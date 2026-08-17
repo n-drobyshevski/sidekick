@@ -5,6 +5,7 @@
 import {
   computeAars,
   DEFAULT_AARS_RULE,
+  derivationSignature,
   gap,
   gapPointsFor,
   type AarsGap,
@@ -19,8 +20,18 @@ import type { Severity } from "./config";
 import type { EffectiveAccessRow } from "./effectiveAccess";
 import { isRatedExposure, worseExposureLevel } from "./exposureQuery";
 import { HUMAN_ACCESS_TYPES } from "./identityQuery";
+import {
+  decideProblem,
+  deriveFindingProblemInput,
+  deriveProblemInput,
+  stripProblemFields,
+} from "./problem";
+import { vectorSignature, type ProblemRule } from "./problemRule";
+import { decidePosture, derivePostureInput, worstOpenProblem } from "./posture";
+import type { PostureRule } from "./postureRule";
 import { conditionHolds, conditionState } from "./riskConditions";
-import type { ConditionKey } from "./toxicCombos";
+import { worstBusinessImpact } from "./syncNormalize";
+import { CONDITION_KEYS, comboGapCode, type ConditionKey } from "./toxicCombos";
 import {
   AI_ASSET_KINDS,
   edgeId,
@@ -45,6 +56,16 @@ export interface AarsHint {
    * does not silently declare the whole estate unreachable.
    */
   internetExposure?: InternetExposure;
+  /**
+   * The `derivationSignature` this hint was computed under, when it was computed by a rule
+   * at all. `buildAarsHintsFromFindings` stamps it, because that hint really is a fresh
+   * derivation under the rule passed in; a pinned dry-run hint from `SEED_AARS_HINTS`
+   * carries none, because it was transcribed from ai/custom_score.md and was never derived
+   * by anything. `enrichGraphDoc` copies whichever of these onto `node.aarsInput`, which is
+   * exactly what lets `syncStore.enrichFromTabs` reuse a persisted input as a hint here
+   * (matching signature) without laundering it into looking freshly derived.
+   */
+  derivedUnder?: string;
 }
 export type AarsHints = Record<string, AarsHint>;
 
@@ -87,15 +108,42 @@ export function internetExposureOf(node: GNode): InternetExposure {
 
 /**
  * Heuristic AARS input for live data (dry-run seeds carry exact hints transcribed
- * from ai/custom_score.md instead): compliance gaps = the distinct framework codes on
- * the asset's open issues plus NO_GUARDRAIL when guardrail coverage flagged the node;
- * data exposure from the CIEM/DSPM flags.
+ * from ai/custom_score.md instead): compliance gaps depend on `rule.gapUnit` (see the
+ * two branches below); data exposure from the CIEM/DSPM flags.
  */
 export function deriveAarsInput(
   node: GNode,
   nodeIssues: IssueRow[],
   rule: AarsRule = DEFAULT_AARS_RULE,
 ): AarsInput {
+  const gaps: AarsGap[] =
+    rule.gapUnit === "condition"
+      ? conditionGaps(node, nodeIssues)
+      : frameworkCodeGaps(node, nodeIssues, rule);
+  // Status-derived gaps. `status` is persisted on every asset and read by nothing but the
+  // detail sheet; these two conditions are the ones the cascade already knows how to price.
+  // Node-status facts, not framework codes, so both gapUnit branches read them the same way.
+  const status = String(node.status ?? "").trim().toUpperCase();
+  if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
+  if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
+  const dataExposure = dataExposureOf(node);
+  return {
+    // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
+    // ai/custom_score.md: MEDIUM ×1.2 = 24); the adjusted severity is a display
+    // lens, not a scoring input — using it would double-count the 5Rs amplifier.
+    issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
+    gaps,
+    dataExposure,
+    internetExposure: internetExposureOf(node),
+  };
+}
+
+/**
+ * `gapUnit: "code"` (the spec): one gap per distinct framework code the asset's open
+ * issues carry, plus `NO_GUARDRAIL` when guardrail coverage flagged the node. Exactly the
+ * pre-6b behaviour, unchanged.
+ */
+function frameworkCodeGaps(node: GNode, nodeIssues: IssueRow[], rule: AarsRule): AarsGap[] {
   const codes = new Set<string>();
   for (const issue of nodeIssues) {
     const fw = issue.frameworks ?? {};
@@ -111,21 +159,36 @@ export function deriveAarsInput(
   }
   const gaps: AarsGap[] = [...codes].sort().map((c) => gap(c));
   if (node.guardrailMissing) gaps.push(gap("NO_GUARDRAIL"));
-  // Status-derived gaps. `status` is persisted on every asset and read by nothing but the
-  // detail sheet; these two conditions are the ones the cascade already knows how to price.
-  const status = String(node.status ?? "").trim().toUpperCase();
-  if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
-  if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
-  const dataExposure = dataExposureOf(node);
-  return {
-    // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
-    // ai/custom_score.md: MEDIUM ×1.2 = 24); the adjusted severity is a display
-    // lens, not a scoring input — using it would double-count the 5Rs amplifier.
-    issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
-    gaps,
-    dataExposure,
-    internetExposure: internetExposureOf(node),
-  };
+  return gaps;
+}
+
+/**
+ * `gapUnit: "condition"` (ai/AARS_SCORING_ASSESSMENT.md §1): one gap per
+ * `riskConditions.CONDITION_KEYS` condition the asset actually HOLDS, priced once no matter
+ * how many issues or framework codes cite it, plus one gap per distinct toxic-combination
+ * group its open issues fall into. No framework code is emitted — `IssueRow.frameworks`
+ * stays exactly as synced, so the detail sheet and the compliance rollups render unchanged;
+ * only pillar B stops pricing them.
+ *
+ * `NO_GUARDRAIL` is not pushed separately here: `COND_MISSING_GUARDRAIL` reads the identical
+ * predicate (`riskConditions.conditionState`'s `MISSING_GUARDRAIL` case is
+ * `node.guardrailMissing === true`), so pushing both would double-charge one fact under two
+ * names — precisely the defect this unit exists to remove.
+ *
+ * `gapSources.fiveRs` and `.frameworkMapping` are framework-code SOURCES and have nothing to
+ * feed here — inert under this unit, the same call `aarsRule.unreachableGapRules` makes for
+ * the diagnostic. `.deprecatedModel` / `.inactiveAgent` are handled by the caller: they are
+ * node-status facts, not framework codes, so both units read them identically.
+ */
+function conditionGaps(node: GNode, nodeIssues: IssueRow[]): AarsGap[] {
+  const gaps: AarsGap[] = [];
+  for (const key of CONDITION_KEYS) {
+    if (conditionState(node, key) === true) gaps.push(gap(`COND_${key}`));
+  }
+  const groups = new Set<string>();
+  for (const issue of nodeIssues) if (issue.comboGroup) groups.add(issue.comboGroup);
+  for (const g of [...groups].sort()) gaps.push(gap(comboGapCode(g)));
+  return gaps;
 }
 
 /**
@@ -146,13 +209,15 @@ function weightedGap(code: string, severity: Severity | undefined, rule: AarsRul
 
 /**
  * Turn config-findings into per-asset AARS hints so live Pillar B stops being purely
- * heuristic: for each resource carrying ≥1 failing finding, the hint's gaps are the
- * union of (a) what deriveAarsInput would compute from the asset's open issues +
- * guardrail flag and (b) one gap per distinct framework code the findings contribute —
- * so no existing signal is lost and real failing controls add real points (computeAars
- * still caps pillar B at 30). dataExposure comes from deriveAarsInput, so hinted and
- * un-hinted assets classify identically. Assets with no findings are omitted and fall
- * through to deriveAarsInput unchanged.
+ * heuristic: for each resource carrying ≥1 failing finding, the hint's gaps are the union
+ * of (a) what deriveAarsInput would compute for the asset under `rule.gapUnit` and (b),
+ * under `gapUnit: "code"` ONLY, one gap per distinct framework code the findings contribute
+ * — so no existing signal is lost and real failing controls add real points (computeAars
+ * still caps pillar B at its cap). Under `gapUnit: "condition"` (b) is skipped: a finding's
+ * framework codes are the same framework-code currency `deriveAarsInput` already stopped
+ * emitting, so there is nothing for them to add. dataExposure comes from deriveAarsInput, so
+ * hinted and un-hinted assets classify identically. Assets with no findings are omitted and
+ * fall through to deriveAarsInput unchanged.
  *
  * Only FAILING, OPEN findings price anything — `isOpenGap`. That filter used to live at
  * the normalizer, which stored nothing else; now that the register also keeps RESOLVED
@@ -197,16 +262,27 @@ export function buildAarsHintsFromFindings(
     const base = deriveAarsInput(node, issuesByAsset.get(resourceId) ?? [], rule);
     const seen = new Set(base.gaps.map((g) => g.code));
     const gaps = [...base.gaps];
-    for (const c of codes) {
-      if (c && !seen.has(c)) {
-        seen.add(c);
-        gaps.push(weightedGap(c, worstByCode.get(`${resourceId}|${c}`), rule));
+    // A finding's `frameworkCodes` are a framework-code SOURCE, same family as
+    // `gapSources.fiveRs` — under `gapUnit: "condition"` pillar B's currency is
+    // `COND_*`/`COMBO_*`, so there is nothing left here for them to feed. Inert, not
+    // silently dropped: `deriveAarsInput`'s condition branch already covers this asset via
+    // `base`, and `unreachableGapRules` reports the same call for the cascade rows.
+    if (rule.gapUnit !== "condition") {
+      for (const c of codes) {
+        if (c && !seen.has(c)) {
+          seen.add(c);
+          gaps.push(weightedGap(c, worstByCode.get(`${resourceId}|${c}`), rule));
+        }
       }
     }
     hints[resourceId] = {
       gaps,
       dataExposure: base.dataExposure,
       internetExposure: base.internetExposure,
+      // This hint IS a fresh derivation under `rule` — `base` came straight out of
+      // `deriveAarsInput(rule)` two lines up — so it is stamped exactly like the no-hint
+      // branch of `enrichGraphDoc` would be, and `enrichFromTabs` can trust the signature.
+      derivedUnder: derivationSignature(rule),
     };
   }
   return hints;
@@ -230,6 +306,17 @@ export function enrichGraphDoc(
   const nodes: GNode[] = doc.nodes.map((raw) => {
     const node: GNode = { ...raw };
     const nodeIssues = byAsset.get(node.id) ?? [];
+
+    // Asset-level worst business impact, re-derived from the node's OWN projects on every
+    // enrich pass (not carried over from a previous score) — the same "recompute from the
+    // more primitive persisted fact" treatment `severity` and `comboGroups` already get
+    // from the open issues below. Cheap and side-effect-free: `node.projects` doesn't
+    // change across a rescore, so this is idempotent, and it never touches a pillar —
+    // scoreOrdinality.test.ts pins that adding it moves no score.
+    if (node.projects?.length) {
+      const impact = worstBusinessImpact(node.projects);
+      if (impact) node.businessImpact = impact;
+    }
 
     if (nodeIssues.length) {
       node.severity = worstSeverity(nodeIssues.map((i) => i.adjustedSeverity));
@@ -272,6 +359,12 @@ export function enrichGraphDoc(
         gaps: input.gaps,
         dataExposure: input.dataExposure,
         internetExposure: input.internetExposure,
+        // Propagate the hint's own signature rather than re-stamping today's: a REUSED
+        // persisted input (the hint `enrichFromTabs` passes through when its signature
+        // still matches) must keep saying what it was actually derived under, and a
+        // pinned dry-run hint must keep saying nothing. Only the no-hint branch — a genuine
+        // fresh derivation right here, under `rule` — earns today's signature.
+        derivedUnder: hint ? hint.derivedUnder : derivationSignature(rule),
       };
       if (reached) {
         node.aarsInput.dataFindings = countBySeverity(reached);
@@ -301,6 +394,130 @@ export function enrichGraphDoc(
     edges: [...doc.edges, ...issueEdges],
     syncedAt: doc.syncedAt,
   };
+}
+
+// ------------------------------------------------------------- the problem/decision-vector fold
+
+/**
+ * Decide every eligible issue and finding through `problem.decideProblem`, joined to the
+ * enriched graph's nodes by `assetId` / `resourceId`.
+ *
+ * A SEPARATE exported function, called BESIDE `enrichGraphDoc` — never folded inside it.
+ * The reason is versioning, not taste: the AARS rule version and the problem rule version
+ * move INDEPENDENTLY (settingsLogic's `aars_scored_version` vs `problem_decided_version`),
+ * so the two enrichments must be independently re-runnable. Burying this fold inside
+ * `enrichGraphDoc` would mean a problem-rule edit forces an AARS rescore (or vice versa) —
+ * exactly the coupling `syncStore.rescoreInventory` and the future `redecideProblems` must
+ * NOT share, or editing one rule would pay the Sheets-rewrite cost of the other for nothing.
+ *
+ * Gating differs by row kind because the two source types define "still relevant" in their
+ * OWN vocabularies: an issue is `isUnresolvedIssue` (config.ts), a finding is `isOpenGap`.
+ * A row that fails its gate gets NO verdict — `stripProblemFields` clears whatever a prior
+ * decide left on it, so a resolved issue or a now-passing finding never keeps a stale ACT
+ * sitting on it.
+ *
+ * A missing node (`byId.get(...)` returns `undefined`) is the ORDINARY case, not an edge
+ * case: most config rules fail on a REGION, an IAM policy, or some other resource the AI
+ * graph does not model at all. `deriveProblemInput` / `deriveFindingProblemInput` already
+ * handle `node === undefined` (every axis that would read the node falls to UNKNOWN /
+ * UNVERIFIED), so the row is decided — with more unknowns — rather than dropped.
+ *
+ * `ruleVersion` is the `problem_rule` version this call is deciding under
+ * (`settingsStore.getProblemRule().version`); stamped onto every decided row's
+ * `problemRuleVersion` so a later reader can tell which rule produced it without a join
+ * back to sync_history. This is the SYNC-TIME path, so every decided row is a FRESH
+ * derivation — `enrichFromTabs`'s reuse-under-signature trick belongs to the recompute path
+ * in syncStore.ts, not here, because a live sync always has fresh Wiz data to derive from.
+ */
+export function withProblemVerdicts(
+  doc: GraphDoc,
+  issues: IssueRow[],
+  findings: FindingRow[],
+  rule: ProblemRule,
+  ruleVersion: number,
+): { issues: IssueRow[]; findings: FindingRow[] } {
+  const byId = indexBy(doc.nodes, (n) => n.id);
+  const sig = vectorSignature(rule);
+
+  const decidedIssues = issues.map((issue) => {
+    if (!isUnresolvedIssue(issue)) return stripProblemFields(issue);
+    const input = deriveProblemInput(issue, byId.get(issue.assetId), rule);
+    const { outcome } = decideProblem(input.vector, rule);
+    return {
+      ...issue,
+      problemOutcome: outcome,
+      problemInput: { ...input, derivedUnder: sig },
+      problemRuleVersion: ruleVersion,
+    };
+  });
+
+  const decidedFindings = findings.map((finding) => {
+    if (!isOpenGap(finding)) return stripProblemFields(finding);
+    const input = deriveFindingProblemInput(finding, byId.get(finding.resourceId), rule);
+    const { outcome } = decideProblem(input.vector, rule);
+    return {
+      ...finding,
+      problemOutcome: outcome,
+      problemInput: { ...input, derivedUnder: sig },
+      problemRuleVersion: ruleVersion,
+    };
+  });
+
+  return { issues: decidedIssues, findings: decidedFindings };
+}
+
+/**
+ * Phase 6: fold the Asset Posture Tier onto every real node, BESIDE the AARS enrichment
+ * and the problem-verdict fold above — a THIRD independent fold, never merged into either
+ * of the other two, for the same independent-rerunnability reason `withProblemVerdicts` is
+ * already separate from `enrichGraphDoc`: an operator who edits only `posture_rule` must be
+ * able to re-decide every tier without re-scoring AARS or re-deciding a single problem
+ * verdict, and vice versa. See posture.ts's own header for why a tier is computed from the
+ * node's OWN fields rather than from what has been found on it.
+ *
+ * `issues` / `findings` here are the ALREADY-DECIDED rows (`withProblemVerdicts`'s return),
+ * not the raw synced ones — this fold reads their `problemOutcome`, never their severity or
+ * status directly, and folds `worstOpenProblem` per asset from exactly that field. Passing
+ * the raw rows would leave every asset's `worstOpenProblem` undefined (no row carries the
+ * field until it has been decided), which is why the doc comment on `GNode.worstOpenProblem`
+ * calls it "folded here FROM the Phase 4/5 verdicts" rather than derived independently.
+ *
+ * Runs over EVERY real node (`kind` outside {ISSUE, SUMMARY}), not only the AI-asset kinds
+ * `enrichGraphDoc`'s `scorable` check restricts AARS to: a bucket or a service account has
+ * a capability envelope and a containment reading just as much as an agent does, and the
+ * Inventory's tier column is meant to sit beside a possibly-blank AARS score on exactly
+ * those rows, not to be blank itself wherever AARS is.
+ */
+export function withPostureTiers(
+  doc: GraphDoc,
+  issues: IssueRow[],
+  findings: FindingRow[],
+  rule: PostureRule,
+): GraphDoc {
+  const outcomesByAsset = new Map<string, string[]>();
+  for (const issue of issues) {
+    if (issue.problemOutcome) pushInto(outcomesByAsset, issue.assetId, issue.problemOutcome);
+  }
+  for (const finding of findings) {
+    if (finding.problemOutcome) pushInto(outcomesByAsset, finding.resourceId, finding.problemOutcome);
+  }
+
+  const nodes = doc.nodes.map((node) => {
+    if (node.kind === "ISSUE" || node.kind === "SUMMARY") return node;
+    const { vector, unknowns } = derivePostureInput(node, rule);
+    const { tier } = decidePosture(vector, rule);
+    const worst = worstOpenProblem(outcomesByAsset.get(node.id) ?? []);
+    const next: GNode = {
+      ...node,
+      postureTier: tier,
+      postureInput: unknowns.length ? { ...vector, unknowns } : { ...vector },
+    };
+    if (worst) next.worstOpenProblem = worst;
+    else delete next.worstOpenProblem;
+    return next;
+  });
+
+  return { ...doc, nodes };
 }
 
 /**

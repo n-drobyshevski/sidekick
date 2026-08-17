@@ -42,6 +42,7 @@ function api_setSelectedFrameworks(p) { return timedApi_("setSelectedFrameworks"
 function api_getIssues(p) { return timedApi_("getIssues", p); }
 function api_getIssueDetail(p) { return timedApi_("getIssueDetail", p); }
 function api_getToxicCombos(p) { return timedApi_("getToxicCombos", p); }
+function api_getProblems(p) { return timedApi_("getProblems", p); }
 function api_runSync(p) { return timedApi_("runSync", p); }
 function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }
 function api_cancelSync(p) { return timedApi_("cancelSync", p); }
@@ -56,5 +57,13 @@ function api_setAarsRule(p) { return timedApi_("setAarsRule", p); }
 function api_previewAarsRule(p) { return timedApi_("previewAarsRule", p); }
 function api_scoreAarsSample(p) { return timedApi_("scoreAarsSample", p); }
 function api_rescoreAars(p) { return timedApi_("rescoreAars", p); }
+function api_getProblemRule(p) { return timedApi_("getProblemRule", p); }
+function api_setProblemRule(p) { return timedApi_("setProblemRule", p); }
+function api_previewProblemRule(p) { return timedApi_("previewProblemRule", p); }
+function api_recomputeProblems(p) { return timedApi_("recomputeProblems", p); }
+function api_getPostureRule(p) { return timedApi_("getPostureRule", p); }
+function api_setPostureRule(p) { return timedApi_("setPostureRule", p); }
+function api_previewPostureRule(p) { return timedApi_("previewPostureRule", p); }
+function api_recomputePostures(p) { return timedApi_("recomputePostures", p); }
 function api_resetData(p) { return timedApi_("resetData", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }

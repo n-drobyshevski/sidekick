@@ -16,6 +16,8 @@ import {
   withIdentityAccessNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
+  withPostureTiers,
+  withProblemVerdicts,
   withSensitiveDataNodes,
   type AarsHints,
 } from "../domain/graphEnrich";
@@ -26,8 +28,19 @@ import type {
 } from "../domain/graphTypes";
 import type { EffectiveAccessRow } from "../domain/effectiveAccess";
 import { edgeId } from "../domain/graphTypes";
-import { aarsSeverity, type AarsBands, type AarsRule } from "../domain/aars";
-import { isUnresolvedIssue, normalizeAarsSeverity } from "../domain/config";
+import { aarsSeverity, derivationSignature, type AarsBands, type AarsRule } from "../domain/aars";
+import { isOpenGap, isUnresolvedIssue, normalizeAarsSeverity } from "../domain/config";
+import {
+  countProblemOutcomes,
+  decideProblem,
+  deriveFindingProblemInput,
+  deriveProblemInput,
+  stripProblemFields,
+  type ProblemVerdictInput,
+} from "../domain/problem";
+import { vectorSignature, type ProblemRule } from "../domain/problemRule";
+import { countPostureTiers, type Tier as PostureTier } from "../domain/posture";
+import type { PostureRule } from "../domain/postureRule";
 import { OTHER_GROUP_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
 import { countAarsSeverities } from "../domain/aarsTrend";
@@ -63,6 +76,29 @@ export function parseJson<T>(v: unknown, fallback: T): T {
   }
 }
 
+/**
+ * `projects_json` two-branch reader. A cell THIS version wrote holds full objects
+ * (`{id, name, businessImpact}`, from `assetToRow`); a cell an OLDER version wrote holds
+ * bare project names. The shape of the first element tells the two apart — a string means
+ * legacy, an object means current — and an empty array satisfies both branches identically,
+ * so it never has to guess.
+ *
+ * The legacy branch fabricates `proj-<lowercased name>` ids EXACTLY as the old unconditional
+ * code did. That recipe is load-bearing for an existing ledger: it is what those rows'
+ * project ids already are, and a rescore must keep producing the same ones rather than
+ * re-keying every project on an asset a live sync hasn't touched since this shipped.
+ */
+function parseAssetProjects(v: unknown): NonNullable<GNode["projects"]> {
+  const raw = parseJson<unknown[]>(v, []);
+  if (typeof raw[0] === "string") {
+    return (raw as unknown[]).map((name) => ({
+      id: `proj-${String(name).toLowerCase()}`,
+      name: String(name),
+    }));
+  }
+  return raw as NonNullable<GNode["projects"]>;
+}
+
 export function assetToRow(n: GNode): Rec {
   return {
     id: n.id,
@@ -74,7 +110,17 @@ export function assetToRow(n: GNode): Rec {
     status: n.status ?? null,
     account_id: n.cloudAccount?.id ?? null,
     account_name: n.cloudAccount?.name ?? null,
-    projects_json: JSON.stringify((n.projects ?? []).map((p) => p.name)),
+    // Full project objects, not just names: `rowToAsset` used to fabricate a `proj-<name>`
+    // id and drop `businessImpact` entirely on the way back in, which is what stranded the
+    // signal ai/AARS_ASSESSMENT.md §7 named as the highest-value follow-up. A row this
+    // writes is always read back through the object branch of `rowToAsset`'s two-branch
+    // reader below; the legacy string-array branch exists only for rows an OLDER version
+    // wrote.
+    projects_json: JSON.stringify(n.projects ?? []),
+    // The asset-level worst-of `enrichGraphDoc` folds from `projects[].businessImpact` —
+    // `?? null`, never a default, so an asset Wiz reported no impact for reads back
+    // undefined rather than as a false "LBI".
+    business_impact: n.businessImpact ?? null,
     first_seen: n.firstSeen ?? null,
     last_seen: n.lastSeen ?? null,
     internet: triCell(n.isAccessibleFromInternet),
@@ -115,6 +161,11 @@ export function assetToRow(n: GNode): Rec {
     email: n.email ?? null,
     publisher: n.publisher ?? null,
     discovery_methods: (n.discoveryMethods ?? []).join(","),
+    // Phase 6: the Asset Posture Tier — `?? null`, never a default: a synthetic node, or a
+    // real one the fold never reached, must read back as undefined rather than as tier 0.
+    posture_tier: n.postureTier ?? null,
+    posture_input_json: n.postureInput ? JSON.stringify(n.postureInput) : null,
+    worst_open_problem: n.worstOpenProblem ?? null,
   };
 }
 
@@ -136,15 +187,16 @@ export function rowToAsset(r: Rec): GNode {
     hasHighPrivileges: parseBool(r["high_priv"]),
     hasAdminPrivileges: parseBool(r["admin_priv"]),
     guardrailMissing: parseBool(r["guardrail_missing"]),
-    projects: parseJson<string[]>(r["projects_json"], []).map((name) => ({
-      id: `proj-${String(name).toLowerCase()}`,
-      name: String(name),
-    })),
+    projects: parseAssetProjects(r["projects_json"]),
   };
   const account = (r["account_id"] as string | null) ?? null;
   if (account) {
     node.cloudAccount = { id: account, name: String(r["account_name"] ?? account) };
   }
+  // `?? null`, not a default: an asset Wiz reported no business impact for (or that
+  // predates this column) must read back as undefined, never as a false "LBI".
+  const businessImpact = (r["business_impact"] as string | null) ?? null;
+  if (businessImpact) node.businessImpact = businessImpact;
   const severity = (r["severity"] as string | null) ?? null;
   if (severity) node.severity = severity as Severity;
   if (r["aars"] !== null && r["aars"] !== undefined) node.aars = Number(r["aars"]);
@@ -200,6 +252,16 @@ export function rowToAsset(r: Rec): GNode {
   if (publisher) node.publisher = publisher;
   const methods = String(r["discovery_methods"] ?? "").split(",").filter(Boolean);
   if (methods.length) node.discoveryMethods = methods;
+  // Phase 6: absent reads as undefined, never a default — a synthetic node, or a row
+  // written before this phase, must not read as tier 0 or as posture-decided.
+  const postureTier = r["posture_tier"];
+  if (postureTier !== null && postureTier !== undefined && String(postureTier) !== "") {
+    node.postureTier = Number(postureTier);
+  }
+  const postureInput = parseJson<GNode["postureInput"] | null>(r["posture_input_json"], null);
+  if (postureInput) node.postureInput = postureInput;
+  const worstOpenProblem = (r["worst_open_problem"] as string | null) ?? null;
+  if (worstOpenProblem) node.worstOpenProblem = worstOpenProblem;
   return node;
 }
 
@@ -265,6 +327,12 @@ export function issueToRow(i: IssueRow): Rec {
     ticket_urls: (i.ticketUrls ?? []).join(","),
     ai_verdict: i.aiVerdict ?? null,
     ai_recommended_severity: i.aiRecommendedSeverity ?? null,
+    // Phase 4: the Problem/Decision-Vector verdict. `?? null`, never a default: a resolved
+    // issue (or one synced before this phase) carries none of the three, and reading that
+    // as some fallback outcome would assert a decision nobody made.
+    problem_outcome: i.problemOutcome ?? null,
+    problem_input_json: i.problemInput ? JSON.stringify(i.problemInput) : null,
+    problem_rule_version: i.problemRuleVersion ?? null,
   };
 }
 
@@ -313,6 +381,20 @@ export function rowToIssue(r: Rec): IssueRow {
   const ticketUrls = String(r["ticket_urls"] ?? "").split(",").filter(Boolean);
   if (ticketUrls.length) issue.ticketUrls = ticketUrls;
   if (parseBool(r["validated_exploitable"])) issue.validatedAsExploitable = true;
+  // Phase 4: absent reads as undefined, never a default — a row this app synced before the
+  // verdict existed (or a resolved issue that never got one) must not read as decided.
+  const problemOutcome = (r["problem_outcome"] as string | null) ?? null;
+  if (problemOutcome) issue.problemOutcome = problemOutcome;
+  const problemInput = parseJson<ProblemVerdictInput | null>(r["problem_input_json"], null);
+  if (problemInput) issue.problemInput = problemInput;
+  const problemRuleVersion = r["problem_rule_version"];
+  if (
+    problemRuleVersion !== null &&
+    problemRuleVersion !== undefined &&
+    String(problemRuleVersion) !== ""
+  ) {
+    issue.problemRuleVersion = Number(problemRuleVersion);
+  }
   return issue;
 }
 
@@ -383,6 +465,12 @@ export function findingToRow(f: FindingRow): Rec {
       f.ignoreRuleIds && f.ignoreRuleIds.length ? JSON.stringify(f.ignoreRuleIds) : null,
     iac_finding_ids_json:
       f.iacFindingIds && f.iacFindingIds.length ? JSON.stringify(f.iacFindingIds) : null,
+
+    // Phase 4: the Problem/Decision-Vector verdict — same three columns, same `?? null`
+    // convention, as ai_issues above.
+    problem_outcome: f.problemOutcome ?? null,
+    problem_input_json: f.problemInput ? JSON.stringify(f.problemInput) : null,
+    problem_rule_version: f.problemRuleVersion ?? null,
   };
 }
 
@@ -429,6 +517,19 @@ export function rowToFinding(r: Rec): FindingRow {
   // `false` would assert a tombstone check that never ran.
   const deleted = parseTri(r["deleted"]);
   if (deleted !== null) finding.deleted = deleted;
+  // Phase 4: same absent-reads-undefined contract as rowToIssue's block above.
+  const problemOutcome = (r["problem_outcome"] as string | null) ?? null;
+  if (problemOutcome) finding.problemOutcome = problemOutcome;
+  const problemInput = parseJson<ProblemVerdictInput | null>(r["problem_input_json"], null);
+  if (problemInput) finding.problemInput = problemInput;
+  const problemRuleVersion = r["problem_rule_version"];
+  if (
+    problemRuleVersion !== null &&
+    problemRuleVersion !== undefined &&
+    String(problemRuleVersion) !== ""
+  ) {
+    finding.problemRuleVersion = Number(problemRuleVersion);
+  }
   return finding;
 }
 
@@ -711,13 +812,36 @@ export function persistSync(
   });
   const enriched = enrichGraphDoc(reachable, issues, hints, rule);
 
+  // The problem/decision-vector verdict, BESIDE the AARS enrichment above, never inside
+  // it — see withProblemVerdicts's own comment for why the two must stay independently
+  // re-runnable. Runs against `enriched.nodes` rather than `reachable`'s, so a row's
+  // `mission` axis reads the SAME freshly-recomputed `businessImpact` AARS's pillars do,
+  // and its `exposure` axis reads the same exposureEvidence/humanAccess join both already
+  // carry through unchanged from the two `with*` folds above.
+  const { version: problemRuleVersion, rule: problemRule } = settingsStore.getProblemRule();
+  const { issues: decidedIssues, findings: decidedFindings } = withProblemVerdicts(
+    enriched,
+    issues,
+    findings,
+    problemRule,
+    problemRuleVersion,
+  );
+
+  // Phase 6: the Asset Posture Tier, a THIRD independent fold — see withPostureTiers's own
+  // comment. Runs against the already-DECIDED issues/findings (not the raw synced ones), so
+  // `worstOpenProblem` folds from the same verdicts the register shows, and against
+  // `enriched.nodes` for the same "freshest businessImpact / exposure join" reason
+  // `withProblemVerdicts` does above it.
+  const { version: postureRuleVersion, rule: postureRule } = settingsStore.getPostureRule();
+  const postured = withPostureTiers(enriched, decidedIssues, decidedFindings, postureRule);
+
   // Tabs hold the real (non-synthetic) nodes; ISSUE nodes are derivable from ai_issues.
-  const assetNodes = realNodes(enriched.nodes);
-  const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
+  const assetNodes = realNodes(postured.nodes);
+  const assetEdges = postured.edges.filter((e) => e.type !== "HAS_ISSUE");
   overwrite(TABS.assets, assetNodes.map(assetToRow));
   overwrite(TABS.edges, assetEdges.map(edgeToRow));
-  overwrite(TABS.issues, issues.map(issueToRow));
-  overwrite(TABS.findings, findings.map(findingToRow));
+  overwrite(TABS.issues, decidedIssues.map(issueToRow));
+  overwrite(TABS.findings, decidedFindings.map(findingToRow));
   overwrite(TABS.dataFindings, dataFindings.map(dataFindingToRow));
 
   // Compliance-framework posture. Written like every other data tab — wholesale, BEFORE
@@ -743,7 +867,7 @@ export function persistSync(
   // after they have all fixed it is worse than an empty one.
   overwrite(TABS.identityFindings, (extras.identityFindings ?? []).map(identityFindingToRow));
 
-  const snapshotRef = writeGraphSnapshot(enriched);
+  const snapshotRef = writeGraphSnapshot(postured);
 
   // Commit record LAST.
   appendRows(TABS.syncHistory, [{
@@ -752,22 +876,30 @@ export function persistSync(
     finished_at: nowIso(now),
     status: "SUCCESS",
     mode: meta.mode,
-    node_count: enriched.nodes.length,
-    edge_count: enriched.edges.length,
+    node_count: postured.nodes.length,
+    edge_count: postured.edges.length,
     issue_count: issues.length,
     api_calls: meta.apiCalls,
     snapshot_ref: snapshotRef,
     error: null,
     // The AARS distribution at this sync — the only record of it, since the snapshot
     // this row points at is overwritten by the next sync. Feeds the inventory trend.
-    aars_severity_json: JSON.stringify(countAarsSeverities(enriched.nodes)),
+    aars_severity_json: JSON.stringify(countAarsSeverities(postured.nodes)),
     // Which scoring model produced that distribution: counts from two versions are not
     // on the same scale, and the trend chart says so rather than drawing a false step.
     aars_rule_version: ruleVersion,
+    // The outcome distribution this sync decided, over BOTH decided populations at once —
+    // mirrors aars_severity_json exactly, one row down.
+    problem_outcome_json: JSON.stringify(countProblemOutcomes([...decidedIssues, ...decidedFindings])),
+    // Which problem rule produced it — mirrors aars_rule_version, and moves independently
+    // of it, exactly as the two settings keys (aars_rule / problem_rule) do.
+    problem_rule_version: problemRuleVersion,
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
+  settingsStore.setDecidedRuleVersion(problemRuleVersion);
+  settingsStore.setComputedPostureVersion(postureRuleVersion);
   commit();
-  return enriched;
+  return postured;
 }
 
 /**
@@ -820,16 +952,215 @@ export function scoreAssetsWith(rule: AarsRule): GNode[] {
  * Re-enrich the persisted graph under `rule`, feeding each asset the SAME AARS inputs its
  * score was built from. Where a row predates the `aars_input_json` column the inputs are
  * rebuilt from findings, which is what the sync's live path would have derived anyway.
+ *
+ * "Same inputs" is right for a PRICING change (severityPoints, gapPoints, a cap) — that is
+ * the whole point of this function, and why a rescore costs zero Wiz calls. It is wrong for
+ * a DERIVATION change: `rule.gapSources` decides WHICH GAPS EXIST (deriveAarsInput), and a
+ * persisted input built under the old flags does not contain the gaps the new ones would
+ * add. Reusing it unconditionally meant flipping `fiveRs` on and hitting Recompute moved
+ * nothing until the next full sync — the exact bug `derivedUnder` exists to close: a
+ * persisted input is only trusted here when its signature still matches `rule`'s, or it
+ * predates the field entirely (legacy — reused, so no tenant re-scores on upgrade). Anything
+ * else is left OUT of `hints`, so `enrichGraphDoc` falls through to a fresh
+ * `deriveAarsInput` (or to whatever `buildAarsHintsFromFindings` computed above, which is
+ * itself a fresh derivation under the current `rule` and already carries a matching
+ * signature) instead of a stale one wearing the new rule's clothes.
  */
 function enrichFromTabs(rule: AarsRule): GraphDoc | null {
   const base = loadRawGraph();
   if (!base) return null;
   const issues = loadIssues();
   const hints: AarsHints = { ...buildAarsHintsFromFindings(loadFindings(), base, issues, rule) };
+  const sig = derivationSignature(rule);
   for (const node of base.nodes) {
-    if (node.aarsInput) hints[node.id] = node.aarsInput;
+    const input = node.aarsInput;
+    if (input && (input.derivedUnder === undefined || input.derivedUnder === sig)) {
+      hints[node.id] = input;
+    }
   }
   return enrichGraphDoc(base, issues, hints, rule);
+}
+
+/**
+ * Re-decide every persisted issue and finding under `rule`, without touching the Wiz API:
+ * every input a verdict needs is already on the tabs (the issue/finding's own fields, and
+ * the asset's own CIEM/exposure/business-impact columns).
+ *
+ * UNLIKE `enrichFromTabs` above, this does NOT reuse a persisted input unconditionally —
+ * it reuses it only when `problemRule.vectorSignature(rule)` still matches what the row
+ * was decided under (or the row predates the field entirely — legacy, reused, so no tenant
+ * redecides on upgrade). This is the SAME `derivedUnder` precedent `enrichFromTabs`
+ * follows for AARS, applied to this rule's own derivation knobs
+ * (`exploitationByRuleId` / `remediateVerdicts` / `totalImpactGroups` / `missingMission`)
+ * rather than `gapSources` — DO NOT let this regress to unconditional reuse the way the
+ * AARS rescore briefly did: an operator flips `missingMission` from MEDIUM to LOW, hits
+ * Redecide, and nothing should move for a row whose vector was actually built under the
+ * old default — it must re-derive, not keep answering for a rule that no longer exists.
+ *
+ * `decideProblem` itself (the `outcomeRules` cascade) is ALWAYS re-run under the CURRENT
+ * `rule`, whether the vector was reused or freshly derived: reordering or editing
+ * `outcomeRules` changes what a vector ROUTES TO, never WHICH VECTOR a row has, so it must
+ * never be gated by the same signature check the vector-reuse decision uses. A rule edit
+ * that touches only `outcomeRules` therefore reuses every persisted `problemInput`
+ * untouched and still redecides every outcome — the "pure ordering change" case
+ * `problem.test.ts` / `redecideProblems.test.ts` pin.
+ *
+ * A row that no longer passes its own gate (`isUnresolvedIssue` / `isOpenGap`) is stripped
+ * rather than redecided — see `stripProblemFields`. This can only happen here if the row
+ * changed status without a sync in between, which does not happen (status is a synced
+ * field), but the strip keeps this function correct independent of that fact rather than
+ * relying on it.
+ */
+function redecideFromTabs(
+  rule: ProblemRule,
+  ruleVersion: number | undefined,
+): { issues: IssueRow[]; findings: FindingRow[] } {
+  const byId = new Map(loadAssetsRaw().map((n) => [n.id, n]));
+  const sig = vectorSignature(rule);
+
+  const reuseOrDerive = <Row extends { problemInput?: ProblemVerdictInput }>(
+    row: Row,
+    node: GNode | undefined,
+    derive: () => ProblemVerdictInput,
+  ): ProblemVerdictInput => {
+    const persisted = row.problemInput;
+    if (persisted && (persisted.derivedUnder === undefined || persisted.derivedUnder === sig)) {
+      return persisted; // reused verbatim, own (possibly legacy) signature and all
+    }
+    return { ...derive(), derivedUnder: sig };
+  };
+
+  const stampVersion = <Row extends { problemRuleVersion?: number }>(row: Row): Row => {
+    if (ruleVersion === undefined) {
+      // A preview (decideProblemsWith): nothing is being saved, so no real version exists
+      // to stamp. Strip whatever the source row carried rather than let a stale number
+      // from a PRIOR real redecide leak through as if it described this preview.
+      if (row.problemRuleVersion === undefined) return row;
+      const next = { ...row };
+      delete next.problemRuleVersion;
+      return next;
+    }
+    return { ...row, problemRuleVersion: ruleVersion };
+  };
+
+  const issues = loadIssues().map((issue) => {
+    if (!isUnresolvedIssue(issue)) return stripProblemFields(issue);
+    const input = reuseOrDerive(issue, byId.get(issue.assetId), () =>
+      deriveProblemInput(issue, byId.get(issue.assetId), rule));
+    const { outcome } = decideProblem(input.vector, rule);
+    return stampVersion({ ...issue, problemOutcome: outcome, problemInput: input });
+  });
+
+  const findings = loadFindings().map((finding) => {
+    if (!isOpenGap(finding)) return stripProblemFields(finding);
+    const input = reuseOrDerive(finding, byId.get(finding.resourceId), () =>
+      deriveFindingProblemInput(finding, byId.get(finding.resourceId), rule));
+    const { outcome } = decideProblem(input.vector, rule);
+    return stampVersion({ ...finding, problemOutcome: outcome, problemInput: input });
+  });
+
+  return { issues, findings };
+}
+
+/**
+ * Re-decide every persisted issue and finding under the current problem rule, and rewrite
+ * the two tabs. Same non-negotiable as `rescoreInventory`: NOT a sync — zero Wiz calls, and
+ * no `sync_history` row, because inventing a commit record would put a point on the
+ * outcome trend for an estate that never moved.
+ *
+ * Caller holds the script lock.
+ */
+export function redecideProblems(): {
+  version: number;
+  issueCount: number;
+  findingCount: number;
+  outcomes: Record<string, number>;
+} {
+  const { version, rule } = settingsStore.getProblemRule();
+  const { issues, findings } = redecideFromTabs(rule, version);
+
+  overwrite(TABS.issues, issues.map(issueToRow));
+  overwrite(TABS.findings, findings.map(findingToRow));
+
+  settingsStore.setDecidedRuleVersion(version);
+  commit();
+
+  return {
+    version,
+    issueCount: issues.filter((i) => i.problemOutcome !== undefined).length,
+    findingCount: findings.filter((f) => f.problemOutcome !== undefined).length,
+    outcomes: countProblemOutcomes([...issues, ...findings]),
+  };
+}
+
+/**
+ * Decide every persisted issue and finding under an ARBITRARY rule and return the result
+ * WITHOUT writing anything — what a future Problem Rules page previews before committing
+ * to it. Shares `redecideFromTabs` with the real redecide, so the preview is the redecide,
+ * minus the writes and the version stamp (there is no real version for a rule that has not
+ * been saved).
+ */
+export function decideProblemsWith(rule: ProblemRule): { issues: IssueRow[]; findings: FindingRow[] } {
+  return redecideFromTabs(rule, undefined);
+}
+
+/**
+ * Fold posture tiers over the persisted assets under an arbitrary `rule`, reading the
+ * persisted `problemOutcome`s off `ai_issues` / `ai_findings` exactly as they stand (no
+ * re-derivation needed there — `derivePostureInput` never reads a problem verdict, only
+ * `worstOpenProblem` does, and that fold is a pure read of an already-decided field).
+ * Costs zero Wiz calls: every input `withPostureTiers` needs is already on the tabs. Shared
+ * by `recomputePostures` (writes) and `previewPostureRule` (does not) — the same
+ * one-function-two-callers shape `decideProblemsWith` / `redecideProblems` share.
+ */
+function postureFromTabs(rule: PostureRule): GNode[] {
+  const nodes = loadAssetsRaw();
+  if (!nodes.length) return [];
+  const doc: GraphDoc = { nodes, edges: [], syncedAt: "" };
+  return withPostureTiers(doc, loadIssues(), loadFindings(), rule).nodes;
+}
+
+/**
+ * Score every persisted asset's posture tier under an ARBITRARY rule and return the result
+ * WITHOUT writing anything — what the AARS Rules page's Posture tab previews before
+ * committing to it. Shares `postureFromTabs` with the real recompute, so the preview is
+ * the recompute, minus the writes.
+ */
+export function posturesWith(rule: PostureRule): GNode[] {
+  return postureFromTabs(rule);
+}
+
+/**
+ * Re-tier every persisted asset under the current posture rule, and rewrite the assets
+ * tab. Same non-negotiable as `rescoreInventory` / `redecideProblems`: NOT a sync — zero
+ * Wiz calls, and no `sync_history` row, because inventing a commit record would put a
+ * point on a trend for an estate that never moved.
+ *
+ * Does NOT rewrite the Drive snapshot — mirrors `redecideProblems`'s choice, not
+ * `rescoreInventory`'s: `postureFromTabs` builds its working doc from `loadAssetsRaw()`
+ * alone (no ISSUE nodes, unlike `enrichFromTabs`'s call into `enrichGraphDoc`), so writing
+ * it back to Drive would silently drop every ISSUE node from the cached graph until the
+ * next real sync. `TABS.assets` is the read model every consumer of a posture tier
+ * actually reads (`loadAssets` — Inventory's tier column never goes through
+ * `loadGraphDoc`), so the Security Graph page carrying a stale `postureTier` on its copy
+ * of a node until the next sync is the same accepted trade-off `redecideProblems` already
+ * makes for `problemOutcome` on ISSUE nodes.
+ *
+ * Caller holds the script lock.
+ */
+export function recomputePostures(): {
+  version: number;
+  assetCount: number;
+  tierCounts: Record<PostureTier, number>;
+} {
+  const { version, rule } = settingsStore.getPostureRule();
+  const nodes = postureFromTabs(rule);
+
+  overwrite(TABS.assets, nodes.map(assetToRow));
+  settingsStore.setComputedPostureVersion(version);
+  commit();
+
+  return { version, assetCount: nodes.length, tierCounts: countPostureTiers(nodes) };
 }
 
 /**

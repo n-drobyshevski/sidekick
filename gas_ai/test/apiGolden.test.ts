@@ -52,6 +52,12 @@ describe("dry-run sync", () => {
 
   it("is deterministic — two syncs from a clean store agree", async () => {
     const first = server.api.getGraph({}) as { data: unknown };
+    // Phase 4: the graph carries no issue/finding rows (an ISSUE node has no
+    // `problemOutcome`), so the problem-verdict determinism check needs its own two
+    // endpoints — getGraph agreeing says nothing about whether two independent syncs
+    // decided the same ACT/ATTEND/TRACK_STAR/TRACK for the same issue or finding.
+    const firstIssues = server.api.getIssues({}) as { data: unknown };
+    const firstConfig = server.api.getConfigFindings({}) as { data: unknown };
 
     const second = await bootServer();
     second.setup();
@@ -62,6 +68,12 @@ describe("dry-run sync", () => {
     // derived risk topology all at once. If two runs agree here they agree everywhere.
     expect(normalize((second.api.getGraph({}) as { data: unknown }).data))
       .toEqual(normalize(first.data));
+    // Two syncs from a clean store must decide identical problem verdicts — same outcome,
+    // same vector, same unknowns — for every issue and every config finding.
+    expect(normalize((second.api.getIssues({}) as { data: unknown }).data))
+      .toEqual(normalize(firstIssues.data));
+    expect(normalize((second.api.getConfigFindings({}) as { data: unknown }).data))
+      .toEqual(normalize(firstConfig.data));
 
     teardownServer();
     // Restore the shared instance the remaining cases read from.

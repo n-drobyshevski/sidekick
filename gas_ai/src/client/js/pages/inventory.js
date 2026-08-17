@@ -32,7 +32,7 @@ import {
   aarsChip, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el, emptyState,
   errorState,
   fmtDate, meter, pager, plural, sectionLabel, sevBadge, sevEntries, sevKeyRow,
-  sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, toast,
+  sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tierBadge, toast,
 } from "../ui.js";
 
 const PAGE_SIZES = [25, 50, 100, 250];
@@ -68,6 +68,9 @@ const COLUMNS = [
   { key: "cloud", label: "Cloud", sort: "cloud" },
   { key: "region", label: "Region", sort: "region" },
   { key: "aars", label: "AARS", sort: "aars" },
+  // BESIDE aars, never merged into it — a posture tier is a capability envelope, not an
+  // aggregate of AARS or of open problems. See src/domain/posture.ts's own header.
+  { key: "postureTier", label: "Posture", sort: "postureTier" },
   { key: "severity", label: "Issues", sort: "severity" },
   { key: "combos", label: "Toxic combo", sort: "combos" },
   { key: "guardrail", label: "Guardrail", sort: null },
@@ -854,6 +857,7 @@ export async function renderInventory(main, params) {
         ? el("span", { class: "muted small" }, "—")
         : el("span", { class: "aars-cell" },
             aarsChip(row.aars, row.aarsSeverity), aarsMeter(row.aars))),
+      postureTier: (row) => tierBadge(row.postureTier),
       severity: (row) => (row.severity
         ? el("span", { class: "issue-cell" }, sevBadge(row.severity), issueBars(row.issuesBySeverity))
         : "—"),
@@ -899,6 +903,7 @@ export async function renderInventory(main, params) {
             : aarsChip(row.aars, row.aarsSeverity)),
         row.aars === null || row.aars === undefined ? null : aarsMeter(row.aars),
         el("div", { class: "asset-card-marks" },
+          row.postureTier ? tierBadge(row.postureTier) : null,
           row.severity ? sevBadge(row.severity) : null,
           issueBars(row.issuesBySeverity),
           row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : null,

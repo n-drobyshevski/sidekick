@@ -16,10 +16,13 @@ import {
   type GapMatch,
   type GapPointRule,
   type GapSources,
+  type GapUnit,
   type InternetExposure,
   type IssueSeverityKey,
   type MultiIssueScaling,
 } from "./aars";
+import { effectiveCardinality, tieRate } from "./rankStats";
+import { CONDITION_KEYS } from "./toxicCombos";
 import { clampInt } from "./util";
 
 export const POINTS_MIN = 0;
@@ -165,6 +168,9 @@ export function cleanAarsRule(raw: unknown): AarsRule {
   const gapAggregation: GapAggregation = r["gapAggregation"] === "rss" ? "rss" : "sum";
   const dataFindingScaling: MultiIssueScaling =
     r["dataFindingScaling"] === "log2" ? "log2" : "flat";
+  // Same convention: an unreadable value reads as "code", the spec unit — never as
+  // "condition", which would silently change WHICH GAPS a stored rule prices.
+  const gapUnit: GapUnit = r["gapUnit"] === "condition" ? "condition" : "code";
 
   return {
     severityPoints,
@@ -174,6 +180,7 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     ),
     multiIssueScaling,
     pillarACap: clampInt(r["pillarACap"], DEFAULT_AARS_RULE.pillarACap, POINTS_MIN, POINTS_MAX),
+    gapUnit,
     gapPoints,
     gapFallbackPoints: clampInt(
       r["gapFallbackPoints"],
@@ -301,10 +308,10 @@ export function shadowedGapRules(rule: AarsRule): number[] {
 }
 
 /**
- * Every gap code a DERIVATION can raise, as opposed to one a tenant's findings might
- * carry. Four groups, matching the four places codes are made:
- *   - graphEnrich.deriveAarsInput: the OWASP families off issue mappings, NO_GUARDRAIL,
- *     and the three gapSources codes
+ * Every gap code a DERIVATION can raise under `gapUnit: "code"`, as opposed to one a
+ * tenant's findings might carry. Four groups, matching the four places codes are made:
+ *   - graphEnrich.deriveAarsInput (frameworkCodeGaps): the OWASP families off issue
+ *     mappings, NO_GUARDRAIL, and the 5R_ gapSources code
  *   - syncNormalize.frameworkCodesFromRule: the same OWASP token shapes off config rules
  *   - syncNormalize.withFrameworkCodes: the AUTHORITATIVE mapping from synced compliance
  *     posture, under gapSources.frameworkMapping
@@ -315,12 +322,36 @@ export function shadowedGapRules(rule: AarsRule): number[] {
 const DERIVABLE_PREFIXES = ["LLM", "ASI", "ML_", "5R_"];
 const DERIVABLE_EXACT = ["NO_GUARDRAIL", "DEPRECATED_MODEL", "INACTIVE_AGENT", "FIVE_RS"];
 
-/** Whether any derivation could emit this code, given what the rule has switched on. */
+/**
+ * The `COND_<key>` exact codes `gapUnit: "condition"` can raise — one per
+ * `riskConditions.CONDITION_KEYS` entry, derived from that constant rather than written out
+ * a second time, so the two vocabularies cannot drift apart.
+ */
+const CONDITION_GAP_CODES = CONDITION_KEYS.map((k) => `COND_${k}`);
+
+/**
+ * Whether any derivation could emit this code, given what the rule has switched on —
+ * `gapUnit`-aware, because it decides WHICH VOCABULARY `deriveAarsInput` speaks at all.
+ */
 function isDerivable(code: string, rule: AarsRule): boolean {
   const c = cleanGapCode(code);
   if (!c) return false;
+  // Node-status gaps: read identically under either unit, so they are checked before the
+  // branch on `gapUnit` rather than inside each side of it.
   if (c === "DEPRECATED_MODEL") return rule.gapSources.deprecatedModel === true;
   if (c === "INACTIVE_AGENT") return rule.gapSources.inactiveAgent === true;
+
+  if (rule.gapUnit === "condition") {
+    // deriveAarsInput's condition branch emits exactly these, unconditionally — no
+    // gapSources flag gates a COND_ or COMBO_ code. Everything else this cascade might still
+    // name from a "code"-unit rule (LLM/ASI/ML/5R families, NO_GUARDRAIL, FIVE_RS) is dead:
+    // `gapSources.fiveRs` and `.frameworkMapping` are framework-code SOURCES with nothing
+    // left to feed once pillar B's currency is conditions — see `GapUnit` in aars.ts.
+    if (CONDITION_GAP_CODES.includes(c)) return true;
+    return c.startsWith("COMBO_");
+  }
+
+  // gapUnit "code" — the spec's derivation, unchanged from before this knob existed.
   // The framework mapping raises 5R_ codes off a failing CONTROL, which is a second source
   // for them and independent of the issue-mapping one. Either switch makes these rows live,
   // so asking only about `fiveRs` would keep reporting them dead while they fire.
@@ -335,6 +366,31 @@ function isDerivable(code: string, rule: AarsRule): boolean {
 }
 
 /**
+ * Whether a PREFIX row's family has any live member, under the rule's `gapUnit`. Handled
+ * apart from `isDerivable` (which answers for one concrete code) because a prefix row names
+ * a whole family — "LLM" rather than "LLM06" — and the two units disagree about which
+ * families exist at all, not just about which gapSources flag gates them.
+ */
+function prefixFamilyIsDerivable(prefix: string, rule: AarsRule): boolean {
+  const isComboFamily = prefix.startsWith("COMBO");
+  if (rule.gapUnit === "condition") {
+    // Only COMBO_ is live: every open issue's comboGroup lands in some bucket (OTHER_GROUP_ID
+    // included, per toxicCombos.comboGapCode), so this family always has a member the moment
+    // an asset has an open issue. The OWASP/5R families a "code"-unit rule might still name
+    // are dead — see isDerivable's condition branch for the same call.
+    return isComboFamily;
+  }
+  // gapUnit "code" — COMBO_ is never emitted here; 5R is the one family still gated by a
+  // gapSources flag, exactly as before this knob existed.
+  if (isComboFamily) return false;
+  return !(
+    prefix.startsWith("5R") &&
+    rule.gapSources.fiveRs !== true &&
+    rule.gapSources.frameworkMapping !== true
+  );
+}
+
+/**
  * Rows that can never fire because NOTHING EMITS the code they name — as distinct from
  * `shadowedGapRules` (an earlier row already claims it) and from a row this tenant simply
  * doesn't exercise yet. The page must separate the three: only the last is a rule in
@@ -346,15 +402,12 @@ function isDerivable(code: string, rule: AarsRule): boolean {
  */
 export function unreachableGapRules(rule: AarsRule): number[] {
   const dead: number[] = [];
+  const checkedExact = [...DERIVABLE_EXACT, ...CONDITION_GAP_CODES];
   rule.gapPoints.forEach((row, i) => {
-    // A prefix row is unreachable only when the whole family it names is off; a bare
-    // prefix like "LLM" always has live members.
     const claimsDerivedFamily =
       row.match === "prefix"
-        ? row.code.startsWith("5R") &&
-          rule.gapSources.fiveRs !== true &&
-          rule.gapSources.frameworkMapping !== true
-        : DERIVABLE_EXACT.includes(cleanGapCode(row.code)) && !isDerivable(row.code, rule);
+        ? !prefixFamilyIsDerivable(row.code, rule)
+        : checkedExact.includes(cleanGapCode(row.code)) && !isDerivable(row.code, rule);
     if (claimsDerivedFamily) dead.push(i);
   });
   return dead;
@@ -381,6 +434,24 @@ export interface RuleDiscrimination {
   distinctScores: number;
   /** The largest set of assets sharing one score — the tie block a "top N" would cut into. */
   largestTieGroup: number;
+  /**
+   * The share of asset PAIRS this model cannot separate — `rankStats.tieRate` over the
+   * score list. 1.0 means it ranks nothing: every pair of scored assets shares a value, so
+   * ANY ordering within the estate is arbitrary. `largestTieGroup` names the single worst
+   * block; this measures how much of the whole estate sits in a block at all, which is the
+   * number that keeps a healthy-looking `distinctScores` (several small groups) from hiding
+   * an estate that is still mostly tied.
+   */
+  tieRate: number;
+  /**
+   * exp(Shannon entropy) over the score distribution — `rankStats.effectiveCardinality` —
+   * how many distinct scores the estate BEHAVES as if it has, as opposed to how many it
+   * literally has. `distinctScores` counts values; this weights each one by how many assets
+   * take it, so a scale of {30: 1 asset, 72: 19 assets} is not credited with "2 distinct
+   * scores" worth of discrimination — one outlier score does not read as the estate being
+   * spread out. Equal to `distinctScores` only when every value is taken equally often.
+   */
+  effectiveCardinality: number;
   /** Occupancy per level, INFO included, zeroes kept: an empty band is the finding. */
   bandOccupancy: Record<string, number>;
   /** Lowest and highest score actually reached, so an unused range is visible. */
@@ -393,6 +464,8 @@ const EMPTY_DISCRIMINATION: RuleDiscrimination = {
   scored: 0,
   distinctScores: 0,
   largestTieGroup: 0,
+  tieRate: 0,
+  effectiveCardinality: 0,
   bandOccupancy: {},
   range: { min: 0, max: 0 },
   saturated: { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 },
@@ -455,6 +528,13 @@ export function ruleDiscrimination(
     scored: scores.length,
     distinctScores: byScore.size,
     largestTieGroup: Math.max(...byScore.values()),
+    // Both delegate to rankStats rather than repeating Σ C(nₖ,2)/C(N,2) and exp(-Σ pₖ ln pₖ)
+    // here. They group `scores` again internally, which cannot disagree with `byScore` —
+    // same array, same grouping — and one implementation of each formula is one place for it
+    // to be wrong. rankStats is deliberately free of any AARS import so it stays the shared
+    // home for these the day something other than a score needs measuring.
+    tieRate: tieRate(scores),
+    effectiveCardinality: effectiveCardinality(scores),
     bandOccupancy: counts,
     range: { min: Math.min(...scores), max: Math.max(...scores) },
     saturated,
@@ -549,6 +629,18 @@ export function ruleSummary(rule: AarsRule): string[] {
     rule.gapAggregation === "rss"
       ? `matched prices combine as a root-sum-square, so each further gap adds less than the last`
       : `matched prices are added up`;
+  // What a gap COUNTS, before the cascade prices it — stated up front, because it changes
+  // what the cascade rows below even mean. "code" reads like every knob before this one and
+  // says nothing extra; "condition" is the departure and gets the fuller sentence.
+  const gapUnitClause =
+    rule.gapUnit === "condition"
+      ? `Priced per CONDITION, not per framework code: one charge for each risk condition ` +
+        `held (missing guardrail, excessive privilege, sensitive data, internet exposure) ` +
+        `and one more per distinct toxic-combination group the asset's issues fall into. ` +
+        `The framework codes on those issues still render on the detail sheet and the ` +
+        `compliance rollups — they are just not what pillar B counts.`
+      : `Priced per CODE: one charge for each distinct framework code (OWASP LLM / ` +
+        `Agentic / ML, 5Rs) the asset's open issues carry.`;
   // Said out loud when off, the way pillar D's clause is: a term scoring nothing is a
   // deliberate choice, and a summary that just omitted it would read as an oversight.
   const findingClause = SEVERITY_KEYS.every((k) => rule.dataFindingPoints[k] === 0)
@@ -564,9 +656,10 @@ export function ruleSummary(rule: AarsRule): string[] {
   return [
     `Pillar A — toxic combinations, capped at ${rule.pillarACap}. The asset's worst open ` +
       `issue scores ${sev}; ${countClause}.`,
-    `Pillar B — compliance gaps, capped at ${rule.pillarBCap}. ${rule.gapPoints.length} ` +
-      `pricing rules are tried in order, first match wins; an unmatched code scores ` +
-      `${pointsPhrase(rule.gapFallbackPoints)}. ${gapClause[0]!.toUpperCase()}${gapClause.slice(1)}.`,
+    `Pillar B — compliance gaps, capped at ${rule.pillarBCap}. ${gapUnitClause} ` +
+      `${rule.gapPoints.length} pricing rules are tried in order, first match wins; an ` +
+      `unmatched code scores ${pointsPhrase(rule.gapFallbackPoints)}. ` +
+      `${gapClause[0]!.toUpperCase()}${gapClause.slice(1)}.`,
     `Pillar C — data exposure, capped at ${rule.pillarCCap}: ${exposure}, all amplified by ` +
       `×${rule.dataAmplifier} (→ ${amplified}). ${findingClause}`,
     rule.exposurePoints.CONFIRMED === 0 &&

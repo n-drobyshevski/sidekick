@@ -15,11 +15,11 @@
 // Keep in step with src/domain/assetTable.ts.
 
 export const ASSET_SORTS = [
-  "aars", "name", "kind", "cloud", "region", "severity", "combos",
+  "aars", "postureTier", "name", "kind", "cloud", "region", "severity", "combos",
 ];
 
 export const DEFAULT_SORT_DIR = {
-  aars: "desc", severity: "desc", combos: "desc",
+  aars: "desc", postureTier: "desc", severity: "desc", combos: "desc",
   name: "asc", kind: "asc", cloud: "asc", region: "asc",
 };
 
@@ -150,6 +150,7 @@ export function filterAssetRows(rows, q) {
 
 const PRIMARY = {
   aars: (a, b) => score(a.aars) - score(b.aars),
+  postureTier: (a, b) => score(a.postureTier) - score(b.postureTier),
   name: (a, b) => str(a.name).localeCompare(str(b.name)),
   kind: (a, b) => str(a.kind).localeCompare(str(b.kind)),
   cloud: (a, b) => str(a.cloud).localeCompare(str(b.cloud)),

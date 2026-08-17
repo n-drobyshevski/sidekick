@@ -9,16 +9,20 @@ import { describe, expect, it } from "vitest";
 import {
   aarsSeverity,
   AARS_V2_RULE,
+  AARS_V3_RULE,
   computeAars,
   DEFAULT_AARS_RULE,
+  derivationSignature,
   gap,
   gapBreakdown,
   gapPointsFor,
   type AarsRule,
 } from "../src/domain/aars";
-import { cleanAarsRule, validateAarsRule } from "../src/domain/aarsRule";
+import { cleanAarsRule, unreachableGapRules, validateAarsRule } from "../src/domain/aarsRule";
 import { AARS_SEVERITY_ORDER, normalizeAarsSeverity } from "../src/domain/config";
 import type { Severity } from "../src/domain/config";
+import { deriveAarsInput, enrichGraphDoc } from "../src/domain/graphEnrich";
+import type { GNode, GraphDoc, IssueRow } from "../src/domain/graphTypes";
 
 function tuned(over: Partial<AarsRule>): AarsRule {
   return cleanAarsRule({ ...DEFAULT_AARS_RULE, ...over });
@@ -493,5 +497,210 @@ describe("normalizeAarsSeverity", () => {
     expect(aarsSeverity(10)).toBe("LOW");
     expect(aarsSeverity(9)).toBe("INFO");
     expect(aarsSeverity(0)).toBe("INFO");
+  });
+});
+
+// Phase 6b — ai/AARS_SCORING_ASSESSMENT.md §1: pillar B's unit is label vs condition, not
+// code vs framework. `gapUnit` makes that a knob. Defaults to "code" (the spec, and every
+// case above), so this block is additive — it proves the opt-in surface, not a replacement
+// for any assertion pinned above.
+describe("gapUnit", () => {
+  const privilegedNode: GNode = {
+    id: "n", kind: "AI_AGENT", name: "n",
+    guardrailMissing: true, hasAdminPrivileges: true, hasAccessToSensitiveData: true,
+  };
+  const privilegedIssue: IssueRow = {
+    id: "i", ruleId: "r", ruleName: "r", comboGroup: "gcp-managed-privileged",
+    nativeSeverity: "MEDIUM", adjustedSeverity: "HIGH", status: "OPEN",
+    assetId: "n", assetName: "n",
+    frameworks: { owaspLlm: ["LLM06"], owaspAgentic: ["ASI01"] },
+  };
+
+  it("defaults to \"code\" on the spec rule and on a fresh clean", () => {
+    expect(DEFAULT_AARS_RULE.gapUnit).toBe("code");
+    expect(cleanAarsRule({}).gapUnit).toBe("code");
+  });
+
+  it("cleanAarsRule coerces an unreadable value to \"code\", never silently to \"condition\"", () => {
+    expect(cleanAarsRule({ ...DEFAULT_AARS_RULE, gapUnit: "bogus" }).gapUnit).toBe("code");
+    expect(cleanAarsRule({ ...DEFAULT_AARS_RULE, gapUnit: undefined }).gapUnit).toBe("code");
+    expect(cleanAarsRule({ ...DEFAULT_AARS_RULE, gapUnit: "condition" }).gapUnit).toBe("condition");
+  });
+
+  it("under \"condition\" the same asset gets condition gaps instead of framework codes", () => {
+    const codeGaps = deriveAarsInput(privilegedNode, [privilegedIssue], DEFAULT_AARS_RULE)
+      .gaps.map((g) => g.code).sort();
+    expect(codeGaps).toEqual(["ASI01", "LLM06", "NO_GUARDRAIL"]);
+
+    const conditionRule = cleanAarsRule({ ...DEFAULT_AARS_RULE, gapUnit: "condition" });
+    const conditionGaps = deriveAarsInput(privilegedNode, [privilegedIssue], conditionRule)
+      .gaps.map((g) => g.code).sort();
+    expect(conditionGaps).toEqual([
+      "COMBO_GCP_MANAGED_PRIVILEGED", "COND_EXCESSIVE_PRIVILEGE", "COND_MISSING_GUARDRAIL",
+      "COND_SENSITIVE_DATA",
+    ]);
+    // No overlap: the two units never emit the same shaped code, so a rescore across them
+    // cannot half-apply.
+    expect(conditionGaps.some((c) => codeGaps.includes(c))).toBe(false);
+  });
+
+  it("OTHER_GROUP_ID combo gaps price as COMBO_OTHER, not a literal empty pattern", () => {
+    const issue: IssueRow = { ...privilegedIssue, comboGroup: "other-ai-risk" };
+    const conditionRule = cleanAarsRule({ ...DEFAULT_AARS_RULE, gapUnit: "condition" });
+    const codes = deriveAarsInput(privilegedNode, [issue], conditionRule).gaps.map((g) => g.code);
+    expect(codes).toContain("COMBO_OTHER");
+  });
+
+  it("holds each held condition once, however many issues or codes cite it", () => {
+    const twoIssues: IssueRow[] = [
+      privilegedIssue,
+      { ...privilegedIssue, id: "i2", comboGroup: "gcp-hosted-privileged" },
+    ];
+    const conditionRule = cleanAarsRule({ ...DEFAULT_AARS_RULE, gapUnit: "condition" });
+    const codes = deriveAarsInput(privilegedNode, twoIssues, conditionRule).gaps.map((g) => g.code);
+    expect(codes.filter((c) => c === "COND_EXCESSIVE_PRIVILEGE")).toHaveLength(1);
+    expect(codes).toContain("COMBO_GCP_MANAGED_PRIVILEGED");
+    expect(codes).toContain("COMBO_GCP_HOSTED_PRIVILEGED"); // two distinct groups, two combo gaps
+  });
+
+  it("gapSources.deprecatedModel / .inactiveAgent still fire — node-status facts, not codes", () => {
+    const conditionRule = cleanAarsRule({
+      ...DEFAULT_AARS_RULE,
+      gapUnit: "condition",
+      gapSources: { ...DEFAULT_AARS_RULE.gapSources, deprecatedModel: true },
+    });
+    const deprecated: GNode = { id: "n", kind: "AI_AGENT", name: "n", status: "Deprecated" };
+    expect(deriveAarsInput(deprecated, [], conditionRule).gaps.map((g) => g.code))
+      .toEqual(["DEPRECATED_MODEL"]);
+  });
+
+  it("fiveRs is inert under \"condition\" — nothing left for a framework-code source to feed", () => {
+    const conditionRule = cleanAarsRule({
+      ...DEFAULT_AARS_RULE,
+      gapUnit: "condition",
+      gapSources: { ...DEFAULT_AARS_RULE.gapSources, fiveRs: true },
+    });
+    const issue: IssueRow = {
+      ...privilegedIssue,
+      frameworks: { ...privilegedIssue.frameworks, fiveRs: ["Restrict"] },
+    };
+    const codes = deriveAarsInput(privilegedNode, [issue], conditionRule).gaps.map((g) => g.code);
+    expect(codes).not.toContain("5R_RESTRICT");
+  });
+
+  it("derivationSignature differs between the two units, all else equal", () => {
+    const conditionRule = cleanAarsRule({ ...DEFAULT_AARS_RULE, gapUnit: "condition" });
+    expect(derivationSignature(DEFAULT_AARS_RULE)).not.toBe(derivationSignature(conditionRule));
+  });
+
+  it("unreachableGapRules reports the cascade going dead across a flipped unit", () => {
+    // The DEFAULT cascade's OWASP/5R/NO_GUARDRAIL rows are live under "code"...
+    expect(unreachableGapRules(DEFAULT_AARS_RULE).length).toBe(3);
+    // ...and unreachable under "condition", because nothing emits those codes any more —
+    // this IS the diagnostic that tells an operator their cascade went dead.
+    const conditionRule = cleanAarsRule({ ...DEFAULT_AARS_RULE, gapUnit: "condition" });
+    const dead = unreachableGapRules(conditionRule).map((i) => conditionRule.gapPoints[i]!.code);
+    expect(dead).toEqual(
+      expect.arrayContaining(["NO_GUARDRAIL", "LLM", "ASI", "ML", "5R", "FIVE_RS"]),
+    );
+  });
+
+  it("a rescore under a flipped unit actually re-derives — the gate syncStore.enrichFromTabs applies", () => {
+    const doc: GraphDoc = { nodes: [privilegedNode], edges: [], syncedAt: "T" };
+
+    // A persisted input from a prior sync, derived under the spec ("code") unit.
+    const persisted = enrichGraphDoc(doc, [privilegedIssue], undefined, DEFAULT_AARS_RULE)
+      .nodes[0]!.aarsInput!;
+    expect(persisted.derivedUnder).toBe(derivationSignature(DEFAULT_AARS_RULE));
+    expect(persisted.gaps.map((g) => g.code)).toContain("LLM06");
+
+    // The operator flips gapUnit to "condition" and hits Recompute. enrichFromTabs's gate:
+    // reuse a persisted input only when its signature still matches the rule scoring it now.
+    const conditionRule = cleanAarsRule({ ...DEFAULT_AARS_RULE, gapUnit: "condition" });
+    const sig = derivationSignature(conditionRule);
+    const hints: Record<string, typeof persisted> =
+      persisted.derivedUnder === sig ? { n: persisted } : {};
+    expect(hints).toEqual({}); // signatures disagree — nothing is reused
+
+    const rescored = enrichGraphDoc(doc, [privilegedIssue], hints, conditionRule);
+    const gaps = rescored.nodes[0]!.aarsInput!.gaps.map((g) => g.code);
+    // Actually re-derived, not stale: the framework code is gone and the condition code
+    // that subsumes it is present. Nothing moved BEFORE this rescore — this is the movement
+    // Phase 2b's `derivedUnder` machinery exists to guarantee happens at all.
+    expect(gaps).not.toContain("LLM06");
+    expect(gaps).toContain("COND_MISSING_GUARDRAIL");
+  });
+});
+
+describe("AARS_V3_RULE — the condition-unit preset", () => {
+  it("is a valid rule that survives a clean round-trip", () => {
+    expect(validateAarsRule(AARS_V3_RULE)).toEqual([]);
+    expect(cleanAarsRule(AARS_V3_RULE)).toEqual(AARS_V3_RULE);
+  });
+
+  it("is NOT the default, and selects \"condition\" where v2 stays on \"code\"", () => {
+    expect(AARS_V3_RULE).not.toEqual(DEFAULT_AARS_RULE);
+    expect(AARS_V3_RULE.gapUnit).toBe("condition");
+    expect(AARS_V2_RULE.gapUnit).toBe("code");
+    expect(DEFAULT_AARS_RULE.gapUnit).toBe("code");
+  });
+
+  it("is v2 with the unit flipped and the cascade re-cast for it — everything else agrees", () => {
+    const { gapUnit, gapPoints, ...v3Rest } = AARS_V3_RULE;
+    const { gapUnit: v2Unit, gapPoints: v2Points, ...v2Rest } = AARS_V2_RULE;
+    expect(v3Rest).toEqual(v2Rest);
+  });
+
+  it("prices the COND_ vocabulary explicitly rather than the fallback", () => {
+    for (const code of [
+      "COND_MISSING_GUARDRAIL", "COND_SENSITIVE_DATA", "COND_EXCESSIVE_PRIVILEGE",
+      "COND_INTERNET_EXPOSURE",
+    ]) {
+      expect(gapPointsFor(code, AARS_V3_RULE)).not.toBe(AARS_V3_RULE.gapFallbackPoints);
+    }
+  });
+
+  it("prices any COMBO_ group through the prefix row, including an unmodelled one", () => {
+    expect(gapPointsFor("COMBO_SOME_FUTURE_PATTERN", AARS_V3_RULE)).toBe(5);
+    expect(gapPointsFor("COMBO_OTHER", AARS_V3_RULE)).toBe(5);
+  });
+
+  it("keeps INACTIVE_AGENT / DEPRECATED_MODEL priced explicitly, same as v2", () => {
+    expect(gapPointsFor("INACTIVE_AGENT", AARS_V3_RULE)).toBe(10);
+    expect(gapPointsFor("DEPRECATED_MODEL", AARS_V3_RULE)).toBe(5);
+  });
+
+  it("no cascade row is unreachable — every code it names, this unit can raise", () => {
+    expect(unreachableGapRules(AARS_V3_RULE)).toEqual([]);
+  });
+
+  it("scores an asset holding every condition and two combo groups, off the pillar B cap", () => {
+    const node: GNode = {
+      id: "n", kind: "AI_AGENT", name: "n",
+      guardrailMissing: true, hasAdminPrivileges: true, hasAccessToSensitiveData: true,
+      isOpenToAllInternet: true,
+    };
+    const issues: IssueRow[] = [
+      {
+        id: "i1", ruleId: "r1", ruleName: "r1", comboGroup: "gcp-managed-privileged",
+        nativeSeverity: "HIGH", adjustedSeverity: "HIGH", status: "OPEN",
+        assetId: "n", assetName: "n",
+      },
+      {
+        id: "i2", ruleId: "r2", ruleName: "r2", comboGroup: "bedrock-no-guardrail",
+        nativeSeverity: "HIGH", adjustedSeverity: "HIGH", status: "OPEN",
+        assetId: "n", assetName: "n",
+      },
+    ];
+    const input = deriveAarsInput(node, issues, AARS_V3_RULE);
+    expect(input.gaps.map((g) => g.code).sort()).toEqual([
+      "COMBO_BEDROCK_NO_GUARDRAIL", "COMBO_GCP_MANAGED_PRIVILEGED", "COND_EXCESSIVE_PRIVILEGE",
+      "COND_INTERNET_EXPOSURE", "COND_MISSING_GUARDRAIL", "COND_SENSITIVE_DATA",
+    ]);
+    const result = computeAars({ ...input, dataExposure: "SENSITIVE" }, AARS_V3_RULE);
+    // rss over [10, 8, 8, 6, 5, 5] = sqrt(100+64+64+36+25+25) = sqrt(314) ≈ 17.7 → 18,
+    // comfortably under the 25 cap — the point of this unit, not an incidental fact.
+    expect(result.pillars.compliance).toBe(18);
+    expect(result.pillars.compliance).toBeLessThan(AARS_V3_RULE.pillarBCap);
   });
 });

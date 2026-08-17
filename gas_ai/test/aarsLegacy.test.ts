@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AARS_RULE } from "../src/domain/aars";
 import type { GNode, GraphDoc } from "../src/domain/graphTypes";
-import { normalizeLegacyAars, rowToAsset, withCurrentBands } from "../src/server/syncStore";
+import { assetToRow, normalizeLegacyAars, rowToAsset, withCurrentBands } from "../src/server/syncStore";
 
 const T = "2026-06-28T05:00:00Z";
 
@@ -86,6 +86,57 @@ describe("rowToAsset (ai_assets tab)", () => {
       .toEqual(input);
     expect(rowToAsset({ ...base }).aarsInput).toBeUndefined();
     expect(rowToAsset({ ...base, aars_input_json: "{oops" }).aarsInput).toBeUndefined();
+  });
+});
+
+describe("rowToAsset — projects_json two-branch reader", () => {
+  const base = { id: "a", kind: "AI_AGENT", name: "a" };
+
+  it("a legacy string-array cell still fabricates proj-<name> ids, unchanged", () => {
+    const node = rowToAsset({ ...base, projects_json: JSON.stringify(["proj-a", "proj-b"]) });
+    expect(node.projects).toEqual([
+      { id: "proj-proj-a", name: "proj-a" },
+      { id: "proj-proj-b", name: "proj-b" },
+    ]);
+  });
+
+  it("a current object cell round-trips id, name and businessImpact through", () => {
+    const projects = [{ id: "p1", name: "PROJECT-ALPHA", businessImpact: "HBI" }];
+    const node = rowToAsset({ ...base, projects_json: JSON.stringify(projects) });
+    expect(node.projects).toEqual(projects);
+  });
+
+  it("an empty array satisfies both branches identically", () => {
+    expect(rowToAsset({ ...base, projects_json: "[]" }).projects).toEqual([]);
+    expect(rowToAsset({ ...base }).projects).toEqual([]);
+  });
+
+  it("business_impact absent reads as undefined, never a default", () => {
+    expect(rowToAsset({ ...base }).businessImpact).toBeUndefined();
+    expect(rowToAsset({ ...base, business_impact: "" }).businessImpact).toBeUndefined();
+  });
+
+  it("business_impact present reads back verbatim", () => {
+    expect(rowToAsset({ ...base, business_impact: "HBI" }).businessImpact).toBe("HBI");
+  });
+});
+
+describe("assetToRow — projects_json and business_impact", () => {
+  it("writes the full project objects and the asset-level worst-of", () => {
+    const row = assetToRow({
+      id: "a", kind: "AI_AGENT", name: "a",
+      projects: [{ id: "p1", name: "one", businessImpact: "MBI" }],
+      businessImpact: "MBI",
+    } as GNode);
+    expect(row["projects_json"]).toBe(
+      JSON.stringify([{ id: "p1", name: "one", businessImpact: "MBI" }]),
+    );
+    expect(row["business_impact"]).toBe("MBI");
+  });
+
+  it("writes null, not a default, when the asset has no business impact", () => {
+    const row = assetToRow({ id: "a", kind: "AI_AGENT", name: "a" } as GNode);
+    expect(row["business_impact"]).toBeNull();
   });
 });
 

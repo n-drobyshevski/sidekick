@@ -360,15 +360,24 @@ function ignoreRationale(raw: unknown): string | undefined {
   return undefined;
 }
 
-/** Worst business impact across an issue's projects — one column answering "does this matter". */
+/**
+ * Worst business-impact tier across a project list — HBI beats MBI beats LBI, and a
+ * project with no recognised tier is skipped rather than counted as the worst.
+ *
+ * Takes the FLAT `{businessImpact}` shape `projectsOf` already extracts from the raw
+ * `riskProfile.businessImpact` nesting, not raw response rows — one caller (graphEnrich's
+ * per-node fold onto `GNode.businessImpact`) never has raw rows to read at all, only the
+ * already-normalized `node.projects[]`. Exported so that caller, and the two below, share
+ * ONE ranking: the alternative was a second `BUSINESS_IMPACT_ORDER` the moment anything
+ * outside this file needed the same worst-of, and two orderings drift the day someone
+ * edits one and not the other.
+ */
 const BUSINESS_IMPACT_ORDER = ["HBI", "MBI", "LBI"];
-function worstBusinessImpact(projects: Rec[]): string | undefined {
+export function worstBusinessImpact(projects: Array<{ businessImpact?: string }>): string | undefined {
   let best: string | undefined;
   let bestRank = BUSINESS_IMPACT_ORDER.length;
   for (const p of projects) {
-    const profile = p["riskProfile"] as Rec | null | undefined;
-    if (!profile || typeof profile !== "object") continue;
-    const impact = str(profile["businessImpact"]);
+    const impact = p.businessImpact;
     if (!impact) continue;
     const rank = BUSINESS_IMPACT_ORDER.indexOf(impact);
     if (rank >= 0 && rank < bestRank) {
@@ -424,10 +433,11 @@ export function normalizeIssuesPage(rows: Rec[]): NormalizedPart {
       (control && typeof control === "object" ? str(control["resolutionRecommendation"]) : undefined);
 
     const assetName = str(snap!["name"]) ?? assetId;
-    const projectRows = Array.isArray(raw["projects"]) ? (raw["projects"] as Rec[]) : [];
-    const projects = projectRows
-      .map((p) => str(p["name"]))
-      .filter((n): n is string => Boolean(n));
+    // Through `projectsOf` rather than a second hand-rolled extraction, so this row's
+    // `businessImpact` reads the SAME `riskProfile.businessImpact` nesting the asset and
+    // finding rows do.
+    const projectObjs = projectsOf(raw["projects"]);
+    const projects = projectObjs.map((p) => p.name);
 
     const assigneeRaw = raw["assignee"] as Rec | null | undefined;
     const aiAnalysis = raw["aiRemediationAnalysis"] as Rec | null | undefined;
@@ -464,7 +474,7 @@ export function normalizeIssuesPage(rows: Rec[]): NormalizedPart {
         assigneeRaw && typeof assigneeRaw === "object"
           ? str(assigneeRaw["name"]) ?? str(assigneeRaw["primaryEmail"])
           : undefined,
-      businessImpact: worstBusinessImpact(projectRows),
+      businessImpact: worstBusinessImpact(projectObjs),
       entityStatus: str(snap!["status"]),
       subscriptionId: str(snap!["subscriptionId"]),
       ignoreNote: ignoreRationale(raw["notes"]),
@@ -617,6 +627,10 @@ export function normalizeConfigFindingsPage(rows: Rec[]): NormalizedPart {
     const subscription = raw["subscription"] as Rec | null | undefined;
     const hasSub = !!subscription && typeof subscription === "object";
     const rawProjects = resource && typeof resource === "object" ? resource["projects"] : undefined;
+    // Extracted once, fed to both fields below: `projectsOf` already pulls
+    // `riskProfile.businessImpact` out for the per-project list, so re-reading the raw
+    // rows for `businessImpact` would be a second, driftable copy of the same nesting.
+    const projectObjs = projectsOf(rawProjects);
 
     part.findings.push({
       id,
@@ -654,10 +668,8 @@ export function normalizeConfigFindingsPage(rows: Rec[]): NormalizedPart {
       subscriptionId: hasSub ? str(subscription!["id"]) : undefined,
       subscriptionName: hasSub ? str(subscription!["name"]) : undefined,
       cloudProvider: hasSub ? str(subscription!["cloudProvider"]) : undefined,
-      projects: projectsOf(rawProjects),
-      businessImpact: Array.isArray(rawProjects)
-        ? worstBusinessImpact(rawProjects as Rec[])
-        : undefined,
+      projects: projectObjs,
+      businessImpact: worstBusinessImpact(projectObjs),
 
       ignoreRuleIds: idsOf(raw["ignoreRules"]),
       iacFindingIds: idsOf(raw["sourceMappedIacFindings"]),

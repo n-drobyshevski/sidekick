@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AARS_RULE } from "../src/domain/aars";
+import { DEFAULT_PROBLEM_RULE } from "../src/domain/problemRule";
 import {
   DEFAULT_FRAMEWORK_IDS,
   clampDepth,
@@ -10,14 +11,18 @@ import {
   cleanFiveRsPins,
   getAarsRule,
   getAutoExpand,
+  getDecidedRuleVersion,
   getDefaultDepth,
   getFiveRsPins,
   getMaxNodes,
+  getProblemRule,
   getScoredRuleVersion,
   getSelectedFrameworks,
   resolveDefaultFrameworks,
   withAarsRule,
+  withDecidedRuleVersion,
   withFiveRsPins,
+  withProblemRule,
   withSelectedFrameworks,
   withAutoExpand,
   withDefaultDepth,
@@ -183,6 +188,92 @@ describe("scored rule version", () => {
     expect(getScoredRuleVersion(s)).toBe(getAarsRule(s).version);
     s = withAarsRule(s, { ...DEFAULT_AARS_RULE, gapFallbackPoints: 15 });
     expect(getScoredRuleVersion(s)).not.toBe(getAarsRule(s).version);
+  });
+});
+
+describe("getProblemRule", () => {
+  it("reads an untouched deployment as version 0 on the spec model", () => {
+    expect(getProblemRule({})).toEqual({ version: 0, rule: DEFAULT_PROBLEM_RULE });
+  });
+
+  it("repairs an unreadable stored blob instead of deciding with it", () => {
+    for (const junk of [null, "", 7, "{}"]) {
+      expect(getProblemRule({ problem_rule: junk }).rule).toEqual(DEFAULT_PROBLEM_RULE);
+    }
+    expect(getProblemRule({ problem_rule: { version: 3, rule: "nonsense" } })).toEqual({
+      version: 3,
+      rule: DEFAULT_PROBLEM_RULE,
+    });
+  });
+
+  it("reads a nonsense version as 0 rather than propagating it", () => {
+    expect(getProblemRule({ problem_rule: { version: -4, rule: DEFAULT_PROBLEM_RULE } }).version).toBe(0);
+    expect(getProblemRule({ problem_rule: { version: "x", rule: DEFAULT_PROBLEM_RULE } }).version).toBe(0);
+  });
+
+  it("is a completely separate key from aars_rule — editing one never touches the other", () => {
+    const s = withAarsRule({}, DEFAULT_AARS_RULE) as Rec;
+    expect(getProblemRule(s)).toEqual({ version: 0, rule: DEFAULT_PROBLEM_RULE });
+    const s2 = withProblemRule({}, DEFAULT_PROBLEM_RULE) as Rec;
+    expect(getAarsRule(s2)).toEqual({ version: 0, rule: DEFAULT_AARS_RULE });
+  });
+});
+
+describe("withProblemRule", () => {
+  it("bumps the version on every save — it is the staleness token", () => {
+    let s: Rec = {};
+    s = withProblemRule(s, DEFAULT_PROBLEM_RULE);
+    expect(getProblemRule(s).version).toBe(1);
+    s = withProblemRule(s, DEFAULT_PROBLEM_RULE);
+    expect(getProblemRule(s).version).toBe(2);
+  });
+
+  it("stores the cleaned rule, so a bad value can never reach a decision", () => {
+    const s = withProblemRule({}, { ...DEFAULT_PROBLEM_RULE, actLeafCeiling: 9999 });
+    expect(getProblemRule(s).rule.actLeafCeiling).toBe(1);
+  });
+
+  it("leaves the other settings alone", () => {
+    const s = withProblemRule({ default_depth: 3 }, DEFAULT_PROBLEM_RULE) as Rec;
+    expect(s["default_depth"]).toBe(3);
+  });
+
+  it("bumps its own version independently of the AARS rule's", () => {
+    let s: Rec = withAarsRule({}, DEFAULT_AARS_RULE);
+    s = withProblemRule(s, DEFAULT_PROBLEM_RULE);
+    expect(getAarsRule(s).version).toBe(1);
+    expect(getProblemRule(s).version).toBe(1);
+    s = withProblemRule(s, DEFAULT_PROBLEM_RULE);
+    // A second tree edit must not move the AARS counter.
+    expect(getAarsRule(s).version).toBe(1);
+    expect(getProblemRule(s).version).toBe(2);
+  });
+});
+
+describe("decided rule version", () => {
+  it("reads an unset marker as 0, matching an unedited rule", () => {
+    expect(getDecidedRuleVersion({})).toBe(0);
+    expect(getDecidedRuleVersion({ problem_decided_version: "junk" })).toBe(0);
+  });
+
+  it("round-trips, so verdicts can be compared against the rule that made them", () => {
+    expect(getDecidedRuleVersion(withDecidedRuleVersion({}, 5))).toBe(5);
+    expect(getDecidedRuleVersion(withDecidedRuleVersion({}, -2))).toBe(0);
+  });
+
+  it("goes out of step the moment a rule is saved — that IS the stale signal", () => {
+    let s: Rec = withDecidedRuleVersion({}, 0);
+    expect(getDecidedRuleVersion(s)).toBe(getProblemRule(s).version);
+    s = withProblemRule(s, { ...DEFAULT_PROBLEM_RULE, fallbackOutcome: "ATTEND" });
+    expect(getDecidedRuleVersion(s)).not.toBe(getProblemRule(s).version);
+  });
+
+  it("moves independently of aars_scored_version", () => {
+    let s: Rec = withScoredRuleVersion(withDecidedRuleVersion({}, 0), 0);
+    s = withProblemRule(s, { ...DEFAULT_PROBLEM_RULE, fallbackOutcome: "ATTEND" });
+    // The tree went stale; the AARS scored marker must not have moved.
+    expect(getScoredRuleVersion(s)).toBe(0);
+    expect(getDecidedRuleVersion(s)).not.toBe(getProblemRule(s).version);
   });
 });
 

@@ -21,8 +21,8 @@ import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
-  clear, dataTable, debounce, el, emptyState, errorState, kpiCard, pager, sectionLabel,
-  select,
+  clear, dataTable, debounce, el, emptyState, errorState, kpiCard, outcomeBadge,
+  outcomeLabel, pager, sectionLabel, select,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,
   togglePills,
 } from "../ui.js";
@@ -663,6 +663,7 @@ export async function renderCombos(main, params) {
       el("div", { class: "field" }, search),
       issueFilterField("Account", "acct", options.accounts, rerender),
       issueFilterField("Project", "proj", options.projects, rerender),
+      issueFilterField("Priority", "outcome", options.outcomes, rerender, outcomeLabel),
       el("div", { class: "filter-meta" },
         el("span", { class: "count" },
           shownCount === totalCount
@@ -672,9 +673,10 @@ export async function renderCombos(main, params) {
     return bar;
   }
 
-  function issueFilterField(labelText, key, values, onChange) {
+  /** `optionLabel`, when given, turns a raw value (e.g. "TRACK_STAR") into display text. */
+  function issueFilterField(labelText, key, values, onChange, optionLabel) {
     return selectField(labelText, select({
-      options: values,
+      options: optionLabel ? values.map((v) => ({ value: v, label: optionLabel(v) })) : values,
       value: view[key],
       ariaLabel: labelText,
       placeholder: "All",
@@ -704,6 +706,9 @@ export async function renderCombos(main, params) {
       { key: "asset", label: "Asset", cell: (i) => i.assetName },
       { key: "severity", label: "Adjusted", cell: (i) => sevBadge(i.adjustedSeverity) },
       { key: "native", label: "Wiz native", cell: (i) => i.nativeSeverity },
+      // The problem tree's outcome (Phase 5) — a separate scale from the severity columns
+      // above, decided from exploitation/impact/exposure/mission, not from Wiz severity.
+      { key: "priority", label: "Priority", cell: (i) => outcomeBadge(i.problemOutcome) },
       // The status the register used to collect and never show. statusPill carries the
       // word, so the state never rides on the tint alone.
       {

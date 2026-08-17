@@ -7,6 +7,7 @@ import { clear, el, fmtDateTime, progressBar, runPageTeardown, statusPill } from
 import { toast } from "./ui.js";
 import { renderGraphPage } from "./pages/graph.js";
 import { renderInventory } from "./pages/inventory.js";
+import { renderProblems } from "./pages/problems.js";
 import { renderCombos } from "./pages/combos.js";
 import { renderConfigFindings } from "./pages/config.js";
 import { renderCompliance } from "./pages/compliance.js";
@@ -21,6 +22,11 @@ const PAGES = {
   // fullBleed: the page owns the whole content pane (no main padding/max-width).
   graph: { title: "Security Graph", group: "Security", render: renderGraphPage, fullBleed: true },
   inventory: { title: "AI Inventory", group: "Security", render: renderInventory },
+  // Phase 7: issues UNION findings, ranked together across the whole estate — neither
+  // `combos` (one toxic-combination pattern) nor `config` (findings only) can answer
+  // "what do I work on Monday". Sits right after inventory: both name the estate, this one
+  // orders what is wrong with it.
+  problems: { title: "Priorities", group: "Security", render: renderProblems },
   combos: { title: "Toxic Combinations", group: "Security", render: renderCombos },
   config: { title: "Cloud Configuration", group: "Security", render: renderConfigFindings },
   // After config, never first: the FIRST key is the default landing route (parseHash's

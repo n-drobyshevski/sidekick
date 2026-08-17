@@ -10,6 +10,11 @@
 export const ROUTE_ICONS = {
   graph: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="7" r="2.3"/><circle cx="18.5" cy="6" r="2.3"/><circle cx="12" cy="17.5" r="2.3"/><path d="M7.6 8.1l3 7.3"/><path d="M16.6 7.7l-3.3 8"/><path d="M7.7 7.2l8.6-0.7"/></svg>',
   inventory: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4-8 4-8-4z"/><path d="M4 11l8 4 8-4"/><path d="M4 15l8 4 8-4"/></svg>',
+  // A checked list, worst item on top: the page's whole job is one ranked queue drawn from
+  // two populations (issues and findings), not a checklist app — so the mark is a short
+  // ordered stack rather than a clipboard, which `compliance` already uses for a different
+  // idea (a published framework's checklist).
+  problems: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h10.5"/><path d="M8 12h10.5"/><path d="M8 18h10.5"/><path d="M4.8 5.2l.6.6 1.1-1.2"/><path d="M4.8 11.2l.6.6 1.1-1.2"/><path d="M4.8 17.2l.6.6 1.1-1.2"/></svg>',
   combos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4.5l8 14H4z"/><path d="M12 10v4.2"/><path d="M12 16.8h.01"/></svg>',
   // A cloud with a check inside it: the page is the pass/fail record of cloud controls,
   // and the cloud is what separates it at a glance from the combos triangle above it.

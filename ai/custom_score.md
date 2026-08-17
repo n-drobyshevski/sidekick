@@ -7,12 +7,18 @@
 >
 > Two things to know when reading the tables below:
 >
-> - **Pillar B's unit is ambiguous.** "Asset maps to a failing OWASP LLM control → +10"
->   reads as one charge per *framework*, and the applied table charges one code per asset
->   accordingly. The implementation charges per *code*. Wiz maps a single toxic-combination
->   issue onto several LLM codes and several ASI codes, so live scoring reaches the 30-point
->   cap for every asset while this table shows 20 or 25. The applied table is reproducible
->   only because the dry-run scores from hand-pinned hints.
+> - **Pillar B's unit is ambiguous — and is now a knob, `AarsRule.gapUnit`.** "Asset maps to
+>   a failing OWASP LLM control → +10" reads as one charge per *framework*, and the applied
+>   table charges one code per asset accordingly. `gapUnit: "code"` — the **default**, and
+>   the value that reproduces every row below exactly — charges per *code* instead: Wiz maps
+>   a single toxic-combination issue onto several LLM codes and several ASI codes, so live
+>   scoring reaches the 30-point cap for every asset while this table shows 20 or 25. The
+>   applied table is reproducible only because the dry-run scores from hand-pinned hints.
+>   A third reading — one charge per *condition* an asset actually holds (missing guardrail,
+>   excessive privilege, sensitive data, internet exposure), regardless of how many framework
+>   codes cite it — is `gapUnit: "condition"`, selected by `AARS_V3_RULE`
+>   (see [AARS_ASSESSMENT.md](AARS_ASSESSMENT.md) §6 for its measured effect). It is a preset,
+>   never a default, for the same reason `AARS_V2_RULE` is: adopting it moves scores.
 > - **The ×1.1 amplifier is a tenant-wide constant**, so it cannot change any ranking — but
 >   it does decide band membership. It is the entire reason `agent-H-chatbot` below is
 >   CRITICAL at 71 rather than HIGH at 69.

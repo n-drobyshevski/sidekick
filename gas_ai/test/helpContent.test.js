@@ -28,6 +28,11 @@ import { lookupGap } from "../src/client/js/codebook.js";
 // reading upper-case keys off a lower-case object and silently degrading to "not counted
 // here" on every deployment.
 import { DEFAULT_AARS_RULE, computeAars } from "../src/domain/aars";
+// Phase 8's authoritative record, and its client-side mirror (measureContent.js) — a .js
+// test importing a .ts module is fine (see this file's own header on why the reverse
+// direction is the one tsc rejects), so the parity check below can read both directly.
+import { MEASURE_SPECS } from "../src/domain/measureSpec";
+import { MEASURE_ENTRIES } from "../src/client/js/measureContent.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(join(root, p), "utf8");
@@ -425,5 +430,38 @@ describe("lexTally", () => {
     const t = lexTally(resolveEntries(FULL_CTX));
     expect(t.uncounted, "a complete payload should leave nothing uncounted").toBe(0);
     expect(t.convention).toBe(ENTRIES.filter((e) => !e.count).length);
+  });
+});
+
+// Phase 8: the client mirror (measureContent.js) held to the authoritative TS record
+// (src/domain/measureSpec.ts). Nothing here recomputes a number — this file is purely
+// descriptive, same as codebook.js — but the two sides must never disagree about WHICH
+// measures exist or what type/method each one claims, or an operator reading the Help page
+// gets a different story than test/measureSpec.test.ts pins for the record itself.
+describe("the measure specifications", () => {
+  it("mirrors exactly the ids MEASURE_SPECS declares — none missing, none stale", () => {
+    const specIds = MEASURE_SPECS.map((s) => s.id).sort();
+    const mirrorIds = MEASURE_ENTRIES.map((m) => m.id).sort();
+    expect(mirrorIds).toEqual(specIds);
+  });
+
+  it("agrees with MEASURE_SPECS on type and measurementMethod for every id", () => {
+    const byId = new Map(MEASURE_SPECS.map((s) => [s.id, s]));
+    for (const m of MEASURE_ENTRIES) {
+      const spec = byId.get(m.id);
+      expect(spec, m.id).toBeTruthy();
+      expect(m.type, m.id).toBe(spec.type);
+      expect(m.measurementMethod, m.id).toBe(spec.measurementMethod);
+    }
+  });
+
+  it("renders one Help entry per measure, filed under the measures family", () => {
+    const rendered = ENTRIES.filter((e) => e.id.startsWith("measure-"));
+    expect(rendered.length).toBe(MEASURE_ENTRIES.length);
+    for (const e of rendered) {
+      expect(e.family, e.id).toBe("measures");
+      expect(typeof e.mark, e.id).toBe("function");
+      expect(e.count, e.id + " is documentation, not a live figure").toBeUndefined();
+    }
   });
 });

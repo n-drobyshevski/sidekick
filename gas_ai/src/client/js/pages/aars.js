@@ -34,13 +34,16 @@ import {
   filterCombobox,
   helpTip,
   openSheet,
+  outcomeBadge,
   pointRail,
   railScale,
   segmented,
+  select,
   sevBadge,
   sheetSection,
   skeleton,
   statusPill,
+  tierBadge,
   toast,
 } from "../ui.js";
 import {
@@ -191,8 +194,58 @@ export async function renderAarsRules(main, _params, ctx) {
   const root = el("div", { class: "workbench" }, bar, body);
   main.append(root);
 
-  bar.append(el("h1", { class: "workbench-title" }, "AARS Rules"));
-  body.append(
+  // Three tabs over one route (help.js's ROUTE_TITLES / ROUTE_ICONS still name "aars"
+  // alone): the AARS point score this file has always edited, the Problem tree —
+  // Phase 3/4's decision cascade — and the Posture lattice — Phase 6's capability-envelope
+  // tiers — each a SEPARATE workbench sharing the page rather than a new route.
+  // `aarsPane`, `problemPane` and `posturePane` are all mounted from the start; only
+  // `hidden` moves, so switching tabs never re-fetches or re-builds a pane that has
+  // already loaded. Each is `.tab-pane` (position:absolute; inset:0) rather than its own
+  // `.workbench-body` — `body` is already the positioned ancestor all three tabs share,
+  // and stacking three `flex:1` boxes inside a plain block parent would collapse them to
+  // zero height instead of filling it.
+  const aarsPane = el("div", { class: "tab-pane" });
+  const problemPane = el("div", { class: "tab-pane", hidden: true });
+  const posturePane = el("div", { class: "tab-pane", hidden: true });
+  body.append(aarsPane, problemPane, posturePane);
+
+  const modelTabs = segmented({
+    options: [
+      { value: "aars", label: "AARS" },
+      { value: "problem", label: "Problem tree" },
+      { value: "posture", label: "Posture" },
+    ],
+    value: "aars",
+    ariaLabel: "Scoring model",
+    onChange: (v) => selectModelTab(v),
+  });
+  bar.append(el("h1", { class: "workbench-title" }, "AARS Rules"), modelTabs);
+
+  // Assigned once the AARS rule loads (below) and once the Problem/Posture tabs have each
+  // loaded at least once — `let`, not `const`, so this closure can reach them however far
+  // any load has gotten, including "never" if the AARS rule itself failed to load.
+  let aarsControls = null;
+  let problemControls = null;
+  let postureControls = null;
+  let activeModelTab = "aars"; // which tab is showing, so an async load can't unhide the wrong one
+
+  function selectModelTab(which) {
+    activeModelTab = which;
+    const isAars = which === "aars";
+    const isProblem = which === "problem";
+    const isPosture = which === "posture";
+    aarsPane.hidden = !isAars;
+    problemPane.hidden = !isProblem;
+    posturePane.hidden = !isPosture;
+    if (aarsControls) aarsControls.hidden = !isAars;
+    if (problemControls) problemControls.hidden = !isProblem;
+    if (postureControls) postureControls.hidden = !isPosture;
+    modelTabs.set(which);
+    if (isProblem) loadProblemPane();
+    if (isPosture) loadPosturePane();
+  }
+
+  aarsPane.append(
     el(
       "div",
       {
@@ -211,7 +264,7 @@ export async function renderAarsRules(main, _params, ctx) {
   try {
     state = await call("api_getAarsRule", {});
   } catch (e) {
-    clear(body).append(
+    clear(aarsPane).append(
       el(
         "div",
         { class: "workbench-empty" },
@@ -301,21 +354,20 @@ export async function renderAarsRules(main, _params, ctx) {
   const saveBtn = el("button", { class: "primary" }, "Save rule");
   const revertBtn = el("button", {}, "Revert");
   const recomputeHost = el("span", {});
-  bar.append(
-    el(
-      "div",
-      { class: "workbench-controls" },
-      el("div", { class: "rule-bar-state" }, versionPill, scorePill, dirtyHost),
-      recomputeHost,
-      revertBtn,
-      saveBtn,
-    ),
+  aarsControls = el(
+    "div",
+    { class: "workbench-controls" },
+    el("div", { class: "rule-bar-state" }, versionPill, scorePill, dirtyHost),
+    recomputeHost,
+    revertBtn,
+    saveBtn,
   );
+  bar.append(aarsControls);
 
   // ------------------------------------------------------------------------- panes
   const editor = el("div", { class: "rule-editor" });
   const impact = el("div", { class: "rule-impact" });
-  clear(body).append(el("div", { class: "rule-panes" }, editor, impact));
+  clear(aarsPane).append(el("div", { class: "rule-panes" }, editor, impact));
 
   // A single small polite region for impact updates. The tables themselves are NOT live:
   // announcing 55 rows on every keystroke is noise, not access.
@@ -696,6 +748,35 @@ export async function renderAarsRules(main, _params, ctx) {
     v2Btn.focus();
   });
 
+  // v3 is v2 with one further change: pillar B prices the CONDITION an asset holds (missing
+  // guardrail, excessive privilege, sensitive data, internet exposure) plus which toxic-
+  // combination groups it belongs to, instead of the framework codes those groups mint. It
+  // is not simply "better than v2" — see the confirm body — so it is offered beside v2, not
+  // instead of it.
+  const v3Btn = el("button", {}, "Load AARS v3");
+  v3Btn.addEventListener("click", async () => {
+    const ok = await confirmDialog({
+      title: "Load the AARS v3 model?",
+      body:
+        "v3 is v2 with pillar B repriced: one charge per risk CONDITION an asset holds " +
+        "(missing guardrail, excessive privilege, sensitive data, internet exposure) and " +
+        "one per distinct toxic-combination group, instead of one per framework code. It " +
+        "takes pillar B further off its ceiling than v2's root-sum-square does (0 of 30 " +
+        "assets at cap on the seed estate, vs v2's 1 of 30), but it is not a strict upgrade: " +
+        "v2 currently separates the estate a little better (lower tie rate, higher effective " +
+        "cardinality) because its framework-code cascade happens to distinguish toxic-combo " +
+        "patterns that v3 correctly prices the same once they cost the same conditions. It " +
+        "WILL move scores — the impact panel shows exactly which. Nothing is saved until you " +
+        "press Save rule.",
+      confirmLabel: "Load v3",
+    });
+    if (!ok) return;
+    draft = cloneRule(state.presets && state.presets.v3 ? state.presets.v3 : draft);
+    renderCascade();
+    onEdit();
+    v3Btn.focus();
+  });
+
   const exportBtn = el("button", { class: "link" }, "Export JSON");
   exportBtn.addEventListener("click", () => {
     downloadText(
@@ -732,7 +813,7 @@ export async function renderAarsRules(main, _params, ctx) {
 
   editor.append(
     section("Manage", null, [
-      el("div", { class: "rule-row" }, resetBtn, v2Btn, exportBtn, importBtn, importInput),
+      el("div", { class: "rule-row" }, resetBtn, v2Btn, v3Btn, exportBtn, importBtn, importInput),
     ]),
   );
 
@@ -1789,12 +1870,13 @@ export async function renderAarsRules(main, _params, ctx) {
       return;
     }
     const link = e.target.closest && e.target.closest(".nav-link");
-    if (!link || leaving || !isDirty()) return;
+    if (!link || leaving || !(isDirty() || isProblemDirty() || isPostureDirty())) return;
     e.preventDefault();
     e.stopPropagation();
     const ok = await confirmDialog({
       title: "Discard unsaved changes?",
-      body: "The AARS rule has edits that have not been saved. Leaving discards them.",
+      body: "This page has edits — to the AARS rule, the Problem tree rule, or the Posture " +
+        "rule — that have not been saved. Leaving discards them.",
       confirmLabel: "Discard & leave",
       danger: true,
     });
@@ -1809,11 +1891,1481 @@ export async function renderAarsRules(main, _params, ctx) {
       window.removeEventListener("beforeunload", onBeforeUnload);
       return;
     }
-    if (leaving || !isDirty()) return;
+    if (leaving || !(isDirty() || isProblemDirty() || isPostureDirty())) return;
     e.preventDefault();
     e.returnValue = "";
   };
   window.addEventListener("beforeunload", onBeforeUnload);
+
+  // ============================================================================
+  // Problem tree — Phase 5. Same rule 1 as the AARS half of this file: the client NEVER
+  // decides. Every outcome shown below — the occupancy strip, the movers, the leaf
+  // counts, the per-axis unknown rates — comes from api_previewProblemRule, which runs
+  // the real cascade server-side (syncStore.decideProblemsWith) at zero Wiz cost.
+  // Nothing here calls decideProblem or reimplements first-match-wins.
+
+  const AXIS_DEFS = [
+    { key: "exploitation", label: "Exploitation", values: ["ACTIVE", "SUSPECTED", "UNKNOWN"] },
+    { key: "impact", label: "Technical impact", values: ["TOTAL", "PARTIAL"] },
+    { key: "exposure", label: "System exposure", values: ["OPEN", "CONTROLLED", "UNVERIFIED"] },
+    { key: "mission", label: "Mission", values: ["HIGH", "MEDIUM", "LOW"] },
+  ];
+  // Mirrors OUTCOME_VALUES (src/domain/problem.ts), worst first — the outcome dropdowns
+  // and the occupancy strip both walk this order, so a row's options and its place in the
+  // strip never disagree about which end of the scale is worse.
+  const OUTCOME_OPTIONS = [
+    { value: "ACT", label: "Act" },
+    { value: "ATTEND", label: "Attend" },
+    { value: "TRACK_STAR", label: "Track ★" },
+    { value: "TRACK", label: "Track" },
+  ];
+  const AXIS_LABELS = {
+    exploitation: "Exploitation", impact: "Technical impact",
+    exposure: "System exposure", mission: "Mission",
+  };
+  // An axis whose UNKNOWN share crosses this line gets its own .diag-warn card, the same
+  // "this is a finding, not a footnote" treatment AARS gives a saturated pillar below.
+  const UNKNOWN_WARN_THRESHOLD = 0.5;
+  const PROBLEM_MOVERS_INLINE = 8;
+
+  let problemState = null;
+  let problemSaved = null;
+  let problemDraft = null;
+  let problemPreview = null;
+  let problemPreviewError = "";
+  let problemPreviewSeq = 0;
+  let problemSaving = false;
+  let problemLoading = false;
+  let problemLoaded = false;
+
+  function isProblemDirty() {
+    return problemLoaded && JSON.stringify(problemDraft) !== JSON.stringify(problemSaved);
+  }
+
+  /**
+   * The cheap structural checks only — no leaf enumeration, which would mean re-running
+   * the cascade client-side. The ACT-ceiling check (validateProblemRule's other half)
+   * stays server-only for exactly that reason; this is an early warning, never the last
+   * word, same contract draftErrors() keeps for the AARS half.
+   */
+  function problemDraftErrors(rule) {
+    const max = (problemState && problemState.limits && problemState.limits.maxOutcomeRules) || 40;
+    const list = [];
+    if (!rule.outcomeRules.length) {
+      list.push(
+        "The outcome cascade has no rules; every issue and finding would route to the " +
+          "fallback outcome.");
+    }
+    if (rule.outcomeRules.length > max) list.push(`The outcome cascade is limited to ${max} rules.`);
+    rule.outcomeRules.forEach((row, i) => {
+      const empty = AXIS_DEFS.every((a) => !row.when[a.key]);
+      if (empty && i !== rule.outcomeRules.length - 1) {
+        list.push(`Outcome rule ${i + 1} has no conditions, so it swallows every rule after it.`);
+      }
+    });
+    return list;
+  }
+
+  async function loadProblemPane() {
+    if (problemLoaded || problemLoading) return;
+    problemLoading = true;
+    problemPane.append(
+      el(
+        "div",
+        {
+          role: "status",
+          "aria-label": "Loading the problem tree rule",
+          style: "position:absolute; inset:20px; display:flex; flex-direction:column; gap:14px",
+        },
+        skeleton("title", { width: "220px" }),
+        skeleton("chart", { height: "120px" }),
+        skeleton("line", { width: "70%" }),
+      ),
+    );
+    try {
+      problemState = await call("api_getProblemRule", {});
+    } catch (e) {
+      clear(problemPane).append(
+        el(
+          "div",
+          { class: "workbench-empty" },
+          emptyState("Couldn't load the Problem tree rule.", String(e.message || e)),
+        ),
+      );
+      problemLoading = false;
+      return;
+    }
+    problemLoading = false;
+    problemSaved = cloneRule(problemState.rule);
+    problemDraft = cloneRule(problemState.rule);
+    problemLoaded = true;
+    buildProblemPane();
+  }
+
+  function buildProblemPane() {
+    // ---------------------------------------------------------------------- toolbar
+    const pVersionPill = el("span", { class: "pill neutral" });
+    const pStalePill = el("span", { class: "pill" });
+    const pDirtyHost = el("span", {});
+    const pSaveBtn = el("button", { class: "primary" }, "Save rule");
+    const pRevertBtn = el("button", {}, "Revert");
+    const pRecomputeHost = el("span", {});
+    problemControls = el(
+      "div",
+      { class: "workbench-controls" },
+      el("div", { class: "rule-bar-state" }, pVersionPill, pStalePill, pDirtyHost),
+      pRecomputeHost,
+      pRevertBtn,
+      pSaveBtn,
+    );
+    problemControls.hidden = activeModelTab !== "problem";
+    bar.append(problemControls);
+
+    // ---------------------------------------------------------------- cascade (editor)
+    const pCascadeBody = el("tbody", {});
+    const pClaimsTh = el("th", { class: "rule-prices", hidden: true }, "Leaves");
+    const pCascadeTable = el(
+      "div",
+      { class: "table-wrap" },
+      el(
+        "table",
+        { class: "data rule-table" },
+        el("caption", { class: "visually-hidden" }, "Problem tree outcome rules, tried in order"),
+        el(
+          "thead",
+          {},
+          el(
+            "tr",
+            {},
+            el("th", {}, "#"),
+            ...AXIS_DEFS.map((a) => el("th", {}, a.label)),
+            el("th", {}, "Outcome"),
+            pClaimsTh,
+            el("th", { class: "rule-noteh" }, "Note"),
+            el("th", {}, el("span", { class: "visually-hidden" }, "Actions")),
+          ),
+        ),
+        pCascadeBody,
+      ),
+    );
+
+    const pAddBtn = el("button", {}, "Add rule");
+    pAddBtn.addEventListener("click", () => {
+      // New rules go on TOP — a first-match cascade, same reasoning as the AARS cascade.
+      problemDraft.outcomeRules.unshift({ when: {}, outcome: "ATTEND" });
+      renderProblemCascade();
+      focusProblemRow(0);
+      onProblemEdit();
+    });
+
+    function focusProblemRow(i) {
+      const tr = pCascadeBody.querySelector(`tr[data-idx="${i}"]`);
+      const sel = tr && tr.querySelector("select");
+      if (sel) sel.focus();
+    }
+
+    function renderProblemCascade() {
+      clear(pCascadeBody);
+      const max = (problemState.limits && problemState.limits.maxOutcomeRules) || 40;
+      problemDraft.outcomeRules.forEach((row, i) => {
+        const axisCells = AXIS_DEFS.map((axis) => {
+          const sel = select({
+            options: axis.values,
+            value: row.when[axis.key] || "",
+            ariaLabel: `${axis.label}, rule ${i + 1}`,
+            placeholder: "any",
+            onChange: (v) => {
+              if (v) row.when[axis.key] = v;
+              else delete row.when[axis.key];
+              onProblemEdit();
+            },
+          });
+          return el("td", {}, sel);
+        });
+        const outcomeSel = select({
+          options: OUTCOME_OPTIONS,
+          value: row.outcome,
+          ariaLabel: `Outcome, rule ${i + 1}`,
+          onChange: (v) => {
+            row.outcome = v;
+            onProblemEdit();
+          },
+        });
+
+        const move = (delta) => {
+          const to = i + delta;
+          if (to < 0 || to >= problemDraft.outcomeRules.length) return;
+          const other = problemDraft.outcomeRules[to];
+          problemDraft.outcomeRules[to] = row;
+          problemDraft.outcomeRules[i] = other;
+          renderProblemCascade();
+          const moved = pCascadeBody.querySelector(`tr[data-idx="${to}"]`);
+          const btn = moved && moved.querySelector(delta < 0 ? ".js-up" : ".js-down");
+          if (btn) btn.focus();
+          onProblemEdit();
+        };
+        const up = el("button", { class: "link js-up", "aria-label": `Move rule ${i + 1} up` }, "↑");
+        up.disabled = i === 0;
+        up.addEventListener("click", () => move(-1));
+        const down = el(
+          "button", { class: "link js-down", "aria-label": `Move rule ${i + 1} down` }, "↓");
+        down.disabled = i === problemDraft.outcomeRules.length - 1;
+        down.addEventListener("click", () => move(1));
+        const del = el("button", { class: "link danger", "aria-label": `Remove rule ${i + 1}` }, "✕");
+        del.addEventListener("click", () => {
+          problemDraft.outcomeRules.splice(i, 1);
+          renderProblemCascade();
+          const rows = pCascadeBody.querySelectorAll("tr[data-idx]");
+          const next = rows[Math.min(i, rows.length - 1)];
+          const btn = next && next.querySelector(".link.danger");
+          (btn || pAddBtn).focus();
+          onProblemEdit();
+        });
+
+        const meta = el("td", { class: "rule-rowmeta small muted" });
+        const claims = el("td", { class: "rule-prices num", hidden: true });
+        const tr = el(
+          "tr",
+          { "data-idx": String(i) },
+          el("td", { class: "num muted small" }, String(i + 1)),
+          ...axisCells,
+          el("td", {}, outcomeSel),
+          claims,
+          meta,
+          el("td", { class: "rule-rowbtns" }, up, down, del),
+        );
+        pCascadeBody.append(tr);
+      });
+
+      // The cascade's terminal step, drawn as the table's last row — same idiom as the
+      // AARS cascade's fallback price.
+      const fbSel = select({
+        options: OUTCOME_OPTIONS,
+        value: problemDraft.fallbackOutcome,
+        ariaLabel: "Fallback outcome",
+        onChange: (v) => {
+          problemDraft.fallbackOutcome = v;
+          onProblemEdit();
+        },
+      });
+      pCascadeBody.append(
+        el(
+          "tr",
+          { class: "rule-fallback" },
+          el("td", { class: "num muted small", "aria-hidden": "true" }, "↳"),
+          el("td", { colspan: String(AXIS_DEFS.length) }, "Matches no rule above"),
+          el("td", {}, fbSel),
+          el("td", { class: "rule-prices num", hidden: true }),
+          el("td", { class: "rule-rowmeta small muted" }, "the tree's fallback outcome"),
+          el("td", {}),
+        ),
+      );
+
+      pAddBtn.disabled = problemDraft.outcomeRules.length >= max;
+      pAddBtn.title = pAddBtn.disabled ? `The cascade is limited to ${max} rules.` : "";
+    }
+
+    // -------------------------------------------------------- derivation knobs (editor)
+    const pMissionSelect = select({
+      options: ["HIGH", "MEDIUM", "LOW"],
+      value: problemDraft.missingMission,
+      ariaLabel: "Missing business impact reads as",
+      onChange: (v) => {
+        problemDraft.missingMission = v;
+        onProblemEdit();
+      },
+    });
+    const pMissionId = nextId("pmission");
+    pMissionSelect.id = pMissionId;
+    const pMissionField = field(pMissionId, "Missing business impact reads as", pMissionSelect);
+
+    const pCeilingId = nextId("pceil");
+    const pCeilingInput = numberInput(pCeilingId, {
+      value: Math.round(problemDraft.actLeafCeiling * 1000) / 10, min: 0.1, max: 100, step: 0.1,
+    });
+    pCeilingInput.addEventListener("input", () => {
+      const pct = num(pCeilingInput.value, problemDraft.actLeafCeiling * 100);
+      problemDraft.actLeafCeiling = clamp(pct, 0.1, 100) / 100;
+      onProblemEdit();
+    });
+    const pCeilingField = {
+      ...field(pCeilingId, "ACT ceiling", pCeilingInput, "% of the 54 leaves"),
+      input: pCeilingInput,
+    };
+
+    const pRemediateId = nextId("premed");
+    const pRemediateInput = el("input", { type: "text", id: pRemediateId, class: "rule-code" });
+    pRemediateInput.value = problemDraft.remediateVerdicts.join(", ");
+    pRemediateInput.addEventListener("input", () => {
+      problemDraft.remediateVerdicts =
+        pRemediateInput.value.split(",").map((s) => s.trim()).filter(Boolean);
+      onProblemEdit();
+    });
+    const pRemediateField = {
+      ...field(
+        pRemediateId, "AI verdicts that reach SUSPECTED", pRemediateInput,
+        "aiRemediationAnalysis.verdict values, comma-separated"),
+      input: pRemediateInput,
+    };
+
+    const pGroupsId = nextId("pgroups");
+    const pGroupsInput = el("input", { type: "text", id: pGroupsId, class: "rule-code" });
+    pGroupsInput.value = problemDraft.totalImpactGroups.join(", ");
+    pGroupsInput.addEventListener("input", () => {
+      problemDraft.totalImpactGroups =
+        pGroupsInput.value.split(",").map((s) => s.trim()).filter(Boolean);
+      onProblemEdit();
+    });
+    const pGroupsField = {
+      ...field(
+        pGroupsId, "Combo groups that grant code execution", pGroupsInput,
+        "combo-group ids, comma-separated — the third TOTAL-impact source"),
+      input: pGroupsInput,
+    };
+
+    // ------------------------------------------------------- exploitation table (editor)
+    const pExploitBody = el("tbody", {});
+    const pExploitTable = el(
+      "div",
+      { class: "table-wrap" },
+      el(
+        "table",
+        { class: "data rule-table" },
+        el("caption", { class: "visually-hidden" }, "Wiz combo rules with a known exploit maturity"),
+        el(
+          "thead",
+          {},
+          el(
+            "tr",
+            {},
+            el("th", {}, "Wiz combo rule id"),
+            el("th", {}, "Maturity"),
+            el("th", {}, el("span", { class: "visually-hidden" }, "Actions")),
+          ),
+        ),
+        pExploitBody,
+      ),
+    );
+    const pExploitAddBtn = el("button", {}, "Add rule");
+    pExploitAddBtn.addEventListener("click", () => {
+      problemDraft.exploitationByRuleId.unshift({ ruleId: "", maturity: "FEASIBLE" });
+      renderExploitationRows();
+      onProblemEdit();
+    });
+
+    function renderExploitationRows() {
+      clear(pExploitBody);
+      problemDraft.exploitationByRuleId.forEach((row, i) => {
+        const ruleIdInput = el("input", {
+          type: "text", class: "rule-code", value: row.ruleId,
+          "aria-label": `Wiz combo rule id, row ${i + 1}`,
+        });
+        ruleIdInput.addEventListener("input", () => {
+          row.ruleId = ruleIdInput.value.trim();
+          onProblemEdit();
+        });
+        const maturitySelect = select({
+          options: ["REALIZED", "DEMONSTRATED", "FEASIBLE"],
+          value: row.maturity,
+          ariaLabel: `Maturity, row ${i + 1}`,
+          onChange: (v) => {
+            row.maturity = v;
+            onProblemEdit();
+          },
+        });
+        const del = el("button", { class: "link danger", "aria-label": `Remove row ${i + 1}` }, "✕");
+        del.addEventListener("click", () => {
+          problemDraft.exploitationByRuleId.splice(i, 1);
+          renderExploitationRows();
+          onProblemEdit();
+        });
+        pExploitBody.append(
+          el(
+            "tr",
+            {},
+            el("td", {}, ruleIdInput),
+            el("td", {}, maturitySelect),
+            el("td", { class: "rule-rowbtns" }, del),
+          ),
+        );
+      });
+    }
+
+    const pEditor = el(
+      "div",
+      { class: "rule-editor" },
+      section(
+        "Outcome cascade",
+        "Each row is tried in order; the first whose conditions ALL match wins. An axis " +
+          "left on “any” is a wildcard, not a value — a row with no conditions at all " +
+          "matches every remaining vector.",
+        [pCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, pAddBtn)],
+      ),
+      section(
+        "How the four axes are read",
+        "Separate from the cascade above, which only decides what a VECTOR routes to once " +
+          "it exists. These decide what the vector IS.",
+        [
+          el("div", { class: "rule-row" }, pMissionField.node, pCeilingField.node),
+          el("div", { class: "rule-row", style: "margin-top:10px" }, pRemediateField.node),
+          el("div", { class: "rule-row", style: "margin-top:10px" }, pGroupsField.node),
+        ],
+      ),
+      section(
+        "Exploitation maturity by Wiz combo rule",
+        "REALIZED or DEMONSTRATED reaches SUSPECTED exploitation on an issue this rule " +
+          "matches; FEASIBLE does not — “someone could” is not “someone has”.",
+        [pExploitTable, el("div", { class: "rule-row", style: "margin-top:10px" }, pExploitAddBtn)],
+      ),
+    );
+
+    // ---------------------------------------------------------------- impact (preview)
+    const pImpactStrip = el("div", { class: "impact-strip" });
+    const pImpactHeadline = el("p", { class: "impact-headline small muted" });
+    const pLeavesLine = el("p", { class: "small muted", style: "margin:0 0 12px" });
+    const pImpactState = el("div", {});
+    const pLiveNote = el("span", { role: "status", "aria-live": "polite", class: "visually-hidden" });
+
+    // The per-axis unknown-rate readout — the finding this whole endpoint exists to
+    // surface (problemRule.ts's own header). Presented with the same weight the AARS
+    // pane gives "how well it separates", not folded into a smaller line.
+    const pUnknownList = el("div", { class: "diag-list" });
+    const pUnknownWarn = el("div", {});
+    const pUnknownSection = el(
+      "div",
+      {},
+      el("h2", { class: "section-label", style: "margin-top:18px" }, "Per-axis unknown rate"),
+      el(
+        "p", { class: "small muted", style: "margin:0 0 6px" },
+        "How often each axis could not be established, over the issues and findings this " +
+          "draft actually decided. A high rate here — not the outcome counts above — is " +
+          "usually the real finding."),
+      pUnknownList,
+      pUnknownWarn,
+    );
+
+    const pMoverList = el("div", { class: "mover-list" });
+    const pMoverMore = el("div", { style: "margin-top:8px" });
+    const pMoverSection = el(
+      "div", {},
+      el("h2", { class: "section-label", style: "margin-top:18px" }, "What moves"),
+      pMoverList, pMoverMore,
+    );
+
+    const pImpact = el(
+      "div",
+      { class: "rule-impact" },
+      pLiveNote,
+      el("h2", { class: "section-label" }, "Impact on open issues and findings"),
+      pImpactState,
+      pImpactStrip,
+      pImpactHeadline,
+      pLeavesLine,
+      pUnknownSection,
+      pMoverSection,
+    );
+
+    // problemControls lives in `bar`, appended above — the toolbar's own home is next to
+    // the AARS toolbar it mirrors, not inside the scrollable pane. `problemPane` gets only
+    // the two-pane grid below it.
+    clear(problemPane).append(el("div", { class: "rule-panes" }, pEditor, pImpact));
+
+    function problemMoverRow(m) {
+      return el(
+        "div",
+        { class: "mover-row" },
+        el("span", { class: "mover-row__name" }, `${m.assetName} — ${m.ruleName}`),
+        el(
+          "div",
+          { class: "mover-row__move" },
+          outcomeBadge(m.fromOutcome),
+          el("span", { class: "mover-arrow", "aria-hidden": "true" }, "→"),
+          outcomeBadge(m.toOutcome),
+          el("span", { class: "mover-row__kind" }, m.kind === "issue" ? "toxic combination" : "config finding"),
+        ),
+      );
+    }
+
+    function paintUnknownRates(disc) {
+      clear(pUnknownList);
+      clear(pUnknownWarn);
+      pUnknownSection.hidden = !disc;
+      if (!disc) return;
+      setText(
+        pLeavesLine,
+        `${disc.leavesReached} of 54 leaves reached, across ${disc.decided.length} decided ` +
+          `issues and findings.`,
+      );
+      for (const key of ["exploitation", "impact", "exposure", "mission"]) {
+        const rate = disc.unknownRate[key] || 0;
+        const pct = Math.round(rate * 1000) / 10;
+        const high = rate >= UNKNOWN_WARN_THRESHOLD;
+        pUnknownList.append(
+          el(
+            "div", { class: "diag-row" },
+            el("span", { class: "diag-row__label" }, AXIS_LABELS[key]),
+            el("span", { class: "diag-row__value" }, `${pct}% unknown`),
+            high
+              ? el("span", { class: "diag-row__hint small muted" },
+                "most reads on this axis could not be established")
+              : null,
+          ),
+        );
+        if (high) {
+          pUnknownWarn.append(
+            el(
+              "p", { class: "diag-warn small" },
+              el("span", { class: "diag-warn__mark", "aria-hidden": "true" }, "▲"),
+              `${AXIS_LABELS[key]} reads UNKNOWN on ${pct}% of decided rows. This axis is not ` +
+                "populated on this tenant, and every rule keyed on it is deciding on the " +
+                "minority it could actually read.",
+            ),
+          );
+        }
+      }
+    }
+
+    function paintProblemImpact() {
+      const errs = problemDraftErrors(problemDraft);
+      clear(pImpactState);
+
+      if (errs.length) {
+        clear(pImpactStrip);
+        clear(pMoverList);
+        clear(pMoverMore);
+        pMoverSection.hidden = true;
+        paintUnknownRates(null);
+        setText(pImpactHeadline, "");
+        setText(pLeavesLine, "");
+        pImpactState.append(emptyState("Fix the highlighted fields to preview.", errs[0]));
+        return;
+      }
+      if (problemPreviewError) {
+        clear(pImpactStrip);
+        pMoverSection.hidden = true;
+        paintUnknownRates(null);
+        setText(pImpactHeadline, "");
+        setText(pLeavesLine, "");
+        const retry = el("button", { style: "margin-top:10px" }, "Try again");
+        retry.addEventListener("click", () => {
+          problemPreviewError = "";
+          scheduleProblemPreview();
+          paintProblemImpact();
+        });
+        pImpactState.append(emptyState("Couldn't preview this rule.", problemPreviewError), retry);
+        return;
+      }
+      if (!problemPreview) {
+        pMoverSection.hidden = true;
+        paintUnknownRates(null);
+        setText(pImpactHeadline, "");
+        setText(pLeavesLine, "");
+        clear(pImpactStrip).append(
+          skeleton("line", { width: "80%" }), skeleton("line", { width: "60%" }));
+        return;
+      }
+      if (!problemPreview.total) {
+        clear(pImpactStrip);
+        pMoverSection.hidden = true;
+        paintUnknownRates(null);
+        setText(pImpactHeadline, "");
+        setText(pLeavesLine, "");
+        pImpactState.append(
+          emptyState(
+            "No open issue or failing finding to compare against.",
+            "Run a sync first; the rule still saves and applies to the next one."));
+        return;
+      }
+
+      clear(pImpactStrip);
+      for (const opt of OUTCOME_OPTIONS) {
+        const now = problemPreview.current[opt.value] || 0;
+        const next = problemPreview.proposed[opt.value] || 0;
+        const delta = next - now;
+        pImpactStrip.append(
+          el(
+            "div", { class: "impact-row" },
+            outcomeBadge(opt.value),
+            el("span", { class: "impact-row__nums" }, `${now} → ${next}`),
+            el(
+              "span", { class: "impact-row__delta" },
+              delta === 0
+                ? el("span", { class: "muted" }, "—")
+                : el(
+                  "span", { class: delta > 0 ? "delta-up" : "delta-down" },
+                  (delta > 0 ? "+" : "") + String(delta)),
+            ),
+          ),
+        );
+      }
+
+      const headline = problemPreview.moverCount
+        ? `Of ${problemPreview.total} issues and findings, ${problemPreview.moverCount} change priority.`
+        : `Nothing changes across ${problemPreview.total} issues and findings.`;
+      setText(pImpactHeadline, headline);
+      setText(pLiveNote, `Impact updated. ${headline}`);
+
+      paintUnknownRates(problemPreview.treeDiscrimination);
+
+      clear(pMoverList);
+      clear(pMoverMore);
+      pMoverSection.hidden = !problemPreview.movers.length;
+      for (const m of problemPreview.movers.slice(0, PROBLEM_MOVERS_INLINE)) {
+        pMoverList.append(problemMoverRow(m));
+      }
+      if (problemPreview.moverCount > PROBLEM_MOVERS_INLINE) {
+        const more = el("button", { class: "link" }, `View all ${problemPreview.moverCount}`);
+        more.addEventListener("click", () => {
+          openSheet(
+            (sheetBody) => {
+              const list = el("div", { class: "mover-list" });
+              for (const m of problemPreview.movers) list.append(problemMoverRow(m));
+              sheetBody.append(list);
+              if (problemPreview.truncated) {
+                sheetBody.append(
+                  el(
+                    "p", { class: "small muted", style: "margin-top:10px" },
+                    `Showing the ${problemPreview.movers.length} most consequential of ` +
+                      `${problemPreview.moverCount} — worst proposed priority first.`),
+                );
+              }
+            },
+            { title: "What moves", subtitle: headline, ariaLabel: "Issues and findings that change priority" },
+          );
+        });
+        pMoverMore.append(more);
+      }
+    }
+
+    // -------------------------------------------------------------------------- sync
+    function onProblemEdit() {
+      syncProblem();
+      scheduleProblemPreview();
+    }
+
+    function syncProblem() {
+      setText(pVersionPill, problemState.version === 0 ? "Spec defaults" : `Model v${problemState.version}`);
+      pStalePill.className = `pill ${problemState.stale ? "warn" : "ok"}`;
+      setText(pStalePill, problemState.stale ? "Verdicts stale" : "Verdicts current");
+      clear(pDirtyHost);
+      if (isProblemDirty()) pDirtyHost.append(statusPill("warn", "Unsaved changes"));
+      pRevertBtn.disabled = !isProblemDirty() || problemSaving;
+      pSaveBtn.disabled = problemSaving;
+
+      setValue(pCeilingInput, Math.round(problemDraft.actLeafCeiling * 1000) / 10);
+      setValue(pRemediateInput, problemDraft.remediateVerdicts.join(", "));
+      setValue(pGroupsInput, problemDraft.totalImpactGroups.join(", "));
+      if (document.activeElement !== pMissionSelect) pMissionSelect.value = problemDraft.missingMission;
+
+      // Cascade row notes: shadowed, and how many leaves each row claims — both come from
+      // the preview, which walks the DRAFT, exactly like the AARS cascade's own coverage.
+      const shadowed = (problemPreview && problemPreview.shadowedOutcomeRules) || [];
+      const coverage = (problemPreview && problemPreview.leafCoverage) || null;
+      const rows = pCascadeBody.querySelectorAll("tr[data-idx]");
+      rows.forEach((tr, i) => {
+        const meta = tr.querySelector(".rule-rowmeta");
+        const isShadow = shadowed.indexOf(i) >= 0;
+        tr.classList.toggle("rule-dead", isShadow);
+        setText(meta, isShadow ? "never fires — an earlier rule already claims every leaf it could match" : "");
+        paintPrices(tr.querySelector(".rule-prices"), coverage ? coverage.byRow[i] || 0 : null, coverage ? coverage.total : 0);
+      });
+      const fbRow = pCascadeBody.querySelector("tr.rule-fallback");
+      if (fbRow) {
+        paintPrices(
+          fbRow.querySelector(".rule-prices"),
+          coverage ? coverage.byFallback : null,
+          coverage ? coverage.total : 0);
+      }
+      pClaimsTh.hidden = !coverage;
+
+      syncProblemRecompute();
+    }
+
+    function syncProblemRecompute() {
+      const want = problemState.stale ? "1" : "0";
+      if (pRecomputeHost.dataset.sig === want) return;
+      pRecomputeHost.dataset.sig = want;
+      clear(pRecomputeHost);
+      if (!problemState.stale) return;
+      const btn = el("button", {}, "Recompute verdicts");
+      btn.addEventListener("click", async () => {
+        const ok = await confirmDialog({
+          title: "Recompute every problem verdict?",
+          body:
+            "Re-decides every open issue and failing finding under the saved rule and " +
+            "rewrites the issues and findings tabs. No sync-history row is written, so " +
+            "the outcome trend is left alone.",
+          confirmLabel: "Recompute",
+        });
+        if (!ok) return;
+        btn.disabled = true;
+        setText(btn, "Recomputing…");
+        try {
+          const fresh = await call("api_recomputeProblems", {});
+          problemState = { ...problemState, ...fresh };
+          problemSaved = cloneRule(problemState.rule);
+          toast(`Redecided ${fresh.issueCount + fresh.findingCount} issues and findings.`);
+          syncProblem();
+          scheduleProblemPreview();
+          ctx.refresh();
+        } catch (e) {
+          toast(String(e.message || e), "error");
+          btn.disabled = false;
+          setText(btn, "Recompute verdicts");
+        }
+      });
+      pRecomputeHost.append(btn);
+    }
+
+    // ----------------------------------------------------------------------- preview
+    const scheduleProblemPreviewRun = debounce(() => runProblemPreview(), PREVIEW_DEBOUNCE_MS);
+    function scheduleProblemPreview() {
+      scheduleProblemPreviewRun.cancel();
+      if (problemDraftErrors(problemDraft).length) {
+        problemPreview = null;
+        problemPreviewError = "";
+        pImpact.classList.remove("updating");
+        paintProblemImpact();
+        return;
+      }
+      pImpact.classList.add("updating");
+      scheduleProblemPreviewRun();
+    }
+
+    async function runProblemPreview() {
+      const seq = ++problemPreviewSeq;
+      try {
+        const data = await call("api_previewProblemRule", { rule: problemDraft });
+        if (seq !== problemPreviewSeq) return;
+        problemPreview = data;
+        problemPreviewError = "";
+      } catch (e) {
+        if (seq !== problemPreviewSeq) return;
+        problemPreview = null;
+        problemPreviewError = String(e.message || e);
+      }
+      pImpact.classList.remove("updating");
+      paintProblemImpact();
+      syncProblem(); // row notes and leaf counts come from the preview
+    }
+
+    // -------------------------------------------------------------------------- save
+    pRevertBtn.addEventListener("click", () => {
+      problemDraft = cloneRule(problemSaved);
+      renderProblemCascade();
+      renderExploitationRows();
+      onProblemEdit();
+    });
+
+    pSaveBtn.addEventListener("click", async () => {
+      const errs = problemDraftErrors(problemDraft);
+      if (errs.length) {
+        toast(errs[0], "warn");
+        return;
+      }
+      problemSaving = true;
+      syncProblem();
+      try {
+        const fresh = await call("api_setProblemRule", { rule: problemDraft });
+        problemState = fresh;
+        problemSaved = cloneRule(fresh.rule);
+        problemDraft = cloneRule(fresh.rule);
+        toast("Problem tree rule saved.");
+        renderProblemCascade();
+        renderExploitationRows();
+        problemSaving = false;
+        onProblemEdit();
+        ctx.refresh();
+      } catch (e) {
+        problemSaving = false;
+        syncProblem();
+        toast(String(e.message || e), "error");
+      }
+    });
+
+    // --------------------------------------------------------------------- first paint
+    renderProblemCascade();
+    renderExploitationRows();
+    syncProblem();
+    paintProblemImpact();
+    scheduleProblemPreview();
+  }
+
+  // ============================================================================
+  // Posture — Phase 6. Same rule 1 as the AARS and Problem-tree panes: the client NEVER
+  // decides. Every outcome shown below — the tier occupancy strip, the movers, the cell
+  // counts, the per-axis unknown rates — comes from api_previewPostureRule, which runs the
+  // real cascade server-side (syncStore.posturesWith) at zero Wiz cost. Nothing here calls
+  // decidePosture or reimplements first-match-wins.
+  //
+  // Deliberately a SMALLER editor than the Problem tree's: posture derivation reads only
+  // the node's own already-persisted fields (see posture.ts's derivePostureInput comment —
+  // `rule` is accepted but unread), so there is no derivation-knobs section here the way
+  // the Problem tab has one for missingMission / remediateVerdicts / totalImpactGroups.
+  // Only the cascade itself and its two validation-only knobs (fallback tier, top-tier
+  // ceiling) are editable.
+
+  const POSTURE_AXIS_DEFS = [
+    { key: "capability", label: "Capability", values: ["BROAD", "SCOPED", "MINIMAL"] },
+    { key: "containment", label: "Containment", values: ["WEAK", "PARTIAL", "STRONG"] },
+    { key: "consequence", label: "Consequence", values: ["SEVERE", "MODERATE", "LIMITED"] },
+  ];
+  // Every key a `when` can carry — the three axes plus the three lethal-trifecta legs. The
+  // editor never writes the trifecta legs itself (see DEFAULT_POSTURE_RULE row 0's own
+  // comment for why that stays true even for a hand-added row), but a loaded rule can carry
+  // them, and the empty/duplicate `when` checks below must see the whole shape or a
+  // trifecta-only row would misread as empty.
+  const POSTURE_WHEN_KEYS = [
+    "capability", "containment", "consequence", "privateData", "untrustedIngress", "externalEgress",
+  ];
+  // Worst first — 4 down to 1 — mirrors TIER_VALUES (src/domain/posture.ts) reversed, the
+  // same "worst end of the scale leads" convention OUTCOME_OPTIONS keeps for the tree.
+  const TIER_OPTIONS = [
+    { value: "4", label: "Tier 4" },
+    { value: "3", label: "Tier 3" },
+    { value: "2", label: "Tier 2" },
+    { value: "1", label: "Tier 1" },
+  ];
+  const POSTURE_AXIS_LABELS = { capability: "Capability", containment: "Containment", consequence: "Consequence" };
+  const POSTURE_UNKNOWN_WARN_THRESHOLD = 0.5;
+  const POSTURE_MOVERS_INLINE = 8;
+
+  let postureState = null;
+  let postureSaved = null;
+  let postureDraft = null;
+  let posturePreview = null;
+  let posturePreviewError = "";
+  let posturePreviewSeq = 0;
+  let postureSaving = false;
+  let postureLoading = false;
+  let postureLoaded = false;
+
+  function isPostureDirty() {
+    return postureLoaded && JSON.stringify(postureDraft) !== JSON.stringify(postureSaved);
+  }
+
+  /**
+   * The cheap structural checks only — no cell enumeration, which would mean re-running
+   * the cascade client-side. The top-tier-ceiling check (validatePostureRule's other half)
+   * stays server-only, same contract `problemDraftErrors` keeps for the tree.
+   */
+  function postureDraftErrors(rule) {
+    const max = (postureState && postureState.limits && postureState.limits.maxTierRules) || 40;
+    const list = [];
+    if (!rule.tierRules.length) {
+      list.push("The tier cascade has no rules; every asset would route to the fallback tier.");
+    }
+    if (rule.tierRules.length > max) list.push(`The tier cascade is limited to ${max} rules.`);
+    rule.tierRules.forEach((row, i) => {
+      const empty = POSTURE_WHEN_KEYS.every((k) => row.when[k] === undefined);
+      if (empty && i !== rule.tierRules.length - 1) {
+        list.push(`Tier rule ${i + 1} has no conditions, so it swallows every rule after it.`);
+      }
+    });
+    return list;
+  }
+
+  async function loadPosturePane() {
+    if (postureLoaded || postureLoading) return;
+    postureLoading = true;
+    posturePane.append(
+      el(
+        "div",
+        {
+          role: "status",
+          "aria-label": "Loading the posture rule",
+          style: "position:absolute; inset:20px; display:flex; flex-direction:column; gap:14px",
+        },
+        skeleton("title", { width: "220px" }),
+        skeleton("chart", { height: "120px" }),
+        skeleton("line", { width: "70%" }),
+      ),
+    );
+    try {
+      postureState = await call("api_getPostureRule", {});
+    } catch (e) {
+      clear(posturePane).append(
+        el(
+          "div",
+          { class: "workbench-empty" },
+          emptyState("Couldn't load the Posture rule.", String(e.message || e)),
+        ),
+      );
+      postureLoading = false;
+      return;
+    }
+    postureLoading = false;
+    postureSaved = cloneRule(postureState.rule);
+    postureDraft = cloneRule(postureState.rule);
+    postureLoaded = true;
+    buildPosturePane();
+  }
+
+  function buildPosturePane() {
+    // ---------------------------------------------------------------------- toolbar
+    const uVersionPill = el("span", { class: "pill neutral" });
+    const uStalePill = el("span", { class: "pill" });
+    const uDirtyHost = el("span", {});
+    const uSaveBtn = el("button", { class: "primary" }, "Save rule");
+    const uRevertBtn = el("button", {}, "Revert");
+    const uRecomputeHost = el("span", {});
+    postureControls = el(
+      "div",
+      { class: "workbench-controls" },
+      el("div", { class: "rule-bar-state" }, uVersionPill, uStalePill, uDirtyHost),
+      uRecomputeHost,
+      uRevertBtn,
+      uSaveBtn,
+    );
+    postureControls.hidden = activeModelTab !== "posture";
+    bar.append(postureControls);
+
+    // ---------------------------------------------------------------- cascade (editor)
+    const uCascadeBody = el("tbody", {});
+    const uClaimsTh = el("th", { class: "rule-prices", hidden: true }, "Cells");
+    const uCascadeTable = el(
+      "div",
+      { class: "table-wrap" },
+      el(
+        "table",
+        { class: "data rule-table" },
+        el("caption", { class: "visually-hidden" }, "Posture tier rules, tried in order"),
+        el(
+          "thead",
+          {},
+          el(
+            "tr",
+            {},
+            el("th", {}, "#"),
+            ...POSTURE_AXIS_DEFS.map((a) => el("th", {}, a.label)),
+            el("th", {}, "Tier"),
+            uClaimsTh,
+            el("th", { class: "rule-noteh" }, "Note"),
+            el("th", {}, el("span", { class: "visually-hidden" }, "Actions")),
+          ),
+        ),
+        uCascadeBody,
+      ),
+    );
+
+    const uAddBtn = el("button", {}, "Add rule");
+    uAddBtn.addEventListener("click", () => {
+      // New rules go on TOP — a first-match cascade, same reasoning as the other two.
+      postureDraft.tierRules.unshift({ when: {}, tier: 2 });
+      renderPostureCascade();
+      focusPostureRow(0);
+      onPostureEdit();
+    });
+
+    function focusPostureRow(i) {
+      const tr = uCascadeBody.querySelector(`tr[data-idx="${i}"]`);
+      const sel = tr && tr.querySelector("select");
+      if (sel) sel.focus();
+    }
+
+    function renderPostureCascade() {
+      clear(uCascadeBody);
+      const max = (postureState.limits && postureState.limits.maxTierRules) || 40;
+      postureDraft.tierRules.forEach((row, i) => {
+        const axisCells = POSTURE_AXIS_DEFS.map((axis) => {
+          const sel = select({
+            options: axis.values,
+            value: row.when[axis.key] || "",
+            ariaLabel: `${axis.label}, rule ${i + 1}`,
+            placeholder: "any",
+            onChange: (v) => {
+              if (v) row.when[axis.key] = v;
+              else delete row.when[axis.key];
+              onPostureEdit();
+            },
+          });
+          return el("td", {}, sel);
+        });
+        const tierSel = select({
+          options: TIER_OPTIONS,
+          value: String(row.tier),
+          ariaLabel: `Tier, rule ${i + 1}`,
+          onChange: (v) => {
+            row.tier = Number(v);
+            onPostureEdit();
+          },
+        });
+
+        const move = (delta) => {
+          const to = i + delta;
+          if (to < 0 || to >= postureDraft.tierRules.length) return;
+          const other = postureDraft.tierRules[to];
+          postureDraft.tierRules[to] = row;
+          postureDraft.tierRules[i] = other;
+          renderPostureCascade();
+          const moved = uCascadeBody.querySelector(`tr[data-idx="${to}"]`);
+          const btn = moved && moved.querySelector(delta < 0 ? ".js-up" : ".js-down");
+          if (btn) btn.focus();
+          onPostureEdit();
+        };
+        const up = el("button", { class: "link js-up", "aria-label": `Move rule ${i + 1} up` }, "↑");
+        up.disabled = i === 0;
+        up.addEventListener("click", () => move(-1));
+        const down = el(
+          "button", { class: "link js-down", "aria-label": `Move rule ${i + 1} down` }, "↓");
+        down.disabled = i === postureDraft.tierRules.length - 1;
+        down.addEventListener("click", () => move(1));
+        const del = el("button", { class: "link danger", "aria-label": `Remove rule ${i + 1}` }, "✕");
+        del.addEventListener("click", () => {
+          postureDraft.tierRules.splice(i, 1);
+          renderPostureCascade();
+          const rows = uCascadeBody.querySelectorAll("tr[data-idx]");
+          const next = rows[Math.min(i, rows.length - 1)];
+          const btn = next && next.querySelector(".link.danger");
+          (btn || uAddBtn).focus();
+          onPostureEdit();
+        });
+
+        const meta = el("td", { class: "rule-rowmeta small muted" });
+        const claims = el("td", { class: "rule-prices num", hidden: true });
+        const tr = el(
+          "tr",
+          { "data-idx": String(i) },
+          el("td", { class: "num muted small" }, String(i + 1)),
+          ...axisCells,
+          el("td", {}, tierSel),
+          claims,
+          meta,
+          el("td", { class: "rule-rowbtns" }, up, down, del),
+        );
+        uCascadeBody.append(tr);
+      });
+
+      // The cascade's terminal step, drawn as the table's last row — same idiom as the
+      // other two cascades' fallback rows.
+      const fbSel = select({
+        options: TIER_OPTIONS,
+        value: String(postureDraft.fallbackTier),
+        ariaLabel: "Fallback tier",
+        onChange: (v) => {
+          postureDraft.fallbackTier = Number(v);
+          onPostureEdit();
+        },
+      });
+      uCascadeBody.append(
+        el(
+          "tr",
+          { class: "rule-fallback" },
+          el("td", { class: "num muted small", "aria-hidden": "true" }, "↳"),
+          el("td", { colspan: String(POSTURE_AXIS_DEFS.length) }, "Matches no rule above"),
+          el("td", {}, fbSel),
+          el("td", { class: "rule-prices num", hidden: true }),
+          el("td", { class: "rule-rowmeta small muted" }, "the lattice's fallback tier"),
+          el("td", {}),
+        ),
+      );
+
+      uAddBtn.disabled = postureDraft.tierRules.length >= max;
+      uAddBtn.title = uAddBtn.disabled ? `The cascade is limited to ${max} rules.` : "";
+    }
+
+    // -------------------------------------------------------- validation-only knob (editor)
+    const uCeilingId = nextId("uceil");
+    const uCeilingInput = numberInput(uCeilingId, {
+      value: Math.round(postureDraft.topTierCeiling * 1000) / 10, min: 0.1, max: 100, step: 0.1,
+    });
+    uCeilingInput.addEventListener("input", () => {
+      const pct = num(uCeilingInput.value, postureDraft.topTierCeiling * 100);
+      postureDraft.topTierCeiling = clamp(pct, 0.1, 100) / 100;
+      onPostureEdit();
+    });
+    const uCeilingField = {
+      ...field(uCeilingId, "Tier 4 ceiling", uCeilingInput, "% of the 27 cells"),
+      input: uCeilingInput,
+    };
+
+    const uEditor = el(
+      "div",
+      { class: "rule-editor" },
+      section(
+        "Tier cascade",
+        "Each row is tried in order; the first whose conditions ALL match wins. An axis " +
+          "left on “any” is a wildcard, not a value — a row with no conditions at all " +
+          "matches every remaining vector. A capability envelope, not an aggregate of open " +
+          "issues: nothing here reads a problem verdict.",
+        [uCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, uAddBtn)],
+      ),
+      section(
+        "Validation only",
+        "Moving this never changes which tier a vector receives — only whether the cascade " +
+          "as a whole still validates.",
+        [el("div", { class: "rule-row" }, uCeilingField.node)],
+      ),
+    );
+
+    // ---------------------------------------------------------------- impact (preview)
+    const uImpactStrip = el("div", { class: "impact-strip" });
+    const uImpactHeadline = el("p", { class: "impact-headline small muted" });
+    const uCellsLine = el("p", { class: "small muted", style: "margin:0 0 12px" });
+    const uImpactState = el("div", {});
+    const uLiveNote = el("span", { role: "status", "aria-live": "polite", class: "visually-hidden" });
+
+    const uUnknownList = el("div", { class: "diag-list" });
+    const uUnknownWarn = el("div", {});
+    const uUnknownSection = el(
+      "div",
+      {},
+      el("h2", { class: "section-label", style: "margin-top:18px" }, "Per-axis unknown rate"),
+      el(
+        "p", { class: "small muted", style: "margin:0 0 6px" },
+        "How often each axis could not be established, over the assets this draft actually " +
+          "tiered. A high rate here — not the tier counts above — is usually the real finding."),
+      uUnknownList,
+      uUnknownWarn,
+    );
+
+    const uMoverList = el("div", { class: "mover-list" });
+    const uMoverMore = el("div", { style: "margin-top:8px" });
+    const uMoverSection = el(
+      "div", {},
+      el("h2", { class: "section-label", style: "margin-top:18px" }, "What moves"),
+      uMoverList, uMoverMore,
+    );
+
+    const uImpact = el(
+      "div",
+      { class: "rule-impact" },
+      uLiveNote,
+      el("h2", { class: "section-label" }, "Impact on the persisted estate"),
+      uImpactState,
+      uImpactStrip,
+      uImpactHeadline,
+      uCellsLine,
+      uUnknownSection,
+      uMoverSection,
+    );
+
+    // postureControls lives in `bar`, appended above — the toolbar's own home is next to
+    // the other two toolbars it mirrors, not inside the scrollable pane. `posturePane`
+    // gets only the two-pane grid below it.
+    clear(posturePane).append(el("div", { class: "rule-panes" }, uEditor, uImpact));
+
+    function postureMoverRow(m) {
+      return el(
+        "div",
+        { class: "mover-row" },
+        el("span", { class: "mover-row__name" }, `${m.name} — ${m.kind}`),
+        el(
+          "div",
+          { class: "mover-row__move" },
+          tierBadge(m.fromTier),
+          el("span", { class: "mover-arrow", "aria-hidden": "true" }, "→"),
+          tierBadge(m.toTier),
+        ),
+      );
+    }
+
+    function paintPostureUnknownRates(disc) {
+      clear(uUnknownList);
+      clear(uUnknownWarn);
+      uUnknownSection.hidden = !disc;
+      if (!disc) return;
+      setText(
+        uCellsLine,
+        `${disc.cellsReached} of 27 cells reached, across ${disc.decided.length} tiered assets.`,
+      );
+      for (const key of ["capability", "containment", "consequence"]) {
+        const rate = disc.unknownRate[key] || 0;
+        const pct = Math.round(rate * 1000) / 10;
+        const high = rate >= POSTURE_UNKNOWN_WARN_THRESHOLD;
+        uUnknownList.append(
+          el(
+            "div", { class: "diag-row" },
+            el("span", { class: "diag-row__label" }, POSTURE_AXIS_LABELS[key]),
+            el("span", { class: "diag-row__value" }, `${pct}% unknown`),
+            high
+              ? el("span", { class: "diag-row__hint small muted" },
+                "most reads on this axis could not be established")
+              : null,
+          ),
+        );
+        if (high) {
+          uUnknownWarn.append(
+            el(
+              "p", { class: "diag-warn small" },
+              el("span", { class: "diag-warn__mark", "aria-hidden": "true" }, "▲"),
+              `${POSTURE_AXIS_LABELS[key]} reads UNKNOWN on ${pct}% of tiered assets. This ` +
+                "axis is not populated on this tenant, and every rule keyed on it is " +
+                "deciding on the minority it could actually read.",
+            ),
+          );
+        }
+      }
+    }
+
+    function paintPostureImpact() {
+      const errs = postureDraftErrors(postureDraft);
+      clear(uImpactState);
+
+      if (errs.length) {
+        clear(uImpactStrip);
+        clear(uMoverList);
+        clear(uMoverMore);
+        uMoverSection.hidden = true;
+        paintPostureUnknownRates(null);
+        setText(uImpactHeadline, "");
+        setText(uCellsLine, "");
+        uImpactState.append(emptyState("Fix the highlighted fields to preview.", errs[0]));
+        return;
+      }
+      if (posturePreviewError) {
+        clear(uImpactStrip);
+        uMoverSection.hidden = true;
+        paintPostureUnknownRates(null);
+        setText(uImpactHeadline, "");
+        setText(uCellsLine, "");
+        const retry = el("button", { style: "margin-top:10px" }, "Try again");
+        retry.addEventListener("click", () => {
+          posturePreviewError = "";
+          schedulePosturePreview();
+          paintPostureImpact();
+        });
+        uImpactState.append(emptyState("Couldn't preview this rule.", posturePreviewError), retry);
+        return;
+      }
+      if (!posturePreview) {
+        uMoverSection.hidden = true;
+        paintPostureUnknownRates(null);
+        setText(uImpactHeadline, "");
+        setText(uCellsLine, "");
+        clear(uImpactStrip).append(
+          skeleton("line", { width: "80%" }), skeleton("line", { width: "60%" }));
+        return;
+      }
+      if (!posturePreview.total) {
+        clear(uImpactStrip);
+        uMoverSection.hidden = true;
+        paintPostureUnknownRates(null);
+        setText(uImpactHeadline, "");
+        setText(uCellsLine, "");
+        uImpactState.append(
+          emptyState(
+            "No persisted asset to compare against.",
+            "Run a sync first; the rule still saves and applies to the next one."));
+        return;
+      }
+
+      clear(uImpactStrip);
+      for (const opt of TIER_OPTIONS) {
+        const now = posturePreview.current[Number(opt.value)] || 0;
+        const next = posturePreview.proposed[Number(opt.value)] || 0;
+        const delta = next - now;
+        uImpactStrip.append(
+          el(
+            "div", { class: "impact-row" },
+            tierBadge(Number(opt.value)),
+            el("span", { class: "impact-row__nums" }, `${now} → ${next}`),
+            el(
+              "span", { class: "impact-row__delta" },
+              delta === 0
+                ? el("span", { class: "muted" }, "—")
+                : el(
+                  "span", { class: delta > 0 ? "delta-up" : "delta-down" },
+                  (delta > 0 ? "+" : "") + String(delta)),
+            ),
+          ),
+        );
+      }
+
+      const headline = posturePreview.moverCount
+        ? `Of ${posturePreview.total} assets, ${posturePreview.moverCount} change tier.`
+        : `Nothing changes across ${posturePreview.total} assets.`;
+      setText(uImpactHeadline, headline);
+      setText(uLiveNote, `Impact updated. ${headline}`);
+
+      paintPostureUnknownRates(posturePreview.postureDiscrimination);
+
+      clear(uMoverList);
+      clear(uMoverMore);
+      uMoverSection.hidden = !posturePreview.movers.length;
+      for (const m of posturePreview.movers.slice(0, POSTURE_MOVERS_INLINE)) {
+        uMoverList.append(postureMoverRow(m));
+      }
+      if (posturePreview.moverCount > POSTURE_MOVERS_INLINE) {
+        const more = el("button", { class: "link" }, `View all ${posturePreview.moverCount}`);
+        more.addEventListener("click", () => {
+          openSheet(
+            (sheetBody) => {
+              const list = el("div", { class: "mover-list" });
+              for (const m of posturePreview.movers) list.append(postureMoverRow(m));
+              sheetBody.append(list);
+              if (posturePreview.truncated) {
+                sheetBody.append(
+                  el(
+                    "p", { class: "small muted", style: "margin-top:10px" },
+                    `Showing the ${posturePreview.movers.length} most consequential of ` +
+                      `${posturePreview.moverCount} — worst proposed tier first.`),
+                );
+              }
+            },
+            { title: "What moves", subtitle: headline, ariaLabel: "Assets that change tier" },
+          );
+        });
+        uMoverMore.append(more);
+      }
+    }
+
+    // -------------------------------------------------------------------------- sync
+    function onPostureEdit() {
+      syncPosture();
+      schedulePosturePreview();
+    }
+
+    function syncPosture() {
+      setText(uVersionPill, postureState.version === 0 ? "Spec defaults" : `Model v${postureState.version}`);
+      uStalePill.className = `pill ${postureState.stale ? "warn" : "ok"}`;
+      setText(uStalePill, postureState.stale ? "Tiers stale" : "Tiers current");
+      clear(uDirtyHost);
+      if (isPostureDirty()) uDirtyHost.append(statusPill("warn", "Unsaved changes"));
+      uRevertBtn.disabled = !isPostureDirty() || postureSaving;
+      uSaveBtn.disabled = postureSaving;
+
+      setValue(uCeilingInput, Math.round(postureDraft.topTierCeiling * 1000) / 10);
+
+      // Cascade row notes: shadowed or unreachable, and how many cells each row claims —
+      // both come from the preview, which walks the DRAFT, exactly like the other two
+      // cascades' own coverage.
+      const shadowed = (posturePreview && posturePreview.shadowed) || [];
+      const unreachable = (posturePreview && posturePreview.unreachable) || [];
+      const coverage = (posturePreview && posturePreview.cellCoverage) || null;
+      const rows = uCascadeBody.querySelectorAll("tr[data-idx]");
+      rows.forEach((tr, i) => {
+        const meta = tr.querySelector(".rule-rowmeta");
+        const isShadow = shadowed.indexOf(i) >= 0;
+        const isUnreachable = !isShadow && unreachable.indexOf(i) >= 0;
+        tr.classList.toggle("rule-dead", isShadow || isUnreachable);
+        setText(
+          meta,
+          isShadow
+            ? "never fires — an earlier rule already claims every cell it could match"
+            : isUnreachable
+              ? "never fires — names something no live signal can produce (see this rule's own header)"
+              : "",
+        );
+        paintPrices(tr.querySelector(".rule-prices"), coverage ? coverage.byRow[i] || 0 : null, coverage ? coverage.total : 0);
+      });
+      const fbRow = uCascadeBody.querySelector("tr.rule-fallback");
+      if (fbRow) {
+        paintPrices(
+          fbRow.querySelector(".rule-prices"),
+          coverage ? coverage.byFallback : null,
+          coverage ? coverage.total : 0);
+      }
+      uClaimsTh.hidden = !coverage;
+
+      syncPostureRecompute();
+    }
+
+    function syncPostureRecompute() {
+      const want = postureState.stale ? "1" : "0";
+      if (uRecomputeHost.dataset.sig === want) return;
+      uRecomputeHost.dataset.sig = want;
+      clear(uRecomputeHost);
+      if (!postureState.stale) return;
+      const btn = el("button", {}, "Recompute tiers");
+      btn.addEventListener("click", async () => {
+        const ok = await confirmDialog({
+          title: "Recompute every posture tier?",
+          body:
+            "Re-tiers every persisted asset under the saved rule and rewrites the assets " +
+            "tab. No sync-history row is written, so no trend is affected.",
+          confirmLabel: "Recompute",
+        });
+        if (!ok) return;
+        btn.disabled = true;
+        setText(btn, "Recomputing…");
+        try {
+          const fresh = await call("api_recomputePostures", {});
+          postureState = { ...postureState, ...fresh };
+          postureSaved = cloneRule(postureState.rule);
+          toast(`Retiered ${fresh.assetCount} assets.`);
+          syncPosture();
+          schedulePosturePreview();
+          ctx.refresh();
+        } catch (e) {
+          toast(String(e.message || e), "error");
+          btn.disabled = false;
+          setText(btn, "Recompute tiers");
+        }
+      });
+      uRecomputeHost.append(btn);
+    }
+
+    // ----------------------------------------------------------------------- preview
+    const schedulePosturePreviewRun = debounce(() => runPosturePreview(), PREVIEW_DEBOUNCE_MS);
+    function schedulePosturePreview() {
+      schedulePosturePreviewRun.cancel();
+      if (postureDraftErrors(postureDraft).length) {
+        posturePreview = null;
+        posturePreviewError = "";
+        uImpact.classList.remove("updating");
+        paintPostureImpact();
+        return;
+      }
+      uImpact.classList.add("updating");
+      schedulePosturePreviewRun();
+    }
+
+    async function runPosturePreview() {
+      const seq = ++posturePreviewSeq;
+      try {
+        const data = await call("api_previewPostureRule", { rule: postureDraft });
+        if (seq !== posturePreviewSeq) return;
+        posturePreview = data;
+        posturePreviewError = "";
+      } catch (e) {
+        if (seq !== posturePreviewSeq) return;
+        posturePreview = null;
+        posturePreviewError = String(e.message || e);
+      }
+      uImpact.classList.remove("updating");
+      paintPostureImpact();
+      syncPosture(); // row notes and cell counts come from the preview
+    }
+
+    // -------------------------------------------------------------------------- save
+    uRevertBtn.addEventListener("click", () => {
+      postureDraft = cloneRule(postureSaved);
+      renderPostureCascade();
+      onPostureEdit();
+    });
+
+    uSaveBtn.addEventListener("click", async () => {
+      const errs = postureDraftErrors(postureDraft);
+      if (errs.length) {
+        toast(errs[0], "warn");
+        return;
+      }
+      postureSaving = true;
+      syncPosture();
+      try {
+        const fresh = await call("api_setPostureRule", { rule: postureDraft });
+        postureState = fresh;
+        postureSaved = cloneRule(fresh.rule);
+        postureDraft = cloneRule(fresh.rule);
+        toast("Posture rule saved.");
+        renderPostureCascade();
+        postureSaving = false;
+        onPostureEdit();
+        ctx.refresh();
+      } catch (e) {
+        postureSaving = false;
+        syncPosture();
+        toast(String(e.message || e), "error");
+      }
+    });
+
+    // --------------------------------------------------------------------- first paint
+    renderPostureCascade();
+    syncPosture();
+    paintPostureImpact();
+    schedulePosturePreview();
+  }
 
   // --------------------------------------------------------------------- first paint
   renderCascade();

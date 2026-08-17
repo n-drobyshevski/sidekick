@@ -5,6 +5,8 @@
 import { DEFAULT_AARS_RULE, type AarsRule } from "./aars";
 import { cleanAarsRule } from "./aarsRule";
 import type { ScopePins } from "./complianceScope";
+import { cleanProblemRule, DEFAULT_PROBLEM_RULE, type ProblemRule } from "./problemRule";
+import { cleanPostureRule, DEFAULT_POSTURE_RULE, type PostureRule } from "./postureRule";
 import { cleanStepVars } from "./scanVars";
 import {
   DEPTH_DEFAULT,
@@ -121,6 +123,136 @@ export function withScoredRuleVersion(settings: Rec, version: unknown): Rec {
   return {
     ...settings,
     aars_scored_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0,
+  };
+}
+
+// ---------------------------------------------------------------------- problem rule
+//
+// `problem_rule` is a SECOND, SEPARATE settings key from `aars_rule` above — never merged
+// into it, for three reasons:
+//
+//   1. `scoringEqual` (aarsRule.ts) works by `delete c.bands` off the cleaned rule; a
+//      decision tree has no `bands` field at all. A shared no-op guard built on that trick
+//      would have nothing to delete for the tree half of a merged rule, so it could not
+//      tell a cosmetic tree edit from a decision-changing one the way it does for AARS.
+//   2. The two version counters must move INDEPENDENTLY. A tree edit must not mark every
+//      persisted AARS score stale, and an AARS point-rule edit must not mark every
+//      persisted problem verdict stale — one shared counter cannot answer two staleness
+//      questions that move on different schedules.
+//   3. Merging the two rule blobs into one settings cell would grow (and diff) the
+//      bootstrap snapshot for a feature that, as of this phase, is not wired into the API
+//      surface or the client at all — a cost paid by every deployment for no visible
+//      benefit yet.
+
+export interface StoredProblemRule {
+  version: number;
+  rule: ProblemRule;
+}
+
+/** Version 0 = never edited, i.e. the model is exactly `DEFAULT_PROBLEM_RULE`. */
+export function getProblemRule(settings: Rec): StoredProblemRule {
+  const raw = settings["problem_rule"];
+  if (!raw || typeof raw !== "object") {
+    return { version: 0, rule: cleanProblemRule(DEFAULT_PROBLEM_RULE) };
+  }
+  const stored = raw as Rec;
+  const version = Number(stored["version"]);
+  return {
+    version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
+    // cleanProblemRule on every read IS the migration mechanism, exactly as cleanAarsRule
+    // is above: a rule blob written by an older schema is repaired on the way OUT rather
+    // than migrated once on the way in, so there is no separate migration step to forget
+    // to run when a field is added to ProblemRule later.
+    rule: cleanProblemRule(stored["rule"]),
+  };
+}
+
+/**
+ * Store a rule and bump its version. The version is the cache/staleness token: derived
+ * views key on it, and verdicts persisted under an older version are known to be stale.
+ */
+export function withProblemRule(settings: Rec, rule: unknown): Rec {
+  const current = getProblemRule(settings);
+  return {
+    ...settings,
+    problem_rule: { version: current.version + 1, rule: cleanProblemRule(rule) },
+  };
+}
+
+/**
+ * The rule version the persisted problem verdicts were decided under. Compared against
+ * `getProblemRule().version` to decide whether the register needs a redecide.
+ */
+export function getDecidedRuleVersion(settings: Rec): number {
+  const v = Number(settings["problem_decided_version"]);
+  return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+}
+
+export function withDecidedRuleVersion(settings: Rec, version: unknown): Rec {
+  const v = Number(version);
+  return {
+    ...settings,
+    problem_decided_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0,
+  };
+}
+
+// ---------------------------------------------------------------------- posture rule
+//
+// `posture_rule` is a THIRD, SEPARATE settings key from `aars_rule` and `problem_rule`
+// above — never merged into either, for the same three reasons `problem_rule`'s own
+// header gives for staying apart from `aars_rule`: `tierEqual` (postureRule.ts) has its own
+// no-op guard shape, the version counters move independently (a posture-cascade edit must
+// not mark a single AARS score or problem verdict stale, and vice versa), and keeping the
+// three rule blobs apart keeps the bootstrap snapshot from growing for features a given
+// edit does not touch.
+
+export interface StoredPostureRule {
+  version: number;
+  rule: PostureRule;
+}
+
+/** Version 0 = never edited, i.e. the model is exactly `DEFAULT_POSTURE_RULE`. */
+export function getPostureRule(settings: Rec): StoredPostureRule {
+  const raw = settings["posture_rule"];
+  if (!raw || typeof raw !== "object") {
+    return { version: 0, rule: cleanPostureRule(DEFAULT_POSTURE_RULE) };
+  }
+  const stored = raw as Rec;
+  const version = Number(stored["version"]);
+  return {
+    version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
+    // cleanPostureRule on every read IS the migration mechanism — see getProblemRule's
+    // identical comment for why.
+    rule: cleanPostureRule(stored["rule"]),
+  };
+}
+
+/**
+ * Store a rule and bump its version. The version is the cache/staleness token: derived
+ * views key on it, and tiers persisted under an older version are known to be stale.
+ */
+export function withPostureRule(settings: Rec, rule: unknown): Rec {
+  const current = getPostureRule(settings);
+  return {
+    ...settings,
+    posture_rule: { version: current.version + 1, rule: cleanPostureRule(rule) },
+  };
+}
+
+/**
+ * The rule version the persisted posture tiers were computed under. Compared against
+ * `getPostureRule().version` to decide whether the register needs a recompute.
+ */
+export function getComputedPostureVersion(settings: Rec): number {
+  const v = Number(settings["posture_computed_version"]);
+  return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+}
+
+export function withComputedPostureVersion(settings: Rec, version: unknown): Rec {
+  const v = Number(version);
+  return {
+    ...settings,
+    posture_computed_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0,
   };
 }
 

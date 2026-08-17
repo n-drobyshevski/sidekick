@@ -5,14 +5,17 @@
 import {
   ASSET_COMPARATORS,
   CLIENT_ALL_MAX,
+  DEFAULT_PAGE_SIZE,
   facetCounts,
   filterAssetRows,
+  MAX_PAGE_SIZE,
   pageOf,
   resolveAssetQuery,
   sortAssetRows,
 } from "../domain/assetTable";
 import {
   AARS_V2_RULE,
+  AARS_V3_RULE,
   computeAars,
   DEFAULT_AARS_RULE,
   gap,
@@ -42,6 +45,39 @@ import {
   ruleChangePoints,
   type AarsTrendPoint,
 } from "../domain/aarsTrend";
+import {
+  countProblemOutcomes,
+  OUTCOME_VALUES,
+  type DecisionVector,
+  type Outcome,
+} from "../domain/problem";
+import {
+  cleanProblemRule,
+  leafCoverage,
+  MAX_OUTCOME_RULES,
+  problemRuleSummary,
+  shadowedOutcomeRules,
+  treeDiscrimination,
+  validateProblemRule,
+} from "../domain/problemRule";
+import { countPostureTiers, TIER_VALUES, type PostureVector, type Tier } from "../domain/posture";
+import {
+  buildProblemRows,
+  countProblemRowsByOutcome,
+  PROBLEMS_CLIENT_ALL_MAX,
+  rankProblems,
+  type ProblemRow,
+} from "../domain/problems";
+import {
+  cellCoverage,
+  cleanPostureRule,
+  MAX_TIER_RULES,
+  postureDiscrimination,
+  postureRuleSummary,
+  shadowedTierRules,
+  unreachableTierRules,
+  validatePostureRule,
+} from "../domain/postureRule";
 import {
   AARS_SEVERITY_ORDER,
   isOpenGap,
@@ -106,6 +142,7 @@ import {
 import {
   AI_ASSET_KINDS,
   NODE_KINDS,
+  type FindingRow,
   type FrameworkPolicyRow,
   type GEdge,
   type GNode,
@@ -588,6 +625,11 @@ function assetRow(n: GNode): Rec {
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aarsSeverity: n.aarsSeverity ?? null,
+    // Phase 6: the posture tier, BESIDE the AARS score above, never blended into it — see
+    // posture.ts's own header for why a tier is not an aggregate of what has been found.
+    postureTier: n.postureTier ?? null,
+    postureInput: n.postureInput ?? null,
+    worstOpenProblem: n.worstOpenProblem ?? null,
     comboGroups: n.comboGroups ?? [],
     internet: n.isAccessibleFromInternet ?? null,
     openInternet: n.isOpenToAllInternet ?? null,
@@ -648,6 +690,9 @@ function assetTableRow(n: GNode, issuesBySeverity?: Record<string, number>): Rec
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aarsSeverity: n.aarsSeverity ?? null,
+    // Phase 6: BESIDE aars — the two must be visibly independent columns, never merged.
+    postureTier: n.postureTier ?? null,
+    worstOpenProblem: n.worstOpenProblem ?? null,
     combos: (n.comboGroups ?? []).length,
     guardrailMissing: n.guardrailMissing ?? false,
     agentic: n.identityPurpose === "AGENTIC",
@@ -1456,6 +1501,87 @@ export function getToxicCombos(_p?: unknown): ApiResult {
   );
 }
 
+// -------------------------------------------------------------------------- problems
+
+interface ProblemsModel {
+  /** Ranked once, by `compareProblems` — never re-sorted per request. */
+  rows: ProblemRow[];
+  outcomeCounts: Record<string, number>;
+}
+
+/**
+ * The Priorities page's whole population: every unresolved issue and every open finding,
+ * one row each, ranked. Cached per data version like `assetsModel` / `configModel` — the
+ * join against every asset (for posture tier and amplification) reads the whole assets
+ * tab and must not run per keystroke, and the ranking itself is O(n log n) over the same
+ * population on every call otherwise.
+ */
+function problemsModel(): ProblemsModel {
+  const assetsById = new Map(syncStore.loadAssets().map((a) => [a.id, a]));
+  const rows = rankProblems(
+    buildProblemRows(syncStore.loadIssues(), syncStore.loadFindings(), assetsById),
+  );
+  return { rows, outcomeCounts: countProblemRowsByOutcome(rows) };
+}
+
+/**
+ * The estate-wide Priorities: issues ∪ findings, ranked together — the thing neither
+ * Toxic Combinations (issues scoped to one pattern) nor Cloud Configuration (findings
+ * only) can answer. Same two-mode shape `getAssets` / `getConfigFindings` keep: under
+ * `PROBLEMS_CLIENT_ALL_MAX` the browser gets every row, already ranked, and filters and
+ * pages locally — the shape `pages/combos.js`'s issue table already uses for one group,
+ * copied here for the whole union; over it the outcome filter and paging happen here.
+ *
+ * `total` is always the WHOLE union regardless of mode or filter, so a caller can check
+ * the invariant `problems.ts`'s own header documents: `total` must equal
+ * `issues.filter(isUnresolvedIssue).length + findings.filter(isOpenGap).length` exactly.
+ */
+export function getProblems(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const outcome = String(params["outcome"] ?? "").toUpperCase();
+    const validOutcome = (OUTCOME_VALUES as readonly string[]).includes(outcome) ? outcome : "";
+    const pageSize = Math.min(
+      MAX_PAGE_SIZE,
+      Math.max(1, Number(params["pageSize"]) || DEFAULT_PAGE_SIZE),
+    );
+    const page = Math.max(0, Number(params["page"]) || 0);
+
+    const model = cached("problemsModel", null, problemsModel) as ProblemsModel;
+    const head = {
+      // The union invariant's left-hand side — every unresolved issue and every open
+      // finding, regardless of the outcome filter or the mode below.
+      total: model.rows.length,
+      outcomeCounts: model.outcomeCounts,
+      pageSize,
+    };
+
+    if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
+      return {
+        ...head,
+        all: true,
+        rows: model.rows,
+        filtered: model.rows.length,
+        page: 0,
+        pageCount: Math.max(1, Math.ceil(model.rows.length / pageSize)),
+      };
+    }
+
+    const filtered = validOutcome
+      ? model.rows.filter((r) => r.problemOutcome === validOutcome)
+      : model.rows;
+    const paged = pageOf(filtered as unknown as Rec[], page, pageSize);
+    return {
+      ...head,
+      all: false,
+      rows: paged.rows,
+      filtered: filtered.length,
+      page: paged.page,
+      pageCount: paged.pageCount,
+    };
+  });
+}
+
 // ----------------------------------------------------------------------------- sync
 
 export function runSync(_p?: unknown): ApiResult {
@@ -1612,7 +1738,7 @@ function ruleState(): Rec {
     defaults: DEFAULT_AARS_RULE,
     // Whole rules the page can load into the draft. `defaults` above is the spec model and
     // stays where it is (Reset reads it); presets are alternatives, not a fallback.
-    presets: { v2: AARS_V2_RULE },
+    presets: { v2: AARS_V2_RULE, v3: AARS_V3_RULE },
     summary: ruleSummary(stored.rule),
     scoredVersion,
     // Only the point model can strand the persisted scores; bands re-derive on read, and
@@ -1770,6 +1896,283 @@ export function scoreAarsSample(p?: unknown): ApiResult {
 
 export function rescoreAars(_p?: unknown): ApiResult {
   return mutate(() => ({ ...syncStore.rescoreInventory(), ...ruleState() }));
+}
+
+// ------------------------------------------------------------------------ problem rule
+//
+// The Phase 3/4 decision tree (domain/problem.ts, domain/problemRule.ts) exposed: same
+// four endpoints as the AARS rule above, same shapes, mirrored rather than shared because
+// the two models diverge in exactly the ways aarsRule.ts's and problemRule.ts's own header
+// comments explain (a continuous score vs. a 4-outcome tree; `stale` compares against a
+// DECIDED version, not a scored one).
+
+/**
+ * The same {version, rule, decidedVersion, stale, summary, leafCoverage, validation,
+ * shadowed} shape ruleState() assembles for AARS, mirrored onto the tree. getProblemRule
+ * and setProblemRule share it so the two can never disagree about what "the current state"
+ * means — the same reason ruleState() itself is factored out rather than duplicated.
+ */
+function problemRuleState(): Rec {
+  const stored = settingsStore.getProblemRule();
+  const decidedVersion = settingsStore.getDecidedRuleVersion();
+  return {
+    version: stored.version,
+    rule: stored.rule,
+    decidedVersion,
+    // Only outcomeRules / fallbackOutcome / the derivation knobs can strand a persisted
+    // verdict (decisionEqual, problemRule.ts) — setProblemRule's own no-op guard already
+    // moves decidedVersion forward across an edit that cannot have changed one.
+    stale: decidedVersion !== stored.version,
+    summary: problemRuleSummary(stored.rule),
+    leafCoverage: leafCoverage(stored.rule),
+    validation: validateProblemRule(stored.rule),
+    shadowed: shadowedOutcomeRules(stored.rule),
+    limits: { maxOutcomeRules: MAX_OUTCOME_RULES },
+  };
+}
+
+export function getProblemRule(_p?: unknown): ApiResult {
+  return run(() => problemRuleState());
+}
+
+export function setProblemRule(p?: unknown): ApiResult {
+  return mutate(() => {
+    const params = (p ?? {}) as Rec;
+    const proposed = cleanProblemRule(params["rule"]);
+    const errors = validateProblemRule(proposed);
+    if (errors.length) throw new Error(errors.join(" "));
+    settingsStore.setProblemRule(proposed);
+    return problemRuleState();
+  });
+}
+
+/** An issue row, narrowed from the union `previewProblemRule` walks — see `isIssueRow`. */
+function isIssueRow(row: IssueRow | FindingRow): row is IssueRow {
+  return "assetId" in row;
+}
+
+/**
+ * The decided population `treeDiscrimination` wants: outcome + vector + unknowns, read off
+ * whichever rows a preview actually reached a verdict on. A row `decideProblemsWith`
+ * stripped (no longer eligible) or never decided carries no `problemInput` and is skipped —
+ * the same "decided, not merely present" filter `countProblemOutcomes` applies via
+ * `OUTCOME_VALUES`, applied here to the richer shape treeDiscrimination needs.
+ */
+function decidedForDiscrimination(
+  rows: ReadonlyArray<IssueRow | FindingRow>,
+): Array<{ outcome: Outcome; vector: DecisionVector; unknowns: string[] }> {
+  const out: Array<{ outcome: Outcome; vector: DecisionVector; unknowns: string[] }> = [];
+  for (const row of rows) {
+    const outcome = row.problemOutcome;
+    const input = row.problemInput;
+    if (!outcome || !input || !(OUTCOME_VALUES as readonly string[]).includes(outcome)) continue;
+    out.push({ outcome: outcome as Outcome, vector: input.vector, unknowns: input.unknowns });
+  }
+  return out;
+}
+
+/**
+ * What saving this rule would do to every open issue and failing finding as they read
+ * right now — previewAarsRule's counterpart, built the same way: `syncStore
+ * .decideProblemsWith(draft)` costs ZERO Wiz calls (every axis reading is either already
+ * persisted in `problemInput` or cheap to re-derive from the tabs), and the result is
+ * diffed against what the register shows today.
+ *
+ * `treeDiscrimination`'s per-axis unknown rates are the reason this endpoint exists: they
+ * are how an operator discovers that, say, `validatedAsExploitable` is unpopulated on
+ * their tenant — the finding the whole SSVC-shaped model hinges on, and the one thing this
+ * payload must never let get buried under the outcome counts. See problemRule.ts's own
+ * header for why `treeDiscrimination` measures unknown rates and leaves reached rather than
+ * porting `ruleDiscrimination`'s tie-rate machinery.
+ */
+export function previewProblemRule(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const proposed = cleanProblemRule(params["rule"]);
+    const errors = validateProblemRule(proposed);
+    if (errors.length) throw new Error(errors.join(" "));
+
+    const beforeAll: Array<IssueRow | FindingRow> = [...syncStore.loadIssues(), ...syncStore.loadFindings()];
+    const beforeById = new Map(beforeAll.map((r) => [r.id, r.problemOutcome]));
+
+    const after = syncStore.decideProblemsWith(proposed);
+    const afterAll: Array<IssueRow | FindingRow> = [...after.issues, ...after.findings];
+
+    const rank = (o: string | undefined): number => {
+      const i = o ? (OUTCOME_VALUES as readonly string[]).indexOf(o) : -1;
+      return i < 0 ? OUTCOME_VALUES.length : i;
+    };
+
+    const movers: Rec[] = [];
+    for (const row of afterAll) {
+      const fromOutcome = beforeById.get(row.id) ?? null;
+      const toOutcome = row.problemOutcome ?? null;
+      if (fromOutcome === toOutcome) continue;
+      movers.push({
+        id: row.id,
+        kind: isIssueRow(row) ? "issue" : "finding",
+        ruleName: isIssueRow(row) ? row.ruleName : (row.ruleName ?? row.ruleShortId ?? ""),
+        assetName: isIssueRow(row) ? row.assetName : (row.resourceName ?? row.resourceId),
+        fromOutcome,
+        toOutcome,
+      });
+    }
+    // Worst proposed outcome first — the queue an operator would actually triage — then id
+    // for a stable order across an otherwise-tied pair.
+    movers.sort((a, b) => {
+      const r = rank(a["toOutcome"] as string | undefined) - rank(b["toOutcome"] as string | undefined);
+      return r !== 0 ? r : String(a["id"]).localeCompare(String(b["id"]));
+    });
+
+    return {
+      total: afterAll.length,
+      current: countProblemOutcomes(beforeAll),
+      proposed: countProblemOutcomes(afterAll),
+      // The proposed rule read back in prose, and the rows that can never be a first match —
+      // both describe the DRAFT, so they travel with the preview rather than the saved state.
+      summary: problemRuleSummary(proposed),
+      leafCoverage: leafCoverage(proposed),
+      shadowedOutcomeRules: shadowedOutcomeRules(proposed),
+      validation: validateProblemRule(proposed),
+      treeDiscrimination: treeDiscrimination(decidedForDiscrimination(afterAll)),
+      movers: movers.slice(0, PREVIEW_MOVERS_MAX),
+      moverCount: movers.length,
+      truncated: movers.length > PREVIEW_MOVERS_MAX,
+    };
+  });
+}
+
+export function recomputeProblems(_p?: unknown): ApiResult {
+  return mutate(() => ({ ...syncStore.redecideProblems(), ...problemRuleState() }));
+}
+
+// ------------------------------------------------------------------------ posture rule
+//
+// Phase 6's lattice (domain/posture.ts, domain/postureRule.ts) exposed: same four
+// endpoints as the AARS rule and the problem rule above, same shapes, mirrored rather than
+// shared for the reason each of those own header comments gives — three genuinely
+// different models (a continuous score, a 4-outcome tree, a 4-tier lattice) that happen to
+// share an editor idiom, not one model wearing three costumes.
+
+/**
+ * The same {version, rule, computedVersion, stale, summary, cellCoverage, validation,
+ * shadowed, unreachable} shape `problemRuleState()` assembles for the tree, mirrored onto
+ * the lattice. `getPostureRule` and `setPostureRule` share it so the two can never
+ * disagree about what "the current state" means.
+ */
+function postureRuleState(): Rec {
+  const stored = settingsStore.getPostureRule();
+  const computedVersion = settingsStore.getComputedPostureVersion();
+  return {
+    version: stored.version,
+    rule: stored.rule,
+    computedVersion,
+    stale: computedVersion !== stored.version,
+    summary: postureRuleSummary(stored.rule),
+    cellCoverage: cellCoverage(stored.rule),
+    validation: validatePostureRule(stored.rule),
+    shadowed: shadowedTierRules(stored.rule),
+    unreachable: unreachableTierRules(stored.rule),
+    limits: { maxTierRules: MAX_TIER_RULES },
+  };
+}
+
+export function getPostureRule(_p?: unknown): ApiResult {
+  return run(() => postureRuleState());
+}
+
+export function setPostureRule(p?: unknown): ApiResult {
+  return mutate(() => {
+    const params = (p ?? {}) as Rec;
+    const proposed = cleanPostureRule(params["rule"]);
+    const errors = validatePostureRule(proposed);
+    if (errors.length) throw new Error(errors.join(" "));
+    settingsStore.setPostureRule(proposed);
+    return postureRuleState();
+  });
+}
+
+/**
+ * The decided population `postureDiscrimination` wants: tier + vector + unknowns, read off
+ * whichever nodes a preview actually folded a tier onto. Mirrors `decidedForDiscrimination`
+ * (the problem-rule preview's identical filter) — a node with no `postureInput` (never
+ * folded, or a synthetic node the fold skipped) is excluded rather than guessed at.
+ */
+function decidedForPostureDiscrimination(
+  nodes: ReadonlyArray<{ postureTier?: number; postureInput?: { capability: string; containment: string; consequence: string; unknowns?: string[] } }>,
+): Array<{ tier: Tier; vector: PostureVector; unknowns: string[] }> {
+  const out: Array<{ tier: Tier; vector: PostureVector; unknowns: string[] }> = [];
+  for (const node of nodes) {
+    const tier = node.postureTier;
+    const input = node.postureInput;
+    if (!input || !(TIER_VALUES as readonly number[]).includes(tier as number)) continue;
+    out.push({
+      tier: tier as Tier,
+      vector: {
+        capability: input.capability as PostureVector["capability"],
+        containment: input.containment as PostureVector["containment"],
+        consequence: input.consequence as PostureVector["consequence"],
+      },
+      unknowns: input.unknowns ?? [],
+    });
+  }
+  return out;
+}
+
+/**
+ * What saving this rule would do to every persisted asset's tier as it reads right now —
+ * `previewProblemRule`'s counterpart, built the same way: `syncStore.posturesWith(draft)`
+ * costs ZERO Wiz calls (posture derivation reads only the node's own already-persisted
+ * fields plus the already-decided problem verdicts), and the result is diffed against what
+ * the Inventory shows today.
+ */
+export function previewPostureRule(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const proposed = cleanPostureRule(params["rule"]);
+    const errors = validatePostureRule(proposed);
+    if (errors.length) throw new Error(errors.join(" "));
+
+    const before = syncStore.loadAssets();
+    const beforeById = new Map(before.map((n) => [n.id, n.postureTier]));
+
+    const after = syncStore.posturesWith(proposed);
+
+    const movers: Rec[] = [];
+    for (const node of after) {
+      const fromTier = beforeById.get(node.id) ?? null;
+      const toTier = node.postureTier ?? null;
+      if (fromTier === toTier) continue;
+      movers.push({
+        id: node.id, name: node.name, kind: node.kind, fromTier, toTier,
+      });
+    }
+    // Worst proposed tier first (4 → 1) — the queue an operator would actually triage —
+    // then id for a stable order across an otherwise-tied pair.
+    movers.sort((a, b) => {
+      const r = Number(b["toTier"] ?? 0) - Number(a["toTier"] ?? 0);
+      return r !== 0 ? r : String(a["id"]).localeCompare(String(b["id"]));
+    });
+
+    return {
+      total: after.length,
+      current: countPostureTiers(before),
+      proposed: countPostureTiers(after),
+      summary: postureRuleSummary(proposed),
+      cellCoverage: cellCoverage(proposed),
+      shadowed: shadowedTierRules(proposed),
+      unreachable: unreachableTierRules(proposed),
+      validation: validatePostureRule(proposed),
+      postureDiscrimination: postureDiscrimination(decidedForPostureDiscrimination(after)),
+      movers: movers.slice(0, PREVIEW_MOVERS_MAX),
+      moverCount: movers.length,
+      truncated: movers.length > PREVIEW_MOVERS_MAX,
+    };
+  });
+}
+
+export function recomputePostures(_p?: unknown): ApiResult {
+  return mutate(() => ({ ...syncStore.recomputePostures(), ...postureRuleState() }));
 }
 
 // ----------------------------------------------------------------------------- data

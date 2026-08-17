@@ -50,20 +50,25 @@ against a 30-point cap, that saturates:
 Scored end-to-end over the seed estate through the live path:
 
 ```
-spec rule, LIVE derivation   distinct scores: 5     largest tie group: 15
-0,0,0,0,0,0,0,0,22,29,29,72,72,72,72,72,72,72,72,72,72,72,72,72,72,72,76,76,76,76
+spec rule, LIVE derivation   distinct scores: 5     largest tie group: 14
+0,0,0,0,0,0,0,0,22,29,29,72,72,72,72,72,72,72,72,72,72,72,72,72,72,76,76,76,76,76
 bands: CRITICAL 19 · HIGH 0 · MEDIUM 0 · LOW 3 · INFO 8
-pillar B at cap: 19 of 19 scored agents
+tie rate: 0.30    effective cardinality: 3.67
+pillar B at cap: 19 of 30 scored assets — and those 19 are exactly the CRITICAL band
 ```
 
-**Fifteen assets tie at exactly 72. Every scored agent is CRITICAL. HIGH and MEDIUM are
+**Fourteen assets tie at exactly 72. Every asset above LOW is CRITICAL. HIGH and MEDIUM are
 unreachable.** A prioritiser that rates everything CRITICAL does not prioritise, and a
-"top 10" cut from a 15-asset tie block is arbitrary.
+"top 10" cut from a 14-asset tie block is arbitrary. The two figures added above put a
+magnitude on "collapses": **30% of all asset pairs cannot be separated at all**, and the
+estate behaves as though it has 3.67 distinct scores rather than the 5 it literally has —
+`distinctScores` counts values, `effectiveCardinality` weights them by how many assets take
+each, so the lone 22 does not get to claim a fifth of the discrimination.
 
 The dashboard's demo hides this: the dry-run scores from `SEED_AARS_HINTS`
 (`sampleData.ts:507`), which pin 2–3 codes per asset transcribed from the doc, and produce
-10 distinct scores across five bands. **The demo and production disagree about the model,
-and only the demo looks healthy.**
+10 distinct scores (tie rate 0.14, effective cardinality 7.43) across four occupied bands.
+**The demo and production disagree about the model, and only the demo looks healthy.**
 
 **Root cause.** [`custom_score.md:21-24`](custom_score.md) prices "a failing OWASP LLM
 **control**" — one charge per framework. The implementation charges per **code** within the
@@ -155,6 +160,18 @@ no tenant re-scores on upgrade.
 | `gapSources` | all off | 3.3. `5R_*` from the issue's own 5Rs mapping; `DEPRECATED_MODEL` and a new `INACTIVE_AGENT` from `status` |
 | `exposurePoints` | all zero | §4. Pillar D, derived through the existing `conditionState` so the tri-state survives: `null` → `UNDETERMINED`, never `CONFIRMED`, never `NONE` |
 | `findingSeverityWeights` | all 1 | §4. A CRITICAL failing control can outrank a LOW one. At weight 1 no override is written, so the persisted input stays byte-identical |
+| `gapUnit: "code" \| "condition"` | `code` | [AARS_SCORING_ASSESSMENT.md](AARS_SCORING_ASSESSMENT.md) §1. `"condition"` retires framework-code gaps entirely and prices one gap per held `riskConditions.CONDITION_KEYS` condition plus one per distinct toxic-combination group instead — the label-vs-condition fix, not another aggregation trick on top of the same codes. Framework codes stay on `IssueRow.frameworks`; only pillar B's currency changes, so the detail sheet and compliance rollups are untouched |
+
+**A `gapSources` change now takes effect on Recompute — it previously did not.**
+`gapSources` decides WHICH GAPS EXIST, not how they price, but the rescore path reused a
+persisted `aarsInput` unconditionally: flip `fiveRs` on and hit Recompute, and nothing moved
+until the next full sync, because the reused gaps were still the ones derived under the old
+flags. `aars.derivationSignature` fingerprints the four `gapSources` flags, `GNode.aarsInput`
+now carries the signature it was derived under (`derivedUnder`), and `syncStore.enrichFromTabs`
+reuses a persisted input only when that signature still matches (or is absent — a legacy row,
+reused so no tenant re-scores on upgrade) — otherwise it lets `deriveAarsInput` re-derive.
+Every other knob above is a PRICING change and is unaffected: reusing the persisted input for
+those is the point, not the bug.
 
 **Diagnostics** (`ruleDiscrimination`, `unreachableGapRules`) now report distinct scores, the
 largest tie group, the range used, empty bands, and per-pillar cap saturation on the Rules
@@ -168,25 +185,65 @@ nothing; that budget buys pillar D, which discriminates. The 5Rs amplifier is fo
 points (`dataAmplifier: 1`) so the pillar says what it means. Bands stay at 70/50/30/10 —
 they carry the doc's remediation SLAs, and the page's rail moves them per tenant.
 
+**`AARS_V3_RULE`** is v2 with one further change: `gapUnit: "condition"` instead of another
+turn on `gapAggregation`. v2 takes pillar B off its ceiling by root-sum-squaring the SAME
+5-6 framework codes an issue mints — sublinear, but still summing three taxonomies' names
+for one fact. v3 retires the framework code as pillar B's currency and prices the
+`riskConditions.CONDITION_KEYS` condition an asset actually holds instead — see
+[AARS_SCORING_ASSESSMENT.md](AARS_SCORING_ASSESSMENT.md) §1 for why that is the structural
+fix rather than a second aggregation trick. Framework codes are untouched on
+`IssueRow.frameworks`; only pillar B stops pricing them.
+
 Measured over the seed estate, live path:
 
-| | spec rule | **AARS v2** |
-|---|---|---|
-| distinct scores | 5 | **11** |
-| largest tie group | 15 | 12 |
-| pillar B at cap | **19 of 19** | **0** |
-| bands occupied | CRITICAL 19 · HIGH 0 · MEDIUM 0 | HIGH 15 · MEDIUM 2 · LOW 1 (+INFO 8) |
-| unreachable cascade rows | 3 | 1 |
+| | spec rule | **AARS v2** | **AARS v3** |
+|---|---|---|---|
+| distinct scores | 5 | **11** | 10 |
+| largest tie group | 14 | 12 | 14 |
+| tie rate | 0.30 | **0.20** | 0.26 |
+| effective cardinality | 3.67 | **6.43** | 5.31 |
+| pillar B at cap | **19 of 30** | **1 of 30** | **0 of 30** |
+| bands occupied | CRITICAL 19 · HIGH 0 · MEDIUM 0 · LOW 3 | HIGH 4 · MEDIUM 15 · LOW 2 (+INFO 9) | HIGH 2 · MEDIUM 17 · LOW 3 (+INFO 8) |
+| unreachable cascade rows | 3 | 1 | **0** |
+
+**v3 does not beat v2 on tie rate or effective cardinality — both come out worse.** It wins
+outright on the metric it was built for (pillar B saturation: 19 of 30 down to 0, better
+even than v2's already-good 1 of 30) and on cascade health (every row derivable — 0
+unreachable), but the coarser, more correct currency costs some separation: `COMBO_` is one
+flat-priced prefix, so two assets holding the SAME three conditions but belonging to
+DIFFERENT toxic-combination groups (`gcp-managed-privileged` vs `bedrock-no-guardrail`) now
+price identically, where v2's per-framework-code cascade happened to separate them by which
+6-7 codes each pattern mints. That is the SAME "genuinely identical inputs" tie §7 documents
+for v2 (12 assets there) — it is larger here (14) because pricing the condition rather than
+the code is honest about there being less real difference between those two patterns than
+the code list made it look like, not because v3 is worse at discriminating on a like-for-like
+basis. Giving each combo group its own cascade price was tried and measured: it changes
+nothing under `rss` (the point spread rounds away before the pillar collapses to an integer)
+and reopens the pillar-B saturation this preset exists to close under `sum`. Reported here
+rather than tuned quietly until the table looked better.
+
+Every figure in the v2 columns above is asserted in `test/scoreOrdinality.test.ts` §6; the v3
+column is §6b, against the same live path. That is the point of pinning them: the numbers
+above were measured once, by hand, and the seed estate then drifted underneath them — three
+issues added to `agent-e` moved it from the 72 block to the 76 block, and the earlier
+"15 / 19 of 19 / HIGH 15 · MEDIUM 2" row was stale before anyone noticed. A claim a test does
+not hold is a claim that expires quietly.
 
 ## 7. Known limits
 
 - **A 12-asset tie remains under v2**, and no scoring function can fix it: those agents have
   genuinely identical inputs — same gap shape, sensitive data, no confirmed exposure, one
   issue. Separating them needs signal the model does not have.
-- **`projects[].businessImpact` is the signal that would break it.** It is queried
-  (`wizQueriesAi.ts:50`), normalized (`syncNormalize.ts:106`) and typed
-  (`graphTypes.ts:136`) — then dropped at `syncStore.ts:67`, which writes project *names*
-  only. Reaching it needs a new `ai_assets` column. This is the highest-value follow-up.
+- **`projects[].businessImpact` now reaches `ai_assets`, and the tie still stands.** It is
+  queried (`wizQueriesAi.ts:104`), normalized once (`syncNormalize.worstBusinessImpact`,
+  exported so `graphEnrich.enrichGraphDoc` shares the same HBI>MBI>LBI ordering) and folded
+  onto `GNode.businessImpact` (`graphTypes.ts:363`) — the asset-level worst-of, persisted in
+  a new `ai_assets.business_impact` column (`syncStore.ts` `assetToRow`/`rowToAsset`), with
+  `projects_json` now carrying the full `{id, name, businessImpact}` objects instead of
+  names a read had to fabricate ids for. It is a DISPLAY signal only: AARS prices nothing
+  from it, by the same "no default rule change" discipline every addition here follows, so
+  the 12-asset tie above is unmoved. Feeding it into a pillar or a new knob — the tie-break
+  this signal was named for — remains the follow-up.
 - **Pillar C is still at its ceiling for 20 of 30 assets** under v2. It is a true fact about
   the estate rather than a modelling error, but it means the pillar ranks little; v2 responds
   by reducing its weight rather than by pretending otherwise.
@@ -202,8 +259,17 @@ Measured over the seed estate, live path:
 
 - **Changing `DEFAULT_AARS_RULE`.** Every improvement here moves scores; making any of it
   default would silently re-score every tenant and invalidate the normative applied table.
-- **A gap theme / equivalence map** for 3.4. `rss` absorbs most of the double-count for far
-  less machinery. Worth revisiting only if measured discrimination stays poor.
+- ~~A gap theme / equivalence map for 3.4, worth revisiting only if measured discrimination
+  stays poor.~~ **Revisited — built as `gapUnit: "condition"` / `AARS_V3_RULE`, §6.** The
+  verdict, now that the numbers are in: worth shipping for CORRECTNESS — it is the structural
+  fix (framework codes stop feeding pillar B at all, so the LLM03/ASI04/ML_SUPPLY_CHAIN
+  triple-charge is gone by construction, not softened by an exponent), and pillar B goes from
+  saturated for 19 of 30 assets to 0 — but it is NOT a discrimination win over `rss` alone:
+  v3's tie rate (0.26) and effective cardinality (5.31) are both worse than v2's (0.20 /
+  6.43), because the coarser currency correctly stops treating two different toxic-combo
+  patterns as different once they cost the same conditions. Ship both: v2 for tenants who
+  want `rss`'s bigger discrimination gain with a lower migration bar (same code-based
+  vocabulary, one aggregation flip), v3 for tenants who want pillar B to mean what it says.
 - **Replacing the numeric score with a decision tree.** Defensible on the merits, but it
   would discard the trend series, the bands, and the entire Rules page.
 - **Refitting v2's bands to the seed distribution.** Thirty demo assets are not a population;
@@ -214,19 +280,50 @@ Measured over the seed estate, live path:
 The measurements in §2 and §6 come from scoring the seed estate through the two paths:
 
 ```js
-import { AARS_V2_RULE, DEFAULT_AARS_RULE } from "../src/domain/aars";
+import { AARS_V2_RULE, AARS_V3_RULE, DEFAULT_AARS_RULE } from "../src/domain/aars";
 import { ruleDiscrimination } from "../src/domain/aarsRule";
 import { enrichGraphDoc } from "../src/domain/graphEnrich";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
 // the demo path — pinned hints, 2-3 codes per asset
 enrichGraphDoc(seedGraphDoc("T"), SEED_ISSUES, SEED_AARS_HINTS, DEFAULT_AARS_RULE);
-// the live path — deriveAarsInput, 5-6 codes per asset
+// the live path — deriveAarsInput, 5-6 codes per asset (framework codes) under the spec
+// rule and v2, one gap per held condition + toxic-combo group under v3
 enrichGraphDoc(seedGraphDoc("T"), SEED_ISSUES, undefined, DEFAULT_AARS_RULE);
 enrichGraphDoc(seedGraphDoc("T"), SEED_ISSUES, undefined, AARS_V2_RULE);
+enrichGraphDoc(seedGraphDoc("T"), SEED_ISSUES, undefined, AARS_V3_RULE);
 // then: ruleDiscrimination(doc.nodes, rule)
 ```
 
-The same numbers are asserted in `gas_ai/test/aars.test.ts`,
-`gas_ai/test/aarsRule.test.ts` and `gas_ai/test/graphEnrich.test.ts`; `npm run check` in
-`gas_ai/` runs them.
+The same numbers are asserted in `gas_ai/test/aars.test.ts`, `gas_ai/test/aarsRule.test.ts`
+and `gas_ai/test/graphEnrich.test.ts` (spec rule and v2), and in
+`gas_ai/test/scoreOrdinality.test.ts` §6 (v2) and §6b (v3); `npm run check` in `gas_ai/` runs
+them.
+
+## 10. Measure specifications
+
+Every number this section has discussed as prose — §2's tie rate and effective
+cardinality, §2b's near-constant pillars, §6's before/after discrimination deltas — and
+every other number this product publishes now has a formal record: `gas_ai/src/domain/
+measureSpec.ts`. It is the authoritative list, written to NIST SP 800-55v1's measure
+specification template plus ISO/IEC 27004 Annex A's `measurementMethod` /
+`revisionDue` — one record per number, stating its goal, scope, formula, target (or the
+honest absence of one), evidence, time basis, owner, source column and where it is
+reported.
+
+Two disciplines that section this repo would otherwise be tempted to soften:
+
+- Any record whose value can be swayed by `ai_verdict` or `ai_recommended_severity` — an
+  LLM rater's opinion, non-deterministic upstream, unmeasured inter-rater reliability — is
+  marked `measurementMethod: "Subjective"`, not `"Objective"`. `problem-outcome-distribution`
+  is that record: its exploitation axis can be set through `issue.aiVerdict`.
+- No record computes an MTTR over closed issues. `resolvedAt` exists, but a mean over that
+  population is censored data — every still-open issue has no close date and would be
+  silently excluded, which is precisely the population an MTTR figure exists to catch. The
+  file publishes none rather than publish one that flatters itself.
+
+`gas_ai/test/measureSpec.test.ts` turns the record's own completeness into a build
+failure: every field must be non-empty, every `dataSource` must name a column
+`sheetsDb.ts`'s `TAB_HEADERS` still carries, and no record may be past its own
+`revisionDue` at the test's frozen clock — the mechanism that makes "review this
+periodically" an enforced date rather than a comment nobody rereads.

@@ -93,9 +93,19 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
   ["getAssetOptions", {}],
   ["getIssues", {}],
   ["getToxicCombos", {}],
+  // Phase 7: the estate-wide Priorities page — issues ∪ findings, ranked together.
+  ["getProblems", {}],
   ["getSyncHistory", {}],
   ["getSettings", {}],
   ["getAarsRule", {}],
+  // Phase 5: the problem tree's rule state, mirroring getAarsRule above. Mutating
+  // endpoints (setProblemRule, previewProblemRule, recomputeProblems) stay out of this
+  // list, per its own rule.
+  ["getProblemRule", {}],
+  // Phase 6: the posture lattice's rule state, mirroring getProblemRule above. Mutating
+  // endpoints (setPostureRule, previewPostureRule, recomputePostures) stay out of this
+  // list, per its own rule.
+  ["getPostureRule", {}],
   ["getStorageStats", {}],
   // agent-h-chatbot is the max-degree node in the golden getGraph payload (17 neighbors),
   // so it exercises the widest neighbour list getAssetDetail can produce in this estate.

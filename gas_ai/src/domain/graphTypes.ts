@@ -5,6 +5,11 @@
 import type { AarsGap, DataExposure, InternetExposure } from "./aars";
 import type { AarsSeverity, Severity } from "./config";
 import { SEVERITY_ORDER } from "./config";
+// Type-only, and mutual with problem.ts (which itself imports FindingRow/GNode/IssueRow
+// from here): problem.ts is where `ProblemVerdictInput` naturally lives, next to the
+// `DecisionVector` axes it is built from, and `import type` is erased at compile time, so
+// this closes no runtime cycle — only a type-checking one, which tsc resolves fine.
+import type { ProblemVerdictInput } from "./problem";
 import type { Rec } from "./util";
 
 /**
@@ -360,6 +365,20 @@ export interface GNode {
     critical: number;
   };
   // Enrichment, computed once at sync time and persisted:
+  /**
+   * Worst business-impact tier across this asset's OWN projects (HBI beats MBI beats LBI),
+   * folded from `projects[].businessImpact` by `enrichGraphDoc` so the register and the
+   * AARS Rules page can read one column instead of walking the project list on every row.
+   *
+   * Absent means Wiz reported NO business impact for any of the asset's projects — an
+   * unattributed project, or an asset with no projects at all — and must NEVER be read as
+   * "low impact": that would silently promote "nobody classified this" into a claim about
+   * the asset's importance. The same "not reported vs not true" split `inactive` and
+   * `dataFindingCount` already keep in this file. Display-only: AARS does not price it
+   * (ai/AARS_ASSESSMENT.md §7), and the score-identity assertions in
+   * scoreOrdinality.test.ts are what pin that this field never moves a score.
+   */
+  businessImpact?: string;
   severity?: Severity;      // worst attached open-issue severity (ISSUE nodes: own severity)
   aars?: number;            // AI Asset Risk Score 0–100 (AI assets only)
   aarsSeverity?: AarsSeverity;
@@ -382,8 +401,50 @@ export interface GNode {
      * is why the pillar-C knob prices an absent list as zero rather than as "no findings".
      */
     dataFindings?: Array<{ severity: string; count: number }>;
+    /**
+     * Fingerprint of the derivation knobs (`aars.derivationSignature`) this input was
+     * computed under — what `syncStore.enrichFromTabs` checks before reusing a persisted
+     * input on a rescore, so a `gapSources` change re-derives instead of silently reusing
+     * gaps priced under the old rule.
+     *
+     * Absent means the row was written before this field existed. It is treated as
+     * reusable rather than forced through a re-derivation — the same grandfather rule
+     * `derivedUnder`'s sibling fields follow — so upgrading to this version never
+     * re-scores a tenant's estate on its own. A pinned dry-run hint
+     * (`sampleData.SEED_AARS_HINTS`) carries no signature for the same reason it is never
+     * stamped with one at enrich time: it was transcribed from ai/custom_score.md, not
+     * derived by any rule, so no signature could honestly describe it.
+     */
+    derivedUnder?: string;
   };
   comboGroups?: string[];   // toxic-combination group ids this node participates in
+
+  // ---- Phase 6: the Asset Posture Tier (posture.ts, postureRule.ts) ----
+  //
+  // A CAPABILITY ENVELOPE, NOT AN AGGREGATE OF `problemOutcome`s. Folded onto every real
+  // asset node by `graphEnrich.withPostureTiers`, a fold SEPARATE from both `enrichGraphDoc`
+  // (AARS) and `withProblemVerdicts` (the decision tree) — same independent-rerunnability
+  // reason those two are separate from each other. See posture.ts's own header for why a
+  // posture tier is deliberately not derived from what has been FOUND on the asset.
+  /** 1–4, 4 = worst. Absent on a node the fold never reached (a synthetic node) or one never enriched. */
+  postureTier?: number;
+  /**
+   * What the tier was decided FROM — `PostureVector` plus which axes came back UNKNOWN.
+   * Persisted for the same reason `aarsInput` is: a rule change can RE-DECIDE this exact
+   * vector without re-deriving it (posture derivation is rule-independent — see
+   * `derivePostureInput`'s own comment for why it therefore carries no `derivedUnder`
+   * signature the way `problemInput` does).
+   */
+  postureInput?: { capability: string; containment: string; consequence: string; unknowns?: string[] };
+  /**
+   * The worst `problemOutcome` across this asset's own open issues and failing findings —
+   * folded here from the Phase 4/5 verdicts, and read BESIDE `postureTier`, never blended
+   * into it: the whole argument for a tier is that it is not a summary of problems. Absent
+   * for an asset with no open issues or findings, which is a real state (`posture.ts`'s own
+   * header: "zero open findings" is not "zero risk"), not an unscored placeholder.
+   */
+  worstOpenProblem?: string;
+
   // SUMMARY nodes only:
   summaryOf?: NodeKind;
   summaryCount?: number;
@@ -458,6 +519,27 @@ export interface IssueRow {
   ticketUrls?: string[];
   aiVerdict?: string;                // aiRemediationAnalysis.verdict, e.g. REMEDIATE
   aiRecommendedSeverity?: Severity;
+
+  // ---- Phase 4: the Problem/Decision-Vector verdict (problem.ts, problemRule.ts) ----
+  // All three absent on a resolved issue (isUnresolvedIssue false) — see
+  // graphEnrich.withProblemVerdicts. Absent also means "not decided yet" for any row
+  // synced before this phase, which is exactly what an absent read gives for free.
+  /**
+   * `Outcome` (ACT | ATTEND | TRACK_STAR | TRACK), stored as a bare string rather than the
+   * union type: a ledger written by a NEWER version — a fifth outcome this version has
+   * never heard of — must still parse and round-trip rather than fail the read.
+   */
+  problemOutcome?: string;
+  /**
+   * What the verdict was made FROM — the `DecisionVector` plus which axes came back
+   * UNKNOWN, whether exposure was evidenced, and which door exploitation came through
+   * (`problem.ProblemVerdictInput`). Persisted for the same reason `aarsInput` is: it is
+   * what lets a rule change RE-DECIDE exactly these facts rather than re-derive a possibly
+   * different set, and it is what makes a whole-estate preview cost zero Wiz calls.
+   */
+  problemInput?: ProblemVerdictInput;
+  /** The `problem_rule` version (settingsLogic.getProblemRule) this verdict was decided under. */
+  problemRuleVersion?: number;
 }
 
 /**
@@ -526,6 +608,13 @@ export interface FindingRow {
   /** sourceMappedIacFindings — the IaC that produced the misconfiguration, when Wiz
    *  traced one. The finding's link back to the code that caused it. */
   iacFindingIds?: string[];
+
+  // ---- Phase 4: the Problem/Decision-Vector verdict — see IssueRow's own block above for
+  // the full doc comment; identical shape and identical reasoning, gated on `isOpenGap`
+  // rather than `isUnresolvedIssue` (graphEnrich.withProblemVerdicts).
+  problemOutcome?: string;
+  problemInput?: ProblemVerdictInput;
+  problemRuleVersion?: number;
 }
 
 /**
