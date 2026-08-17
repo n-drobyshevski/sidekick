@@ -140,7 +140,7 @@ describe("weakestAreas — scored ascending, and nothing that cannot be ranked",
     expect(scored.map((w) => w.posturePct)).toEqual([86, 93, 99, 100]);
   });
 
-  it("carries each subcategory's worstFailingSeverity through the flattening", () => {
+  it("carries each subcategory's postureBand through the flattening", () => {
     // postureCell() tints this row and the register's row from the same field. If the
     // flattening dropped it, one subcategory would be tinted in the per-framework table
     // and plain in the estate-wide one — the same fact, drawn two ways.
@@ -150,16 +150,17 @@ describe("weakestAreas — scored ascending, and nothing that cannot be ranked",
       const sub = tree.categories
         .flatMap((c) => c.subcategories)
         .find((s) => s.externalId === row.externalId)!;
-      expect(row.worstFailingSeverity).toBe(sub.worstFailingSeverity);
+      expect(row.postureBand).toBe(sub.postureBand);
     }
-    // Concretely, not just self-consistently. And note WHICH row 2.1 is: Wiz scores it
-    // 100% while the cloud rule mapped to it reports ten failures. Wiz's posture is its own
-    // opaque number, not a function of these counts, so a full bar CAN carry a tint — the
-    // hue tracks failing policies, never the percentage beside it.
-    expect(weak.find((w) => w.externalId === "ASI01")!.worstFailingSeverity).toBe("MEDIUM");
+    // Concretely, and on the row that makes the encoding's point. 5Rs 2.1 scores 100% while
+    // the cloud rule mapped to it reports ten failures — the case that used to paint a full
+    // bar in a MEDIUM wash. The band reads the number, so it is `strong`, and the failing
+    // rule is reported by the Failing policies column beside it instead.
+    expect(weak.find((w) => w.externalId === "ASI01")!.postureBand).toBe("strong");
     const publicExposure = weak.find((w) => w.externalId === "2.1")!;
     expect(publicExposure.posturePct).toBe(100);
-    expect(publicExposure.worstFailingSeverity).toBe("MEDIUM");
+    expect(publicExposure.postureBand).toBe("strong");
+    expect(publicExposure.failingPolicyCount).toBeGreaterThan(0);
   });
 
   it("contains no row it cannot rank — every one carries a number", () => {

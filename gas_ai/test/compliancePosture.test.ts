@@ -20,6 +20,7 @@ import {
   buildAllFrameworkTrees,
   buildFrameworkTree,
   complianceKpis,
+  postureBandOf,
   postureState,
   titleRepeatsExternalId,
 } from "../src/domain/compliancePosture";
@@ -69,8 +70,57 @@ describe("postureState — emptiness is decided before the number", () => {
   });
 });
 
+describe("postureBandOf — the ramp that tints every bar on the page", () => {
+  it("bands on the number, at 90 and 70", () => {
+    expect(postureBandOf(100)).toBe("strong");
+    expect(postureBandOf(90)).toBe("strong");
+    // The breaks are inclusive-low, so 89 and 69 are the first rows of the band below —
+    // pinned because an off-by-one here recolours a quarter of a real register silently.
+    expect(postureBandOf(89)).toBe("fair");
+    expect(postureBandOf(70)).toBe("fair");
+    expect(postureBandOf(69)).toBe("weak");
+    expect(postureBandOf(0)).toBe("weak");
+  });
+
+  it("has no band for a missing number — null, never 'weak'", () => {
+    // The file's governing rule, one more time: an unscored row painted the failing colour
+    // is `posture ?? 0` in another coat.
+    expect(postureBandOf(null)).toBeNull();
+  });
+
+  it("is null on a node whose reason contradicts its number", () => {
+    // postureState trusts the reason over the number, so this row is not "scored" — and a
+    // row that is not scored must not be banded, or the colour would state a percentage the
+    // rest of the cell declines to state.
+    const contradictory: PostureRow[] = [
+      {
+        frameworkId: "wf-id-band", level: "framework", title: "Contradictory",
+        posturePct: 88, passCount: 0, failCount: 0, emptyPostureReason: "NO_RESOURCES",
+      },
+    ];
+    const tree = buildFrameworkTree("wf-id-band", contradictory, [])!;
+    expect(tree.state).toBe("noResources");
+    expect(tree.postureBand).toBeNull();
+    // The raw classifier still answers for the number in isolation — the guard is in the
+    // node, not in the function, which is what keeps the function reusable.
+    expect(postureBandOf(88)).toBe("fair");
+  });
+});
+
 describe("buildFrameworkTree", () => {
   const tree = buildFrameworkTree("wf-id-275", posture, policies, frameworks)!;
+
+  it("bands every level off its own percentage", () => {
+    // The framework, its categories and their subcategories each read their own number —
+    // 97, 93, 86, 99 in this capture — rather than inheriting the level above. A page that
+    // banded children by the parent would paint an 86% row with a 97% framework's colour.
+    expect(tree.posturePct).toBe(97);
+    expect(tree.postureBand).toBe("strong");
+    const asi02 = tree.categories.find((c) => c.externalId === "ASI02")!;
+    expect(asi02.posturePct).toBe(86);
+    expect(asi02.postureBand).toBe("fair");
+    expect(asi02.subcategories[0].postureBand).toBe("fair");
+  });
 
   it("rebuilds the hierarchy from the flat rows", () => {
     expect(tree.name).toBe("OWASP Top 10 For Agentic Applications 2026");
@@ -352,6 +402,9 @@ describe("complianceKpis", () => {
       frameworks: 0,
       scoredFrameworks: 0,
       averagePosture: null,
+      // Null, not "weak". An estate nobody scored is not an estate scoring badly, and the
+      // hero draws no bar for it — the same rule the per-row bands follow.
+      averagePostureBand: null,
       failingSubcategories: 0,
       failingPolicies: 0,
     });

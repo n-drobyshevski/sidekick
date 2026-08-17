@@ -67,6 +67,49 @@ export const POSTURE_STATES = {
 export type PostureState = keyof typeof POSTURE_STATES;
 
 /**
+ * How a posture PERCENTAGE reads, as three bands — the classification that tints every
+ * posture bar on the page.
+ *
+ * Hue tracks the number, not the severity of what is failing under it, and the two are
+ * genuinely different claims: a subcategory can score 100% with a CRITICAL rule failing
+ * somewhere beneath it (Wiz's posture is its own aggregate, not a function of the policy
+ * counts). Tinting the bar by severity made a full bar red; tinting it by the number makes
+ * the colour say exactly what the number beside it says, which is the honest reading of a
+ * progress bar. Severity is still reported — by the badges beside the hero and the rail
+ * row, where it is a separate fact rather than a competing encoding on the same mark.
+ *
+ * That redundancy is also what satisfies the accessibility bar: the percentage IS the
+ * non-colour cue, exact and already in the cell, so the ramp adds emphasis without ever
+ * being the only carrier of meaning.
+ *
+ * THE BREAKS ARE A PRODUCT CHOICE, not a derivation — 90 and 70, the common compliance
+ * reading of "clean", "work to do" and "materially failing". They live here rather than in
+ * CSS so they are stated once, tested, and shipped with the row; the view owns only the
+ * colour it paints for each.
+ */
+export const POSTURE_BANDS = {
+  strong: { min: 90, label: "Strong" },
+  fair: { min: 70, label: "Work to do" },
+  weak: { min: 0, label: "Materially failing" },
+} as const;
+
+export type PostureBand = keyof typeof POSTURE_BANDS;
+
+/**
+ * The band a percentage falls in, or null when there is no percentage at all.
+ *
+ * Null, never "weak", for an absent score — the file's governing rule applied to one more
+ * derived field. An unscored row painted the failing colour would be `posture ?? 0` again,
+ * wearing a different coat.
+ */
+export function postureBandOf(posturePct: number | null): PostureBand | null {
+  if (posturePct === null || posturePct === undefined) return null;
+  if (posturePct >= POSTURE_BANDS.strong.min) return "strong";
+  if (posturePct >= POSTURE_BANDS.fair.min) return "fair";
+  return "weak";
+}
+
+/**
  * The state of one posture cell.
  *
  * Note the order: emptiness is decided BEFORE the number is looked at. A row carrying both
@@ -120,10 +163,22 @@ export interface PostureNode {
   failCount: number;
   emptyPostureReason: EmptyPostureReason | null;
   /**
-   * Worst severity among the FAILING policies under this node. Null when none are failing,
-   * which is what keeps a healthy row unmarked: the register tints a posture bar with this
-   * and pairs it with the severity in words, so the ink lands on rows that carry work
-   * rather than on every row that carries a number.
+   * Which band `posturePct` falls in — what tints this row's bar. Null when unscored.
+   *
+   * Shipped rather than derived in the browser, for the reason complianceShared.js gives
+   * about `state`: labels and colours belong to the view, the classification itself always
+   * comes from the server, so the four bars on this page cannot end up drawing four
+   * opinions of where 90 sits.
+   */
+  postureBand: PostureBand | null;
+  /**
+   * Worst severity among the FAILING policies under this node. Null when none are failing.
+   *
+   * NOT a render field at category or subcategory level — no cell draws it, and nothing
+   * should start: the bar's colour is the posture band above, and a second severity
+   * encoding on the same row is what this page just moved away from. It exists because the
+   * framework's own `worstFailingSeverity` (which the hero and the rail DO draw, as a
+   * badge) folds up through these, so the three levels cannot disagree.
    */
   worstFailingSeverity: Severity | null;
 }
@@ -173,6 +228,8 @@ export interface FrameworkTree {
   description?: string;
   posturePct: number | null;
   state: PostureState;
+  /** Which band `posturePct` falls in — what tints the hero meter and the rail bar. */
+  postureBand: PostureBand | null;
   emptyPostureReason: EmptyPostureReason | null;
   passSubCategoryCount: number;
   failSubCategoryCount: number;
@@ -259,7 +316,10 @@ export function isAssessedPolicy(p: FrameworkPolicyRow): boolean {
  * them — it is a fact about the policies underneath, which a row does not carry — so every
  * caller folds it in afterwards from the level below.
  */
-function toNode(row: PostureRow, externalId: string): Omit<PostureNode, "worstFailingSeverity"> {
+function toNode(
+  row: PostureRow,
+  externalId: string,
+): Omit<PostureNode, "worstFailingSeverity"> {
   return {
     frameworkId: row.frameworkId,
     externalId,
@@ -270,6 +330,12 @@ function toNode(row: PostureRow, externalId: string): Omit<PostureNode, "worstFa
     description: row.description,
     posturePct: row.posturePct,
     state: postureState(row.posturePct, row.emptyPostureReason),
+    // Read off the state, not off the number: a row carrying both a percentage and an
+    // emptyPostureReason is one postureState declines to score, and banding the number it
+    // just disowned would put a colour back on a row that has no posture.
+    postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored"
+      ? postureBandOf(row.posturePct)
+      : null,
     passCount: row.passCount,
     failCount: row.failCount,
     emptyPostureReason: row.emptyPostureReason,
@@ -400,15 +466,22 @@ export function buildFrameworkTree(
     null,
   );
 
+  const frameworkState = postureState(
+    frameworkRow?.posturePct ?? null,
+    frameworkRow?.emptyPostureReason ?? null,
+  );
+
   return {
     frameworkId,
     name: frameworkRow?.title ?? catalogue?.name ?? frameworkId,
     description: frameworkRow?.description ?? catalogue?.description,
     posturePct: frameworkRow?.posturePct ?? null,
-    state: postureState(
-      frameworkRow?.posturePct ?? null,
-      frameworkRow?.emptyPostureReason ?? null,
-    ),
+    state: frameworkState,
+    // Same guard toNode applies one level down: only a row that actually scored gets a
+    // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
+    postureBand: frameworkState === "scored"
+      ? postureBandOf(frameworkRow?.posturePct ?? null)
+      : null,
     emptyPostureReason: frameworkRow?.emptyPostureReason ?? null,
     passSubCategoryCount: frameworkRow?.passSubCategoryCount ?? 0,
     failSubCategoryCount: frameworkRow?.failSubCategoryCount ?? 0,
@@ -461,6 +534,14 @@ export function complianceKpis(
   frameworks: number;
   scoredFrameworks: number;
   averagePosture: number | null;
+  /**
+   * The band `averagePosture` falls in, banded HERE rather than in the browser.
+   *
+   * This is the one posture figure on the page with no node behind it — it is derived, not
+   * reported — so without this field the overview's hero would be the single mark applying
+   * the 90/70 breaks client-side, and a threshold edit would move every bar but that one.
+   */
+  averagePostureBand: PostureBand | null;
   failingSubcategories: number;
   failingPolicies: number;
 } {
@@ -486,6 +567,7 @@ export function complianceKpis(
     frameworks: frameworkRows.length,
     scoredFrameworks: scored.length,
     averagePosture,
+    averagePostureBand: postureBandOf(averagePosture),
     failingSubcategories,
     failingPolicies: failing.size,
   };

@@ -137,9 +137,10 @@ function renderHeadline(host, data) {
   // drawn) alongside a scored mean; an unscored estate has no bar to tint either.
   const worstSeverity = scored ? worstFailingSeverityAcross(data.rail || []) : null;
 
-  // ONE OF THREE MARKS ON THIS WHOLE PAGE ALLOWED TO CARRY SEVERITY COLOUR — see the
-  // matching comment on the rail bar below for why the register, the weakest-areas table
-  // and the subcategory detail rows all stay neutral graphite on purpose.
+  // Banded by its own number, like every other bar on this page — see postureCell() in
+  // complianceShared.js for why fill colour stopped meaning severity. The estate mean is
+  // derived here rather than sent by Wiz, so it is banded here too rather than carrying a
+  // `postureBand` down the wire: there is no server-side node for "the estate".
   const heroMeter = scored
     ? meter(kpis.averagePosture, {
         max: 100,
@@ -147,7 +148,9 @@ function renderHeadline(host, data) {
           (worstSeverity ? `, worst failing severity ${worstSeverity}` : ""),
       })
     : null;
-  if (heroMeter && worstSeverity) heroMeter.fill.dataset.sev = worstSeverity;
+  if (heroMeter && kpis.averagePostureBand) {
+    heroMeter.fill.dataset.band = kpis.averagePostureBand;
+  }
 
   // The sub-line is the hero's one prose slot, so the severity mark folds into it rather
   // than opening a new one — a sevBadge beside the sentence that already explains the
@@ -283,13 +286,13 @@ function railRow(row, meanPct, actions, fiveRsScope) {
   });
   if (scored) {
     const bar = el("div", { class: "comp-fw-bar" });
-    // ONE OF THREE MARKS ON THIS WHOLE PAGE ALLOWED TO CARRY SEVERITY COLOUR (the other
-    // two are both hero meters). DESIGN.md's Rationed Ink Rule sanctions this because the
-    // rail is a handful of prominent rows, not a column — the register below, the
-    // weakest-areas table and the subcategory detail rows all stay neutral graphite on
-    // purpose. Do not extend this tint to those; that is the wall of colour the rule
-    // forbids.
-    if (row.worstFailingSeverity) bar.dataset.sev = row.worstFailingSeverity;
+    // Banded by the row's own percentage, like every bar on this page. It used to take the
+    // wash of the framework's worst failing severity, and the rail is where that reading
+    // was least wrong — these are a handful of prominent rows, each with a sevBadge beside
+    // it — but a bar whose colour means one thing here and another in the register below is
+    // a page that has to be learned twice. The severity did not go anywhere: it is the
+    // badge, one line up.
+    if (row.postureBand) bar.dataset.band = row.postureBand;
     bar.style.width = `${row.posturePct}%`;
     laneEl.append(bar);
   } else {

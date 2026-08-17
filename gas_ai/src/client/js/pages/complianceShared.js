@@ -52,24 +52,23 @@ export function extChip(node) {
  * with a glyph as well as text, because these four states are exactly the kind of thing
  * PRODUCT.md forbids carrying by colour alone.
  *
- * THE BAR IS TINTED BY WHAT IS FAILING UNDER IT, and only then. This column was flat
- * graphite on the theory that tinting it would turn a long framework into a column of
- * coloured bars — the wall of red and orange cells PRODUCT.md names as an anti-reference.
- * What makes the tint safe is the field it reads: `worstFailingSeverity` is null unless a
- * policy under this node is actually failing, so a row with nothing to fix stays graphite
- * and the ink lands only where there is work.
+ * THE BAR IS TINTED BY ITS OWN NUMBER. `postureBand` (compliancePosture.ts) puts the
+ * percentage in one of three bands and the fill takes that band's wash, so 100% reads green
+ * because there is nothing left to close, and 62% reads red because there is.
  *
- * NOT the same thing as "a high percentage is never tinted", and the difference is worth
- * stating because it looks like a bug from the outside. Wiz's posture is its own opaque
- * number — a subcategory in the tenant capture reports 100% while the rule mapped to it
- * reports ten failures — so a full bar CAN carry a hue. That is the honest reading of two
- * facts Wiz reports separately, and the badge beside it is what stops the pair looking like
- * a contradiction: the row says 100%, and it says a MEDIUM control is failing under it.
+ * IT USED TO BE TINTED BY SEVERITY — the worst failing policy underneath — and that was
+ * wrong in the way a chart is wrong rather than the way a bug is: it painted a full bar red
+ * whenever a CRITICAL rule failed somewhere beneath a subcategory Wiz scored 100%, which is
+ * two facts fighting over one mark. Severity did not stop being reported when it stopped
+ * tinting: it rides the badges beside the hero and the rail row, where it is a fact of its
+ * own next to the bar rather than an encoding on top of it.
  *
- * The badge is not decoration. Hue alone would carry the severity, which the accessibility
- * bar in PRODUCT.md forbids, so the word rides beside it. It is also the only announcement
- * of the severity: the meter's own label deliberately does NOT repeat it, or a screen
- * reader would hear the level twice for one cell.
+ * THE PERCENTAGE IS THE NON-COLOUR CUE, and it is already in the cell — exact, and beside
+ * the bar it describes. That is what lets the ramp exist at all under PRODUCT.md's rule
+ * against meaning carried by colour alone: the hue says nothing the number does not, so a
+ * reader who cannot separate the hues loses emphasis and no information. It is also why
+ * this cell carries no badge. A severity pill on every row would be a second colour channel
+ * saying a different thing, which is the arrangement this page just left.
  */
 export function postureCell(node) {
   if (node.state === "scored" && node.posturePct !== null) {
@@ -77,14 +76,13 @@ export function postureCell(node) {
       max: 100,
       label: `${node.title}, ${node.posturePct} percent compliant`,
     });
-    // `data-sev` rather than the shared `.sev-fill-*` classes, for the reason the rail bar
-    // gives: those mean "a saturated severity mark" everywhere else in both apps, and this
-    // is a wash mixed toward the page ground.
-    if (node.worstFailingSeverity) bar.fill.dataset.sev = node.worstFailingSeverity;
+    // `data-band`, keyed like `.comp-bar-seg`'s `data-state`, and deliberately not a class:
+    // a class named for a colour would have to be renamed to move a threshold, and the
+    // threshold lives in the domain.
+    if (node.postureBand) bar.fill.dataset.band = node.postureBand;
     return el("div", { class: "comp-posture" },
       bar,
-      el("span", { class: "comp-posture-num" }, `${node.posturePct}%`),
-      node.worstFailingSeverity ? sevBadge(node.worstFailingSeverity) : null);
+      el("span", { class: "comp-posture-num" }, `${node.posturePct}%`));
   }
   const state = STATES[node.state] || STATES.unknown;
   return el("div", { class: "comp-posture" },

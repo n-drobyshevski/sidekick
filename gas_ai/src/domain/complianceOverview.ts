@@ -21,7 +21,7 @@
 // this page exists to report — "how many frameworks would ONE fix satisfy" — is wrong.
 
 import { SEVERITY_ORDER, type Severity } from "./config";
-import type { FrameworkTree, PostureState } from "./compliancePosture";
+import type { FrameworkTree, PostureBand, PostureState } from "./compliancePosture";
 import type {
   EmptyPostureReason, FrameworkRow, PolicyKind,
 } from "./graphTypes";
@@ -43,6 +43,8 @@ export interface FrameworkRailRow {
   name: string;
   posturePct: number | null;
   state: PostureState;
+  /** Carried through from the tree — what tints this row's bar on the shared axis. */
+  postureBand: PostureBand | null;
   emptyPostureReason: EmptyPostureReason | null;
   categoryCount: number;
   subcategoryCount: number;
@@ -66,6 +68,7 @@ export function frameworkRail(trees: FrameworkTree[]): FrameworkRailRow[] {
     name: tree.name,
     posturePct: tree.posturePct,
     state: tree.state,
+    postureBand: tree.postureBand,
     emptyPostureReason: tree.emptyPostureReason,
     categoryCount: tree.categories.length,
     // From stateCounts, not from the listed nodes: the tree lists only scored
@@ -102,7 +105,7 @@ export interface WeakAreaRow {
    * this row and a register row with the same cells — a flattening that dropped the field
    * would leave the same subcategory tinted in one table and plain in the other.
    */
-  worstFailingSeverity: Severity | null;
+  postureBand: PostureBand | null;
 }
 
 /**
@@ -164,7 +167,7 @@ export function weakestAreas(trees: FrameworkTree[], limit?: number): WeakAreaRo
           // here would be the wrong scope all over again — count the list as given.
           policyCount: sub.policies.length,
           failingPolicyCount: sub.failingPolicyCount,
-          worstFailingSeverity: sub.worstFailingSeverity,
+          postureBand: sub.postureBand,
         });
       }
     }

@@ -251,9 +251,14 @@ export async function renderCompliance(main, params, ctx) {
     const scopedHere = scored && fiveRs && fiveRs.frameworkId === tree.frameworkId &&
       fiveRs.selected < fiveRs.total;
 
-    // ONE OF THREE MARKS ON THIS WHOLE PAGE ALLOWED TO CARRY SEVERITY COLOUR — see the
-    // matching comment on `.comp-fw-bar` in compliance.css. Null when nothing under this
-    // framework is failing, and the meter stays plain graphite.
+    // The hero meter takes the same posture band as every bar in the register below it —
+    // one meaning for fill colour on this page, so a reader does not have to learn that
+    // the big bar and the small ones are coloured by different facts.
+    //
+    // The SEVERITY still has a mark here, and it is the badge in the sub-line below: a fact
+    // beside the bar rather than a second encoding on it. That split is what the bar's own
+    // comment in complianceShared.js describes, and it is why this line no longer reaches
+    // for `worstFailingSeverity`.
     const worstSeverity = scored ? tree.worstFailingSeverity : null;
     const heroMeter = scored
       ? meter(tree.posturePct, {
@@ -262,7 +267,7 @@ export async function renderCompliance(main, params, ctx) {
           (worstSeverity ? `, worst failing severity ${worstSeverity}` : ""),
       })
       : null;
-    if (heroMeter && worstSeverity) heroMeter.fill.dataset.sev = worstSeverity;
+    if (heroMeter && tree.postureBand) heroMeter.fill.dataset.band = tree.postureBand;
 
     // The severity mark folds into the sub-line's existing sentence rather than a new slot.
     const heroSubKids = [scored

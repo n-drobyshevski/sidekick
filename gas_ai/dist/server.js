@@ -3454,6 +3454,7 @@ var Server = (() => {
       name: tree.name,
       posturePct: tree.posturePct,
       state: tree.state,
+      postureBand: tree.postureBand,
       emptyPostureReason: tree.emptyPostureReason,
       categoryCount: tree.categories.length,
       // From stateCounts, not from the listed nodes: the tree lists only scored
@@ -3495,7 +3496,7 @@ var Server = (() => {
             // here would be the wrong scope all over again — count the list as given.
             policyCount: sub.policies.length,
             failingPolicyCount: sub.failingPolicyCount,
-            worstFailingSeverity: sub.worstFailingSeverity
+            postureBand: sub.postureBand
           });
         }
       }
@@ -5174,6 +5175,17 @@ var Server = (() => {
   }
 
   // src/domain/compliancePosture.ts
+  var POSTURE_BANDS = {
+    strong: { min: 90, label: "Strong" },
+    fair: { min: 70, label: "Work to do" },
+    weak: { min: 0, label: "Materially failing" }
+  };
+  function postureBandOf(posturePct2) {
+    if (posturePct2 === null || posturePct2 === void 0) return null;
+    if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
+    if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
+    return "weak";
+  }
   function postureState(posturePct2, emptyPostureReason) {
     const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
     if (reason === "NO_RESOURCES") return "noResources";
@@ -5220,13 +5232,17 @@ var Server = (() => {
       description: row.description,
       posturePct: row.posturePct,
       state: postureState(row.posturePct, row.emptyPostureReason),
+      // Read off the state, not off the number: a row carrying both a percentage and an
+      // emptyPostureReason is one postureState declines to score, and banding the number it
+      // just disowned would put a colour back on a row that has no posture.
+      postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored" ? postureBandOf(row.posturePct) : null,
       passCount: row.passCount,
       failCount: row.failCount,
       emptyPostureReason: row.emptyPostureReason
     };
   }
   function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
     const rows = posture.filter((p) => p.frameworkId === frameworkId);
     if (!rows.length) return null;
     const frameworkRow = rows.find((p) => p.level === "framework");
@@ -5303,18 +5319,22 @@ var Server = (() => {
       (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
       null
     );
+    const frameworkState = postureState(
+      (_g = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _g : null,
+      (_h = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _h : null
+    );
     return {
       frameworkId,
-      name: (_h = (_g = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _g : catalogue == null ? void 0 : catalogue.name) != null ? _h : frameworkId,
-      description: (_i = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _i : catalogue == null ? void 0 : catalogue.description,
-      posturePct: (_j = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _j : null,
-      state: postureState(
-        (_k = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _k : null,
-        (_l = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _l : null
-      ),
-      emptyPostureReason: (_m = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _m : null,
-      passSubCategoryCount: (_n = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _n : 0,
-      failSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _o : 0,
+      name: (_j = (_i = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _i : catalogue == null ? void 0 : catalogue.name) != null ? _j : frameworkId,
+      description: (_k = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _k : catalogue == null ? void 0 : catalogue.description,
+      posturePct: (_l = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _l : null,
+      state: frameworkState,
+      // Same guard toNode applies one level down: only a row that actually scored gets a
+      // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
+      postureBand: frameworkState === "scored" ? postureBandOf((_m = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _m : null) : null,
+      emptyPostureReason: (_n = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _n : null,
+      passSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _o : 0,
+      failSubCategoryCount: (_p = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _p : 0,
       categories,
       stateCounts,
       policyCount: distinct.size,
@@ -5356,6 +5376,7 @@ var Server = (() => {
       frameworks: frameworkRows.length,
       scoredFrameworks: scored.length,
       averagePosture,
+      averagePostureBand: postureBandOf(averagePosture),
       failingSubcategories,
       failingPolicies: failing.size
     };
@@ -7768,7 +7789,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7ebaf57ed983" : "dev";
+  var BUILD_ID = true ? "3050b677ab7e" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
