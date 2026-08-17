@@ -309,3 +309,53 @@ export function cellCoverage(rule) {
   }
   return { total: leaves.length, byRow, byFallback, byTier };
 }
+
+// ------------------------------------------------------------------ occupancy by row
+
+/**
+ * How many live records land on the leaves each cascade row claims AS ITS FIRST MATCH.
+ *
+ * This is what lets the Problem and Posture cascades tell apart the third of three very
+ * different zeros, which the AARS gap ladder has always distinguished and they could not:
+ *
+ *   1. shadowed          — an earlier row already claims every leaf this one could match,
+ *                          so it can never fire, no matter what the tenant holds.
+ *   2. unreachable       — it names something no live signal can produce (Posture's
+ *                          lethal-trifecta row), so it cannot fire either, for a different
+ *                          reason and with a different fix.
+ *   3. in force, unused  — it fires perfectly well, and nothing in THIS tenant happens to
+ *                          carry what it matches.
+ *
+ * Three zeros, three claims, and only the first two are problems with the rule. Reporting
+ * them as one undifferentiated "0 leaves" invites an operator to delete a row that is
+ * working exactly as written.
+ *
+ * `occupancy` is the sparse map a preview response carries (`leafOccupancy` /
+ * `cellOccupancy`), keyed the same way `leafKey` / `postureKey` spell a vector — which is
+ * the whole reason the mirror is required to reproduce those keys byte for byte.
+ */
+function occupancyByRow(vectors, rows, keyOf, decideOne, occupancy) {
+  const byRow = rows.map(() => 0);
+  for (const v of vectors) {
+    const { matchedRuleIndex } = decideOne(v);
+    if (matchedRuleIndex === -1) continue;
+    byRow[matchedRuleIndex] += (occupancy && occupancy[keyOf(v)]) || 0;
+  }
+  return byRow;
+}
+
+/** Live records per outcome-cascade row, index-aligned with `rule.outcomeRules`. */
+export function leafOccupancyByRow(rule, occupancy) {
+  return occupancyByRow(
+    enumerateDecisionVectors(), rule.outcomeRules, leafKey,
+    (v) => decideProblem(v, rule), occupancy,
+  );
+}
+
+/** Live records per tier-cascade row, index-aligned with `rule.tierRules`. */
+export function cellOccupancyByRow(rule, occupancy) {
+  return occupancyByRow(
+    enumeratePostureVectors(), rule.tierRules, postureKey,
+    (v) => decidePosture(v, rule), occupancy,
+  );
+}

@@ -359,3 +359,19 @@ table.data tr.rule-won > td:first-child {
 .lat-icicle rect.is-traced { stroke: var(--accent); stroke-width: 3; }
 .lat-icicle .lat-leaf:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .lat-icicle.is-diverged rect { fill: rgba(0, 0, 0, 0.05); }
+
+/* A row that fires perfectly well over a tenant that happens to carry nothing it matches.
+   Deliberately NOT .rule-dead's treatment: that one says "this rule cannot work", this one
+   says "this rule works and had nothing to do", and an operator asked to act on them would
+   act differently. A hairline marker, not a fade. */
+table.data tr.rule-unused > td:first-child { box-shadow: inset 2px 0 0 var(--hairline); }
+
+/* -------------------------------------------------------------- the AARS hero's link */
+/* The same row-to-picture link the lattices have, applied to the stacked pillar bar: a
+   pillar's controls and the segment they fill light together, so which part of the budget
+   a rail is pushing on stops being something you infer from the section heading. */
+.model-stack__seg.is-lit { box-shadow: inset 0 0 0 2px var(--ink); }
+.rails.is-lit, .table-wrap.is-lit { box-shadow: 0 0 0 2px var(--hairline); border-radius: var(--radius-md); }
+@media (prefers-reduced-motion: reduce) {
+  .model-stack__seg.is-lit, .rails.is-lit, .table-wrap.is-lit { transition: none; }
+}

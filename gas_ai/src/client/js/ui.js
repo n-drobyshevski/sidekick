@@ -21,6 +21,7 @@
 //   posture.js   the posture lattice's Tier 1..4 badge
 //   lattice.js   the decision lattice: 54 leaves or 27 cells as a grid of cells
 //   claimRail.js how much of a closed space one cascade row claims, on a shared axis
+//   diagList.js  the "is this rule quietly failing" read-out, shared by all three cascades
 
 export { clear, downloadText, el, motionOk } from "./ui/dom.js";
 export { DISPLAY_TZ, fmtDate, fmtDateTime, plural, pluralize, sevRank } from "./ui/format.js";
@@ -50,3 +51,4 @@ export { tierBadge, tierLabel } from "./ui/posture.js";
 export { latticeGrid } from "./ui/lattice.js";
 export { latticeSection } from "./ui/latticeSection.js";
 export { claimRail, claimOffsets } from "./ui/claimRail.js";
+export { diagRow, diagWarn, paintUnknownRates } from "./ui/diagList.js";

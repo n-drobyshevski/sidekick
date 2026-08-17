@@ -474,3 +474,54 @@ describe("row verdicts are cleaned the way the server cleans them", () => {
       .toEqual(tsPostureRule.cellCoverage(tsPostureRule.cleanPostureRule(postureRaw)));
   });
 });
+
+// -------------------------------------------------------------------- occupancy by row
+
+/**
+ * The third zero. A row can read `0` for three unrelated reasons and only two of them are
+ * faults in the rule; these pin that the arithmetic behind telling them apart is a
+ * first-match partition of the occupancy map, not a re-count of anything.
+ */
+describe("occupancy by row", () => {
+  it("partitions the occupancy map across rows and the fallback", () => {
+    const rule = tsProblemRule.DEFAULT_PROBLEM_RULE;
+    // One record on every leaf, so each row's share must equal its leaf claim exactly.
+    const occupancy = {};
+    for (const v of tsProblem.enumerateDecisionVectors()) occupancy[tsProblem.leafKey(v)] = 1;
+    const byRow = mirror.leafOccupancyByRow(rule, occupancy);
+    const coverage = mirror.leafCoverage(rule);
+    expect(byRow).toEqual(coverage.byRow);
+    // Rows plus fallback account for the whole map, nothing double-counted.
+    expect(byRow.reduce((a, b) => a + b, 0) + coverage.byFallback).toBe(54);
+  });
+
+  it("weights by the map rather than by the leaf count", () => {
+    const rule = tsProblemRule.DEFAULT_PROBLEM_RULE;
+    const target = { exploitation: "ACTIVE", impact: "TOTAL", exposure: "OPEN", mission: "HIGH" };
+    const occupancy = { [tsProblem.leafKey(target)]: 7 };
+    const byRow = mirror.leafOccupancyByRow(rule, occupancy);
+    const winner = mirror.decideProblem(target, rule).matchedRuleIndex;
+    expect(byRow[winner]).toBe(7);
+    expect(byRow.reduce((a, b) => a + b, 0)).toBe(7);
+  });
+
+  it("a live row over an empty tenant reads zero without being shadowed", () => {
+    const rule = tsProblemRule.DEFAULT_PROBLEM_RULE;
+    const byRow = mirror.leafOccupancyByRow(rule, {});
+    expect(byRow.every((n) => n === 0)).toBe(true);
+    // ...while the rule itself is demonstrably in force: it claims leaves, and none of its
+    // rows are shadowed. That gap between the two is exactly the third state.
+    expect(mirror.leafCoverage(rule).byRow.some((n) => n > 0)).toBe(true);
+    expect(tsProblemRule.shadowedOutcomeRules(rule)).toEqual([]);
+  });
+
+  it("posture rows partition their own map, trifecta row included at zero", () => {
+    const rule = tsPostureRule.DEFAULT_POSTURE_RULE;
+    const occupancy = {};
+    for (const v of tsPosture.enumeratePostureVectors()) occupancy[tsPosture.postureKey(v)] = 2;
+    const byRow = mirror.cellOccupancyByRow(rule, occupancy);
+    expect(byRow[0]).toBe(0); // the lethal trifecta claims nothing, so it carries nothing
+    const coverage = mirror.cellCoverage(rule);
+    expect(byRow).toEqual(coverage.byRow.map((n) => n * 2));
+  });
+});
