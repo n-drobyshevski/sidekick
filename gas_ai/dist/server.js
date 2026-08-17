@@ -1686,6 +1686,10 @@ var Server = (() => {
     frameworks: { owaspLlm: [], owaspAgentic: [], owaspMl: [], fiveRs: [] }
   };
   var REGISTER_GROUPS = [...COMBO_GROUPS, OTHER_AI_RISK];
+  function comboGapCode(comboGroupId) {
+    if (comboGroupId === OTHER_GROUP_ID) return "COMBO_OTHER";
+    return `COMBO_${comboGroupId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
+  }
   var BY_RULE_ID = new Map(COMBO_GROUPS.map((g) => [g.ruleId, g]));
   var BY_GROUP_ID = new Map(REGISTER_GROUPS.map((g) => [g.id, g]));
   function comboGroupById(id) {
@@ -2651,6 +2655,8 @@ var Server = (() => {
     multiIssueMultiplier: 1.2,
     multiIssueScaling: "flat",
     pillarACap: 50,
+    // "code": the spec's unit — one gap per distinct framework code. See `GapUnit`.
+    gapUnit: "code",
     gapPoints: [
       { match: "exact", code: "NO_GUARDRAIL", points: 10 },
       { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
@@ -2699,6 +2705,10 @@ var Server = (() => {
     multiIssueMultiplier: 1.2,
     multiIssueScaling: "log2",
     pillarACap: 45,
+    // Stays "code", same reasoning as `frameworkMapping` below: this preset was calibrated
+    // against the code-unit shape, and switching the unit is a bigger act than this pass —
+    // `AARS_V3_RULE` is that act, kept separate so v2 keeps meaning what it always meant.
+    gapUnit: "code",
     gapPoints: [
       { match: "exact", code: "NO_GUARDRAIL", points: 10 },
       { match: "exact", code: "INACTIVE_AGENT", points: 10 },
@@ -2741,10 +2751,24 @@ var Server = (() => {
     exposurePoints: { CONFIRMED: 18, UNDETERMINED: 7, NONE: 0 },
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
   };
+  var AARS_V3_RULE = {
+    ...AARS_V2_RULE,
+    gapUnit: "condition",
+    gapPoints: [
+      { match: "exact", code: "INACTIVE_AGENT", points: 10 },
+      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
+      { match: "exact", code: "COND_MISSING_GUARDRAIL", points: 10 },
+      { match: "exact", code: "COND_SENSITIVE_DATA", points: 8 },
+      { match: "exact", code: "COND_EXCESSIVE_PRIVILEGE", points: 8 },
+      { match: "exact", code: "COND_INTERNET_EXPOSURE", points: 6 },
+      { match: "prefix", code: "COMBO_", points: 5 }
+    ]
+  };
   var AARS_MAX_SCORE = 100;
   function derivationSignature(rule) {
     const s = rule.gapSources;
     return [
+      `gapUnit:${rule.gapUnit}`,
       `fiveRs:${s.fiveRs ? 1 : 0}`,
       `deprecatedModel:${s.deprecatedModel ? 1 : 0}`,
       `inactiveAgent:${s.inactiveAgent ? 1 : 0}`,
@@ -2974,6 +2998,7 @@ var Server = (() => {
     const multiIssueScaling = r["multiIssueScaling"] === "log2" ? "log2" : "flat";
     const gapAggregation = r["gapAggregation"] === "rss" ? "rss" : "sum";
     const dataFindingScaling = r["dataFindingScaling"] === "log2" ? "log2" : "flat";
+    const gapUnit = r["gapUnit"] === "condition" ? "condition" : "code";
     return {
       severityPoints,
       multiIssueMultiplier: clampMultiplier(
@@ -2982,6 +3007,7 @@ var Server = (() => {
       ),
       multiIssueScaling,
       pillarACap: clampInt(r["pillarACap"], DEFAULT_AARS_RULE.pillarACap, POINTS_MIN, POINTS_MAX),
+      gapUnit,
       gapPoints,
       gapFallbackPoints: clampInt(
         r["gapFallbackPoints"],
@@ -3075,11 +3101,16 @@ var Server = (() => {
   }
   var DERIVABLE_PREFIXES = ["LLM", "ASI", "ML_", "5R_"];
   var DERIVABLE_EXACT = ["NO_GUARDRAIL", "DEPRECATED_MODEL", "INACTIVE_AGENT", "FIVE_RS"];
+  var CONDITION_GAP_CODES = CONDITION_KEYS.map((k) => `COND_${k}`);
   function isDerivable(code, rule) {
     const c = cleanGapCode(code);
     if (!c) return false;
     if (c === "DEPRECATED_MODEL") return rule.gapSources.deprecatedModel === true;
     if (c === "INACTIVE_AGENT") return rule.gapSources.inactiveAgent === true;
+    if (rule.gapUnit === "condition") {
+      if (CONDITION_GAP_CODES.includes(c)) return true;
+      return c.startsWith("COMBO_");
+    }
     if (c.startsWith("5R_")) {
       return rule.gapSources.fiveRs === true || rule.gapSources.frameworkMapping === true;
     }
@@ -3087,10 +3118,19 @@ var Server = (() => {
     if (DERIVABLE_EXACT.includes(c)) return true;
     return DERIVABLE_PREFIXES.some((p) => c.startsWith(p));
   }
+  function prefixFamilyIsDerivable(prefix, rule) {
+    const isComboFamily = prefix.startsWith("COMBO");
+    if (rule.gapUnit === "condition") {
+      return isComboFamily;
+    }
+    if (isComboFamily) return false;
+    return !(prefix.startsWith("5R") && rule.gapSources.fiveRs !== true && rule.gapSources.frameworkMapping !== true);
+  }
   function unreachableGapRules(rule) {
     const dead = [];
+    const checkedExact = [...DERIVABLE_EXACT, ...CONDITION_GAP_CODES];
     rule.gapPoints.forEach((row, i) => {
-      const claimsDerivedFamily = row.match === "prefix" ? row.code.startsWith("5R") && rule.gapSources.fiveRs !== true && rule.gapSources.frameworkMapping !== true : DERIVABLE_EXACT.includes(cleanGapCode(row.code)) && !isDerivable(row.code, rule);
+      const claimsDerivedFamily = row.match === "prefix" ? !prefixFamilyIsDerivable(row.code, rule) : checkedExact.includes(cleanGapCode(row.code)) && !isDerivable(row.code, rule);
       if (claimsDerivedFamily) dead.push(i);
     });
     return dead;
@@ -3192,10 +3232,11 @@ var Server = (() => {
     ).join(" / ");
     const countClause = rule.multiIssueScaling === "log2" ? `each doubling of the open-issue count multiplies that by a further \xD7${rule.multiIssueMultiplier} step (two issues \xD7${rule.multiIssueMultiplier}, four \xD7${(1 + (rule.multiIssueMultiplier - 1) * 2).toFixed(2)}, eight \xD7${(1 + (rule.multiIssueMultiplier - 1) * 3).toFixed(2)})` : `more than one open issue multiplies that by \xD7${rule.multiIssueMultiplier}, however many there are`;
     const gapClause = rule.gapAggregation === "rss" ? `matched prices combine as a root-sum-square, so each further gap adds less than the last` : `matched prices are added up`;
+    const gapUnitClause = rule.gapUnit === "condition" ? `Priced per CONDITION, not per framework code: one charge for each risk condition held (missing guardrail, excessive privilege, sensitive data, internet exposure) and one more per distinct toxic-combination group the asset's issues fall into. The framework codes on those issues still render on the detail sheet and the compliance rollups \u2014 they are just not what pillar B counts.` : `Priced per CODE: one charge for each distinct framework code (OWASP LLM / Agentic / ML, 5Rs) the asset's open issues carry.`;
     const findingClause = SEVERITY_KEYS.every((k) => rule.dataFindingPoints[k] === 0) ? `The data findings an asset can reach score nothing; they are drawn on the graph but never added to the score.` : `The worst data finding it can reach adds ` + SEVERITY_KEYS.map((k) => `${k.toLowerCase()} ${rule.dataFindingPoints[k]}`).join(" / ") + (rule.dataFindingScaling === "log2" ? `, and each doubling of the finding count multiplies that by a further \xD7${rule.dataFindingMultiplier} step.` : `, however many it reaches.`);
     return [
       `Pillar A \u2014 toxic combinations, capped at ${rule.pillarACap}. The asset's worst open issue scores ${sev}; ${countClause}.`,
-      `Pillar B \u2014 compliance gaps, capped at ${rule.pillarBCap}. ${rule.gapPoints.length} pricing rules are tried in order, first match wins; an unmatched code scores ${pointsPhrase(rule.gapFallbackPoints)}. ${gapClause[0].toUpperCase()}${gapClause.slice(1)}.`,
+      `Pillar B \u2014 compliance gaps, capped at ${rule.pillarBCap}. ${gapUnitClause} ${rule.gapPoints.length} pricing rules are tried in order, first match wins; an unmatched code scores ${pointsPhrase(rule.gapFallbackPoints)}. ${gapClause[0].toUpperCase()}${gapClause.slice(1)}.`,
       `Pillar C \u2014 data exposure, capped at ${rule.pillarCCap}: ${exposure}, all amplified by \xD7${rule.dataAmplifier} (\u2192 ${amplified}). ${findingClause}`,
       rule.exposurePoints.CONFIRMED === 0 && rule.exposurePoints.UNDETERMINED === 0 && rule.exposurePoints.NONE === 0 ? `Pillar D \u2014 internet exposure scores nothing; reachability is reported beside the score but never added to it.` : `Pillar D \u2014 internet exposure: confirmed ${rule.exposurePoints.CONFIRMED}, undetermined ${rule.exposurePoints.UNDETERMINED}, none ${rule.exposurePoints.NONE}. Not amplified \u2014 the 5Rs signal says nothing about reachability.`,
       `Levels \u2014 CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. Scores are clamped to 100.`
@@ -8037,20 +8078,9 @@ var Server = (() => {
     return "NONE";
   }
   function deriveAarsInput(node2, nodeIssues, rule = DEFAULT_AARS_RULE) {
-    var _a5, _b, _c, _d, _e, _f;
-    const codes = /* @__PURE__ */ new Set();
-    for (const issue2 of nodeIssues) {
-      const fw = (_a5 = issue2.frameworks) != null ? _a5 : {};
-      for (const c of (_b = fw.owaspLlm) != null ? _b : []) codes.add(c);
-      for (const c of (_c = fw.owaspAgentic) != null ? _c : []) codes.add(c);
-      for (const c of (_d = fw.owaspMl) != null ? _d : []) codes.add(`ML_${c.replace(/\s+/g, "_").toUpperCase()}`);
-      if (rule.gapSources.fiveRs) {
-        for (const c of (_e = fw.fiveRs) != null ? _e : []) codes.add(`5R_${c.replace(/\s+/g, "_").toUpperCase()}`);
-      }
-    }
-    const gaps = [...codes].sort().map((c) => gap(c));
-    if (node2.guardrailMissing) gaps.push(gap("NO_GUARDRAIL"));
-    const status = String((_f = node2.status) != null ? _f : "").trim().toUpperCase();
+    var _a5;
+    const gaps = rule.gapUnit === "condition" ? conditionGaps(node2, nodeIssues) : frameworkCodeGaps(node2, nodeIssues, rule);
+    const status = String((_a5 = node2.status) != null ? _a5 : "").trim().toUpperCase();
     if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
     if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
     const dataExposure = dataExposureOf(node2);
@@ -8063,6 +8093,32 @@ var Server = (() => {
       dataExposure,
       internetExposure: internetExposureOf(node2)
     };
+  }
+  function frameworkCodeGaps(node2, nodeIssues, rule) {
+    var _a5, _b, _c, _d, _e;
+    const codes = /* @__PURE__ */ new Set();
+    for (const issue2 of nodeIssues) {
+      const fw = (_a5 = issue2.frameworks) != null ? _a5 : {};
+      for (const c of (_b = fw.owaspLlm) != null ? _b : []) codes.add(c);
+      for (const c of (_c = fw.owaspAgentic) != null ? _c : []) codes.add(c);
+      for (const c of (_d = fw.owaspMl) != null ? _d : []) codes.add(`ML_${c.replace(/\s+/g, "_").toUpperCase()}`);
+      if (rule.gapSources.fiveRs) {
+        for (const c of (_e = fw.fiveRs) != null ? _e : []) codes.add(`5R_${c.replace(/\s+/g, "_").toUpperCase()}`);
+      }
+    }
+    const gaps = [...codes].sort().map((c) => gap(c));
+    if (node2.guardrailMissing) gaps.push(gap("NO_GUARDRAIL"));
+    return gaps;
+  }
+  function conditionGaps(node2, nodeIssues) {
+    const gaps = [];
+    for (const key of CONDITION_KEYS) {
+      if (conditionState(node2, key) === true) gaps.push(gap(`COND_${key}`));
+    }
+    const groups = /* @__PURE__ */ new Set();
+    for (const issue2 of nodeIssues) if (issue2.comboGroup) groups.add(issue2.comboGroup);
+    for (const g of [...groups].sort()) gaps.push(gap(comboGapCode(g)));
+    return gaps;
   }
   function weightedGap(code, severity, rule) {
     var _a5;
@@ -8094,10 +8150,12 @@ var Server = (() => {
       const base = deriveAarsInput(node2, (_a5 = issuesByAsset.get(resourceId)) != null ? _a5 : [], rule);
       const seen = new Set(base.gaps.map((g) => g.code));
       const gaps = [...base.gaps];
-      for (const c of codes) {
-        if (c && !seen.has(c)) {
-          seen.add(c);
-          gaps.push(weightedGap(c, worstByCode.get(`${resourceId}|${c}`), rule));
+      if (rule.gapUnit !== "condition") {
+        for (const c of codes) {
+          if (c && !seen.has(c)) {
+            seen.add(c);
+            gaps.push(weightedGap(c, worstByCode.get(`${resourceId}|${c}`), rule));
+          }
         }
       }
       hints[resourceId] = {
@@ -8786,7 +8844,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "a1d4968d6e8e" : "dev";
+  var BUILD_ID = true ? "95443eecb894" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -13321,7 +13379,7 @@ var Server = (() => {
       defaults: DEFAULT_AARS_RULE,
       // Whole rules the page can load into the draft. `defaults` above is the spec model and
       // stays where it is (Reset reads it); presets are alternatives, not a fallback.
-      presets: { v2: AARS_V2_RULE },
+      presets: { v2: AARS_V2_RULE, v3: AARS_V3_RULE },
       summary: ruleSummary(stored.rule),
       scoredVersion,
       // Only the point model can strand the persisted scores; bands re-derive on read, and

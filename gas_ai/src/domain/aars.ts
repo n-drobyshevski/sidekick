@@ -108,6 +108,32 @@ export type MultiIssueScaling = "flat" | "log2";
 export type GapAggregation = "sum" | "rss";
 
 /**
+ * The unit pillar B prices, as opposed to the cascade that prices it.
+ *
+ * `"code"` is the spec: one gap per distinct framework code (OWASP LLM / Agentic / ML,
+ * 5Rs) plus `NO_GUARDRAIL`. Its defect is measured, not theoretical —
+ * ai/AARS_SCORING_ASSESSMENT.md §1: the codes are not Wiz data, they are four hardcoded
+ * literals in `toxicCombos.COMBO_GROUPS` keyed to four Wiz rule ids. An issue matching one
+ * mints 4–7 codes and pins pillar B at its cap; an issue matching none contributes zero.
+ * Worse, three of those literals name the SAME underlying fact three ways — `LLM03` /
+ * `ASI04` / `ML_SUPPLY_CHAIN` are one supply-chain condition, not three — so even the
+ * "healthy" middle of the distribution over-charges.
+ *
+ * `"condition"` prices the thing the codes were always standing in for: the four
+ * `riskConditions.CONDITION_KEYS` an asset actually holds (`COND_MISSING_GUARDRAIL`,
+ * `COND_EXCESSIVE_PRIVILEGE`, `COND_SENSITIVE_DATA`, `COND_INTERNET_EXPOSURE`, each priced
+ * once, however many issues or frameworks cite it) plus one charge per distinct
+ * toxic-combination group its open issues fall into (`COMBO_<group>`). Framework codes
+ * are NOT deleted — `IssueRow.frameworks` is untouched, so the detail sheet and the
+ * compliance rollups render exactly as before — pillar B just stops pricing them.
+ *
+ * Defaults to `"code"`: this is a derivation knob (`derivationSignature` carries it), and
+ * every knob in this file ships opt-in so `ai/custom_score.md`'s applied table keeps
+ * reproducing untouched. `AARS_V3_RULE` is the first preset to select `"condition"`.
+ */
+export type GapUnit = "code" | "condition";
+
+/**
  * Which derivations are allowed to RAISE a gap, as opposed to how gaps are priced.
  *
  * Coverage belongs on the rule for the same reason pricing does: it is a judgement the
@@ -169,6 +195,11 @@ export interface AarsRule {
   /** How `multiIssueMultiplier` scales with the issue count. Defaults to the spec's `flat`. */
   multiIssueScaling: MultiIssueScaling;
   pillarACap: number;
+  /**
+   * What a pillar-B gap COUNTS, before the cascade below prices it. Defaults to the spec's
+   * `"code"`. See `GapUnit` for what `"condition"` changes and why.
+   */
+  gapUnit: GapUnit;
   /** Ordered pricing cascade for gap codes — FIRST MATCH WINS. */
   gapPoints: GapPointRule[];
   /** Price for a code no row matches. Governs tenant-specific finding shortIds. */
@@ -233,6 +264,8 @@ export const DEFAULT_AARS_RULE: AarsRule = {
   multiIssueMultiplier: 1.2,
   multiIssueScaling: "flat",
   pillarACap: 50,
+  // "code": the spec's unit — one gap per distinct framework code. See `GapUnit`.
+  gapUnit: "code",
   gapPoints: [
     { match: "exact", code: "NO_GUARDRAIL", points: 10 },
     { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
@@ -314,6 +347,10 @@ export const AARS_V2_RULE: AarsRule = {
   multiIssueMultiplier: 1.2,
   multiIssueScaling: "log2",
   pillarACap: 45,
+  // Stays "code", same reasoning as `frameworkMapping` below: this preset was calibrated
+  // against the code-unit shape, and switching the unit is a bigger act than this pass —
+  // `AARS_V3_RULE` is that act, kept separate so v2 keeps meaning what it always meant.
+  gapUnit: "code",
   gapPoints: [
     { match: "exact", code: "NO_GUARDRAIL", points: 10 },
     { match: "exact", code: "INACTIVE_AGENT", points: 10 },
@@ -354,13 +391,78 @@ export const AARS_V2_RULE: AarsRule = {
   bands: { critical: 70, high: 50, medium: 30, low: 10 },
 };
 
+/**
+ * A second calibrated preset — offered beside `AARS_V2_RULE`, never a default — that
+ * selects `gapUnit: "condition"` instead of retuning pillar B's aggregation.
+ *
+ * `AARS_V2_RULE` takes pillar B off its ceiling with `rss`: √(Σ p²) over the SAME 5-6
+ * framework codes an issue mints, so it stops clamping but is still summing three
+ * taxonomies' names for one fact (ai/AARS_SCORING_ASSESSMENT.md §1's "LLM03 / ASI04 /
+ * ML_SUPPLY_CHAIN are one supply-chain condition, charged three times"). v3 fixes the unit
+ * itself: `deriveAarsInput` stops emitting a gap per framework code and emits one gap per
+ * `riskConditions.CONDITION_KEYS` condition actually HELD, plus one per distinct toxic-
+ * combination group — see `GapUnit`. The framework codes stay exactly where they were on
+ * `IssueRow.frameworks`; only pillar B's pricing currency changes, so the compliance pages
+ * are byte-identical under v3.
+ *
+ * Everything else is `AARS_V2_RULE`, unchanged: pillar caps 45/25/12/18 = 100, `log2` issue
+ * scaling, `rss` gap aggregation (still worth keeping — an asset can hold 2-3 conditions
+ * PLUS 2-3 combo groups at once, and `rss` is the same sublinear response to that as it is
+ * to a framework-code list), the amplifier folded to 1, and INACTIVE_AGENT / DEPRECATED_MODEL
+ * priced explicitly rather than by the fallback.
+ *
+ * The cascade prices the new vocabulary explicitly rather than falling through to
+ * `gapFallbackPoints` (5, inherited from v2):
+ *
+ *   COND_MISSING_GUARDRAIL    10  Same price `NO_GUARDRAIL` always had — this IS that gap,
+ *                                 renamed to the unit that also reaches it from privilege/
+ *                                 data findings, not only from `node.guardrailMissing`.
+ *   COND_SENSITIVE_DATA        8  Above excessive privilege: reachable sensitive data is
+ *   COND_EXCESSIVE_PRIVILEGE   8  what a missing guardrail or a leaked credential turns
+ *                                 into an incident, so both outrank the network fact below.
+ *   COND_INTERNET_EXPOSURE     6  Lowest of the four on PURPOSE, not because it matters
+ *                                 less: pillar D already prices confirmed/undetermined
+ *                                 reachability on its own 18-point budget (`exposurePoints`
+ *                                 above), so charging it heavily again here would count the
+ *                                 same network fact under two pillars. `COND_INTERNET_
+ *                                 EXPOSURE` still needs a price — an asset can hold the
+ *                                 condition without the traversal that feeds pillar D having
+ *                                 run — it just should not compete with pillar D's own share.
+ *   COMBO_ (prefix)             5  One toxic-combination pattern, at parity with v2's ML/5R
+ *                                 rows — a real but secondary signal once the four conditions
+ *                                 underneath it are already priced.
+ *
+ * `pillarBCap` stays 25, unchanged from v2 — measurement (ai/AARS_ASSESSMENT.md's method,
+ * reproduced in test/scoreOrdinality.test.ts §6b) is what justifies that rather than
+ * widening it on the suggested prices alone; see that file and ai/AARS_ASSESSMENT.md §6 for
+ * the measured comparison against v2.
+ */
+export const AARS_V3_RULE: AarsRule = {
+  ...AARS_V2_RULE,
+  gapUnit: "condition",
+  gapPoints: [
+    { match: "exact", code: "INACTIVE_AGENT", points: 10 },
+    { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
+    { match: "exact", code: "COND_MISSING_GUARDRAIL", points: 10 },
+    { match: "exact", code: "COND_SENSITIVE_DATA", points: 8 },
+    { match: "exact", code: "COND_EXCESSIVE_PRIVILEGE", points: 8 },
+    { match: "exact", code: "COND_INTERNET_EXPOSURE", points: 6 },
+    { match: "prefix", code: "COMBO_", points: 5 },
+  ],
+};
+
 /** The AARS scale itself: not tunable, unlike everything in `AarsRule`. */
 export const AARS_MAX_SCORE = 100;
 
 /**
  * A short, human-readable fingerprint of the knobs that change WHICH GAPS EXIST, as
- * opposed to how they price — today, `gapSources`'s four flags; it will gain `gapUnit` the
- * day that knob exists. Persisted on `GNode.aarsInput.derivedUnder` (graphEnrich.ts) so a
+ * opposed to how they price — `gapUnit` plus `gapSources`'s four flags. `gapUnit` had to
+ * join this the day it existed, not later: it decides whether pillar B's gaps are framework
+ * codes or `COND_*`/`COMBO_*` conditions, which is a more radical change to WHICH GAPS EXIST
+ * than any single `gapSources` flag. Leaving it out would repeat exactly the bug Phase 2b's
+ * `gapSources` fingerprint was built to fix — an operator flips `gapUnit`, hits Recompute,
+ * and the persisted gaps (still framework codes, or still conditions) silently survive until
+ * the next full sync. Persisted on `GNode.aarsInput.derivedUnder` (graphEnrich.ts) so a
  * rescore can tell a stale DERIVATION apart from a stale PRICE: `enrichFromTabs`
  * (syncStore.ts) reuses a persisted input to re-PRICE it for free, and that is correct for a
  * `severityPoints` or cap edit — but reusing it across a `gapSources` change silently keeps
@@ -379,6 +481,7 @@ export const AARS_MAX_SCORE = 100;
 export function derivationSignature(rule: AarsRule): string {
   const s = rule.gapSources;
   return [
+    `gapUnit:${rule.gapUnit}`,
     `fiveRs:${s.fiveRs ? 1 : 0}`,
     `deprecatedModel:${s.deprecatedModel ? 1 : 0}`,
     `inactiveAgent:${s.inactiveAgent ? 1 : 0}`,

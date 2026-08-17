@@ -171,6 +171,22 @@ export const OTHER_AI_RISK: ComboGroup = {
 /** Every bucket the register counts into, in display order. */
 export const REGISTER_GROUPS: ComboGroup[] = [...COMBO_GROUPS, OTHER_AI_RISK];
 
+/**
+ * The `COMBO_<…>` pillar-B gap code `AarsRule.gapUnit: "condition"` prices for a combo
+ * group — one per distinct group an asset's open issues fall into
+ * (`graphEnrich.deriveAarsInput`).
+ *
+ * `OTHER_GROUP_ID` is deliberately INCLUDED, as `COMBO_OTHER` rather than the literal slug
+ * `COMBO_OTHER_AI_RISK`: an asset whose only open issue is an unclassified AI-risk finding
+ * contributing NOTHING to pillar B is the "code" unit's bimodality bug in miniature — one
+ * regex match away from a gap that either mints many codes or none. Pricing the bucket,
+ * even generically, is what keeps that from repeating under `"condition"`.
+ */
+export function comboGapCode(comboGroupId: string): string {
+  if (comboGroupId === OTHER_GROUP_ID) return "COMBO_OTHER";
+  return `COMBO_${comboGroupId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
+}
+
 const BY_RULE_ID = new Map(COMBO_GROUPS.map((g) => [g.ruleId, g]));
 const BY_GROUP_ID = new Map(REGISTER_GROUPS.map((g) => [g.id, g]));
 

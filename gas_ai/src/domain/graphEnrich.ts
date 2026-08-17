@@ -31,7 +31,7 @@ import { decidePosture, derivePostureInput, worstOpenProblem } from "./posture";
 import type { PostureRule } from "./postureRule";
 import { conditionHolds, conditionState } from "./riskConditions";
 import { worstBusinessImpact } from "./syncNormalize";
-import type { ConditionKey } from "./toxicCombos";
+import { CONDITION_KEYS, comboGapCode, type ConditionKey } from "./toxicCombos";
 import {
   AI_ASSET_KINDS,
   edgeId,
@@ -108,15 +108,42 @@ export function internetExposureOf(node: GNode): InternetExposure {
 
 /**
  * Heuristic AARS input for live data (dry-run seeds carry exact hints transcribed
- * from ai/custom_score.md instead): compliance gaps = the distinct framework codes on
- * the asset's open issues plus NO_GUARDRAIL when guardrail coverage flagged the node;
- * data exposure from the CIEM/DSPM flags.
+ * from ai/custom_score.md instead): compliance gaps depend on `rule.gapUnit` (see the
+ * two branches below); data exposure from the CIEM/DSPM flags.
  */
 export function deriveAarsInput(
   node: GNode,
   nodeIssues: IssueRow[],
   rule: AarsRule = DEFAULT_AARS_RULE,
 ): AarsInput {
+  const gaps: AarsGap[] =
+    rule.gapUnit === "condition"
+      ? conditionGaps(node, nodeIssues)
+      : frameworkCodeGaps(node, nodeIssues, rule);
+  // Status-derived gaps. `status` is persisted on every asset and read by nothing but the
+  // detail sheet; these two conditions are the ones the cascade already knows how to price.
+  // Node-status facts, not framework codes, so both gapUnit branches read them the same way.
+  const status = String(node.status ?? "").trim().toUpperCase();
+  if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
+  if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
+  const dataExposure = dataExposureOf(node);
+  return {
+    // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
+    // ai/custom_score.md: MEDIUM ×1.2 = 24); the adjusted severity is a display
+    // lens, not a scoring input — using it would double-count the 5Rs amplifier.
+    issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
+    gaps,
+    dataExposure,
+    internetExposure: internetExposureOf(node),
+  };
+}
+
+/**
+ * `gapUnit: "code"` (the spec): one gap per distinct framework code the asset's open
+ * issues carry, plus `NO_GUARDRAIL` when guardrail coverage flagged the node. Exactly the
+ * pre-6b behaviour, unchanged.
+ */
+function frameworkCodeGaps(node: GNode, nodeIssues: IssueRow[], rule: AarsRule): AarsGap[] {
   const codes = new Set<string>();
   for (const issue of nodeIssues) {
     const fw = issue.frameworks ?? {};
@@ -132,21 +159,36 @@ export function deriveAarsInput(
   }
   const gaps: AarsGap[] = [...codes].sort().map((c) => gap(c));
   if (node.guardrailMissing) gaps.push(gap("NO_GUARDRAIL"));
-  // Status-derived gaps. `status` is persisted on every asset and read by nothing but the
-  // detail sheet; these two conditions are the ones the cascade already knows how to price.
-  const status = String(node.status ?? "").trim().toUpperCase();
-  if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
-  if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
-  const dataExposure = dataExposureOf(node);
-  return {
-    // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
-    // ai/custom_score.md: MEDIUM ×1.2 = 24); the adjusted severity is a display
-    // lens, not a scoring input — using it would double-count the 5Rs amplifier.
-    issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
-    gaps,
-    dataExposure,
-    internetExposure: internetExposureOf(node),
-  };
+  return gaps;
+}
+
+/**
+ * `gapUnit: "condition"` (ai/AARS_SCORING_ASSESSMENT.md §1): one gap per
+ * `riskConditions.CONDITION_KEYS` condition the asset actually HOLDS, priced once no matter
+ * how many issues or framework codes cite it, plus one gap per distinct toxic-combination
+ * group its open issues fall into. No framework code is emitted — `IssueRow.frameworks`
+ * stays exactly as synced, so the detail sheet and the compliance rollups render unchanged;
+ * only pillar B stops pricing them.
+ *
+ * `NO_GUARDRAIL` is not pushed separately here: `COND_MISSING_GUARDRAIL` reads the identical
+ * predicate (`riskConditions.conditionState`'s `MISSING_GUARDRAIL` case is
+ * `node.guardrailMissing === true`), so pushing both would double-charge one fact under two
+ * names — precisely the defect this unit exists to remove.
+ *
+ * `gapSources.fiveRs` and `.frameworkMapping` are framework-code SOURCES and have nothing to
+ * feed here — inert under this unit, the same call `aarsRule.unreachableGapRules` makes for
+ * the diagnostic. `.deprecatedModel` / `.inactiveAgent` are handled by the caller: they are
+ * node-status facts, not framework codes, so both units read them identically.
+ */
+function conditionGaps(node: GNode, nodeIssues: IssueRow[]): AarsGap[] {
+  const gaps: AarsGap[] = [];
+  for (const key of CONDITION_KEYS) {
+    if (conditionState(node, key) === true) gaps.push(gap(`COND_${key}`));
+  }
+  const groups = new Set<string>();
+  for (const issue of nodeIssues) if (issue.comboGroup) groups.add(issue.comboGroup);
+  for (const g of [...groups].sort()) gaps.push(gap(comboGapCode(g)));
+  return gaps;
 }
 
 /**
@@ -167,13 +209,15 @@ function weightedGap(code: string, severity: Severity | undefined, rule: AarsRul
 
 /**
  * Turn config-findings into per-asset AARS hints so live Pillar B stops being purely
- * heuristic: for each resource carrying ≥1 failing finding, the hint's gaps are the
- * union of (a) what deriveAarsInput would compute from the asset's open issues +
- * guardrail flag and (b) one gap per distinct framework code the findings contribute —
- * so no existing signal is lost and real failing controls add real points (computeAars
- * still caps pillar B at 30). dataExposure comes from deriveAarsInput, so hinted and
- * un-hinted assets classify identically. Assets with no findings are omitted and fall
- * through to deriveAarsInput unchanged.
+ * heuristic: for each resource carrying ≥1 failing finding, the hint's gaps are the union
+ * of (a) what deriveAarsInput would compute for the asset under `rule.gapUnit` and (b),
+ * under `gapUnit: "code"` ONLY, one gap per distinct framework code the findings contribute
+ * — so no existing signal is lost and real failing controls add real points (computeAars
+ * still caps pillar B at its cap). Under `gapUnit: "condition"` (b) is skipped: a finding's
+ * framework codes are the same framework-code currency `deriveAarsInput` already stopped
+ * emitting, so there is nothing for them to add. dataExposure comes from deriveAarsInput, so
+ * hinted and un-hinted assets classify identically. Assets with no findings are omitted and
+ * fall through to deriveAarsInput unchanged.
  *
  * Only FAILING, OPEN findings price anything — `isOpenGap`. That filter used to live at
  * the normalizer, which stored nothing else; now that the register also keeps RESOLVED
@@ -218,10 +262,17 @@ export function buildAarsHintsFromFindings(
     const base = deriveAarsInput(node, issuesByAsset.get(resourceId) ?? [], rule);
     const seen = new Set(base.gaps.map((g) => g.code));
     const gaps = [...base.gaps];
-    for (const c of codes) {
-      if (c && !seen.has(c)) {
-        seen.add(c);
-        gaps.push(weightedGap(c, worstByCode.get(`${resourceId}|${c}`), rule));
+    // A finding's `frameworkCodes` are a framework-code SOURCE, same family as
+    // `gapSources.fiveRs` — under `gapUnit: "condition"` pillar B's currency is
+    // `COND_*`/`COMBO_*`, so there is nothing left here for them to feed. Inert, not
+    // silently dropped: `deriveAarsInput`'s condition branch already covers this asset via
+    // `base`, and `unreachableGapRules` reports the same call for the cascade rows.
+    if (rule.gapUnit !== "condition") {
+      for (const c of codes) {
+        if (c && !seen.has(c)) {
+          seen.add(c);
+          gaps.push(weightedGap(c, worstByCode.get(`${resourceId}|${c}`), rule));
+        }
       }
     }
     hints[resourceId] = {

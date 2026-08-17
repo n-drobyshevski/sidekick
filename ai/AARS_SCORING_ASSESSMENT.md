@@ -65,6 +65,19 @@ The four `CONDITION_KEYS` in `riskConditions.ts` — `MISSING_GUARDRAIL`, `EXCES
 Wiz data rather than from a literal, and is shared by the graph topology and the combos matrix.
 That is what pillar B should price, once each.
 
+**This ships as `AarsRule.gapUnit: "code" | "condition"`, opt-in, default `"code"`** (Phase
+6b — [AARS_ASSESSMENT.md](AARS_ASSESSMENT.md) §6). `"condition"` retires the framework-code
+gap entirely and prices exactly the four `CONDITION_KEYS` above, each once per asset however
+many issues or codes cite it, plus one gap per distinct toxic-combination group; framework
+codes stay on `IssueRow.frameworks` for the detail sheet and the compliance rollups, which do
+not change. `AARS_V3_RULE` is the preset that selects it. Measured over the seed estate, live
+path: pillar B's saturation — 19 of 30 assets pinned at the cap under the spec rule — falls to
+0, better even than `AARS_V2_RULE`'s `rss` fix (1 of 30). It is not a free win: v3's tie rate
+(0.26) and effective cardinality (5.31) both come out worse than v2's (0.20 / 6.43), because
+pricing the condition rather than the code correctly stops treating two different toxic-combo
+patterns that happen to hold the same conditions as different. See AARS_ASSESSMENT.md §6 for
+the full comparison and the honest accounting of that trade.
+
 ---
 
 ## 2. What the score reads, against what the product stores

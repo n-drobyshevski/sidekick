@@ -748,6 +748,35 @@ export async function renderAarsRules(main, _params, ctx) {
     v2Btn.focus();
   });
 
+  // v3 is v2 with one further change: pillar B prices the CONDITION an asset holds (missing
+  // guardrail, excessive privilege, sensitive data, internet exposure) plus which toxic-
+  // combination groups it belongs to, instead of the framework codes those groups mint. It
+  // is not simply "better than v2" — see the confirm body — so it is offered beside v2, not
+  // instead of it.
+  const v3Btn = el("button", {}, "Load AARS v3");
+  v3Btn.addEventListener("click", async () => {
+    const ok = await confirmDialog({
+      title: "Load the AARS v3 model?",
+      body:
+        "v3 is v2 with pillar B repriced: one charge per risk CONDITION an asset holds " +
+        "(missing guardrail, excessive privilege, sensitive data, internet exposure) and " +
+        "one per distinct toxic-combination group, instead of one per framework code. It " +
+        "takes pillar B further off its ceiling than v2's root-sum-square does (0 of 30 " +
+        "assets at cap on the seed estate, vs v2's 1 of 30), but it is not a strict upgrade: " +
+        "v2 currently separates the estate a little better (lower tie rate, higher effective " +
+        "cardinality) because its framework-code cascade happens to distinguish toxic-combo " +
+        "patterns that v3 correctly prices the same once they cost the same conditions. It " +
+        "WILL move scores — the impact panel shows exactly which. Nothing is saved until you " +
+        "press Save rule.",
+      confirmLabel: "Load v3",
+    });
+    if (!ok) return;
+    draft = cloneRule(state.presets && state.presets.v3 ? state.presets.v3 : draft);
+    renderCascade();
+    onEdit();
+    v3Btn.focus();
+  });
+
   const exportBtn = el("button", { class: "link" }, "Export JSON");
   exportBtn.addEventListener("click", () => {
     downloadText(
@@ -784,7 +813,7 @@ export async function renderAarsRules(main, _params, ctx) {
 
   editor.append(
     section("Manage", null, [
-      el("div", { class: "rule-row" }, resetBtn, v2Btn, exportBtn, importBtn, importInput),
+      el("div", { class: "rule-row" }, resetBtn, v2Btn, v3Btn, exportBtn, importBtn, importInput),
     ]),
   );
 

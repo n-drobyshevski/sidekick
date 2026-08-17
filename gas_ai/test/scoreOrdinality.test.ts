@@ -8,7 +8,7 @@
 // `hint`) and would understate every measurement here.
 
 import { describe, expect, it } from "vitest";
-import { AARS_V2_RULE, DEFAULT_AARS_RULE, type AarsRule } from "../src/domain/aars";
+import { AARS_V2_RULE, AARS_V3_RULE, DEFAULT_AARS_RULE, type AarsRule } from "../src/domain/aars";
 import { ruleDiscrimination, unreachableGapRules } from "../src/domain/aarsRule";
 import { enrichGraphDoc } from "../src/domain/graphEnrich";
 import { kendallTauB } from "../src/domain/rankStats";
@@ -149,6 +149,45 @@ describe("3. saturation census — the numbers ai/AARS_ASSESSMENT.md publishes",
     // The preset's whole purpose: pillar B off its ceiling. 19 of 30 becomes 1 of 30.
     expect(d.saturated.compliance).toBe(1);
     expect(unreachableGapRules(AARS_V2_RULE).length).toBe(1);
+  });
+
+  // Phase 6b (ai/AARS_SCORING_ASSESSMENT.md §1): v3 changes what a pillar-B gap COUNTS,
+  // not just how the cascade prices it. Measured the same way §6 measured v2 — same seed
+  // estate, same live path, same `ruleDiscrimination` — so the two presets are comparable.
+  //
+  // The honest result: v3 meets the target this phase was written for — pillar-B
+  // saturation goes from 19-of-30 (spec) to effectively NONE — but it does NOT beat v2 on
+  // tie rate or effective cardinality. Both come out WORSE than v2, and the reason is
+  // structural, not a tuning miss: `COMBO_` is a single flat-priced prefix, so two assets
+  // holding the SAME three conditions but belonging to DIFFERENT toxic-combination groups
+  // (`gcp-managed-privileged` vs `bedrock-no-guardrail`) now price identically, where v2's
+  // per-framework-code cascade happened to separate them by which 6-7 codes each pattern
+  // mints. That is the SAME "genuinely identical inputs" tie ai/AARS_ASSESSMENT.md §7
+  // already documents for v2 (12 assets there), just larger here (14) because the coarser,
+  // more correct currency collapses more of what used to look like difference but was
+  // really the same regex match wearing different code lists. Giving each combo group its
+  // own cascade price was tried and measured — it changes nothing under `rss` (the
+  // point spread rounds away before `Math.round`) and reopens the pillar-B saturation this
+  // phase exists to close under `sum`. Both are recorded here rather than quietly discarded.
+  it("§6b: AARS v3 on the live path, against the spec rule's row AND v2's", () => {
+    const d = ruleDiscrimination(liveDoc(AARS_V3_RULE).nodes, AARS_V3_RULE);
+
+    // The metric this preset was built to fix: pillar B pinned at its cap for 19 of 30
+    // assets under the spec rule falls to none under v3 — better than v2's already-good 1.
+    expect(d.saturated.compliance).toBe(0);
+    expect(unreachableGapRules(AARS_V3_RULE).length).toBe(0);
+
+    // Everything else, measured plainly rather than tuned toward a target:
+    expect(d.distinctScores).toBe(10);          // v2: 11, spec: 5 — between the two
+    expect(d.largestTieGroup).toBe(14);          // v2: 12, spec: 14 — ties the spec rule
+    expect(d.tieRate).toBeCloseTo(0.26, 2);      // v2: 0.20, spec: 0.30 — WORSE than v2
+    expect(d.effectiveCardinality).toBeCloseTo(5.31, 2); // v2: 6.43, spec: 3.67 — WORSE than v2
+    expect(d.bandOccupancy).toEqual({ CRITICAL: 0, HIGH: 2, MEDIUM: 17, LOW: 3, INFO: 8 });
+
+    // The plain comparison this block exists to make honest, not favorable:
+    expect(d.tieRate).toBeGreaterThan(ruleDiscrimination(liveDoc(AARS_V2_RULE).nodes, AARS_V2_RULE).tieRate);
+    expect(d.effectiveCardinality)
+      .toBeLessThan(ruleDiscrimination(liveDoc(AARS_V2_RULE).nodes, AARS_V2_RULE).effectiveCardinality);
   });
 });
 

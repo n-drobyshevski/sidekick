@@ -160,6 +160,7 @@ no tenant re-scores on upgrade.
 | `gapSources` | all off | 3.3. `5R_*` from the issue's own 5Rs mapping; `DEPRECATED_MODEL` and a new `INACTIVE_AGENT` from `status` |
 | `exposurePoints` | all zero | §4. Pillar D, derived through the existing `conditionState` so the tri-state survives: `null` → `UNDETERMINED`, never `CONFIRMED`, never `NONE` |
 | `findingSeverityWeights` | all 1 | §4. A CRITICAL failing control can outrank a LOW one. At weight 1 no override is written, so the persisted input stays byte-identical |
+| `gapUnit: "code" \| "condition"` | `code` | [AARS_SCORING_ASSESSMENT.md](AARS_SCORING_ASSESSMENT.md) §1. `"condition"` retires framework-code gaps entirely and prices one gap per held `riskConditions.CONDITION_KEYS` condition plus one per distinct toxic-combination group instead — the label-vs-condition fix, not another aggregation trick on top of the same codes. Framework codes stay on `IssueRow.frameworks`; only pillar B's currency changes, so the detail sheet and compliance rollups are untouched |
 
 **A `gapSources` change now takes effect on Recompute — it previously did not.**
 `gapSources` decides WHICH GAPS EXIST, not how they price, but the rescore path reused a
@@ -184,23 +185,49 @@ nothing; that budget buys pillar D, which discriminates. The 5Rs amplifier is fo
 points (`dataAmplifier: 1`) so the pillar says what it means. Bands stay at 70/50/30/10 —
 they carry the doc's remediation SLAs, and the page's rail moves them per tenant.
 
+**`AARS_V3_RULE`** is v2 with one further change: `gapUnit: "condition"` instead of another
+turn on `gapAggregation`. v2 takes pillar B off its ceiling by root-sum-squaring the SAME
+5-6 framework codes an issue mints — sublinear, but still summing three taxonomies' names
+for one fact. v3 retires the framework code as pillar B's currency and prices the
+`riskConditions.CONDITION_KEYS` condition an asset actually holds instead — see
+[AARS_SCORING_ASSESSMENT.md](AARS_SCORING_ASSESSMENT.md) §1 for why that is the structural
+fix rather than a second aggregation trick. Framework codes are untouched on
+`IssueRow.frameworks`; only pillar B stops pricing them.
+
 Measured over the seed estate, live path:
 
-| | spec rule | **AARS v2** |
-|---|---|---|
-| distinct scores | 5 | **11** |
-| largest tie group | 14 | 12 |
-| tie rate | 0.30 | **0.20** |
-| effective cardinality | 3.67 | **6.43** |
-| pillar B at cap | **19 of 30** | **1 of 30** |
-| bands occupied | CRITICAL 19 · HIGH 0 · MEDIUM 0 · LOW 3 | HIGH 4 · MEDIUM 15 · LOW 2 (+INFO 9) |
-| unreachable cascade rows | 3 | 1 |
+| | spec rule | **AARS v2** | **AARS v3** |
+|---|---|---|---|
+| distinct scores | 5 | **11** | 10 |
+| largest tie group | 14 | 12 | 14 |
+| tie rate | 0.30 | **0.20** | 0.26 |
+| effective cardinality | 3.67 | **6.43** | 5.31 |
+| pillar B at cap | **19 of 30** | **1 of 30** | **0 of 30** |
+| bands occupied | CRITICAL 19 · HIGH 0 · MEDIUM 0 · LOW 3 | HIGH 4 · MEDIUM 15 · LOW 2 (+INFO 9) | HIGH 2 · MEDIUM 17 · LOW 3 (+INFO 8) |
+| unreachable cascade rows | 3 | 1 | **0** |
 
-Every figure in this table is now asserted in `test/scoreOrdinality.test.ts`, against the same
-live path. That is the point of pinning them: the numbers above were measured once, by hand,
-and the seed estate then drifted underneath them — three issues added to `agent-e` moved it
-from the 72 block to the 76 block, and the earlier "15 / 19 of 19 / HIGH 15 · MEDIUM 2" row
-was stale before anyone noticed. A claim a test does not hold is a claim that expires quietly.
+**v3 does not beat v2 on tie rate or effective cardinality — both come out worse.** It wins
+outright on the metric it was built for (pillar B saturation: 19 of 30 down to 0, better
+even than v2's already-good 1 of 30) and on cascade health (every row derivable — 0
+unreachable), but the coarser, more correct currency costs some separation: `COMBO_` is one
+flat-priced prefix, so two assets holding the SAME three conditions but belonging to
+DIFFERENT toxic-combination groups (`gcp-managed-privileged` vs `bedrock-no-guardrail`) now
+price identically, where v2's per-framework-code cascade happened to separate them by which
+6-7 codes each pattern mints. That is the SAME "genuinely identical inputs" tie §7 documents
+for v2 (12 assets there) — it is larger here (14) because pricing the condition rather than
+the code is honest about there being less real difference between those two patterns than
+the code list made it look like, not because v3 is worse at discriminating on a like-for-like
+basis. Giving each combo group its own cascade price was tried and measured: it changes
+nothing under `rss` (the point spread rounds away before the pillar collapses to an integer)
+and reopens the pillar-B saturation this preset exists to close under `sum`. Reported here
+rather than tuned quietly until the table looked better.
+
+Every figure in the v2 columns above is asserted in `test/scoreOrdinality.test.ts` §6; the v3
+column is §6b, against the same live path. That is the point of pinning them: the numbers
+above were measured once, by hand, and the seed estate then drifted underneath them — three
+issues added to `agent-e` moved it from the 72 block to the 76 block, and the earlier
+"15 / 19 of 19 / HIGH 15 · MEDIUM 2" row was stale before anyone noticed. A claim a test does
+not hold is a claim that expires quietly.
 
 ## 7. Known limits
 
@@ -232,8 +259,17 @@ was stale before anyone noticed. A claim a test does not hold is a claim that ex
 
 - **Changing `DEFAULT_AARS_RULE`.** Every improvement here moves scores; making any of it
   default would silently re-score every tenant and invalidate the normative applied table.
-- **A gap theme / equivalence map** for 3.4. `rss` absorbs most of the double-count for far
-  less machinery. Worth revisiting only if measured discrimination stays poor.
+- ~~A gap theme / equivalence map for 3.4, worth revisiting only if measured discrimination
+  stays poor.~~ **Revisited — built as `gapUnit: "condition"` / `AARS_V3_RULE`, §6.** The
+  verdict, now that the numbers are in: worth shipping for CORRECTNESS — it is the structural
+  fix (framework codes stop feeding pillar B at all, so the LLM03/ASI04/ML_SUPPLY_CHAIN
+  triple-charge is gone by construction, not softened by an exponent), and pillar B goes from
+  saturated for 19 of 30 assets to 0 — but it is NOT a discrimination win over `rss` alone:
+  v3's tie rate (0.26) and effective cardinality (5.31) are both worse than v2's (0.20 /
+  6.43), because the coarser currency correctly stops treating two different toxic-combo
+  patterns as different once they cost the same conditions. Ship both: v2 for tenants who
+  want `rss`'s bigger discrimination gain with a lower migration bar (same code-based
+  vocabulary, one aggregation flip), v3 for tenants who want pillar B to mean what it says.
 - **Replacing the numeric score with a decision tree.** Defensible on the merits, but it
   would discard the trend series, the bands, and the entire Rules page.
 - **Refitting v2's bands to the seed distribution.** Thirty demo assets are not a population;
@@ -244,19 +280,22 @@ was stale before anyone noticed. A claim a test does not hold is a claim that ex
 The measurements in §2 and §6 come from scoring the seed estate through the two paths:
 
 ```js
-import { AARS_V2_RULE, DEFAULT_AARS_RULE } from "../src/domain/aars";
+import { AARS_V2_RULE, AARS_V3_RULE, DEFAULT_AARS_RULE } from "../src/domain/aars";
 import { ruleDiscrimination } from "../src/domain/aarsRule";
 import { enrichGraphDoc } from "../src/domain/graphEnrich";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
 // the demo path — pinned hints, 2-3 codes per asset
 enrichGraphDoc(seedGraphDoc("T"), SEED_ISSUES, SEED_AARS_HINTS, DEFAULT_AARS_RULE);
-// the live path — deriveAarsInput, 5-6 codes per asset
+// the live path — deriveAarsInput, 5-6 codes per asset (framework codes) under the spec
+// rule and v2, one gap per held condition + toxic-combo group under v3
 enrichGraphDoc(seedGraphDoc("T"), SEED_ISSUES, undefined, DEFAULT_AARS_RULE);
 enrichGraphDoc(seedGraphDoc("T"), SEED_ISSUES, undefined, AARS_V2_RULE);
+enrichGraphDoc(seedGraphDoc("T"), SEED_ISSUES, undefined, AARS_V3_RULE);
 // then: ruleDiscrimination(doc.nodes, rule)
 ```
 
-The same numbers are asserted in `gas_ai/test/aars.test.ts`,
-`gas_ai/test/aarsRule.test.ts` and `gas_ai/test/graphEnrich.test.ts`; `npm run check` in
-`gas_ai/` runs them.
+The same numbers are asserted in `gas_ai/test/aars.test.ts`, `gas_ai/test/aarsRule.test.ts`
+and `gas_ai/test/graphEnrich.test.ts` (spec rule and v2), and in
+`gas_ai/test/scoreOrdinality.test.ts` §6 (v2) and §6b (v3); `npm run check` in `gas_ai/` runs
+them.
