@@ -12,13 +12,20 @@
   display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
   font-size: 12px; color: var(--text-2);
 }
-/* Counts + "Load more", bottom-left over the canvas. Needs the panel treatment the
+/* Counts + "Load more", along the bottom edge over the canvas. Needs the panel treatment the
    legend has, since it sits on top of edges and cards rather than on a bar. Hidden when
-   empty so an empty or errored view doesn't leave a bare box floating in the corner. */
+   empty so an empty or errored view doesn't leave a bare box floating in the corner.
+
+   It shares this edge with the zoom rail, which took the corner: indented by the rail's width
+   rather than raised above it, because this pill wraps to a second row when "Load more"
+   appears and a vertical clearance would have to be measured to stay true. The right-hand
+   reservation grows by the same amount, since the pill's right edge moves with its left — the
+   space it keeps clear is for the legend in the opposite corner. */
 .workbench-meta.overlay {
-  position: absolute; left: 10px; bottom: 10px; z-index: var(--z-canvas-chrome);
+  position: absolute; bottom: 10px; z-index: var(--z-canvas-chrome);
+  left: calc(10px + var(--rail-w) + 8px);
   gap: 8px; padding: 7px 10px; font-size: 11px;
-  max-width: min(560px, calc(100% - 120px));
+  max-width: min(560px, calc(100% - 120px - var(--rail-w) - 8px));
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
 }
@@ -141,6 +148,9 @@
 .workbench-body {
   flex: 1; min-width: 0; min-height: 0; position: relative;
   background: var(--page); overflow: hidden;
+  /* One button of the bottom-left zoom rail. Named here because the counts overlay indents
+     past the rail by it, and the two must not disagree. */
+  --rail-w: 36px;
 }
 /* The DIRECT child only. This used to be `.workbench-body svg`, which was harmless while the
    canvas was the only SVG in here — and then the table view grew per-row kind icons and every
@@ -158,24 +168,7 @@
 /* emptyState() is message + hint only, so the way out of a dead end lives beside it. */
 .workbench-empty-action { display: flex; justify-content: center; margin-top: 14px; }
 
-/* Zoom: one capsule for the scale (with a readout — zoom was a state you could change but
-   not read), Fit beside it as the separate action it is.
-
-   It sits at the canvas's top-right, directly under the query editor, so it steps below the
-   card by the card's own height — set on .workbench-split by a ResizeObserver, and 0 when the
-   card is away. A variable rather than a fixed offset because the card grows a row at a time
-   and re-wraps on resize. */
-.graph-zoom {
-  position: absolute; top: calc(10px + var(--gq-panel-h, 0px)); right: 10px;
-  display: flex; gap: 6px; z-index: var(--z-canvas-chrome);
-  transition: top 120ms ease-out;
-}
-@media (prefers-reduced-motion: reduce) { .graph-zoom { transition: none; } }
 @media (max-width: 800px) {
-  /* Below 800px the editor rejoins the flow (graphQuery.css) and stops covering this corner.
-     The offset has to be dropped HERE rather than by zeroing --gq-panel-h: that variable is
-     written as an inline style, and no stylesheet can outrank one. */
-  .graph-zoom { top: 10px; }
   /* base.css says this too, and has never once been heard: styles.css imports it BEFORE this
      file, so the plain `.workbench-split { display: flex }` above wins at every width. It went
      unnoticed while the split held exactly one child and flex looked like block — and stopped
@@ -183,14 +176,37 @@
      BESIDE the canvas, 202px wide, with the page scrolling sideways to fit them both. */
   .workbench-split { display: block; }
 }
-.graph-zoom .segmented, .graph-zoom-fit { background: var(--page); box-shadow: var(--shadow-card); }
-.graph-zoom-scale > button { min-width: 32px; font-weight: 600; }
-.graph-zoom-pct {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 52px; padding: 0 4px; font-size: 12px; color: var(--text-2);
-  border-left: 1px solid var(--hairline); border-right: 1px solid var(--hairline);
+
+/* Zoom: a rail of round icon buttons at the canvas's bottom-left, the scale keeping its readout
+   (zoom was a state you could change but not read) and Fit set off below it as the separate
+   action it is.
+
+   The corner matters. From the top-right it sat directly under the floating query editor and
+   had to step down by the card's measured height on every toggle — a ResizeObserver, a
+   `--gq-panel-h` variable, a transition and a media query to undo it. The card is anchored to
+   the top; a control at the bottom simply never meets it, and all of that went away. */
+.graph-zoom {
+  position: absolute; left: 10px; bottom: 10px; z-index: var(--z-canvas-chrome);
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
 }
-.graph-zoom-fit { font-weight: 600; }
+.graph-zoom-scale { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+/* Circles, against a base recipe that gives none of it: `button` sets min-height 36, a 14px
+   side padding and the medium radius, so all three have to be named here. */
+.graph-zoom button {
+  width: var(--rail-w); height: var(--rail-w); min-height: var(--rail-w); padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--page); box-shadow: var(--shadow-card);
+}
+/* Tabular, or the readout jitters as it crosses 38% → 100% under a live zoom. It carries its
+   own ground for the same reason the buttons do — the rail floats over nodes and edges, and
+   bare text on a canvas is legible only until something is drawn behind it. A pill and no
+   shadow: it is a label, and the lift belongs to the things you can press. */
+.graph-zoom-pct {
+  min-width: var(--rail-w); text-align: center;
+  padding: 1px 4px; border-radius: var(--radius-pill); background: var(--page);
+  font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums;
+}
 
 .gedge { stroke: rgba(0, 0, 0, 0.22); stroke-width: 1.25; fill: none; }
 .gedge.negated { stroke: var(--sev-high); stroke-dasharray: 5 4; }
@@ -304,8 +320,9 @@
   transition: transform 150ms ease-out;
 }
 .graph-legend[open] > .legend-toggle::after { transform: rotate(45deg); }
-/* Collapsed, the overlay is a compact labelled pill sized like the zoom controls — the
-   word plus its chevron, not a bare glyph. */
+/* Collapsed, the overlay is a compact labelled pill — the word plus its chevron, not a bare
+   glyph. It used to be sized to match the zoom capsule across the canvas; the zoom is a rail
+   of circles now, and this keeps its own height because a legend is opened by its NAME. */
 .graph-legend.overlay > .legend-toggle {
   gap: 8px; padding: 6px 12px; min-height: 34px; margin-left: auto;
 }

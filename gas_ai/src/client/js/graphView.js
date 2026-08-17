@@ -7,7 +7,7 @@
 // dot + label chip. Kind = icon + text label.
 
 import { kindLabel, svgEl } from "./icons.js";
-import { el } from "./ui.js";
+import { el, uiIcon } from "./ui.js";
 import { NODE_H, NODE_W, drawNodeCard, truncate } from "./graphNode.js";
 
 /**
@@ -477,19 +477,36 @@ export function renderGraph(container, data, handlers = {}) {
   // Make the first node tabbable so Tab enters the graph.
   if (focusedId) nodeEls.get(focusedId).setAttribute("tabindex", "0");
 
-  // Zoom toolbar (HTML overlay, focusable before the SVG): one capsule for the scale,
-  // Fit beside it as the separate thing it is. The percent is the on-screen scale, not the
-  // viewBox ratio — preserveAspectRatio letterboxes, so the two disagree whenever the
-  // container and the view have different aspects.
+  // Zoom rail (HTML overlay, focusable before the SVG): a column of round icon buttons at the
+  // canvas's bottom-left, with Fit set off below the scale as the separate thing it is. `+`
+  // above `−` is the way every map puts it, and the way the reference does.
+  //
+  // The scale keeps its `role="group"` because the readout's accessible name hangs off it (see
+  // paintZoom). It does NOT keep the `segmented` class: that recipe joins its children into one
+  // capsule with `overflow: hidden`, a shared radius and hairline dividers, and styles an
+  // `aria-pressed` state these buttons never set — none of which a rail of separate circles
+  // wants, and it is shared with five real `segmented()` controls that must not inherit the fix.
+  //
+  // The percent is the on-screen scale, not the viewBox ratio — preserveAspectRatio letterboxes,
+  // so the two disagree whenever the container and the view have different aspects.
   const zoomPct = el("span", { class: "graph-zoom-pct num" }, "100%");
-  const zoomGroup = el("div", { class: "segmented graph-zoom-scale", role: "group" },
-    el("button", { "aria-label": "Zoom out", onclick: () => zoom(1.3) }, "−"),
+  const zoomGroup = el("div", { class: "graph-zoom-scale", role: "group" },
+    el("button", {
+      "aria-label": "Zoom in", title: "Zoom in (+)", onclick: () => zoom(1 / 1.3),
+    }, uiIcon("plus", 15)),
     zoomPct,
-    el("button", { "aria-label": "Zoom in", onclick: () => zoom(1 / 1.3) }, "+"),
+    el("button", {
+      "aria-label": "Zoom out", title: "Zoom out (−)", onclick: () => zoom(1.3),
+    }, uiIcon("minus", 15)),
   );
   const zoomBar = el("div", { class: "graph-zoom" },
     zoomGroup,
-    el("button", { class: "graph-zoom-fit", onclick: fit, title: "Fit graph to view (0)" }, "Fit"),
+    // An explicit name, not just the title: the glyph is `aria-hidden`, so without this the
+    // button that used to be called "Fit" by its own text would have no accessible name at all.
+    el("button", {
+      class: "graph-zoom-fit", "aria-label": "Fit graph to view",
+      title: "Fit graph to view (0)", onclick: fit,
+    }, uiIcon("fit", 15)),
   );
 
   /**

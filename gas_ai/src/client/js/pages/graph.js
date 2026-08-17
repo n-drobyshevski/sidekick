@@ -549,14 +549,6 @@ export async function renderGraphPage(main, params, _ctx) {
     document.removeEventListener("keydown", onEscape, true);
   });
 
-  // The zoom capsule sits at the canvas's top-right, directly under the card. A variable rather
-  // than a fixed offset because the card grows a row at a time and re-wraps on resize.
-  const panelSize = new ResizeObserver(() => {
-    split.style.setProperty("--gq-panel-h", (editing ? panel.offsetHeight : 0) + "px");
-  });
-  panelSize.observe(panel);
-  onPageTeardown(() => panelSize.disconnect());
-
   // ------------------------------------------------------------ update cycle
   function update(patch) {
     const { params: current } = parseHash();
@@ -1167,7 +1159,6 @@ export async function renderGraphPage(main, params, _ctx) {
     builder.sync();
     panel.hidden = !editing;
     editBtn.setAttribute("aria-expanded", editing ? "true" : "false");
-    split.style.setProperty("--gq-panel-h", (editing ? panel.offsetHeight : 0) + "px");
 
     // Chips + count badge. The badge counts what the USER applied — the AI-agent lens the
     // page seeds on a fresh visit is shown as a chip and clearable, but it is not a filter
