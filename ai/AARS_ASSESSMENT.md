@@ -50,20 +50,25 @@ against a 30-point cap, that saturates:
 Scored end-to-end over the seed estate through the live path:
 
 ```
-spec rule, LIVE derivation   distinct scores: 5     largest tie group: 15
-0,0,0,0,0,0,0,0,22,29,29,72,72,72,72,72,72,72,72,72,72,72,72,72,72,72,76,76,76,76
+spec rule, LIVE derivation   distinct scores: 5     largest tie group: 14
+0,0,0,0,0,0,0,0,22,29,29,72,72,72,72,72,72,72,72,72,72,72,72,72,72,76,76,76,76,76
 bands: CRITICAL 19 · HIGH 0 · MEDIUM 0 · LOW 3 · INFO 8
-pillar B at cap: 19 of 19 scored agents
+tie rate: 0.30    effective cardinality: 3.67
+pillar B at cap: 19 of 30 scored assets — and those 19 are exactly the CRITICAL band
 ```
 
-**Fifteen assets tie at exactly 72. Every scored agent is CRITICAL. HIGH and MEDIUM are
+**Fourteen assets tie at exactly 72. Every asset above LOW is CRITICAL. HIGH and MEDIUM are
 unreachable.** A prioritiser that rates everything CRITICAL does not prioritise, and a
-"top 10" cut from a 15-asset tie block is arbitrary.
+"top 10" cut from a 14-asset tie block is arbitrary. The two figures added above put a
+magnitude on "collapses": **30% of all asset pairs cannot be separated at all**, and the
+estate behaves as though it has 3.67 distinct scores rather than the 5 it literally has —
+`distinctScores` counts values, `effectiveCardinality` weights them by how many assets take
+each, so the lone 22 does not get to claim a fifth of the discrimination.
 
 The dashboard's demo hides this: the dry-run scores from `SEED_AARS_HINTS`
 (`sampleData.ts:507`), which pin 2–3 codes per asset transcribed from the doc, and produce
-10 distinct scores across five bands. **The demo and production disagree about the model,
-and only the demo looks healthy.**
+10 distinct scores (tie rate 0.14, effective cardinality 7.43) across four occupied bands.
+**The demo and production disagree about the model, and only the demo looks healthy.**
 
 **Root cause.** [`custom_score.md:21-24`](custom_score.md) prices "a failing OWASP LLM
 **control**" — one charge per framework. The implementation charges per **code** within the
@@ -173,10 +178,18 @@ Measured over the seed estate, live path:
 | | spec rule | **AARS v2** |
 |---|---|---|
 | distinct scores | 5 | **11** |
-| largest tie group | 15 | 12 |
-| pillar B at cap | **19 of 19** | **0** |
-| bands occupied | CRITICAL 19 · HIGH 0 · MEDIUM 0 | HIGH 15 · MEDIUM 2 · LOW 1 (+INFO 8) |
+| largest tie group | 14 | 12 |
+| tie rate | 0.30 | **0.20** |
+| effective cardinality | 3.67 | **6.43** |
+| pillar B at cap | **19 of 30** | **1 of 30** |
+| bands occupied | CRITICAL 19 · HIGH 0 · MEDIUM 0 · LOW 3 | HIGH 4 · MEDIUM 15 · LOW 2 (+INFO 9) |
 | unreachable cascade rows | 3 | 1 |
+
+Every figure in this table is now asserted in `test/scoreOrdinality.test.ts`, against the same
+live path. That is the point of pinning them: the numbers above were measured once, by hand,
+and the seed estate then drifted underneath them — three issues added to `agent-e` moved it
+from the 72 block to the 76 block, and the earlier "15 / 19 of 19 / HIGH 15 · MEDIUM 2" row
+was stale before anyone noticed. A claim a test does not hold is a claim that expires quietly.
 
 ## 7. Known limits
 

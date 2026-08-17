@@ -235,10 +235,32 @@ describe("bandRanges", () => {
 });
 
 describe("unreachableGapRules", () => {
-  it("names the three default rows nothing can raise", () => {
-    const dead = unreachableGapRules(DEFAULT_AARS_RULE).map((i) => DEFAULT_AARS_RULE.gapPoints[i]!);
-    expect(dead.map((r) => `${r.match} ${r.code}`))
-      .toEqual(["exact DEPRECATED_MODEL", "exact FIVE_RS", "prefix 5R"]);
+  it("names rows whose code no CURRENTLY-active derivation can raise", () => {
+    const dead = unreachableGapRules(DEFAULT_AARS_RULE);
+    // The count, on its own: three rows are dead under the defaults (every source off).
+    // Checked apart from the property below so a genuinely new dead row changes this
+    // number deliberately, rather than the property test silently absorbing it.
+    expect(dead.length).toBe(3);
+
+    // The property `unreachableGapRules` exists to report — "isDerivable rejects this
+    // code" — checked through the public surface rather than the private predicate
+    // directly: switching on EVERY gap source must revive every dead row except FIVE_RS,
+    // the one code no source ever names (both 5Rs sources always say WHICH of the five —
+    // see the "switching a gap source on" case below). A row that stayed dead here for any
+    // other code would mean something can never derive it no matter what the operator
+    // enables, which is exactly what "unreachable" claims.
+    const allSourcesOn = withRule({
+      gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true, frameworkMapping: true },
+    });
+    const stillDeadCodes = unreachableGapRules(allSourcesOn).map((i) => allSourcesOn.gapPoints[i]!.code);
+    for (const i of dead) {
+      const code = DEFAULT_AARS_RULE.gapPoints[i]!.code;
+      if (code === "FIVE_RS") {
+        expect(stillDeadCodes).toContain(code);
+      } else {
+        expect(stillDeadCodes).not.toContain(code);
+      }
+    }
   });
 
   it("is not the same claim as shadowedGapRules — these rows are not shadowed", () => {
@@ -286,6 +308,33 @@ describe("ruleDiscrimination", () => {
     expect(d.distinctScores).toBe(3);
     expect(d.largestTieGroup).toBe(3);
     expect(d.range).toEqual({ min: 62, max: 76 });
+    // Groups: {62: 3, 66: 1, 76: 1}, n=5, C(5,2)=10 total pairs.
+    // Tied pairs: C(3,2) + C(1,2) + C(1,2) = 3 + 0 + 0 = 3. tieRate = 3/10.
+    expect(d.tieRate).toBeCloseTo(0.3, 12);
+    // p = [3/5, 1/5, 1/5]. H = -(0.6·ln0.6 + 0.2·ln0.2 + 0.2·ln0.2) ≈ 0.9503 nats.
+    // exp(H) ≈ 2.5864 — between the 1 a constant list would give and the 5 all-distinct
+    // values would give, and noticeably short of `distinctScores` (3) because one group
+    // holds 3 of the 5 assets.
+    expect(d.effectiveCardinality).toBeCloseTo(2.5864, 3);
+    expect(d.effectiveCardinality).toBeLessThan(d.distinctScores);
+  });
+
+  it("tieRate and effectiveCardinality hit their identity extremes", () => {
+    // Every asset tied at one score: tieRate 1 (every pair shares it), cardinality 1.
+    const allTied = ruleDiscrimination(
+      [50, 50, 50].map((s) => asset(s, "HIGH", { toxic: 20, compliance: 20, data: 22 })),
+      DEFAULT_AARS_RULE,
+    );
+    expect(allTied.tieRate).toBe(1);
+    expect(allTied.effectiveCardinality).toBeCloseTo(1, 12);
+
+    // Every asset at a distinct score: tieRate 0, cardinality equal to the count.
+    const allDistinct = ruleDiscrimination(
+      [10, 20, 30, 40].map((s) => asset(s, "LOW", { toxic: 5, compliance: 5, data: 0 })),
+      DEFAULT_AARS_RULE,
+    );
+    expect(allDistinct.tieRate).toBe(0);
+    expect(allDistinct.effectiveCardinality).toBeCloseTo(4, 12);
   });
 
   it("catches the failure this whole diagnostic exists for: a pillar at cap for everyone", () => {
@@ -339,7 +388,10 @@ describe("ruleSummary", () => {
 
   it("counts the cascade rows and names the fallback", () => {
     const text = ruleSummary(withRule({ gapFallbackPoints: 1 })).join(" ");
-    expect(text).toContain("9 pricing rules");
+    // The intent under test is "the summary counts the rows", not "there are exactly nine
+    // rows" — computed from the rule rather than hard-coded, so an added cascade row can
+    // never make this assertion lie about what it is checking.
+    expect(text).toContain(`${DEFAULT_AARS_RULE.gapPoints.length} pricing rules`);
     expect(text).toContain("1 point"); // singular, not "1 points"
   });
 });

@@ -2775,6 +2775,34 @@ var Server = (() => {
     });
   }
 
+  // src/domain/rankStats.ts
+  function tiedPairCount(values) {
+    var _a5;
+    const counts = /* @__PURE__ */ new Map();
+    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
+    let pairs = 0;
+    for (const c of counts.values()) pairs += c * (c - 1) / 2;
+    return pairs;
+  }
+  function tieRate(values) {
+    const n = values.length;
+    if (n < 2) return 0;
+    return tiedPairCount(values) / (n * (n - 1) / 2);
+  }
+  function effectiveCardinality(values) {
+    var _a5;
+    const n = values.length;
+    if (n === 0) return 0;
+    const counts = /* @__PURE__ */ new Map();
+    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
+    let entropy = 0;
+    for (const c of counts.values()) {
+      const p = c / n;
+      entropy += -p * Math.log(p);
+    }
+    return Math.exp(entropy);
+  }
+
   // src/domain/aarsRule.ts
   var POINTS_MIN = 0;
   var POINTS_MAX = 100;
@@ -3008,6 +3036,8 @@ var Server = (() => {
     scored: 0,
     distinctScores: 0,
     largestTieGroup: 0,
+    tieRate: 0,
+    effectiveCardinality: 0,
     bandOccupancy: {},
     range: { min: 0, max: 0 },
     saturated: { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 }
@@ -3046,6 +3076,13 @@ var Server = (() => {
       scored: scores.length,
       distinctScores: byScore.size,
       largestTieGroup: Math.max(...byScore.values()),
+      // Both delegate to rankStats rather than repeating Σ C(nₖ,2)/C(N,2) and exp(-Σ pₖ ln pₖ)
+      // here. They group `scores` again internally, which cannot disagree with `byScore` —
+      // same array, same grouping — and one implementation of each formula is one place for it
+      // to be wrong. rankStats is deliberately free of any AARS import so it stays the shared
+      // home for these the day something other than a score needs measuring.
+      tieRate: tieRate(scores),
+      effectiveCardinality: effectiveCardinality(scores),
       bandOccupancy: counts,
       range: { min: Math.min(...scores), max: Math.max(...scores) },
       saturated
@@ -7883,7 +7920,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "fbb3bee6c631" : "dev";
+  var BUILD_ID = true ? "47d716e3baf2" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

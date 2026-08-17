@@ -20,6 +20,7 @@ import {
   type IssueSeverityKey,
   type MultiIssueScaling,
 } from "./aars";
+import { effectiveCardinality, tieRate } from "./rankStats";
 import { clampInt } from "./util";
 
 export const POINTS_MIN = 0;
@@ -381,6 +382,24 @@ export interface RuleDiscrimination {
   distinctScores: number;
   /** The largest set of assets sharing one score — the tie block a "top N" would cut into. */
   largestTieGroup: number;
+  /**
+   * The share of asset PAIRS this model cannot separate — `rankStats.tieRate` over the
+   * score list. 1.0 means it ranks nothing: every pair of scored assets shares a value, so
+   * ANY ordering within the estate is arbitrary. `largestTieGroup` names the single worst
+   * block; this measures how much of the whole estate sits in a block at all, which is the
+   * number that keeps a healthy-looking `distinctScores` (several small groups) from hiding
+   * an estate that is still mostly tied.
+   */
+  tieRate: number;
+  /**
+   * exp(Shannon entropy) over the score distribution — `rankStats.effectiveCardinality` —
+   * how many distinct scores the estate BEHAVES as if it has, as opposed to how many it
+   * literally has. `distinctScores` counts values; this weights each one by how many assets
+   * take it, so a scale of {30: 1 asset, 72: 19 assets} is not credited with "2 distinct
+   * scores" worth of discrimination — one outlier score does not read as the estate being
+   * spread out. Equal to `distinctScores` only when every value is taken equally often.
+   */
+  effectiveCardinality: number;
   /** Occupancy per level, INFO included, zeroes kept: an empty band is the finding. */
   bandOccupancy: Record<string, number>;
   /** Lowest and highest score actually reached, so an unused range is visible. */
@@ -393,6 +412,8 @@ const EMPTY_DISCRIMINATION: RuleDiscrimination = {
   scored: 0,
   distinctScores: 0,
   largestTieGroup: 0,
+  tieRate: 0,
+  effectiveCardinality: 0,
   bandOccupancy: {},
   range: { min: 0, max: 0 },
   saturated: { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 },
@@ -455,6 +476,13 @@ export function ruleDiscrimination(
     scored: scores.length,
     distinctScores: byScore.size,
     largestTieGroup: Math.max(...byScore.values()),
+    // Both delegate to rankStats rather than repeating Σ C(nₖ,2)/C(N,2) and exp(-Σ pₖ ln pₖ)
+    // here. They group `scores` again internally, which cannot disagree with `byScore` —
+    // same array, same grouping — and one implementation of each formula is one place for it
+    // to be wrong. rankStats is deliberately free of any AARS import so it stays the shared
+    // home for these the day something other than a score needs measuring.
+    tieRate: tieRate(scores),
+    effectiveCardinality: effectiveCardinality(scores),
     bandOccupancy: counts,
     range: { min: Math.min(...scores), max: Math.max(...scores) },
     saturated,
