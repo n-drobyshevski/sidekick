@@ -114,6 +114,17 @@
 
   --font: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, "Helvetica Neue",
     sans-serif;
+
+  /* Motion. Nothing referenced these before the ghost graph — every duration in the tree up to
+     now was a bare literal (~30 of them, from aars.css's 120ms to sheet.css's 220ms), and this
+     is not a sweep to collect them, only tokens for the new animations below. Keep the
+     vocabulary to `ease` / `ease-out` / `ease-in-out` / `linear`; no cubic-beziers anywhere in
+     this codebase, and no reason to start with a loading state. */
+  --dur-fast: 140ms;
+  --dur-base: 180ms;
+  --dur-slow: 320ms;
+  --ease-out: ease-out;
+  --ease-loop: ease-in-out;
 }
 
 * { box-sizing: border-box; }

@@ -163,6 +163,38 @@
 .workbench-body > svg.panning { cursor: grabbing; }
 .workbench-body.updating > svg,
 .workbench-body.updating > .workbench-table { opacity: 0.55; transition: opacity 120ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  /* The one dim/undim in the file with no reduced-motion rule of its own, relying entirely on
+     the global `transition-duration: 0.01ms !important` blanket in overrides.css. That still
+     works, but every other transition here carries its own guard rather than leaning on it
+     alone — this brings the refetch dim into that pattern instead of being the one exception. */
+  .workbench-body.updating > svg,
+  .workbench-body.updating > .workbench-table { transition: none; }
+}
+
+/* The boot -> first-answer handoff: `body` itself fades out, the canvas swap happens
+   synchronously while it is invisible, then it fades back in — see paint()'s `handoff` branch.
+   Gated in JS on `bootSkeleton && motionOk()`, so this class is never added under reduced
+   motion; the media query below is the same belt-and-suspenders every other transition here
+   carries regardless of whether JS already gates it. */
+.workbench-body.gcanvas-handoff { opacity: 0; transition: opacity var(--dur-base) var(--ease-out); }
+@media (prefers-reduced-motion: reduce) {
+  .workbench-body.gcanvas-handoff { transition: none; }
+}
+
+/* The refetch indicator: a hairline-thin indeterminate bar pinned to the canvas's top edge,
+   shown only while `.workbench-body` carries `.updating`. A SIBLING of the canvas, not a
+   child — `renderGraph` clears `body`'s children on every repaint (graphView.js:19) and would
+   destroy anything placed inside it, the same reason `.graph-rail` and `.gq-panel` sit beside
+   `body` rather than in it. Reuses `.progress-track.indeterminate` (base.css) rather than a
+   second indeterminate-bar implementation — it already carries the striped reduced-motion
+   fallback. */
+.gs-updating-bar {
+  position: absolute; top: 0; left: 0; right: 0; z-index: var(--z-canvas-chrome);
+  overflow: hidden;
+}
+.gs-updating-bar[hidden] { display: none; }
+.gs-updating-bar .progress-track { height: 2px; }
 .workbench-table {
   /* Bottom padding clears the counts overlay, which floats above this in table view. */
   position: absolute; inset: 0; overflow-y: auto; padding: 12px 16px 60px;
@@ -170,6 +202,110 @@
 .workbench-empty { padding: 32px; max-width: 640px; margin: 0 auto; width: 100%; }
 /* emptyState() is message + hint only, so the way out of a dead end lives beside it. */
 .workbench-empty-action { display: flex; justify-content: center; margin-top: 14px; }
+
+/* ------------------------------------------------------------------- the ghost graph */
+/* `.graph-skeleton` used to be one inline-styled div wrapping a single pulsing rectangle —
+   the class had no rule anywhere in the tree. It gets real ones now: a wireframe built from
+   graphSkeleton.js's layout (real NODE_W/NODE_H card geometry, one of the five real
+   arrangements) instead of a shape that could stand in for any loading screen in any product.
+   `--gs-stagger` is scoped here rather than promoted to tokens.css — nothing outside this one
+   component reads it.
+
+   No `display: flex` here on purpose: `renderGraphSkeleton` measures THIS element's
+   `clientWidth`/`clientHeight` and hands them straight to `skeletonLayout` as the viewBox size
+   (see that function's own comment), so the host's box has to equal the svg's box exactly —
+   nothing else may eat into it. That's also why `.gs-status` below is an absolute overlay
+   rather than a flex sibling stacked under the canvas: a flex column would shrink `.gs-canvas`
+   by the status row's own height, and the measurement taken before either element exists
+   would then be for a box bigger than the one the svg actually got. */
+.graph-skeleton { position: absolute; inset: 12px; overflow: hidden; --gs-stagger: 45ms; }
+.gs-canvas { display: block; width: 100%; height: 100%; }
+
+/* Group boxes: identical recipe to `.ggroup-box`, so a grouped ghost previews the exact hull
+   the real canvas will draw, not an approximation of it. */
+.gs-group {
+  fill: rgba(0, 0, 0, 0.015); stroke: var(--hairline); stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  animation: gs-rise var(--dur-fast) var(--ease-out) both;
+}
+
+/* Edges: quieter than `.gedge`'s 0.22 alpha (0.14) — a ghost is a lighter claim than a drawn
+   relationship — drawn in via stroke-dashoffset (see graphSkeleton.js for why the dash length
+   is per-edge rather than one shared constant). */
+.gs-edge {
+  stroke: rgba(0, 0, 0, 0.14); stroke-width: 1.25; fill: none;
+  stroke-dasharray: var(--gs-len); stroke-dashoffset: var(--gs-len);
+  vector-effect: non-scaling-stroke;
+  animation: gs-draw var(--dur-slow) var(--ease-out) both;
+  animation-delay: calc(var(--i) * var(--gs-stagger) + var(--dur-fast));
+}
+
+/* Cards: a rise-in (opacity + 4px lift, lane-ordered by --i so the arrangement's own flow is
+   what animates first) that settles into a slow, low-amplitude breathing loop — "arriving, not
+   stuck", with no shimmer sweep and no gradient (DESIGN.md forbids both; see the same rule
+   stated for the flat loading blocks at ui/feedback.js:71 and base.css:383). Both animations
+   sit on the GROUP (box + title + subtitle rise and breathe together, never out of phase with
+   each other) and share the opacity property on purpose: gs-rise (fill-mode both) holds at
+   opacity 1 once its single pass ends, and gs-breath starts exactly then — its delay is
+   gs-rise's own delay plus its duration — and, being the later animation in the list, takes
+   over from there, so there is one continuous motion rather than a visible handoff between two. */
+.gs-node {
+  opacity: 0;
+  animation-name: gs-rise, gs-breath;
+  animation-duration: var(--dur-slow), 1.8s;
+  animation-timing-function: var(--ease-out), var(--ease-loop);
+  animation-delay: calc(var(--i) * var(--gs-stagger)), calc(var(--i) * var(--gs-stagger) + var(--dur-slow));
+  animation-iteration-count: 1, infinite;
+  animation-fill-mode: both, both;
+}
+.gs-node-box { fill: color-mix(in srgb, var(--ink) 7%, var(--surface)); stroke: none; }
+.gs-node-title, .gs-node-sub { fill: color-mix(in srgb, var(--ink) 12%, var(--surface)); }
+
+@keyframes gs-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes gs-breath {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.62; }
+}
+@keyframes gs-draw {
+  from { opacity: 0; }
+  to { opacity: 1; stroke-dashoffset: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The house pattern (`.skeleton`'s own reduced-motion rule, base.css:395-399): replace
+     motion with a static equivalent that still reads as "not yet drawn", rather than merely
+     freezing mid-animation. Groups and cards land at their lighter tint with a hairline
+     border; edges render at full length instead of mid-draw. */
+  .gs-group, .gs-edge, .gs-node { animation: none; }
+  .gs-node { opacity: 1; }
+  .gs-edge { stroke-dashoffset: 0; }
+  .gs-node-box {
+    fill: color-mix(in srgb, var(--ink) 5%, var(--surface));
+    stroke: var(--hairline); stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+}
+
+/* The status region: the one part of the ghost that is actually announced (the SVG above is
+   `aria-hidden`). Phrased on the `.route-overlay-label` idiom (base.css:336-348) so a reader
+   who has seen that pill during a route change recognises this one. Positioned absolutely
+   (bottom-left of the host, over the canvas) rather than stacked below it in flow — see
+   `.graph-skeleton`'s own comment for why the host's measured box has to stay exactly the
+   svg's box, with no second row for this to have claimed height from. `.gs-phase`'s own
+   solid pill background is what keeps it legible sitting over the wireframe. */
+.gs-status {
+  position: absolute; left: 2px; bottom: 2px; z-index: 1;
+  display: flex; align-items: center; gap: 10px;
+}
+.gs-status .progress-track { flex: 0 0 88px; }
+.gs-phase {
+  font-size: 12px; font-weight: 600; color: var(--text-2);
+  background: var(--page); border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill); padding: 5px 12px; box-shadow: var(--shadow-card);
+}
 
 @media (max-width: 800px) {
   /* base.css says this too, and has never once been heard: styles.css imports it BEFORE this
