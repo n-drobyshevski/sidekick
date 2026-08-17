@@ -37,6 +37,7 @@ import {
   outcomeBadge,
   pointRail,
   railScale,
+  latticeGrid,
   segmented,
   select,
   sevBadge,
@@ -46,6 +47,8 @@ import {
   tierBadge,
   toast,
 } from "../ui.js";
+import { PROBLEM_LATTICE, paintCells, vectorSentence } from "../lattice.js";
+import { decideProblem as mirrorDecideProblem, leafCoverage as mirrorLeafCoverage } from "../decideMirror.js";
 import {
   CODEBOOK,
   gapCodeOptions,
@@ -1898,11 +1901,29 @@ export async function renderAarsRules(main, _params, ctx) {
   window.addEventListener("beforeunload", onBeforeUnload);
 
   // ============================================================================
-  // Problem tree — Phase 5. Same rule 1 as the AARS half of this file: the client NEVER
-  // decides. Every outcome shown below — the occupancy strip, the movers, the leaf
-  // counts, the per-axis unknown rates — comes from api_previewProblemRule, which runs
-  // the real cascade server-side (syncStore.decideProblemsWith) at zero Wiz cost.
-  // Nothing here calls decideProblem or reimplements first-match-wins.
+  // Problem tree — Phase 5.
+  //
+  // THE CLIENT DRAWS THE CASCADE; THE SERVER REMAINS THE ONLY SOURCE OF ANYTHING COUNTED.
+  // This is a narrowing of what this comment used to say ("the client NEVER decides"), and
+  // it is narrower on purpose rather than by erosion. The lattice below has to repaint in
+  // the same frame as a keystroke — after PREVIEW_DEBOUNCE_MS (700ms) plus an Apps Script
+  // round-trip, a picture you are dragging rows around in reads as broken — so
+  // decideMirror.js re-walks the first-match-wins cascade in the browser to decide WHICH
+  // CELL GETS WHICH TINT. That is the whole of what it does.
+  //
+  // Every NUMBER on this tab still comes from api_previewProblemRule, which runs the real
+  // cascade server-side (syncStore.decideProblemsWith) at zero Wiz cost: the leaf counts,
+  // the estate occupancy, the movers, the per-axis unknown rates, and the validation that
+  // gates Save. Two guards keep the drawn picture and the counted truth from drifting:
+  // test/decideMirror.test.js pins the mirror against domain/problem.ts over all 54 vectors
+  // (and all 27 posture cells) including which row decided, and checkLatticeAgreement below
+  // reconciles the mirror's own tally against the server's leafCoverage.byRow on every
+  // preview response — hatching the whole lattice rather than letting it show a confident
+  // wrong answer if they ever disagree.
+  //
+  // Rule 1 at the top of this file is untouched: no score, no points, nothing continuous is
+  // computed here. See decideMirror.js's own header for why a cascade walk is safe to
+  // mirror when a score is not.
 
   const AXIS_DEFS = [
     { key: "exploitation", label: "Exploitation", values: ["ACTIVE", "SUSPECTED", "UNKNOWN"] },
@@ -2134,6 +2155,15 @@ export async function renderAarsRules(main, _params, ctx) {
           meta,
           el("td", { class: "rule-rowbtns" }, up, down, del),
         );
+        // The register drives the picture, and focus counts as much as hover — the rule
+        // scans.js's provenance diagram keeps, so a keyboard user gets the same link.
+        const lightCells = () => pLattice.light(i);
+        const dimCells = () => pLattice.light(null);
+        tr.addEventListener("mouseenter", lightCells);
+        tr.addEventListener("mouseleave", dimCells);
+        tr.addEventListener("focusin", lightCells);
+        tr.addEventListener("focusout", dimCells);
+
         pCascadeBody.append(tr);
       });
 
@@ -2291,9 +2321,43 @@ export async function renderAarsRules(main, _params, ctx) {
       });
     }
 
+    // ------------------------------------------------------------------ the lattice hero
+    // The same structural slot the AARS tab opens with: one picture of the whole model,
+    // the only boxed surface in the editor pane, with the parts of the model below it.
+    const pLatticeNote = el("div", {});
+    const pLattice = latticeGrid({
+      spec: PROBLEM_LATTICE,
+      ariaLabel: "Decision lattice, 54 leaves",
+      hooks: {
+        onCellEnter: (cell) => {
+          const d = pLattice.descriptorFor(cell.key);
+          pLattice.light(d ? d.ruleIndex : null);
+          lightProblemRow(d ? d.ruleIndex : null);
+        },
+        onCellLeave: () => {
+          pLattice.light(null);
+          lightProblemRow(null);
+        },
+        // Step 3 is read-only; the cell popover and "Add a rule for this cell" land next.
+        onActivate: () => {},
+      },
+    });
+    const pLatticeHero = el(
+      "div",
+      { class: "model-hero" },
+      el(
+        "div",
+        { class: "model-hero__head" },
+        el("span", { class: "label" }, "The decision space"),
+      ),
+      pLattice.node,
+      pLatticeNote,
+    );
+
     const pEditor = el(
       "div",
       { class: "rule-editor" },
+      pLatticeHero,
       section(
         "Outcome cascade",
         "Each row is tried in order; the first whose conditions ALL match wins. An axis " +
@@ -2537,9 +2601,73 @@ export async function renderAarsRules(main, _params, ctx) {
       }
     }
 
+    // ----------------------------------------------------------------------- lattice
+    /** Light the cascade row that claims a cell, or clear. Rows are rebuilt structurally, so this re-queries. */
+    function lightProblemRow(idx) {
+      pCascadeBody.querySelectorAll("tr").forEach((tr) => {
+        tr.classList.toggle("is-lit", idx !== null && idx !== undefined && Number(tr.dataset.idx) === idx);
+      });
+    }
+
+    /**
+     * Repaint the lattice from the MIRROR — no server round-trip, so this runs on every
+     * keystroke. Rule mode only for now; the other three modes land with the paint-mode
+     * control.
+     */
+    function paintProblemLattice() {
+      pLattice.setMode("rule");
+      pLattice.paint(paintCells(pLattice.cells, {
+        mode: "rule",
+        decide: (v) => mirrorDecideProblem(v, problemDraft),
+      }));
+    }
+
+    /**
+     * Guard 2: reconcile the drawn cascade against the server's own walk of the SAME rule.
+     *
+     * The comparison is against the draft that was SENT, never the live one — the preview is
+     * 700ms-debounced, so a live comparison would fire on every keystroke made while a
+     * request was in flight and report a disagreement that is really just a race.
+     *
+     * What this can catch is a per-ROW disagreement, not a per-CELL one: a pathological rule
+     * could in principle tie on every count and still place a leaf differently. byRow,
+     * byFallback and byOutcome agreeing together makes that vanishingly unlikely, and
+     * test/decideMirror.test.js closes the gap properly by comparing the decisions
+     * themselves. When they do disagree the picture stops claiming anything — hatched, not
+     * merely captioned with a warning, because a confident wrong lattice beside a small note
+     * is worse than no lattice.
+     */
+    function checkLatticeAgreement(sentDraft, serverCoverage) {
+      clear(pLatticeNote);
+      if (!serverCoverage) {
+        pLattice.setDiverged(false);
+        return;
+      }
+      const mine = mirrorLeafCoverage(sentDraft);
+      const rowsDisagree = (mine.byRow.length !== serverCoverage.byRow.length)
+        || mine.byRow.some((n, i) => n !== serverCoverage.byRow[i]);
+      const agrees = !rowsDisagree
+        && mine.byFallback === serverCoverage.byFallback
+        && mine.total === serverCoverage.total;
+      pLattice.setDiverged(!agrees);
+      if (agrees) return;
+      const firstBad = mine.byRow.findIndex((n, i) => n !== serverCoverage.byRow[i]);
+      pLatticeNote.append(el(
+        "div",
+        { class: "diag-warn", role: "status" },
+        "The lattice drawn here and the server's own walk of this rule disagree" +
+          (firstBad >= 0
+            ? ` — rule ${firstBad + 1} claims ${mine.byRow[firstBad]} leaves here and ` +
+              `${serverCoverage.byRow[firstBad]} there. `
+            : ". ") +
+          "The server decides; this picture has stopped claiming anything until they agree.",
+      ));
+    }
+
     // -------------------------------------------------------------------------- sync
     function onProblemEdit() {
       syncProblem();
+      paintProblemLattice();
       scheduleProblemPreview();
     }
 
@@ -2634,11 +2762,15 @@ export async function renderAarsRules(main, _params, ctx) {
 
     async function runProblemPreview() {
       const seq = ++problemPreviewSeq;
+      // The rule as it stood when the request left, for checkLatticeAgreement — see its
+      // own comment for why comparing against the live draft would report races as bugs.
+      const sentDraft = cloneRule(problemDraft);
       try {
-        const data = await call("api_previewProblemRule", { rule: problemDraft });
+        const data = await call("api_previewProblemRule", { rule: sentDraft });
         if (seq !== problemPreviewSeq) return;
         problemPreview = data;
         problemPreviewError = "";
+        checkLatticeAgreement(sentDraft, data && data.leafCoverage);
       } catch (e) {
         if (seq !== problemPreviewSeq) return;
         problemPreview = null;
@@ -2687,6 +2819,7 @@ export async function renderAarsRules(main, _params, ctx) {
     renderProblemCascade();
     renderExploitationRows();
     syncProblem();
+    paintProblemLattice();
     paintProblemImpact();
     scheduleProblemPreview();
   }

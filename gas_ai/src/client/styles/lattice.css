@@ -50,6 +50,12 @@
   gap: 0;
   min-width: 0;
 }
+/* `role="grid"` needs its cells inside `role="row"` elements, and a laid-out row would
+   break grid placement — the cells would lay out inside the row instead of in the grid.
+   `display: contents` keeps the wrapper in the accessibility tree while contributing
+   nothing to layout, so the grid sees the cells directly and a screen reader still sees
+   rows. Every child is explicitly placed, so the wrappers are purely semantic. */
+.lat-rowwrap { display: contents; }
 
 /* Header bands. The OUTER group labels are aria-hidden decoration — every cell's own
    aria-label restates the whole vector in words, so a screen reader never needs them, and
@@ -268,3 +274,8 @@
   text-transform: uppercase;
   fill: var(--text-3);
 }
+
+/* The reverse of `light()`: a cascade row lights when the cell it claims is hovered or
+   focused. Same wash the row hover already uses, so the two directions of the same link
+   look like one thing. */
+table.data tr.is-lit > td { background: var(--wash-hover); }

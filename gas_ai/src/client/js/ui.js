@@ -19,6 +19,7 @@
 //   portals.js   the open-portal count the sheet's focus trap defers to
 //   outcome.js   the problem tree's ACT/ATTEND/TRACK*/TRACK badge
 //   posture.js   the posture lattice's Tier 1..4 badge
+//   lattice.js   the decision lattice: 54 leaves or 27 cells as a grid of cells
 
 export { clear, downloadText, el, motionOk } from "./ui/dom.js";
 export { DISPLAY_TZ, fmtDate, fmtDateTime, plural, pluralize, sevRank } from "./ui/format.js";
@@ -45,3 +46,4 @@ export { pointRail, railScale } from "./ui/rail.js";
 export { debounce, onPageTeardown, runPageTeardown } from "./ui/timing.js";
 export { outcomeBadge, outcomeLabel } from "./ui/outcome.js";
 export { tierBadge, tierLabel } from "./ui/posture.js";
+export { latticeGrid } from "./ui/lattice.js";
