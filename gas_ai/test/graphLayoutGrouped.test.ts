@@ -26,11 +26,24 @@ import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sample
 const DOC = enrichGraphDoc(seedGraphDoc("2026-06-28T05:00:00Z"), SEED_ISSUES, SEED_AARS_HINTS);
 const PROJECTION = projectGraph(DOC, { seedIds: ["agent-h-chatbot", "agent-autogen"], depth: 3 });
 
+/**
+ * One grouping level, the shape every case below this line was written against. The
+ * scalar is wrapped rather than the cases rewritten: that is the guarantee a second
+ * level changed nothing about what one level means.
+ */
 function grouped(groupBy: GroupKey, sort: SortKey = "smart", p: Projection = PROJECTION): Layout {
-  return layoutGraph(p, { mode: "grouped", groupBy, sort });
+  return layoutGraph(p, { mode: "grouped", groupBy: [groupBy], sort });
+}
+
+/** Two levels, the outer one first. */
+function nested(outer: GroupKey, inner: GroupKey, p: Projection = PROJECTION): Layout {
+  return layoutGraph(p, { mode: "grouped", groupBy: [outer, inner], sort: "smart" });
 }
 
 const ALL_KEYS: GroupKey[] = ["asset", "combo", "project", "cloud", "kind", "severity"];
+
+/** The outer boxes. With one level that is all of them. */
+const tops = (l: Layout) => l.groups!.filter((g) => g.depth === 0);
 
 describe("layoutGrouped: structure", () => {
   it("positions every projected node exactly once, for every group key", () => {
@@ -65,13 +78,16 @@ describe("layoutGrouped: structure", () => {
     }
   });
 
-  it("group bounding boxes are pairwise non-overlapping", () => {
+  // Siblings, not all pairs. A sub-group overlaps its parent by construction — that IS
+  // the nesting — so the invariant is per depth, and containment is asserted separately.
+  it("group bounding boxes are pairwise non-overlapping within a level", () => {
     for (const key of ALL_KEYS) {
       const groups = grouped(key).groups!;
       for (let i = 0; i < groups.length; i++) {
         for (let j = i + 1; j < groups.length; j++) {
           const a = groups[i];
           const b = groups[j];
+          if (a.depth !== b.depth) continue;
           const overlap =
             a.x < b.x + b.width && b.x < a.x + a.width &&
             a.y < b.y + b.height && b.y < a.y + a.height;
@@ -84,7 +100,9 @@ describe("layoutGrouped: structure", () => {
   it("group counts add up and bounds are positive", () => {
     for (const key of ALL_KEYS) {
       const layout = grouped(key);
-      const total = layout.groups!.reduce((acc, g) => acc + g.count, 0);
+      // Outer boxes only: a nested layout counts each node twice over, once in its
+      // sub-group and once in the parent that holds it.
+      const total = tops(layout).reduce((acc, g) => acc + g.count, 0);
       expect(total).toBe(PROJECTION.nodes.length);
       expect(layout.width).toBeGreaterThan(0);
       expect(layout.height).toBeGreaterThan(0);
@@ -101,6 +119,88 @@ describe("layoutGrouped: structure", () => {
     for (const key of ALL_KEYS) {
       expect(JSON.stringify(grouped(key))).toBe(JSON.stringify(grouped(key)));
     }
+  });
+});
+
+describe("layoutGrouped: two levels", () => {
+  const PAIRS: Array<[GroupKey, GroupKey]> = [
+    ["cloud", "kind"], ["severity", "cloud"], ["project", "severity"], ["combo", "kind"],
+  ];
+
+  it("still places every node exactly once, in one leaf", () => {
+    for (const [a, b] of PAIRS) {
+      const layout = nested(a, b);
+      expect(layout.nodes).toHaveLength(PROJECTION.nodes.length);
+      expect(new Set(layout.nodes.map((n) => n.id)).size).toBe(PROJECTION.nodes.length);
+      expect(new Set(layout.nodes.map((n) => `${n.x},${n.y}`)).size).toBe(layout.nodes.length);
+      // The partition stays hard: the outer boxes alone account for every node, and so
+      // do the leaves. Nesting subdivides a bucket, it does not duplicate into two.
+      const outer = tops(layout).reduce((acc, g) => acc + g.count, 0);
+      const leaves = layout.groups!.filter((g) => g.depth === 1)
+        .reduce((acc, g) => acc + g.count, 0);
+      expect(outer).toBe(PROJECTION.nodes.length);
+      expect(leaves).toBe(PROJECTION.nodes.length);
+    }
+  });
+
+  it("labels each box with the dimension it actually partitions", () => {
+    for (const [a, b] of PAIRS) {
+      const groups = nested(a, b).groups!;
+      expect(groups.some((g) => g.depth === 1)).toBe(true);
+      for (const g of groups) expect(g.by).toBe(g.depth === 0 ? a : b);
+    }
+  });
+
+  it("sits every sub-group wholly inside its parent, and points back at it", () => {
+    for (const [a, b] of PAIRS) {
+      const groups = nested(a, b).groups!;
+      groups.forEach((g, i) => {
+        if (g.depth !== 1) return;
+        expect(g.parent).toBeDefined();
+        // Backwards, so a client can paint the array in order and get the layering.
+        expect(g.parent!).toBeLessThan(i);
+        const p = groups[g.parent!];
+        expect(p.depth).toBe(0);
+        expect(g.x).toBeGreaterThanOrEqual(p.x);
+        expect(g.y).toBeGreaterThanOrEqual(p.y);
+        expect(g.x + g.width).toBeLessThanOrEqual(p.x + p.width);
+        expect(g.y + g.height).toBeLessThanOrEqual(p.y + p.height);
+      });
+    }
+  });
+
+  it("points `lane` at the leaf, not the outer box", () => {
+    for (const [a, b] of PAIRS) {
+      const layout = nested(a, b);
+      const groups = layout.groups!;
+      for (const n of layout.nodes) {
+        const g = groups[n.lane];
+        expect(g.depth).toBe(1);
+        expect(n.x).toBeGreaterThan(g.x);
+        expect(n.x).toBeLessThan(g.x + g.width);
+        expect(n.y).toBeGreaterThan(g.y);
+        expect(n.y).toBeLessThan(g.y + g.height);
+      }
+    }
+  });
+
+  it("gives every group a unique id naming both levels", () => {
+    const groups = nested("cloud", "kind").groups!;
+    expect(new Set(groups.map((g) => g.id)).size).toBe(groups.length);
+    const sub = groups.find((g) => g.depth === 1)!;
+    expect(sub.id).toMatch(/^cloud:[^/]*\/kind:/);
+  });
+
+  it("ignores a second level under `asset`, which is an arrangement and not a partition", () => {
+    const one = layoutGraph(PROJECTION, { mode: "grouped", groupBy: ["asset"], sort: "smart" });
+    const two = layoutGraph(PROJECTION, {
+      mode: "grouped", groupBy: ["asset", "cloud"], sort: "smart",
+    });
+    expect(JSON.stringify(two)).toBe(JSON.stringify(one));
+  });
+
+  it("treats a repeated dimension as the one grouping it is", () => {
+    expect(JSON.stringify(nested("cloud", "cloud"))).toBe(JSON.stringify(grouped("cloud")));
   });
 });
 
@@ -143,7 +243,9 @@ describe("layoutGrouped: bucket assignment", () => {
 
   it("the ungrouped bucket is always last and labelled", () => {
     for (const key of ALL_KEYS) {
-      const groups = grouped(key).groups!;
+      // Among the outer boxes — "last" is a statement about the group order, and a
+      // nested layout interleaves each parent's children right behind it.
+      const groups = tops(grouped(key));
       const noneIdx = groups.findIndex((g) => g.key === GROUP_NONE);
       if (noneIdx !== -1) {
         expect(noneIdx).toBe(groups.length - 1);
@@ -155,19 +257,19 @@ describe("layoutGrouped: bucket assignment", () => {
 
 describe("layoutGrouped: group ordering", () => {
   it("severity groups follow SEVERITY_ORDER", () => {
-    const keys = grouped("severity").groups!.map((g) => g.key).filter((k) => k !== GROUP_NONE);
+    const keys = tops(grouped("severity")).map((g) => g.key).filter((k) => k !== GROUP_NONE);
     const ranks = keys.map((k) => (SEVERITY_ORDER as readonly string[]).indexOf(k));
     expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
   });
 
   it("kind groups follow NODE_KINDS declaration order", () => {
-    const keys = grouped("kind").groups!.map((g) => g.key);
+    const keys = tops(grouped("kind")).map((g) => g.key);
     const ranks = keys.map((k) => (NODE_KINDS as readonly string[]).indexOf(k));
     expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
   });
 
   it("combo groups follow COMBO_GROUPS order and use shortLabel", () => {
-    const groups = grouped("combo").groups!.filter((g) => g.key !== GROUP_NONE);
+    const groups = tops(grouped("combo")).filter((g) => g.key !== GROUP_NONE);
     const ranks = groups.map((g) => COMBO_GROUPS.findIndex((c) => c.id === g.key));
     expect(ranks.every((r) => r >= 0)).toBe(true);
     expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
@@ -179,7 +281,7 @@ describe("layoutGrouped: group ordering", () => {
 
   it("project groups order by worst member severity, then name", () => {
     const layout = grouped("project");
-    const groups = layout.groups!.filter((g) => g.key !== GROUP_NONE);
+    const groups = tops(layout).filter((g) => g.key !== GROUP_NONE);
     const byId = new Map(PROJECTION.nodes.map((n) => [n.id, n]));
     const laneOfNode = new Map(layout.nodes.map((n) => [n.id, n.lane]));
     const worst = new Map<string, number>();
@@ -325,12 +427,19 @@ const RISK_DOC = withMissingGuardrailNodes(
 const RISK_PROJECTION = projectGraph(RISK_DOC, { seedIds: ["agent-h-chatbot"], depth: 2 });
 
 describe("layoutGrouped: risk evidence", () => {
-  /** The group block a node was placed inside. */
+  /**
+   * The group block a node was placed inside — the OUTER one.
+   *
+   * Found by containment, and with nesting a node sits inside two boxes, so the depth
+   * has to be named: a bare `find` would return whichever came first in the array and
+   * be quietly right for one level and quietly wrong for two.
+   */
   function blockOf(layout: Layout, id: string) {
     const node = layout.nodes.find((n) => n.id === id);
     if (!node) return undefined;
     return (layout.groups ?? []).find(
       (g) =>
+        g.depth === 0 &&
         node.x >= g.x && node.x <= g.x + g.width && node.y >= g.y && node.y <= g.y + g.height,
     );
   }

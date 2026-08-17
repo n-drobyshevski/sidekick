@@ -9286,7 +9286,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
     "options": {
       "depth": 2,
       "expandIds": [],
-      "groupBy": "combo",
+      "groupBy": [
+        "combo",
+      ],
       "layout": "rows",
       "maxNodes": 100,
       "seedIds": [
@@ -15512,7 +15514,9 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
       },
     ],
     "options": {
-      "groupBy": "combo",
+      "groupBy": [
+        "combo",
+      ],
       "layout": "rows",
       "maxNodes": 100,
       "sort": "smart",
@@ -17110,7 +17114,9 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
       },
     ],
     "options": {
-      "groupBy": "combo",
+      "groupBy": [
+        "combo",
+      ],
       "layout": "rows",
       "maxNodes": 100,
       "sort": "smart",

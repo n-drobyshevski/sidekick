@@ -48,6 +48,10 @@ const PATHS = {
   // control and the column chooser beside it.
   plus: ["M8 3.5 V12.5", "M3.5 8 H12.5"],
   minus: ["M3.5 8 H12.5"],
+  // Layout + grouping: a box holding a smaller box, which is what grouped mode draws and
+  // what a second level adds. Not `fit` (four corners, and already the button below this
+  // one in the same rail) and not `filter` (a funnel — grouping does not narrow a set).
+  group: ["M2.5 2.5 h11 v11 h-11 z", "M5.5 5.5 h5 v5 h-5 z"],
   // Fit the graph to the view: four corners closing on the content, the frame-it idiom. Not
   // `widen`, which is a one-dimensional "more width" gesture and belongs to the sheet.
   fit: ["M6 2.5 H2.5 V6", "M10 2.5 H13.5 V6", "M6 13.5 H2.5 V10", "M10 13.5 H13.5 V10"],

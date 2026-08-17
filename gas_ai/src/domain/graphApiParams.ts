@@ -60,7 +60,8 @@ function comboAssetIds(issues: IssueRow[], groupId?: string): string[] {
 
 export interface GraphLayoutParams {
   mode: LayoutMode;
-  groupBy: GroupKey;
+  /** One or two dimensions, outermost first. Two nests the second inside the first. */
+  groupBy: GroupKey[];
   sort: SortKey;
 }
 
@@ -69,12 +70,41 @@ function pick<T extends string>(v: unknown, allowed: readonly T[], fallback: T):
   return (allowed as readonly string[]).includes(s) ? (s as T) : fallback;
 }
 
+/**
+ * The grouping dimensions, outermost first: `groupBy=cloud,kind`.
+ *
+ * A list rather than a second param so one value stays a one-element list and every
+ * link and saved view written before nesting existed keeps meaning what it meant.
+ * Unknown names are dropped rather than defaulted, because a garbage SECOND level
+ * should not silently become "combo" and draw a nesting nobody asked for — but an
+ * entirely unreadable value still falls back, matching the scalar behaviour it replaces.
+ *
+ * "asset" is outermost-or-nothing. It is hub-and-spoke BFS — an arrangement rather than
+ * a partition by a property — so there is nothing inside it to subdivide, and it has no
+ * key of its own to be subdivided BY: `ownGroupKey` answers GROUP_NONE for it, which as
+ * a second level would file every node under one sub-box labelled "Ungrouped".
+ */
+function pickList(v: unknown): GroupKey[] {
+  const raw = typeof v === "string" ? v.split(",") : [];
+  const out: GroupKey[] = [];
+  for (const part of raw) {
+    const s = part.trim().toLowerCase();
+    if (!(GROUP_KEYS as readonly string[]).includes(s)) continue;
+    const key = s as GroupKey;
+    if (out.includes(key)) continue;          // grouping twice by one thing is one group
+    if (key === "asset" && out.length) continue;
+    out.push(key);
+    if (key === "asset" || out.length === 2) break;
+  }
+  return out.length ? out : ["combo"];
+}
+
 /** Layout knobs (hash params `layout`, `groupBy`, `sort`): whitelisted,
  *  case-insensitive, garbage falls back to defaults. */
 export function resolveLayoutParams(p: Rec): GraphLayoutParams {
   return {
     mode: pick(p["layout"], LAYOUT_MODES, "rows"),
-    groupBy: pick(p["groupBy"], GROUP_KEYS, "combo"),
+    groupBy: pickList(p["groupBy"]),
     sort: pick(p["sort"], SORT_KEYS, "smart"),
   };
 }

@@ -35,17 +35,21 @@ export function renderGraph(container, data, handlers = {}) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const grouped = layout.mode === "grouped";
   const horizontal = layout.mode === "rows";
-  const groupBy = (data.options && data.options.groupBy) || "";
 
   const width = Math.max(layout.width, 640);
   const height = Math.max(layout.height, 360);
 
+  // Nesting is drawn as a box inside a box and announced nowhere else, so the one label
+  // that describes the canvas has to say it.
+  const nested = grouped && (layout.groups || []).some((g) => g.depth === 1);
   const svg = svgEl("svg", {
     role: "application",
     "aria-label":
-      (grouped
-        ? "Security graph, nodes clustered into labelled groups. "
-        : "Security graph. ") +
+      (nested
+        ? "Security graph, nodes clustered into labelled groups nested two levels deep. "
+        : grouped
+          ? "Security graph, nodes clustered into labelled groups. "
+          : "Security graph. ") +
       "Tab to enter, arrow keys move between connected nodes, " +
       "Shift plus arrow keys nudge the focused node, " +
       "Enter opens details, Escape leaves the graph.",
@@ -72,14 +76,23 @@ export function renderGraph(container, data, handlers = {}) {
   if (grouped && Array.isArray(layout.groups)) {
     const hullLayer = svgEl("g");
     world.append(hullLayer);
+    // Array order is paint order, and the layout emits every parent before the children
+    // nested in it — so an inner box lands on top of its parent's wash without either
+    // side sorting anything.
     for (const grp of layout.groups) {
+      const sub = grp.depth === 1;
       hullLayer.append(svgEl("rect", {
-        class: "ggroup-box",
-        x: grp.x, y: grp.y, width: grp.width, height: grp.height, rx: 14,
+        class: sub ? "ggroup-box is-sub" : "ggroup-box",
+        x: grp.x, y: grp.y, width: grp.width, height: grp.height, rx: sub ? 10 : 14,
       }));
-      const label = svgEl("text", { class: "ggroup-label", x: grp.x + 16, y: grp.y + 20 });
-      const name = groupBy === "kind" && grp.key !== "__none__" ? kindLabel(grp.key) : grp.label;
-      label.textContent = `${truncate(name, 26)} · ${grp.count}`;
+      const label = svgEl("text", {
+        class: sub ? "ggroup-label is-sub" : "ggroup-label",
+        x: grp.x + (sub ? 12 : 16), y: grp.y + (sub ? 17 : 20),
+      });
+      // Asked of the box, not of the page: the two levels can be different dimensions,
+      // so one page-level `groupBy` cannot say how to format both.
+      const name = grp.by === "kind" && grp.key !== "__none__" ? kindLabel(grp.key) : grp.label;
+      label.textContent = `${truncate(name, sub ? 18 : 26)} · ${grp.count}`;
       hullLayer.append(label);
     }
   }
@@ -524,7 +537,19 @@ export function renderGraph(container, data, handlers = {}) {
     zoomGroup.setAttribute("aria-label", `Zoom, ${pct} percent`);
   }
 
-  container.append(zoomBar, svg);
+  // The rail can be hosted OUTSIDE this container. It has to be, for anything on it that
+  // opens a popover: every layout change repaints the canvas, `container.textContent = ""`
+  // detaches the anchor, and an anchored popover measures a detached rect and dismisses
+  // itself — so a live-apply control in the rail would die on its own first click.
+  // Hosted: the page owns the rail and we refill our slot. Unhosted: as before, and the
+  // zoom buttons alone are safe either way because they open nothing.
+  if (handlers.railZoomHost) {
+    handlers.railZoomHost.textContent = "";
+    handlers.railZoomHost.append(zoomBar);
+    container.append(svg);
+  } else {
+    container.append(zoomBar, svg);
+  }
   fit();
 
   // The viewBox is fixed at first paint, so every later geometry change — window resize,
