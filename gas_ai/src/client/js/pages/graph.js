@@ -67,6 +67,57 @@ const GROUP_LABELS = {
   severity: "severity",
 };
 
+/**
+ * The layouts, in the order the list offers them — the page's whole vocabulary for `layout=`.
+ *
+ * `mode: ""` is Rows, because rows is the default and the hash carries an absent param rather
+ * than a redundant `layout=rows`. Every other entry names its engine exactly as
+ * `LAYOUT_MODES` does, so the value in the URL and the row in the list are the same word.
+ *
+ * The blurb is not decoration. Five rows reading "Rows / Columns / Organic / Radial / Groups"
+ * say nothing about which one answers the question in hand, and a layout picker is exactly
+ * where someone is guessing — so each one says what it arranges BY, in the estate's own terms.
+ */
+const LAYOUTS = [
+  {
+    mode: "", label: "Rows", icon: "rows",
+    blurb: "Category bands across — risk, AI assets, identities, data, compute",
+  },
+  {
+    mode: "lanes", label: "Columns", icon: "lanes",
+    blurb: "The same bands, running down instead of across",
+  },
+  {
+    mode: "organic", label: "Organic", icon: "organic",
+    blurb: "Force-directed — clusters emerge from the connections",
+  },
+  {
+    mode: "radial", label: "Radial", icon: "radial",
+    blurb: "Rings out from the worst-risk agent, one ring per hop",
+  },
+  {
+    mode: "grid", label: "Grid", icon: "group",
+    blurb: "Every node packed densely, categories ignored",
+  },
+];
+
+/** Every layout the hash may name — Rows is the absent value, so it is not one of them. */
+const LAYOUT_MODES = LAYOUTS.map((l) => l.mode).filter(Boolean);
+
+/**
+ * Old layout values, mapped onto the arrangement that draws what they drew.
+ *
+ * `grouped` was an arrangement before grouping and arrangement came apart, and what it drew was
+ * the compact grid. Mirrors `resolveLayoutParams`, which does the same mapping server-side —
+ * mirrored rather than shared because the client bundle cannot import the domain layer, the same
+ * reason egoLayout.js keeps its own copy of SEVERITY_ORDER. test/graphLayout.test.ts holds the
+ * two together.
+ */
+const LAYOUT_ALIAS = { grouped: "grid" };
+
+/** The key that opens the Layouts list, as the reference screen prints it. */
+const LAYOUT_KEY = "y";
+
 // Legend starts collapsed on each visit; once the user opens it we keep it open
 // across in-place repaints (filter changes rebuild the legend, and a key that
 // snapped shut on every tweak would be worse than useless).
@@ -114,6 +165,12 @@ const VIEW_PARAMS = [
   "layout", "groupBy", "sort", "sortCol", "dir", "pageSize", "maxNodes",
 ];
 
+/** A hash `layout` value as this page understands it: an alias resolved, anything else dropped. */
+function normalizeLayout(raw) {
+  const v = LAYOUT_ALIAS[raw] || raw;
+  return LAYOUT_MODES.includes(v) ? v : "";
+}
+
 function graphParams(params, defaults) {
   return {
     // The question. `find` is the structure and `where` the per-node property filters; see
@@ -130,7 +187,12 @@ function graphParams(params, defaults) {
     pageSize: Number(params.pageSize) || DEFAULT_PAGE_SIZE,
     sortCol: params.sortCol || "",
     dir: params.dir === "desc" ? "desc" : "asc",
-    layout: (params.layout === "grouped" || params.layout === "lanes") ? params.layout : "",
+    // Whitelisted against LAYOUTS rather than against a hand-written pair. The literal this
+    // replaces named "grouped" and "lanes" and nothing else, so a new engine in the domain and a
+    // new row in the list both landed — and the URL still carried it — while THIS silently
+    // rewrote it to rows on the way to the request. One list, so a layout cannot be added to
+    // four places and forgotten in the fifth.
+    layout: normalizeLayout(params.layout),
     groupBy: params.groupBy || "",
     sort: params.sort || "",
     view: params.view === "table" ? "table" : "graph",
@@ -285,6 +347,27 @@ export async function renderGraphPage(main, params, _ctx) {
       "severities", "projects", "clouds"]) delete params[k];
     setParams(params);
   }
+  // `layout=grouped` is the other kind of old link, and it is REWRITTEN rather than translated on
+  // every read. Grouping used to be one of the arrangements and chose its own interior — the
+  // compact grid, except under `asset`, where it forced hub-and-spoke. Modernising the hash once,
+  // here, is what keeps a single value flowing through everything after it: the row the list
+  // marks, the badge, the legend, and the request. Left as-is, this page would normalise `layout`
+  // for its own display and send the normalised value on, so the resolver's own migration would
+  // never see the legacy word and a saved view would open with no boxes at all.
+  //
+  // Mirrors `resolveLayoutParams`, which keeps the same mapping as the server-side safety net.
+  // Two copies because the client bundle cannot import the domain layer; the pair is held together
+  // by test/graphLayout.test.ts (the alias) and by the browser walk (the `asset` branch).
+  if (LAYOUT_ALIAS[params.layout]) {
+    params = { ...params };
+    // An absent `groupBy` is what grouped mode defaulted to internally, so it still groups.
+    const groupBy = params.groupBy || "combo";
+    params.groupBy = groupBy;
+    params.layout = groupBy.split(",")[0].trim() === "asset"
+      ? "radial"
+      : LAYOUT_ALIAS[params.layout];
+    setParams(params);
+  }
   // The retired canvas search. Stripped from any link that still names it rather than left
   // sitting inert: a URL that carries `q=agent` reads like a page that does something with it.
   if (params.q != null) {
@@ -359,42 +442,57 @@ export async function renderGraphPage(main, params, _ctx) {
   const panel = el("div", {
     class: "gq-panel", id: "gq-panel", hidden: true, "aria-label": "Query editor",
   }, panelClose, barHost);
-  // ------------------------------------------------------------- layout, in the rail
+  // ------------------------------------------------------- layout + grouping, in the rail
   // Arrange used to be a select up here, fusing the mode and the dimension into one
   // eight-way enum and splitting it back out with a string slice. It is canvas chrome —
   // already hidden in table view — so it moves onto the canvas, beside the zoom it
   // belongs with, and the mode and the dimensions get to be the separate things they are.
-  const layoutBadge = el("span", { class: "graph-tool-badge", "aria-hidden": "true" });
+  //
+  // TWO BUTTONS, AND TWO INDEPENDENT QUESTIONS. One control used to hold the arrangement AND the
+  // grouping dimensions, with a badge counting the dimensions — a single trigger describing two
+  // unrelated things, whose badge answered for only one of them. Splitting them in two was the
+  // first half; the second is that NEITHER constrains the other. Grouping is not one of the
+  // arrangements any more, so this button is always live, and every pair of values means
+  // something: grouping partitions, the arrangement fills each partition.
+  let layoutPop = null;
   const layoutBtn = el("button", {
-    class: "graph-tool", "aria-haspopup": "dialog",
-    onclick: () => openLayout(),
-  }, uiIcon("group", 15), layoutBadge);
+    class: "graph-tool", "aria-haspopup": "listbox",
+    onclick: () => toggleLayout(),
+  }, uiIcon("layout", 15));
 
-  /** How many grouping levels are in force — what the badge counts. */
+  const groupBadge = el("span", { class: "graph-tool-badge", "aria-hidden": "true" });
+  const groupBtn = el("button", {
+    class: "graph-tool", "aria-haspopup": "dialog",
+    onclick: () => openGroups(),
+  }, uiIcon("group", 15), groupBadge);
+
+  /** How many grouping levels are in force — what the badge counts. Zero is a real answer. */
   function groupLevels() {
-    if (state.layout !== "grouped") return [];
     return String(state.groupBy || "").split(",").map((s) => s.trim()).filter(Boolean);
   }
 
   function syncLayoutBtn() {
+    // `state.layout` is "" for rows, which is Rows' own `mode` — so this matches exactly rather
+    // than leaning on the fallback to be right about the default.
+    const spec = LAYOUTS.find((l) => l.mode === (state.layout || "")) || LAYOUTS[0];
+    layoutBtn.setAttribute("aria-label", `Layout: ${spec.label}`);
     const levels = groupLevels();
     // "" rather than "0", so `:empty` hides it — the recipe the filter badge uses.
-    layoutBadge.textContent = levels.length ? String(levels.length) : "";
-    const mode = state.layout === "grouped"
-      ? "grouped by " + levels.map((k) => GROUP_LABELS[k] || k).join(", then ")
-      : state.layout === "lanes" ? "columns" : "rows";
-    layoutBtn.setAttribute("aria-label", `Layout: ${mode}`);
+    groupBadge.textContent = levels.length ? String(levels.length) : "";
+    groupBtn.setAttribute("aria-label", levels.length
+      ? "Grouped by " + levels.map((k) => GROUP_LABELS[k] || k).join(", then ")
+      : "Group by");
   }
 
-  // The canvas rail: the page's layout tool on top, the renderer's zoom controls below.
+  // The canvas rail: the page's two canvas tools on top, the renderer's zoom controls below.
   //
   // It hangs off the split rather than the canvas because `renderGraph` clears its own
-  // container on every repaint — and the layout button opens a popover, which measures
-  // its anchor. Rebuilt mid-flight, the anchor detaches, the popover reads a zeroed rect
+  // container on every repaint — and both buttons open popovers, which measure their
+  // anchor. Rebuilt mid-flight, the anchor detaches, the popover reads a zeroed rect
   // and closes itself, so a live-apply control inside the canvas would dismiss on its own
   // first use. Out here it simply persists, and the renderer refills its slot.
   const railZoom = el("div", { class: "graph-rail-zoom" });
-  const rail = el("div", { class: "graph-rail" }, layoutBtn, railZoom);
+  const rail = el("div", { class: "graph-rail" }, layoutBtn, groupBtn, railZoom);
   // `body` is the containing block for the canvas overlays, the table, the empty states and the
   // boot skeleton; the panel is positioned against the split so it can sit over all of them.
   const split = el("div", { class: "workbench-split" }, panel, rail, body);
@@ -565,11 +663,37 @@ export async function renderGraphPage(main, params, _ctx) {
     if (portalsOpen()) return;
     setEditing(false, true);
   }
+  /**
+   * `Y` opens the Layouts list — the app's first page-level shortcut, so the guards matter.
+   *
+   * A bare letter on `document` is a key someone is otherwise entitled to TYPE, and this page is
+   * mostly text fields: the query builder's search, the filter editors, the saved-query name. So
+   * it stands down for anything editable, for any modifier (Cmd-Y is the browser's), for an open
+   * portal (a letter aimed at a palette's search box must reach it), and in table view, where the
+   * rail this belongs to is hidden and a layout is not a thing the page is showing.
+   *
+   * Registered here, beside Escape, and torn down the same way — `onPageTeardown` runs on
+   * navigation, and a listener that outlived its page would answer for a canvas that is gone.
+   */
+  function onLayoutKey(e) {
+    if (e.key.toLowerCase() !== LAYOUT_KEY) return;
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+    if (state.view === "table") return;
+    const t = e.target;
+    if (t instanceof Element && (t.closest("input, select, textarea, [contenteditable]"))) return;
+    // The trigger's own popover is the exception to `portalsOpen` — pressing the key again has to
+    // close what the key opened, which is exactly what a toggle means.
+    if (portalsOpen() && !(layoutPop && layoutPop.isOpen())) return;
+    e.preventDefault();
+    toggleLayout();
+  }
   document.addEventListener("pointerdown", onOutsidePointer, true);
   document.addEventListener("keydown", onEscape, true);
+  document.addEventListener("keydown", onLayoutKey, true);
   onPageTeardown(() => {
     document.removeEventListener("pointerdown", onOutsidePointer, true);
     document.removeEventListener("keydown", onEscape, true);
+    document.removeEventListener("keydown", onLayoutKey, true);
   });
 
   // ------------------------------------------------------------ update cycle
@@ -987,34 +1111,144 @@ export async function renderGraphPage(main, params, _ctx) {
    * forever.
    */
   /**
-   * The canvas's layout: which arrangement, and — when it is groups — by what.
+   * The layouts, as the reference draws it: a flat list of named arrangements, one glyph each,
+   * the one in force marked, and the shortcut printed beside the heading.
    *
-   * The three modes are presented as the exclusive choice the engine actually is. An
-   * earlier draft offered "Arrange: Rows|Columns" beside an independent "Group by",
-   * which reads well and is a lie: grouped is not rows-with-boxes, it is a third mode,
-   * and the Arrange value would have meant nothing while grouping was on.
+   *   Layouts                Shortcut: Y
+   *     ▤  Rows          ✓
+   *     ▥  Columns
+   *     ✳  Organic
+   *     ◌  Radial
+   *     ▦  Groups
+   *
+   * A LIST, not the segmented control this replaces. Segments are for two or three peers that fit
+   * on one line; five do not, and the third of them ("Groups") was carrying two `<select>`s in the
+   * same popover — an arrangement picker and a dimension picker wearing one trigger. The
+   * dimensions moved to their own button, which is what lets this be a list at all.
+   *
+   * The marked row carries BOLD AND A TICK, never the reference's blue alone. Five rows in one
+   * tint with the current one merely coloured is exactly the colour-only signal the design bar
+   * forbids, and the tick is the part a monochrome or forced-colours reader still gets.
+   *
+   * `role="listbox"` with `aria-activedescendant`: the arrangement is a single exclusive choice
+   * out of five, which is what a listbox means, and the arrow keys move the active row without
+   * moving DOM focus off the container.
+   */
+  function toggleLayout() {
+    // Pressing the trigger — or the shortcut — a second time closes. Without this the key would
+    // stack a second popover over the first, and `openSheet`'s singleton rule has no equivalent
+    // for popovers.
+    if (layoutPop && layoutPop.isOpen()) {
+      layoutPop.close(true);
+      return;
+    }
+    openLayout();
+  }
+
+  function openLayout() {
+    const active = state.layout || "";
+    const listId = "graph-layouts-list";
+    const rows = [];
+    let at = Math.max(0, LAYOUTS.findIndex((l) => l.mode === active));
+
+    const list = el("div", {
+      class: "graph-layouts", id: listId, role: "listbox", "aria-label": "Layouts",
+      tabindex: "0",
+    });
+    LAYOUTS.forEach((spec, i) => {
+      const on = spec.mode === active;
+      const row = el("div", {
+        class: "graph-layouts-row" + (on ? " is-on" : ""),
+        id: listId + "-" + i, role: "option", "aria-selected": on ? "true" : "false",
+        onmousedown: (e) => { e.preventDefault(); choose(i); },
+      },
+        el("span", { class: "graph-layouts-glyph", "aria-hidden": "true" }, uiIcon(spec.icon, 15)),
+        el("span", { class: "graph-layouts-text" },
+          el("span", { class: "graph-layouts-label" }, spec.label),
+          el("span", { class: "graph-layouts-blurb" }, spec.blurb)),
+        on ? el("span", { class: "graph-layouts-check" }, uiIcon("check", 13)) : null,
+      );
+      rows.push(row);
+      list.append(row);
+    });
+
+    function highlight() {
+      rows.forEach((row, i) => row.classList.toggle("is-active", i === at));
+      list.setAttribute("aria-activedescendant", listId + "-" + at);
+    }
+
+    /**
+     * Live-apply, and `pos` clears with the layout: a new arrangement recomputes every position,
+     * so the manual nudges `pos` records no longer describe anything on screen.
+     *
+     * `groupBy` IS NOT TOUCHED. Changing the arrangement while grouping is on keeps the boxes and
+     * rearranges what is inside them — which is the whole point of the two being independent.
+     * This used to clear it on every pick, so choosing a layout silently threw the grouping away.
+     */
+    function choose(i) {
+      const spec = LAYOUTS[i];
+      if (layoutPop) layoutPop.close(true);
+      if (spec.mode === (state.layout || "")) return;
+      update({ layout: spec.mode, pos: "" });
+    }
+
+    list.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); at = Math.min(at + 1, rows.length - 1); highlight(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); at = Math.max(at - 1, 0); highlight(); }
+      else if (e.key === "Home") { e.preventDefault(); at = 0; highlight(); }
+      else if (e.key === "End") { e.preventDefault(); at = rows.length - 1; highlight(); }
+      else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(at); }
+    });
+    highlight();
+
+    const body = el("div", { class: "graph-layout" },
+      el("div", { class: "graph-layouts-head" },
+        el("span", { class: "graph-layouts-title" }, "Layouts"),
+        el("span", { class: "graph-layouts-key" },
+          "Shortcut: ", el("kbd", {}, LAYOUT_KEY.toUpperCase()))),
+      list);
+
+    layoutPop = openPopover({
+      anchor: layoutBtn,
+      className: "graph-layout-pop",
+      ariaLabel: "Layouts",
+      // The trigger sits at the bottom of the viewport, so there is never room below it.
+      // Left at the default this would try downward first and flip only on measurement.
+      position: { width: 320, minWidth: 280, maxHeight: 420, minHeight: 220, flipBelow: 10000 },
+      build: () => body,
+      onClose: () => { layoutPop = null; },
+    });
+    // Focus goes INTO the panel: it is portaled to the end of <body>, so Tab from the trigger
+    // would walk the page behind it rather than its contents. The LIST takes it, not a row —
+    // this is the editable-listbox pattern the palette uses, where the container holds focus and
+    // `aria-activedescendant` carries the cursor.
+    if (layoutPop.isOpen()) list.focus();
+  }
+
+  /**
+   * What grouped mode groups BY — its own control, because it is its own question.
    *
    * Level 2 offers what level 1 has not taken, minus `asset` — hub-and-spoke is an
    * arrangement rather than a partition, with no key of its own to subdivide by, so it
    * is outermost-or-nothing and the resolver drops it anywhere else.
    */
-  function openLayout() {
+  function openGroups() {
     const DIMS = ["asset", "combo", "project", "cloud", "kind", "severity"];
     const levels = groupLevels();
-    let mode = state.layout || "";
-    let g1 = levels[0] || (state.groupBy ? String(state.groupBy).split(",")[0] : "combo");
+    let g1 = levels[0] || "";
     let g2 = levels[1] || "";
 
     // Every change goes straight to the URL — live-apply, no OK button, same as Columns.
-    // `pos` clears with it: a new arrangement recomputes the picture, so manual node
-    // nudges no longer describe anything.
+    // `pos` clears with it: a regrouping recomputes the picture, so manual node nudges no longer
+    // describe anything.
+    //
+    // `layout` IS NOT TOUCHED. Grouping is not an arrangement any more, so choosing a dimension
+    // writes `groupBy` and leaves the arrangement someone picked alone — it used to force
+    // `layout: "grouped"`, which is the coupling this whole change undoes.
     const apply = () => {
-      if (mode !== "grouped") {
-        update({ layout: mode, groupBy: "", pos: "" });
-        return;
-      }
-      const list = g2 && g2 !== g1 && g1 !== "asset" && g2 !== "asset" ? [g1, g2] : [g1];
-      update({ layout: "grouped", groupBy: list.join(","), pos: "" });
+      const list = !g1 ? []
+        : g2 && g2 !== g1 && g1 !== "asset" && g2 !== "asset" ? [g1, g2] : [g1];
+      update({ groupBy: list.join(","), pos: "" });
     };
 
     // Built ONCE, then updated in place. A rebuild-on-every-change draft dismissed the
@@ -1024,11 +1258,14 @@ export async function renderGraphPage(main, params, _ctx) {
     // lines up — rewrite the half that moved, never the container.
     const sel1 = el("select", { "aria-label": "Group by 1" });
     const sel2 = el("select", { "aria-label": "Group by 2" });
-    const fill = (sel, skipAsset) => {
+    const fill = (sel, second) => {
       clear(sel);
-      if (skipAsset) sel.append(el("option", { value: "" }, "Select…"));
+      // Level 1's empty option is how grouping is turned OFF, and it has to live here: the
+      // control that switches grouping on is the only place a reader will look to switch it off,
+      // and there is no longer a layout to leave in order to stop grouping.
+      sel.append(el("option", { value: "" }, second ? "Select…" : "No grouping"));
       for (const k of DIMS) {
-        if (skipAsset && (k === "asset" || k === g1)) continue;
+        if (second && (k === "asset" || k === g1)) continue;
         sel.append(el("option", { value: k }, GROUP_LABELS[k] || k));
       }
     };
@@ -1042,26 +1279,14 @@ export async function renderGraphPage(main, params, _ctx) {
       el("span", { class: "graph-layout-label" }, "Group by 2"), sel2, clear2);
     const note = el("p", { class: "graph-layout-note" },
       "Asset grouping puts each agent at the centre of its own neighbours, so there is nothing inside a group to subdivide.");
-    const modes = segmented({
-      options: [
-        { value: "", label: "Rows" },
-        { value: "lanes", label: "Columns" },
-        { value: "grouped", label: "Groups" },
-      ],
-      value: mode,
-      ariaLabel: "Arrangement",
-      onChange: (v) => { mode = v; apply(); sync(); },
-    });
-    const body = el("div", { class: "graph-layout" }, modes, row1, row2, note);
+    const body = el("div", { class: "graph-layout" }, row1, row2, note);
 
     let panel = null;
     function sync() {
-      const grouping = mode === "grouped";
-      row1.hidden = !grouping;
-      // `asset` is outermost-or-nothing, so the second level is not offered under it —
-      // and the note says why rather than leaving a control mysteriously missing.
-      row2.hidden = !grouping || g1 === "asset";
-      note.hidden = !grouping || g1 !== "asset";
+      // No second level without a first, and none under `asset`, which is outermost-or-nothing —
+      // the note says why rather than leaving a control mysteriously missing.
+      row2.hidden = !g1 || g1 === "asset";
+      note.hidden = g1 !== "asset";
       fill(sel1, false);
       sel1.value = g1;
       fill(sel2, true);
@@ -1070,24 +1295,22 @@ export async function renderGraphPage(main, params, _ctx) {
       if (panel) panel.reposition();
     }
     sel1.addEventListener("change", () => {
-      g1 = sel1.value || "combo";
-      if (g2 === g1 || g1 === "asset") g2 = "";
+      g1 = sel1.value;
+      // Turning level 1 off, or onto `asset`, takes level 2 with it — a nesting with no outer
+      // box is not a nesting, and `asset` has no key to subdivide by.
+      if (!g1 || g2 === g1 || g1 === "asset") g2 = "";
       apply(); sync();
     });
     sel2.addEventListener("change", () => { g2 = sel2.value; apply(); sync(); });
     sync();
 
     panel = openPopover({
-      anchor: layoutBtn,
+      anchor: groupBtn,
       className: "graph-layout-pop",
-      ariaLabel: "Layout",
-      // The trigger sits at the bottom of the viewport, so there is never room below it.
-      // Left at the default this would try downward first and flip only on measurement.
-      position: { width: 300, minWidth: 260, maxHeight: 380, minHeight: 200, flipBelow: 10000 },
+      ariaLabel: "Group by",
+      position: { width: 300, minWidth: 260, maxHeight: 380, minHeight: 160, flipBelow: 10000 },
       build: () => body,
     });
-    // Focus goes INTO the panel: it is portaled to the end of <body>, so Tab from the
-    // trigger would walk the page behind it rather than its contents.
     const first = panel.pop && panel.pop.querySelector("button, select");
     if (first && panel.isOpen()) first.focus();
   }
@@ -1351,11 +1574,20 @@ export async function renderGraphPage(main, params, _ctx) {
 
 
 function buildLegend(boot, payload) {
-  const grouped = payload.layout && payload.layout.mode === "grouped";
-  // The server echoes the dimensions it actually grouped by, outermost first — read from
-  // the answer rather than the request, so the legend names what was drawn.
-  const levels = [].concat((payload.options && payload.options.groupBy) || "combo")
-    .filter(Boolean);
+  // Read off the BOXES, which is as close to "what was drawn" as this can get. There is no
+  // longer a mode that means grouped — grouping is orthogonal to the arrangement, so the
+  // presence of boxes is the only thing that says a picture is grouped. And each box names the
+  // dimension IT partitions (`by`), so a two-level nesting needs no second source: the outer
+  // level is any depth-0 box, the inner any depth-1 one.
+  //
+  // The old reading was `options.groupBy || "combo"`, echoing the request. Its own comment said
+  // to read the answer instead, and that `|| "combo"` was the last guess left in it — harmless
+  // while grouping was a layout, and with grouping now defaulting to none it would have printed
+  // a key for a picture that has no boxes at all.
+  const boxes = (payload.layout && payload.layout.groups) || [];
+  const grouped = boxes.length > 0;
+  const byDepth = (d) => (boxes.find((g) => g.depth === d) || {}).by;
+  const levels = [byDepth(0), byDepth(1)].filter(Boolean);
 
   // Native <details> disclosure: standard, keyboard-accessible, and works with
   // no script. Collapsed shows only the toggle; the overlay is bottom-anchored

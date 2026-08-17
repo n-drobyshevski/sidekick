@@ -1,4 +1,16 @@
-// Deterministic graph layouts. Three modes, no forces, no randomness:
+// Deterministic graph layouts. TWO INDEPENDENT DIMENSIONS, no randomness anywhere.
+//
+// GROUPING (`groupBy`, none / one / two dimensions) partitions the nodes into labelled boxes.
+// THE ARRANGEMENT (`mode`, one of five) decides how nodes are placed — over the whole canvas
+// when there is no grouping, and inside each box when there is. They compose: every pair means
+// something, and neither is a special case of the other.
+//
+// Grouping used to BE an arrangement ("grouped"), which made the two mutually exclusive and left
+// the arrangement meaningless whenever grouping was on. The answer is that the arrangement is
+// what happens INSIDE a box; "grouped" is now `grid`, the compact row-major packing it always
+// actually drew, and grouping is free to sit on top of any of the five.
+//
+// The five arrangements:
 //
 // - "rows" (default): the Wiz security-graph visual language, transposed to run
 //   top-to-bottom instead of left-to-right — 5 category swimlanes become
@@ -10,16 +22,35 @@
 //   left-to-right, with nodes stacked top-to-bottom within each. "rows" is
 //   its horizontal transpose — both share the same lane assignment and
 //   barycenter/sort ordering; only the final x/y positioning differs.
-// - "grouped": nodes clustered into labelled blocks by a key (asset, toxic
-//   combo, project, cloud, kind, or severity); blocks are shelf-packed
-//   left-to-right. Most keys arrange members in a compact grid; the "asset"
-//   key is hub-and-spoke — each AI agent sits at the center of its block with
-//   its BFS-nearest neighbors (issues, identities, data, compute) on rings
-//   around it.
+// - "grid": every node in one compact row-major grid, categories ignored. The
+//   densest of the five, and the interior every grouped picture used to have.
+// - "radial": the whole estate as one ring system. The worst-risk AI agent is
+//   the center and every other node sits on the ring of its BFS distance from
+//   it, so a ring IS "n hops from the thing most likely to hurt you". Ring
+//   radii come from occupancy, never from a constant: the circumference has to
+//   fit its own cards, which is what makes the layout overlap-free at any size.
+// - "organic": force-directed — repulsion between every pair, springs along the
+//   edges, weak gravity toward the center. Clusters emerge from the edges
+//   instead of being declared, which is what finds structure the five fixed
+//   category bands cannot express.
+//
+// "organic" IS forces, and this header used to say there were none. What it was
+// really promising is DETERMINISM — "the same URL always draws the same picture"
+// — and that survives intact: the seed is each node's radial ring position, a
+// computed order, and `Math.random` appears nowhere in this file. Two calls with
+// the same projection and options are byte-identical, which a test asserts.
 //
 // All are reduced-motion friendly by construction (nothing animates), and all
 // support explicit row-ordering ("sort") so the same URL always draws the same
 // picture.
+//
+// GROUPING RUNS EACH ARRANGEMENT ON A SUBSET rather than reimplementing it. A group's block is
+// the arrangement's own output over a sub-projection, measured and framed — so "rows grouped by
+// cloud" is the rows engine, five times, and there is one implementation of rows. The two
+// exceptions are `grid`, which is already block-shaped, and `radial`, which uses the
+// hub-and-spoke `radialBlock` inside a group: a whole estate is one component with real hop
+// structure to show, while a six-node group usually is not, and rank rings pack tighter when
+// every member is one hop out. Both are rings around the most important node.
 //
 // "rows" and "lanes" additionally CLUSTER under the default "smart" order: connected
 // nodes are packed into a contiguous stripe of slots across every band, and the next
@@ -43,7 +74,7 @@ import type { Projection } from "./graphProject";
 import { nodeOrder } from "./graphProject";
 import { comboGroupById, REGISTER_GROUPS } from "./toxicCombos";
 
-export const LAYOUT_MODES = ["lanes", "grouped", "rows"] as const;
+export const LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"] as const;
 export type LayoutMode = (typeof LAYOUT_MODES)[number];
 
 export const GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"] as const;
@@ -110,8 +141,10 @@ export interface LayoutNode {
   id: string;
   x: number;
   y: number;
-  /** Lane index in "lanes" mode; group index in "grouped" mode (keyboard nav
-   *  walks this axis either way). */
+  /** Lane index in "lanes"/"rows" mode; group index in "grouped"; hops from the hub in
+   *  "radial"/"organic". Whatever the mode calls it, it is the axis keyboard nav walks with
+   *  two of its four arrows — so every mode has to answer with something a reader could
+   *  step along and recognise, never a filler zero. */
   lane: number;
   /** Cluster rank in lanes/rows mode under the smart order — 0 is the worst-severity
    *  cluster, the last rank is the pooled bucket of lone nodes. Absent when clustering
@@ -143,6 +176,23 @@ export interface LayoutGroup {
   parent?: number;
 }
 
+/**
+ * One connected component's outline — the only structure on this canvas that is about the EDGES
+ * rather than about a property or a position.
+ *
+ * A component, not the `clusterRanks` unit the arrangements space by. That one splits a component
+ * across several clusters by nearest agent (its own comment says so: "the database three agents
+ * all read"), so an outline around it would be crossed by edges — and an outline that edges cross
+ * is worse than none. A component is edge-closed by definition.
+ */
+export interface LayoutCluster {
+  /** Convex polygon in layout space, already padded to clear the node cards. */
+  points: Array<[number, number]>;
+  count: number;
+  /** Index into `groups` of the leaf box holding it. Absent when nothing is grouping. */
+  group?: number;
+}
+
 export interface Layout {
   nodes: LayoutNode[];
   width: number;
@@ -151,6 +201,7 @@ export interface Layout {
   rowGap: number;
   mode: LayoutMode;
   groups?: LayoutGroup[];
+  clusters?: LayoutCluster[];
 }
 
 export interface LayoutOptions {
@@ -158,10 +209,20 @@ export interface LayoutOptions {
   rowGap?: number;  // vertical distance between row centers (lanes mode)
   margin?: number;
   mode?: LayoutMode;
-  /** One or two dimensions. Two nests the second inside the first. Empty means the
-   *  default single "combo" level. */
+  /** One or two dimensions. Two nests the second inside the first. EMPTY MEANS NO GROUPING —
+   *  it is a real value, not a missing one, which is what lets grouping be a dimension the
+   *  arrangement composes with rather than one of the arrangements. */
   groupBy?: GroupKey[];
   sort?: SortKey;
+  /**
+   * Place only the bands that hold something, at consecutive offsets.
+   *
+   * OFF for the whole canvas, where the six bands are a fixed frame of reference and an empty
+   * one is information — "this estate has no compute in view" reads off the gap. ON inside a
+   * group, where a box holding assets and data alone would otherwise reserve all six band gaps
+   * and come out mostly air. The reported `lane` is the true category band either way.
+   */
+  compactBands?: boolean;
 }
 
 const BARYCENTER_SWEEPS = 3;
@@ -243,6 +304,74 @@ function parentIndex(p: Projection): Map<string, GNode> {
     if (parent) parentOf.set(s.id, parent);
   }
   return parentOf;
+}
+
+/**
+ * Undirected adjacency over the projected subgraph.
+ *
+ * EDGES ARE WALKED IN ID ORDER, which is not decoration: every BFS built on this map reaches
+ * ties in a fixed sequence, so "which hub claimed this node" and "which ring it landed on" are
+ * facts about the graph rather than about whatever order the projection happened to emit. The
+ * same sort appears in `componentRoots` and `parentIndex` for the same reason.
+ */
+function adjacency(p: Projection): Map<string, string[]> {
+  const adj = new Map<string, string[]>();
+  for (const e of [...p.edges].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+    if (!adj.has(e.src)) adj.set(e.src, []);
+    if (!adj.has(e.dst)) adj.set(e.dst, []);
+    adj.get(e.src)!.push(e.dst);
+    adj.get(e.dst)!.push(e.src);
+  }
+  return adj;
+}
+
+/**
+ * Hops from the estate's worst-risk AI agent — the axis "radial" and "organic" are both built on.
+ *
+ * The root is `assignToHubs`' first hub, which that function has already sorted worst-first by
+ * `nodeOrder`; where the projection holds no AI asset at all it falls back to the first node in
+ * projection order, which is itself severity-sorted. So ring 0 is never an arbitrary node.
+ *
+ * A node BFS cannot reach gets `maxDepth + 1` rather than 0. Filing the unreachable at the centre
+ * would put the nodes with no path to the risk in the position the layout reserves for its
+ * source; one ring beyond the last real hop says what they are. In this product that set is
+ * normally small — see `clusterRanks` on why an unfiltered view is usually one component.
+ *
+ * Returned depths double as `LayoutNode.lane`, which is what keeps the canvas walkable by
+ * keyboard: `graphView.js` moves along `lane` with two arrows and follows edges with the other
+ * two, so the lane axis becomes "distance from the hub" instead of a category band.
+ */
+function hopDepth(p: Projection): { depth: Map<string, number>; root: GNode | null; max: number } {
+  const { hubs } = assignToHubs(p, parentIndex(p));
+  const root = hubs[0] ?? p.nodes[0] ?? null;
+  const depth = new Map<string, number>();
+  if (!root) return { depth, root: null, max: 0 };
+
+  const adj = adjacency(p);
+  depth.set(root.id, 0);
+  const queue = [root.id];
+  let max = 0;
+  for (let head = 0; head < queue.length; head++) {
+    const id = queue[head];
+    const d = depth.get(id)! + 1;
+    for (const next of adj.get(id) ?? []) {
+      if (depth.has(next)) continue;
+      depth.set(next, d);
+      max = Math.max(max, d);
+      queue.push(next);
+    }
+  }
+  // The unreachable ring is `max + 1` even when nothing is unreachable — `max` below is the
+  // outermost ring that actually HAS occupants, computed after the fill, so an empty ring is
+  // never sized or drawn.
+  const orphanRing = max + 1;
+  let used = max;
+  for (const n of p.nodes) {
+    if (depth.has(n.id)) continue;
+    depth.set(n.id, orphanRing);
+    used = orphanRing;
+  }
+  return { depth, root, max: used };
 }
 
 /** Connected components of the projected subgraph, as a node id → root id map. */
@@ -544,9 +673,30 @@ function wrapRun(
   return { start, shelfOfRank, shelves: shelf + 1, longest };
 }
 
+/**
+ * GROUPING DECIDES THE OUTER STRUCTURE; THE MODE DECIDES THE INTERIOR.
+ *
+ * With no grouping the arrangement gets the whole canvas. With grouping it gets each box, and the
+ * boxes are shelf-packed — so `mode` is never ignored, which is what makes the two controls
+ * genuinely independent rather than one masking the other.
+ */
 export function layoutGraph(p: Projection, opts: LayoutOptions = {}): Layout {
-  const mode = opts.mode ?? "rows";
-  if (mode === "grouped") return layoutGrouped(p, opts);
+  const laid = (opts.groupBy ?? []).length
+    ? layoutGrouped(p, opts)
+    : layoutWhole(p, opts, opts.mode ?? "rows");
+  // Outlined AFTER placement, from the positions, so one implementation covers all five
+  // arrangements and both halves of the dispatch above — see `clusterHulls`. The key is omitted
+  // when there are none, the way `groups` and `altOf` are: an empty array in the payload reads as
+  // a fact about the picture rather than as an absence.
+  const clusters = clusterHulls(p, laid);
+  return clusters.length ? { ...laid, clusters } : laid;
+}
+
+/** One arrangement over every node. The ungrouped half of the dispatch above. */
+function layoutWhole(p: Projection, opts: LayoutOptions, mode: LayoutMode): Layout {
+  if (mode === "radial") return layoutRadial(p, opts);
+  if (mode === "organic") return layoutOrganic(p, opts);
+  if (mode === "grid") return layoutGrid(p, opts);
   return layoutLanes(p, opts, mode !== "lanes"); // horizontal unless explicitly "lanes"
 }
 
@@ -630,7 +780,12 @@ function layoutLanes(p: Projection, opts: LayoutOptions, horizontal: boolean): L
   const step = horizontal ? ROW_COL_STEP : rowGap;
   const gap = horizontal ? ROW_CLUSTER_GAP : LANE_CLUSTER_GAP;
   const bandGap = horizontal ? ROW_BAND_GAP : laneGap;
-  const bandSpan = (LANE_COUNT - 1) * bandGap;
+  // Which offset each band is drawn at. Normally its own index, so the six bands are a fixed
+  // frame; compacted, its position among the bands that actually hold something.
+  const occupied = lanes.map((lane, i) => (lane.length ? i : -1)).filter((i) => i >= 0);
+  const slotOfBand = (i: number) => (opts.compactBands ? occupied.indexOf(i) : i);
+  const bandCount = opts.compactBands ? Math.max(occupied.length, 1) : LANE_COUNT;
+  const bandSpan = (bandCount - 1) * bandGap;
   const shelfPitch = bandSpan + (horizontal ? ROW_SHELF_GAP : LANE_SHELF_GAP);
   const { pos, shelfOf, extent, shelves } = packLanes(
     lanes, rankOf, step, rankOf ? gap : 0, bandSpan,
@@ -645,7 +800,7 @@ function layoutLanes(p: Projection, opts: LayoutOptions, horizontal: boolean): L
       for (const id of lane) {
         if (shelfOf.get(id) !== shelf) continue;
         const along = margin + pos.get(id)!;
-        const across = margin + shelf * shelfPitch + laneIdx * bandGap;
+        const across = margin + shelf * shelfPitch + slotOfBand(laneIdx) * bandGap;
         nodes.push({
           id,
           lane: laneIdx,
@@ -863,9 +1018,98 @@ function nestBlock(key: string, label: string, children: BlockSpec[]): BlockSpec
   };
 }
 
-/** Compact row-major grid — the default block interior. */
-function gridBlock(key: string, label: string, list: GNode[]): BlockSpec {
-  const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list.length))));
+/**
+ * The sub-graph a group holds: its nodes, the edges among them, and the summaries it carries.
+ *
+ * Grouping runs an arrangement on this rather than reimplementing it per group — so "organic
+ * grouped by cloud" is the organic engine, once per cloud, and there stays exactly one organic.
+ * Edges to nodes OUTSIDE the group are dropped, which is the point: what pulls a box's members
+ * together is what connects them to each other, and a spring to a node three boxes away would
+ * drag the whole block off its packed position.
+ */
+function subProjection(p: Projection, list: GNode[]): Projection {
+  const ids = new Set(list.map((n) => n.id));
+  return {
+    nodes: list,
+    edges: p.edges.filter((e) => ids.has(e.src) && ids.has(e.dst)),
+    summaries: p.summaries.filter((s) => ids.has(s.id)),
+    counts: p.counts,
+  };
+}
+
+/**
+ * A whole-canvas layout, framed as a block: shift its node centres so the tightest box around
+ * them starts after the header and the padding, and report the size that box needs.
+ *
+ * Measured rather than taken from `layout.width`/`height` — an engine sizes its canvas for a
+ * viewport and can leave slack, and slack inside a labelled box reads as an empty region of the
+ * group rather than as margin.
+ */
+function blockOf(key: string, label: string, layout: Layout): BlockSpec {
+  const pts = layout.nodes;
+  const minX = Math.min(...pts.map((n) => n.x));
+  const minY = Math.min(...pts.map((n) => n.y));
+  const maxX = Math.max(...pts.map((n) => n.x));
+  const maxY = Math.max(...pts.map((n) => n.y));
+  const originX = GROUP_PAD + CELL_W / 2;
+  const originY = HEADER_H + GROUP_PAD + CELL_H / 2;
+  return {
+    key,
+    label,
+    width: GROUP_PAD * 2 + CELL_W + (maxX - minX),
+    height: HEADER_H + GROUP_PAD * 2 + CELL_H + (maxY - minY),
+    cells: pts.map((n) => ({
+      id: n.id,
+      x: round2(originX + n.x - minX),
+      y: round2(originY + n.y - minY),
+    })),
+  };
+}
+
+/**
+ * One group's interior, in whichever arrangement is in force.
+ *
+ * `grid` is already block-shaped, so it is used directly. `radial` uses HUB-AND-SPOKE rather than
+ * the whole-canvas engine's BFS rings, and the asymmetry is deliberate: an estate is one
+ * component with real hop structure to show, while a group of six is usually all one hop out —
+ * which BFS would draw as a single enormous ring where rank rings nest tightly. Both are rings
+ * around the most important node, which is what Radial promises.
+ *
+ * The rest run their own engine over `subProjection`, with `compactBands` on so a box holding two
+ * categories is two bands tall rather than six.
+ */
+function blockFor(
+  mode: LayoutMode,
+  key: string,
+  label: string,
+  list: GNode[],
+  p: Projection,
+  opts: LayoutOptions,
+  hub?: GNode,
+): BlockSpec {
+  if (!list.length || mode === "grid") return gridBlock(key, label, list);
+  if (mode === "radial") {
+    // The CENTRE is named by the caller where the grouping already knows it — under "asset" the
+    // box IS an agent's neighbourhood, and letting the sort pick would put a CRITICAL issue at
+    // the middle of a block labelled with the agent's name. Elsewhere the group has no
+    // distinguished member, so the worst one takes the centre.
+    const centre = hub ?? list[0];
+    return radialBlock(key, label, centre, list.filter((n) => n.id !== centre.id));
+  }
+  const sub = subProjection(p, list);
+  const inner: LayoutOptions = { ...opts, margin: 0, groupBy: [], compactBands: true };
+  return blockOf(key, label, layoutWhole(sub, inner, mode));
+}
+
+/**
+ * Compact row-major grid — the default block interior.
+ *
+ * `columns` overrides the count for a caller that knows better. The default caps at 4, which suits
+ * a group's interior: a box is one item in a shelf-packed row, and a wide one pushes every box
+ * after it down. `layoutGrid` fills a whole canvas instead and passes its own.
+ */
+function gridBlock(key: string, label: string, list: GNode[], columns?: number): BlockSpec {
+  const cols = columns ?? Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list.length))));
   const rows = Math.ceil(list.length / cols);
   return {
     key,
@@ -929,14 +1173,7 @@ function assignToHubs(
   }
   hubs = [...hubs].sort(cmp);
 
-  const adj = new Map<string, string[]>();
-  const sortedEdges = [...p.edges].sort((a, b) => (a.id < b.id ? -1 : 1));
-  for (const e of sortedEdges) {
-    if (!adj.has(e.src)) adj.set(e.src, []);
-    if (!adj.has(e.dst)) adj.set(e.dst, []);
-    adj.get(e.src)!.push(e.dst);
-    adj.get(e.dst)!.push(e.src);
-  }
+  const adj = adjacency(p);
 
   const hubOf = new Map<string, string>();
   const queue: string[] = [];
@@ -962,26 +1199,35 @@ function assignToHubs(
 
 function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
   const margin = opts.margin ?? 120;
-  const levels = (opts.groupBy ?? []).length ? opts.groupBy! : (["combo"] as GroupKey[]);
+  const levels = opts.groupBy ?? [];
   const groupBy = levels[0];
-  // Three ways a second level is not one. "asset" is an ARRANGEMENT (hub-and-spoke BFS)
-  // rather than a partition by a property: there is nothing coherent to subdivide inside
-  // it, AND it has no key of its own to subdivide by — `ownGroupKey` answers GROUP_NONE
-  // for it, so as an inner level it would file everything under one "Ungrouped" box. And
-  // a dimension nested in itself yields one child identical to its parent, a box drawn
-  // twice. The resolver rejects all three — this guard makes the engine total, so a
-  // direct caller cannot produce a picture that lies.
+  // Two ways a second level is not one. "asset" has no key of its OWN to be subdivided by —
+  // `ownGroupKey` answers GROUP_NONE for it, so as an inner level it would file everything under
+  // one "Ungrouped" box. And a dimension nested in itself yields one child identical to its
+  // parent, a box drawn twice. The resolver rejects both; this guard makes the engine total, so
+  // a direct caller cannot produce a picture that lies.
+  //
+  // Note what is NO LONGER a reason: "asset" used to be called an arrangement rather than a
+  // partition, because it also dictated hub-and-spoke interiors. It always was a partition —
+  // `assignToHubs` gives every node exactly one hub — and the interior is now the layout's job,
+  // so the only objection left is the missing key.
   const second = levels[1] ?? null;
   const inner: GroupKey | null =
     groupBy === "asset" || second === "asset" || second === groupBy ? null : second;
   const sort = opts.sort ?? "smart";
+  const mode = opts.mode ?? "rows";
 
   const parentOf = parentIndex(p);
-  const cmp = comparator(sort);
+  // Box interiors take the same order the ungrouped arrangements take, so a component inside a box
+  // is contiguous and can be outlined — under the smart order only, for the reason `memberOrder`
+  // gives. This is why a grouped picture shows cluster outlines at all.
+  const cmp = memberOrder(p, sort);
+  const block = (key: string, label: string, list: GNode[], hub?: GNode) =>
+    blockFor(mode, key, label, [...list].sort(cmp), p, opts, hub);
 
-  // Build one block spec per top-level group. "asset" is hub-and-spoke; everything else
-  // buckets by key into grids, in canonical group order — and when a second level is
-  // asked for, each bucket is re-bucketed and becomes a block of blocks.
+  // One block spec per top-level group, in canonical group order — and when a second level is
+  // asked for, each bucket is re-bucketed and becomes a block of blocks. What goes INSIDE each
+  // block is `mode`'s business, not this function's.
   const specs: BlockSpec[] = [];
   if (groupBy === "asset") {
     const { hubOf, hubs } = assignToHubs(p, parentOf);
@@ -992,11 +1238,8 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
       if (key) members.get(key)!.push(node);
       else strays.push(node);
     }
-    for (const hub of hubs) {
-      const sats = members.get(hub.id)!.filter((n) => n.id !== hub.id).sort(cmp);
-      specs.push(radialBlock(hub.id, hub.name, hub, sats));
-    }
-    if (strays.length) specs.push(gridBlock(GROUP_NONE, "Ungrouped", [...strays].sort(cmp)));
+    for (const hub of hubs) specs.push(block(hub.id, hub.name, members.get(hub.id)!, hub));
+    if (strays.length) specs.push(block(GROUP_NONE, "Ungrouped", strays));
   } else {
     const members = new Map<string, GNode[]>();
     for (const node of p.nodes) {
@@ -1008,7 +1251,7 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
       const list = members.get(key)!;
       const label = groupLabel(key, groupBy);
       if (!inner) {
-        specs.push(gridBlock(key, label, [...list].sort(cmp)));
+        specs.push(block(key, label, list));
         continue;
       }
       // Same bucketing and same canonical ordering, one level down. A node still lands
@@ -1020,7 +1263,7 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
         subs.get(k2)!.push(node);
       }
       const children = orderGroups([...subs.keys()], inner, subs).map((k2) =>
-        gridBlock(k2, groupLabel(k2, inner), [...subs.get(k2)!].sort(cmp)));
+        block(k2, groupLabel(k2, inner), subs.get(k2)!));
       specs.push(nestBlock(key, label, children));
     }
   }
@@ -1088,7 +1331,588 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
     height: packed.height + margin,
     laneGap: CELL_W,
     rowGap: CELL_H,
-    mode: "grouped",
+    // The ARRANGEMENT, which is what `mode` means everywhere now — a grouped layout used to
+    // report "grouped" and swallow the arrangement with it. `groups` being present is what says
+    // this picture is grouped, and the renderer reads it that way.
+    mode,
     groups,
   };
+}
+
+/**
+ * Every node in one compact grid, categories ignored — the densest of the five.
+ *
+ * This is `gridBlock` over the whole projection, which is exactly the interior every grouped
+ * picture had before grouping and arrangement came apart. So `grid` + a grouping reproduces the
+ * old "grouped" layout byte for byte, and `grid` alone is the one new picture the split adds.
+ */
+function layoutGrid(p: Projection, opts: LayoutOptions): Layout {
+  const margin = opts.margin ?? 120;
+  // Component-first, for the reason `layoutRadial` gives: a dense grid interleaving two components
+  // cell by cell has no outline that could be drawn without claiming the other's nodes.
+  const cmp = memberOrder(p, opts.sort ?? "smart");
+  // ITS OWN COLUMN COUNT, not gridBlock's. That helper caps at 4 columns, which is right for the
+  // small interior of a group box and wrong for a whole canvas: 120 nodes came out as a 4×30
+  // ribbon, the shape this file's header complains about for unwrapped lanes — "a ribbon thousands
+  // of pixels long and a few hundred deep, which fit to view can only show by shrinking every card
+  // past reading". Solving cols²·CELL_W / (n·CELL_H) = VIEWPORT_ASPECT gives a canvas roughly the
+  // shape of the window, and it also lays a component's run across fewer, wider rows — which is
+  // what lets its outline survive the membership guard.
+  const cols = Math.max(1, Math.round(Math.sqrt((VIEWPORT_ASPECT * CELL_H * p.nodes.length) / CELL_W)));
+  const spec = gridBlock("", "", [...p.nodes].sort(cmp), cols);
+  // The grid's rows ARE its lane axis — read off the distinct y values rather than recomputing
+  // the column count, so this cannot disagree with where gridBlock actually put the cells. Two
+  // of the four arrow keys walk `lane`, and a layout answering 0 for every node would leave them
+  // stepping through the whole grid one cell at a time.
+  const rows = [...new Set(spec.cells.map((c) => c.y))].sort((a, b) => a - b);
+  return {
+    nodes: spec.cells.map((c) => ({
+      id: c.id,
+      // No header to clear and no box to sit inside: the block's own header offset is subtracted
+      // back off so the grid starts at the margin like every other ungrouped layout.
+      x: round2(margin + c.x - GROUP_PAD),
+      y: round2(margin + c.y - GROUP_PAD - HEADER_H),
+      lane: rows.indexOf(c.y),
+    })),
+    width: round2(margin * 2 + spec.width - GROUP_PAD * 2),
+    height: round2(margin * 2 + spec.height - GROUP_PAD * 2 - HEADER_H),
+    laneGap: CELL_W,
+    rowGap: CELL_H,
+    mode: "grid",
+  };
+}
+
+// ------------------------------------------------------------ radial / organic
+
+// Card footprint plus the gutter a reader needs between two of them. The renderer draws
+// 196×56 (graphNode.js NODE_W/NODE_H); these are what the two free-form layouts keep every
+// pair at least, and they are deliberately the grouped-mode cell size — one number for
+// "how much room does a card want", not a second opinion about it.
+const FREE_W = CELL_W;
+const FREE_H = CELL_H;
+// The narrowest a ring may sit inside the one before it.
+//
+// Two cards overlap only when |dx| < 196 AND |dy| < 56, which together put them closer than
+// sqrt(196² + 56²) ≈ 204 — so any pair at least that far apart is clear whatever direction it
+// lies in. Two points on concentric circles are never closer than the radial gap, so a step past
+// 204 makes cross-ring overlap impossible; 220 takes it with a gutter. This floor only binds on
+// sparse rings, since a busy ring is pushed further out by its own occupancy anyway.
+const RING_STEP = 220;
+// Repulsion is all-pairs, so one organic pass costs n². Iterations are traded against that so
+// the 400-node ceiling (MAX_NODES_CEILING) costs about what the 100-node default does; the
+// clamp keeps a tiny graph from being iterated pointlessly and a huge one from being iterated
+// too few times to settle at all.
+const FR_PAIR_BUDGET = 6000;
+const FR_MIN_STEPS = 30;
+const FR_MAX_STEPS = 120;
+// How hard the centre pulls, relative to a spring. Fruchterman–Reingold says nothing about
+// disconnected nodes, so without this term they are pushed outward by repulsion alone and never
+// pulled back — a handful of orphans would fly to the far corners and take the canvas bounds,
+// and therefore the zoom, with them.
+const FR_GRAVITY = 0.06;
+// How hard a node is pulled toward its OWN component's centre of mass.
+//
+// Fruchterman–Reingold holds a component together only through its edges, so a long chain stretches
+// and two components with no edge between them interpenetrate at the rim — pushed apart by
+// repulsion, pulled back together by the gravity above, with nothing distinguishing "my cluster"
+// from "the canvas". This term is what makes the clusters organic mode promises actually emerge as
+// separable blobs; it is also what lets each one be outlined (see `clusterHulls`).
+const FR_COHESION = 0.1;
+// Overlap resolution after the forces settle. FR gives no non-overlap guarantee at all — it
+// treats nodes as points — so these passes are what actually hold the invariant every layout in
+// this file is tested for. Each pass separates along the axis of LEAST overlap, which moves a
+// pair the shortest distance that frees it.
+const SEPARATE_PASSES = 24;
+
+/**
+ * Ring `d` holds every node `d` hops from the estate's worst-risk agent.
+ *
+ * THE RADIUS COMES FROM THE OCCUPANCY, and that is the whole design. A ring of 30 nodes at a
+ * constant radius overlaps; a constant radius large enough for 30 leaves a ring of 3 floating in
+ * the middle of nowhere. Sizing each ring to exactly what it holds makes the layout overlap-free
+ * for any graph with no cap on ring size, which is what lets this run on the whole 400-node
+ * ceiling rather than on a hand-tuned sample.
+ *
+ * The spacing constraint is on the CHORD between neighbours, not the arc: `2r·sin(π/n) ≥ FREE_W`.
+ * Arc length is the tempting formula and it is wrong — the two agree only for large n, and on a
+ * ring of two the arc is π/2 times the gap that actually exists, which is how a ring that
+ * measured as spaced still drew one card over another.
+ *
+ * Nodes are placed in `sort` order, clockwise from 12 o'clock — the same convention
+ * `radialBlock` uses for the hub-and-spoke groups, so the two radial pictures in this product
+ * read the same way round.
+ */
+function layoutRadial(p: Projection, opts: LayoutOptions): Layout {
+  const margin = opts.margin ?? 120;
+  // Component-first WITHIN a ring under the smart order, so one component takes a contiguous arc
+  // rather than being scattered around it — which is what lets its outline come out tight enough
+  // to be drawn at all (see `clusterHulls`). Inside a component the order is the usual one.
+  const cmp = memberOrder(p, opts.sort ?? "smart");
+  const { depth, max } = hopDepth(p);
+
+  const rings: GNode[][] = Array.from({ length: max + 1 }, () => []);
+  for (const node of p.nodes) rings[depth.get(node.id) ?? 0].push(node);
+  for (const ring of rings) ring.sort(cmp);
+
+  /** The smallest radius on which `n` cards fit side by side, by chord. One node needs none. */
+  const fits = (count: number) => (count < 2 ? 0 : FREE_W / (2 * Math.sin(Math.PI / count)));
+
+  // Radii first, so the canvas can be sized before anything is placed.
+  const radii: number[] = [];
+  let prev = 0;
+  for (let d = 0; d < rings.length; d++) {
+    if (d === 0) {
+      // Ring 0 is the root alone unless the projection has no edges at all, in which case
+      // everything is an orphan out on the last ring and this one is empty.
+      prev = fits(rings[0].length);
+      radii.push(round2(prev));
+      continue;
+    }
+    prev = Math.max(prev + RING_STEP, fits(rings[d].length));
+    radii.push(round2(prev));
+  }
+
+  const outer = radii[radii.length - 1] ?? 0;
+  const half = outer + FREE_W / 2;
+  const cx = round2(margin + half);
+  const cy = round2(margin + outer + FREE_H / 2);
+
+  const nodes: LayoutNode[] = [];
+  rings.forEach((ring, d) => {
+    if (!ring.length) return;
+    if (d === 0 && ring.length === 1) {
+      nodes.push({ id: ring[0].id, x: cx, y: cy, lane: 0 });
+      return;
+    }
+    const r = radii[d];
+    const step = (Math.PI * 2) / ring.length;
+    ring.forEach((node, k) => {
+      const a = -Math.PI / 2 + k * step;
+      nodes.push({
+        id: node.id,
+        x: round2(cx + r * Math.cos(a)),
+        y: round2(cy + r * Math.sin(a)),
+        lane: d,
+      });
+    });
+  });
+
+  return {
+    nodes,
+    width: round2(cx + half + margin),
+    height: round2(cy + outer + FREE_H / 2 + margin),
+    // Reported for the renderer's edge routing and keyboard steps, not used for placement here.
+    laneGap: RING_STEP,
+    rowGap: FREE_H,
+    mode: "radial",
+  };
+}
+
+/**
+ * Force-directed, and reproducible.
+ *
+ * Fruchterman–Reingold: every pair repels by `k²/d`, every edge pulls by `d²/k`, and a
+ * temperature caps how far a node may travel per step, cooling linearly to nothing so the
+ * picture settles instead of oscillating. Two departures from the paper, both because a security
+ * projection is not the connected graph FR assumes:
+ *
+ * - THE SEED IS THE RADIAL LAYOUT, not random placement. That is what makes this deterministic
+ *   — the property the file header trades on — and it also starts the solver from a picture that
+ *   already encodes hop distance, so the forces refine real structure rather than untangling an
+ *   arbitrary one.
+ * - GRAVITY toward the centre. FR pushes disconnected nodes apart forever; this product's views
+ *   routinely carry a few orphans, and without a restoring term they leave for the corners and
+ *   drag the canvas bounds — and the fit-to-view zoom — out with them.
+ *
+ * Then `separate` resolves the overlaps FR cannot see, since it models nodes as points.
+ */
+function layoutOrganic(p: Projection, opts: LayoutOptions): Layout {
+  const margin = opts.margin ?? 120;
+  const n = p.nodes.length;
+  const seed = layoutRadial(p, { ...opts, margin: 0 });
+  const component = componentRoots(p);
+  const at = new Map(seed.nodes.map((s) => [s.id, { x: s.x, y: s.y }]));
+  const lane = new Map(seed.nodes.map((s) => [s.id, s.lane]));
+  const ids = p.nodes.map((node) => node.id).filter((id) => at.has(id));
+
+  if (ids.length > 1) {
+    const area = Math.max(seed.width, 1) * Math.max(seed.height, 1);
+    const k = Math.sqrt(area / ids.length);
+    const cx = seed.width / 2;
+    const cy = seed.height / 2;
+    const steps = Math.min(FR_MAX_STEPS, Math.max(FR_MIN_STEPS, Math.round(FR_PAIR_BUDGET / n)));
+    const disp = new Map(ids.map((id) => [id, { x: 0, y: 0 }]));
+    // Edges as index pairs once, rather than re-resolving ids inside the hot loop.
+    const springs = p.edges
+      .filter((e) => at.has(e.src) && at.has(e.dst) && e.src !== e.dst)
+      .map((e) => [e.src, e.dst] as const);
+
+    for (let step = 0; step < steps; step++) {
+      // Temperature starts at a tenth of the ideal separation: the seed is already a sensible
+      // picture, so the first step should refine it rather than throw every node across the
+      // canvas the way a cold-start FR run has to.
+      const temp = (k / 10) * (1 - step / steps);
+      for (const d of disp.values()) { d.x = 0; d.y = 0; }
+
+      for (let i = 0; i < ids.length; i++) {
+        const a = at.get(ids[i])!;
+        const da = disp.get(ids[i])!;
+        for (let j = i + 1; j < ids.length; j++) {
+          const b = at.get(ids[j])!;
+          let dx = a.x - b.x;
+          let dy = a.y - b.y;
+          let dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 0.01) {
+            // Coincident nodes have no direction to be pushed along. Nudging by INDEX rather
+            // than at random keeps the tie-break deterministic, which is the whole contract.
+            dx = (i - j) || 1;
+            dy = 1;
+            dist = Math.sqrt(dx * dx + dy * dy);
+          }
+          const force = (k * k) / dist;
+          const ux = (dx / dist) * force;
+          const uy = (dy / dist) * force;
+          da.x += ux;
+          da.y += uy;
+          const db = disp.get(ids[j])!;
+          db.x -= ux;
+          db.y -= uy;
+        }
+      }
+
+      for (const [src, dst] of springs) {
+        const a = at.get(src)!;
+        const b = at.get(dst)!;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.01);
+        const force = (dist * dist) / k;
+        const ux = (dx / dist) * force;
+        const uy = (dy / dist) * force;
+        disp.get(src)!.x -= ux;
+        disp.get(src)!.y -= uy;
+        disp.get(dst)!.x += ux;
+        disp.get(dst)!.y += uy;
+      }
+
+      // Component centres of mass, recomputed each step: cohesion has to chase the cluster as it
+      // moves, or it pulls every node toward where the cluster used to be.
+      const hub = new Map<string, { x: number; y: number; n: number }>();
+      for (const id of ids) {
+        const key = component.get(id)!;
+        const acc = hub.get(key) ?? { x: 0, y: 0, n: 0 };
+        const a = at.get(id)!;
+        acc.x += a.x;
+        acc.y += a.y;
+        acc.n += 1;
+        hub.set(key, acc);
+      }
+      for (const id of ids) {
+        const a = at.get(id)!;
+        const d = disp.get(id)!;
+        const own = hub.get(component.get(id)!)!;
+        d.x += (own.x / own.n - a.x) * FR_COHESION * k;
+        d.y += (own.y / own.n - a.y) * FR_COHESION * k;
+        // The whole cloud still answers to the middle, which is what keeps a component with no
+        // edges at all — cohesive with itself, repelled by everything — on the canvas.
+        d.x += (cx - a.x) * FR_GRAVITY * k;
+        d.y += (cy - a.y) * FR_GRAVITY * k;
+        const len = Math.sqrt(d.x * d.x + d.y * d.y);
+        if (len < 0.01) continue;
+        const travel = Math.min(len, temp);
+        a.x += (d.x / len) * travel;
+        a.y += (d.y / len) * travel;
+      }
+    }
+  }
+
+  separate(ids, at);
+
+  // Translate the settled cloud so its top-left card edge sits exactly at the margin. Bounds are
+  // measured rather than predicted: the forces decide the extent, so anything computed up front
+  // would be a guess that clips.
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const id of ids) {
+    const a = at.get(id)!;
+    minX = Math.min(minX, a.x);
+    minY = Math.min(minY, a.y);
+    maxX = Math.max(maxX, a.x);
+    maxY = Math.max(maxY, a.y);
+  }
+  if (!ids.length) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+  const offX = margin + FREE_W / 2 - minX;
+  const offY = margin + FREE_H / 2 - minY;
+
+  return {
+    nodes: ids.map((id) => ({
+      id,
+      x: round2(at.get(id)!.x + offX),
+      y: round2(at.get(id)!.y + offY),
+      lane: lane.get(id) ?? 0,
+    })),
+    width: round2(maxX - minX + FREE_W + margin * 2),
+    height: round2(maxY - minY + FREE_H + margin * 2),
+    laneGap: RING_STEP,
+    rowGap: FREE_H,
+    mode: "organic",
+  };
+}
+
+/**
+ * Push apart every pair whose cards intersect, along the axis of least overlap.
+ *
+ * Iterated because separating one pair can push a node into a third; bounded because a
+ * pathological graph must not spin here, and `SEPARATE_PASSES` is generous enough that the loop
+ * exits early on anything real. Pairs are visited in `ids` order and moved symmetrically, so the
+ * result depends only on the input order — no randomness, no `Date`, nothing to make two runs
+ * differ.
+ */
+function separate(ids: string[], at: Map<string, { x: number; y: number }>): void {
+  for (let pass = 0; pass < SEPARATE_PASSES; pass++) {
+    let moved = false;
+    for (let i = 0; i < ids.length; i++) {
+      const a = at.get(ids[i])!;
+      for (let j = i + 1; j < ids.length; j++) {
+        const b = at.get(ids[j])!;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const overlapX = FREE_W - Math.abs(dx);
+        const overlapY = FREE_H - Math.abs(dy);
+        if (overlapX <= 0 || overlapY <= 0) continue;
+        moved = true;
+        // Least-overlap axis: separating along the other one would move the pair further than
+        // it has to. `|| 1` covers exactly coincident cards, which have no side to be on.
+        if (overlapX / FREE_W < overlapY / FREE_H) {
+          const push = (overlapX / 2) * (dx < 0 ? -1 : 1);
+          a.x -= push;
+          b.x += push;
+        } else {
+          const push = (overlapY / 2) * (dy < 0 ? -1 : 1);
+          a.y -= push;
+          b.y += push;
+        }
+      }
+    }
+    if (!moved) return;
+  }
+}
+
+// ------------------------------------------------------------- cluster outlines
+
+// How far the outline stands off a card. Room enough to read as a boundary rather than as a
+// border on the card itself, and well inside the tightest step between two cards (the grid's
+// 240 and rows' 150 band gap), so padding never pushes a hull over a neighbour's centre.
+const CLUSTER_PAD = 12;
+
+/**
+ * A convex outline per connected component, per box — or nothing, wherever nothing would be true.
+ *
+ * COMPUTED FROM THE PLACED NODES, once, for every arrangement. By the time this runs, rows,
+ * columns, grid, organic and radial have all answered in the same currency — positions — so
+ * outlining is one implementation rather than five, and it works identically whether the picture
+ * is grouped or not.
+ *
+ * The research this follows (an ~800-subject evaluation of group overlays on node-link diagrams)
+ * found hulls are the best encoding for "which group is this in" AND that any such overlay costs
+ * about a quarter of the accuracy on tasks that mean following a path. Following a path is what
+ * this product is for, so every rule below is about drawing FEWER outlines: the client paints them
+ * under the edges, and this function refuses to emit one that would not earn its ink.
+ */
+function clusterHulls(p: Projection, laid: Layout): LayoutCluster[] {
+  if (laid.nodes.length < 2) return [];
+  const roots = componentRoots(p);
+  const boxes = laid.groups ?? [];
+  // The boxes a node can actually sit in: the innermost level, since a nested picture puts every
+  // node in a depth-1 box and a hull belongs to the box that holds it.
+  const nested = boxes.some((g) => g.depth === 1);
+  const leaves = boxes
+    .map((g, i) => ({ g, i }))
+    .filter(({ g }) => (nested ? g.depth === 1 : g.depth === 0));
+  const boxOf = (n: LayoutNode): number => {
+    for (const { g, i } of leaves) {
+      if (n.x >= g.x && n.x <= g.x + g.width && n.y >= g.y && n.y <= g.y + g.height) return i;
+    }
+    return -1;
+  };
+
+  // Bucketed by component AND by box. The pair is load-bearing: grouping partitions by a
+  // property, so one component's nodes can land in several boxes, and a single hull spanning two
+  // of them would draw a shape that is inside neither.
+  const buckets = new Map<string, { members: LayoutNode[]; group: number }>();
+  const perBox = new Map<number, number>();
+  for (const n of laid.nodes) {
+    const group = boxOf(n);
+    const key = (roots.get(n.id) ?? n.id) + "|" + group;
+    if (!buckets.has(key)) buckets.set(key, { members: [], group });
+    buckets.get(key)!.members.push(n);
+    perBox.set(group, (perBox.get(group) ?? 0) + 1);
+  }
+
+  const out: LayoutCluster[] = [];
+  // Biggest first, then by key. Two outlines can hold only their own nodes and still CROSS in the
+  // empty space between them, and a pair of crossing boundaries is the opposite of the distinction
+  // they exist to draw — so an outline is refused if it overlaps one already accepted, and the
+  // bigger cluster wins the ground. Size-then-key rather than insertion order, so which one gives
+  // way is a fact about the graph.
+  const candidates = [...buckets.keys()].sort((a, b) =>
+    buckets.get(b)!.members.length - buckets.get(a)!.members.length || (a < b ? -1 : 1));
+  for (const key of candidates) {
+    const { members, group } = buckets.get(key)!;
+    // A hull around one card says nothing that the card does not already say.
+    if (members.length < 2) continue;
+    // Nor does a hull around everything in its box: if there is only one component here, there is
+    // nothing to tell it apart from.
+    if (members.length === (perBox.get(group) ?? 0)) continue;
+
+    const hull = convexHull(members.flatMap((n) => ([
+      [n.x - NODE_HALF_W, n.y - NODE_HALF_H],
+      [n.x + NODE_HALF_W, n.y - NODE_HALF_H],
+      [n.x + NODE_HALF_W, n.y + NODE_HALF_H],
+      [n.x - NODE_HALF_W, n.y + NODE_HALF_H],
+    ] as Array<[number, number]>)));
+    if (hull.length < 3) continue;
+
+    // THE RULE THAT KEEPS AN OUTLINE HONEST. A convex hull over scattered members can enclose a
+    // node that is not one of them — an arrangement that interleaves components, or one wide
+    // outlier stretching the hull across a neighbour. Such an outline claims a node it does not
+    // hold, so it is dropped rather than drawn: an interleaved picture degrades to silence.
+    //
+    // Only same-box outsiders need testing. Boxes at one level never overlap, so a hull built
+    // from points inside one box cannot reach into another.
+    const mine = new Set(members.map((n) => n.id));
+    const claimsAnother = laid.nodes.some((n) =>
+      !mine.has(n.id) && boxOf(n) === group && inPolygon(n.x, n.y, hull));
+    if (claimsAnother) continue;
+    if (out.some((c) => !convexDisjoint(hull, c.points))) continue;
+
+    out.push({
+      points: hull.map(([x, y]) => [round2(x), round2(y)] as [number, number]),
+      count: members.length,
+      ...(group === -1 ? {} : { group }),
+    });
+  }
+  // Emitted biggest-first above; re-sorted so the payload reads in the picture's own order and two
+  // runs cannot differ by which cluster happened to be measured first.
+  return out.sort((a, b) => a.points[0][0] - b.points[0][0] || a.points[0][1] - b.points[0][1]);
+}
+
+/**
+ * Are two CONVEX polygons disjoint? Separating-axis test — exact, since every hull here is convex
+ * by construction, and cheaper than clipping.
+ *
+ * Vertex-in-polygon alone would miss the case that matters most: two long thin hulls crossing like
+ * an X, where neither has a vertex inside the other.
+ */
+function convexDisjoint(a: Array<[number, number]>, b: Array<[number, number]>): boolean {
+  for (const poly of [a, b]) {
+    for (let i = 0; i < poly.length; i++) {
+      const [x1, y1] = poly[i];
+      const [x2, y2] = poly[(i + 1) % poly.length];
+      // The edge normal, as the axis to project both shapes onto.
+      const nx = -(y2 - y1);
+      const ny = x2 - x1;
+      let aMin = Infinity;
+      let aMax = -Infinity;
+      let bMin = Infinity;
+      let bMax = -Infinity;
+      for (const [x, y] of a) {
+        const d = x * nx + y * ny;
+        aMin = Math.min(aMin, d);
+        aMax = Math.max(aMax, d);
+      }
+      for (const [x, y] of b) {
+        const d = x * nx + y * ny;
+        bMin = Math.min(bMin, d);
+        bMax = Math.max(bMax, d);
+      }
+      // A gap on any one axis is proof of separation; touching exactly is not overlapping.
+      if (aMax <= bMin || bMax <= aMin) return true;
+    }
+  }
+  return false;
+}
+
+// The node card the renderer draws (graphNode.js NODE_W/NODE_H), plus the standoff — the hull is
+// built from card CORNERS rather than centres, so the outline clears the cards instead of running
+// through them.
+const NODE_HALF_W = 196 / 2 + CLUSTER_PAD;
+const NODE_HALF_H = 56 / 2 + CLUSTER_PAD;
+
+/**
+ * Convex hull by monotone chain — sort by x then y, sweep the lower and upper hulls.
+ *
+ * O(n log n), no floating-point tolerance anywhere, and deterministic for a given point list,
+ * which is the property this whole file is built on. Collinear points are dropped (`<= 0`), so the
+ * result is the minimal polygon rather than one carrying redundant vertices along a straight edge —
+ * a grid of cards produces a great many of those.
+ */
+function convexHull(pts: Array<[number, number]>): Array<[number, number]> {
+  const sorted = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (sorted.length < 3) return sorted;
+  const cross = (o: [number, number], a: [number, number], b: [number, number]): number =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const half = (list: Array<[number, number]>): Array<[number, number]> => {
+    const chain: Array<[number, number]> = [];
+    for (const pt of list) {
+      while (chain.length >= 2 && cross(chain[chain.length - 2], chain[chain.length - 1], pt) <= 0) {
+        chain.pop();
+      }
+      chain.push(pt);
+    }
+    return chain;
+  };
+  const lower = half(sorted);
+  const upper = half([...sorted].reverse());
+  // Each chain repeats the other's endpoints, so both give up their last point.
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
+/** Ray casting — is the point strictly inside the polygon? Used only by the membership guard. */
+function inPolygon(x: number, y: number, poly: Array<[number, number]>): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * The member order for an arrangement: component-first under the smart order, the reader's chosen
+ * sequence otherwise.
+ *
+ * SMART ONLY, and `layoutLanes` states the rule this follows: "clustering the smart order, and only
+ * the smart order: an explicit sort is a request for one global sequence, which gutters cut
+ * through." A box whose control says "Name (A–Z)" has to read alphabetically; grouping components
+ * first while claiming alphabetical order would be exactly the kind of quiet lie a cluster
+ * outline is supposed to prevent. So an explicit sort keeps its sequence and simply gets fewer
+ * outlines — components interleave, and `clusterHulls`' membership guard drops what it cannot
+ * draw honestly.
+ */
+function memberOrder(p: Projection, sort: SortKey): (a: GNode, b: GNode) => number {
+  const cmp = comparator(sort);
+  return sort === "smart" ? byComponent(p, cmp) : cmp;
+}
+
+/**
+ * A comparator that keeps one component's nodes together, then falls back to `cmp`.
+ *
+ * Contiguity is what lets a component's outline come out tight enough to pass the membership
+ * guard above — scattered members produce a hull that reaches across its neighbours and is
+ * dropped. Components lead in the order of their best member, so the worst risk still opens the
+ * picture.
+ */
+function byComponent(p: Projection, cmp: (a: GNode, b: GNode) => number): (a: GNode, b: GNode) => number {
+  const roots = componentRoots(p);
+  const rank = new Map<string, number>();
+  [...p.nodes].sort(cmp).forEach((n) => {
+    const root = roots.get(n.id) ?? n.id;
+    if (!rank.has(root)) rank.set(root, rank.size);
+  });
+  const of = (n: GNode) => rank.get(roots.get(n.id) ?? n.id) ?? rank.size;
+  return (a, b) => of(a) - of(b) || cmp(a, b);
 }

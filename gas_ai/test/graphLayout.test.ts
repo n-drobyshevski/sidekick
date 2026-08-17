@@ -1,9 +1,13 @@
 // The layered layout: lane assignment per kind, no coordinate collisions,
 // positive bounds, and determinism.
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { enrichGraphDoc } from "../src/domain/graphEnrich";
-import { laneOf, layoutGraph } from "../src/domain/graphLayout";
+import { LAYOUT_MODES, type GroupKey, laneOf, layoutGraph } from "../src/domain/graphLayout";
+import { resolveLayoutParams } from "../src/domain/graphApiParams";
 import { projectGraph } from "../src/domain/graphProject";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
@@ -269,5 +273,607 @@ describe("layoutGraph lanes-mode sort variants", () => {
     const a = layoutGraph(PROJECTION, { sort: "severity" });
     const b = layoutGraph(PROJECTION, { sort: "severity" });
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
+// ------------------------------------------------- the two free-form layouts
+//
+// "radial" and "organic" carry no bands, so almost nothing in the suites above applies to them —
+// and the two invariants that DO apply to every layout in this file (every node placed once, no
+// two cards overlapping) are exactly the ones a new engine is most likely to break. Radial can
+// break them by mis-deriving a ring radius; organic by design, since Fruchterman–Reingold treats
+// nodes as points and knows nothing about the 196×56 card drawn around each one.
+
+/** Every pair of node cards that would visually collide. Empty is the invariant. */
+function collisions(nodes: Array<{ id: string; x: number; y: number }>): string[] {
+  const bad: string[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const dx = Math.abs(nodes[i].x - nodes[j].x);
+      const dy = Math.abs(nodes[i].y - nodes[j].y);
+      if (dx < 196 && dy < 56) bad.push(`${nodes[i].id}/${nodes[j].id}`);
+    }
+  }
+  return bad;
+}
+
+describe.each(["radial", "organic"] as const)("layoutGraph %s mode", (mode) => {
+  const layout = layoutGraph(PROJECTION, { mode });
+
+  it("places every projected node exactly once", () => {
+    expect(layout.nodes).toHaveLength(PROJECTION.nodes.length);
+    expect(new Set(layout.nodes.map((n) => n.id)).size).toBe(PROJECTION.nodes.length);
+  });
+
+  it("declares its mode and draws no group boxes", () => {
+    expect(layout.mode).toBe(mode);
+    expect(layout.groups).toBeUndefined();
+  });
+
+  it("keeps every card clear of every other", () => {
+    expect(collisions(layout.nodes)).toEqual([]);
+  });
+
+  it("fits inside its own declared bounds", () => {
+    // The canvas is what "fit to view" scales by, so a node outside it is a node that cannot be
+    // reached at any zoom.
+    expect(layout.width).toBeGreaterThan(0);
+    expect(layout.height).toBeGreaterThan(0);
+    for (const n of layout.nodes) {
+      expect(n.x).toBeGreaterThanOrEqual(0);
+      expect(n.y).toBeGreaterThanOrEqual(0);
+      expect(n.x).toBeLessThanOrEqual(layout.width);
+      expect(n.y).toBeLessThanOrEqual(layout.height);
+    }
+  });
+
+  it("is deterministic, forces or not", () => {
+    // The property the file header trades on. Organic runs a force simulation and still has to
+    // answer this: its seed is a computed order, never Math.random.
+    expect(JSON.stringify(layoutGraph(PROJECTION, { mode })))
+      .toBe(JSON.stringify(layoutGraph(PROJECTION, { mode })));
+  });
+
+  it("reports hops from the hub as the lane, so the keyboard has an axis to walk", () => {
+    // graphView.js walks `lane` with two of its four arrows. A layout answering 0 for everything
+    // would leave those two keys stepping through the whole graph in array order.
+    const lanes = [...new Set(layout.nodes.map((n) => n.lane))].sort((a, b) => a - b);
+    expect(lanes.length).toBeGreaterThan(2);
+    // Contiguous from the centre out: a gap would mean an empty ring was sized and drawn.
+    expect(lanes).toEqual(lanes.map((_, i) => i));
+    // Exactly one node at the centre — the estate's worst-risk asset.
+    expect(layout.nodes.filter((n) => n.lane === 0)).toHaveLength(1);
+  });
+
+  it("responds to the sort, so the Order control still means something", () => {
+    // Both modes order by the comparator — radial for its angular sequence, organic for the seed
+    // that sequence becomes. A control that changed nothing would be a lie on the screen.
+    expect(JSON.stringify(layoutGraph(PROJECTION, { mode, sort: "name" })))
+      .not.toBe(JSON.stringify(layoutGraph(PROJECTION, { mode, sort: "aars" })));
+  });
+});
+
+describe("layoutGraph radial mode geometry", () => {
+  const layout = layoutGraph(PROJECTION, { mode: "radial" });
+  const centre = layout.nodes.find((n) => n.lane === 0)!;
+  const radius = (n: { x: number; y: number }) =>
+    Math.sqrt((n.x - centre.x) ** 2 + (n.y - centre.y) ** 2);
+
+  it("puts the highest-risk AI agent at the centre", () => {
+    const byId = new Map(PROJECTION.nodes.map((n) => [n.id, n]));
+    expect(byId.get(centre.id)!.kind).toBe("AI_AGENT");
+  });
+
+  it("holds one ring per hop, each at a single radius", () => {
+    const byLane = new Map<number, number[]>();
+    for (const n of layout.nodes) {
+      if (n.lane === 0) continue;
+      if (!byLane.has(n.lane)) byLane.set(n.lane, []);
+      byLane.get(n.lane)!.push(radius(n));
+    }
+    for (const [lane, radii] of byLane) {
+      const first = radii[0];
+      // Equidistant to within rounding — round2 is the only thing separating them.
+      for (const r of radii) expect(Math.abs(r - first), `lane ${lane}`).toBeLessThan(0.5);
+    }
+  });
+
+  it("orders the rings outward, so a ring is readable as a distance", () => {
+    const radiusOf = new Map<number, number>();
+    for (const n of layout.nodes) if (n.lane > 0) radiusOf.set(n.lane, radius(n));
+    const lanes = [...radiusOf.keys()].sort((a, b) => a - b);
+    for (let i = 1; i < lanes.length; i++) {
+      expect(radiusOf.get(lanes[i])!).toBeGreaterThan(radiusOf.get(lanes[i - 1])!);
+    }
+  });
+
+  it("sizes a busy ring by its occupancy rather than by a constant", () => {
+    // The chord between neighbours has to clear a card width, which is what makes the mode
+    // overlap-free at any ring size. A constant radius could not — and the arc-length formula,
+    // the tempting one, over-estimates the gap on a small ring by up to π/2.
+    const crowded = { syncedAt: DOC.syncedAt, nodes: [{ id: "hub", kind: "AI_AGENT", name: "hub" }],
+      edges: [] as Array<{ id: string; src: string; dst: string; type: string }> };
+    for (let i = 0; i < 40; i++) {
+      crowded.nodes.push({ id: "b" + i, kind: "BUCKET", name: "b" + i });
+      crowded.edges.push({ id: "e" + i, src: "hub", dst: "b" + i, type: "ALLOWS_ACCESS_TO" });
+    }
+    // The per-kind fan-out cap collapses 40 buckets into a SUMMARY stub, which is the
+    // projection's job and not this layout's — lifted here so the ring under test is the crowded
+    // one the formula exists for.
+    const wide = layoutGraph(
+      projectGraph(crowded as never, {
+        seedIds: ["hub"], depth: 2, maxNodes: 60, maxEdges: 60, perKindCap: { BUCKET: 60 },
+      }),
+      { mode: "radial" });
+    expect(wide.nodes).toHaveLength(41);
+    expect(collisions(wide.nodes)).toEqual([]);
+    // 40 cards on one ring need far more room than the sparse-ring floor would have given them.
+    const hub = wide.nodes.find((n) => n.lane === 0)!;
+    const ring = wide.nodes.filter((n) => n.lane === 1)[0];
+    expect(Math.sqrt((ring.x - hub.x) ** 2 + (ring.y - hub.y) ** 2)).toBeGreaterThan(1400);
+  });
+
+  it("puts unreachable nodes on the outermost ring, not at the centre", () => {
+    // A node with no path to the hub is the furthest thing from it, and filing it at distance 0
+    // would put it in the position the layout reserves for its source.
+    const split = { syncedAt: DOC.syncedAt,
+      nodes: [
+        { id: "hub", kind: "AI_AGENT", name: "hub" },
+        { id: "near", kind: "SERVICE_ACCOUNT", name: "near" },
+        { id: "lonely", kind: "BUCKET", name: "lonely" },
+      ],
+      edges: [{ id: "e0", src: "hub", dst: "near", type: "RUNS_AS" }] };
+    const out = layoutGraph(
+      projectGraph(split as never, { seedIds: ["hub", "lonely"], depth: 2, maxNodes: 10, maxEdges: 10 }),
+      { mode: "radial" });
+    const laneOfId = new Map(out.nodes.map((n) => [n.id, n.lane]));
+    expect(laneOfId.get("hub")).toBe(0);
+    expect(laneOfId.get("near")).toBe(1);
+    expect(laneOfId.get("lonely")).toBe(2);
+  });
+});
+
+describe("layoutGraph organic mode forces", () => {
+  it("pulls connected nodes closer than the ring seed put them", () => {
+    // Otherwise this is the radial layout with extra steps. Mean edge length is the honest
+    // measure: individual edges can lengthen as a cluster rotates into place.
+    const mean = (mode: "radial" | "organic") => {
+      const layout = layoutGraph(PROJECTION, { mode });
+      const at = new Map(layout.nodes.map((n) => [n.id, n]));
+      const lengths = PROJECTION.edges
+        .filter((e) => at.has(e.src) && at.has(e.dst))
+        .map((e) => Math.hypot(at.get(e.src)!.x - at.get(e.dst)!.x, at.get(e.src)!.y - at.get(e.dst)!.y));
+      return lengths.reduce((a, b) => a + b, 0) / lengths.length;
+    };
+    expect(mean("organic")).toBeLessThan(mean("radial"));
+  });
+
+  it("keeps disconnected nodes on the canvas instead of letting them fly", () => {
+    // Fruchterman–Reingold says nothing about a node with no springs: repulsion alone pushes it
+    // outward forever, and the bounds — and therefore the zoom — follow it. The gravity term is
+    // what holds it, and this is the case that proves the term is doing its job.
+    const strays = { syncedAt: DOC.syncedAt,
+      nodes: [
+        { id: "hub", kind: "AI_AGENT", name: "hub" },
+        { id: "sa", kind: "SERVICE_ACCOUNT", name: "sa" },
+        { id: "x1", kind: "BUCKET", name: "x1" },
+        { id: "x2", kind: "BUCKET", name: "x2" },
+        { id: "x3", kind: "BUCKET", name: "x3" },
+      ],
+      edges: [{ id: "e0", src: "hub", dst: "sa", type: "RUNS_AS" }] };
+    const p = projectGraph(strays as never,
+      { seedIds: ["hub", "x1", "x2", "x3"], depth: 2, maxNodes: 10, maxEdges: 10 });
+    const out = layoutGraph(p, { mode: "organic" });
+    expect(out.nodes).toHaveLength(p.nodes.length);
+    expect(collisions(out.nodes)).toEqual([]);
+    for (const n of out.nodes) {
+      expect(n.x).toBeLessThanOrEqual(out.width);
+      expect(n.y).toBeLessThanOrEqual(out.height);
+    }
+    // Nothing has run away: the canvas stays within a few screens rather than a few thousand.
+    expect(out.width).toBeLessThan(6000);
+    expect(out.height).toBeLessThan(6000);
+  });
+
+  it("stays inside its budget at the node ceiling", () => {
+    // Repulsion is all-pairs, so one pass costs n². The iteration count is traded against that
+    // (FR_PAIR_BUDGET) precisely so the 400-node ceiling stays usable; without the trade this is
+    // where the mode would quietly time out a request.
+    const big = { syncedAt: DOC.syncedAt,
+      nodes: [{ id: "hub", kind: "AI_AGENT", name: "hub" }] as Array<Record<string, string>>,
+      edges: [] as Array<Record<string, string>> };
+    for (let i = 0; i < 399; i++) {
+      big.nodes.push({ id: "n" + i, kind: i % 3 ? "BUCKET" : "SERVICE_ACCOUNT", name: "n" + i });
+      big.edges.push({
+        id: "e" + i, type: "ALLOWS_ACCESS_TO",
+        src: i < 8 ? "hub" : "n" + Math.floor(i / 8 - 1), dst: "n" + i,
+      });
+    }
+    const p = projectGraph(big as never,
+      { seedIds: ["hub"], depth: 12, maxNodes: 400, maxEdges: 800 });
+    expect(p.nodes.length).toBe(400);
+    const started = Date.now();
+    const out = layoutGraph(p, { mode: "organic" });
+    const ms = Date.now() - started;
+    expect(out.nodes).toHaveLength(400);
+    expect(collisions(out.nodes)).toEqual([]);
+    // Generous — this is a ceiling that catches an O(n³) regression, not a benchmark.
+    expect(ms).toBeLessThan(3000);
+  });
+});
+
+// ANTI-ROT. A layout lives in five places: the domain's LAYOUT_MODES, the engine's dispatch, the
+// page's LAYOUTS table (the list, and the whitelist derived from it), the renderer's free-form
+// test, and the resolver. Adding "radial" and "organic" to four of them and missing the fifth is
+// exactly what happened: `graphParams` carried a hand-written `=== "grouped" || === "lanes"`, so
+// the URL kept the new mode, the domain understood it, and the page quietly rewrote it to rows on
+// the way to the request. No error, no failing type — just a layout that never appeared.
+//
+// graph.js cannot be imported here (it is DOM-shaped and there is no jsdom), so its table is read
+// as source, the way test/icons.test.js reads help.js for its glyph names.
+describe("the page's layout list and the domain agree", () => {
+  const PAGE = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../src/client/js/pages/graph.js"), "utf8");
+
+  /** The `mode:` values in graph.js's LAYOUTS table. "" is Rows — the absent hash value. */
+  function pageModes(): string[] {
+    const table = PAGE.slice(PAGE.indexOf("const LAYOUTS = ["));
+    const body = table.slice(0, table.indexOf("\n];"));
+    return [...body.matchAll(/mode:\s*"([^"]*)"/g)].map((m) => m[1]);
+  }
+
+  it("offers one row per engine, and no row for an engine that does not exist", () => {
+    const listed = pageModes();
+    expect(listed).toContain("");                          // Rows, as the absent value
+    expect(new Set(listed.filter(Boolean))).toEqual(new Set(LAYOUT_MODES.filter((m) => m !== "rows")));
+  });
+
+  it("keeps the picker's whitelist derived from that table, never hand-written", () => {
+    // The literal that caused the bug. If a comparison against a specific mode name reappears in
+    // graphParams, this is the test that says so.
+    const fn = PAGE.slice(PAGE.indexOf("function graphParams("));
+    const body = fn.slice(0, fn.indexOf("\n}"));
+    expect(body).toContain("normalizeLayout(params.layout)");
+    for (const mode of LAYOUT_MODES) {
+      expect(body, `graphParams must not name ${mode} directly`).not.toContain(`=== "${mode}"`);
+    }
+    const norm = PAGE.slice(PAGE.indexOf("function normalizeLayout("));
+    expect(norm.slice(0, norm.indexOf("\n}"))).toContain("LAYOUT_MODES.includes");
+  });
+
+  it("agrees with the resolver about what a retired layout value becomes", () => {
+    // The client maps old `layout=` values for the row it marks; the resolver maps them for the
+    // picture it draws. Two copies, because the client bundle cannot import the domain — so the
+    // one thing worth pinning is that they map to the SAME arrangement. Diverge, and a legacy
+    // link would mark one row in the list while the canvas drew another.
+    const alias = PAGE.slice(PAGE.indexOf("const LAYOUT_ALIAS = {"));
+    const pairs = [...alias.slice(0, alias.indexOf("};")).matchAll(/(\w+):\s*"([^"]+)"/g)];
+    expect(pairs.length).toBeGreaterThan(0);
+    for (const [, from, to] of pairs) {
+      expect(LAYOUT_MODES, `${to} must be a real arrangement`).toContain(to);
+      expect(LAYOUT_MODES, `${from} must be retired, not live`).not.toContain(from);
+      expect(resolveLayoutParams({ layout: from }).mode, `resolver maps ${from}`).toBe(to);
+    }
+  });
+});
+
+// ------------------------------------------- grouping × arrangement, the whole grid
+//
+// The two are independent controls, so the claim this suite has to hold up is that EVERY pair
+// works — not that grouping works and the arrangements work. The failure mode of a composed
+// feature is one cell of the grid: "organic grouped by cloud" placing nodes outside their own
+// box, or "rows grouped by cloud, kind" reserving six band gaps inside a two-band group and
+// overlapping the box beside it.
+//
+// Grouping used to BE one of the arrangements, so this grid could not be written at all — naming
+// a layout meant giving up grouping and vice versa.
+describe.each(LAYOUT_MODES)("%s, grouped", (mode) => {
+  const boxes = (l: ReturnType<typeof layoutGraph>) => l.groups ?? [];
+  /** The leaf boxes — the ones a node actually sits in. With one level, all of them. */
+  const leaves = (l: ReturnType<typeof layoutGraph>) => {
+    const all = boxes(l);
+    const nested = all.some((g) => g.depth === 1);
+    return all.filter((g) => (nested ? g.depth === 1 : g.depth === 0));
+  };
+
+  for (const groupBy of [["cloud"], ["cloud", "kind"]] as GroupKey[][]) {
+    const label = groupBy.join(" then ");
+    const layout = layoutGraph(PROJECTION, { mode, groupBy });
+
+    it(`by ${label}: places every node once, and reports the arrangement`, () => {
+      expect(layout.nodes).toHaveLength(PROJECTION.nodes.length);
+      expect(new Set(layout.nodes.map((n) => n.id)).size).toBe(PROJECTION.nodes.length);
+      // `mode` is the ARRANGEMENT even when grouped — the boxes are what say it is grouped.
+      expect(layout.mode).toBe(mode);
+      expect(boxes(layout).length).toBeGreaterThan(0);
+    });
+
+    it(`by ${label}: keeps every node inside its own box`, () => {
+      const at = new Map(layout.nodes.map((n) => [n.id, n]));
+      // Every leaf box has to contain each of its members' centres. A block form that measured
+      // its own extent wrongly shows up here and nowhere else.
+      let checked = 0;
+      for (const g of leaves(layout)) {
+        const inside = layout.nodes.filter((n) => n.x >= g.x && n.x <= g.x + g.width
+          && n.y >= g.y && n.y <= g.y + g.height);
+        expect(inside.length, `${g.id} holds ${g.count}`).toBe(g.count);
+        checked += g.count;
+      }
+      expect(checked).toBe(at.size);
+    });
+
+    it(`by ${label}: draws no two boxes over each other, per level`, () => {
+      for (const depth of [0, 1]) {
+        const level = boxes(layout).filter((g) => g.depth === depth);
+        for (let i = 0; i < level.length; i++) {
+          for (let j = i + 1; j < level.length; j++) {
+            const a = level[i];
+            const b = level[j];
+            const apart = a.x + a.width <= b.x || b.x + b.width <= a.x
+              || a.y + a.height <= b.y || b.y + b.height <= a.y;
+            expect(apart, `${a.id} vs ${b.id}`).toBe(true);
+          }
+        }
+      }
+    });
+
+    it(`by ${label}: keeps every card clear of every other`, () => {
+      expect(collisions(layout.nodes)).toEqual([]);
+    });
+
+    it(`by ${label}: conserves the counts and is deterministic`, () => {
+      expect(leaves(layout).reduce((n, g) => n + g.count, 0)).toBe(PROJECTION.nodes.length);
+      expect(JSON.stringify(layoutGraph(PROJECTION, { mode, groupBy })))
+        .toBe(JSON.stringify(layout));
+    });
+  }
+});
+
+describe("grouping and the arrangement do not constrain each other", () => {
+  it("draws boxes for every arrangement, and none for any of them ungrouped", () => {
+    for (const mode of LAYOUT_MODES) {
+      expect(layoutGraph(PROJECTION, { mode }).groups, `${mode} ungrouped`).toBeUndefined();
+      expect(layoutGraph(PROJECTION, { mode, groupBy: ["cloud"] }).groups, `${mode} grouped`)
+        .toBeDefined();
+    }
+  });
+
+  it("changes the interior when the arrangement changes, boxes and all held still", () => {
+    // If the arrangement were ignored while grouping was on — which is what the old design did,
+    // structurally — every one of these would be the same picture.
+    const seen = new Set(LAYOUT_MODES.map((mode) =>
+      JSON.stringify(layoutGraph(PROJECTION, { mode, groupBy: ["cloud"] }).nodes)));
+    expect(seen.size).toBe(LAYOUT_MODES.length);
+  });
+
+  it("changes the boxes when the grouping changes, the arrangement held still", () => {
+    const keys = (groupBy: GroupKey[]) =>
+      (layoutGraph(PROJECTION, { mode: "rows", groupBy }).groups ?? []).map((g) => g.by);
+    expect(keys(["cloud"])).toContain("cloud");
+    expect(keys(["kind"])).toContain("kind");
+    expect(keys(["cloud", "kind"])).toEqual(expect.arrayContaining(["cloud", "kind"]));
+  });
+
+  it("compacts the bands inside a box, and only inside a box", () => {
+    // Six category bands are a fixed frame of reference on the whole canvas — an empty one says
+    // "no compute in view". Inside a group they are dead air, so occupied bands close up. A box
+    // holding two categories must be nowhere near six band-gaps tall.
+    const flat = layoutGraph(PROJECTION, { mode: "rows" });
+    const bandsUsed = [...new Set(flat.nodes.map((n) => n.lane))].sort((a, b) => a - b);
+    expect(bandsUsed.length).toBeLessThan(6);      // the sample estate leaves a band empty…
+    // …and the canvas still spaces bands by their TRUE index, so the empty one leaves its gap.
+    // Read within one shelf, since a wrap adds a whole band set below.
+    const firstShelf = flat.nodes.filter((n) => (n.shelf ?? 0) === 0);
+    const yOf = new Map(firstShelf.map((n) => [n.lane, n.y]));
+    const base = Math.min(...yOf.keys());
+    for (const lane of yOf.keys()) {
+      expect(yOf.get(lane)! - yOf.get(base)!, `band ${lane}`).toBe((lane - base) * 150);
+    }
+    // The gap the empty band leaves — the thing `compactBands` closes up inside a box.
+    expect(bandsUsed.some((l, i) => i > 0 && l - bandsUsed[i - 1] > 1)).toBe(true);
+    const grouped = layoutGraph(PROJECTION, { mode: "rows", groupBy: ["kind"] });
+    // Grouped by kind, every box holds ONE category, so every box is a single band tall.
+    for (const g of grouped.groups ?? []) {
+      const ys = new Set(grouped.nodes.filter((n) => n.x >= g.x && n.x <= g.x + g.width
+        && n.y >= g.y && n.y <= g.y + g.height).map((n) => n.y));
+      expect(ys.size, `${g.id} band count`).toBe(1);
+    }
+  });
+});
+
+// -------------------------------------------------- cluster outlines
+//
+// A connected component's outline is the one thing on this canvas that is about the EDGES rather
+// than a property or a position — and the only way it can be WRONG is by claiming a node it does
+// not hold. Every rule below is about that: an outline is emitted when it is true of exactly its
+// members and suppressed otherwise, so an arrangement that interleaves components goes quiet
+// instead of drawing a lie. That is where the weight of this suite sits.
+//
+// The seeded PROJECTION above is a single connected component (42 nodes, 41 edges), which is
+// precisely the case that must emit NOTHING — an outline around everything distinguishes nothing.
+// So the cases that need several components seed every agent at depth 1 instead.
+const MANY = projectGraph(DOC, {
+  seedIds: DOC.nodes.filter((n) => n.kind === "AI_AGENT").map((n) => n.id),
+  depth: 1,
+  maxNodes: 120,
+});
+
+/** Ray casting, independent of the domain's own copy — the test must not share the bug. */
+function insideHull(x: number, y: number, poly: Array<[number, number]>): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** node id → connected-component id, computed here rather than taken from the domain. */
+function componentsOf(p: typeof MANY): Map<string, string> {
+  const parent = new Map(p.nodes.map((n) => [n.id, n.id]));
+  const find = (x: string): string => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    return root;
+  };
+  for (const e of p.edges) {
+    const a = find(e.src);
+    const b = find(e.dst);
+    if (a !== b) parent.set(a, b);
+  }
+  return new Map(p.nodes.map((n) => [n.id, find(n.id)]));
+}
+
+describe("cluster outlines: several components", () => {
+  it("the fixture really does hold several components", () => {
+    // Guards the rest of this describe: if the projection collapsed to one component, every
+    // assertion below would pass vacuously.
+    expect(new Set(componentsOf(MANY).values()).size).toBeGreaterThan(3);
+  });
+
+  describe.each(LAYOUT_MODES)("%s", (mode) => {
+    for (const groupBy of [[], ["cloud"], ["kind"]] as GroupKey[][]) {
+      const label = groupBy.length ? `by ${groupBy.join(",")}` : "ungrouped";
+      const layout = layoutGraph(MANY, { mode, groupBy });
+      const hulls = layout.clusters ?? [];
+
+      it(`${label}: no outline claims a node it does not hold`, () => {
+        // THE INVARIANT. Everything else here is a consequence of it.
+        const comp = componentsOf(MANY);
+        const at = new Map(layout.nodes.map((n) => [n.id, n]));
+        for (const cl of hulls) {
+          const held = layout.nodes.filter((n) => insideHull(n.x, n.y, cl.points));
+          expect(held.length, "outline holds its declared count").toBe(cl.count);
+          const roots = new Set(held.map((n) => comp.get(n.id)));
+          expect(roots.size, "every node inside is from ONE component").toBe(1);
+          expect(at.size).toBeGreaterThan(0);
+        }
+      });
+
+      it(`${label}: outlines never overlap each other`, () => {
+        // Two outlines sharing ground would be two claims on the same node — which the guard
+        // above rules out pointwise, and this states as a shape property.
+        for (let i = 0; i < hulls.length; i++) {
+          for (let j = i + 1; j < hulls.length; j++) {
+            const shared = hulls[i].points.some(([x, y]) => insideHull(x, y, hulls[j].points));
+            expect(shared, `outline ${i} vs ${j}`).toBe(false);
+          }
+        }
+      });
+
+      it(`${label}: counts are honest and the emit is deterministic`, () => {
+        for (const cl of hulls) {
+          expect(cl.count).toBeGreaterThan(1);       // never one node
+          expect(cl.points.length).toBeGreaterThanOrEqual(3);
+        }
+        expect(hulls.reduce((n, c) => n + c.count, 0)).toBeLessThanOrEqual(MANY.nodes.length);
+        expect(JSON.stringify(layoutGraph(MANY, { mode, groupBy }).clusters))
+          .toBe(JSON.stringify(hulls));
+      });
+
+      if (groupBy.length) {
+        it(`${label}: every outline names the box it sits in, and stays inside it`, () => {
+          const boxes = layout.groups ?? [];
+          const nested = boxes.some((g) => g.depth === 1);
+          for (const cl of hulls) {
+            expect(cl.group, "an outline in a grouped picture belongs to a box").toBeDefined();
+            const box = boxes[cl.group!];
+            expect(box).toBeDefined();
+            expect(nested ? box.depth : 0).toBe(nested ? 1 : 0);
+            // Every vertex within the box — a hull escaping its box would be drawn over a
+            // neighbour's members.
+            for (const [x, y] of cl.points) {
+              expect(x).toBeGreaterThanOrEqual(box.x);
+              expect(x).toBeLessThanOrEqual(box.x + box.width);
+              expect(y).toBeGreaterThanOrEqual(box.y);
+              expect(y).toBeLessThanOrEqual(box.y + box.height);
+            }
+          }
+        });
+      } else {
+        it(`${label}: an ungrouped outline names no box`, () => {
+          for (const cl of hulls) expect(cl.group).toBeUndefined();
+        });
+      }
+    }
+  });
+});
+
+describe("cluster outlines: when nothing is drawn", () => {
+  it("emits none for a single connected component", () => {
+    // The seeded projection is one component, so an outline would enclose the whole canvas and
+    // distinguish nothing. This is the suppression most likely to be lost in a refactor: it is the
+    // one that makes the feature quiet on the app's own default view.
+    expect(new Set(componentsOf(PROJECTION).values()).size).toBe(1);
+    for (const mode of LAYOUT_MODES) {
+      expect(layoutGraph(PROJECTION, { mode }).clusters, mode).toBeUndefined();
+    }
+  });
+
+  it("emits none around a lone node", () => {
+    // Two isolated nodes: two components, neither big enough to outline.
+    const doc = {
+      syncedAt: DOC.syncedAt,
+      nodes: [
+        { id: "a", kind: "AI_AGENT", name: "a" },
+        { id: "b", kind: "AI_AGENT", name: "b" },
+      ],
+      edges: [],
+    };
+    const p = projectGraph(doc as never, { seedIds: ["a", "b"], depth: 1, maxNodes: 10 });
+    expect(p.nodes).toHaveLength(2);
+    expect(layoutGraph(p, { mode: "grid" }).clusters).toBeUndefined();
+  });
+
+  it("emits fewer under an explicit order than under the smart one", () => {
+    // The documented trade. An explicit sort is a request for one global sequence, so components
+    // interleave and the membership guard drops what it cannot draw truthfully. Pinned so it stays
+    // a decision rather than becoming a surprise.
+    const smart = (layoutGraph(MANY, { mode: "rows", sort: "smart" }).clusters ?? []).length;
+    const named = (layoutGraph(MANY, { mode: "rows", sort: "name" }).clusters ?? []).length;
+    expect(smart).toBeGreaterThan(0);
+    expect(named).toBeLessThan(smart);
+  });
+
+  it("outlines the components of the SHOWN graph, not of the estate", () => {
+    // Two nodes connected in the document but only one admitted by the projection must not be
+    // outlined together — the picture is what is being annotated.
+    const shown = layoutGraph(MANY, { mode: "rows" });
+    const comp = componentsOf(MANY);
+    const ids = new Set(MANY.nodes.map((n) => n.id));
+    for (const cl of shown.clusters ?? []) {
+      const held = shown.nodes.filter((n) => insideHull(n.x, n.y, cl.points));
+      for (const n of held) {
+        expect(ids.has(n.id)).toBe(true);
+        expect(comp.get(n.id)).toBeDefined();
+      }
+    }
+  });
+});
+
+describe("layoutGrid shape", () => {
+  it("comes out roughly the shape of a viewport, not a ribbon", () => {
+    // `gridBlock` caps at 4 columns, which is right for a group's interior and wrong for a whole
+    // canvas: 120 nodes came out 4 wide and 30 deep — the ribbon this file's header calls out for
+    // unwrapped lanes, which fit-to-view can only show by shrinking every card past reading.
+    const layout = layoutGraph(MANY, { mode: "grid" });
+    const aspect = layout.width / layout.height;
+    expect(aspect).toBeGreaterThan(1);
+    expect(aspect).toBeLessThan(3.5);
+    // More than four columns for a graph this size — the assertion that the cap is gone.
+    const cols = new Set(layout.nodes.map((n) => n.x)).size;
+    expect(cols).toBeGreaterThan(4);
+  });
+
+  it("leaves a group box's interior on the 4-column cap", () => {
+    // A box is one item in a shelf-packed row, so a wide one pushes every box after it down. The
+    // override is layoutGrid's alone.
+    const grouped = layoutGraph(MANY, { mode: "grid", groupBy: ["kind"] });
+    for (const g of grouped.groups ?? []) {
+      const inside = grouped.nodes.filter((n) => n.x >= g.x && n.x <= g.x + g.width
+        && n.y >= g.y && n.y <= g.y + g.height);
+      expect(new Set(inside.map((n) => n.x)).size, `${g.id} columns`).toBeLessThanOrEqual(4);
+    }
   });
 });

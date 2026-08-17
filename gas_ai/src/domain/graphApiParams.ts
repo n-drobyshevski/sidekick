@@ -76,13 +76,17 @@ function pick<T extends string>(v: unknown, allowed: readonly T[], fallback: T):
  * A list rather than a second param so one value stays a one-element list and every
  * link and saved view written before nesting existed keeps meaning what it meant.
  * Unknown names are dropped rather than defaulted, because a garbage SECOND level
- * should not silently become "combo" and draw a nesting nobody asked for — but an
- * entirely unreadable value still falls back, matching the scalar behaviour it replaces.
+ * should not silently become "combo" and draw a nesting nobody asked for.
  *
- * "asset" is outermost-or-nothing. It is hub-and-spoke BFS — an arrangement rather than
- * a partition by a property — so there is nothing inside it to subdivide, and it has no
- * key of its own to be subdivided BY: `ownGroupKey` answers GROUP_NONE for it, which as
- * a second level would file every node under one sub-box labelled "Ungrouped".
+ * AN EMPTY LIST MEANS NO GROUPING, and is the default. Grouping and the arrangement are two
+ * independent controls now, so "grouped by nothing" has to be expressible — it used to fall back
+ * to `["combo"]`, which was harmless only because the arrangement `grouped` was the one thing
+ * that read it. With every arrangement reading it, that fallback would group every default view
+ * by toxic combo without being asked.
+ *
+ * "asset" is outermost-or-nothing: it has no key of its own to be subdivided BY — `ownGroupKey`
+ * answers GROUP_NONE for it, which as a second level would file every node under one sub-box
+ * labelled "Ungrouped".
  */
 function pickList(v: unknown): GroupKey[] {
   const raw = typeof v === "string" ? v.split(",") : [];
@@ -96,15 +100,30 @@ function pickList(v: unknown): GroupKey[] {
     out.push(key);
     if (key === "asset" || out.length === 2) break;
   }
-  return out.length ? out : ["combo"];
+  return out;
 }
 
-/** Layout knobs (hash params `layout`, `groupBy`, `sort`): whitelisted,
- *  case-insensitive, garbage falls back to defaults. */
+/**
+ * Layout knobs (hash params `layout`, `groupBy`, `sort`): whitelisted, case-insensitive, garbage
+ * falls back to defaults.
+ *
+ * `layout=grouped` IS AN OLD LINK, and it maps to the arrangement that draws what it drew.
+ * Grouping used to be one of the arrangements, and it chose the interior itself: the compact grid
+ * now called `grid` for every dimension EXCEPT `asset`, where it forced hub-and-spoke — which is
+ * now `radial`. An absent `groupBy` takes the `["combo"]` grouped mode defaulted to internally.
+ * So every saved view and shared link written before the split keeps drawing exactly what it
+ * drew, `asset` included.
+ */
 export function resolveLayoutParams(p: Rec): GraphLayoutParams {
+  const legacyGrouped = typeof p["layout"] === "string"
+    && (p["layout"] as string).toLowerCase() === "grouped";
+  const asked = pickList(p["groupBy"]);
+  const groupBy = legacyGrouped && !asked.length ? (["combo"] as GroupKey[]) : asked;
   return {
-    mode: pick(p["layout"], LAYOUT_MODES, "rows"),
-    groupBy: pickList(p["groupBy"]),
+    mode: legacyGrouped
+      ? (groupBy[0] === "asset" ? "radial" : "grid")
+      : pick(p["layout"], LAYOUT_MODES, "rows"),
+    groupBy,
     sort: pick(p["sort"], SORT_KEYS, "smart"),
   };
 }

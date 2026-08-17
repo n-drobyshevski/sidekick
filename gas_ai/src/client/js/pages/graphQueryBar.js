@@ -32,13 +32,15 @@
 
 import { el, openPopover, uiIcon } from "../ui.js";
 import { describeFilter, filterEditor, operatorOf, valuesText } from "./filterEditor.js";
-import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "../icons.js";
+import { categoryOf, edgeLabel, kindIconSvg, kindLabel, kindsLabel } from "../icons.js";
 import {
   MAX_DEPTH,
   addStep,
   canNegate,
   depthOf,
   isGroup,
+  kindsOf,
+  kindsOverlap,
   nodeAt,
   pathAfterRegroup,
   pathAfterRemoval,
@@ -49,7 +51,7 @@ import {
   setConjunction,
   setEdge,
   setHidden,
-  setKind,
+  setKinds,
   stepAt,
 } from "./graphQuery.js";
 import { currentEntryId, openQueryPalette, stepForPick } from "./queryPalette.js";
@@ -154,6 +156,15 @@ export function queryBar(opts) {
       vocab: opts.getVocab() || { kinds: [], stepsFrom: {} },
       row,
       currentId: currentEntryId(mode, row),
+      // Entity mode's pressed rows. Only this mode toggles, and only the FIND-row call passes
+      // the row's own kinds as `fromKind`; a "replace" palette's `fromKind` is the step's PARENT
+      // kind, which is a scope to read the vocabulary from and not a selection to mark.
+      selected: mode === "entity" ? row.kinds : null,
+      // The other half of that: the panel keeps focus while it is open, so something has to hand
+      // it back. `close(true)` would return it to the anchor, but a committed toggle has rebuilt
+      // the bar and the anchor is detached — focus would fall to `<body>` and a keyboard user
+      // would be dropped out of the builder entirely.
+      onClose: () => focusRow(pathKey(row.path)),
       loadFields: opts.loadFields,
       // The whole reading this node already holds for a field — values AND operator — so
       // reopening one shows what it says rather than an empty control over a filter plainly on
@@ -163,18 +174,35 @@ export function queryBar(opts) {
         return (forNode && forNode.get(key)) || null;
       },
       onPick: (pick) => {
-        if (pick.type === "kind") {
-          // Re-picking what the row already says is NOT an edit, and has to return before
-          // `commit` rather than committing an identical tree: `dropAt` would take this node's
-          // filter chips off, and the page's `onChange` clears `columns` and `page` on every
-          // patch — so confirming the current answer would reset the table to arrive back at
-          // the query already on screen.
-          if (pick.kind === row.kind) return;
-          // `setKind` drops the steps below (they were chosen against the old kind's
-          // vocabulary) and `dropAt` drops this node's filters with them, for the same reason:
-          // they name fields the new kind does not have, and a query answering zero with every
-          // chip still reading correctly says nothing about why.
-          commit(setKind(query, row.path, pick.kind), pathKey(row.path), { dropAt: row.path });
+        if (pick.type === "kinds") {
+          // READ THE LIVE QUERY, not the `query` captured when the palette opened. Entity mode
+          // is a multi-select that stays open, and every toggle commits — so each commit
+          // re-renders the bar and leaves the captured tree a generation behind. Computing the
+          // second toggle against it would silently undo the first.
+          const live = opts.getQuery();
+          const node = nodeAt(live, row.path);
+          if (!node) return;
+          const was = kindsOf(node);
+          // Re-picking the same set is NOT an edit, and has to return before `commit` rather
+          // than committing an identical tree: the page's `onChange` clears `columns` and
+          // `page` on every patch, so confirming the current answer would reset the table to
+          // arrive back at the query already on screen.
+          if (was.length === pick.kinds.length && was.every((k) => pick.kinds.includes(k))) return;
+          // Overlap keeps, disjoint drops — the rule `setKinds` applies to the steps below, and
+          // this is the other half of it for the filters. Widening or narrowing a selection
+          // leaves the kinds still there able to answer the fields already filtered on; only
+          // trading the selection for an unrelated one makes every chip name a field nothing on
+          // the row has, which is a query answering zero with nothing on screen saying why.
+          const overlap = kindsOverlap(was, pick.kinds);
+          // NO FOCUS KEY, and this is what keeps the panel open. Every other edit here closes the
+          // palette and pulls focus onto the rebuilt row; a multi-select cannot, because moving
+          // focus out of the panel's search field fires `focusout` — one of the seven ways
+          // popoverDismiss closes — so the first toggle would shut the panel it is toggling in.
+          // Setting `focusPath` alone still makes this row the builder's tab stop, so the row is
+          // where focus lands once the panel goes; `onPaletteClose` below puts it there.
+          focusPath = pathKey(row.path);
+          commit(setKinds(live, row.path, pick.kinds), undefined,
+            overlap ? undefined : { dropAt: row.path });
           return;
         }
         if (pick.type === "relation" && mode === "replace") {
@@ -282,7 +310,7 @@ export function queryBar(opts) {
     if (!forNode || !forNode.size) return null;
     // Only for a kind that actually carries a filter — the vocabulary is fetched per kind, and
     // a row with nothing on it has no question to describe.
-    ensureFields(row.kind);
+    ensureFields(row);
     // WHERE, in the same label role FIND and THAT wear. A filter narrows which nodes bind at this
     // step, so it is part of the QUESTION — the chips used to trail the row as though they were
     // something applied to the answer afterwards.
@@ -303,14 +331,14 @@ export function queryBar(opts) {
           type: "button",
           class: "filter-chip-body",
           "aria-haspopup": "dialog",
-          "aria-label": "Edit filter " + text + " on " + kindLabel(row.kind),
+          "aria-label": "Edit filter " + text + " on " + kindsLabel(row.kinds),
           onclick: (e) => openFilterEditor(e.currentTarget, query, row, field, filter),
         }, el("span", { class: "gq-filter-key" }, field.label), " ",
           el("span", { class: "gq-filter-op" }, operatorOf(field, filter, listed).label), " ",
           valuesText(filter)),
         el("button", {
           class: "filter-chip-x",
-          "aria-label": "Remove filter " + text + " from " + kindLabel(row.kind),
+          "aria-label": "Remove filter " + text + " from " + kindsLabel(row.kinds),
           onclick: () => removeFilter(query, row, key),
         }, "×"),
       ));
@@ -368,9 +396,16 @@ export function queryBar(opts) {
     const cached = fieldCache.get(row.kind);
     if (cached) mount(cached);
     else {
-      holder.append(el("p", { class: "gq-fe-hint small muted" }, "Reading this kind's values…"));
-      Promise.resolve(opts.loadFields ? opts.loadFields(row.kind) : null)
-        .then((got) => { if (got) fieldCache.set(row.kind, got); mount(got || EMPTY_FIELDS); })
+      holder.append(el("p", { class: "gq-fe-hint small muted" },
+        row.kinds.length > 1 ? "Reading these kinds' values…" : "Reading this kind's values…"));
+      Promise.all((row.kinds || []).map((k) =>
+        Promise.resolve(opts.loadFields ? opts.loadFields(k) : null).catch(() => null)))
+        .then((parts) => {
+          const got = parts.filter(Boolean);
+          const merged = got.length ? mergeFields(got) : EMPTY_FIELDS;
+          if (got.length) fieldCache.set(row.kind, merged);
+          mount(merged);
+        })
         .catch(() => mount(EMPTY_FIELDS));
     }
     return host;
@@ -381,7 +416,33 @@ export function queryBar(opts) {
   const fieldsAsked = new Set();
 
   /**
-   * Warm the field cache for a kind that has filters on it.
+   * The vocabulary for a row's kinds, merged into the shape one kind would have returned.
+   *
+   * FIELDS INTERSECT, VALUES UNION, and the asymmetry is the same one the domain's
+   * `fieldsForKind` documents: a field only some of the kinds can answer would read as narrowing
+   * and actually exclude the rest, so it is not offered; but where a field IS common, every
+   * kind's values belong in the list, with the counts added up because the count is "how many
+   * nodes this would still leave" and the row is asking about all of them.
+   */
+  function mergeFields(parts) {
+    const first = parts[0] || EMPTY_FIELDS;
+    if (parts.length === 1) return first;
+    const fields = (first.fields || []).filter((f) =>
+      parts.every((p) => ((p && p.fields) || []).some((g) => g.key === f.key)));
+    const values = fields.map((f) => {
+      const counts = new Map();
+      for (const p of parts) {
+        for (const v of valuesIn(p, f.key)) {
+          counts.set(v.value, (counts.get(v.value) || 0) + (v.count || 0));
+        }
+      }
+      return { key: f.key, values: [...counts].map(([value, count]) => ({ value, count })) };
+    });
+    return { fields, values };
+  }
+
+  /**
+   * Warm the field cache for a row that has filters on it.
    *
    * The chip has to name a field's OPERATOR, and the operator list turns on `type` and `multi` —
    * neither of which the column chooser's `available` list carries, so before this the chip fell
@@ -389,17 +450,23 @@ export function queryBar(opts) {
    * The chip and its own editor disagreed about what the filter said, which is precisely the
    * drift the shared editor exists to prevent.
    *
-   * Asked once per kind and repainted when it lands. `swrCall` upstream already dedupes the RPC,
-   * so the guard here is only to stop the repaint looping.
+   * Cached under the row's `kind` IDENTITY — the joined string — so a two-kind row is its own
+   * entry rather than a cache miss that would send "AI_AGENT-AI_DEPLOYMENT" to a server that
+   * whitelists single kinds and answers nothing. Asked once per identity and repainted when it
+   * lands; `swrCall` upstream already dedupes each per-kind RPC.
    */
-  function ensureFields(kind) {
-    if (!kind || fieldCache.has(kind) || fieldsAsked.has(kind) || !opts.loadFields) return;
-    fieldsAsked.add(kind);
-    Promise.resolve(opts.loadFields(kind)).then((got) => {
-      if (!got) return;
-      fieldCache.set(kind, got);
-      render();
-    }).catch(() => {});
+  function ensureFields(row) {
+    const key = row.kind;
+    const kinds = row.kinds || [];
+    if (!key || fieldCache.has(key) || fieldsAsked.has(key) || !opts.loadFields) return;
+    fieldsAsked.add(key);
+    Promise.all(kinds.map((k) => Promise.resolve(opts.loadFields(k)).catch(() => null)))
+      .then((parts) => {
+        const got = parts.filter(Boolean);
+        if (!got.length) return;
+        fieldCache.set(key, mergeFields(got));
+        render();
+      }).catch(() => {});
   }
 
   const EMPTY_FIELDS = { fields: [], values: [] };
@@ -454,6 +521,27 @@ export function queryBar(opts) {
       icon, el("span", { class: "gq-chip-text" }, any ? "Any node" : kindLabel(kind)));
   }
 
+  /** How many kinds a term names before the rest become "+N more". */
+  const CHIPS_SHOWN = 3;
+
+  /**
+   * The entities a row looks for — ONE CHIP EACH, not one chip naming several.
+   *
+   * `.gq-chip` caps at 260px with an ellipsis (150px on a phone), so a concatenated
+   * "AI Agent, AI Deployment, AI Tool" gets cut; and each kind carries its own category tint,
+   * which one merged chip would have to throw away or lie about. `.gq-term` and `.gq-row` are
+   * already `flex-wrap: wrap`, so siblings cost no new CSS.
+   *
+   * Past three it stops and counts, because the row is a sentence and a dozen chips is not one.
+   */
+  function entityChips(kinds) {
+    const shown = kinds.slice(0, CHIPS_SHOWN);
+    const rest = kinds.length - shown.length;
+    const out = shown.map(entityChip);
+    if (rest > 0) out.push(el("span", { class: "gq-chip gq-chip--more" }, "+" + rest + " more"));
+    return out;
+  }
+
   /**
    * The row's editable term, and the only thing on the row that opens the palette to change it.
    *
@@ -479,7 +567,7 @@ export function queryBar(opts) {
     if (row.path.length) {
       parts.push(el("span", { class: "gq-term-edge" }, describeEdge(row)));
     }
-    parts.push(entityChip(row.kind));
+    parts.push(...entityChips(row.kinds));
     parts.push(el("span", { class: "sr-only" },
       row.path.length ? ", change this relationship" : ", change what this query finds"));
     return el("button", {
@@ -674,7 +762,7 @@ export function queryBar(opts) {
       // step, so its pill picks an entity instead.
       line.append(row.path.length
         ? termButton(row, (anchor) => openPalette(anchor, query, row, parentKind, "replace"))
-        : termButton(row, (anchor) => openPalette(anchor, query, row, row.kind, "entity")));
+        : termButton(row, (anchor) => openPalette(anchor, query, row, row.kinds, "entity")));
 
       // `append(null)` writes the literal text "null" — the trap graph.js's savedViewsControl
       // already carries a comment about. `el()` skips nulls; `append` does not.
@@ -682,11 +770,11 @@ export function queryBar(opts) {
       if (chips) line.append(chips);
 
       const actions = el("span", { class: "gq-row-actions" });
-      actions.append(iconButton("plus", "Add to " + kindLabel(row.kind),
-        (e) => openPalette(e.currentTarget, query, row, row.kind, "add")));
+      actions.append(iconButton("plus", "Add to " + kindsLabel(row.kinds),
+        (e) => openPalette(e.currentTarget, query, row, row.kinds, "add")));
       if (row.canHide) {
         actions.append(iconButton(row.hidden ? "eye-off" : "eye",
-          (row.hidden ? "Show " : "Hide ") + kindLabel(row.kind) + " columns",
+          (row.hidden ? "Show " : "Hide ") + kindsLabel(row.kinds) + " columns",
           () => commit(setHidden(query, row.path, !row.hidden)), !row.hidden));
       }
       if (row.canRemove) {
@@ -712,6 +800,20 @@ export function queryBar(opts) {
   }
 
   /**
+   * Put DOM focus on the row holding `key`, if the current tree still has one.
+   *
+   * `render`'s own `takeFocus` block does this for an edit that closes its control; this is for
+   * the one that does not — a control still open at commit time keeps focus, and asks for it back
+   * when it closes. The row is looked up in the LIVE tree rather than in whatever `render` last
+   * built, because several commits may have gone past since the control opened.
+   */
+  function focusRow(key) {
+    const at = queryRows(opts.getQuery()).findIndex((r) => rowKey(r) === key);
+    const line = at >= 0 ? list.children[at] : null;
+    if (line) line.focus();
+  }
+
+  /**
    * The kind of the nearest enclosing node, skipping boolean groups.
    *
    * `nodeAt` answers null for a path that lands on a group, because a group has no kind of its
@@ -731,7 +833,7 @@ export function queryBar(opts) {
       return (row.op === "or" ? "Either of" : "All of") + " " + row.branches
         + (row.branches === 1 ? " branch" : " branches");
     }
-    if (!row.path.length) return "Find " + kindLabel(row.kind);
+    if (!row.path.length) return "Find " + kindsLabel(row.kinds);
     // The join leads, because it is the first thing the row now says and the thing the keyword
     // pill just changed — the row takes focus after that edit, so this string IS the readback.
     const join = row.conj === "or" ? "Or that " : row.conj === "and" ? "And that " : "That ";
@@ -739,7 +841,7 @@ export function queryBar(opts) {
     // finite verb phrases, so no auxiliary can be prefixed grammatically — "does not has issue"
     // was the old attempt. Mirroring the visible "AND THAT NOT" instead is both readable and the
     // thing WCAG asks for: the name a control is called by contains the words on it.
-    return join + (row.negate ? "not " : "") + describeEdge(row) + " " + kindLabel(row.kind)
+    return join + (row.negate ? "not " : "") + describeEdge(row) + " " + kindsLabel(row.kinds)
       + (row.hidden ? ", columns hidden" : "");
   }
 

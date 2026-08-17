@@ -384,6 +384,26 @@ export function kindLabel(kind) {
   return KIND_LABELS[kind] || kind;
 }
 
+/**
+ * Several kinds, in prose — "AI Agent, Bucket or Service Account".
+ *
+ * A query node can name more than one kind, and its IDENTITY is the list joined by `-`
+ * ("AI_AGENT-BUCKET"), which is what the wire and the column groups carry. Passing that key
+ * straight to `kindLabel` finds no entry and echoes the raw token back, so anywhere a node's
+ * kinds are shown to a reader comes through here instead — the table's group heading and the
+ * builder's row labels both do.
+ *
+ * "or" rather than "and": the node matches any ONE of them, and a reader who sees "AI Agent and
+ * Bucket" would reasonably expect the impossible thing. ANY is spelled out because it is not a
+ * kind and `KIND_LABELS` has no entry for it.
+ */
+export function kindsLabel(kinds) {
+  const list = Array.isArray(kinds) ? kinds : String(kinds || "").split("-");
+  const names = list.filter(Boolean).map((k) => (k === "ANY" ? "Any node" : kindLabel(k)));
+  if (names.length < 2) return names[0] || "";
+  return names.slice(0, -1).join(", ") + " or " + names[names.length - 1];
+}
+
 // Wiz's edge-type enum is precise and stays one hover away via the edge's title
 // tooltip / domain-chip text; it is not what a reader can scan off a curve between two
 // node cards in a ~500px diagram. EDGE_LABELS is that prose gloss — lowercase,

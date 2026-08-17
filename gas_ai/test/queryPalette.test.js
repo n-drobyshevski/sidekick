@@ -13,8 +13,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  currentEntryId, entriesForTab, literalFor, paletteEntries, paletteRail, searchEntries,
-  stepForPick,
+  currentEntryId, entriesForTab, kindList, literalFor, mergeVocab, paletteEntries, paletteRail,
+  searchEntries, stepForPick, stepsFromKinds,
 } from "../src/client/js/pages/queryPalette.js";
 import {
   addStep, parseQuery, serializeQuery, setEdge,
@@ -39,6 +39,12 @@ const VOCAB = {
       { edge: "CAN_INVOKE", reverse: true, kind: "AI_AGENT", count: 1 },
     ],
     LONE_KIND: [],
+    // A second kind with its own relationships, one of which — HAS_ISSUE → ISSUE — the agent has
+    // too. That overlap is what makes the union's dedup and its summed count observable.
+    BUCKET: [
+      { edge: "ALLOWS_ACCESS_TO", reverse: true, kind: "SERVICE_ACCOUNT", count: 20 },
+      { edge: "HAS_ISSUE", reverse: false, kind: "ISSUE", count: 5 },
+    ],
   },
 };
 
@@ -180,6 +186,92 @@ describe("entity mode — what to FIND", () => {
   it("carries no relationship, operator, property or shortcut", () => {
     const sections = new Set(inMode("entity", "AI_AGENT").map((e) => e.section));
     expect([...sections]).toEqual(["entities"]);
+  });
+
+  it("offers the same one list when the row already names several kinds", () => {
+    // A multi-select adds no section and no second mode — it adds PRESSED STATE, which lives in
+    // the DOM. One mode, one job, however many kinds are on.
+    const sections = new Set(inMode("entity", ["AI_AGENT", "BUCKET"]).map((e) => e.section));
+    expect([...sections]).toEqual(["entities"]);
+    expect(inMode("entity", ["AI_AGENT", "BUCKET"]).map((e) => e.id))
+      .toEqual(inMode("entity", "AI_AGENT").map((e) => e.id));
+  });
+});
+
+// "AI agents and AI deployments that reach sensitive data" — one node, several kinds. Everything
+// the palette offers such a node is arithmetic on the vocabulary it already holds, so none of
+// this needed a wire change; what it needs is the union/intersection split to be the right way
+// round in each place.
+describe("a palette opened on several kinds", () => {
+  it("unions the relationships, dedupes the shared one and adds its counts up", () => {
+    const rel = stepsFromKinds(VOCAB, ["AI_AGENT", "BUCKET"]);
+    const id = (e) => e.edge + (e.reverse ? "<" : ">") + e.kind;
+    // Deduped by (edge, direction, target) — the same identity the server builds stepsFrom with.
+    expect(rel.filter((e) => id(e) === "HAS_ISSUE>ISSUE")).toHaveLength(1);
+    // ...and the count is the sum, because it answers "how many nodes will this find" for the
+    // whole selection rather than for whichever kind was picked first.
+    expect(rel.find((e) => id(e) === "HAS_ISSUE>ISSUE").count).toBe(7);
+    // A reverse hop is NOT the same relationship as the forward one, even on the same edge.
+    expect(rel.map(id)).toContain("ALLOWS_ACCESS_TO<SERVICE_ACCOUNT");
+    expect(rel.map(id)).toContain("ALLOWS_ACCESS_TO>BUCKET");
+    // Commonest first over the MERGED set: the bucket's busiest hop now leads, and HAS_ISSUE has
+    // climbed past PROTECTED_BY on the strength of the two kinds together.
+    expect(rel.map(id)).toEqual([
+      "ALLOWS_ACCESS_TO<SERVICE_ACCOUNT", "RUNS_AS>SERVICE_ACCOUNT", "USES_MODEL>AI_MODEL",
+      "HAS_ISSUE>ISSUE", "PROTECTED_BY>AI_GUARDRAIL", "ALLOWS_ACCESS_TO>BUCKET",
+      "USES_TOOL>AI_TOOL", "CAN_INVOKE<AI_AGENT",
+    ]);
+    // One kind is the list the server sent, untouched — so nothing about a single-kind palette
+    // is routed through the merge.
+    expect(stepsFromKinds(VOCAB, ["AI_AGENT"])).toBe(VOCAB.stepsFrom.AI_AGENT);
+  });
+
+  it("offers every union'd relationship as a real, round-trippable step", () => {
+    // The union is only useful if each entry still builds a query the DSL can carry — a merged
+    // entry that lost its `reverse` would append a step pointing the wrong way.
+    for (const e of inMode("add", ["AI_AGENT", "BUCKET"]).filter((x) => x.pick.type === "relation")) {
+      const next = addStep(parseQuery("AI_AGENT"), [], stepForPick(e.pick));
+      expect(parseQuery(serializeQuery(next))).toEqual(next);
+    }
+  });
+
+  it("INTERSECTS the fields and UNIONS their values, counts added up", () => {
+    // The asymmetry the domain documents: a field only some kinds can answer would silently
+    // exclude the rest, but where a field IS common every kind's values belong in the list.
+    const merged = mergeVocab([
+      {
+        fields: [{ key: "cloud", label: "Cloud", type: "choice" }, { key: "publisher", label: "Publisher", type: "text" }],
+        values: [{ key: "cloud", values: [{ value: "gcp", count: 3 }, { value: "aws", count: 1 }] }],
+      },
+      {
+        fields: [{ key: "cloud", label: "Cloud", type: "choice" }, { key: "email", label: "Email", type: "text" }],
+        values: [{ key: "cloud", values: [{ value: "gcp", count: 4 }, { value: "azure", count: 2 }] }],
+      },
+    ]);
+    expect(merged.fields.map((f) => f.key)).toEqual(["cloud"]);
+    expect(merged.values[0].values).toEqual([
+      { value: "gcp", count: 7 }, { value: "aws", count: 1 }, { value: "azure", count: 2 },
+    ]);
+    // One kind is passed straight back, not rebuilt — the single-kind path is unchanged.
+    const one = { fields: [], values: [] };
+    expect(mergeVocab([one])).toBe(one);
+    expect(mergeVocab([])).toBeNull();
+  });
+
+  it("reads a bare kind, a list, and an empty list as something askable", () => {
+    expect(kindList("AI_AGENT")).toEqual(["AI_AGENT"]);
+    expect(kindList(["AI_AGENT", "BUCKET"])).toEqual(["AI_AGENT", "BUCKET"]);
+    // No kind at all is the wildcard, never an empty offer: a palette with nothing in it is a
+    // dead end, and "every kind" is the honest reading of "unspecified".
+    expect(kindList([])).toEqual(["ANY"]);
+    expect(kindList(null)).toEqual(["ANY"]);
+  });
+
+  it("opens on the first selected kind, and on nothing for a multi-kind target", () => {
+    // Entity mode marks EVERY selected kind as pressed; `currentEntryId` is only the row the
+    // panel opens ON, so the first is as good an anchor as any.
+    expect(currentEntryId("entity", { kinds: ["BUCKET", "AI_AGENT"] })).toBe("kind-BUCKET");
+    expect(currentEntryId("entity", { kind: "AI_AGENT" })).toBe("kind-AI_AGENT");
   });
 });
 
