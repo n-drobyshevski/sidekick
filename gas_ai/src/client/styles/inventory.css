@@ -33,6 +33,12 @@
 .filter-chips.inv-chips { padding: 10px 0 0; border-bottom: none; }
 .saved-views { display: inline-flex; align-items: center; gap: 6px; }
 .saved-views select { max-width: 180px; }
+/* Name search. The rule lived in graph.css while the graph had a search box of its own; the
+   register is the only `.workbench-search` left now that a node name is a `WHERE` filter
+   there, so it moves in beside the toolbar it actually dresses. (base.css widens it to 100%
+   below 800px — and cannot, since a plain rule in either file outranks its media block. That
+   shadowing predates this and is the inventory's to settle.) */
+.workbench-search input[type="search"] { width: 170px; }
 
 /* Segmented view-mode control: two aria-pressed buttons sharing one border. */
 .viewmode { display: inline-flex; }

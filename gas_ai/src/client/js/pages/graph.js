@@ -1,8 +1,16 @@
 // Security Graph — the centerpiece, as a full-page workbench. The server computes
 // a depth-limited projection + deterministic layout (lanes or grouped clusters);
-// this page owns the slim top bar (search, arrange, order, view toggle), the query
-// builder, and the SVG canvas with its accessible table fallback. All state is hash
-// params, so any view is shareable.
+// this page owns the slim top bar (arrange, order, view toggle), the query builder,
+// and the SVG canvas with its accessible table fallback. All state is hash params,
+// so any view is shareable.
+//
+// THERE IS NO NODE SEARCH. A box that dimmed everything whose name did not contain a
+// substring was the query builder's question asked worse: `WHERE Name contains …` says
+// the same thing, on any node in the query rather than all of them, alongside every other
+// field, and REMOVES the rows instead of greying them — so the count, the table and the
+// canvas finally agree on what matched. The dim was also the one filter that could not be
+// read off the page: nothing named it, and "42 of 812 nodes · 3 matches" was the only
+// evidence that two thirds of the picture had been turned down.
 //
 // THE BUILDER IS AN OVERLAY, not a band. It floats over the canvas from an "Edit query"
 // toggle, so putting the question away gives the answer the whole viewport. It hangs off
@@ -38,7 +46,7 @@ import {
 } from "./graphQuery.js";
 import { queryBar } from "./graphQueryBar.js";
 import {
-  clear, confirmDialog, debounce, el, emptyState, filterChipRow, helpTip, onPageTeardown,
+  clear, confirmDialog, el, emptyState, filterChipRow, helpTip, onPageTeardown,
   openPopover, portalsOpen, segmented, selectField, sevBadge, skeleton, toast, togglePills,
   uiIcon,
 } from "../ui.js";
@@ -119,7 +127,6 @@ function graphParams(params, defaults) {
     groupBy: params.groupBy || "",
     sort: params.sort || "",
     view: params.view === "table" ? "table" : "graph",
-    q: params.q || "",
     pos: params.pos || "",
   };
 }
@@ -271,6 +278,13 @@ export async function renderGraphPage(main, params, _ctx) {
       "severities", "projects", "clouds"]) delete params[k];
     setParams(params);
   }
+  // The retired canvas search. Stripped from any link that still names it rather than left
+  // sitting inert: a URL that carries `q=agent` reads like a page that does something with it.
+  if (params.q != null) {
+    params = { ...params };
+    delete params.q;
+    setParams(params);
+  }
   // A fresh visit opens on the product's primary lens — the same AI-agent view it always did,
   // now spelled out in the builder as `FIND AI Agent` rather than hidden in two facets.
   // Written into the hash so it is explicit, shareable and editable.
@@ -359,27 +373,8 @@ export async function renderGraphPage(main, params, _ctx) {
   // an empty vocabulary offers "any node" and "is related to", which is still a usable query.
   let vocab = { kinds: [], stepsFrom: {} };
   let graphApi = null;
-  let matchIds = null;
   /** Guards against a slow answer painting over a faster one that was asked for later. */
   let seq = 0;
-
-  // Search (client-side highlight; graph view only).
-  const searchInput = el("input", {
-    type: "search",
-    class: "graph-search",
-    placeholder: "Search nodes",
-    "aria-label": "Search nodes by name",
-    value: state.q,
-  });
-  const onSearch = debounce(() => update({ q: searchInput.value }), 150);
-  searchInput.addEventListener("input", onSearch);
-  searchInput.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" || !graphApi || !matchIds || !matchIds.size || !lastData) return;
-    e.preventDefault();
-    const first = (lastData.layout.nodes || []).find((n) => matchIds.has(n.id));
-    if (first) graphApi.focusNode(first.id);
-  });
-  const searchField = el("div", { class: "workbench-search" }, searchInput);
 
   // Arrange (layout mode) + Order (row sort).
   const arrangeSel = el("select", { "aria-label": "Arrange nodes" },
@@ -456,7 +451,7 @@ export async function renderGraphPage(main, params, _ctx) {
     viewToggle,
     controls,
   );
-  controls.append(countBox, searchField, selectField("Arrange", arrangeSel),
+  controls.append(countBox, selectField("Arrange", arrangeSel),
     selectField("Order", orderSel), columnsBtn);
 
   // ------------------------------------------------------------- header actions
@@ -579,9 +574,6 @@ export async function renderGraphPage(main, params, _ctx) {
       // they DO need a repaint. `setParams` uses replaceState, which fires no hashchange, so
       // without this branch the URL changed and the table did not.
       paint(lastData);
-    } else if (prev.q !== state.q) {
-      applyHighlight();
-      updateMeta(lastData);
     } else if (prev.pos !== state.pos) {
       // Drag commits already moved the DOM; a cleared pos snaps nodes back.
       if (state.pos) updateMeta(lastData);
@@ -746,7 +738,6 @@ export async function renderGraphPage(main, params, _ctx) {
     } else {
       graphApi = renderGraph(body, payload, handlers);
       body.append(buildLegend(boot, payload));
-      applyHighlight();
     }
     // The counts overlay describes the CANVAS — how much of the match set it managed to
     // draw. In table view it would float over the table's own footer saying nothing the
@@ -796,8 +787,7 @@ export async function renderGraphPage(main, params, _ctx) {
    * text — and rebuilding it wholesale destroyed the button that had just been pressed.
    *
    * Only the half that changed is rewritten, and the status text only when the sentence
-   * actually differs: a search change routes through here too, so an unguarded rewrite
-   * re-announced the whole line on every debounced keystroke.
+   * actually differs — a repaint that lands on the same counts must not re-announce them.
    */
   function updateMeta(payload) {
     if (!payload || payload.empty) {
@@ -817,10 +807,6 @@ export async function renderGraphPage(main, params, _ctx) {
     ];
     if (payload.summaries && payload.summaries.length) {
       parts.push(`${payload.summaries.length} collapsed group${payload.summaries.length > 1 ? "s" : ""}`);
-    }
-    if (state.q.trim() && state.view !== "table") {
-      const n = matchIds ? matchIds.size : 0;
-      parts.push(`${n} match${n === 1 ? "" : "es"}`);
     }
     const text = parts.join(" · ");
     if (text !== lastStatusText) {
@@ -1143,26 +1129,6 @@ export async function renderGraphPage(main, params, _ctx) {
     }
   }
 
-  // ------------------------------------------------------------------ search
-  function applyHighlight() {
-    const q = state.q.trim().toLowerCase();
-    if (!graphApi || !lastData || lastData.empty) {
-      matchIds = null;
-      return;
-    }
-    if (!q) {
-      matchIds = null;
-      graphApi.setHighlight(null);
-      return;
-    }
-    matchIds = new Set(
-      lastData.nodes
-        .filter((n) => String(n.name).toLowerCase().includes(q))
-        .map((n) => n.id),
-    );
-    graphApi.setHighlight(matchIds);
-  }
-
   // ------------------------------------------------------------------- chips
   function chipEntries() {
     return filterEntries(state, defaults);
@@ -1187,14 +1153,9 @@ export async function renderGraphPage(main, params, _ctx) {
       : state.layout === "lanes" ? "lanes"
       : "";
     orderSel.value = state.sort;
-    if (document.activeElement !== searchInput && searchInput.value !== state.q) {
-      searchInput.value = state.q;
-    }
-    // Search highlights nodes on the canvas, and Arrange/Order lay them out. None of the
-    // three means anything to a table of paths, so they are hidden there rather than left
-    // sitting inert beside a control that does work.
+    // Arrange and Order lay nodes out on a canvas, which means nothing to a table of paths —
+    // hidden there rather than left sitting inert beside a control that does work.
     const graphOnly = state.view === "table" ? "none" : "";
-    searchField.style.display = graphOnly;
     for (const f of controls.querySelectorAll(".select-field")) f.style.display = graphOnly;
     columnsBtn.style.display = state.view === "table" ? "" : "none";
     viewToggle.set(state.view);

@@ -39,7 +39,6 @@
 .workbench-controls__group + .workbench-controls__group {
   padding-left: 14px; border-left: 1px solid var(--hairline);
 }
-.workbench-search input[type="search"] { width: 170px; }
 
 /* A native select with its dimension named beside it, so "Rows" and "Smart order" stop
    floating with nothing attached. The label is aria-hidden — the select keeps its own
@@ -195,7 +194,6 @@
 
 .gedge { stroke: rgba(0, 0, 0, 0.22); stroke-width: 1.25; fill: none; }
 .gedge.negated { stroke: var(--sev-high); stroke-dasharray: 5 4; }
-.gedge.dimmed { opacity: 0.18; }
 .gv-arrow-head { fill: rgba(0, 0, 0, 0.3); }
 
 /* Grouped-mode cluster hulls: hairline boxes + muted uppercase labels. Quiet by
@@ -277,8 +275,6 @@
 /* Summary (collapse) pill */
 .gnode.summary .gnode-box { fill: rgba(0, 0, 0, 0.04); stroke-dasharray: 4 3; }
 .gnode.summary .gnode-name { fill: var(--text-2); }
-/* Search: everything that doesn't match dims; matches keep full treatment. */
-.gnode.dimmed { opacity: 0.3; }
 
 /* Legend: a collapsible <details> disclosure, hidden by default. */
 .graph-legend {

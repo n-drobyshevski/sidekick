@@ -538,24 +538,11 @@ export function renderGraph(container, data, handlers = {}) {
   });
   ro.observe(container);
 
-  // Search highlight: dim non-matching nodes (and edges touching them). The
-  // dimming of everything else is the signal; matches keep full treatment.
-  function setHighlight(matchIds) {
-    for (const [id, g] of nodeEls) {
-      g.classList.toggle("dimmed", !!matchIds && !matchIds.has(id));
-    }
-    for (const e2 of edgeEls) {
-      const dim = !!matchIds && (!matchIds.has(e2.src) || !matchIds.has(e2.dst));
-      e2.el.classList.toggle("dimmed", dim);
-    }
-  }
-
   return {
     focusFirst() {
       if (focusedId) focusNode(focusedId);
     },
     focusNode,
-    setHighlight,
     /**
      * Release the ResizeObserver. The page clears and re-renders the canvas on every
      * filter change; without this each render leaves an observer attached to a container
