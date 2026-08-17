@@ -6,7 +6,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { enrichGraphDoc } from "../src/domain/graphEnrich";
-import { LAYOUT_MODES, laneOf, layoutGraph } from "../src/domain/graphLayout";
+import { LAYOUT_MODES, type GroupKey, laneOf, layoutGraph } from "../src/domain/graphLayout";
+import { resolveLayoutParams } from "../src/domain/graphApiParams";
 import { projectGraph } from "../src/domain/graphProject";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
@@ -532,9 +533,150 @@ describe("the page's layout list and the domain agree", () => {
     // graphParams, this is the test that says so.
     const fn = PAGE.slice(PAGE.indexOf("function graphParams("));
     const body = fn.slice(0, fn.indexOf("\n}"));
-    expect(body).toContain("LAYOUT_MODES.includes(params.layout)");
+    expect(body).toContain("normalizeLayout(params.layout)");
     for (const mode of LAYOUT_MODES) {
       expect(body, `graphParams must not name ${mode} directly`).not.toContain(`=== "${mode}"`);
+    }
+    const norm = PAGE.slice(PAGE.indexOf("function normalizeLayout("));
+    expect(norm.slice(0, norm.indexOf("\n}"))).toContain("LAYOUT_MODES.includes");
+  });
+
+  it("agrees with the resolver about what a retired layout value becomes", () => {
+    // The client maps old `layout=` values for the row it marks; the resolver maps them for the
+    // picture it draws. Two copies, because the client bundle cannot import the domain — so the
+    // one thing worth pinning is that they map to the SAME arrangement. Diverge, and a legacy
+    // link would mark one row in the list while the canvas drew another.
+    const alias = PAGE.slice(PAGE.indexOf("const LAYOUT_ALIAS = {"));
+    const pairs = [...alias.slice(0, alias.indexOf("};")).matchAll(/(\w+):\s*"([^"]+)"/g)];
+    expect(pairs.length).toBeGreaterThan(0);
+    for (const [, from, to] of pairs) {
+      expect(LAYOUT_MODES, `${to} must be a real arrangement`).toContain(to);
+      expect(LAYOUT_MODES, `${from} must be retired, not live`).not.toContain(from);
+      expect(resolveLayoutParams({ layout: from }).mode, `resolver maps ${from}`).toBe(to);
+    }
+  });
+});
+
+// ------------------------------------------- grouping × arrangement, the whole grid
+//
+// The two are independent controls, so the claim this suite has to hold up is that EVERY pair
+// works — not that grouping works and the arrangements work. The failure mode of a composed
+// feature is one cell of the grid: "organic grouped by cloud" placing nodes outside their own
+// box, or "rows grouped by cloud, kind" reserving six band gaps inside a two-band group and
+// overlapping the box beside it.
+//
+// Grouping used to BE one of the arrangements, so this grid could not be written at all — naming
+// a layout meant giving up grouping and vice versa.
+describe.each(LAYOUT_MODES)("%s, grouped", (mode) => {
+  const boxes = (l: ReturnType<typeof layoutGraph>) => l.groups ?? [];
+  /** The leaf boxes — the ones a node actually sits in. With one level, all of them. */
+  const leaves = (l: ReturnType<typeof layoutGraph>) => {
+    const all = boxes(l);
+    const nested = all.some((g) => g.depth === 1);
+    return all.filter((g) => (nested ? g.depth === 1 : g.depth === 0));
+  };
+
+  for (const groupBy of [["cloud"], ["cloud", "kind"]] as GroupKey[][]) {
+    const label = groupBy.join(" then ");
+    const layout = layoutGraph(PROJECTION, { mode, groupBy });
+
+    it(`by ${label}: places every node once, and reports the arrangement`, () => {
+      expect(layout.nodes).toHaveLength(PROJECTION.nodes.length);
+      expect(new Set(layout.nodes.map((n) => n.id)).size).toBe(PROJECTION.nodes.length);
+      // `mode` is the ARRANGEMENT even when grouped — the boxes are what say it is grouped.
+      expect(layout.mode).toBe(mode);
+      expect(boxes(layout).length).toBeGreaterThan(0);
+    });
+
+    it(`by ${label}: keeps every node inside its own box`, () => {
+      const at = new Map(layout.nodes.map((n) => [n.id, n]));
+      // Every leaf box has to contain each of its members' centres. A block form that measured
+      // its own extent wrongly shows up here and nowhere else.
+      let checked = 0;
+      for (const g of leaves(layout)) {
+        const inside = layout.nodes.filter((n) => n.x >= g.x && n.x <= g.x + g.width
+          && n.y >= g.y && n.y <= g.y + g.height);
+        expect(inside.length, `${g.id} holds ${g.count}`).toBe(g.count);
+        checked += g.count;
+      }
+      expect(checked).toBe(at.size);
+    });
+
+    it(`by ${label}: draws no two boxes over each other, per level`, () => {
+      for (const depth of [0, 1]) {
+        const level = boxes(layout).filter((g) => g.depth === depth);
+        for (let i = 0; i < level.length; i++) {
+          for (let j = i + 1; j < level.length; j++) {
+            const a = level[i];
+            const b = level[j];
+            const apart = a.x + a.width <= b.x || b.x + b.width <= a.x
+              || a.y + a.height <= b.y || b.y + b.height <= a.y;
+            expect(apart, `${a.id} vs ${b.id}`).toBe(true);
+          }
+        }
+      }
+    });
+
+    it(`by ${label}: keeps every card clear of every other`, () => {
+      expect(collisions(layout.nodes)).toEqual([]);
+    });
+
+    it(`by ${label}: conserves the counts and is deterministic`, () => {
+      expect(leaves(layout).reduce((n, g) => n + g.count, 0)).toBe(PROJECTION.nodes.length);
+      expect(JSON.stringify(layoutGraph(PROJECTION, { mode, groupBy })))
+        .toBe(JSON.stringify(layout));
+    });
+  }
+});
+
+describe("grouping and the arrangement do not constrain each other", () => {
+  it("draws boxes for every arrangement, and none for any of them ungrouped", () => {
+    for (const mode of LAYOUT_MODES) {
+      expect(layoutGraph(PROJECTION, { mode }).groups, `${mode} ungrouped`).toBeUndefined();
+      expect(layoutGraph(PROJECTION, { mode, groupBy: ["cloud"] }).groups, `${mode} grouped`)
+        .toBeDefined();
+    }
+  });
+
+  it("changes the interior when the arrangement changes, boxes and all held still", () => {
+    // If the arrangement were ignored while grouping was on — which is what the old design did,
+    // structurally — every one of these would be the same picture.
+    const seen = new Set(LAYOUT_MODES.map((mode) =>
+      JSON.stringify(layoutGraph(PROJECTION, { mode, groupBy: ["cloud"] }).nodes)));
+    expect(seen.size).toBe(LAYOUT_MODES.length);
+  });
+
+  it("changes the boxes when the grouping changes, the arrangement held still", () => {
+    const keys = (groupBy: GroupKey[]) =>
+      (layoutGraph(PROJECTION, { mode: "rows", groupBy }).groups ?? []).map((g) => g.by);
+    expect(keys(["cloud"])).toContain("cloud");
+    expect(keys(["kind"])).toContain("kind");
+    expect(keys(["cloud", "kind"])).toEqual(expect.arrayContaining(["cloud", "kind"]));
+  });
+
+  it("compacts the bands inside a box, and only inside a box", () => {
+    // Six category bands are a fixed frame of reference on the whole canvas — an empty one says
+    // "no compute in view". Inside a group they are dead air, so occupied bands close up. A box
+    // holding two categories must be nowhere near six band-gaps tall.
+    const flat = layoutGraph(PROJECTION, { mode: "rows" });
+    const bandsUsed = [...new Set(flat.nodes.map((n) => n.lane))].sort((a, b) => a - b);
+    expect(bandsUsed.length).toBeLessThan(6);      // the sample estate leaves a band empty…
+    // …and the canvas still spaces bands by their TRUE index, so the empty one leaves its gap.
+    // Read within one shelf, since a wrap adds a whole band set below.
+    const firstShelf = flat.nodes.filter((n) => (n.shelf ?? 0) === 0);
+    const yOf = new Map(firstShelf.map((n) => [n.lane, n.y]));
+    const base = Math.min(...yOf.keys());
+    for (const lane of yOf.keys()) {
+      expect(yOf.get(lane)! - yOf.get(base)!, `band ${lane}`).toBe((lane - base) * 150);
+    }
+    // The gap the empty band leaves — the thing `compactBands` closes up inside a box.
+    expect(bandsUsed.some((l, i) => i > 0 && l - bandsUsed[i - 1] > 1)).toBe(true);
+    const grouped = layoutGraph(PROJECTION, { mode: "rows", groupBy: ["kind"] });
+    // Grouped by kind, every box holds ONE category, so every box is a single band tall.
+    for (const g of grouped.groups ?? []) {
+      const ys = new Set(grouped.nodes.filter((n) => n.x >= g.x && n.x <= g.x + g.width
+        && n.y >= g.y && n.y <= g.y + g.height).map((n) => n.y));
+      expect(ys.size, `${g.id} band count`).toBe(1);
     }
   });
 });

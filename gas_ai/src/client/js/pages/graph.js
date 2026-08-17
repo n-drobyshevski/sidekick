@@ -96,13 +96,24 @@ const LAYOUTS = [
     blurb: "Rings out from the worst-risk agent, one ring per hop",
   },
   {
-    mode: "grouped", label: "Groups", icon: "group",
-    blurb: "Labelled boxes, by a dimension you choose",
+    mode: "grid", label: "Grid", icon: "group",
+    blurb: "Every node packed densely, categories ignored",
   },
 ];
 
 /** Every layout the hash may name — Rows is the absent value, so it is not one of them. */
 const LAYOUT_MODES = LAYOUTS.map((l) => l.mode).filter(Boolean);
+
+/**
+ * Old layout values, mapped onto the arrangement that draws what they drew.
+ *
+ * `grouped` was an arrangement before grouping and arrangement came apart, and what it drew was
+ * the compact grid. Mirrors `resolveLayoutParams`, which does the same mapping server-side —
+ * mirrored rather than shared because the client bundle cannot import the domain layer, the same
+ * reason egoLayout.js keeps its own copy of SEVERITY_ORDER. test/graphLayout.test.ts holds the
+ * two together.
+ */
+const LAYOUT_ALIAS = { grouped: "grid" };
 
 /** The key that opens the Layouts list, as the reference screen prints it. */
 const LAYOUT_KEY = "y";
@@ -154,6 +165,12 @@ const VIEW_PARAMS = [
   "layout", "groupBy", "sort", "sortCol", "dir", "pageSize", "maxNodes",
 ];
 
+/** A hash `layout` value as this page understands it: an alias resolved, anything else dropped. */
+function normalizeLayout(raw) {
+  const v = LAYOUT_ALIAS[raw] || raw;
+  return LAYOUT_MODES.includes(v) ? v : "";
+}
+
 function graphParams(params, defaults) {
   return {
     // The question. `find` is the structure and `where` the per-node property filters; see
@@ -175,7 +192,7 @@ function graphParams(params, defaults) {
     // new row in the list both landed — and the URL still carried it — while THIS silently
     // rewrote it to rows on the way to the request. One list, so a layout cannot be added to
     // four places and forgotten in the fifth.
-    layout: LAYOUT_MODES.includes(params.layout) ? params.layout : "",
+    layout: normalizeLayout(params.layout),
     groupBy: params.groupBy || "",
     sort: params.sort || "",
     view: params.view === "table" ? "table" : "graph",
@@ -330,6 +347,27 @@ export async function renderGraphPage(main, params, _ctx) {
       "severities", "projects", "clouds"]) delete params[k];
     setParams(params);
   }
+  // `layout=grouped` is the other kind of old link, and it is REWRITTEN rather than translated on
+  // every read. Grouping used to be one of the arrangements and chose its own interior — the
+  // compact grid, except under `asset`, where it forced hub-and-spoke. Modernising the hash once,
+  // here, is what keeps a single value flowing through everything after it: the row the list
+  // marks, the badge, the legend, and the request. Left as-is, this page would normalise `layout`
+  // for its own display and send the normalised value on, so the resolver's own migration would
+  // never see the legacy word and a saved view would open with no boxes at all.
+  //
+  // Mirrors `resolveLayoutParams`, which keeps the same mapping as the server-side safety net.
+  // Two copies because the client bundle cannot import the domain layer; the pair is held together
+  // by test/graphLayout.test.ts (the alias) and by the browser walk (the `asset` branch).
+  if (LAYOUT_ALIAS[params.layout]) {
+    params = { ...params };
+    // An absent `groupBy` is what grouped mode defaulted to internally, so it still groups.
+    const groupBy = params.groupBy || "combo";
+    params.groupBy = groupBy;
+    params.layout = groupBy.split(",")[0].trim() === "asset"
+      ? "radial"
+      : LAYOUT_ALIAS[params.layout];
+    setParams(params);
+  }
   // The retired canvas search. Stripped from any link that still names it rather than left
   // sitting inert: a URL that carries `q=agent` reads like a page that does something with it.
   if (params.q != null) {
@@ -410,11 +448,12 @@ export async function renderGraphPage(main, params, _ctx) {
   // already hidden in table view — so it moves onto the canvas, beside the zoom it
   // belongs with, and the mode and the dimensions get to be the separate things they are.
   //
-  // TWO BUTTONS, because they are two questions. One control used to hold the arrangement AND
-  // the grouping dimensions, with a badge counting the dimensions — a single trigger describing
-  // two unrelated things, whose badge answered for only one of them. The reference screen keeps
-  // them apart for the same reason, and it is what lets the layout list be the plain list of
-  // named layouts it should be.
+  // TWO BUTTONS, AND TWO INDEPENDENT QUESTIONS. One control used to hold the arrangement AND the
+  // grouping dimensions, with a badge counting the dimensions — a single trigger describing two
+  // unrelated things, whose badge answered for only one of them. Splitting them in two was the
+  // first half; the second is that NEITHER constrains the other. Grouping is not one of the
+  // arrangements any more, so this button is always live, and every pair of values means
+  // something: grouping partitions, the arrangement fills each partition.
   let layoutPop = null;
   const layoutBtn = el("button", {
     class: "graph-tool", "aria-haspopup": "listbox",
@@ -427,9 +466,8 @@ export async function renderGraphPage(main, params, _ctx) {
     onclick: () => openGroups(),
   }, uiIcon("group", 15), groupBadge);
 
-  /** How many grouping levels are in force — what the badge counts. */
+  /** How many grouping levels are in force — what the badge counts. Zero is a real answer. */
   function groupLevels() {
-    if (state.layout !== "grouped") return [];
     return String(state.groupBy || "").split(",").map((s) => s.trim()).filter(Boolean);
   }
 
@@ -444,10 +482,6 @@ export async function renderGraphPage(main, params, _ctx) {
     groupBtn.setAttribute("aria-label", levels.length
       ? "Grouped by " + levels.map((k) => GROUP_LABELS[k] || k).join(", then ")
       : "Group by");
-    // Grouping exists only AS a layout here, so off the grouped layout this button has nothing
-    // it could do. Hidden rather than disabled: a dead control that stays visible invites the
-    // click it will not answer, and the layout list one button up is where grouping is turned on.
-    groupBtn.hidden = state.layout !== "grouped";
   }
 
   // The canvas rail: the page's two canvas tools on top, the renderer's zoom controls below.
@@ -1147,17 +1181,15 @@ export async function renderGraphPage(main, params, _ctx) {
      * Live-apply, and `pos` clears with the layout: a new arrangement recomputes every position,
      * so the manual nudges `pos` records no longer describe anything on screen.
      *
-     * Picking Groups keeps whatever `groupBy` the URL already carries — an empty one resolves to
-     * the default single "combo" level server-side — so turning grouping on and off again does
-     * not forget the dimensions someone chose.
+     * `groupBy` IS NOT TOUCHED. Changing the arrangement while grouping is on keeps the boxes and
+     * rearranges what is inside them — which is the whole point of the two being independent.
+     * This used to clear it on every pick, so choosing a layout silently threw the grouping away.
      */
     function choose(i) {
       const spec = LAYOUTS[i];
       if (layoutPop) layoutPop.close(true);
       if (spec.mode === (state.layout || "")) return;
-      update(spec.mode === "grouped"
-        ? { layout: "grouped", pos: "" }
-        : { layout: spec.mode, groupBy: "", pos: "" });
+      update({ layout: spec.mode, pos: "" });
     }
 
     list.addEventListener("keydown", (e) => {
@@ -1203,15 +1235,20 @@ export async function renderGraphPage(main, params, _ctx) {
   function openGroups() {
     const DIMS = ["asset", "combo", "project", "cloud", "kind", "severity"];
     const levels = groupLevels();
-    let g1 = levels[0] || (state.groupBy ? String(state.groupBy).split(",")[0] : "combo");
+    let g1 = levels[0] || "";
     let g2 = levels[1] || "";
 
     // Every change goes straight to the URL — live-apply, no OK button, same as Columns.
-    // `pos` clears with it: a new arrangement recomputes the picture, so manual node
-    // nudges no longer describe anything.
+    // `pos` clears with it: a regrouping recomputes the picture, so manual node nudges no longer
+    // describe anything.
+    //
+    // `layout` IS NOT TOUCHED. Grouping is not an arrangement any more, so choosing a dimension
+    // writes `groupBy` and leaves the arrangement someone picked alone — it used to force
+    // `layout: "grouped"`, which is the coupling this whole change undoes.
     const apply = () => {
-      const list = g2 && g2 !== g1 && g1 !== "asset" && g2 !== "asset" ? [g1, g2] : [g1];
-      update({ layout: "grouped", groupBy: list.join(","), pos: "" });
+      const list = !g1 ? []
+        : g2 && g2 !== g1 && g1 !== "asset" && g2 !== "asset" ? [g1, g2] : [g1];
+      update({ groupBy: list.join(","), pos: "" });
     };
 
     // Built ONCE, then updated in place. A rebuild-on-every-change draft dismissed the
@@ -1221,11 +1258,14 @@ export async function renderGraphPage(main, params, _ctx) {
     // lines up — rewrite the half that moved, never the container.
     const sel1 = el("select", { "aria-label": "Group by 1" });
     const sel2 = el("select", { "aria-label": "Group by 2" });
-    const fill = (sel, skipAsset) => {
+    const fill = (sel, second) => {
       clear(sel);
-      if (skipAsset) sel.append(el("option", { value: "" }, "Select…"));
+      // Level 1's empty option is how grouping is turned OFF, and it has to live here: the
+      // control that switches grouping on is the only place a reader will look to switch it off,
+      // and there is no longer a layout to leave in order to stop grouping.
+      sel.append(el("option", { value: "" }, second ? "Select…" : "No grouping"));
       for (const k of DIMS) {
-        if (skipAsset && (k === "asset" || k === g1)) continue;
+        if (second && (k === "asset" || k === g1)) continue;
         sel.append(el("option", { value: k }, GROUP_LABELS[k] || k));
       }
     };
@@ -1243,9 +1283,9 @@ export async function renderGraphPage(main, params, _ctx) {
 
     let panel = null;
     function sync() {
-      // `asset` is outermost-or-nothing, so the second level is not offered under it —
-      // and the note says why rather than leaving a control mysteriously missing.
-      row2.hidden = g1 === "asset";
+      // No second level without a first, and none under `asset`, which is outermost-or-nothing —
+      // the note says why rather than leaving a control mysteriously missing.
+      row2.hidden = !g1 || g1 === "asset";
       note.hidden = g1 !== "asset";
       fill(sel1, false);
       sel1.value = g1;
@@ -1255,8 +1295,10 @@ export async function renderGraphPage(main, params, _ctx) {
       if (panel) panel.reposition();
     }
     sel1.addEventListener("change", () => {
-      g1 = sel1.value || "combo";
-      if (g2 === g1 || g1 === "asset") g2 = "";
+      g1 = sel1.value;
+      // Turning level 1 off, or onto `asset`, takes level 2 with it — a nesting with no outer
+      // box is not a nesting, and `asset` has no key to subdivide by.
+      if (!g1 || g2 === g1 || g1 === "asset") g2 = "";
       apply(); sync();
     });
     sel2.addEventListener("change", () => { g2 = sel2.value; apply(); sync(); });
@@ -1532,11 +1574,20 @@ export async function renderGraphPage(main, params, _ctx) {
 
 
 function buildLegend(boot, payload) {
-  const grouped = payload.layout && payload.layout.mode === "grouped";
-  // The server echoes the dimensions it actually grouped by, outermost first — read from
-  // the answer rather than the request, so the legend names what was drawn.
-  const levels = [].concat((payload.options && payload.options.groupBy) || "combo")
-    .filter(Boolean);
+  // Read off the BOXES, which is as close to "what was drawn" as this can get. There is no
+  // longer a mode that means grouped — grouping is orthogonal to the arrangement, so the
+  // presence of boxes is the only thing that says a picture is grouped. And each box names the
+  // dimension IT partitions (`by`), so a two-level nesting needs no second source: the outer
+  // level is any depth-0 box, the inner any depth-1 one.
+  //
+  // The old reading was `options.groupBy || "combo"`, echoing the request. Its own comment said
+  // to read the answer instead, and that `|| "combo"` was the last guess left in it — harmless
+  // while grouping was a layout, and with grouping now defaulting to none it would have printed
+  // a key for a picture that has no boxes at all.
+  const boxes = (payload.layout && payload.layout.groups) || [];
+  const grouped = boxes.length > 0;
+  const byDepth = (d) => (boxes.find((g) => g.depth === d) || {}).by;
+  const levels = [byDepth(0), byDepth(1)].filter(Boolean);
 
   // Native <details> disclosure: standard, keyboard-accessible, and works with
   // no script. Collapsed shows only the toggle; the overlay is bottom-anchored

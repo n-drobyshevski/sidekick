@@ -5553,7 +5553,7 @@ var Server = (() => {
   }
 
   // src/domain/graphLayout.ts
-  var LAYOUT_MODES = ["lanes", "grouped", "rows", "organic", "radial"];
+  var LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"];
   var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"];
   var SORT_KEYS = ["smart", "severity", "aars", "name"];
   var GROUP_NONE = "__none__";
@@ -5902,11 +5902,14 @@ var Server = (() => {
     return { start, shelfOfRank, shelves: shelf + 1, longest };
   }
   function layoutGraph(p, opts = {}) {
-    var _a5;
-    const mode = (_a5 = opts.mode) != null ? _a5 : "rows";
-    if (mode === "grouped") return layoutGrouped(p, opts);
+    var _a5, _b;
+    if (((_a5 = opts.groupBy) != null ? _a5 : []).length) return layoutGrouped(p, opts);
+    return layoutWhole(p, opts, (_b = opts.mode) != null ? _b : "rows");
+  }
+  function layoutWhole(p, opts, mode) {
     if (mode === "radial") return layoutRadial(p, opts);
     if (mode === "organic") return layoutOrganic(p, opts);
+    if (mode === "grid") return layoutGrid(p, opts);
     return layoutLanes(p, opts, mode !== "lanes");
   }
   function layoutLanes(p, opts, horizontal) {
@@ -5979,7 +5982,10 @@ var Server = (() => {
     const step = horizontal ? ROW_COL_STEP : rowGap;
     const gap2 = horizontal ? ROW_CLUSTER_GAP : LANE_CLUSTER_GAP;
     const bandGap = horizontal ? ROW_BAND_GAP : laneGap;
-    const bandSpan = (LANE_COUNT - 1) * bandGap;
+    const occupied = lanes.map((lane, i) => lane.length ? i : -1).filter((i) => i >= 0);
+    const slotOfBand = (i) => opts.compactBands ? occupied.indexOf(i) : i;
+    const bandCount = opts.compactBands ? Math.max(occupied.length, 1) : LANE_COUNT;
+    const bandSpan = (bandCount - 1) * bandGap;
     const shelfPitch = bandSpan + (horizontal ? ROW_SHELF_GAP : LANE_SHELF_GAP);
     const { pos, shelfOf, extent, shelves } = packLanes(
       lanes,
@@ -5997,7 +6003,7 @@ var Server = (() => {
         for (const id of lane) {
           if (shelfOf.get(id) !== shelf) continue;
           const along = margin + pos.get(id);
-          const across = margin + shelf * shelfPitch + laneIdx * bandGap;
+          const across = margin + shelf * shelfPitch + slotOfBand(laneIdx) * bandGap;
           nodes.push({
             id,
             lane: laneIdx,
@@ -6149,6 +6155,45 @@ var Server = (() => {
       height: packed.height + GROUP_PAD
     };
   }
+  function subProjection(p, list2) {
+    const ids = new Set(list2.map((n) => n.id));
+    return {
+      nodes: list2,
+      edges: p.edges.filter((e) => ids.has(e.src) && ids.has(e.dst)),
+      summaries: p.summaries.filter((s) => ids.has(s.id)),
+      counts: p.counts
+    };
+  }
+  function blockOf(key, label, layout) {
+    const pts = layout.nodes;
+    const minX = Math.min(...pts.map((n) => n.x));
+    const minY = Math.min(...pts.map((n) => n.y));
+    const maxX = Math.max(...pts.map((n) => n.x));
+    const maxY = Math.max(...pts.map((n) => n.y));
+    const originX = GROUP_PAD + CELL_W / 2;
+    const originY = HEADER_H + GROUP_PAD + CELL_H / 2;
+    return {
+      key,
+      label,
+      width: GROUP_PAD * 2 + CELL_W + (maxX - minX),
+      height: HEADER_H + GROUP_PAD * 2 + CELL_H + (maxY - minY),
+      cells: pts.map((n) => ({
+        id: n.id,
+        x: round2(originX + n.x - minX),
+        y: round2(originY + n.y - minY)
+      }))
+    };
+  }
+  function blockFor(mode, key, label, list2, p, opts, hub) {
+    if (!list2.length || mode === "grid") return gridBlock(key, label, list2);
+    if (mode === "radial") {
+      const centre = hub != null ? hub : list2[0];
+      return radialBlock(key, label, centre, list2.filter((n) => n.id !== centre.id));
+    }
+    const sub = subProjection(p, list2);
+    const inner = { ...opts, margin: 0, groupBy: [], compactBands: true };
+    return blockOf(key, label, layoutWhole(sub, inner, mode));
+  }
   function gridBlock(key, label, list2) {
     const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list2.length))));
     const rows = Math.ceil(list2.length / cols);
@@ -6223,15 +6268,17 @@ var Server = (() => {
     return { hubOf, hubs };
   }
   function layoutGrouped(p, opts) {
-    var _a5, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
     const margin = (_a5 = opts.margin) != null ? _a5 : 120;
-    const levels = ((_b = opts.groupBy) != null ? _b : []).length ? opts.groupBy : ["combo"];
+    const levels = (_b = opts.groupBy) != null ? _b : [];
     const groupBy2 = levels[0];
     const second = (_c = levels[1]) != null ? _c : null;
     const inner = groupBy2 === "asset" || second === "asset" || second === groupBy2 ? null : second;
     const sort = (_d = opts.sort) != null ? _d : "smart";
+    const mode = (_e = opts.mode) != null ? _e : "rows";
     const parentOf = parentIndex(p);
     const cmp2 = comparator(sort);
+    const block = (key, label, list2, hub) => blockFor(mode, key, label, [...list2].sort(cmp2), p, opts, hub);
     const specs = [];
     if (groupBy2 === "asset") {
       const { hubOf, hubs } = assignToHubs(p, parentOf);
@@ -6242,11 +6289,8 @@ var Server = (() => {
         if (key) members.get(key).push(node2);
         else strays.push(node2);
       }
-      for (const hub of hubs) {
-        const sats = members.get(hub.id).filter((n) => n.id !== hub.id).sort(cmp2);
-        specs.push(radialBlock(hub.id, hub.name, hub, sats));
-      }
-      if (strays.length) specs.push(gridBlock(GROUP_NONE, "Ungrouped", [...strays].sort(cmp2)));
+      for (const hub of hubs) specs.push(block(hub.id, hub.name, members.get(hub.id), hub));
+      if (strays.length) specs.push(block(GROUP_NONE, "Ungrouped", strays));
     } else {
       const members = /* @__PURE__ */ new Map();
       for (const node2 of p.nodes) {
@@ -6258,7 +6302,7 @@ var Server = (() => {
         const list2 = members.get(key);
         const label = groupLabel(key, groupBy2);
         if (!inner) {
-          specs.push(gridBlock(key, label, [...list2].sort(cmp2)));
+          specs.push(block(key, label, list2));
           continue;
         }
         const subs = /* @__PURE__ */ new Map();
@@ -6267,7 +6311,7 @@ var Server = (() => {
           if (!subs.has(k2)) subs.set(k2, []);
           subs.get(k2).push(node2);
         }
-        const children = orderGroups([...subs.keys()], inner, subs).map((k2) => gridBlock(k2, groupLabel(k2, inner), [...subs.get(k2)].sort(cmp2)));
+        const children = orderGroups([...subs.keys()], inner, subs).map((k2) => block(k2, groupLabel(k2, inner), subs.get(k2)));
         specs.push(nestBlock(key, label, children));
       }
     }
@@ -6288,7 +6332,7 @@ var Server = (() => {
         by: groupBy2,
         depth: 0
       });
-      for (const sub of (_e = spec.subs) != null ? _e : []) {
+      for (const sub of (_f = spec.subs) != null ? _f : []) {
         groups.push({
           id: `${groupBy2}:${spec.key}/${inner}:${sub.key}`,
           key: sub.key,
@@ -6307,7 +6351,7 @@ var Server = (() => {
         const px = gx + c.x;
         const py = gy + c.y;
         let lane = parentIdx;
-        for (let i = 0; i < ((_g = (_f = spec.subs) == null ? void 0 : _f.length) != null ? _g : 0); i++) {
+        for (let i = 0; i < ((_h = (_g = spec.subs) == null ? void 0 : _g.length) != null ? _h : 0); i++) {
           const sub = spec.subs[i];
           if (c.x >= sub.x && c.x <= sub.x + sub.width && c.y >= sub.y && c.y <= sub.y + sub.height) {
             lane = parentIdx + 1 + i;
@@ -6323,8 +6367,33 @@ var Server = (() => {
       height: packed.height + margin,
       laneGap: CELL_W,
       rowGap: CELL_H,
-      mode: "grouped",
+      // The ARRANGEMENT, which is what `mode` means everywhere now — a grouped layout used to
+      // report "grouped" and swallow the arrangement with it. `groups` being present is what says
+      // this picture is grouped, and the renderer reads it that way.
+      mode,
       groups
+    };
+  }
+  function layoutGrid(p, opts) {
+    var _a5, _b;
+    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
+    const cmp2 = comparator((_b = opts.sort) != null ? _b : "smart");
+    const spec = gridBlock("", "", [...p.nodes].sort(cmp2));
+    const rows = [...new Set(spec.cells.map((c) => c.y))].sort((a, b) => a - b);
+    return {
+      nodes: spec.cells.map((c) => ({
+        id: c.id,
+        // No header to clear and no box to sit inside: the block's own header offset is subtracted
+        // back off so the grid starts at the margin like every other ungrouped layout.
+        x: round2(margin + c.x - GROUP_PAD),
+        y: round2(margin + c.y - GROUP_PAD - HEADER_H),
+        lane: rows.indexOf(c.y)
+      })),
+      width: round2(margin * 2 + spec.width - GROUP_PAD * 2),
+      height: round2(margin * 2 + spec.height - GROUP_PAD * 2 - HEADER_H),
+      laneGap: CELL_W,
+      rowGap: CELL_H,
+      mode: "grid"
     };
   }
   var FREE_W = CELL_W;
@@ -6564,12 +6633,15 @@ var Server = (() => {
       out.push(key);
       if (key === "asset" || out.length === 2) break;
     }
-    return out.length ? out : ["combo"];
+    return out;
   }
   function resolveLayoutParams(p) {
+    const legacyGrouped = typeof p["layout"] === "string" && p["layout"].toLowerCase() === "grouped";
+    const asked = pickList(p["groupBy"]);
+    const groupBy2 = legacyGrouped && !asked.length ? ["combo"] : asked;
     return {
-      mode: pick(p["layout"], LAYOUT_MODES, "rows"),
-      groupBy: pickList(p["groupBy"]),
+      mode: legacyGrouped ? groupBy2[0] === "asset" ? "radial" : "grid" : pick(p["layout"], LAYOUT_MODES, "rows"),
+      groupBy: groupBy2,
       sort: pick(p["sort"], SORT_KEYS, "smart")
     };
   }
@@ -8135,7 +8207,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "95c4018e07a5" : "dev";
+  var BUILD_ID = true ? "d78e800592ce" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

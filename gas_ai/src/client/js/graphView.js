@@ -33,12 +33,19 @@ export function renderGraph(container, data, handlers = {}) {
     }];
   }));
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const grouped = layout.mode === "grouped";
-  const horizontal = layout.mode === "rows";
-  // The layouts with no dominant flow direction: nodes sit all around each other rather than in
-  // bands, so an edge can leave a card on any side. Everything downstream that assumed
-  // left-to-right (edge anchoring, chiefly) branches on this rather than on `grouped` alone.
-  const freeForm = grouped || layout.mode === "radial" || layout.mode === "organic";
+  // GROUPING IS ORTHOGONAL to the arrangement, so `mode` never says "grouped" — the presence of
+  // boxes does. Both facts matter here and they are separate: the boxes decide how edges leave a
+  // card, the arrangement decides which way the picture flows.
+  const grouped = (layout.groups || []).length > 0;
+  // Bands across, and only when they span the canvas. Grouped, they span a box instead and the
+  // boxes are packed in two dimensions, so the picture as a whole has no left-to-right flow and
+  // keyboard walking takes the same branch every other grouped layout takes.
+  const horizontal = layout.mode === "rows" && !grouped;
+  // No dominant flow direction: nodes sit all around each other rather than in bands, so an edge
+  // can leave a card on any side. True of the free-form arrangements, and true of ANY arrangement
+  // once it is inside boxes — an edge between two boxes runs whichever way they were packed.
+  const freeForm = grouped
+    || layout.mode === "radial" || layout.mode === "organic" || layout.mode === "grid";
 
   const width = Math.max(layout.width, 640);
   const height = Math.max(layout.height, 360);
@@ -47,21 +54,29 @@ export function renderGraph(container, data, handlers = {}) {
   // that describes the canvas has to say it.
   const nested = grouped && (layout.groups || []).some((g) => g.depth === 1);
   /**
-   * The ARRANGEMENT, in the one label that describes the canvas.
+   * The ARRANGEMENT AND THE GROUPING, in the one label that describes the canvas.
    *
-   * A sighted reader gets the layout from the picture; a screen-reader user gets it from here or
-   * not at all — and it changes what the arrow keys mean, since two of them walk the layout's own
-   * axis (bands in rows/columns, rings in radial/organic). So each mode says what that axis is.
+   * A sighted reader gets both from the picture; a screen-reader user gets them from here or not
+   * at all — and the arrangement changes what the arrow keys mean, since two of them walk its own
+   * axis (bands in rows/columns, rings in radial/organic, group members when grouped).
+   *
+   * TWO CLAUSES, not one sentence chosen from a list. The two are independent now, so any
+   * arrangement can be grouped and a fixed list of five sentences would have to spell out ten
+   * combinations — and would still say only one of the two things about each.
    */
-  const shape = layout.mode === "radial"
-    ? "Security graph, nodes on rings by their distance from the highest-risk asset. "
+  const arrangement = layout.mode === "radial"
+    ? "nodes on rings by their distance from the highest-risk asset"
     : layout.mode === "organic"
-      ? "Security graph, nodes positioned by their connections so clusters sit together. "
-      : nested
-        ? "Security graph, nodes clustered into labelled groups nested two levels deep. "
-        : grouped
-          ? "Security graph, nodes clustered into labelled groups. "
-          : "Security graph. ";
+      ? "nodes positioned by their connections so clusters sit together"
+      : layout.mode === "grid"
+        ? "nodes packed into a dense grid"
+        : layout.mode === "lanes"
+          ? "nodes in category columns"
+          : "nodes in category bands";
+  const shape = "Security graph, " + arrangement
+    + (nested
+      ? ", clustered into labelled groups nested two levels deep. "
+      : grouped ? ", clustered into labelled groups. " : ". ");
   const svg = svgEl("svg", {
     role: "application",
     "aria-label": shape +
@@ -113,11 +128,11 @@ export function renderGraph(container, data, handlers = {}) {
   }
 
   // ------------------------------------------------------------------- edges
-  // Lanes flow left-to-right, so edges anchor on the sides. In the free-form modes — grouped,
-  // radial, organic — a mostly-vertical edge anchors top/bottom instead, so it leaves the card
-  // through the nearest face rather than looping around it. Radial in particular has edges
-  // running in every direction by construction, so side-anchoring alone would send half of them
-  // back around the cards they start from.
+  // Lanes flow left-to-right, so edges anchor on the sides. Where there is no such flow — the
+  // free-form arrangements, and anything inside boxes — a mostly-vertical edge anchors top/bottom
+  // instead, so it leaves the card through the nearest face rather than looping around it. Radial
+  // in particular has edges running in every direction by construction, so side-anchoring alone
+  // would send half of them back around the cards they start from.
   function edgeGeometry(a, b) {
     if (freeForm && Math.abs(b.y - a.y) > Math.abs(b.x - a.x)) {
       const topToBottom = a.y <= b.y;

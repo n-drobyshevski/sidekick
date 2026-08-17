@@ -1,4 +1,16 @@
-// Deterministic graph layouts. Five modes, no randomness anywhere:
+// Deterministic graph layouts. TWO INDEPENDENT DIMENSIONS, no randomness anywhere.
+//
+// GROUPING (`groupBy`, none / one / two dimensions) partitions the nodes into labelled boxes.
+// THE ARRANGEMENT (`mode`, one of five) decides how nodes are placed — over the whole canvas
+// when there is no grouping, and inside each box when there is. They compose: every pair means
+// something, and neither is a special case of the other.
+//
+// Grouping used to BE an arrangement ("grouped"), which made the two mutually exclusive and left
+// the arrangement meaningless whenever grouping was on. The answer is that the arrangement is
+// what happens INSIDE a box; "grouped" is now `grid`, the compact row-major packing it always
+// actually drew, and grouping is free to sit on top of any of the five.
+//
+// The five arrangements:
 //
 // - "rows" (default): the Wiz security-graph visual language, transposed to run
 //   top-to-bottom instead of left-to-right — 5 category swimlanes become
@@ -10,12 +22,8 @@
 //   left-to-right, with nodes stacked top-to-bottom within each. "rows" is
 //   its horizontal transpose — both share the same lane assignment and
 //   barycenter/sort ordering; only the final x/y positioning differs.
-// - "grouped": nodes clustered into labelled blocks by a key (asset, toxic
-//   combo, project, cloud, kind, or severity); blocks are shelf-packed
-//   left-to-right. Most keys arrange members in a compact grid; the "asset"
-//   key is hub-and-spoke — each AI agent sits at the center of its block with
-//   its BFS-nearest neighbors (issues, identities, data, compute) on rings
-//   around it.
+// - "grid": every node in one compact row-major grid, categories ignored. The
+//   densest of the five, and the interior every grouped picture used to have.
 // - "radial": the whole estate as one ring system. The worst-risk AI agent is
 //   the center and every other node sits on the ring of its BFS distance from
 //   it, so a ring IS "n hops from the thing most likely to hurt you". Ring
@@ -35,6 +43,14 @@
 // All are reduced-motion friendly by construction (nothing animates), and all
 // support explicit row-ordering ("sort") so the same URL always draws the same
 // picture.
+//
+// GROUPING RUNS EACH ARRANGEMENT ON A SUBSET rather than reimplementing it. A group's block is
+// the arrangement's own output over a sub-projection, measured and framed — so "rows grouped by
+// cloud" is the rows engine, five times, and there is one implementation of rows. The two
+// exceptions are `grid`, which is already block-shaped, and `radial`, which uses the
+// hub-and-spoke `radialBlock` inside a group: a whole estate is one component with real hop
+// structure to show, while a six-node group usually is not, and rank rings pack tighter when
+// every member is one hop out. Both are rings around the most important node.
 //
 // "rows" and "lanes" additionally CLUSTER under the default "smart" order: connected
 // nodes are packed into a contiguous stripe of slots across every band, and the next
@@ -58,7 +74,7 @@ import type { Projection } from "./graphProject";
 import { nodeOrder } from "./graphProject";
 import { comboGroupById, REGISTER_GROUPS } from "./toxicCombos";
 
-export const LAYOUT_MODES = ["lanes", "grouped", "rows", "organic", "radial"] as const;
+export const LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"] as const;
 export type LayoutMode = (typeof LAYOUT_MODES)[number];
 
 export const GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"] as const;
@@ -175,10 +191,20 @@ export interface LayoutOptions {
   rowGap?: number;  // vertical distance between row centers (lanes mode)
   margin?: number;
   mode?: LayoutMode;
-  /** One or two dimensions. Two nests the second inside the first. Empty means the
-   *  default single "combo" level. */
+  /** One or two dimensions. Two nests the second inside the first. EMPTY MEANS NO GROUPING —
+   *  it is a real value, not a missing one, which is what lets grouping be a dimension the
+   *  arrangement composes with rather than one of the arrangements. */
   groupBy?: GroupKey[];
   sort?: SortKey;
+  /**
+   * Place only the bands that hold something, at consecutive offsets.
+   *
+   * OFF for the whole canvas, where the six bands are a fixed frame of reference and an empty
+   * one is information — "this estate has no compute in view" reads off the gap. ON inside a
+   * group, where a box holding assets and data alone would otherwise reserve all six band gaps
+   * and come out mostly air. The reported `lane` is the true category band either way.
+   */
+  compactBands?: boolean;
 }
 
 const BARYCENTER_SWEEPS = 3;
@@ -629,11 +655,23 @@ function wrapRun(
   return { start, shelfOfRank, shelves: shelf + 1, longest };
 }
 
+/**
+ * GROUPING DECIDES THE OUTER STRUCTURE; THE MODE DECIDES THE INTERIOR.
+ *
+ * With no grouping the arrangement gets the whole canvas. With grouping it gets each box, and the
+ * boxes are shelf-packed — so `mode` is never ignored, which is what makes the two controls
+ * genuinely independent rather than one masking the other.
+ */
 export function layoutGraph(p: Projection, opts: LayoutOptions = {}): Layout {
-  const mode = opts.mode ?? "rows";
-  if (mode === "grouped") return layoutGrouped(p, opts);
+  if ((opts.groupBy ?? []).length) return layoutGrouped(p, opts);
+  return layoutWhole(p, opts, opts.mode ?? "rows");
+}
+
+/** One arrangement over every node. The ungrouped half of the dispatch above. */
+function layoutWhole(p: Projection, opts: LayoutOptions, mode: LayoutMode): Layout {
   if (mode === "radial") return layoutRadial(p, opts);
   if (mode === "organic") return layoutOrganic(p, opts);
+  if (mode === "grid") return layoutGrid(p, opts);
   return layoutLanes(p, opts, mode !== "lanes"); // horizontal unless explicitly "lanes"
 }
 
@@ -717,7 +755,12 @@ function layoutLanes(p: Projection, opts: LayoutOptions, horizontal: boolean): L
   const step = horizontal ? ROW_COL_STEP : rowGap;
   const gap = horizontal ? ROW_CLUSTER_GAP : LANE_CLUSTER_GAP;
   const bandGap = horizontal ? ROW_BAND_GAP : laneGap;
-  const bandSpan = (LANE_COUNT - 1) * bandGap;
+  // Which offset each band is drawn at. Normally its own index, so the six bands are a fixed
+  // frame; compacted, its position among the bands that actually hold something.
+  const occupied = lanes.map((lane, i) => (lane.length ? i : -1)).filter((i) => i >= 0);
+  const slotOfBand = (i: number) => (opts.compactBands ? occupied.indexOf(i) : i);
+  const bandCount = opts.compactBands ? Math.max(occupied.length, 1) : LANE_COUNT;
+  const bandSpan = (bandCount - 1) * bandGap;
   const shelfPitch = bandSpan + (horizontal ? ROW_SHELF_GAP : LANE_SHELF_GAP);
   const { pos, shelfOf, extent, shelves } = packLanes(
     lanes, rankOf, step, rankOf ? gap : 0, bandSpan,
@@ -732,7 +775,7 @@ function layoutLanes(p: Projection, opts: LayoutOptions, horizontal: boolean): L
       for (const id of lane) {
         if (shelfOf.get(id) !== shelf) continue;
         const along = margin + pos.get(id)!;
-        const across = margin + shelf * shelfPitch + laneIdx * bandGap;
+        const across = margin + shelf * shelfPitch + slotOfBand(laneIdx) * bandGap;
         nodes.push({
           id,
           lane: laneIdx,
@@ -950,6 +993,89 @@ function nestBlock(key: string, label: string, children: BlockSpec[]): BlockSpec
   };
 }
 
+/**
+ * The sub-graph a group holds: its nodes, the edges among them, and the summaries it carries.
+ *
+ * Grouping runs an arrangement on this rather than reimplementing it per group — so "organic
+ * grouped by cloud" is the organic engine, once per cloud, and there stays exactly one organic.
+ * Edges to nodes OUTSIDE the group are dropped, which is the point: what pulls a box's members
+ * together is what connects them to each other, and a spring to a node three boxes away would
+ * drag the whole block off its packed position.
+ */
+function subProjection(p: Projection, list: GNode[]): Projection {
+  const ids = new Set(list.map((n) => n.id));
+  return {
+    nodes: list,
+    edges: p.edges.filter((e) => ids.has(e.src) && ids.has(e.dst)),
+    summaries: p.summaries.filter((s) => ids.has(s.id)),
+    counts: p.counts,
+  };
+}
+
+/**
+ * A whole-canvas layout, framed as a block: shift its node centres so the tightest box around
+ * them starts after the header and the padding, and report the size that box needs.
+ *
+ * Measured rather than taken from `layout.width`/`height` — an engine sizes its canvas for a
+ * viewport and can leave slack, and slack inside a labelled box reads as an empty region of the
+ * group rather than as margin.
+ */
+function blockOf(key: string, label: string, layout: Layout): BlockSpec {
+  const pts = layout.nodes;
+  const minX = Math.min(...pts.map((n) => n.x));
+  const minY = Math.min(...pts.map((n) => n.y));
+  const maxX = Math.max(...pts.map((n) => n.x));
+  const maxY = Math.max(...pts.map((n) => n.y));
+  const originX = GROUP_PAD + CELL_W / 2;
+  const originY = HEADER_H + GROUP_PAD + CELL_H / 2;
+  return {
+    key,
+    label,
+    width: GROUP_PAD * 2 + CELL_W + (maxX - minX),
+    height: HEADER_H + GROUP_PAD * 2 + CELL_H + (maxY - minY),
+    cells: pts.map((n) => ({
+      id: n.id,
+      x: round2(originX + n.x - minX),
+      y: round2(originY + n.y - minY),
+    })),
+  };
+}
+
+/**
+ * One group's interior, in whichever arrangement is in force.
+ *
+ * `grid` is already block-shaped, so it is used directly. `radial` uses HUB-AND-SPOKE rather than
+ * the whole-canvas engine's BFS rings, and the asymmetry is deliberate: an estate is one
+ * component with real hop structure to show, while a group of six is usually all one hop out —
+ * which BFS would draw as a single enormous ring where rank rings nest tightly. Both are rings
+ * around the most important node, which is what Radial promises.
+ *
+ * The rest run their own engine over `subProjection`, with `compactBands` on so a box holding two
+ * categories is two bands tall rather than six.
+ */
+function blockFor(
+  mode: LayoutMode,
+  key: string,
+  label: string,
+  list: GNode[],
+  p: Projection,
+  opts: LayoutOptions,
+  hub?: GNode,
+): BlockSpec {
+  if (!list.length || mode === "grid") return gridBlock(key, label, list);
+  if (mode === "radial") {
+    // The CENTRE is named by the caller where the grouping already knows it — under "asset" the
+    // box IS an agent's neighbourhood, and letting the sort pick would put a CRITICAL issue at
+    // the middle of a block labelled with the agent's name. Elsewhere the group has no
+    // distinguished member, so the worst one takes the centre.
+    const centre = hub ?? list[0];
+    return radialBlock(key, label, centre, list.filter((n) => n.id !== centre.id));
+  }
+  const sub = subProjection(p, list);
+  const inner: LayoutOptions = { ...opts, margin: 0, groupBy: [], compactBands: true };
+  return blockOf(key, label, layoutWhole(sub, inner, mode));
+}
+
 /** Compact row-major grid — the default block interior. */
 function gridBlock(key: string, label: string, list: GNode[]): BlockSpec {
   const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list.length))));
@@ -1042,26 +1168,32 @@ function assignToHubs(
 
 function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
   const margin = opts.margin ?? 120;
-  const levels = (opts.groupBy ?? []).length ? opts.groupBy! : (["combo"] as GroupKey[]);
+  const levels = opts.groupBy ?? [];
   const groupBy = levels[0];
-  // Three ways a second level is not one. "asset" is an ARRANGEMENT (hub-and-spoke BFS)
-  // rather than a partition by a property: there is nothing coherent to subdivide inside
-  // it, AND it has no key of its own to subdivide by — `ownGroupKey` answers GROUP_NONE
-  // for it, so as an inner level it would file everything under one "Ungrouped" box. And
-  // a dimension nested in itself yields one child identical to its parent, a box drawn
-  // twice. The resolver rejects all three — this guard makes the engine total, so a
-  // direct caller cannot produce a picture that lies.
+  // Two ways a second level is not one. "asset" has no key of its OWN to be subdivided by —
+  // `ownGroupKey` answers GROUP_NONE for it, so as an inner level it would file everything under
+  // one "Ungrouped" box. And a dimension nested in itself yields one child identical to its
+  // parent, a box drawn twice. The resolver rejects both; this guard makes the engine total, so
+  // a direct caller cannot produce a picture that lies.
+  //
+  // Note what is NO LONGER a reason: "asset" used to be called an arrangement rather than a
+  // partition, because it also dictated hub-and-spoke interiors. It always was a partition —
+  // `assignToHubs` gives every node exactly one hub — and the interior is now the layout's job,
+  // so the only objection left is the missing key.
   const second = levels[1] ?? null;
   const inner: GroupKey | null =
     groupBy === "asset" || second === "asset" || second === groupBy ? null : second;
   const sort = opts.sort ?? "smart";
+  const mode = opts.mode ?? "rows";
 
   const parentOf = parentIndex(p);
   const cmp = comparator(sort);
+  const block = (key: string, label: string, list: GNode[], hub?: GNode) =>
+    blockFor(mode, key, label, [...list].sort(cmp), p, opts, hub);
 
-  // Build one block spec per top-level group. "asset" is hub-and-spoke; everything else
-  // buckets by key into grids, in canonical group order — and when a second level is
-  // asked for, each bucket is re-bucketed and becomes a block of blocks.
+  // One block spec per top-level group, in canonical group order — and when a second level is
+  // asked for, each bucket is re-bucketed and becomes a block of blocks. What goes INSIDE each
+  // block is `mode`'s business, not this function's.
   const specs: BlockSpec[] = [];
   if (groupBy === "asset") {
     const { hubOf, hubs } = assignToHubs(p, parentOf);
@@ -1072,11 +1204,8 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
       if (key) members.get(key)!.push(node);
       else strays.push(node);
     }
-    for (const hub of hubs) {
-      const sats = members.get(hub.id)!.filter((n) => n.id !== hub.id).sort(cmp);
-      specs.push(radialBlock(hub.id, hub.name, hub, sats));
-    }
-    if (strays.length) specs.push(gridBlock(GROUP_NONE, "Ungrouped", [...strays].sort(cmp)));
+    for (const hub of hubs) specs.push(block(hub.id, hub.name, members.get(hub.id)!, hub));
+    if (strays.length) specs.push(block(GROUP_NONE, "Ungrouped", strays));
   } else {
     const members = new Map<string, GNode[]>();
     for (const node of p.nodes) {
@@ -1088,7 +1217,7 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
       const list = members.get(key)!;
       const label = groupLabel(key, groupBy);
       if (!inner) {
-        specs.push(gridBlock(key, label, [...list].sort(cmp)));
+        specs.push(block(key, label, list));
         continue;
       }
       // Same bucketing and same canonical ordering, one level down. A node still lands
@@ -1100,7 +1229,7 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
         subs.get(k2)!.push(node);
       }
       const children = orderGroups([...subs.keys()], inner, subs).map((k2) =>
-        gridBlock(k2, groupLabel(k2, inner), [...subs.get(k2)!].sort(cmp)));
+        block(k2, groupLabel(k2, inner), subs.get(k2)!));
       specs.push(nestBlock(key, label, children));
     }
   }
@@ -1168,8 +1297,44 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
     height: packed.height + margin,
     laneGap: CELL_W,
     rowGap: CELL_H,
-    mode: "grouped",
+    // The ARRANGEMENT, which is what `mode` means everywhere now — a grouped layout used to
+    // report "grouped" and swallow the arrangement with it. `groups` being present is what says
+    // this picture is grouped, and the renderer reads it that way.
+    mode,
     groups,
+  };
+}
+
+/**
+ * Every node in one compact grid, categories ignored — the densest of the five.
+ *
+ * This is `gridBlock` over the whole projection, which is exactly the interior every grouped
+ * picture had before grouping and arrangement came apart. So `grid` + a grouping reproduces the
+ * old "grouped" layout byte for byte, and `grid` alone is the one new picture the split adds.
+ */
+function layoutGrid(p: Projection, opts: LayoutOptions): Layout {
+  const margin = opts.margin ?? 120;
+  const cmp = comparator(opts.sort ?? "smart");
+  const spec = gridBlock("", "", [...p.nodes].sort(cmp));
+  // The grid's rows ARE its lane axis — read off the distinct y values rather than recomputing
+  // the column count, so this cannot disagree with where gridBlock actually put the cells. Two
+  // of the four arrow keys walk `lane`, and a layout answering 0 for every node would leave them
+  // stepping through the whole grid one cell at a time.
+  const rows = [...new Set(spec.cells.map((c) => c.y))].sort((a, b) => a - b);
+  return {
+    nodes: spec.cells.map((c) => ({
+      id: c.id,
+      // No header to clear and no box to sit inside: the block's own header offset is subtracted
+      // back off so the grid starts at the margin like every other ungrouped layout.
+      x: round2(margin + c.x - GROUP_PAD),
+      y: round2(margin + c.y - GROUP_PAD - HEADER_H),
+      lane: rows.indexOf(c.y),
+    })),
+    width: round2(margin * 2 + spec.width - GROUP_PAD * 2),
+    height: round2(margin * 2 + spec.height - GROUP_PAD * 2 - HEADER_H),
+    laneGap: CELL_W,
+    rowGap: CELL_H,
+    mode: "grid",
   };
 }
 

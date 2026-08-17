@@ -27,17 +27,32 @@ const DOC = enrichGraphDoc(seedGraphDoc("2026-06-28T05:00:00Z"), SEED_ISSUES, SE
 const PROJECTION = projectGraph(DOC, { seedIds: ["agent-h-chatbot", "agent-autogen"], depth: 3 });
 
 /**
- * One grouping level, the shape every case below this line was written against. The
- * scalar is wrapped rather than the cases rewritten: that is the guarantee a second
+ * One grouping level in the GRID arrangement — the shape every case below this line was written
+ * against. The scalar is wrapped rather than the cases rewritten: that is the guarantee a second
  * level changed nothing about what one level means.
+ *
+ * `mode: "grid"` is what "grouped" used to be. Grouping stopped being one of the arrangements and
+ * became a dimension any of them composes with; the compact row-major interior it always drew is
+ * now named `grid`, so these cases pin the same pictures they always did. The other four
+ * interiors are covered by the composition suite in graphLayout.test.ts.
  */
 function grouped(groupBy: GroupKey, sort: SortKey = "smart", p: Projection = PROJECTION): Layout {
-  return layoutGraph(p, { mode: "grouped", groupBy: [groupBy], sort });
+  return layoutGraph(p, { mode: "grid", groupBy: [groupBy], sort });
+}
+
+/**
+ * One grouping level in the RADIAL arrangement — hub at the centre of each box, satellites on
+ * concentric rings. This is the interior `groupBy=asset` used to be hard-wired to, back when
+ * grouping was an arrangement and chose the interior itself; it is now one of five a reader picks,
+ * and the pairing is what an `asset` grouping still means.
+ */
+function hubbed(groupBy: GroupKey, sort: SortKey = "smart", p: Projection = PROJECTION): Layout {
+  return layoutGraph(p, { mode: "radial", groupBy: [groupBy], sort });
 }
 
 /** Two levels, the outer one first. */
 function nested(outer: GroupKey, inner: GroupKey, p: Projection = PROJECTION): Layout {
-  return layoutGraph(p, { mode: "grouped", groupBy: [outer, inner], sort: "smart" });
+  return layoutGraph(p, { mode: "grid", groupBy: [outer, inner], sort: "smart" });
 }
 
 const ALL_KEYS: GroupKey[] = ["asset", "combo", "project", "cloud", "kind", "severity"];
@@ -49,7 +64,9 @@ describe("layoutGrouped: structure", () => {
   it("positions every projected node exactly once, for every group key", () => {
     for (const key of ALL_KEYS) {
       const layout = grouped(key);
-      expect(layout.mode).toBe("grouped");
+      // The ARRANGEMENT, not "grouped" — grouping is orthogonal now and `groups` is what says a
+      // picture is grouped. `grid` is the interior these cases were all written against.
+      expect(layout.mode).toBe("grid");
       expect(layout.nodes).toHaveLength(PROJECTION.nodes.length);
       expect(new Set(layout.nodes.map((n) => n.id)).size).toBe(PROJECTION.nodes.length);
     }
@@ -192,9 +209,9 @@ describe("layoutGrouped: two levels", () => {
   });
 
   it("ignores a second level under `asset`, which is an arrangement and not a partition", () => {
-    const one = layoutGraph(PROJECTION, { mode: "grouped", groupBy: ["asset"], sort: "smart" });
+    const one = layoutGraph(PROJECTION, { mode: "grid", groupBy: ["asset"], sort: "smart" });
     const two = layoutGraph(PROJECTION, {
-      mode: "grouped", groupBy: ["asset", "cloud"], sort: "smart",
+      mode: "grid", groupBy: ["asset", "cloud"], sort: "smart",
     });
     expect(JSON.stringify(two)).toBe(JSON.stringify(one));
   });
@@ -303,7 +320,7 @@ describe("layoutGrouped: group ordering", () => {
 });
 
 describe("layoutGrouped: asset hubs (hub-and-spoke)", () => {
-  const layout = grouped("asset");
+  const layout = hubbed("asset");
   const byId = new Map(PROJECTION.nodes.map((n) => [n.id, n]));
   const groups = layout.groups!;
   const laneOfNode = new Map(layout.nodes.map((n) => [n.id, n.lane]));
