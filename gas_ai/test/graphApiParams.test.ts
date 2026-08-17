@@ -112,7 +112,7 @@ describe("graphCacheParams", () => {
     const key = graphCacheParams({ seed: "agent-a", depth: "3", severities: "HIGH,CRITICAL" });
     expect(key["seed"]).toBe("agent-a");
     expect(key["depth"]).toBe("3");
-    expect(key["view"]).toEqual({ mode: "rows", groupBy: "combo", sort: "smart" });
+    expect(key["view"]).toEqual({ mode: "rows", groupBy: ["combo"], sort: "smart" });
   });
 
   it("sorts list params so either order shares one cache entry", () => {
@@ -136,20 +136,56 @@ describe("graphCacheParams", () => {
 
 describe("resolveLayoutParams", () => {
   it("defaults to rows / combo / smart", () => {
-    expect(resolveLayoutParams({})).toEqual({ mode: "rows", groupBy: "combo", sort: "smart" });
+    expect(resolveLayoutParams({})).toEqual({ mode: "rows", groupBy: ["combo"], sort: "smart" });
   });
 
   it("whitelists known values and normalizes case", () => {
     expect(resolveLayoutParams({ layout: "grouped", groupBy: "project", sort: "aars" }))
-      .toEqual({ mode: "grouped", groupBy: "project", sort: "aars" });
+      .toEqual({ mode: "grouped", groupBy: ["project"], sort: "aars" });
     expect(resolveLayoutParams({ layout: "GROUPED", groupBy: "Severity", sort: "NAME" }))
-      .toEqual({ mode: "grouped", groupBy: "severity", sort: "name" });
+      .toEqual({ mode: "grouped", groupBy: ["severity"], sort: "name" });
     expect(resolveLayoutParams({ layout: "lanes", groupBy: "cloud", sort: "severity" }))
-      .toEqual({ mode: "lanes", groupBy: "cloud", sort: "severity" });
+      .toEqual({ mode: "lanes", groupBy: ["cloud"], sort: "severity" });
   });
 
   it("garbage falls back to defaults", () => {
     expect(resolveLayoutParams({ layout: "spiral", groupBy: 42, sort: null }))
-      .toEqual({ mode: "rows", groupBy: "combo", sort: "smart" });
+      .toEqual({ mode: "rows", groupBy: ["combo"], sort: "smart" });
+  });
+
+  // `groupBy` is a list so that nesting needed no second param and every link written
+  // before it existed still resolves to the one level it named.
+  it("reads two grouping levels, outermost first", () => {
+    expect(resolveLayoutParams({ groupBy: "cloud,kind" }).groupBy).toEqual(["cloud", "kind"]);
+    expect(resolveLayoutParams({ groupBy: " Cloud , KIND " }).groupBy).toEqual(["cloud", "kind"]);
+  });
+
+  it("keeps a one-value link meaning exactly what it meant", () => {
+    expect(resolveLayoutParams({ groupBy: "cloud" }).groupBy).toEqual(["cloud"]);
+  });
+
+  it("drops unknown levels rather than defaulting them", () => {
+    // A garbage SECOND level must not silently become "combo" and draw a nesting
+    // nobody asked for. An entirely unreadable value still falls back, as before.
+    expect(resolveLayoutParams({ groupBy: "cloud,spiral" }).groupBy).toEqual(["cloud"]);
+    expect(resolveLayoutParams({ groupBy: "spiral,cloud" }).groupBy).toEqual(["cloud"]);
+    expect(resolveLayoutParams({ groupBy: "spiral,nonsense" }).groupBy).toEqual(["combo"]);
+    expect(resolveLayoutParams({ groupBy: "" }).groupBy).toEqual(["combo"]);
+  });
+
+  it("caps at two, dedupes, and truncates after `asset`", () => {
+    expect(resolveLayoutParams({ groupBy: "cloud,kind,severity" }).groupBy)
+      .toEqual(["cloud", "kind"]);
+    expect(resolveLayoutParams({ groupBy: "cloud,cloud" }).groupBy).toEqual(["cloud"]);
+    // Hub-and-spoke is outermost-or-nothing: nothing inside it to subdivide, and no key
+    // of its own to be subdivided by (ownGroupKey answers GROUP_NONE), so as an inner
+    // level it would file every node under one "Ungrouped" box.
+    expect(resolveLayoutParams({ groupBy: "asset,cloud" }).groupBy).toEqual(["asset"]);
+    expect(resolveLayoutParams({ groupBy: "cloud,asset" }).groupBy).toEqual(["cloud"]);
+  });
+
+  it("gives the two orders different cache entries", () => {
+    expect(JSON.stringify(graphCacheParams({ groupBy: "cloud,kind" })))
+      .not.toBe(JSON.stringify(graphCacheParams({ groupBy: "kind,cloud" })));
   });
 });

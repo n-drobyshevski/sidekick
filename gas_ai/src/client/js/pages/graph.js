@@ -1,8 +1,15 @@
 // Security Graph — the centerpiece, as a full-page workbench. The server computes
 // a depth-limited projection + deterministic layout (lanes or grouped clusters);
-// this page owns the slim top bar (arrange, order, view toggle), the query builder,
-// and the SVG canvas with its accessible table fallback. All state is hash params,
-// so any view is shareable.
+// this page owns the slim top bar (order, view toggle), the query builder, and the SVG
+// canvas with its accessible table fallback. All state is hash params, so any view is
+// shareable.
+//
+// THE LAYOUT CONTROL IS CANVAS CHROME. Arrange was a select in the top bar that fused the
+// mode and the grouping dimension into one eight-way enum and split it back out with a
+// string slice — while being hidden in table view, i.e. already admitting it described the
+// canvas. It is a button on the canvas now, in the rail beside the zoom, and the mode and
+// the dimensions are the separate things they always were: three exclusive arrangements,
+// and (for groups) one or two dimensions to nest.
 //
 // THERE IS NO NODE SEARCH. A box that dimmed everything whose name did not contain a
 // substring was the query builder's question asked worse: `WHERE Name contains …` says
@@ -352,9 +359,45 @@ export async function renderGraphPage(main, params, _ctx) {
   const panel = el("div", {
     class: "gq-panel", id: "gq-panel", hidden: true, "aria-label": "Query editor",
   }, panelClose, barHost);
+  // ------------------------------------------------------------- layout, in the rail
+  // Arrange used to be a select up here, fusing the mode and the dimension into one
+  // eight-way enum and splitting it back out with a string slice. It is canvas chrome —
+  // already hidden in table view — so it moves onto the canvas, beside the zoom it
+  // belongs with, and the mode and the dimensions get to be the separate things they are.
+  const layoutBadge = el("span", { class: "graph-tool-badge", "aria-hidden": "true" });
+  const layoutBtn = el("button", {
+    class: "graph-tool", "aria-haspopup": "dialog",
+    onclick: () => openLayout(),
+  }, uiIcon("group", 15), layoutBadge);
+
+  /** How many grouping levels are in force — what the badge counts. */
+  function groupLevels() {
+    if (state.layout !== "grouped") return [];
+    return String(state.groupBy || "").split(",").map((s) => s.trim()).filter(Boolean);
+  }
+
+  function syncLayoutBtn() {
+    const levels = groupLevels();
+    // "" rather than "0", so `:empty` hides it — the recipe the filter badge uses.
+    layoutBadge.textContent = levels.length ? String(levels.length) : "";
+    const mode = state.layout === "grouped"
+      ? "grouped by " + levels.map((k) => GROUP_LABELS[k] || k).join(", then ")
+      : state.layout === "lanes" ? "columns" : "rows";
+    layoutBtn.setAttribute("aria-label", `Layout: ${mode}`);
+  }
+
+  // The canvas rail: the page's layout tool on top, the renderer's zoom controls below.
+  //
+  // It hangs off the split rather than the canvas because `renderGraph` clears its own
+  // container on every repaint — and the layout button opens a popover, which measures
+  // its anchor. Rebuilt mid-flight, the anchor detaches, the popover reads a zeroed rect
+  // and closes itself, so a live-apply control inside the canvas would dismiss on its own
+  // first use. Out here it simply persists, and the renderer refills its slot.
+  const railZoom = el("div", { class: "graph-rail-zoom" });
+  const rail = el("div", { class: "graph-rail" }, layoutBtn, railZoom);
   // `body` is the containing block for the canvas overlays, the table, the empty states and the
   // boot skeleton; the panel is positioned against the split so it can sit over all of them.
-  const split = el("div", { class: "workbench-split" }, panel, body);
+  const split = el("div", { class: "workbench-split" }, panel, rail, body);
   const root = el("div", { class: "workbench" }, bar, viewbar, chipsRow, split);
   main.append(root);
 
@@ -375,25 +418,6 @@ export async function renderGraphPage(main, params, _ctx) {
   let graphApi = null;
   /** Guards against a slow answer painting over a faster one that was asked for later. */
   let seq = 0;
-
-  // Arrange (layout mode) + Order (row sort).
-  const arrangeSel = el("select", { "aria-label": "Arrange nodes" },
-    el("option", { value: "" }, "Rows"),
-    el("option", { value: "lanes" }, "Columns"),
-    el("option", { value: "grouped:asset" }, "Group: asset (hub view)"),
-    el("option", { value: "grouped:combo" }, "Group: toxic combo"),
-    el("option", { value: "grouped:project" }, "Group: project"),
-    el("option", { value: "grouped:cloud" }, "Group: cloud"),
-    el("option", { value: "grouped:kind" }, "Group: node type"),
-    el("option", { value: "grouped:severity" }, "Group: severity"),
-  );
-  arrangeSel.addEventListener("change", () => {
-    // A new arrangement recomputes the whole picture — manual nudges reset.
-    const v = arrangeSel.value;
-    if (v === "") update({ layout: "", groupBy: "", pos: "" });           // Rows (default, horizontal)
-    else if (v === "lanes") update({ layout: "lanes", groupBy: "", pos: "" }); // Columns (vertical)
-    else update({ layout: "grouped", groupBy: v.slice(8), pos: "" });
-  });
 
   const orderSel = el("select", { "aria-label": "Order nodes" },
     el("option", { value: "" }, "Smart order"),
@@ -451,8 +475,7 @@ export async function renderGraphPage(main, params, _ctx) {
     viewToggle,
     controls,
   );
-  controls.append(countBox, selectField("Arrange", arrangeSel),
-    selectField("Order", orderSel), columnsBtn);
+  controls.append(countBox, selectField("Order", orderSel), columnsBtn);
 
   // ------------------------------------------------------------- header actions
   headActions.append(
@@ -549,14 +572,6 @@ export async function renderGraphPage(main, params, _ctx) {
     document.removeEventListener("keydown", onEscape, true);
   });
 
-  // The zoom capsule sits at the canvas's top-right, directly under the card. A variable rather
-  // than a fixed offset because the card grows a row at a time and re-wraps on resize.
-  const panelSize = new ResizeObserver(() => {
-    split.style.setProperty("--gq-panel-h", (editing ? panel.offsetHeight : 0) + "px");
-  });
-  panelSize.observe(panel);
-  onPageTeardown(() => panelSize.disconnect());
-
   // ------------------------------------------------------------ update cycle
   function update(patch) {
     const { params: current } = parseHash();
@@ -651,6 +666,9 @@ export async function renderGraphPage(main, params, _ctx) {
     // was a modal you had to escape *to*. With the panel docked and persistent, leaving
     // the canvas is the browser's job — Tab. Escape here does nothing.
     onEscape: () => {},
+    // The renderer fills its slot in the page's rail instead of building one inside the
+    // canvas it clears — see the comment on `rail` above for why that matters.
+    railZoomHost: railZoom,
   };
 
   /** Tear down the previous renderer before the canvas is cleared out from under it. */
@@ -968,6 +986,112 @@ export async function renderGraphPage(main, params, _ctx) {
    * states and the old panel could not express the first one — any click put columns in the URL
    * forever.
    */
+  /**
+   * The canvas's layout: which arrangement, and — when it is groups — by what.
+   *
+   * The three modes are presented as the exclusive choice the engine actually is. An
+   * earlier draft offered "Arrange: Rows|Columns" beside an independent "Group by",
+   * which reads well and is a lie: grouped is not rows-with-boxes, it is a third mode,
+   * and the Arrange value would have meant nothing while grouping was on.
+   *
+   * Level 2 offers what level 1 has not taken, minus `asset` — hub-and-spoke is an
+   * arrangement rather than a partition, with no key of its own to subdivide by, so it
+   * is outermost-or-nothing and the resolver drops it anywhere else.
+   */
+  function openLayout() {
+    const DIMS = ["asset", "combo", "project", "cloud", "kind", "severity"];
+    const levels = groupLevels();
+    let mode = state.layout || "";
+    let g1 = levels[0] || (state.groupBy ? String(state.groupBy).split(",")[0] : "combo");
+    let g2 = levels[1] || "";
+
+    // Every change goes straight to the URL — live-apply, no OK button, same as Columns.
+    // `pos` clears with it: a new arrangement recomputes the picture, so manual node
+    // nudges no longer describe anything.
+    const apply = () => {
+      if (mode !== "grouped") {
+        update({ layout: mode, groupBy: "", pos: "" });
+        return;
+      }
+      const list = g2 && g2 !== g1 && g1 !== "asset" && g2 !== "asset" ? [g1, g2] : [g1];
+      update({ layout: "grouped", groupBy: list.join(","), pos: "" });
+    };
+
+    // Built ONCE, then updated in place. A rebuild-on-every-change draft dismissed the
+    // popover on its own first use: `clear()` detached the `<select>` that had just been
+    // changed, and detaching the focused element fires `focusout`, which is one of the
+    // seven ways popoverDismiss closes. Same lesson `updateMeta` records a few hundred
+    // lines up — rewrite the half that moved, never the container.
+    const sel1 = el("select", { "aria-label": "Group by 1" });
+    const sel2 = el("select", { "aria-label": "Group by 2" });
+    const fill = (sel, skipAsset) => {
+      clear(sel);
+      if (skipAsset) sel.append(el("option", { value: "" }, "Select…"));
+      for (const k of DIMS) {
+        if (skipAsset && (k === "asset" || k === g1)) continue;
+        sel.append(el("option", { value: k }, GROUP_LABELS[k] || k));
+      }
+    };
+    const clear2 = el("button", {
+      class: "gq-iconbtn", "aria-label": "Clear Group by 2",
+      onclick: () => { g2 = ""; apply(); sync(); },
+    }, uiIcon("close", 12));
+    const row1 = el("div", { class: "graph-layout-row" },
+      el("span", { class: "graph-layout-label" }, "Group by 1"), sel1);
+    const row2 = el("div", { class: "graph-layout-row" },
+      el("span", { class: "graph-layout-label" }, "Group by 2"), sel2, clear2);
+    const note = el("p", { class: "graph-layout-note" },
+      "Asset grouping puts each agent at the centre of its own neighbours, so there is nothing inside a group to subdivide.");
+    const modes = segmented({
+      options: [
+        { value: "", label: "Rows" },
+        { value: "lanes", label: "Columns" },
+        { value: "grouped", label: "Groups" },
+      ],
+      value: mode,
+      ariaLabel: "Arrangement",
+      onChange: (v) => { mode = v; apply(); sync(); },
+    });
+    const body = el("div", { class: "graph-layout" }, modes, row1, row2, note);
+
+    let panel = null;
+    function sync() {
+      const grouping = mode === "grouped";
+      row1.hidden = !grouping;
+      // `asset` is outermost-or-nothing, so the second level is not offered under it —
+      // and the note says why rather than leaving a control mysteriously missing.
+      row2.hidden = !grouping || g1 === "asset";
+      note.hidden = !grouping || g1 !== "asset";
+      fill(sel1, false);
+      sel1.value = g1;
+      fill(sel2, true);
+      sel2.value = g2;
+      clear2.hidden = !g2;
+      if (panel) panel.reposition();
+    }
+    sel1.addEventListener("change", () => {
+      g1 = sel1.value || "combo";
+      if (g2 === g1 || g1 === "asset") g2 = "";
+      apply(); sync();
+    });
+    sel2.addEventListener("change", () => { g2 = sel2.value; apply(); sync(); });
+    sync();
+
+    panel = openPopover({
+      anchor: layoutBtn,
+      className: "graph-layout-pop",
+      ariaLabel: "Layout",
+      // The trigger sits at the bottom of the viewport, so there is never room below it.
+      // Left at the default this would try downward first and flip only on measurement.
+      position: { width: 300, minWidth: 260, maxHeight: 380, minHeight: 200, flipBelow: 10000 },
+      build: () => body,
+    });
+    // Focus goes INTO the panel: it is portaled to the end of <body>, so Tab from the
+    // trigger would walk the page behind it rather than its contents.
+    const first = panel.pop && panel.pop.querySelector("button, select");
+    if (first && panel.isOpen()) first.focus();
+  }
+
   function openColumns() {
     const groups = (lastData && lastData.groups) || [];
     if (!groups.length) return;
@@ -1149,11 +1273,13 @@ export async function renderGraphPage(main, params, _ctx) {
 
   function syncControls() {
     // Top bar.
-    arrangeSel.value = state.layout === "grouped" ? "grouped:" + (state.groupBy || "combo")
-      : state.layout === "lanes" ? "lanes"
-      : "";
     orderSel.value = state.sort;
-    // Arrange and Order lay nodes out on a canvas, which means nothing to a table of paths —
+    // The rail describes the canvas, so it leaves with it. It is a sibling of the canvas
+    // rather than a child (so a popover on it survives a repaint), which means nothing
+    // hides it for free — the table view has to say so.
+    rail.hidden = state.view === "table";
+    syncLayoutBtn();
+    // Order sequences nodes on a canvas, which means nothing to a table of paths —
     // hidden there rather than left sitting inert beside a control that does work.
     const graphOnly = state.view === "table" ? "none" : "";
     for (const f of controls.querySelectorAll(".select-field")) f.style.display = graphOnly;
@@ -1167,7 +1293,6 @@ export async function renderGraphPage(main, params, _ctx) {
     builder.sync();
     panel.hidden = !editing;
     editBtn.setAttribute("aria-expanded", editing ? "true" : "false");
-    split.style.setProperty("--gq-panel-h", (editing ? panel.offsetHeight : 0) + "px");
 
     // Chips + count badge. The badge counts what the USER applied — the AI-agent lens the
     // page seeds on a fresh visit is shown as a chip and clearable, but it is not a filter
@@ -1227,7 +1352,10 @@ export async function renderGraphPage(main, params, _ctx) {
 
 function buildLegend(boot, payload) {
   const grouped = payload.layout && payload.layout.mode === "grouped";
-  const groupBy = (payload.options && payload.options.groupBy) || "combo";
+  // The server echoes the dimensions it actually grouped by, outermost first — read from
+  // the answer rather than the request, so the legend names what was drawn.
+  const levels = [].concat((payload.options && payload.options.groupBy) || "combo")
+    .filter(Boolean);
 
   // Native <details> disclosure: standard, keyboard-accessible, and works with
   // no script. Collapsed shows only the toggle; the overlay is bottom-anchored
@@ -1245,9 +1373,16 @@ function buildLegend(boot, payload) {
       "dashed = missing guardrail"),
   );
   if (grouped) {
+    // One line per level: with two, "box" alone no longer says which box.
+    const name = (k) => GROUP_LABELS[k] || k;
     body.append(el("span", { class: "legend-item" },
       el("span", { class: "legend-swatch-group", "aria-hidden": "true" }),
-      `box = ${GROUP_LABELS[groupBy] || groupBy} group`));
+      levels.length > 1 ? `outer box = ${name(levels[0])} group` : `box = ${name(levels[0])} group`));
+    if (levels.length > 1) {
+      body.append(el("span", { class: "legend-item" },
+        el("span", { class: "legend-swatch-group is-sub", "aria-hidden": "true" }),
+        `inner box = ${name(levels[1])} group`));
+    }
   }
   // Node-category color key (color reinforces the kind icon + label).
   for (const cat of CATEGORY_ORDER) {

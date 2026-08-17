@@ -124,7 +124,7 @@ export interface LayoutNode {
 
 /** A cluster block in "grouped" mode — the client draws it as a labelled hull. */
 export interface LayoutGroup {
-  id: string;    // `${groupBy}:${key}`
+  id: string;    // `${by}:${key}`, or `${by1}:${key1}/${by2}:${key2}` for a sub-group
   key: string;   // raw key value, GROUP_NONE for the ungrouped bucket
   label: string; // display label (kind keys are formatted client-side)
   x: number;
@@ -132,6 +132,15 @@ export interface LayoutGroup {
   width: number;
   height: number;
   count: number;
+  /** Which dimension THIS rectangle partitions. The two levels can be different
+   *  dimensions, so the client cannot read one page-level `groupBy` to decide how to
+   *  format a label — it has to ask the box. */
+  by: GroupKey;
+  depth: 0 | 1;
+  /** Index of the enclosing group, on sub-groups only. Parents are always emitted
+   *  before their children, so this points backwards and the client can draw the
+   *  array in order and get correct paint layering for free. */
+  parent?: number;
 }
 
 export interface Layout {
@@ -149,7 +158,9 @@ export interface LayoutOptions {
   rowGap?: number;  // vertical distance between row centers (lanes mode)
   margin?: number;
   mode?: LayoutMode;
-  groupBy?: GroupKey;
+  /** One or two dimensions. Two nests the second inside the first. Empty means the
+   *  default single "combo" level. */
+  groupBy?: GroupKey[];
   sort?: SortKey;
 }
 
@@ -761,13 +772,95 @@ function round2(v: number): number {
 }
 
 /** A group block before placement: size + node centers relative to its
- *  top-left corner. Blocks are shelf-packed onto the canvas afterwards. */
+ *  top-left corner. Blocks are shelf-packed onto the canvas afterwards.
+ *
+ *  The shape composes, which is the whole trick behind nesting: a sub-block is just
+ *  another BlockSpec, so a parent is built by packing its children with the same
+ *  packer that puts parents on the canvas, then translating their cells up into the
+ *  parent's own coordinates. `subs` remembers where each child landed. */
 interface BlockSpec {
   key: string;
   label: string;
   width: number;
   height: number;
   cells: Array<{ id: string; x: number; y: number }>;
+  subs?: Array<{
+    key: string; label: string; count: number;
+    x: number; y: number; width: number; height: number;
+  }>;
+}
+
+/** Where one block landed on a shelf. */
+interface Placement { spec: BlockSpec; x: number; y: number }
+
+/**
+ * Greedy first-fit shelf pack, left to right, wrapping at `wrapW`.
+ *
+ * Lifted out of layoutGrouped so a parent block can arrange its children with the
+ * same algorithm that arranges parents on the canvas — one packer, two scales.
+ * Blocks keep their incoming (canonical) order; a shelf is as tall as its tallest
+ * member. `origin` is where the first shelf starts, which is the canvas margin at the
+ * top level and the header + padding inset inside a parent.
+ */
+function packBlocks(specs: BlockSpec[], wrapW: number, origin: number): {
+  at: Placement[]; width: number; height: number;
+} {
+  const at: Placement[] = [];
+  let shelfX = origin;
+  let shelfY = origin;
+  let shelfH = 0;
+  let maxX = 0;
+  for (const spec of specs) {
+    if (shelfX > origin && shelfX + spec.width > origin + wrapW) {
+      shelfY += shelfH + BLOCK_GAP_Y;
+      shelfX = origin;
+      shelfH = 0;
+    }
+    at.push({ spec, x: shelfX, y: shelfY });
+    shelfX += spec.width + BLOCK_GAP_X;
+    shelfH = Math.max(shelfH, spec.height);
+    maxX = Math.max(maxX, at[at.length - 1].x + spec.width);
+  }
+  return { at, width: maxX, height: shelfY + shelfH };
+}
+
+/** The wrap width that keeps a pack roughly screen-shaped rather than one tall column. */
+function shelfWidth(specs: BlockSpec[], floor: number): number {
+  const area = specs.reduce(
+    (acc, s) => acc + (s.width + BLOCK_GAP_X) * (s.height + BLOCK_GAP_Y),
+    0,
+  );
+  return Math.max(floor, Math.ceil(Math.sqrt(area * 1.8)));
+}
+
+/**
+ * A block whose interior is other blocks — the second grouping level.
+ *
+ * Its own header sits above the children's, so the sub-labels never collide with the
+ * parent's: the children are packed from `HEADER_H + GROUP_PAD` down, and each child
+ * carries its own HEADER_H from gridBlock.
+ */
+function nestBlock(key: string, label: string, children: BlockSpec[]): BlockSpec {
+  const inset = HEADER_H + GROUP_PAD;
+  // A smaller floor than the canvas uses: a parent that wrapped at 1600px would be
+  // wider than most screens before the outer pack even started.
+  const packed = packBlocks(children, shelfWidth(children, 900), inset);
+  const cells: BlockSpec["cells"] = [];
+  const subs: NonNullable<BlockSpec["subs"]> = [];
+  for (const place of packed.at) {
+    for (const c of place.spec.cells) {
+      cells.push({ id: c.id, x: place.x + c.x, y: place.y + c.y });
+    }
+    subs.push({
+      key: place.spec.key, label: place.spec.label, count: place.spec.cells.length,
+      x: place.x, y: place.y, width: place.spec.width, height: place.spec.height,
+    });
+  }
+  return {
+    key, label, cells, subs,
+    width: packed.width + GROUP_PAD,
+    height: packed.height + GROUP_PAD,
+  };
 }
 
 /** Compact row-major grid — the default block interior. */
@@ -869,14 +962,26 @@ function assignToHubs(
 
 function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
   const margin = opts.margin ?? 120;
-  const groupBy = opts.groupBy ?? "combo";
+  const levels = (opts.groupBy ?? []).length ? opts.groupBy! : (["combo"] as GroupKey[]);
+  const groupBy = levels[0];
+  // Three ways a second level is not one. "asset" is an ARRANGEMENT (hub-and-spoke BFS)
+  // rather than a partition by a property: there is nothing coherent to subdivide inside
+  // it, AND it has no key of its own to subdivide by — `ownGroupKey` answers GROUP_NONE
+  // for it, so as an inner level it would file everything under one "Ungrouped" box. And
+  // a dimension nested in itself yields one child identical to its parent, a box drawn
+  // twice. The resolver rejects all three — this guard makes the engine total, so a
+  // direct caller cannot produce a picture that lies.
+  const second = levels[1] ?? null;
+  const inner: GroupKey | null =
+    groupBy === "asset" || second === "asset" || second === groupBy ? null : second;
   const sort = opts.sort ?? "smart";
 
   const parentOf = parentIndex(p);
   const cmp = comparator(sort);
 
-  // Build one block spec per group. "asset" is hub-and-spoke; everything else
-  // buckets by key into grids, in canonical group order.
+  // Build one block spec per top-level group. "asset" is hub-and-spoke; everything else
+  // buckets by key into grids, in canonical group order — and when a second level is
+  // asked for, each bucket is re-bucketed and becomes a block of blocks.
   const specs: BlockSpec[] = [];
   if (groupBy === "asset") {
     const { hubOf, hubs } = assignToHubs(p, parentOf);
@@ -900,38 +1005,36 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
       members.get(key)!.push(node);
     }
     for (const key of orderGroups([...members.keys()], groupBy, members)) {
-      specs.push(gridBlock(key, groupLabel(key, groupBy), [...members.get(key)!].sort(cmp)));
+      const list = members.get(key)!;
+      const label = groupLabel(key, groupBy);
+      if (!inner) {
+        specs.push(gridBlock(key, label, [...list].sort(cmp)));
+        continue;
+      }
+      // Same bucketing and same canonical ordering, one level down. A node still lands
+      // in exactly one leaf — the partition stays hard, so counts still conserve.
+      const subs = new Map<string, GNode[]>();
+      for (const node of list) {
+        const k2 = groupKeyOf(node, inner, parentOf);
+        if (!subs.has(k2)) subs.set(k2, []);
+        subs.get(k2)!.push(node);
+      }
+      const children = orderGroups([...subs.keys()], inner, subs).map((k2) =>
+        gridBlock(k2, groupLabel(k2, inner), [...subs.get(k2)!].sort(cmp)));
+      specs.push(nestBlock(key, label, children));
     }
   }
 
   // Shelf-pack the blocks left-to-right. The wrap width adapts to the total
   // block area so the canvas stays roughly screen-shaped (16:9-ish) instead of
   // degenerating into one tall column when blocks are large (asset hubs).
-  const totalArea = specs.reduce(
-    (acc, s) => acc + (s.width + BLOCK_GAP_X) * (s.height + BLOCK_GAP_Y),
-    0,
-  );
-  const shelfW = Math.max(MAX_SHELF_W, Math.ceil(Math.sqrt(totalArea * 1.8)));
+  const packed = packBlocks(specs, shelfWidth(specs, MAX_SHELF_W), margin);
 
   const nodes: LayoutNode[] = [];
   const groups: LayoutGroup[] = [];
-  let shelfX = margin;
-  let shelfY = margin;
-  let shelfH = 0;
-  let maxX = 0;
 
-  specs.forEach((spec, groupIdx) => {
-    if (shelfX > margin && shelfX + spec.width > margin + shelfW) {
-      shelfY += shelfH + BLOCK_GAP_Y;
-      shelfX = margin;
-      shelfH = 0;
-    }
-    const gx = shelfX;
-    const gy = shelfY;
-    shelfX += spec.width + BLOCK_GAP_X;
-    shelfH = Math.max(shelfH, spec.height);
-    maxX = Math.max(maxX, gx + spec.width);
-
+  for (const { spec, x: gx, y: gy } of packed.at) {
+    const parentIdx = groups.length;
     groups.push({
       id: `${groupBy}:${spec.key}`,
       key: spec.key,
@@ -941,16 +1044,48 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
       width: spec.width,
       height: spec.height,
       count: spec.cells.length,
+      by: groupBy,
+      depth: 0,
     });
-    for (const c of spec.cells) {
-      nodes.push({ id: c.id, lane: groupIdx, x: gx + c.x, y: gy + c.y });
+    // Children right after their parent, so `parent` points backwards and a client
+    // drawing the array in order paints every hull behind the ones nested in it.
+    for (const sub of spec.subs ?? []) {
+      groups.push({
+        id: `${groupBy}:${spec.key}/${inner}:${sub.key}`,
+        key: sub.key,
+        label: sub.label,
+        x: gx + sub.x,
+        y: gy + sub.y,
+        width: sub.width,
+        height: sub.height,
+        count: sub.count,
+        by: inner!,
+        depth: 1,
+        parent: parentIdx,
+      });
     }
-  });
+    // `lane` is the group that IMMEDIATELY holds the node — the leaf. Arrow keys walk
+    // the innermost cluster, and `groups[n.lane]` stays the box that contains it.
+    for (const c of spec.cells) {
+      const px = gx + c.x;
+      const py = gy + c.y;
+      let lane = parentIdx;
+      for (let i = 0; i < (spec.subs?.length ?? 0); i++) {
+        const sub = spec.subs![i];
+        if (c.x >= sub.x && c.x <= sub.x + sub.width
+          && c.y >= sub.y && c.y <= sub.y + sub.height) {
+          lane = parentIdx + 1 + i;
+          break;
+        }
+      }
+      nodes.push({ id: c.id, lane, x: px, y: py });
+    }
+  }
 
   return {
     nodes,
-    width: maxX + margin,
-    height: shelfY + shelfH + margin,
+    width: packed.width + margin,
+    height: packed.height + margin,
     laneGap: CELL_W,
     rowGap: CELL_H,
     mode: "grouped",

@@ -6054,6 +6054,60 @@ var Server = (() => {
   function round2(v) {
     return Math.round(v * 100) / 100;
   }
+  function packBlocks(specs, wrapW, origin) {
+    const at = [];
+    let shelfX = origin;
+    let shelfY = origin;
+    let shelfH = 0;
+    let maxX = 0;
+    for (const spec of specs) {
+      if (shelfX > origin && shelfX + spec.width > origin + wrapW) {
+        shelfY += shelfH + BLOCK_GAP_Y;
+        shelfX = origin;
+        shelfH = 0;
+      }
+      at.push({ spec, x: shelfX, y: shelfY });
+      shelfX += spec.width + BLOCK_GAP_X;
+      shelfH = Math.max(shelfH, spec.height);
+      maxX = Math.max(maxX, at[at.length - 1].x + spec.width);
+    }
+    return { at, width: maxX, height: shelfY + shelfH };
+  }
+  function shelfWidth(specs, floor) {
+    const area = specs.reduce(
+      (acc, s) => acc + (s.width + BLOCK_GAP_X) * (s.height + BLOCK_GAP_Y),
+      0
+    );
+    return Math.max(floor, Math.ceil(Math.sqrt(area * 1.8)));
+  }
+  function nestBlock(key, label, children) {
+    const inset = HEADER_H + GROUP_PAD;
+    const packed = packBlocks(children, shelfWidth(children, 900), inset);
+    const cells = [];
+    const subs = [];
+    for (const place of packed.at) {
+      for (const c of place.spec.cells) {
+        cells.push({ id: c.id, x: place.x + c.x, y: place.y + c.y });
+      }
+      subs.push({
+        key: place.spec.key,
+        label: place.spec.label,
+        count: place.spec.cells.length,
+        x: place.x,
+        y: place.y,
+        width: place.spec.width,
+        height: place.spec.height
+      });
+    }
+    return {
+      key,
+      label,
+      cells,
+      subs,
+      width: packed.width + GROUP_PAD,
+      height: packed.height + GROUP_PAD
+    };
+  }
   function gridBlock(key, label, list2) {
     const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list2.length))));
     const rows = Math.ceil(list2.length / cols);
@@ -6135,10 +6189,13 @@ var Server = (() => {
     return { hubOf, hubs };
   }
   function layoutGrouped(p, opts) {
-    var _a5, _b, _c;
+    var _a5, _b, _c, _d, _e, _f, _g;
     const margin = (_a5 = opts.margin) != null ? _a5 : 120;
-    const groupBy2 = (_b = opts.groupBy) != null ? _b : "combo";
-    const sort = (_c = opts.sort) != null ? _c : "smart";
+    const levels = ((_b = opts.groupBy) != null ? _b : []).length ? opts.groupBy : ["combo"];
+    const groupBy2 = levels[0];
+    const second = (_c = levels[1]) != null ? _c : null;
+    const inner = groupBy2 === "asset" || second === "asset" || second === groupBy2 ? null : second;
+    const sort = (_d = opts.sort) != null ? _d : "smart";
     const parentOf = parentIndex(p);
     const cmp2 = comparator(sort);
     const specs = [];
@@ -6164,31 +6221,27 @@ var Server = (() => {
         members.get(key).push(node2);
       }
       for (const key of orderGroups([...members.keys()], groupBy2, members)) {
-        specs.push(gridBlock(key, groupLabel(key, groupBy2), [...members.get(key)].sort(cmp2)));
+        const list2 = members.get(key);
+        const label = groupLabel(key, groupBy2);
+        if (!inner) {
+          specs.push(gridBlock(key, label, [...list2].sort(cmp2)));
+          continue;
+        }
+        const subs = /* @__PURE__ */ new Map();
+        for (const node2 of list2) {
+          const k2 = groupKeyOf(node2, inner, parentOf);
+          if (!subs.has(k2)) subs.set(k2, []);
+          subs.get(k2).push(node2);
+        }
+        const children = orderGroups([...subs.keys()], inner, subs).map((k2) => gridBlock(k2, groupLabel(k2, inner), [...subs.get(k2)].sort(cmp2)));
+        specs.push(nestBlock(key, label, children));
       }
     }
-    const totalArea = specs.reduce(
-      (acc, s) => acc + (s.width + BLOCK_GAP_X) * (s.height + BLOCK_GAP_Y),
-      0
-    );
-    const shelfW = Math.max(MAX_SHELF_W, Math.ceil(Math.sqrt(totalArea * 1.8)));
+    const packed = packBlocks(specs, shelfWidth(specs, MAX_SHELF_W), margin);
     const nodes = [];
     const groups = [];
-    let shelfX = margin;
-    let shelfY = margin;
-    let shelfH = 0;
-    let maxX = 0;
-    specs.forEach((spec, groupIdx) => {
-      if (shelfX > margin && shelfX + spec.width > margin + shelfW) {
-        shelfY += shelfH + BLOCK_GAP_Y;
-        shelfX = margin;
-        shelfH = 0;
-      }
-      const gx = shelfX;
-      const gy = shelfY;
-      shelfX += spec.width + BLOCK_GAP_X;
-      shelfH = Math.max(shelfH, spec.height);
-      maxX = Math.max(maxX, gx + spec.width);
+    for (const { spec, x: gx, y: gy } of packed.at) {
+      const parentIdx = groups.length;
       groups.push({
         id: `${groupBy2}:${spec.key}`,
         key: spec.key,
@@ -6197,16 +6250,43 @@ var Server = (() => {
         y: gy,
         width: spec.width,
         height: spec.height,
-        count: spec.cells.length
+        count: spec.cells.length,
+        by: groupBy2,
+        depth: 0
       });
-      for (const c of spec.cells) {
-        nodes.push({ id: c.id, lane: groupIdx, x: gx + c.x, y: gy + c.y });
+      for (const sub of (_e = spec.subs) != null ? _e : []) {
+        groups.push({
+          id: `${groupBy2}:${spec.key}/${inner}:${sub.key}`,
+          key: sub.key,
+          label: sub.label,
+          x: gx + sub.x,
+          y: gy + sub.y,
+          width: sub.width,
+          height: sub.height,
+          count: sub.count,
+          by: inner,
+          depth: 1,
+          parent: parentIdx
+        });
       }
-    });
+      for (const c of spec.cells) {
+        const px = gx + c.x;
+        const py = gy + c.y;
+        let lane = parentIdx;
+        for (let i = 0; i < ((_g = (_f = spec.subs) == null ? void 0 : _f.length) != null ? _g : 0); i++) {
+          const sub = spec.subs[i];
+          if (c.x >= sub.x && c.x <= sub.x + sub.width && c.y >= sub.y && c.y <= sub.y + sub.height) {
+            lane = parentIdx + 1 + i;
+            break;
+          }
+        }
+        nodes.push({ id: c.id, lane, x: px, y: py });
+      }
+    }
     return {
       nodes,
-      width: maxX + margin,
-      height: shelfY + shelfH + margin,
+      width: packed.width + margin,
+      height: packed.height + margin,
       laneGap: CELL_W,
       rowGap: CELL_H,
       mode: "grouped",
@@ -6241,10 +6321,24 @@ var Server = (() => {
     const s = typeof v === "string" ? v.toLowerCase() : "";
     return allowed.includes(s) ? s : fallback;
   }
+  function pickList(v) {
+    const raw = typeof v === "string" ? v.split(",") : [];
+    const out = [];
+    for (const part of raw) {
+      const s = part.trim().toLowerCase();
+      if (!GROUP_KEYS.includes(s)) continue;
+      const key = s;
+      if (out.includes(key)) continue;
+      if (key === "asset" && out.length) continue;
+      out.push(key);
+      if (key === "asset" || out.length === 2) break;
+    }
+    return out.length ? out : ["combo"];
+  }
   function resolveLayoutParams(p) {
     return {
       mode: pick(p["layout"], LAYOUT_MODES, "rows"),
-      groupBy: pick(p["groupBy"], GROUP_KEYS, "combo"),
+      groupBy: pickList(p["groupBy"]),
       sort: pick(p["sort"], SORT_KEYS, "smart")
     };
   }
@@ -7789,7 +7883,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "3050b677ab7e" : "dev";
+  var BUILD_ID = true ? "fbb3bee6c631" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

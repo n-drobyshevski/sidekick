@@ -7,7 +7,7 @@
 // dot + label chip. Kind = icon + text label.
 
 import { kindLabel, svgEl } from "./icons.js";
-import { el } from "./ui.js";
+import { el, uiIcon } from "./ui.js";
 import { NODE_H, NODE_W, drawNodeCard, truncate } from "./graphNode.js";
 
 /**
@@ -35,17 +35,21 @@ export function renderGraph(container, data, handlers = {}) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const grouped = layout.mode === "grouped";
   const horizontal = layout.mode === "rows";
-  const groupBy = (data.options && data.options.groupBy) || "";
 
   const width = Math.max(layout.width, 640);
   const height = Math.max(layout.height, 360);
 
+  // Nesting is drawn as a box inside a box and announced nowhere else, so the one label
+  // that describes the canvas has to say it.
+  const nested = grouped && (layout.groups || []).some((g) => g.depth === 1);
   const svg = svgEl("svg", {
     role: "application",
     "aria-label":
-      (grouped
-        ? "Security graph, nodes clustered into labelled groups. "
-        : "Security graph. ") +
+      (nested
+        ? "Security graph, nodes clustered into labelled groups nested two levels deep. "
+        : grouped
+          ? "Security graph, nodes clustered into labelled groups. "
+          : "Security graph. ") +
       "Tab to enter, arrow keys move between connected nodes, " +
       "Shift plus arrow keys nudge the focused node, " +
       "Enter opens details, Escape leaves the graph.",
@@ -72,14 +76,23 @@ export function renderGraph(container, data, handlers = {}) {
   if (grouped && Array.isArray(layout.groups)) {
     const hullLayer = svgEl("g");
     world.append(hullLayer);
+    // Array order is paint order, and the layout emits every parent before the children
+    // nested in it — so an inner box lands on top of its parent's wash without either
+    // side sorting anything.
     for (const grp of layout.groups) {
+      const sub = grp.depth === 1;
       hullLayer.append(svgEl("rect", {
-        class: "ggroup-box",
-        x: grp.x, y: grp.y, width: grp.width, height: grp.height, rx: 14,
+        class: sub ? "ggroup-box is-sub" : "ggroup-box",
+        x: grp.x, y: grp.y, width: grp.width, height: grp.height, rx: sub ? 10 : 14,
       }));
-      const label = svgEl("text", { class: "ggroup-label", x: grp.x + 16, y: grp.y + 20 });
-      const name = groupBy === "kind" && grp.key !== "__none__" ? kindLabel(grp.key) : grp.label;
-      label.textContent = `${truncate(name, 26)} · ${grp.count}`;
+      const label = svgEl("text", {
+        class: sub ? "ggroup-label is-sub" : "ggroup-label",
+        x: grp.x + (sub ? 12 : 16), y: grp.y + (sub ? 17 : 20),
+      });
+      // Asked of the box, not of the page: the two levels can be different dimensions,
+      // so one page-level `groupBy` cannot say how to format both.
+      const name = grp.by === "kind" && grp.key !== "__none__" ? kindLabel(grp.key) : grp.label;
+      label.textContent = `${truncate(name, sub ? 18 : 26)} · ${grp.count}`;
       hullLayer.append(label);
     }
   }
@@ -477,19 +490,36 @@ export function renderGraph(container, data, handlers = {}) {
   // Make the first node tabbable so Tab enters the graph.
   if (focusedId) nodeEls.get(focusedId).setAttribute("tabindex", "0");
 
-  // Zoom toolbar (HTML overlay, focusable before the SVG): one capsule for the scale,
-  // Fit beside it as the separate thing it is. The percent is the on-screen scale, not the
-  // viewBox ratio — preserveAspectRatio letterboxes, so the two disagree whenever the
-  // container and the view have different aspects.
+  // Zoom rail (HTML overlay, focusable before the SVG): a column of round icon buttons at the
+  // canvas's bottom-left, with Fit set off below the scale as the separate thing it is. `+`
+  // above `−` is the way every map puts it, and the way the reference does.
+  //
+  // The scale keeps its `role="group"` because the readout's accessible name hangs off it (see
+  // paintZoom). It does NOT keep the `segmented` class: that recipe joins its children into one
+  // capsule with `overflow: hidden`, a shared radius and hairline dividers, and styles an
+  // `aria-pressed` state these buttons never set — none of which a rail of separate circles
+  // wants, and it is shared with five real `segmented()` controls that must not inherit the fix.
+  //
+  // The percent is the on-screen scale, not the viewBox ratio — preserveAspectRatio letterboxes,
+  // so the two disagree whenever the container and the view have different aspects.
   const zoomPct = el("span", { class: "graph-zoom-pct num" }, "100%");
-  const zoomGroup = el("div", { class: "segmented graph-zoom-scale", role: "group" },
-    el("button", { "aria-label": "Zoom out", onclick: () => zoom(1.3) }, "−"),
+  const zoomGroup = el("div", { class: "graph-zoom-scale", role: "group" },
+    el("button", {
+      "aria-label": "Zoom in", title: "Zoom in (+)", onclick: () => zoom(1 / 1.3),
+    }, uiIcon("plus", 15)),
     zoomPct,
-    el("button", { "aria-label": "Zoom in", onclick: () => zoom(1 / 1.3) }, "+"),
+    el("button", {
+      "aria-label": "Zoom out", title: "Zoom out (−)", onclick: () => zoom(1.3),
+    }, uiIcon("minus", 15)),
   );
   const zoomBar = el("div", { class: "graph-zoom" },
     zoomGroup,
-    el("button", { class: "graph-zoom-fit", onclick: fit, title: "Fit graph to view (0)" }, "Fit"),
+    // An explicit name, not just the title: the glyph is `aria-hidden`, so without this the
+    // button that used to be called "Fit" by its own text would have no accessible name at all.
+    el("button", {
+      class: "graph-zoom-fit", "aria-label": "Fit graph to view",
+      title: "Fit graph to view (0)", onclick: fit,
+    }, uiIcon("fit", 15)),
   );
 
   /**
@@ -507,7 +537,19 @@ export function renderGraph(container, data, handlers = {}) {
     zoomGroup.setAttribute("aria-label", `Zoom, ${pct} percent`);
   }
 
-  container.append(zoomBar, svg);
+  // The rail can be hosted OUTSIDE this container. It has to be, for anything on it that
+  // opens a popover: every layout change repaints the canvas, `container.textContent = ""`
+  // detaches the anchor, and an anchored popover measures a detached rect and dismisses
+  // itself — so a live-apply control in the rail would die on its own first click.
+  // Hosted: the page owns the rail and we refill our slot. Unhosted: as before, and the
+  // zoom buttons alone are safe either way because they open nothing.
+  if (handlers.railZoomHost) {
+    handlers.railZoomHost.textContent = "";
+    handlers.railZoomHost.append(zoomBar);
+    container.append(svg);
+  } else {
+    container.append(zoomBar, svg);
+  }
   fit();
 
   // The viewBox is fixed at first paint, so every later geometry change — window resize,
