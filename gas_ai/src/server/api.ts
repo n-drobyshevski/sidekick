@@ -406,13 +406,19 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
       if (!kind) return vocab;
       return {
         ...vocab,
-        // ANY has no value lists: they are keyed by kind, and "every kind at once" would be a
-        // picker offering the union of things that do not co-occur. Its fields still come.
-        valuesFor: kind === "ANY" ? {} : { [kind]: fieldValuesFor(doc, kind as NodeKind) },
+        // ANY gets them too, over every node in the graph. `fieldsForKind("ANY")` already keeps
+        // only the kind-agnostic fields, so the union is never one of things that cannot
+        // co-occur — it is "which clouds does this estate use", which is the question.
+        valuesFor: { [kind]: fieldValuesFor(doc, kind) },
         // What the palette's Properties tab lists, and the type that decides which control each
         // field gets. Per-kind for the same reason the value lists are.
         fieldsFor: {
-          [kind]: fieldsForKind(kind).map((f) => ({ key: f.key, label: f.label, type: f.type })),
+          // Picked field by field rather than spread, so a getter never rides over the wire.
+          // `multi` has to be here: it is what decides whether the filter editor offers "all of
+          // these", and the client cannot recover it from a rendered string.
+          [kind]: fieldsForKind(kind).map((f) => ({
+            key: f.key, label: f.label, type: f.type, ...(f.multi ? { multi: true } : {}),
+          })),
         },
       };
     }),

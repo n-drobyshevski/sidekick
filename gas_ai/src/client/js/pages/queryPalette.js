@@ -38,7 +38,7 @@ import { el, openPopover, openSheet, uiIcon } from "../ui.js";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, edgeLabel, kindIconSvg, kindLabel,
 } from "../icons.js";
-import { facetGroup } from "../filters.js";
+import { filterEditor } from "./filterEditor.js";
 import { findEntry } from "../helpContent.js";
 import { canNegate, serializeQuery, serializeStep } from "./graphQuery.js";
 
@@ -640,7 +640,7 @@ let _paletteSeq = 0;
  * cannot be edited.
  */
 export function openQueryPalette(spec) {
-  const { anchor, kind, vocab, row, onPick, title, loadFields, currentValues, currentId } = spec;
+  const { anchor, kind, vocab, row, onPick, title, loadFields, currentFilter, currentId } = spec;
   const mode = spec.mode || "add";
   const seq = ++_paletteSeq;
   const listId = "gq-palette-list-" + seq;
@@ -917,65 +917,41 @@ export function openQueryPalette(spec) {
     const holder = el("li", { role: "presentation", class: "gq-pal-drill-body" });
     listEl.append(holder);
 
-    if (drill.field.type === "text" || drill.field.type === "number") {
-      const input = el("input", {
-        type: "text", class: "gq-pal-text",
-        "aria-label": drill.field.label + (drill.field.type === "text" ? " contains" : " equals"),
-        placeholder: drill.field.type === "text" ? "contains…" : "exactly…",
-        value: (drill.selected[0] || ""),
-      });
-      input.addEventListener("keydown", (e) => {
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        e.stopPropagation();
-        const v = input.value.trim();
-        commitProperty(v ? [v] : []);
-      });
-      holder.append(input, el("p", { class: "gq-pal-hint small muted" },
-        drill.field.type === "text"
-          ? "Press Enter to add. Matched as a substring, case ignored."
-          : "Press Enter to add. Matched exactly."));
-      // Focus the value field, not the search box — this pane IS the question now.
-      setTimeout(() => input.focus(), 0);
-      paintDetail(drill.entry);
-      return;
-    }
-
-    const options = (drill.values || []).map((v) => ({
-      value: v.value,
-      label: v.value === "unknown" ? "Not reported" : v.value,
-      count: v.count,
-    }));
-    if (!options.length) {
-      holder.append(el("p", { class: "gq-pal-empty" },
-        "No values to choose from — this estate reports none, or there are too many to list."));
-      paintDetail(drill.entry);
-      return;
-    }
-    const group = facetGroup({
-      label: drill.field.label,
-      noun: "node",
-      onToggle: (value) => {
-        const at = drill.selected.indexOf(value);
-        const next = at === -1
-          ? drill.selected.concat([value])
-          : drill.selected.filter((v) => v !== value);
+    // The control itself lives in filterEditor.js, because the WHERE chip on a builder row opens
+    // the same question and the two must not drift. This pane is only its frame — which is the
+    // point of keeping it a drill-in rather than a second popover, per the note above.
+    const editor = filterEditor({
+      field: drill.field,
+      filter: { values: drill.selected, ...(drill.op || {}) },
+      values: drill.values,
+      onChange: (next) => {
+        drill.selected = next.values;
+        drill.op = { op: next.op, all: next.all, negate: next.negate };
         commitProperty(next);
       },
     });
-    group.update(options, drill.selected);
-    holder.append(group.root);
+    holder.append(editor.root);
+    // Focus the value control, not the search box — this pane IS the question now.
+    setTimeout(() => editor.focus(), 0);
     paintDetail(drill.entry);
   }
 
-  /** Write the field's values onto this node, and close — the same contract every pick has. */
-  function commitProperty(vals) {
+  /**
+   * Write the reading onto this node, and close — the same contract every pick has.
+   *
+   * It closes on the first committed change, which is what every other pick in this palette does.
+   * Reopening lands on the chip's own editor, where an operator and several values can be worked
+   * through without the panel disappearing between them.
+   */
+  function commitProperty(next) {
     if (host) host.close(true);
     onPick({
       type: "property",
       key: drill.field.key,
-      values: vals,
-      op: drill.field.type === "text" ? "contains" : "eq",
+      values: next.values,
+      op: next.op,
+      all: next.all,
+      negate: next.negate,
     });
   }
 
@@ -986,11 +962,16 @@ export function openQueryPalette(spec) {
     // than committing something nobody has chosen a value for yet.
     if (entry.pick && entry.pick.type === "field") {
       const forField = (values || []).find((v) => v.key === entry.field.key);
+      // Seeded from the filter already on this node, operator included, so reopening a field
+      // shows what it currently says rather than an empty control over a filter plainly on the
+      // row — and so changing one value cannot silently reset the reading to the default.
+      const held = (currentFilter && currentFilter(entry.field.key)) || null;
       drill = {
         field: entry.field,
         entry,
         values: forField ? forField.values : [],
-        selected: ((currentValues && currentValues(entry.field.key)) || []).slice(),
+        selected: ((held && held.values) || []).slice(),
+        op: held ? { op: held.op, all: held.all, negate: held.negate } : null,
       };
       paint();
       return;

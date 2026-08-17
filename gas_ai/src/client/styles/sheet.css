@@ -159,33 +159,7 @@ h3.sheet-section-title {
   margin: 0 0 6px; padding: 8px 0 5px;
   background: var(--page);
 }
-/* Filter panel body — the docked panel, or the modal sheet below 800px. Hairline-ruled
-   sections; every control applies immediately. */
-.filter-fields { display: flex; flex-direction: column; }
-.filter-fields select { width: 100%; }
-.filter-section { padding: 16px 0 4px; border-top: 1px solid var(--hairline); }
-.filter-section:first-child { border-top: none; padding-top: 4px; }
-.filter-section-head {
-  display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px;
-}
-/* The section title doubles as the jump target for a filter chip's label, so it is
-   programmatically focusable. Its ring is inset — a section heading has no border of its
-   own to sit outside of, and an outset ring would collide with the rule above it. */
-.filter-section-head .label { margin: 0; }
-.filter-section-focus:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
-.filter-section-count {
-  margin-left: 6px; font-variant-numeric: tabular-nums;
-  font-weight: 600; color: var(--accent-hover);
-}
-.filter-section-count:empty { display: none; }
-.filter-section-head .link { margin-left: auto; font-size: 12px; }
-.filter-section .field-hint { color: var(--text-3); }
-.depth-field { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-.filter-fields-footer {
-  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hairline);
-}
-
-/* Collapsible group inside the panel (the node-type categories). Shares the legend's
+/* Collapsible group inside a sheet. Shares the legend's
    chevron so the page has one disclosure, not two. */
 .disclosure > .disclosure-toggle {
   list-style: none; cursor: pointer; user-select: none;

@@ -1,17 +1,23 @@
 // Security Graph — the centerpiece, as a full-page workbench. The server computes
 // a depth-limited projection + deterministic layout (lanes or grouped clusters);
-// this page owns the slim top bar (search, arrange, order, filters, view toggle),
-// the applied-filter chips, the Filters panel, and the SVG canvas with its
-// accessible table fallback. All state is hash params, so any view is shareable.
+// this page owns the slim top bar (search, arrange, order, view toggle), the query
+// builder, and the SVG canvas with its accessible table fallback. All state is hash
+// params, so any view is shareable.
 //
-// Filter changes update in place — the top bar and panel are never rebuilt, so focus
-// stays put while the graph repaints live. That is also why the Filters panel docks
-// beside the canvas rather than covering it: these filters have no Apply button, so the
-// result of every toggle has to be visible as it happens. Below 800px, where there is no
-// room to dock, it falls back to the modal sheet.
+// THERE IS NO FILTERS PANEL. It offered severity, cloud and project — three of the
+// twenty-three fields the query knows — as a severity pill row and two SINGLE-value
+// selects, with no counts, always on the root node, and only ever as whole-value
+// equality. `rpcParams` then folded them onto node 0 as `where` filters, which is what
+// they always were. The builder's WHERE segment says the same thing with counts, several
+// values, every field, any node in the query, and is/is not/all/none — and once both
+// could write `severity` on node 0, the fold silently overwrote whatever the builder
+// said, so the bar displayed a filter that was not the one being applied.
+//
+// Changes update in place — the top bar is never rebuilt, so focus stays put while the
+// graph repaints live.
 
 import {
-  bootstrap, listJoin, listSplit, navigate, parseHash, setParams, swrCall,
+  bootstrap, navigate, parseHash, setParams, swrCall,
 } from "../store.js";
 import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { renderGraph } from "../graphView.js";
@@ -19,14 +25,14 @@ import { queryTable, DEFAULT_PAGE_SIZE } from "../queryTable.js";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindIconSvg, kindLabel,
 } from "../icons.js";
-import { appliedCount, filterEntries, isNarrowingSet, sectionOf } from "./graphChips.js";
+import { filterEntries } from "./graphChips.js";
 import {
   applyWhere, defaultQuery, migrateLegacyParams, parseQuery, parseWhere, queryRows,
   serializeQuery, serializeWhere,
 } from "./graphQuery.js";
 import { queryBar } from "./graphQueryBar.js";
 import {
-  clear, confirmDialog, debounce, el, emptyState, filterChipRow, helpTip, openPopover, openSheet,
+  clear, confirmDialog, debounce, el, emptyState, filterChipRow, helpTip, openPopover,
   segmented, selectField, sevBadge, skeleton, toast, togglePills, uiIcon,
 } from "../ui.js";
 
@@ -45,18 +51,8 @@ const GROUP_LABELS = {
 let legendOpen = false;
 
 // Params that change the server payload (vs. client-only view/q/panel).
-const DATA_KEYS = [
-  "find", "where", "maxNodes",
-  "severities", "projects", "clouds",
-  "layout", "groupBy", "sort", "columns",
-];
+const DATA_KEYS = ["find", "where", "maxNodes", "layout", "groupBy", "sort", "columns"];
 
-// The filter panel docks beside the canvas on desktop. Below this the canvas is already
-// capped at 70vh inside a scrolling page (see the <=800px block in styles.css), so there
-// is nothing to dock beside and the panel falls back to the modal sheet.
-const NARROW_VIEWPORT = "(max-width: 800px)";
-
-const FILTER_PANEL_ID = "graph-filter-panel";
 /** Table-only view state: repainted from the rows already fetched, never refetched. */
 const TABLE_KEYS = ["page", "pageSize", "sortCol", "dir"];
 const VIEWS_KEY = "sidekickai.graphQueries";
@@ -64,13 +60,9 @@ const VIEWS_KEY = "sidekickai.graphQueries";
 const COLS_KEY = "sidekickai.graphColumns";
 /** What a saved query remembers. The whole page state, minus transient panel/focus intent. */
 const VIEW_PARAMS = [
-  "find", "where", "columns", "view", "severities", "projects", "clouds",
+  "find", "where", "columns", "view",
   "layout", "groupBy", "sort", "sortCol", "dir", "pageSize", "maxNodes",
 ];
-
-function isNarrowViewport() {
-  return window.matchMedia(NARROW_VIEWPORT).matches;
-}
 
 function graphParams(params, defaults) {
   return {
@@ -82,9 +74,6 @@ function graphParams(params, defaults) {
     // writes the next step here, so a widened view is shareable like any other.
     maxNodes: Number(params.maxNodes) || defaults.maxNodes || 0,
     maxNodesRaw: params.maxNodes == null ? "" : String(params.maxNodes),
-    severities: params.severities || "",
-    projects: params.projects || "",
-    clouds: params.clouds || "",
     // Table view state. In the hash like everything else, so a configured table is a link.
     columns: params.columns || "",
     page: Math.max(1, Number(params.page) || 1),
@@ -135,26 +124,19 @@ function encodeOffsets(map) {
 /**
  * The hash, as the endpoint's parameters.
  *
- * The two halves of the question are separate in the URL — `find` is rewritten by the builder,
- * `where` by the filter panel, and neither should churn the other — and one object on the
+ * The two halves of the question are separate in the URL — `find` is the structure and `where`
+ * the per-node property filters, and neither should churn the other — and one object on the
  * wire, because the server validates and evaluates a single tree.
  *
- * The filter panel's three dimensions fold onto node 0: they narrow what was FOUND, which is
- * the node the panel has always been about.
+ * Nothing is folded in on the way past any more. The filter panel's three dimensions used to be
+ * merged onto node 0 here, from their own hash params, with an unconditional `set` that
+ * overwrote whatever the builder had put under the same key. `migrateLegacyParams` folds those
+ * params into `where` once, on entry, so by the time anything reaches here there is one copy of
+ * the question and it is the one on screen.
  */
 function rpcParams(p, columnDefaults) {
-  const where = parseWhere(p.where);
-  const put = (key, values) => {
-    if (!values.length) return;
-    if (!where.has(0)) where.set(0, new Map());
-    // The panel's three dimensions are whole-value multi-selects, always.
-    where.get(0).set(key, { values, op: "eq" });
-  };
-  put("severity", listSplit(p.severities));
-  put("cloud", listSplit(p.clouds));
-  put("projects", listSplit(p.projects));
   return {
-    query: applyWhere(queryOf(p), where),
+    query: applyWhere(queryOf(p), parseWhere(p.where)),
     columns: columnsFor(p, columnDefaults),
     // Raw hash value; "" = use the server-configured default. Keeping the RPC params free of
     // bootstrap-derived values lets the initial fetch run in parallel with bootstrap.
@@ -250,7 +232,8 @@ export async function renderGraphPage(main, params, _ctx) {
   const migrated = migrateLegacyParams(params);
   if (migrated) {
     params = { ...params, ...migrated };
-    for (const k of ["seed", "seedKind", "depth", "expand", "kinds"]) delete params[k];
+    for (const k of ["seed", "seedKind", "depth", "expand", "kinds",
+      "severities", "projects", "clouds"]) delete params[k];
     setParams(params);
   }
   // A fresh visit opens on the product's primary lens — the same AI-agent view it always did,
@@ -293,16 +276,17 @@ export async function renderGraphPage(main, params, _ctx) {
   const countBox = el("div", { class: "gq-count" }, countText, countNote);
   const viewbar = el("div", { class: "gq-viewbar" });
   const controls = el("div", { class: "gq-viewbar-end" });
-  // Two hit targets per chip: the label opens the panel at that filter's own section, only
-  // the ✕ clears. `emptyText` keeps the band's height when nothing is applied — it sits
-  // between the bar and the canvas, and showing/hiding it moved the whole picture the
-  // first time a filter was applied.
+  // What differs from the default VIEW, which since the Filters panel retired is the node
+  // budget and nothing else. No `emptyText`: the band used to hold a line reading "No filters
+  // applied" to keep its height, and with the property filters now written as chips in the
+  // builder directly above it, that line sat under a visible filter calling itself nothing.
+  // One rare chip is not worth a standing lie, so the band collapses when there is none.
   const chipsRow = filterChipRow({
     onPatch: (patch) => update(patch),
-    onEdit: (e) => openFilters(true, sectionOf(e)),
-    onClearAll: () => clearAllFilters(),
-    emptyText: "No filters applied",
-    fallbackFocus: null, // assigned below, once filterBtn exists
+    // Clears what this ROW shows, which since the Filters panel retired is the node budget
+    // alone. The property filters are chips in the builder, each with its own ✕.
+    onClearAll: () => update({ maxNodes: "", page: "" }),
+    fallbackFocus: null, // assigned below, once the Columns button exists
   });
   const body = el("div", { class: "workbench-body" });
   // The canvas and the filter panel are flex siblings inside the split, so an open panel
@@ -310,8 +294,7 @@ export async function renderGraphPage(main, params, _ctx) {
   // thing being filtered defeats the point. `body` stays the containing block, so the
   // overlays, the table, the empty states and the boot skeleton all follow it in for free.
   // The panel host is DOM-ordered after the canvas, matching its position on screen.
-  const panelHost = el("div", { class: "filter-panel-host" });
-  const split = el("div", { class: "workbench-split" }, body, panelHost);
+  const split = el("div", { class: "workbench-split" }, body);
   const barHost = el("div", {});
   const root = el("div", { class: "workbench" }, bar, barHost, viewbar, chipsRow, split);
   main.append(root);
@@ -334,8 +317,6 @@ export async function renderGraphPage(main, params, _ctx) {
   let matchIds = null;
   // The open panel, whichever way it is hosted: { close, docked }. Docked is the desktop
   // case (a flex sibling of the canvas); the modal sheet is the <=800px fallback.
-  let filtersHost = null;
-  let panelSync = null;
   let seq = 0;
 
   // Search (client-side highlight; graph view only).
@@ -383,14 +364,6 @@ export async function renderGraphPage(main, params, _ctx) {
   );
   orderSel.addEventListener("change", () => update({ sort: orderSel.value, pos: "" }));
 
-  // Filters panel trigger, with an applied-count badge (the number is the signal).
-  const filterCount = el("span", { class: "filter-count", "aria-hidden": "true" });
-  const filterBtn = el("button", {
-    "aria-expanded": "false",
-    "aria-controls": FILTER_PANEL_ID,
-    onclick: () => (filtersHost ? closeFilters() : openFilters(true)),
-  }, "Filters", filterCount);
-
   // Graph | Table as two always-visible segments rather than one button whose label named
   // the destination while aria-pressed named the origin — and whose width changed on every
   // toggle, shifting the whole right-aligned row. It moves onto its own labelled VIEW row,
@@ -416,7 +389,9 @@ export async function renderGraphPage(main, params, _ctx) {
   }, uiIcon("columns", 14), el("span", { style: "margin-left:6px" }, "Columns"));
 
   // The chip row is built above the trigger it falls back to, so the reference is set here.
-  chipsRow.fallbackFocus = filterBtn;
+  // Where focus lands when the last chip is cleared out from under it. The Filters button used
+  // to be the answer; the nearest surviving control on that row is Columns.
+  chipsRow.fallbackFocus = columnsBtn;
 
   // The builder owns the question; this row owns how the answer is read.
   viewbar.append(
@@ -425,7 +400,7 @@ export async function renderGraphPage(main, params, _ctx) {
     controls,
   );
   controls.append(searchField, selectField("Arrange", arrangeSel), selectField("Order", orderSel),
-    columnsBtn, filterBtn);
+    columnsBtn);
 
   // ------------------------------------------------------------- header actions
   headActions.append(
@@ -1076,8 +1051,16 @@ export async function renderGraphPage(main, params, _ctx) {
   }
 
   /** Is anything constraining the query — including the defaults the page seeded itself? */
+  /**
+   * Is anything narrowing the ANSWER, as opposed to shaping the question?
+   *
+   * It used to mean "the filter panel has something set". With the panel retired that is the
+   * `where` half of the query — the property filters written as chips in the builder. The node
+   * budget is deliberately not counted: raising or lowering it can only ever show more or less
+   * of a match set, never change what matches, which is the distinction graphChips draws.
+   */
   function isNarrowing() {
-    return isNarrowingSet(chipEntries());
+    return !!state.where;
   }
 
   function syncControls() {
@@ -1103,12 +1086,8 @@ export async function renderGraphPage(main, params, _ctx) {
     // page seeds on a fresh visit is shown as a chip and clearable, but it is not a filter
     // anyone chose, and counting it had the page opening with "2 filters applied".
     const entries = chipEntries();
-    const applied = appliedCount(entries);
-    filterCount.textContent = applied ? String(applied) : "";
-    filterBtn.setAttribute("aria-label", applied ? `Filters, ${applied} applied` : "Filters");
     chipsRow.sync(entries);
 
-    if (panelSync) panelSync();
   }
 
   /**
@@ -1116,9 +1095,9 @@ export async function renderGraphPage(main, params, _ctx) {
    * typed; wiping it from a control labelled "clear all filters" would throw away work that
    * the chip row never claimed to own.
    */
+  /** The empty state's way out: drop every property filter, and the budget with them. */
   function clearAllFilters() {
-    update({ maxNodes: "", severities: "", projects: "", clouds: "", page: "" });
-    filterBtn.focus();
+    update({ where: "", maxNodes: "", page: "" });
   }
 
   /** Everything within two hops of one asset — the old seed-and-depth view, as a query. */
@@ -1128,193 +1107,6 @@ export async function renderGraphPage(main, params, _ctx) {
       where: "0.id." + encodeURIComponent(id),
       columns: "", page: "", sortCol: "",
     });
-  }
-
-  // --------------------------------------------------------- filters panel
-  /**
-   * On desktop the panel is part of the workbench: a flex sibling of the canvas, no
-   * scrim, no focus trap, `role="region"` rather than `dialog`. That is the whole point —
-   * these filters apply live, and the modal sheet it replaces put a scrim over the exact
-   * graph the user was filtering. Below 800px the canvas is already capped at 70vh inside
-   * a scrolling page, so there is nothing to dock beside and the modal sheet is right.
-   *
-   * `section` optionally names the field group to put focus on (a chip's label opens the
-   * panel "at" its own filter). It is deliberately not a hash param: transient focus
-   * intent does not belong in a link someone else will open.
-   */
-  function openFilters(takeFocus, section) {
-    if (filtersHost) {
-      if (section) focusSection(section);
-      else if (takeFocus) focusPanelStart();
-      return;
-    }
-    update({ panel: "filters" });
-    const fc = buildFilterControls();
-    panelSync = fc.sync;
-    filtersHost = isNarrowViewport() ? openModalFilters(fc, takeFocus) : dockFilters(fc, takeFocus);
-    filterBtn.setAttribute("aria-expanded", "true");
-    if (section) focusSection(section);
-  }
-
-  function closeFilters() {
-    if (!filtersHost) return;
-    filtersHost.close();
-  }
-
-  // Set while the panel is being moved between hosts across the breakpoint, so the close
-  // half of the move doesn't clear `panel=filters` or yank focus back to the trigger.
-  let rehosting = false;
-
-  function afterClose(returnFocus) {
-    filtersHost = null;
-    panelSync = null;
-    if (rehosting) return;
-    filterBtn.setAttribute("aria-expanded", "false");
-    update({ panel: "" });
-    // Guarded: the panel outlives many repaints, so anything captured at open time may
-    // have been destroyed by now. The trigger is the honest place to come back to.
-    if (returnFocus && filterBtn.isConnected) filterBtn.focus();
-  }
-
-  function dockFilters(fc, takeFocus) {
-    const heading = el("h2", { class: "filter-panel-title", id: FILTER_PANEL_ID + "-title" }, "Filters");
-    const closeBtn = el("button", {
-      class: "sheet-close", "aria-label": "Close filters", onclick: () => closeFilters(),
-    }, "✕");
-    const panelBody = el("div", { class: "filter-panel-body" }, fc.root);
-    const panel = el("aside", {
-      class: "filter-panel", id: FILTER_PANEL_ID,
-      role: "region", "aria-labelledby": FILTER_PANEL_ID + "-title",
-    },
-      el("div", { class: "filter-panel-header" }, heading, closeBtn),
-      panelBody);
-
-    // Escape is scoped to the panel. A document-level handler (what openSheet uses, which
-    // is correct for a modal) would also fire for an Escape pressed on the canvas, closing
-    // the panel out from under someone who meant to leave the graph.
-    panel.addEventListener("keydown", (e) => {
-      if (e.key !== "Escape") return;
-      e.stopPropagation();
-      closeFilters();
-    });
-
-    panelHost.append(panel);
-    root.classList.add("panel-open");
-    if (takeFocus) focusPanelStart();
-    return {
-      docked: true,
-      focusStart: () => closeBtn.focus(),
-      close: () => {
-        panel.remove();
-        root.classList.remove("panel-open");
-        afterClose(true);
-      },
-    };
-  }
-
-  function openModalFilters(fc, takeFocus) {
-    let sheet = null;
-    sheet = openSheet((sheetBody) => sheetBody.append(fc.root), {
-      title: "Filters",
-      subtitle: "Changes apply immediately",
-      width: "min(400px, 92vw)",
-      autoFocus: !!takeFocus,
-      onClose: () => afterClose(false),
-    });
-    return { docked: false, focusStart: () => {}, close: () => sheet.close() };
-  }
-
-  function focusPanelStart() {
-    if (filtersHost) filtersHost.focusStart();
-  }
-
-  function focusSection(key) {
-    const target = (filtersHost && filtersHost.docked ? panelHost : document)
-      .querySelector(`[data-filter-section="${key}"] .filter-section-focus`);
-    if (target) target.focus();
-    else focusPanelStart();
-  }
-
-  // A viewport that crosses the breakpoint while the panel is open would leave a docked
-  // panel inside a page that no longer has room for it (or a modal sheet on a desktop that
-  // does). Re-host in the other mode, keeping the panel open. There is no page-teardown
-  // hook in the router — it just clears `main` — so the listener retires itself once the
-  // workbench it belongs to is off the document.
-  const narrowQuery = window.matchMedia(NARROW_VIEWPORT);
-  const onBreakpoint = () => {
-    if (!root.isConnected) {
-      narrowQuery.removeEventListener("change", onBreakpoint);
-      return;
-    }
-    const shouldDock = !isNarrowViewport();
-    if (!filtersHost || filtersHost.docked === shouldDock) return;
-    rehosting = true;
-    closeFilters();
-    rehosting = false;
-    openFilters(false);
-  };
-  if (narrowQuery.addEventListener) narrowQuery.addEventListener("change", onBreakpoint);
-
-  function buildFilterControls() {
-    const fields = el("div", { class: "filter-fields" });
-
-    // Severity chips.
-    const sevRow = togglePills({
-      options: (boot.palette?.order || []).filter((x) => x !== "UNKNOWN"),
-      selected: listSplit(state.severities),
-      ariaLabel: "Severity filter",
-      onToggle: (s) => {
-        const active = new Set(listSplit(state.severities));
-        if (active.has(s)) active.delete(s);
-        else active.add(s);
-        update({ severities: listJoin([...active]) });
-      },
-    });
-    const sevBtns = sevRow.buttons;
-
-    const opts = boot.filterOptions || { kinds: [], clouds: [], projects: [] };
-
-    // Project / cloud selects (single-value quick filters; "" = all).
-    const projSel = plainSelect("Project", opts.projects);
-    projSel.addEventListener("change", () => update({ projects: projSel.value }));
-    const cloudSel = plainSelect("Cloud", opts.clouds);
-    cloudSel.addEventListener("change", () => update({ clouds: cloudSel.value }));
-
-    const sevCount = el("span", { class: "filter-section-count" });
-    fields.append(
-      section("severity", "Severity", sevRow, null, sevCount),
-      section("projects", "Project", projSel),
-      section("clouds", "Cloud", cloudSel),
-      el("div", { class: "filter-fields-footer" },
-        el("button", { class: "link", onclick: () => clearAllFilters() }, "Clear all filters")),
-    );
-
-    // Reflect chip-clears and Clear-all while the panel stays open. Everything the panel
-    // shows about state is written here — nothing is left to build time, or it goes stale
-    // the moment a chip is cleared from the other side of the page.
-    function sync() {
-      const active = new Set(listSplit(state.severities));
-      for (const [s, btn] of sevBtns) {
-        btn.setAttribute("aria-pressed", active.has(s) ? "true" : "false");
-      }
-      sevCount.textContent = active.size ? String(active.size) : "";
-
-      projSel.value = state.projects;
-      cloudSel.value = state.clouds;
-    }
-    sync();
-
-    return { root: fields, sync };
-  }
-
-  function plainSelect(labelText, options, format) {
-    const sel = el("select", { "aria-label": labelText },
-      el("option", { value: "" }, `All ${labelText.toLowerCase()}s`),
-      ...options.map((o) => el("option", { value: o }, format ? format(o) : o)),
-    );
-    const current = { "Project": state.projects, "Cloud": state.clouds }[labelText];
-    if (current) sel.value = current;
-    return sel;
   }
 
   // ---------------------------------------------------------------- boot-up
@@ -1343,26 +1135,8 @@ export async function renderGraphPage(main, params, _ctx) {
 
   syncControls();
   await load();
-  if (params.panel === "filters") openFilters(false);
 }
 
-/**
- * One field group in the filter panel: a hairline-ruled section with an uppercase title
- * (DESIGN.md names sheet section titles as the label role), an optional count of what is
- * selected, an optional per-section action, and the controls.
- *
- * `key` is the anchor a filter chip's label jumps to, and `.filter-section-focus` marks
- * the element that takes focus when it does — the heading, which is made programmatically
- * focusable so the jump lands on the section's name rather than on its first control.
- */
-function section(key, labelText, control, action, count) {
-  return el("div", { class: "filter-section", "data-filter-section": key },
-    el("div", { class: "filter-section-head" },
-      el("h3", { class: "label filter-section-focus", tabindex: "-1" }, labelText, count || null),
-      action || null),
-    control,
-  );
-}
 
 function buildLegend(boot, payload) {
   const grouped = payload.layout && payload.layout.mode === "grouped";

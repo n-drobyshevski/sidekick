@@ -516,13 +516,14 @@ describe("OR subsumption", () => {
 describe("filter vocabulary", () => {
   it("gives every field a type, so the palette knows what control to draw", () => {
     for (const f of QUERY_FIELDS) {
-      expect(["text", "choice", "boolean", "number"]).toContain(f.type);
+      expect(["text", "choice", "boolean", "number", "pairs"]).toContain(f.type);
     }
     const typeOf = (key: string) => QUERY_FIELDS.find((f) => f.key === key)?.type;
     expect(typeOf("name")).toBe("text");
     expect(typeOf("cloud")).toBe("choice");
     expect(typeOf("inactive")).toBe("boolean");
     expect(typeOf("aars")).toBe("number");
+    expect(typeOf("tags")).toBe("pairs");
   });
 
   it("contains is a substring where eq is the whole value", () => {
@@ -544,6 +545,138 @@ describe("filter vocabulary", () => {
     expect(() => validateQuery({
       kind: "AI_AGENT", where: [{ key: "name", values: ["x"], op: "startsWith" }],
     })).toThrow(/unknown filter operator/);
+  });
+
+  // The two quantifier flags. What matters most here is the FIRST test: every filter written
+  // before these existed carries neither, and has to keep meaning exactly what it meant.
+  describe("all and negate", () => {
+    const run = (where: unknown[]) =>
+      runQuery(DOC, validateQuery({ kind: "AI_AGENT", where }));
+    const names = (r: ReturnType<typeof runQuery>) =>
+      r.rows.map((x) => x.cells[0]?.name).sort();
+
+    it("leaves an unflagged filter meaning what it always meant", () => {
+      const clouds = [...new Set(DOC.nodes.filter((n) => n.kind === "AI_AGENT")
+        .map((n) => n.cloudPlatform).filter(Boolean))] as string[];
+      expect(clouds.length).toBeGreaterThan(0);
+      // Values OR: the union of the single-value answers, exactly.
+      const both = run([{ key: "cloud", values: clouds }]);
+      const union = new Set(clouds.flatMap((c) => names(run([{ key: "cloud", values: [c] }]))));
+      expect(names(both)).toEqual([...union].sort());
+    });
+
+    it("negate keeps precisely the rows the same filter drops", () => {
+      const yes = run([{ key: "cloud", values: ["GCP"] }]);
+      const no = run([{ key: "cloud", values: ["GCP"], negate: true }]);
+      const all = run([]);
+      expect(yes.total + no.total).toBe(all.total);
+      expect([...names(yes), ...names(no)].sort()).toEqual(names(all));
+    });
+
+    it("negate keeps a node whose field is absent, rather than leaving it in neither half", () => {
+      // The tension named on PropFilter.negate: absent is its own answer for a tri-state
+      // column, but a node with no cloud at all genuinely is not GCP, and "is" plus "is not"
+      // have to partition the estate or something is silently in neither.
+      const noCloud = DOC.nodes.find((n) => n.kind === "AI_AGENT" && !n.cloudPlatform);
+      if (noCloud) {
+        expect(names(run([{ key: "cloud", values: ["GCP"], negate: true }])))
+          .toContain(noCloud.name);
+      }
+    });
+
+    it("all requires every value where the default requires one", () => {
+      // The getter renders projects by NAME and joins them, which is what a filter compares to.
+      const listed = DOC.nodes.find((n) => n.kind === "AI_AGENT"
+        && (n.projects ?? []).filter((p) => p.name).length > 1);
+      if (!listed) return;
+      const two = (listed.projects ?? []).map((p) => p.name).filter(Boolean).slice(0, 2);
+      const any = run([{ key: "projects", values: two }]);
+      const every = run([{ key: "projects", values: two, all: true }]);
+      expect(every.total).toBeLessThanOrEqual(any.total);
+      expect(names(every)).toContain(listed.name);
+      // A value the node cannot have makes `all` fail while `any` still holds.
+      const impossible = run([{ key: "projects", values: [two[0], "NO-SUCH-PROJECT"], all: true }]);
+      expect(names(impossible)).not.toContain(listed.name);
+      expect(names(run([{ key: "projects", values: [two[0], "NO-SUCH-PROJECT"] }])))
+        .toContain(listed.name);
+    });
+
+    it("composes the two into 'has none of these'", () => {
+      const listed = DOC.nodes.find((n) => n.kind === "AI_AGENT"
+        && (n.projects ?? []).some((p) => p.name));
+      if (!listed) return;
+      const mine = (listed.projects ?? []).map((p) => p.name).filter(Boolean)[0];
+      expect(names(run([{ key: "projects", values: [mine], negate: true }])))
+        .not.toContain(listed.name);
+    });
+
+    it("rejects a flag that is not a boolean", () => {
+      expect(() => validateQuery({
+        kind: "AI_AGENT", where: [{ key: "name", values: ["x"], all: "yes" }],
+      })).toThrow(/all must be a boolean/);
+      expect(() => validateQuery({
+        kind: "AI_AGENT", where: [{ key: "name", values: ["x"], negate: 1 }],
+      })).toThrow(/negate must be a boolean/);
+    });
+
+    it("carries the flags through validation instead of dropping them", () => {
+      // The validator rebuilds a filter key by key, so a flag has to be named in the guard AND
+      // in the assignment. One without the other is a silently different query.
+      expect(validateQuery({
+        kind: "AI_AGENT", where: [{ key: "cloud", values: ["GCP"], all: true, negate: true }],
+      }).where).toEqual([{ key: "cloud", values: ["GCP"], all: true, negate: true }]);
+    });
+  });
+
+  // Tags were synced and shown on the asset sheet long before they were askable. The sample
+  // estate now carries three tagged agents with DELIBERATELY OVERLAPPING sets, because that is
+  // the only shape that can tell the four readings apart:
+  //
+  //   Agent-A   env:prod     team:ml       owner:platform
+  //   Agent-B   env:prod     team:search
+  //   dev-agent-D  env:staging  team:ml
+  //
+  describe("tags", () => {
+    const hit = (values: string[], extra: object = {}) =>
+      runQuery(DOC, validateQuery({ kind: "AI_AGENT", where: [{ key: "tags", values, ...extra }] }))
+        .rows.map((r) => r.cells[0]?.name).sort();
+
+    it("has a tagged fixture at all, so the rest of this block is not vacuous", () => {
+      expect(DOC.nodes.filter((n) => (n.tags ?? []).length > 0).length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("matches a key and value together, and a bare key at any value", () => {
+      expect(hit(["env:prod"])).toEqual(["Agent-A", "Agent-B"]);
+      // The key alone asks "has this tag at all", which is the question a value list cannot pose.
+      expect(hit(["env"])).toEqual(["Agent-A", "Agent-B", "dev-agent-D"]);
+      // A value that only shares a prefix must not match — pairs are compared pair by pair,
+      // never as a substring of the rendered join, which is what `contains` would have done.
+      expect(hit(["env:prod-nope"])).toEqual([]);
+      expect(hit(["env:pro"])).toEqual([]);
+    });
+
+    it("tells the four readings apart on the same two terms", () => {
+      const terms = ["env:prod", "team:ml"];
+      expect(hit(terms)).toEqual(["Agent-A", "Agent-B", "dev-agent-D"]);   // any
+      expect(hit(terms, { all: true })).toEqual(["Agent-A"]);              // all
+      const none = hit(terms, { negate: true });                          // none
+      expect(none).not.toContain("Agent-A");
+      expect(none).not.toContain("Agent-B");
+      const notAll = hit(terms, { all: true, negate: true });              // not all
+      expect(notAll).not.toContain("Agent-A");
+      expect(notAll).toContain("Agent-B");
+    });
+
+    it("counts an untagged node as holding none of them", () => {
+      const bare = DOC.nodes.find((n) => n.kind === "AI_AGENT" && !(n.tags ?? []).length);
+      expect(bare).toBeDefined();
+      expect(hit(["env:prod"])).not.toContain(bare!.name);
+      expect(hit(["env:prod"], { negate: true })).toContain(bare!.name);
+    });
+
+    it("offers no value list, because a real estate has far too many", () => {
+      expect(fieldValuesFor(DOC, "AI_AGENT").map((f) => f.key)).not.toContain("tags");
+    });
   });
 
   it("reads internet reachability through the same predicate the canvas draws", () => {
@@ -767,5 +900,31 @@ describe("QUERY_SHORTCUTS", () => {
     expect(shortcutsFor("AI_AGENT", empty)).toEqual([]);
     // ANY is a wildcard root, not a kind — no shortcut is written against it.
     expect(shortcutsFor("ANY", VOCAB)).toEqual([]);
+  });
+});
+
+// A wildcard node used to get no value lists at all, which made every choice filter on it a
+// bare text box. `FIND ANY(…)` is a shape the app writes for itself when someone focuses an
+// asset, so that was the common case, not a corner.
+describe("value lists for a wildcard node", () => {
+  it("counts across the whole estate, not one kind", () => {
+    const any = fieldValuesFor(DOC, "ANY").find((v) => v.key === "cloud");
+    const agent = fieldValuesFor(DOC, "AI_AGENT").find((v) => v.key === "cloud");
+    expect(any).toBeDefined();
+    const total = (f?: { values: Array<{ count: number }> }) =>
+      (f?.values ?? []).reduce((n, v) => n + v.count, 0);
+    expect(total(any)).toBeGreaterThan(total(agent));
+  });
+
+  it("offers only fields a wildcard node actually has", () => {
+    // The worry that kept this empty was a picker "offering the union of things that do not
+    // co-occur". It cannot happen: `fieldsForKind("ANY")` drops every kind-specific spec first,
+    // and these two lists have to agree or the palette lists a field with no values.
+    const offered = new Set(fieldsForKind("ANY").map((f) => f.key));
+    for (const v of fieldValuesFor(DOC, "ANY")) expect(offered).toContain(v.key);
+    // `publisher` and `email` are kind-specific, so neither may appear.
+    const keys = fieldValuesFor(DOC, "ANY").map((v) => v.key);
+    expect(keys).not.toContain("identityPurpose");
+    expect(keys).not.toContain("guardrail");
   });
 });

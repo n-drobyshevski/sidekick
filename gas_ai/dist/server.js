@@ -6322,6 +6322,7 @@ var Server = (() => {
       key: "discoveredBy",
       label: "Discovered by",
       type: "choice",
+      multi: true,
       kinds: AI_ASSET_KINDS,
       get: (n) => {
         var _a5;
@@ -6355,6 +6356,24 @@ var Server = (() => {
     },
     { key: "cloud", label: "Cloud", type: "choice", get: (n) => orNull(n.cloudPlatform) },
     { key: "region", label: "Region", type: "choice", get: (n) => orNull(n.region) },
+    // The cloud tags, rendered `key: value` and joined like any other list cell so the table and
+    // the column chooser need to know nothing about them. They were synced and shown on the asset
+    // sheet long before this — `tags_json` round-trips through the ledger — but with no entry here
+    // you could read a tag and not ask about it, which is the gap this closes.
+    //
+    // `pairs` rather than `choice` because the value space is the estate's, not the schema's: a
+    // real tenant has thousands of distinct `key: value` strings, far past VALUE_CARDINALITY_MAX,
+    // so `fieldValuesFor` offers no list and the builder asks for a key and a value instead.
+    {
+      key: "tags",
+      label: "Tags",
+      type: "pairs",
+      multi: true,
+      get: (n) => {
+        var _a5;
+        return orNull(((_a5 = n.tags) != null ? _a5 : []).map((t) => t.value ? `${t.key}: ${t.value}` : t.key).join(", "));
+      }
+    },
     { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
     { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
     { key: "aars", label: "AARS", type: "number", numeric: true, get: (n) => {
@@ -6366,6 +6385,7 @@ var Server = (() => {
       key: "projects",
       label: "Projects",
       type: "choice",
+      multi: true,
       get: (n) => {
         var _a5;
         const names = ((_a5 = n.projects) != null ? _a5 : []).map((p) => p.name).filter(Boolean);
@@ -6397,6 +6417,7 @@ var Server = (() => {
       key: "comboGroup",
       label: "Toxic combination",
       type: "choice",
+      multi: true,
       get: (n) => {
         var _a5;
         const g = (_a5 = n.comboGroups) != null ? _a5 : [];
@@ -6499,8 +6520,18 @@ var Server = (() => {
         if (op !== void 0 && op !== "eq" && op !== "contains") {
           fail(`unknown filter operator: ${String(op)}`);
         }
+        const all = f["all"];
+        const negate = f["negate"];
+        if (all !== void 0 && typeof all !== "boolean") {
+          fail(`filter ${key}: all must be a boolean`);
+        }
+        if (negate !== void 0 && typeof negate !== "boolean") {
+          fail(`filter ${key}: negate must be a boolean`);
+        }
         const filter = { key, values: values.map((v) => String(v)) };
         if (op === "contains") filter.op = "contains";
+        if (all === true) filter.all = true;
+        if (negate === true) filter.negate = true;
         filters.push(filter);
       }
       if (filters.length) node2.where = filters;
@@ -6594,11 +6625,11 @@ var Server = (() => {
   }
   function fieldValuesFor(doc, kind) {
     var _a5;
-    const nodes = doc.nodes.filter((n) => n.kind === kind);
+    const nodes = kind === "ANY" ? doc.nodes : doc.nodes.filter((n) => n.kind === kind);
     const perField = [];
     for (const spec of QUERY_FIELDS) {
       if (spec.type !== "choice" && spec.type !== "boolean") continue;
-      if (spec.kinds && !spec.kinds.includes(kind)) continue;
+      if (spec.kinds && (kind === "ANY" || !spec.kinds.includes(kind))) continue;
       if (spec.key === "kind") continue;
       const counts = /* @__PURE__ */ new Map();
       let overflow = false;
@@ -6771,17 +6802,35 @@ var Server = (() => {
   }
   function matchesFilter(node2, f) {
     const v = fieldValue(node2, f.key);
-    if (v === null) {
-      return f.values.some((x) => x === "unknown" || x === "");
-    }
-    const s = String(v).toLowerCase();
-    if (f.op === "contains") {
-      return f.values.some((x) => s.indexOf(String(x).toLowerCase()) !== -1);
-    }
-    return f.values.some((x) => {
+    const hit = (x) => {
+      if (v === null) {
+        return x === "unknown" || x === "";
+      }
+      const s = String(v).toLowerCase();
       const want = String(x).toLowerCase();
+      if (f.op !== "contains" && fieldIsPairs(f.key)) return matchesTag(node2, want);
+      if (f.op === "contains") {
+        return s.indexOf(want) !== -1;
+      }
       if (want === s) return true;
       return s.split(", ").includes(want);
+    };
+    const held = f.all ? f.values.every(hit) : f.values.some(hit);
+    return f.negate ? !held : held;
+  }
+  function fieldIsPairs(key) {
+    var _a5;
+    return ((_a5 = FIELD_BY_KEY.get(key)) == null ? void 0 : _a5.type) === "pairs";
+  }
+  function matchesTag(node2, want) {
+    var _a5;
+    const at = want.indexOf(":");
+    const wantKey = (at === -1 ? want : want.slice(0, at)).trim();
+    const wantValue = at === -1 ? null : want.slice(at + 1).trim();
+    return ((_a5 = node2.tags) != null ? _a5 : []).some((t) => {
+      var _a6;
+      if (String(t.key).toLowerCase() !== wantKey) return false;
+      return wantValue === null || String((_a6 = t.value) != null ? _a6 : "").toLowerCase() === wantValue;
     });
   }
   function matchesNode(node2, q) {
@@ -7692,7 +7741,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "a5c38c0f2bbb" : "dev";
+  var BUILD_ID = true ? "f9d6f3e33902" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8028,6 +8077,10 @@ var Server = (() => {
       name: seed.name,
       nativeType: seed.nativeType,
       cloudPlatform: seed.cloud,
+      // The cloud tags. Only some seeds carry them, and the ones that do carry DIFFERENT sets —
+      // a dry run has to be able to tell "contains any" from "contains all", and it cannot if
+      // every node is tagged the same way or none is tagged at all.
+      tags: seed.tags,
       region: seed.region,
       status: (_a5 = seed.status) != null ? _a5 : "Active",
       firstSeen: T0,
@@ -8083,6 +8136,7 @@ var Server = (() => {
       id: "agent-a",
       name: "Agent-A",
       region: "europe-west1",
+      tags: [{ key: "env", value: "prod" }, { key: "team", value: "ml" }, { key: "owner", value: "platform" }],
       account: { id: "gcp-account-01", name: "gcp-account-01" },
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
@@ -8097,6 +8151,7 @@ var Server = (() => {
       id: "agent-b",
       name: "Agent-B",
       region: "us-west1",
+      tags: [{ key: "env", value: "prod" }, { key: "team", value: "search" }],
       account: { id: "gcp-account-01", name: "gcp-account-01" },
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
@@ -8128,6 +8183,7 @@ var Server = (() => {
       id: "agent-d",
       name: "dev-agent-D",
       region: "europe-west3",
+      tags: [{ key: "env", value: "staging" }, { key: "team", value: "ml" }],
       account: { id: "gcp-account-02", name: "gcp-account-02" },
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
@@ -11182,13 +11238,22 @@ var Server = (() => {
         if (!kind) return vocab;
         return {
           ...vocab,
-          // ANY has no value lists: they are keyed by kind, and "every kind at once" would be a
-          // picker offering the union of things that do not co-occur. Its fields still come.
-          valuesFor: kind === "ANY" ? {} : { [kind]: fieldValuesFor(doc, kind) },
+          // ANY gets them too, over every node in the graph. `fieldsForKind("ANY")` already keeps
+          // only the kind-agnostic fields, so the union is never one of things that cannot
+          // co-occur — it is "which clouds does this estate use", which is the question.
+          valuesFor: { [kind]: fieldValuesFor(doc, kind) },
           // What the palette's Properties tab lists, and the type that decides which control each
           // field gets. Per-kind for the same reason the value lists are.
           fieldsFor: {
-            [kind]: fieldsForKind(kind).map((f) => ({ key: f.key, label: f.label, type: f.type }))
+            // Picked field by field rather than spread, so a getter never rides over the wire.
+            // `multi` has to be here: it is what decides whether the filter editor offers "all of
+            // these", and the client cannot recover it from a rendered string.
+            [kind]: fieldsForKind(kind).map((f) => ({
+              key: f.key,
+              label: f.label,
+              type: f.type,
+              ...f.multi ? { multi: true } : {}
+            }))
           }
         };
       })

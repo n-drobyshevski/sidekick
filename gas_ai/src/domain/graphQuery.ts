@@ -35,10 +35,15 @@ export type QueryKind = NodeKind | "ANY";
 export type QueryEdge = EdgeType | "ANY";
 
 /**
- * One property constraint. Values OR together; separate filters AND. That is the same rule
- * the inventory's facets use (`assetTable.ts`), so a user who learned it there is not learning
- * it twice — except that page's `flags` dimension, which ANDs inside itself for a documented
- * reason that does not apply here.
+ * One property constraint. Separate filters AND; within one filter, the two flags below say how
+ * its values are quantified. Unflagged, values OR — which is what every filter written before
+ * these existed means, and what the inventory's facets mean on the page next door.
+ *
+ * TWO AXES, DELIBERATELY SEPARATE. `op` says how ONE value is compared to the field; `all` and
+ * `negate` say how the SET of values is quantified over. Keeping them apart is what lets the
+ * four readings a multi-valued field wants — contains any / all / none / not all — fall out of
+ * two booleans instead of an operator enum that would have to spell out every combination, and
+ * it keeps substring matching orthogonal to both.
  */
 export interface PropFilter {
   key: string;
@@ -49,6 +54,24 @@ export interface PropFilter {
    * filter on a name — "prod" should find "prod-agent-01", and until this existed it did not.
    */
   op?: "eq" | "contains";
+  /**
+   * EVERY value must match, not just one. Only meaningful where a node can hold several at once
+   * — a joined list like `projects`, or the key/value `pairs` of `tags`. A single-valued field
+   * can never satisfy two different values, so the builder does not offer this there.
+   */
+  all?: boolean;
+  /**
+   * The match is asserted ABSENT: the filter keeps exactly the nodes it would otherwise drop.
+   *
+   * Applied as a plain inversion of the whole test, INCLUDING the unknown-field case — so a node
+   * with no cloud at all does match "cloud is not GCP". That is the reading a negation carries
+   * everywhere else, and the one that makes "is" and "is not" partition the estate between them
+   * rather than leaving a silent third group in neither. It is knowingly in tension with the
+   * tri-state rule the boolean fields follow, where absent is its own answer; the difference is
+   * that there you ASK for `unknown` by name, and here you would be excluded by it without
+   * anything on screen saying so.
+   */
+  negate?: boolean;
 }
 
 export interface QueryNode {
@@ -144,7 +167,7 @@ export type FieldValue = string | number | boolean | null;
  * draws it: free text takes an input and a substring match, a choice takes a value list with
  * counts, a yes/no takes three states because absent is its own answer.
  */
-export type FieldType = "text" | "choice" | "boolean" | "number";
+export type FieldType = "text" | "choice" | "boolean" | "number" | "pairs";
 
 export interface FieldSpec {
   key: string;
@@ -152,6 +175,16 @@ export interface FieldSpec {
   type: FieldType;
   /** Kinds that offer this field. Absent = every kind. */
   kinds?: readonly NodeKind[];
+  /**
+   * A node can hold SEVERAL of these at once — the getter joins them with ", ".
+   *
+   * Declared rather than inferred, because the client needs it and can only see the rendered
+   * string: `"GCP"` and `"CE-DPCP"` look identical from there, and guessing from whether a comma
+   * happens to appear would make a filter's operator list depend on which tenant is loaded. It
+   * is what decides whether "all of these" is offered at all — a node has one cloud, so asking
+   * for two would be asking for nothing.
+   */
+  multi?: boolean;
   /** Right-align in the table — numbers only. */
   numeric?: boolean;
   get(n: GNode): FieldValue;
@@ -187,7 +220,7 @@ export const QUERY_FIELDS: readonly FieldSpec[] = [
     get: (n) => orNull(n.publisher),
   },
   {
-    key: "discoveredBy", label: "Discovered by", type: "choice", kinds: AI_ASSET_KINDS,
+    key: "discoveredBy", label: "Discovered by", type: "choice", multi: true, kinds: AI_ASSET_KINDS,
     get: (n) => {
       const m = n.discoveryMethods ?? [];
       return m.length ? m.map(humanDiscoveryMethod).join(", ") : null;
@@ -210,12 +243,29 @@ export const QUERY_FIELDS: readonly FieldSpec[] = [
   },
   { key: "cloud", label: "Cloud", type: "choice", get: (n) => orNull(n.cloudPlatform) },
   { key: "region", label: "Region", type: "choice", get: (n) => orNull(n.region) },
+  // The cloud tags, rendered `key: value` and joined like any other list cell so the table and
+  // the column chooser need to know nothing about them. They were synced and shown on the asset
+  // sheet long before this — `tags_json` round-trips through the ledger — but with no entry here
+  // you could read a tag and not ask about it, which is the gap this closes.
+  //
+  // `pairs` rather than `choice` because the value space is the estate's, not the schema's: a
+  // real tenant has thousands of distinct `key: value` strings, far past VALUE_CARDINALITY_MAX,
+  // so `fieldValuesFor` offers no list and the builder asks for a key and a value instead.
+  {
+    key: "tags",
+    label: "Tags",
+    type: "pairs",
+    multi: true,
+    get: (n) => orNull((n.tags ?? [])
+      .map((t) => (t.value ? `${t.key}: ${t.value}` : t.key))
+      .join(", ")),
+  },
   { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
   { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
   { key: "aars", label: "AARS", type: "number", numeric: true, get: (n) => (n.aars ?? null) },
   { key: "aarsSeverity", label: "AARS level", type: "choice", get: (n) => orNull(n.aarsSeverity) },
   {
-    key: "projects", label: "Projects", type: "choice",
+    key: "projects", label: "Projects", type: "choice", multi: true,
     get: (n) => {
       const names = (n.projects ?? []).map((p) => p.name).filter(Boolean);
       return names.length ? names.join(", ") : null;
@@ -236,7 +286,7 @@ export const QUERY_FIELDS: readonly FieldSpec[] = [
     // The combination patterns BY NAME, where `combos` only ever counted them. "Show me the
     // members of the privileged managed-agent pattern" is the question the register is built
     // around, and a count cannot answer it.
-    key: "comboGroup", label: "Toxic combination", type: "choice",
+    key: "comboGroup", label: "Toxic combination", type: "choice", multi: true,
     get: (n) => {
       const g = n.comboGroups ?? [];
       return g.length ? g.join(", ") : null;
@@ -359,8 +409,22 @@ function readNode(raw: unknown, depth: number, counter: { nodes: number }): Quer
       if (op !== undefined && op !== "eq" && op !== "contains") {
         fail(`unknown filter operator: ${String(op)}`);
       }
+      const all = (f as Rec)["all"];
+      const negate = (f as Rec)["negate"];
+      if (all !== undefined && typeof all !== "boolean") {
+        fail(`filter ${key}: all must be a boolean`);
+      }
+      if (negate !== undefined && typeof negate !== "boolean") {
+        fail(`filter ${key}: negate must be a boolean`);
+      }
+      // Rebuilt key by key, so anything not named here is DROPPED rather than carried — which is
+      // the point of a validator at a trust boundary, and the reason every flag has to be written
+      // TWICE: once in a guard above and once in an assignment here. One accepted by the guard
+      // and forgotten here is not an error anyone sees; it is a quietly different query.
       const filter: PropFilter = { key, values: values.map((v) => String(v)) };
       if (op === "contains") filter.op = "contains";
+      if (all === true) filter.all = true;
+      if (negate === true) filter.negate = true;
       filters.push(filter);
     }
     if (filters.length) node.where = filters;
@@ -478,7 +542,7 @@ export interface Vocabulary {
    * The fields a kind can be filtered on, with the type that decides which control to draw.
    * Filled for ONE kind at a time, beside `valuesFor` and for the same reason.
    */
-  fieldsFor: Record<string, Array<{ key: string; label: string; type: FieldType }>>;
+  fieldsFor: Record<string, Array<{ key: string; label: string; type: FieldType; multi?: boolean }>>;
 }
 
 /**
@@ -550,13 +614,24 @@ export function queryVocabulary(doc: GraphDoc): Vocabulary {
  * to both, because "how many assets are in PROJECT-ALPHA" is the question the number answers.
  * A `null` becomes the literal "unknown" bucket, which `matchesFilter` already accepts as a
  * filter value — "Wiz never told us" is a real answer and has to be selectable.
+ *
+ * ANY IS A REAL KIND HERE, over every node in the graph. The worry that stopped it before was a
+ * picker "offering the union of things that do not co-occur" — but that cannot happen, because
+ * `fieldsForKind("ANY")` already drops every spec carrying a `kinds` list. What survives is the
+ * kind-agnostic set: cloud, region, status, severity, the AARS level, projects, tags. Every node
+ * answers those, so their union is exactly the question "which clouds does this estate use".
+ * Without this a wildcard node got no lists at all, and `FIND ANY(…)` is a shape the app writes
+ * for itself whenever someone focuses an asset from the inventory.
  */
-export function fieldValuesFor(doc: GraphDoc, kind: NodeKind): FieldValues[] {
-  const nodes = doc.nodes.filter((n) => n.kind === kind);
+export function fieldValuesFor(doc: GraphDoc, kind: QueryKind): FieldValues[] {
+  const nodes = kind === "ANY" ? doc.nodes : doc.nodes.filter((n) => n.kind === kind);
   const perField: FieldValues[] = [];
   for (const spec of QUERY_FIELDS) {
     if (spec.type !== "choice" && spec.type !== "boolean") continue;
-    if (spec.kinds && !spec.kinds.includes(kind)) continue;
+    // A kind-specific field on a wildcard node is not offered at all — the same rule
+    // `fieldsForKind` applies, so the values and the field list cannot disagree about what
+    // exists.
+    if (spec.kinds && (kind === "ANY" || !spec.kinds.includes(kind))) continue;
     // `kind` is a no-op here: this list is keyed BY kind, so it could only ever offer the one
     // value, filtering a thing by what it already is. A node asking for ANY kind gets its
     // options from `vocab.kinds`, which carries every kind with a count already.
@@ -921,26 +996,60 @@ function fieldValue(node: GNode, key: string): FieldValue {
   return spec ? spec.get(node) : null;
 }
 
-/** Case-insensitive, because a filter typed as "gcp" must find `GCP`. */
+/**
+ * Case-insensitive, because a filter typed as "gcp" must find `GCP`.
+ *
+ * ONE PER-VALUE TEST, QUANTIFIED ONCE. The comparison lives in `hit` and the quantifier sits
+ * outside it, so `all` and `negate` apply identically to every field type instead of each branch
+ * having to remember them. The unflagged path is `some` — exactly what this function did before
+ * the flags existed, which is what keeps every stored link meaning what it meant.
+ */
 function matchesFilter(node: GNode, f: PropFilter): boolean {
   const v = fieldValue(node, f.key);
-  if (v === null) {
-    // "unknown" is a value a user can legitimately filter FOR — it is the whole point of the
-    // three-state columns. Anything else does not match an absent field.
-    return f.values.some((x) => x === "unknown" || x === "");
-  }
-  const s = String(v).toLowerCase();
-  if (f.op === "contains") {
-    // Substring, over the whole rendered value. A multi-value cell is already joined, so
-    // "portal" finds a project list containing CE-DPCP-PORTAL without needing the split below.
-    return f.values.some((x) => s.indexOf(String(x).toLowerCase()) !== -1);
-  }
-  return f.values.some((x) => {
+  const hit = (x: string): boolean => {
+    if (v === null) {
+      // "unknown" is a value a user can legitimately filter FOR — it is the whole point of the
+      // three-state columns. Anything else does not match an absent field. This sits INSIDE the
+      // per-value test now: it used to return early, above the operator branch, which made it
+      // the one path a flag could not reach.
+      return x === "unknown" || x === "";
+    }
+    const s = String(v).toLowerCase();
     const want = String(x).toLowerCase();
+    // A key/value field is compared pair by pair rather than over its rendered join, so
+    // `env:prod` cannot match an `env:production` by prefix and a bare `env` matches whatever
+    // that key holds. Substring matching is left to `contains`, where it is asked for.
+    if (f.op !== "contains" && fieldIsPairs(f.key)) return matchesTag(node, want);
+    if (f.op === "contains") {
+      // Substring, over the whole rendered value. A multi-value cell is already joined, so
+      // "portal" finds a project list containing CE-DPCP-PORTAL without needing the split below.
+      return s.indexOf(want) !== -1;
+    }
     if (want === s) return true;
     // Multi-valued cells (projects, discovery methods) are joined with ", " by their getter,
     // so an exact compare would never match one project inside a list of three.
     return s.split(", ").includes(want);
+  };
+  const held = f.all ? f.values.every(hit) : f.values.some(hit);
+  return f.negate ? !held : held;
+}
+
+/** Whether a field is a key/value list — see the `pairs` type. */
+function fieldIsPairs(key: string): boolean {
+  return FIELD_BY_KEY.get(key)?.type === "pairs";
+}
+
+/**
+ * One tag term against a node's tags. `key:value` wants both; a bare `key` wants the key at any
+ * value, which is how "has an owner tag at all" gets asked.
+ */
+function matchesTag(node: GNode, want: string): boolean {
+  const at = want.indexOf(":");
+  const wantKey = (at === -1 ? want : want.slice(0, at)).trim();
+  const wantValue = at === -1 ? null : want.slice(at + 1).trim();
+  return (node.tags ?? []).some((t) => {
+    if (String(t.key).toLowerCase() !== wantKey) return false;
+    return wantValue === null || String(t.value ?? "").toLowerCase() === wantValue;
   });
 }
 

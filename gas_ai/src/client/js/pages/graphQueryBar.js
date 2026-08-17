@@ -30,7 +30,8 @@
 // for the whole tree with a roving tabindex, arrows to move between rows, Enter to open the
 // focused row's entity picker, Delete to remove a row.
 
-import { el, uiIcon } from "../ui.js";
+import { el, openPopover, uiIcon } from "../ui.js";
+import { describeFilter, filterEditor, operatorOf, valuesText } from "./filterEditor.js";
 import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "../icons.js";
 import {
   MAX_DEPTH,
@@ -154,12 +155,12 @@ export function queryBar(opts) {
       row,
       currentId: currentEntryId(mode, row),
       loadFields: opts.loadFields,
-      // What this node is already filtered on, so reopening a field shows its values pressed
-      // rather than presenting an empty picker over a filter that is plainly on the row.
-      currentValues: (key) => {
+      // The whole reading this node already holds for a field — values AND operator — so
+      // reopening one shows what it says rather than an empty control over a filter plainly on
+      // the row, and changing a value cannot quietly reset "is not" back to "is".
+      currentFilter: (key) => {
         const forNode = currentWhere().get(row.index);
-        const filter = forNode && forNode.get(key);
-        return (filter && filter.values) || [];
+        return (forNode && forNode.get(key)) || null;
       },
       onPick: (pick) => {
         if (pick.type === "kind") {
@@ -191,7 +192,7 @@ export function queryBar(opts) {
           const where = currentWhere();
           const next = new Map(where);
           const forNode = new Map(next.get(row.index) || []);
-          if (pick.values.length) forNode.set(pick.key, { values: pick.values, op: pick.op || "eq" });
+          if (pick.values.length) forNode.set(pick.key, filterOf(pick));
           else forNode.delete(pick.key);
           if (forNode.size) next.set(row.index, forNode);
           else next.delete(row.index);
@@ -239,6 +240,18 @@ export function queryBar(opts) {
     });
   }
 
+  /**
+   * A filter as the `where` map holds it. Flags are written only when true, the way `op` omits
+   * its default — so a plain filter stays the plain object it has always been, and a flag present
+   * anywhere in this map is always doing something.
+   */
+  function filterOf(src) {
+    const out = { values: src.values, op: src.op || "eq" };
+    if (src.all) out.all = true;
+    if (src.negate) out.negate = true;
+    return out;
+  }
+
   /** Drop one property filter from a node, leaving the rest of its filters alone. */
   function removeFilter(query, row, key) {
     const where = currentWhere();
@@ -267,20 +280,37 @@ export function queryBar(opts) {
   function filterChips(query, row) {
     const forNode = currentWhere().get(row.index);
     if (!forNode || !forNode.size) return null;
-    const wrap = el("span", { class: "gq-chips" });
+    // Only for a kind that actually carries a filter — the vocabulary is fetched per kind, and
+    // a row with nothing on it has no question to describe.
+    ensureFields(row.kind);
+    // WHERE, in the same label role FIND and THAT wear. A filter narrows which nodes bind at this
+    // step, so it is part of the QUESTION — the chips used to trail the row as though they were
+    // something applied to the answer afterwards.
+    const wrap = el("span", { class: "gq-chips" }, el("span", { class: "gq-kw" }, "Where"));
     for (const key of [...forNode.keys()].sort()) {
       const filter = forNode.get(key) || { values: [] };
-      const label = fieldLabel(row.kind, key);
-      // "contains" is stated, not implied: the same chip text under two different readings
-      // would be the query answering a question the row does not admit to asking.
-      const text = (filter.op === "contains" ? "contains " : "") + filter.values.join(", ");
+      const field = fieldSpec(row.kind, key);
+      // The chip must read the operator the EDITOR will show. Over the cardinality cap a choice
+      // field has no list, and the menu it gets there is a different one — without this the chip
+      // and its own editor would name the same filter differently.
+      const listed = hasValuesFor(row.kind, key);
+      // The operator is STATED, always. It used to be written only for `contains`, so a filter
+      // holding two values read "Projects A, B" — which is either alternative or both, and on a
+      // field whose values can themselves contain a comma, not even reliably two values.
+      const text = describeFilter(field, filter, field.label, listed);
       wrap.append(el("span", { class: "filter-chip gq-filter-chip" },
-        el("span", { class: "filter-chip-body" },
-          el("span", { class: "gq-filter-key" }, label), " ", text),
+        el("button", {
+          type: "button",
+          class: "filter-chip-body",
+          "aria-haspopup": "dialog",
+          "aria-label": "Edit filter " + text + " on " + kindLabel(row.kind),
+          onclick: (e) => openFilterEditor(e.currentTarget, query, row, field, filter),
+        }, el("span", { class: "gq-filter-key" }, field.label), " ",
+          el("span", { class: "gq-filter-op" }, operatorOf(field, filter, listed).label), " ",
+          valuesText(filter)),
         el("button", {
           class: "filter-chip-x",
-          "aria-label": "Remove filter " + label + " " + text
-            + " from " + kindLabel(row.kind),
+          "aria-label": "Remove filter " + text + " from " + kindLabel(row.kind),
           onclick: () => removeFilter(query, row, key),
         }, "×"),
       ));
@@ -288,14 +318,123 @@ export function queryBar(opts) {
     return wrap;
   }
 
-  /** A field's human label, from whatever the column chooser already offers for this kind. */
-  function fieldLabel(kind, key) {
+  /**
+   * The chip's editor: the same control the palette draws when a filter is being created, in a
+   * popover instead of a pane.
+   *
+   * This is the half that was missing. A filter could be made once and then only deleted — to
+   * turn "Cloud is GCP" into "Cloud is GCP or AWS" you removed the chip and rebuilt it through
+   * the `+`. Values were settable exactly once.
+   */
+  function openFilterEditor(anchor, query, row, field, filter) {
+    const holder = el("div", { class: "gq-fe-host" });
+    let open = true;
+    const host = openPopover({
+      anchor,
+      className: "gq-fe-pop",
+      ariaLabel: "Edit filter on " + field.label,
+      position: { width: 320, minWidth: 320, maxHeight: 380, minHeight: 140, flipBelow: 220 },
+      build: () => holder,
+      onClose: () => { open = false; },
+    });
+
+    const mount = (got) => {
+      if (!open) return;
+      holder.textContent = "";
+      const editor = filterEditor({
+        // The FETCHED spec, not the column group's: `available` carries a key and a label, and
+        // the operator list turns on `type` and `multi`, which only the vocabulary has.
+        field: fieldIn(got, field.key) || field,
+        filter,
+        values: valuesIn(got, field.key),
+        onChange: (next) => {
+          const copy = new Map(currentWhere());
+          const forNode = new Map(copy.get(row.index) || []);
+          if (next.values.length) forNode.set(field.key, filterOf(next));
+          else forNode.delete(field.key);
+          if (forNode.size) copy.set(row.index, forNode);
+          else copy.delete(row.index);
+          // The popover does NOT close on each change. An operator and its values are one
+          // thought, and closing after the first click is exactly what made the palette's
+          // drill-in a create-only control.
+          focusPath = pathKey(row.path);
+          opts.onChange(query, copy);
+        },
+      });
+      holder.append(editor.root);
+      editor.focus();
+    };
+
+    const cached = fieldCache.get(row.kind);
+    if (cached) mount(cached);
+    else {
+      holder.append(el("p", { class: "gq-fe-hint small muted" }, "Reading this kind's values…"));
+      Promise.resolve(opts.loadFields ? opts.loadFields(row.kind) : null)
+        .then((got) => { if (got) fieldCache.set(row.kind, got); mount(got || EMPTY_FIELDS); })
+        .catch(() => mount(EMPTY_FIELDS));
+    }
+    return host;
+  }
+
+  /** One round trip per kind per session — `swrCall` already dedupes; this saves the re-render. */
+  const fieldCache = new Map();
+  const fieldsAsked = new Set();
+
+  /**
+   * Warm the field cache for a kind that has filters on it.
+   *
+   * The chip has to name a field's OPERATOR, and the operator list turns on `type` and `multi` —
+   * neither of which the column chooser's `available` list carries, so before this the chip fell
+   * back to "text" and rendered "Cloud is exactly GCP" over a menu offering "is" and "is not".
+   * The chip and its own editor disagreed about what the filter said, which is precisely the
+   * drift the shared editor exists to prevent.
+   *
+   * Asked once per kind and repainted when it lands. `swrCall` upstream already dedupes the RPC,
+   * so the guard here is only to stop the repaint looping.
+   */
+  function ensureFields(kind) {
+    if (!kind || fieldCache.has(kind) || fieldsAsked.has(kind) || !opts.loadFields) return;
+    fieldsAsked.add(kind);
+    Promise.resolve(opts.loadFields(kind)).then((got) => {
+      if (!got) return;
+      fieldCache.set(kind, got);
+      render();
+    }).catch(() => {});
+  }
+
+  const EMPTY_FIELDS = { fields: [], values: [] };
+  const fieldIn = (got, key) => ((got && got.fields) || []).find((f) => f.key === key) || null;
+  /** Whether the estate offered a value list for this field — undefined until the fetch lands. */
+  const hasValuesFor = (kind, key) => {
+    const got = fieldCache.get(kind);
+    if (!got) return undefined;
+    const spec = fieldIn(got, key);
+    if (!spec || (spec.type !== "choice" && spec.type !== "boolean")) return undefined;
+    return valuesIn(got, key).length > 0;
+  };
+  const valuesIn = (got, key) => {
+    const hit = ((got && got.values) || []).find((v) => v.key === key);
+    return (hit && hit.values) || [];
+  };
+
+  /**
+   * What the chip should call a field, and how it should be compared, before anything is fetched.
+   *
+   * The column chooser's `available` list is the one description already on the client, but it
+   * carries only a key and a label — so the chip reads correctly on first paint and the editor
+   * upgrades to the real spec when the vocabulary lands. A filter naming a field this kind cannot
+   * answer (a hand-edited link, or a kind change whose `dropAt` did not reach) still renders and
+   * still comes off.
+   */
+  function fieldSpec(kind, key) {
+    const fetched = fieldIn(fieldCache.get(kind), key);
+    if (fetched) return fetched;
     for (const group of (opts.getGroups ? opts.getGroups() : [])) {
       if (group.kind !== kind) continue;
       const hit = (group.available || []).find((f) => f.key === key);
-      if (hit) return hit.label;
+      if (hit) return { key, label: hit.label, type: hit.type || "text" };
     }
-    return key;
+    return { key, label: key, type: "text" };
   }
 
   /**
