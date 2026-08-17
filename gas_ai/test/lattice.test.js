@@ -356,3 +356,65 @@ describe("outcomeMass", () => {
     expect(mass.over).toBe(false);
   });
 });
+
+// ------------------------------------------------------------------------- axis naming
+
+/**
+ * The span rule, pinned. Inlining an axis name is free only where the band spans more than
+ * one cell; anywhere else it widens a header and, on the Posture lattice, pushes the third
+ * small-multiple panel off its row. Rows never inline whatever their span, because a row
+ * band spans vertically and vertical span buys no horizontal room.
+ *
+ * The property that matters most is the last one: between the inline names and the corner
+ * key, every axis is named exactly once — never zero times (the bug being fixed) and never
+ * twice (which would read as two different things being named).
+ */
+describe("axis naming", () => {
+  it("PROBLEM inlines the wide column band and keys the rest", () => {
+    const { rowBands, colBands, key } = latticeHeaders(PROBLEM_LATTICE);
+    // exposure spans 3 mission columns, so its name rides along for free
+    expect(colBands[0].inlineName).toBe(true);
+    expect(colBands[0].cells[0].span).toBe(3);
+    // mission's own cells are one column wide — no room, so it goes in the key
+    expect(colBands[1].inlineName).toBe(false);
+    expect(colBands[1].cells[0].span).toBe(1);
+    // rows never inline, even though exploitation's band spans 2 rows
+    expect(rowBands[0].cells[0].span).toBe(2);
+    expect(rowBands.every((b) => b.inlineName === false)).toBe(true);
+
+    expect(key.rows).toEqual(["Exploitation", "Impact"]);
+    expect(key.cols).toEqual(["Mission"]);
+  });
+
+  it("POSTURE inlines nothing, because one column axis means one-cell bands", () => {
+    const { rowBands, colBands, key } = latticeHeaders(POSTURE_LATTICE);
+    expect(colBands[0].cells[0].span).toBe(1);
+    expect(colBands.every((b) => b.inlineName === false)).toBe(true);
+    expect(rowBands.every((b) => b.inlineName === false)).toBe(true);
+    expect(key.rows).toEqual(["Capability"]);
+    expect(key.cols).toEqual(["Containment"]);
+  });
+
+  it("every axis is named exactly once, inline or in the key", () => {
+    for (const { spec } of SPECS) {
+      const { rowBands, colBands, key } = latticeHeaders(spec);
+      const inlined = [...rowBands, ...colBands].filter((b) => b.inlineName).map((b) => b.shortLabel);
+      const keyed = [...key.rows, ...key.cols];
+      const named = [...inlined, ...keyed];
+      const expected = [...spec.rows, ...spec.cols]
+        .map((k) => spec.axes.find((a) => a.key === k))
+        .map((a) => a.shortLabel || a.label);
+      expect(named.slice().sort()).toEqual(expected.slice().sort());
+      expect(new Set(named).size).toBe(named.length); // nothing named twice
+    }
+  });
+
+  it("a short label is always available, falling back to the full one", () => {
+    for (const { spec } of SPECS) {
+      for (const band of latticeHeaders(spec).rowBands.concat(latticeHeaders(spec).colBands)) {
+        expect(typeof band.shortLabel).toBe("string");
+        expect(band.shortLabel.length).toBeGreaterThan(0);
+      }
+    }
+  });
+});

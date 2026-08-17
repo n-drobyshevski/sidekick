@@ -71,7 +71,7 @@ function wireRoving(cells, nCols) {
  * row-major order.
  */
 function buildGrid(spec, cells, ariaLabel, byKey, hooks) {
-  const { rowBands, colBands } = latticeHeaders(spec);
+  const { rowBands, colBands, key: axisKey } = latticeHeaders(spec);
   const rowLevels = rowBands.length;
   const colLevels = colBands.length;
 
@@ -116,13 +116,34 @@ function buildGrid(spec, cells, ariaLabel, byKey, hooks) {
   // ---------------------------------------------------------------- column header rows
   colBands.forEach((level, li) => {
     const row = el("div", { class: "lat-rowwrap", role: "row" });
-    // The top-left corner. An empty columnheader is the ordinary data-table idiom for it.
-    const corner = el("div", { role: "columnheader" });
-    corner.style.gridRow = String(li + 1);
-    corner.style.gridColumn = `1 / span ${rowLevels}`;
-    row.append(corner);
+    if (li === 0) {
+      // The corner is the one part of this grid that was reserved and never used, so the key
+      // goes there: directly above the row labels it explains, which means the mapping is
+      // read by the same downward movement as the values themselves. A key that sits where
+      // you already are is not really a key. It spans every header row, the way a table's
+      // top-left corner spans its header band.
+      const corner = el("div", { class: "lat-key", role: "columnheader" });
+      if (axisKey.rows.length) {
+        corner.append(el("span", { class: "lat-key__line" },
+          el("span", { class: "lat-key__dir", "aria-hidden": "true" }, "\u2193"),
+          el("b", {}, axisKey.rows.join(" \u00d7 "))));
+      }
+      if (axisKey.cols.length) {
+        corner.append(el("span", { class: "lat-key__line" },
+          el("span", { class: "lat-key__dir", "aria-hidden": "true" }, "\u2192"),
+          el("b", {}, axisKey.cols.join(" \u00d7 "))));
+      }
+      corner.style.gridRow = `1 / span ${colLevels}`;
+      corner.style.gridColumn = `1 / span ${rowLevels}`;
+      row.append(corner);
+    }
     level.cells.forEach((band) => {
-      const head = el("div", { class: li === 0 && colLevels > 1 ? "lat-hgroup" : "lat-hsub", role: "columnheader" }, band.label);
+      const head = el("div", { class: li === 0 && colLevels > 1 ? "lat-hgroup" : "lat-hsub", role: "columnheader" });
+      // A band wide enough to hold its own axis name carries it; the name is the quiet half
+      // and the VALUE stays the loud word, because nine repetitions of "Exposure" must not
+      // become the most prominent thing in the header.
+      if (level.inlineName) head.append(el("span", { class: "lat-ax" }, level.shortLabel));
+      head.append(band.label);
       head.style.gridRow = String(li + 1);
       head.style.gridColumn = `${colAt(band.start)} / span ${band.span}`;
       row.append(head);
