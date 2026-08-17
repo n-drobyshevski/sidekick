@@ -1,0 +1,167 @@
+// The Help page's rendering of src/domain/measureSpec.ts — Phase 8 of the
+// Prioritization-to-Prediction rebuild: what a published number on this app's pages
+// actually means, where it comes from, and who it is for.
+//
+// A MIRROR, same reason codebook.js is one: the client bundle cannot import a TS module
+// (comboView.js's own header states the wall this repeats), and every field below is
+// ANNOTATION — prose about a number, never an input the app computes anything from — so
+// duplicating it here carries none of the drift risk a computed value would (codebook.js's
+// own rule 1). What CAN drift is the two files disagreeing about which measures exist or
+// what family/type each one claims; test/helpContent.test.js's "the measure specifications"
+// block cross-checks every id here against MEASURE_SPECS in the TS module directly, so an
+// id added, renamed or removed on one side and not the other fails the build.
+//
+// Deliberately NOT a full copy of every NIST/ISO field: an operator reading this page wants
+// "what does this number mean and where do I read it", not the whole audit record. `goal`,
+// `formula`, `dataSource`, `reportingFormat`, `measurementMethod` and `revisionDue` are the
+// six fields that answer that; `scope`, `target`, `implementationEvidence` and
+// `timeBasedReference` stay in the TS module as the fuller record for an actual audit.
+
+export const MEASURE_ENTRIES = [
+  {
+    id: "aars-score", measure: "AARS score", type: "impact", measurementMethod: "Objective",
+    goal: "One comparable risk number per AI asset, priced from what a sync actually "
+      + "collected — never asserted.",
+    formula: "computeAars(aarsInput, aarsRule): four pillars, summed and clamped to 0–100.",
+    dataSource: "ai_assets.aars, ai_assets.aars_input_json",
+    reportingFormat: "AI Inventory table; asset detail sheet's pillar bars.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "aars-band", measure: "AARS band", type: "impact", measurementMethod: "Objective",
+    goal: "The score's own severity level, re-derived from the rule in force on every read.",
+    formula: "bandRanges(rule.bands) applied to the stored aars — no re-sync required.",
+    dataSource: "ai_assets.aars, ai_assets.aars_severity",
+    reportingFormat: "AI Inventory table; bootstrap KPI counts.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "aars-distinct-scores", measure: "distinctScores", type: "effectiveness",
+    measurementMethod: "Objective",
+    goal: "Measures the MODEL's separating power, not the estate's risk — a rule can render "
+      + "a confident number for every asset while carrying zero ranking information.",
+    formula: "new Set(scores).size, over every scored asset in the preview.",
+    dataSource: "ai_assets.aars",
+    reportingFormat: "AARS Rules page, rule-preview Discrimination panel.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "aars-tie-rate", measure: "tieRate", type: "effectiveness", measurementMethod: "Objective",
+    goal: "Same as distinctScores, at the scale of PAIRS: 1.0 means every pair of scored "
+      + "assets shares a value, so any ordering within the estate is arbitrary.",
+    formula: "Σ C(n_k,2) / C(N,2) over the distinct-value groups (rankStats.tieRate).",
+    dataSource: "ai_assets.aars",
+    reportingFormat: "AARS Rules page, rule-preview Discrimination panel.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "aars-effective-cardinality", measure: "effectiveCardinality", type: "effectiveness",
+    measurementMethod: "Objective",
+    goal: "Same as distinctScores, weighted by population — one outlier score does not "
+      + "claim the same discrimination credit an even split would.",
+    formula: "exp(Shannon entropy) over the score distribution (rankStats.effectiveCardinality).",
+    dataSource: "ai_assets.aars",
+    reportingFormat: "AARS Rules page, rule-preview Discrimination panel.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "aars-pillar-saturation", measure: "Pillar saturation", type: "effectiveness",
+    measurementMethod: "Objective",
+    goal: "Locates WHICH pillar of the model has stopped discriminating — a pillar pinned "
+      + "at its cap for most of the estate still renders a plausible total score.",
+    formula: "Assets at or above each pillar's cap (aarsRule.ts's ruleDiscrimination).",
+    dataSource: "ai_assets.aars_pillars_json",
+    reportingFormat: "AARS Rules page, rule-preview Discrimination panel.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "problem-outcome-distribution", measure: "Problem outcome distribution",
+    type: "impact", measurementMethod: "Subjective",
+    goal: "How open issues and failing findings split across Act/Attend/Track ★/Track.",
+    formula: "countProblemOutcomes(rows) over OUTCOME_VALUES, zero-filled. One input axis "
+      + "(exploitation) can be set via an LLM rater's verdict — see measurementMethod.",
+    dataSource: "ai_issues.problem_outcome, ai_findings.problem_outcome",
+    reportingFormat: "Priorities page KPI row; Priority column throughout.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "problem-axis-unknown-rate", measure: "Per-axis unknown rate", type: "implementation",
+    measurementMethod: "Objective",
+    goal: "THE MOST IMPORTANT MEASURE ON THIS PAGE. A high value does NOT mean the estate "
+      + "is safe — it means the model cannot prioritise, because the evidence one axis "
+      + "needs was never collected. Reading it as reassurance is the misuse this exists to prevent.",
+    formula: "Fraction of the decided population unresolved on each axis (treeDiscrimination.unknownRate).",
+    dataSource: "ai_issues.problem_input_json, ai_findings.problem_input_json",
+    reportingFormat: "AARS Rules page, Problem tree tab's preview.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "posture-tier-distribution", measure: "Posture tier distribution", type: "impact",
+    measurementMethod: "Objective",
+    goal: "How many assets sit in each capability-envelope tier (1 best, 4 worst) — "
+      + "independent of what has been found on the asset.",
+    formula: "countPostureTiers(nodes) over TIER_VALUES, zero-filled.",
+    dataSource: "ai_assets.posture_tier",
+    reportingFormat: "AI Inventory Posture column; Priorities page's ranking.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "issue-sla-tally", measure: "SLA tally", type: "efficiency", measurementMethod: "Objective",
+    goal: "How much of the open-issue register is racing a clock — past-due, due-soon or "
+      + "no deadline at all, kept apart.",
+    formula: "slaState(dueAt, now) bucketed per issue (comboDigest.ts).",
+    dataSource: "ai_issues.due_at",
+    reportingFormat: "Toxic Combinations KPI row; Priorities page's SLA tiebreak.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "compliance-gaps", measure: "complianceGaps", type: "effectiveness",
+    measurementMethod: "Objective",
+    goal: "How many cloud-configuration controls are failing right now — one definition, "
+      + "shared by every page that counts it.",
+    formula: "isOpenGap(finding) filter, then a count.",
+    dataSource: "ai_findings.result, ai_findings.status",
+    reportingFormat: "AI Inventory KPI row; Cloud Configuration register header.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "compliance-gaps-unlinked", measure: "complianceGapsUnlinked", type: "implementation",
+    measurementMethod: "Objective",
+    goal: "How much of complianceGaps this app can attribute to a modeled AI asset — a "
+      + "fact about THIS APP's own graph coverage, not about Wiz's controls.",
+    formula: "Open gaps whose resourceId is not a key in the current asset set.",
+    dataSource: "ai_findings.resource_id, ai_assets.id",
+    reportingFormat: "AI Inventory KPI row, beside complianceGaps.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "guardrail-coverage-pct", measure: "guardrailCoveragePct", type: "implementation",
+    measurementMethod: "Objective",
+    goal: "Share of managed AI agents with no missing-guardrail finding raised — an "
+      + "absence of evidence, not a confirmed control (see the record's own caveat).",
+    formula: "protectedAgents / agents × 100, rounded; null when there are no agents.",
+    dataSource: "ai_assets.guardrail_missing, ai_assets.kind",
+    reportingFormat: "Wiz Scans coverage area.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "toxic-combo-patterns-active", measure: "patternsActive / patternsTotal",
+    type: "impact", measurementMethod: "Objective",
+    goal: "How many of the four modelled toxic-combination patterns currently have an "
+      + "open issue firing.",
+    formula: "Count of REGISTER_GROUPS with at least one matching unresolved issue.",
+    dataSource: "ai_issues.combo_group, ai_issues.status",
+    reportingFormat: "Toxic Combinations page KPI row.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "framework-average-posture", measure: "averagePosture", type: "effectiveness",
+    measurementMethod: "Objective",
+    goal: "One number for estate-wide compliance across every synced framework — unscored "
+      + "frameworks are excluded rather than read as zero.",
+    formula: "Mean posture_pct across framework rows whose state resolves to 'scored'.",
+    dataSource: "ai_framework_posture.posture_pct",
+    reportingFormat: "Compliance Posture page's headline strip.",
+    revisionDue: "2027-08-13",
+  },
+];

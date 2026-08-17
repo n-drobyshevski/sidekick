@@ -5,8 +5,10 @@
 import {
   ASSET_COMPARATORS,
   CLIENT_ALL_MAX,
+  DEFAULT_PAGE_SIZE,
   facetCounts,
   filterAssetRows,
+  MAX_PAGE_SIZE,
   pageOf,
   resolveAssetQuery,
   sortAssetRows,
@@ -59,6 +61,13 @@ import {
   validateProblemRule,
 } from "../domain/problemRule";
 import { countPostureTiers, TIER_VALUES, type PostureVector, type Tier } from "../domain/posture";
+import {
+  buildProblemRows,
+  countProblemRowsByOutcome,
+  PROBLEMS_CLIENT_ALL_MAX,
+  rankProblems,
+  type ProblemRow,
+} from "../domain/problems";
 import {
   cellCoverage,
   cleanPostureRule,
@@ -1426,6 +1435,87 @@ export function getToxicCombos(_p?: unknown): ApiResult {
       };
     }),
   );
+}
+
+// -------------------------------------------------------------------------- problems
+
+interface ProblemsModel {
+  /** Ranked once, by `compareProblems` — never re-sorted per request. */
+  rows: ProblemRow[];
+  outcomeCounts: Record<string, number>;
+}
+
+/**
+ * The Priorities page's whole population: every unresolved issue and every open finding,
+ * one row each, ranked. Cached per data version like `assetsModel` / `configModel` — the
+ * join against every asset (for posture tier and amplification) reads the whole assets
+ * tab and must not run per keystroke, and the ranking itself is O(n log n) over the same
+ * population on every call otherwise.
+ */
+function problemsModel(): ProblemsModel {
+  const assetsById = new Map(syncStore.loadAssets().map((a) => [a.id, a]));
+  const rows = rankProblems(
+    buildProblemRows(syncStore.loadIssues(), syncStore.loadFindings(), assetsById),
+  );
+  return { rows, outcomeCounts: countProblemRowsByOutcome(rows) };
+}
+
+/**
+ * The estate-wide Priorities: issues ∪ findings, ranked together — the thing neither
+ * Toxic Combinations (issues scoped to one pattern) nor Cloud Configuration (findings
+ * only) can answer. Same two-mode shape `getAssets` / `getConfigFindings` keep: under
+ * `PROBLEMS_CLIENT_ALL_MAX` the browser gets every row, already ranked, and filters and
+ * pages locally — the shape `pages/combos.js`'s issue table already uses for one group,
+ * copied here for the whole union; over it the outcome filter and paging happen here.
+ *
+ * `total` is always the WHOLE union regardless of mode or filter, so a caller can check
+ * the invariant `problems.ts`'s own header documents: `total` must equal
+ * `issues.filter(isUnresolvedIssue).length + findings.filter(isOpenGap).length` exactly.
+ */
+export function getProblems(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const outcome = String(params["outcome"] ?? "").toUpperCase();
+    const validOutcome = (OUTCOME_VALUES as readonly string[]).includes(outcome) ? outcome : "";
+    const pageSize = Math.min(
+      MAX_PAGE_SIZE,
+      Math.max(1, Number(params["pageSize"]) || DEFAULT_PAGE_SIZE),
+    );
+    const page = Math.max(0, Number(params["page"]) || 0);
+
+    const model = cached("problemsModel", null, problemsModel) as ProblemsModel;
+    const head = {
+      // The union invariant's left-hand side — every unresolved issue and every open
+      // finding, regardless of the outcome filter or the mode below.
+      total: model.rows.length,
+      outcomeCounts: model.outcomeCounts,
+      pageSize,
+    };
+
+    if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
+      return {
+        ...head,
+        all: true,
+        rows: model.rows,
+        filtered: model.rows.length,
+        page: 0,
+        pageCount: Math.max(1, Math.ceil(model.rows.length / pageSize)),
+      };
+    }
+
+    const filtered = validOutcome
+      ? model.rows.filter((r) => r.problemOutcome === validOutcome)
+      : model.rows;
+    const paged = pageOf(filtered as unknown as Rec[], page, pageSize);
+    return {
+      ...head,
+      all: false,
+      rows: paged.rows,
+      filtered: filtered.length,
+      page: paged.page,
+      pageCount: paged.pageCount,
+    };
+  });
 }
 
 // ----------------------------------------------------------------------------- sync

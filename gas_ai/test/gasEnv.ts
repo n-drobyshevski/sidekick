@@ -83,6 +83,8 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
   ["getAssetOptions", {}],
   ["getIssues", {}],
   ["getToxicCombos", {}],
+  // Phase 7: the estate-wide Priorities page — issues ∪ findings, ranked together.
+  ["getProblems", {}],
   ["getSyncHistory", {}],
   ["getSettings", {}],
   ["getAarsRule", {}],

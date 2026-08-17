@@ -2415,6 +2415,7 @@ var Server = (() => {
     getJobStatus: () => getJobStatus,
     getPostureRule: () => getPostureRule3,
     getProblemRule: () => getProblemRule3,
+    getProblems: () => getProblems,
     getQueryVocabulary: () => getQueryVocabulary,
     getScanQueries: () => getScanQueries,
     getSettings: () => getSettings,
@@ -3410,6 +3411,51 @@ var Server = (() => {
     }
     return counts;
   }
+  var AGENTIC_ASSET_KINDS = [
+    "AI_AGENT",
+    "AI_AGENT_REGISTRY",
+    "MCP_SERVER",
+    "AI_SKILL",
+    "AI_SKILL_TEMPLATE",
+    "AI_TOOL",
+    "AI_EXTENSION",
+    "AI_GATEWAY",
+    "AI_SERVICE",
+    "AI_DEPLOYMENT"
+  ];
+  function identityFactor(node2) {
+    var _a5;
+    if (!node2) return null;
+    if (node2.hasAdminPrivileges === true) return 1;
+    const permissionCount = (_a5 = node2.humanAccess) == null ? void 0 : _a5.permissionCount;
+    if (node2.hasHighPrivileges === true || typeof permissionCount === "number" && permissionCount > 0) {
+      return 0.5;
+    }
+    if (node2.hasAdminPrivileges === false || node2.hasHighPrivileges === false || node2.humanAccess) return 0;
+    return null;
+  }
+  function contextFactor(node2) {
+    if (!node2) return null;
+    if (node2.hasSensitiveData === true || node2.hasAccessToSensitiveData === true) return 1;
+    const findingCount = node2.dataFindingCount;
+    if (typeof findingCount === "number") return findingCount > 0 ? 0.5 : 0;
+    if (node2.hasSensitiveData === false || node2.hasAccessToSensitiveData === false) return 0;
+    return null;
+  }
+  function languageFactor(node2) {
+    if (!node2) return null;
+    return AGENTIC_ASSET_KINDS.includes(node2.kind) ? 1 : null;
+  }
+  function nodeAmplificationVector(node2) {
+    return {
+      tools: null,
+      identity: identityFactor(node2),
+      persistence: null,
+      multiAgent: null,
+      context: contextFactor(node2),
+      language: languageFactor(node2)
+    };
+  }
 
   // src/domain/aarsTrend.ts
   function countAarsSeverities(nodes) {
@@ -3807,6 +3853,94 @@ var Server = (() => {
       }
     }
     return worst;
+  }
+
+  // src/domain/problems.ts
+  var PROBLEMS_CLIENT_ALL_MAX = 1e3;
+  function issueToProblemRow(issue2, node2) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
+    return {
+      id: issue2.id,
+      kind: "ISSUE",
+      title: issue2.ruleName,
+      assetId: issue2.assetId || null,
+      assetName: issue2.assetName,
+      problemOutcome: (_a5 = issue2.problemOutcome) != null ? _a5 : "",
+      vector: (_c = (_b = issue2.problemInput) == null ? void 0 : _b.vector) != null ? _c : null,
+      unknowns: (_e = (_d = issue2.problemInput) == null ? void 0 : _d.unknowns) != null ? _e : [],
+      dueAt: (_f = issue2.dueAt) != null ? _f : null,
+      postureTier: (_g = node2 == null ? void 0 : node2.postureTier) != null ? _g : null,
+      amplification: nodeAmplificationVector(node2),
+      severity: (_h = issue2.adjustedSeverity) != null ? _h : null
+    };
+  }
+  function findingToProblemRow(finding, node2) {
+    var _a5, _b, _c, _d, _e, _f, _g;
+    return {
+      id: finding.id,
+      kind: "FINDING",
+      title: finding.ruleName || finding.ruleShortId || "",
+      assetId: node2 ? node2.id : null,
+      assetName: node2 ? node2.name : finding.resourceName || finding.resourceId,
+      problemOutcome: (_a5 = finding.problemOutcome) != null ? _a5 : "",
+      vector: (_c = (_b = finding.problemInput) == null ? void 0 : _b.vector) != null ? _c : null,
+      unknowns: (_e = (_d = finding.problemInput) == null ? void 0 : _d.unknowns) != null ? _e : [],
+      // FindingRow carries no SLA deadline — Wiz's config-finding evaluations have no dueAt
+      // field, only issuesV2 does. Null, never a made-up date.
+      dueAt: null,
+      postureTier: (_f = node2 == null ? void 0 : node2.postureTier) != null ? _f : null,
+      amplification: nodeAmplificationVector(node2),
+      severity: (_g = finding.severity) != null ? _g : null
+    };
+  }
+  function buildProblemRows(issues2, findings, assetsById) {
+    const rows = [];
+    for (const issue2 of issues2) {
+      if (!isUnresolvedIssue(issue2)) continue;
+      rows.push(issueToProblemRow(issue2, assetsById.get(issue2.assetId)));
+    }
+    for (const finding of findings) {
+      if (!isOpenGap(finding)) continue;
+      rows.push(findingToProblemRow(finding, assetsById.get(finding.resourceId)));
+    }
+    return rows;
+  }
+  function outcomeRank(o) {
+    const i = OUTCOME_VALUES.indexOf(o);
+    return i < 0 ? OUTCOME_VALUES.length : i;
+  }
+  function postureRank(t) {
+    return t === null ? 0 : t;
+  }
+  function slaRank(dueAt) {
+    const t = Date.parse(dueAt || "");
+    return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
+  }
+  var AMPLIFICATION_KEYS = ["tools", "identity", "persistence", "multiAgent", "context", "language"];
+  function amplificationFactorRank(v) {
+    return v === null || v === void 0 ? -1 : v;
+  }
+  function compareProblems(a, b) {
+    const outcome = outcomeRank(a.problemOutcome) - outcomeRank(b.problemOutcome);
+    if (outcome !== 0) return outcome;
+    const posture = postureRank(b.postureTier) - postureRank(a.postureTier);
+    if (posture !== 0) return posture;
+    const sla = slaRank(a.dueAt) - slaRank(b.dueAt);
+    if (sla !== 0) return sla;
+    for (const key of AMPLIFICATION_KEYS) {
+      const diff = amplificationFactorRank(b.amplification[key]) - amplificationFactorRank(a.amplification[key]);
+      if (diff !== 0) return diff;
+    }
+    return a.id.localeCompare(b.id);
+  }
+  function rankProblems(rows) {
+    return [...rows].sort(compareProblems);
+  }
+  function countProblemRowsByOutcome(rows) {
+    var _a5;
+    const counts = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0, "": 0 };
+    for (const r of rows) counts[r.problemOutcome] = ((_a5 = counts[r.problemOutcome]) != null ? _a5 : 0) + 1;
+    return counts;
   }
 
   // src/domain/postureRule.ts
@@ -8844,7 +8978,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "95443eecb894" : "dev";
+  var BUILD_ID = true ? "9ca3f756f57d" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -13257,6 +13391,54 @@ var Server = (() => {
         };
       })
     );
+  }
+  function problemsModel() {
+    const assetsById = new Map(loadAssets().map((a) => [a.id, a]));
+    const rows = rankProblems(
+      buildProblemRows(loadIssues(), loadFindings(), assetsById)
+    );
+    return { rows, outcomeCounts: countProblemRowsByOutcome(rows) };
+  }
+  function getProblems(p) {
+    return run(() => {
+      var _a5;
+      const params = p != null ? p : {};
+      const outcome = String((_a5 = params["outcome"]) != null ? _a5 : "").toUpperCase();
+      const validOutcome = OUTCOME_VALUES.includes(outcome) ? outcome : "";
+      const pageSize = Math.min(
+        MAX_PAGE_SIZE,
+        Math.max(1, Number(params["pageSize"]) || DEFAULT_PAGE_SIZE)
+      );
+      const page = Math.max(0, Number(params["page"]) || 0);
+      const model = cached("problemsModel", null, problemsModel);
+      const head = {
+        // The union invariant's left-hand side — every unresolved issue and every open
+        // finding, regardless of the outcome filter or the mode below.
+        total: model.rows.length,
+        outcomeCounts: model.outcomeCounts,
+        pageSize
+      };
+      if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
+        return {
+          ...head,
+          all: true,
+          rows: model.rows,
+          filtered: model.rows.length,
+          page: 0,
+          pageCount: Math.max(1, Math.ceil(model.rows.length / pageSize))
+        };
+      }
+      const filtered = validOutcome ? model.rows.filter((r) => r.problemOutcome === validOutcome) : model.rows;
+      const paged = pageOf(filtered, page, pageSize);
+      return {
+        ...head,
+        all: false,
+        rows: paged.rows,
+        filtered: filtered.length,
+        page: paged.page,
+        pageCount: paged.pageCount
+      };
+    });
   }
   function runSync(_p) {
     return mutate(() => startSync());

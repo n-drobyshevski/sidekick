@@ -33,6 +33,7 @@
 //    links out. Copying the definitions is the wall this page exists to avoid.
 
 import { CODEBOOK, FAMILY_GROUP } from "./codebook.js";
+import { MEASURE_ENTRIES } from "./measureContent.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, kindIconSvg } from "./icons.js";
 import { aarsChip, el, outcomeBadge, pluralize, sevBadge, statusPill, tierBadge } from "./ui.js";
 
@@ -44,6 +45,10 @@ export const FAMILIES = [
   { id: "severity", title: "Severity" },
   { id: "coverage", title: "Coverage and freshness" },
   { id: "framework", title: "Framework vocabularies" },
+  // Phase 8: what a published number IS — its goal, formula, source and whether it was
+  // measured or judged. See src/domain/measureSpec.ts for the authoritative record; this
+  // family renders measureContent.js's mirror of it.
+  { id: "measures", title: "Measure specifications" },
 ];
 
 /**
@@ -57,6 +62,7 @@ export const FAMILIES = [
 export const ROUTE_TITLES = {
   graph: "Security Graph",
   inventory: "AI Inventory",
+  problems: "Priorities",
   combos: "Toxic Combinations",
   config: "Cloud Configuration",
   aars: "AARS Rules",
@@ -591,7 +597,7 @@ export const ENTRIES = [
       "rank, a queue, and it is built so most leaves land in Track or Track ★ and only a " +
       "documented, auditable minority reach Act. The AARS Rules page carries its editor on " +
       "a second tab.",
-    drawnOn: ["aars"],
+    drawnOn: ["aars", "problems"],
     mark: () => outcomeBadge("ACT"),
     link: { label: "Open the Problem tree tab", route: "aars", params: {} },
   },
@@ -608,7 +614,7 @@ export const ENTRIES = [
       "sensitive data is not a low tier just because nothing has been found yet — this is " +
       "the one reading on the Inventory that is not an aggregate of AARS or of the " +
       "Problem tree's outcomes, deliberately drawn beside them rather than blended in.",
-    drawnOn: ["aars", "inventory"],
+    drawnOn: ["aars", "inventory", "problems"],
     mark: () => tierBadge(4),
     link: { label: "Open the Posture tab", route: "aars", params: {} },
   },
@@ -629,6 +635,23 @@ export const ENTRIES = [
     drawnOn: ["aars"],
     mark: () => el("span", { class: "pill neutral" }, "27"),
     link: { label: "Open the Posture tab", route: "aars", params: {} },
+  },
+  {
+    id: "priorities-rank",
+    term: "The Priorities ranking",
+    aka: "issues ∪ findings, one queue",
+    family: "score",
+    blurb:
+      "Every unresolved issue and every open configuration finding, unioned into one list " +
+      "and ranked on one scale — the thing neither Toxic Combinations (one pattern) nor " +
+      "Cloud Configuration (findings only) can show. Worst-first at five levels: the " +
+      "Problem tree's outcome, then the asset's posture tier, then how soon it is due, " +
+      "then the amplification vector (identity power, data reach, whether language is the " +
+      "control channel), then id for stability. Nothing in the union is ever dropped for " +
+      "lacking a verdict — a row the tree never reached still gets a place, ranked last.",
+    drawnOn: ["problems"],
+    mark: () => el("span", { class: "pill neutral" }, "1–5"),
+    link: { label: "Open Priorities", route: "problems", params: {} },
   },
 
   // ---------------------------------------------------------------------- severity
@@ -692,7 +715,7 @@ export const ENTRIES = [
       "exploitable, reachable or mission-relevant, and a coverage gap in the axes that " +
       "would confirm that reads Track ★ rather than being silently dropped. A dash means " +
       "undecided — a resolved row, or one this rule never reached.",
-    drawnOn: ["combos", "config"],
+    drawnOn: ["combos", "config", "problems"],
     mark: () => outcomeBadge("TRACK_STAR"),
     link: { label: "Open the Problem tree tab", route: "aars", params: {} },
   },
@@ -811,6 +834,46 @@ for (const family of CODEBOOK) {
     mark: () => el("span", { class: "pill neutral" }, String(family.entries.length)),
     codes: family.entries.map((e) => e[0]),
     link: { label: "Browse the codes", route: "aars", params: {} },
+  });
+}
+
+// Where each measure's number is actually drawn — hand-kept because a measure's
+// `reportingFormat` in the TS module is prose, not a route list, and this is the one place
+// that has to resolve to a real page for the "routes only to pages that exist" test.
+const MEASURE_ROUTES = {
+  "aars-score": ["inventory", "aars"],
+  "aars-band": ["inventory", "aars"],
+  "aars-distinct-scores": ["aars"],
+  "aars-tie-rate": ["aars"],
+  "aars-effective-cardinality": ["aars"],
+  "aars-pillar-saturation": ["aars"],
+  "problem-outcome-distribution": ["problems", "combos", "config"],
+  "problem-axis-unknown-rate": ["aars"],
+  "posture-tier-distribution": ["inventory", "problems"],
+  "issue-sla-tally": ["combos", "problems"],
+  "compliance-gaps": ["inventory", "config"],
+  "compliance-gaps-unlinked": ["inventory"],
+  "guardrail-coverage-pct": ["scans"],
+  "toxic-combo-patterns-active": ["combos"],
+  "framework-average-posture": ["compliance"],
+};
+
+// One entry per measureSpec.ts record — pure documentation, no `count`, so it renders as a
+// destination rather than a figure (the same "no count at all is a convention" rule this
+// file's own header states). `id` is prefixed so it can never collide with a hand-authored
+// entry above, mirroring the "vocab-" prefix the framework-codebook loop below already uses.
+for (const m of MEASURE_ENTRIES) {
+  const routes = MEASURE_ROUTES[m.id] || [];
+  ENTRIES.push({
+    id: "measure-" + m.id,
+    term: m.measure,
+    aka: m.type + " · " + m.measurementMethod,
+    family: "measures",
+    blurb: m.goal + " " + m.formula,
+    more: "Reads " + m.dataSource + ". Surfaced on: " + m.reportingFormat,
+    drawnOn: routes,
+    mark: () => el("span", { class: "pill neutral" }, m.measurementMethod === "Subjective" ? "S" : "O"),
+    link: routes.length ? { label: "Open " + (ROUTE_TITLES[routes[0]] || routes[0]), route: routes[0], params: {} } : undefined,
   });
 }
 

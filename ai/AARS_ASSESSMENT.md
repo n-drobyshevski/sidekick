@@ -299,3 +299,31 @@ The same numbers are asserted in `gas_ai/test/aars.test.ts`, `gas_ai/test/aarsRu
 and `gas_ai/test/graphEnrich.test.ts` (spec rule and v2), and in
 `gas_ai/test/scoreOrdinality.test.ts` §6 (v2) and §6b (v3); `npm run check` in `gas_ai/` runs
 them.
+
+## 10. Measure specifications
+
+Every number this section has discussed as prose — §2's tie rate and effective
+cardinality, §2b's near-constant pillars, §6's before/after discrimination deltas — and
+every other number this product publishes now has a formal record: `gas_ai/src/domain/
+measureSpec.ts`. It is the authoritative list, written to NIST SP 800-55v1's measure
+specification template plus ISO/IEC 27004 Annex A's `measurementMethod` /
+`revisionDue` — one record per number, stating its goal, scope, formula, target (or the
+honest absence of one), evidence, time basis, owner, source column and where it is
+reported.
+
+Two disciplines that section this repo would otherwise be tempted to soften:
+
+- Any record whose value can be swayed by `ai_verdict` or `ai_recommended_severity` — an
+  LLM rater's opinion, non-deterministic upstream, unmeasured inter-rater reliability — is
+  marked `measurementMethod: "Subjective"`, not `"Objective"`. `problem-outcome-distribution`
+  is that record: its exploitation axis can be set through `issue.aiVerdict`.
+- No record computes an MTTR over closed issues. `resolvedAt` exists, but a mean over that
+  population is censored data — every still-open issue has no close date and would be
+  silently excluded, which is precisely the population an MTTR figure exists to catch. The
+  file publishes none rather than publish one that flatters itself.
+
+`gas_ai/test/measureSpec.test.ts` turns the record's own completeness into a build
+failure: every field must be non-empty, every `dataSource` must name a column
+`sheetsDb.ts`'s `TAB_HEADERS` still carries, and no record may be past its own
+`revisionDue` at the test's frozen clock — the mechanism that makes "review this
+periodically" an enforced date rather than a comment nobody rereads.

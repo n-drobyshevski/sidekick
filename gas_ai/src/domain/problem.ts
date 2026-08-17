@@ -545,11 +545,15 @@ function languageFactor(node: GNode | undefined): AmplificationFactor {
  * amplification into the decision would let an EXPLANATION silently become a VOTE, which
  * is the one thing a routing tree, as opposed to a score, must never allow.
  */
-export function amplificationVector(
-  issue: IssueRow,
-  node: GNode | undefined,
-): Record<string, AmplificationFactor> {
-  void issue; // see doc comment — accepted for symmetry, unread by the three live factors
+/**
+ * The node-only core of `amplificationVector` — every live factor reads `node` alone, so
+ * this is the whole computation minus the unread `issue` parameter kept for the reason
+ * documented above. Exported so a caller with no `IssueRow` in hand (Phase 7's
+ * `problems.ts`, which ranks a FINDING beside an issue and has no issue to offer for a
+ * FindingRow) can still read this vector for a node, without a call site inventing a fake
+ * `IssueRow` just to satisfy a signature that would not have read it anyway.
+ */
+export function nodeAmplificationVector(node: GNode | undefined): Record<string, AmplificationFactor> {
   return {
     tools: null,
     identity: identityFactor(node),
@@ -558,4 +562,12 @@ export function amplificationVector(
     context: contextFactor(node),
     language: languageFactor(node),
   };
+}
+
+export function amplificationVector(
+  issue: IssueRow,
+  node: GNode | undefined,
+): Record<string, AmplificationFactor> {
+  void issue; // see doc comment — accepted for symmetry, unread by the three live factors
+  return nodeAmplificationVector(node);
 }

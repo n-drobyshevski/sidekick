@@ -42,6 +42,7 @@ function api_setSelectedFrameworks(p) { return timedApi_("setSelectedFrameworks"
 function api_getIssues(p) { return timedApi_("getIssues", p); }
 function api_getIssueDetail(p) { return timedApi_("getIssueDetail", p); }
 function api_getToxicCombos(p) { return timedApi_("getToxicCombos", p); }
+function api_getProblems(p) { return timedApi_("getProblems", p); }
 function api_runSync(p) { return timedApi_("runSync", p); }
 function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }
 function api_cancelSync(p) { return timedApi_("cancelSync", p); }
