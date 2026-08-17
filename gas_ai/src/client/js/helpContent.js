@@ -34,7 +34,7 @@
 
 import { CODEBOOK, FAMILY_GROUP } from "./codebook.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, kindIconSvg } from "./icons.js";
-import { aarsChip, el, pluralize, sevBadge, statusPill } from "./ui.js";
+import { aarsChip, el, outcomeBadge, pluralize, sevBadge, statusPill } from "./ui.js";
 
 /** The six headings, in reading order. Six headings and find-in-page beat a search box. */
 export const FAMILIES = [
@@ -58,6 +58,7 @@ export const ROUTE_TITLES = {
   graph: "Security Graph",
   inventory: "AI Inventory",
   combos: "Toxic Combinations",
+  config: "Cloud Configuration",
   aars: "AARS Rules",
   scans: "Wiz Scans",
   data: "Data",
@@ -578,6 +579,22 @@ export const ENTRIES = [
     mark: () => el("span", { class: "pill neutral" }, "↻"),
     link: { label: "Open AARS Rules", route: "aars", params: {} },
   },
+  {
+    id: "problem-tree",
+    term: "Problem tree",
+    aka: "ACT · Attend · Track ★ · Track",
+    family: "score",
+    blurb:
+      "A 54-leaf decision tree — exploitation × technical impact × system exposure × " +
+      "mission — that routes one issue or finding into one of four queues, first match " +
+      "wins over an ordered cascade. It answers a different question than AARS: not a " +
+      "rank, a queue, and it is built so most leaves land in Track or Track ★ and only a " +
+      "documented, auditable minority reach Act. The AARS Rules page carries its editor on " +
+      "a second tab.",
+    drawnOn: ["aars"],
+    mark: () => outcomeBadge("ACT"),
+    link: { label: "Open the Problem tree tab", route: "aars", params: {} },
+  },
 
   // ---------------------------------------------------------------------- severity
   {
@@ -627,6 +644,22 @@ export const ENTRIES = [
         params: {},
       };
     },
+  },
+  {
+    id: "priority",
+    term: "Priority",
+    aka: "the problem tree's outcome, not a severity",
+    family: "severity",
+    blurb:
+      "The Problem tree's queue for this issue or finding — Act, Attend, Track ★ or Track. " +
+      "It is a SEPARATE reading from the severity beside it, not a restatement of it: an " +
+      "issue can be Critical and still read Track if nothing here confirms it is actually " +
+      "exploitable, reachable or mission-relevant, and a coverage gap in the axes that " +
+      "would confirm that reads Track ★ rather than being silently dropped. A dash means " +
+      "undecided — a resolved row, or one this rule never reached.",
+    drawnOn: ["combos", "config"],
+    mark: () => outcomeBadge("TRACK_STAR"),
+    link: { label: "Open the Problem tree tab", route: "aars", params: {} },
   },
   {
     id: "two-token",

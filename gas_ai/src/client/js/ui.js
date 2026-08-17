@@ -17,6 +17,7 @@
 //   rail.js      one value drawn on the shared 0–100 axis, and edited on it
 //   popover.js   where a portaled popover sits, and the one contract for closing it
 //   portals.js   the open-portal count the sheet's focus trap defers to
+//   outcome.js   the problem tree's ACT/ATTEND/TRACK*/TRACK badge
 
 export { clear, downloadText, el, motionOk } from "./ui/dom.js";
 export { DISPLAY_TZ, fmtDate, fmtDateTime, plural, pluralize, sevRank } from "./ui/format.js";
@@ -41,3 +42,4 @@ export { codeBlock, copyButton, copyText } from "./ui/code.js";
 export { uiIcon } from "./ui/uiIcons.js";
 export { pointRail, railScale } from "./ui/rail.js";
 export { debounce, onPageTeardown, runPageTeardown } from "./ui/timing.js";
+export { outcomeBadge, outcomeLabel } from "./ui/outcome.js";

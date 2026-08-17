@@ -1,4 +1,10 @@
 /* ------------------------------------------------------------------- AARS rules */
+/* Phase 5: the AARS / Problem tree tab switch. Both panes mount at once (so the Problem
+   tree keeps its loaded state across a tab flip) and share `.workbench-body` as their one
+   positioned ancestor — each fills it via inset:0 rather than carrying its own `flex:1`,
+   which would collapse to zero height with no normal-flow content of its own. */
+.tab-pane { position: absolute; inset: 0; }
+
 /* Two panes inside the workbench body: the model on the left, its consequence pinned on
    the right. Each pane is its own scroller, so editing a threshold never scrolls the
    impact out of view and the toolbar (which owns Save) never moves at all. */

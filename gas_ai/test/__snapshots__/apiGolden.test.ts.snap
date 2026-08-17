@@ -650,6 +650,117 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
     },
     "ok": true,
   },
+  "getProblemRule": {
+    "data": {
+      "decidedVersion": 0,
+      "leafCoverage": {
+        "byFallback": 12,
+        "byOutcome": {
+          "ACT": 6,
+          "ATTEND": 19,
+          "TRACK": 12,
+          "TRACK_STAR": 17,
+        },
+        "byRow": [
+          3,
+          2,
+          1,
+          12,
+          2,
+          5,
+          12,
+          5,
+        ],
+        "total": 54,
+      },
+      "limits": {
+        "maxOutcomeRules": 40,
+      },
+      "rule": {
+        "actLeafCeiling": 0.15,
+        "exploitationByRuleId": [],
+        "fallbackOutcome": "TRACK",
+        "missingMission": "MEDIUM",
+        "outcomeRules": [
+          {
+            "outcome": "ACT",
+            "when": {
+              "exploitation": "ACTIVE",
+              "exposure": "OPEN",
+              "impact": "TOTAL",
+            },
+          },
+          {
+            "outcome": "ACT",
+            "when": {
+              "exploitation": "ACTIVE",
+              "impact": "TOTAL",
+              "mission": "HIGH",
+            },
+          },
+          {
+            "outcome": "ACT",
+            "when": {
+              "exploitation": "ACTIVE",
+              "exposure": "OPEN",
+              "mission": "HIGH",
+            },
+          },
+          {
+            "outcome": "ATTEND",
+            "when": {
+              "exploitation": "ACTIVE",
+            },
+          },
+          {
+            "outcome": "ATTEND",
+            "when": {
+              "exposure": "OPEN",
+              "impact": "TOTAL",
+              "mission": "HIGH",
+            },
+          },
+          {
+            "outcome": "ATTEND",
+            "when": {
+              "exploitation": "SUSPECTED",
+              "exposure": "OPEN",
+            },
+          },
+          {
+            "outcome": "TRACK_STAR",
+            "when": {
+              "exposure": "UNVERIFIED",
+            },
+          },
+          {
+            "outcome": "TRACK_STAR",
+            "when": {
+              "mission": "HIGH",
+            },
+          },
+        ],
+        "remediateVerdicts": [
+          "REMEDIATE",
+        ],
+        "totalImpactGroups": [
+          "gcp-hosted-privileged",
+        ],
+      },
+      "shadowed": [],
+      "stale": false,
+      "summary": [
+        "8 outcome rules are tried in order, first match wins; a vector matching none of them falls back to TRACK.",
+        "ACT claims 6 of 54 leaves (11.1%), against a ceiling of 15.0%.",
+        "Exploitation reaches ACTIVE only from Wiz's own validated-exploitable flag. It reaches SUSPECTED from 0 rule-table row(s) at REALIZED or DEMONSTRATED maturity, or from an AI verdict of REMEDIATE — never both the way to ACTIVE.",
+        "Technical impact reads TOTAL from admin privileges, admin-level human access, or membership in gcp-hosted-privileged; otherwise PARTIAL.",
+        "A missing business-impact tier reads as MEDIUM, never LOW.",
+      ],
+      "validation": [],
+      "version": 0,
+    },
+    "ok": true,
+  },
   "getQueryVocabulary": {
     "data": {
       "empty": true,
@@ -11604,6 +11715,120 @@ Ignored until: Feb 1, 2026",
       },
     ],
     "total": 32,
+  },
+  "ok": true,
+}
+`;
+
+exports[`read endpoints > getProblemRule answers the same shape 1`] = `
+{
+  "data": {
+    "decidedVersion": 0,
+    "leafCoverage": {
+      "byFallback": 12,
+      "byOutcome": {
+        "ACT": 6,
+        "ATTEND": 19,
+        "TRACK": 12,
+        "TRACK_STAR": 17,
+      },
+      "byRow": [
+        3,
+        2,
+        1,
+        12,
+        2,
+        5,
+        12,
+        5,
+      ],
+      "total": 54,
+    },
+    "limits": {
+      "maxOutcomeRules": 40,
+    },
+    "rule": {
+      "actLeafCeiling": 0.15,
+      "exploitationByRuleId": [],
+      "fallbackOutcome": "TRACK",
+      "missingMission": "MEDIUM",
+      "outcomeRules": [
+        {
+          "outcome": "ACT",
+          "when": {
+            "exploitation": "ACTIVE",
+            "exposure": "OPEN",
+            "impact": "TOTAL",
+          },
+        },
+        {
+          "outcome": "ACT",
+          "when": {
+            "exploitation": "ACTIVE",
+            "impact": "TOTAL",
+            "mission": "HIGH",
+          },
+        },
+        {
+          "outcome": "ACT",
+          "when": {
+            "exploitation": "ACTIVE",
+            "exposure": "OPEN",
+            "mission": "HIGH",
+          },
+        },
+        {
+          "outcome": "ATTEND",
+          "when": {
+            "exploitation": "ACTIVE",
+          },
+        },
+        {
+          "outcome": "ATTEND",
+          "when": {
+            "exposure": "OPEN",
+            "impact": "TOTAL",
+            "mission": "HIGH",
+          },
+        },
+        {
+          "outcome": "ATTEND",
+          "when": {
+            "exploitation": "SUSPECTED",
+            "exposure": "OPEN",
+          },
+        },
+        {
+          "outcome": "TRACK_STAR",
+          "when": {
+            "exposure": "UNVERIFIED",
+          },
+        },
+        {
+          "outcome": "TRACK_STAR",
+          "when": {
+            "mission": "HIGH",
+          },
+        },
+      ],
+      "remediateVerdicts": [
+        "REMEDIATE",
+      ],
+      "totalImpactGroups": [
+        "gcp-hosted-privileged",
+      ],
+    },
+    "shadowed": [],
+    "stale": false,
+    "summary": [
+      "8 outcome rules are tried in order, first match wins; a vector matching none of them falls back to TRACK.",
+      "ACT claims 6 of 54 leaves (11.1%), against a ceiling of 15.0%.",
+      "Exploitation reaches ACTIVE only from Wiz's own validated-exploitable flag. It reaches SUSPECTED from 0 rule-table row(s) at REALIZED or DEMONSTRATED maturity, or from an AI verdict of REMEDIATE — never both the way to ACTIVE.",
+      "Technical impact reads TOTAL from admin privileges, admin-level human access, or membership in gcp-hosted-privileged; otherwise PARTIAL.",
+      "A missing business-impact tier reads as MEDIUM, never LOW.",
+    ],
+    "validation": [],
+    "version": 0,
   },
   "ok": true,
 }

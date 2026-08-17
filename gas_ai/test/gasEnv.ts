@@ -86,6 +86,10 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
   ["getSyncHistory", {}],
   ["getSettings", {}],
   ["getAarsRule", {}],
+  // Phase 5: the problem tree's rule state, mirroring getAarsRule above. Mutating
+  // endpoints (setProblemRule, previewProblemRule, recomputeProblems) stay out of this
+  // list, per its own rule.
+  ["getProblemRule", {}],
   ["getStorageStats", {}],
   // agent-h-chatbot is the max-degree node in the golden getGraph payload (17 neighbors),
   // so it exercises the widest neighbour list getAssetDetail can produce in this estate.

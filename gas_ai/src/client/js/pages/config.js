@@ -21,13 +21,13 @@
 import { setParams, swrCall } from "../store.js";
 import { openConfigFindingSheet } from "../detailSheets.js";
 import {
-  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, kpiCard, pager,
-  plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
+  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, kpiCard, outcomeBadge,
+  pager, plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
   skeletonStack, statusPill, togglePills,
 } from "../ui.js";
 import {
-  CONFIG_SORTS, CONFIG_SORT_DESC, FLAG_LABELS, LINKAGE_LABELS, SEVERITY_ORDER,
-  SEVERITY_RANK, activeConfigFilters, applyConfigFilters, configFacetCounts,
+  CONFIG_SORTS, CONFIG_SORT_DESC, FLAG_LABELS, LINKAGE_LABELS, OUTCOME_LABELS,
+  SEVERITY_ORDER, SEVERITY_RANK, activeConfigFilters, applyConfigFilters, configFacetCounts,
   readConfigParams, sortConfigRows,
 } from "./configView.js";
 
@@ -45,7 +45,7 @@ function sevRank(sev) {
 
 const FACET_KEYS = [
   "severities", "statuses", "clouds", "resourceTypes", "rules", "projects",
-  "linkage", "flags",
+  "linkage", "flags", "outcomes",
 ];
 
 const FACET_LABELS = {
@@ -57,11 +57,13 @@ const FACET_LABELS = {
   projects: "Project",
   linkage: "AI asset",
   flags: "Signals",
+  outcomes: "Priority",
 };
 
 function optionLabel(key, value) {
   if (key === "flags") return FLAG_LABELS[value] || value;
   if (key === "linkage") return LINKAGE_LABELS[value] || value;
+  if (key === "outcomes") return OUTCOME_LABELS[value] || value;
   return value;
 }
 
@@ -118,6 +120,7 @@ export async function renderConfigFindings(main, params, ctx) {
       projects: view.query.projects.join(",") || null,
       linkage: view.query.linkage.join(",") || null,
       flags: view.query.flags.join(",") || null,
+      outcomes: view.query.outcomes.join(",") || null,
       sort: view.sort === "severity" ? null : view.sort,
       dir: view.descending === CONFIG_SORT_DESC[view.sort] ? null : (view.descending ? "desc" : "asc"),
       page: view.page ? String(view.page) : null,
@@ -210,7 +213,7 @@ export async function renderConfigFindings(main, params, ctx) {
     const filtered = applyConfigFilters(rows, view.query);
     const counts = configFacetCounts(rows, view.query, FACET_KEYS);
     const facetHost = el("div", { class: "card", style: "margin-top:12px" });
-    for (const key of ["linkage", "flags", "statuses", "clouds", "resourceTypes"]) {
+    for (const key of ["linkage", "flags", "outcomes", "statuses", "clouds", "resourceTypes"]) {
       const options = (counts[key] || []).filter((o) => o.count > 0 || view.query[key].indexOf(o.value) >= 0);
       if (options.length < 2) continue;
       facetHost.append(el("div", { class: "facet-row", style: "margin-bottom:8px" },
@@ -383,6 +386,9 @@ export async function renderConfigFindings(main, params, ctx) {
     const table = dataTable({
       columns: [
         { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
+        // The problem tree's outcome (Phase 5) — decided from exploitation/impact/exposure/
+        // mission, a separate scale from the Wiz severity column beside it.
+        { key: "priority", label: "Priority", sortable: true, cell: (r) => outcomeBadge(r.problemOutcome) },
         {
           key: "rule", label: "Control", sortable: true,
           cell: (r) => el("div", {},

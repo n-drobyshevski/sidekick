@@ -56,5 +56,9 @@ function api_setAarsRule(p) { return timedApi_("setAarsRule", p); }
 function api_previewAarsRule(p) { return timedApi_("previewAarsRule", p); }
 function api_scoreAarsSample(p) { return timedApi_("scoreAarsSample", p); }
 function api_rescoreAars(p) { return timedApi_("rescoreAars", p); }
+function api_getProblemRule(p) { return timedApi_("getProblemRule", p); }
+function api_setProblemRule(p) { return timedApi_("setProblemRule", p); }
+function api_previewProblemRule(p) { return timedApi_("previewProblemRule", p); }
+function api_recomputeProblems(p) { return timedApi_("recomputeProblems", p); }
 function api_resetData(p) { return timedApi_("resetData", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }

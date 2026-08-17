@@ -2403,6 +2403,7 @@ var Server = (() => {
     getIssueDetail: () => getIssueDetail,
     getIssues: () => getIssues,
     getJobStatus: () => getJobStatus,
+    getProblemRule: () => getProblemRule3,
     getQueryVocabulary: () => getQueryVocabulary,
     getScanQueries: () => getScanQueries,
     getSettings: () => getSettings,
@@ -2410,12 +2411,15 @@ var Server = (() => {
     getSyncHistory: () => getSyncHistory,
     getToxicCombos: () => getToxicCombos,
     previewAarsRule: () => previewAarsRule,
+    previewProblemRule: () => previewProblemRule,
+    recomputeProblems: () => recomputeProblems,
     rescoreAars: () => rescoreAars,
     resetData: () => resetData2,
     runGraphQuery: () => runGraphQuery,
     runSync: () => runSync,
     scoreAarsSample: () => scoreAarsSample,
     setAarsRule: () => setAarsRule2,
+    setProblemRule: () => setProblemRule2,
     setScanVars: () => setScanVars2,
     setSelectedFrameworks: () => setSelectedFrameworks2,
     setSettings: () => setSettings,
@@ -3233,6 +3237,22 @@ var Server = (() => {
   var IMPACT_VALUES = ["TOTAL", "PARTIAL"];
   var EXPOSURE_VALUES = ["OPEN", "CONTROLLED", "UNVERIFIED"];
   var MISSION_VALUES = ["HIGH", "MEDIUM", "LOW"];
+  function enumerateDecisionVectors() {
+    const out = [];
+    for (const exploitation of EXPLOITATION_VALUES) {
+      for (const impact of IMPACT_VALUES) {
+        for (const exposure of EXPOSURE_VALUES) {
+          for (const mission of MISSION_VALUES) {
+            out.push({ exploitation, impact, exposure, mission });
+          }
+        }
+      }
+    }
+    return out;
+  }
+  function leafKey(v) {
+    return `${v.exploitation}|${v.impact}|${v.exposure}|${v.mission}`;
+  }
   function vectorMatches(vector, when) {
     if (when.exploitation !== void 0 && when.exploitation !== vector.exploitation) return false;
     if (when.impact !== void 0 && when.impact !== vector.impact) return false;
@@ -3392,20 +3412,264 @@ var Server = (() => {
     return marks;
   }
 
+  // src/domain/problemRule.ts
+  var AXIS_KEYS = ["exploitation", "impact", "exposure", "mission"];
+  var MAX_OUTCOME_RULES = 40;
+  var MAX_EXPLOITATION_RULES = 200;
+  var MAX_VERDICTS = 20;
+  var MAX_TOTAL_IMPACT_GROUPS = 40;
+  var CODE_MAX_LEN2 = 128;
+  var ACT_CEILING_FLOOR = 1e-3;
+  function rec2(v) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  }
+  function cleanCode(v) {
+    return String(v != null ? v : "").trim().slice(0, CODE_MAX_LEN2);
+  }
+  var DEFAULT_PROBLEM_RULE = {
+    outcomeRules: [
+      { when: { exploitation: "ACTIVE", impact: "TOTAL", exposure: "OPEN" }, outcome: "ACT" },
+      { when: { exploitation: "ACTIVE", impact: "TOTAL", mission: "HIGH" }, outcome: "ACT" },
+      { when: { exploitation: "ACTIVE", exposure: "OPEN", mission: "HIGH" }, outcome: "ACT" },
+      { when: { exploitation: "ACTIVE" }, outcome: "ATTEND" },
+      { when: { impact: "TOTAL", exposure: "OPEN", mission: "HIGH" }, outcome: "ATTEND" },
+      { when: { exploitation: "SUSPECTED", exposure: "OPEN" }, outcome: "ATTEND" },
+      { when: { exposure: "UNVERIFIED" }, outcome: "TRACK_STAR" },
+      { when: { mission: "HIGH" }, outcome: "TRACK_STAR" }
+    ],
+    fallbackOutcome: "TRACK",
+    exploitationByRuleId: [],
+    remediateVerdicts: ["REMEDIATE"],
+    // wc-id-3230 (gcp-hosted-privileged) is the one combo pattern whose OWASP Agentic
+    // mapping names ASI05 (toxicCombos.ts) — Excessive Agency / remote-code-execution shape
+    // — alongside its excessive-privilege and sensitive-data conditions. That is what
+    // "grants code execution" means operationally for this axis: not merely elevated IAM,
+    // but the specific pattern whose own framework tags say RCE.
+    totalImpactGroups: ["gcp-hosted-privileged"],
+    missingMission: "MEDIUM",
+    actLeafCeiling: 0.15
+  };
+  function cleanWhen(v) {
+    const raw = rec2(v);
+    const when = {};
+    if (EXPLOITATION_VALUES.includes(raw["exploitation"])) {
+      when.exploitation = raw["exploitation"];
+    }
+    if (IMPACT_VALUES.includes(raw["impact"])) {
+      when.impact = raw["impact"];
+    }
+    if (EXPOSURE_VALUES.includes(raw["exposure"])) {
+      when.exposure = raw["exposure"];
+    }
+    if (MISSION_VALUES.includes(raw["mission"])) {
+      when.mission = raw["mission"];
+    }
+    return when;
+  }
+  function cleanOutcome(v, fallback) {
+    return OUTCOME_VALUES.includes(v) ? v : fallback;
+  }
+  function cleanOutcomeRule(v, fallback) {
+    const raw = rec2(v);
+    return { when: cleanWhen(raw["when"]), outcome: cleanOutcome(raw["outcome"], fallback) };
+  }
+  function cleanExploitationRuleRow(v) {
+    const raw = rec2(v);
+    const ruleId = cleanCode(raw["ruleId"]);
+    if (!ruleId) return null;
+    const maturityRaw = raw["maturity"];
+    const maturity = maturityRaw === "REALIZED" || maturityRaw === "DEMONSTRATED" || maturityRaw === "FEASIBLE" ? maturityRaw : "FEASIBLE";
+    return { ruleId, maturity };
+  }
+  function cleanCodeList(v, fallback, max) {
+    if (!Array.isArray(v)) return [...fallback];
+    const out = [];
+    for (const item of v) {
+      const c = cleanCode(item);
+      if (c) out.push(c);
+      if (out.length >= max) break;
+    }
+    return out;
+  }
+  function cleanProblemRule(raw) {
+    const r = rec2(raw);
+    const fallbackOutcome = cleanOutcome(r["fallbackOutcome"], DEFAULT_PROBLEM_RULE.fallbackOutcome);
+    const rowsRaw = Array.isArray(r["outcomeRules"]) ? r["outcomeRules"] : null;
+    const outcomeRules = rowsRaw ? rowsRaw.slice(0, MAX_OUTCOME_RULES).map((row) => cleanOutcomeRule(row, fallbackOutcome)) : DEFAULT_PROBLEM_RULE.outcomeRules.map((row) => ({ when: { ...row.when }, outcome: row.outcome }));
+    const exploitationRaw = Array.isArray(r["exploitationByRuleId"]) ? r["exploitationByRuleId"] : null;
+    const exploitationByRuleId = exploitationRaw ? exploitationRaw.slice(0, MAX_EXPLOITATION_RULES).map(cleanExploitationRuleRow).filter((row) => row !== null) : DEFAULT_PROBLEM_RULE.exploitationByRuleId.map((row) => ({ ...row }));
+    const remediateVerdicts = cleanCodeList(
+      r["remediateVerdicts"],
+      DEFAULT_PROBLEM_RULE.remediateVerdicts,
+      MAX_VERDICTS
+    );
+    const totalImpactGroups = cleanCodeList(
+      r["totalImpactGroups"],
+      DEFAULT_PROBLEM_RULE.totalImpactGroups,
+      MAX_TOTAL_IMPACT_GROUPS
+    );
+    const missingMission = MISSION_VALUES.includes(r["missingMission"]) ? r["missingMission"] : DEFAULT_PROBLEM_RULE.missingMission;
+    const ceilingRaw = Number(r["actLeafCeiling"]);
+    const actLeafCeiling = Number.isFinite(ceilingRaw) ? Math.min(1, Math.max(ACT_CEILING_FLOOR, ceilingRaw)) : DEFAULT_PROBLEM_RULE.actLeafCeiling;
+    return {
+      outcomeRules,
+      fallbackOutcome,
+      exploitationByRuleId,
+      remediateVerdicts,
+      totalImpactGroups,
+      missingMission,
+      actLeafCeiling
+    };
+  }
+  function pct(share) {
+    return `${(share * 100).toFixed(1)}%`;
+  }
+  function validateProblemRule(rule) {
+    const errors = [];
+    if (!rule.outcomeRules.length) {
+      errors.push(
+        "The outcome cascade has no rules; every vector would route to the fallback outcome. Add a rule or accept the fallback deliberately."
+      );
+    }
+    if (rule.outcomeRules.length > MAX_OUTCOME_RULES) {
+      errors.push(`The outcome cascade is limited to ${MAX_OUTCOME_RULES} rules.`);
+    }
+    rule.outcomeRules.forEach((row, i) => {
+      const isEmpty = AXIS_KEYS.every((k) => row.when[k] === void 0);
+      if (isEmpty && i !== rule.outcomeRules.length - 1) {
+        errors.push(
+          `Outcome rule ${i + 1} has no conditions, so it matches every remaining vector and swallows every rule after it. Move it last or give it a condition.`
+        );
+      }
+    });
+    const seen = /* @__PURE__ */ new Map();
+    rule.outcomeRules.forEach((row, i) => {
+      const isEmpty = AXIS_KEYS.every((k) => row.when[k] === void 0);
+      if (isEmpty) return;
+      const key = AXIS_KEYS.filter((k) => row.when[k] !== void 0).map((k) => `${k}:${row.when[k]}`).join("|");
+      const earlier = seen.get(key);
+      if (earlier !== void 0) {
+        errors.push(`Outcome rule ${i + 1} repeats the same condition as rule ${earlier + 1}.`);
+      } else {
+        seen.set(key, i);
+      }
+    });
+    const coverage = leafCoverage(rule);
+    const actShare = coverage.total ? coverage.byOutcome.ACT / coverage.total : 0;
+    if (actShare > rule.actLeafCeiling) {
+      errors.push(
+        `This rule sends ${coverage.byOutcome.ACT} of ${coverage.total} leaves to ACT (${pct(actShare)}) \u2014 above the ${pct(rule.actLeafCeiling)} ceiling.`
+      );
+    }
+    return errors;
+  }
+  function shadowedOutcomeRules(rule) {
+    const leaves = enumerateDecisionVectors();
+    const dead = [];
+    rule.outcomeRules.forEach((row, i) => {
+      const rowLeaves = leaves.filter((v) => vectorMatches(v, row.when));
+      if (!rowLeaves.length) return;
+      const allClaimedEarlier = rowLeaves.every(
+        (v) => rule.outcomeRules.slice(0, i).some((earlier) => vectorMatches(v, earlier.when))
+      );
+      if (allClaimedEarlier) dead.push(i);
+    });
+    return dead;
+  }
+  function leafCoverage(rule) {
+    const leaves = enumerateDecisionVectors();
+    const byRow = rule.outcomeRules.map(() => 0);
+    const byOutcome = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0 };
+    let byFallback = 0;
+    for (const v of leaves) {
+      const { outcome, matchedRuleIndex } = decideProblem(v, rule);
+      if (matchedRuleIndex === -1) byFallback++;
+      else byRow[matchedRuleIndex] += 1;
+      byOutcome[outcome]++;
+    }
+    return { total: leaves.length, byRow, byFallback, byOutcome };
+  }
+  function treeDiscrimination(decided) {
+    var _a5;
+    const outcomeOccupancy = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0 };
+    const leafOccupancy = {};
+    const unknownCounts = {
+      exploitation: 0,
+      impact: 0,
+      exposure: 0,
+      mission: 0
+    };
+    for (const d of decided) {
+      outcomeOccupancy[d.outcome]++;
+      const key = leafKey(d.vector);
+      leafOccupancy[key] = ((_a5 = leafOccupancy[key]) != null ? _a5 : 0) + 1;
+      for (const u of d.unknowns) {
+        if (u === "exploitation" || u === "impact" || u === "exposure" || u === "mission") {
+          unknownCounts[u]++;
+        }
+      }
+    }
+    const n = decided.length;
+    const rate = (count2) => n ? count2 / n : 0;
+    return {
+      decided,
+      outcomeOccupancy,
+      leavesReached: Object.keys(leafOccupancy).length,
+      leafOccupancy,
+      unknownRate: {
+        exploitation: rate(unknownCounts.exploitation),
+        impact: rate(unknownCounts.impact),
+        exposure: rate(unknownCounts.exposure),
+        mission: rate(unknownCounts.mission)
+      }
+    };
+  }
+  function problemRuleSummary(rule) {
+    const coverage = leafCoverage(rule);
+    const actShare = coverage.total ? coverage.byOutcome.ACT / coverage.total : 0;
+    return [
+      `${rule.outcomeRules.length} outcome rules are tried in order, first match wins; a vector matching none of them falls back to ${rule.fallbackOutcome}.`,
+      `ACT claims ${coverage.byOutcome.ACT} of ${coverage.total} leaves (${pct(actShare)}), against a ceiling of ${pct(rule.actLeafCeiling)}.`,
+      `Exploitation reaches ACTIVE only from Wiz's own validated-exploitable flag. It reaches SUSPECTED from ${rule.exploitationByRuleId.length} rule-table row(s) at REALIZED or DEMONSTRATED maturity, or from an AI verdict of ${rule.remediateVerdicts.length ? rule.remediateVerdicts.join("/") : "(none configured)"} \u2014 never both the way to ACTIVE.`,
+      `Technical impact reads TOTAL from admin privileges, admin-level human access, or membership in ${rule.totalImpactGroups.length ? rule.totalImpactGroups.join(", ") : "(no configured groups)"}; otherwise PARTIAL.`,
+      `A missing business-impact tier reads as ${rule.missingMission}, never LOW.`
+    ];
+  }
+  function vectorSignature(rule) {
+    const exploitation = rule.exploitationByRuleId.map((r) => `${r.ruleId}:${r.maturity}`).join(",");
+    return [
+      `exploitationByRuleId:${exploitation}`,
+      `remediateVerdicts:${rule.remediateVerdicts.join(",")}`,
+      `totalImpactGroups:${rule.totalImpactGroups.join(",")}`,
+      `missingMission:${rule.missingMission}`
+    ].join("|");
+  }
+  function decisionEqual(a, b) {
+    const withoutCeiling = (r) => {
+      const c = cleanProblemRule(r);
+      delete c.actLeafCeiling;
+      return JSON.stringify(c);
+    };
+    return withoutCeiling(a) === withoutCeiling(b);
+  }
+
   // src/domain/configFindings.ts
   var CONFIG_SORTS = [
     "severity",
     "rule",
     "resource",
     "firstSeen",
-    "status"
+    "status",
+    "priority"
   ];
   var DEFAULT_CONFIG_SORT_DIR = {
     severity: "desc",
     firstSeen: "desc",
     rule: "asc",
     resource: "asc",
-    status: "asc"
+    status: "asc",
+    // Phase 5: the problem tree's outcome, worst (ACT) first — same convention as severity.
+    priority: "desc"
   };
   var DEFAULT_CONFIG_PAGE_SIZE = 50;
   var MAX_CONFIG_PAGE_SIZE = 500;
@@ -3418,13 +3682,18 @@ var Server = (() => {
     "rules",
     "projects",
     "linkage",
-    "flags"
+    "flags",
+    "outcomes"
   ];
   var LINKAGE_VALUES = ["linked", "unlinked"];
   var CONFIG_FLAGS = ["gap", "ignored", "iac"];
   var sevRank2 = (s) => {
     const i = SEVERITY_ORDER.indexOf(s);
     return i < 0 ? SEVERITY_ORDER.length : i;
+  };
+  var priorityRank = (o) => {
+    const i = OUTCOME_VALUES.indexOf(o);
+    return i < 0 ? OUTCOME_VALUES.length : i;
   };
   function toConfigView(f, linked) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
@@ -3473,6 +3742,9 @@ var Server = (() => {
       ),
       flags: listParam(params["flags"]).filter(
         (v) => CONFIG_FLAGS.indexOf(v) >= 0
+      ),
+      outcomes: listParam(params["outcomes"]).filter(
+        (v) => OUTCOME_VALUES.indexOf(v) >= 0
       )
     };
   }
@@ -3493,6 +3765,7 @@ var Server = (() => {
     if (!anyOf(q.rules, row.ruleShortId)) return false;
     if (q.projects.length && !row.projects.some((p) => q.projects.indexOf(p) >= 0)) return false;
     if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
+    if (!anyOf(q.outcomes, row.problemOutcome)) return false;
     for (const flag of q.flags) if (!hasConfigFlag(row, flag)) return false;
     if (q.q) {
       const hay = [
@@ -3520,6 +3793,7 @@ var Server = (() => {
       else if (sort === "resource") cmp2 = a.resourceName.localeCompare(b.resourceName);
       else if (sort === "status") cmp2 = a.status.localeCompare(b.status);
       else if (sort === "firstSeen") cmp2 = a.firstSeenAt.localeCompare(b.firstSeenAt);
+      else if (sort === "priority") cmp2 = priorityRank(b.problemOutcome) - priorityRank(a.problemOutcome);
       return cmp2 !== 0 ? cmp2 * d : tie(a, b);
     };
   }
@@ -3534,10 +3808,12 @@ var Server = (() => {
     if (key === "rules") return [row.ruleShortId].filter(Boolean);
     if (key === "projects") return row.projects;
     if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
+    if (key === "outcomes") return row.problemOutcome ? [row.problemOutcome] : [];
     return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f));
   }
   function facetSorter2(key) {
     if (key === "severities") return (a, b) => sevRank2(a.value) - sevRank2(b.value);
+    if (key === "outcomes") return (a, b) => priorityRank(a.value) - priorityRank(b.value);
     if (key === "flags") {
       const order = CONFIG_FLAGS;
       return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
@@ -4914,124 +5190,6 @@ var Server = (() => {
     return scope.policies.filter((p) => !p.selected).map((p) => p.policyId);
   }
 
-  // src/domain/problemRule.ts
-  var MAX_OUTCOME_RULES = 40;
-  var MAX_EXPLOITATION_RULES = 200;
-  var MAX_VERDICTS = 20;
-  var MAX_TOTAL_IMPACT_GROUPS = 40;
-  var CODE_MAX_LEN2 = 128;
-  var ACT_CEILING_FLOOR = 1e-3;
-  function rec2(v) {
-    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
-  }
-  function cleanCode(v) {
-    return String(v != null ? v : "").trim().slice(0, CODE_MAX_LEN2);
-  }
-  var DEFAULT_PROBLEM_RULE = {
-    outcomeRules: [
-      { when: { exploitation: "ACTIVE", impact: "TOTAL", exposure: "OPEN" }, outcome: "ACT" },
-      { when: { exploitation: "ACTIVE", impact: "TOTAL", mission: "HIGH" }, outcome: "ACT" },
-      { when: { exploitation: "ACTIVE", exposure: "OPEN", mission: "HIGH" }, outcome: "ACT" },
-      { when: { exploitation: "ACTIVE" }, outcome: "ATTEND" },
-      { when: { impact: "TOTAL", exposure: "OPEN", mission: "HIGH" }, outcome: "ATTEND" },
-      { when: { exploitation: "SUSPECTED", exposure: "OPEN" }, outcome: "ATTEND" },
-      { when: { exposure: "UNVERIFIED" }, outcome: "TRACK_STAR" },
-      { when: { mission: "HIGH" }, outcome: "TRACK_STAR" }
-    ],
-    fallbackOutcome: "TRACK",
-    exploitationByRuleId: [],
-    remediateVerdicts: ["REMEDIATE"],
-    // wc-id-3230 (gcp-hosted-privileged) is the one combo pattern whose OWASP Agentic
-    // mapping names ASI05 (toxicCombos.ts) — Excessive Agency / remote-code-execution shape
-    // — alongside its excessive-privilege and sensitive-data conditions. That is what
-    // "grants code execution" means operationally for this axis: not merely elevated IAM,
-    // but the specific pattern whose own framework tags say RCE.
-    totalImpactGroups: ["gcp-hosted-privileged"],
-    missingMission: "MEDIUM",
-    actLeafCeiling: 0.15
-  };
-  function cleanWhen(v) {
-    const raw = rec2(v);
-    const when = {};
-    if (EXPLOITATION_VALUES.includes(raw["exploitation"])) {
-      when.exploitation = raw["exploitation"];
-    }
-    if (IMPACT_VALUES.includes(raw["impact"])) {
-      when.impact = raw["impact"];
-    }
-    if (EXPOSURE_VALUES.includes(raw["exposure"])) {
-      when.exposure = raw["exposure"];
-    }
-    if (MISSION_VALUES.includes(raw["mission"])) {
-      when.mission = raw["mission"];
-    }
-    return when;
-  }
-  function cleanOutcome(v, fallback) {
-    return OUTCOME_VALUES.includes(v) ? v : fallback;
-  }
-  function cleanOutcomeRule(v, fallback) {
-    const raw = rec2(v);
-    return { when: cleanWhen(raw["when"]), outcome: cleanOutcome(raw["outcome"], fallback) };
-  }
-  function cleanExploitationRuleRow(v) {
-    const raw = rec2(v);
-    const ruleId = cleanCode(raw["ruleId"]);
-    if (!ruleId) return null;
-    const maturityRaw = raw["maturity"];
-    const maturity = maturityRaw === "REALIZED" || maturityRaw === "DEMONSTRATED" || maturityRaw === "FEASIBLE" ? maturityRaw : "FEASIBLE";
-    return { ruleId, maturity };
-  }
-  function cleanCodeList(v, fallback, max) {
-    if (!Array.isArray(v)) return [...fallback];
-    const out = [];
-    for (const item of v) {
-      const c = cleanCode(item);
-      if (c) out.push(c);
-      if (out.length >= max) break;
-    }
-    return out;
-  }
-  function cleanProblemRule(raw) {
-    const r = rec2(raw);
-    const fallbackOutcome = cleanOutcome(r["fallbackOutcome"], DEFAULT_PROBLEM_RULE.fallbackOutcome);
-    const rowsRaw = Array.isArray(r["outcomeRules"]) ? r["outcomeRules"] : null;
-    const outcomeRules = rowsRaw ? rowsRaw.slice(0, MAX_OUTCOME_RULES).map((row) => cleanOutcomeRule(row, fallbackOutcome)) : DEFAULT_PROBLEM_RULE.outcomeRules.map((row) => ({ when: { ...row.when }, outcome: row.outcome }));
-    const exploitationRaw = Array.isArray(r["exploitationByRuleId"]) ? r["exploitationByRuleId"] : null;
-    const exploitationByRuleId = exploitationRaw ? exploitationRaw.slice(0, MAX_EXPLOITATION_RULES).map(cleanExploitationRuleRow).filter((row) => row !== null) : DEFAULT_PROBLEM_RULE.exploitationByRuleId.map((row) => ({ ...row }));
-    const remediateVerdicts = cleanCodeList(
-      r["remediateVerdicts"],
-      DEFAULT_PROBLEM_RULE.remediateVerdicts,
-      MAX_VERDICTS
-    );
-    const totalImpactGroups = cleanCodeList(
-      r["totalImpactGroups"],
-      DEFAULT_PROBLEM_RULE.totalImpactGroups,
-      MAX_TOTAL_IMPACT_GROUPS
-    );
-    const missingMission = MISSION_VALUES.includes(r["missingMission"]) ? r["missingMission"] : DEFAULT_PROBLEM_RULE.missingMission;
-    const ceilingRaw = Number(r["actLeafCeiling"]);
-    const actLeafCeiling = Number.isFinite(ceilingRaw) ? Math.min(1, Math.max(ACT_CEILING_FLOOR, ceilingRaw)) : DEFAULT_PROBLEM_RULE.actLeafCeiling;
-    return {
-      outcomeRules,
-      fallbackOutcome,
-      exploitationByRuleId,
-      remediateVerdicts,
-      totalImpactGroups,
-      missingMission,
-      actLeafCeiling
-    };
-  }
-  function vectorSignature(rule) {
-    const exploitation = rule.exploitationByRuleId.map((r) => `${r.ruleId}:${r.maturity}`).join(",");
-    return [
-      `exploitationByRuleId:${exploitation}`,
-      `remediateVerdicts:${rule.remediateVerdicts.join(",")}`,
-      `totalImpactGroups:${rule.totalImpactGroups.join(",")}`,
-      `missingMission:${rule.missingMission}`
-    ].join("|");
-  }
-
   // src/domain/scanVars.ts
   var MAX_LIST_VALUES = 40;
   var MAX_VALUE_LEN = 120;
@@ -5406,6 +5564,13 @@ var Server = (() => {
       // than migrated once on the way in, so there is no separate migration step to forget
       // to run when a field is added to ProblemRule later.
       rule: cleanProblemRule(stored["rule"])
+    };
+  }
+  function withProblemRule(settings, rule) {
+    const current = getProblemRule(settings);
+    return {
+      ...settings,
+      problem_rule: { version: current.version + 1, rule: cleanProblemRule(rule) }
     };
   }
   function getDecidedRuleVersion(settings) {
@@ -8262,7 +8427,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "a5471ee6b9fc" : "dev";
+  var BUILD_ID = true ? "0a37a6fcc6a5" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8484,6 +8649,18 @@ var Server = (() => {
     return stored;
   }
   var getProblemRule2 = () => getProblemRule(loadSettings());
+  function setProblemRule(rule) {
+    const settings = loadSettings();
+    const before = getProblemRule(settings);
+    const verdictsWereCurrent = getDecidedRuleVersion(settings) === before.version;
+    let next = withProblemRule(settings, rule);
+    const stored = getProblemRule(next);
+    if (verdictsWereCurrent && decisionEqual(before.rule, stored.rule)) {
+      next = withDecidedRuleVersion(next, stored.version);
+    }
+    saveSettings(next);
+    return stored;
+  }
   var getSkippedSteps2 = () => getSkippedSteps(loadSettings());
   function setSkippedSteps(steps) {
     const settings = loadSettings();
@@ -8535,6 +8712,7 @@ var Server = (() => {
     if (getScoredRuleVersion(next) === getScoredRuleVersion(settings)) return;
     saveSettings(next);
   }
+  var getDecidedRuleVersion2 = () => getDecidedRuleVersion(loadSettings());
   function setDecidedRuleVersion(version) {
     const settings = loadSettings();
     const next = withDecidedRuleVersion(settings, version);
@@ -10676,6 +10854,56 @@ var Server = (() => {
     }
     return enrichGraphDoc(base, issues2, hints, rule);
   }
+  function redecideFromTabs(rule, ruleVersion) {
+    const byId = new Map(loadAssetsRaw().map((n) => [n.id, n]));
+    const sig = vectorSignature(rule);
+    const reuseOrDerive = (row, node2, derive) => {
+      const persisted = row.problemInput;
+      if (persisted && (persisted.derivedUnder === void 0 || persisted.derivedUnder === sig)) {
+        return persisted;
+      }
+      return { ...derive(), derivedUnder: sig };
+    };
+    const stampVersion = (row) => {
+      if (ruleVersion === void 0) {
+        if (row.problemRuleVersion === void 0) return row;
+        const next = { ...row };
+        delete next.problemRuleVersion;
+        return next;
+      }
+      return { ...row, problemRuleVersion: ruleVersion };
+    };
+    const issues2 = loadIssues().map((issue2) => {
+      if (!isUnresolvedIssue(issue2)) return stripProblemFields(issue2);
+      const input = reuseOrDerive(issue2, byId.get(issue2.assetId), () => deriveProblemInput(issue2, byId.get(issue2.assetId), rule));
+      const { outcome } = decideProblem(input.vector, rule);
+      return stampVersion({ ...issue2, problemOutcome: outcome, problemInput: input });
+    });
+    const findings = loadFindings().map((finding) => {
+      if (!isOpenGap(finding)) return stripProblemFields(finding);
+      const input = reuseOrDerive(finding, byId.get(finding.resourceId), () => deriveFindingProblemInput(finding, byId.get(finding.resourceId), rule));
+      const { outcome } = decideProblem(input.vector, rule);
+      return stampVersion({ ...finding, problemOutcome: outcome, problemInput: input });
+    });
+    return { issues: issues2, findings };
+  }
+  function redecideProblems() {
+    const { version, rule } = getProblemRule2();
+    const { issues: issues2, findings } = redecideFromTabs(rule, version);
+    overwrite(TABS.issues, issues2.map(issueToRow));
+    overwrite(TABS.findings, findings.map(findingToRow));
+    setDecidedRuleVersion(version);
+    commit();
+    return {
+      version,
+      issueCount: issues2.filter((i) => i.problemOutcome !== void 0).length,
+      findingCount: findings.filter((f) => f.problemOutcome !== void 0).length,
+      outcomes: countProblemOutcomes([...issues2, ...findings])
+    };
+  }
+  function decideProblemsWith(rule) {
+    return redecideFromTabs(rule, void 0);
+  }
   function loadRawGraph() {
     var _a5;
     const nodes = loadAssetsRaw();
@@ -12801,6 +13029,103 @@ var Server = (() => {
   }
   function rescoreAars(_p) {
     return mutate(() => ({ ...rescoreInventory(), ...ruleState() }));
+  }
+  function problemRuleState() {
+    const stored = getProblemRule2();
+    const decidedVersion = getDecidedRuleVersion2();
+    return {
+      version: stored.version,
+      rule: stored.rule,
+      decidedVersion,
+      // Only outcomeRules / fallbackOutcome / the derivation knobs can strand a persisted
+      // verdict (decisionEqual, problemRule.ts) — setProblemRule's own no-op guard already
+      // moves decidedVersion forward across an edit that cannot have changed one.
+      stale: decidedVersion !== stored.version,
+      summary: problemRuleSummary(stored.rule),
+      leafCoverage: leafCoverage(stored.rule),
+      validation: validateProblemRule(stored.rule),
+      shadowed: shadowedOutcomeRules(stored.rule),
+      limits: { maxOutcomeRules: MAX_OUTCOME_RULES }
+    };
+  }
+  function getProblemRule3(_p) {
+    return run(() => problemRuleState());
+  }
+  function setProblemRule2(p) {
+    return mutate(() => {
+      const params = p != null ? p : {};
+      const proposed = cleanProblemRule(params["rule"]);
+      const errors = validateProblemRule(proposed);
+      if (errors.length) throw new Error(errors.join(" "));
+      setProblemRule(proposed);
+      return problemRuleState();
+    });
+  }
+  function isIssueRow(row) {
+    return "assetId" in row;
+  }
+  function decidedForDiscrimination(rows) {
+    const out = [];
+    for (const row of rows) {
+      const outcome = row.problemOutcome;
+      const input = row.problemInput;
+      if (!outcome || !input || !OUTCOME_VALUES.includes(outcome)) continue;
+      out.push({ outcome, vector: input.vector, unknowns: input.unknowns });
+    }
+    return out;
+  }
+  function previewProblemRule(p) {
+    return run(() => {
+      var _a5, _b, _c, _d, _e;
+      const params = p != null ? p : {};
+      const proposed = cleanProblemRule(params["rule"]);
+      const errors = validateProblemRule(proposed);
+      if (errors.length) throw new Error(errors.join(" "));
+      const beforeAll = [...loadIssues(), ...loadFindings()];
+      const beforeById = new Map(beforeAll.map((r) => [r.id, r.problemOutcome]));
+      const after = decideProblemsWith(proposed);
+      const afterAll = [...after.issues, ...after.findings];
+      const rank = (o) => {
+        const i = o ? OUTCOME_VALUES.indexOf(o) : -1;
+        return i < 0 ? OUTCOME_VALUES.length : i;
+      };
+      const movers = [];
+      for (const row of afterAll) {
+        const fromOutcome = (_a5 = beforeById.get(row.id)) != null ? _a5 : null;
+        const toOutcome = (_b = row.problemOutcome) != null ? _b : null;
+        if (fromOutcome === toOutcome) continue;
+        movers.push({
+          id: row.id,
+          kind: isIssueRow(row) ? "issue" : "finding",
+          ruleName: isIssueRow(row) ? row.ruleName : (_d = (_c = row.ruleName) != null ? _c : row.ruleShortId) != null ? _d : "",
+          assetName: isIssueRow(row) ? row.assetName : (_e = row.resourceName) != null ? _e : row.resourceId,
+          fromOutcome,
+          toOutcome
+        });
+      }
+      movers.sort((a, b) => {
+        const r = rank(a["toOutcome"]) - rank(b["toOutcome"]);
+        return r !== 0 ? r : String(a["id"]).localeCompare(String(b["id"]));
+      });
+      return {
+        total: afterAll.length,
+        current: countProblemOutcomes(beforeAll),
+        proposed: countProblemOutcomes(afterAll),
+        // The proposed rule read back in prose, and the rows that can never be a first match —
+        // both describe the DRAFT, so they travel with the preview rather than the saved state.
+        summary: problemRuleSummary(proposed),
+        leafCoverage: leafCoverage(proposed),
+        shadowedOutcomeRules: shadowedOutcomeRules(proposed),
+        validation: validateProblemRule(proposed),
+        treeDiscrimination: treeDiscrimination(decidedForDiscrimination(afterAll)),
+        movers: movers.slice(0, PREVIEW_MOVERS_MAX),
+        moverCount: movers.length,
+        truncated: movers.length > PREVIEW_MOVERS_MAX
+      };
+    });
+  }
+  function recomputeProblems(_p) {
+    return mutate(() => ({ ...redecideProblems(), ...problemRuleState() }));
   }
   function resetData2(_p) {
     return mutate(() => {

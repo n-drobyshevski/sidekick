@@ -43,6 +43,21 @@ import {
   type AarsTrendPoint,
 } from "../domain/aarsTrend";
 import {
+  countProblemOutcomes,
+  OUTCOME_VALUES,
+  type DecisionVector,
+  type Outcome,
+} from "../domain/problem";
+import {
+  cleanProblemRule,
+  leafCoverage,
+  MAX_OUTCOME_RULES,
+  problemRuleSummary,
+  shadowedOutcomeRules,
+  treeDiscrimination,
+  validateProblemRule,
+} from "../domain/problemRule";
+import {
   AARS_SEVERITY_ORDER,
   isOpenGap,
   isUnresolvedIssue,
@@ -104,6 +119,7 @@ import {
 import {
   AI_ASSET_KINDS,
   NODE_KINDS,
+  type FindingRow,
   type FrameworkPolicyRow,
   type GEdge,
   type GNode,
@@ -1706,6 +1722,154 @@ export function scoreAarsSample(p?: unknown): ApiResult {
 
 export function rescoreAars(_p?: unknown): ApiResult {
   return mutate(() => ({ ...syncStore.rescoreInventory(), ...ruleState() }));
+}
+
+// ------------------------------------------------------------------------ problem rule
+//
+// The Phase 3/4 decision tree (domain/problem.ts, domain/problemRule.ts) exposed: same
+// four endpoints as the AARS rule above, same shapes, mirrored rather than shared because
+// the two models diverge in exactly the ways aarsRule.ts's and problemRule.ts's own header
+// comments explain (a continuous score vs. a 4-outcome tree; `stale` compares against a
+// DECIDED version, not a scored one).
+
+/**
+ * The same {version, rule, decidedVersion, stale, summary, leafCoverage, validation,
+ * shadowed} shape ruleState() assembles for AARS, mirrored onto the tree. getProblemRule
+ * and setProblemRule share it so the two can never disagree about what "the current state"
+ * means — the same reason ruleState() itself is factored out rather than duplicated.
+ */
+function problemRuleState(): Rec {
+  const stored = settingsStore.getProblemRule();
+  const decidedVersion = settingsStore.getDecidedRuleVersion();
+  return {
+    version: stored.version,
+    rule: stored.rule,
+    decidedVersion,
+    // Only outcomeRules / fallbackOutcome / the derivation knobs can strand a persisted
+    // verdict (decisionEqual, problemRule.ts) — setProblemRule's own no-op guard already
+    // moves decidedVersion forward across an edit that cannot have changed one.
+    stale: decidedVersion !== stored.version,
+    summary: problemRuleSummary(stored.rule),
+    leafCoverage: leafCoverage(stored.rule),
+    validation: validateProblemRule(stored.rule),
+    shadowed: shadowedOutcomeRules(stored.rule),
+    limits: { maxOutcomeRules: MAX_OUTCOME_RULES },
+  };
+}
+
+export function getProblemRule(_p?: unknown): ApiResult {
+  return run(() => problemRuleState());
+}
+
+export function setProblemRule(p?: unknown): ApiResult {
+  return mutate(() => {
+    const params = (p ?? {}) as Rec;
+    const proposed = cleanProblemRule(params["rule"]);
+    const errors = validateProblemRule(proposed);
+    if (errors.length) throw new Error(errors.join(" "));
+    settingsStore.setProblemRule(proposed);
+    return problemRuleState();
+  });
+}
+
+/** An issue row, narrowed from the union `previewProblemRule` walks — see `isIssueRow`. */
+function isIssueRow(row: IssueRow | FindingRow): row is IssueRow {
+  return "assetId" in row;
+}
+
+/**
+ * The decided population `treeDiscrimination` wants: outcome + vector + unknowns, read off
+ * whichever rows a preview actually reached a verdict on. A row `decideProblemsWith`
+ * stripped (no longer eligible) or never decided carries no `problemInput` and is skipped —
+ * the same "decided, not merely present" filter `countProblemOutcomes` applies via
+ * `OUTCOME_VALUES`, applied here to the richer shape treeDiscrimination needs.
+ */
+function decidedForDiscrimination(
+  rows: ReadonlyArray<IssueRow | FindingRow>,
+): Array<{ outcome: Outcome; vector: DecisionVector; unknowns: string[] }> {
+  const out: Array<{ outcome: Outcome; vector: DecisionVector; unknowns: string[] }> = [];
+  for (const row of rows) {
+    const outcome = row.problemOutcome;
+    const input = row.problemInput;
+    if (!outcome || !input || !(OUTCOME_VALUES as readonly string[]).includes(outcome)) continue;
+    out.push({ outcome: outcome as Outcome, vector: input.vector, unknowns: input.unknowns });
+  }
+  return out;
+}
+
+/**
+ * What saving this rule would do to every open issue and failing finding as they read
+ * right now — previewAarsRule's counterpart, built the same way: `syncStore
+ * .decideProblemsWith(draft)` costs ZERO Wiz calls (every axis reading is either already
+ * persisted in `problemInput` or cheap to re-derive from the tabs), and the result is
+ * diffed against what the register shows today.
+ *
+ * `treeDiscrimination`'s per-axis unknown rates are the reason this endpoint exists: they
+ * are how an operator discovers that, say, `validatedAsExploitable` is unpopulated on
+ * their tenant — the finding the whole SSVC-shaped model hinges on, and the one thing this
+ * payload must never let get buried under the outcome counts. See problemRule.ts's own
+ * header for why `treeDiscrimination` measures unknown rates and leaves reached rather than
+ * porting `ruleDiscrimination`'s tie-rate machinery.
+ */
+export function previewProblemRule(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const proposed = cleanProblemRule(params["rule"]);
+    const errors = validateProblemRule(proposed);
+    if (errors.length) throw new Error(errors.join(" "));
+
+    const beforeAll: Array<IssueRow | FindingRow> = [...syncStore.loadIssues(), ...syncStore.loadFindings()];
+    const beforeById = new Map(beforeAll.map((r) => [r.id, r.problemOutcome]));
+
+    const after = syncStore.decideProblemsWith(proposed);
+    const afterAll: Array<IssueRow | FindingRow> = [...after.issues, ...after.findings];
+
+    const rank = (o: string | undefined): number => {
+      const i = o ? (OUTCOME_VALUES as readonly string[]).indexOf(o) : -1;
+      return i < 0 ? OUTCOME_VALUES.length : i;
+    };
+
+    const movers: Rec[] = [];
+    for (const row of afterAll) {
+      const fromOutcome = beforeById.get(row.id) ?? null;
+      const toOutcome = row.problemOutcome ?? null;
+      if (fromOutcome === toOutcome) continue;
+      movers.push({
+        id: row.id,
+        kind: isIssueRow(row) ? "issue" : "finding",
+        ruleName: isIssueRow(row) ? row.ruleName : (row.ruleName ?? row.ruleShortId ?? ""),
+        assetName: isIssueRow(row) ? row.assetName : (row.resourceName ?? row.resourceId),
+        fromOutcome,
+        toOutcome,
+      });
+    }
+    // Worst proposed outcome first — the queue an operator would actually triage — then id
+    // for a stable order across an otherwise-tied pair.
+    movers.sort((a, b) => {
+      const r = rank(a["toOutcome"] as string | undefined) - rank(b["toOutcome"] as string | undefined);
+      return r !== 0 ? r : String(a["id"]).localeCompare(String(b["id"]));
+    });
+
+    return {
+      total: afterAll.length,
+      current: countProblemOutcomes(beforeAll),
+      proposed: countProblemOutcomes(afterAll),
+      // The proposed rule read back in prose, and the rows that can never be a first match —
+      // both describe the DRAFT, so they travel with the preview rather than the saved state.
+      summary: problemRuleSummary(proposed),
+      leafCoverage: leafCoverage(proposed),
+      shadowedOutcomeRules: shadowedOutcomeRules(proposed),
+      validation: validateProblemRule(proposed),
+      treeDiscrimination: treeDiscrimination(decidedForDiscrimination(afterAll)),
+      movers: movers.slice(0, PREVIEW_MOVERS_MAX),
+      moverCount: movers.length,
+      truncated: movers.length > PREVIEW_MOVERS_MAX,
+    };
+  });
+}
+
+export function recomputeProblems(_p?: unknown): ApiResult {
+  return mutate(() => ({ ...syncStore.redecideProblems(), ...problemRuleState() }));
 }
 
 // ----------------------------------------------------------------------------- data
