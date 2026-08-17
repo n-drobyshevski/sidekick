@@ -31,6 +31,31 @@ import { cmp, pushInto, type Rec } from "./util";
 
 /** A kind slot in a query. "ANY" matches every kind — the wildcard the ANY-hops step needs. */
 export type QueryKind = NodeKind | "ANY";
+
+/**
+ * The kinds a node names, always as a list. THE one narrowing point for `QueryNode.kind`.
+ *
+ * Everything downstream reads kinds through this, so nothing else has to know that a single
+ * kind is stored as a bare string — and adding a reader that forgets is a type error rather
+ * than a branch that quietly works for one shape and not the other.
+ */
+export function kindsOf(node: QueryNode): QueryKind[] {
+  return Array.isArray(node.kind) ? node.kind : [node.kind];
+}
+
+/** The character between kinds in `find=`. See the grammar note in the client's graphQuery.js. */
+export const KIND_SEP = "-";
+
+/**
+ * A node's kinds as one stable string — `"AI_AGENT"`, `"AI_AGENT-AI_DEPLOYMENT"`.
+ *
+ * The identity two sides of the wire compare (`ColumnGroup.kind` here, the builder row's `kind`
+ * there) and the key per-kind column preferences are stored under. A one-kind node answers the
+ * bare kind, which is why nothing about an existing payload moves.
+ */
+export function kindKey(node: QueryNode): string {
+  return kindsOf(node).join(KIND_SEP);
+}
 /** An edge slot. "ANY" means "related somehow", walked undirected up to `hops`. */
 export type QueryEdge = EdgeType | "ANY";
 
@@ -75,7 +100,16 @@ export interface PropFilter {
 }
 
 export interface QueryNode {
-  kind: QueryKind;
+  /**
+   * What this node is looking for. An array names SEVERAL kinds and matches any of them —
+   * "AI agents and AI deployments that reach classified data" is one node, not two queries.
+   *
+   * Scalar-or-array rather than always-array so that a one-kind node stays the object it has
+   * always been on the wire, which keeps every existing link, saved view and golden payload
+   * byte-identical. `validateQuery` canonicalises the two spellings into one, and `kindsOf` is
+   * the single place anything narrows them — no reader below this line asks which it got.
+   */
+  kind: QueryKind | QueryKind[];
   where?: PropFilter[];
   /**
    * Whether this node contributes rows and a column group — the eye toggle in the builder.
@@ -325,12 +359,23 @@ export const QUERY_FIELDS: readonly FieldSpec[] = [
 
 const FIELD_BY_KEY = new Map(QUERY_FIELDS.map((f) => [f.key, f]));
 
-/** Every field a node of this kind can answer. "ANY" offers only the kind-agnostic ones. */
-export function fieldsForKind(kind: QueryKind): FieldSpec[] {
+/**
+ * Every field a node of these kinds can answer — the INTERSECTION where there are several.
+ *
+ * Intersect rather than union, and the asymmetry with the union used for relationships is
+ * deliberate: a filter on a field only some of the kinds carry would read as narrowing and
+ * actually EXCLUDE the rest, since a node that cannot answer a field matches only "unknown". A
+ * relationship is a step you take on purpose with a count beside it; a field is a promise the
+ * whole set has to keep.
+ *
+ * "ANY" offering only the kind-agnostic specs is the same rule, not an exception to it — the
+ * wildcard is the intersection over every kind there is.
+ */
+export function fieldsForKind(kind: QueryKind | QueryKind[]): FieldSpec[] {
+  const kinds = Array.isArray(kind) ? kind : [kind];
   return QUERY_FIELDS.filter((f) => {
     if (!f.kinds) return true;
-    if (kind === "ANY") return false;
-    return f.kinds.includes(kind);
+    return kinds.every((k) => k !== "ANY" && f.kinds!.includes(k));
   });
 }
 
@@ -340,14 +385,18 @@ export function fieldsForKind(kind: QueryKind): FieldSpec[] {
  * These three sets are the screenshot: an AI-asset group reads name / publisher / discovered
  * by, an identity group reads name / display name / inactive-for-90-days. Everything else gets
  * the columns that are true of any node.
+ *
+ * EVERY member has to be in a family for that family's columns, which is the same intersection
+ * rule `fieldsForKind` applies — asking for AI agents and deployments together keeps the
+ * AI-asset columns, asking for agents and buckets falls back to the generic three, because
+ * `publisher` is not a column a bucket can fill.
  */
-export function defaultFieldsForKind(kind: QueryKind): string[] {
-  if (kind !== "ANY" && (AI_ASSET_KINDS as readonly string[]).includes(kind)) {
-    return ["name", "publisher", "discoveredBy"];
-  }
-  if (kind !== "ANY" && (IDENTITY_KINDS as readonly string[]).includes(kind)) {
-    return ["name", "displayName", "inactive"];
-  }
+export function defaultFieldsForKind(kind: QueryKind | QueryKind[]): string[] {
+  const kinds = Array.isArray(kind) ? kind : [kind];
+  const all = (family: readonly string[]) =>
+    kinds.every((k) => k !== "ANY" && family.includes(k));
+  if (all(AI_ASSET_KINDS as readonly string[])) return ["name", "publisher", "discoveredBy"];
+  if (all(IDENTITY_KINDS as readonly string[])) return ["name", "displayName", "inactive"];
   return ["name", "kind", "cloud"];
 }
 
@@ -377,17 +426,45 @@ export function validateQuery(raw: unknown): QueryNode {
   return q;
 }
 
+/**
+ * The kinds one node names, canonicalised so a selection has exactly one spelling.
+ *
+ * One kind collapses to the bare string, which is what keeps a single-kind query the same object
+ * it has always been. Duplicates drop. A set holding "ANY" collapses to "ANY" alone, because the
+ * union of everything with anything is everything — offering both would be a query that reads as
+ * narrower than it is.
+ *
+ * THE ORDER IS LEFT AS WRITTEN, and that is deliberate. Sorting into NODE_KINDS order here would
+ * be the obvious canonicalisation, but `kindKey` — the joined string — is compared ACROSS THE
+ * WIRE by value: the client derives a row's identity from its own parsed tree and looks up this
+ * node's `ColumnGroup` by it (test/graphQueryWalk.test.js pins the pair). The client's parser and
+ * `setKinds` keep the order they were given, so reordering on this side alone would make a link
+ * written `AI_DEPLOYMENT-AI_AGENT` describe two different nodes to the two halves of the app —
+ * losing the row's field specs and its saved columns, silently. Agreement by construction is
+ * worth more than a normalised spelling for a hand-edited URL, and the palette already emits its
+ * selection in the vocabulary's order, so anything built in the UI has one spelling anyway.
+ */
+function readKinds(raw: unknown): QueryKind | QueryKind[] {
+  const list = Array.isArray(raw) ? raw : [raw];
+  if (!list.length) fail("node names no kind");
+  const out: QueryKind[] = [];
+  for (const one of list) {
+    if (typeof one !== "string" || (one !== "ANY" && !KIND_SET.has(one))) {
+      fail(`unknown node kind: ${String(one)}`);
+    }
+    if (!out.includes(one as QueryKind)) out.push(one as QueryKind);
+  }
+  if (out.includes("ANY")) return "ANY";
+  return out.length === 1 ? out[0] : out;
+}
+
 function readNode(raw: unknown, depth: number, counter: { nodes: number }): QueryNode {
   if (!raw || typeof raw !== "object") fail("query node must be an object");
   if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
   if (++counter.nodes > MAX_QUERY_NODES) fail(`query has more than ${MAX_QUERY_NODES} nodes`);
 
   const r = raw as Rec;
-  const kind = r["kind"];
-  if (typeof kind !== "string" || (kind !== "ANY" && !KIND_SET.has(kind))) {
-    fail(`unknown node kind: ${String(kind)}`);
-  }
-  const node: QueryNode = { kind: kind as QueryKind };
+  const node: QueryNode = { kind: readKinds(r["kind"]) };
 
   if (r["show"] === false) node.show = false;
 
@@ -800,28 +877,42 @@ export const QUERY_SHORTCUTS: readonly QueryShortcut[] = [
  * most worth offering in an estate where NOTHING is protected — which is exactly the estate
  * whose vocabulary carries no PROTECTED_BY edge to require.
  */
-export function shortcutsFor(kind: QueryKind, vocab: Vocabulary): QueryShortcut[] {
-  if (kind === "ANY") return [];
+export function shortcutsFor(kind: QueryKind | QueryKind[], vocab: Vocabulary): QueryShortcut[] {
+  // SEVERAL KINDS UNION, where the fields a set offers intersect — and the asymmetry is the
+  // point. A field has to be answerable by every kind or filtering on it silently excludes the
+  // ones that cannot; a shortcut is a step someone takes deliberately, so offering one that only
+  // part of the selection can walk is a choice with a visible consequence (the other kinds drop
+  // out of the results) rather than a hidden narrowing of the question already asked.
+  const from = kindsOf({ kind } as QueryNode).filter((k) => k !== "ANY") as NodeKind[];
+  // The wildcard is not a kind and has no relationships of its own; `stepsFrom` has no "ANY" key
+  // at all, so there is nothing to check reachability against.
+  if (!from.length) return [];
   // The kind has to be IN the estate. Without this, a shortcut whose every step is negated —
   // or which is a bare property filter — passes the reachability check against a graph with
   // nothing in it at all, and an unsynced tenant is offered six buttons that answer nothing.
-  if (!vocab.kinds.some((k) => k.kind === kind)) return [];
-  return QUERY_SHORTCUTS.filter((s) => {
-    if (!s.kinds.includes(kind as NodeKind)) return false;
-    return s.steps.every((step) => reachable(kind as NodeKind, step, vocab));
-  });
+  const present = from.filter((k) => vocab.kinds.some((v) => v.kind === k));
+  if (!present.length) return [];
+  return QUERY_SHORTCUTS.filter((s) => present.some((k) =>
+    s.kinds.includes(k) && s.steps.every((step) => reachable(k, step, vocab))));
 }
 
 function reachable(from: NodeKind, step: QueryStep, vocab: Vocabulary): boolean {
   if (isGroup(step)) return step.steps.every((s) => reachable(from, s, vocab));
   if (step.negate) return true;
   if (step.edge === "ANY") return true;
-  const target = step.node.kind;
-  const hit = (vocab.stepsFrom[from] ?? []).some((e) =>
-    e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
-  if (!hit) return false;
-  if (target === "ANY") return true;
-  return (step.node.steps ?? []).every((s) => reachable(target as NodeKind, s, vocab));
+  // A step naming several target kinds is reachable if ANY of them is — the same union the
+  // palette offers relationships by. Shortcuts are all authored single-kind, so this only ever
+  // runs one way today; written as a fold because `e.kind === step.node.kind` against an array
+  // is type-legal and silently false, which would judge such a shortcut unanswerable.
+  const targets = kindsOf(step.node);
+  const from2 = vocab.stepsFrom[from] ?? [];
+  return targets.some((target) => {
+    const hit = from2.some((e) =>
+      e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
+    if (!hit) return false;
+    if (target === "ANY") return true;
+    return (step.node.steps ?? []).every((s) => reachable(target as NodeKind, s, vocab));
+  });
 }
 
 // ------------------------------------------------------------------------- columns
@@ -829,7 +920,12 @@ function reachable(from: NodeKind, step: QueryStep, vocab: Vocabulary): boolean 
 export interface ColumnGroup {
   /** Pre-order index among SHOWN nodes — the row's cell index. */
   index: number;
-  kind: QueryKind;
+  /**
+   * `kindKey` of the node this group describes — one kind, or several joined by KIND_SEP.
+   * A string rather than a QueryKind because it is an IDENTITY, compared across the wire
+   * against the builder row's own and used as the per-kind column-preference key.
+   */
+  kind: string;
   label: string;
   fields: Array<{ key: string; label: string; numeric?: boolean }>;
   /** Every field this kind could show, for the column chooser. */
@@ -860,8 +956,11 @@ export function queryColumnGroups(query: QueryNode, selected?: Array<string[] | 
     const keys = picked.length ? picked : defaultFieldsForKind(node.kind).filter((k) => offeredKeys.has(k));
     groups.push({
       index,
-      kind: node.kind,
-      label: node.kind === "ANY" ? "Any node" : node.kind,
+      // `kindKey`, not `node.kind`: the builder row derives its own identity the same way, and
+      // graphQueryWalk.test.js compares the two by value across the wire. A one-kind node
+      // answers the bare kind, so no existing payload moves.
+      kind: kindKey(node),
+      label: kindsOf(node).map((k) => (k === "ANY" ? "Any node" : k)).join(" or "),
       fields: keys.map((k) => {
         const f = FIELD_BY_KEY.get(k) as FieldSpec;
         return { key: f.key, label: f.label, numeric: f.numeric };
@@ -1054,7 +1153,9 @@ function matchesTag(node: GNode, want: string): boolean {
 }
 
 function matchesNode(node: GNode, q: QueryNode): boolean {
-  if (q.kind !== "ANY" && node.kind !== q.kind) return false;
+  // Several kinds match ANY of them — the whole evaluator cost of multi-kind is this line.
+  const kinds = kindsOf(q);
+  if (!kinds.includes("ANY") && !(kinds as string[]).includes(node.kind)) return false;
   for (const f of q.where ?? []) {
     if (!matchesFilter(node, f)) return false;
   }

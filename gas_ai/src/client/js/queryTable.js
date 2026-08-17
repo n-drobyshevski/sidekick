@@ -12,7 +12,7 @@
 // — the same bargain inventory.js took.
 
 import { dataTable, el, pager, sevBadge } from "./ui.js";
-import { categoryOf, kindIconSvg, kindLabel } from "./icons.js";
+import { categoryOf, kindIconSvg, kindLabel, kindsLabel } from "./icons.js";
 
 const PAGE_SIZES = [25, 50, 100, 250];
 export const DEFAULT_PAGE_SIZE = 50;
@@ -208,7 +208,10 @@ export function queryTable(payload, opts = {}) {
  * one needs no number, and adding it anyway reads as though a first group is missing.
  */
 function groupLabel(group, index, groups) {
-  const base = group.kind === "ANY" ? "Any node" : kindLabel(group.kind);
+  // `kindsLabel`, not `kindLabel`: a group's kind is the node's IDENTITY, which for a node naming
+  // several kinds is the list joined by `-`. `kindLabel` has no entry for that and echoed the raw
+  // "AI_AGENT-BUCKET" into the header. It handles the wildcard too.
+  const base = kindsLabel(group.kind);
   const sameKind = groups.filter((g) => g.kind === group.kind);
   if (sameKind.length < 2) return base;
   return base + " (" + (sameKind.indexOf(group) + 1) + ")";

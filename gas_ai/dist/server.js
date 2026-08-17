@@ -6424,6 +6424,13 @@ var Server = (() => {
   }
 
   // src/domain/graphQuery.ts
+  function kindsOf(node2) {
+    return Array.isArray(node2.kind) ? node2.kind : [node2.kind];
+  }
+  var KIND_SEP = "-";
+  function kindKey(node2) {
+    return kindsOf(node2).join(KIND_SEP);
+  }
   function isGroup(step) {
     return step.op !== void 0;
   }
@@ -6608,19 +6615,17 @@ var Server = (() => {
   ];
   var FIELD_BY_KEY = new Map(QUERY_FIELDS.map((f) => [f.key, f]));
   function fieldsForKind(kind) {
+    const kinds = Array.isArray(kind) ? kind : [kind];
     return QUERY_FIELDS.filter((f) => {
       if (!f.kinds) return true;
-      if (kind === "ANY") return false;
-      return f.kinds.includes(kind);
+      return kinds.every((k) => k !== "ANY" && f.kinds.includes(k));
     });
   }
   function defaultFieldsForKind(kind) {
-    if (kind !== "ANY" && AI_ASSET_KINDS.includes(kind)) {
-      return ["name", "publisher", "discoveredBy"];
-    }
-    if (kind !== "ANY" && IDENTITY_KINDS.includes(kind)) {
-      return ["name", "displayName", "inactive"];
-    }
+    const kinds = Array.isArray(kind) ? kind : [kind];
+    const all = (family) => kinds.every((k) => k !== "ANY" && family.includes(k));
+    if (all(AI_ASSET_KINDS)) return ["name", "publisher", "discoveredBy"];
+    if (all(IDENTITY_KINDS)) return ["name", "displayName", "inactive"];
     return ["name", "kind", "cloud"];
   }
   var QueryError = class extends Error {
@@ -6635,16 +6640,25 @@ var Server = (() => {
     const q = readNode(raw, 1, counter);
     return q;
   }
+  function readKinds(raw) {
+    const list2 = Array.isArray(raw) ? raw : [raw];
+    if (!list2.length) fail("node names no kind");
+    const out = [];
+    for (const one of list2) {
+      if (typeof one !== "string" || one !== "ANY" && !KIND_SET.has(one)) {
+        fail(`unknown node kind: ${String(one)}`);
+      }
+      if (!out.includes(one)) out.push(one);
+    }
+    if (out.includes("ANY")) return "ANY";
+    return out.length === 1 ? out[0] : out;
+  }
   function readNode(raw, depth, counter) {
     if (!raw || typeof raw !== "object") fail("query node must be an object");
     if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
     if (++counter.nodes > MAX_QUERY_NODES) fail(`query has more than ${MAX_QUERY_NODES} nodes`);
     const r = raw;
-    const kind = r["kind"];
-    if (typeof kind !== "string" || kind !== "ANY" && !KIND_SET.has(kind)) {
-      fail(`unknown node kind: ${String(kind)}`);
-    }
-    const node2 = { kind };
+    const node2 = { kind: readKinds(r["kind"]) };
     if (r["show"] === false) node2.show = false;
     const where = r["where"];
     if (where !== void 0) {
@@ -6862,23 +6876,26 @@ var Server = (() => {
     }
   ];
   function shortcutsFor(kind, vocab) {
-    if (kind === "ANY") return [];
-    if (!vocab.kinds.some((k) => k.kind === kind)) return [];
-    return QUERY_SHORTCUTS.filter((s) => {
-      if (!s.kinds.includes(kind)) return false;
-      return s.steps.every((step) => reachable(kind, step, vocab));
-    });
+    const from = kindsOf({ kind }).filter((k) => k !== "ANY");
+    if (!from.length) return [];
+    const present2 = from.filter((k) => vocab.kinds.some((v) => v.kind === k));
+    if (!present2.length) return [];
+    return QUERY_SHORTCUTS.filter((s) => present2.some((k) => s.kinds.includes(k) && s.steps.every((step) => reachable(k, step, vocab))));
   }
   function reachable(from, step, vocab) {
-    var _a5, _b;
+    var _a5;
     if (isGroup(step)) return step.steps.every((s) => reachable(from, s, vocab));
     if (step.negate) return true;
     if (step.edge === "ANY") return true;
-    const target = step.node.kind;
-    const hit = ((_a5 = vocab.stepsFrom[from]) != null ? _a5 : []).some((e) => e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
-    if (!hit) return false;
-    if (target === "ANY") return true;
-    return ((_b = step.node.steps) != null ? _b : []).every((s) => reachable(target, s, vocab));
+    const targets = kindsOf(step.node);
+    const from2 = (_a5 = vocab.stepsFrom[from]) != null ? _a5 : [];
+    return targets.some((target) => {
+      var _a6;
+      const hit = from2.some((e) => e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
+      if (!hit) return false;
+      if (target === "ANY") return true;
+      return ((_a6 = step.node.steps) != null ? _a6 : []).every((s) => reachable(target, s, vocab));
+    });
   }
   function queryColumnGroups(query, selected) {
     var _a5;
@@ -6893,8 +6910,11 @@ var Server = (() => {
       const keys = picked.length ? picked : defaultFieldsForKind(node2.kind).filter((k) => offeredKeys.has(k));
       groups.push({
         index,
-        kind: node2.kind,
-        label: node2.kind === "ANY" ? "Any node" : node2.kind,
+        // `kindKey`, not `node.kind`: the builder row derives its own identity the same way, and
+        // graphQueryWalk.test.js compares the two by value across the wire. A one-kind node
+        // answers the bare kind, so no existing payload moves.
+        kind: kindKey(node2),
+        label: kindsOf(node2).map((k) => k === "ANY" ? "Any node" : k).join(" or "),
         fields: keys.map((k) => {
           const f = FIELD_BY_KEY.get(k);
           return { key: f.key, label: f.label, numeric: f.numeric };
@@ -6977,7 +6997,8 @@ var Server = (() => {
   }
   function matchesNode(node2, q) {
     var _a5;
-    if (q.kind !== "ANY" && node2.kind !== q.kind) return false;
+    const kinds = kindsOf(q);
+    if (!kinds.includes("ANY") && !kinds.includes(node2.kind)) return false;
     for (const f of (_a5 = q.where) != null ? _a5 : []) {
       if (!matchesFilter(node2, f)) return false;
     }
@@ -7883,7 +7904,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "fbb3bee6c631" : "dev";
+  var BUILD_ID = true ? "e46728f51926" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

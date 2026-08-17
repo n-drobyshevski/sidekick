@@ -173,6 +173,14 @@
   color: var(--cat-exposure-text);
 }
 .gq-chip[data-category="exposure"] .gq-chip-icon { color: var(--cat-exposure-ink); }
+/* "+2 more", where a term names more kinds than the row spells out. Deliberately NOT tinted and
+   a step lighter than a real entity: it is a count of things not shown, and dressing it like the
+   chips beside it would read as a sixth category nobody can point at. */
+.gq-chip--more {
+  padding-inline: 8px;
+  border-color: transparent; background: var(--track-bg);
+  font-size: 12px; font-weight: 500; color: var(--text-3);
+}
 
 /* Row actions: flat 26px squares. They reset the 36px bordered global button recipe the same
    way .filter-chip-body does — left alone, three shadowed surfaces would sit in a 28px line. */
@@ -413,6 +421,13 @@
    faint ground is only its echo — the tinted row alone would be a colour-only signal, and this
    one sits beside four others in the same category tint. */
 .gq-pal-option.is-current .gq-pal-option-label { font-weight: 600; }
+/* PRESSED, in entity mode's multi-select. SEVERAL rows can be on at once, so the list has to read
+   as a set rather than as one highlighted answer: `aria-pressed` carries it to a screen reader,
+   the tick to the eye, and the ring traces the chosen rows down the glyph column so the set is
+   scannable without reading every label. No wash — `is-active` owns the row's ground, and a
+   pressed row under the keyboard cursor would be two washes arguing about which one means what. */
+.gq-pal-option.is-on .gq-pal-option-label { font-weight: 600; }
+.gq-pal-option.is-on .gq-pal-glyph-wrap { box-shadow: inset 0 0 0 1.5px currentColor; }
 .gq-pal-option-current {
   flex: 0 0 auto; display: inline-flex; align-items: center;
   color: var(--accent);

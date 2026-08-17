@@ -928,3 +928,129 @@ describe("value lists for a wildcard node", () => {
     expect(keys).not.toContain("guardrail");
   });
 });
+
+// ------------------------------------------------- several kinds at one position
+//
+// "FIND AI Agents and AI Models that reach sensitive data" is ONE node looking for either kind,
+// not two queries and not a wildcard narrowed by a `kind` filter. The wildcard was the old
+// workaround and it lost three things: `stepsFrom` has no "ANY" key so it offered no
+// relationships at all, `shortcutsFor("ANY")` is empty so the shortcut that IS this question was
+// unbuildable, and `fieldsForKind("ANY")` drops the AI-asset specs so the table opened on
+// name/kind/cloud instead of the product's signature name/publisher/discovered by.
+describe("a node naming several kinds", () => {
+  const VOCAB = queryVocabulary(DOC);
+  const both = (...kinds: NodeKind[]) => kinds.reduce(
+    (n, k) => n + DOC.nodes.filter((x) => x.kind === k).length, 0);
+
+  it("matches either kind, and counts them all", () => {
+    const res = runQuery(DOC, validateQuery({ kind: ["AI_AGENT", "AI_MODEL"] }));
+    expect(res.total).toBe(both("AI_AGENT", "AI_MODEL"));
+    const kinds = new Set(res.rows.map((r) => r.cells[0]?.kind));
+    expect(kinds).toEqual(new Set(["AI_AGENT", "AI_MODEL"]));
+    // Not the union of two queries by accident: it is still one node, so one cell per row.
+    for (const row of res.rows) expect(row.cells).toHaveLength(1);
+  });
+
+  it("works at the far end of a step as well as at the root", () => {
+    const wide = runQuery(DOC, validateQuery({
+      kind: "AI_AGENT",
+      steps: [{ edge: "RUNS_AS", node: { kind: ["SERVICE_ACCOUNT", "ACCESS_KEY"] } }],
+    }));
+    const narrow = runQuery(DOC, validateQuery(AGENT_RUNS_AS_SA));
+    // The seed gives one agent an agentic ACCESS_KEY rather than a service account — the row
+    // the single-kind query drops is exactly the row widening the set gets back.
+    expect(wide.total).toBe(narrow.total + 1);
+    expect(new Set(wide.rows.map((r) => r.cells[1]?.kind)))
+      .toEqual(new Set(["SERVICE_ACCOUNT", "ACCESS_KEY"]));
+  });
+
+  it("canonicalises the list, so one selection has one spelling", () => {
+    // One kind is the bare string it has always been — which is what keeps every existing
+    // payload, and every golden, byte-identical.
+    expect(validateQuery({ kind: ["AI_AGENT"] })).toEqual({ kind: "AI_AGENT" });
+    expect(validateQuery({ kind: ["BUCKET", "BUCKET"] })).toEqual({ kind: "BUCKET" });
+    // ANY is the union of everything, so it cannot be one of several: a set holding it reads as
+    // narrower than it is, and collapsing says what the query actually does.
+    expect(validateQuery({ kind: ["AI_AGENT", "ANY"] })).toEqual({ kind: "ANY" });
+    // The written order survives. `kindKey` is compared across the wire by value, and the client
+    // does not reorder either — see the note on readKinds.
+    expect(validateQuery({ kind: ["AI_MODEL", "AI_AGENT"] }).kind).toEqual(["AI_MODEL", "AI_AGENT"]);
+  });
+
+  it("rejects an unknown member by name rather than dropping it", () => {
+    // Dropping it would answer a wider question than the link asked for, silently.
+    expect(() => validateQuery({ kind: ["AI_AGENT", "AI_ROBOT"] })).toThrow(/unknown node kind/);
+    expect(() => validateQuery({ kind: [] })).toThrow(/names no kind/);
+  });
+
+  it("INTERSECTS the fields, because a field only some kinds answer would exclude the rest", () => {
+    // Two AI assets keep the AI-asset specs — including the ones the ANY workaround lost.
+    const asset = fieldsForKind(["AI_AGENT", "AI_MODEL"]).map((f) => f.key);
+    expect(asset).toEqual(fieldsForKind("AI_AGENT").map((f) => f.key));
+    expect(asset).toContain("publisher");
+    expect(asset).toContain("discoveredBy");
+    expect(asset).toContain("guardrail");
+    // ACROSS CATEGORIES it falls to what both can answer — and the intersection reading is what
+    // `fieldsForKind("ANY")` has always been: the intersection over every kind there is.
+    const mixed = fieldsForKind(["AI_AGENT", "BUCKET"]).map((f) => f.key);
+    expect(mixed).toEqual(fieldsForKind("ANY").map((f) => f.key));
+    expect(mixed).not.toContain("publisher");
+  });
+
+  it("opens on the columns the whole set has, not the first kind's", () => {
+    expect(defaultFieldsForKind(["AI_AGENT", "AI_MODEL"])).toEqual(["name", "publisher", "discoveredBy"]);
+    expect(defaultFieldsForKind(["SERVICE_ACCOUNT", "USER_ACCOUNT"])).toEqual(["name", "displayName", "inactive"]);
+    // Mixed categories have no signature columns in common, so it is the generic three.
+    expect(defaultFieldsForKind(["AI_AGENT", "BUCKET"])).toEqual(["name", "kind", "cloud"]);
+  });
+
+  it("names the column group by the whole set, and labels it in prose", () => {
+    const groups = queryColumnGroups(validateQuery({
+      kind: ["AI_AGENT", "AI_MODEL"],
+      steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }],
+    }));
+    // The IDENTITY is the joined list — the client derives the same string from its own tree and
+    // matches this group by it (test/graphQueryWalk.test.js pins the pair).
+    expect(groups.map((g) => g.kind)).toEqual(["AI_AGENT-AI_MODEL", "SERVICE_ACCOUNT"]);
+    // "or", not "and": the node matches any one of them, and "AI_AGENT and AI_MODEL" would
+    // promise a node that is both. The raw tokens are what this layer has always emitted —
+    // `kindLabel` lives on the client, which glosses each one before it reaches a header.
+    expect(groups[0].label).toBe("AI_AGENT or AI_MODEL");
+    // A single kind is untouched, which is why no golden moves.
+    expect(queryColumnGroups(validateQuery(AGENT_RUNS_AS_SA))[0].kind).toBe("AI_AGENT");
+  });
+
+  it("UNIONS the shortcuts, because a step is taken deliberately", () => {
+    // Offered when ANY selected kind can answer it. Buckets answer none of these, but the
+    // question "agents or buckets that reach classified data" is still worth a button — and
+    // taking it visibly drops the buckets, where an intersected field silently drops rows.
+    const agent = shortcutsFor("AI_AGENT", VOCAB).map((s) => s.id);
+    expect(shortcutsFor(["AI_AGENT", "BUCKET"], VOCAB).map((s) => s.id)).toEqual(agent);
+    expect(shortcutsFor("BUCKET", VOCAB)).toEqual([]);
+    expect(agent).toContain("reaches-classified");
+    // A set entirely outside the estate is still nothing, not everything.
+    const empty = queryVocabulary({ syncedAt: DOC.syncedAt, nodes: [], edges: [] });
+    expect(shortcutsFor(["AI_AGENT", "BUCKET"], empty)).toEqual([]);
+  });
+
+  it("is still ONE node — one slot, one column, one where index", () => {
+    // The whole point of putting this in the grammar rather than writing `ANY` plus a kind
+    // filter: the reader sees one term, so the machinery underneath must agree.
+    const q = validateQuery({
+      kind: ["AI_AGENT", "AI_MODEL"],
+      steps: [{ edge: "HAS_ISSUE", node: { kind: "ISSUE" } }],
+    });
+    // Two column groups for a two-node query, whatever the first node names.
+    expect(queryColumnGroups(q)).toHaveLength(2);
+    for (const row of runQuery(DOC, q).rows) expect(row.cells).toHaveLength(2);
+    // ONE `where` index for the whole term: slot 0 is the term, not one slot per kind — so a
+    // filter on it narrows the set rather than landing on whichever kind was written first.
+    const open = runQuery(DOC, validateQuery({ kind: ["AI_AGENT", "AI_MODEL"] }));
+    const narrowed = runQuery(DOC, validateQuery({
+      kind: ["AI_AGENT", "AI_MODEL"],
+      where: [{ key: "kind", values: ["AI_MODEL"] }],
+    }));
+    expect(open.total).toBe(both("AI_AGENT", "AI_MODEL"));
+    expect(narrowed.total).toBe(both("AI_MODEL"));
+  });
+});
