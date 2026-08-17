@@ -97,6 +97,12 @@ export interface WeakAreaRow {
   failCount: number;
   policyCount: number;
   failingPolicyCount: number;
+  /**
+   * Carried through from the subcategory node, unchanged, because postureCell() renders
+   * this row and a register row with the same cells — a flattening that dropped the field
+   * would leave the same subcategory tinted in one table and plain in the other.
+   */
+  worstFailingSeverity: Severity | null;
 }
 
 /**
@@ -158,6 +164,7 @@ export function weakestAreas(trees: FrameworkTree[], limit?: number): WeakAreaRo
           // here would be the wrong scope all over again — count the list as given.
           policyCount: sub.policies.length,
           failingPolicyCount: sub.failingPolicyCount,
+          worstFailingSeverity: sub.worstFailingSeverity,
         });
       }
     }

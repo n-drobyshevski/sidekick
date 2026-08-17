@@ -497,6 +497,69 @@ describe("worstFailingSeverity — what colours the posture bar", () => {
     const tree = buildFrameworkTree(frameworkId, framework, [])!;
     expect(tree.worstFailingSeverity).toBeNull();
   });
+
+  // The field is what tints the posture bar at every level of the register, so all three
+  // levels carry it and all three have to agree. They agree by construction — each folds
+  // its children's answer rather than re-walking the policy rows — and these cases pin
+  // that, because three independent walks is exactly how a header comes to name a severity
+  // its own rows do not show.
+  it("reaches the subcategory and category nodes, not only the framework", () => {
+    const tree = buildFrameworkTree(frameworkId, framework, [
+      policy("p-low", "LOW", 3),
+      policy("p-critical", "CRITICAL", 1),
+    ])!;
+    const category = tree.categories[0];
+    expect(category.subcategories[0].worstFailingSeverity).toBe("CRITICAL");
+    expect(category.worstFailingSeverity).toBe("CRITICAL");
+    expect(tree.worstFailingSeverity).toBe("CRITICAL");
+  });
+
+  it("leaves a clean node null at every level — no failing policy, no tint", () => {
+    const tree = buildFrameworkTree(frameworkId, framework, [
+      policy("p-passing-critical", "CRITICAL", 0),
+    ])!;
+    const category = tree.categories[0];
+    expect(category.subcategories[0].worstFailingSeverity).toBeNull();
+    expect(category.worstFailingSeverity).toBeNull();
+    expect(tree.worstFailingSeverity).toBeNull();
+  });
+
+  it("takes the worst across sibling subcategories, not the first one built", () => {
+    // Two subcategories under one category: the milder one is built first, so a category
+    // that simply kept whichever child it reached first would report LOW and tint its row
+    // one level below the CRITICAL its own expansion reveals.
+    const twoSubs: PostureRow[] = [
+      ...framework,
+      {
+        frameworkId, level: "subcategory", categoryExternalId: "C1",
+        subcategoryExternalId: "C1.2", title: "Second subcategory",
+        posturePct: 40, passCount: 4, failCount: 6, emptyPostureReason: null,
+      },
+    ];
+    const second = (severity: Severity): FrameworkPolicyRow => ({
+      ...policy("p-second", severity, 2), subcategoryExternalId: "C1.2",
+    });
+    const tree = buildFrameworkTree(frameworkId, twoSubs, [
+      policy("p-low", "LOW", 3),
+      second("CRITICAL"),
+    ])!;
+    const category = tree.categories[0];
+    expect(category.subcategories.map((s) => s.worstFailingSeverity))
+      .toEqual(["LOW", "CRITICAL"]);
+    expect(category.worstFailingSeverity).toBe("CRITICAL");
+    expect(tree.worstFailingSeverity).toBe("CRITICAL");
+  });
+
+  it("ignores a policy that failed but was never assessed into the tree", () => {
+    // The two filters meeting: an unassessed row is not listed, so it cannot tint a bar
+    // either. `isAssessedPolicy` keeps anything with a real count, so the row that reaches
+    // this case is the genuinely empty one — every count zero, including failCount.
+    const tree = buildFrameworkTree(frameworkId, framework, [
+      { ...policy("p-never-ran", "CRITICAL", 0), assessedCount: 0, noResourceToAssess: true },
+      policy("p-low", "LOW", 3),
+    ])!;
+    expect(tree.categories[0].subcategories[0].worstFailingSeverity).toBe("LOW");
+  });
 });
 
 describe("titleRepeatsExternalId — the duplicated number", () => {

@@ -3494,7 +3494,8 @@ var Server = (() => {
             // deduped `policies` to that scope (compliancePosture.ts:190), so re-deduping
             // here would be the wrong scope all over again — count the list as given.
             policyCount: sub.policies.length,
-            failingPolicyCount: sub.failingPolicyCount
+            failingPolicyCount: sub.failingPolicyCount,
+            worstFailingSeverity: sub.worstFailingSeverity
           });
         }
       }
@@ -5192,6 +5193,16 @@ var Server = (() => {
     const i = SEVERITY_ORDER.indexOf(s);
     return i === -1 ? SEVERITY_ORDER.length : i;
   }
+  function worstOf(a, b) {
+    if (a === null) return b;
+    if (b === null) return a;
+    return severityRank4(b) < severityRank4(a) ? b : a;
+  }
+  function worstFailingSeverityOf(policies) {
+    let worst = null;
+    for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
+    return worst;
+  }
   function emptyStateCounts() {
     return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
   }
@@ -5254,7 +5265,10 @@ var Server = (() => {
         mappingRationale: row.mappingRationale,
         policies: assessed,
         failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
-        unassessedPolicyCount: deduped.length - assessed.length
+        unassessedPolicyCount: deduped.length - assessed.length,
+        // From the LISTED policies, so the tint on this row and the rules the row expands to
+        // show can never name different severities.
+        worstFailingSeverity: worstFailingSeverityOf(assessed)
       };
       stateCounts[node2.state] += 1;
       if (node2.state !== "scored") continue;
@@ -5270,26 +5284,25 @@ var Server = (() => {
       return {
         ...toNode(row, externalId),
         subcategories,
-        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId
+        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId,
+        worstFailingSeverity: subcategories.reduce(
+          (worst, sub) => worstOf(worst, sub.worstFailingSeverity),
+          null
+        )
       };
     }).filter((cat) => cat.subcategories.length > 0);
     const distinct = /* @__PURE__ */ new Map();
-    let worstFailingSeverity = null;
-    let worstFailingRank = Infinity;
     for (const cat of categories) {
       for (const sub of cat.subcategories) {
         for (const p of sub.policies) {
           distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
-          if (p.failCount > 0) {
-            const rank = severityRank4(p.severity);
-            if (rank < worstFailingRank) {
-              worstFailingRank = rank;
-              worstFailingSeverity = p.severity;
-            }
-          }
         }
       }
     }
+    const worstFailingSeverity = categories.reduce(
+      (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
+      null
+    );
     return {
       frameworkId,
       name: (_h = (_g = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _g : catalogue == null ? void 0 : catalogue.name) != null ? _h : frameworkId,
@@ -7755,7 +7768,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "0b1267589918" : "dev";
+  var BUILD_ID = true ? "7ebaf57ed983" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

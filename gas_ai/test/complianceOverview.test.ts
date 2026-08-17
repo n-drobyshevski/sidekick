@@ -140,6 +140,28 @@ describe("weakestAreas — scored ascending, and nothing that cannot be ranked",
     expect(scored.map((w) => w.posturePct)).toEqual([86, 93, 99, 100]);
   });
 
+  it("carries each subcategory's worstFailingSeverity through the flattening", () => {
+    // postureCell() tints this row and the register's row from the same field. If the
+    // flattening dropped it, one subcategory would be tinted in the per-framework table
+    // and plain in the estate-wide one — the same fact, drawn two ways.
+    const weak = weakestAreas(trees);
+    for (const row of weak) {
+      const tree = trees.find((t) => t.frameworkId === row.frameworkId)!;
+      const sub = tree.categories
+        .flatMap((c) => c.subcategories)
+        .find((s) => s.externalId === row.externalId)!;
+      expect(row.worstFailingSeverity).toBe(sub.worstFailingSeverity);
+    }
+    // Concretely, not just self-consistently. And note WHICH row 2.1 is: Wiz scores it
+    // 100% while the cloud rule mapped to it reports ten failures. Wiz's posture is its own
+    // opaque number, not a function of these counts, so a full bar CAN carry a tint — the
+    // hue tracks failing policies, never the percentage beside it.
+    expect(weak.find((w) => w.externalId === "ASI01")!.worstFailingSeverity).toBe("MEDIUM");
+    const publicExposure = weak.find((w) => w.externalId === "2.1")!;
+    expect(publicExposure.posturePct).toBe(100);
+    expect(publicExposure.worstFailingSeverity).toBe("MEDIUM");
+  });
+
   it("contains no row it cannot rank — every one carries a number", () => {
     // This band used to list the unscored rows unranked at the bottom. They no longer
     // reach it: the trees carry only scored subcategories, and weakestAreas drops anything

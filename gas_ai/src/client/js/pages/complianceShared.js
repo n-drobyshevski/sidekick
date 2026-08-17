@@ -51,15 +51,40 @@ export function extChip(node) {
  * A scored node gets the meter + number. An unscored one gets an em-dash and its reason,
  * with a glyph as well as text, because these four states are exactly the kind of thing
  * PRODUCT.md forbids carrying by colour alone.
+ *
+ * THE BAR IS TINTED BY WHAT IS FAILING UNDER IT, and only then. This column was flat
+ * graphite on the theory that tinting it would turn a long framework into a column of
+ * coloured bars — the wall of red and orange cells PRODUCT.md names as an anti-reference.
+ * What makes the tint safe is the field it reads: `worstFailingSeverity` is null unless a
+ * policy under this node is actually failing, so a row with nothing to fix stays graphite
+ * and the ink lands only where there is work.
+ *
+ * NOT the same thing as "a high percentage is never tinted", and the difference is worth
+ * stating because it looks like a bug from the outside. Wiz's posture is its own opaque
+ * number — a subcategory in the tenant capture reports 100% while the rule mapped to it
+ * reports ten failures — so a full bar CAN carry a hue. That is the honest reading of two
+ * facts Wiz reports separately, and the badge beside it is what stops the pair looking like
+ * a contradiction: the row says 100%, and it says a MEDIUM control is failing under it.
+ *
+ * The badge is not decoration. Hue alone would carry the severity, which the accessibility
+ * bar in PRODUCT.md forbids, so the word rides beside it. It is also the only announcement
+ * of the severity: the meter's own label deliberately does NOT repeat it, or a screen
+ * reader would hear the level twice for one cell.
  */
 export function postureCell(node) {
   if (node.state === "scored" && node.posturePct !== null) {
+    const bar = meter(node.posturePct, {
+      max: 100,
+      label: `${node.title}, ${node.posturePct} percent compliant`,
+    });
+    // `data-sev` rather than the shared `.sev-fill-*` classes, for the reason the rail bar
+    // gives: those mean "a saturated severity mark" everywhere else in both apps, and this
+    // is a wash mixed toward the page ground.
+    if (node.worstFailingSeverity) bar.fill.dataset.sev = node.worstFailingSeverity;
     return el("div", { class: "comp-posture" },
-      meter(node.posturePct, {
-        max: 100,
-        label: `${node.title}, ${node.posturePct} percent compliant`,
-      }),
-      el("span", { class: "comp-posture-num" }, `${node.posturePct}%`));
+      bar,
+      el("span", { class: "comp-posture-num" }, `${node.posturePct}%`),
+      node.worstFailingSeverity ? sevBadge(node.worstFailingSeverity) : null);
   }
   const state = STATES[node.state] || STATES.unknown;
   return el("div", { class: "comp-posture" },

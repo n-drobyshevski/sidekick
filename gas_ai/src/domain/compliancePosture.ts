@@ -119,6 +119,13 @@ export interface PostureNode {
   passCount: number;
   failCount: number;
   emptyPostureReason: EmptyPostureReason | null;
+  /**
+   * Worst severity among the FAILING policies under this node. Null when none are failing,
+   * which is what keeps a healthy row unmarked: the register tints a posture bar with this
+   * and pairs it with the severity in words, so the ink lands on rows that carry work
+   * rather than on every row that carries a number.
+   */
+  worstFailingSeverity: Severity | null;
 }
 
 export interface SubcategoryNode extends PostureNode {
@@ -197,6 +204,34 @@ function severityRank(s: Severity): number {
   return i === -1 ? SEVERITY_ORDER.length : i;
 }
 
+/**
+ * The worse of two severities, either of which may be absent.
+ *
+ * Every level's `worstFailingSeverity` is folded up with this rather than computed by its
+ * own walk over the policy rows. A category asking its subcategories, and a framework
+ * asking its categories, cannot disagree with the leaf that actually holds the policy —
+ * three independent walks over three differently filtered sets is exactly how a header
+ * comes to name a severity its own rows do not show.
+ */
+function worstOf(a: Severity | null, b: Severity | null): Severity | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return severityRank(b) < severityRank(a) ? b : a;
+}
+
+/**
+ * The worst severity among the FAILING policies of `policies`, or null when none fail.
+ *
+ * Failing is the whole filter: a CRITICAL control that passes describes the estate's good
+ * news, and letting it set this field would paint a clean row with an alarm. Null means
+ * "nothing here is failing", never "nothing here is severe".
+ */
+function worstFailingSeverityOf(policies: readonly FrameworkPolicyRow[]): Severity | null {
+  let worst: Severity | null = null;
+  for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
+  return worst;
+}
+
 function emptyStateCounts(): Record<PostureState, number> {
   return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
 }
@@ -219,7 +254,12 @@ export function isAssessedPolicy(p: FrameworkPolicyRow): boolean {
   return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
 }
 
-function toNode(row: PostureRow, externalId: string): PostureNode {
+/**
+ * The fields a node reads off its own posture row. `worstFailingSeverity` is NOT one of
+ * them — it is a fact about the policies underneath, which a row does not carry — so every
+ * caller folds it in afterwards from the level below.
+ */
+function toNode(row: PostureRow, externalId: string): Omit<PostureNode, "worstFailingSeverity"> {
   return {
     frameworkId: row.frameworkId,
     externalId,
@@ -302,6 +342,9 @@ export function buildFrameworkTree(
       policies: assessed,
       failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
       unassessedPolicyCount: deduped.length - assessed.length,
+      // From the LISTED policies, so the tint on this row and the rules the row expands to
+      // show can never name different severities.
+      worstFailingSeverity: worstFailingSeverityOf(assessed),
     };
     stateCounts[node.state] += 1;
     // The list keeps only what Wiz scored. An unscored subcategory is not a low score and
@@ -324,6 +367,10 @@ export function buildFrameworkTree(
         subcategories,
         mirrorsCategory: subcategories.length === 1
           && subcategories[0].externalId === externalId,
+        worstFailingSeverity: subcategories.reduce(
+          (worst: Severity | null, sub) => worstOf(worst, sub.worstFailingSeverity),
+          null,
+        ),
       };
     })
     // A category whose every subcategory was dropped goes with them. Kept, it would draw a
@@ -336,27 +383,22 @@ export function buildFrameworkTree(
   // policy that this framework covers, and reporting three would inflate every count on
   // the header.
   //
-  // worstFailingSeverity rides the same walk rather than a second one: it only ever looks
-  // at a policy the moment it is confirmed failing here, so a policy that never fails
-  // (however severe) can never set it, and one that fails under several subcategories is
-  // only ever compared by its severity, never by how many rows it appears on.
+  // worstFailingSeverity is NOT computed here. It folds up from the categories, which
+  // folded it up from their subcategories, which read it off the policies this same walk
+  // is counting — one source, three levels, and the hero can no longer name a severity the
+  // register below it does not show.
   const distinct = new Map<string, boolean>();
-  let worstFailingSeverity: Severity | null = null;
-  let worstFailingRank = Infinity;
   for (const cat of categories) {
     for (const sub of cat.subcategories) {
       for (const p of sub.policies) {
         distinct.set(p.policyId, (distinct.get(p.policyId) ?? false) || p.failCount > 0);
-        if (p.failCount > 0) {
-          const rank = severityRank(p.severity);
-          if (rank < worstFailingRank) {
-            worstFailingRank = rank;
-            worstFailingSeverity = p.severity;
-          }
-        }
       }
     }
   }
+  const worstFailingSeverity = categories.reduce(
+    (worst: Severity | null, cat) => worstOf(worst, cat.worstFailingSeverity),
+    null,
+  );
 
   return {
     frameworkId,

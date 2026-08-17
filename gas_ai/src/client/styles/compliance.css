@@ -107,10 +107,17 @@
   margin-right: 8px;
 }
 
-/* The posture cell: meter + number, or a state pill when there is no number. Fixed width
-   so the column reads as a column rather than as ragged text. */
-.comp-posture { display: flex; align-items: center; gap: 10px; min-width: 150px; }
-.comp-posture .meter { flex: 1; }
+/* The posture cell: meter + number + the severity of what is failing under it, or a state
+   pill when there is no number. Fixed width so the column reads as a column rather than as
+   ragged text — wider than it was, because the badge shares the cell now.
+
+   The badge never shrinks and never wraps: it is the non-colour half of the tint below,
+   and a cell that drops it under pressure would leave the hue carrying the meaning alone.
+   The METER is what gives way instead, which is the right order — a bar two pixels shorter
+   still reads, and the number beside it is exact anyway. */
+.comp-posture { display: flex; align-items: center; gap: 10px; min-width: 210px; }
+.comp-posture .meter { flex: 1; min-width: 48px; }
+.comp-posture .sev-badge { flex: none; }
 .comp-posture-num {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
@@ -283,16 +290,37 @@
 .comp-fw-bar[data-sev="INFO"] { background: color-mix(in srgb, var(--sev-info) 38%, white); }
 .comp-fw-bar[data-sev="UNKNOWN"] { background: color-mix(in srgb, var(--sev-unknown) 38%, white); }
 
-/* The hero meters take the same wash. `.meter-fill` is a shared class, so this is scoped
-   to the two hero slots rather than restyling every meter in the app — the register's own
-   posture cells stay graphite, which is what keeps a long framework from becoming a column
-   of tinted bars. */
-.comp-hero-meter .meter-fill[data-sev="CRITICAL"] { background: color-mix(in srgb, var(--sev-critical) 38%, white); }
-.comp-hero-meter .meter-fill[data-sev="HIGH"] { background: color-mix(in srgb, var(--sev-high) 38%, white); }
-.comp-hero-meter .meter-fill[data-sev="MEDIUM"] { background: color-mix(in srgb, var(--sev-medium) 38%, white); }
-.comp-hero-meter .meter-fill[data-sev="LOW"] { background: color-mix(in srgb, var(--sev-low) 38%, white); }
-.comp-hero-meter .meter-fill[data-sev="INFO"] { background: color-mix(in srgb, var(--sev-info) 38%, white); }
-.comp-hero-meter .meter-fill[data-sev="UNKNOWN"] { background: color-mix(in srgb, var(--sev-unknown) 38%, white); }
+/* The hero meters and the register's posture cells take the same wash, off the same
+   `data-sev`, so one recipe covers the whole page and the three levels of one framework
+   cannot be tinted by three different rules.
+
+   THIS COLUMN USED TO STAY GRAPHITE, and the reason it no longer has to is the attribute
+   itself. `worstFailingSeverity` is null unless something under the row is failing, so the
+   tint marks work rather than marking every row that carries a number — the Rationed-Ink
+   Rule holding, not being spent.
+
+   The polarity trap described on `.comp-fw-bar` above is answered the same way, but only
+   partly, so read that comment before widening this one. Hue here is not a function of the
+   percentage at all: most long bars have nothing failing and stay plain, but Wiz can score
+   a subcategory 100% while a rule mapped to it reports failures, and such a row is both
+   full AND tinted. The wash is what keeps that legible instead of alarming — at 38% over
+   white a full-width tint reads as a marked row, not a red cell. Saturate this and the
+   trap bites immediately.
+
+   `.meter-fill` is a shared class, so both selectors stay scoped to their own slot rather
+   than restyling every meter in the app. */
+.comp-hero-meter .meter-fill[data-sev="CRITICAL"],
+.comp-posture .meter-fill[data-sev="CRITICAL"] { background: color-mix(in srgb, var(--sev-critical) 38%, white); }
+.comp-hero-meter .meter-fill[data-sev="HIGH"],
+.comp-posture .meter-fill[data-sev="HIGH"] { background: color-mix(in srgb, var(--sev-high) 38%, white); }
+.comp-hero-meter .meter-fill[data-sev="MEDIUM"],
+.comp-posture .meter-fill[data-sev="MEDIUM"] { background: color-mix(in srgb, var(--sev-medium) 38%, white); }
+.comp-hero-meter .meter-fill[data-sev="LOW"],
+.comp-posture .meter-fill[data-sev="LOW"] { background: color-mix(in srgb, var(--sev-low) 38%, white); }
+.comp-hero-meter .meter-fill[data-sev="INFO"],
+.comp-posture .meter-fill[data-sev="INFO"] { background: color-mix(in srgb, var(--sev-info) 38%, white); }
+.comp-hero-meter .meter-fill[data-sev="UNKNOWN"],
+.comp-posture .meter-fill[data-sev="UNKNOWN"] { background: color-mix(in srgb, var(--sev-unknown) 38%, white); }
 
 /* The honest-state lane: an unscored framework gets NO bar, not a bar at zero — a
    sliver still reads as "very little" where the fact is "not measured", and those are
