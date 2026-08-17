@@ -47,8 +47,13 @@
 .comp-bar-seg[data-state="empty"] { flex: 1; background: var(--track-bg); }
 
 .comp-keys { display: flex; flex-wrap: wrap; gap: 6px; }
-/* A real <button>: the strip is the page's cross-filter, so every key is operable by
-   keyboard and carries aria-pressed. A canvas chart could offer neither. */
+/* A <span>, not a <button>. The strip was the page's cross-filter and every key was
+   operable; the tables now list scored subcategories only, so three of the four states
+   filter to nothing and the affordance was removed rather than left to disappoint. The
+   legend itself stays — it is the only place the unscored rows are still counted — so it
+   keeps the glyph beside the label and offers no hover or pressed state to imply
+   otherwise. `.comp-posture-empty` reuses `.comp-key-glyph` below, which is why the glyph
+   colours stay on their own rule. */
 .comp-key {
   display: inline-flex;
   align-items: center;
@@ -59,15 +64,7 @@
   border-radius: var(--radius-pill);
   background: var(--page);
   color: var(--text-2);
-  cursor: pointer;
 }
-.comp-key:hover { border-color: var(--accent); }
-.comp-key[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--surface);
-  color: var(--ink);
-}
-.comp-key[disabled] { opacity: 0.55; cursor: default; }
 .comp-key-glyph { font-size: 10px; line-height: 1; }
 .comp-key[data-state="scored"] .comp-key-glyph { color: var(--ok); }
 .comp-key[data-state="noResources"] .comp-key-glyph { color: var(--sev-info-text); }
@@ -111,9 +108,13 @@
 }
 
 /* The posture cell: meter + number, or a state pill when there is no number. Fixed width
-   so the column reads as a column rather than as ragged text. */
+   so the column reads as a column rather than as ragged text.
+
+   It briefly held a severity badge too, when the bar was tinted by severity rather than by
+   its own percentage. The badge went with that encoding: the number is the non-colour cue
+   for a band, and it was already here. */
 .comp-posture { display: flex; align-items: center; gap: 10px; min-width: 150px; }
-.comp-posture .meter { flex: 1; }
+.comp-posture .meter { flex: 1; min-width: 48px; }
 .comp-posture-num {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
@@ -255,47 +256,60 @@
   position: relative; height: 22px;
   background: var(--track-bg); border-radius: 4px; overflow: hidden;
 }
-/* Graphite is the DEFAULT, and what the bar's two dimensions each carry is the whole
-   design: LENGTH is Wiz's posture percentage and never carries colour (a threshold-band
-   red/amber/green on that number would be a scale this app invented — the wall-of-colour
-   PRODUCT.md and components.css:116-117 both refuse), while HUE carries the worst severity
-   among the framework's failing policies. DESIGN.md's Rationed Ink Rule sanctions severity
-   specifically, and this is one of only three marks on the page allowed to spend it — the
-   other two being the two hero meters. Width is set inline per row.
+/* THE BAR'S TWO DIMENSIONS NOW CARRY ONE FACT BETWEEN THEM. Length is Wiz's posture
+   percentage; hue is the band that same percentage falls in (`postureBand`, three breaks at
+   90 and 70, defined in compliancePosture.ts). Width is still set inline per row.
 
-   A WASH, NOT THE FILL TOKEN, AND THE REASON IS POLARITY. The first cut painted the bar
-   the saturated `.sev-fill-*` token, and the sample estate showed what that does: OWASP ML
-   sits at 100% — the BEST framework here — so its bar is full width, and at full
-   saturation it became the loudest thing on the page. Fill area scales with the good news
-   while hue carries the bad news, so the two encodings pull against each other and the
-   healthiest row shouts. Mixing toward the page ground keeps the hue legible and keeps
-   length readable against the track without letting a long bar turn into an alarm. The
-   saturated mark stays where its area is fixed regardless of the number: the sevBadge
-   beside the row, which also carries the severity in WORDS, since colour alone is never
-   sufficient.
+   HUE USED TO CARRY THE WORST FAILING SEVERITY instead, and the polarity note that stood
+   here described the trouble that caused without naming it: a framework at 100% got a full
+   bar in the colour of whatever CRITICAL rule was failing somewhere beneath it, so the
+   longest bar was also the reddest. That is two facts fighting over one mark, and no amount
+   of washing it fixes the reading. Banding by the number instead makes length and hue agree
+   by construction — a full bar is a green bar — and the severity keeps a mark of its own:
+   the sevBadge beside the row, whose area is fixed regardless of any number.
 
-   `data-sev` rather than the shared `.sev-fill-*` classes on purpose. Those mean "a
-   saturated severity mark" everywhere else in both apps; re-pointing them at a wash here
-   would quietly redefine them for every other caller. Same reason `.comp-bar-seg` keys its
-   four posture states off `data-state` a few rules up. */
+   THE WASH STAYS, and its reason survives the change intact. The saturated `.sev-fill-*`
+   tokens on a full-width bar make the healthiest row the loudest thing on the page.
+   Mixing toward the page ground keeps hue legible and length readable against the track
+   without letting a long bar turn into an alarm — which matters MORE for a ramp than it did
+   for a severity tint, because now every scored row takes a colour.
+
+   WHY THIS IS NOT THE WALL OF COLOUR PRODUCT.md REFUSES, which the note here previously
+   claimed it would be. The rule that matters is meaning never carried by colour alone: the
+   percentage sits beside every one of these bars, exact, so the ramp is pure emphasis over
+   a number the reader already has. Nothing here is knowable only by hue. Keep it that way —
+   a band drawn where the number is NOT present would be the thing both docs forbid.
+
+   `data-band` rather than a class named for a colour: the thresholds live in the domain,
+   and a class called `.is-red` would have to be renamed to move one. Same reason
+   `.comp-bar-seg` keys its four posture states off `data-state` a few rules up. */
 .comp-fw-bar { position: absolute; inset: 0 auto 0 0; background: var(--graphite); }
-.comp-fw-bar[data-sev="CRITICAL"] { background: color-mix(in srgb, var(--sev-critical) 38%, white); }
-.comp-fw-bar[data-sev="HIGH"] { background: color-mix(in srgb, var(--sev-high) 38%, white); }
-.comp-fw-bar[data-sev="MEDIUM"] { background: color-mix(in srgb, var(--sev-medium) 38%, white); }
-.comp-fw-bar[data-sev="LOW"] { background: color-mix(in srgb, var(--sev-low) 38%, white); }
-.comp-fw-bar[data-sev="INFO"] { background: color-mix(in srgb, var(--sev-info) 38%, white); }
-.comp-fw-bar[data-sev="UNKNOWN"] { background: color-mix(in srgb, var(--sev-unknown) 38%, white); }
 
-/* The hero meters take the same wash. `.meter-fill` is a shared class, so this is scoped
-   to the two hero slots rather than restyling every meter in the app — the register's own
-   posture cells stay graphite, which is what keeps a long framework from becoming a column
-   of tinted bars. */
-.comp-hero-meter .meter-fill[data-sev="CRITICAL"] { background: color-mix(in srgb, var(--sev-critical) 38%, white); }
-.comp-hero-meter .meter-fill[data-sev="HIGH"] { background: color-mix(in srgb, var(--sev-high) 38%, white); }
-.comp-hero-meter .meter-fill[data-sev="MEDIUM"] { background: color-mix(in srgb, var(--sev-medium) 38%, white); }
-.comp-hero-meter .meter-fill[data-sev="LOW"] { background: color-mix(in srgb, var(--sev-low) 38%, white); }
-.comp-hero-meter .meter-fill[data-sev="INFO"] { background: color-mix(in srgb, var(--sev-info) 38%, white); }
-.comp-hero-meter .meter-fill[data-sev="UNKNOWN"] { background: color-mix(in srgb, var(--sev-unknown) 38%, white); }
+/* THE ONE RAMP, for all four bars: the rail lane above, both hero meters, and every posture
+   cell in both tables. One recipe, one meaning — a reader learns this page's colour once.
+
+   The tokens are the semantic state triad (`--ok` / `--warn` / `--bad`), NOT the severity
+   scale. A posture band is a state, not a severity, and borrowing `--sev-critical` here
+   would say "this row is CRITICAL" in a page that also draws real CRITICAL badges two
+   columns away. `--warn` and `--bad` are within a hair of the severity hues by design;
+   what differs is what a reader is entitled to conclude from them.
+
+   RED/GREEN IS THE OBVIOUS COLOURBLIND TRAP, and the reason it is survivable here is the
+   number: `.comp-posture-num` sits beside every one of these bars, and the hero prints its
+   percentage at 2rem directly above. Deuteranopia costs a reader the emphasis and none of
+   the information. Do not reuse this ramp anywhere the number is absent.
+
+   `.meter-fill` is a shared class, so each selector stays scoped to its own slot rather
+   than restyling every meter in the app. */
+.comp-fw-bar[data-band="strong"],
+.comp-hero-meter .meter-fill[data-band="strong"],
+.comp-posture .meter-fill[data-band="strong"] { background: color-mix(in srgb, var(--ok) 38%, white); }
+.comp-fw-bar[data-band="fair"],
+.comp-hero-meter .meter-fill[data-band="fair"],
+.comp-posture .meter-fill[data-band="fair"] { background: color-mix(in srgb, var(--warn) 38%, white); }
+.comp-fw-bar[data-band="weak"],
+.comp-hero-meter .meter-fill[data-band="weak"],
+.comp-posture .meter-fill[data-band="weak"] { background: color-mix(in srgb, var(--bad) 38%, white); }
 
 /* The honest-state lane: an unscored framework gets NO bar, not a bar at zero — a
    sliver still reads as "very little" where the fact is "not measured", and those are

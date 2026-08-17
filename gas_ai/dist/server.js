@@ -3447,15 +3447,20 @@ var Server = (() => {
     const i = SEVERITY_ORDER.indexOf(s);
     return i === -1 ? SEVERITY_ORDER.length : i;
   }
+  var STATE_KEYS = ["scored", "noResources", "noPolicies", "unknown"];
   function frameworkRail(trees) {
     return trees.map((tree) => ({
       frameworkId: tree.frameworkId,
       name: tree.name,
       posturePct: tree.posturePct,
       state: tree.state,
+      postureBand: tree.postureBand,
       emptyPostureReason: tree.emptyPostureReason,
       categoryCount: tree.categories.length,
-      subcategoryCount: tree.categories.reduce((sum, c) => sum + c.subcategories.length, 0),
+      // From stateCounts, not from the listed nodes: the tree lists only scored
+      // subcategories (compliancePosture.ts), and a rail that counted those would report a
+      // framework's size as the part of it that happened to score.
+      subcategoryCount: STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0),
       policyCount: tree.policyCount,
       failingPolicyCount: tree.failingPolicyCount,
       worstFailingSeverity: tree.worstFailingSeverity,
@@ -3490,20 +3495,15 @@ var Server = (() => {
             // deduped `policies` to that scope (compliancePosture.ts:190), so re-deduping
             // here would be the wrong scope all over again — count the list as given.
             policyCount: sub.policies.length,
-            failingPolicyCount: sub.failingPolicyCount
+            failingPolicyCount: sub.failingPolicyCount,
+            postureBand: sub.postureBand
           });
         }
       }
     }
-    const scored = [];
-    const unscored = [];
-    for (const row of rows) {
-      if (isScoredRow(row)) scored.push(row);
-      else unscored.push(row);
-    }
+    const scored = rows.filter(isScoredRow);
     scored.sort((a, b) => a.posturePct - b.posturePct || b.failingPolicyCount - a.failingPolicyCount || (a.frameworkName < b.frameworkName ? -1 : a.frameworkName > b.frameworkName ? 1 : 0) || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
-    const ordered = [...scored, ...unscored];
-    return typeof limit === "number" ? ordered.slice(0, limit) : ordered;
+    return typeof limit === "number" ? scored.slice(0, limit) : scored;
   }
   function sharedControls(trees) {
     const byPolicy = /* @__PURE__ */ new Map();
@@ -3580,7 +3580,7 @@ var Server = (() => {
       stateCounts.noResources += tree.stateCounts.noResources;
       stateCounts.noPolicies += tree.stateCounts.noPolicies;
       stateCounts.unknown += tree.stateCounts.unknown;
-      for (const category of tree.categories) subcategoryCount += category.subcategories.length;
+      subcategoryCount += STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
     }
     return {
       collected: trees.length,
@@ -5175,6 +5175,17 @@ var Server = (() => {
   }
 
   // src/domain/compliancePosture.ts
+  var POSTURE_BANDS = {
+    strong: { min: 90, label: "Strong" },
+    fair: { min: 70, label: "Work to do" },
+    weak: { min: 0, label: "Materially failing" }
+  };
+  function postureBandOf(posturePct2) {
+    if (posturePct2 === null || posturePct2 === void 0) return null;
+    if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
+    if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
+    return "weak";
+  }
   function postureState(posturePct2, emptyPostureReason) {
     const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
     if (reason === "NO_RESOURCES") return "noResources";
@@ -5194,8 +5205,21 @@ var Server = (() => {
     const i = SEVERITY_ORDER.indexOf(s);
     return i === -1 ? SEVERITY_ORDER.length : i;
   }
+  function worstOf(a, b) {
+    if (a === null) return b;
+    if (b === null) return a;
+    return severityRank4(b) < severityRank4(a) ? b : a;
+  }
+  function worstFailingSeverityOf(policies) {
+    let worst = null;
+    for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
+    return worst;
+  }
   function emptyStateCounts() {
     return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
+  }
+  function isAssessedPolicy(p) {
+    return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
   }
   function toNode(row, externalId) {
     return {
@@ -5208,13 +5232,17 @@ var Server = (() => {
       description: row.description,
       posturePct: row.posturePct,
       state: postureState(row.posturePct, row.emptyPostureReason),
+      // Read off the state, not off the number: a row carrying both a percentage and an
+      // emptyPostureReason is one postureState declines to score, and banding the number it
+      // just disowned would put a colour back on a row that has no posture.
+      postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored" ? postureBandOf(row.posturePct) : null,
       passCount: row.passCount,
       failCount: row.failCount,
       emptyPostureReason: row.emptyPostureReason
     };
   }
   function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
     const rows = posture.filter((p) => p.frameworkId === frameworkId);
     if (!rows.length) return null;
     const frameworkRow = rows.find((p) => p.level === "framework");
@@ -5226,6 +5254,8 @@ var Server = (() => {
       list2.push(p);
       policiesBySub.set(p.subcategoryExternalId, list2);
     }
+    const stateCounts = emptyStateCounts();
+    const unassessedIds = /* @__PURE__ */ new Set();
     const subsByCategory = /* @__PURE__ */ new Map();
     for (const row of rows) {
       if (row.level !== "subcategory") continue;
@@ -5240,13 +5270,24 @@ var Server = (() => {
       deduped.sort(
         (a, b) => severityRank4(a.severity) - severityRank4(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
       );
+      const assessed = [];
+      for (const p of deduped) {
+        if (isAssessedPolicy(p)) assessed.push(p);
+        else unassessedIds.add(p.policyId);
+      }
       const node2 = {
         ...toNode(row, externalId),
         assessmentScope: row.assessmentScope,
         mappingRationale: row.mappingRationale,
-        policies: deduped,
-        failingPolicyCount: deduped.filter((p) => p.failCount > 0).length
+        policies: assessed,
+        failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
+        unassessedPolicyCount: deduped.length - assessed.length,
+        // From the LISTED policies, so the tint on this row and the rules the row expands to
+        // show can never name different severities.
+        worstFailingSeverity: worstFailingSeverityOf(assessed)
       };
+      stateCounts[node2.state] += 1;
+      if (node2.state !== "scored") continue;
       const key = (_d = row.categoryExternalId) != null ? _d : "";
       const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
       list2.push(node2);
@@ -5259,43 +5300,49 @@ var Server = (() => {
       return {
         ...toNode(row, externalId),
         subcategories,
-        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId
+        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId,
+        worstFailingSeverity: subcategories.reduce(
+          (worst, sub) => worstOf(worst, sub.worstFailingSeverity),
+          null
+        )
       };
-    });
-    const stateCounts = emptyStateCounts();
-    for (const cat of categories) {
-      for (const sub of cat.subcategories) stateCounts[sub.state] += 1;
-    }
+    }).filter((cat) => cat.subcategories.length > 0);
     const distinct = /* @__PURE__ */ new Map();
-    let worstFailingSeverity = null;
-    let worstFailingRank = Infinity;
-    for (const p of policies) {
-      if (p.frameworkId !== frameworkId) continue;
-      distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
-      if (p.failCount > 0) {
-        const rank = severityRank4(p.severity);
-        if (rank < worstFailingRank) {
-          worstFailingRank = rank;
-          worstFailingSeverity = p.severity;
+    for (const cat of categories) {
+      for (const sub of cat.subcategories) {
+        for (const p of sub.policies) {
+          distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
         }
       }
     }
+    const worstFailingSeverity = categories.reduce(
+      (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
+      null
+    );
+    const frameworkState = postureState(
+      (_g = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _g : null,
+      (_h = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _h : null
+    );
     return {
       frameworkId,
-      name: (_h = (_g = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _g : catalogue == null ? void 0 : catalogue.name) != null ? _h : frameworkId,
-      description: (_i = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _i : catalogue == null ? void 0 : catalogue.description,
-      posturePct: (_j = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _j : null,
-      state: postureState(
-        (_k = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _k : null,
-        (_l = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _l : null
-      ),
-      emptyPostureReason: (_m = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _m : null,
-      passSubCategoryCount: (_n = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _n : 0,
-      failSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _o : 0,
+      name: (_j = (_i = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _i : catalogue == null ? void 0 : catalogue.name) != null ? _j : frameworkId,
+      description: (_k = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _k : catalogue == null ? void 0 : catalogue.description,
+      posturePct: (_l = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _l : null,
+      state: frameworkState,
+      // Same guard toNode applies one level down: only a row that actually scored gets a
+      // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
+      postureBand: frameworkState === "scored" ? postureBandOf((_m = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _m : null) : null,
+      emptyPostureReason: (_n = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _n : null,
+      passSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _o : 0,
+      failSubCategoryCount: (_p = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _p : 0,
       categories,
       stateCounts,
       policyCount: distinct.size,
       failingPolicyCount: [...distinct.values()].filter(Boolean).length,
+      // Only ids that appear NOWHERE in the listed tree. A control mapped under six
+      // subcategories and evaluated under one of them is a listed policy, not a dropped one,
+      // and counting it in both places would describe the same rule twice.
+      unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
       worstFailingSeverity
     };
   }
@@ -5329,6 +5376,7 @@ var Server = (() => {
       frameworks: frameworkRows.length,
       scoredFrameworks: scored.length,
       averagePosture,
+      averagePostureBand: postureBandOf(averagePosture),
       failingSubcategories,
       failingPolicies: failing.size
     };
@@ -7741,7 +7789,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "9c7fdc80a455" : "dev";
+  var BUILD_ID = true ? "3050b677ab7e" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

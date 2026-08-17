@@ -27,6 +27,14 @@
 // of shipped guesswork the two hard facts above exist to avoid. If a future edit reaches for
 // either field to "improve" the signal, that is this same mistake again, not a fix.
 //
+// WHAT THIS CAN SEE. The trees handed in list only what Wiz assessed — scored
+// subcategories, and under them the policies that evaluated something (compliancePosture.ts).
+// So the scope picker offers exactly the 5Rs rules that ran against this estate. A rule Wiz
+// maps but has never evaluated is not offered to be pinned, in or out, and that is the
+// intended reading of the pin: it decides whether a LIVE rule belongs on an AI register,
+// not whether a dormant one might one day. If such a rule later evaluates something it
+// appears here on the next sync, derived like any other.
+//
 // BE HONEST ABOUT THE LIMIT. This signal is not clairvoyant. A genuinely AI-relevant 5Rs
 // rule that no OWASP framework happens to cross-map, and that has not yet failed on a
 // synced AI asset, WILL be scoped out by default — see the REGION/RAW_ACCESS_POLICY case

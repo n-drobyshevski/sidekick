@@ -118,7 +118,10 @@ export function renderOverview(host, data, view, actions) {
     return;
   }
 
-  renderHeadline(host, data, view, actions);
+  // The headline takes neither `view` nor `actions` any more: its strip was the page's one
+  // cross-filter, and with that gone it reads only the payload — like renderSharedControls
+  // below, and unlike the two bands that still own an expand/open interaction.
+  renderHeadline(host, data);
   renderRail(host, data, actions);
   renderWeakestAreas(host, data, view, actions);
   renderSharedControls(host, data);
@@ -126,7 +129,7 @@ export function renderOverview(host, data, view, actions) {
 
 // -------------------------------------------------------------------- A. headline
 
-function renderHeadline(host, data, view, actions) {
+function renderHeadline(host, data) {
   const kpis = data.kpis || {};
   const coverage = data.coverage || {};
   const scored = kpis.averagePosture !== null && kpis.averagePosture !== undefined;
@@ -134,9 +137,10 @@ function renderHeadline(host, data, view, actions) {
   // drawn) alongside a scored mean; an unscored estate has no bar to tint either.
   const worstSeverity = scored ? worstFailingSeverityAcross(data.rail || []) : null;
 
-  // ONE OF THREE MARKS ON THIS WHOLE PAGE ALLOWED TO CARRY SEVERITY COLOUR — see the
-  // matching comment on the rail bar below for why the register, the weakest-areas table
-  // and the subcategory detail rows all stay neutral graphite on purpose.
+  // Banded by its own number, like every other bar on this page — see postureCell() in
+  // complianceShared.js for why fill colour stopped meaning severity. The estate mean is
+  // derived here rather than sent by Wiz, so it is banded here too rather than carrying a
+  // `postureBand` down the wire: there is no server-side node for "the estate".
   const heroMeter = scored
     ? meter(kpis.averagePosture, {
         max: 100,
@@ -144,7 +148,9 @@ function renderHeadline(host, data, view, actions) {
           (worstSeverity ? `, worst failing severity ${worstSeverity}` : ""),
       })
     : null;
-  if (heroMeter && worstSeverity) heroMeter.fill.dataset.sev = worstSeverity;
+  if (heroMeter && kpis.averagePostureBand) {
+    heroMeter.fill.dataset.band = kpis.averagePostureBand;
+  }
 
   // The sub-line is the hero's one prose slot, so the severity mark folds into it rather
   // than opening a new one — a sevBadge beside the sentence that already explains the
@@ -170,9 +176,11 @@ function renderHeadline(host, data, view, actions) {
   );
 
   // The shared strip only ever reads `.stateCounts`, so the estate-wide roll-up — which is
-  // not a FrameworkTree — can drive the exact same component the register uses per framework.
-  const strip = stateStrip({ stateCounts: coverage.stateCounts || {} }, view.state,
-    (key) => actions.setState(key));
+  // not a FrameworkTree — can drive the exact same component the register uses per
+  // framework. It no longer cross-filters the weakest-areas band below: that band lists
+  // scored subcategories only now, so every state but one filtered to nothing. The strip
+  // is a summary here, and the estate's only count of what went unscored.
+  const strip = stateStrip({ stateCounts: coverage.stateCounts || {} });
 
   const sharedRows = data.sharedControls || [];
   const sharedCount = sharedRows.filter((c) => (c.frameworkCount || 0) >= 2).length;
@@ -278,13 +286,13 @@ function railRow(row, meanPct, actions, fiveRsScope) {
   });
   if (scored) {
     const bar = el("div", { class: "comp-fw-bar" });
-    // ONE OF THREE MARKS ON THIS WHOLE PAGE ALLOWED TO CARRY SEVERITY COLOUR (the other
-    // two are both hero meters). DESIGN.md's Rationed Ink Rule sanctions this because the
-    // rail is a handful of prominent rows, not a column — the register below, the
-    // weakest-areas table and the subcategory detail rows all stay neutral graphite on
-    // purpose. Do not extend this tint to those; that is the wall of colour the rule
-    // forbids.
-    if (row.worstFailingSeverity) bar.dataset.sev = row.worstFailingSeverity;
+    // Banded by the row's own percentage, like every bar on this page. It used to take the
+    // wash of the framework's worst failing severity, and the rail is where that reading
+    // was least wrong — these are a handful of prominent rows, each with a sevBadge beside
+    // it — but a bar whose colour means one thing here and another in the register below is
+    // a page that has to be learned twice. The severity did not go anywhere: it is the
+    // badge, one line up.
+    if (row.postureBand) bar.dataset.band = row.postureBand;
     bar.style.width = `${row.posturePct}%`;
     laneEl.append(bar);
   } else {
@@ -391,16 +399,17 @@ function renderRail(host, data, actions) {
 // --------------------------------------------------------------- C. weakest areas
 
 function renderWeakestAreas(host, data, view, actions) {
-  const all = data.weakestAreas || [];
-  // The only band the estate-wide state strip cross-filters — see the comment on band D
-  // for why that filter stops here instead of reaching into the shared-controls table too.
-  const rows = view.state ? all.filter((r) => r.state === view.state) : all;
+  // Every row here is scored — weakestAreas() drops what it cannot rank, and the trees it
+  // walks carry nothing unscored to begin with. The estate-wide strip above used to
+  // cross-filter this band by state; with three of the four states now unrepresentable in
+  // it, that control is gone rather than left to resolve to an empty table.
+  const rows = data.weakestAreas || [];
 
   // Which rows are expanded, held on `view` — like the register's own `expanded` Set in
-  // compliance.js — but deliberately NOT mirrored into the URL. pushParams() already nulls
-  // `state` outside framework mode even though the overview reads it as its own
-  // cross-filter, so overview-local view state is already ephemeral by this page's design;
-  // a URL param for one more band would be the odd one out. Keyed by the same
+  // compliance.js — but deliberately NOT mirrored into the URL. Overview-local view state
+  // is ephemeral by this page's design (the mode switch and the chosen framework are the
+  // only things worth a deep link), so a URL param for one more band would be the odd one
+  // out rather than the missing one. Keyed by the same
   // frameworkId/categoryExternalId/externalId triple findSubcategory() takes, because this
   // band is cross-framework and two frameworks can both carry a subcategory called "2.1".
   const open = view.weakOpen || (view.weakOpen = new Set());
@@ -445,9 +454,7 @@ function renderWeakestAreas(host, data, view, actions) {
       const found = findSubcategory(data.trees, r.frameworkId, r.categoryExternalId, r.externalId);
       return found ? subcategoryDetail(found.sub) : null;
     },
-    emptyText: view.state
-      ? `No weak area is ${(STATES[view.state] || {}).label || "shown"}.`
-      : "Nothing here is close to failing.",
+    emptyText: "Nothing here is close to failing.",
   });
 
   host.append(el("div", { class: "comp-ov-section" }, sectionLabel("Weakest areas"), table));

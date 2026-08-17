@@ -564,6 +564,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "dataFindings": 0,
         "frameworkPosture": {
           "averagePosture": null,
+          "averagePostureBand": null,
           "failingPolicies": 0,
           "failingSubcategories": 0,
           "frameworks": 0,
@@ -3565,6 +3566,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       "dataFindings": 6,
       "frameworkPosture": {
         "averagePosture": 94,
+        "averagePostureBand": "strong",
         "failingPolicies": 5,
         "failingSubcategories": 9,
         "frameworks": 4,
