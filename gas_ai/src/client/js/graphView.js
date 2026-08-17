@@ -73,10 +73,15 @@ export function renderGraph(container, data, handlers = {}) {
         : layout.mode === "lanes"
           ? "nodes in category columns"
           : "nodes in category bands";
+  // A third clause for the outlines, when there are any. They are the only thing on the canvas
+  // saying which nodes hang together by their edges, and a reader who cannot see them has no other
+  // route to it — the count beside each one is decoration to a screen reader, not information.
+  const outlined = (layout.clusters || []).length;
   const shape = "Security graph, " + arrangement
     + (nested
-      ? ", clustered into labelled groups nested two levels deep. "
-      : grouped ? ", clustered into labelled groups. " : ". ");
+      ? ", clustered into labelled groups nested two levels deep"
+      : grouped ? ", clustered into labelled groups" : "")
+    + (outlined ? `, with ${outlined} connected clusters outlined. ` : ". ");
   const svg = svgEl("svg", {
     role: "application",
     "aria-label": shape +
@@ -124,6 +129,31 @@ export function renderGraph(container, data, handlers = {}) {
       const name = grp.by === "kind" && grp.key !== "__none__" ? kindLabel(grp.key) : grp.label;
       label.textContent = `${truncate(name, sub ? 18 : 26)} · ${grp.count}`;
       hullLayer.append(label);
+    }
+  }
+
+  // ----------------------------------------------------------- cluster outlines
+  // One dashed outline per connected component — the only structure here that is about the EDGES
+  // rather than a property or a position. Grouping's boxes partition by cloud or kind and cut
+  // straight across connectivity; these say "this much of the picture hangs together".
+  //
+  // BELOW THE EDGES, deliberately. The evaluation this follows found group overlays are the best
+  // encoding for judging membership and cost about a quarter of the accuracy on tasks that mean
+  // following a path — which is what this canvas is for. Painting under the links, hairline and
+  // unfilled, is the cheapest way to keep the second without giving up the first. The domain does
+  // the rest by refusing to emit an outline that would not earn its ink.
+  if (Array.isArray(layout.clusters) && layout.clusters.length) {
+    const clusterLayer = svgEl("g");
+    world.append(clusterLayer);
+    for (const cl of layout.clusters) {
+      clusterLayer.append(svgEl("path", { class: "gcluster-hull", d: roundedPolygon(cl.points, 14) }));
+      // The count, at the polygon's topmost vertex. No name: a component has no name to give —
+      // unlike a group box, which is a dimension's value — and "10" beside an outline says the one
+      // thing the outline cannot, which is how much of the picture it holds.
+      const top = cl.points.reduce((a, b) => (b[1] < a[1] ? b : a));
+      const count = svgEl("text", { class: "gcluster-count", x: top[0], y: top[1] - 5 });
+      count.textContent = String(cl.count);
+      clusterLayer.append(count);
     }
   }
 
@@ -624,4 +654,41 @@ export function renderGraph(container, data, handlers = {}) {
      */
     destroy() { ro.disconnect(); },
   };
+}
+
+/**
+ * A closed polygon path with its corners cut by quadratic curves.
+ *
+ * A convex hull over card corners is all right angles and long straight runs, and drawn as-is it
+ * reads as a BOX — which is what the group boxes already are, and the two would then say the same
+ * thing in the same shape. Rounding is the whole visual difference between "the cloud you grouped
+ * by" and "these happen to be connected".
+ *
+ * The radius is clamped per corner to a third of the shorter adjacent edge, so a short edge between
+ * two corners cannot have both of them eat past its middle and invert the curve. Same bezier idiom
+ * as `edgeGeometry` above and `egoLayout.js`.
+ */
+function roundedPolygon(points, radius) {
+  const n = points.length;
+  if (n < 3) return "";
+  const at = (i) => points[(i + n) % n];
+  const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  const parts = [];
+  for (let i = 0; i < n; i++) {
+    const prev = at(i - 1);
+    const cur = at(i);
+    const next = at(i + 1);
+    const lenPrev = Math.hypot(cur[0] - prev[0], cur[1] - prev[1]) || 1;
+    const lenNext = Math.hypot(next[0] - cur[0], next[1] - cur[1]) || 1;
+    const r = Math.min(radius, lenPrev / 3, lenNext / 3);
+    const from = lerp(cur, prev, r / lenPrev);
+    const to = lerp(cur, next, r / lenNext);
+    parts.push(`${i === 0 ? "M" : "L"} ${round1(from[0])} ${round1(from[1])}`);
+    parts.push(`Q ${round1(cur[0])} ${round1(cur[1])}, ${round1(to[0])} ${round1(to[1])}`);
+  }
+  return parts.join(" ") + " Z";
+}
+
+function round1(v) {
+  return Math.round(v * 10) / 10;
 }

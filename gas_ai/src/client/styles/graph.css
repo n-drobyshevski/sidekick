@@ -314,6 +314,12 @@
 
 /* Grouped-mode cluster hulls: hairline boxes + muted uppercase labels. Quiet by
    design — structure, not color (the Rationed Ink Rule). */
+/* NON-SCALING STROKE, on every boundary this canvas draws. The zoom is a viewBox transform, so a
+   1-unit stroke is 1 CSS pixel only at 100%: at the 20% a large graph fits to, every hairline
+   thinned to a fifth of a pixel and the structure simply disappeared — the boxes were there in the
+   DOM and invisible on screen. A boundary is chrome, not content, so its weight belongs in screen
+   pixels; `vector-effect` is what says so, and it keeps the dash pattern in screen pixels too. */
+.ggroup-box, .ggroup-box.is-sub, .gcluster-hull { vector-effect: non-scaling-stroke; }
 .ggroup-box { fill: rgba(0, 0, 0, 0.015); stroke: var(--hairline); stroke-width: 1; }
 .ggroup-label {
   font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
@@ -324,6 +330,23 @@
    outline alone says "inside", and the smaller label says which level you are reading. */
 .ggroup-box.is-sub { fill: none; stroke-dasharray: 3 3; }
 .ggroup-label.is-sub { font-size: 10px; font-weight: 500; fill: var(--svg-text-2); }
+
+/* A connected component's outline. The lightest thing on the canvas, on purpose: the study behind
+   it measured a ~25% accuracy cost on path-following for ANY group overlay, and this one sits over
+   a graph whose whole job is paths. So no fill, a longer dash than the nested group box (which is
+   3 3) so the two never read as the same kind of boundary, and no colour at all — the five
+   category tints, severity and the accent are spoken for, and structure is not theirs to borrow.
+   The renderer paints this under every edge for the same reason. */
+.gcluster-hull {
+  fill: none;
+  stroke: var(--hairline); stroke-width: 1; stroke-dasharray: 6 5;
+  stroke-linejoin: round;
+}
+/* How much of the picture the outline holds — the one thing the shape itself cannot say. */
+.gcluster-count {
+  font-size: 10px; font-weight: 600; fill: var(--svg-text-2);
+  font-variant-numeric: tabular-nums;
+}
 .gedge-label {
   font-size: 10px; fill: var(--svg-text-2);
   paint-order: stroke; stroke: #ffffff; stroke-width: 3; stroke-linejoin: round;

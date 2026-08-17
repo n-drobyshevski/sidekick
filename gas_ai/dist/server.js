@@ -5903,8 +5903,9 @@ var Server = (() => {
   }
   function layoutGraph(p, opts = {}) {
     var _a5, _b;
-    if (((_a5 = opts.groupBy) != null ? _a5 : []).length) return layoutGrouped(p, opts);
-    return layoutWhole(p, opts, (_b = opts.mode) != null ? _b : "rows");
+    const laid = ((_a5 = opts.groupBy) != null ? _a5 : []).length ? layoutGrouped(p, opts) : layoutWhole(p, opts, (_b = opts.mode) != null ? _b : "rows");
+    const clusters = clusterHulls(p, laid);
+    return clusters.length ? { ...laid, clusters } : laid;
   }
   function layoutWhole(p, opts, mode) {
     if (mode === "radial") return layoutRadial(p, opts);
@@ -6194,8 +6195,8 @@ var Server = (() => {
     const inner = { ...opts, margin: 0, groupBy: [], compactBands: true };
     return blockOf(key, label, layoutWhole(sub, inner, mode));
   }
-  function gridBlock(key, label, list2) {
-    const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list2.length))));
+  function gridBlock(key, label, list2, columns) {
+    const cols = columns != null ? columns : Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list2.length))));
     const rows = Math.ceil(list2.length / cols);
     return {
       key,
@@ -6277,7 +6278,7 @@ var Server = (() => {
     const sort = (_d = opts.sort) != null ? _d : "smart";
     const mode = (_e = opts.mode) != null ? _e : "rows";
     const parentOf = parentIndex(p);
-    const cmp2 = comparator(sort);
+    const cmp2 = memberOrder(p, sort);
     const block = (key, label, list2, hub) => blockFor(mode, key, label, [...list2].sort(cmp2), p, opts, hub);
     const specs = [];
     if (groupBy2 === "asset") {
@@ -6377,8 +6378,9 @@ var Server = (() => {
   function layoutGrid(p, opts) {
     var _a5, _b;
     const margin = (_a5 = opts.margin) != null ? _a5 : 120;
-    const cmp2 = comparator((_b = opts.sort) != null ? _b : "smart");
-    const spec = gridBlock("", "", [...p.nodes].sort(cmp2));
+    const cmp2 = memberOrder(p, (_b = opts.sort) != null ? _b : "smart");
+    const cols = Math.max(1, Math.round(Math.sqrt(VIEWPORT_ASPECT * CELL_H * p.nodes.length / CELL_W)));
+    const spec = gridBlock("", "", [...p.nodes].sort(cmp2), cols);
     const rows = [...new Set(spec.cells.map((c) => c.y))].sort((a, b) => a - b);
     return {
       nodes: spec.cells.map((c) => ({
@@ -6403,11 +6405,12 @@ var Server = (() => {
   var FR_MIN_STEPS = 30;
   var FR_MAX_STEPS = 120;
   var FR_GRAVITY = 0.06;
+  var FR_COHESION = 0.1;
   var SEPARATE_PASSES = 24;
   function layoutRadial(p, opts) {
     var _a5, _b, _c, _d;
     const margin = (_a5 = opts.margin) != null ? _a5 : 120;
-    const cmp2 = comparator((_b = opts.sort) != null ? _b : "smart");
+    const cmp2 = memberOrder(p, (_b = opts.sort) != null ? _b : "smart");
     const { depth, max } = hopDepth(p);
     const rings = Array.from({ length: max + 1 }, () => []);
     for (const node2 of p.nodes) rings[(_c = depth.get(node2.id)) != null ? _c : 0].push(node2);
@@ -6458,10 +6461,11 @@ var Server = (() => {
     };
   }
   function layoutOrganic(p, opts) {
-    var _a5;
+    var _a5, _b;
     const margin = (_a5 = opts.margin) != null ? _a5 : 120;
     const n = p.nodes.length;
     const seed = layoutRadial(p, { ...opts, margin: 0 });
+    const component = componentRoots(p);
     const at = new Map(seed.nodes.map((s) => [s.id, { x: s.x, y: s.y }]));
     const lane = new Map(seed.nodes.map((s) => [s.id, s.lane]));
     const ids = p.nodes.map((node2) => node2.id).filter((id) => at.has(id));
@@ -6516,9 +6520,22 @@ var Server = (() => {
           disp.get(dst).x += ux;
           disp.get(dst).y += uy;
         }
+        const hub = /* @__PURE__ */ new Map();
+        for (const id of ids) {
+          const key = component.get(id);
+          const acc = (_b = hub.get(key)) != null ? _b : { x: 0, y: 0, n: 0 };
+          const a = at.get(id);
+          acc.x += a.x;
+          acc.y += a.y;
+          acc.n += 1;
+          hub.set(key, acc);
+        }
         for (const id of ids) {
           const a = at.get(id);
           const d = disp.get(id);
+          const own = hub.get(component.get(id));
+          d.x += (own.x / own.n - a.x) * FR_COHESION * k;
+          d.y += (own.y / own.n - a.y) * FR_COHESION * k;
           d.x += (cx - a.x) * FR_GRAVITY * k;
           d.y += (cy - a.y) * FR_GRAVITY * k;
           const len = Math.sqrt(d.x * d.x + d.y * d.y);
@@ -6592,6 +6609,127 @@ var Server = (() => {
       }
       if (!moved) return;
     }
+  }
+  var CLUSTER_PAD = 12;
+  function clusterHulls(p, laid) {
+    var _a5, _b, _c, _d;
+    if (laid.nodes.length < 2) return [];
+    const roots = componentRoots(p);
+    const boxes = (_a5 = laid.groups) != null ? _a5 : [];
+    const nested = boxes.some((g) => g.depth === 1);
+    const leaves = boxes.map((g, i) => ({ g, i })).filter(({ g }) => nested ? g.depth === 1 : g.depth === 0);
+    const boxOf = (n) => {
+      for (const { g, i } of leaves) {
+        if (n.x >= g.x && n.x <= g.x + g.width && n.y >= g.y && n.y <= g.y + g.height) return i;
+      }
+      return -1;
+    };
+    const buckets = /* @__PURE__ */ new Map();
+    const perBox = /* @__PURE__ */ new Map();
+    for (const n of laid.nodes) {
+      const group = boxOf(n);
+      const key = ((_b = roots.get(n.id)) != null ? _b : n.id) + "|" + group;
+      if (!buckets.has(key)) buckets.set(key, { members: [], group });
+      buckets.get(key).members.push(n);
+      perBox.set(group, ((_c = perBox.get(group)) != null ? _c : 0) + 1);
+    }
+    const out = [];
+    const candidates = [...buckets.keys()].sort((a, b) => buckets.get(b).members.length - buckets.get(a).members.length || (a < b ? -1 : 1));
+    for (const key of candidates) {
+      const { members, group } = buckets.get(key);
+      if (members.length < 2) continue;
+      if (members.length === ((_d = perBox.get(group)) != null ? _d : 0)) continue;
+      const hull = convexHull(members.flatMap((n) => [
+        [n.x - NODE_HALF_W, n.y - NODE_HALF_H],
+        [n.x + NODE_HALF_W, n.y - NODE_HALF_H],
+        [n.x + NODE_HALF_W, n.y + NODE_HALF_H],
+        [n.x - NODE_HALF_W, n.y + NODE_HALF_H]
+      ]));
+      if (hull.length < 3) continue;
+      const mine = new Set(members.map((n) => n.id));
+      const claimsAnother = laid.nodes.some((n) => !mine.has(n.id) && boxOf(n) === group && inPolygon(n.x, n.y, hull));
+      if (claimsAnother) continue;
+      if (out.some((c) => !convexDisjoint(hull, c.points))) continue;
+      out.push({
+        points: hull.map(([x, y]) => [round2(x), round2(y)]),
+        count: members.length,
+        ...group === -1 ? {} : { group }
+      });
+    }
+    return out.sort((a, b) => a.points[0][0] - b.points[0][0] || a.points[0][1] - b.points[0][1]);
+  }
+  function convexDisjoint(a, b) {
+    for (const poly of [a, b]) {
+      for (let i = 0; i < poly.length; i++) {
+        const [x1, y1] = poly[i];
+        const [x2, y2] = poly[(i + 1) % poly.length];
+        const nx = -(y2 - y1);
+        const ny = x2 - x1;
+        let aMin = Infinity;
+        let aMax = -Infinity;
+        let bMin = Infinity;
+        let bMax = -Infinity;
+        for (const [x, y] of a) {
+          const d = x * nx + y * ny;
+          aMin = Math.min(aMin, d);
+          aMax = Math.max(aMax, d);
+        }
+        for (const [x, y] of b) {
+          const d = x * nx + y * ny;
+          bMin = Math.min(bMin, d);
+          bMax = Math.max(bMax, d);
+        }
+        if (aMax <= bMin || bMax <= aMin) return true;
+      }
+    }
+    return false;
+  }
+  var NODE_HALF_W = 196 / 2 + CLUSTER_PAD;
+  var NODE_HALF_H = 56 / 2 + CLUSTER_PAD;
+  function convexHull(pts) {
+    const sorted = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    if (sorted.length < 3) return sorted;
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const half = (list2) => {
+      const chain = [];
+      for (const pt of list2) {
+        while (chain.length >= 2 && cross(chain[chain.length - 2], chain[chain.length - 1], pt) <= 0) {
+          chain.pop();
+        }
+        chain.push(pt);
+      }
+      return chain;
+    };
+    const lower = half(sorted);
+    const upper = half([...sorted].reverse());
+    return lower.slice(0, -1).concat(upper.slice(0, -1));
+  }
+  function inPolygon(x, y, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, yi] = poly[i];
+      const [xj, yj] = poly[j];
+      if (yi > y !== yj > y && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  function memberOrder(p, sort) {
+    const cmp2 = comparator(sort);
+    return sort === "smart" ? byComponent(p, cmp2) : cmp2;
+  }
+  function byComponent(p, cmp2) {
+    const roots = componentRoots(p);
+    const rank = /* @__PURE__ */ new Map();
+    [...p.nodes].sort(cmp2).forEach((n) => {
+      var _a5;
+      const root = (_a5 = roots.get(n.id)) != null ? _a5 : n.id;
+      if (!rank.has(root)) rank.set(root, rank.size);
+    });
+    const of = (n) => {
+      var _a5, _b;
+      return (_b = rank.get((_a5 = roots.get(n.id)) != null ? _a5 : n.id)) != null ? _b : rank.size;
+    };
+    return (a, b) => of(a) - of(b) || cmp2(a, b);
   }
 
   // src/domain/graphApiParams.ts
@@ -8207,7 +8345,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "d78e800592ce" : "dev";
+  var BUILD_ID = true ? "050d3b980d3c" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

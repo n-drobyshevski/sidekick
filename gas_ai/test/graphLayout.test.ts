@@ -680,3 +680,200 @@ describe("grouping and the arrangement do not constrain each other", () => {
     }
   });
 });
+
+// -------------------------------------------------- cluster outlines
+//
+// A connected component's outline is the one thing on this canvas that is about the EDGES rather
+// than a property or a position — and the only way it can be WRONG is by claiming a node it does
+// not hold. Every rule below is about that: an outline is emitted when it is true of exactly its
+// members and suppressed otherwise, so an arrangement that interleaves components goes quiet
+// instead of drawing a lie. That is where the weight of this suite sits.
+//
+// The seeded PROJECTION above is a single connected component (42 nodes, 41 edges), which is
+// precisely the case that must emit NOTHING — an outline around everything distinguishes nothing.
+// So the cases that need several components seed every agent at depth 1 instead.
+const MANY = projectGraph(DOC, {
+  seedIds: DOC.nodes.filter((n) => n.kind === "AI_AGENT").map((n) => n.id),
+  depth: 1,
+  maxNodes: 120,
+});
+
+/** Ray casting, independent of the domain's own copy — the test must not share the bug. */
+function insideHull(x: number, y: number, poly: Array<[number, number]>): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** node id → connected-component id, computed here rather than taken from the domain. */
+function componentsOf(p: typeof MANY): Map<string, string> {
+  const parent = new Map(p.nodes.map((n) => [n.id, n.id]));
+  const find = (x: string): string => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    return root;
+  };
+  for (const e of p.edges) {
+    const a = find(e.src);
+    const b = find(e.dst);
+    if (a !== b) parent.set(a, b);
+  }
+  return new Map(p.nodes.map((n) => [n.id, find(n.id)]));
+}
+
+describe("cluster outlines: several components", () => {
+  it("the fixture really does hold several components", () => {
+    // Guards the rest of this describe: if the projection collapsed to one component, every
+    // assertion below would pass vacuously.
+    expect(new Set(componentsOf(MANY).values()).size).toBeGreaterThan(3);
+  });
+
+  describe.each(LAYOUT_MODES)("%s", (mode) => {
+    for (const groupBy of [[], ["cloud"], ["kind"]] as GroupKey[][]) {
+      const label = groupBy.length ? `by ${groupBy.join(",")}` : "ungrouped";
+      const layout = layoutGraph(MANY, { mode, groupBy });
+      const hulls = layout.clusters ?? [];
+
+      it(`${label}: no outline claims a node it does not hold`, () => {
+        // THE INVARIANT. Everything else here is a consequence of it.
+        const comp = componentsOf(MANY);
+        const at = new Map(layout.nodes.map((n) => [n.id, n]));
+        for (const cl of hulls) {
+          const held = layout.nodes.filter((n) => insideHull(n.x, n.y, cl.points));
+          expect(held.length, "outline holds its declared count").toBe(cl.count);
+          const roots = new Set(held.map((n) => comp.get(n.id)));
+          expect(roots.size, "every node inside is from ONE component").toBe(1);
+          expect(at.size).toBeGreaterThan(0);
+        }
+      });
+
+      it(`${label}: outlines never overlap each other`, () => {
+        // Two outlines sharing ground would be two claims on the same node — which the guard
+        // above rules out pointwise, and this states as a shape property.
+        for (let i = 0; i < hulls.length; i++) {
+          for (let j = i + 1; j < hulls.length; j++) {
+            const shared = hulls[i].points.some(([x, y]) => insideHull(x, y, hulls[j].points));
+            expect(shared, `outline ${i} vs ${j}`).toBe(false);
+          }
+        }
+      });
+
+      it(`${label}: counts are honest and the emit is deterministic`, () => {
+        for (const cl of hulls) {
+          expect(cl.count).toBeGreaterThan(1);       // never one node
+          expect(cl.points.length).toBeGreaterThanOrEqual(3);
+        }
+        expect(hulls.reduce((n, c) => n + c.count, 0)).toBeLessThanOrEqual(MANY.nodes.length);
+        expect(JSON.stringify(layoutGraph(MANY, { mode, groupBy }).clusters))
+          .toBe(JSON.stringify(hulls));
+      });
+
+      if (groupBy.length) {
+        it(`${label}: every outline names the box it sits in, and stays inside it`, () => {
+          const boxes = layout.groups ?? [];
+          const nested = boxes.some((g) => g.depth === 1);
+          for (const cl of hulls) {
+            expect(cl.group, "an outline in a grouped picture belongs to a box").toBeDefined();
+            const box = boxes[cl.group!];
+            expect(box).toBeDefined();
+            expect(nested ? box.depth : 0).toBe(nested ? 1 : 0);
+            // Every vertex within the box — a hull escaping its box would be drawn over a
+            // neighbour's members.
+            for (const [x, y] of cl.points) {
+              expect(x).toBeGreaterThanOrEqual(box.x);
+              expect(x).toBeLessThanOrEqual(box.x + box.width);
+              expect(y).toBeGreaterThanOrEqual(box.y);
+              expect(y).toBeLessThanOrEqual(box.y + box.height);
+            }
+          }
+        });
+      } else {
+        it(`${label}: an ungrouped outline names no box`, () => {
+          for (const cl of hulls) expect(cl.group).toBeUndefined();
+        });
+      }
+    }
+  });
+});
+
+describe("cluster outlines: when nothing is drawn", () => {
+  it("emits none for a single connected component", () => {
+    // The seeded projection is one component, so an outline would enclose the whole canvas and
+    // distinguish nothing. This is the suppression most likely to be lost in a refactor: it is the
+    // one that makes the feature quiet on the app's own default view.
+    expect(new Set(componentsOf(PROJECTION).values()).size).toBe(1);
+    for (const mode of LAYOUT_MODES) {
+      expect(layoutGraph(PROJECTION, { mode }).clusters, mode).toBeUndefined();
+    }
+  });
+
+  it("emits none around a lone node", () => {
+    // Two isolated nodes: two components, neither big enough to outline.
+    const doc = {
+      syncedAt: DOC.syncedAt,
+      nodes: [
+        { id: "a", kind: "AI_AGENT", name: "a" },
+        { id: "b", kind: "AI_AGENT", name: "b" },
+      ],
+      edges: [],
+    };
+    const p = projectGraph(doc as never, { seedIds: ["a", "b"], depth: 1, maxNodes: 10 });
+    expect(p.nodes).toHaveLength(2);
+    expect(layoutGraph(p, { mode: "grid" }).clusters).toBeUndefined();
+  });
+
+  it("emits fewer under an explicit order than under the smart one", () => {
+    // The documented trade. An explicit sort is a request for one global sequence, so components
+    // interleave and the membership guard drops what it cannot draw truthfully. Pinned so it stays
+    // a decision rather than becoming a surprise.
+    const smart = (layoutGraph(MANY, { mode: "rows", sort: "smart" }).clusters ?? []).length;
+    const named = (layoutGraph(MANY, { mode: "rows", sort: "name" }).clusters ?? []).length;
+    expect(smart).toBeGreaterThan(0);
+    expect(named).toBeLessThan(smart);
+  });
+
+  it("outlines the components of the SHOWN graph, not of the estate", () => {
+    // Two nodes connected in the document but only one admitted by the projection must not be
+    // outlined together — the picture is what is being annotated.
+    const shown = layoutGraph(MANY, { mode: "rows" });
+    const comp = componentsOf(MANY);
+    const ids = new Set(MANY.nodes.map((n) => n.id));
+    for (const cl of shown.clusters ?? []) {
+      const held = shown.nodes.filter((n) => insideHull(n.x, n.y, cl.points));
+      for (const n of held) {
+        expect(ids.has(n.id)).toBe(true);
+        expect(comp.get(n.id)).toBeDefined();
+      }
+    }
+  });
+});
+
+describe("layoutGrid shape", () => {
+  it("comes out roughly the shape of a viewport, not a ribbon", () => {
+    // `gridBlock` caps at 4 columns, which is right for a group's interior and wrong for a whole
+    // canvas: 120 nodes came out 4 wide and 30 deep — the ribbon this file's header calls out for
+    // unwrapped lanes, which fit-to-view can only show by shrinking every card past reading.
+    const layout = layoutGraph(MANY, { mode: "grid" });
+    const aspect = layout.width / layout.height;
+    expect(aspect).toBeGreaterThan(1);
+    expect(aspect).toBeLessThan(3.5);
+    // More than four columns for a graph this size — the assertion that the cap is gone.
+    const cols = new Set(layout.nodes.map((n) => n.x)).size;
+    expect(cols).toBeGreaterThan(4);
+  });
+
+  it("leaves a group box's interior on the 4-column cap", () => {
+    // A box is one item in a shelf-packed row, so a wide one pushes every box after it down. The
+    // override is layoutGrid's alone.
+    const grouped = layoutGraph(MANY, { mode: "grid", groupBy: ["kind"] });
+    for (const g of grouped.groups ?? []) {
+      const inside = grouped.nodes.filter((n) => n.x >= g.x && n.x <= g.x + g.width
+        && n.y >= g.y && n.y <= g.y + g.height);
+      expect(new Set(inside.map((n) => n.x)).size, `${g.id} columns`).toBeLessThanOrEqual(4);
+    }
+  });
+});
