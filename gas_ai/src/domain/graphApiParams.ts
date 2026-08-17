@@ -6,6 +6,7 @@
 import { clampDepth, clampMaxNodes } from "./settingsLogic";
 import { EDGE_BUDGET_RATIO, isUnresolvedIssue } from "./config";
 import {
+  DEFAULT_LAYOUT,
   GROUP_KEYS,
   LAYOUT_MODES,
   SORT_KEYS,
@@ -122,7 +123,7 @@ export function resolveLayoutParams(p: Rec): GraphLayoutParams {
   return {
     mode: legacyGrouped
       ? (groupBy[0] === "asset" ? "radial" : "grid")
-      : pick(p["layout"], LAYOUT_MODES, "rows"),
+      : pick(p["layout"], LAYOUT_MODES, DEFAULT_LAYOUT),
     groupBy,
     sort: pick(p["sort"], SORT_KEYS, "smart"),
   };

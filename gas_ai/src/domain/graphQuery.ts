@@ -137,6 +137,20 @@ export interface RelationStep {
   optional?: boolean;
   /** ANY edges only: how far to walk. 1–MAX_HOPS. This is where the old depth slider landed. */
   hops?: number;
+  /**
+   * Follow the edge that RECORDS AN ABSENCE rather than the ones that record a relationship —
+   * the negated `PROTECTED_BY` that a MISSING_GUARDRAIL stub hangs off.
+   *
+   * INTERNAL, and it has to be: `THAT is PROTECTED_BY a guardrail` must not match an asset whose
+   * only such edge is the absence marker, which is exactly why `stepTargets` skips negated edges
+   * for every ordinary step. Witnesses are the one caller that wants precisely that edge, because
+   * for them the absence IS the evidence — "no guardrail" is a node in this graph, and the only
+   * way to it is the edge saying it is not there.
+   *
+   * `readStep` copies a whitelist of fields onto a fresh object, so a client cannot set this by
+   * sending it; the flag exists only for the witnesses built in this file.
+   */
+  viaAbsence?: boolean;
   node: QueryNode;
 }
 
@@ -358,6 +372,162 @@ export const QUERY_FIELDS: readonly FieldSpec[] = [
 ];
 
 const FIELD_BY_KEY = new Map(QUERY_FIELDS.map((f) => [f.key, f]));
+
+// ------------------------------------------------------------------- witnesses
+//
+// THE EVIDENCE FOR A FILTER, AS A PATH.
+//
+// A filtered query used to answer with bare cards. "AI agents that reach classified data" is
+// `FIND AI_AGENT WHERE sensitiveAccess is true` — a node with no steps — so `solutions` bound
+// one slot per agent and the canvas drew 11 agents, 0 edges, 11 isolated components: the answer
+// to a question about a PATH, drawn with no path in it. Meanwhile the shortcut carrying the very
+// same label ("Reaches classified data", QUERY_SHORTCUTS below) spelled the path out and drew
+// 39 nodes in 5 clusters. One name, two pictures.
+//
+// The fix is that a filter naming a risk property also names, implicitly, the subgraph that
+// PROVES it — and that subgraph is drawn even though the question never asked for it as a step.
+//
+// WHY THIS IS A `QueryStep[]` AND NOT A TRAVERSAL. Every edge below is already in `EDGE_TYPES`,
+// so a witness is expressible in the grammar this file already evaluates: `solutions` starts
+// from `[{slots:[node]}]` without re-matching its root, handles `optional`, collects the edges
+// it walks, and honours the scan budget. So there is no new walker here — a witness is a query,
+// run from an already-bound node, and the engine is the one that was already here.
+//
+// WHY NOT GRAFT THESE ONTO THE USER'S QUERY, which would be less code still: A ROW IS A PATH.
+// The shortcut above returns 24 rows for 10 agents, because an agent reaching three buckets is
+// three paths. Grafting the witness would multiply the table the same way — and would rewrite
+// the question showing in the builder. So the witness rides the CANVAS half only: `runQuery`
+// keeps it in its own id sets, and `rows`, `groups` and `total` never see it.
+//
+// TWO SPELLINGS PER ROW, deliberately. `graphEnrich` draws the derived stub only where the real
+// chain could not be traced (its own comment: "stub wherever the real thing exists"), so which
+// of the two exists is a per-asset fact and a witness that named one would miss half the estate.
+// They are sibling steps, both optional, so whichever is present binds and the other null-binds.
+interface Witness {
+  /** The `QUERY_FIELDS` key whose filter arms this. */
+  key: string;
+  /**
+   * The field values that arm it, lowercased. Only the AFFIRMATIVE reading gets a witness:
+   * "is false" and "is unknown" are answers about the absence of a path, and there is no path
+   * to draw for them. `negate` disarms too — see `witnessFor`.
+   */
+  when: string[];
+  /** What proves it, from the node the filter is on. */
+  steps: QueryStep[];
+}
+
+/** Every node in a witness is hidden: it is evidence on the canvas, never a table column. */
+function ev(kind: QueryKind | QueryKind[], steps?: QueryStep[]): QueryNode {
+  return steps ? { kind, show: false, steps } : { kind, show: false };
+}
+
+const WITNESSES: Witness[] = [
+  {
+    // The four-hop chain, which is why "one hop of evidence" was never an option: the data end
+    // sits at RUNS_AS → ALLOWS_ACCESS_TO → BUCKET → HAS_DATA_FINDING. Same shape as the
+    // `reaches-classified` shortcut, carried one hop further to the findings — the shortcut stops
+    // at the bucket because that is where its table column wants to stop, and a canvas does not.
+    key: "sensitiveAccess",
+    when: ["true"],
+    steps: [
+      {
+        edge: "RUNS_AS",
+        optional: true,
+        node: ev("SERVICE_ACCOUNT", [{
+          edge: "ALLOWS_ACCESS_TO",
+          optional: true,
+          node: ev(["BUCKET", "DATABASE"], [
+            { edge: "HAS_DATA_FINDING", optional: true, node: ev("DATA_FINDING") },
+          ]),
+        }]),
+      },
+      { edge: "HAS_ACCESS_TO_SENSITIVE_DATA", optional: true, node: ev("SENSITIVE_DATA") },
+    ],
+  },
+  {
+    // Holding it rather than reaching it — the other end of the same chain, read from the store.
+    key: "sensitiveData",
+    when: ["true"],
+    steps: [
+      { edge: "HAS_DATA_FINDING", optional: true, node: ev("DATA_FINDING") },
+      { edge: "HAS_SENSITIVE_DATA", optional: true, node: ev("SENSITIVE_DATA") },
+    ],
+  },
+  {
+    key: "internet",
+    when: ["true"],
+    steps: [{ edge: "EXPOSED_TO_INTERNET", optional: true, node: ev("INTERNET_EXPOSURE") }],
+  },
+  {
+    // A choice field, not a boolean: "missing" is the affirmative here and "present" is the
+    // absence of a finding, so only one of its two values arms anything.
+    //
+    // `viaAbsence` because the edge is a NEGATED `PROTECTED_BY` — enrich's own words — and every
+    // ordinary step skips negated edges on purpose. This witness is the one thing that wants it:
+    // the stub is only reachable by the edge that says the guardrail is not there. Without the
+    // flag this row armed correctly and then drew nothing, which is how it was caught.
+    key: "guardrail",
+    when: ["missing"],
+    steps: [{
+      edge: "PROTECTED_BY", optional: true, viaAbsence: true, node: ev("MISSING_GUARDRAIL"),
+    }],
+  },
+  ...(["highPriv", "adminPriv"] as const).map((key) => ({
+    // Both flags are witnessed by one stub — `conditionState` reads EXCESSIVE_PRIVILEGE as their
+    // disjunction — and `HAS_FINDING` is the second spelling: enrich suppresses its own stub on
+    // an asset already carrying Wiz's real EXCESSIVE_ACCESS_FINDING.
+    //
+    // The two land on different nodes rather than being alternatives for the same one:
+    // `HAS_FINDING` runs identity → finding, so it fires when the filter is on a SERVICE_ACCOUNT,
+    // while the stub is what an AI asset carries. Both listed, so either end of the same claim
+    // draws its evidence.
+    key,
+    when: ["true"],
+    steps: [
+      { edge: "HAS_EXCESSIVE_PRIVILEGE", optional: true, node: ev("EXCESSIVE_PRIVILEGE") },
+      { edge: "HAS_FINDING", optional: true, node: ev("EXCESSIVE_ACCESS_FINDING") },
+    ] as QueryStep[],
+  })),
+];
+
+const WITNESS_BY_KEY = new Map(WITNESSES.map((w) => [w.key, w]));
+
+/**
+ * How many witness bindings one bound node contributes. An agent reaching forty buckets would
+ * otherwise spend a whole canvas on one cluster.
+ *
+ * 6, matching the `BUCKET` / `DATABASE` entries in `graphProject.DEFAULT_PER_KIND_CAP` — the same
+ * judgement about the same fan-out, made in the other projection. No "+N more" stub goes with it:
+ * `inducedProjection` draws none by design, and the capped indicator is what says rows are
+ * missing.
+ */
+export const WITNESS_FANOUT_CAP = 6;
+
+/**
+ * The evidence subgraph a node's filters ask for, as a query to run FROM that node — or null.
+ *
+ * Every armed filter contributes, so two of them on one node draw both witnesses. The arming
+ * rules are the load-bearing part: get them wrong and the canvas contradicts the question.
+ *
+ *   - `negate` disarms. "does NOT reach classified data" is a claim about an absent path, and
+ *     drawing the chain would assert the opposite of what was asked.
+ *   - only `when` values arm. `is false` and `is unknown` are the same case as negation.
+ *   - values are compared lowercased, because `matchesFilter` compares them lowercased — a
+ *     filter written `TRUE` matches nodes and so must arm the witness that explains them.
+ */
+function witnessFor(node: QueryNode): QueryNode | null {
+  const steps: QueryStep[] = [];
+  for (const f of node.where ?? []) {
+    if (f.negate) continue;
+    const w = WITNESS_BY_KEY.get(f.key);
+    if (!w) continue;
+    if (!f.values.some((v) => w.when.includes(String(v).toLowerCase()))) continue;
+    steps.push(...w.steps);
+  }
+  // `kind: "ANY"` is not a wildcard match here — `solutions` never re-matches its root — it is
+  // just the honest kind for "whatever node this was bound to".
+  return steps.length ? { kind: "ANY", show: false, steps } : null;
+}
 
 /**
  * Every field a node of these kinds can answer — the INTERSECTION where there are several.
@@ -1055,6 +1225,23 @@ export interface QueryResult {
   nodeIds: string[];
   /** Every edge actually traversed by a surviving path. */
   edgeIds: string[];
+  /**
+   * The evidence for the query's own filters — see `WITNESSES`. Nodes and edges the question did
+   * not name as steps, but which prove the properties it filtered on: the bucket chain behind
+   * "reaches classified data", the exposure node behind "internet reachable".
+   *
+   * SEPARATE FROM `nodeIds`, not folded in, for one reason: the canvas budget must never drop a
+   * MATCHED node to make room for an attachment. The two sets say different things — one is the
+   * answer, the other is why — and `inducedProjection` spends the budget accordingly.
+   *
+   * `paths` is what makes that spending possible at all: one entry per surviving binding, holding
+   * that binding's nodes AND its evidence, so the projection can admit a cluster whole or not at
+   * all instead of slicing a flat list and decapitating every path in it.
+   */
+  witnessNodeIds: string[];
+  witnessEdgeIds: string[];
+  /** One per surviving binding, in row order: every node id that binding put on the canvas. */
+  paths: string[][];
 }
 
 export interface RunOptions {
@@ -1172,8 +1359,10 @@ function stepTargets(from: GNode, step: RelationStep, adj: Adjacency): Array<{ n
   for (const e of edges) {
     if (e.type !== step.edge) continue;
     // A negated edge is an absence, not a relationship. Walking one would answer
-    // "protected by" with a guardrail that is specifically NOT attached.
-    if (e.negated) continue;
+    // "protected by" with a guardrail that is specifically NOT attached — so an ordinary step
+    // skips them, and a `viaAbsence` witness takes ONLY them. Not a union of the two: a step
+    // asking for the absence marker would be lying if it matched a real relationship as well.
+    if (Boolean(e.negated) !== Boolean(step.viaAbsence)) continue;
     const other = adj.byId.get(step.reverse ? e.src : e.dst);
     if (!other || seen.has(other.id)) continue;
     if (!matchesNode(other, step.node)) continue;
@@ -1389,7 +1578,13 @@ export function runQuery(doc: GraphDoc, query: QueryNode, opts: RunOptions = {})
 
   // Which slots are shown, as a mask over the pre-order slot list. Built once: the binder emits
   // every traversed node (the Graph view wants the waypoints) and only the table drops them.
-  const shownMask = bindingSlots(query).map((slot) => slot.node.show !== false);
+  const slots = bindingSlots(query);
+  const shownMask = slots.map((slot) => slot.node.show !== false);
+  // The evidence each slot's own filters ask for, over the SAME pre-order — so slot i's witness
+  // runs from slot i's bound node and a filter on a non-root node hangs its evidence off that
+  // node, not off the root. Built once beside `shownMask` because it is the same walk.
+  const witnessOf = slots.map((slot) => witnessFor(slot.node));
+  const anyWitness = witnessOf.some(Boolean);
   const groupFields = groups.map((g) => g.fields.map((f) => f.key));
 
   const roots = doc.nodes
@@ -1401,6 +1596,9 @@ export function runQuery(doc: GraphDoc, query: QueryNode, opts: RunOptions = {})
   const rows: QueryRow[] = [];
   const nodeIds = new Set<string>();
   const edgeIds = new Set<string>();
+  const witnessNodeIds = new Set<string>();
+  const witnessEdgeIds = new Set<string>();
+  const paths: string[][] = [];
   let total = 0;
 
   for (const root of roots) {
@@ -1408,10 +1606,16 @@ export function runQuery(doc: GraphDoc, query: QueryNode, opts: RunOptions = {})
       total += 1;
       if (rows.length < rowMax) {
         rows.push({ cells: toCells(sol.slots, shownMask, groupFields) });
+        // This binding's own nodes, kept as a group as well as merged into the flat set. The
+        // group is what lets the canvas budget admit a path whole — see `QueryResult.paths`.
+        const mine: string[] = [];
+        const mineAdd = (id: string) => {
+          if (!mine.includes(id)) mine.push(id);
+        };
         // Only surviving, SHIPPED paths contribute to the canvas. A path counted past the row
         // cap is real, but drawing nodes the table cannot show would put the two views out of
         // step with no way for the reader to tell which one to believe.
-        for (const n of sol.slots) if (n) nodeIds.add(n.id);
+        for (const n of sol.slots) if (n) { nodeIds.add(n.id); mineAdd(n.id); }
         for (const e of sol.edges) {
           edgeIds.add(e.id);
           // Both endpoints, not just the bound slots. A multi-hop ANY step walks THROUGH nodes
@@ -1420,7 +1624,37 @@ export function runQuery(doc: GraphDoc, query: QueryNode, opts: RunOptions = {})
           // pointing at nothing.
           nodeIds.add(e.src);
           nodeIds.add(e.dst);
+          mineAdd(e.src);
+          mineAdd(e.dst);
         }
+        // THE EVIDENCE, if any filter armed one. Run from each bound node rather than from the
+        // root, so slot i's filter explains slot i. Same engine, same scan budget: a witness is
+        // a query, and this is the query engine.
+        if (anyWitness) {
+          sol.slots.forEach((bound, i) => {
+            const witness = witnessOf[i];
+            if (!bound || !witness) return;
+            let taken = 0;
+            for (const found of solutions(witness, bound, adj, scan)) {
+              if (taken++ >= WITNESS_FANOUT_CAP) break;
+              // The witness root IS `bound`, already counted above — `solutions` seeds its first
+              // slot with the node it was handed. Only what it reached is evidence.
+              for (const n of found.slots) {
+                if (!n || n.id === bound.id) continue;
+                witnessNodeIds.add(n.id);
+                mineAdd(n.id);
+              }
+              for (const e of found.edges) {
+                witnessEdgeIds.add(e.id);
+                for (const end of [e.src, e.dst]) {
+                  if (end !== bound.id) witnessNodeIds.add(end);
+                  mineAdd(end);
+                }
+              }
+            }
+          });
+        }
+        paths.push(mine);
       }
     }
     if (scan.truncated) break;
@@ -1434,6 +1668,9 @@ export function runQuery(doc: GraphDoc, query: QueryNode, opts: RunOptions = {})
     truncated: scan.truncated,
     nodeIds: [...nodeIds],
     edgeIds: [...edgeIds],
+    witnessNodeIds: [...witnessNodeIds],
+    witnessEdgeIds: [...witnessEdgeIds],
+    paths,
   };
 }
 

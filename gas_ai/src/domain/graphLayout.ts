@@ -12,7 +12,7 @@
 //
 // The five arrangements:
 //
-// - "rows" (default): the Wiz security-graph visual language, transposed to run
+// - "rows": the Wiz security-graph visual language, transposed to run
 //   top-to-bottom instead of left-to-right — 5 category swimlanes become
 //   horizontal bands stacked findings/issues → AI assets → identities → data →
 //   compute/supply, with nodes spread left-to-right within each band. Wider
@@ -22,8 +22,29 @@
 //   left-to-right, with nodes stacked top-to-bottom within each. "rows" is
 //   its horizontal transpose — both share the same lane assignment and
 //   barycenter/sort ordering; only the final x/y positioning differs.
-// - "grid": every node in one compact row-major grid, categories ignored. The
-//   densest of the five, and the interior every grouped picture used to have.
+// - "grid" (default): every node in one compact row-major grid, categories
+//   ignored. The densest of the five, and the interior every grouped picture
+//   used to have.
+//
+// GRID IS THE DEFAULT BECAUSE OF WHAT "FIT TO VIEW" LANDS ON. Density is the
+// whole difference between a first paint you can read and one you have to zoom
+// into, and the gap is not marginal — measured on three sample projections
+// against a 1180x660 canvas:
+//
+//     nodes    rows    lanes    grid    organic   radial
+//        42     34%      36%     66%        56%      19%
+//        69     23%      35%     61%        36%      13%
+//        96     21%      24%     53%        36%      15%
+//
+// The category arrangements spend the canvas on structure: a band is as long as
+// its busiest kind, so five bands are as long as the worst one and four of them
+// carry whitespace to match. Grid roughly doubles the zoom on every fixture,
+// which is the difference between cards showing their names and cards showing a
+// smear. What that costs is real and worth stating: grid says nothing about
+// category, and its row-major wrap breaks up connected components, so it draws
+// FEWER cluster outlines than rows does (8 of 12 components at 69 nodes against
+// rows' 12). Both are one keypress away — the trade is only about which picture
+// answers first, and "all of it, legible" beats "some of it, arranged".
 // - "radial": the whole estate as one ring system. The worst-risk AI agent is
 //   the center and every other node sits on the ring of its BFS distance from
 //   it, so a ring IS "n hops from the thing most likely to hurt you". Ring
@@ -76,6 +97,16 @@ import { comboGroupById, REGISTER_GROUPS } from "./toxicCombos";
 
 export const LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"] as const;
 export type LayoutMode = (typeof LAYOUT_MODES)[number];
+
+/**
+ * The arrangement a caller that names none gets — see the header for the measurement.
+ *
+ * Named once, and exported, because the default is a CROSS-LAYER AGREEMENT rather than a local
+ * fallback: the resolver falls back to it, both halves of the dispatch below default to it, and
+ * the page omits `layout=` from the hash precisely when it means this one. Three copies of a bare
+ * `?? "rows"` is how a default gets changed in two of its three homes.
+ */
+export const DEFAULT_LAYOUT: LayoutMode = "grid";
 
 export const GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"] as const;
 export type GroupKey = (typeof GROUP_KEYS)[number];
@@ -141,10 +172,11 @@ export interface LayoutNode {
   id: string;
   x: number;
   y: number;
-  /** Lane index in "lanes"/"rows" mode; group index in "grouped"; hops from the hub in
-   *  "radial"/"organic". Whatever the mode calls it, it is the axis keyboard nav walks with
-   *  two of its four arrows — so every mode has to answer with something a reader could
-   *  step along and recognise, never a filler zero. */
+  /** Category band in "lanes"/"rows"; grid row in "grid" (the default, so the commonest
+   *  answer); hops from the hub in "radial"/"organic"; the containing box's index when
+   *  grouped. Whatever the mode calls it, it is the axis keyboard nav walks with two of its
+   *  four arrows — so every mode has to answer with something a reader could step along and
+   *  recognise, never a filler zero. */
   lane: number;
   /** Cluster rank in lanes/rows mode under the smart order — 0 is the worst-severity
    *  cluster, the last rank is the pooled bucket of lone nodes. Absent when clustering
@@ -683,7 +715,7 @@ function wrapRun(
 export function layoutGraph(p: Projection, opts: LayoutOptions = {}): Layout {
   const laid = (opts.groupBy ?? []).length
     ? layoutGrouped(p, opts)
-    : layoutWhole(p, opts, opts.mode ?? "rows");
+    : layoutWhole(p, opts, opts.mode ?? DEFAULT_LAYOUT);
   // Outlined AFTER placement, from the positions, so one implementation covers all five
   // arrangements and both halves of the dispatch above — see `clusterHulls`. The key is omitted
   // when there are none, the way `groups` and `altOf` are: an empty array in the payload reads as
@@ -1215,7 +1247,7 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
   const inner: GroupKey | null =
     groupBy === "asset" || second === "asset" || second === groupBy ? null : second;
   const sort = opts.sort ?? "smart";
-  const mode = opts.mode ?? "rows";
+  const mode = opts.mode ?? DEFAULT_LAYOUT;
 
   const parentOf = parentIndex(p);
   // Box interiors take the same order the ungrouped arrangements take, so a component inside a box

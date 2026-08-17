@@ -5554,6 +5554,7 @@ var Server = (() => {
 
   // src/domain/graphLayout.ts
   var LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"];
+  var DEFAULT_LAYOUT = "grid";
   var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"];
   var SORT_KEYS = ["smart", "severity", "aars", "name"];
   var GROUP_NONE = "__none__";
@@ -5903,7 +5904,7 @@ var Server = (() => {
   }
   function layoutGraph(p, opts = {}) {
     var _a5, _b;
-    const laid = ((_a5 = opts.groupBy) != null ? _a5 : []).length ? layoutGrouped(p, opts) : layoutWhole(p, opts, (_b = opts.mode) != null ? _b : "rows");
+    const laid = ((_a5 = opts.groupBy) != null ? _a5 : []).length ? layoutGrouped(p, opts) : layoutWhole(p, opts, (_b = opts.mode) != null ? _b : DEFAULT_LAYOUT);
     const clusters = clusterHulls(p, laid);
     return clusters.length ? { ...laid, clusters } : laid;
   }
@@ -6276,7 +6277,7 @@ var Server = (() => {
     const second = (_c = levels[1]) != null ? _c : null;
     const inner = groupBy2 === "asset" || second === "asset" || second === groupBy2 ? null : second;
     const sort = (_d = opts.sort) != null ? _d : "smart";
-    const mode = (_e = opts.mode) != null ? _e : "rows";
+    const mode = (_e = opts.mode) != null ? _e : DEFAULT_LAYOUT;
     const parentOf = parentIndex(p);
     const cmp2 = memberOrder(p, sort);
     const block = (key, label, list2, hub) => blockFor(mode, key, label, [...list2].sort(cmp2), p, opts, hub);
@@ -6778,7 +6779,7 @@ var Server = (() => {
     const asked = pickList(p["groupBy"]);
     const groupBy2 = legacyGrouped && !asked.length ? ["combo"] : asked;
     return {
-      mode: legacyGrouped ? groupBy2[0] === "asset" ? "radial" : "grid" : pick(p["layout"], LAYOUT_MODES, "rows"),
+      mode: legacyGrouped ? groupBy2[0] === "asset" ? "radial" : "grid" : pick(p["layout"], LAYOUT_MODES, DEFAULT_LAYOUT),
       groupBy: groupBy2,
       sort: pick(p["sort"], SORT_KEYS, "smart")
     };
@@ -7055,6 +7056,94 @@ var Server = (() => {
     }
   ];
   var FIELD_BY_KEY = new Map(QUERY_FIELDS.map((f) => [f.key, f]));
+  function ev(kind, steps) {
+    return steps ? { kind, show: false, steps } : { kind, show: false };
+  }
+  var WITNESSES = [
+    {
+      // The four-hop chain, which is why "one hop of evidence" was never an option: the data end
+      // sits at RUNS_AS → ALLOWS_ACCESS_TO → BUCKET → HAS_DATA_FINDING. Same shape as the
+      // `reaches-classified` shortcut, carried one hop further to the findings — the shortcut stops
+      // at the bucket because that is where its table column wants to stop, and a canvas does not.
+      key: "sensitiveAccess",
+      when: ["true"],
+      steps: [
+        {
+          edge: "RUNS_AS",
+          optional: true,
+          node: ev("SERVICE_ACCOUNT", [{
+            edge: "ALLOWS_ACCESS_TO",
+            optional: true,
+            node: ev(["BUCKET", "DATABASE"], [
+              { edge: "HAS_DATA_FINDING", optional: true, node: ev("DATA_FINDING") }
+            ])
+          }])
+        },
+        { edge: "HAS_ACCESS_TO_SENSITIVE_DATA", optional: true, node: ev("SENSITIVE_DATA") }
+      ]
+    },
+    {
+      // Holding it rather than reaching it — the other end of the same chain, read from the store.
+      key: "sensitiveData",
+      when: ["true"],
+      steps: [
+        { edge: "HAS_DATA_FINDING", optional: true, node: ev("DATA_FINDING") },
+        { edge: "HAS_SENSITIVE_DATA", optional: true, node: ev("SENSITIVE_DATA") }
+      ]
+    },
+    {
+      key: "internet",
+      when: ["true"],
+      steps: [{ edge: "EXPOSED_TO_INTERNET", optional: true, node: ev("INTERNET_EXPOSURE") }]
+    },
+    {
+      // A choice field, not a boolean: "missing" is the affirmative here and "present" is the
+      // absence of a finding, so only one of its two values arms anything.
+      //
+      // `viaAbsence` because the edge is a NEGATED `PROTECTED_BY` — enrich's own words — and every
+      // ordinary step skips negated edges on purpose. This witness is the one thing that wants it:
+      // the stub is only reachable by the edge that says the guardrail is not there. Without the
+      // flag this row armed correctly and then drew nothing, which is how it was caught.
+      key: "guardrail",
+      when: ["missing"],
+      steps: [{
+        edge: "PROTECTED_BY",
+        optional: true,
+        viaAbsence: true,
+        node: ev("MISSING_GUARDRAIL")
+      }]
+    },
+    ...["highPriv", "adminPriv"].map((key) => ({
+      // Both flags are witnessed by one stub — `conditionState` reads EXCESSIVE_PRIVILEGE as their
+      // disjunction — and `HAS_FINDING` is the second spelling: enrich suppresses its own stub on
+      // an asset already carrying Wiz's real EXCESSIVE_ACCESS_FINDING.
+      //
+      // The two land on different nodes rather than being alternatives for the same one:
+      // `HAS_FINDING` runs identity → finding, so it fires when the filter is on a SERVICE_ACCOUNT,
+      // while the stub is what an AI asset carries. Both listed, so either end of the same claim
+      // draws its evidence.
+      key,
+      when: ["true"],
+      steps: [
+        { edge: "HAS_EXCESSIVE_PRIVILEGE", optional: true, node: ev("EXCESSIVE_PRIVILEGE") },
+        { edge: "HAS_FINDING", optional: true, node: ev("EXCESSIVE_ACCESS_FINDING") }
+      ]
+    }))
+  ];
+  var WITNESS_BY_KEY = new Map(WITNESSES.map((w) => [w.key, w]));
+  var WITNESS_FANOUT_CAP = 6;
+  function witnessFor(node2) {
+    var _a5;
+    const steps = [];
+    for (const f of (_a5 = node2.where) != null ? _a5 : []) {
+      if (f.negate) continue;
+      const w = WITNESS_BY_KEY.get(f.key);
+      if (!w) continue;
+      if (!f.values.some((v) => w.when.includes(String(v).toLowerCase()))) continue;
+      steps.push(...w.steps);
+    }
+    return steps.length ? { kind: "ANY", show: false, steps } : null;
+  }
   function fieldsForKind(kind) {
     const kinds = Array.isArray(kind) ? kind : [kind];
     return QUERY_FIELDS.filter((f) => {
@@ -7453,7 +7542,7 @@ var Server = (() => {
     const hits = [];
     for (const e of edges2) {
       if (e.type !== step.edge) continue;
-      if (e.negated) continue;
+      if (Boolean(e.negated) !== Boolean(step.viaAbsence)) continue;
       const other = adj.byId.get(step.reverse ? e.src : e.dst);
       if (!other || seen.has(other.id)) continue;
       if (!matchesNode(other, step.node)) continue;
@@ -7589,7 +7678,10 @@ var Server = (() => {
     const scan = { scanned: 0, max: (_b = opts.scanMax) != null ? _b : QUERY_SCAN_MAX, truncated: false };
     const adj = buildAdjacency(doc);
     const groups = queryColumnGroups(query, opts.columns);
-    const shownMask = bindingSlots(query).map((slot) => slot.node.show !== false);
+    const slots = bindingSlots(query);
+    const shownMask = slots.map((slot) => slot.node.show !== false);
+    const witnessOf = slots.map((slot) => witnessFor(slot.node));
+    const anyWitness = witnessOf.some(Boolean);
     const groupFields = groups.map((g) => g.fields.map((f) => f.key));
     const roots = doc.nodes.filter((n) => matchesNode(n, query)).sort((a, b) => {
       var _a6, _b2;
@@ -7598,18 +7690,53 @@ var Server = (() => {
     const rows = [];
     const nodeIds = /* @__PURE__ */ new Set();
     const edgeIds = /* @__PURE__ */ new Set();
+    const witnessNodeIds = /* @__PURE__ */ new Set();
+    const witnessEdgeIds = /* @__PURE__ */ new Set();
+    const paths = [];
     let total2 = 0;
     for (const root of roots) {
       for (const sol of solutions(query, root, adj, scan)) {
         total2 += 1;
         if (rows.length < rowMax) {
           rows.push({ cells: toCells(sol.slots, shownMask, groupFields) });
-          for (const n of sol.slots) if (n) nodeIds.add(n.id);
+          const mine = [];
+          const mineAdd = (id) => {
+            if (!mine.includes(id)) mine.push(id);
+          };
+          for (const n of sol.slots) if (n) {
+            nodeIds.add(n.id);
+            mineAdd(n.id);
+          }
           for (const e of sol.edges) {
             edgeIds.add(e.id);
             nodeIds.add(e.src);
             nodeIds.add(e.dst);
+            mineAdd(e.src);
+            mineAdd(e.dst);
           }
+          if (anyWitness) {
+            sol.slots.forEach((bound, i) => {
+              const witness = witnessOf[i];
+              if (!bound || !witness) return;
+              let taken = 0;
+              for (const found of solutions(witness, bound, adj, scan)) {
+                if (taken++ >= WITNESS_FANOUT_CAP) break;
+                for (const n of found.slots) {
+                  if (!n || n.id === bound.id) continue;
+                  witnessNodeIds.add(n.id);
+                  mineAdd(n.id);
+                }
+                for (const e of found.edges) {
+                  witnessEdgeIds.add(e.id);
+                  for (const end of [e.src, e.dst]) {
+                    if (end !== bound.id) witnessNodeIds.add(end);
+                    mineAdd(end);
+                  }
+                }
+              }
+            });
+          }
+          paths.push(mine);
         }
       }
       if (scan.truncated) break;
@@ -7621,7 +7748,10 @@ var Server = (() => {
       capped: total2 > rows.length,
       truncated: scan.truncated,
       nodeIds: [...nodeIds],
-      edgeIds: [...edgeIds]
+      edgeIds: [...edgeIds],
+      witnessNodeIds: [...witnessNodeIds],
+      witnessEdgeIds: [...witnessEdgeIds],
+      paths
     };
   }
   function toCells(slots, shownMask, groupFields) {
@@ -8345,7 +8475,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "050d3b980d3c" : "dev";
+  var BUILD_ID = true ? "5d49225e6d11" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -11880,7 +12010,7 @@ var Server = (() => {
         const doc = loadGraphDoc();
         if (!doc) return { empty: true };
         const result = runQuery(doc, query, { columns });
-        const projection = inducedProjection(doc, result.nodeIds, result.edgeIds, maxNodes);
+        const projection = inducedProjection(doc, result, maxNodes);
         return {
           rows: result.rows,
           groups: result.groups,
@@ -11902,24 +12032,39 @@ var Server = (() => {
     if (!Array.isArray(raw)) return void 0;
     return raw.map((entry) => Array.isArray(entry) ? entry.map((k) => String(k)) : null);
   }
-  function inducedProjection(doc, nodeIds, edgeIds, maxNodes) {
-    const wantNodes = new Set(nodeIds);
-    const wantEdges = new Set(edgeIds);
-    const all = doc.nodes.filter((n) => wantNodes.has(n.id)).sort(nodeOrder);
-    const nodes = all.slice(0, maxNodes);
-    const admitted = new Set(nodes.map((n) => n.id));
+  function inducedProjection(doc, result, maxNodes) {
+    const wantNodes = /* @__PURE__ */ new Set([...result.nodeIds, ...result.witnessNodeIds]);
+    const wantEdges = /* @__PURE__ */ new Set([...result.edgeIds, ...result.witnessEdgeIds]);
+    const isWitness = new Set(result.witnessNodeIds);
+    const admitted = /* @__PURE__ */ new Set();
+    for (const path of result.paths) {
+      const fresh = path.filter((id) => wantNodes.has(id) && !admitted.has(id));
+      if (!fresh.length) continue;
+      if (admitted.size + fresh.length <= maxNodes) {
+        for (const id of fresh) admitted.add(id);
+        continue;
+      }
+      if (!admitted.size) {
+        const room = fresh.slice().sort((a, b) => Number(isWitness.has(a)) - Number(isWitness.has(b))).slice(0, maxNodes);
+        for (const id of room) admitted.add(id);
+      }
+      break;
+    }
+    const nodes = doc.nodes.filter((n) => admitted.has(n.id)).sort(nodeOrder);
     const allEdges = doc.edges.filter((e) => wantEdges.has(e.id));
     const edges2 = allEdges.filter((e) => admitted.has(e.src) && admitted.has(e.dst));
+    const evidence = nodes.filter((n) => isWitness.has(n.id)).length;
     return {
       nodes,
       edges: edges2,
       summaries: [],
       counts: {
-        totalNodes: all.length,
+        totalNodes: wantNodes.size,
         shownNodes: nodes.length,
         totalEdges: allEdges.length,
         shownEdges: edges2.length,
-        capped: nodes.length < all.length
+        capped: nodes.length < wantNodes.size,
+        ...evidence ? { evidence } : {}
       }
     };
   }
