@@ -329,3 +329,33 @@ table.data tr.rule-won > td { background: rgba(190, 18, 60, 0.07); }
 table.data tr.rule-won > td:first-child {
   box-shadow: inset 3px 0 0 var(--accent);
 }
+
+/* ---------------------------------------------------------------------------- icicle */
+/* The Problem tree's second view: the axes nested, branch by branch. Free geometry, so
+   this one is SVG — see ui/latticeIcicle.js for the argument. */
+.lat-icicle { display: block; }
+/* Belt and braces against the smear above: text never strokes, whatever it sits inside. */
+.lat-icicle text { stroke: none; paint-order: normal; }
+.lat-icicle .lat-band { fill: rgba(0, 0, 0, 0.045); stroke: var(--page); stroke-width: 1; }
+.lat-icicle .lat-band__label { font-size: 10px; font-weight: 600; fill: var(--ink); }
+.lat-icicle .lat-leaf__label { font-size: 9px; font-weight: 600; fill: var(--svg-text-2); }
+.lat-icicle .lat-colhead {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; fill: var(--text-3);
+}
+
+/* Leaf swatches wear the same four pill kinds the grid cells do — one palette, two
+   painters, so a leaf cannot read as Act here and Attend there. */
+.lat-icicle rect[data-tone="bad"]     { fill: rgba(185, 28, 28, 0.16); }
+.lat-icicle rect[data-tone="warn"]    { fill: rgba(161, 98, 7, 0.16); }
+.lat-icicle rect[data-tone="neutral"] { fill: rgba(0, 0, 0, 0.08); }
+.lat-icicle rect[data-tone="ok"]      { fill: rgba(21, 128, 61, 0.16); }
+.lat-icicle rect[data-bucket="0"]     { fill: rgba(0, 0, 0, 0.03); }
+.lat-icicle rect[data-bucket="1"]     { fill: rgba(0, 0, 0, 0.08); }
+.lat-icicle rect[data-bucket="2"]     { fill: rgba(0, 0, 0, 0.18); }
+.lat-icicle rect[data-bucket="3"]     { fill: rgba(0, 0, 0, 0.32); }
+.lat-icicle rect.is-receded { opacity: 0.18; }
+.lat-icicle rect.is-lit { stroke: var(--ink); stroke-width: 2; }
+.lat-icicle rect.is-traced { stroke: var(--accent); stroke-width: 3; }
+.lat-icicle .lat-leaf:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lat-icicle.is-diverged rect { fill: rgba(0, 0, 0, 0.05); }

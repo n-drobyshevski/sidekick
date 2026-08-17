@@ -3118,6 +3118,7 @@ export async function renderAarsRules(main, _params, ctx) {
     const uLattice = latticeSection({
       spec: POSTURE_LATTICE,
       kind: "posture",
+      views: false,
       unit: "cells",
       unitOne: "cell",
       decide: (v) => mirrorDecidePosture(v, postureDraft),

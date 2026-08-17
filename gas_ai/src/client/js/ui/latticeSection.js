@@ -30,6 +30,7 @@ import { openPopover } from "./popover.js";
 import { outcomeBadge, outcomeLabel } from "./outcome.js";
 import { tierBadge, tierLabel } from "./posture.js";
 import { latticeGrid } from "./lattice.js";
+import { latticeIcicle } from "./latticeIcicle.js";
 import { latticeCells, outcomeMass, paintCells, toneForKey, vectorSentence } from "../lattice.js";
 import { OUTCOME_VALUES } from "../decideMirror.js";
 
@@ -81,26 +82,53 @@ export function latticeSection(opts) {
     }
   }
 
-  const grid = latticeGrid({
-    spec,
-    ariaLabel: `Decision lattice, ${latticeCells(spec).length} ${unit}`,
-    hooks: {
-      onCellEnter: (cell) => {
-        const d = grid.descriptorFor(cell.key);
-        const idx = d ? d.ruleIndex : null;
-        grid.light(idx);
-        if (onRowLight) onRowLight(idx);
-      },
-      onCellLeave: () => {
-        grid.light(null);
-        if (onRowLight) onRowLight(null);
-      },
-      onActivate: (cell, anchor) => {
-        closePop();
-        pop = openCellPopover(cell, anchor);
-      },
+  /**
+   * The two painters share one handle shape, so a view switch is a swap and never a fork.
+   * `views` is only set for lattices that have a second one to offer — Posture's three
+   * consequence panels have no nesting for a tree to show, so it never grows the control.
+   */
+  const painterHooks = {
+    onCellEnter: (cell) => {
+      const d = grid.descriptorFor(cell.key);
+      const idx = d ? d.ruleIndex : null;
+      grid.light(idx);
+      if (onRowLight) onRowLight(idx);
     },
-  });
+    onCellLeave: () => {
+      grid.light(null);
+      if (onRowLight) onRowLight(null);
+    },
+    onActivate: (cell, anchor) => {
+      closePop();
+      pop = openCellPopover(cell, anchor);
+    },
+  };
+
+  const gridAriaLabel = `Decision lattice, ${latticeCells(spec).length} ${unit}`;
+  const painters = {
+    matrix: () => latticeGrid({ spec, ariaLabel: gridAriaLabel, hooks: painterHooks }),
+    tree: () => latticeIcicle({ spec, ariaLabel: `Decision tree, ${latticeCells(spec).length} ${unit}`, hooks: painterHooks }),
+  };
+  let view = "matrix";
+  let grid = painters.matrix();
+  const painterHost = el("div", {});
+  painterHost.append(grid.node);
+
+  /**
+   * Switching painters is the ONE structural rebuild this component does, so it restores
+   * focus explicitly — the same discipline focusRow keeps in pages/aars.js. Without it the
+   * caret lands on <body> and a keyboard user loses their place mid-comparison.
+   */
+  function setView(next) {
+    if (next === view) return;
+    const focused = document.activeElement;
+    const focusedKey = focused && focused.dataset ? focused.dataset.key : null;
+    view = next;
+    grid = painters[next]();
+    painterHost.replaceChildren(grid.node);
+    repaint();
+    if (focusedKey) grid.focusCell(focusedKey);
+  }
 
   const modeTabs = segmented({
     options: [
@@ -204,6 +232,18 @@ export function latticeSection(opts) {
   const legend = el("p", { class: "small muted", style: "margin:12px 0 0" });
   const note = el("div", {});
 
+  // Posture's three panels have no nesting a tree could show, so the switch appears only
+  // where a second view says something the first does not.
+  const viewTabs = opts.views === false ? null : segmented({
+    options: [
+      { value: "matrix", label: "Matrix", title: "Every leaf on one grid" },
+      { value: "tree", label: "Tree", title: "The axes nested, branch by branch" },
+    ],
+    value: "matrix",
+    ariaLabel: "How the lattice is drawn",
+    onChange: (v) => { viewTabs.set(v); setView(v); },
+  });
+
   const node = el(
     "div",
     { class: "model-hero" },
@@ -212,9 +252,10 @@ export function latticeSection(opts) {
       { class: "model-hero__head" },
       el("span", { class: "label" }, "The decision space"),
       el("span", { style: "flex:1 1 auto" }),
+      viewTabs,
       modeTabs,
     ),
-    grid.node,
+    painterHost,
     massHost,
     legend,
     note,
