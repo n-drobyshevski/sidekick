@@ -95,6 +95,13 @@ export interface ConfigFindingView {
   ignored: boolean;
   iac: boolean;
   gap: boolean;
+  /**
+   * Phase 4: the problem/decision-vector `Outcome` (ACT | ATTEND | TRACK_STAR | TRACK) this
+   * finding was last decided as, empty when it has none — a passing or resolved finding
+   * gets no verdict (graphEnrich.withProblemVerdicts), the same absent-not-defaulted
+   * contract every other optional column on this view already follows.
+   */
+  problemOutcome: string;
 }
 
 export interface ControlRollup {
@@ -168,6 +175,7 @@ export function toConfigView(f: FindingRow, linked: boolean): ConfigFindingView 
     ignored: (f.ignoreRuleIds ?? []).length > 0,
     iac: (f.iacFindingIds ?? []).length > 0,
     gap: isOpenGap(f),
+    problemOutcome: f.problemOutcome ?? "",
   };
 }
 

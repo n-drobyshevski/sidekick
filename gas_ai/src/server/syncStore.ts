@@ -16,6 +16,7 @@ import {
   withIdentityAccessNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
+  withProblemVerdicts,
   withSensitiveDataNodes,
   type AarsHints,
 } from "../domain/graphEnrich";
@@ -27,7 +28,16 @@ import type {
 import type { EffectiveAccessRow } from "../domain/effectiveAccess";
 import { edgeId } from "../domain/graphTypes";
 import { aarsSeverity, derivationSignature, type AarsBands, type AarsRule } from "../domain/aars";
-import { isUnresolvedIssue, normalizeAarsSeverity } from "../domain/config";
+import { isOpenGap, isUnresolvedIssue, normalizeAarsSeverity } from "../domain/config";
+import {
+  countProblemOutcomes,
+  decideProblem,
+  deriveFindingProblemInput,
+  deriveProblemInput,
+  stripProblemFields,
+  type ProblemVerdictInput,
+} from "../domain/problem";
+import { vectorSignature, type ProblemRule } from "../domain/problemRule";
 import { OTHER_GROUP_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
 import { countAarsSeverities } from "../domain/aarsTrend";
@@ -299,6 +309,12 @@ export function issueToRow(i: IssueRow): Rec {
     ticket_urls: (i.ticketUrls ?? []).join(","),
     ai_verdict: i.aiVerdict ?? null,
     ai_recommended_severity: i.aiRecommendedSeverity ?? null,
+    // Phase 4: the Problem/Decision-Vector verdict. `?? null`, never a default: a resolved
+    // issue (or one synced before this phase) carries none of the three, and reading that
+    // as some fallback outcome would assert a decision nobody made.
+    problem_outcome: i.problemOutcome ?? null,
+    problem_input_json: i.problemInput ? JSON.stringify(i.problemInput) : null,
+    problem_rule_version: i.problemRuleVersion ?? null,
   };
 }
 
@@ -347,6 +363,20 @@ export function rowToIssue(r: Rec): IssueRow {
   const ticketUrls = String(r["ticket_urls"] ?? "").split(",").filter(Boolean);
   if (ticketUrls.length) issue.ticketUrls = ticketUrls;
   if (parseBool(r["validated_exploitable"])) issue.validatedAsExploitable = true;
+  // Phase 4: absent reads as undefined, never a default — a row this app synced before the
+  // verdict existed (or a resolved issue that never got one) must not read as decided.
+  const problemOutcome = (r["problem_outcome"] as string | null) ?? null;
+  if (problemOutcome) issue.problemOutcome = problemOutcome;
+  const problemInput = parseJson<ProblemVerdictInput | null>(r["problem_input_json"], null);
+  if (problemInput) issue.problemInput = problemInput;
+  const problemRuleVersion = r["problem_rule_version"];
+  if (
+    problemRuleVersion !== null &&
+    problemRuleVersion !== undefined &&
+    String(problemRuleVersion) !== ""
+  ) {
+    issue.problemRuleVersion = Number(problemRuleVersion);
+  }
   return issue;
 }
 
@@ -417,6 +447,12 @@ export function findingToRow(f: FindingRow): Rec {
       f.ignoreRuleIds && f.ignoreRuleIds.length ? JSON.stringify(f.ignoreRuleIds) : null,
     iac_finding_ids_json:
       f.iacFindingIds && f.iacFindingIds.length ? JSON.stringify(f.iacFindingIds) : null,
+
+    // Phase 4: the Problem/Decision-Vector verdict — same three columns, same `?? null`
+    // convention, as ai_issues above.
+    problem_outcome: f.problemOutcome ?? null,
+    problem_input_json: f.problemInput ? JSON.stringify(f.problemInput) : null,
+    problem_rule_version: f.problemRuleVersion ?? null,
   };
 }
 
@@ -463,6 +499,19 @@ export function rowToFinding(r: Rec): FindingRow {
   // `false` would assert a tombstone check that never ran.
   const deleted = parseTri(r["deleted"]);
   if (deleted !== null) finding.deleted = deleted;
+  // Phase 4: same absent-reads-undefined contract as rowToIssue's block above.
+  const problemOutcome = (r["problem_outcome"] as string | null) ?? null;
+  if (problemOutcome) finding.problemOutcome = problemOutcome;
+  const problemInput = parseJson<ProblemVerdictInput | null>(r["problem_input_json"], null);
+  if (problemInput) finding.problemInput = problemInput;
+  const problemRuleVersion = r["problem_rule_version"];
+  if (
+    problemRuleVersion !== null &&
+    problemRuleVersion !== undefined &&
+    String(problemRuleVersion) !== ""
+  ) {
+    finding.problemRuleVersion = Number(problemRuleVersion);
+  }
   return finding;
 }
 
@@ -745,13 +794,28 @@ export function persistSync(
   });
   const enriched = enrichGraphDoc(reachable, issues, hints, rule);
 
+  // The problem/decision-vector verdict, BESIDE the AARS enrichment above, never inside
+  // it — see withProblemVerdicts's own comment for why the two must stay independently
+  // re-runnable. Runs against `enriched.nodes` rather than `reachable`'s, so a row's
+  // `mission` axis reads the SAME freshly-recomputed `businessImpact` AARS's pillars do,
+  // and its `exposure` axis reads the same exposureEvidence/humanAccess join both already
+  // carry through unchanged from the two `with*` folds above.
+  const { version: problemRuleVersion, rule: problemRule } = settingsStore.getProblemRule();
+  const { issues: decidedIssues, findings: decidedFindings } = withProblemVerdicts(
+    enriched,
+    issues,
+    findings,
+    problemRule,
+    problemRuleVersion,
+  );
+
   // Tabs hold the real (non-synthetic) nodes; ISSUE nodes are derivable from ai_issues.
   const assetNodes = realNodes(enriched.nodes);
   const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
   overwrite(TABS.assets, assetNodes.map(assetToRow));
   overwrite(TABS.edges, assetEdges.map(edgeToRow));
-  overwrite(TABS.issues, issues.map(issueToRow));
-  overwrite(TABS.findings, findings.map(findingToRow));
+  overwrite(TABS.issues, decidedIssues.map(issueToRow));
+  overwrite(TABS.findings, decidedFindings.map(findingToRow));
   overwrite(TABS.dataFindings, dataFindings.map(dataFindingToRow));
 
   // Compliance-framework posture. Written like every other data tab — wholesale, BEFORE
@@ -798,8 +862,15 @@ export function persistSync(
     // Which scoring model produced that distribution: counts from two versions are not
     // on the same scale, and the trend chart says so rather than drawing a false step.
     aars_rule_version: ruleVersion,
+    // The outcome distribution this sync decided, over BOTH decided populations at once —
+    // mirrors aars_severity_json exactly, one row down.
+    problem_outcome_json: JSON.stringify(countProblemOutcomes([...decidedIssues, ...decidedFindings])),
+    // Which problem rule produced it — mirrors aars_rule_version, and moves independently
+    // of it, exactly as the two settings keys (aars_rule / problem_rule) do.
+    problem_rule_version: problemRuleVersion,
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
+  settingsStore.setDecidedRuleVersion(problemRuleVersion);
   commit();
   return enriched;
 }
@@ -881,6 +952,129 @@ function enrichFromTabs(rule: AarsRule): GraphDoc | null {
     }
   }
   return enrichGraphDoc(base, issues, hints, rule);
+}
+
+/**
+ * Re-decide every persisted issue and finding under `rule`, without touching the Wiz API:
+ * every input a verdict needs is already on the tabs (the issue/finding's own fields, and
+ * the asset's own CIEM/exposure/business-impact columns).
+ *
+ * UNLIKE `enrichFromTabs` above, this does NOT reuse a persisted input unconditionally —
+ * it reuses it only when `problemRule.vectorSignature(rule)` still matches what the row
+ * was decided under (or the row predates the field entirely — legacy, reused, so no tenant
+ * redecides on upgrade). This is the SAME `derivedUnder` precedent `enrichFromTabs`
+ * follows for AARS, applied to this rule's own derivation knobs
+ * (`exploitationByRuleId` / `remediateVerdicts` / `totalImpactGroups` / `missingMission`)
+ * rather than `gapSources` — DO NOT let this regress to unconditional reuse the way the
+ * AARS rescore briefly did: an operator flips `missingMission` from MEDIUM to LOW, hits
+ * Redecide, and nothing should move for a row whose vector was actually built under the
+ * old default — it must re-derive, not keep answering for a rule that no longer exists.
+ *
+ * `decideProblem` itself (the `outcomeRules` cascade) is ALWAYS re-run under the CURRENT
+ * `rule`, whether the vector was reused or freshly derived: reordering or editing
+ * `outcomeRules` changes what a vector ROUTES TO, never WHICH VECTOR a row has, so it must
+ * never be gated by the same signature check the vector-reuse decision uses. A rule edit
+ * that touches only `outcomeRules` therefore reuses every persisted `problemInput`
+ * untouched and still redecides every outcome — the "pure ordering change" case
+ * `problem.test.ts` / `redecideProblems.test.ts` pin.
+ *
+ * A row that no longer passes its own gate (`isUnresolvedIssue` / `isOpenGap`) is stripped
+ * rather than redecided — see `stripProblemFields`. This can only happen here if the row
+ * changed status without a sync in between, which does not happen (status is a synced
+ * field), but the strip keeps this function correct independent of that fact rather than
+ * relying on it.
+ */
+function redecideFromTabs(
+  rule: ProblemRule,
+  ruleVersion: number | undefined,
+): { issues: IssueRow[]; findings: FindingRow[] } {
+  const byId = new Map(loadAssetsRaw().map((n) => [n.id, n]));
+  const sig = vectorSignature(rule);
+
+  const reuseOrDerive = <Row extends { problemInput?: ProblemVerdictInput }>(
+    row: Row,
+    node: GNode | undefined,
+    derive: () => ProblemVerdictInput,
+  ): ProblemVerdictInput => {
+    const persisted = row.problemInput;
+    if (persisted && (persisted.derivedUnder === undefined || persisted.derivedUnder === sig)) {
+      return persisted; // reused verbatim, own (possibly legacy) signature and all
+    }
+    return { ...derive(), derivedUnder: sig };
+  };
+
+  const stampVersion = <Row extends { problemRuleVersion?: number }>(row: Row): Row => {
+    if (ruleVersion === undefined) {
+      // A preview (decideProblemsWith): nothing is being saved, so no real version exists
+      // to stamp. Strip whatever the source row carried rather than let a stale number
+      // from a PRIOR real redecide leak through as if it described this preview.
+      if (row.problemRuleVersion === undefined) return row;
+      const next = { ...row };
+      delete next.problemRuleVersion;
+      return next;
+    }
+    return { ...row, problemRuleVersion: ruleVersion };
+  };
+
+  const issues = loadIssues().map((issue) => {
+    if (!isUnresolvedIssue(issue)) return stripProblemFields(issue);
+    const input = reuseOrDerive(issue, byId.get(issue.assetId), () =>
+      deriveProblemInput(issue, byId.get(issue.assetId), rule));
+    const { outcome } = decideProblem(input.vector, rule);
+    return stampVersion({ ...issue, problemOutcome: outcome, problemInput: input });
+  });
+
+  const findings = loadFindings().map((finding) => {
+    if (!isOpenGap(finding)) return stripProblemFields(finding);
+    const input = reuseOrDerive(finding, byId.get(finding.resourceId), () =>
+      deriveFindingProblemInput(finding, byId.get(finding.resourceId), rule));
+    const { outcome } = decideProblem(input.vector, rule);
+    return stampVersion({ ...finding, problemOutcome: outcome, problemInput: input });
+  });
+
+  return { issues, findings };
+}
+
+/**
+ * Re-decide every persisted issue and finding under the current problem rule, and rewrite
+ * the two tabs. Same non-negotiable as `rescoreInventory`: NOT a sync — zero Wiz calls, and
+ * no `sync_history` row, because inventing a commit record would put a point on the
+ * outcome trend for an estate that never moved.
+ *
+ * Caller holds the script lock.
+ */
+export function redecideProblems(): {
+  version: number;
+  issueCount: number;
+  findingCount: number;
+  outcomes: Record<string, number>;
+} {
+  const { version, rule } = settingsStore.getProblemRule();
+  const { issues, findings } = redecideFromTabs(rule, version);
+
+  overwrite(TABS.issues, issues.map(issueToRow));
+  overwrite(TABS.findings, findings.map(findingToRow));
+
+  settingsStore.setDecidedRuleVersion(version);
+  commit();
+
+  return {
+    version,
+    issueCount: issues.filter((i) => i.problemOutcome !== undefined).length,
+    findingCount: findings.filter((f) => f.problemOutcome !== undefined).length,
+    outcomes: countProblemOutcomes([...issues, ...findings]),
+  };
+}
+
+/**
+ * Decide every persisted issue and finding under an ARBITRARY rule and return the result
+ * WITHOUT writing anything — what a future Problem Rules page previews before committing
+ * to it. Shares `redecideFromTabs` with the real redecide, so the preview is the redecide,
+ * minus the writes and the version stamp (there is no real version for a rule that has not
+ * been saved).
+ */
+export function decideProblemsWith(rule: ProblemRule): { issues: IssueRow[]; findings: FindingRow[] } {
+  return redecideFromTabs(rule, undefined);
 }
 
 /**

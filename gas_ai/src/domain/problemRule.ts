@@ -464,6 +464,36 @@ export function problemRuleSummary(rule: ProblemRule): string[] {
 }
 
 /**
+ * A short, human-readable fingerprint of the four DERIVATION knobs —
+ * `exploitationByRuleId`, `remediateVerdicts`, `totalImpactGroups`, `missingMission` — the
+ * ones that decide WHICH VECTOR a row gets (`problem.deriveProblemInput` /
+ * `deriveFindingProblemInput`), as opposed to `outcomeRules` / `fallbackOutcome`, which
+ * decide what a vector ROUTES TO once it exists. Persisted on `IssueRow.problemInput
+ * .derivedUnder` / `FindingRow.problemInput.derivedUnder` (graphTypes.ts) — the direct
+ * structural port of `aars.derivationSignature` onto this rule's shape, for exactly the
+ * reason that one exists: `syncStore.redecideProblems` reuses a persisted VECTOR to
+ * re-ROUTE it for free on an `outcomeRules` edit, and that is the wrong thing to do the
+ * moment a caller instead flips `missingMission` from MEDIUM to LOW — the persisted
+ * vector's `mission` axis was derived under the OLD default and was never re-read.
+ * Unconditional reuse across a signature mismatch is the exact bug `enrichFromTabs`'s
+ * `derivedUnder` check exists to close for AARS; this is the same fix, made once here
+ * rather than rediscovered later against this rule's shape.
+ *
+ * Deliberately NOT a hash, for the same reason `derivationSignature`'s own comment gives:
+ * this value lands in a sheet cell and inside `problem_input_json`, read by a human
+ * comparing two rows, and a digest would tell them nothing a name doesn't.
+ */
+export function vectorSignature(rule: ProblemRule): string {
+  const exploitation = rule.exploitationByRuleId.map((r) => `${r.ruleId}:${r.maturity}`).join(",");
+  return [
+    `exploitationByRuleId:${exploitation}`,
+    `remediateVerdicts:${rule.remediateVerdicts.join(",")}`,
+    `totalImpactGroups:${rule.totalImpactGroups.join(",")}`,
+    `missingMission:${rule.missingMission}`,
+  ].join("|");
+}
+
+/**
  * Structural equality over everything that changes an OUTCOME — the tree analogue of
  * `scoringEqual`. Excludes exactly one field, `actLeafCeiling`: it is checked only by
  * `validateProblemRule` and never read by `decideProblem` or either `derive*ProblemInput`

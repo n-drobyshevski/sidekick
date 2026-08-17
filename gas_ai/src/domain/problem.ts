@@ -378,6 +378,70 @@ export function deriveFindingProblemInput(
   return { vector: { exploitation, impact, exposure, mission }, unknowns, evidenced, exploitationSource: source };
 }
 
+// -------------------------------------------------------------------- the persisted verdict
+
+/**
+ * What a verdict was decided FROM, persisted on `IssueRow.problemInput` /
+ * `FindingRow.problemInput` (graphTypes.ts) — `ProblemInput` (the vector, which axes came
+ * back UNKNOWN, whether exposure was evidenced, and which door exploitation came through)
+ * plus `derivedUnder`, the `problemRule.vectorSignature` this input was computed under.
+ *
+ * The precedent is `GNode.aarsInput`: persisting WHAT THE VERDICT WAS MADE FROM is what
+ * lets a rule change RE-DECIDE exactly these facts (`syncStore.redecideProblems`) rather
+ * than re-derive a possibly different set from a graph that may have moved on since — and
+ * it is what makes a whole-estate preview (`syncStore.decideProblemsWith`) cost zero Wiz
+ * calls, for exactly the reason a persisted `aarsInput` makes `rescoreInventory` free.
+ *
+ * `derivedUnder` absent means the row predates this field: reused rather than forced
+ * through a re-derivation, the same grandfather rule `aarsInput.derivedUnder` follows, so
+ * upgrading to this version never re-decides a tenant's estate on its own.
+ */
+export interface ProblemVerdictInput extends ProblemInput {
+  derivedUnder?: string;
+}
+
+/**
+ * Clear a row's verdict fields — for the row that just stopped qualifying for one (an
+ * issue that resolved, a finding that started passing). Mirrors `syncStore.stripAarsScore`'s
+ * reasoning exactly: a row that stops being eligible must LOSE its stale verdict, not keep
+ * whatever the last eligible run decided. Returns the same reference when there is nothing
+ * to clear, so a row that never carried a verdict costs no allocation.
+ */
+export function stripProblemFields<
+  T extends { problemOutcome?: string; problemInput?: ProblemVerdictInput; problemRuleVersion?: number },
+>(row: T): T {
+  if (
+    row.problemOutcome === undefined &&
+    row.problemInput === undefined &&
+    row.problemRuleVersion === undefined
+  ) {
+    return row;
+  }
+  const next = { ...row };
+  delete next.problemOutcome;
+  delete next.problemInput;
+  delete next.problemRuleVersion;
+  return next;
+}
+
+/**
+ * Tally decided rows by outcome, zeros kept — an outcome nothing reached this sync is the
+ * finding, not an absence, the same reasoning `treeDiscrimination.outcomeOccupancy` applies
+ * over the full 54-leaf enumeration, here applied to the population that actually got
+ * persisted. Feeds `sync_history.problem_outcome_json`, the one record of a sync's
+ * distribution, and the problem-outcome trend series `aarsTrend.ts` builds off it.
+ */
+export function countProblemOutcomes(
+  rows: ReadonlyArray<{ problemOutcome?: string }>,
+): Record<Outcome, number> {
+  const counts: Record<Outcome, number> = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0 };
+  for (const r of rows) {
+    const o = r.problemOutcome;
+    if (o && (OUTCOME_VALUES as readonly string[]).includes(o)) counts[o as Outcome]++;
+  }
+  return counts;
+}
+
 // --------------------------------------------------------------- the amplification vector
 
 /** One AIVSS-shaped amplification factor: none / partial / full, or genuinely unmeasured. */

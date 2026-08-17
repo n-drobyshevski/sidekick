@@ -78,6 +78,18 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "assignee", "environments", "validated_exploitable", "business_impact",
     "entity_status", "subscription_id", "ignore_note", "ignore_expired_at",
     "ticket_urls", "ai_verdict", "ai_recommended_severity",
+    // Phase 4: the Problem/Decision-Vector verdict (problem.ts, problemRule.ts). Appended,
+    // never inserted — same no-migration contract as every block above: ensureHeaders adds
+    // declared-but-missing headers to the right, and every read maps by header NAME.
+    //
+    // Deliberately NO `problem_points` column. The whole argument for a decision tree over
+    // a score is that its output is an ACTION (one of four queues), not a number — and a
+    // points column sitting next to it would be too tempting a sort comparator to leave
+    // alone. Add one and within a week something sorts the register by it, ranks ACT rows
+    // against each other by "how ACT" they are, and the tree has quietly grown the score it
+    // was built to replace. If a number is ever genuinely needed, it belongs in a rule's own
+    // preview surface, never on the row.
+    "problem_outcome", "problem_input_json", "problem_rule_version",
   ],
   [TABS.findings]: [
     "id", "resource_id", "rule_short_id", "severity", "remediation", "framework_codes",
@@ -102,6 +114,11 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "resource_name", "resource_type", "resource_status", "target_external_id", "source",
     "subscription_id", "subscription_name", "cloud_provider", "projects_json",
     "business_impact", "ignore_rule_ids_json", "iac_finding_ids_json",
+    // Phase 4: the Problem/Decision-Vector verdict. Same three columns as ai_issues above,
+    // same no-migration contract, and the same deliberate absence of a `problem_points`
+    // column — see that block's comment for why. Gated on `isOpenGap` rather than
+    // `isUnresolvedIssue` (graphEnrich.withProblemVerdicts).
+    "problem_outcome", "problem_input_json", "problem_rule_version",
   ],
   // DSPM findings, kept apart from the compliance findings above on purpose: that tab
   // prices AARS pillar B and counts as `complianceGaps`, and a classification finding
@@ -169,6 +186,10 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "sync_id", "started_at", "finished_at", "status", "mode",
     "node_count", "edge_count", "issue_count", "api_calls", "snapshot_ref", "error",
     "aars_severity_json", "aars_rule_version",
+    // Phase 4: the outcome distribution this sync produced, and which problem_rule version
+    // produced it — the problem-outcome analogue of the two columns just above, feeding
+    // aarsTrend.ts's second series. Appended, same no-migration contract.
+    "problem_outcome_json", "problem_rule_version",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [

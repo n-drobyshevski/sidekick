@@ -7,9 +7,11 @@ import {
   TREND_SEVERITIES,
   aarsTrendFromHistory,
   countAarsSeverities,
+  problemTrendFromHistory,
   ruleChangePoints,
 } from "../src/domain/aarsTrend";
 import { AARS_SEVERITY_ORDER } from "../src/domain/config";
+import { OUTCOME_VALUES } from "../src/domain/problem";
 import type { Rec } from "../src/domain/util";
 
 function row(over: Rec): Rec {
@@ -140,5 +142,58 @@ describe("rule version on a trend point", () => {
   it("marks every change, including a rule that was reverted", () => {
     const points = aarsTrendFromHistory([pt("20", 1), pt("21", 2), pt("22", 1)]);
     expect(ruleChangePoints(points)).toEqual([1, 2]);
+  });
+});
+
+// The problem-outcome series: `trendFromHistory` bound to a different vocabulary and a
+// different pair of columns. Not a repeat of every case above — that would be exactly the
+// fork this generalisation exists to avoid — just enough to pin that the SAME machinery
+// answers for the second series: the skip-before-the-column rule, the rule-version
+// leniency, and the window/limit behaviour.
+describe("problemTrendFromHistory", () => {
+  const outcomeRow = (over: Rec): Rec => ({ status: "SUCCESS", finished_at: "2026-06-20T05:00:00Z", ...over });
+  const outcomeCounts = (o: Record<string, number>) => JSON.stringify(o);
+
+  it("builds one chronological point per successful sync, over the outcome vocabulary", () => {
+    const points = problemTrendFromHistory([
+      outcomeRow({ finished_at: "2026-06-21T05:00:00Z", problem_outcome_json: outcomeCounts({ ACT: 2 }) }),
+      outcomeRow({ finished_at: "2026-06-20T05:00:00Z", problem_outcome_json: outcomeCounts({ ACT: 1 }) }),
+    ]);
+    expect(points.map((p) => p.counts.ACT)).toEqual([1, 2]);
+    expect(Object.keys(points[0].counts).sort()).toEqual([...OUTCOME_VALUES].sort());
+  });
+
+  it("skips a sync recorded before the column existed, rather than plotting zero", () => {
+    const points = problemTrendFromHistory([
+      outcomeRow({ finished_at: "2026-06-20T05:00:00Z" }),
+      outcomeRow({ finished_at: "2026-06-21T05:00:00Z", problem_outcome_json: outcomeCounts({ ACT: 4 }) }),
+    ]);
+    expect(points).toHaveLength(1);
+    expect(points[0].counts.ACT).toBe(4);
+  });
+
+  it("reads an absent rule version as 0, and marks a change under its own column", () => {
+    const points = problemTrendFromHistory([
+      outcomeRow({ finished_at: "2026-06-20T05:00:00Z", problem_outcome_json: outcomeCounts({ TRACK: 1 }) }),
+      outcomeRow({
+        finished_at: "2026-06-21T05:00:00Z",
+        problem_outcome_json: outcomeCounts({ TRACK: 2 }),
+        problem_rule_version: 1,
+      }),
+    ]);
+    expect(points.map((p) => p.ruleVersion)).toEqual([0, 1]);
+    expect(ruleChangePoints(points)).toEqual([1]);
+  });
+
+  it("is independent of the AARS series — an aars_severity_json-only row contributes nothing here", () => {
+    const rows = [
+      outcomeRow({
+        finished_at: "2026-06-20T05:00:00Z",
+        aars_severity_json: JSON.stringify({ HIGH: 3 }),
+        // No problem_outcome_json on this row at all.
+      }),
+    ];
+    expect(aarsTrendFromHistory(rows)).toHaveLength(1);
+    expect(problemTrendFromHistory(rows)).toHaveLength(0);
   });
 });

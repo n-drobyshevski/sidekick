@@ -20,6 +20,13 @@ import type { Severity } from "./config";
 import type { EffectiveAccessRow } from "./effectiveAccess";
 import { isRatedExposure, worseExposureLevel } from "./exposureQuery";
 import { HUMAN_ACCESS_TYPES } from "./identityQuery";
+import {
+  decideProblem,
+  deriveFindingProblemInput,
+  deriveProblemInput,
+  stripProblemFields,
+} from "./problem";
+import { vectorSignature, type ProblemRule } from "./problemRule";
 import { conditionHolds, conditionState } from "./riskConditions";
 import { worstBusinessImpact } from "./syncNormalize";
 import type { ConditionKey } from "./toxicCombos";
@@ -334,6 +341,76 @@ export function enrichGraphDoc(
     edges: [...doc.edges, ...issueEdges],
     syncedAt: doc.syncedAt,
   };
+}
+
+// ------------------------------------------------------------- the problem/decision-vector fold
+
+/**
+ * Decide every eligible issue and finding through `problem.decideProblem`, joined to the
+ * enriched graph's nodes by `assetId` / `resourceId`.
+ *
+ * A SEPARATE exported function, called BESIDE `enrichGraphDoc` — never folded inside it.
+ * The reason is versioning, not taste: the AARS rule version and the problem rule version
+ * move INDEPENDENTLY (settingsLogic's `aars_scored_version` vs `problem_decided_version`),
+ * so the two enrichments must be independently re-runnable. Burying this fold inside
+ * `enrichGraphDoc` would mean a problem-rule edit forces an AARS rescore (or vice versa) —
+ * exactly the coupling `syncStore.rescoreInventory` and the future `redecideProblems` must
+ * NOT share, or editing one rule would pay the Sheets-rewrite cost of the other for nothing.
+ *
+ * Gating differs by row kind because the two source types define "still relevant" in their
+ * OWN vocabularies: an issue is `isUnresolvedIssue` (config.ts), a finding is `isOpenGap`.
+ * A row that fails its gate gets NO verdict — `stripProblemFields` clears whatever a prior
+ * decide left on it, so a resolved issue or a now-passing finding never keeps a stale ACT
+ * sitting on it.
+ *
+ * A missing node (`byId.get(...)` returns `undefined`) is the ORDINARY case, not an edge
+ * case: most config rules fail on a REGION, an IAM policy, or some other resource the AI
+ * graph does not model at all. `deriveProblemInput` / `deriveFindingProblemInput` already
+ * handle `node === undefined` (every axis that would read the node falls to UNKNOWN /
+ * UNVERIFIED), so the row is decided — with more unknowns — rather than dropped.
+ *
+ * `ruleVersion` is the `problem_rule` version this call is deciding under
+ * (`settingsStore.getProblemRule().version`); stamped onto every decided row's
+ * `problemRuleVersion` so a later reader can tell which rule produced it without a join
+ * back to sync_history. This is the SYNC-TIME path, so every decided row is a FRESH
+ * derivation — `enrichFromTabs`'s reuse-under-signature trick belongs to the recompute path
+ * in syncStore.ts, not here, because a live sync always has fresh Wiz data to derive from.
+ */
+export function withProblemVerdicts(
+  doc: GraphDoc,
+  issues: IssueRow[],
+  findings: FindingRow[],
+  rule: ProblemRule,
+  ruleVersion: number,
+): { issues: IssueRow[]; findings: FindingRow[] } {
+  const byId = indexBy(doc.nodes, (n) => n.id);
+  const sig = vectorSignature(rule);
+
+  const decidedIssues = issues.map((issue) => {
+    if (!isUnresolvedIssue(issue)) return stripProblemFields(issue);
+    const input = deriveProblemInput(issue, byId.get(issue.assetId), rule);
+    const { outcome } = decideProblem(input.vector, rule);
+    return {
+      ...issue,
+      problemOutcome: outcome,
+      problemInput: { ...input, derivedUnder: sig },
+      problemRuleVersion: ruleVersion,
+    };
+  });
+
+  const decidedFindings = findings.map((finding) => {
+    if (!isOpenGap(finding)) return stripProblemFields(finding);
+    const input = deriveFindingProblemInput(finding, byId.get(finding.resourceId), rule);
+    const { outcome } = decideProblem(input.vector, rule);
+    return {
+      ...finding,
+      problemOutcome: outcome,
+      problemInput: { ...input, derivedUnder: sig },
+      problemRuleVersion: ruleVersion,
+    };
+  });
+
+  return { issues: decidedIssues, findings: decidedFindings };
 }
 
 /**

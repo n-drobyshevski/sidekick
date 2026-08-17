@@ -3,6 +3,7 @@
 
 import { scoringEqual } from "../domain/aarsRule";
 import type { ScopePins } from "../domain/complianceScope";
+import { decisionEqual } from "../domain/problemRule";
 import * as logic from "../domain/settingsLogic";
 import type { Rec } from "../domain/util";
 import { bumpDataVersion } from "./serverCache";
@@ -84,6 +85,30 @@ export function setAarsRule(rule: unknown): logic.StoredAarsRule {
   const stored = logic.getAarsRule(next);
   if (scoresWereCurrent && scoringEqual(before.rule, stored.rule)) {
     next = logic.withScoredRuleVersion(next, stored.version);
+  }
+  saveSettings(next);
+  return stored;
+}
+
+export const getProblemRule = (): logic.StoredProblemRule => logic.getProblemRule(loadSettings());
+
+/**
+ * Save a rule and return it as stored — clamped, and with its new version. Mirrors
+ * `setAarsRule`'s no-op guard exactly, over `decisionEqual` instead of `scoringEqual`: when
+ * the persisted verdicts were current AND the edit changed nothing that could alter an
+ * OUTCOME (only `actLeafCeiling` moved, say — the one field `decisionEqual` excludes), the
+ * decided-version marker moves forward with it rather than prompting for a redecide that
+ * would change nothing.
+ */
+export function setProblemRule(rule: unknown): logic.StoredProblemRule {
+  const settings = loadSettings();
+  const before = logic.getProblemRule(settings);
+  const verdictsWereCurrent = logic.getDecidedRuleVersion(settings) === before.version;
+
+  let next = logic.withProblemRule(settings, rule);
+  const stored = logic.getProblemRule(next);
+  if (verdictsWereCurrent && decisionEqual(before.rule, stored.rule)) {
+    next = logic.withDecidedRuleVersion(next, stored.version);
   }
   saveSettings(next);
   return stored;
@@ -182,6 +207,21 @@ export function setScoredRuleVersion(version: unknown): void {
   const settings = loadSettings();
   const next = logic.withScoredRuleVersion(settings, version);
   if (logic.getScoredRuleVersion(next) === logic.getScoredRuleVersion(settings)) return;
+  saveSettings(next);
+}
+
+export const getDecidedRuleVersion = (): number => logic.getDecidedRuleVersion(loadSettings());
+
+/**
+ * Mark which problem-rule version the persisted verdicts were decided under. Every sync
+ * and every redecide calls this, and almost every call is a no-op — same guard as
+ * `setScoredRuleVersion`, for the same reason: skip the whole-tab rewrite (and the cache
+ * invalidation that rides with it) when the marker is already where it should be.
+ */
+export function setDecidedRuleVersion(version: unknown): void {
+  const settings = loadSettings();
+  const next = logic.withDecidedRuleVersion(settings, version);
+  if (logic.getDecidedRuleVersion(next) === logic.getDecidedRuleVersion(settings)) return;
   saveSettings(next);
 }
 
