@@ -822,6 +822,13 @@ export async function renderGraphPage(main, params, _ctx) {
       // leave either behind — the same chokepoint `paint()` and `emptyCanvas()` use.
       releaseCanvas();
       body.classList.remove("updating");
+      // Unconditional, not "only if a handoff was in flight": `paint()` can leave this class
+      // on `body` (opacity 0) while it awaits its fade, and if THIS load's rejection is what
+      // supersedes that paint, its own early-return bail already strips the class — but that
+      // is a second, defensive removal, not the only one, precisely so this catch branch never
+      // has to know or trust which state the class is in. Skipping it here is what used to
+      // strand the empty-state message below at opacity 0 with no way back.
+      body.classList.remove("gcanvas-handoff");
       body.removeAttribute("aria-busy");
       updatingBar.hidden = true;
       // A rejected query is the common case here now, and its message names the offending
@@ -989,7 +996,16 @@ export async function renderGraphPage(main, params, _ctx) {
     if (handoff) {
       body.classList.add("gcanvas-handoff");
       await fadeOut(body);
-      if (paintToken !== seq) return;
+      if (paintToken !== seq) {
+        // Bailing before the swap below ever runs, so nothing here will reach the RAF at the
+        // bottom of this function that would otherwise be the one to undo the class — remove
+        // it explicitly rather than leaving `body` stranded at opacity 0 for whichever path
+        // (a newer paint, or load()'s own catch branch) ends up handling `seq` instead. Not a
+        // `finally`: the NORMAL continuation below must keep the class on `body` all the way
+        // through the swap, so only this early exit gets its own cleanup.
+        body.classList.remove("gcanvas-handoff");
+        return;
+      }
     }
     lastData = payload;
     body.classList.remove("updating");

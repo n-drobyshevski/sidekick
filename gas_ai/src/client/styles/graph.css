@@ -209,13 +209,17 @@
    graphSkeleton.js's layout (real NODE_W/NODE_H card geometry, one of the five real
    arrangements) instead of a shape that could stand in for any loading screen in any product.
    `--gs-stagger` is scoped here rather than promoted to tokens.css — nothing outside this one
-   component reads it. */
-.graph-skeleton {
-  position: absolute; inset: 12px; overflow: hidden;
-  display: flex; flex-direction: column;
-  --gs-stagger: 45ms;
-}
-.gs-canvas { flex: 1; min-height: 0; display: block; width: 100%; height: 100%; }
+   component reads it.
+
+   No `display: flex` here on purpose: `renderGraphSkeleton` measures THIS element's
+   `clientWidth`/`clientHeight` and hands them straight to `skeletonLayout` as the viewBox size
+   (see that function's own comment), so the host's box has to equal the svg's box exactly —
+   nothing else may eat into it. That's also why `.gs-status` below is an absolute overlay
+   rather than a flex sibling stacked under the canvas: a flex column would shrink `.gs-canvas`
+   by the status row's own height, and the measurement taken before either element exists
+   would then be for a box bigger than the one the svg actually got. */
+.graph-skeleton { position: absolute; inset: 12px; overflow: hidden; --gs-stagger: 45ms; }
+.gs-canvas { display: block; width: 100%; height: 100%; }
 
 /* Group boxes: identical recipe to `.ggroup-box`, so a grouped ghost previews the exact hull
    the real canvas will draw, not an approximation of it. */
@@ -287,10 +291,14 @@
 
 /* The status region: the one part of the ghost that is actually announced (the SVG above is
    `aria-hidden`). Phrased on the `.route-overlay-label` idiom (base.css:336-348) so a reader
-   who has seen that pill during a route change recognises this one. */
+   who has seen that pill during a route change recognises this one. Positioned absolutely
+   (bottom-left of the host, over the canvas) rather than stacked below it in flow — see
+   `.graph-skeleton`'s own comment for why the host's measured box has to stay exactly the
+   svg's box, with no second row for this to have claimed height from. `.gs-phase`'s own
+   solid pill background is what keeps it legible sitting over the wireframe. */
 .gs-status {
+  position: absolute; left: 2px; bottom: 2px; z-index: 1;
   display: flex; align-items: center; gap: 10px;
-  padding: 10px 2px 2px;
 }
 .gs-status .progress-track { flex: 0 0 88px; }
 .gs-phase {
