@@ -5554,6 +5554,7 @@ var Server = (() => {
 
   // src/domain/graphLayout.ts
   var LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"];
+  var DEFAULT_LAYOUT = "grid";
   var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"];
   var SORT_KEYS = ["smart", "severity", "aars", "name"];
   var GROUP_NONE = "__none__";
@@ -5903,7 +5904,7 @@ var Server = (() => {
   }
   function layoutGraph(p, opts = {}) {
     var _a5, _b;
-    const laid = ((_a5 = opts.groupBy) != null ? _a5 : []).length ? layoutGrouped(p, opts) : layoutWhole(p, opts, (_b = opts.mode) != null ? _b : "rows");
+    const laid = ((_a5 = opts.groupBy) != null ? _a5 : []).length ? layoutGrouped(p, opts) : layoutWhole(p, opts, (_b = opts.mode) != null ? _b : DEFAULT_LAYOUT);
     const clusters = clusterHulls(p, laid);
     return clusters.length ? { ...laid, clusters } : laid;
   }
@@ -6276,7 +6277,7 @@ var Server = (() => {
     const second = (_c = levels[1]) != null ? _c : null;
     const inner = groupBy2 === "asset" || second === "asset" || second === groupBy2 ? null : second;
     const sort = (_d = opts.sort) != null ? _d : "smart";
-    const mode = (_e = opts.mode) != null ? _e : "rows";
+    const mode = (_e = opts.mode) != null ? _e : DEFAULT_LAYOUT;
     const parentOf = parentIndex(p);
     const cmp2 = memberOrder(p, sort);
     const block = (key, label, list2, hub) => blockFor(mode, key, label, [...list2].sort(cmp2), p, opts, hub);
@@ -6778,7 +6779,7 @@ var Server = (() => {
     const asked = pickList(p["groupBy"]);
     const groupBy2 = legacyGrouped && !asked.length ? ["combo"] : asked;
     return {
-      mode: legacyGrouped ? groupBy2[0] === "asset" ? "radial" : "grid" : pick(p["layout"], LAYOUT_MODES, "rows"),
+      mode: legacyGrouped ? groupBy2[0] === "asset" ? "radial" : "grid" : pick(p["layout"], LAYOUT_MODES, DEFAULT_LAYOUT),
       groupBy: groupBy2,
       sort: pick(p["sort"], SORT_KEYS, "smart")
     };
@@ -8345,7 +8346,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "050d3b980d3c" : "dev";
+  var BUILD_ID = true ? "f18545ec76df" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

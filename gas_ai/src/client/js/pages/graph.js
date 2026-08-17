@@ -70,17 +70,27 @@ const GROUP_LABELS = {
 /**
  * The layouts, in the order the list offers them — the page's whole vocabulary for `layout=`.
  *
- * `mode: ""` is Rows, because rows is the default and the hash carries an absent param rather
- * than a redundant `layout=rows`. Every other entry names its engine exactly as
- * `LAYOUT_MODES` does, so the value in the URL and the row in the list are the same word.
+ * Every entry names its engine exactly as the domain's `LAYOUT_MODES` does, so the value in the
+ * URL and the row in the list are the same word. The DEFAULT one is simply first, and the hash
+ * carries nothing at all for it: `normalizeLayout` collapses it to "" on the way in and `choose`
+ * writes "" on the way out, so a link says `layout=rows` when someone asked for rows and stays
+ * silent when they took what they were given.
  *
- * The blurb is not decoration. Five rows reading "Rows / Columns / Organic / Radial / Groups"
+ * This used to be spelled `mode: ""` on the default row itself, which read as if one arrangement
+ * had no name. It has one; what it has is no NEED to be named, and that is a fact about the hash
+ * rather than about the engine — so it lives in one constant beside the table.
+ *
+ * The blurb is not decoration. Five rows reading "Grid / Rows / Columns / Organic / Radial"
  * say nothing about which one answers the question in hand, and a layout picker is exactly
  * where someone is guessing — so each one says what it arranges BY, in the estate's own terms.
  */
 const LAYOUTS = [
   {
-    mode: "", label: "Rows", icon: "rows",
+    mode: "grid", label: "Grid", icon: "group",
+    blurb: "Every node packed densely, categories ignored — fits the most on screen",
+  },
+  {
+    mode: "rows", label: "Rows", icon: "rows",
     blurb: "Category bands across — risk, AI assets, identities, data, compute",
   },
   {
@@ -95,14 +105,20 @@ const LAYOUTS = [
     mode: "radial", label: "Radial", icon: "radial",
     blurb: "Rings out from the worst-risk agent, one ring per hop",
   },
-  {
-    mode: "grid", label: "Grid", icon: "group",
-    blurb: "Every node packed densely, categories ignored",
-  },
 ];
 
-/** Every layout the hash may name — Rows is the absent value, so it is not one of them. */
-const LAYOUT_MODES = LAYOUTS.map((l) => l.mode).filter(Boolean);
+/** Every layout the hash may name — all five, since none of them lacks a name. */
+const LAYOUT_MODES = LAYOUTS.map((l) => l.mode);
+
+/**
+ * The arrangement an absent `layout=` means. Mirrors the domain's `DEFAULT_LAYOUT`, and is the one
+ * word to change to move the default; test/graphLayout.test.ts reads both and fails if they part.
+ *
+ * Grid, because a first paint should be legible: measured against a 1180x660 canvas it fits at
+ * 53–66% where the category bands fit at 21–34%, roughly double the zoom on every sample
+ * projection. graphLayout.ts's header carries the table and what the choice costs.
+ */
+const DEFAULT_LAYOUT = "grid";
 
 /**
  * Old layout values, mapped onto the arrangement that draws what they drew.
@@ -165,10 +181,19 @@ const VIEW_PARAMS = [
   "layout", "groupBy", "sort", "sortCol", "dir", "pageSize", "maxNodes",
 ];
 
-/** A hash `layout` value as this page understands it: an alias resolved, anything else dropped. */
+/**
+ * A hash `layout` value as this page understands it: an alias resolved, anything unknown dropped,
+ * and THE DEFAULT COLLAPSED TO "" so one arrangement has exactly one spelling in the hash.
+ *
+ * That last step is why `layout=grid` and no `layout` at all are the same state everywhere after
+ * this — the row the list marks, the button's label, the request. Without it a hand-written
+ * `layout=grid` would draw the right picture while comparing unequal to the default, so the list
+ * would mark nothing and the button would read whatever the fallback said.
+ */
 function normalizeLayout(raw) {
   const v = LAYOUT_ALIAS[raw] || raw;
-  return LAYOUT_MODES.includes(v) ? v : "";
+  if (!LAYOUT_MODES.includes(v)) return "";
+  return v === DEFAULT_LAYOUT ? "" : v;
 }
 
 function graphParams(params, defaults) {
@@ -363,9 +388,28 @@ export async function renderGraphPage(main, params, _ctx) {
     // An absent `groupBy` is what grouped mode defaulted to internally, so it still groups.
     const groupBy = params.groupBy || "combo";
     params.groupBy = groupBy;
-    params.layout = groupBy.split(",")[0].trim() === "asset"
+    // Through `normalizeLayout` rather than straight from the alias, so what lands in the URL is
+    // the CANONICAL spelling — and the alias's own target is the default, which spells itself as
+    // nothing. Written raw, an old link would modernise into `layout=grid`: the right picture, at
+    // a value the rest of the page then has to keep collapsing.
+    params.layout = normalizeLayout(groupBy.split(",")[0].trim() === "asset"
       ? "radial"
-      : LAYOUT_ALIAS[params.layout];
+      : LAYOUT_ALIAS[params.layout]);
+    setParams(params);
+  }
+  // A `layout=` THAT NAMES THE DEFAULT is rewritten out, and so is one that names nothing real.
+  //
+  // This is the migration for the move of the default itself. `layout=grid` was the honest,
+  // canonical spelling of an explicit choice right up until grid became the value an absent param
+  // means — so every link and saved view written while Rows was the default carries it, and each
+  // one would now arrive redundant. Not merely untidy: `update` merges the RAW hash params, so the
+  // stale value rides along through every later change to the view and only clears if someone
+  // happens to pick a layout again.
+  //
+  // Same posture as the retired `q=` below and as the alias above — modernise the hash once, on
+  // read, so one arrangement has one spelling from here on.
+  if (params.layout != null && params.layout !== normalizeLayout(params.layout)) {
+    params = { ...params, layout: normalizeLayout(params.layout) };
     setParams(params);
   }
   // The retired canvas search. Stripped from any link that still names it rather than left
@@ -472,9 +516,10 @@ export async function renderGraphPage(main, params, _ctx) {
   }
 
   function syncLayoutBtn() {
-    // `state.layout` is "" for rows, which is Rows' own `mode` — so this matches exactly rather
-    // than leaning on the fallback to be right about the default.
-    const spec = LAYOUTS.find((l) => l.mode === (state.layout || "")) || LAYOUTS[0];
+    // `state.layout` is "" for the default, so it is resolved to the default's NAME before the
+    // lookup — every row in the table now carries a real engine name, and matching exactly beats
+    // leaning on `LAYOUTS[0]` happening to be the right one.
+    const spec = LAYOUTS.find((l) => l.mode === (state.layout || DEFAULT_LAYOUT)) || LAYOUTS[0];
     layoutBtn.setAttribute("aria-label", `Layout: ${spec.label}`);
     const levels = groupLevels();
     // "" rather than "0", so `:empty` hides it — the recipe the filter badge uses.
@@ -1115,16 +1160,19 @@ export async function renderGraphPage(main, params, _ctx) {
    * the one in force marked, and the shortcut printed beside the heading.
    *
    *   Layouts                Shortcut: Y
-   *     ▤  Rows          ✓
+   *     ▦  Grid            ✓
+   *     ▤  Rows
    *     ▥  Columns
    *     ✳  Organic
    *     ◌  Radial
-   *     ▦  Groups
    *
    * A LIST, not the segmented control this replaces. Segments are for two or three peers that fit
    * on one line; five do not, and the third of them ("Groups") was carrying two `<select>`s in the
    * same popover — an arrangement picker and a dimension picker wearing one trigger. The
    * dimensions moved to their own button, which is what lets this be a list at all.
+   *
+   * The default leads, so the row a fresh visit has ticked is the row the list opens on and the
+   * arrow keys start from the top rather than from the middle.
    *
    * The marked row carries BOLD AND A TICK, never the reference's blue alone. Five rows in one
    * tint with the current one merely coloured is exactly the colour-only signal the design bar
@@ -1146,7 +1194,7 @@ export async function renderGraphPage(main, params, _ctx) {
   }
 
   function openLayout() {
-    const active = state.layout || "";
+    const active = state.layout || DEFAULT_LAYOUT;
     const listId = "graph-layouts-list";
     const rows = [];
     let at = Math.max(0, LAYOUTS.findIndex((l) => l.mode === active));
@@ -1188,8 +1236,11 @@ export async function renderGraphPage(main, params, _ctx) {
     function choose(i) {
       const spec = LAYOUTS[i];
       if (layoutPop) layoutPop.close(true);
-      if (spec.mode === (state.layout || "")) return;
-      update({ layout: spec.mode, pos: "" });
+      if (spec.mode === active) return;
+      // `normalizeLayout` on the way out, so picking the default row REMOVES `layout=` rather than
+      // writing it: `buildHash` drops empty values, and a link should only spell out an
+      // arrangement that was actually asked for.
+      update({ layout: normalizeLayout(spec.mode), pos: "" });
     }
 
     list.addEventListener("keydown", (e) => {

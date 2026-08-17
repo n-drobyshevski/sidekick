@@ -9,6 +9,7 @@ import {
   toList,
 } from "../src/domain/graphApiParams";
 import { MAX_EDGES_DEFAULT, MAX_NODES_DEFAULT } from "../src/domain/config";
+import { DEFAULT_LAYOUT } from "../src/domain/graphLayout";
 import { SEED_ISSUES } from "../src/server/sampleData";
 
 const CTX = { defaultDepth: 2, maxNodes: 120, issues: SEED_ISSUES };
@@ -112,7 +113,7 @@ describe("graphCacheParams", () => {
     const key = graphCacheParams({ seed: "agent-a", depth: "3", severities: "HIGH,CRITICAL" });
     expect(key["seed"]).toBe("agent-a");
     expect(key["depth"]).toBe("3");
-    expect(key["view"]).toEqual({ mode: "rows", groupBy: [], sort: "smart" });
+    expect(key["view"]).toEqual({ mode: "grid", groupBy: [], sort: "smart" });
   });
 
   it("sorts list params so either order shares one cache entry", () => {
@@ -139,8 +140,8 @@ describe("resolveLayoutParams", () => {
   // arrangement are independent controls, so `groupBy` is read whichever arrangement is in force.
   // It used to fall back to `["combo"]`, which was harmless only because the one arrangement that
   // read it was `grouped` — kept now, every default view would silently group by toxic combo.
-  it("defaults to rows, ungrouped, smart", () => {
-    expect(resolveLayoutParams({})).toEqual({ mode: "rows", groupBy: [], sort: "smart" });
+  it("defaults to grid, ungrouped, smart", () => {
+    expect(resolveLayoutParams({})).toEqual({ mode: "grid", groupBy: [], sort: "smart" });
   });
 
   it("whitelists known values and normalizes case", () => {
@@ -182,7 +183,10 @@ describe("resolveLayoutParams", () => {
 
   it("garbage falls back to defaults", () => {
     expect(resolveLayoutParams({ layout: "spiral", groupBy: 42, sort: null }))
-      .toEqual({ mode: "rows", groupBy: [], sort: "smart" });
+      .toEqual({ mode: DEFAULT_LAYOUT, groupBy: [], sort: "smart" });
+    // The page sends "" for an absent `layout`, so the fallback is the ordinary path here, not an
+    // error path — an unnamed arrangement and an unknown one land on the same picture.
+    expect(resolveLayoutParams({ layout: "" }).mode).toBe(DEFAULT_LAYOUT);
   });
 
   // `groupBy` is a list so that nesting needed no second param and every link written

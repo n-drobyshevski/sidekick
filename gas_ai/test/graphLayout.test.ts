@@ -6,7 +6,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { enrichGraphDoc } from "../src/domain/graphEnrich";
-import { LAYOUT_MODES, type GroupKey, laneOf, layoutGraph } from "../src/domain/graphLayout";
+import {
+  DEFAULT_LAYOUT,
+  LAYOUT_MODES,
+  type GroupKey,
+  laneOf,
+  layoutGraph,
+} from "../src/domain/graphLayout";
 import { resolveLayoutParams } from "../src/domain/graphApiParams";
 import { projectGraph } from "../src/domain/graphProject";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
@@ -92,11 +98,7 @@ describe("layoutGraph", () => {
   });
 });
 
-describe("layoutGraph rows mode (horizontal transpose of lanes, the default)", () => {
-  it("is the default mode for a bare call", () => {
-    expect(layoutGraph(PROJECTION).mode).toBe("rows");
-  });
-
+describe("layoutGraph rows mode (horizontal transpose of lanes)", () => {
   it("declares its mode and has no groups", () => {
     const layout = layoutGraph(PROJECTION, { mode: "rows" });
     expect(layout.mode).toBe("rows");
@@ -515,7 +517,7 @@ describe("the page's layout list and the domain agree", () => {
   const PAGE = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), "../src/client/js/pages/graph.js"), "utf8");
 
-  /** The `mode:` values in graph.js's LAYOUTS table. "" is Rows — the absent hash value. */
+  /** The `mode:` values in graph.js's LAYOUTS table, in the order the list offers them. */
   function pageModes(): string[] {
     const table = PAGE.slice(PAGE.indexOf("const LAYOUTS = ["));
     const body = table.slice(0, table.indexOf("\n];"));
@@ -524,8 +526,29 @@ describe("the page's layout list and the domain agree", () => {
 
   it("offers one row per engine, and no row for an engine that does not exist", () => {
     const listed = pageModes();
-    expect(listed).toContain("");                          // Rows, as the absent value
-    expect(new Set(listed.filter(Boolean))).toEqual(new Set(LAYOUT_MODES.filter((m) => m !== "rows")));
+    // Every row names its engine. The default row used to carry `mode: ""` instead — the absent
+    // hash value written into the table — which made the list and the domain sets unequal by
+    // construction and left this test comparing them minus a hardcoded exception.
+    expect(listed).not.toContain("");
+    expect(new Set(listed)).toEqual(new Set(LAYOUT_MODES));
+  });
+
+  it("agrees with the domain about which arrangement an absent layout= means", () => {
+    // Two copies of the default, and they mean different halves of one behaviour: the domain's is
+    // what a bare call draws, the page's is what it OMITS from the hash. Part them and a fresh
+    // visit paints one arrangement while the list ticks another — no error anywhere, because each
+    // side is internally consistent.
+    const decl = PAGE.match(/const DEFAULT_LAYOUT = "([^"]*)"/);
+    expect(decl, "graph.js must declare DEFAULT_LAYOUT").toBeTruthy();
+    expect(decl![1]).toBe(DEFAULT_LAYOUT);
+    expect(pageModes(), "the default must be one of the offered rows").toContain(DEFAULT_LAYOUT);
+    // And it leads the list, so the row a fresh visit has ticked is the row the list opens on.
+    expect(pageModes()[0]).toBe(DEFAULT_LAYOUT);
+    // The collapse is what keeps `layout=grid` and no layout at all the same state. Asserted on
+    // the source because normalizeLayout is DOM-free but lives in a file that is not importable
+    // here — the same reason this whole suite reads text.
+    const norm = PAGE.slice(PAGE.indexOf("function normalizeLayout("));
+    expect(norm.slice(0, norm.indexOf("\n}"))).toContain("=== DEFAULT_LAYOUT");
   });
 
   it("keeps the picker's whitelist derived from that table, never hand-written", () => {
@@ -853,6 +876,37 @@ describe("cluster outlines: when nothing is drawn", () => {
 });
 
 describe("layoutGrid shape", () => {
+  it("is what a bare call draws, both grouped and not", () => {
+    // The default lives in three places that have to agree — the resolver's fallback, and both
+    // halves of layoutGraph's dispatch. The grouped half had its own `?? "rows"`, so a default
+    // changed in the ungrouped one alone would leave `groupBy=cloud` drawing bands inside boxes
+    // while the ungrouped canvas drew a grid.
+    expect(DEFAULT_LAYOUT).toBe("grid");
+    expect(layoutGraph(PROJECTION).mode).toBe(DEFAULT_LAYOUT);
+    expect(resolveLayoutParams({}).mode).toBe(DEFAULT_LAYOUT);
+    const bare = layoutGraph(PROJECTION, { groupBy: ["cloud"] });
+    const named = layoutGraph(PROJECTION, { groupBy: ["cloud"], mode: DEFAULT_LAYOUT });
+    expect(JSON.stringify(bare)).toBe(JSON.stringify(named));
+  });
+
+  it("is why it is the default: it fits a viewport at roughly twice the zoom of the bands", () => {
+    // The measurement the choice rests on, kept honest rather than left in a commit message. A
+    // canvas is scaled to fit, so what matters is min(vw/width, vh/height) — and the category
+    // arrangements spend the canvas on structure, since five bands are as long as the busiest one
+    // and the other four carry whitespace to match.
+    const VW = 1180;
+    const VH = 660;
+    const fit = (mode: (typeof LAYOUT_MODES)[number]) => {
+      const l = layoutGraph(MANY, { mode });
+      return Math.min(VW / l.width, VH / l.height);
+    };
+    const grid = fit("grid");
+    for (const mode of LAYOUT_MODES) {
+      if (mode === "grid") continue;
+      expect(grid, `grid must fit better than ${mode}`).toBeGreaterThan(fit(mode) * 1.4);
+    }
+  });
+
   it("comes out roughly the shape of a viewport, not a ribbon", () => {
     // `gridBlock` caps at 4 columns, which is right for a group's interior and wrong for a whole
     // canvas: 120 nodes came out 4 wide and 30 deep — the ribbon this file's header calls out for
