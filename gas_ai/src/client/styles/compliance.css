@@ -47,8 +47,13 @@
 .comp-bar-seg[data-state="empty"] { flex: 1; background: var(--track-bg); }
 
 .comp-keys { display: flex; flex-wrap: wrap; gap: 6px; }
-/* A real <button>: the strip is the page's cross-filter, so every key is operable by
-   keyboard and carries aria-pressed. A canvas chart could offer neither. */
+/* A <span>, not a <button>. The strip was the page's cross-filter and every key was
+   operable; the tables now list scored subcategories only, so three of the four states
+   filter to nothing and the affordance was removed rather than left to disappoint. The
+   legend itself stays — it is the only place the unscored rows are still counted — so it
+   keeps the glyph beside the label and offers no hover or pressed state to imply
+   otherwise. `.comp-posture-empty` reuses `.comp-key-glyph` below, which is why the glyph
+   colours stay on their own rule. */
 .comp-key {
   display: inline-flex;
   align-items: center;
@@ -59,15 +64,7 @@
   border-radius: var(--radius-pill);
   background: var(--page);
   color: var(--text-2);
-  cursor: pointer;
 }
-.comp-key:hover { border-color: var(--accent); }
-.comp-key[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--surface);
-  color: var(--ink);
-}
-.comp-key[disabled] { opacity: 0.55; cursor: default; }
 .comp-key-glyph { font-size: 10px; line-height: 1; }
 .comp-key[data-state="scored"] .comp-key-glyph { color: var(--ok); }
 .comp-key[data-state="noResources"] .comp-key-glyph { color: var(--sev-info-text); }

@@ -40,10 +40,17 @@ describe("getCompliance after a dry-run sync", () => {
 
   it("rebuilds the Agentic framework's categories and their policies", () => {
     const tree = compliance().trees.find((t: any) => t.frameworkId === "wf-id-275");
+    // ASI08 is in the seed and not in this list: its one subcategory has no resources to
+    // assess, so neither it nor its parent is listed. The strip still counts it.
     expect(tree.categories.map((c: any) => c.externalId))
-      .toEqual(["ASI01", "ASI03", "ASI08", "ASI10"]);
-    // Distinct policies, not policy rows: SUB-082 and SUB-114 are each mapped twice.
-    expect(tree.policyCount).toBe(6);
+      .toEqual(["ASI01", "ASI03", "ASI10"]);
+    expect(tree.stateCounts.noResources).toBe(1);
+    // Distinct policies, not policy rows: SUB-082 and SUB-114 are each mapped twice. Five,
+    // not six: AIService-009 is the seed's never-evaluated rule (every count zero, flag
+    // set), it maps under ASI08, and it is reported as dropped rather than counted as a
+    // rule this framework covers.
+    expect(tree.policyCount).toBe(5);
+    expect(tree.unassessedPolicyCount).toBe(1);
   });
 
   it("reads the OWASP LLM framework, whose codes live in the category name", () => {
@@ -56,21 +63,27 @@ describe("getCompliance after a dry-run sync", () => {
     expect(tree.categories.map((c: any) => c.posturePct)).toEqual([90, 98]);
   });
 
-  it("keeps the empty category empty — with a reason, not a zero", () => {
+  it("leaves the empty category out of the register rather than scoring it a zero", () => {
     const tree = compliance().trees.find((t: any) => t.frameworkId === "wf-id-275");
-    const asi08 = tree.categories.find((c: any) => c.externalId === "ASI08");
-    expect(asi08.posturePct).toBeNull();
-    expect(asi08.state).toBe("noResources");
-    expect(asi08.subcategories[0].state).toBe("noResources");
+    // ASI08 has nothing in the estate to assess. It is not a 0% row and it is not a listed
+    // row — it is a counted one, and every subcategory that IS listed carries a number.
+    expect(tree.categories.find((c: any) => c.externalId === "ASI08")).toBeUndefined();
+    expect(tree.stateCounts.noResources).toBe(1);
+    for (const cat of tree.categories) {
+      for (const sub of cat.subcategories) expect(sub.posturePct).not.toBeNull();
+    }
   });
 
-  it("distinguishes the 5Rs' two kinds of emptiness", () => {
+  it("distinguishes the 5Rs' two kinds of emptiness — in the counts, where they survive", () => {
     const tree = compliance().trees.find((t: any) => t.frameworkId === "wf-id-214");
-    const reduce = tree.categories.find((c: any) => c.externalId === "1");
-    expect(reduce.state).toBe("noResources");
-    // The category has no resources; its subcategory has no policy written at all. Two
-    // different facts, and the page says which.
-    expect(reduce.subcategories[0].state).toBe("noPolicies");
+    // Reduce (1) has no resources; its subcategory has no policy written at all. Two
+    // different facts about two different levels, and both are gone from the register —
+    // there is nothing evaluated under either to act on. The strip is where the difference
+    // is still stated, which is why the two states are counted apart rather than summed
+    // into one "unscored" bucket.
+    expect(tree.categories.find((c: any) => c.externalId === "1")).toBeUndefined();
+    expect(tree.stateCounts.noPolicies).toBe(1);
+    expect(tree.stateCounts.scored).toBeGreaterThan(0);
   });
 
   it("ships the catalogue with this app's selection folded in", () => {
@@ -136,8 +149,12 @@ describe("getCompliance after a dry-run sync", () => {
     // honestly move it. Scoping changes the registers beneath the number, never the
     // number. If this ever fails, something has started recomputing a score.
     expect(fiveRs.posturePct).toBe(85);
+    // Four categories, four percentages. The fifth — Reduce, which Wiz sent as a null with
+    // a reason — is not listed, and its absence is the one thing about this list that the
+    // scope did NOT cause: an unscored category leaves the register regardless of scoping,
+    // and the numbers on the four that remain are still Wiz's own.
     expect(fiveRs.categories.map((c: any) => c.posturePct))
-      .toEqual([null, 85, 62, 91, 78]);
+      .toEqual([85, 62, 91, 78]);
     expect(data.kpis.averagePosture).toBe(94);
 
     // And the counts the scope DOES own moved: 7 policies map, 3 survive.
@@ -202,21 +219,21 @@ describe("the Overview bands getCompliance ships beside the trees", () => {
     expect(data.rail.map((r: any) => r.posturePct)).toEqual([85, 95, 96, 100]);
   });
 
-  it("ranks the weakest areas across frameworks, and ranks no unscored one", () => {
+  it("ranks the weakest areas across frameworks, and carries nothing it cannot rank", () => {
     const rows = compliance().weakestAreas;
-    const scored = rows.filter((r: any) => r.state === "scored");
-    const unscored = rows.filter((r: any) => r.state !== "scored");
 
-    expect(scored.map((r: any) => r.posturePct))
-      .toEqual([...scored.map((r: any) => r.posturePct)].sort((a: number, b: number) => a - b));
+    expect(rows.map((r: any) => r.posturePct))
+      .toEqual([...rows.map((r: any) => r.posturePct)].sort((a: number, b: number) => a - b));
 
-    // The invariant, at estate scope: a subcategory with no posture is LISTED, because
-    // "no check is written for this" is a finding about the programme — but it is never
-    // ranked, because `posturePct ?? 0` would file it as the worst thing in the estate.
-    for (const r of unscored) expect(r.posturePct).toBeNull();
-    expect(unscored.length).toBeGreaterThan(0);
-    expect(rows.indexOf(unscored[0]))
-      .toBeGreaterThan(rows.indexOf(scored[scored.length - 1]));
+    // The invariant, at estate scope, in its current form: a subcategory with no posture
+    // is not ranked AND not listed here — `posturePct ?? 0` would file it as the worst
+    // thing in the estate, and appending it unranked to a "weakest areas" band presents a
+    // coverage gap as a score. It is counted in the coverage strip instead.
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(r.state).toBe("scored");
+      expect(r.posturePct).not.toBeNull();
+    }
 
     // Flattened rows carry the framework they came from; the register does not have to.
     expect(new Set(rows.map((r: any) => r.frameworkId)).size).toBeGreaterThan(1);

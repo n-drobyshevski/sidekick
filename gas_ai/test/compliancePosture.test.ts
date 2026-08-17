@@ -8,6 +8,11 @@
 //   2. Distinctness has a SCOPE. The same policy legitimately appears under several
 //      subcategories, so counting policy rows double-counts and deduping globally destroys
 //      the mapping. The right answer is different per question, and each one is pinned.
+//   3. What the tree LISTS and what it COUNTS are different sets, on purpose. Unscored
+//      subcategories and never-evaluated policies are dropped from the lists and kept in
+//      the counts (`stateCounts`, `unassessedPolicyCount`), because a register that
+//      silently shows a subset of the estate is invariant 1 wearing a tidier face. Every
+//      assertion below that pairs a shortened list with an unchanged count is pinning that.
 
 import { describe, expect, it } from "vitest";
 
@@ -70,8 +75,11 @@ describe("buildFrameworkTree", () => {
   it("rebuilds the hierarchy from the flat rows", () => {
     expect(tree.name).toBe("OWASP Top 10 For Agentic Applications 2026");
     expect(tree.posturePct).toBe(97);
-    expect(tree.categories).toHaveLength(4);
-    expect(tree.categories.map((c) => c.externalId)).toEqual(["ASI01", "ASI02", "ASI08", "ASI10"]);
+    // FOUR categories are in the capture; three are listed. ASI08's only subcategory is
+    // NO_RESOURCES, so the subcategory goes and the category goes with it — an expander
+    // over nothing is not a row. The one that left is still counted, in stateCounts.
+    expect(tree.categories).toHaveLength(3);
+    expect(tree.categories.map((c) => c.externalId)).toEqual(["ASI01", "ASI02", "ASI10"]);
     expect(tree.categories.every((c) => c.subcategories.length === 1)).toBe(true);
   });
 
@@ -91,8 +99,11 @@ describe("buildFrameworkTree", () => {
 
   it("counts DISTINCT policies across the framework, not policy rows", () => {
     // 5 rows in this framework, but the shared control appears in three of them. Reporting
-    // 5 would say the framework covers five things when it covers three.
-    expect(tree.policyCount).toBe(3);
+    // 5 would say the framework covers five things when it covers three — and of those
+    // three, AIAgent-002 evaluated nothing at all, so two are listed and the third is
+    // reported as dropped rather than silently missing.
+    expect(tree.policyCount).toBe(2);
+    expect(tree.unassessedPolicyCount).toBe(1);
     expect(tree.failingPolicyCount).toBe(1);
   });
 
@@ -117,18 +128,151 @@ describe("buildFrameworkTree", () => {
     const asi01 = tree.categories.find((c) => c.externalId === "ASI01")!.subcategories[0];
     const ranks = asi01.policies.map((p) => p.severity);
     expect(ranks[0]).toBe("MEDIUM");
-    expect(asi01.policies).toHaveLength(3);
+    // Three policies map here; the capture's unassessed cloud rule is not one of the two
+    // listed, and the subcategory says so rather than reading as a two-rule subcategory.
+    expect(asi01.policies).toHaveLength(2);
+    expect(asi01.unassessedPolicyCount).toBe(1);
   });
 
-  it("carries the empty reason all the way to the leaf", () => {
-    const asi08 = tree.categories.find((c) => c.externalId === "ASI08")!;
-    expect(asi08.state).toBe("noResources");
-    expect(asi08.posturePct).toBeNull();
-    expect(asi08.subcategories[0].state).toBe("noResources");
+  it("drops the unscored category from the list and keeps it in the counts", () => {
+    // ASI08 is the capture's all-empty branch: NO_RESOURCES at the category level, one
+    // NO_RESOURCES subcategory under it. Nothing was evaluated there, so nothing is listed
+    // — but the strip still reports it, which is the whole reason the drop is allowed.
+    expect(tree.categories.find((c) => c.externalId === "ASI08")).toBeUndefined();
+    expect(tree.stateCounts.noResources).toBe(1);
+    expect(tree.categories.flatMap((c) => c.subcategories).every((s) => s.state === "scored"))
+      .toBe(true);
   });
 
   it("returns null for a framework with no stored posture", () => {
     expect(buildFrameworkTree("wf-id-999", posture, policies, frameworks)).toBeNull();
+  });
+});
+
+describe("what the tree lists vs. what it counts", () => {
+  const frameworkId = "wf-id-listing";
+  const rows: PostureRow[] = [
+    {
+      frameworkId, level: "framework", title: "Listing fixture",
+      posturePct: 60, passCount: 6, failCount: 4, emptyPostureReason: null,
+    },
+    {
+      frameworkId, level: "category", categoryExternalId: "C1", title: "Scored category",
+      posturePct: 60, passCount: 6, failCount: 4, emptyPostureReason: null,
+    },
+    {
+      frameworkId, level: "subcategory", categoryExternalId: "C1",
+      subcategoryExternalId: "C1.1", title: "Scored subcategory",
+      posturePct: 60, passCount: 6, failCount: 4, emptyPostureReason: null,
+    },
+    // The two emptinesses, under a category of their own so the category-drop rule is
+    // exercised as well as the subcategory one.
+    {
+      frameworkId, level: "category", categoryExternalId: "C2", title: "Empty category",
+      posturePct: null, passCount: 0, failCount: 0, emptyPostureReason: "NO_RESOURCES",
+    },
+    {
+      frameworkId, level: "subcategory", categoryExternalId: "C2",
+      subcategoryExternalId: "C2.1", title: "Nothing written for this",
+      posturePct: null, passCount: 0, failCount: 0, emptyPostureReason: "NO_POLICIES",
+    },
+    {
+      frameworkId, level: "subcategory", categoryExternalId: "C2",
+      subcategoryExternalId: "C2.2", title: "Nothing to assess",
+      posturePct: null, passCount: 0, failCount: 0, emptyPostureReason: "NO_RESOURCES",
+    },
+  ];
+
+  function policy(
+    policyId: string,
+    over: Partial<FrameworkPolicyRow> = {},
+  ): FrameworkPolicyRow {
+    return {
+      frameworkId,
+      categoryExternalId: "C1",
+      subcategoryExternalId: "C1.1",
+      policyId,
+      policyKind: "CONTROL",
+      name: policyId,
+      severity: "MEDIUM" as Severity,
+      passCount: 0,
+      failCount: 0,
+      assessedCount: 0,
+      rejectedCount: 0,
+      noResourceToAssess: false,
+      ...over,
+    };
+  }
+
+  it("lists only the scored subcategories, and counts every one Wiz reported", () => {
+    const tree = buildFrameworkTree(frameworkId, rows, [])!;
+    expect(tree.categories.map((c) => c.externalId)).toEqual(["C1"]);
+    expect(tree.categories[0].subcategories.map((s) => s.externalId)).toEqual(["C1.1"]);
+    // One listed, three reported — SUBCATEGORIES only, which is what the strip counts. The
+    // empty category itself is not a fourth entry here; it is dropped as the container of
+    // the two that are. The denominator is what makes the omission honest.
+    expect(tree.stateCounts).toEqual({
+      scored: 1, noResources: 1, noPolicies: 1, unknown: 0,
+    });
+  });
+
+  it("drops a policy Wiz evaluated against nothing, and says how many went", () => {
+    const tree = buildFrameworkTree(frameworkId, rows, [
+      policy("p-ran", { passCount: 4, assessedCount: 4 }),
+      policy("p-never-ran", { noResourceToAssess: true }),
+    ])!;
+    const sub = tree.categories[0].subcategories[0];
+    expect(sub.policies.map((p) => p.policyId)).toEqual(["p-ran"]);
+    expect(sub.unassessedPolicyCount).toBe(1);
+    expect(tree.policyCount).toBe(1);
+    expect(tree.unassessedPolicyCount).toBe(1);
+  });
+
+  it("keeps a policy with a real count even when Wiz's flag says there was nothing", () => {
+    // The contradictory row: `noResourceToAssess` true beside ten failures. The number is
+    // the harder fact, and hiding a failing control on the strength of a flag that
+    // disagrees with it is the one mistake this filter must never make.
+    const tree = buildFrameworkTree(frameworkId, rows, [
+      policy("p-contradictory", { failCount: 10, noResourceToAssess: true }),
+    ])!;
+    expect(tree.categories[0].subcategories[0].policies).toHaveLength(1);
+    expect(tree.unassessedPolicyCount).toBe(0);
+    expect(tree.worstFailingSeverity).toBe("MEDIUM");
+  });
+
+  it("counts a rule whose every finding was rejected as having run", () => {
+    // Exempted findings are still an evaluation. Dropping the row would hide the exemption
+    // rather than the rule.
+    const tree = buildFrameworkTree(frameworkId, rows, [
+      policy("p-all-rejected", { rejectedCount: 3 }),
+    ])!;
+    expect(tree.categories[0].subcategories[0].policies).toHaveLength(1);
+    expect(tree.unassessedPolicyCount).toBe(0);
+  });
+
+  it("counts a policy dropped in one place and listed in another as listed, once", () => {
+    // The many-to-many, at the edge: the same control maps to two subcategories and only
+    // ran under one. It is a rule this framework covers — reporting it as both listed and
+    // dropped would describe one control twice, in two contradictory ways.
+    const withSecondScored: PostureRow[] = [
+      ...rows,
+      {
+        frameworkId, level: "subcategory", categoryExternalId: "C1",
+        subcategoryExternalId: "C1.2", title: "Second scored subcategory",
+        posturePct: 90, passCount: 9, failCount: 1, emptyPostureReason: null,
+      },
+    ];
+    const tree = buildFrameworkTree(frameworkId, withSecondScored, [
+      policy("p-shared", { passCount: 4, assessedCount: 4 }),
+      policy("p-shared", { subcategoryExternalId: "C1.2", noResourceToAssess: true }),
+    ])!;
+    expect(tree.policyCount).toBe(1);
+    expect(tree.unassessedPolicyCount).toBe(0);
+    // Still absent from the subcategory it did not run under: this is a fact about the
+    // framework's coverage, not a licence to re-list the row where it evaluated nothing.
+    const c12 = tree.categories[0].subcategories.find((s) => s.externalId === "C1.2")!;
+    expect(c12.policies).toHaveLength(0);
+    expect(c12.unassessedPolicyCount).toBe(1);
   });
 });
 
@@ -242,7 +386,11 @@ describe("mirrorsCategory — the one-level frameworks", () => {
     expect(tree.categories.find((c) => c.externalId === "ASI01")!.mirrorsCategory).toBe(false);
   });
 
-  it("is false for a category with no subcategories at all — nothing to collapse into", () => {
+  it("never has to answer for a childless category — one cannot reach the tree", () => {
+    // This used to assert `mirrorsCategory === false` on a category with no subcategories.
+    // A childless category no longer survives the build at all, which is the stronger
+    // guarantee: the register's mirrored-category branch reads `subcategories[0]`
+    // unguarded, and this is what makes that safe.
     const orphan = [
       {
         frameworkId: "wf-id-777", level: "framework" as const, title: "Orphan",
@@ -255,7 +403,10 @@ describe("mirrorsCategory — the one-level frameworks", () => {
       },
     ];
     const tree = buildFrameworkTree("wf-id-777", orphan, [], [])!;
-    expect(tree.categories[0].mirrorsCategory).toBe(false);
+    expect(tree.categories).toHaveLength(0);
+    // The framework itself still exists and still scores — a tree with nothing to list is
+    // not a tree that failed to build, and the rail must still be able to draw its 10%.
+    expect(tree.posturePct).toBe(10);
   });
 });
 
@@ -263,13 +414,26 @@ describe("worstFailingSeverity — what colours the posture bar", () => {
   // A minimal single-framework fixture, built by hand rather than through the fixture file
   // — none of the three cases below (a naive first-wins bug, a severe-but-passing policy,
   // an all-clean framework) exist in frameworkPosture.fixture.ts, and the file is not to be
-  // edited. Only ONE posture row is needed: the worst-failing-severity walk iterates the
-  // `policies` argument directly (compliancePosture.ts's `distinct` loop), never the
-  // category/subcategory tree, so nothing here needs to join back to it.
+  // edited.
+  //
+  // ALL THREE LEVELS are spelled out, and that is not boilerplate. The walk used to iterate
+  // the `policies` argument directly, so a framework row alone was enough; it now rolls up
+  // off the built nodes instead, because the header has to count what the register lists.
+  // A policy mapped to a subcategory that is not in the tree contributes to neither — which
+  // is the point, and which this fixture has to satisfy to test anything at all.
   const frameworkId = "wf-id-worst";
   const framework: PostureRow[] = [
     {
       frameworkId, level: "framework", title: "Worst-severity fixture",
+      posturePct: 80, passCount: 8, failCount: 2, emptyPostureReason: null,
+    },
+    {
+      frameworkId, level: "category", categoryExternalId: "C1", title: "One category",
+      posturePct: 80, passCount: 8, failCount: 2, emptyPostureReason: null,
+    },
+    {
+      frameworkId, level: "subcategory", categoryExternalId: "C1",
+      subcategoryExternalId: "C1.1", title: "One subcategory",
       posturePct: 80, passCount: 8, failCount: 2, emptyPostureReason: null,
     },
   ];

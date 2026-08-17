@@ -15,6 +15,19 @@
 // So emptiness is modelled as its OWN state with its own glyph and label, reusing the
 // three-state vocabulary the Wiz Scans page already established rather than minting a
 // second one, and nothing here ever coerces a null percentage.
+//
+// WHAT THE TREE LISTS vs. WHAT IT COUNTS. The register is a worklist, and a row nothing was
+// ever evaluated against is not work — so the tree LISTS only what Wiz actually assessed:
+// scored subcategories (`categories[].subcategories`) and, under them, only policies that
+// evaluated something (`isAssessedPolicy`). Categories left with no listed subcategory drop
+// out with them.
+//
+// That is a filter on the LIST, never on the ARITHMETIC, and the difference is the whole
+// reason the two are separated below. `stateCounts` is still computed over EVERY
+// subcategory Wiz reported, before anything is dropped, and `unassessedPolicyCount` still
+// counts the policies that went — because a page that silently lists fewer rows than the
+// estate has is the implied confidence PRODUCT.md forbids, just wearing a tidier face. The
+// header states what was left out; the register just doesn't rank it as work.
 
 import { SEVERITY_ORDER, type Severity } from "./config";
 import type {
@@ -111,13 +124,24 @@ export interface PostureNode {
 export interface SubcategoryNode extends PostureNode {
   assessmentScope?: string;
   mappingRationale?: string;
-  /** Distinct policies mapped to this subcategory, worst severity first. */
+  /**
+   * Distinct policies mapped to this subcategory that ACTUALLY EVALUATED SOMETHING, worst
+   * severity first. Mapped-but-unassessed policies are excluded — see isAssessedPolicy.
+   */
   policies: FrameworkPolicyRow[];
   /** Policies with at least one failing evaluation — the unit of work. */
   failingPolicyCount: number;
+  /**
+   * How many mapped policies `policies` leaves out because Wiz evaluated them against
+   * nothing. Reported rather than swallowed: the detail panel states the number, so a
+   * reader can tell "three rules, all passing" from "three rules, none of which ran".
+   */
+  unassessedPolicyCount: number;
 }
 
 export interface CategoryNode extends PostureNode {
+  /** Only the SCORED subcategories — see the file header. Never empty: a category left
+   *  with none is dropped from the tree rather than drawn as an expander over nothing. */
   subcategories: SubcategoryNode[];
   /**
    * True when this category's ONLY subcategory restates the category itself — same
@@ -145,12 +169,25 @@ export interface FrameworkTree {
   emptyPostureReason: EmptyPostureReason | null;
   passSubCategoryCount: number;
   failSubCategoryCount: number;
+  /** Categories with at least one scored subcategory, in Wiz's order. */
   categories: CategoryNode[];
-  /** Every subcategory, by state — the header's distribution strip. */
+  /**
+   * Every subcategory Wiz reported, by state — INCLUDING the unscored ones `categories`
+   * no longer lists. Counted before the filter runs, so this stays the honest denominator:
+   * the header reads "12 scored of 20" against a register showing twelve rows, and the
+   * eight that are missing are named rather than merely absent.
+   */
   stateCounts: Record<PostureState, number>;
-  /** Distinct policies across the whole framework. Deduped: the same control maps many times. */
+  /**
+   * Distinct policies LISTED across the whole framework. Deduped: the same control maps
+   * many times. Counts what the register shows, which is why it is rolled up from the
+   * built nodes rather than re-walked off the raw rows — two walks over two differently
+   * filtered sets is exactly how a header and its table come to disagree.
+   */
   policyCount: number;
   failingPolicyCount: number;
+  /** Distinct policies dropped from every subcategory for having evaluated nothing. */
+  unassessedPolicyCount: number;
   /** Worst severity among this framework's FAILING policies. Null when none are failing. */
   worstFailingSeverity: Severity | null;
 }
@@ -162,6 +199,24 @@ function severityRank(s: Severity): number {
 
 function emptyStateCounts(): Record<PostureState, number> {
   return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
+}
+
+/**
+ * Whether Wiz actually ran this policy against anything.
+ *
+ * The predicate is ANY NON-ZERO COUNT rather than `!noResourceToAssess`, and that choice is
+ * deliberately conservative in one direction: a row carrying a real number is never hidden,
+ * whatever its flag says. Wiz's own signal for "nothing to evaluate" is `noResourceToAsses`
+ * (its spelling, one 's') beside four null counts — the two agree on every row of the
+ * tenant capture — but where they DISAGREE, the number is the harder fact. A policy
+ * reporting ten failures must reach the register even if the flag claims there was nothing
+ * to assess; the reverse mistake only costs a row nobody could act on.
+ *
+ * `rejectedCount` counts too: a rule whose findings were all exempted still ran, and
+ * dropping it would hide the exemption rather than the evaluation.
+ */
+export function isAssessedPolicy(p: FrameworkPolicyRow): boolean {
+  return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
 }
 
 function toNode(row: PostureRow, externalId: string): PostureNode {
@@ -211,6 +266,12 @@ export function buildFrameworkTree(
     policiesBySub.set(p.subcategoryExternalId, list);
   }
 
+  // Counted over every subcategory row, INSIDE the same loop that then drops the unscored
+  // ones from the list. One walk, so the count and the omission can never describe
+  // different sets — a second pass over an already-filtered array is how "12 of 20"
+  // quietly becomes "12 of 12".
+  const stateCounts = emptyStateCounts();
+  const unassessedIds = new Set<string>();
   const subsByCategory = new Map<string, SubcategoryNode[]>();
   for (const row of rows) {
     if (row.level !== "subcategory") continue;
@@ -226,13 +287,27 @@ export function buildFrameworkTree(
       (a, b) => severityRank(a.severity) - severityRank(b.severity)
         || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
     );
+    // Filtered AFTER the dedupe, never before: the dedupe's scope is the subcategory (see
+    // this function's own doc comment), and a policy listed twice under one subcategory —
+    // once assessed, once not — must collapse to one row before either is judged.
+    const assessed: FrameworkPolicyRow[] = [];
+    for (const p of deduped) {
+      if (isAssessedPolicy(p)) assessed.push(p);
+      else unassessedIds.add(p.policyId);
+    }
     const node: SubcategoryNode = {
       ...toNode(row, externalId),
       assessmentScope: row.assessmentScope,
       mappingRationale: row.mappingRationale,
-      policies: deduped,
-      failingPolicyCount: deduped.filter((p) => p.failCount > 0).length,
+      policies: assessed,
+      failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
+      unassessedPolicyCount: deduped.length - assessed.length,
     };
+    stateCounts[node.state] += 1;
+    // The list keeps only what Wiz scored. An unscored subcategory is not a low score and
+    // not a fixed one — there is nothing under it to act on, and ranking it beside rows
+    // that ARE work is what the header's state counts exist to say instead.
+    if (node.state !== "scored") continue;
     const key = row.categoryExternalId ?? "";
     const list = subsByCategory.get(key) ?? [];
     list.push(node);
@@ -250,12 +325,12 @@ export function buildFrameworkTree(
         mirrorsCategory: subcategories.length === 1
           && subcategories[0].externalId === externalId,
       };
-    });
-
-  const stateCounts = emptyStateCounts();
-  for (const cat of categories) {
-    for (const sub of cat.subcategories) stateCounts[sub.state] += 1;
-  }
+    })
+    // A category whose every subcategory was dropped goes with them. Kept, it would draw a
+    // disclosure control that expands to nothing — and mirrorsCategory's own branch in the
+    // register reads `subcategories[0]` unguarded, because this filter is what guarantees
+    // there is one.
+    .filter((cat) => cat.subcategories.length > 0);
 
   // Distinct across the framework — the same control under three subcategories is ONE
   // policy that this framework covers, and reporting three would inflate every count on
@@ -268,14 +343,17 @@ export function buildFrameworkTree(
   const distinct = new Map<string, boolean>();
   let worstFailingSeverity: Severity | null = null;
   let worstFailingRank = Infinity;
-  for (const p of policies) {
-    if (p.frameworkId !== frameworkId) continue;
-    distinct.set(p.policyId, (distinct.get(p.policyId) ?? false) || p.failCount > 0);
-    if (p.failCount > 0) {
-      const rank = severityRank(p.severity);
-      if (rank < worstFailingRank) {
-        worstFailingRank = rank;
-        worstFailingSeverity = p.severity;
+  for (const cat of categories) {
+    for (const sub of cat.subcategories) {
+      for (const p of sub.policies) {
+        distinct.set(p.policyId, (distinct.get(p.policyId) ?? false) || p.failCount > 0);
+        if (p.failCount > 0) {
+          const rank = severityRank(p.severity);
+          if (rank < worstFailingRank) {
+            worstFailingRank = rank;
+            worstFailingSeverity = p.severity;
+          }
+        }
       }
     }
   }
@@ -296,6 +374,10 @@ export function buildFrameworkTree(
     stateCounts,
     policyCount: distinct.size,
     failingPolicyCount: [...distinct.values()].filter(Boolean).length,
+    // Only ids that appear NOWHERE in the listed tree. A control mapped under six
+    // subcategories and evaluated under one of them is a listed policy, not a dropped one,
+    // and counting it in both places would describe the same rule twice.
+    unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
     worstFailingSeverity,
   };
 }

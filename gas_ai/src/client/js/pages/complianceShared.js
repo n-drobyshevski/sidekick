@@ -83,14 +83,22 @@ export function checksCell(node) {
 }
 
 /**
- * The subcategory-state strip: the header's distribution AND the register's filter.
+ * The subcategory-state strip: what Wiz reported, by state.
  *
- * A row of real buttons rather than a chart. The states are four, they are categorical,
- * and the reader's next action is "show me only those" — which a canvas cannot offer a
- * keyboard user at all. `tree` only needs a `.stateCounts` map, so the overview's estate-wide
- * roll-up (which is not a FrameworkTree) can drive this too by handing it `{ stateCounts }`.
+ * IT USED TO BE THE REGISTER'S FILTER, and the buttons are gone with that job. The tables
+ * below now list scored subcategories only (compliancePosture.ts drops the rest before the
+ * tree ever reaches a page), so "show me only the unscored ones" is a filter onto nothing —
+ * a control that looks operable and resolves to an empty table is worse than no control.
+ *
+ * The strip itself stays, and stays complete, because THAT is now its whole job: it is the
+ * only place the dropped subcategories are still counted, and a register that quietly
+ * listed twelve of twenty rows with nothing saying so is the implied confidence PRODUCT.md
+ * forbids. Glyph and label per state, never colour alone, exactly as before.
+ *
+ * `tree` only needs a `.stateCounts` map, so the overview's estate-wide roll-up (which is
+ * not a FrameworkTree) can drive this too by handing it `{ stateCounts }`.
  */
-export function stateStrip(tree, active, onToggle) {
+export function stateStrip(tree) {
   const total = STATE_ORDER.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
   const bar = el("div", {
     class: "comp-bar",
@@ -117,21 +125,17 @@ export function stateStrip(tree, active, onToggle) {
   const keys = el("div", { class: "comp-keys" });
   for (const key of STATE_ORDER) {
     const n = tree.stateCounts[key] || 0;
-    const btn = el("button", {
-      type: "button",
-      class: "comp-key",
-      "data-state": key,
-      "aria-pressed": active === key ? "true" : "false",
-      // Zero-count states stay focusable and readable rather than disappearing: "no
-      // subcategory is unscored" is information, and a vanishing key hides it.
-      disabled: n === 0 ? "" : null,
-      onclick: () => onToggle(key),
-    },
+    // Spans, not buttons — nothing here is pressable any more. Zero-count states still
+    // draw rather than disappearing: "no subcategory went unscored" is information, and a
+    // vanishing key hides it. The bar above is already `role="img"` with the same counts in
+    // its label, so these carry no ARIA of their own.
+    keys.append(el("span", { class: "comp-key", "data-state": key },
       el("span", { class: "comp-key-glyph", "aria-hidden": "true" }, STATES[key].glyph),
       STATES[key].label,
-      el("span", { class: "comp-key-num" }, String(n)));
-    keys.append(btn);
+      el("span", { class: "comp-key-num" }, String(n))));
   }
+
+  const unscored = total - (tree.stateCounts.scored || 0);
 
   return el("div", { class: "comp-strip" },
     bar,
@@ -139,7 +143,17 @@ export function stateStrip(tree, active, onToggle) {
     el("p", { class: "comp-strip-note" },
       "Subcategories by state. A subcategory with no resources or no policies is not a " +
       "failure and not a pass — it is not scored, and it is left out of the framework " +
-      "percentage rather than counted as zero."));
+      "percentage rather than counted as zero." +
+      // The sentence that keeps the filter's removal honest: the rows are not merely
+      // unranked now, they are absent, and the reader is told so in the one place that
+      // still counts them.
+      (unscored
+        ? (unscored === 1
+          ? " The 1 unscored subcategory is not listed below — there is nothing evaluated " +
+            "under it to act on."
+          : ` The ${unscored} unscored subcategories are not listed below — there is ` +
+            "nothing evaluated under them to act on.")
+        : "")));
 }
 
 /** A Control is a graph query over the estate, a cloud rule is a Rego evaluation against one
@@ -189,10 +203,14 @@ function policyTable(policies) {
           // Ungrouped here they read as a different quantity from the same numbers three
           // lines up — "1718" beside "194,309" looks like two ways of counting, not two
           // scopes of one count.
-          el("td", { class: "num" }, p.noResourceToAssess
-            ? "Nothing in this estate to evaluate — neither passing nor failing."
-            : `${p.passCount.toLocaleString()} passed · ${p.failCount.toLocaleString()} failed` +
-              ` · ${p.assessedCount.toLocaleString()} assessed`))))));
+          // Always the numbers now. The "nothing to evaluate" sentence this cell used to
+          // carry belonged to rows isAssessedPolicy (compliancePosture.ts) no longer lets
+          // through — and the one row that could still reach here carrying Wiz's
+          // `noResourceToAssess` flag is the contradictory one, where a real count exists
+          // and the flag is the field to disbelieve.
+          el("td", { class: "num" },
+            `${p.passCount.toLocaleString()} passed · ${p.failCount.toLocaleString()} failed` +
+            ` · ${p.assessedCount.toLocaleString()} assessed`))))));
 }
 
 /**
@@ -217,15 +235,25 @@ export function subcategoryDetail(sub) {
       // "policys", which is why the heading below spells the irregular out by hand too —
       // this line was reading wrong in the sheet as well, where fewer people saw it.
       el("span", {}, el("b", {}, String(sub.policies.length)),
-        sub.policies.length === 1 ? " policy mapped" : " policies mapped")),
+        sub.policies.length === 1 ? " policy evaluated" : " policies evaluated")),
   ];
 
-  if (sub.emptyPostureReason) {
+  // The block that used to sit here read out NO_POLICIES / NO_RESOURCES. It is gone with
+  // the rows it described: only scored subcategories reach a page now, and a scored one
+  // never carries an emptyPostureReason (postureState trusts the reason over the number,
+  // so a row with one is never "scored"). The strip in the header counts those rows.
+  //
+  // What CAN still be missing here is a policy: a rule mapped to this subcategory that Wiz
+  // evaluated against nothing. Those are dropped from the table below, so the count says
+  // so — dropping them silently would read as "this subcategory has three rules" when it
+  // has six, three of which never ran.
+  if (sub.unassessedPolicyCount) {
+    const n = sub.unassessedPolicyCount;
+    // Not "N further policies": this line has to read correctly when the count above it is
+    // zero, which is exactly the subcategory where it matters most.
     kids.push(el("p", { class: "comp-strip-note" },
-      sub.emptyPostureReason === "NO_POLICIES"
-        ? "Wiz has no check written for this subcategory, so nothing was evaluated. " +
-          "This is a gap in the framework's coverage, not in this estate."
-        : "There is nothing in this estate for these checks to evaluate."));
+      `${n} mapped ${n === 1 ? "policy" : "policies"} evaluated nothing in this estate — ` +
+      `neither passing nor failing, so ${n === 1 ? "it is" : "they are"} not listed.`));
   }
 
   if (sub.description) {

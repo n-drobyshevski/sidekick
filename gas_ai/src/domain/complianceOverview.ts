@@ -34,6 +34,9 @@ function severityRank(s: Severity): number {
   return i === -1 ? SEVERITY_ORDER.length : i;
 }
 
+/** The four posture states, for summing a stateCounts map. Local, like severityRank. */
+const STATE_KEYS: PostureState[] = ["scored", "noResources", "noPolicies", "unknown"];
+
 /** One framework's row on the shared 0-100 axis. */
 export interface FrameworkRailRow {
   frameworkId: string;
@@ -65,7 +68,10 @@ export function frameworkRail(trees: FrameworkTree[]): FrameworkRailRow[] {
     state: tree.state,
     emptyPostureReason: tree.emptyPostureReason,
     categoryCount: tree.categories.length,
-    subcategoryCount: tree.categories.reduce((sum, c) => sum + c.subcategories.length, 0),
+    // From stateCounts, not from the listed nodes: the tree lists only scored
+    // subcategories (compliancePosture.ts), and a rail that counted those would report a
+    // framework's size as the part of it that happened to score.
+    subcategoryCount: STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0),
     policyCount: tree.policyCount,
     failingPolicyCount: tree.failingPolicyCount,
     worstFailingSeverity: tree.worstFailingSeverity,
@@ -94,12 +100,16 @@ export interface WeakAreaRow {
 }
 
 /**
- * True when a row's `state` already resolved to "scored" — the one field allowed to
- * decide which bucket a row falls into below. A type guard rather than a bare
- * `!== null` check on `posturePct`, because the two are not always the same fact: a row
- * carrying both a number AND an emptyPostureReason reads as "unknown" (postureState
- * trusts the reason over the number), and sorting it as scored would score a value Wiz
- * itself disowned.
+ * True when a row's `state` already resolved to "scored" — the one field allowed to decide
+ * whether a row is rankable. A type guard rather than a bare `!== null` check on
+ * `posturePct`, because the two are not always the same fact: a row carrying both a number
+ * AND an emptyPostureReason reads as "unknown" (postureState trusts the reason over the
+ * number), and sorting it as scored would score a value Wiz itself disowned.
+ *
+ * buildFrameworkTree no longer puts an unscored subcategory in a tree at all, so this is
+ * now a guard against a tree assembled some other way rather than a routine partition —
+ * and it stays, at one line, precisely because "everything is scored" is an invariant of
+ * another module that this one would silently mis-sort if it ever changed.
  */
 function isScoredRow(row: WeakAreaRow): row is WeakAreaRow & { posturePct: number } {
   return row.state === "scored";
@@ -108,11 +118,12 @@ function isScoredRow(row: WeakAreaRow): row is WeakAreaRow & { posturePct: numbe
 /**
  * Subcategories across every framework, weakest first.
  *
- * Scored rows sort ascending by posturePct (ties broken by failingPolicyCount desc, then
- * framework name, then title, so the order is stable). Unscored rows come AFTER every
- * scored row - they are listed because "nobody wrote a check for this" is a finding about
- * the programme, but they are not ranked, because there is no number to rank them by.
- * `limit` caps the returned rows; omit for all.
+ * Rows sort ascending by posturePct (ties broken by failingPolicyCount desc, then framework
+ * name, then title, so the order is stable). Anything unrankable is DROPPED rather than
+ * listed unranked at the bottom: the trees this walks carry only scored subcategories now,
+ * so a row without a number could only arrive here through a bug, and appending it to a
+ * band titled "weakest areas" would present that bug as a finding. `limit` caps the
+ * returned rows; omit for all.
  */
 export function weakestAreas(trees: FrameworkTree[], limit?: number): WeakAreaRow[] {
   const rows: WeakAreaRow[] = [];
@@ -128,9 +139,6 @@ export function weakestAreas(trees: FrameworkTree[], limit?: number): WeakAreaRo
         // offering nothing to fix. The percentage stays true and stays visible in the
         // register; it just stops being advice.
         //
-        // Unscored subcategories are exempt: they are already listed rather than ranked
-        // (see the partition below), and dropping them here would delete the honest-state
-        // rows this band exists to keep visible.
         if (sub.state === "scored" && !sub.policies.length) continue;
         rows.push({
           frameworkId: tree.frameworkId,
@@ -155,27 +163,17 @@ export function weakestAreas(trees: FrameworkTree[], limit?: number): WeakAreaRo
     }
   }
 
-  // Partitioned into two arrays rather than sorted with one comparator, so "unscored
-  // rows are not ranked" is structural, not a comparator convention a future edit could
-  // erode by adding one more `||` clause to the scored branch.
-  const scored: (WeakAreaRow & { posturePct: number })[] = [];
-  const unscored: WeakAreaRow[] = [];
-  for (const row of rows) {
-    if (isScoredRow(row)) scored.push(row);
-    else unscored.push(row);
-  }
+  // Filtered through the type guard rather than sorted with a comparator that tolerates
+  // null, so "every row in this band has a number" is structural — not a convention a
+  // future edit could erode by adding one more `||` clause below.
+  const scored = rows.filter(isScoredRow);
 
   scored.sort((a, b) => a.posturePct - b.posturePct
     || b.failingPolicyCount - a.failingPolicyCount
     || (a.frameworkName < b.frameworkName ? -1 : a.frameworkName > b.frameworkName ? 1 : 0)
     || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
 
-  // Unscored rows keep the order they were discovered in (framework rail order, then
-  // category, then subcategory — all already deterministic) rather than being sorted
-  // alphabetically or any other way that would manufacture a ranking the data does not
-  // support.
-  const ordered = [...scored, ...unscored];
-  return typeof limit === "number" ? ordered.slice(0, limit) : ordered;
+  return typeof limit === "number" ? scored.slice(0, limit) : scored;
 }
 
 /** One failing control and every framework that raises it. */
@@ -359,7 +357,11 @@ export function coverageSummary(
     stateCounts.noResources += tree.stateCounts.noResources;
     stateCounts.noPolicies += tree.stateCounts.noPolicies;
     stateCounts.unknown += tree.stateCounts.unknown;
-    for (const category of tree.categories) subcategoryCount += category.subcategories.length;
+    // Summed off stateCounts for the reason frameworkRail is: `tree.categories` lists only
+    // the scored subcategories now, and this band's whole job is to say what the estate
+    // measures AND what it doesn't. Counting the listed nodes would make the two halves of
+    // that sentence the same number.
+    subcategoryCount += STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
   }
 
   return {

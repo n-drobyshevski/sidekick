@@ -3447,6 +3447,7 @@ var Server = (() => {
     const i = SEVERITY_ORDER.indexOf(s);
     return i === -1 ? SEVERITY_ORDER.length : i;
   }
+  var STATE_KEYS = ["scored", "noResources", "noPolicies", "unknown"];
   function frameworkRail(trees) {
     return trees.map((tree) => ({
       frameworkId: tree.frameworkId,
@@ -3455,7 +3456,10 @@ var Server = (() => {
       state: tree.state,
       emptyPostureReason: tree.emptyPostureReason,
       categoryCount: tree.categories.length,
-      subcategoryCount: tree.categories.reduce((sum, c) => sum + c.subcategories.length, 0),
+      // From stateCounts, not from the listed nodes: the tree lists only scored
+      // subcategories (compliancePosture.ts), and a rail that counted those would report a
+      // framework's size as the part of it that happened to score.
+      subcategoryCount: STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0),
       policyCount: tree.policyCount,
       failingPolicyCount: tree.failingPolicyCount,
       worstFailingSeverity: tree.worstFailingSeverity,
@@ -3495,15 +3499,9 @@ var Server = (() => {
         }
       }
     }
-    const scored = [];
-    const unscored = [];
-    for (const row of rows) {
-      if (isScoredRow(row)) scored.push(row);
-      else unscored.push(row);
-    }
+    const scored = rows.filter(isScoredRow);
     scored.sort((a, b) => a.posturePct - b.posturePct || b.failingPolicyCount - a.failingPolicyCount || (a.frameworkName < b.frameworkName ? -1 : a.frameworkName > b.frameworkName ? 1 : 0) || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
-    const ordered = [...scored, ...unscored];
-    return typeof limit === "number" ? ordered.slice(0, limit) : ordered;
+    return typeof limit === "number" ? scored.slice(0, limit) : scored;
   }
   function sharedControls(trees) {
     const byPolicy = /* @__PURE__ */ new Map();
@@ -3580,7 +3578,7 @@ var Server = (() => {
       stateCounts.noResources += tree.stateCounts.noResources;
       stateCounts.noPolicies += tree.stateCounts.noPolicies;
       stateCounts.unknown += tree.stateCounts.unknown;
-      for (const category of tree.categories) subcategoryCount += category.subcategories.length;
+      subcategoryCount += STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
     }
     return {
       collected: trees.length,
@@ -5197,6 +5195,9 @@ var Server = (() => {
   function emptyStateCounts() {
     return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
   }
+  function isAssessedPolicy(p) {
+    return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
+  }
   function toNode(row, externalId) {
     return {
       frameworkId: row.frameworkId,
@@ -5226,6 +5227,8 @@ var Server = (() => {
       list2.push(p);
       policiesBySub.set(p.subcategoryExternalId, list2);
     }
+    const stateCounts = emptyStateCounts();
+    const unassessedIds = /* @__PURE__ */ new Set();
     const subsByCategory = /* @__PURE__ */ new Map();
     for (const row of rows) {
       if (row.level !== "subcategory") continue;
@@ -5240,13 +5243,21 @@ var Server = (() => {
       deduped.sort(
         (a, b) => severityRank4(a.severity) - severityRank4(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
       );
+      const assessed = [];
+      for (const p of deduped) {
+        if (isAssessedPolicy(p)) assessed.push(p);
+        else unassessedIds.add(p.policyId);
+      }
       const node2 = {
         ...toNode(row, externalId),
         assessmentScope: row.assessmentScope,
         mappingRationale: row.mappingRationale,
-        policies: deduped,
-        failingPolicyCount: deduped.filter((p) => p.failCount > 0).length
+        policies: assessed,
+        failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
+        unassessedPolicyCount: deduped.length - assessed.length
       };
+      stateCounts[node2.state] += 1;
+      if (node2.state !== "scored") continue;
       const key = (_d = row.categoryExternalId) != null ? _d : "";
       const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
       list2.push(node2);
@@ -5261,22 +5272,21 @@ var Server = (() => {
         subcategories,
         mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId
       };
-    });
-    const stateCounts = emptyStateCounts();
-    for (const cat of categories) {
-      for (const sub of cat.subcategories) stateCounts[sub.state] += 1;
-    }
+    }).filter((cat) => cat.subcategories.length > 0);
     const distinct = /* @__PURE__ */ new Map();
     let worstFailingSeverity = null;
     let worstFailingRank = Infinity;
-    for (const p of policies) {
-      if (p.frameworkId !== frameworkId) continue;
-      distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
-      if (p.failCount > 0) {
-        const rank = severityRank4(p.severity);
-        if (rank < worstFailingRank) {
-          worstFailingRank = rank;
-          worstFailingSeverity = p.severity;
+    for (const cat of categories) {
+      for (const sub of cat.subcategories) {
+        for (const p of sub.policies) {
+          distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
+          if (p.failCount > 0) {
+            const rank = severityRank4(p.severity);
+            if (rank < worstFailingRank) {
+              worstFailingRank = rank;
+              worstFailingSeverity = p.severity;
+            }
+          }
         }
       }
     }
@@ -5296,6 +5306,10 @@ var Server = (() => {
       stateCounts,
       policyCount: distinct.size,
       failingPolicyCount: [...distinct.values()].filter(Boolean).length,
+      // Only ids that appear NOWHERE in the listed tree. A control mapped under six
+      // subcategories and evaluated under one of them is a listed policy, not a dropped one,
+      // and counting it in both places would describe the same rule twice.
+      unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
       worstFailingSeverity
     };
   }
@@ -7741,7 +7755,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "9c7fdc80a455" : "dev";
+  var BUILD_ID = true ? "0b1267589918" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

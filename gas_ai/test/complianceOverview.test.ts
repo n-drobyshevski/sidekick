@@ -86,9 +86,17 @@ describe("frameworkRail — the rail never re-sorts, and unscored is never a zer
   it("projects the counts a FrameworkTree already carries, without recomputing them", () => {
     const rail = frameworkRail(trees);
     const agenticRow = rail.find((r) => r.frameworkId === "wf-id-275")!;
-    expect(agenticRow.categoryCount).toBe(4); // ASI01, ASI02, ASI08, ASI10
-    expect(agenticRow.subcategoryCount).toBe(4); // one subcategory per ASI category
-    expect(agenticRow.policyCount).toBe(3); // distinct policies, not policy rows
+    // THREE categories listed — ASI08's only subcategory is NO_RESOURCES, so the tree drops
+    // it (compliancePosture.ts). categoryCount follows the list, because that is what the
+    // rail's own row expands into.
+    expect(agenticRow.categoryCount).toBe(3); // ASI01, ASI02, ASI10
+    // subcategoryCount does NOT follow the list: it comes off stateCounts, so the rail
+    // still reports the framework's size rather than the part of it that scored. Four
+    // subcategories, one per ASI category in the capture, three of them scored.
+    expect(agenticRow.subcategoryCount).toBe(4);
+    expect(agenticRow.stateCounts.scored).toBe(3);
+    // Distinct policies, not policy rows — and not the one that evaluated nothing.
+    expect(agenticRow.policyCount).toBe(2);
   });
 
   it("carries worstFailingSeverity through unchanged, for every row — a projection, not a rollup", () => {
@@ -122,7 +130,7 @@ describe("frameworkRail — the rail never re-sorts, and unscored is never a zer
   });
 });
 
-describe("weakestAreas — scored ascending, unscored after and unranked", () => {
+describe("weakestAreas — scored ascending, and nothing that cannot be ranked", () => {
   it("sorts every scored subcategory ascending by posturePct", () => {
     const weak = weakestAreas(trees);
     const scored = weak.filter((w) => w.state === "scored");
@@ -132,20 +140,16 @@ describe("weakestAreas — scored ascending, unscored after and unranked", () =>
     expect(scored.map((w) => w.posturePct)).toEqual([86, 93, 99, 100]);
   });
 
-  it("puts every unscored row's index after every scored row's index", () => {
+  it("contains no row it cannot rank — every one carries a number", () => {
+    // This band used to list the unscored rows unranked at the bottom. They no longer
+    // reach it: the trees carry only scored subcategories, and weakestAreas drops anything
+    // else rather than appending a row with no number to a list titled "weakest". Where
+    // those subcategories ARE still reported is the header's state strip, which counts
+    // every one Wiz sent — see compliancePosture's stateCounts.
     const weak = weakestAreas(trees);
-    const scoredIndices = weak
-      .map((w, i) => (w.state === "scored" ? i : -1))
-      .filter((i) => i >= 0);
-    const unscoredIndices = weak
-      .map((w, i) => (w.state === "scored" ? -1 : i))
-      .filter((i) => i >= 0);
-
-    expect(unscoredIndices).toHaveLength(2); // ASI08, 5Rs 1.1
-    expect(Math.max(...scoredIndices)).toBeLessThan(Math.min(...unscoredIndices));
-    // And unscored rows carry no rank-worthy number, on the same principle as
-    // compliancePosture's postureState: null stays null, never coerced to sort as 0.
-    for (const i of unscoredIndices) expect(weak[i].posturePct).toBeNull();
+    expect(weak.every((w) => w.state === "scored")).toBe(true);
+    expect(weak.every((w) => w.posturePct !== null)).toBe(true);
+    expect(weak).toHaveLength(4);
   });
 
   it("limit caps the row count and keeps the same relative order", () => {

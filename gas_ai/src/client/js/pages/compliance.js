@@ -22,6 +22,14 @@
 // subcategoryDetail() now live in complianceShared.js, so this file and
 // complianceOverview.js call the same code rather than drifting into two.
 //
+// THE REGISTER LISTS ONLY WHAT WAS EVALUATED — scored subcategories, and under them the
+// policies that ran. buildFrameworkTree does that filtering (see its header), which is why
+// nothing in this file re-checks a `state`. Two things went with it: the `?state=` filter,
+// because the states it filtered to no longer have rows, and the strip's buttons with it.
+// The strip stays as the header's summary and is now the one place the dropped
+// subcategories are counted — a register showing twelve of twenty rows has to say twenty
+// somewhere, or it is quietly claiming the estate is smaller than it is.
+//
 // TWO SUB-VIEWS, ONE FETCH, ONE URL. `view.mode` is "overview" (the cross-framework rollup
 // — every framework at once) or "framework" (this file's original register, one framework
 // at a time), read from `?view=` and mirrored back into the hash by pushParams() exactly
@@ -46,6 +54,9 @@ import {
 import {
   checksCell, extChip, postureCell, STATES, STATE_ORDER, stateStrip, subcategoryDetail,
 } from "./complianceShared.js";
+// STATE_ORDER survives the filter's removal as the key order for summing a stateCounts map
+// — the header's "scored of N" denominator. STATES still names the framework-level state in
+// the hero, which can be unscored even when its subcategories are not.
 import { renderOverview } from "./complianceOverview.js";
 
 /** Frameworks past this get a searchable combobox instead of a segmented control. */
@@ -76,7 +87,6 @@ export async function renderCompliance(main, params, ctx) {
     // See the back-compat paragraph in the header comment above.
     mode: requestedMode || (params.framework ? "framework" : "overview"),
     frameworkId: params.framework || "",
-    state: STATE_ORDER.indexOf(params.state) >= 0 ? params.state : "",
     expanded: new Set(String(params.open || "").split(",").filter(Boolean)),
   };
 
@@ -96,7 +106,12 @@ export async function renderCompliance(main, params, ctx) {
     setParams(Object.assign({
       view: inOverview ? null : view.mode,
       framework: inOverview ? null : (view.frameworkId || null),
-      state: inOverview ? null : (view.state || null),
+      // Always nulled, in both modes: the register's state filter is gone. A deep link
+      // written while it existed still LOADS with `?state=noPolicies` on it — nothing
+      // rewrites the hash until the reader touches a control — but it renders the whole
+      // register, and the first interaction clears the param rather than carrying a
+      // filter nothing reads back into the URL.
+      state: null,
       open: inOverview ? null : (view.expanded.size ? [...view.expanded].join(",") : null),
     }, patch || {}));
   }
@@ -109,17 +124,10 @@ export async function renderCompliance(main, params, ctx) {
       view.mode = "framework";
       view.frameworkId = frameworkId;
       // A different framework is a different register; carrying the open rows over would
-      // expand categories that belong to something else. `state` is left alone, the same
-      // way the framework switcher below leaves it alone on its own onChange. Subcategory
-      // keys (prefixed "s:", see below) live in this same Set, so this one reset clears
-      // both levels — there is nothing framework-specific left to separately forget.
+      // expand categories that belong to something else. Subcategory keys (prefixed "s:",
+      // see below) live in this same Set, so this one reset clears both levels — there is
+      // nothing framework-specific left to separately forget.
       view.expanded = new Set();
-      pushParams();
-      paint();
-    },
-    /** Press the active key again to clear it — the same toggle the register's own strip uses. */
-    setState(key) {
-      view.state = view.state === key ? "" : key;
       pushParams();
       paint();
     },
@@ -279,7 +287,7 @@ export async function renderCompliance(main, params, ctx) {
 
     host.append(el("div", { class: "comp-header" },
       hero,
-      stateStrip(tree, view.state, (key) => actions.setState(key)),
+      stateStrip(tree),
       el("div", { class: "stat-list" },
         statRow("Categories", String(tree.categories.length), "in this framework"),
         statRow(
@@ -300,12 +308,10 @@ export async function renderCompliance(main, params, ctx) {
     // keyboard path to learn.
     const rows = [];
     for (const cat of tree.categories) {
-      const subs = view.state
-        ? cat.subcategories.filter((s) => s.state === view.state)
-        : cat.subcategories;
-      // Under a state filter a category with no matching child is not shown at all —
-      // an expandable row that expands to nothing is a dead end.
-      if (view.state && !subs.length) continue;
+      // Every subcategory the tree still carries. The "expands to nothing" case this used
+      // to guard against cannot arise any more: buildFrameworkTree drops a category the
+      // moment its last listed subcategory goes, so `cat.subcategories` is never empty.
+      const subs = cat.subcategories;
 
       // A category whose only subcategory restates it (OWASP's Top 10 lists arrive that
       // way) is drawn as ONE row that expands its own detail directly, rather than a
@@ -403,8 +409,14 @@ export async function renderCompliance(main, params, ctx) {
 
     host.append(sectionLabel("Categories"));
     if (!rows.length) {
-      host.append(emptyState(`No subcategory is ${(STATES[view.state] || {}).label || "shown"}.`,
-        "Clear the state filter above to see the whole framework."));
+      // Not "no data": the framework was collected, and the strip above has just counted
+      // its subcategories one state at a time. What it has none of is a SCORED one, so the
+      // empty state names that rather than implying a failed sync.
+      host.append(emptyState(
+        "Nothing in this framework was scored.",
+        "Every subcategory Wiz reported has no resources to assess or no policy written " +
+        "for it — see the breakdown above. There is nothing evaluated here to list.",
+      ));
       return;
     }
 
