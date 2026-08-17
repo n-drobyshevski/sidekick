@@ -1154,8 +1154,11 @@ export const SEED_POSTURE: PostureRow[] = [
     posturePct: 85, passCount: 0, failCount: 0,
     // Five categories now, one of which reports nothing. The framework percentage stays
     // 85 and is deliberately NOT the mean of its categories (62/91/78/85/null averages to
-    // 79) — Wiz's aggregation is undocumented and this row exists partly to keep a
-    // recomputation from ever looking correct.
+    // 79) — Wiz's aggregation is undocumented, and this row exists partly to keep a naive
+    // CATEGORY-MEAN recomputation from ever accidentally looking correct. That guard is
+    // unrelated to the AI-scoped posture in fiveRsPosture.ts: that figure is derived from
+    // a different set of inputs (active in-scope policies' own pass/fail counts, not a
+    // mean of category percentages) and is EXPECTED to differ from 85 — see that module.
     passSubCategoryCount: 1, failSubCategoryCount: 4, emptyPostureReason: null,
   },
   // NO_POLICIES is a DIFFERENT emptiness from NO_RESOURCES: nothing was written to assess,

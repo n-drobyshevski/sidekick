@@ -24,6 +24,7 @@ import { buildAllFrameworkTrees, buildFrameworkTree } from "../src/domain/compli
 import {
   SCOPE_REASONS, scopeFiveRs, unselectedPolicyIds, type ScopeReason,
 } from "../src/domain/complianceScope";
+import { fiveRsDerivedPosture } from "../src/domain/fiveRsPosture";
 import type { FindingRow, FrameworkPolicyRow, PostureRow } from "../src/domain/graphTypes";
 import {
   normalizeCompliancePosturePage, normalizeFrameworksPage,
@@ -156,19 +157,22 @@ const SYNTH_5RS_POLICIES: FrameworkPolicyRow[] = [
     passCount: 0, failCount: 5, assessedCount: 5, rejectedCount: 0, noResourceToAssess: false,
   },
   // Mapped under "1.1" FIRST, then "2.1" — the same policyId recurs, as buildFrameworkTree
-  // legitimately allows (compliancePosture.ts). failCount differs per row on purpose (1 vs
-  // 7) to pin that scopeFiveRs takes the MAX, not the first-seen or the sum.
+  // legitimately allows (compliancePosture.ts). failCount AND passCount differ per row on
+  // purpose (1 vs 7, 12 vs 5) to pin that scopeFiveRs takes the MAX of each independently,
+  // not the first-seen row and not the sum. `enabled` also disagrees (true, then false) to
+  // pin the sticky-false rule: the LATER row's `false` wins even though it is not the row
+  // that wins the display fields.
   {
     frameworkId: SYNTH_5RS_ID, categoryExternalId: "1", subcategoryExternalId: "1.1",
     policyId: "policy-multi", policyKind: "CONTROL", shortId: "MULTI-001",
-    name: "Multiply-mapped rule", severity: "LOW",
-    passCount: 0, failCount: 1, assessedCount: 1, rejectedCount: 0, noResourceToAssess: false,
+    name: "Multiply-mapped rule", severity: "LOW", enabled: true,
+    passCount: 12, failCount: 1, assessedCount: 13, rejectedCount: 0, noResourceToAssess: false,
   },
   {
     frameworkId: SYNTH_5RS_ID, categoryExternalId: "2", subcategoryExternalId: "2.1",
     policyId: "policy-multi", policyKind: "CONTROL", shortId: "MULTI-001",
-    name: "Multiply-mapped rule", severity: "LOW",
-    passCount: 0, failCount: 7, assessedCount: 7, rejectedCount: 0, noResourceToAssess: false,
+    name: "Multiply-mapped rule", severity: "LOW", enabled: false,
+    passCount: 5, failCount: 7, assessedCount: 12, rejectedCount: 0, noResourceToAssess: false,
   },
 ];
 
@@ -291,6 +295,14 @@ describe("scopeFiveRs — derived reasons (no cross-mapped AI framework in `tree
     // MAX across its two mapping rows (1 and 7), never the first-seen value and never the
     // sum — the same discipline sharedControls applies in complianceOverview.ts.
     expect(row.failCount).toBe(7);
+    // Same MAX discipline for passCount, independently of failCount — the two rows disagree
+    // in OPPOSITE directions (12>5 for passCount, 1<7 for failCount) so a bug that reused
+    // one field's max for the other would be caught.
+    expect(row.passCount).toBe(12);
+    // Sticky false: the first row says enabled:true, the second says enabled:false, and the
+    // false wins even though it is not the row that won categoryExternalId/subcategoryTitle
+    // above — the two ties are decided independently.
+    expect(row.enabled).toBe(false);
   });
 
   it("total and selected reconcile with the policies actually returned", () => {
@@ -350,6 +362,55 @@ describe("scopeFiveRs — operator pins", () => {
     const row = scope.policies.find((p) => p.policyId === "policy-multi")!;
     expect(row.selected).toBe(false);
     expect(row.reason).toBe("pinnedOut");
+  });
+});
+
+// The composition, not the two halves. fiveRsPosture.test.ts pins the arithmetic against
+// hand-built PolicyScope rows; this asserts that the rows scopeFiveRs actually PRODUCES —
+// carrying the passCount it accumulated by MAX and the `enabled` it resolved sticky-false —
+// reach that arithmetic intact. A field added to PolicyScope and never threaded through is
+// exactly the kind of break neither unit suite can see on its own, and it is not
+// hypothetical: `enabled` sat on FrameworkPolicyRow, stored and unread, until this feature.
+//
+// It lives HERE rather than in complianceEndToEnd.test.ts because getCompliance is cached
+// on a frozen clock (see that file's pin round-trip case), so a pin cannot be observed to
+// move a percentage there. There is no cache at all in this file.
+describe("scopeFiveRs → fiveRsDerivedPosture", () => {
+  const derive = (pins: { in: string[]; out: string[] }) => fiveRsDerivedPosture(
+    scopeFiveRs([synth5RsTree, synthAsiTree], findings, aiAssetIds, pins), 85,
+  )!;
+
+  it("computes over the policies the scope selected, and no others", () => {
+    const derived = derive(noPins);
+    // policy-linked (0/3) and policy-trap-in (0/4) are the two in scope. The four rules
+    // scoped out carry their own counts and contribute nothing.
+    expect(derived.frameworkId).toBe(SYNTH_5RS_ID);
+    expect(derived.activePolicyCount).toBe(2);
+    expect(derived.passCount).toBe(0);
+    expect(derived.failCount).toBe(7);
+    // A REAL 0 — seven checks ran under the active rules and every one failed. Not the
+    // null that means "nothing was evaluated".
+    expect(derived.posturePct).toBe(0);
+    expect(derived.controlPassPct).toBe(0);
+    expect(derived.wizPosturePct).toBe(85);
+  });
+
+  it("excludes a pinned-in rule that Wiz has disabled, and NAMES it rather than dropping it", () => {
+    // policy-multi is mapped twice with `enabled` true then false, so the scope resolves it
+    // sticky-false. Pinning it IN makes it `selected` — an operator saying "this rule is
+    // AI-relevant" — but selected is not the same claim as running: its 12 passing checks
+    // must stay out of the arithmetic, and the reader must be told one rule was held back
+    // rather than left to wonder why the denominator did not move.
+    const derived = derive({ in: ["policy-multi"], out: [] });
+    expect(derived.activePolicyCount).toBe(2);
+    expect(derived.disabledPolicyCount).toBe(1);
+    expect(derived.passCount).toBe(0);
+  });
+
+  it("returns null when there is no 5Rs framework to derive over", () => {
+    expect(fiveRsDerivedPosture(
+      scopeFiveRs([synthAsiTree], findings, aiAssetIds, noPins), null,
+    )).toBeNull();
   });
 });
 
