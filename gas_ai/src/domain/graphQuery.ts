@@ -90,7 +90,7 @@ export interface PropFilter {
    *
    * Applied as a plain inversion of the whole test, INCLUDING the unknown-field case — so a node
    * with no cloud at all does match "cloud is not GCP". That is the reading a negation carries
-   * everywhere else, and the one that makes "is" and "is not" partition the estate between them
+   * everywhere else, and the one that makes "is" and "is not" partition the landscape between them
    * rather than leaving a silent third group in neither. It is knowingly in tension with the
    * tri-state rule the boolean fields follow, where absent is its own answer; the difference is
    * that there you ASK for `unknown` by name, and here you would be excluded by it without
@@ -296,7 +296,7 @@ export const QUERY_FIELDS: readonly FieldSpec[] = [
   // sheet long before this — `tags_json` round-trips through the ledger — but with no entry here
   // you could read a tag and not ask about it, which is the gap this closes.
   //
-  // `pairs` rather than `choice` because the value space is the estate's, not the schema's: a
+  // `pairs` rather than `choice` because the value space is the landscape's, not the schema's: a
   // real tenant has thousands of distinct `key: value` strings, far past VALUE_CARDINALITY_MAX,
   // so `fieldValuesFor` offers no list and the builder asks for a key and a value instead.
   {
@@ -310,8 +310,17 @@ export const QUERY_FIELDS: readonly FieldSpec[] = [
   },
   { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
   { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
-  { key: "aars", label: "AARS", type: "number", numeric: true, get: (n) => (n.aars ?? null) },
-  { key: "aarsSeverity", label: "AARS level", type: "choice", get: (n) => orNull(n.aarsSeverity) },
+  // Keys are the persisted identifiers and never change; the LABELS are the display name
+  // (aars.AARS_DISPLAY_LABEL) — see its comment for why the two deliberately differ.
+  { key: "aars", label: "Findings score", type: "number", numeric: true, get: (n) => (n.aars ?? null) },
+  {
+    key: "aarsPercentile", label: "Findings percentile", type: "number", numeric: true,
+    get: (n) => (n.aarsPercentile ?? null),
+  },
+  {
+    key: "aarsSeverity", label: "Findings score level", type: "choice",
+    get: (n) => orNull(n.aarsSeverity),
+  },
   {
     key: "projects", label: "Projects", type: "choice", multi: true,
     get: (n) => {
@@ -401,7 +410,7 @@ const FIELD_BY_KEY = new Map(QUERY_FIELDS.map((f) => [f.key, f]));
 //
 // TWO SPELLINGS PER ROW, deliberately. `graphEnrich` draws the derived stub only where the real
 // chain could not be traced (its own comment: "stub wherever the real thing exists"), so which
-// of the two exists is a per-asset fact and a witness that named one would miss half the estate.
+// of the two exists is a per-asset fact and a witness that named one would miss half the landscape.
 // They are sibling steps, both optional, so whichever is present binds and the other null-binds.
 interface Witness {
   /** The `QUERY_FIELDS` key whose filter arms this. */
@@ -587,7 +596,7 @@ const EDGE_SET = new Set<string>(EDGE_TYPES as readonly string[]);
  * This is the only thing standing between a hand-edited URL and the evaluator, so it is
  * exhaustive rather than polite: unknown kinds and edges are rejected by name (they cannot
  * match anything anyway, and silently returning zero rows would read as "nothing is wrong with
- * your estate"), and the two structural caps stop a pathological tree from spending the
+ * your landscape"), and the two structural caps stop a pathological tree from spending the
  * execution budget before the first row.
  */
 export function validateQuery(raw: unknown): QueryNode {
@@ -766,7 +775,7 @@ export interface Vocabulary {
   stepsFrom: Record<string, VocabEntry[]>;
   /**
    * The choice fields a kind can be filtered on and the values they actually take IN THIS
-   * TENANT — offering "GCP, AWS, Azure" to an estate that is entirely GCP would be describing
+   * TENANT — offering "GCP, AWS, Azure" to a landscape that is entirely GCP would be describing
    * the schema rather than the graph.
    *
    * Populated for ONE kind at a time, on request. Every kind's lists together came to 22 KB of
@@ -832,7 +841,7 @@ export function queryVocabulary(doc: GraphDoc): Vocabulary {
   }
 
   // Commonest first, not alphabetical. The picker's job is to get someone to a useful query in
-  // one click, and an estate's most-travelled relationship is the best guess at the next step —
+  // one click, and a landscape's most-travelled relationship is the best guess at the next step —
   // alphabetical order just puts whatever begins with A at the top of every list.
   for (const list of Object.values(stepsFrom)) {
     list.sort((a, b) => (b.count - a.count)
@@ -866,7 +875,7 @@ export function queryVocabulary(doc: GraphDoc): Vocabulary {
  * picker "offering the union of things that do not co-occur" — but that cannot happen, because
  * `fieldsForKind("ANY")` already drops every spec carrying a `kinds` list. What survives is the
  * kind-agnostic set: cloud, region, status, severity, the AARS level, projects, tags. Every node
- * answers those, so their union is exactly the question "which clouds does this estate use".
+ * answers those, so their union is exactly the question "which clouds does this landscape use".
  * Without this a wildcard node got no lists at all, and `FIND ANY(…)` is a shape the app writes
  * for itself whenever someone focuses an asset from the inventory.
  */
@@ -1040,11 +1049,11 @@ export const QUERY_SHORTCUTS: readonly QueryShortcut[] = [
  * The shortcuts this tenant's graph can actually answer from `kind`.
  *
  * Semantic scope comes from the shortcut (`kinds`); whether the relationships exist HERE comes
- * from the vocabulary. Offering "reaches classified data" to an estate whose identities touch
+ * from the vocabulary. Offering "reaches classified data" to a landscape whose identities touch
  * no buckets would be a button that always answers nothing.
  *
  * Negated steps are exempt from the reachability check, and have to be: "has no guardrail" is
- * most worth offering in an estate where NOTHING is protected — which is exactly the estate
+ * most worth offering in a landscape where NOTHING is protected — which is exactly the landscape
  * whose vocabulary carries no PROTECTED_BY edge to require.
  */
 export function shortcutsFor(kind: QueryKind | QueryKind[], vocab: Vocabulary): QueryShortcut[] {
@@ -1057,7 +1066,7 @@ export function shortcutsFor(kind: QueryKind | QueryKind[], vocab: Vocabulary): 
   // The wildcard is not a kind and has no relationships of its own; `stepsFrom` has no "ANY" key
   // at all, so there is nothing to check reachability against.
   if (!from.length) return [];
-  // The kind has to be IN the estate. Without this, a shortcut whose every step is negated —
+  // The kind has to be IN the landscape. Without this, a shortcut whose every step is negated —
   // or which is a bare property filter — passes the reachability check against a graph with
   // nothing in it at all, and an unsynced tenant is offered six buttons that answer nothing.
   const present = from.filter((k) => vocab.kinds.some((v) => v.kind === k));

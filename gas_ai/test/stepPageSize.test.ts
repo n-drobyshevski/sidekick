@@ -82,7 +82,7 @@ describe("per-step page size", () => {
   it("puts the graphSearch traversals in the middle, not on either extreme", () => {
     // A graphSearch row is a PATH: narrow field set, but two to four entities per row, each
     // with an unbounded `properties` bag. Not comparable to 500 flat resource rows — and at
-    // a 13,842-asset estate, not something to leave at 100 either.
+    // a 13,842-asset landscape, not something to leave at 100 either.
     for (const id of ["GUARDRAIL_GAPS", "RUNS_AS", "SA_FINDINGS", "SENSITIVE_DATA_ACCESS",
       "IDENTITY_ACCESS"]) {
       expect(byId(id).pageSize).toBe(PAGE_SIZE_TRAVERSAL);

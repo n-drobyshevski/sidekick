@@ -49,7 +49,9 @@ export function saveSettings(settings: Rec): void {
   // bumpDataVersion alone, deliberately — NOT syncStore's commit(). That pairs the
   // version bump with dropping this execution's read memos, and those memos hold RAW
   // asset rows; loadAssets re-reads currentBands() on every call and applies them after
-  // the memo, so a rule change is already reflected without invalidating anything. The
+  // the memo, so a rule change is already reflected without invalidating anything. Its
+  // second memo — the band/percentile-derived array — is keyed on those same bands, so a
+  // rule change misses it and re-derives rather than serving a stale banding. The
   // asymmetry looks like drift and isn't. (syncStore also imports this module, so the
   // call would be a cycle.)
   bumpDataVersion();
@@ -193,7 +195,7 @@ export function setSelectedFrameworks(ids: unknown): string[] {
  * The operator's overrides on which 5Rs rules this app looks at.
  *
  * Only the pins are stored, never the resolved selection: the default is DERIVED from the
- * estate (does an OWASP framework map this rule, do its findings land on an AI asset), and
+ * landscape (does an OWASP framework map this rule, do its findings land on an AI asset), and
  * freezing that derivation into a stored list would stop it tracking a tenant whose rules
  * and findings move under it. What an operator decided is a decision; what the app worked
  * out is not, and only the first is worth persisting.

@@ -20,11 +20,11 @@
 // 3. A COUNT CARRIES ITS OWN ZERO, AND BEFORE A SYNC THERE IS NO COUNT AT ALL. `n` is the
 //    raw number beside the display string, so the page can refuse to link a zero into an
 //    empty filtered view — the one thing a count-as-link must never do. And two different
-//    kinds of number live in that column: a MEASUREMENT of the estate, which needs a sync,
+//    kinds of number live in that column: a MEASUREMENT of the landscape, which needs a sync,
 //    and a SETTING — the node budget, the pillar caps, the band thresholds — which is the
 //    model in force and is just as true before the first sync as after it. An entry that
 //    reads a setting says so with `fromSettings`; everything else is withheld until a sync
-//    exists, because an estate figure of zero read off an empty ledger is not zero, it is
+//    exists, because a landscape figure of zero read off an empty ledger is not zero, it is
 //    unknown, and reporting it as zero is the implied confidence PRODUCT.md forbids.
 //
 // 4. THE FRAMEWORK CODES ARE INDEXED HERE, NOT COPIED. codebook.js already carries all
@@ -36,7 +36,7 @@ import { CODEBOOK, FAMILY_GROUP } from "./codebook.js";
 import { MEASURE_ENTRIES } from "./measureContent.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, kindIconSvg } from "./icons.js";
 import {
-  aarsChip, aarsPercentileMark, el, outcomeBadge, pluralize, sevBadge, statusPill, tierBadge,
+  aarsChip, el, outcomeBadge, pluralize, scoreChip, sevBadge, statusPill, tierBadge,
 } from "./ui.js";
 
 /** The six headings, in reading order. Six headings and find-in-page beat a search box. */
@@ -126,7 +126,7 @@ export const ENTRIES = [
       return {
         n: kinds.length,
         value: String(kinds.length),
-        unit: "kinds in this estate",
+        unit: "kinds in this landscape",
         route: "inventory",
         params: { panel: "filters" },
       };
@@ -415,25 +415,31 @@ export const ENTRIES = [
   // ------------------------------------------------------------------------- the score
   {
     id: "aars",
-    term: "AARS",
-    aka: "AI Asset Risk Score",
+    term: "Findings score",
+    aka: "AARS — the identifier every column and route still uses",
     family: "score",
     blurb:
       "One number per asset, 0 to 100, summed across four pillars and clamped. It is this " +
       "app's own score, not a Wiz field: it prices what the sync collected, so the model " +
-      "that produces it is editable and its inputs are persisted beside every score.",
+      "that produces it is editable and its inputs are persisted beside every score. It " +
+      "counts what has already been FOUND — issues, compliance gaps, data exposure — which " +
+      "is why it is not called a risk score; forward-looking consequence is the posture " +
+      "tier's job. Surfaces show it as a percentile of the scored estate, because the raw " +
+      "number is only meaningful against the other assets.",
     drawnOn: ["inventory", "graph", "aars"],
-    mark: () => aarsChip(78, "HIGH"),
-    // Not a band count (see aars-band below for why): how many AI assets carry a score at
-    // all, which is what "AARS" itself names. Sorted worst-first by default, so the link
-    // opens on the riskiest end of the estate without asserting a threshold to get there.
+    mark: () => scoreChip(78, 92, "HIGH"),
     count: (ctx) => {
+      // The scored POPULATION, not a count of one level. This read `criticalAars` until
+      // that KPI was withdrawn: on live data the top level holds 19 of 30 scored assets,
+      // so "N assets score Critical" was a restatement of "N assets are scored" wearing a
+      // verdict's clothes. The denominator is the honest figure, and it is the one the
+      // percentile beside every score is a percentile OF.
       const k = ctx.kpis;
-      if (!k || k.aiAssets === undefined) return null;
+      if (!k || k.aarsScored === undefined) return null;
       return {
-        n: n(k.aiAssets),
-        value: String(n(k.aiAssets)),
-        unit: "AI assets carry a score",
+        n: n(k.aarsScored),
+        value: String(n(k.aarsScored)),
+        unit: "assets scored",
         route: "inventory",
         params: {},
       };
@@ -455,19 +461,18 @@ export const ENTRIES = [
   },
   {
     id: "aars-band",
-    term: "AARS band",
-    aka: "the score's own severity",
+    term: "Findings score level",
+    aka: "context beside a score, not a verdict",
     family: "score",
     blurb:
       "The level a score falls into. Bands are re-derived from the stored score on every " +
       "read, so moving a threshold applies at once and retroactively — no re-sync, no " +
       "rescore. Changing the POINT model is the other thing entirely, and strands the " +
-      "stored scores until they are recomputed. A band is a threshold on the CURRENT " +
-      "scored population, not an absolute rating — the same rule has put nearly an entire " +
-      "estate in CRITICAL on one tenant and nearly an entire estate in INFO on another. " +
-      "It stays legitimate as a MODEL diagnostic (the AARS trend, this page's own band " +
-      "occupancy) and as an opt-in filter; the Inventory table and the asset sheet lead " +
-      "with the percentile above instead of this band for that reason.",
+      "stored scores until they are recomputed. A level is not a queue: on this estate the " +
+      "top one holds most of the scored assets and two hold none, so it is drawn tinted " +
+      "only on the AARS Rules page, where the thresholds themselves are the subject, and " +
+      "plain everywhere else. Its two honest readings are the distribution the trend " +
+      "charts over time and the occupancy the rule editor reports.",
     drawnOn: ["aars", "inventory"],
     mark: () => sevBadge("HIGH"),
     // The model in force, not a measurement — true before the first sync.
@@ -603,7 +608,7 @@ export const ENTRIES = [
     blurb:
       "Re-runs the enrichment over data already in the sheet and makes ZERO Wiz API calls. " +
       "It writes no sync-history row, because a rescore is not a sync and the trend must " +
-      "not gain a point for an estate that never moved. Trend points carry the rule version " +
+      "not gain a point for a landscape that never moved. Trend points carry the rule version " +
       "they were scored under, so a threshold edit reads as a break rather than as movement.",
     drawnOn: ["aars"],
     mark: () => el("span", { class: "pill neutral" }, "↻"),
@@ -617,7 +622,8 @@ export const ENTRIES = [
     blurb:
       "A 54-leaf decision tree — exploitation × technical impact × system exposure × " +
       "mission — that routes one issue or finding into one of four queues, first match " +
-      "wins over an ordered cascade. It answers a different question than AARS: not a " +
+      "wins over an ordered cascade. It answers a different question than the findings " +
+      "score: not a " +
       "rank, a queue, and it is built so most leaves land in Track or Track ★ and only a " +
       "documented, auditable minority reach Act. The AARS Rules page carries its editor on " +
       "a second tab.",
@@ -636,7 +642,8 @@ export const ENTRIES = [
       "question: not what has been FOUND on an asset, but what it could DO and what " +
       "stands in its way. An agent with zero open issues and unrestricted access to " +
       "sensitive data is not a low tier just because nothing has been found yet — this is " +
-      "the one reading on the Inventory that is not an aggregate of AARS or of the " +
+      "the one reading on the Inventory that is not an aggregate of the findings score or " +
+      "of the " +
       "Problem tree's outcomes, deliberately drawn beside them rather than blended in.",
     drawnOn: ["aars", "inventory", "problems"],
     mark: () => tierBadge(4),
@@ -789,13 +796,13 @@ export const ENTRIES = [
   {
     id: "dry-run",
     term: "Dry-run",
-    aka: "the bundled sample estate",
+    aka: "the bundled sample landscape",
     family: "coverage",
     blurb:
       "With no Wiz credentials configured, “Sync now” persists a bundled sample dataset " +
       "instead of querying a tenant, and the whole app works. Every page says which mode " +
       "produced the figures it is showing, because a number from a sample and a number " +
-      "from your estate are not the same kind of thing.",
+      "from your landscape are not the same kind of thing.",
     drawnOn: ["settings", "data"],
     mark: () => statusPill("neutral", "Dry-run"),
     link: { label: "Check the connection", route: "settings", params: {} },
@@ -867,7 +874,7 @@ for (const family of CODEBOOK) {
 const MEASURE_ROUTES = {
   "aars-score": ["inventory", "aars"],
   "aars-band": ["inventory", "aars"],
-  "aars-percentile": ["inventory"],
+  "aars-percentile": ["inventory", "graph"],
   "aars-distinct-scores": ["aars"],
   "aars-tie-rate": ["aars"],
   "aars-effective-cardinality": ["aars"],
@@ -916,9 +923,9 @@ for (const m of MEASURE_ENTRIES) {
  */
 export function resolveEntry(entry, ctx) {
   if (!entry.count) return { ...entry, resolved: null };
-  // Before the first sync the estate is unknown, not empty. The KPI payload still answers
+  // Before the first sync the landscape is unknown, not empty. The KPI payload still answers
   // — with zeros, off an empty ledger — so without this guard the page would report "0 AI
-  // assets reach classified data" for an estate nobody has looked at yet, and the coverage
+  // assets reach classified data" for a landscape nobody has looked at yet, and the coverage
   // tally would count areas as reporting because their resolvers happened to return a 0.
   // Wiz Scans refuses to draw at all in this state; this is the same refusal, per entry.
   if (!entry.fromSettings && !(ctx.boot && ctx.boot.latestSync)) {

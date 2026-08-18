@@ -92,7 +92,7 @@ describe("posture tier vs. AARS band — the ordinality question", () => {
     expect(Number.isFinite(tau)).toBe(true);
     expect(tau).toBeGreaterThanOrEqual(-1);
     expect(tau).toBeLessThanOrEqual(1);
-    // Pinned to what the code actually produces on the seed estate. NOT ≈1.0 — there is
+    // Pinned to what the code actually produces on the seed landscape. NOT ≈1.0 — there is
     // real disagreement between the two rankings — but the point estimate is high, and
     // the reasons are named in this file's own header note and in the module's REPORT.
     expect(tau).toBeCloseTo(0.9139321579354337, 10);
@@ -125,7 +125,7 @@ describe("posture tier vs. AARS band — the ordinality question", () => {
   });
 });
 
-describe("tier distribution and cell coverage over the seed estate", () => {
+describe("tier distribution and cell coverage over the seed landscape", () => {
   it("reports the tier distribution across every synced asset, not only the AARS-scored subset", () => {
     const counts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
     for (const r of rows) if (r.postureTier != null) counts[r.postureTier as number]!++;
@@ -135,7 +135,7 @@ describe("tier distribution and cell coverage over the seed estate", () => {
       counts,
     );
     expect(counts[1]! + counts[2]! + counts[3]! + counts[4]!).toBe(rows.length);
-    // Pinned: the seed estate's actual shape. Tier 4 sits at zero here — the lattice
+    // Pinned: the seed landscape's actual shape. Tier 4 sits at zero here — the lattice
     // PERMITS it (1/27 cells under DEFAULT_POSTURE_RULE), but no synced asset happens to
     // combine BROAD capability, WEAK containment and SEVERE consequence at once, mostly
     // because `businessImpact` is never populated on a seed GNode (see the unknown-rate
@@ -152,7 +152,7 @@ describe("tier distribution and cell coverage over the seed estate", () => {
   });
 });
 
-describe("per-dimension unknown rates on the seed estate", () => {
+describe("per-dimension unknown rates on the seed landscape", () => {
   it("capability and containment are fully observed; consequence is almost entirely unknown", () => {
     const counts = { capability: 0, containment: 0, consequence: 0 };
     let n = 0;
@@ -178,7 +178,7 @@ describe("per-dimension unknown rates on the seed estate", () => {
     // capability / containment: sampleData.ts's `node()` builder defaults every one of
     // hasAdminPrivileges / hasHighPrivileges / hasAccessToSensitiveData / guardrailMissing
     // to `false` rather than leaving them unset (see that function's own comment), so
-    // there is never an all-unobserved node on this estate for either axis.
+    // there is never an all-unobserved node on this landscape for either axis.
     expect(unknownRate.capability).toBe(0);
     expect(unknownRate.containment).toBe(0);
     // consequence: `NodeSeed` (sampleData.ts) carries no `businessImpact` field at all, and
@@ -187,7 +187,7 @@ describe("per-dimension unknown rates on the seed estate", () => {
     // undefined on literally every seed asset. The few points of daylight below the 100%
     // ceiling are the handful of datastores `withDataFindingCounts` actually gave a real
     // `dataFindingCount` to from `SEED_DATA_FINDINGS`. This is a genuine gap in the DEMO
-    // estate, not a defect in `consequenceOf` — a real tenant's Wiz-reported
+    // landscape, not a defect in `consequenceOf` — a real tenant's Wiz-reported
     // `businessImpact` would close almost all of it.
     expect(unknownRate.consequence).toBeCloseTo(0.9655172413793104, 10);
     expect(unknownRate.consequence).toBeGreaterThan(0.9);

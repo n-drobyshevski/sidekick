@@ -50,10 +50,10 @@ function renderValue(key, value, cell) {
   if (typeof value === "boolean") return triCell(value);
   if (key === "kind") return kindLabel(cell.kind);
   if (key === "severity") return sevBadge(String(value));
-  // "AARS level" is a raw property a query explicitly asked to see, unlike the Inventory
-  // table or a record sheet — but it is still the population-dependent band, not `severity`
-  // (Wiz's own issue rating), so it does not earn the same colour-coded verdict mark. Plain
-  // text says the same word without implying the same authority.
+  // The findings score's LEVEL, as a word. It shared the line above until the band was
+  // demoted, which drew a threshold over one number with the exact badge an issue severity
+  // uses — two different scales rendered identically, in a table whose column headers are
+  // the only thing telling them apart.
   if (key === "aarsSeverity") return el("span", { class: "muted" }, String(value));
   if (key === "guardrail") {
     return value === "missing"

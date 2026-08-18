@@ -93,7 +93,7 @@ export interface MeasureSpec {
 const NO_PER_ENTITY_HISTORY =
   "Per-sync distribution only; per-entity history requires Drive archive replay, which is " +
   "not implemented. Every data tab this measure reads is overwritten wholesale on each " +
-  "sync — only sync_history is append-only, and it records estate-wide aggregates, never " +
+  "sync — only sync_history is append-only, and it records landscape-wide aggregates, never " +
   "a per-entity trail.";
 
 const REVISION_DUE = "2027-08-13"; // ~1 year past the frozen test clock (2026-08-13)
@@ -103,7 +103,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
   {
     id: "aars-score",
     goal:
-      "Give every AI asset a single, comparable risk number so the estate can be ranked "
+      "Give every AI asset a single, comparable risk number so the landscape can be ranked "
       + "and triaged, priced from what a sync actually collected rather than asserted.",
     scope: "Every AI asset in ai_assets carrying a persisted `aars` value as of the last sync.",
     measure: "The AARS score: 0–100, summed across four pillars (toxic-combination "
@@ -124,7 +124,9 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     timeBasedReference: "Snapshotted at each sync's completion. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "AARS Rules page operator (the model); security analysts (the ranking).",
     dataSource: "ai_assets.aars, ai_assets.aars_input_json",
-    reportingFormat: "AI Inventory table (aars column, sortable); asset detail sheet's pillar bars.",
+    reportingFormat:
+      "AI Inventory register (sortable score column, shown beside aars-percentile); asset "
+      + "detail sheet's verdict number and pillar bars.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
@@ -146,63 +148,67 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       "Re-derived, not stored as a separate decision — bandRanges(rule.bands) applied to "
       + "the persisted aars on every read, so a threshold edit re-bands retroactively with "
       + "no re-sync and no rescore.",
-    target: "No numeric target — see aars-score. A skewed distribution (most assets in one "
-      + "band) is itself the signal aars-tie-rate and aars-effective-cardinality quantify.",
+    target:
+      "No numeric target — see aars-score. A skewed distribution (most assets in one band) "
+      + "is itself the signal aars-tie-rate and aars-effective-cardinality quantify, and on "
+      + "the seed estate it is severe: 19 of 30 scored assets in the top band with two "
+      + "bands empty. The band is therefore published as CONTEXT beside a score and as a "
+      + "distribution over the estate, never as a per-asset decision; aars-percentile is "
+      + "the placement statistic that replaced it in that role.",
     implementationEvidence: "aarsRule.bands on the settings row (settingsStore.getAarsRule) "
       + "carries four distinct, ordered thresholds — validateAarsRule rejects a rule that does not.",
     timeBasedReference: "Read live against the rule in force. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "AARS Rules page operator (thresholds); security analysts (the read).",
     dataSource: "ai_assets.aars, ai_assets.aars_severity",
-    reportingFormat: "AI Inventory filter drawer (aarsSeverities) and asset-sheet secondary "
-      + "chip (with a population-dependence caveat); AARS trend chart; AARS Rules page band "
-      + "occupancy; bootstrap KPI counts (byAarsSeverity); Help's aars-band entry. NOT the "
-      + "Inventory table's primary AARS column as of P2c — see aars-percentile.",
+    reportingFormat:
+      "As CONTEXT: a plain word beside the score in the AI Inventory register and the asset "
+      + "detail sheet — never a tinted verdict chip. As a DISTRIBUTION: the Inventory's "
+      + "level strip and its per-sync trend chart. As a MODEL DIAGNOSTIC: the AARS Rules "
+      + "page's band rail and occupancy read-out, the one surface that still tints it. No "
+      + "KPI counts it: the criticalAars and highAars tiles were withdrawn once the top "
+      + "band was measured holding the whole working population.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
+
   {
     id: "aars-percentile",
     goal:
-      "A percentile is a statement about RANK WITHIN THIS ESTATE, not about absolute risk — "
-      + "the same AARS rule put 100% of the demo estate in CRITICAL and 97.58% of a live "
-      + "estate in INFO under the identical absolute bands, which is what makes an absolute "
-      + "band incomparable across populations while a percentile stays comparable. This "
-      + "figure MOVES WHENEVER THE ESTATE MOVES — a new sync, a rescore, an asset added or "
-      + "removed — even when the asset's own AARS score does not change at all, and a reader "
-      + "must not mistake that movement for the asset itself having gotten better or worse.",
-    scope: "Every AI asset in the currently-scored population (the same population "
-      + "aars-distinct-scores and its siblings measure) carrying a numeric aars value.",
-    measure: "aarsPercentile: 0-100 rank position of the asset's score within that "
-      + "population, using MIDRANK (average) percentile so every member of a tied score "
-      + "shares one value rather than an arbitrary tie-break inventing an ordering the model "
-      + "does not have. Tied scores are common on live data — the seed estate's own tie rate "
-      + "is 0.30, meaning nearly a third of asset pairs cannot be separated at all.",
+      "Say where one asset's findings score sits in the estate that was actually scored, "
+      + "so a reader can act on a placement instead of on a band that does not separate "
+      + "assets. The band it replaces in this role holds 19 of 30 scored assets in its top "
+      + "level on the seed landscape, with two levels empty.",
+    scope:
+      "Every asset carrying a numeric score at read time — the same population the "
+      + "published denominator counts, and the same one the percentile is computed over. "
+      + "Unscored assets are excluded from both, never counted as zero.",
+    measure:
+      "Midrank percentile of the score within the scored population, 0-100, higher = worse. "
+      + "Tied scores share ONE percentile by construction, which is the point: a block of "
+      + "assets the model cannot separate must not be handed an order it did not earn.",
     type: "impact",
-    formula: "rankStats.midrankPercentiles(scores) — for a tie block spanning 1-indexed "
-      + "ranks [a,b], percentile = ((a+b)/2 - 0.5) / N × 100. Run once over every scored "
-      + "asset's aars in src/server/api.ts's assetsModel() and looked up per row; never "
-      + "computed per-asset in isolation, since a percentile has nothing to rank against on "
-      + "its own. getAssetDetail reuses the same cached assetsModel() row rather than "
-      + "re-deriving one over doc.nodes' own (identical, but separately loaded) population, "
-      + "so the Inventory table and the asset sheet can never disagree about one asset's "
-      + "percentile.",
-    target: "No numeric target — a percentile is a position within a distribution, not a "
-      + "pass/fail measure. Watching one asset's percentile move across successive syncs, or "
-      + "reading it beside the population's own shape, is the intended use; a single asset's "
-      + "percentile in isolation says nothing a target could usefully bound.",
-    implementationEvidence: "Computed over the exact same scored population "
-      + "ruleDiscrimination() already measures for the AARS Rules preview (both read "
-      + "`typeof aars === \"number\"` over the same asset list), so the two can never "
-      + "disagree about which assets count as 'in' the estate for this purpose.",
-    timeBasedReference: "Computed fresh on every read, over the scored population as it "
-      + "reads right now. Deliberately NOT a persisted column: persisting it would go stale "
-      + "silently the moment the estate changed without this one asset being rescored, which "
-      + "is exactly the failure mode `withCurrentBands` was built to avoid for the band. "
-      + NO_PER_ENTITY_HISTORY,
-    responsibleParties: "Security analysts, reading one asset's standing against its estate.",
+    formula:
+      "midrankPercentiles(scores) = (count below + count equal / 2) / N, rounded to whole "
+      + "percent when published. The midrank form rather than the cumulative one: with a "
+      + "14-asset tie block on the seed estate, cumulative would read every member at the "
+      + "top of its own block and claim it beat the assets genuinely above it.",
+    target:
+      "No target — a placement is not a threshold. The diagnostic reading is the opposite "
+      + "of a bad value: a percentile IDENTICAL across many assets is the honest report of "
+      + "a tie the score cannot break, and aars-tie-rate quantifies how much of that there is.",
+    implementationEvidence:
+      "Every scored asset carries a percentile on every read path (register, graph, detail "
+      + "sheet) and none carries one in the ledger — there is no percentile column, and the "
+      + "persisted-ledger golden snapshot has none.",
+    timeBasedReference:
+      "Recomputed on every read against the population as it stands, so an unchanged score "
+      + "reads differently once other assets move. " + NO_PER_ENTITY_HISTORY,
+    responsibleParties:
+      "Security analysts (the read); AARS Rules page operator (the model it is a placement in).",
     dataSource: "ai_assets.aars",
-    reportingFormat: "AI Inventory table's primary AARS column (P2c); the asset detail "
-      + "sheet's lead verdict figure, beside the raw score.",
+    reportingFormat:
+      "AI Inventory register (leads the score cell); asset detail sheet's verdict line, with "
+      + "the population size beside it; security graph node badge.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
@@ -217,8 +223,8 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "(previewAarsRule's `after` — every asset re-scored under the rule being evaluated).",
     measure:
       "distinctScores: the count of DIFFERENT score values the scored population takes. "
-      + "This measures the MODEL's separating power, not the estate's risk level — an "
-      + "estate that is genuinely uniform in risk and a model that cannot tell assets apart "
+      + "This measures the MODEL's separating power, not the landscape's risk level — an "
+      + "landscape that is genuinely uniform in risk and a model that cannot tell assets apart "
       + "produce the identical number, and this record's whole job is to keep that "
       + "ambiguity visible rather than let a healthy-looking score list hide it.",
     type: "effectiveness",
@@ -231,7 +237,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       "previewAarsRule's discrimination field is populated (never null) whenever at least "
       + "one asset carries a numeric aars — see EMPTY_DISCRIMINATION's guard for the zero case.",
     timeBasedReference: "Computed fresh on each AARS Rules preview request, over the "
-      + "estate as it reads right now. " + NO_PER_ENTITY_HISTORY,
+      + "landscape as it reads right now. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "AARS Rules page operator, before saving a rule change.",
     dataSource: "ai_assets.aars",
     reportingFormat: "AARS Rules page, rule-preview Discrimination panel (previewAarsRule).",
@@ -242,11 +248,11 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     id: "aars-tie-rate",
     goal:
       "Same as aars-distinct-scores — measure the MODEL's discriminative power, not the "
-      + "estate's risk — but at the scale of PAIRS rather than values, which "
+      + "landscape's risk — but at the scale of PAIRS rather than values, which "
       + "distinctScores alone can hide (several small tie groups still look 'distinct').",
     scope: "The same scored population as aars-distinct-scores.",
     measure: "tieRate: the share of asset PAIRS the model cannot separate — 1.0 means "
-      + "every pair of scored assets shares a value, so any ordering within the estate is "
+      + "every pair of scored assets shares a value, so any ordering within the landscape is "
       + "arbitrary; 0 means every score is unique.",
     type: "effectiveness",
     formula: "rankStats.tieRate(scores) = Σ C(n_k,2) / C(N,2) over the distinct-value groups.",
@@ -264,12 +270,12 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     id: "aars-effective-cardinality",
     goal:
       "Same as aars-distinct-scores and aars-tie-rate — the MODEL's discriminative power, "
-      + "not the estate's risk — weighted by population, so one outlier score does not "
+      + "not the landscape's risk — weighted by population, so one outlier score does not "
       + "claim the same discrimination credit an even split across values would earn.",
     scope: "The same scored population as aars-distinct-scores.",
     measure:
       "effectiveCardinality: exp(Shannon entropy) over the score distribution — how many "
-      + "distinct scores the estate BEHAVES as if it has. Equals distinctScores only when "
+      + "distinct scores the landscape BEHAVES as if it has. Equals distinctScores only when "
       + "every value is taken equally often; a scale of {30: 1 asset, 72: 19 assets} reads "
       + "as barely more than one effective value, not two.",
     type: "effectiveness",
@@ -287,10 +293,10 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     id: "aars-pillar-saturation",
     goal:
       "Locate WHICH pillar of the MODEL has stopped discriminating, not just that the "
-      + "total score has — a pillar pinned at its cap for most of the estate still renders "
+      + "total score has — a pillar pinned at its cap for most of the landscape still renders "
       + "a plausible total, and nothing about the sum alone points back at the pillar "
       + "responsible. Like the three records above it, this measures the MODEL's own "
-      + "separating power, not the estate's risk level.",
+      + "separating power, not the landscape's risk level.",
     scope: "The same scored population as aars-distinct-scores, per pillar.",
     measure:
       "saturated.{toxic,compliance,data,exposure,score}: count of assets sitting AT or "
@@ -317,7 +323,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
   {
     id: "problem-outcome-distribution",
     goal:
-      "Show how the estate's open issues and failing findings split across the four "
+      "Show how the landscape's open issues and failing findings split across the four "
       + "triage queues (ACT/ATTEND/TRACK ★/TRACK), so a lopsided distribution — everything "
       + "landing in TRACK, or an implausibly large ACT count — is visible as a shape rather "
       + "than requiring someone to read every row.",
@@ -339,7 +345,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     timeBasedReference: "Snapshotted at each sync's completion; sync_history.problem_outcome_json "
       + "additionally records this SAME distribution once per sync as an append-only series "
       + "(feeding the AARS trend chart's second series), which is the one figure in this file "
-      + "that DOES have a real, queryable multi-point trend — but still only at the whole-estate "
+      + "that DOES have a real, queryable multi-point trend — but still only at the whole-landscape "
       + "grain, never per-entity. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "Security analysts (triage); AARS Rules page operator (the Problem tree tab).",
     dataSource: "ai_issues.problem_outcome, ai_findings.problem_outcome, sync_history.problem_outcome_json",
@@ -360,10 +366,10 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
   {
     id: "problem-axis-unknown-rate",
     goal:
-      "THE MOST IMPORTANT RECORD IN THIS FILE. A high value here does NOT mean the estate "
+      "THE MOST IMPORTANT RECORD IN THIS FILE. A high value here does NOT mean the landscape "
       + "is safe — it means the model CANNOT PRIORITISE, because the evidence one of its "
       + "four axes needs was never collected. An unknown exploitation rate of 97% is not "
-      + "97% of the estate confirmed non-exploitable; it is 97% of the estate this tree has "
+      + "97% of the landscape confirmed non-exploitable; it is 97% of the landscape this tree has "
       + "no opinion on, defaulting to the least alarming reading by construction. Reading "
       + "a high unknown rate as reassurance is the single most dangerous misuse this "
       + "product's numbers are exposed to, and this record exists to make that misuse hard "
@@ -387,7 +393,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "impact table, exposure traversal evidence (node.exposureEvidence) and business-"
       + "impact tagging are all upstream CONTROLS whose operating rate this measure reports "
       + "on indirectly — a falling unknown rate is evidence those controls are running "
-      + "against more of the estate, not evidence this app changed anything.",
+      + "against more of the landscape, not evidence this app changed anything.",
     timeBasedReference: "Snapshotted at each sync's completion, over the decided population "
       + "as it reads right now. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "Security analysts (reading the queue); Wiz tenant administrators "
@@ -463,7 +469,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       "Count how many cloud-configuration controls are failing RIGHT NOW — the one "
       + "definition of 'compliance gap' every reader of this app (pillar B's pricing, the "
       + "Cloud Configuration register, this KPI) must agree on, so no two pages can ever "
-      + "report a different count for the same estate.",
+      + "report a different count for the same landscape.",
     scope: "Every row in ai_findings passing isOpenGap: result FAIL, status OPEN, not deleted.",
     measure: "complianceGaps: count of open, failing configuration findings.",
     type: "effectiveness",
@@ -500,7 +506,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     target: "No numeric target — this is a coverage-visibility figure about the AI graph's "
       + "own reach, not a control an operator can directly close.",
     implementationEvidence: "ai_assets.id set built from the same sync this tally reads, so "
-      + "the linkage join always reflects the estate as of the same snapshot.",
+      + "the linkage join always reflects the landscape as of the same snapshot.",
     timeBasedReference: "Snapshotted at each sync's completion. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "This app's own operators — a rising figure here is a prompt to "
       + "widen what the AI graph models, not a prompt to fix a cloud control.",
@@ -566,7 +572,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
   {
     id: "framework-average-posture",
     goal:
-      "Give leadership one number for 'how compliant is the estate' across every synced "
+      "Give leadership one number for 'how compliant is the landscape' across every synced "
       + "framework, while keeping unscored frameworks OUT of the average rather than "
       + "letting them silently read as a zero (compliancePosture.ts's own governing rule).",
     scope: "Every framework-level row in ai_framework_posture whose posture state resolves "

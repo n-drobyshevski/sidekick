@@ -181,7 +181,7 @@ export function comboDigest(issues: IssueRow[], assets: GNode[], nowIso: string)
     };
   });
 
-  // Estate totals are taken over EVERY unresolved issue. There used to be a `classified`
+  // Landscape totals are taken over EVERY unresolved issue. There used to be a `classified`
   // narrowing here that dropped anything outside the four patterns, which is what made
   // the KPI row read lower than the same filter in the Wiz console. Every issue now has
   // a bucket, so the cards and the total add up by construction.

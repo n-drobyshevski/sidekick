@@ -10,15 +10,15 @@
 // make; there is no third case, which is what makes it useful. Update the snapshots only
 // with a commit that says why.
 //
-// WHAT IT DOES NOT COVER. Its reach is exactly what the sample estate exercises, which was
-// measured by mutation rather than assumed. Renaming a node the estate contains fails it
+// WHAT IT DOES NOT COVER. Its reach is exactly what the sample landscape exercises, which was
+// measured by mutation rather than assumed. Renaming a node the landscape contains fails it
 // immediately; three other mutations passed, and checking each one showed why:
 //
 //   - `DUE_SOON_DAYS` 7 -> 5           no sample issue falls due in that window
 //   - `SEV_RANK` + a constant offset   a uniform shift does not reorder anything
 //   - a field added to api.ts's error path   no handler errors during a dry run
 //
-// The first is a real gap in the estate, the other two are inert mutations. The important
+// The first is a real gap in the landscape, the other two are inert mutations. The important
 // consequence: `sampleData.ts` sets both internet flags to `false` unless a seed overrides
 // them, and no seed sets `openInternet` without `internet`, so the graph/combos exposure
 // divergence CANNOT show up here. Defects get their own targeted tests with hand-built
@@ -46,7 +46,7 @@ afterEach(() => {
 });
 
 describe("dry-run sync", () => {
-  it("produces the sample estate", () => {
+  it("produces the sample landscape", () => {
     expect(normalize(syncResult)).toMatchSnapshot();
   });
 

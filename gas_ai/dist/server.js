@@ -433,7 +433,7 @@ var Server = (() => {
       // for one Bedrock rule in the sample tenant. Denormalized on purpose: the register
       // reads them per row, the sync rewrites this tab wholesale, and a rules tab would buy
       // a join to save a few hundred cells on a register the framework filter already
-      // bounds to the AI estate.
+      // bounds to the AI landscape.
       "rule_id",
       "rule_graph_id",
       "rule_name",
@@ -537,7 +537,7 @@ var Server = (() => {
     // ---- the rule catalogue + identity hygiene (cloudConfigurationRules) ----
     //
     // `ai_config_rules` is Wiz's VOCABULARY, not this tenant's posture — the only tab here
-    // whose contents do not describe the estate. It is what turns an opaque `SUB-082` in the
+    // whose contents do not describe the landscape. It is what turns an opaque `SUB-082` in the
     // AARS cascade into "Vertex AI Metadata Store should be encrypted with a customer-managed
     // key", and what the identity-hygiene matchers resolve MFA and dormancy rules against
     // instead of hardcoding ids that differ per cloud. ~3,858 rows, refreshed monthly rather
@@ -2835,7 +2835,7 @@ var Server = (() => {
     // posture was collected at all, so switching it on would make the preset differ from the
     // measurement that justifies its numbers; and its effect is DATA-DEPENDENT — it does
     // nothing until a posture sync has run, then changes scores — so a preset carrying it
-    // would silently re-score an estate on the strength of an unrelated sync finishing.
+    // would silently re-score a landscape on the strength of an unrelated sync finishing.
     // It is switched on deliberately, through the Rules page, with the same preview.
     gapSources: {
       fiveRs: true,
@@ -2846,7 +2846,7 @@ var Server = (() => {
     findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
     pillarBCap: 25,
     // Split, so the pillar takes more than two values. Reaching sensitive data is worth 6 —
-    // half what it was, because it is what most of the estate shares — and what you reach is
+    // half what it was, because it is what most of the landscape shares — and what you reach is
     // worth up to 6 more. An asset with one MEDIUM finding scores 6+2=8; one with three
     // CRITICALs scores 6+7=13, clamped to the 12 cap. Two values become five.
     dataExposurePoints: { SENSITIVE: 6, DATA_ACCESS: 3, NONE: 0 },
@@ -3008,20 +3008,19 @@ var Server = (() => {
     return Math.exp(entropy);
   }
   function midrankPercentiles(values) {
+    var _a5;
     const n = values.length;
     if (n === 0) return [];
-    const order = values.map((_, i2) => i2).sort((a, b) => values[a] - values[b]);
-    const percentiles = new Array(n);
-    let i = 0;
-    while (i < n) {
-      let j = i;
-      while (j + 1 < n && values[order[j + 1]] === values[order[i]]) j++;
-      const midrank = (i + 1 + (j + 1)) / 2;
-      const percentile = (midrank - 0.5) / n * 100;
-      for (let k = i; k <= j; k++) percentiles[order[k]] = percentile;
-      i = j + 1;
+    const counts = /* @__PURE__ */ new Map();
+    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
+    const percentileOf = /* @__PURE__ */ new Map();
+    let below = 0;
+    for (const value of [...counts.keys()].sort((a, b) => a - b)) {
+      const size = counts.get(value);
+      percentileOf.set(value, (below + size / 2) / n * 100);
+      below += size;
     }
-    return percentiles;
+    return values.map((v) => percentileOf.get(v));
   }
 
   // src/domain/aarsRule.ts
@@ -7005,7 +7004,7 @@ var Server = (() => {
     SERVERLESS: 5,
     CONTAINER_IMAGE: 5,
     REPOSITORY: 5,
-    // Beside the compute that serves it. An endpoint is the far edge of the estate, but it is
+    // Beside the compute that serves it. An endpoint is the far edge of the landscape, but it is
     // inventory rather than evidence, so it belongs in the infrastructure band and not in the
     // risk band where INTERNET_EXPOSURE sits.
     ENDPOINT: 5
@@ -8331,7 +8330,7 @@ var Server = (() => {
     // sheet long before this — `tags_json` round-trips through the ledger — but with no entry here
     // you could read a tag and not ask about it, which is the gap this closes.
     //
-    // `pairs` rather than `choice` because the value space is the estate's, not the schema's: a
+    // `pairs` rather than `choice` because the value space is the landscape's, not the schema's: a
     // real tenant has thousands of distinct `key: value` strings, far past VALUE_CARDINALITY_MAX,
     // so `fieldValuesFor` offers no list and the builder asks for a key and a value instead.
     {
@@ -8346,11 +8345,28 @@ var Server = (() => {
     },
     { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
     { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
-    { key: "aars", label: "AARS", type: "number", numeric: true, get: (n) => {
+    // Keys are the persisted identifiers and never change; the LABELS are the display name
+    // (aars.AARS_DISPLAY_LABEL) — see its comment for why the two deliberately differ.
+    { key: "aars", label: "Findings score", type: "number", numeric: true, get: (n) => {
       var _a5;
       return (_a5 = n.aars) != null ? _a5 : null;
     } },
-    { key: "aarsSeverity", label: "AARS level", type: "choice", get: (n) => orNull(n.aarsSeverity) },
+    {
+      key: "aarsPercentile",
+      label: "Findings percentile",
+      type: "number",
+      numeric: true,
+      get: (n) => {
+        var _a5;
+        return (_a5 = n.aarsPercentile) != null ? _a5 : null;
+      }
+    },
+    {
+      key: "aarsSeverity",
+      label: "Findings score level",
+      type: "choice",
+      get: (n) => orNull(n.aarsSeverity)
+    },
     {
       key: "projects",
       label: "Projects",
@@ -10064,7 +10080,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7ff893ac6eac" : "dev";
+  var BUILD_ID = true ? "882bd68dd1b6" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -11221,7 +11237,7 @@ var Server = (() => {
     },
     {
       id: "cfg-006",
-      // A SERVICE_ACCOUNT no agent in this estate runs as, so still off-inventory.
+      // A SERVICE_ACCOUNT no agent in this landscape runs as, so still off-inventory.
       resourceId: "sa-bigdata-ai-weatherforecast-pp",
       ruleShortId: "IAM-236",
       severity: "HIGH",
@@ -11389,7 +11405,7 @@ var Server = (() => {
     seedSubCategory("wf-id-275", "ASI01", "ASI01", "ASI01 Agent Goal Hijack", 93, 144, 10),
     seedCategory("wf-id-275", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
     seedSubCategory("wf-id-275", "ASI03", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
-    // The empty category: nothing in this estate to assess. Posture null, reason given —
+    // The empty category: nothing in this landscape to assess. Posture null, reason given —
     // the case the page must never render as 0%.
     seedCategory("wf-id-275", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
     seedSubCategory("wf-id-275", "ASI08", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
@@ -11424,11 +11440,11 @@ var Server = (() => {
     // The other three Rs, and the reason they are seeded at all: this is a DATA-security
     // framework collected by an AI product, and until now the sample carried only the two
     // categories whose rules happen to be about AI (a Bedrock trust policy, a training
-    // bucket). An estate that agrees with the product's focus cannot demonstrate the scope
+    // bucket). A landscape that agrees with the product's focus cannot demonstrate the scope
     // feature, and worse, cannot catch it silently excluding nothing.
     //
     // Note the check counts. 2.1 reports 194,309 passing against ASI01's 144 — three orders
-    // of magnitude, because Wiz is scoring the WHOLE data estate here, not the AI slice of
+    // of magnitude, because Wiz is scoring the WHOLE data landscape here, not the AI slice of
     // it. That gap is the framework's non-AI character showing up in the numbers, and these
     // rows keep it visible.
     seedCategory("wf-id-214", "3", "Relabel", 62, 88412, 1204),
@@ -11581,7 +11597,7 @@ var Server = (() => {
       1
     ),
     // The 5Rs rules this product has no use for: general cloud data governance, evaluated
-    // against the whole estate. None is mapped into an OWASP framework and none has a
+    // against the whole landscape. None is mapped into an OWASP framework and none has a
     // finding on an AI asset, so the derived scope files all four out — which is the point
     // of seeding them. Without these the scope excludes nothing and a broken filter looks
     // exactly like a working one.
@@ -12615,6 +12631,7 @@ var Server = (() => {
     delete next.aars;
     delete next.aarsSeverity;
     delete next.aarsPillars;
+    delete next.aarsPercentile;
     return next;
   }
   var graphDocMemo;
@@ -12628,10 +12645,11 @@ var Server = (() => {
   var frameworkPoliciesMemo;
   var configRulesMemo;
   var identityFindingsMemo;
+  var derivedAssetsMemo;
   function invalidateReadMemos() {
     graphDocMemo = void 0;
     assetsMemo = void 0;
-    edgesMemo = void 0;
+    derivedAssetsMemo = void 0;
     issuesMemo = void 0;
     findingsMemo = void 0;
     dataFindingsMemo = void 0;
@@ -12690,11 +12708,25 @@ var Server = (() => {
     });
     return touched ? out : nodes;
   }
+  function withAarsPercentile(nodes) {
+    const scored = [];
+    for (const n of nodes) if (typeof n.aars === "number") scored.push(n.aars);
+    if (!scored.length) return nodes;
+    const percentiles = midrankPercentiles(scored);
+    let i = 0;
+    return nodes.map((n) => {
+      if (typeof n.aars !== "number") return n;
+      return { ...n, aarsPercentile: Math.round(percentiles[i++]) };
+    });
+  }
   function currentBands() {
     return getAarsRule2().rule.bands;
   }
+  function withAarsReadDerivations(nodes) {
+    return withAarsPercentile(withCurrentBands(nodes, currentBands()));
+  }
   function withBandsApplied(doc) {
-    const nodes = withCurrentBands(doc.nodes, currentBands());
+    const nodes = withAarsReadDerivations(doc.nodes);
     return nodes === doc.nodes ? doc : { ...doc, nodes };
   }
   function loadGraphDocUncached() {
@@ -12703,7 +12735,7 @@ var Server = (() => {
     if (snap) return withRiskNodes(withBandsApplied(normalizeLegacyAars(snap)));
     const assetRows = readAll(TABS.assets);
     if (!assetRows.length) return null;
-    const nodes = withCurrentBands(assetRows.map(rowToAsset), currentBands());
+    const nodes = withAarsReadDerivations(assetRows.map(rowToAsset));
     const edges2 = readAll(TABS.edges).map(rowToEdge);
     const issues2 = loadIssues().filter(isUnresolvedIssue);
     for (const issue2 of issues2) {
@@ -12734,7 +12766,14 @@ var Server = (() => {
     return assetsMemo;
   }
   function loadAssets() {
-    return withCurrentBands(loadAssetsRaw(), currentBands());
+    const raw = loadAssetsRaw();
+    const bands = currentBands();
+    const bandKey = `${bands.critical}|${bands.high}|${bands.medium}|${bands.low}`;
+    const memo = derivedAssetsMemo;
+    if (memo && memo.raw === raw && memo.bandKey === bandKey) return memo.out;
+    const out = withAarsReadDerivations(raw);
+    derivedAssetsMemo = { raw, bandKey, out };
+    return out;
   }
   function loadEdges() {
     if (edgesMemo === void 0) edgesMemo = readAll(TABS.edges).map(rowToEdge);
@@ -12858,7 +12897,7 @@ var Server = (() => {
         optional: true
       },
       // Wiz's cloud-configuration RULE CATALOGUE — reference data, and the only step here whose
-      // contents describe the product rather than the estate. It is what glosses an opaque
+      // contents describe the product rather than the landscape. It is what glosses an opaque
       // `SUB-082` in the AARS cascade, and what the identity-hygiene matchers resolve against
       // instead of hardcoding MFA rule ids that differ per cloud.
       //
@@ -13650,7 +13689,13 @@ var Server = (() => {
         totalAssets: assets.length,
         openIssues: issues2.length,
         bySeverity,
-        byAarsSeverity
+        // A DISTRIBUTION, kept: this is the shape of the score across the estate, which is a
+        // legitimate thing to publish and is the same object the trend charts over time. It
+        // is not the per-asset claim; that moved to `aarsPercentile`.
+        byAarsSeverity,
+        // The percentile's denominator, so a surface reading a percentile off a node can
+        // name the population it is a percentile OF without a second round trip.
+        aarsScored: assets.filter((a) => typeof a.aars === "number").length
       },
       filterOptions: filterOptions(assets)
     };
@@ -13760,7 +13805,7 @@ var Server = (() => {
           ...vocab,
           // ANY gets them too, over every node in the graph. `fieldsForKind("ANY")` already keeps
           // only the kind-agnostic fields, so the union is never one of things that cannot
-          // co-occur — it is "which clouds does this estate use", which is the question.
+          // co-occur — it is "which clouds does this landscape use", which is the question.
           valuesFor: { [kind]: fieldValuesFor(doc, kind) },
           // What the palette's Properties tab lists, and the type that decides which control each
           // field gets. Per-kind for the same reason the value lists are.
@@ -13855,7 +13900,7 @@ var Server = (() => {
     };
   }
   function assetRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K, _L, _M;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K, _L, _M, _N;
     return {
       id: n.id,
       name: n.name,
@@ -13871,49 +13916,53 @@ var Server = (() => {
       severity: (_i = n.severity) != null ? _i : null,
       aars: (_j = n.aars) != null ? _j : null,
       aarsSeverity: (_k = n.aarsSeverity) != null ? _k : null,
+      // The estate percentile, which is what the asset surfaces LEAD with now — the band
+      // beside it is context. Read-derived (syncStore.withAarsPercentile), so null here
+      // means "not in the scored population", never "we have not computed it yet".
+      aarsPercentile: (_l = n.aarsPercentile) != null ? _l : null,
       // Phase 6: the posture tier, BESIDE the AARS score above, never blended into it — see
       // posture.ts's own header for why a tier is not an aggregate of what has been found.
-      postureTier: (_l = n.postureTier) != null ? _l : null,
-      postureInput: (_m = n.postureInput) != null ? _m : null,
-      worstOpenProblem: (_n = n.worstOpenProblem) != null ? _n : null,
-      comboGroups: (_o = n.comboGroups) != null ? _o : [],
-      internet: (_p = n.isAccessibleFromInternet) != null ? _p : null,
-      openInternet: (_q = n.isOpenToAllInternet) != null ? _q : null,
+      postureTier: (_m = n.postureTier) != null ? _m : null,
+      postureInput: (_n = n.postureInput) != null ? _n : null,
+      worstOpenProblem: (_o = n.worstOpenProblem) != null ? _o : null,
+      comboGroups: (_p = n.comboGroups) != null ? _p : [],
+      internet: (_q = n.isAccessibleFromInternet) != null ? _q : null,
+      openInternet: (_r = n.isOpenToAllInternet) != null ? _r : null,
       // ENDPOINT rows only; null everywhere else. The pair is the dynamic scanner's verdict,
       // and the detail sheet prints both because either alone is misleading — an open port
       // behind SSO rates Low and is not an exposure.
-      exposureLevel: (_r = n.exposureLevel) != null ? _r : null,
-      portValidation: (_s = n.portValidation) != null ? _s : null,
+      exposureLevel: (_s = n.exposureLevel) != null ? _s : null,
+      portValidation: (_t = n.portValidation) != null ? _t : null,
       // Null, not {}, when the exposure steps never reached this asset — the same "clean" vs
       // "never asked" split dataFindingCount keeps below.
-      exposureEvidence: (_t = n.exposureEvidence) != null ? _t : null,
+      exposureEvidence: (_u = n.exposureEvidence) != null ? _u : null,
       // Identity rows carry the first two; AI assets carry the third. Null, not false/{}, for
       // the "never reported" vs "reported clean" split the rest of this row keeps.
-      inactive: (_u = n.inactive) != null ? _u : null,
-      inactiveTimeframe: (_v = n.inactiveTimeframe) != null ? _v : null,
-      humanAccess: (_w = n.humanAccess) != null ? _w : null,
-      sensitiveAccess: (_x = n.hasAccessToSensitiveData) != null ? _x : false,
-      sensitiveData: (_y = n.hasSensitiveData) != null ? _y : false,
-      highPriv: (_z = n.hasHighPrivileges) != null ? _z : false,
-      adminPriv: (_A = n.hasAdminPrivileges) != null ? _A : false,
-      guardrailMissing: (_B = n.guardrailMissing) != null ? _B : false,
+      inactive: (_v = n.inactive) != null ? _v : null,
+      inactiveTimeframe: (_w = n.inactiveTimeframe) != null ? _w : null,
+      humanAccess: (_x = n.humanAccess) != null ? _x : null,
+      sensitiveAccess: (_y = n.hasAccessToSensitiveData) != null ? _y : false,
+      sensitiveData: (_z = n.hasSensitiveData) != null ? _z : false,
+      highPriv: (_A = n.hasHighPrivileges) != null ? _A : false,
+      adminPriv: (_B = n.hasAdminPrivileges) != null ? _B : false,
+      guardrailMissing: (_C = n.guardrailMissing) != null ? _C : false,
       // Null, not 0, when the sensitive-data traversal never reached this node: the graph
       // card and the insight row both key on truthiness, and a 0 would make "we never asked"
       // render exactly like "we looked and it is clean".
-      dataFindingCount: (_C = n.dataFindingCount) != null ? _C : null,
-      dataFindingSeverities: (_D = n.dataFindingSeverities) != null ? _D : null,
+      dataFindingCount: (_D = n.dataFindingCount) != null ? _D : null,
+      dataFindingSeverities: (_E = n.dataFindingSeverities) != null ? _E : null,
       // On the aggregate node only — the count it collapses.
-      summaryCount: (_E = n.summaryCount) != null ? _E : null,
-      technologyCategories: (_F = n.technologyCategories) != null ? _F : [],
-      cloudAccount: (_H = (_G = n.cloudAccount) == null ? void 0 : _G.name) != null ? _H : null,
+      summaryCount: (_F = n.summaryCount) != null ? _F : null,
+      technologyCategories: (_G = n.technologyCategories) != null ? _G : [],
+      cloudAccount: (_I = (_H = n.cloudAccount) == null ? void 0 : _H.name) != null ? _I : null,
       // Full account object, for the detail sheet — cloudAccount above stays a bare
       // name string since existing client code already reads it as one.
-      cloudAccountRef: (_I = n.cloudAccount) != null ? _I : null,
-      tags: (_J = n.tags) != null ? _J : [],
-      identityPurpose: (_K = n.identityPurpose) != null ? _K : null,
-      issueAnalytics: (_L = n.issueAnalytics) != null ? _L : null,
+      cloudAccountRef: (_J = n.cloudAccount) != null ? _J : null,
+      tags: (_K = n.tags) != null ? _K : [],
+      identityPurpose: (_L = n.identityPurpose) != null ? _L : null,
+      issueAnalytics: (_M = n.issueAnalytics) != null ? _M : null,
       // Full project objects, for the detail sheet — projects above stays name-only.
-      projectRefs: ((_M = n.projects) != null ? _M : []).map((p) => ({
+      projectRefs: ((_N = n.projects) != null ? _N : []).map((p) => ({
         id: p.id,
         name: p.name,
         businessImpact: p.businessImpact
@@ -13921,7 +13970,7 @@ var Server = (() => {
     };
   }
   function assetTableRow(n, issuesBySeverity, aarsPercentile) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     const row = {
       id: n.id,
       name: n.name,
@@ -13931,17 +13980,13 @@ var Server = (() => {
       severity: (_c = n.severity) != null ? _c : null,
       aars: (_d = n.aars) != null ? _d : null,
       aarsSeverity: (_e = n.aarsSeverity) != null ? _e : null,
-      // A RANK, not a risk level — read this against the population, not the scale. See
-      // rankStats.midrankPercentiles's own header and the aars-percentile measure spec. Never
-      // persisted: it is recomputed from the currently-scored population on every read
-      // (assetsModel below), so it moves whenever the ESTATE changes even when this asset's
-      // own score does not, and would go stale silently the moment it was stored instead.
-      aarsPercentile: aarsPercentile != null ? aarsPercentile : null,
+      // What the table's score cell leads with. See assetRow's note.
+      aarsPercentile: (_f = n.aarsPercentile) != null ? _f : null,
       // Phase 6: BESIDE aars — the two must be visibly independent columns, never merged.
-      postureTier: (_f = n.postureTier) != null ? _f : null,
-      worstOpenProblem: (_g = n.worstOpenProblem) != null ? _g : null,
-      combos: ((_h = n.comboGroups) != null ? _h : []).length,
-      guardrailMissing: (_i = n.guardrailMissing) != null ? _i : false,
+      postureTier: (_g = n.postureTier) != null ? _g : null,
+      worstOpenProblem: (_h = n.worstOpenProblem) != null ? _h : null,
+      combos: ((_i = n.comboGroups) != null ? _i : []).length,
+      guardrailMissing: (_j = n.guardrailMissing) != null ? _j : false,
       agentic: n.identityPurpose === "AGENTIC",
       // How many classified findings this asset can REACH — its own if it is a datastore,
       // whatever its execution identity can read if it is an agent.
@@ -13951,8 +13996,8 @@ var Server = (() => {
       // holding three findings would otherwise report 0 in the register while the graph drew
       // them. Identities fall in the same gap and stay uncovered here — service accounts are
       // unscored for reasons that predate this chain, so nothing persists their reach.
-      dataFindings: ((_k = (_j = n.aarsInput) == null ? void 0 : _j.dataFindings) != null ? _k : []).reduce((sum, f) => sum + f.count, 0) || ((_l = n.dataFindingCount) != null ? _l : 0),
-      projects: ((_m = n.projects) != null ? _m : []).map((p) => p.name)
+      dataFindings: ((_l = (_k = n.aarsInput) == null ? void 0 : _k.dataFindings) != null ? _l : []).reduce((sum, f) => sum + f.count, 0) || ((_m = n.dataFindingCount) != null ? _m : 0),
+      projects: ((_n = n.projects) != null ? _n : []).map((p) => p.name)
     };
     if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
     return row;
@@ -13998,6 +14043,7 @@ var Server = (() => {
       var _a6;
       return assetTableRow(a, issueRollup.get(a.id), (_a6 = aarsPercentileById.get(a.id)) != null ? _a6 : null);
     }).sort(ASSET_COMPARATORS.aars);
+    const postureTiers = countPostureTiers(assets);
     const aarsSeverityCounts = {};
     const kinds = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
@@ -14021,16 +14067,22 @@ var Server = (() => {
         // "3 of 71 agents"; without this it had to recover the 3 by counting rows, which
         // only works while the client holds every row.
         protectedAgents,
-        // REMOVED (P2c): criticalAars / highAars used to sit here — "N assets score
-        // Critical/High" is a band presented as a decision, the clearest instance of it in
-        // this file (ai/AARS_SCORING_ASSESSMENT.md §3: the same rule put nearly an entire
-        // live estate at INFO and nearly an entire demo estate at CRITICAL). They were also
-        // strictly redundant: aarsSeverityCounts.CRITICAL / .HIGH already ship this same
-        // number on this same payload, as a DISTRIBUTION rather than a per-band KPI tile —
-        // "19 assets are CRITICAL under this rule" stays legitimate exactly the way the AARS
-        // trend and the Rules page's band occupancy do; it just does not need its own field.
-        // Their one live consumer, the Help glossary's "AARS" count, now reads `aiAssets`
-        // instead of a band filter. No persisted value moved — this is `kpis` only.
+        // The two asset-level headline counts, and they come from the POSTURE TIER rather
+        // than from the AARS band.
+        //
+        // `criticalAars` / `highAars` used to sit here and were removed, not renamed. They
+        // could not carry a headline: on live data the CRITICAL band holds 19 of 30 scored
+        // assets while HIGH and MEDIUM hold none (ai/AARS_SCORING_ASSESSMENT.md §3, pinned
+        // by test/scoreOrdinality.test.ts), so "criticals" counted the whole working
+        // population and "highs" counted nothing. A KPI that reads as a queue has to be cut
+        // by a model that cuts queues; the tier lattice is that model, and tier 4 is its
+        // worst reading (posture.ts's TIER_VALUES — 4 = worst).
+        tier4Assets: postureTiers[4],
+        tier3Assets: postureTiers[3],
+        // The percentile's DENOMINATOR, published rather than implied — the S-test
+        // AARS_SCORING_ASSESSMENT.md §3 sets for any aggregate this app ships. Without it
+        // "60th percentile" is a number with no population behind it.
+        aarsScored: assets.filter((a) => typeof a.aars === "number").length,
         guardrailCoveragePct: agents.length ? Math.round(protectedAgents / agents.length * 100) : null,
         sensitiveAccess: assets.filter(
           (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData
@@ -14055,16 +14107,16 @@ var Server = (() => {
         // has been synced, so the Wiz Scans area degrades to `partial` on its own instead of
         // reporting a confident zero for a question this tenant was never asked.
         // Scoped the same way the Compliance page scopes it. Not an optimisation — the two
-        // pages would otherwise report different failing-control totals for one estate, and
+        // pages would otherwise report different failing-control totals for one landscape, and
         // this KPI is the number the Wiz Scans coverage area prints beside the other one.
         frameworkPosture: complianceKpis(
           loadPosture(),
           scopedFrameworkPolicies().policies
         ),
         agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
-        // Estate-wide counts for the two risk conditions that had no total. The flags were
+        // Landscape-wide counts for the two risk conditions that had no total. The flags were
         // persisted and drawn on the graph, but `assetTableRow` strips them, so nothing
-        // could say how much of the estate they cover. `internetUnknown` is its own number
+        // could say how much of the landscape they cover. `internetUnknown` is its own number
         // on purpose: a hosted agent inherits exposure from its host and Wiz reports that
         // as undetermined, so folding it into "not exposed" under-reports.
         internetExposed: assets.filter((a) => conditionState(a, "INTERNET_EXPOSURE") === true).length,
@@ -14536,9 +14588,15 @@ var Server = (() => {
               nativeMix: (_d = (_c = digestById.get(s.group.id)) == null ? void 0 : _c.nativeMix) != null ? _d : {},
               count: s.count,
               assets: s.assetIds.map((id) => {
-                var _a6, _b2;
+                var _a6, _b2, _c2;
                 const a = assets.get(id);
-                return a ? { id, name: a.name, aars: (_a6 = a.aars) != null ? _a6 : null, aarsSeverity: (_b2 = a.aarsSeverity) != null ? _b2 : null } : { id, name: id, aars: null, aarsSeverity: null };
+                return a ? {
+                  id,
+                  name: a.name,
+                  aars: (_a6 = a.aars) != null ? _a6 : null,
+                  aarsSeverity: (_b2 = a.aarsSeverity) != null ? _b2 : null,
+                  aarsPercentile: (_c2 = a.aarsPercentile) != null ? _c2 : null
+                } : { id, name: id, aars: null, aarsSeverity: null, aarsPercentile: null };
               })
             };
           }),
@@ -14823,11 +14881,11 @@ var Server = (() => {
         // A THIRD state, distinct from both shadowed and unexercised: the row names a code
         // no derivation can raise, so it cannot fire in any tenant, not just this one.
         unreachableGapRules: unreachableGapRules(proposed),
-        // How well the draft separates the estate — the number the band counts above cannot
+        // How well the draft separates the landscape — the number the band counts above cannot
         // show, because a rule that gives every asset the same score still fills a band.
         discrimination: ruleDiscrimination(after, proposed),
         // Coverage: how many gap instances each cascade row priced, what fell through to the
-        // fallback, and the codes the estate carries. A row at 0 here is NOT the same claim
+        // fallback, and the codes the landscape carries. A row at 0 here is NOT the same claim
         // as shadowedGapRules — one can never fire, the other simply is not exercised — and
         // the page reads them as two different sentences.
         gapMatchCounts: tally.perRule,

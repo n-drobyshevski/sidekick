@@ -471,7 +471,7 @@ export function queryBar(opts) {
 
   const EMPTY_FIELDS = { fields: [], values: [] };
   const fieldIn = (got, key) => ((got && got.fields) || []).find((f) => f.key === key) || null;
-  /** Whether the estate offered a value list for this field — undefined until the fetch lands. */
+  /** Whether the landscape offered a value list for this field — undefined until the fetch lands. */
   const hasValuesFor = (kind, key) => {
     const got = fieldCache.get(kind);
     if (!got) return undefined;

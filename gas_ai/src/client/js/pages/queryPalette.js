@@ -88,7 +88,7 @@ const TYPE_WORDS = {
 };
 const TYPE_BLURBS = {
   text: "Matched as a SUBSTRING, so “prod” finds “prod-agent-01”. Case is ignored.",
-  choice: "Pick from the values this estate actually holds — the list is the graph's, not the "
+  choice: "Pick from the values this landscape actually holds — the list is the graph's, not the "
     + "schema's, and each value says how many nodes carry it.",
   boolean: "Three states, not two: yes, no, and unknown. Wiz not reporting a property is a "
     + "different answer from reporting it false, and the filter keeps them apart.",
@@ -99,7 +99,7 @@ const TYPE_BLURBS = {
 /** How many relationships the Popular section leads with before you go to a category. */
 const POPULAR_RELATIONS = 6;
 
-/** The same, for entity kinds — the commonest in the estate, since the vocabulary has no other
+/** The same, for entity kinds — the commonest in the landscape, since the vocabulary has no other
  *  ranking to offer and alphabetical would just promote whatever begins with A. */
 const POPULAR_KINDS = 6;
 
@@ -202,7 +202,7 @@ export function paletteEntries(ctx) {
   // ------------------------------------------------------------------ entities
   // What to look FOR, rather than where to go next. Only the kinds this tenant's graph actually
   // holds, in the vocabulary's declaration order so the picker reads the way the legend does —
-  // and each one says how many there are, so an empty corner of the estate is visible before
+  // and each one says how many there are, so an empty corner of the landscape is visible before
   // you build a query around it.
   if (mode === "entity") {
     const kinds = ((vocab || {}).kinds || []);
@@ -665,7 +665,7 @@ const HELP_FOR_KIND = {
 /**
  * What an entity kind is, for the entity palette's detail pane.
  *
- * The TALLY leads, because it is the half that is about this estate rather than about the model:
+ * The TALLY leads, because it is the half that is about this landscape rather than about the model:
  * a kind the graph holds four of is a different proposition from one it holds four hundred of,
  * and a kind it holds none of is a query that will answer nothing. Then the help book's prose
  * where it has an entry — the same words the `?` tips and the Reference page carry, so the

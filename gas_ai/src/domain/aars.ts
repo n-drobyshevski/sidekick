@@ -13,6 +13,38 @@
 
 import type { AarsSeverity, Severity } from "./config";
 
+/**
+ * What the UI calls this model on any surface ABOUT AN ASSET. The one place the string
+ * lives, so it cannot drift between a column header, a chip, a sheet caption and a query
+ * field label.
+ *
+ * THE IDENTIFIER AND THE LABEL ARE DELIBERATELY DIFFERENT, and the difference is load-bearing
+ * in both directions.
+ *
+ * The LABEL changed because "AI Asset Risk Score" overclaims. This model is a weighted sum
+ * over issues, compliance gaps and data exposure that have already been FOUND; "risk"
+ * implies forward-looking consequence, and that is the AssetPosture tier's job (posture.ts:
+ * capability × containment × consequence). Calling a backward-looking total a risk score is
+ * what let its bands be read as an SLA — see ai/AARS_SCORING_ASSESSMENT.md §3, where the top
+ * band holds 19 of 30 scored assets.
+ *
+ * The IDENTIFIERS did not change, and must not. Eight of them are persisted —
+ * `ai_assets.aars` / `aars_severity` / `aars_pillars_json` / `aars_input_json`,
+ * `sync_history.aars_severity_json` / `aars_rule_version`, and the `aars_rule` /
+ * `aars_scored_version` settings keys — and `sheetsDb.ensureHeaders` only ever APPENDS: it
+ * has no rename path and no drop path, so a renamed column would sit beside its predecessor
+ * in every tenant's sheet permanently. The evidence is already in the tree: renaming the
+ * single field `aarsBand` → `aarsSeverity` still costs four maintained code paths today
+ * (`normalizeLegacyAars`, `rowToAsset`'s dual read, and two branches in diagnostics.ts). A
+ * label is free to change; a column name is a migration this app cannot perform.
+ *
+ * The acronym AARS survives on the AARS Rules page, where it names a specific tunable model
+ * rather than making a claim about an asset. `src/client/js/ui/findingsScore.js` mirrors
+ * this constant for the client bundle (which cannot import a TS module) and
+ * test/assetQueryMirror.test.ts asserts the two agree.
+ */
+export const AARS_DISPLAY_LABEL = "Findings score";
+
 export type DataExposure = "SENSITIVE" | "DATA_ACCESS" | "NONE";
 
 /**
@@ -222,8 +254,8 @@ export interface AarsRule {
    *
    * This is what ai/AARS_ASSESSMENT.md:74,190 measures the need for: pillar C sits at its
    * ceiling for 20 of 30 assets under BOTH the spec rule and v2, because it prices a
-   * boolean — "reaches sensitive data" — that most of the estate shares, and the assessment
-   * calls that "a true fact about the estate rather than a modelling error". A pillar
+   * boolean — "reaches sensitive data" — that most of the landscape shares, and the assessment
+   * calls that "a true fact about the landscape rather than a modelling error". A pillar
    * constant across two thirds of the population ranks nothing. The finding term reads what
    * the boolean cannot: WHICH data, and how much of it.
    *
@@ -312,7 +344,7 @@ export const DEFAULT_AARS_RULE: AarsRule = {
  * deliberately — never a default. It exists because `DEFAULT_AARS_RULE` was fitted to the
  * 14-row applied table in ai/custom_score.md, where each asset carries 2–3 hand-picked gap
  * codes, and the live derivation produces 5–6. Under the spec rule on live data pillar B
- * sits at its cap for every scored agent, the estate collapses onto ~5 distinct scores,
+ * sits at its cap for every scored agent, the landscape collapses onto ~5 distinct scores,
  * and the HIGH and MEDIUM levels are unreachable.
  *
  * What changed, and why each one:
@@ -331,7 +363,7 @@ export const DEFAULT_AARS_RULE: AarsRule = {
  *                membership (it is the whole reason agent-H-chatbot is CRITICAL at 71 rather
  *                than HIGH at 69). Baking it in makes the pillar say what it means. The
  *                split is what stops the pillar being near-constant: the boolean it used to
- *                price alone is shared by two thirds of the estate, so the findings an asset
+ *                price alone is shared by two thirds of the landscape, so the findings an asset
  *                actually reaches now carry half the pillar's weight.
  *   Pillar D 18  The budget pillar C gave up. Reachability is the signal the spec computes,
  *                draws on the graph, writes a section of the doc about, and never scores.
@@ -370,7 +402,7 @@ export const AARS_V2_RULE: AarsRule = {
   // posture was collected at all, so switching it on would make the preset differ from the
   // measurement that justifies its numbers; and its effect is DATA-DEPENDENT — it does
   // nothing until a posture sync has run, then changes scores — so a preset carrying it
-  // would silently re-score an estate on the strength of an unrelated sync finishing.
+  // would silently re-score a landscape on the strength of an unrelated sync finishing.
   // It is switched on deliberately, through the Rules page, with the same preview.
   gapSources: {
     fiveRs: true, deprecatedModel: true, inactiveAgent: true, frameworkMapping: false,
@@ -378,7 +410,7 @@ export const AARS_V2_RULE: AarsRule = {
   findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
   pillarBCap: 25,
   // Split, so the pillar takes more than two values. Reaching sensitive data is worth 6 —
-  // half what it was, because it is what most of the estate shares — and what you reach is
+  // half what it was, because it is what most of the landscape shares — and what you reach is
   // worth up to 6 more. An asset with one MEDIUM finding scores 6+2=8; one with three
   // CRITICALs scores 6+7=13, clamped to the 12 cap. Two values become five.
   dataExposurePoints: { SENSITIVE: 6, DATA_ACCESS: 3, NONE: 0 },

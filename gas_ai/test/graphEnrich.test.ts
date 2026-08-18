@@ -66,7 +66,7 @@ describe("enrichGraphDoc", () => {
     );
     expect(flagged.length).toBeGreaterThan(0);
     // Not one per flagged asset any more: the stub is the FALLBACK, drawn only where no
-    // traversable path to a classified store exists. The seed estate has real chains, so a
+    // traversable path to a classified store exists. The seed landscape has real chains, so a
     // strict per-flag count here would assert the feature is off.
     expect(sensNodes.length).toBeLessThan(flagged.length);
     expect(sensNodes).toHaveLength(sensEdges.length);

@@ -3,7 +3,7 @@
 // not by a rater's gut). This is a 4-axis, 54-leaf classification TREE, and it exists to
 // answer a different question than AARS (aars.ts) answers.
 //
-// AARS is a continuous 0–100 SCORE, built to RANK an estate against itself: its entire
+// AARS is a continuous 0–100 SCORE, built to RANK a landscape against itself: its entire
 // value is that (almost) every asset gets a different number, so "top 10" means
 // something. This module is a discrete ROUTING tree, built to sort one issue or finding
 // into one of four queues: ACT, ATTEND, TRACK*, TRACK. Its entire value is the opposite
@@ -248,7 +248,7 @@ function exploitationOfFinding(
  * group (if any) is not one `rule.totalImpactGroups` names. This is worth stating
  * explicitly because the axis itself has only two VALUES (see `TechnicalImpact`'s
  * comment) — `unknowns` reports a RATE that exists independently of whether the axis has
- * a third value to fall into. An estate can be 40% "impact unknown" while every reading
+ * a third value to fall into. A landscape can be 40% "impact unknown" while every reading
  * that was made still says TOTAL or PARTIAL; collapsing the two would hide exactly the
  * coverage gap this whole tree exists to surface.
  */
@@ -389,12 +389,12 @@ export function deriveFindingProblemInput(
  * The precedent is `GNode.aarsInput`: persisting WHAT THE VERDICT WAS MADE FROM is what
  * lets a rule change RE-DECIDE exactly these facts (`syncStore.redecideProblems`) rather
  * than re-derive a possibly different set from a graph that may have moved on since — and
- * it is what makes a whole-estate preview (`syncStore.decideProblemsWith`) cost zero Wiz
+ * it is what makes a whole-landscape preview (`syncStore.decideProblemsWith`) cost zero Wiz
  * calls, for exactly the reason a persisted `aarsInput` makes `rescoreInventory` free.
  *
  * `derivedUnder` absent means the row predates this field: reused rather than forced
  * through a re-derivation, the same grandfather rule `aarsInput.derivedUnder` follows, so
- * upgrading to this version never re-decides a tenant's estate on its own.
+ * upgrading to this version never re-decides a tenant's landscape on its own.
  */
 export interface ProblemVerdictInput extends ProblemInput {
   derivedUnder?: string;
@@ -518,7 +518,7 @@ function languageFactor(node: GNode | undefined): AmplificationFactor {
  * the single most important rule in this function. `tools`, `persistence` and
  * `multiAgent` need the `USES_TOOL` / `INVOKES_TOOL` / `USES_DATASET` edges — and no LIVE
  * Wiz query this app runs produces them. They exist only in two places: the hand-authored
- * `sampleData.ts` seed estate, and the `AGENT_EXPANSION` fixture, which is never
+ * `sampleData.ts` seed landscape, and the `AGENT_EXPANSION` fixture, which is never
  * persisted. On real tenant data these three factors have NOTHING to read, and this
  * function returns `null` for all three, always, on every live node. An unmeasured
  * factor reading as `0` would render as "confirmed no tool access, confirmed no

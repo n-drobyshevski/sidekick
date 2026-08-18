@@ -125,7 +125,7 @@ describe("withFrameworkCodes — adds precision, never a gap", () => {
     }
   });
 
-  it("is a no-op against an empty lookup — an estate with no posture synced", () => {
+  it("is a no-op against an empty lookup — a landscape with no posture synced", () => {
     expect(withFrameworkCodes(FINDINGS, {})).toEqual(FINDINGS);
   });
 });
@@ -138,7 +138,7 @@ describe("gapSources.frameworkMapping", () => {
   it("is OFF even in the calibrated v2 preset", () => {
     // ai/AARS_ASSESSMENT.md measured v2 before posture existed, and the flag's effect is
     // data-dependent — it does nothing until a posture sync runs, then moves scores. A
-    // preset carrying it would silently re-score an estate when an unrelated sync landed.
+    // preset carrying it would silently re-score a landscape when an unrelated sync landed.
     expect(AARS_V2_RULE.gapSources.frameworkMapping).toBe(false);
   });
 

@@ -6,12 +6,29 @@
 
 import { categoryOf, kindIcon, kindLabel, svgEl } from "./icons.js";
 import { sevEntries, sevSpoken } from "./ui/severity.js";
-import { tierLabel } from "./ui/posture.js";
+import { FINDINGS_SCORE_LABEL, ordinal } from "./ui/scoreLabel.js";
 
 // Mirrors SEVERITY_ORDER in src/domain/config.ts, for the same reason egoLayout.js,
 // assetQuery.js and comboView.js each keep their own copy: the client bundle cannot import
 // the domain layer, and the order must still agree with it.
 const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
+
+/**
+ * What the score badge prints. The PERCENTILE, not the raw score, because a graph card is
+ * the one surface with no column of neighbours to read a 0–100 number against — "72" alone
+ * says nothing about whether 72 is unusual here, and on this estate it is not (14 assets
+ * share it). "p60" says where the asset sits, which is the only comparison a card can
+ * usefully make. The raw score is still spoken in the accessible name and shown in full on
+ * the detail sheet.
+ *
+ * Falls back to the bare score on a payload cached before the percentile existed, rather
+ * than drawing an empty badge.
+ */
+function scoreBadgeText(node) {
+  return typeof node.aarsPercentile === "number"
+    ? "p" + node.aarsPercentile
+    : String(node.aars);
+}
 
 export const NODE_W = 196;
 export const NODE_H = 56;
@@ -35,13 +52,14 @@ export function nodeAriaLabel(node) {
   const parts = [kindLabel(node.kind), node.name];
   if (node.severity) parts.push("severity " + node.severity);
   if (node.aars !== undefined && node.aars !== null) {
-    // Posture tier, not the AARS band: a graph node's neighbourhood is a different, smaller
-    // population every time the seed changes, so a percentile computed against it would not
-    // mean what the Inventory table's percentile means, and the band is the population-
-    // dependent read this whole change exists to stop asserting about one asset. The tier is
-    // neither — a lattice read (capability × containment), true independent of population size.
-    const tier = tierLabel(node.postureTier);
-    parts.push("AARS " + node.aars + (tier ? ", posture " + tier : ""));
+    // The score and its placement. The BAND is deliberately not spoken here any more: it
+    // separates almost nothing on live data (ai/AARS_SCORING_ASSESSMENT.md §3), so reading
+    // "CRITICAL" onto a card next to a real issue severity announced two lines earlier put
+    // two different scales under one word.
+    parts.push(FINDINGS_SCORE_LABEL.toLowerCase() + " " + node.aars +
+      (typeof node.aarsPercentile === "number"
+        ? ", " + ordinal(node.aarsPercentile) + " percentile"
+        : ""));
   }
   if ((node.comboGroups || []).length) parts.push("toxic combination member");
   if (node.guardrailMissing) parts.push("no guardrail");
@@ -106,7 +124,7 @@ function drawFullCard(node, palette) {
   kind.textContent = isSummary ? "Enter to expand" : kindLabel(node.kind).toUpperCase();
   g.append(kind);
 
-  // Severity dot + label (bottom-left) and AARS score (bottom-right).
+  // Severity dot + label (bottom-left) and the findings-score percentile (bottom-right).
   // Two-token severity: the dot keeps the server palette's vivid FILL (a graphical mark,
   // >=3:1, and a deployment may retint it), while the label takes the darkened TEXT token
   // via CSS so it clears 4.5:1 on the pale category tint behind it. Painting the label in
@@ -125,7 +143,7 @@ function drawFullCard(node, palette) {
       class: "gnode-aars",
       x: NODE_W - 10, y: 49.5, "text-anchor": "end",
     });
-    aars.textContent = "AARS " + node.aars;
+    aars.textContent = scoreBadgeText(node);
     g.append(aars);
   }
 
@@ -197,13 +215,15 @@ function drawCompactCard(node, palette) {
   const label = node.kind === "DATA_FINDING" && node.summaryCount
     ? node.name + " ×" + node.summaryCount
     : isSummary ? node.name + " " + kindLabel(node.summaryOf) : node.name;
-  name.textContent = truncate(label, hasAars ? 12 : 19);
+  // 15, not the old 12: the badge shrank from "AARS 72" to "p60", and the row-sharing
+  // arithmetic above is what decides how much of the name survives.
+  name.textContent = truncate(label, hasAars ? 15 : 19);
   g.append(name);
   if (hasAars) {
     const aars = svgEl("text", {
       class: "gnode-aars", x: NODE_W_SM - 10, y: 17, "text-anchor": "end",
     });
-    aars.textContent = "AARS " + node.aars;
+    aars.textContent = scoreBadgeText(node);
     g.append(aars);
   }
 

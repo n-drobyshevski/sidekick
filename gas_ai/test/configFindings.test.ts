@@ -110,7 +110,7 @@ describe("configTotals", () => {
   });
 
   it("draws the severity mix from gaps only", () => {
-    // The resolved row is HIGH-adjacent noise: counting it would draw risk the estate no
+    // The resolved row is HIGH-adjacent noise: counting it would draw risk the landscape no
     // longer carries.
     const mix = configTotals(rows).severityMix;
     expect(mix.HIGH).toBe(1);

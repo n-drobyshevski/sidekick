@@ -11,7 +11,7 @@
 //
 // So the honest states are three, not two, and an area's state is DERIVED wherever a
 // resolver can decide it: if `figure()` cannot produce a number — an older server bundle
-// without the KPI, a failed RPC, an estate with none of that thing — the area degrades to
+// without the KPI, a failed RPC, a landscape with none of that thing — the area degrades to
 // `partial` on its own rather than asserting a figure it cannot compute. Only "we never
 // ask Wiz this" and "we ask, but what comes back does not cover what the prose claims" are
 // declared, because no payload can tell you either.
@@ -287,13 +287,13 @@ export const SCAN_AREAS = [
     title: "Compliance Framework Posture",
     query: "securityFrameworks (FRAMEWORKS_LIST) + securityFramework · complianceAnalytics " +
       "(COMPLIANCE_POSTURE_<framework>)",
-    what: "The score each tracked security framework holds against this estate — OWASP " +
+    what: "The score each tracked security framework holds against this landscape — OWASP " +
       "Agentic, OWASP ML, the Wiz 5Rs — broken down by category, subcategory and the " +
       "policies behind them.",
     lands: "compliance",
     // DERIVED, not declared. This area used to be the missing half of the one above, and
     // the honest thing now is to let `figure` decide: a tenant that rejected the optional
-    // step, an estate with no framework selected, and an older server bundle without the
+    // step, a landscape with no framework selected, and an older server bundle without the
     // KPI all produce no figure and step back to `partial` on their own.
     note: "Two queries, and only one of them scores anything. FRAMEWORKS_LIST collects the " +
       "tenant's framework catalogue, which populates the Settings picker; the posture steps " +
@@ -301,7 +301,7 @@ export const SCAN_AREAS = [
       "rather than with the catalogue — a tenant carrying a hundred builtin frameworks costs " +
       "one listing call, not a hundred posture ones. Wiz's own percentages are stored " +
       "verbatim and never recomputed here. A subcategory Wiz could not score — nothing in " +
-      "the estate to assess, or no policy written for it — is carried as its own state and " +
+      "the landscape to assess, or no policy written for it — is carried as its own state and " +
       "left OUT of the average, never counted as a zero. The framework id is not an editable " +
       "step variable, because it selects which framework is fetched rather than filtering " +
       "within one.",
@@ -350,7 +350,7 @@ export const SCAN_AREAS = [
       const admin = n(ctx.kpis.humanReachableAdmin);
       if (admin) parts.push(admin + " at admin");
       // The hygiene clauses go last and only when they fire: they are findings about the
-      // people rather than facts about the reach, and a clean estate should not be made to
+      // people rather than facts about the reach, and a clean landscape should not be made to
       // carry two zeroes to say so.
       const noMfa = n(ctx.kpis.humanNoMfa);
       if (noMfa) parts.push(noMfa + " without MFA");
@@ -383,7 +383,7 @@ export const SCAN_AREAS = [
       "a live tenant. The two network-exposure steps do request the code-source path (it " +
       "is part of the console document they send verbatim), and every page of it is kept " +
       "in the Drive archive; nothing normalizes it into edges yet, and it would only ever " +
-      "cover the internet-exposed slice of the estate, so this area stays unscanned rather " +
+      "cover the internet-exposed slice of the landscape, so this area stays unscanned rather " +
       "than claiming coverage from a biased sample.",
     figure: () => null,
   },

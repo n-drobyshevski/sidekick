@@ -1,0 +1,409 @@
+/* ------------------------------------------------------------------ decision lattice */
+/* The Problem tree's 54 leaves and the Posture lattice's 27 cells, drawn. Both tabs edit a
+   first-match-wins cascade over a fixed, closed, enumerable space, and until this existed
+   neither drew that space at all — a row's claim was a number in a table cell, and the
+   per-leaf landscape census the server already sends was read for one scalar and discarded.
+
+   A GRID OF BUTTONS, NOT AN SVG. The graph, the ego map and the provenance diagram are SVG
+   because they draw edges between irregularly placed boxes — Béziers, arrowheads, labels
+   evaluated along a curve. A lattice is a regular grid with none of that, and everything
+   SVG would be good at here is free in CSS grid: `base.css` already rings `button` on
+   :focus-visible, a <button> already answers Enter and Space, and a popover anchors off
+   getBoundingClientRect() identically either way. This is `.combo-matrix`'s own call
+   (combos.css) — "a grid, not a table element, because the row heads are buttons" — and
+   the class names stay disjoint from it. The icicle view IS free geometry, so that one is
+   SVG; see ui/latticeIcicle.js.
+
+   A LEDGER, NOT A HEAT MAP. combos.css says it out loud: tinting cells by magnitude is
+   what turns a ledger into a heat map, and the condition matrix declines it. Rule mode
+   carries no magnitude at all — four discrete outcome tints off the four .pill kinds
+   outcomeBadge and tierBadge already use, each with its word. Landscape mode is the one place
+   a quantity is encoded, and it is BUCKETED rather than continuous, always prints the
+   count, and hatches zero — so the number is the reading and the tint is only the sort
+   order. No cell ever depends on telling two shades apart. */
+
+.lat-scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+/* Small multiples: Posture hoists its consequence axis into three panels on one shared
+   scale — the pattern the compliance framework rail already uses. Each panel is its own
+   grid and its own tab stop; see ui/lattice.js for why they are not threaded together. */
+.lat-panels {
+  display: flex;
+  gap: 26px;
+  flex-wrap: wrap;
+}
+.lat-panel-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink);
+  padding-bottom: 7px;
+  margin-bottom: 7px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.lat {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+/* `role="grid"` needs its cells inside `role="row"` elements, and a laid-out row would
+   break grid placement — the cells would lay out inside the row instead of in the grid.
+   `display: contents` keeps the wrapper in the accessibility tree while contributing
+   nothing to layout, so the grid sees the cells directly and a screen reader still sees
+   rows. Every child is explicitly placed, so the wrappers are purely semantic. */
+.lat-rowwrap { display: contents; }
+
+/* Header bands. The OUTER group labels are aria-hidden decoration — every cell's own
+   aria-label restates the whole vector in words, so a screen reader never needs them, and
+   announcing them would repeat the axis name on every one of 54 cells. */
+.lat-hgroup,
+.lat-hsub,
+.lat-rgroup,
+.lat-rsub {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.lat-hgroup {
+  justify-content: center;
+  padding-bottom: 5px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+/* Narrow panels put two header words shoulder to shoulder ("PARTIALSTRONG"), so the inner
+   band keeps a gutter of its own rather than relying on the cell width below it. */
+.lat-hsub { justify-content: center; padding: 0 4px 6px; }
+.lat-rgroup { padding-right: 10px; }
+.lat-rsub { padding-right: 10px; font-weight: 600; color: var(--text-2); }
+
+/* ------------------------------------------------------------------------- the cell */
+.lat-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  margin: 1px;
+  padding: 2px;
+  min-height: 34px;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.15;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-2);
+  transition: box-shadow var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+.lat-cell__mark { font-size: 9px; letter-spacing: 0.01em; }
+.lat-cell__count { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Rule / Change tones — the four .pill kinds, so the lattice cannot mint a fifth palette. */
+.lat-cell[data-tone="bad"]     { background: rgba(185, 28, 28, 0.12); color: var(--bad); }
+.lat-cell[data-tone="warn"]    { background: rgba(161, 98, 7, 0.12); color: var(--warn); }
+.lat-cell[data-tone="neutral"] { background: rgba(0, 0, 0, 0.06); color: var(--text-2); }
+.lat-cell[data-tone="ok"]      { background: rgba(21, 128, 61, 0.12); color: var(--ok); }
+
+/* Landscape buckets. Four steps, not a ramp, and the count is printed in every one of them. */
+.lat-cell[data-bucket="1"] { background: rgba(0, 0, 0, 0.05); color: var(--text-2); }
+.lat-cell[data-bucket="2"] { background: rgba(0, 0, 0, 0.13); color: var(--ink); }
+.lat-cell[data-bucket="3"] { background: rgba(0, 0, 0, 0.26); color: var(--ink); }
+
+/* Zero occupancy, and "no preview has landed yet" — different claims, different marks.
+   The hatch is .rail-over's, so "past the edge of what is real" reads the same way here
+   as it does on the pillar rails one tab over. */
+.lat-cell[data-bucket="0"],
+.lat-cell.is-unmeasured {
+  background: repeating-linear-gradient(
+    45deg, transparent, transparent 4px, rgba(0, 0, 0, 0.06) 4px, rgba(0, 0, 0, 0.06) 8px);
+  color: var(--text-3);
+}
+.lat-cell.is-unmeasured { color: rgba(0, 0, 0, 0.4); }
+
+/* Change mode: cells the draft does not move recede rather than disappear, so the shape of
+   the unchanged remainder is still legible behind the diff. */
+.lat-cell.is-receded { opacity: 0.16; }
+
+/* Divergence: the mirror and the server disagree about this rule, so the picture is not
+   trusted. Every cell is hatched and toned out rather than left showing a confident wrong
+   answer with a warning beside it. */
+.lat.is-diverged .lat-cell {
+  background: repeating-linear-gradient(
+    45deg, transparent, transparent 4px, rgba(0, 0, 0, 0.08) 4px, rgba(0, 0, 0, 0.08) 8px);
+  color: var(--text-3);
+}
+
+/* ------------------------------------------------------------------ lit / focus / trace */
+/* The register drives the picture: hovering OR focusing a cascade row lights the cells it
+   claims. Focus as well as hover, because a keyboard user gets the same link — the rule
+   scans.js's provenance diagram already follows. */
+.lat-cell.is-lit { box-shadow: 0 0 0 2px var(--ink); z-index: 1; }
+.lat-cell:hover { box-shadow: 0 0 0 2px var(--text-3); z-index: 1; }
+.lat-cell:focus-visible { z-index: 2; }
+.lat-cell.is-traced {
+  box-shadow: 0 0 0 3px var(--accent);
+  z-index: 3;
+  animation: lat-pulse 1.1s var(--ease-loop) infinite;
+}
+@keyframes lat-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--accent); }
+  50% { box-shadow: 0 0 0 6px rgba(190, 18, 60, 0.28); }
+}
+
+/* Landscape is the only mode that goes stale while a preview is in flight — Rule and Change
+   are mirror-driven and already current, so they must NOT dim. Same grammar as
+   .rule-impact.updating. */
+.lat.is-updating[data-mode="landscape"] .lat-cell {
+  opacity: 0.45;
+  transition: opacity 120ms var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lat-cell { transition: none; }
+  .lat-cell.is-traced { animation: none; box-shadow: 0 0 0 3px var(--accent); }
+  .lat.is-updating[data-mode="landscape"] .lat-cell { transition: none; }
+}
+
+/* ------------------------------------------------------------------- outcome mass strip */
+/* The four outcomes over the whole 54 (or 27), with the ACT / tier-4 ceiling drawn as a
+   reference marker. Until this existed the ceiling only spoke as a thrown string at save
+   time; the mirror makes it answer while you drag. The marker lives in the frame, NOT in
+   the bar — overflow:hidden on the bar would eat both its overhang and its label. */
+.lat-mass { margin-top: 24px; }
+.lat-mass__frame { position: relative; padding-top: 15px; }
+.lat-mass__bar {
+  display: flex;
+  height: 12px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--track-bg);
+}
+.lat-mass__seg { display: block; min-width: 2px; }
+.lat-mass__seg[data-tone="bad"]     { background: var(--bad); }
+.lat-mass__seg[data-tone="warn"]    { background: var(--warn); }
+.lat-mass__seg[data-tone="neutral"] { background: rgba(0, 0, 0, 0.42); }
+.lat-mass__seg[data-tone="ok"]      { background: var(--ok); }
+.lat-mass__mark {
+  position: absolute;
+  top: 9px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--ink);
+}
+.lat-mass__mark::after {
+  content: attr(data-label);
+  position: absolute;
+  left: 5px;
+  top: -13px;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.lat-mass__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 16px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.lat-mass__legend b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* --------------------------------------------------------------------- the claim rail */
+/* Replaces the 44px per-row bar, on which 1 of 54 rendered at 0.8px and 6 of 54 at 4.9px —
+   two claims a reader could not tell apart. Each row's claim is a SEGMENT at its cumulative
+   offset in cascade order, so the column reads top to bottom as the space being consumed:
+   row 1 takes [0,3), row 2 [3,5), the fallback takes the tail. That is what "order is
+   meaning" actually looks like. aria-hidden beside its own number, per ui/data.js's
+   decorative-meter rule. */
+.claim-rail { display: flex; align-items: center; gap: 6px; }
+.claim-rail__track {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  min-width: 60px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--track-bg);
+}
+.claim-rail__fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  border-radius: 1px;
+  background: rgba(0, 0, 0, 0.55);
+}
+.claim-rail__n {
+  min-width: 15px;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+/* A row that claims nothing gets a hatched lane rather than an empty one: "never fires" is
+   a finding to report, not an absence to leave blank. */
+.claim-rail.is-dead .claim-rail__track {
+  background: repeating-linear-gradient(
+    45deg, transparent, transparent 3px, rgba(0, 0, 0, 0.09) 3px, rgba(0, 0, 0, 0.09) 6px);
+}
+
+/* ---------------------------------------------------------------------------- icicle */
+.lat-icicle { display: block; width: 100%; height: auto; }
+.lat-icicle text { font-family: var(--font); fill: var(--svg-text-2); }
+.lat-icicle .lat-band { stroke: var(--page); stroke-width: 1; }
+.lat-icicle .lat-band.is-lit { stroke: var(--ink); stroke-width: 2; }
+.lat-icicle .lat-band__label { font-size: 10px; font-weight: 600; fill: var(--ink); }
+.lat-icicle .lat-leaf__label { font-size: 9px; font-weight: 600; }
+.lat-icicle .lat-colhead {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  fill: var(--text-3);
+}
+
+/* The reverse of `light()`: a cascade row lights when the cell it claims is hovered or
+   focused. Same wash the row hover already uses, so the two directions of the same link
+   look like one thing. */
+table.data tr.is-lit > td { background: var(--wash-hover); }
+
+/* ------------------------------------------------------------------- the cell popover */
+/* What decided this leaf, and the one edit that usually follows from reading it. */
+.popover--lattice { padding: 12px 13px; max-width: 320px; }
+.lat-pop__vector {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--ink);
+}
+.lat-pop__row { margin: 0 0 8px; }
+.lat-pop button { width: 100%; }
+
+/* ---------------------------------------------------------------------------- tracer */
+/* One vector walked through the cascade, so "why did this get Act" stops being work the
+   reader does in their head against an ordered table. */
+.lat-trace { margin-top: 18px; }
+.lat-trace__axes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 10px;
+}
+.lat-trace__axis { display: flex; flex-direction: column; gap: 3px; }
+.lat-trace__axis > span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* A row the walk stepped past. Deliberately NOT the same mark as .rule-dead: "tried and did
+   not match THIS vector" is a fact about one walk, "never fires" is a fact about the rule,
+   and dimming alone would conflate them. Hence the glyph as well as the fade. */
+table.data tr.rule-tried > td { opacity: 0.5; }
+table.data tr.rule-tried > td:first-child::before {
+  content: "·";
+  margin-right: 3px;
+  font-weight: 700;
+  color: var(--text-3);
+}
+/* The row that won the walk. */
+table.data tr.rule-won > td { background: rgba(190, 18, 60, 0.07); }
+table.data tr.rule-won > td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* ---------------------------------------------------------------------------- icicle */
+/* The Problem tree's second view: the axes nested, branch by branch. Free geometry, so
+   this one is SVG — see ui/latticeIcicle.js for the argument. */
+.lat-icicle { display: block; }
+/* Belt and braces against the smear above: text never strokes, whatever it sits inside. */
+.lat-icicle text { stroke: none; paint-order: normal; }
+.lat-icicle .lat-band { fill: rgba(0, 0, 0, 0.045); stroke: var(--page); stroke-width: 1; }
+.lat-icicle .lat-band__label { font-size: 10px; font-weight: 600; fill: var(--ink); }
+.lat-icicle .lat-leaf__label { font-size: 9px; font-weight: 600; fill: var(--svg-text-2); }
+.lat-icicle .lat-colhead {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; fill: var(--text-3);
+}
+
+/* Leaf swatches wear the same four pill kinds the grid cells do — one palette, two
+   painters, so a leaf cannot read as Act here and Attend there. */
+.lat-icicle rect[data-tone="bad"]     { fill: rgba(185, 28, 28, 0.16); }
+.lat-icicle rect[data-tone="warn"]    { fill: rgba(161, 98, 7, 0.16); }
+.lat-icicle rect[data-tone="neutral"] { fill: rgba(0, 0, 0, 0.08); }
+.lat-icicle rect[data-tone="ok"]      { fill: rgba(21, 128, 61, 0.16); }
+.lat-icicle rect[data-bucket="0"]     { fill: rgba(0, 0, 0, 0.03); }
+.lat-icicle rect[data-bucket="1"]     { fill: rgba(0, 0, 0, 0.08); }
+.lat-icicle rect[data-bucket="2"]     { fill: rgba(0, 0, 0, 0.18); }
+.lat-icicle rect[data-bucket="3"]     { fill: rgba(0, 0, 0, 0.32); }
+.lat-icicle rect.is-receded { opacity: 0.18; }
+.lat-icicle rect.is-lit { stroke: var(--ink); stroke-width: 2; }
+.lat-icicle rect.is-traced { stroke: var(--accent); stroke-width: 3; }
+.lat-icicle .lat-leaf:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lat-icicle.is-diverged rect { fill: rgba(0, 0, 0, 0.05); }
+
+/* A row that fires perfectly well over a tenant that happens to carry nothing it matches.
+   Deliberately NOT .rule-dead's treatment: that one says "this rule cannot work", this one
+   says "this rule works and had nothing to do", and an operator asked to act on them would
+   act differently. A hairline marker, not a fade. */
+table.data tr.rule-unused > td:first-child { box-shadow: inset 2px 0 0 var(--hairline); }
+
+/* -------------------------------------------------------------- the AARS hero's link */
+/* The same row-to-picture link the lattices have, applied to the stacked pillar bar: a
+   pillar's controls and the segment they fill light together, so which part of the budget
+   a rail is pushing on stops being something you infer from the section heading. */
+.model-stack__seg.is-lit { box-shadow: inset 0 0 0 2px var(--ink); }
+.rails.is-lit, .table-wrap.is-lit { box-shadow: 0 0 0 2px var(--hairline); border-radius: var(--radius-md); }
+@media (prefers-reduced-motion: reduce) {
+  .model-stack__seg.is-lit, .rails.is-lit, .table-wrap.is-lit { transition: none; }
+}
+
+/* ------------------------------------------------------------------- axis names */
+/* The values were always drawn; the axes they belong to were not, and most of them are
+   generic enough to be ambiguous on their own — TOTAL / PARTIAL could be almost anything,
+   and HIGH / MEDIUM / LOW could be severity, confidence or mission.
+   Named in two places, and between them every axis is named exactly once: inline on any
+   band wide enough to hold it (see lattice.js's span rule), and in the corner key for the
+   rest. The corner was reserved by the row headers and otherwise empty, so the key costs
+   nothing in either dimension and sits directly above the labels it explains. */
+.lat-ax {
+  margin-right: 5px;
+  color: var(--accent);
+  font-weight: 700;
+}
+.lat-key {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 3px;
+  padding: 0 12px 6px 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.lat-key__line { display: flex; align-items: center; }
+.lat-key__line b { color: var(--ink); font-weight: 700; }
+/* The arrow says which way to read the axis, and is aria-hidden: a screen reader gets the
+   whole vector in words from every cell's own label, where direction is not a concept. */
+.lat-key__dir { margin-right: 5px; font-weight: 400; color: var(--accent); }

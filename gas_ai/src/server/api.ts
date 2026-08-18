@@ -298,7 +298,13 @@ function bootstrapCore(): Rec {
       totalAssets: assets.length,
       openIssues: issues.length,
       bySeverity,
+      // A DISTRIBUTION, kept: this is the shape of the score across the estate, which is a
+      // legitimate thing to publish and is the same object the trend charts over time. It
+      // is not the per-asset claim; that moved to `aarsPercentile`.
       byAarsSeverity,
+      // The percentile's denominator, so a surface reading a percentile off a node can
+      // name the population it is a percentile OF without a second round trip.
+      aarsScored: assets.filter((a) => typeof a.aars === "number").length,
     },
     filterOptions: filterOptions(assets),
   };
@@ -455,7 +461,7 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
         ...vocab,
         // ANY gets them too, over every node in the graph. `fieldsForKind("ANY")` already keeps
         // only the kind-agnostic fields, so the union is never one of things that cannot
-        // co-occur — it is "which clouds does this estate use", which is the question.
+        // co-occur — it is "which clouds does this landscape use", which is the question.
         valuesFor: { [kind]: fieldValuesFor(doc, kind) },
         // What the palette's Properties tab lists, and the type that decides which control each
         // field gets. Per-kind for the same reason the value lists are.
@@ -539,7 +545,7 @@ function readColumnSelection(raw: unknown): Array<string[] | null> | undefined {
  * preserve. `nodeOrder` leads on severity, and `severityRank(undefined)` answers
  * `SEVERITY_ORDER.length` — the WORST rank. Service accounts and buckets carry no severity of
  * their own, so a path's connective tissue always sorted last and was always cut first; every
- * edge that lost an endpoint went with it. Measured on the sample estate, dropping 39 wanted
+ * edge that lost an endpoint went with it. Measured on the sample landscape, dropping 39 wanted
  * nodes to a 30-node budget kept 2 of 34 edges and left 27 of 30 cards isolated — a 23% node cut
  * costing 94% of the edges, and a canvas of disconnected dots where the answer was a set of
  * attack paths.
@@ -633,6 +639,10 @@ function assetRow(n: GNode): Rec {
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aarsSeverity: n.aarsSeverity ?? null,
+    // The estate percentile, which is what the asset surfaces LEAD with now — the band
+    // beside it is context. Read-derived (syncStore.withAarsPercentile), so null here
+    // means "not in the scored population", never "we have not computed it yet".
+    aarsPercentile: n.aarsPercentile ?? null,
     // Phase 6: the posture tier, BESIDE the AARS score above, never blended into it — see
     // posture.ts's own header for why a tier is not an aggregate of what has been found.
     postureTier: n.postureTier ?? null,
@@ -707,12 +717,8 @@ function assetTableRow(
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aarsSeverity: n.aarsSeverity ?? null,
-    // A RANK, not a risk level — read this against the population, not the scale. See
-    // rankStats.midrankPercentiles's own header and the aars-percentile measure spec. Never
-    // persisted: it is recomputed from the currently-scored population on every read
-    // (assetsModel below), so it moves whenever the ESTATE changes even when this asset's
-    // own score does not, and would go stale silently the moment it was stored instead.
-    aarsPercentile: aarsPercentile ?? null,
+    // What the table's score cell leads with. See assetRow's note.
+    aarsPercentile: n.aarsPercentile ?? null,
     // Phase 6: BESIDE aars — the two must be visibly independent columns, never merged.
     postureTier: n.postureTier ?? null,
     worstOpenProblem: n.worstOpenProblem ?? null,
@@ -731,7 +737,7 @@ function assetTableRow(
       || (n.dataFindingCount ?? 0),
     projects: (n.projects ?? []).map((p) => p.name),
   };
-  // Only the rows that have open issues carry the breakdown. Most of a healthy estate has
+  // Only the rows that have open issues carry the breakdown. Most of a healthy landscape has
   // none, and an empty object per row is pure weight in the all-inventory payload.
   if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
   return row;
@@ -778,7 +784,7 @@ interface AssetsModel {
  * Everything about the inventory that doesn't depend on the request: every table row, the
  * KPI totals, the AARS-severity histogram and the filter vocabulary. The aggregates are
  * computed over the whole inventory on purpose — the KPI row and the chart describe the
- * estate, never the page or the filtered subset, so they stay honest when the client only
+ * landscape, never the page or the filtered subset, so they stay honest when the client only
  * ever holds 50 rows.
  */
 function assetsModel(): AssetsModel {
@@ -833,6 +839,7 @@ function assetsModel(): AssetsModel {
     .map((a) => assetTableRow(a, issueRollup.get(a.id), aarsPercentileById.get(a.id) ?? null))
     .sort(ASSET_COMPARATORS.aars);
 
+  const postureTiers = countPostureTiers(assets);
   const aarsSeverityCounts: Record<string, number> = {};
   const kinds = new Set<string>();
   const clouds = new Set<string>();
@@ -857,16 +864,22 @@ function assetsModel(): AssetsModel {
       // "3 of 71 agents"; without this it had to recover the 3 by counting rows, which
       // only works while the client holds every row.
       protectedAgents,
-      // REMOVED (P2c): criticalAars / highAars used to sit here — "N assets score
-      // Critical/High" is a band presented as a decision, the clearest instance of it in
-      // this file (ai/AARS_SCORING_ASSESSMENT.md §3: the same rule put nearly an entire
-      // live estate at INFO and nearly an entire demo estate at CRITICAL). They were also
-      // strictly redundant: aarsSeverityCounts.CRITICAL / .HIGH already ship this same
-      // number on this same payload, as a DISTRIBUTION rather than a per-band KPI tile —
-      // "19 assets are CRITICAL under this rule" stays legitimate exactly the way the AARS
-      // trend and the Rules page's band occupancy do; it just does not need its own field.
-      // Their one live consumer, the Help glossary's "AARS" count, now reads `aiAssets`
-      // instead of a band filter. No persisted value moved — this is `kpis` only.
+      // The two asset-level headline counts, and they come from the POSTURE TIER rather
+      // than from the AARS band.
+      //
+      // `criticalAars` / `highAars` used to sit here and were removed, not renamed. They
+      // could not carry a headline: on live data the CRITICAL band holds 19 of 30 scored
+      // assets while HIGH and MEDIUM hold none (ai/AARS_SCORING_ASSESSMENT.md §3, pinned
+      // by test/scoreOrdinality.test.ts), so "criticals" counted the whole working
+      // population and "highs" counted nothing. A KPI that reads as a queue has to be cut
+      // by a model that cuts queues; the tier lattice is that model, and tier 4 is its
+      // worst reading (posture.ts's TIER_VALUES — 4 = worst).
+      tier4Assets: postureTiers[4],
+      tier3Assets: postureTiers[3],
+      // The percentile's DENOMINATOR, published rather than implied — the S-test
+      // AARS_SCORING_ASSESSMENT.md §3 sets for any aggregate this app ships. Without it
+      // "60th percentile" is a number with no population behind it.
+      aarsScored: assets.filter((a) => typeof a.aars === "number").length,
       guardrailCoveragePct: agents.length
         ? Math.round((protectedAgents / agents.length) * 100)
         : null,
@@ -890,16 +903,16 @@ function assetsModel(): AssetsModel {
       // has been synced, so the Wiz Scans area degrades to `partial` on its own instead of
       // reporting a confident zero for a question this tenant was never asked.
       // Scoped the same way the Compliance page scopes it. Not an optimisation — the two
-      // pages would otherwise report different failing-control totals for one estate, and
+      // pages would otherwise report different failing-control totals for one landscape, and
       // this KPI is the number the Wiz Scans coverage area prints beside the other one.
       frameworkPosture: complianceKpis(
         syncStore.loadPosture(),
         scopedFrameworkPolicies().policies,
       ),
       agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
-      // Estate-wide counts for the two risk conditions that had no total. The flags were
+      // Landscape-wide counts for the two risk conditions that had no total. The flags were
       // persisted and drawn on the graph, but `assetTableRow` strips them, so nothing
-      // could say how much of the estate they cover. `internetUnknown` is its own number
+      // could say how much of the landscape they cover. `internetUnknown` is its own number
       // on purpose: a hosted agent inherits exposure from its host and Wiz reports that
       // as undetermined, so folding it into "not exposed" under-reports.
       internetExposed: assets.filter((a) => conditionState(a, "INTERNET_EXPOSURE") === true).length,
@@ -1011,7 +1024,7 @@ export function getAssets(p?: unknown): ApiResult {
  * hedged number:
  *  - fewer than two points: nothing to compare against;
  *  - the scoring rule changed between them: the two points aren't on the same scale;
- *  - the latest point disagrees with the live counts, which means the estate was rescored
+ *  - the latest point disagrees with the live counts, which means the landscape was rescored
  *    (AARS Rules → Recompute) without a sync — so a delta would explain a figure that
  *    isn't the one on screen.
  */
@@ -1123,7 +1136,7 @@ export function getAssetDetail(p?: unknown): ApiResult {
  * in the inventory?) reads the whole assets tab and must not run per keystroke.
  *
  * The totals are computed over the WHOLE set on purpose — the header describes the
- * estate, never the page or the filtered subset, the same contract the inventory keeps.
+ * landscape, never the page or the filtered subset, the same contract the inventory keeps.
  */
 /**
  * The synced AI assets, as an id set — "did this finding land on something the AI graph
@@ -1143,13 +1156,13 @@ function aiAssetIdSet(): Record<string, true> {
  * ONE definition, called from both readers. `getCompliance` and `getAssets` each count
  * failing controls off these rows, and a filter applied to one and not the other is not a
  * cosmetic difference: the Compliance page and the Wiz Scans coverage area would print
- * different totals for the same estate, which is exactly the "two answers to one question"
+ * different totals for the same landscape, which is exactly the "two answers to one question"
  * failure this codebase spends its comments avoiding.
  *
  * The scope has to be derived from the FULL tree before it can be applied to a filtered
  * one — a 5Rs rule is in scope partly because some OTHER framework maps it, so the trees
  * must exist before the question can be asked. Hence a build to decide and a build to
- * render. The payload is bounded by the framework rather than the estate, so that is cheap.
+ * render. The payload is bounded by the framework rather than the landscape, so that is cheap.
  */
 function scopedFrameworkPolicies(): {
   policies: FrameworkPolicyRow[];
@@ -1317,7 +1330,7 @@ export function getConfigFindingDetail(p?: unknown): ApiResult {
  * Settings picker.
  *
  * Shipped whole rather than paged. The payload is bounded by the FRAMEWORK, not by the
- * estate — ten categories of ten subcategories is the shape of a published Top-10 list,
+ * landscape — ten categories of ten subcategories is the shape of a published Top-10 list,
  * not of a tenant — so the row count cannot run away the way the inventory's or the
  * configuration register's can, and the two-mode all/paged machinery those need would be
  * complexity bought for nothing here.
@@ -1557,8 +1570,14 @@ export function getToxicCombos(_p?: unknown): ApiResult {
           assets: s.assetIds.map((id) => {
             const a = assets.get(id);
             return a
-              ? { id, name: a.name, aars: a.aars ?? null, aarsSeverity: a.aarsSeverity ?? null }
-              : { id, name: id, aars: null, aarsSeverity: null };
+              ? {
+                  id,
+                  name: a.name,
+                  aars: a.aars ?? null,
+                  aarsSeverity: a.aarsSeverity ?? null,
+                  aarsPercentile: a.aarsPercentile ?? null,
+                }
+              : { id, name: id, aars: null, aarsSeverity: null, aarsPercentile: null };
           }),
         })),
         totalOpen: issues.length,
@@ -1591,7 +1610,7 @@ function problemsModel(): ProblemsModel {
 }
 
 /**
- * The estate-wide Priorities: issues ∪ findings, ranked together — the thing neither
+ * The landscape-wide Priorities: issues ∪ findings, ranked together — the thing neither
  * Toxic Combinations (issues scoped to one pattern) nor Cloud Configuration (findings
  * only) can answer. Same two-mode shape `getAssets` / `getConfigFindings` keep: under
  * `PROBLEMS_CLIENT_ALL_MAX` the browser gets every row, already ranked, and filters and
@@ -1948,11 +1967,11 @@ export function previewAarsRule(p?: unknown): ApiResult {
       // A THIRD state, distinct from both shadowed and unexercised: the row names a code
       // no derivation can raise, so it cannot fire in any tenant, not just this one.
       unreachableGapRules: unreachableGapRules(proposed),
-      // How well the draft separates the estate — the number the band counts above cannot
+      // How well the draft separates the landscape — the number the band counts above cannot
       // show, because a rule that gives every asset the same score still fills a band.
       discrimination: ruleDiscrimination(after, proposed),
       // Coverage: how many gap instances each cascade row priced, what fell through to the
-      // fallback, and the codes the estate carries. A row at 0 here is NOT the same claim
+      // fallback, and the codes the landscape carries. A row at 0 here is NOT the same claim
       // as shadowedGapRules — one can never fire, the other simply is not exercised — and
       // the page reads them as two different sentences.
       gapMatchCounts: tally.perRule,

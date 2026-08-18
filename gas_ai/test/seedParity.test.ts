@@ -79,7 +79,7 @@ describe("seed parity: asset detail's issues vs the issues list filtered by asse
 
       // openIssues() (src/server/api.ts:116-118) is `loadIssues().filter(isUnresolvedIssue)`
       // — a filter, so it preserves loadIssues()'s order. getIssues({}) with no group applies
-      // no filter at all, so it is loadIssues() verbatim. In THIS sample estate every issue
+      // no filter at all, so it is loadIssues() verbatim. In THIS sample landscape every issue
       // is OPEN or IN_PROGRESS (getIssues({}).total is 32, the whole ai_issues tab — see
       // apiGolden's snapshot), so the unresolved filter drops nothing and the two lists are
       // over the same order. Filtering both by assetId preserves that shared order, so a

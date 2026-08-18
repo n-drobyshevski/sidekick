@@ -40,9 +40,9 @@ import {
 } from "../ui.js";
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
 
-// Only the whole-estate head of api_getAssets is read (kpis, total) — never `rows`. Past
+// Only the whole-landscape head of api_getAssets is read (kpis, total) — never `rows`. Past
 // the server's row ceiling the payload downgrades to a single page, but the head still
-// describes the estate, so a small pageSize keeps this page correct AND cheap at any size.
+// describes the landscape, so a small pageSize keeps this page correct AND cheap at any size.
 const ASSETS_PARAMS = { all: true, pageSize: 25 };
 
 export async function renderScans(main, params, ctx) {

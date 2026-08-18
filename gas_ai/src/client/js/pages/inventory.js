@@ -1,8 +1,8 @@
-// AI Inventory: the estate's posture up top, a faceted filter drawer, and the asset
+// AI Inventory: the landscape's posture up top, a faceted filter drawer, and the asset
 // register as a sortable table or a card grid. Row click opens the shared asset sheet;
 // "Open in graph" deep-links.
 //
-// The page never holds the whole estate unless it's cheap to. api_getAssets answers with
+// The page never holds the whole landscape unless it's cheap to. api_getAssets answers with
 // every row (`all: true`) only while the inventory fits under the server's row ceiling —
 // then the filters, the sort, the pager and the facet counts all run in the browser with
 // no further RPCs, which is what a Google Apps Script round trip per keystroke deserves.
@@ -29,16 +29,19 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  aarsPercentileMark, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
+  FINDINGS_SCORE_LABEL, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
   emptyState, errorState,
-  fmtDate, kpiCard, meter, pager, plural, sectionLabel, sevBadge, sevEntries, sevKeyRow,
+  fmtDate, kpiCard, meter, pager, percentileText, plural, scoreChip, sectionLabel,
+  sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tierBadge, toast,
 } from "../ui.js";
 
 const PAGE_SIZES = [25, 50, 100, 250];
 const DEFAULT_PAGE_SIZE = 50;
 
-/** The AARS levels the trend draws. Mirrors TREND_SEVERITIES in src/domain/aarsTrend.ts. */
+/** The findings-score levels the trend draws. Mirrors TREND_SEVERITIES in
+ *  src/domain/aarsTrend.ts. The trend is a DISTRIBUTION over time, which is one of the two
+ *  readings of a band this page still makes — see the strip's own note for the other. */
 const CHARTED_SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 /** The strip shows every level, INFO included — a distribution that hides its biggest
  *  bucket is not a distribution. The trend still omits it; each says which it is doing. */
@@ -52,7 +55,7 @@ const FLAG_LABELS = {
 };
 
 const FACET_LABELS = {
-  aarsSeverities: "AARS severity",
+  aarsSeverities: FINDINGS_SCORE_LABEL + " level",
   severities: "Issue severity",
   kinds: "Asset kind",
   clouds: "Cloud",
@@ -67,7 +70,9 @@ const COLUMNS = [
   { key: "kind", label: "Kind", sort: "kind" },
   { key: "cloud", label: "Cloud", sort: "cloud" },
   { key: "region", label: "Region", sort: "region" },
-  { key: "aars", label: "AARS", sort: "aars" },
+  // Sorted by the raw score, not the percentile: the percentile is a monotone transform
+  // of it, so a second sort control would offer the same ordering under a second name.
+  { key: "aars", label: FINDINGS_SCORE_LABEL, sort: "aars" },
   // BESIDE aars, never merged into it — a posture tier is a capability envelope, not an
   // aggregate of AARS or of open problems. See src/domain/posture.ts's own header.
   { key: "postureTier", label: "Posture", sort: "postureTier" },
@@ -88,9 +93,10 @@ const VIEW_PARAMS = [
 // -------------------------------------------------------------------- small helpers
 
 /**
- * The score as a quantity beside the percentile mark. Neutral graphite, same as the mark
- * itself — see aarsPercentileMark's own header. Decorative because the mark already names
- * both the number and the percentile — one announcement per cell, not two.
+ * The score as a quantity beside the chip that gives its level. Neutral graphite on
+ * purpose: the level is already colored on the chip, and fifty tinted bars down a page is
+ * the wall of color PRODUCT.md rejects. Decorative because scoreChip already names the
+ * percentile, the number and the level — one announcement per cell, not four.
  */
 function aarsMeter(score) {
   return meter(score, { decorative: true, className: "meter--score" });
@@ -171,7 +177,8 @@ export async function renderInventory(main, params) {
     el("h1", {}, "AI Inventory"),
     el("p", { class: "page-sub" },
       "Every AI asset and its supporting identity/data surface from the last sync, " +
-      "scored with the AI Asset Risk Score (AARS)."),
+      "ranked by posture tier and by where its " + FINDINGS_SCORE_LABEL.toLowerCase() +
+      " sits in the estate."),
   );
 
   if (!boot.latestSync) {
@@ -231,7 +238,7 @@ export async function renderInventory(main, params) {
 
   function requestParams() {
     return {
-      all: true, // the server downgrades this to one page when the estate is too big
+      all: true, // the server downgrades this to one page when the landscape is too big
       q: query.q,
       aarsSeverities: query.aarsSeverities, severities: query.severities,
       kinds: query.kinds, clouds: query.clouds, regions: query.regions,
@@ -263,7 +270,7 @@ export async function renderInventory(main, params) {
     const counts = new Map(
       ((facets && facets[key]) || []).map((f) => [f.value, f.count]),
     );
-    // A selected value the vocabulary no longer knows (stale link, re-synced estate) is
+    // A selected value the vocabulary no longer knows (stale link, re-synced landscape) is
     // still listed, so it can be switched off rather than silently filtering the table.
     const values = vocab.slice();
     for (const v of query[key]) if (values.indexOf(v) < 0) values.push(v);
@@ -314,7 +321,7 @@ export async function renderInventory(main, params) {
   /** What is applied right now — one chip per selected value, plus the search term. */
   /**
    * What is narrowing the view right now. `label` is the dimension and `value` is what was
-   * picked, kept apart so the shared chip row can print "AARS severity · CRITICAL" with
+   * picked, kept apart so the shared chip row can print "Findings score level · CRITICAL" with
    * the dimension muted — the same shape graphChips.js emits.
    */
   function filterEntries() {
@@ -395,7 +402,7 @@ export async function renderInventory(main, params) {
     renderResults(fresh);
     panel.sync();
     // Rewrite the URL into the canonical spelling: a link carrying ?kind= or ?band= (or a
-    // value the estate no longer has) has already been folded into the plural dimensions,
+    // value the landscape no longer has) has already been folded into the plural dimensions,
     // so leave the address bar describing the filters that are actually applied.
     persistParams();
     if (panelName === "filters") panel.open(false);
@@ -439,6 +446,28 @@ export async function renderInventory(main, params) {
         `${kpis.agents ?? 0} agents · ${kpis.agenticIdentities ?? 0} agentic identities`),
     );
 
+    // The verdict row: the two posture tiers that carry an action, which is what used to
+    // be claimed for the score's top two BANDS. Tier 4 is the lattice's worst reading
+    // (src/domain/posture.ts) — unlike the CRITICAL band it is scarce, which is the whole
+    // property a headline needs.
+    //
+    // Read-outs, not toggles: this table has no posture-tier facet (FACET_KEYS in
+    // src/domain/assetTable.ts), and a control that looks like the strip's filter keys but
+    // does nothing would be worse than a number. The tier is filterable where it is
+    // decided — the Priorities page.
+    const tierStat = (tier, n) => el("div", { class: "inv-tier" },
+      tierBadge(tier),
+      el("span", { class: "inv-tier-n num" }, String(n ?? 0)));
+    const verdict = el("div", { class: "inv-verdict" },
+      el("div", { class: "kpi-label" }, "Posture"),
+      el("div", { class: "inv-tier-row" },
+        tierStat(4, kpis.tier4Assets),
+        tierStat(3, kpis.tier3Assets)),
+      el("p", { class: "sev-strip-note" },
+        "Capability × containment × consequence — the tier that selects a remediation " +
+        "target. Open Priorities for the per-problem verdict."),
+    );
+
     // The distribution strip: the page's cross-filter, and the keyboard-reachable twin of
     // clicking a bar. The bar itself is decoration (the keys carry the same numbers as
     // text), and every key is a real toggle button, so nothing here is mouse-only.
@@ -447,12 +476,12 @@ export async function renderInventory(main, params) {
     const track = sevSegmentBar(entries, { size: "md", selected: selected() });
     const keys = sevKeyRow(entries, {
       variant: "toggle",
-      ariaLabel: "Filter by AARS severity",
+      ariaLabel: "Filter by " + FINDINGS_SCORE_LABEL.toLowerCase() + " level",
       isOn: (sev) => query.aarsSeverities.indexOf(sev) >= 0,
       describe: (e) => `${e.sev}, ${plural(e.count, "asset")}` +
         (bandLabel(e.sev) ? `, ${bandLabel(e.sev)}` : ""),
       // A delta only appears where history actually supports one: aarsTrend records
-      // per-sync AARS counts, so these two are real. Nothing else on this header has
+      // per-sync level counts, so these two are real. Nothing else on this header has
       // a recorded history, and nothing else gets a chip.
       suffix: (e) => {
         const delta = deltas && deltas.counts ? Number(deltas.counts[e.sev] || 0) : 0;
@@ -472,12 +501,18 @@ export async function renderInventory(main, params) {
     });
 
     const strip = el("div", { class: "sev-strip" },
-      el("div", { class: "kpi-label" }, "AARS severity"),
+      el("div", { class: "kpi-label" }, FINDINGS_SCORE_LABEL + " levels"),
       track,
       keys,
+      // The note says what the levels ARE, because the widest misreading of this strip is
+      // that its top segment is a work queue. It is the shape of one distribution over the
+      // estate — the same object the trend below charts over time — and a level is a cut
+      // of the score, not an instruction. The per-asset reading is the percentile in the
+      // table's score column.
       el("p", { class: "sev-strip-note" },
         `${scored} of ${fresh.total || 0} assets scored` +
-        (unscored > 0 ? " · AARS covers AI assets and what they reach" : "") +
+        (unscored > 0 ? " · covers AI assets and what they reach" : "") +
+        " · the score's distribution, not a queue" +
         (deltas ? ` · change since ${fmtDate(deltas.since)}` : "")),
     );
 
@@ -502,7 +537,7 @@ export async function renderInventory(main, params) {
     );
 
     // The strip is a control, so it has to reflect state it did not itself change — a
-    // chip cleared outside it, or the drawer's own AARS facet. Marked in place rather
+    // chip cleared outside it, or the drawer's own level facet. Marked in place rather
     // than rebuilt, so the key you just pressed keeps focus.
     syncStrip = () => {
       const active = query.aarsSeverities;
@@ -517,7 +552,8 @@ export async function renderInventory(main, params) {
       }
     };
 
-    return el("div", { class: "inv-header" }, hero, strip, stats);
+    // hero and verdict share the top row; the score distribution sits under them.
+    return el("div", { class: "inv-header" }, hero, verdict, strip, stats);
   }
 
   // ---- toolbar
@@ -885,7 +921,7 @@ export async function renderInventory(main, params) {
       aars: (row) => (row.aars === null || row.aars === undefined
         ? el("span", { class: "muted small" }, "—")
         : el("span", { class: "aars-cell" },
-            aarsPercentileMark(row.aarsPercentile, row.aars), aarsMeter(row.aars))),
+            scoreChip(row.aars, row.aarsPercentile, row.aarsSeverity), aarsMeter(row.aars))),
       postureTier: (row) => tierBadge(row.postureTier),
       severity: (row) => (row.severity
         ? el("span", { class: "issue-cell" }, sevBadge(row.severity), issueBars(row.issuesBySeverity))
@@ -921,7 +957,12 @@ export async function renderInventory(main, params) {
       grid.append(el("button", {
         class: "asset-card",
         "aria-label": `${row.name}, ${kindLabel(row.kind)}` +
-          (row.aars === null || row.aars === undefined ? "" : `, AARS ${row.aars}`),
+          (row.aars === null || row.aars === undefined
+            ? ""
+            : `, ${FINDINGS_SCORE_LABEL} ${row.aars}` +
+              (row.aarsPercentile === null || row.aarsPercentile === undefined
+                ? ""
+                : `, ${percentileText(row.aarsPercentile)}`)),
         onclick: openRow(row),
       },
         el("div", { class: "asset-card-head" },
@@ -929,7 +970,7 @@ export async function renderInventory(main, params) {
           el("span", { class: "asset-card-name" }, row.name),
           row.aars === null || row.aars === undefined
             ? null
-            : aarsPercentileMark(row.aarsPercentile, row.aars)),
+            : scoreChip(row.aars, row.aarsPercentile, row.aarsSeverity)),
         row.aars === null || row.aars === undefined ? null : aarsMeter(row.aars),
         el("div", { class: "asset-card-marks" },
           row.postureTier ? tierBadge(row.postureTier) : null,
@@ -953,12 +994,13 @@ export async function renderInventory(main, params) {
     const ruleChanges = fresh.aarsTrendRuleChanges || [];
     const colorOf = (sev) => (boot.palette?.colors || {})[sev];
     const canvas = el("canvas", {
-      "aria-label": "AARS severity over time, one line per level, excluding INFO",
+      "aria-label":
+        FINDINGS_SCORE_LABEL + " levels over time, one line per level, excluding INFO",
       role: "img",
     });
 
     const card = el("div", { class: "chart-card" },
-      el("h3", {}, "AARS severity over time"),
+      el("h3", {}, FINDINGS_SCORE_LABEL + " levels over time"),
       el("p", { class: "chart-note" },
         trend.length >= 2
           ? `${trend.length} syncs · INFO not charted`
@@ -970,7 +1012,7 @@ export async function renderInventory(main, params) {
               ? "One sync recorded so far — the trend draws from the second."
               : "No history yet. Each sync adds a point; earlier syncs can't be recovered."),
       // Points scored under different AARS rules are not on the same scale. Rather than
-      // let a threshold edit read as the estate moving, the note names the breaks.
+      // let a threshold edit read as the landscape moving, the note names the breaks.
       trend.length >= 2 && ruleChanges.length
         ? el("p", { class: "chart-note warn" },
             `The scoring rule changed ${ruleChanges.length} time` +

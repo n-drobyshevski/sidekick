@@ -380,8 +380,22 @@ export interface GNode {
    */
   businessImpact?: string;
   severity?: Severity;      // worst attached open-issue severity (ISSUE nodes: own severity)
-  aars?: number;            // AI Asset Risk Score 0–100 (AI assets only)
+  aars?: number;            // findings score 0–100 (AI assets only) — see AARS_DISPLAY_LABEL
   aarsSeverity?: AarsSeverity;
+  /**
+   * Where `aars` sits in the whole scored estate, as a whole-percent midrank percentile.
+   *
+   * DERIVED ON READ, NEVER PERSISTED, and unlike `aarsSeverity` it has no persisted
+   * fallback at all — because it is not a statement about this asset. It is a statement
+   * about this asset's POSITION IN A POPULATION, so it goes stale the instant any other
+   * asset is added, removed or rescored; a stored copy would be wrong far more often than
+   * it was right, and wrong silently. `syncStore.withAarsPercentile` attaches it on every
+   * read path and nothing on the write path sets it, which is what keeps the Drive graph
+   * snapshot free of a number that cannot survive being snapshotted.
+   *
+   * Tied assets share one value on purpose — see `rankStats.midrankPercentiles`.
+   */
+  aarsPercentile?: number;
   aarsPillars?: { toxic: number; compliance: number; data: number; exposure?: number };
   /**
    * What the score was computed FROM, minus the issue severities (those stay in the issues
@@ -410,7 +424,7 @@ export interface GNode {
      * Absent means the row was written before this field existed. It is treated as
      * reusable rather than forced through a re-derivation — the same grandfather rule
      * `derivedUnder`'s sibling fields follow — so upgrading to this version never
-     * re-scores a tenant's estate on its own. A pinned dry-run hint
+     * re-scores a tenant's landscape on its own. A pinned dry-run hint
      * (`sampleData.SEED_AARS_HINTS`) carries no signature for the same reason it is never
      * stamped with one at enrich time: it was transcribed from ai/custom_score.md, not
      * derived by any rule, so no signature could honestly describe it.
@@ -535,7 +549,7 @@ export interface IssueRow {
    * UNKNOWN, whether exposure was evidenced, and which door exploitation came through
    * (`problem.ProblemVerdictInput`). Persisted for the same reason `aarsInput` is: it is
    * what lets a rule change RE-DECIDE exactly these facts rather than re-derive a possibly
-   * different set, and it is what makes a whole-estate preview cost zero Wiz calls.
+   * different set, and it is what makes a whole-landscape preview cost zero Wiz calls.
    */
   problemInput?: ProblemVerdictInput;
   /** The `problem_rule` version (settingsLogic.getProblemRule) this verdict was decided under. */
@@ -730,7 +744,7 @@ export interface FrameworkRow {
  *
  * REFERENCE DATA, and the distinction is the whole reason it has its own tab and its own
  * refresh gate: a rule exists whether or not this tenant has a resource it applies to. The
- * catalogue changes when Wiz ships rules; the findings change when the estate moves.
+ * catalogue changes when Wiz ships rules; the findings change when the landscape moves.
  *
  * It answers two questions nothing else could. `shortId → name` is the gloss for a code that
  * otherwise reaches the AARS cascade opaque — codebook.js says so in its own header, and

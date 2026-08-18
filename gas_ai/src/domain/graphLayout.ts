@@ -45,7 +45,7 @@
 // FEWER cluster outlines than rows does (8 of 12 components at 69 nodes against
 // rows' 12). Both are one keypress away — the trade is only about which picture
 // answers first, and "all of it, legible" beats "some of it, arranged".
-// - "radial": the whole estate as one ring system. The worst-risk AI agent is
+// - "radial": the whole landscape as one ring system. The worst-risk AI agent is
 //   the center and every other node sits on the ring of its BFS distance from
 //   it, so a ring IS "n hops from the thing most likely to hurt you". Ring
 //   radii come from occupancy, never from a constant: the circumference has to
@@ -69,7 +69,7 @@
 // the arrangement's own output over a sub-projection, measured and framed — so "rows grouped by
 // cloud" is the rows engine, five times, and there is one implementation of rows. The two
 // exceptions are `grid`, which is already block-shaped, and `radial`, which uses the
-// hub-and-spoke `radialBlock` inside a group: a whole estate is one component with real hop
+// hub-and-spoke `radialBlock` inside a group: a whole landscape is one component with real hop
 // structure to show, while a six-node group usually is not, and rank rings pack tighter when
 // every member is one hop out. Both are rings around the most important node.
 //
@@ -156,7 +156,7 @@ const LANE_OF: Record<string, number> = {
   SERVERLESS: 5,
   CONTAINER_IMAGE: 5,
   REPOSITORY: 5,
-  // Beside the compute that serves it. An endpoint is the far edge of the estate, but it is
+  // Beside the compute that serves it. An endpoint is the far edge of the landscape, but it is
   // inventory rather than evidence, so it belongs in the infrastructure band and not in the
   // risk band where INTERNET_EXPOSURE sits.
   ENDPOINT: 5,
@@ -250,7 +250,7 @@ export interface LayoutOptions {
    * Place only the bands that hold something, at consecutive offsets.
    *
    * OFF for the whole canvas, where the six bands are a fixed frame of reference and an empty
-   * one is information — "this estate has no compute in view" reads off the gap. ON inside a
+   * one is information — "this landscape has no compute in view" reads off the gap. ON inside a
    * group, where a box holding assets and data alone would otherwise reserve all six band gaps
    * and come out mostly air. The reported `lane` is the true category band either way.
    */
@@ -358,7 +358,7 @@ function adjacency(p: Projection): Map<string, string[]> {
 }
 
 /**
- * Hops from the estate's worst-risk AI agent — the axis "radial" and "organic" are both built on.
+ * Hops from the landscape's worst-risk AI agent — the axis "radial" and "organic" are both built on.
  *
  * The root is `assignToHubs`' first hub, which that function has already sorted worst-first by
  * `nodeOrder`; where the projection holds no AI asset at all it falls back to the first node in
@@ -1102,7 +1102,7 @@ function blockOf(key: string, label: string, layout: Layout): BlockSpec {
  * One group's interior, in whichever arrangement is in force.
  *
  * `grid` is already block-shaped, so it is used directly. `radial` uses HUB-AND-SPOKE rather than
- * the whole-canvas engine's BFS rings, and the asymmetry is deliberate: an estate is one
+ * the whole-canvas engine's BFS rings, and the asymmetry is deliberate: a landscape is one
  * component with real hop structure to show, while a group of six is usually all one hop out —
  * which BFS would draw as a single enormous ring where rank rings nest tightly. Both are rings
  * around the most important node, which is what Radial promises.
@@ -1457,7 +1457,7 @@ const FR_COHESION = 0.1;
 const SEPARATE_PASSES = 24;
 
 /**
- * Ring `d` holds every node `d` hops from the estate's worst-risk agent.
+ * Ring `d` holds every node `d` hops from the landscape's worst-risk agent.
  *
  * THE RADIUS COMES FROM THE OCCUPANCY, and that is the whole design. A ring of 30 nodes at a
  * constant radius overlaps; a constant radius large enough for 30 leaves a ring of 3 floating in

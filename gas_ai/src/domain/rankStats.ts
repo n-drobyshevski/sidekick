@@ -10,7 +10,7 @@
 // give the "collapses" claim a magnitude instead of an adjective; cohensKappa is the same
 // question one step removed — do two SEVERITY BANDINGS agree, not just two raw scores; and
 // bootstrapCI puts an honest error bar on any of the above computed from a 30-asset seed
-// estate, which is too small to trust a single point estimate from.
+// landscape, which is too small to trust a single point estimate from.
 //
 // Independently testable on purpose: no import from aars.ts, no Google Apps Script global.
 // These are statistics about a list of numbers, not about AARS, and must stay reusable the
@@ -72,7 +72,7 @@ function tiedPairCount(values: number[]): number {
  * groups. 1.0 means every pair shares a value — the model ranks nothing; 0 means every
  * value is unique — the model separates every pair. This is the pair-counting twin of
  * `largestTieGroup` in aarsRule.ts: that field names the single worst block, this one
- * measures how much of the WHOLE estate sits in blocks at all. 0 for N < 2 (no pairs exist).
+ * measures how much of the WHOLE landscape sits in blocks at all. 0 for N < 2 (no pairs exist).
  */
 export function tieRate(values: number[]): number {
   const n = values.length;
@@ -103,6 +103,54 @@ export function effectiveCardinality(values: number[]): number {
     entropy += -p * Math.log(p);
   }
   return Math.exp(entropy);
+}
+
+/**
+ * Where each value sits in its own list, as a percentile of the whole — the statistic that
+ * replaces the AARS BAND wherever a surface used to present a band as a decision.
+ *
+ * WHY THIS EXISTS AT ALL. `ai/AARS_SCORING_ASSESSMENT.md` §3 measured what the bands do on
+ * live data: 19 of 30 scored assets land CRITICAL, HIGH and MEDIUM are both empty, tieRate
+ * is 0.30 and effectiveCardinality 3.67 against 5 distinct scores. A band holding the
+ * entire working population names no action and cuts no queue. A percentile makes the same
+ * score say the only thing it can honestly say — where this asset sits relative to the rest
+ * of the estate — and says it against a denominator the caller has to publish.
+ *
+ * MIDRANK, NOT CDF, AND THE CHOICE IS THE POINT. The obvious form, `(below + equal) / N`,
+ * puts every member of a tie block at the block's TOP: the 14 seed assets tied at 72 would
+ * all read as the 87th percentile, which is a claim that they beat the 8 assets above
+ * them — they do not, they are tied with each other and below those 8. The midrank form,
+ * `(below + equal/2) / N`, puts the whole block at its own middle (those 14 read 60), so a
+ * tie block gets ONE shared percentile that is honest about being a block. Using the CDF
+ * form here would reintroduce exactly the false ordering this statistic was added to stop.
+ *
+ * Returns exact, unrounded percentages in the input's own index order, never sorted — a
+ * caller zipping these back onto nodes by position must be able to trust the alignment.
+ * Rounding is the caller's decision and belongs where the population size is known
+ * (`syncStore.withAarsPercentile` rounds to whole percent, because 1/30 of an estate is
+ * ~3.3 points and a decimal would imply precision the population does not have).
+ *
+ * A constant list gives every entry 50 — one block spanning the whole estate, centred.
+ * That is the correct reading of "this model separates nothing", and it is the same
+ * message `tieRate` returns 1.0 for.
+ */
+export function midrankPercentiles(values: number[]): number[] {
+  const n = values.length;
+  if (n === 0) return [];
+  const counts = new Map<number, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  // One pass up the distinct values accumulates each block's `below` count, so the
+  // per-value percentile is computed once per BLOCK rather than once per element — and
+  // every member of a block therefore reads back a bit-identical number, which is the
+  // property the whole doc-comment above turns on.
+  const percentileOf = new Map<number, number>();
+  let below = 0;
+  for (const value of [...counts.keys()].sort((a, b) => a - b)) {
+    const size = counts.get(value)!;
+    percentileOf.set(value, ((below + size / 2) / n) * 100);
+    below += size;
+  }
+  return values.map((v) => percentileOf.get(v)!);
 }
 
 /**
@@ -167,8 +215,8 @@ function mulberry32(seed: number): () => number {
  * Percentile bootstrap: resample `values` with replacement `samples` times, compute `stat`
  * on each resample, and return the 2.5th/97.5th percentiles of that distribution as a 95%
  * confidence interval. This is what turns a single discrimination number (a tau-b, a tie
- * rate) computed on a 30-asset seed estate into an honest claim about how much that number
- * would wobble on a differently-sampled estate the same size, instead of reporting a point
+ * rate) computed on a 30-asset seed landscape into an honest claim about how much that number
+ * would wobble on a differently-sampled landscape the same size, instead of reporting a point
  * estimate as if it were exact.
  *
  * Seeded and deterministic — the whole point of using mulberry32 above instead of
@@ -199,66 +247,3 @@ export function bootstrapCI<T>(
   };
 }
 
-/**
- * Midrank (average) percentile: each value's position in `values`, 0–100, sorted ascending.
- * Exists because AARS's absolute bands have no population-independent meaning — the same
- * rule put 100% of the demo estate in CRITICAL and 97.58% of a live estate in INFO. A
- * percentile is comparable ACROSS populations the way an absolute band never can be.
- *
- * TIES ARE THE WHOLE REASON THIS IS ITS OWN FUNCTION rather than a one-line sort-and-index.
- * `tieRate` above measures how often this matters: 0.30 on the seed estate, meaning nearly a
- * third of asset pairs share a score. Assigning those tied assets DIFFERENT percentiles —
- * whatever a stable sort happened to do with the tie — would manufacture an ordering this
- * model does not have and cannot defend if asked which of the two came first. Midrank is the
- * standard fix (equivalent to `scipy.stats.percentileofscore(..., kind="mean")`, and to
- * `rankdata(..., method="average")` rescaled to 0–100): every member of a tied block is
- * assigned the block's MIDRANK — the average of the 1-indexed ranks the block spans — so
- * ties share one value rather than being arbitrarily broken.
- *
- * Formula, for a tie block occupying 1-indexed ranks [a, b] (b === a for an untied value):
- *   midrank   = (a + b) / 2
- *   percentile = (midrank − 0.5) / N × 100
- * The −0.5 centers each value in the slice of the 0–100 scale its rank owns, rather than
- * anchoring it to the slice's upper edge — this is what keeps a single value from reading as
- * either the 0th or the 100th percentile of itself (see the single-value case below) and
- * what makes the formula agree with `percentileofscore`'s "mean" convention exactly:
- * (countBelow + countBelowOrEqual) / (2N) × 100 reduces to the same expression once
- * countBelow and countBelowOrEqual are rewritten as the tie block's rank span.
- *
- * Identity cases this reduces to, all provable from the formula above rather than special-
- * cased in the code:
- *   - Empty list: returns [] — there is no population to rank anything against.
- *   - Single value: the only "tie block" spans rank [1, 1], midrank 1, percentile
- *     (1 − 0.5)/1 × 100 = 50 — the sole reasonable answer when there is nothing to compare
- *     against, and the same 50 a fully-tied list of any size reduces to below.
- *   - All tied: one block spanning [1, N], midrank (N+1)/2, percentile
- *     ((N+1)/2 − 0.5)/N × 100 = 50 for every N — indistinguishable assets get the
- *     distribution's exact middle, never an arbitrary spread.
- *   - Clean (all-distinct) ordering of N values: ranks are untied, so this reduces to the
- *     familiar (rank − 0.5)/N × 100 percentile-rank ladder, e.g. N=4 → 12.5/37.5/62.5/87.5.
- *
- * Pure and AARS-free like every other export in this file — see the file header. Returns
- * percentiles in the SAME ORDER as `values`, not sorted, so a caller can zip the result back
- * onto whatever else is indexed the same way (asset ids, node references) without carrying
- * a second array of original positions.
- */
-export function midrankPercentiles(values: number[]): number[] {
-  const n = values.length;
-  if (n === 0) return [];
-
-  const order = values.map((_, i) => i).sort((a, b) => values[a]! - values[b]!);
-  const percentiles = new Array<number>(n);
-
-  let i = 0;
-  while (i < n) {
-    let j = i;
-    while (j + 1 < n && values[order[j + 1]!] === values[order[i]!]) j++;
-    // Tie block spans sorted positions [i, j] (0-indexed) — 1-indexed ranks [i+1, j+1].
-    const midrank = (i + 1 + (j + 1)) / 2;
-    const percentile = ((midrank - 0.5) / n) * 100;
-    for (let k = i; k <= j; k++) percentiles[order[k]!] = percentile;
-    i = j + 1;
-  }
-
-  return percentiles;
-}

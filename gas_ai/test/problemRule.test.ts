@@ -1,5 +1,5 @@
 // The problem rule as a configurable object: outcome cascade, coercion, validation, leaf
-// accounting, and the tree-vs-estate diagnostic — the structural port of aarsRule.test.ts
+// accounting, and the tree-vs-landscape diagnostic — the structural port of aarsRule.test.ts
 // onto problem.ts's tree instead of AARS's score.
 
 import { describe, expect, it } from "vitest";
@@ -28,7 +28,7 @@ import { enrichGraphDoc } from "../src/domain/graphEnrich";
 import { DEFAULT_AARS_RULE } from "../src/domain/aars";
 import { seedGraphDoc, SEED_ISSUES } from "../src/server/sampleData";
 import { indexBy } from "../src/domain/util";
-import { buildNullExposureEstate } from "./problem.fixture";
+import { buildNullExposureLandscape } from "./problem.fixture";
 
 function tuned(over: Partial<ProblemRule>): ProblemRule {
   return cleanProblemRule({ ...DEFAULT_PROBLEM_RULE, ...over });
@@ -299,8 +299,8 @@ describe("decisionEqual", () => {
 // ---------------------------------------------------------------------- treeDiscrimination
 
 describe("treeDiscrimination — the null-exposure fixture (the point of this phase)", () => {
-  it("reports a high UNVERIFIED-exposure rate on an estate shaped like a real hosted-agent tenant", () => {
-    const { nodes, issues } = buildNullExposureEstate();
+  it("reports a high UNVERIFIED-exposure rate on a landscape shaped like a real hosted-agent tenant", () => {
+    const { nodes, issues } = buildNullExposureLandscape();
     const nodesById = indexBy(nodes, (n) => n.id);
 
     const decided = issues.map((issue) => {
@@ -327,7 +327,7 @@ describe("treeDiscrimination — the null-exposure fixture (the point of this ph
   });
 });
 
-describe("treeDiscrimination — the real seed estate", () => {
+describe("treeDiscrimination — the real seed landscape", () => {
   it("runs DEFAULT_PROBLEM_RULE over enrichGraphDoc(seedGraphDoc) + SEED_ISSUES and reports the shape", () => {
     const enriched = enrichGraphDoc(seedGraphDoc("T"), SEED_ISSUES, undefined, DEFAULT_AARS_RULE);
     const nodesById = indexBy(enriched.nodes, (n) => n.id);
@@ -349,7 +349,7 @@ describe("treeDiscrimination — the real seed estate", () => {
     expect(outcomeTotal).toBe(open.length);
 
     // eslint-disable-next-line no-console
-    console.log("[problemRule] SEED ESTATE treeDiscrimination:", {
+    console.log("[problemRule] SEED LANDSCAPE treeDiscrimination:", {
       decidedCount: d.decided.length,
       outcomeOccupancy: d.outcomeOccupancy,
       leavesReached: d.leavesReached,

@@ -22,9 +22,9 @@ const PAGES = {
   // fullBleed: the page owns the whole content pane (no main padding/max-width).
   graph: { title: "Security Graph", group: "Security", render: renderGraphPage, fullBleed: true },
   inventory: { title: "AI Inventory", group: "Security", render: renderInventory },
-  // Phase 7: issues UNION findings, ranked together across the whole estate — neither
+  // Phase 7: issues UNION findings, ranked together across the whole landscape — neither
   // `combos` (one toxic-combination pattern) nor `config` (findings only) can answer
-  // "what do I work on Monday". Sits right after inventory: both name the estate, this one
+  // "what do I work on Monday". Sits right after inventory: both name the landscape, this one
   // orders what is wrong with it.
   problems: { title: "Priorities", group: "Security", render: renderProblems },
   combos: { title: "Toxic Combinations", group: "Security", render: renderCombos },

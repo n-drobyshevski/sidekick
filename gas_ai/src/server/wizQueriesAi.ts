@@ -997,7 +997,7 @@ export function aiPrincipalsVariables(
  * It is REFERENCE DATA and the sync treats it as such: ~3,858 rules is ~39 pages at PAGE_SIZE,
  * against a battery that is otherwise ~10–20 calls. The step is gated on a 30-day freshness
  * check (see syncJobs.CONFIG_RULES) because this list changes when Wiz ships rules, not when
- * the estate moves.
+ * the landscape moves.
  */
 export const Q_CONFIG_RULES =
   "query SidekickAiConfigRules($first: Int, $after: String) {\n" +

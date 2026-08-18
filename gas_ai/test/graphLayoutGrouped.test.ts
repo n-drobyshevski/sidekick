@@ -492,7 +492,7 @@ describe("layoutGrouped: risk evidence", () => {
   it("files a data-finding aggregate under its own kind, and in its STORE's block", () => {
     // The aggregate's parent is the datastore, not the agent — so under an inventory
     // grouping it inherits the store's bucket, and under 'kind' it stands on its own.
-    // Its own fixture rather than the seed estate: what is asserted is the grouping rule,
+    // Its own fixture rather than the seed landscape: what is asserted is the grouping rule,
     // and pinning it to whichever seed bucket happens to carry findings would make this
     // test fail for reasons that have nothing to do with layout.
     const doc = withDataFindingNodes({

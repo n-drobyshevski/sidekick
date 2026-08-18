@@ -57,42 +57,45 @@ Asset has confirmed access to sensitive data (PII/PHI/PCI)	+20
 Asset has access to data resources (unconfirmed sensitivity)	+10
 Asset has no data access	0
 Global multiplier: 5Rs = 53% → apply ×1.1 to all data-related scores	×1.1
-AARS Score Severity
+AARS Score Levels
+Score	Level	What it means
+70–100	🔴 CRITICAL	The top of the score's range
+50–69	🟠 HIGH	Upper range
+30–49	🟡 MEDIUM	Middle range
+10–29	🔵 LOW	Lower range
+0–9	✅ INFO	Nothing priced, or almost nothing
 
-> **P2c — the Action column above is no longer accurate, and is not fixable by rewording.**
-> This table's original "Action" column tied a remediation SLA to each band — "Immediate
-> remediation required" for CRITICAL, "within 7 days" for HIGH, and so on — which asserts
-> the band means the same thing on every tenant's data. Measured, it does not:
+> **These levels are context, not a decision, and this table no longer states remediation
+> SLAs.** It used to: CRITICAL read "immediate remediation required", HIGH "remediate
+> within 7 days", and so on down the table. Those were withdrawn because the model cannot
+> support them, and the measurements are in this repository rather than in an opinion —
+> `gas_ai/test/scoreOrdinality.test.ts` asserts every number below against the live
+> derivation over the seed estate, so they cannot go stale unnoticed:
 >
-> - **The demo estate scores 100% CRITICAL; a live estate scores 97.58% INFO** — the
->   identical rule, the identical thresholds, opposite ends of the scale. A band that holds
->   an estate's entire working population, or almost none of it, is not naming a remediation
->   priority; it is naming which estate happened to be measured.
-> - **Tie rate 0.30, effective cardinality 3.67** against a `distinctScores` of 5 on the
->   seed estate (`test/scoreOrdinality.test.ts`, `rankStats.ts`) — nearly a third of scored
->   asset pairs cannot be separated at all, and the five distinct values behave like three
->   and a half.
-> - **Pillar ablation: τ-b 0.863 when pillar A (toxic-combination participation) is zeroed,
->   0.987 when B (compliance) or C (data) is zeroed** — pillar A does nearly all of the
->   ranking work; the other 50 of 100 points move the ranking by about 1.3% between them.
->   A band built from a sum where two of three pillars barely move the order is not a
->   finer-grained read than pillar A alone would give.
+> - **19 of 30 scored assets land CRITICAL, and HIGH and MEDIUM are both empty.** An SLA
+>   attached to a level holding the entire working population schedules everything at once,
+>   which is indistinguishable from scheduling nothing.
+> - **Tie rate 0.30, effective cardinality 3.67** against 5 distinct scores. Nearly a third
+>   of asset pairs are unorderable, and the five values behave like three and a half — so a
+>   "top 10" cut out of the 14-asset block tied at 72 is a coin toss, not a priority list.
+> - **Pillar ablation τ-b: A 0.863, B 0.987, C 0.987.** Pillar A does essentially all of the
+>   ranking work; 50 of the 100 points move the ranking by about 1.3% between them.
+> - **A monotone re-encoding of `severityPoints` changes the ranking (τ-b 0.9967).** An
+>   order-preserving change to an ordinal input must not reorder the output, so the
+>   cross-pillar addition is not licensed by the scale type of what it adds.
 >
-> See [AARS_SCORING_ASSESSMENT.md](AARS_SCORING_ASSESSMENT.md) §3 ("A — Actionable and
-> Assignable: fails") for the full measurement. The product now leads a reader looking at
-> ONE asset with `aarsPercentile` — a rank within the CURRENT scored population, which
-> survives the exact inversion above — and keeps the band only where it was always honest:
-> a distribution over time (the AARS trend) or a diagnostic about the MODEL rather than
-> about one asset (the AARS Rules page's band occupancy). The Score / Risk Level columns
-> below are unchanged and remain the normative threshold definition for `DEFAULT_AARS_RULE
-> .bands`; only the claim that a band is a scheduling decision is retired.
+> What the product does instead: it publishes each asset's **midrank percentile within the
+> scored estate** beside the score — tied assets share one percentile, so a 14-asset block
+> reads 60 for all fourteen rather than pretending to fourteen positions — and it leads its
+> asset surfaces with the two models that do cut a queue, the posture tier
+> (`gas_ai/src/domain/posture.ts`) and the problem verdict (`gas_ai/src/domain/problem.ts`).
+> The levels survive as a distribution (the trend chart) and as a rule diagnostic (the AARS
+> Rules page's band occupancy), which are the two readings they can carry.
+>
+> **Nothing here changes what a score IS.** `DEFAULT_AARS_RULE` is untouched, the applied
+> table below still reproduces exactly, and `gas_ai/test/aars.test.ts` pins it. The
+> thresholds above are unchanged too — this is a claim about how they are READ.
 
-Score	Risk Level	Action
-70–100	🔴 CRITICAL	Model diagnostic threshold — not a standalone SLA; see the caveat above
-50–69	🟠 HIGH	Model diagnostic threshold — not a standalone SLA; see the caveat above
-30–49	🟡 MEDIUM	Model diagnostic threshold — not a standalone SLA; see the caveat above
-10–29	🔵 LOW	Model diagnostic threshold — not a standalone SLA; see the caveat above
-0–9	✅ INFO	Model diagnostic threshold — not a standalone SLA; see the caveat above
 📊 Applied AARS — Your AI Assets (Top Scored)
 Asset	Toxic Issues	Compliance Gaps	Data Exposure	AARS Score	Risk Level	Parent Project
 Agent-A	MEDIUM ×1 (20)	LLM06 gap +10, No guardrail +10	Sensitive data ×1.1 = +22	62	🟠 HIGH	PROJECT-BETA, PROJECT-ALPHA, gcp-account-01

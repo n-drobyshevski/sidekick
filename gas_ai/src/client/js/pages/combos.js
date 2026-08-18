@@ -1,4 +1,4 @@
-// Toxic Combinations: what the estate looks like in combination terms, then one card per
+// Toxic Combinations: what the landscape looks like in combination terms, then one card per
 // pattern, then the issues inside it.
 //
 // The page is built around the thing it was previously only asserting. Wiz rates these
@@ -21,6 +21,7 @@ import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
+  FINDINGS_SCORE_LABEL, ordinal,
   clear, dataTable, debounce, el, emptyState, errorState, kpiCard, outcomeBadge,
   outcomeLabel, pager, sectionLabel, select,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,
@@ -560,16 +561,21 @@ export async function renderCombos(main, params) {
     const chips = group.assets.map((a) => el("button", {
       class: "asset-chip",
       onclick: () => openAsset(a),
-      "aria-label": a.name + ", AARS " + (a.aars === null || a.aars === undefined ? "unscored" : a.aars),
+      "aria-label": a.name + ", " + FINDINGS_SCORE_LABEL.toLowerCase() + " " +
+        (a.aars === null || a.aars === undefined ? "unscored" : a.aars) +
+        (typeof a.aarsPercentile === "number"
+          ? ", " + ordinal(a.aarsPercentile) + " percentile"
+          : ""),
     },
       el("span", { class: "asset-chip-name" }, a.name),
-      // The score, never colour-coded by the AARS band here — a claim about one asset (see
-      // aars-band's own caveat, and ui/severity.js's aarsPercentileMark, this list's own
-      // asset-chip is too small to also carry a percentile). aria-hidden: the button's own
-      // aria-label already speaks the number.
-      a.aars === null || a.aars === undefined
-        ? null
-        : el("span", { class: "asset-chip-score num", "aria-hidden": "true" }, String(a.aars))));
+      // The percentile, untinted. This carried the raw score painted in its BAND's severity
+      // token, which put a red pill on an asset chip sitting inches from real issue
+      // severities on the same card — one threshold reading as a finding. The card is a way
+      // into a record; the number on it is placement, not a verdict.
+      typeof a.aarsPercentile === "number"
+        ? el("span", { class: "asset-chip-score num", "aria-hidden": "true" },
+            "p" + a.aarsPercentile)
+        : null));
 
     const head = chips.slice(0, ASSET_PREVIEW);
     const tail = chips.slice(ASSET_PREVIEW);

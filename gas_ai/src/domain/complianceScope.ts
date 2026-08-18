@@ -4,9 +4,9 @@
 // 5Rs (Reduce, Restrict, Relabel, Relocate, Reconfigure) is a DATA SECURITY framework,
 // collected here by an AI-focused product. Most of its rules are about all cloud data — a
 // stale bucket, an over-broad grant on a data warehouse nobody's agent ever touches — and
-// are noise on a page built to answer "is my AI estate safe". A fixed allowlist of "the
+// are noise on a page built to answer "is my AI landscape safe". A fixed allowlist of "the
 // AI-relevant 5Rs rules" would go stale the moment Wiz revises the framework, so this module
-// DERIVES the scope instead, from two HARD facts about the estate rather than a guess:
+// DERIVES the scope instead, from two HARD facts about the landscape rather than a guess:
 //
 //   1. CROSS-MAPPED. The same policyId also appears under a framework this app already
 //      knows is AI-specific — an OWASP Agentic, LLM or ML tree collected alongside 5Rs.
@@ -29,7 +29,7 @@
 //
 // WHAT THIS CAN SEE. The trees handed in list only what Wiz assessed — scored
 // subcategories, and under them the policies that evaluated something (compliancePosture.ts).
-// So the scope picker offers exactly the 5Rs rules that ran against this estate. A rule Wiz
+// So the scope picker offers exactly the 5Rs rules that ran against this landscape. A rule Wiz
 // maps but has never evaluated is not offered to be pinned, in or out, and that is the
 // intended reading of the pin: it decides whether a LIVE rule belongs on an AI register,
 // not whether a dormant one might one day. If such a rule later evaluates something it
@@ -244,7 +244,7 @@ export function scopeFiveRs(
           byPolicy.set(p.policyId, acc);
         }
         // MAX, never sum — the same discipline complianceOverview.ts's sharedControls
-        // applies at estate scope, applied here at the 5Rs tree's own scope: one policy is
+        // applies at landscape scope, applied here at the 5Rs tree's own scope: one policy is
         // evaluated once, and its fail count is simply repeated on every subcategory row it
         // maps to.
         if (p.failCount > acc.failCount) acc.failCount = p.failCount;
@@ -273,7 +273,7 @@ export function scopeFiveRs(
     const aiFindingCount = matched.size;
 
     // Pins beat derivation in BOTH directions, so the UI can trust `reason` to say who
-    // actually decided — an operator's call is never re-labelled as something the estate
+    // actually decided — an operator's call is never re-labelled as something the landscape
     // "found" on its own. `out` is checked FIRST: a policyId stored in both lists is a
     // contradiction cleanFiveRsPins (settingsLogic.ts) should already have resolved before
     // it reaches here, but this function does not trust that it was, and re-applies the

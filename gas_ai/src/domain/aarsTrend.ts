@@ -14,7 +14,7 @@ import { cmpBy } from "./util";
 
 /**
  * The levels the chart draws. INFO (score 0–9, "no action required") is recorded but not
- * plotted: it is the largest bucket in a healthy estate and would flatten the levels that
+ * plotted: it is the largest bucket in a healthy landscape and would flatten the levels that
  * need watching. The bar chart beside it hides INFO for the same reason — the two must
  * agree or the pair reads as a contradiction.
  */
@@ -27,7 +27,7 @@ export interface TrendPoint<K extends string> {
   /**
    * The rule version these counts were produced under (0 = the spec/default rule). Counts
    * from different versions are not on the same scale, so the chart marks where the model
-   * changed rather than drawing the step as if the estate had moved.
+   * changed rather than drawing the step as if the landscape had moved.
    */
   ruleVersion: number;
 }
@@ -143,7 +143,7 @@ export function problemTrendFromHistory(rows: Rec[], limit = 90): ProblemTrendPo
 
 /**
  * Indices where the scoring/decision model changed relative to the point before. The chart
- * marks these so a step caused by a rule edit is never read as a step in the estate. Reads
+ * marks these so a step caused by a rule edit is never read as a step in the landscape. Reads
  * only `ruleVersion`, so it serves either series (or any future one) without its own type
  * parameter.
  */

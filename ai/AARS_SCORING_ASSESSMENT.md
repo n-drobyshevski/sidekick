@@ -241,6 +241,70 @@ top-band problem has an owner or a next action.
 *Test:* `P(top band) ≤ ~11%`, every band non-empty, and the share of top-band problems carrying an
 assignee or a ticket within N days of first detection is itself a published measure.
 
+> **Change — the bands were demoted to a percentile and the label was renamed.** The finding
+> above is the one that shipped a fix, and this is what it is.
+>
+> **1. A percentile, and its tie handling.** `rankStats.midrankPercentiles` computes each
+> asset's placement in the scored population as `(below + equal/2) / N`, and
+> `syncStore.withAarsPercentile` stamps it — rounded to whole percent — on every read path
+> (the Drive-snapshot path, the tab-rebuild path and `loadAssets`). It is read-derived and
+> **never persisted**, because a percentile is a statement about a population and goes stale
+> the instant any other asset moves; there is no column and no fallback.
+>
+> The midrank form is the whole point, and the seed estate shows why. Its live-path score
+> groups are 8 / 1 / 2 / **14** / 5 at scores 0 / 22 / 29 / 72 / 76 — the shape that
+> reproduces §2's pinned tie rate 0.30 and effective cardinality 3.67. The 14 assets tied at
+> 72 get **one shared percentile, 60** — `(11 + 7)/30` — not fourteen different ones. A
+> cumulative percentile would have read all fourteen at 87, the top of their own block,
+> claiming they beat the five assets genuinely above them. An identical percentile across a
+> block is not a defect in the statistic; it is this section's coin toss, made visible
+> instead of hidden behind five band names.
+>
+> **2. Which band call sites moved, and the rule used to sort them.** A band was demoted
+> wherever it was a **claim about an asset** — the Inventory register cell, the asset detail
+> sheet (including its heading accent, which painted the whole record in the band's colour),
+> the graph node badge, the toxic-combination card's asset chip, and the graph-query results
+> table, which drew a band with the identical badge an issue severity uses. On all of those
+> the percentile now leads, the score follows, and the level reads as a plain word with no
+> severity tint. The `criticalAars` and `highAars` KPIs were withdrawn outright rather than
+> renamed: a tile counting 19 of 30 assets as "critical" is a restatement of "these are the
+> scored assets" wearing a verdict's clothes. The Inventory's summary is now led by the
+> posture tier, and the score's denominator (`aarsScored`) is published beside the
+> percentile, per §3's own S-test.
+>
+> A band was **kept** wherever it is a distribution or a model diagnostic. The trend chart
+> (`aarsTrend.ts`, `TREND_SEVERITIES`, `sync_history.aars_severity_json`) is a distribution
+> over time and is the one series this ledger genuinely has — removing it would destroy
+> history that cannot be backfilled. The AARS Rules page's band rail, `bandRanges` and
+> `bandOccupancy` are diagnostics **about the model**, not claims about assets; the empty-band
+> read-out there is how a future operator would discover this same finding. The Inventory's
+> level strip is the same distribution at one point in time, so it survives too — relabelled,
+> moved below the posture summary, and carrying a note that it is the score's shape and not a
+> queue. `withCurrentBands` still re-derives levels on read, unchanged.
+>
+> **3. The label, and why no identifier moved.** On any surface about an asset the model is
+> now called **"Findings score"**, held in one constant (`AARS_DISPLAY_LABEL`, `aars.ts`) with
+> a client mirror a test pins. "Risk" overclaimed: this is a weighted sum over issues,
+> compliance gaps and data exposure already *found*, and forward-looking consequence is the
+> posture tier's job. The acronym stays on the AARS Rules page, where it names a specific
+> tunable model rather than making a claim about an asset.
+>
+> **Not one identifier changed** — not `ai_assets.aars` / `aars_severity` /
+> `aars_pillars_json` / `aars_input_json`, not `sync_history.aars_severity_json` /
+> `aars_rule_version`, not the `aars_rule` / `aars_scored_version` settings keys, not the
+> `#/aars` route, not a type or a field name. `sheetsDb.ensureHeaders` only ever APPENDS: it
+> has no rename path and no drop path, so a renamed column would sit beside its predecessor
+> in every tenant's sheet permanently. The evidence is already in the tree — renaming the
+> single field `aarsBand` → `aarsSeverity` still costs four maintained code paths today
+> (`normalizeLegacyAars`, `rowToAsset`'s dual read, two branches in `diagnostics.ts`). A label
+> is free to change; eight columns are a migration this app cannot perform.
+>
+> **4. No score moved.** `DEFAULT_AARS_RULE` is untouched. `custom_score.md`'s applied 14-row
+> table, `graphEnrich.test.ts`'s end-to-end reproduction of it, `aarsRule.test.ts`'s
+> `legacyDefaultGapPoints` block and this document's own §2 / §6 / §6b figures in
+> `scoreOrdinality.test.ts` all pass unchanged. This was presentation, a label and an added
+> statistic.
+
 ### R — Repeatable: **partly passes**
 
 The strong parts are genuinely strong: pure domain functions, a frozen clock in the test harness,

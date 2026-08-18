@@ -9,7 +9,7 @@ import { debounce } from "./timing.js";
 let _comboboxSeq = 0;
 
 /** How many matches the list will render before it stops and says so. Rebuilding runs
- *  synchronously on every keystroke, and the asset picker's list is the whole estate. */
+ *  synchronously on every keystroke, and the asset picker's list is the whole landscape. */
 const COMBOBOX_MATCH_CAP = 100;
 const COMBOBOX_DEBOUNCE_MS = 120;
 
@@ -28,7 +28,7 @@ function comboMatches(o, q) {
  *
  * Forked from the OS-vulns tool's `filterCombobox` (gas/src/client/js/ui.js), which
  * fronts ~20 sidebar options where the value IS the label. This one fronts the whole
- * asset estate from inside a scrolling panel, so it differs in six ways:
+ * asset landscape from inside a scrolling panel, so it differs in six ways:
  *
  *   - options are `{value, label, hint, group}` (or plain strings), searched on `label`
  *     and rendered under `role="presentation"` group headers that the keyboard walk skips;
@@ -321,7 +321,7 @@ export function filterCombobox({
           role: "combobox", "aria-expanded": "true", "aria-controls": listboxId,
           "aria-autocomplete": "list", autocomplete: "off", spellcheck: "false",
           // Debounced: each rebuild is one <li> per match, synchronously, and this list can
-          // be the whole estate. Not page-scoped — close() below cancels it, and this
+          // be the whole landscape. Not page-scoped — close() below cancels it, and this
           // control outlives no page.
           oninput: onSearchInput,
           onkeydown: onListKey,

@@ -136,7 +136,7 @@ describe("degradation — an area never claims more than its payload supports", 
   it("steps DSPM back to partial on a zero, which is also what a rejected step leaves", () => {
     // The sensitive-data traversal is optional: a tenant whose schema rejects it records a
     // skip and reports nothing, which reaches the resolver as the same 0 a genuinely clean
-    // estate would. Claiming `live` on that would assert a reading nobody took.
+    // landscape would. Claiming `live` on that would assert a reading nobody took.
     const kpis = { ...FULL.kpis, sensitiveDatastores: 0, dataFindings: 0 };
     expect(stateOf({ ...FULL, kpis }, "dspm")).toBe("partial");
   });

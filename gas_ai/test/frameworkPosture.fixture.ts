@@ -152,7 +152,7 @@ export const AGENTIC_FRAMEWORK: Rec = {
           subCategory("ASI02", "ASI02 Tool Misuse and Exploitation", 86, 465, 70, [sharedControl]),
         ],
       },
-      // The all-empty category: nothing in the estate to assess. Its posture is null and
+      // The all-empty category: nothing in the landscape to assess. Its posture is null and
       // its reason says why — the case a page must never render as 0%.
       {
         category: {

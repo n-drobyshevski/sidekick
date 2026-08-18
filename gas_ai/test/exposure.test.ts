@@ -396,7 +396,7 @@ describe("withExposureEvidence", () => {
     expect(agent?.exposureEvidence?.exposureLevel).toBe("High");
   });
 
-  it("leaves an untouched estate byte-identical", () => {
+  it("leaves an untouched landscape byte-identical", () => {
     // An asset the steps never reached must score and render exactly as it did before they
     // existed — "never asked" is not "asked and found nothing".
     const before = doc([node("agent", "AI_AGENT", { isAccessibleFromInternet: false })], []);

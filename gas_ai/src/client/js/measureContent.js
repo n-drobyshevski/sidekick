@@ -19,43 +19,46 @@
 
 export const MEASURE_ENTRIES = [
   {
-    id: "aars-score", measure: "AARS score", type: "impact", measurementMethod: "Objective",
-    goal: "One comparable risk number per AI asset, priced from what a sync actually "
-      + "collected — never asserted.",
+    id: "aars-score", measure: "Findings score", type: "impact",
+    measurementMethod: "Objective",
+    goal: "One comparable number per AI asset for what has already been FOUND on it, priced "
+      + "from what a sync actually collected — never asserted.",
     formula: "computeAars(aarsInput, aarsRule): four pillars, summed and clamped to 0–100.",
     dataSource: "ai_assets.aars, ai_assets.aars_input_json",
-    reportingFormat: "AI Inventory table; asset detail sheet's pillar bars.",
+    reportingFormat: "AI Inventory register, beside its percentile; asset detail sheet's "
+      + "verdict number and pillar bars.",
     revisionDue: "2027-08-13",
   },
   {
-    id: "aars-band", measure: "AARS band", type: "impact", measurementMethod: "Objective",
-    goal: "The score's own severity level, re-derived from the rule in force on every read. "
-      + "A MODEL diagnostic and an opt-in filter, not a claim about one asset (P2c) — the "
-      + "Inventory table and the asset sheet lead with aars-percentile instead.",
+    id: "aars-band", measure: "Findings score level", type: "impact",
+    measurementMethod: "Objective",
+    goal: "The score's own level, re-derived from the rule in force on every read. Context "
+      + "beside a score and a distribution over the estate — not a per-asset decision, "
+      + "because on this landscape its top level holds most of the scored assets.",
     formula: "bandRanges(rule.bands) applied to the stored aars — no re-sync required.",
     dataSource: "ai_assets.aars, ai_assets.aars_severity",
-    reportingFormat: "AI Inventory filter drawer and asset-sheet secondary chip; AARS trend "
-      + "chart; AARS Rules page band occupancy; bootstrap KPI counts.",
+    reportingFormat: "AI Inventory register and asset sheet (as a plain word); the level "
+      + "strip and trend chart (as a distribution); AARS Rules page (as a rule diagnostic, "
+      + "the one surface that still tints it).",
     revisionDue: "2027-08-13",
   },
   {
-    id: "aars-percentile", measure: "aarsPercentile", type: "impact", measurementMethod: "Objective",
-    goal: "A statement about RANK WITHIN THIS ESTATE, not absolute risk — the same rule put "
-      + "100% of the demo estate in CRITICAL and 97.58% of a live estate in INFO under "
-      + "identical bands. Moves whenever the ESTATE moves, even when this asset's own score "
-      + "does not.",
-    formula: "midrankPercentiles(scores): for a tied score, every member shares the tie "
-      + "block's average rank (rankStats.ts), computed fresh over the scored population on "
-      + "every read.",
+    id: "aars-percentile", measure: "Findings score percentile", type: "impact",
+    measurementMethod: "Objective",
+    goal: "Where one asset's score sits in the estate that was actually scored — the "
+      + "placement an analyst can read, given that the score's levels barely separate "
+      + "assets on this landscape.",
+    formula: "midrankPercentiles(scores) = (count below + count equal / 2) / N, whole "
+      + "percent. Tied scores share one percentile by construction.",
     dataSource: "ai_assets.aars",
-    reportingFormat: "AI Inventory table's primary AARS column; the asset detail sheet's "
-      + "lead verdict figure.",
+    reportingFormat: "AI Inventory register (leads the score cell); asset detail sheet's "
+      + "verdict line, with the population size; security graph node badge.",
     revisionDue: "2027-08-13",
   },
   {
     id: "aars-distinct-scores", measure: "distinctScores", type: "effectiveness",
     measurementMethod: "Objective",
-    goal: "Measures the MODEL's separating power, not the estate's risk — a rule can render "
+    goal: "Measures the MODEL's separating power, not the landscape's risk — a rule can render "
       + "a confident number for every asset while carrying zero ranking information.",
     formula: "new Set(scores).size, over every scored asset in the preview.",
     dataSource: "ai_assets.aars",
@@ -65,7 +68,7 @@ export const MEASURE_ENTRIES = [
   {
     id: "aars-tie-rate", measure: "tieRate", type: "effectiveness", measurementMethod: "Objective",
     goal: "Same as distinctScores, at the scale of PAIRS: 1.0 means every pair of scored "
-      + "assets shares a value, so any ordering within the estate is arbitrary.",
+      + "assets shares a value, so any ordering within the landscape is arbitrary.",
     formula: "Σ C(n_k,2) / C(N,2) over the distinct-value groups (rankStats.tieRate).",
     dataSource: "ai_assets.aars",
     reportingFormat: "AARS Rules page, rule-preview Discrimination panel.",
@@ -85,7 +88,7 @@ export const MEASURE_ENTRIES = [
     id: "aars-pillar-saturation", measure: "Pillar saturation", type: "effectiveness",
     measurementMethod: "Objective",
     goal: "Locates WHICH pillar of the model has stopped discriminating — a pillar pinned "
-      + "at its cap for most of the estate still renders a plausible total score.",
+      + "at its cap for most of the landscape still renders a plausible total score.",
     formula: "Assets at or above each pillar's cap (aarsRule.ts's ruleDiscrimination).",
     dataSource: "ai_assets.aars_pillars_json",
     reportingFormat: "AARS Rules page, rule-preview Discrimination panel.",
@@ -104,7 +107,7 @@ export const MEASURE_ENTRIES = [
   {
     id: "problem-axis-unknown-rate", measure: "Per-axis unknown rate", type: "implementation",
     measurementMethod: "Objective",
-    goal: "THE MOST IMPORTANT MEASURE ON THIS PAGE. A high value does NOT mean the estate "
+    goal: "THE MOST IMPORTANT MEASURE ON THIS PAGE. A high value does NOT mean the landscape "
       + "is safe — it means the model cannot prioritise, because the evidence one axis "
       + "needs was never collected. Reading it as reassurance is the misuse this exists to prevent.",
     formula: "Fraction of the decided population unresolved on each axis (treeDiscrimination.unknownRate).",
@@ -174,7 +177,7 @@ export const MEASURE_ENTRIES = [
   {
     id: "framework-average-posture", measure: "averagePosture", type: "effectiveness",
     measurementMethod: "Objective",
-    goal: "One number for estate-wide compliance across every synced framework — unscored "
+    goal: "One number for landscape-wide compliance across every synced framework — unscored "
       + "frameworks are excluded rather than read as zero.",
     formula: "Mean posture_pct across framework rows whose state resolves to 'scored'.",
     dataSource: "ai_framework_posture.posture_pct",

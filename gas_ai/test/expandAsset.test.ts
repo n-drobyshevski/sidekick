@@ -34,7 +34,7 @@ describe("expandAsset", () => {
     });
   });
 
-  it("returns null for a missing id rather than expanding the whole estate", () => {
+  it("returns null for a missing id rather than expanding the whole landscape", () => {
     const res = server.api.expandAsset({}) as Result;
     expect(res.ok).toBe(true);
     expect(res.data).toBeNull();
@@ -48,7 +48,7 @@ describe("expandAsset", () => {
       rows: Array<{ id: string; kind: string }>;
     };
     const nonAgent = assets.rows.filter((r) => r.kind !== "AI_AGENT")[0];
-    expect(nonAgent, "sample estate should contain a non-agent asset").toBeTruthy();
+    expect(nonAgent, "sample landscape should contain a non-agent asset").toBeTruthy();
 
     const res = server.api.expandAsset({ id: nonAgent.id }) as Result;
     expect(res.ok).toBe(true);

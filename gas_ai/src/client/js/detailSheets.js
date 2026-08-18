@@ -15,9 +15,10 @@ import {
   assetSections, configFindingSections, issueSections, recordCursor,
 } from "./recordSections.js";
 import {
-  aarsChip, aarsPercentileMark, clear, codeBlock, copyButton, el, emptyState, errorState,
-  fmtDate, fmtDateTime, helpTip, meter, openSheet, plural, sevBadge, sheetRow, sheetSection,
-  skeleton, statusPill, uiIcon,
+  FINDINGS_SCORE_LABEL, clear, codeBlock, copyButton, el, emptyState, errorState, fmtDate,
+  fmtDateTime,
+  meter, openSheet, outcomeBadge, percentileText, plural, scoreChip, sevBadge, sheetRow,
+  sheetSection, skeleton, statusPill, tierBadge, uiIcon,
 } from "./ui.js";
 
 /** Fallback only — the caps in force ride on the bootstrap payload. */
@@ -309,7 +310,7 @@ function propsGrid(node) {
   );
 }
 
-/** When the estate first saw this asset and when it last did — sync provenance, not risk. */
+/** When the landscape first saw this asset and when it last did — sync provenance, not risk. */
 function provStrip(node) {
   const bits = [];
   if (node.firstSeen) bits.push(el("span", {}, "First seen " + fmtDateTime(node.firstSeen)));
@@ -513,7 +514,14 @@ export function openAssetSheet(assetId, opts = {}) {
       ctx.setHeading({
         title: node.name,
         subtitle: [kindLabel(node.kind), node.cloud, node.region].filter(Boolean).join(" · "),
-        sev: node.aarsSeverity || "",
+        // No accent, deliberately. This used to be `node.aarsSeverity`, which painted the
+        // whole record — its heading rule and its rail — in the findings score's band
+        // colour, making the band the sheet's verdict. It is the weakest verdict here: on
+        // live data its top level holds 19 of 30 scored assets and two levels hold none
+        // (ai/AARS_SCORING_ASSESSMENT.md §3). The chips below carry the two readings that
+        // ARE decisions — the posture tier and the worst open problem — and neither is a
+        // severity, so neither claims the stripe either.
+        sev: "",
         icon: kindIconSvg(node.kind, 18),
         tone: categoryOf(node.kind),
         actions: [
@@ -531,33 +539,18 @@ export function openAssetSheet(assetId, opts = {}) {
           })),
         ],
         chips: [
-          // The percentile leads — a rank within THIS estate, not the population-dependent
-          // band (ai/AARS_SCORING_ASSESSMENT.md §3: the same rule put nearly an entire live
-          // estate at INFO and an entire demo estate at CRITICAL). The band still follows,
-          // wrapped in its own caveat, rather than dropped outright — a reader who came from
-          // a band-sorted worklist still needs to see the word this asset was filed under.
-          el("span", { class: "sheet-chip-label" }, "AARS"),
-          aarsPercentileMark(node.aarsPercentile, node.aars),
-          node.aarsSeverity
-            ? helpTip(
-                aarsChip(node.aars, node.aarsSeverity),
-                [
-                  "A threshold on the CURRENT scored population, not an absolute rating — " +
-                    "the same rule can put nearly an entire estate in CRITICAL on one " +
-                    "tenant and in INFO on another.",
-                  "The percentile above is the comparison that survives that shift.",
-                ],
-                // helpTip's own `label`, when given, REPLACES the wrapped content's
-                // accessible name rather than adding to it (see graph.js's "capped"/
-                // "partial" pills) — fine where the wrapped mark is redundant with text
-                // already announced beside it, wrong here, where the band word is the
-                // only place it is said at all. So the label STATES the value rather than
-                // only naming the reveal.
-                { label: `AARS band ${node.aarsSeverity}`, term: "aars-band" },
-              )
-            : null,
+          // Order is the argument: the two models that decide something lead, and the
+          // findings score follows as context. Each is named, because they routinely
+          // disagree and an unlabelled row of pills would read as one escalating scale.
+          node.postureTier ? el("span", { class: "sheet-chip-label" }, "Posture") : null,
+          node.postureTier ? tierBadge(node.postureTier) : null,
+          node.worstOpenProblem
+            ? el("span", { class: "sheet-chip-label" }, "Worst problem") : null,
+          node.worstOpenProblem ? outcomeBadge(node.worstOpenProblem) : null,
           node.severity ? el("span", { class: "sheet-chip-label" }, "Worst issue") : null,
           node.severity ? sevBadge(node.severity) : null,
+          el("span", { class: "sheet-chip-label" }, FINDINGS_SCORE_LABEL),
+          scoreChip(node.aars, node.aarsPercentile, node.aarsSeverity),
           ...(node.comboGroups || []).map((g) => el("span", { class: "pill bad" }, comboTitle(g))),
           node.guardrailMissing ? el("span", { class: "pill warn" }, "No guardrail") : null,
           node.identityPurpose === "AGENTIC" ? el("span", { class: "pill neutral" }, "Agentic") : null,
@@ -573,17 +566,24 @@ export function openAssetSheet(assetId, opts = {}) {
       // in what sequence, and it is the thing under test.
       const panes = {
         overview(pane) {
-          // The verdict leads, and it leads as a number: the score is the product.
+          // The score leads as a number, and the number is immediately placed: a bare 72
+          // out of 100 reads as "72% of the way to the worst possible asset", which is not
+          // what it means. The percentile says what it does mean — where this asset sits
+          // among the ones actually scored — and it carries its denominator, because
+          // "60th percentile" of an unnamed population is not a measurement.
           if (node.aars !== null && node.aars !== undefined) {
             const p = node.aarsPillars;
+            const scored = (bootstrapCached() || {}).counts;
+            const place = percentileText(node.aarsPercentile, scored && scored.aarsScored);
             pane.append(
               el("div", { class: "sheet-section" },
                 el("div", { class: "sheet-verdict" },
                   el("span", { class: "aars-total" }, String(node.aars)),
-                  el("span", { class: "muted small" }, "AARS out of 100")),
-                node.aarsPercentile !== null && node.aarsPercentile !== undefined
+                  el("span", { class: "muted small" }, FINDINGS_SCORE_LABEL + " out of 100")),
+                place
                   ? el("p", { class: "sheet-caption" },
-                      `Percentile ${Math.round(node.aarsPercentile)} of the scored estate`)
+                      place +
+                      (node.aarsSeverity ? ` · level ${node.aarsSeverity}` : ""))
                   : null,
                 p
                   ? el("p", { class: "sheet-caption" },
@@ -796,7 +796,7 @@ export function openAssetSheet(assetId, opts = {}) {
         aars(pane) {
           if (!node.aarsPillars) {
             pane.append(emptyState(
-              "This asset carries no AARS score.",
+              "This asset carries no " + FINDINGS_SCORE_LABEL.toLowerCase() + ".",
               "Only AI assets are scored; supporting infrastructure is not.",
             ));
             return;
@@ -916,7 +916,8 @@ export function openAssetSheet(assetId, opts = {}) {
         ? recordCursor(opts.records.ids, opts.records.index)
         : { position: 0, total: 0 };
       ctx.announce(
-        `${node.name}. AARS ${node.aars === null || node.aars === undefined ? "unscored" : node.aars}, ` +
+        `${node.name}. ${FINDINGS_SCORE_LABEL} ` +
+        `${node.aars === null || node.aars === undefined ? "unscored" : node.aars}, ` +
         `${plural(openIssues.length, "open issue")}, ${plural(rels.length, "relationship")}.` +
         (cursor.total ? ` Record ${cursor.position} of ${cursor.total}.` : ""),
       );
@@ -959,7 +960,7 @@ export function openAssetSheet(assetId, opts = {}) {
       if (!detail) {
         clear(body).append(emptyState(
           "Asset not found in the last sync.",
-          "It may have been removed from the estate since the sync ran.",
+          "It may have been removed from the landscape since the sync ran.",
         ));
         return;
       }
@@ -970,7 +971,8 @@ export function openAssetSheet(assetId, opts = {}) {
   }, {
     title: seedTitle,
     subtitle: seedSub || assetId,
-    sev: seed.aarsSeverity || "",
+    // Matches the painted heading above — the band does not accent the record.
+    sev: "",
     expandable: opts.expandable !== false,
     closeOnRouteChange: true,
     backTo: opts.backTo || null,
@@ -1500,7 +1502,7 @@ export function openConfigFindingSheet(findingId, opts = {}) {
               "This finding is not on an AI asset.",
               "It was evaluated against a " + (f.resourceType || "resource").toLowerCase() +
               ", which the AI inventory does not hold — so it counts as a compliance gap " +
-              "but prices no asset's AARS score.",
+              "but prices no asset's " + FINDINGS_SCORE_LABEL.toLowerCase() + ".",
             ));
             return;
           }

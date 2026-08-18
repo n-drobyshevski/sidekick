@@ -364,9 +364,15 @@ describe("AARS_V2_RULE — the calibrated preset", () => {
       .toBeLessThan(AARS_V2_RULE.pillarBCap);
   });
 
-  it("keeps the doc's level thresholds, so the action table still applies", () => {
-    // The bands are deliberately NOT refitted to one sample estate: they carry the
-    // remediation SLAs from ai/custom_score.md, and the page's rail moves them per tenant.
+  it("keeps the doc's level thresholds, so the two rules band identically", () => {
+    // The bands are deliberately NOT refitted to one sample landscape. They used to be
+    // pinned because ai/custom_score.md hung remediation SLAs off them; that table no
+    // longer states an SLA (the top level holds 19 of 30 scored assets — see
+    // scoreOrdinality.test.ts), so the reason is now the narrower and more durable one:
+    // the levels are a shared VOCABULARY. The trend chart's series, sync_history's
+    // aars_severity_json and the rule editor's occupancy read-out are all keyed to them,
+    // so a preset that re-cut them would make one tenant's history incomparable with its
+    // own future. The page's rail still moves them per tenant, deliberately and visibly.
     expect(AARS_V2_RULE.bands).toEqual(DEFAULT_AARS_RULE.bands);
   });
 });
