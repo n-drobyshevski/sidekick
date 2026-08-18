@@ -64,6 +64,43 @@ export interface ProblemRow {
   amplification: Record<string, AmplificationFactor>;
   /** Wiz's own severity — adjusted for an issue, the finding's own rating for a finding. */
   severity: Severity | null;
+
+  // ---- P1a: the action key and the fields actions.ts's rollup needs, added purely
+  // additively to this projection (every field below is optional or has a safe boolean
+  // default, so no existing reader of a row built before this phase breaks).
+  //
+  // WHY THE KEY LIVES HERE RATHER THAN BEING RE-DERIVED FROM `title`. `title` is a rule
+  // NAME, and names collide and drift (a rule renamed mid-sync, two differently-worded
+  // rules that happen to render the same string) in a way an id does not — so a grouping
+  // that mattered enough to rank a whole page by needed the id, not the label. See
+  // actions.ts's own header for the full `ActionKey` reasoning.
+  /** issuesV2's `ruleId` — always present (falls back to the combo group's own id, never
+   *  absent) on an ISSUE row; absent on a FINDING row, which has no such field. */
+  ruleId?: string;
+  /** A finding's `ruleShortId` (e.g. `SUB-082`) — absent on an ISSUE row, which has none. */
+  ruleShortId?: string;
+  /** Worst of `projects[].riskProfile.businessImpact`, straight off the source row — same
+   *  field IssueRow and FindingRow both already carry under this exact name. */
+  businessImpact?: string;
+  /** Whether Wiz traced this ROW back to IaC (`FindingRow.iacFindingIds`) — always false
+   *  for an ISSUE row, which carries no such link. */
+  iac: boolean;
+  /** Whether an accepted-risk decision covers this ROW (`FindingRow.ignoreRuleIds`) —
+   *  always false for an ISSUE row; `ignoreNote` is freeform lifecycle text, not this. */
+  ignored: boolean;
+  /** How long this has been true — issuesV2's `createdAt` for an issue, a configuration
+   *  finding's `firstSeenAt` for a finding. Absent when the source never carried one. */
+  firstSeenAt?: string;
+  /**
+   * The RULE's remediation template, never the per-instance text — `resolutionRecommendation`
+   * for an issue, `FindingRow.remediationInstructions` for a finding. Named apart from any
+   * plain `remediation` on purpose: `IssueRow.remediation` is a permanently empty column no
+   * normalizer ever writes (do not read it), and `FindingRow.remediation` is per-INSTANCE and
+   * genuinely diverges within one rule — `sheetsDb.ts`'s own `ai_findings` header notes
+   * `remediation_instructions` repeats verbatim across every finding of the same rule, which
+   * is exactly why THIS field, not that one, is safe for actions.ts to aggregate by rule.
+   */
+  ruleRemediation?: string;
 }
 
 /** One open toxic-combination issue, projected. */
@@ -81,6 +118,13 @@ export function issueToProblemRow(issue: IssueRow, node: GNode | undefined): Pro
     postureTier: (node?.postureTier as Tier | undefined) ?? null,
     amplification: nodeAmplificationVector(node),
     severity: issue.adjustedSeverity ?? null,
+    ruleId: issue.ruleId || undefined,
+    businessImpact: issue.businessImpact,
+    // No IaC link and no ignore-rule list on an issue — see this field's own doc comment.
+    iac: false,
+    ignored: false,
+    firstSeenAt: issue.createdAt,
+    ruleRemediation: issue.resolutionRecommendation,
   };
 }
 
@@ -107,6 +151,13 @@ export function findingToProblemRow(finding: FindingRow, node: GNode | undefined
     postureTier: (node?.postureTier as Tier | undefined) ?? null,
     amplification: nodeAmplificationVector(node),
     severity: finding.severity ?? null,
+    ruleId: finding.ruleId,
+    ruleShortId: finding.ruleShortId || undefined,
+    businessImpact: finding.businessImpact,
+    iac: (finding.iacFindingIds ?? []).length > 0,
+    ignored: (finding.ignoreRuleIds ?? []).length > 0,
+    firstSeenAt: finding.firstSeenAt,
+    ruleRemediation: finding.remediationInstructions,
   };
 }
 

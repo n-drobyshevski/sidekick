@@ -425,3 +425,35 @@ block. Largest tie group 15 → 14, and §6's whole AARS-v2 row was wrong. Nothi
 looked wrong, and the numbers a reader would have quoted were untrue. Both sections are corrected,
 and both are now asserted — which is the only durable version of the fix.
 
+## 7. P2c — the band stops being presented as a decision
+
+§3's "A — Actionable and Assignable: fails" finding was left as a measurement, not yet acted on:
+"every asset that rates above LOW is CRITICAL" on live data, and — the sharper form, found while
+building P2a's percentile — **the identical rule and thresholds put 100% of the demo estate in
+CRITICAL and 97.58% of a live estate in INFO**. A band computed the same way on two estates and
+landing at opposite ends of the scale is not a miscalibrated band; it is a band whose meaning is
+population-dependent, which an absolute threshold cannot be and still call itself a severity level.
+§6 already promised the fix in one sentence — "the 0–100 AARS number survives as an estate
+percentile caption" — this phase is that sentence, applied to every place the band was standing in
+for a per-asset verdict rather than a distribution or a model diagnostic.
+
+**No scoring changed.** `computeAars`, every `AarsRule` preset, `aarsSeverity`'s thresholds,
+`ai_assets.aars_severity`, `withCurrentBands`, `normalizeLegacyAars` — all untouched, and
+`test/aars.test.ts` lines 30–135 (the table this pins) still pass unmodified. This was a
+presentation pass over every surface that reads `aarsSeverity` and makes a claim about ONE asset,
+switching the lead figure to `aarsPercentile` (P2a, rank within the CURRENT scored population,
+comparable across estates the way an absolute band is not) and, on the graph node card, to the
+posture tier where a percentile's population would not even mean the same thing two nodes apart.
+
+**Two surfaces were explicitly exempted, on purpose, not by oversight**: the AARS trend
+(`aarsTrend.ts`, `sync_history.aars_severity_json`) is a band distribution *over time*, and the
+AARS Rules page's `bandOccupancy` / `ruleDiscrimination` is a diagnostic about whether the MODEL
+still discriminates — both are exactly the "distribution" and "model diagnostic" half of the line
+this phase draws, and both keep the band because it is still true there.
+
+`ai/custom_score.md`'s level table lost its "Action" column's SLA prose for the same reason — an
+SLA implies the same band means the same urgency on every tenant's data, and the measured numbers
+say it does not (tie rate 0.30, effective cardinality 3.67 against 5 distinct scores; pillar A
+alone drives τ-b 0.863 of the ranking while B and C together move it ~1.3%). The applied 14-row
+table beneath it — this file's and `aars.test.ts`'s normative contract — was not touched.
+

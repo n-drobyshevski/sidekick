@@ -26,6 +26,7 @@ var Server = (() => {
     doGet: () => doGet,
     include: () => include,
     jobs: () => syncJobs_exports,
+    registerScopeDiagnostic: () => registerScopeDiagnostic,
     setup: () => setup,
     wizDiagnostic: () => wizDiagnostic
   });
@@ -2398,6 +2399,107 @@ var Server = (() => {
     log("=== end ===");
     return lines.join("\n");
   }
+  function registerScopeDiagnostic() {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    const lines = [];
+    const log = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    const pct3 = (n, d) => d > 0 ? `${(100 * n / d).toFixed(1)}%` : "\u2014";
+    log("=== AI register scope diagnostic ===");
+    let issueAssetIds = /* @__PURE__ */ new Set();
+    let findingResourceIds = /* @__PURE__ */ new Set();
+    try {
+      for (const r of readAll(TABS.issues)) {
+        if (isUnresolvedIssue({ status: String((_a5 = r["status"]) != null ? _a5 : "") })) {
+          issueAssetIds.add(String((_b = r["asset_id"]) != null ? _b : ""));
+        }
+      }
+      for (const r of readAll(TABS.findings)) {
+        const gap2 = isOpenGap({
+          result: (_c = r["result"]) != null ? _c : void 0,
+          status: (_d = r["status"]) != null ? _d : void 0,
+          deleted: r["deleted"] === true || r["deleted"] === "TRUE"
+        });
+        if (gap2) findingResourceIds.add(String((_e = r["resource_id"]) != null ? _e : ""));
+      }
+    } catch (e) {
+      log(`issues/findings unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    try {
+      const rows = readAll(TABS.assets);
+      log(`ai_assets rows: ${rows.length}`);
+      if (!rows.length) {
+        log("The assets tab is empty \u2014 run a sync first.");
+      } else {
+        const byKind = /* @__PURE__ */ new Map();
+        let aiKinded = 0;
+        let anySignal = 0;
+        for (const r of rows) {
+          const kind = String((_f = r["kind"]) != null ? _f : "(blank)");
+          const id = String((_g = r["id"]) != null ? _g : "");
+          const held = r["sensitive_data"] === true || r["sensitive_access"] === true || r["high_priv"] === true || r["admin_priv"] === true || r["guardrail_missing"] === true || r["internet"] === true;
+          const signal = issueAssetIds.has(id) || findingResourceIds.has(id) || held;
+          const slot = (_h = byKind.get(kind)) != null ? _h : { total: 0, signal: 0 };
+          slot.total += 1;
+          if (signal) slot.signal += 1;
+          byKind.set(kind, slot);
+          if (AI_ASSET_KINDS.indexOf(kind) >= 0) aiKinded += 1;
+          if (signal) anySignal += 1;
+        }
+        const ordered = [...byKind.entries()].sort((a, b) => b[1].total - a[1].total);
+        log("");
+        log("  by kind, most rows first \u2014 kind / rows / share / carrying signal:");
+        for (const [kind, s] of ordered) {
+          log(
+            `    ${kind.padEnd(26)} ${String(s.total).padStart(7)}  ${pct3(s.total, rows.length).padStart(6)}   signal ${String(s.signal).padStart(6)} (${pct3(s.signal, s.total)})`
+          );
+        }
+        const aiOrdered = ordered.filter(
+          ([k]) => AI_ASSET_KINDS.indexOf(k) >= 0
+        );
+        const topAi = aiOrdered[0];
+        log("");
+        log(`  distinct kinds:        ${ordered.length}`);
+        log(`  carrying any signal:   ${anySignal} of ${rows.length} (${pct3(anySignal, rows.length)})`);
+        log("");
+        log(`  in AI_ASSET_KINDS:     ${aiKinded} of ${rows.length} (${pct3(aiKinded, rows.length)})`);
+        log("    the rest is substrate the exposure / identity / data-reach traversals pull in");
+        log("    so the graph has something to draw a path through. Expected, not a fault.");
+        if (topAi) {
+          log(
+            `  largest AI kind:       ${topAi[0]} at ${topAi[1].total} rows \u2014 ${pct3(topAi[1].total, aiKinded)} of the AI estate, ${pct3(topAi[1].signal, topAi[1].total)} of it carrying signal`
+          );
+        }
+        log("");
+        log("  Read it this way, and let the numbers decide rather than a threshold picked here:");
+        log("  \xB7 ONE AI kind holding most of the AI rows, and carrying little signal, means the");
+        log("    register is wider than the AI estate a reader pictures. Every distribution");
+        log("    downstream is then a statement about that kind, not about AI risk. Check what");
+        log("    that Wiz type actually enumerates before reading any model as degenerate.");
+        log("  \xB7 AI kinds spread across agents / models / pipelines / datasets, most without");
+        log("    signal, means the register is right and the estate is genuinely unassessed \u2014");
+        log("    a visibility finding, and the models were never the problem.");
+      }
+    } catch (e) {
+      log(`ai_assets unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    try {
+      const rows = readAll(TABS.edges);
+      const seen = /* @__PURE__ */ new Set();
+      for (const r of rows) seen.add(String((_i = r["type"]) != null ? _i : ""));
+      const dead = EDGE_TYPES.filter((t) => !seen.has(t));
+      log("");
+      log(`  edge rows: ${rows.length}`);
+      log(`  populated edge types:  ${EDGE_TYPES.length - dead.length} of ${EDGE_TYPES.length}`);
+      if (dead.length) log(`  never populated:       ${dead.join(", ")}`);
+    } catch (e) {
+      log(`ai_edges unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    log("=== end ===");
+    return lines.join("\n");
+  }
 
   // src/server/api.ts
   var api_exports = {};
@@ -2406,6 +2508,7 @@ var Server = (() => {
     cancelSync: () => cancelSync2,
     expandAsset: () => expandAsset,
     getAarsRule: () => getAarsRule3,
+    getActions: () => getActions,
     getAssetDetail: () => getAssetDetail,
     getAssetOptions: () => getAssetOptions,
     getAssets: () => getAssets,
@@ -2769,6 +2872,17 @@ var Server = (() => {
     ]
   };
   var AARS_MAX_SCORE = 100;
+  function achievableMax(rule) {
+    const maxExposure = Math.max(
+      rule.exposurePoints.CONFIRMED,
+      rule.exposurePoints.UNDETERMINED,
+      rule.exposurePoints.NONE
+    );
+    return Math.min(
+      AARS_MAX_SCORE,
+      rule.pillarACap + rule.pillarBCap + rule.pillarCCap + maxExposure
+    );
+  }
   function derivationSignature(rule) {
     const s = rule.gapSources;
     return [
@@ -2920,6 +3034,7 @@ var Server = (() => {
   var BAND_MAX = 100;
   var CODE_MAX_LEN = 64;
   var MAX_GAP_RULES = 60;
+  var BAND_SHARE_WARNING_THRESHOLD = 0.85;
   var SEVERITY_KEYS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
   var EXPOSURE_KEYS = ["SENSITIVE", "DATA_ACCESS", "NONE"];
   var INTERNET_EXPOSURE_KEYS = ["CONFIRMED", "UNDETERMINED", "NONE"];
@@ -3059,6 +3174,23 @@ var Server = (() => {
       if (rule.bands[upper] <= rule.bands[lower]) {
         errors.push(
           `The ${BAND_LABELS[upper]} threshold (${rule.bands[upper]}) must sit above the ${BAND_LABELS[lower]} threshold (${rule.bands[lower]}) \u2014 otherwise no score can land in ${BAND_LABELS[lower]}.`
+        );
+      }
+    }
+    const max = achievableMax(rule);
+    for (const key of BAND_KEYS) {
+      const threshold = rule.bands[key];
+      if (threshold > max) {
+        const sharePct2 = max > 0 ? Math.round(threshold / max * 100) : null;
+        errors.push(
+          `${BAND_LABELS[key]} at ${threshold} is unreachable \u2014 no asset can ever score above the achievable maximum of ${max} under this rule's pillar caps` + (sharePct2 === null ? "" : ` (${sharePct2}% of it)`) + `, so ${BAND_LABELS[key]} can never hold a single asset.`
+        );
+        continue;
+      }
+      const sharePct = Math.round(threshold / max * 100);
+      if (threshold / max >= BAND_SHARE_WARNING_THRESHOLD) {
+        errors.push(
+          `${BAND_LABELS[key]} at ${threshold} needs ${sharePct}% of the achievable ${max} \u2014 reachable only when nearly every pillar lands at or near its own cap on the same asset, which real estates rarely do all at once. Consider lowering the threshold or raising the pillar caps.`
         );
       }
     }
@@ -3244,6 +3376,7 @@ var Server = (() => {
     return n === 1 ? "1 point" : `${n} points`;
   }
   function ruleSummary(rule) {
+    const achievableMaxForRule = achievableMax(rule);
     const sev = SEVERITY_KEYS.map((k) => `${k} ${rule.severityPoints[k]}`).join(", ");
     const exposure = `sensitive data ${rule.dataExposurePoints.SENSITIVE}, unconfirmed data access ${rule.dataExposurePoints.DATA_ACCESS}, none ${rule.dataExposurePoints.NONE}`;
     const amplified = EXPOSURE_KEYS.map(
@@ -3258,7 +3391,11 @@ var Server = (() => {
       `Pillar B \u2014 compliance gaps, capped at ${rule.pillarBCap}. ${gapUnitClause} ${rule.gapPoints.length} pricing rules are tried in order, first match wins; an unmatched code scores ${pointsPhrase(rule.gapFallbackPoints)}. ${gapClause[0].toUpperCase()}${gapClause.slice(1)}.`,
       `Pillar C \u2014 data exposure, capped at ${rule.pillarCCap}: ${exposure}, all amplified by \xD7${rule.dataAmplifier} (\u2192 ${amplified}). ${findingClause}`,
       rule.exposurePoints.CONFIRMED === 0 && rule.exposurePoints.UNDETERMINED === 0 && rule.exposurePoints.NONE === 0 ? `Pillar D \u2014 internet exposure scores nothing; reachability is reported beside the score but never added to it.` : `Pillar D \u2014 internet exposure: confirmed ${rule.exposurePoints.CONFIRMED}, undetermined ${rule.exposurePoints.UNDETERMINED}, none ${rule.exposurePoints.NONE}. Not amplified \u2014 the 5Rs signal says nothing about reachability.`,
-      `Levels \u2014 CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. Scores are clamped to 100.`
+      `Levels \u2014 CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. Scores are clamped to 100.` + // Said only when it changes what a reader should expect: at 100 this sentence would
+      // repeat the clamp just stated and add nothing. Below 100 it is a material fact about
+      // the rule — a band at or near the scale's top may sit above what this rule's own
+      // pillar caps can ever actually deliver; see achievableMax's own doc comment.
+      (achievableMaxForRule < 100 ? ` This rule's pillar caps top out at ${achievableMaxForRule}, not 100 \u2014 no score under it can ever exceed that, whatever the bands above say.` : "")
     ];
   }
   function bandRanges(bands) {
@@ -3889,11 +4026,18 @@ var Server = (() => {
       dueAt: (_f = issue2.dueAt) != null ? _f : null,
       postureTier: (_g = node2 == null ? void 0 : node2.postureTier) != null ? _g : null,
       amplification: nodeAmplificationVector(node2),
-      severity: (_h = issue2.adjustedSeverity) != null ? _h : null
+      severity: (_h = issue2.adjustedSeverity) != null ? _h : null,
+      ruleId: issue2.ruleId || void 0,
+      businessImpact: issue2.businessImpact,
+      // No IaC link and no ignore-rule list on an issue — see this field's own doc comment.
+      iac: false,
+      ignored: false,
+      firstSeenAt: issue2.createdAt,
+      ruleRemediation: issue2.resolutionRecommendation
     };
   }
   function findingToProblemRow(finding, node2) {
-    var _a5, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
     return {
       id: finding.id,
       kind: "FINDING",
@@ -3908,7 +4052,14 @@ var Server = (() => {
       dueAt: null,
       postureTier: (_f = node2 == null ? void 0 : node2.postureTier) != null ? _f : null,
       amplification: nodeAmplificationVector(node2),
-      severity: (_g = finding.severity) != null ? _g : null
+      severity: (_g = finding.severity) != null ? _g : null,
+      ruleId: finding.ruleId,
+      ruleShortId: finding.ruleShortId || void 0,
+      businessImpact: finding.businessImpact,
+      iac: ((_h = finding.iacFindingIds) != null ? _h : []).length > 0,
+      ignored: ((_i = finding.ignoreRuleIds) != null ? _i : []).length > 0,
+      firstSeenAt: finding.firstSeenAt,
+      ruleRemediation: finding.remediationInstructions
     };
   }
   function buildProblemRows(issues2, findings, assetsById) {
@@ -3959,6 +4110,145 @@ var Server = (() => {
     const counts = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0, "": 0 };
     for (const r of rows) counts[r.problemOutcome] = ((_a5 = counts[r.problemOutcome]) != null ? _a5 : 0) + 1;
     return counts;
+  }
+
+  // src/domain/actions.ts
+  function actionKeyOf(row) {
+    var _a5, _b;
+    return `${row.kind}|${(_a5 = row.ruleId) != null ? _a5 : ""}|${(_b = row.ruleShortId) != null ? _b : ""}`;
+  }
+  var NO_OUTCOME = "";
+  function outcomeRank2(o) {
+    const i = OUTCOME_VALUES.indexOf(o);
+    return i < 0 ? OUTCOME_VALUES.length : i;
+  }
+  function candidatesFrom(pool) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const row of pool) {
+      const key = actionKeyOf(row);
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(row);
+      else groups.set(key, [row]);
+    }
+    return groups;
+  }
+  function scoreCandidate(key, rows) {
+    let worstRank = OUTCOME_VALUES.length;
+    const assetIds = /* @__PURE__ */ new Set();
+    for (const row of rows) {
+      const rank = outcomeRank2(row.problemOutcome);
+      if (rank < worstRank) worstRank = rank;
+      if (row.assetId) assetIds.add(row.assetId);
+    }
+    return { key, rows, worstRank, assetCount: assetIds.size };
+  }
+  function compareCandidates(a, b) {
+    if (a.worstRank !== b.worstRank) return a.worstRank - b.worstRank;
+    if (a.rows.length !== b.rows.length) return b.rows.length - a.rows.length;
+    if (a.assetCount !== b.assetCount) return b.assetCount - a.assetCount;
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  }
+  function buildActionRow(key, rows) {
+    var _a5, _b;
+    const sorted = [...rows].sort((a, b) => a.id.localeCompare(b.id));
+    const first = sorted[0];
+    const assetIds = /* @__PURE__ */ new Set();
+    const outcomeMix = {};
+    const severityMix = {};
+    const businessImpacts = /* @__PURE__ */ new Set();
+    let worstRank = OUTCOME_VALUES.length;
+    let worstOutcome = NO_OUTCOME;
+    let iac = 0;
+    let ignored = 0;
+    let firstSeenAt = "";
+    let title = "";
+    let remediation;
+    for (const row of sorted) {
+      if (row.assetId) assetIds.add(row.assetId);
+      outcomeMix[row.problemOutcome] = ((_a5 = outcomeMix[row.problemOutcome]) != null ? _a5 : 0) + 1;
+      if (row.severity) severityMix[row.severity] = ((_b = severityMix[row.severity]) != null ? _b : 0) + 1;
+      if (row.businessImpact) businessImpacts.add(row.businessImpact);
+      const rank = outcomeRank2(row.problemOutcome);
+      if (rank < worstRank) {
+        worstRank = rank;
+        worstOutcome = row.problemOutcome;
+      }
+      if (row.iac) iac += 1;
+      if (row.ignored) ignored += 1;
+      if (row.firstSeenAt && (!firstSeenAt || row.firstSeenAt < firstSeenAt)) {
+        firstSeenAt = row.firstSeenAt;
+      }
+      if (!title && row.title) title = row.title;
+      if (!remediation && row.ruleRemediation) remediation = row.ruleRemediation;
+    }
+    return {
+      key,
+      kind: first.kind,
+      ruleId: first.ruleId,
+      ruleShortId: first.ruleShortId,
+      title: title || first.title,
+      problems: rows.length,
+      assets: assetIds.size,
+      worstOutcome,
+      outcomeMix,
+      severityMix,
+      businessImpacts: [...businessImpacts].sort(),
+      autoRemediable: false,
+      iac,
+      ignored,
+      firstSeenAt: firstSeenAt || void 0,
+      remediation
+    };
+  }
+  function rankActionsByCover(rows, limit) {
+    let remaining = rows.slice();
+    const ranked = [];
+    while (remaining.length > 0) {
+      const groups = candidatesFrom(remaining);
+      let best = null;
+      for (const [key, groupRows] of groups) {
+        const candidate = scoreCandidate(key, groupRows);
+        if (!best || compareCandidates(candidate, best) < 0) best = candidate;
+      }
+      if (!best) break;
+      ranked.push(buildActionRow(best.key, best.rows));
+      const covered = new Set(best.rows.map((r) => r.id));
+      remaining = remaining.filter((r) => !covered.has(r.id));
+    }
+    return limit !== void 0 && limit >= 0 ? ranked.slice(0, limit) : ranked;
+  }
+  function withAutoRemediation(actions, policies) {
+    const byId = /* @__PURE__ */ new Map();
+    const byShortId = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.hasAutoRemediation !== true) continue;
+      byId.set(p.policyId, true);
+      if (p.shortId) byShortId.set(p.shortId, true);
+    }
+    return actions.map((a) => {
+      const auto = a.ruleId !== void 0 && byId.get(a.ruleId) === true || a.ruleShortId !== void 0 && byShortId.get(a.ruleShortId) === true;
+      return auto ? { ...a, autoRemediable: true } : a;
+    });
+  }
+  function coverCurve(ranked, total2) {
+    const out = [];
+    let cumulative = 0;
+    let rank = 0;
+    for (const a of ranked) {
+      rank += 1;
+      cumulative += a.problems;
+      out.push({ rank, cumulative, share: total2 > 0 ? cumulative / total2 : 0 });
+    }
+    return out;
+  }
+  function concentrationRatio(ranked, total2) {
+    const problems = ranked.reduce((n, a) => n + a.problems, 0);
+    const top10 = ranked.slice(0, 10).reduce((n, a) => n + a.problems, 0);
+    return {
+      actions: ranked.length,
+      problems,
+      top10Share: total2 > 0 ? top10 / total2 : 0
+    };
   }
 
   // src/domain/postureRule.ts
@@ -9576,6 +9866,133 @@ var Server = (() => {
     };
   }
 
+  // src/domain/reach.ts
+  var READ_TIME_EDGE_TYPES = [
+    "HAS_ISSUE",
+    "HAS_SENSITIVE_DATA",
+    "HAS_ACCESS_TO_SENSITIVE_DATA",
+    "EXPOSED_TO_INTERNET",
+    "HAS_EXCESSIVE_PRIVILEGE",
+    "HAS_DATA_FINDING"
+  ];
+  function isDecidedRow(row) {
+    return !!row.problemOutcome && !!row.problemInput && OUTCOME_VALUES.includes(row.problemOutcome);
+  }
+  function isEnriched(edgeTouched, a) {
+    var _a5, _b, _c, _d, _e, _f, _g;
+    if (edgeTouched.has(a.id)) return true;
+    const ev2 = a.exposureEvidence;
+    if (ev2 && (((_b = (_a5 = ev2.hostIds) == null ? void 0 : _a5.length) != null ? _b : 0) > 0 || ((_d = (_c = ev2.endpointIds) == null ? void 0 : _c.length) != null ? _d : 0) > 0)) return true;
+    return ((_g = (_f = (_e = a.humanAccess) == null ? void 0 : _e.identityIds) == null ? void 0 : _f.length) != null ? _g : 0) > 0;
+  }
+  function estateReach(input) {
+    var _a5;
+    const { assets, issues: issues2, findings, edges: edges2 } = input;
+    const unresolvedIssues = issues2.filter(isUnresolvedIssue);
+    const openFindings = findings.filter(isOpenGap);
+    const issueAssetIds = new Set(unresolvedIssues.map((i) => i.assetId));
+    const findingResourceIds = new Set(openFindings.map((f) => f.resourceId));
+    const edgeTouched = /* @__PURE__ */ new Set();
+    for (const e of edges2) {
+      edgeTouched.add(e.src);
+      edgeTouched.add(e.dst);
+    }
+    const hasSignal = (a) => issueAssetIds.has(a.id) || findingResourceIds.has(a.id) || CONDITION_KEYS.some((k) => conditionHolds(a, k));
+    const byKind = /* @__PURE__ */ new Map();
+    for (const a of assets) {
+      const slot = (_a5 = byKind.get(a.kind)) != null ? _a5 : { total: 0, signal: 0 };
+      slot.total += 1;
+      if (hasSignal(a)) slot.signal += 1;
+      byKind.set(a.kind, slot);
+    }
+    const kinds = [...byKind.entries()].sort((a, b) => b[1].total - a[1].total).map(([kind, s]) => ({
+      kind,
+      total: s.total,
+      signal: s.signal,
+      ai: AI_ASSET_KINDS.includes(kind)
+    }));
+    const aiAssets = assets.filter((a) => AI_ASSET_KINDS.includes(a.kind));
+    const stages = [
+      // 1. IN REGISTER. Denominator: every row on ai_assets (assets.length). Covered: the
+      // AI-kinded subset (AI_ASSET_KINDS membership on ai_assets.kind) — the same number
+      // registerScopeDiagnostic prints as "in AI_ASSET_KINDS". Everything past this stage is
+      // scoped to that covered count, which is why it becomes every later stage's total.
+      { key: "register", label: "In register", covered: aiAssets.length, total: assets.length },
+      // 2. OBSERVED. Denominator: the AI-kinded population stage 1 established. Covered: AI
+      // assets where hasSignal() holds — ai_issues.status (unresolved), ai_findings.result /
+      // .status (open gap), or ai_assets' four condition columns (sensitive_data,
+      // sensitive_access, high_priv, admin_priv, guardrail_missing, internet /
+      // exposure_evidence_json) via conditionHolds. An asset with none of these contributes
+      // nothing any scoring model can read — "carrying any signal" in
+      // registerScopeDiagnostic's own words.
+      {
+        key: "observed",
+        label: "Observed",
+        covered: aiAssets.filter(hasSignal).length,
+        total: aiAssets.length
+      },
+      // 3. ENRICHED. Denominator: the AI-kinded population. Covered: AI assets a graph
+      // traversal actually reached — participates in a row of ai_edges (src or dst), or
+      // carries folded exposure evidence (ai_assets.exposure_evidence_json) or human-access
+      // evidence (ai_assets.human_access_json). An asset with none of these was never walked
+      // by anything past the mandatory inventory query.
+      {
+        key: "enriched",
+        label: "Enriched",
+        covered: aiAssets.filter((a) => isEnriched(edgeTouched, a)).length,
+        total: aiAssets.length
+      },
+      // 4. ATTRIBUTED. Denominator: the AI-kinded population. Covered: AI assets carrying a
+      // business-impact tier (ai_assets.business_impact) — Wiz's own HBI/MBI/LBI read off the
+      // asset's projects, folded at enrich time. Absent means no project reported one, or the
+      // asset carries no project at all; never read as LOW (graphTypes.ts's own doc comment).
+      {
+        key: "attributed",
+        label: "Attributed",
+        covered: aiAssets.filter((a) => !!a.businessImpact).length,
+        total: aiAssets.length
+      },
+      // 5. DECIDED. Denominator: the AI-kinded population. Covered: AI assets carrying a
+      // problem verdict (ai_assets.worst_open_problem, folded from the Phase 4 tree onto the
+      // asset by graphEnrich.withProblemVerdicts) OR a persisted AARS score (ai_assets.aars).
+      // Either is a model having reached a conclusion about this asset; an asset with neither
+      // sits in the register unscored and unrouted.
+      {
+        key: "decided",
+        label: "Decided",
+        covered: aiAssets.filter((a) => typeof a.aars === "number" || a.worstOpenProblem !== void 0).length,
+        total: aiAssets.length
+      }
+    ];
+    const seenTypes = new Set(edges2.map((e) => e.type));
+    const populated = EDGE_TYPES.filter((t) => seenTypes.has(t));
+    const unseen = EDGE_TYPES.filter((t) => !seenTypes.has(t));
+    const synthetic = unseen.filter((t) => READ_TIME_EDGE_TYPES.includes(t));
+    const dead = unseen.filter((t) => !READ_TIME_EDGE_TYPES.includes(t));
+    const decidedRows = [...issues2, ...findings].filter(isDecidedRow);
+    const decided = decidedRows.map((r) => ({
+      outcome: r.problemOutcome,
+      vector: r.problemInput.vector,
+      unknowns: r.problemInput.unknowns
+    }));
+    const td = treeDiscrimination(decided);
+    const n = decided.length;
+    const axisKnown = (rate) => n > 0 ? 1 - rate : 0;
+    const axes = {
+      exploitation: axisKnown(td.unknownRate.exploitation),
+      impact: axisKnown(td.unknownRate.impact),
+      exposure: axisKnown(td.unknownRate.exposure),
+      mission: axisKnown(td.unknownRate.mission)
+    };
+    return {
+      stages,
+      kinds,
+      edges: { populated, dead, synthetic, declared: EDGE_TYPES.length },
+      axes,
+      axesPopulation: n
+    };
+  }
+
   // src/server/jobsStore.ts
   var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
   function normError(v) {
@@ -9663,7 +10080,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "eb94625c4e5f" : "dev";
+  var BUILD_ID = true ? "882bd68dd1b6" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -12219,6 +12636,7 @@ var Server = (() => {
   }
   var graphDocMemo;
   var assetsMemo;
+  var edgesMemo;
   var issuesMemo;
   var findingsMemo;
   var dataFindingsMemo;
@@ -12356,6 +12774,10 @@ var Server = (() => {
     const out = withAarsReadDerivations(raw);
     derivedAssetsMemo = { raw, bandKey, out };
     return out;
+  }
+  function loadEdges() {
+    if (edgesMemo === void 0) edgesMemo = readAll(TABS.edges).map(rowToEdge);
+    return edgesMemo;
   }
   function loadIssues() {
     if (issuesMemo === void 0) issuesMemo = readAll(TABS.issues).map(rowToIssue);
@@ -13547,7 +13969,7 @@ var Server = (() => {
       }))
     };
   }
-  function assetTableRow(n, issuesBySeverity) {
+  function assetTableRow(n, issuesBySeverity, aarsPercentile) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     const row = {
       id: n.id,
@@ -13597,6 +14019,12 @@ var Server = (() => {
     const trend = aarsTrendFromHistory(syncHistory());
     const assets = loadAssets();
     const issues2 = openIssues();
+    const reach = estateReach({
+      assets,
+      issues: loadIssues(),
+      findings: loadFindings(),
+      edges: loadEdges()
+    });
     const assetIds = {};
     for (const a of assets) assetIds[a.id] = true;
     const openGaps = loadFindings().filter(isOpenGap);
@@ -13604,7 +14032,17 @@ var Server = (() => {
     const agents = assets.filter((a) => a.kind === "AI_AGENT");
     const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
     const issueRollup = issuesBySeverityByAsset(issues2);
-    const rows = assets.map((a) => assetTableRow(a, issueRollup.get(a.id))).sort(ASSET_COMPARATORS.aars);
+    const scoredForPercentile = assets.filter(
+      (a) => typeof a.aars === "number"
+    );
+    const percentileValues = midrankPercentiles(scoredForPercentile.map((a) => a.aars));
+    const aarsPercentileById = new Map(
+      scoredForPercentile.map((a, i) => [a.id, Math.round(percentileValues[i])])
+    );
+    const rows = assets.map((a) => {
+      var _a6;
+      return assetTableRow(a, issueRollup.get(a.id), (_a6 = aarsPercentileById.get(a.id)) != null ? _a6 : null);
+    }).sort(ASSET_COMPARATORS.aars);
     const postureTiers = countPostureTiers(assets);
     const aarsSeverityCounts = {};
     const kinds = /* @__PURE__ */ new Set();
@@ -13733,6 +14171,7 @@ var Server = (() => {
       // Recorded per sync, so the window is short at first and cannot be backfilled.
       aarsTrend: trend,
       aarsTrendRuleChanges: ruleChangePoints(trend),
+      reach,
       facets: {
         kinds: [...kinds].sort(),
         clouds: [...clouds].sort(),
@@ -13754,6 +14193,7 @@ var Server = (() => {
         aarsTrend: model.aarsTrend,
         aarsTrendRuleChanges: model.aarsTrendRuleChanges,
         aarsDeltas: aarsDeltas(model.aarsTrend, model.aarsSeverityCounts),
+        reach: model.reach,
         facets: model.facets,
         pageSize: query.pageSize,
         sort: query.sort,
@@ -13815,7 +14255,7 @@ var Server = (() => {
       var _a5;
       const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
       return cached("getAssetDetail", { id }, () => {
-        var _a6, _b;
+        var _a6, _b, _c;
         const doc = loadGraphDoc();
         if (!doc) return null;
         const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
@@ -13835,7 +14275,7 @@ var Server = (() => {
           });
         }
         const findings = loadFindings().filter((f) => f.resourceId === id && isOpenGap(f)).map((f) => {
-          var _a7, _b2, _c;
+          var _a7, _b2, _c2;
           return {
             id: f.id,
             resourceId: f.resourceId,
@@ -13843,15 +14283,17 @@ var Server = (() => {
             ruleName: (_a7 = f.ruleName) != null ? _a7 : null,
             name: (_b2 = f.name) != null ? _b2 : null,
             severity: f.severity,
-            remediation: (_c = f.remediation) != null ? _c : null,
+            remediation: (_c2 = f.remediation) != null ? _c2 : null,
             frameworkCodes: f.frameworkCodes
           };
         });
+        const percentileRow = cached("assetsModel", null, assetsModel).rows.find((r) => r["id"] === id);
         return {
           node: {
             ...assetRow(node2),
             aarsPillars: (_a6 = node2.aarsPillars) != null ? _a6 : null,
-            aarsInput: (_b = node2.aarsInput) != null ? _b : null
+            aarsInput: (_b = node2.aarsInput) != null ? _b : null,
+            aarsPercentile: percentileRow ? (_c = percentileRow["aarsPercentile"]) != null ? _c : null : null
           },
           issues: issues2,
           neighbors,
@@ -14208,6 +14650,25 @@ var Server = (() => {
         filtered: filtered.length,
         page: paged.page,
         pageCount: paged.pageCount
+      };
+    });
+  }
+  function getActions(p) {
+    return run(() => {
+      const params = p != null ? p : {};
+      const limitParam = Number(params["limit"]);
+      const limit = Number.isFinite(limitParam) && limitParam >= 0 ? Math.floor(limitParam) : void 0;
+      const model = cached("problemsModel", null, problemsModel);
+      const fullyRanked = withAutoRemediation(
+        rankActionsByCover(model.rows),
+        loadFrameworkPolicies()
+      );
+      return {
+        rows: limit !== void 0 ? fullyRanked.slice(0, limit) : fullyRanked,
+        total: fullyRanked.length,
+        totalProblems: model.rows.length,
+        curve: coverCurve(fullyRanked, model.rows.length),
+        concentration: concentrationRatio(fullyRanked, model.rows.length)
       };
     });
   }

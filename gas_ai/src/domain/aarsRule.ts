@@ -8,6 +8,7 @@
 // is worse than one that refuses to save.
 
 import {
+  achievableMax,
   DEFAULT_AARS_RULE,
   type AarsBands,
   type AarsRule,
@@ -36,6 +37,24 @@ export const BAND_MAX = 100;
 export const CODE_MAX_LEN = 64;
 /** Cap on cascade rows: the whole rule lives in ONE `value_json` cell (~50k char limit). */
 export const MAX_GAP_RULES = 60;
+/**
+ * Share of the achievable maximum (`achievableMax`, aars.ts) a band may demand before
+ * `validateAarsRule` calls it out as implausible rather than merely reachable.
+ *
+ * 0.85, not lower: a band under 85% of everything a rule can ever award still has real
+ * headroom — an asset can clear it without every pillar landing at its own cap at once. At
+ * 85% and above, reaching the band needs nearly every pillar (and pillar D, when priced) to
+ * be maxed out on the SAME asset simultaneously, which real estates essentially never
+ * produce — it is the shape a live tenant's tuned rule (pillar caps 45/25/6, no pillar D,
+ * CRITICAL at 70 against an achievable 76 — 92%) actually hit: zero assets in CRITICAL, not
+ * merely few. Chosen with headroom above the DEFAULT_AARS_RULE bands' own worst share (70%,
+ * CRITICAL against a 100-point achievable maximum) so the spec rule never trips it, and
+ * above 80% specifically so a plain descending-bands violation in this file's own tests
+ * (HIGH at 80 against a 100-point maximum — exactly 80%) is not ALSO flagged as implausible;
+ * the two checks are meant to stay independent. Named and exported so a tuning pass can move
+ * it without hunting through this file for a magic number.
+ */
+export const BAND_SHARE_WARNING_THRESHOLD = 0.85;
 
 const SEVERITY_KEYS: IssueSeverityKey[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const EXPOSURE_KEYS: DataExposure[] = ["SENSITIVE", "DATA_ACCESS", "NONE"];
@@ -222,6 +241,41 @@ export function validateAarsRule(rule: AarsRule): string[] {
         `The ${BAND_LABELS[upper]} threshold (${rule.bands[upper]}) must sit above the ` +
           `${BAND_LABELS[lower]} threshold (${rule.bands[lower]}) — otherwise no score can ` +
           `land in ${BAND_LABELS[lower]}.`,
+      );
+    }
+  }
+
+  // Bands are checked against the SCALE (0–100) above; here they are checked against what
+  // this rule's OWN pillar caps can actually deliver. The two are different numbers the
+  // moment the caps stop summing to 100, and a rule can pass every check above while still
+  // reserving its top bands for scores no asset can ever reach — see achievableMax's own
+  // doc comment for the live tenant this was found on. `max` is at most 100, so a band that
+  // already cleared BAND_MAX (100) can still fail this check; it never passes one this fails.
+  const max = achievableMax(rule);
+  for (const key of BAND_KEYS) {
+    const threshold = rule.bands[key];
+    // `max` can be 0 (every pillar cap zeroed and pillar D off) — the only case where
+    // `threshold / max` below would divide by zero, and only THIS branch can be reached
+    // with max=0 (threshold >= BAND_MIN = 1 always beats it). Guarded here so the message
+    // reads "unreachable" instead of "Infinity% of it".
+    if (threshold > max) {
+      const sharePct = max > 0 ? Math.round((threshold / max) * 100) : null;
+      errors.push(
+        `${BAND_LABELS[key]} at ${threshold} is unreachable — no asset can ever score above ` +
+          `the achievable maximum of ${max} under this rule's pillar caps` +
+          (sharePct === null ? "" : ` (${sharePct}% of it)`) +
+          `, so ${BAND_LABELS[key]} can never hold a single asset.`,
+      );
+      continue;
+    }
+    // threshold <= max and threshold >= BAND_MIN (1), so max >= 1 here — safe to divide.
+    const sharePct = Math.round((threshold / max) * 100);
+    if (threshold / max >= BAND_SHARE_WARNING_THRESHOLD) {
+      errors.push(
+        `${BAND_LABELS[key]} at ${threshold} needs ${sharePct}% of the achievable ` +
+          `${max} — reachable only when nearly every pillar lands at or near its own cap on ` +
+          `the same asset, which real estates rarely do all at once. Consider lowering the ` +
+          `threshold or raising the pillar caps.`,
       );
     }
   }
@@ -608,6 +662,7 @@ function pointsPhrase(n: number): string {
  * read back in plain language is a rule you cannot audit.
  */
 export function ruleSummary(rule: AarsRule): string[] {
+  const achievableMaxForRule = achievableMax(rule);
   const sev = SEVERITY_KEYS.map((k) => `${k} ${rule.severityPoints[k]}`).join(", ");
   const exposure =
     `sensitive data ${rule.dataExposurePoints.SENSITIVE}, ` +
@@ -672,7 +727,15 @@ export function ruleSummary(rule: AarsRule): string[] {
         `Not amplified — the 5Rs signal says nothing about reachability.`,
     `Levels — CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, ` +
       `MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. ` +
-      `Scores are clamped to 100.`,
+      `Scores are clamped to 100.` +
+      // Said only when it changes what a reader should expect: at 100 this sentence would
+      // repeat the clamp just stated and add nothing. Below 100 it is a material fact about
+      // the rule — a band at or near the scale's top may sit above what this rule's own
+      // pillar caps can ever actually deliver; see achievableMax's own doc comment.
+      (achievableMaxForRule < 100
+        ? ` This rule's pillar caps top out at ${achievableMaxForRule}, not 100 — no score ` +
+          `under it can ever exceed that, whatever the bands above say.`
+        : ""),
   ];
 }
 

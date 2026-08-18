@@ -446,6 +446,20 @@ export const ENTRIES = [
     },
   },
   {
+    id: "aars-percentile",
+    term: "AARS percentile",
+    aka: "rank within this estate",
+    family: "score",
+    blurb:
+      "Where this asset's score falls among every OTHER scored asset in the estate, 0 to " +
+      "100, using midrank so a tied score is shared rather than arbitrarily broken. It is " +
+      "the lead read for one asset on the Inventory table and the asset sheet — a rank " +
+      "survives the population shift that an absolute band does not, and it MOVES whenever " +
+      "the estate does, even when this asset's own score has not changed at all.",
+    drawnOn: ["inventory"],
+    mark: () => aarsPercentileMark(92, 78),
+  },
+  {
     id: "aars-band",
     term: "Findings score level",
     aka: "context beside a score, not a verdict",
@@ -682,7 +696,7 @@ export const ENTRIES = [
       "bucket, never a value the API returns. Every severity on every screen is a coloured " +
       "DOT plus the level WORD — the red, orange and amber sit close enough together that " +
       "the redundant cue is load-bearing, not decorative.",
-    drawnOn: ["combos", "inventory", "graph"],
+    drawnOn: ["combos", "inventory", "graph", "problems"],
     mark: () => sevBadge("CRITICAL"),
     count: (ctx) => {
       const c = ctx.boot.counts;
@@ -747,7 +761,7 @@ export const ENTRIES = [
       "graphical mark on white; the text token is tuned to clear 4.5:1 on the pale tint " +
       "behind it. Setting a label in the fill colour would fail contrast, so the split is " +
       "deliberate and must not be collapsed.",
-    drawnOn: ["inventory", "combos", "graph"],
+    drawnOn: ["inventory", "combos", "graph", "problems"],
     mark: () => el("span", { class: "help-twotoken", "aria-hidden": "true" }),
   },
 
@@ -866,6 +880,7 @@ const MEASURE_ROUTES = {
   "aars-effective-cardinality": ["aars"],
   "aars-pillar-saturation": ["aars"],
   "problem-outcome-distribution": ["problems", "combos", "config"],
+  "action-concentration-ratio": ["problems"],
   "problem-axis-unknown-rate": ["aars"],
   "posture-tier-distribution": ["inventory", "problems"],
   "issue-sla-tally": ["combos", "problems"],
@@ -874,6 +889,9 @@ const MEASURE_ROUTES = {
   "guardrail-coverage-pct": ["scans"],
   "toxic-combo-patterns-active": ["combos"],
   "framework-average-posture": ["compliance"],
+  "estate-reach-stages": ["scans", "inventory"],
+  "estate-reach-edge-census": ["scans"],
+  "estate-reach-axis-known-rate": ["scans"],
 };
 
 // One entry per measureSpec.ts record — pure documentation, no `count`, so it renders as a

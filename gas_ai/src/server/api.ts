@@ -69,6 +69,12 @@ import {
   type ProblemRow,
 } from "../domain/problems";
 import {
+  concentrationRatio,
+  coverCurve,
+  rankActionsByCover,
+  withAutoRemediation,
+} from "../domain/actions";
+import {
   cellCoverage,
   cleanPostureRule,
   MAX_TIER_RULES,
@@ -151,7 +157,9 @@ import {
   type NodeKind,
 } from "../domain/graphTypes";
 import { DATASTORE_KINDS } from "../domain/graphEnrich";
+import { midrankPercentiles } from "../domain/rankStats";
 import { comboDigest } from "../domain/comboDigest";
+import { estateReach, type EstateReach } from "../domain/reach";
 import { comboGroupById, comboSummary, REGISTER_GROUPS } from "../domain/toxicCombos";
 import { clampInt, nowIso, type Rec } from "../domain/util";
 import { archiveBytes } from "./archiveStore";
@@ -689,8 +697,17 @@ function assetRow(n: GNode): Rec {
  * The inventory table's own projection: the dozen fields the row actually renders, out of
  * the ~25 assetRow carries. The table is the one place that ships every asset at once, so
  * everything the drill-down needs and the list doesn't stays behind getAssetDetail.
+ *
+ * `aarsPercentile` arrives precomputed (`assetsModel`'s `aarsPercentileById`) rather than
+ * being derived per-row here: a percentile is a fact about the whole SCORED POPULATION
+ * (rankStats.midrankPercentiles), not about one asset, so it has to be computed once over
+ * every scored asset together — a per-row call here would have nothing to rank against.
  */
-function assetTableRow(n: GNode, issuesBySeverity?: Record<string, number>): Rec {
+function assetTableRow(
+  n: GNode,
+  issuesBySeverity?: Record<string, number>,
+  aarsPercentile?: number | null,
+): Rec {
   const row: Rec = {
     id: n.id,
     name: n.name,
@@ -751,6 +768,8 @@ interface AssetsModel {
   aarsTrend: AarsTrendPoint[];
   /** Indices in aarsTrend where the scoring model changed — the chart marks them. */
   aarsTrendRuleChanges: number[];
+  /** The estate-grain coverage roll-up (reach.ts) — see the Wiz Scans REACH section. */
+  reach: EstateReach;
   facets: {
     kinds: string[];
     clouds: string[];
@@ -772,6 +791,17 @@ function assetsModel(): AssetsModel {
   const trend = aarsTrendFromHistory(syncStore.syncHistory());
   const assets = syncStore.loadAssets();
   const issues = openIssues();
+  // reach.ts wants the WHOLE issues/findings population (resolved and passing rows
+  // included) because it does its own admission filtering per stage — unlike every KPI
+  // below, which reads `issues` (open only) or `openGaps` (failing only) because those
+  // numbers ARE the filtered count. Reading `loadIssues`/`loadFindings` again here costs
+  // nothing extra: both are memoized per execution (syncStore's read-memo discipline).
+  const reach = estateReach({
+    assets,
+    issues: syncStore.loadIssues(),
+    findings: syncStore.loadFindings(),
+    edges: syncStore.loadEdges(),
+  });
   // The two compliance numbers, computed together so they cannot drift.
   //
   // `complianceGaps` used to be `loadFindings().length` — every stored row, including the
@@ -793,8 +823,20 @@ function assetsModel(): AssetsModel {
   const agents = assets.filter((a) => a.kind === "AI_AGENT");
   const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
   const issueRollup = issuesBySeverityByAsset(issues);
+  // Read-time, over the population as it scores RIGHT NOW — never persisted (see
+  // assetTableRow's own doc comment). Computed once here, over every scored asset together,
+  // and looked up per row below rather than recomputed per row: midrankPercentiles needs the
+  // whole population to rank against, and one pass keeps that population identical for every
+  // row instead of risking each row seeing a subtly different snapshot of `assets`.
+  const scoredForPercentile = assets.filter(
+    (a): a is GNode & { aars: number } => typeof a.aars === "number",
+  );
+  const percentileValues = midrankPercentiles(scoredForPercentile.map((a) => a.aars));
+  const aarsPercentileById = new Map<string, number>(
+    scoredForPercentile.map((a, i) => [a.id, Math.round(percentileValues[i]!)]),
+  );
   const rows = assets
-    .map((a) => assetTableRow(a, issueRollup.get(a.id)))
+    .map((a) => assetTableRow(a, issueRollup.get(a.id), aarsPercentileById.get(a.id) ?? null))
     .sort(ASSET_COMPARATORS.aars);
 
   const postureTiers = countPostureTiers(assets);
@@ -911,6 +953,7 @@ function assetsModel(): AssetsModel {
     // Recorded per sync, so the window is short at first and cannot be backfilled.
     aarsTrend: trend,
     aarsTrendRuleChanges: ruleChangePoints(trend),
+    reach,
     facets: {
       kinds: [...kinds].sort(),
       clouds: [...clouds].sort(),
@@ -938,6 +981,7 @@ export function getAssets(p?: unknown): ApiResult {
       aarsTrend: model.aarsTrend,
       aarsTrendRuleChanges: model.aarsTrendRuleChanges,
       aarsDeltas: aarsDeltas(model.aarsTrend, model.aarsSeverityCounts),
+      reach: model.reach,
       facets: model.facets,
       pageSize: query.pageSize,
       sort: query.sort,
@@ -1062,11 +1106,19 @@ export function getAssetDetail(p?: unknown): ApiResult {
           remediation: f.remediation ?? null,
           frameworkCodes: f.frameworkCodes,
         }));
+      // The SAME percentile the inventory table shows for this asset — read off the one
+      // place it is computed (assetsModel, cached and shared by every reader) rather than
+      // re-derived here over a different population. loadGraphDoc's nodes and loadAssets'
+      // rows carry identical aars/aarsSeverity (both run through withCurrentBands off the
+      // same assetRows), so this id always resolves when the asset is scored.
+      const percentileRow = (cached("assetsModel", null, assetsModel) as AssetsModel).rows
+        .find((r) => r["id"] === id);
       return {
         node: {
           ...assetRow(node),
           aarsPillars: node.aarsPillars ?? null,
           aarsInput: node.aarsInput ?? null,
+          aarsPercentile: percentileRow ? percentileRow["aarsPercentile"] ?? null : null,
         },
         issues,
         neighbors,
@@ -1611,6 +1663,45 @@ export function getProblems(p?: unknown): ApiResult {
       filtered: filtered.length,
       page: paged.page,
       pageCount: paged.pageCount,
+    };
+  });
+}
+
+// ------------------------------------------------------------------------------ actions
+
+/**
+ * Rank remediation ACTIONS rather than problems — P1a, built directly on `problemsModel`
+ * so this endpoint's population is provably the SAME union `getProblems` reports, never a
+ * second derivation that could quietly drift from it (this file's own rule for every
+ * cached model). The ranking itself is the marginal set-cover `actions.ts`'s own header
+ * argues for, over the WHOLE union regardless of `limit` — a caller asking for the top 10
+ * gets the true top 10, computed against every open problem, not against a pre-trimmed
+ * slice of them.
+ *
+ * `total` is the count of DISTINCT ACTIONS the whole estate collapses to; `totalProblems`
+ * is the union total `getProblems.total` already reports — the same "N problems collapse
+ * to M actions" pair PRODUCT.md's own headline names. `curve` and `concentration` are
+ * always computed over the FULL ranked list, never the `limit`-truncated `rows` a caller
+ * asked to see, so trimming the display never moves the headline number beside it.
+ */
+export function getActions(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const limitParam = Number(params["limit"]);
+    const limit = Number.isFinite(limitParam) && limitParam >= 0 ? Math.floor(limitParam) : undefined;
+
+    const model = cached("problemsModel", null, problemsModel) as ProblemsModel;
+    const fullyRanked = withAutoRemediation(
+      rankActionsByCover(model.rows),
+      syncStore.loadFrameworkPolicies(),
+    );
+
+    return {
+      rows: limit !== undefined ? fullyRanked.slice(0, limit) : fullyRanked,
+      total: fullyRanked.length,
+      totalProblems: model.rows.length,
+      curve: coverCurve(fullyRanked, model.rows.length),
+      concentration: concentrationRatio(fullyRanked, model.rows.length),
     };
   });
 }

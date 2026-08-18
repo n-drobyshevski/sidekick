@@ -17,7 +17,7 @@
 // The filter/sort/facet logic itself lives in ../assetQuery.js, a hand-kept mirror of
 // src/domain/assetTable.ts that test/assetQueryMirror.test.ts holds to it.
 
-import { bootstrap, listJoin, navigate, setParams, swrCall } from "../store.js";
+import { bootstrap, buildHash, listJoin, navigate, setParams, swrCall } from "../store.js";
 import { openAssetSheet } from "../detailSheets.js";
 import { trendLine } from "../charts.js";
 import {
@@ -31,8 +31,8 @@ import {
 import {
   FINDINGS_SCORE_LABEL, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
   emptyState, errorState,
-  fmtDate, meter, pager, percentileText, plural, scoreChip, sectionLabel, sevBadge,
-  sevEntries, sevKeyRow,
+  fmtDate, kpiCard, meter, pager, percentileText, plural, scoreChip, sectionLabel,
+  sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tierBadge, toast,
 } from "../ui.js";
 
@@ -389,6 +389,8 @@ export async function renderInventory(main, params) {
     }
 
     host.append(postureHeader(kpis, fresh, bandLabel));
+    const reachCard = reachHeadline(fresh.reach);
+    if (reachCard) host.append(reachCard);
     host.append(toolbar());
     host.append(panel.chips);
     panel.chips.classList.add("inv-chips");
@@ -406,16 +408,31 @@ export async function renderInventory(main, params) {
     if (panelName === "filters") panel.open(false);
   }
 
-  // ---- posture header: one hero, one VERDICT, one distribution, one stat list
-  //
-  // The order is the argument. The lead has to be the model that cuts a queue, and the
-  // findings-score band is not that model: on live data its top level holds 19 of 30
-  // scored assets while two levels hold none (ai/AARS_SCORING_ASSESSMENT.md §3). The
-  // posture tier is — it is a lattice over capability × containment × consequence, not a
-  // total of what has been found — so the tier counts sit beside the hero and the score
-  // distribution moved BELOW them. The strip is still here and still filters, because a
-  // distribution is a legitimate thing to publish about a score; it is just not the thing
-  // an analyst opens this page to act on.
+  // ---- one-glance reach headline, linking to the Scans page's full stage ladder. Placed
+  // beside the posture header rather than inside it: postureHeader answers "what did we
+  // find"; this answers "how much of the estate did the pipeline ever reach" — a different
+  // question, and folding it into the same header would read as one more posture number
+  // rather than the coverage caveat it actually is.
+  function reachHeadline(reach) {
+    if (!reach) return null;
+    const observed = reach.stages.find((s) => s.key === "observed");
+    if (!observed) return null;
+    const known = observed.total > 0;
+    const link = el(
+      "a",
+      { class: "link", href: buildHash("scans", { anchor: "reach" }), target: "_self" },
+      known ? observed.covered + " of " + observed.total : "—",
+    );
+    return el("div", { class: "kpi-row" },
+      kpiCard(
+        "Estate reach — observed",
+        link,
+        "AI-kinded assets carrying any signal, of the register's AI estate — open Wiz Scans "
+          + "for the full five-stage ladder.",
+      ));
+  }
+
+  // ---- posture header: one hero, one distribution, one stat list
   function postureHeader(kpis, fresh, bandLabel) {
     const counts = fresh.aarsSeverityCounts || {};
     const deltas = fresh.aarsDeltas || null;
@@ -897,6 +914,10 @@ export async function renderInventory(main, params) {
       kind: (row) => kindLabel(row.kind),
       cloud: (row) => row.cloud || "—",
       region: (row) => row.region || "—",
+      // Percentile leads — a rank within THIS estate, not the population-dependent band
+      // (see aars-band's own caveat and ai/AARS_SCORING_ASSESSMENT.md §3). The posture
+      // tier sits in its own column right beside this one and must stay visibly
+      // independent of it — a tier is not a restatement of the score.
       aars: (row) => (row.aars === null || row.aars === undefined
         ? el("span", { class: "muted small" }, "—")
         : el("span", { class: "aars-cell" },

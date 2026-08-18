@@ -111,3 +111,55 @@ export function trendLine(canvas, points, { yLabel, series } = {}) {
     options: opts,
   });
 }
+
+/**
+ * The cumulative-cover curve (P1b): one stepped, filled line over `{rank, cumulative,
+ * share}[]` — `actions.ts`'s `coverCurve`, drawn. Stepped because the underlying quantity
+ * IS a step function: the curve only moves at an integer rank (one more action taken), so a
+ * smoothed line between two ranks would imply a fractional action closing a fractional
+ * share, which is not a thing. Filled for the same reason the sync trend's single-series
+ * line is filled — the area under a Pareto-style curve is what reads as "how much of the
+ * board is covered" at a glance, before a reader has found the axis labels.
+ *
+ * Degrading a too-thin curve to `.chart-empty` is the CALLER's job, the same split
+ * `inventory.js`'s own `trendSection` keeps for `trendLine` — this function draws whatever
+ * `curve` it is given and does not second-guess its length.
+ *
+ * `opts.yLabel` names the y axis, matching `trendLine`'s own option; the y axis is always
+ * a 0–100 percentage (the `share` field, not the raw `cumulative` count) so the curve reads
+ * on the same scale regardless of how many total problems the estate carries.
+ */
+export function coverCurve(canvas, curve, { yLabel = "cumulative share of problems closed" } = {}) {
+  destroyExisting(canvas);
+  const points = curve || [];
+  const opts = baseOptions();
+  opts.scales.y.beginAtZero = true;
+  opts.scales.y.max = 100;
+  opts.scales.y.ticks.callback = (v) => `${v}%`;
+  opts.scales.y.title = { display: true, text: yLabel, font: FONT, color: INK2 };
+  opts.scales.x.title = { display: true, text: "actions taken, ranked", font: FONT, color: INK2 };
+  opts.plugins.tooltip.callbacks = {
+    title: (items) => `Top ${points[items[0].dataIndex].rank}`,
+    label: (item) => {
+      const pt = points[item.dataIndex];
+      return `${pt.cumulative.toLocaleString()} problems closed (${Math.round(pt.share * 100)}%)`;
+    },
+  };
+  return new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: points.map((p) => String(p.rank)),
+      datasets: [{
+        data: points.map((p) => Math.round(p.share * 1000) / 10),
+        stepped: true,
+        fill: true,
+        borderColor: ACCENT,
+        backgroundColor: "rgba(190, 18, 60, 0.14)",
+        borderWidth: 2,
+        pointRadius: points.length > 30 ? 0 : 3,
+        pointBackgroundColor: ACCENT,
+      }],
+    },
+    options: opts,
+  });
+}

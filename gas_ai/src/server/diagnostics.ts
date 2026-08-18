@@ -17,6 +17,8 @@ import {
 } from "./wizClientAi";
 import { aiFlavored, aiInventoryVariables, Q_AI_INVENTORY } from "./wizQueriesAi";
 import { readAll, TABS } from "./sheetsDb";
+import { AI_ASSET_KINDS, EDGE_TYPES } from "../domain/graphTypes";
+import { isOpenGap, isUnresolvedIssue } from "../domain/config";
 import { readGraphSnapshot } from "./archiveStore";
 import type { Rec } from "../domain/util";
 
@@ -217,6 +219,160 @@ export function aarsDiagnostic(): string {
     }
   } catch (e) {
     log(`Drive snapshot unreadable: ${String(e instanceof Error ? e.message : e)}`);
+  }
+
+  log("=== end ===");
+  return lines.join("\n");
+}
+
+/**
+ * What is actually IN the AI register, broken down by kind — run from the editor when the
+ * estate's headline numbers look wrong in a way no rule change explains.
+ *
+ * It exists because of a specific failure this product cannot otherwise see. Every scoring
+ * model here reports a distribution over `ai_assets`, and a distribution is only a claim
+ * about risk if the population is the one the reader assumes. A live tenant showed 97.58%
+ * of assets at AARS INFO and 97.2% of them reaching the posture fallback tier — figures
+ * that read as "an exceptionally clean AI estate" and read equally well as "the register
+ * is not the AI estate". Those two readings call for opposite responses, and nothing in
+ * the product distinguished them.
+ *
+ * The distinguishing question is one histogram: if a single `kind` holds most of the rows,
+ * the degeneracy is a scope artefact and the models were never the problem. If the kinds
+ * are spread the way an AI estate is spread, the degeneracy is real and it is a visibility
+ * finding. So this prints the breakdown and refuses to draw the conclusion — the numbers
+ * decide it, not a threshold picked here.
+ *
+ * `withSignal` is the second half of the same question. An asset carrying no open issue,
+ * no failing control and no held risk condition contributes nothing any model can score;
+ * counting how many of those the register holds says whether "97% INFO" means "clean" or
+ * means "never assessed". Reads the ledger only, prints counts and kind names, and never
+ * an asset's identity.
+ */
+export function registerScopeDiagnostic(): string {
+  const lines: string[] = [];
+  const log = (m: string) => {
+    lines.push(m);
+    console.log(m);
+  };
+  const pct = (n: number, d: number) => (d > 0 ? `${((100 * n) / d).toFixed(1)}%` : "—");
+
+  log("=== AI register scope diagnostic ===");
+
+  let issueAssetIds = new Set<string>();
+  let findingResourceIds = new Set<string>();
+  try {
+    for (const r of readAll(TABS.issues)) {
+      if (isUnresolvedIssue({ status: String(r["status"] ?? "") })) {
+        issueAssetIds.add(String(r["asset_id"] ?? ""));
+      }
+    }
+    for (const r of readAll(TABS.findings)) {
+      const gap = isOpenGap({
+        result: (r["result"] as string) ?? undefined,
+        status: (r["status"] as string) ?? undefined,
+        deleted: r["deleted"] === true || r["deleted"] === "TRUE",
+      });
+      if (gap) findingResourceIds.add(String(r["resource_id"] ?? ""));
+    }
+  } catch (e) {
+    log(`issues/findings unreadable: ${String(e instanceof Error ? e.message : e)}`);
+  }
+
+  try {
+    const rows = readAll(TABS.assets);
+    log(`ai_assets rows: ${rows.length}`);
+    if (!rows.length) {
+      log("The assets tab is empty — run a sync first.");
+    } else {
+      const byKind = new Map<string, { total: number; signal: number }>();
+      let aiKinded = 0;
+      let anySignal = 0;
+
+      for (const r of rows) {
+        const kind = String(r["kind"] ?? "(blank)");
+        const id = String(r["id"] ?? "");
+        // "Signal" is anything a model could read: outstanding work, a failing control, or
+        // a risk condition the graph established. The four condition columns are read
+        // directly rather than through riskConditions.conditionState because that predicate
+        // wants a GNode and this diagnostic deliberately reads the flat ledger — the tab is
+        // what the register IS, and a snapshot disagreeing with it is itself a finding.
+        const held =
+          r["sensitive_data"] === true || r["sensitive_access"] === true ||
+          r["high_priv"] === true || r["admin_priv"] === true ||
+          r["guardrail_missing"] === true || r["internet"] === true;
+        const signal = issueAssetIds.has(id) || findingResourceIds.has(id) || held;
+
+        const slot = byKind.get(kind) ?? { total: 0, signal: 0 };
+        slot.total += 1;
+        if (signal) slot.signal += 1;
+        byKind.set(kind, slot);
+
+        if ((AI_ASSET_KINDS as readonly string[]).indexOf(kind) >= 0) aiKinded += 1;
+        if (signal) anySignal += 1;
+      }
+
+      const ordered = [...byKind.entries()].sort((a, b) => b[1].total - a[1].total);
+      log("");
+      log("  by kind, most rows first — kind / rows / share / carrying signal:");
+      for (const [kind, s] of ordered) {
+        log(
+          `    ${kind.padEnd(26)} ${String(s.total).padStart(7)}  ${pct(s.total, rows.length).padStart(6)}` +
+          `   signal ${String(s.signal).padStart(6)} (${pct(s.signal, s.total)})`,
+        );
+      }
+
+      const aiOrdered = ordered.filter(
+        ([k]) => (AI_ASSET_KINDS as readonly string[]).indexOf(k) >= 0,
+      );
+      const topAi = aiOrdered[0];
+      log("");
+      log(`  distinct kinds:        ${ordered.length}`);
+      log(`  carrying any signal:   ${anySignal} of ${rows.length} (${pct(anySignal, rows.length)})`);
+      log("");
+      // The substrate is in this tab BY DESIGN: the exposure, identity and data-reach
+      // traversals pull buckets, service accounts and hosts in so the graph has something
+      // to draw a path through. A low AI share is therefore not itself a fault. The number
+      // that decides the scope question is the largest AI kind, because that is the
+      // population every model's distribution is actually reporting on.
+      log(`  in AI_ASSET_KINDS:     ${aiKinded} of ${rows.length} (${pct(aiKinded, rows.length)})`);
+      log("    the rest is substrate the exposure / identity / data-reach traversals pull in");
+      log("    so the graph has something to draw a path through. Expected, not a fault.");
+      if (topAi) {
+        log(
+          `  largest AI kind:       ${topAi[0]} at ${topAi[1].total} rows — ` +
+          `${pct(topAi[1].total, aiKinded)} of the AI estate, ` +
+          `${pct(topAi[1].signal, topAi[1].total)} of it carrying signal`,
+        );
+      }
+      log("");
+      log("  Read it this way, and let the numbers decide rather than a threshold picked here:");
+      log("  · ONE AI kind holding most of the AI rows, and carrying little signal, means the");
+      log("    register is wider than the AI estate a reader pictures. Every distribution");
+      log("    downstream is then a statement about that kind, not about AI risk. Check what");
+      log("    that Wiz type actually enumerates before reading any model as degenerate.");
+      log("  · AI kinds spread across agents / models / pipelines / datasets, most without");
+      log("    signal, means the register is right and the estate is genuinely unassessed —");
+      log("    a visibility finding, and the models were never the problem.");
+    }
+  } catch (e) {
+    log(`ai_assets unreadable: ${String(e instanceof Error ? e.message : e)}`);
+  }
+
+  // The edge census. Eleven of the declared relationship types have never been observed to
+  // populate on a live tenant, and each dead one silently removes a class of question the
+  // product appears able to answer — tool use, model provenance, agent-to-agent trust.
+  try {
+    const rows = readAll(TABS.edges);
+    const seen = new Set<string>();
+    for (const r of rows) seen.add(String(r["type"] ?? ""));
+    const dead = (EDGE_TYPES as readonly string[]).filter((t) => !seen.has(t));
+    log("");
+    log(`  edge rows: ${rows.length}`);
+    log(`  populated edge types:  ${EDGE_TYPES.length - dead.length} of ${EDGE_TYPES.length}`);
+    if (dead.length) log(`  never populated:       ${dead.join(", ")}`);
+  } catch (e) {
+    log(`ai_edges unreadable: ${String(e instanceof Error ? e.message : e)}`);
   }
 
   log("=== end ===");

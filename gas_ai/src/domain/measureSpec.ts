@@ -133,8 +133,13 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
   {
     id: "aars-band",
     goal:
-      "Turn the continuous AARS score into a small, nameable set of levels an analyst can "
-      + "scan a table by, without re-reading the number on every row.",
+      "Turn the continuous AARS score into a small, nameable set of levels — legitimate as "
+      + "a MODEL diagnostic (the AARS trend, the AARS Rules page's band occupancy) and as "
+      + "an opt-in filter, over its own scored population every time. NOT a claim about one "
+      + "asset (P2c): the same rule has put nearly an entire estate in CRITICAL on one "
+      + "tenant and nearly an entire estate in INFO on another under identical thresholds, "
+      + "so the Inventory table and the asset sheet lead with aars-percentile instead — see "
+      + "that record.",
     scope: "Every AI asset carrying an aars_severity value.",
     measure: "AARS band: CRITICAL / HIGH / MEDIUM / LOW / INFO, re-derived from the stored "
       + "score against the rule's band thresholds on every read.",
@@ -207,7 +212,6 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
-
   // ----------------------------------------------------- the model's own discrimination
   {
     id: "aars-distinct-scores",
@@ -587,6 +591,167 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     dataSource: "ai_framework_posture.posture_pct, ai_framework_posture.level, "
       + "ai_framework_posture.empty_posture_reason",
     reportingFormat: "Compliance Posture page's headline strip.",
+    measurementMethod: "Objective",
+    revisionDue: REVISION_DUE,
+  },
+
+  // -------------------------------------------------------------------------- P1a actions
+  {
+    id: "action-concentration-ratio",
+    goal:
+      "Show whether the estate has LEVERAGE to exploit — whether a small number of fixes "
+      + "closes most of the open-problem board — or whether it does not. A ratio near "
+      + "1:1 (N actions for N problems) is not a healthy reading: it means every open "
+      + "problem is its own distinct fix, the estate carries no repeated pattern this "
+      + "feature can collapse, and ranking actions instead of problems buys this reader "
+      + "nothing over `problems.ts`'s own Priorities ranking. The feature is only useful "
+      + "on data where a handful of actions dominate, the way `configFindings.ts`'s own "
+      + "header documents for a single Bedrock rule failing on sixteen IAM roles at once.",
+    scope: "Every open problem `problems.ts`'s union admits (isUnresolvedIssue ∪ isOpenGap), "
+      + "rolled up by `actions.ts`'s `ActionKey` (kind + ruleId + ruleShortId) and ranked by "
+      + "`rankActionsByCover`'s marginal set-cover.",
+    measure: "concentrationRatio: {actions, problems, top10Share} — the distinct action "
+      + "count the union collapses to, the union total it sums back to, and the share of "
+      + "that total the top 10 ranked actions alone close.",
+    // Impact, not effectiveness: this is a fact about the ESTATE's own shape (how much its
+    // open problems repeat one fix), unlike the aars-distinct-scores family above, which is
+    // effectiveness because it measures the MODEL's discriminative power over that estate.
+    type: "impact",
+    formula: "actions.ts's concentrationRatio(rankActionsByCover(problemRows), total) — "
+      + "problems is Σ ActionRow.problems over the ranked list (always equal to `total` "
+      + "when the ranked list is not itself truncated); top10Share is Σ the first 10 "
+      + "ActionRow.problems divided by `total`.",
+    target: "No numeric target — same reasoning as the AARS discrimination records above: "
+      + "this measures a property of the CURRENT estate's shape, not a house threshold. A "
+      + "reader comparing actions/problems across two syncs, or top10Share moving toward or "
+      + "away from 1.0, is the intended use; a single snapshot has nothing to be compared "
+      + "against.",
+    implementationEvidence: "rankActionsByCover's own set-cover-completeness invariant "
+      + "(test/actions.test.ts) — Σ ActionRow.problems over every ranked action equals the "
+      + "union total exactly, with removal, the same guarantee toxicCombos.ts's "
+      + "comboSummary documents at its own grain — is what makes `problems` in this record "
+      + "trustworthy as a reconciled total rather than an approximation.",
+    timeBasedReference: "Snapshotted at each sync's completion, over the union as it reads "
+      + "right now. " + NO_PER_ENTITY_HISTORY,
+    responsibleParties: "Security analysts (triage); the operator deciding whether this "
+      + "feature is worth surfacing on a given tenant's data at all.",
+    dataSource: "ai_issues.rule_id, ai_issues.status, "
+      + "ai_findings.rule_id, ai_findings.rule_short_id, ai_findings.result, ai_findings.status",
+    reportingFormat: "Actions page headline ('N problems collapse to M actions; the top 10 "
+      + "close K%').",
+    measurementMethod: "Objective",
+    revisionDue: REVISION_DUE,
+  },
+
+  // ------------------------------------------------------------------------ P2b: reach
+  {
+    id: "estate-reach-stages",
+    goal:
+      "Answer, in paired counts a reader cannot mistake for a percentage-only score, what "
+      + "fraction of the AI estate a sync actually TOUCHED — the honest answer on an estate "
+      + "where a live tenant shows 97.58% of assets at AARS INFO and 97.2% reaching the "
+      + "posture fallback tier, figures that read as 'clean' and read equally well as "
+      + "'never assessed'. A reader seeing '0 of 22 attributed' must see the 22, never a "
+      + "bare 0%, or the missing denominator disappears into a number that merely looks bad "
+      + "instead of naming exactly how much is unknown.",
+    scope: "In register: every row on ai_assets, substrate included. Observed / enriched / "
+      + "attributed / decided: the AI-kinded subset that stage establishes (AI_ASSET_KINDS "
+      + "membership on ai_assets.kind) — a claim about the AI estate, not about the buckets "
+      + "and service accounts the exposure/identity/data-reach traversals pull in alongside it.",
+    measure: "Five { covered, total } pairs: in register (AI-kinded of every row), observed "
+      + "(carrying an unresolved issue, an open failing finding, or a held risk condition), "
+      + "enriched (touched by a persisted edge, or carrying exposure/human-access evidence), "
+      + "attributed (a folded business-impact tier), decided (a persisted AARS score or a "
+      + "folded problem verdict).",
+    type: "impact",
+    formula: "reach.ts's estateReach(...).stages — one filter per stage over syncStore."
+      + "loadAssets()/loadIssues()/loadFindings()/loadEdges(), never a re-derivation of "
+      + "isUnresolvedIssue/isOpenGap/conditionHolds, which this reuses verbatim.",
+    target: "No numeric target — a funnel narrowing toward 0 IS the finding this measure "
+      + "exists to surface, not a threshold this deployment enforces. The seed estate's own "
+      + "'0 of 22 attributed' is the demonstration: no house-wide floor would make that "
+      + "number less true.",
+    implementationEvidence: "Each stage's covered count is recomputable from the SAME "
+      + "persisted columns registerScopeDiagnostic already reads by hand — this is that "
+      + "diagnostic's finding, permanent in the product rather than run once from the "
+      + "Apps Script editor.",
+    timeBasedReference: "Snapshotted at each sync's completion, over the register as it "
+      + "reads right now. " + NO_PER_ENTITY_HISTORY,
+    responsibleParties: "Security analysts (reading estate posture); the operator deciding "
+      + "whether a low stage matters for THIS tenant's traversal footprint.",
+    dataSource: "ai_assets.kind, ai_assets.business_impact, ai_assets.worst_open_problem, "
+      + "ai_assets.aars, ai_edges.type, ai_issues.status, ai_findings.result",
+    reportingFormat: "Wiz Scans page, Estate reach section's stage ladder; AI Inventory's "
+      + "one-glance headline card.",
+    measurementMethod: "Objective",
+    revisionDue: REVISION_DUE,
+  },
+  {
+    id: "estate-reach-edge-census",
+    goal:
+      "Name which of the 23 declared graph relationship types this deployment's queries "
+      + "have ever actually populated, and which have not — a dead relationship type "
+      + "silently removes a class of question the product LOOKS able to answer (tool scope, "
+      + "model provenance, agent-to-agent trust) while every page that draws the graph stays "
+      + "visually confident about the edges it does have.",
+    scope: "Every row on ai_edges as last synced, censused against EDGE_TYPES "
+      + "(graphTypes.ts) — the full declared vocabulary, not merely the types this ledger "
+      + "happens to hold.",
+    measure: "populated / declared, plus the named list of types with zero rows.",
+    type: "implementation",
+    formula: "reach.ts's estateReach(...).edges — the identical census "
+      + "registerScopeDiagnostic already runs by hand (server/diagnostics.ts), reused rather "
+      + "than reimplemented so the two can never quietly disagree.",
+    target: "No numeric target — which types are dead is a fact about this tenant's Wiz "
+      + "query coverage, not a threshold. A census that always reports '23 of 23' the day "
+      + "this app stops asking new questions would be the failure, not the target.",
+    implementationEvidence: "populated/dead is read directly off ai_edges.type against the "
+      + "EDGE_TYPES constant both graphExpand.ts and the sync normalizer already import — a "
+      + "type this app cannot even emit would fail typechecking before it reached this count.",
+    timeBasedReference: "Snapshotted at each sync's completion, over the edges tab as it "
+      + "reads right now. " + NO_PER_ENTITY_HISTORY,
+    responsibleParties: "The operator deciding whether to widen the sync's graph queries; "
+      + "security analysts relying on a graph-drawn relationship that may not be populated.",
+    dataSource: "ai_edges.type",
+    reportingFormat: "Wiz Scans page, Estate reach section's edge census.",
+    measurementMethod: "Objective",
+    revisionDue: REVISION_DUE,
+  },
+  {
+    id: "estate-reach-axis-known-rate",
+    goal:
+      "THE SAME WARNING AS problem-axis-unknown-rate, restated for the KNOWN framing this "
+      + "panel reports instead: a high known% here does NOT mean the estate is safe, and a "
+      + "low one does NOT mean it is unsafe — it means the decision tree CANNOT PRIORITISE "
+      + "on that axis, because the evidence it needs was never collected. Reading a high "
+      + "known% as reassurance, or a low one as a body of confirmed-safe findings, is the "
+      + "misuse this record exists to make hard to fall into by accident.",
+    scope: "The same decided population problem-axis-unknown-rate scopes to: every "
+      + "issue/finding row carrying a persisted problem_input_json — one the tree actually "
+      + "reached a verdict for.",
+    measure: "known.{exploitation,impact,exposure,mission}: 1 minus "
+      + "treeDiscrimination.unknownRate over that population, EXCEPT an empty population — "
+      + "no row ever decided — which reads 0, never 1 (a naive inversion of an empty "
+      + "unknownRate would otherwise report '100% known' on an axis nothing was ever read "
+      + "on, the exact false-green failure this whole panel exists to refuse).",
+    type: "implementation",
+    formula: "reach.ts's estateReach(...).axes, computed by calling problemRule.ts's "
+      + "treeDiscrimination(decided) UNCHANGED and inverting its unknownRate at this one "
+      + "boundary — never a second per-axis unknown computation. axesPopulation carries the "
+      + "decided count, so a caller can render '--' rather than a measured 0% on an empty "
+      + "population.",
+    target: "No numeric target is set, deliberately — see this record's own `goal`. A "
+      + "target would imply a 'good enough' known rate, and there is none.",
+    implementationEvidence: "Wiz's exploit-validation pipeline (issue.validatedAsExploitable), "
+      + "the combo-group impact table, exposure traversal evidence (node.exposureEvidence) "
+      + "and business-impact tagging are the upstream CONTROLS whose operating rate this "
+      + "reports on indirectly, exactly as problem-axis-unknown-rate's own record states.",
+    timeBasedReference: "Snapshotted at each sync's completion, over the decided population "
+      + "as it reads right now. " + NO_PER_ENTITY_HISTORY,
+    responsibleParties: "Security analysts (reading the queue); Wiz tenant administrators "
+      + "(the upstream evidence-collection controls this rate reports on).",
+    dataSource: "ai_issues.problem_input_json, ai_findings.problem_input_json",
+    reportingFormat: "Wiz Scans page, Estate reach section's axis-coverage panel.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },

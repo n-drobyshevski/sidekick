@@ -1203,6 +1203,7 @@ function stripAarsScore(n: GNode): GNode {
 // can never serve cross-request data; writers below invalidate them anyway.
 let graphDocMemo: GraphDoc | null | undefined;
 let assetsMemo: GNode[] | undefined;
+let edgesMemo: GEdge[] | undefined;
 let issuesMemo: IssueRow[] | undefined;
 let findingsMemo: FindingRow[] | undefined;
 let dataFindingsMemo: DataFindingRow[] | undefined;
@@ -1442,6 +1443,18 @@ export function loadAssets(): GNode[] {
   const out = withAarsReadDerivations(raw);
   derivedAssetsMemo = { raw, bandKey, out };
   return out;
+}
+
+/**
+ * Edges exactly as persisted on `ai_edges` — never the synthetic HAS_ISSUE / risk-condition
+ * edges `loadGraphDocUncached` adds at read time for the graph page. This is the same
+ * population `registerScopeDiagnostic`'s edge census reads (`readAll(TABS.edges)`), and is
+ * what `reach.ts`'s `estateReach` needs to ask "which relationship types actually populated"
+ * without silently counting synthetic furniture as a Wiz-derived relationship.
+ */
+export function loadEdges(): GEdge[] {
+  if (edgesMemo === undefined) edgesMemo = readAll(TABS.edges).map(rowToEdge);
+  return edgesMemo;
 }
 
 export function loadIssues(): IssueRow[] {

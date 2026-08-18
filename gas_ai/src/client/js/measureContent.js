@@ -184,4 +184,55 @@ export const MEASURE_ENTRIES = [
     reportingFormat: "Compliance Posture page's headline strip.",
     revisionDue: "2027-08-13",
   },
+  {
+    id: "action-concentration-ratio", measure: "Action concentration",
+    type: "impact", measurementMethod: "Objective",
+    goal: "Whether the estate has LEVERAGE to exploit \u2014 whether a handful of fixes closes "
+      + "most of the open board. A ratio near 1:1 is not a healthy reading: it means every "
+      + "problem is its own distinct fix and ranking actions buys nothing over ranking "
+      + "problems.",
+    formula: "concentrationRatio over rankActionsByCover's marginal set-cover: distinct "
+      + "actions, the union total they sum back to, and the share the top 10 alone close.",
+    dataSource: "ai_issues.rule_id, ai_findings.rule_short_id, ai_findings.rule_id",
+    reportingFormat: "Priorities page's action list header and its cumulative-cover curve.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "estate-reach-stages", measure: "Estate reach stage ladder", type: "impact",
+    measurementMethod: "Objective",
+    goal: "What fraction of the AI estate a sync actually touched, in paired counts — never "
+      + "a bare percentage, so a stage with nothing behind it (‘0 of 22 attributed’) "
+      + "cannot be misread as a clean result.",
+    formula: "estateReach(...).stages: in register, observed, enriched, attributed, decided "
+      + "— each { covered, total } over the AI-kinded register.",
+    dataSource: "ai_assets.kind, ai_assets.business_impact, ai_assets.worst_open_problem, "
+      + "ai_assets.aars, ai_edges.type, ai_issues.status, ai_findings.result",
+    reportingFormat: "Wiz Scans page, Estate reach section; AI Inventory headline card.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "estate-reach-edge-census", measure: "Edge census", type: "implementation",
+    measurementMethod: "Objective",
+    goal: "Which of the 23 declared graph relationship types this deployment has ever "
+      + "populated — a dead type quietly removes a class of question the graph looks "
+      + "able to answer.",
+    formula: "estateReach(...).edges: ai_edges.type censused against EDGE_TYPES, the same "
+      + "logic registerScopeDiagnostic already runs by hand.",
+    dataSource: "ai_edges.type",
+    reportingFormat: "Wiz Scans page, Estate reach section's edge census.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "estate-reach-axis-known-rate", measure: "Per-axis known %", type: "implementation",
+    measurementMethod: "Objective",
+    goal: "THE SAME WARNING AS Per-axis unknown rate, restated positively: a high known% "
+      + "does NOT mean the estate is safe — it means the decision tree cannot "
+      + "prioritise on that axis until it does not. An empty population reads 0%, never a "
+      + "false 100%.",
+    formula: "1 − treeDiscrimination(decided).unknownRate per axis, inverted at reach.ts's "
+      + "own boundary; 0 when nothing has ever been decided.",
+    dataSource: "ai_issues.problem_input_json, ai_findings.problem_input_json",
+    reportingFormat: "Wiz Scans page, Estate reach section's axis-coverage panel.",
+    revisionDue: "2027-08-13",
+  },
 ];

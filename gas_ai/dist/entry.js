@@ -13,6 +13,7 @@ function setup() { return Server.setup(); }
 // which auth/query step fails (secret-safe) to the execution log. Never used by a sync.
 function wizDiagnostic() { return Server.wizDiagnostic(); }
 function aarsDiagnostic() { return Server.aarsDiagnostic(); }
+function registerScopeDiagnostic() { return Server.registerScopeDiagnostic(); }
 
 // Trigger handlers (names referenced by ScriptApp.newTrigger calls).
 function trigger_dailySync() { Server.jobs.dailySync(); }
@@ -43,6 +44,7 @@ function api_getIssues(p) { return timedApi_("getIssues", p); }
 function api_getIssueDetail(p) { return timedApi_("getIssueDetail", p); }
 function api_getToxicCombos(p) { return timedApi_("getToxicCombos", p); }
 function api_getProblems(p) { return timedApi_("getProblems", p); }
+function api_getActions(p) { return timedApi_("getActions", p); }
 function api_runSync(p) { return timedApi_("runSync", p); }
 function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }
 function api_cancelSync(p) { return timedApi_("cancelSync", p); }

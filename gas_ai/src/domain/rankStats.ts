@@ -246,3 +246,4 @@ export function bootstrapCI<T>(
     hi: quantile(stats, 0.975)!,
   };
 }
+

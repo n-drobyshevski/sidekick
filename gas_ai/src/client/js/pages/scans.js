@@ -36,8 +36,9 @@ import { svgEl } from "../icons.js";
 import { openAreaSheet } from "./scanSheet.js";
 import {
   clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtDate, fmtDateTime,
-  onPageTeardown, plural, sectionLabel, skeleton, statRow,
+  meter, motionOk, onPageTeardown, plural, sectionLabel, skeleton, statRow,
 } from "../ui.js";
+import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
 
 // Only the whole-landscape head of api_getAssets is read (kpis, total) — never `rows`. Past
 // the server's row ceiling the payload downgrades to a single page, but the head still
@@ -76,6 +77,7 @@ export async function renderScans(main, params, ctx) {
   let combos = null;
   let queries = null;
   let combosError = "";
+  let anchored = false;
 
   const settled = await Promise.allSettled([
     swrCall("api_getAssets", ASSETS_PARAMS, (fresh) => { assets = fresh; paint(); }),
@@ -131,7 +133,20 @@ export async function renderScans(main, params, ctx) {
         "Sync cadence: daily at 05:00 UTC plus on-demand “Sync now”. Every figure above " +
         "is the one the last sync produced; an area with no figure says so rather than " +
         "carrying a number from somewhere else."),
+      el("p", { class: "small muted cov-diagram-note" }, REACH_VS_SCAN_AREA_NOTE),
+      reachSection(assets.reach),
     );
+    // A link from AI Inventory's headline figure sends the reader here with ?anchor=reach —
+    // only worth honouring once, on the render that actually has the section to jump to,
+    // not on every SWR repaint that follows it.
+    if (params && params.anchor === "reach" && !anchored) {
+      anchored = true;
+      const target = document.getElementById("scan-reach-section");
+      if (target) {
+        target.scrollIntoView({ behavior: motionOk() ? "smooth" : "auto", block: "start" });
+        target.focus({ preventScroll: true });
+      }
+    }
   }
 
   // ---------------------------------------------------------------- posture header
@@ -259,6 +274,159 @@ export async function renderScans(main, params, ctx) {
     return el("span", { class: "pill " + meta.pill + " cov-state" },
       el("span", { class: "cov-state-glyph", "aria-hidden": "true" }, meta.glyph),
       meta.label);
+  }
+
+  // ------------------------------------------------------------------ estate reach
+  function reachSection(reach) {
+    const wrap = el("div", {
+      id: "scan-reach-section", class: "reach-wrap", tabindex: "-1",
+      "aria-label": "Estate reach",
+    });
+    if (!reach) {
+      wrap.append(
+        sectionLabel("Estate reach"),
+        emptyState("Not available.", "This server build did not report a reach payload."),
+      );
+      return wrap;
+    }
+
+    wrap.append(
+      sectionLabel("Estate reach"),
+      el("p", { class: "page-sub" },
+        "Of everything on the AI register, how much did the pipeline actually touch — five " +
+        "paired counts, never a bare percentage, because an empty denominator is a fact " +
+        "worth showing, not a number to divide by."),
+      reachLadder(reach.stages),
+      sectionLabel("By kind"),
+      reachKindSummary(reach),
+      reachKindTable(reach.kinds),
+      sectionLabel("Edge census"),
+      reachEdgeCensus(reach.edges),
+      sectionLabel("Decision-tree axis coverage"),
+      el("p", { class: "cov-note" }, AXIS_KNOWN_WARNING),
+      reachAxes(reach.axes, reach.axesPopulation),
+    );
+    return wrap;
+  }
+
+  function reachLadder(stages) {
+    const rows = stages.map((s) => {
+      const known = s.total > 0;
+      const pct = known ? Math.round((s.covered / s.total) * 100) : null;
+      return el("div", { class: "reach-stage" },
+        el("div", { class: "reach-stage-label" }, s.label),
+        el("div", { class: "reach-stage-figure" },
+          el("span", { class: "reach-stage-count num" },
+            known ? s.covered + " of " + s.total : "—"),
+          known
+            ? meter(pct, {
+              decorative: true, className: "meter--flex",
+              label: s.label + ", " + pct + " percent",
+            })
+            : el("span", { class: "reach-stage-bar-empty", "aria-hidden": "true" }),
+        ),
+        el("div", { class: "reach-stage-pct" }, known ? pct + "%" : "no data"),
+      );
+    });
+    return el("div", { class: "reach-ladder" }, ...rows);
+  }
+
+  function reachKindSummary(reach) {
+    const register = reach.stages.find((s) => s.key === "register");
+    const aiKinds = reach.kinds.filter((k) => k.ai).sort((a, b) => b.total - a.total);
+    const largest = aiKinds[0];
+    const share = register && register.total
+      ? Math.round((register.covered / register.total) * 100)
+      : null;
+    const parts = [
+      register
+        ? (share === null ? "—" : share + "%") + " of every register row is AI-kinded"
+          + (register.total ? " (" + register.covered + " of " + register.total + ")" : "")
+        : null,
+      largest
+        ? "the largest AI kind is " + largest.kind + " at " + largest.total + " rows, "
+          + largest.signal + " of them carrying signal"
+        : "no AI-kinded row is on the register",
+    ].filter(Boolean);
+    return el("p", { class: "page-sub" }, parts.join(" — ") + ".");
+  }
+
+  function reachKindTable(kinds) {
+    return dataTable({
+      className: "reach-kinds",
+      columns: [
+        {
+          key: "kind", label: "Kind",
+          cell: (k) => el("span", { class: k.ai ? "reach-kind-ai" : "" }, k.kind),
+        },
+        { key: "total", label: "Rows", cell: (k) => el("span", { class: "num" }, String(k.total)) },
+        {
+          key: "signal", label: "Carrying signal",
+          cell: (k) => el("span", { class: "num" }, k.signal + " of " + k.total),
+        },
+        {
+          key: "ai", label: "AI estate",
+          cell: (k) => (k.ai
+            ? el("span", { class: "pill ok" }, "AI")
+            : el("span", { class: "cov-none" }, "substrate")),
+        },
+      ],
+      rows: kinds,
+      rowLabel: (k) => k.kind + ", " + k.total + " rows, " + k.signal + " carrying signal, "
+        + (k.ai ? "AI-kinded" : "substrate"),
+    });
+  }
+
+  function reachEdgeCensus(edges) {
+    const wrap = el("div", { class: "reach-edges" });
+    wrap.append(
+      el("p", { class: "page-sub" },
+        edges.populated.length + " of " + edges.declared + " relationship types populated " +
+        "on this estate's persisted graph."),
+      el("div", { class: "chipset" },
+        ...edges.populated.map((t) => el("span", { class: "chip" }, t)),
+        !edges.populated.length ? el("span", { class: "chipset-empty" }, "none populated") : null,
+      ),
+    );
+    // Two lists, deliberately not one. A type drawn at graph-read time is correctly absent
+    // from the persisted tab and its absence is not a gap; showing it beside a type nothing
+    // anywhere constructs would inflate the finding and teach a reader to discount the
+    // number — the same false reading this panel exists to refuse, pointed the other way.
+    if (edges.dead.length) {
+      wrap.append(
+        el("p", { class: "small muted", style: "margin-top:8px" },
+          "Declared but produced by nothing — each one is a class of question this product " +
+          "looks able to answer and cannot:"),
+        el("div", { class: "chipset" },
+          ...edges.dead.map((t) => el("span", { class: "chip reach-chip-dead" }, t)),
+        ),
+      );
+    }
+    if (edges.synthetic.length) {
+      wrap.append(
+        el("p", { class: "small muted", style: "margin-top:8px" },
+          "Drawn at read time rather than stored, so absent here by design — not a gap:"),
+        el("div", { class: "chipset" },
+          ...edges.synthetic.map((t) => el("span", { class: "chip" }, t)),
+        ),
+      );
+    }
+    return wrap;
+  }
+
+  function reachAxes(axes, population) {
+    const list = el("div", { class: "card stat-list" });
+    for (const axis of REACH_AXES) {
+      const known = population > 0;
+      const pct = known ? Math.round(axes[axis.key] * 100) : null;
+      list.append(statRow(
+        axis.label,
+        known ? pct + "%" : "—",
+        known ? "known, of " + population + " decided" : "nothing decided yet",
+        known ? pct : null,
+      ));
+    }
+    return list;
   }
 
   /**
@@ -594,5 +762,8 @@ function scansSkeleton() {
     skeleton("title", { width: "130px" }),
     el("div", { class: "skeleton-stack", style: "gap:10px; margin-top:8px" },
       ...Array.from({ length: 9 }, () => skeleton("line", { height: "22px" }))),
+    el("div", { style: "margin-top:20px" }, skeleton("title", { width: "150px" })),
+    el("div", { class: "skeleton-stack", style: "gap:10px; margin-top:8px" },
+      ...Array.from({ length: 5 }, () => skeleton("line", { height: "26px" }))),
   );
 }

@@ -95,6 +95,8 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
   ["getToxicCombos", {}],
   // Phase 7: the landscape-wide Priorities page — issues ∪ findings, ranked together.
   ["getProblems", {}],
+  // Phase P1a: remediation ACTIONS ranked by marginal set-cover over the same union.
+  ["getActions", {}],
   ["getSyncHistory", {}],
   ["getSettings", {}],
   ["getAarsRule", {}],
