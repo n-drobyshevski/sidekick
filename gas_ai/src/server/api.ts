@@ -2218,20 +2218,29 @@ export function setPostureRule(p?: unknown): ApiResult {
 
 /**
  * The decided population `postureDiscrimination` wants: tier + vector + unknowns, read off
- * whichever nodes a preview actually folded a tier onto. Mirrors `decidedForDiscrimination`
+ * whichever nodes a preview actually derived a vector for. Mirrors `decidedForDiscrimination`
  * (the problem-rule preview's identical filter) — a node with no `postureInput` (never
  * folded, or a synthetic node the fold skipped) is excluded rather than guessed at.
+ *
+ * A node IS included with `tier: undefined` when it carries `postureInput` but no
+ * `postureTier` — `posture.tierEstablished` refused to place it (see that function's own
+ * header) — rather than being dropped the way the old admission test dropped it. Dropping
+ * it here would silently remove exactly the population this whole change exists to
+ * surface: `postureDiscrimination.unknownRate.tier` (postureRule.ts) has nothing to count
+ * if this filter throws its numerator away before that function ever sees it.
  */
 function decidedForPostureDiscrimination(
   nodes: ReadonlyArray<{ postureTier?: number; postureInput?: { capability: string; containment: string; consequence: string; unknowns?: string[] } }>,
-): Array<{ tier: Tier; vector: PostureVector; unknowns: string[] }> {
-  const out: Array<{ tier: Tier; vector: PostureVector; unknowns: string[] }> = [];
+): Array<{ tier: Tier | undefined; vector: PostureVector; unknowns: string[] }> {
+  const out: Array<{ tier: Tier | undefined; vector: PostureVector; unknowns: string[] }> = [];
   for (const node of nodes) {
-    const tier = node.postureTier;
     const input = node.postureInput;
-    if (!input || !(TIER_VALUES as readonly number[]).includes(tier as number)) continue;
+    if (!input) continue;
+    const tier = (TIER_VALUES as readonly number[]).includes(node.postureTier as number)
+      ? (node.postureTier as Tier)
+      : undefined;
     out.push({
-      tier: tier as Tier,
+      tier,
       vector: {
         capability: input.capability as PostureVector["capability"],
         containment: input.containment as PostureVector["containment"],

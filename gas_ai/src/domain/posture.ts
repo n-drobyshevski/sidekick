@@ -145,9 +145,45 @@ export function postureVectorMatches(vector: PostureVector, when: Partial<Postur
 }
 
 /**
+ * Whether a derived vector is trustworthy enough to PLACE on the lattice at all —
+ * `compliancePosture.ts`'s own rule, ported: "a posture that does not exist is never a
+ * zero." That file decides emptiness from an explicit `emptyPostureReason` BEFORE it looks
+ * at the percentage; this is the same discipline applied to `derivePostureInput`'s own
+ * `unknowns` list, which already tells the truth about which axes were never read — there
+ * is no second "is this asset missing data" question to invent, only this one to finally
+ * ask before `decidePosture` runs.
+ *
+ * ANY axis in `unknowns` is disqualifying, not just all three. `capabilityOf` /
+ * `containmentOf` / `consequenceOf` each only push an axis onto `unknowns` when EVERY
+ * source for that one axis was never observed (this file's own header on each function) —
+ * so an entry here already means "this axis's reading in the vector is a DEFAULT
+ * (MINIMAL / PARTIAL / LIMITED, the safest-looking value on each axis), not a
+ * measurement." A vector built from even one defaulted axis is not the asset's true
+ * posture — it is the asset's true posture ASSUMING THE UNREAD PART OF IT IS BENIGN, which
+ * is precisely the assumption a security register must never make silently. Reported on a
+ * live tenant, that assumption is what turned an unassessed asset into "Tier 2 of 4": AARS
+ * scores the same asset 0/INFO on the same missing evidence, which reads as unscored; the
+ * old cascade read it as a real number in the middle of the scale, which reads as assessed
+ * and clean. Both are wrong about the SAME asset; only one of them said so.
+ */
+export function tierEstablished(unknowns: readonly string[]): boolean {
+  return unknowns.length === 0;
+}
+
+/**
  * First-match-wins over `rule.tierRules`. `matchedRuleIndex` is `-1` exactly when the
  * fallback fired — same contract as `problem.decideProblem`, and the same reason: an audit
  * trail can always say WHICH row (or "no row") produced a tier.
+ *
+ * Runs over whatever vector it is handed, INCLUDING one built from defaulted axes —
+ * `decidePosture` has no `unknowns` parameter and cannot refuse to decide. It is a pure
+ * function over the 27-cell lattice, exactly as `postureRule.ts`'s `cellCoverage` and
+ * `enumeratePostureVectors` need it to be: every one of the 27 CANONICAL leaves is, by
+ * definition, "fully known" (there is no such thing as an unobserved leaf), so gating
+ * INSIDE this function would have nothing to gate for the lattice-level callers and would
+ * silently do the wrong thing for them. The gate belongs one level up, at the one caller
+ * that has both a DERIVED vector and its `unknowns` — `graphEnrich.withPostureTiers` — via
+ * `tierEstablished` above.
  */
 export function decidePosture(
   vector: PostureVector,

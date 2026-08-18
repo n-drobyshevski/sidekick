@@ -67,9 +67,18 @@ function collapseTier(tier: number): string {
 }
 
 describe("posture tier vs. AARS band — the ordinality question", () => {
-  it("scores 30 assets under both models — the same population scoreOrdinality.test.ts pins", () => {
+  it("scores 23 of the 30 AARS-scored assets under BOTH models — 7 carry no posture tier", () => {
+    // MOVED from 30/30. scoreOrdinality.test.ts still pins 30 assets with an AARS
+    // severity — AARS is untouched by either change (see this repo's own VERIFY step).
+    // What moved is the posture side: `posture.tierEstablished` (Change 2) now withholds
+    // a tier from any asset with an unread capability/containment/consequence axis rather
+    // than deciding one from a defaulted value, so a real subset of the AARS-scored
+    // population now carries `postureTier: null` on purpose — see the per-axis test below
+    // for which axis is doing that, and posture.ts's own header for why.
+    const aarsScored = rows.filter((r) => r.aarsSeverity != null);
+    expect(aarsScored.length).toBe(30);
     const scored = rows.filter((r) => r.aarsSeverity != null && r.postureTier != null);
-    expect(scored.length).toBe(30);
+    expect(scored.length).toBe(23);
   });
 
   it("tau-b: high monotonic agreement, but measurably below 1 — logged and reported, not tuned", () => {
@@ -92,10 +101,15 @@ describe("posture tier vs. AARS band — the ordinality question", () => {
     expect(Number.isFinite(tau)).toBe(true);
     expect(tau).toBeGreaterThanOrEqual(-1);
     expect(tau).toBeLessThanOrEqual(1);
-    // Pinned to what the code actually produces on the seed landscape. NOT ≈1.0 — there is
-    // real disagreement between the two rankings — but the point estimate is high, and
-    // the reasons are named in this file's own header note and in the module's REPORT.
-    expect(tau).toBeCloseTo(0.9139321579354337, 10);
+    // Pinned to what the code actually produces on the seed landscape. MOVED from
+    // 0.9139321579354337 (down): the 23-asset population this measures is smaller AND
+    // different now (see the population test above) — `businessImpact` being real on the
+    // AI-kinded seed (sampleData.ts) moves some assets' consequence axis, and therefore
+    // their tier, without moving AARS at all, so the two rankings' agreement over this
+    // narrower, differently-arranged population is not the same number as before. NOT
+    // ≈1.0 — there is real disagreement between the two rankings — but the point estimate
+    // is still high, and the reasons are named in this file's own header note.
+    expect(tau).toBeCloseTo(0.856037238519734, 10);
     expect(tau).toBeLessThan(0.999);
   });
 
@@ -118,7 +132,11 @@ describe("posture tier vs. AARS band — the ordinality question", () => {
 
     expect(Number.isFinite(kappa)).toBe(true);
     expect(kappa).toBeLessThanOrEqual(1);
-    expect(kappa).toBeCloseTo(0.21348314606741572, 10);
+    // MOVED from 0.21348314606741572 — same population/consequence-axis reasons as tau-b
+    // above. Still "fair" on the Landis & Koch scale (0.21–0.40), which is the finding this
+    // test exists to pin — the two models read categories differently even when their
+    // point estimate of rank agreement is high — surviving both changes unchanged in KIND.
+    expect(kappa).toBeCloseTo(0.35294117647058826, 10);
     // "Only fair" is the finding: a rename of the score would show kappa close to 1 too,
     // the same way tau-b does. It does not. See this file's own header for the reading.
     expect(kappa).toBeLessThan(0.5);
@@ -126,21 +144,37 @@ describe("posture tier vs. AARS band — the ordinality question", () => {
 });
 
 describe("tier distribution and cell coverage over the seed landscape", () => {
-  it("reports the tier distribution across every synced asset, not only the AARS-scored subset", () => {
+  it("reports the tier distribution across every synced asset that could be PLACED", () => {
+    // RENAMED premise: this no longer covers "every synced asset" — Change 2 means a real
+    // node can be synced, enriched, and still carry no postureTier at all when
+    // `posture.tierEstablished` refuses to place it (an unread axis). `rows.length` is the
+    // WHOLE synced population; `counts`' sum is only the ESTABLISHED subset of it, and the
+    // gap between the two IS the finding this test now also asserts, not silently drops.
     const counts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
-    for (const r of rows) if (r.postureTier != null) counts[r.postureTier as number]!++;
+    let notEstablished = 0;
+    for (const r of rows) {
+      if (r.postureTier != null) counts[r.postureTier as number]!++;
+      else notEstablished++;
+    }
     // eslint-disable-next-line no-console
     console.log(
-      `[postureOrdinality] tier distribution over ${rows.length} synced assets:`,
+      `[postureOrdinality] tier distribution over ${rows.length} synced assets ` +
+        `(${notEstablished} not established):`,
       counts,
     );
-    expect(counts[1]! + counts[2]! + counts[3]! + counts[4]!).toBe(rows.length);
-    // Pinned: the seed landscape's actual shape. Tier 4 sits at zero here — the lattice
-    // PERMITS it (1/27 cells under DEFAULT_POSTURE_RULE), but no synced asset happens to
-    // combine BROAD capability, WEAK containment and SEVERE consequence at once, mostly
-    // because `businessImpact` is never populated on a seed GNode (see the unknown-rate
-    // case below), which keeps `consequence` at its LIMITED default almost everywhere.
-    expect(counts).toEqual({ 1: 49, 2: 19, 3: 19, 4: 0 });
+    expect(counts[1]! + counts[2]! + counts[3]! + counts[4]! + notEstablished).toBe(rows.length);
+    // Pinned: the seed landscape's actual shape, MOVED from { 1: 49, 2: 19, 3: 19, 4: 0 }
+    // (which used to sum to all 87 synced assets). Two changes compound here:
+    //   - `businessImpact` is now real on the seed's AI-kinded nodes (sampleData.ts,
+    //     Change 1), so `consequence` reads SEVERE for several of them, which is why tier
+    //     4 is no longer zero — the old comment's own explanation for a zero tier 4 was
+    //     this exact gap, now closed on that subset.
+    //   - the other 61 real nodes (buckets, databases, service accounts, and every other
+    //     seed kind Change 1 left without a businessImpact) still have no way to read
+    //     `consequence`, and Change 2 now REFUSES to place them rather than default them
+    //     to LIMITED — they land in `notEstablished`, not in tier 1.
+    expect(counts).toEqual({ 1: 7, 2: 3, 3: 10, 4: 6 });
+    expect(notEstablished).toBe(87 - (7 + 3 + 10 + 6));
   });
 
   it("cells reached under DEFAULT_POSTURE_RULE, of 27", () => {
@@ -181,15 +215,20 @@ describe("per-dimension unknown rates on the seed landscape", () => {
     // there is never an all-unobserved node on this landscape for either axis.
     expect(unknownRate.capability).toBe(0);
     expect(unknownRate.containment).toBe(0);
-    // consequence: `NodeSeed` (sampleData.ts) carries no `businessImpact` field at all, and
-    // `enrichGraphDoc`'s fold only ever POPULATES `node.businessImpact` from
-    // `projects[].businessImpact` — which no seed project carries either — so it is
-    // undefined on literally every seed asset. The few points of daylight below the 100%
-    // ceiling are the handful of datastores `withDataFindingCounts` actually gave a real
-    // `dataFindingCount` to from `SEED_DATA_FINDINGS`. This is a genuine gap in the DEMO
+    // consequence: MOVED from 0.9655172413793104 (down). `NodeSeed` (sampleData.ts) now
+    // carries a REAL `businessImpact` on a deliberate, non-uniform subset — the 14 AGENTS
+    // (12 of 14; agent-j/agent-k are left unattributed on purpose) plus 6 of the 8 other
+    // AI_ASSET_KINDS entries in SUPPORT (guardrail-bedrock and pipeline-training-01 are
+    // left unattributed too) — see AGENTS's and SUPPORT's own comments in sampleData.ts
+    // for why those specific gaps are load-bearing, not oversights. That closes most, but
+    // deliberately not all, of the gap this test used to report: the remaining ~70% is
+    // every OTHER real node on the seed (buckets, databases, service accounts, identities,
+    // …) that Change 1 left untouched, plus the AI-kinded assets carrying no
+    // businessImpact by design. This is a genuine, intentionally-incomplete DEMO
     // landscape, not a defect in `consequenceOf` — a real tenant's Wiz-reported
-    // `businessImpact` would close almost all of it.
-    expect(unknownRate.consequence).toBeCloseTo(0.9655172413793104, 10);
-    expect(unknownRate.consequence).toBeGreaterThan(0.9);
+    // `businessImpact` on every project would close most of what remains.
+    expect(unknownRate.consequence).toBeCloseTo(0.7011494252873564, 10);
+    expect(unknownRate.consequence).toBeGreaterThan(0.6);
+    expect(unknownRate.consequence).toBeLessThan(0.8);
   });
 });

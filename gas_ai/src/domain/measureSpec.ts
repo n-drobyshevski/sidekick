@@ -420,7 +420,13 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     target: "No numeric target — a distribution weighted toward tier 4 is the finding a "
       + "reader is meant to notice, not a threshold this app enforces.",
     implementationEvidence: "posture_input_json is populated on every asset this tally "
-      + "counts — a node the posture fold never reached carries no postureTier and is excluded.",
+      + "counts, but posture_input_json alone does not guarantee inclusion: a node the "
+      + "posture fold never reached carries neither field and is excluded, and a node the "
+      + "fold DID reach but could not place a tier for (posture.tierEstablished said no — "
+      + "at least one of capability/containment/consequence was never observed) carries "
+      + "posture_input_json with no posture_tier and is excluded from THIS tally the same "
+      + "way, though never silently: previewPostureRule's postureDiscrimination.unknownRate."
+      + "tier reports exactly that population, separately from tier occupancy.",
     timeBasedReference: "Snapshotted at each sync's completion (or the last Recompute "
       + "postures run). " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "Security analysts; AARS Rules page operator (the Posture tab).",

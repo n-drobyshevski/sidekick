@@ -27,7 +27,7 @@ import {
   stripProblemFields,
 } from "./problem";
 import { vectorSignature, type ProblemRule } from "./problemRule";
-import { decidePosture, derivePostureInput, worstOpenProblem } from "./posture";
+import { decidePosture, derivePostureInput, tierEstablished, worstOpenProblem } from "./posture";
 import type { PostureRule } from "./postureRule";
 import { conditionHolds, conditionState } from "./riskConditions";
 import { worstBusinessImpact } from "./syncNormalize";
@@ -487,6 +487,16 @@ export function withProblemVerdicts(
  * a capability envelope and a containment reading just as much as an agent does, and the
  * Inventory's tier column is meant to sit beside a possibly-blank AARS score on exactly
  * those rows, not to be blank itself wherever AARS is.
+ *
+ * A NUMBERED TIER IS WITHHELD, NOT GUESSED, WHEN `tierEstablished` SAYS NO. `postureTier`
+ * stays absent for exactly this reason on a real node — the same field, the same "absent
+ * means never placed" contract its own doc comment already states for a synthetic node the
+ * fold never reached, extended to cover a real node the fold DID reach but could not place
+ * (see `posture.tierEstablished`'s own header for why: at least one axis was never
+ * observed, so the vector `decidePosture` would otherwise run on on is partly a guess).
+ * `postureInput` is still written either way — the vector AND the `unknowns` that
+ * disqualified it — so a caller can always show WHY an asset carries no tier, the same
+ * transparency `compliancePosture.ts`'s `emptyPostureReason` gives a null percentage.
  */
 export function withPostureTiers(
   doc: GraphDoc,
@@ -509,9 +519,10 @@ export function withPostureTiers(
     const worst = worstOpenProblem(outcomesByAsset.get(node.id) ?? []);
     const next: GNode = {
       ...node,
-      postureTier: tier,
       postureInput: unknowns.length ? { ...vector, unknowns } : { ...vector },
     };
+    if (tierEstablished(unknowns)) next.postureTier = tier;
+    else delete next.postureTier;
     if (worst) next.worstOpenProblem = worst;
     else delete next.worstOpenProblem;
     return next;

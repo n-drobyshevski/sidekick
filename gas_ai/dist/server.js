@@ -3940,6 +3940,9 @@ var Server = (() => {
     if (when.externalEgress !== void 0 && when.externalEgress !== vector.externalEgress) return false;
     return true;
   }
+  function tierEstablished(unknowns) {
+    return unknowns.length === 0;
+  }
   function decidePosture(vector, rule) {
     for (let i = 0; i < rule.tierRules.length; i++) {
       const row = rule.tierRules[i];
@@ -4271,9 +4274,14 @@ var Server = (() => {
       { when: { capability: "BROAD" }, tier: 2 },
       { when: { containment: "WEAK" }, tier: 2 },
       { when: { consequence: "SEVERE" }, tier: 2 },
-      { when: { capability: "MINIMAL", containment: "STRONG" }, tier: 1 }
+      { when: { capability: "MINIMAL", containment: "STRONG" }, tier: 1 },
+      // The former bare fallback, made an explicit row — see this const's own comment. Only
+      // reachable by a vector with none of BROAD capability, WEAK containment or SEVERE
+      // consequence (every rule above already claims those), so "nothing here reads at its
+      // worst" is exactly what tier 1 already means for row 9 immediately above it.
+      { when: {}, tier: 1 }
     ],
-    fallbackTier: 2,
+    fallbackTier: 1,
     topTierCeiling: 0.15
   };
   function cleanTier(v, fallback) {
@@ -4396,10 +4404,16 @@ var Server = (() => {
       containment: 0,
       consequence: 0
     };
+    let notEstablished = 0;
     for (const d of decided) {
-      tierOccupancy[d.tier]++;
-      const key = postureKey(d.vector);
-      cellOccupancy[key] = ((_a5 = cellOccupancy[key]) != null ? _a5 : 0) + 1;
+      const established = tierEstablished(d.unknowns);
+      if (established && d.tier !== void 0) {
+        tierOccupancy[d.tier]++;
+        const key = postureKey(d.vector);
+        cellOccupancy[key] = ((_a5 = cellOccupancy[key]) != null ? _a5 : 0) + 1;
+      } else {
+        notEstablished++;
+      }
       for (const u of d.unknowns) {
         if (u === "capability" || u === "containment" || u === "consequence") unknownCounts[u]++;
       }
@@ -4414,7 +4428,8 @@ var Server = (() => {
       unknownRate: {
         capability: rate(unknownCounts.capability),
         containment: rate(unknownCounts.containment),
-        consequence: rate(unknownCounts.consequence)
+        consequence: rate(unknownCounts.consequence),
+        tier: rate(notEstablished)
       }
     };
   }
@@ -9395,9 +9410,10 @@ var Server = (() => {
       const worst = worstOpenProblem((_a5 = outcomesByAsset.get(node2.id)) != null ? _a5 : []);
       const next = {
         ...node2,
-        postureTier: tier,
         postureInput: unknowns.length ? { ...vector, unknowns } : { ...vector }
       };
+      if (tierEstablished(unknowns)) next.postureTier = tier;
+      else delete next.postureTier;
       if (worst) next.worstOpenProblem = worst;
       else delete next.worstOpenProblem;
       return next;
@@ -10080,7 +10096,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "273b21b6c68e" : "dev";
+  var BUILD_ID = true ? "8810e0972040" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -10472,7 +10488,17 @@ var Server = (() => {
       hasAdminPrivileges: (_e = seed.adminPriv) != null ? _e : false,
       guardrailMissing: (_f = seed.guardrailMissing) != null ? _f : false,
       cloudAccount: seed.account ? { id: seed.account.id, name: seed.account.name } : void 0,
-      projects: ((_g = seed.projects) != null ? _g : []).map((name) => ({ id: `proj-${name.toLowerCase()}`, name })),
+      // `businessImpact` is spread onto every project entry rather than left off, so
+      // `worstBusinessImpact` (syncNormalize.ts) — which `enrichGraphDoc` calls on every
+      // enrich pass, exactly as a live sync would — has something real to fold into
+      // `GNode.businessImpact`. Omitted entirely (never `businessImpact: undefined`) when the
+      // seed itself carries none, matching the "absent key, not an undefined one" discipline
+      // `tags` and `exposureEvidence` already keep on this same object.
+      projects: ((_g = seed.projects) != null ? _g : []).map((name) => ({
+        id: `proj-${name.toLowerCase()}`,
+        name,
+        ...seed.businessImpact ? { businessImpact: seed.businessImpact } : {}
+      })),
       technologyCategories: seed.techCats,
       identityPurpose: seed.identityPurpose,
       issueAnalytics: seed.issueAnalytics,
@@ -10521,6 +10547,8 @@ var Server = (() => {
       sensitiveAccess: true,
       highPriv: true,
       guardrailMissing: true,
+      businessImpact: "HBI",
+      // reaches bucket-customer-pii and db-customer-core
       // Two of the fourteen carry a publisher, matching the shape of the real tenant, where the
       // field is populated for a handful of hand-built agents and null for the rest. The dry run
       // has to exercise BOTH paths or the "—" cell never gets looked at.
@@ -10535,7 +10563,9 @@ var Server = (() => {
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
       highPriv: true,
-      guardrailMissing: true
+      guardrailMissing: true,
+      businessImpact: "HBI"
+      // reaches bucket-customer-pii
     }),
     gcpAgent({
       id: "agent-autogen",
@@ -10546,7 +10576,9 @@ var Server = (() => {
       sensitiveAccess: true,
       highPriv: true,
       adminPriv: true,
-      guardrailMissing: true
+      guardrailMissing: true,
+      businessImpact: "HBI"
+      // reaches bucket-finance-reports and db-customer-core
     }),
     gcpAgent({
       id: "agent-d-test",
@@ -10556,7 +10588,9 @@ var Server = (() => {
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
       highPriv: true,
-      guardrailMissing: true
+      guardrailMissing: true,
+      businessImpact: "LBI"
+      // dev/test — prod-level IAM on a project that isn't
     }),
     gcpAgent({
       id: "agent-d",
@@ -10567,7 +10601,9 @@ var Server = (() => {
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
       highPriv: true,
-      guardrailMissing: true
+      guardrailMissing: true,
+      businessImpact: "LBI"
+      // staging counterpart of agent-d-test
     }),
     gcpAgent({
       id: "agent-e",
@@ -10580,7 +10616,9 @@ var Server = (() => {
       // demonstrates the internet-exposure topology node
       sensitiveAccess: true,
       highPriv: true,
-      guardrailMissing: true
+      guardrailMissing: true,
+      businessImpact: "HBI"
+      // internet-exposed AND reaches bucket-customer-pii
     }),
     gcpAgent({
       id: "agent-f",
@@ -10589,7 +10627,9 @@ var Server = (() => {
       projects: ["PROJECT-ALPHA"],
       sensitiveAccess: true,
       highPriv: true,
-      guardrailMissing: true
+      guardrailMissing: true,
+      businessImpact: "MBI"
+      // pricing agent — financial data, not customer PII
     }),
     gcpAgent({
       id: "agent-f-preprod",
@@ -10598,7 +10638,9 @@ var Server = (() => {
       projects: ["PROJECT-ALPHA"],
       sensitiveAccess: true,
       highPriv: true,
-      guardrailMissing: true
+      guardrailMissing: true,
+      businessImpact: "MBI"
+      // "same risk as prod" per its own issue text above
     }),
     gcpAgent({
       id: "agent-g",
@@ -10607,7 +10649,9 @@ var Server = (() => {
       projects: ["PROJECT-ALPHA", "PROJECT-ETA"],
       sensitiveAccess: true,
       highPriv: true,
-      guardrailMissing: true
+      guardrailMissing: true,
+      businessImpact: "MBI"
+      // business-partner data, not customer PII
     }),
     gcpAgent({
       id: "agent-h-chatbot",
@@ -10621,7 +10665,9 @@ var Server = (() => {
       // hosted: exposure inherited from the Cloud Run service
       sensitiveAccess: true,
       highPriv: true,
-      guardrailMissing: true
+      guardrailMissing: true,
+      businessImpact: "HBI"
+      // public-facing chatbot reaching db-customer-core
     }),
     gcpAgent({
       id: "agent-i",
@@ -10636,7 +10682,9 @@ var Server = (() => {
       // hosted: exposure inherited from the VM
       sensitiveAccess: true,
       highPriv: true,
-      guardrailMissing: true
+      guardrailMissing: true,
+      businessImpact: "HBI"
+      // inactive, but still holds sensitive access — the whole point of G3
     }),
     gcpAgent({
       id: "agent-j",
@@ -10647,6 +10695,8 @@ var Server = (() => {
       sensitiveAccess: false,
       highPriv: true,
       guardrailMissing: false
+      // No businessImpact — see this array's own header. Pairs with `sensitiveAccess: false`:
+      // a project Wiz never classified for an agent that never reached classified data.
     }),
     gcpAgent({
       id: "agent-k",
@@ -10657,6 +10707,7 @@ var Server = (() => {
       sensitiveAccess: false,
       highPriv: true,
       guardrailMissing: false
+      // No businessImpact — see this array's own header, same pairing as agent-j.
     }),
     // A guardrail-protected agent with no issues — the healthy contrast case.
     gcpAgent({
@@ -10664,11 +10715,23 @@ var Server = (() => {
       name: "Agent-L-support",
       region: "europe-west1",
       account: { id: "gcp-account-03", name: "gcp-account-03" },
-      projects: ["PROJECT-ALPHA"]
+      projects: ["PROJECT-ALPHA"],
+      businessImpact: "LBI"
+      // healthy AND classified — low impact is a real reading, not a gap
     })
   ];
   var AWS_ROLE_COUNT = 8;
   var awsRoles = [];
+  var AWS_ROLE_BUSINESS_IMPACT = [
+    "MBI",
+    "MBI",
+    "MBI",
+    void 0,
+    void 0,
+    void 0,
+    "LBI",
+    "LBI"
+  ];
   for (let i = 1; i <= AWS_ROLE_COUNT; i++) {
     const n = String(i).padStart(2, "0");
     awsRoles.push({
@@ -10680,21 +10743,29 @@ var Server = (() => {
       account: { id: "aws-account-prod-01", name: "aws-account-prod-01" },
       projects: ["PROJECT-ALPHA"],
       highPriv: true,
-      sensitiveAccess: true
+      sensitiveAccess: true,
+      businessImpact: AWS_ROLE_BUSINESS_IMPACT[i - 1]
     });
   }
   var SUPPORT = [
-    // Guardrails (3 in the tenant; only Agent-L is actually protected)
-    { id: "guardrail-alpha", kind: "AI_GUARDRAIL", name: "guardrail-alpha", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"] },
-    { id: "guardrail-beta", kind: "AI_GUARDRAIL", name: "guardrail-beta", cloud: "GCP", region: "europe-west4", projects: ["PROJECT-ALPHA"] },
+    // Guardrails (3 in the tenant; only Agent-L is actually protected). These, and the models,
+    // MCP server, pipeline and dataset below, are the OTHER eight members of the 22-node
+    // AI_ASSET_KINDS population `estateReach`'s ATTRIBUTED stage measures — AGENTS above supply
+    // 14, these eight the rest. Same spread discipline as AGENTS's own header: guardrail-bedrock
+    // and pipeline-training-01 are left WITHOUT a businessImpact on purpose, so the stage's
+    // denominator still has real absences to report honestly rather than reading a clean 22 of 22.
+    { id: "guardrail-alpha", kind: "AI_GUARDRAIL", name: "guardrail-alpha", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"], businessImpact: "LBI" },
+    { id: "guardrail-beta", kind: "AI_GUARDRAIL", name: "guardrail-beta", cloud: "GCP", region: "europe-west4", projects: ["PROJECT-ALPHA"], businessImpact: "MBI" },
+    // No businessImpact — the AWS-native guardrail Wiz discovered but never got a project tag.
     { id: "guardrail-bedrock", kind: "AI_GUARDRAIL", name: "bedrock-guardrail-default", cloud: "AWS", projects: ["PROJECT-ALPHA"] },
     // Models
-    { id: "model-bedrock-claude", kind: "AI_MODEL", name: "anthropic.claude-3-5-sonnet", nativeType: "bedrock#foundationModel", cloud: "AWS", account: { id: "aws-account-prod-01", name: "aws-account-prod-01" }, projects: ["PROJECT-ALPHA"] },
-    { id: "model-text-embedding-005", kind: "AI_MODEL", name: "text-embedding-005", nativeType: "aiplatform#model", cloud: "GCP", region: "us-west1", status: "Deprecated", projects: ["PROJECT-ALPHA"] },
+    { id: "model-bedrock-claude", kind: "AI_MODEL", name: "anthropic.claude-3-5-sonnet", nativeType: "bedrock#foundationModel", cloud: "AWS", account: { id: "aws-account-prod-01", name: "aws-account-prod-01" }, projects: ["PROJECT-ALPHA"], businessImpact: "MBI" },
+    { id: "model-text-embedding-005", kind: "AI_MODEL", name: "text-embedding-005", nativeType: "aiplatform#model", cloud: "GCP", region: "us-west1", status: "Deprecated", projects: ["PROJECT-ALPHA"], businessImpact: "LBI" },
     // MCP server + pipeline + dataset
-    { id: "mcp-internal-tools", kind: "MCP_SERVER", name: "mcp-internal-tools", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"] },
+    { id: "mcp-internal-tools", kind: "MCP_SERVER", name: "mcp-internal-tools", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"], businessImpact: "MBI" },
+    // No businessImpact — a training pipeline Wiz never mapped to a classified project.
     { id: "pipeline-training-01", kind: "AI_PIPELINE", name: "pipeline-training-01", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
-    { id: "dataset-support-transcripts", kind: "AI_DATASET", name: "dataset-support-transcripts", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
+    { id: "dataset-support-transcripts", kind: "AI_DATASET", name: "dataset-support-transcripts", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], businessImpact: "HBI" },
     // Data resources
     { id: "bucket-customer-pii", kind: "BUCKET", name: "bucket-customer-pii", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
     { id: "bucket-finance-reports", kind: "BUCKET", name: "bucket-finance-reports", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-BETA"] },
@@ -15052,9 +15123,9 @@ var Server = (() => {
     var _a5;
     const out = [];
     for (const node2 of nodes) {
-      const tier = node2.postureTier;
       const input = node2.postureInput;
-      if (!input || !TIER_VALUES.includes(tier)) continue;
+      if (!input) continue;
+      const tier = TIER_VALUES.includes(node2.postureTier) ? node2.postureTier : void 0;
       out.push({
         tier,
         vector: {
