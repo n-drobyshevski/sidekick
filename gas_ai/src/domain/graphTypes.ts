@@ -383,7 +383,7 @@ export interface GNode {
   aars?: number;            // findings score 0–100 (AI assets only) — see AARS_DISPLAY_LABEL
   aarsSeverity?: AarsSeverity;
   /**
-   * Where `aars` sits in the whole scored estate, as a whole-percent midrank percentile.
+   * Where `aars` sits in the whole scored landscape, as a whole-percent midrank percentile.
    *
    * DERIVED ON READ, NEVER PERSISTED, and unlike `aarsSeverity` it has no persisted
    * fallback at all — because it is not a statement about this asset. It is a statement

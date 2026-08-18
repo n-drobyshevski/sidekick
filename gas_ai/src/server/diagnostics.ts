@@ -227,19 +227,19 @@ export function aarsDiagnostic(): string {
 
 /**
  * What is actually IN the AI register, broken down by kind — run from the editor when the
- * estate's headline numbers look wrong in a way no rule change explains.
+ * landscape's headline numbers look wrong in a way no rule change explains.
  *
  * It exists because of a specific failure this product cannot otherwise see. Every scoring
  * model here reports a distribution over `ai_assets`, and a distribution is only a claim
  * about risk if the population is the one the reader assumes. A live tenant showed 97.58%
  * of assets at AARS INFO and 97.2% of them reaching the posture fallback tier — figures
- * that read as "an exceptionally clean AI estate" and read equally well as "the register
- * is not the AI estate". Those two readings call for opposite responses, and nothing in
+ * that read as "an exceptionally clean AI landscape" and read equally well as "the register
+ * is not the AI landscape". Those two readings call for opposite responses, and nothing in
  * the product distinguished them.
  *
  * The distinguishing question is one histogram: if a single `kind` holds most of the rows,
  * the degeneracy is a scope artefact and the models were never the problem. If the kinds
- * are spread the way an AI estate is spread, the degeneracy is real and it is a visibility
+ * are spread the way an AI landscape is spread, the degeneracy is real and it is a visibility
  * finding. So this prints the breakdown and refuses to draw the conclusion — the numbers
  * decide it, not a threshold picked here.
  *
@@ -341,18 +341,18 @@ export function registerScopeDiagnostic(): string {
       if (topAi) {
         log(
           `  largest AI kind:       ${topAi[0]} at ${topAi[1].total} rows — ` +
-          `${pct(topAi[1].total, aiKinded)} of the AI estate, ` +
+          `${pct(topAi[1].total, aiKinded)} of the AI landscape, ` +
           `${pct(topAi[1].signal, topAi[1].total)} of it carrying signal`,
         );
       }
       log("");
       log("  Read it this way, and let the numbers decide rather than a threshold picked here:");
       log("  · ONE AI kind holding most of the AI rows, and carrying little signal, means the");
-      log("    register is wider than the AI estate a reader pictures. Every distribution");
+      log("    register is wider than the AI landscape a reader pictures. Every distribution");
       log("    downstream is then a statement about that kind, not about AI risk. Check what");
       log("    that Wiz type actually enumerates before reading any model as degenerate.");
       log("  · AI kinds spread across agents / models / pipelines / datasets, most without");
-      log("    signal, means the register is right and the estate is genuinely unassessed —");
+      log("    signal, means the register is right and the landscape is genuinely unassessed —");
       log("    a visibility finding, and the models were never the problem.");
     }
   } catch (e) {

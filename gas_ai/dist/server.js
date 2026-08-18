@@ -2469,17 +2469,17 @@ var Server = (() => {
         log("    so the graph has something to draw a path through. Expected, not a fault.");
         if (topAi) {
           log(
-            `  largest AI kind:       ${topAi[0]} at ${topAi[1].total} rows \u2014 ${pct3(topAi[1].total, aiKinded)} of the AI estate, ${pct3(topAi[1].signal, topAi[1].total)} of it carrying signal`
+            `  largest AI kind:       ${topAi[0]} at ${topAi[1].total} rows \u2014 ${pct3(topAi[1].total, aiKinded)} of the AI landscape, ${pct3(topAi[1].signal, topAi[1].total)} of it carrying signal`
           );
         }
         log("");
         log("  Read it this way, and let the numbers decide rather than a threshold picked here:");
         log("  \xB7 ONE AI kind holding most of the AI rows, and carrying little signal, means the");
-        log("    register is wider than the AI estate a reader pictures. Every distribution");
+        log("    register is wider than the AI landscape a reader pictures. Every distribution");
         log("    downstream is then a statement about that kind, not about AI risk. Check what");
         log("    that Wiz type actually enumerates before reading any model as degenerate.");
         log("  \xB7 AI kinds spread across agents / models / pipelines / datasets, most without");
-        log("    signal, means the register is right and the estate is genuinely unassessed \u2014");
+        log("    signal, means the register is right and the landscape is genuinely unassessed \u2014");
         log("    a visibility finding, and the models were never the problem.");
       }
     } catch (e) {
@@ -3190,7 +3190,7 @@ var Server = (() => {
       const sharePct = Math.round(threshold / max * 100);
       if (threshold / max >= BAND_SHARE_WARNING_THRESHOLD) {
         errors.push(
-          `${BAND_LABELS[key]} at ${threshold} needs ${sharePct}% of the achievable ${max} \u2014 reachable only when nearly every pillar lands at or near its own cap on the same asset, which real estates rarely do all at once. Consider lowering the threshold or raising the pillar caps.`
+          `${BAND_LABELS[key]} at ${threshold} needs ${sharePct}% of the achievable ${max} \u2014 reachable only when nearly every pillar lands at or near its own cap on the same asset, which real landscapes rarely do all at once. Consider lowering the threshold or raising the pillar caps.`
         );
       }
     }
@@ -10080,7 +10080,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "882bd68dd1b6" : "dev";
+  var BUILD_ID = true ? "273b21b6c68e" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -13689,7 +13689,7 @@ var Server = (() => {
         totalAssets: assets.length,
         openIssues: issues2.length,
         bySeverity,
-        // A DISTRIBUTION, kept: this is the shape of the score across the estate, which is a
+        // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is a
         // legitimate thing to publish and is the same object the trend charts over time. It
         // is not the per-asset claim; that moved to `aarsPercentile`.
         byAarsSeverity,
@@ -13916,7 +13916,7 @@ var Server = (() => {
       severity: (_i = n.severity) != null ? _i : null,
       aars: (_j = n.aars) != null ? _j : null,
       aarsSeverity: (_k = n.aarsSeverity) != null ? _k : null,
-      // The estate percentile, which is what the asset surfaces LEAD with now — the band
+      // The landscape percentile, which is what the asset surfaces LEAD with now — the band
       // beside it is context. Read-derived (syncStore.withAarsPercentile), so null here
       // means "not in the scored population", never "we have not computed it yet".
       aarsPercentile: (_l = n.aarsPercentile) != null ? _l : null,

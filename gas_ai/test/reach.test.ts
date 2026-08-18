@@ -1,6 +1,6 @@
-// reach.ts — the estate-grain coverage roll-up. Every assertion here is either a stage's
+// reach.ts — the landscape-grain coverage roll-up. Every assertion here is either a stage's
 // PREDICATE (does the right asset land on the right side of the pair), the never-zero-for-
-// unknown rule (an axis with no decided items reads 0% known, never 100%), the empty-estate
+// unknown rule (an axis with no decided items reads 0% known, never 100%), the empty-landscape
 // case (nothing throws, everything reads 0 of 0), or the covered<=total invariant that
 // makes every pair honest regardless of what fed it.
 
@@ -20,7 +20,7 @@ function stageOf(out: ReturnType<typeof estateReach>, key: string) {
   return s;
 }
 
-describe("estateReach — empty estate", () => {
+describe("estateReach — empty landscape", () => {
   const empty: EstateReachInput = { assets: [], issues: [], findings: [], edges: [] };
 
   it("throws on nothing, and every stage reads 0 of 0", () => {
@@ -37,7 +37,7 @@ describe("estateReach — empty estate", () => {
     expect(out.kinds).toEqual([]);
     expect(out.edges.declared).toBe(EDGE_TYPES.length);
     expect(out.edges.populated).toEqual([]);
-    // Every declared type is unseen on an empty estate, but they split by WHERE each is
+    // Every declared type is unseen on an empty landscape, but they split by WHERE each is
     // built: the read-time folds are `synthetic` (absent by design), the rest are `dead`.
     expect([...out.edges.dead, ...out.edges.synthetic].sort())
       .toEqual([...EDGE_TYPES].sort());
@@ -54,7 +54,7 @@ describe("estateReach — empty estate", () => {
 });
 
 describe("estateReach — covered <= total, always", () => {
-  it("holds across a mixed estate", () => {
+  it("holds across a mixed landscape", () => {
     const assets: GNode[] = [
       nodeFixture({ id: "a1", kind: "AI_AGENT", guardrailMissing: true }),
       nodeFixture({ id: "a2", kind: "AI_MODEL", businessImpact: "HBI", aars: 40 }),

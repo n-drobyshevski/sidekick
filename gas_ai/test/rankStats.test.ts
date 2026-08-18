@@ -123,7 +123,7 @@ describe("midrankPercentiles", () => {
     expect(out[2]).toBeCloseTo(50, 12);
   });
 
-  it("reproduces the seed estate's shape: one tie block, one shared percentile", () => {
+  it("reproduces the seed landscape's shape: one tie block, one shared percentile", () => {
     // The live-path AARS distribution over the seed landscape — 30 scored assets in five
     // blocks sized 8 / 1 / 2 / 14 / 5 at scores 0 / 22 / 29 / 72 / 76. This is the shape
     // that reproduces ruleDiscrimination's pinned tieRate 0.30 and effectiveCardinality
@@ -253,7 +253,7 @@ describe("midrankPercentiles", () => {
     expect(new Set(result.slice(1, 4)).size).toBe(1);
   });
 
-  it("the tie rate this whole function exists for: the seed estate's 14-asset block at 72 "
+  it("the tie rate this whole function exists for: the seed landscape's 14-asset block at 72 "
     + "(DEFAULT_AARS_RULE, live path) all receive one identical percentile", () => {
     // Same reproduction path as test/scoreOrdinality.test.ts: `deriveAarsInput` via
     // `enrichGraphDoc`, which is where the doc-pinned largestTieGroup of 14 (tieRate 0.30,

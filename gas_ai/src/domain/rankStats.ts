@@ -114,7 +114,7 @@ export function effectiveCardinality(values: number[]): number {
  * is 0.30 and effectiveCardinality 3.67 against 5 distinct scores. A band holding the
  * entire working population names no action and cuts no queue. A percentile makes the same
  * score say the only thing it can honestly say — where this asset sits relative to the rest
- * of the estate — and says it against a denominator the caller has to publish.
+ * of the landscape — and says it against a denominator the caller has to publish.
  *
  * MIDRANK, NOT CDF, AND THE CHOICE IS THE POINT. The obvious form, `(below + equal) / N`,
  * puts every member of a tie block at the block's TOP: the 14 seed assets tied at 72 would
@@ -127,10 +127,10 @@ export function effectiveCardinality(values: number[]): number {
  * Returns exact, unrounded percentages in the input's own index order, never sorted — a
  * caller zipping these back onto nodes by position must be able to trust the alignment.
  * Rounding is the caller's decision and belongs where the population size is known
- * (`syncStore.withAarsPercentile` rounds to whole percent, because 1/30 of an estate is
+ * (`syncStore.withAarsPercentile` rounds to whole percent, because 1/30 of a landscape is
  * ~3.3 points and a decimal would imply precision the population does not have).
  *
- * A constant list gives every entry 50 — one block spanning the whole estate, centred.
+ * A constant list gives every entry 50 — one block spanning the whole landscape, centred.
  * That is the correct reading of "this model separates nothing", and it is the same
  * message `tieRate` returns 1.0 for.
  */

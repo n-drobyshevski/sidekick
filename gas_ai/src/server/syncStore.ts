@@ -1220,7 +1220,7 @@ let identityFindingsMemo: IdentityFindingRow[] | undefined;
  * agrees with the rule, which for a freshly-scored ledger is every time — so `loadAssets`
  * cost nothing to call repeatedly and four call sites per request did. Stamping a
  * percentile always allocates (every scored node gets a field the raw row does not have),
- * so without this the same estate would be copied once per caller.
+ * so without this the same landscape would be copied once per caller.
  *
  * Keyed on the raw array's IDENTITY and on the bands in force, not merely stored, so
  * settingsStore.saveSettings's invariant survives verbatim: it bumps the data version
@@ -1340,7 +1340,7 @@ export function withCurrentBands(nodes: GNode[], bands: AarsBands): GNode[] {
 }
 
 /**
- * Attach each scored asset's estate percentile — the statistic that carries the ranking
+ * Attach each scored asset's landscape percentile — the statistic that carries the ranking
  * claim now that the BAND does not (ai/AARS_SCORING_ASSESSMENT.md §3: 19 of 30 assets land
  * CRITICAL, HIGH and MEDIUM empty, so the band names no queue).
  *
@@ -1361,7 +1361,7 @@ export function withAarsPercentile(nodes: GNode[]): GNode[] {
   for (const n of nodes) if (typeof n.aars === "number") scored.push(n.aars);
   if (!scored.length) return nodes;
   const percentiles = midrankPercentiles(scored);
-  // Whole percent: 1/30 of an estate is ~3.3 points, so a decimal would advertise a
+  // Whole percent: 1/30 of a landscape is ~3.3 points, so a decimal would advertise a
   // precision the population does not have. Rounded here rather than in rankStats.ts,
   // which stays a pure-statistics module with no opinion about display.
   let i = 0;

@@ -219,8 +219,8 @@
   border-radius: var(--radius-md); padding: 8px 10px; margin: 8px 0 0;
 }
 
-/* --------------------------------------------------------------------- estate reach */
-/* P2b: the estate-grain coverage roll-up (reach.ts). The ladder deliberately does NOT
+/* --------------------------------------------------------------------- landscape reach */
+/* P2b: the landscape-grain coverage roll-up (reach.ts). The ladder deliberately does NOT
    reuse .cov-bar/.cov-keys — those are a TALLY over discrete states (live/partial/
    unscanned); a stage here is a continuous covered-of-total fraction, and the shared
    `.meter` recipe (components.css) is the right primitive for that, not a re-purposed

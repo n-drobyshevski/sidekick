@@ -44,7 +44,7 @@ export const MAX_GAP_RULES = 60;
  * 0.85, not lower: a band under 85% of everything a rule can ever award still has real
  * headroom — an asset can clear it without every pillar landing at its own cap at once. At
  * 85% and above, reaching the band needs nearly every pillar (and pillar D, when priced) to
- * be maxed out on the SAME asset simultaneously, which real estates essentially never
+ * be maxed out on the SAME asset simultaneously, which real landscapes essentially never
  * produce — it is the shape a live tenant's tuned rule (pillar caps 45/25/6, no pillar D,
  * CRITICAL at 70 against an achievable 76 — 92%) actually hit: zero assets in CRITICAL, not
  * merely few. Chosen with headroom above the DEFAULT_AARS_RULE bands' own worst share (70%,
@@ -274,7 +274,7 @@ export function validateAarsRule(rule: AarsRule): string[] {
       errors.push(
         `${BAND_LABELS[key]} at ${threshold} needs ${sharePct}% of the achievable ` +
           `${max} — reachable only when nearly every pillar lands at or near its own cap on ` +
-          `the same asset, which real estates rarely do all at once. Consider lowering the ` +
+          `the same asset, which real landscapes rarely do all at once. Consider lowering the ` +
           `threshold or raising the pillar caps.`,
       );
     }

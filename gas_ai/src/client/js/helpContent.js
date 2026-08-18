@@ -424,7 +424,7 @@ export const ENTRIES = [
       "that produces it is editable and its inputs are persisted beside every score. It " +
       "counts what has already been FOUND — issues, compliance gaps, data exposure — which " +
       "is why it is not called a risk score; forward-looking consequence is the posture " +
-      "tier's job. Surfaces show it as a percentile of the scored estate, because the raw " +
+      "tier's job. Surfaces show it as a percentile of the scored landscape, because the raw " +
       "number is only meaningful against the other assets.",
     drawnOn: ["inventory", "graph", "aars"],
     mark: () => scoreChip(78, 92, "HIGH"),
@@ -448,14 +448,14 @@ export const ENTRIES = [
   {
     id: "aars-percentile",
     term: "AARS percentile",
-    aka: "rank within this estate",
+    aka: "rank within this landscape",
     family: "score",
     blurb:
-      "Where this asset's score falls among every OTHER scored asset in the estate, 0 to " +
+      "Where this asset's score falls among every OTHER scored asset in the landscape, 0 to " +
       "100, using midrank so a tied score is shared rather than arbitrarily broken. It is " +
       "the lead read for one asset on the Inventory table and the asset sheet — a rank " +
       "survives the population shift that an absolute band does not, and it MOVES whenever " +
-      "the estate does, even when this asset's own score has not changed at all.",
+      "the landscape does, even when this asset's own score has not changed at all.",
     drawnOn: ["inventory"],
     mark: () => aarsPercentileMark(92, 78),
   },
@@ -468,7 +468,7 @@ export const ENTRIES = [
       "The level a score falls into. Bands are re-derived from the stored score on every " +
       "read, so moving a threshold applies at once and retroactively — no re-sync, no " +
       "rescore. Changing the POINT model is the other thing entirely, and strands the " +
-      "stored scores until they are recomputed. A level is not a queue: on this estate the " +
+      "stored scores until they are recomputed. A level is not a queue: on this landscape the " +
       "top one holds most of the scored assets and two hold none, so it is drawn tinted " +
       "only on the AARS Rules page, where the thresholds themselves are the subject, and " +
       "plain everywhere else. Its two honest readings are the distribution the trend " +
@@ -889,9 +889,9 @@ const MEASURE_ROUTES = {
   "guardrail-coverage-pct": ["scans"],
   "toxic-combo-patterns-active": ["combos"],
   "framework-average-posture": ["compliance"],
-  "estate-reach-stages": ["scans", "inventory"],
-  "estate-reach-edge-census": ["scans"],
-  "estate-reach-axis-known-rate": ["scans"],
+  "landscape-reach-stages": ["scans", "inventory"],
+  "landscape-reach-edge-census": ["scans"],
+  "landscape-reach-axis-known-rate": ["scans"],
 };
 
 // One entry per measureSpec.ts record — pure documentation, no `count`, so it renders as a

@@ -298,7 +298,7 @@ function bootstrapCore(): Rec {
       totalAssets: assets.length,
       openIssues: issues.length,
       bySeverity,
-      // A DISTRIBUTION, kept: this is the shape of the score across the estate, which is a
+      // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is a
       // legitimate thing to publish and is the same object the trend charts over time. It
       // is not the per-asset claim; that moved to `aarsPercentile`.
       byAarsSeverity,
@@ -639,7 +639,7 @@ function assetRow(n: GNode): Rec {
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aarsSeverity: n.aarsSeverity ?? null,
-    // The estate percentile, which is what the asset surfaces LEAD with now — the band
+    // The landscape percentile, which is what the asset surfaces LEAD with now — the band
     // beside it is context. Read-derived (syncStore.withAarsPercentile), so null here
     // means "not in the scored population", never "we have not computed it yet".
     aarsPercentile: n.aarsPercentile ?? null,
@@ -768,7 +768,7 @@ interface AssetsModel {
   aarsTrend: AarsTrendPoint[];
   /** Indices in aarsTrend where the scoring model changed — the chart marks them. */
   aarsTrendRuleChanges: number[];
-  /** The estate-grain coverage roll-up (reach.ts) — see the Wiz Scans REACH section. */
+  /** The landscape-grain coverage roll-up (reach.ts) — see the Wiz Scans REACH section. */
   reach: EstateReach;
   facets: {
     kinds: string[];
@@ -1678,7 +1678,7 @@ export function getProblems(p?: unknown): ApiResult {
  * gets the true top 10, computed against every open problem, not against a pre-trimmed
  * slice of them.
  *
- * `total` is the count of DISTINCT ACTIONS the whole estate collapses to; `totalProblems`
+ * `total` is the count of DISTINCT ACTIONS the whole landscape collapses to; `totalProblems`
  * is the union total `getProblems.total` already reports — the same "N problems collapse
  * to M actions" pair PRODUCT.md's own headline names. `curve` and `concentration` are
  * always computed over the FULL ranked list, never the `limit`-truncated `rows` a caller
