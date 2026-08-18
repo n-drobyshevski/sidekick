@@ -69,6 +69,12 @@ import {
   type ProblemRow,
 } from "../domain/problems";
 import {
+  concentrationRatio,
+  coverCurve,
+  rankActionsByCover,
+  withAutoRemediation,
+} from "../domain/actions";
+import {
   cellCoverage,
   cleanPostureRule,
   MAX_TIER_RULES,
@@ -1578,6 +1584,45 @@ export function getProblems(p?: unknown): ApiResult {
       filtered: filtered.length,
       page: paged.page,
       pageCount: paged.pageCount,
+    };
+  });
+}
+
+// ------------------------------------------------------------------------------ actions
+
+/**
+ * Rank remediation ACTIONS rather than problems — P1a, built directly on `problemsModel`
+ * so this endpoint's population is provably the SAME union `getProblems` reports, never a
+ * second derivation that could quietly drift from it (this file's own rule for every
+ * cached model). The ranking itself is the marginal set-cover `actions.ts`'s own header
+ * argues for, over the WHOLE union regardless of `limit` — a caller asking for the top 10
+ * gets the true top 10, computed against every open problem, not against a pre-trimmed
+ * slice of them.
+ *
+ * `total` is the count of DISTINCT ACTIONS the whole estate collapses to; `totalProblems`
+ * is the union total `getProblems.total` already reports — the same "N problems collapse
+ * to M actions" pair PRODUCT.md's own headline names. `curve` and `concentration` are
+ * always computed over the FULL ranked list, never the `limit`-truncated `rows` a caller
+ * asked to see, so trimming the display never moves the headline number beside it.
+ */
+export function getActions(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const limitParam = Number(params["limit"]);
+    const limit = Number.isFinite(limitParam) && limitParam >= 0 ? Math.floor(limitParam) : undefined;
+
+    const model = cached("problemsModel", null, problemsModel) as ProblemsModel;
+    const fullyRanked = withAutoRemediation(
+      rankActionsByCover(model.rows),
+      syncStore.loadFrameworkPolicies(),
+    );
+
+    return {
+      rows: limit !== undefined ? fullyRanked.slice(0, limit) : fullyRanked,
+      total: fullyRanked.length,
+      totalProblems: model.rows.length,
+      curve: coverCurve(fullyRanked, model.rows.length),
+      concentration: concentrationRatio(fullyRanked, model.rows.length),
     };
   });
 }

@@ -29,6 +29,8 @@ function row(over: Partial<ProblemRow> = {}): ProblemRow {
     postureTier: null,
     amplification: { tools: null, identity: null, persistence: null, multiAgent: null, context: null, language: null },
     severity: null,
+    iac: false,
+    ignored: false,
     ...over,
   };
 }

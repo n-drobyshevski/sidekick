@@ -535,4 +535,52 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
+
+  // -------------------------------------------------------------------------- P1a actions
+  {
+    id: "action-concentration-ratio",
+    goal:
+      "Show whether the estate has LEVERAGE to exploit — whether a small number of fixes "
+      + "closes most of the open-problem board — or whether it does not. A ratio near "
+      + "1:1 (N actions for N problems) is not a healthy reading: it means every open "
+      + "problem is its own distinct fix, the estate carries no repeated pattern this "
+      + "feature can collapse, and ranking actions instead of problems buys this reader "
+      + "nothing over `problems.ts`'s own Priorities ranking. The feature is only useful "
+      + "on data where a handful of actions dominate, the way `configFindings.ts`'s own "
+      + "header documents for a single Bedrock rule failing on sixteen IAM roles at once.",
+    scope: "Every open problem `problems.ts`'s union admits (isUnresolvedIssue ∪ isOpenGap), "
+      + "rolled up by `actions.ts`'s `ActionKey` (kind + ruleId + ruleShortId) and ranked by "
+      + "`rankActionsByCover`'s marginal set-cover.",
+    measure: "concentrationRatio: {actions, problems, top10Share} — the distinct action "
+      + "count the union collapses to, the union total it sums back to, and the share of "
+      + "that total the top 10 ranked actions alone close.",
+    // Impact, not effectiveness: this is a fact about the ESTATE's own shape (how much its
+    // open problems repeat one fix), unlike the aars-distinct-scores family above, which is
+    // effectiveness because it measures the MODEL's discriminative power over that estate.
+    type: "impact",
+    formula: "actions.ts's concentrationRatio(rankActionsByCover(problemRows), total) — "
+      + "problems is Σ ActionRow.problems over the ranked list (always equal to `total` "
+      + "when the ranked list is not itself truncated); top10Share is Σ the first 10 "
+      + "ActionRow.problems divided by `total`.",
+    target: "No numeric target — same reasoning as the AARS discrimination records above: "
+      + "this measures a property of the CURRENT estate's shape, not a house threshold. A "
+      + "reader comparing actions/problems across two syncs, or top10Share moving toward or "
+      + "away from 1.0, is the intended use; a single snapshot has nothing to be compared "
+      + "against.",
+    implementationEvidence: "rankActionsByCover's own set-cover-completeness invariant "
+      + "(test/actions.test.ts) — Σ ActionRow.problems over every ranked action equals the "
+      + "union total exactly, with removal, the same guarantee toxicCombos.ts's "
+      + "comboSummary documents at its own grain — is what makes `problems` in this record "
+      + "trustworthy as a reconciled total rather than an approximation.",
+    timeBasedReference: "Snapshotted at each sync's completion, over the union as it reads "
+      + "right now. " + NO_PER_ENTITY_HISTORY,
+    responsibleParties: "Security analysts (triage); the operator deciding whether this "
+      + "feature is worth surfacing on a given tenant's data at all.",
+    dataSource: "ai_issues.rule_id, ai_issues.status, "
+      + "ai_findings.rule_id, ai_findings.rule_short_id, ai_findings.result, ai_findings.status",
+    reportingFormat: "Actions page headline ('N problems collapse to M actions; the top 10 "
+      + "close K%').",
+    measurementMethod: "Objective",
+    revisionDue: REVISION_DUE,
+  },
 ] as const;

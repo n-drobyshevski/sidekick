@@ -2508,6 +2508,7 @@ var Server = (() => {
     cancelSync: () => cancelSync2,
     expandAsset: () => expandAsset,
     getAarsRule: () => getAarsRule3,
+    getActions: () => getActions,
     getAssetDetail: () => getAssetDetail,
     getAssetOptions: () => getAssetOptions,
     getAssets: () => getAssets,
@@ -3976,11 +3977,18 @@ var Server = (() => {
       dueAt: (_f = issue2.dueAt) != null ? _f : null,
       postureTier: (_g = node2 == null ? void 0 : node2.postureTier) != null ? _g : null,
       amplification: nodeAmplificationVector(node2),
-      severity: (_h = issue2.adjustedSeverity) != null ? _h : null
+      severity: (_h = issue2.adjustedSeverity) != null ? _h : null,
+      ruleId: issue2.ruleId || void 0,
+      businessImpact: issue2.businessImpact,
+      // No IaC link and no ignore-rule list on an issue — see this field's own doc comment.
+      iac: false,
+      ignored: false,
+      firstSeenAt: issue2.createdAt,
+      ruleRemediation: issue2.resolutionRecommendation
     };
   }
   function findingToProblemRow(finding, node2) {
-    var _a5, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
     return {
       id: finding.id,
       kind: "FINDING",
@@ -3995,7 +4003,14 @@ var Server = (() => {
       dueAt: null,
       postureTier: (_f = node2 == null ? void 0 : node2.postureTier) != null ? _f : null,
       amplification: nodeAmplificationVector(node2),
-      severity: (_g = finding.severity) != null ? _g : null
+      severity: (_g = finding.severity) != null ? _g : null,
+      ruleId: finding.ruleId,
+      ruleShortId: finding.ruleShortId || void 0,
+      businessImpact: finding.businessImpact,
+      iac: ((_h = finding.iacFindingIds) != null ? _h : []).length > 0,
+      ignored: ((_i = finding.ignoreRuleIds) != null ? _i : []).length > 0,
+      firstSeenAt: finding.firstSeenAt,
+      ruleRemediation: finding.remediationInstructions
     };
   }
   function buildProblemRows(issues2, findings, assetsById) {
@@ -4046,6 +4061,145 @@ var Server = (() => {
     const counts = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0, "": 0 };
     for (const r of rows) counts[r.problemOutcome] = ((_a5 = counts[r.problemOutcome]) != null ? _a5 : 0) + 1;
     return counts;
+  }
+
+  // src/domain/actions.ts
+  function actionKeyOf(row) {
+    var _a5, _b;
+    return `${row.kind}|${(_a5 = row.ruleId) != null ? _a5 : ""}|${(_b = row.ruleShortId) != null ? _b : ""}`;
+  }
+  var NO_OUTCOME = "";
+  function outcomeRank2(o) {
+    const i = OUTCOME_VALUES.indexOf(o);
+    return i < 0 ? OUTCOME_VALUES.length : i;
+  }
+  function candidatesFrom(pool) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const row of pool) {
+      const key = actionKeyOf(row);
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(row);
+      else groups.set(key, [row]);
+    }
+    return groups;
+  }
+  function scoreCandidate(key, rows) {
+    let worstRank = OUTCOME_VALUES.length;
+    const assetIds = /* @__PURE__ */ new Set();
+    for (const row of rows) {
+      const rank = outcomeRank2(row.problemOutcome);
+      if (rank < worstRank) worstRank = rank;
+      if (row.assetId) assetIds.add(row.assetId);
+    }
+    return { key, rows, worstRank, assetCount: assetIds.size };
+  }
+  function compareCandidates(a, b) {
+    if (a.worstRank !== b.worstRank) return a.worstRank - b.worstRank;
+    if (a.rows.length !== b.rows.length) return b.rows.length - a.rows.length;
+    if (a.assetCount !== b.assetCount) return b.assetCount - a.assetCount;
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  }
+  function buildActionRow(key, rows) {
+    var _a5, _b;
+    const sorted = [...rows].sort((a, b) => a.id.localeCompare(b.id));
+    const first = sorted[0];
+    const assetIds = /* @__PURE__ */ new Set();
+    const outcomeMix = {};
+    const severityMix = {};
+    const businessImpacts = /* @__PURE__ */ new Set();
+    let worstRank = OUTCOME_VALUES.length;
+    let worstOutcome = NO_OUTCOME;
+    let iac = 0;
+    let ignored = 0;
+    let firstSeenAt = "";
+    let title = "";
+    let remediation;
+    for (const row of sorted) {
+      if (row.assetId) assetIds.add(row.assetId);
+      outcomeMix[row.problemOutcome] = ((_a5 = outcomeMix[row.problemOutcome]) != null ? _a5 : 0) + 1;
+      if (row.severity) severityMix[row.severity] = ((_b = severityMix[row.severity]) != null ? _b : 0) + 1;
+      if (row.businessImpact) businessImpacts.add(row.businessImpact);
+      const rank = outcomeRank2(row.problemOutcome);
+      if (rank < worstRank) {
+        worstRank = rank;
+        worstOutcome = row.problemOutcome;
+      }
+      if (row.iac) iac += 1;
+      if (row.ignored) ignored += 1;
+      if (row.firstSeenAt && (!firstSeenAt || row.firstSeenAt < firstSeenAt)) {
+        firstSeenAt = row.firstSeenAt;
+      }
+      if (!title && row.title) title = row.title;
+      if (!remediation && row.ruleRemediation) remediation = row.ruleRemediation;
+    }
+    return {
+      key,
+      kind: first.kind,
+      ruleId: first.ruleId,
+      ruleShortId: first.ruleShortId,
+      title: title || first.title,
+      problems: rows.length,
+      assets: assetIds.size,
+      worstOutcome,
+      outcomeMix,
+      severityMix,
+      businessImpacts: [...businessImpacts].sort(),
+      autoRemediable: false,
+      iac,
+      ignored,
+      firstSeenAt: firstSeenAt || void 0,
+      remediation
+    };
+  }
+  function rankActionsByCover(rows, limit) {
+    let remaining = rows.slice();
+    const ranked = [];
+    while (remaining.length > 0) {
+      const groups = candidatesFrom(remaining);
+      let best = null;
+      for (const [key, groupRows] of groups) {
+        const candidate = scoreCandidate(key, groupRows);
+        if (!best || compareCandidates(candidate, best) < 0) best = candidate;
+      }
+      if (!best) break;
+      ranked.push(buildActionRow(best.key, best.rows));
+      const covered = new Set(best.rows.map((r) => r.id));
+      remaining = remaining.filter((r) => !covered.has(r.id));
+    }
+    return limit !== void 0 && limit >= 0 ? ranked.slice(0, limit) : ranked;
+  }
+  function withAutoRemediation(actions, policies) {
+    const byId = /* @__PURE__ */ new Map();
+    const byShortId = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.hasAutoRemediation !== true) continue;
+      byId.set(p.policyId, true);
+      if (p.shortId) byShortId.set(p.shortId, true);
+    }
+    return actions.map((a) => {
+      const auto = a.ruleId !== void 0 && byId.get(a.ruleId) === true || a.ruleShortId !== void 0 && byShortId.get(a.ruleShortId) === true;
+      return auto ? { ...a, autoRemediable: true } : a;
+    });
+  }
+  function coverCurve(ranked, total2) {
+    const out = [];
+    let cumulative = 0;
+    let rank = 0;
+    for (const a of ranked) {
+      rank += 1;
+      cumulative += a.problems;
+      out.push({ rank, cumulative, share: total2 > 0 ? cumulative / total2 : 0 });
+    }
+    return out;
+  }
+  function concentrationRatio(ranked, total2) {
+    const problems = ranked.reduce((n, a) => n + a.problems, 0);
+    const top10 = ranked.slice(0, 10).reduce((n, a) => n + a.problems, 0);
+    return {
+      actions: ranked.length,
+      problems,
+      top10Share: total2 > 0 ? top10 / total2 : 0
+    };
   }
 
   // src/domain/postureRule.ts
@@ -9733,7 +9887,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "b29b2c0a31d7" : "dev";
+  var BUILD_ID = true ? "e82dae4faaaf" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -14221,6 +14375,25 @@ var Server = (() => {
         filtered: filtered.length,
         page: paged.page,
         pageCount: paged.pageCount
+      };
+    });
+  }
+  function getActions(p) {
+    return run(() => {
+      const params = p != null ? p : {};
+      const limitParam = Number(params["limit"]);
+      const limit = Number.isFinite(limitParam) && limitParam >= 0 ? Math.floor(limitParam) : void 0;
+      const model = cached("problemsModel", null, problemsModel);
+      const fullyRanked = withAutoRemediation(
+        rankActionsByCover(model.rows),
+        loadFrameworkPolicies()
+      );
+      return {
+        rows: limit !== void 0 ? fullyRanked.slice(0, limit) : fullyRanked,
+        total: fullyRanked.length,
+        totalProblems: model.rows.length,
+        curve: coverCurve(fullyRanked, model.rows.length),
+        concentration: concentrationRatio(fullyRanked, model.rows.length)
       };
     });
   }

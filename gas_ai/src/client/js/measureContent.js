@@ -164,4 +164,17 @@ export const MEASURE_ENTRIES = [
     reportingFormat: "Compliance Posture page's headline strip.",
     revisionDue: "2027-08-13",
   },
+  {
+    id: "action-concentration-ratio", measure: "Action concentration",
+    type: "impact", measurementMethod: "Objective",
+    goal: "Whether the estate has LEVERAGE to exploit \u2014 whether a handful of fixes closes "
+      + "most of the open board. A ratio near 1:1 is not a healthy reading: it means every "
+      + "problem is its own distinct fix and ranking actions buys nothing over ranking "
+      + "problems.",
+    formula: "concentrationRatio over rankActionsByCover's marginal set-cover: distinct "
+      + "actions, the union total they sum back to, and the share the top 10 alone close.",
+    dataSource: "ai_issues.rule_id, ai_findings.rule_short_id, ai_findings.rule_id",
+    reportingFormat: "Priorities page's action list header and its cumulative-cover curve.",
+    revisionDue: "2027-08-13",
+  },
 ];
