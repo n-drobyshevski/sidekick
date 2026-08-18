@@ -35,7 +35,9 @@
 import { CODEBOOK, FAMILY_GROUP } from "./codebook.js";
 import { MEASURE_ENTRIES } from "./measureContent.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, kindIconSvg } from "./icons.js";
-import { aarsChip, el, outcomeBadge, pluralize, sevBadge, statusPill, tierBadge } from "./ui.js";
+import {
+  aarsChip, aarsPercentileMark, el, outcomeBadge, pluralize, sevBadge, statusPill, tierBadge,
+} from "./ui.js";
 
 /** The six headings, in reading order. Six headings and find-in-page beat a search box. */
 export const FAMILIES = [
@@ -422,17 +424,34 @@ export const ENTRIES = [
       "that produces it is editable and its inputs are persisted beside every score.",
     drawnOn: ["inventory", "graph", "aars"],
     mark: () => aarsChip(78, "HIGH"),
+    // Not a band count (see aars-band below for why): how many AI assets carry a score at
+    // all, which is what "AARS" itself names. Sorted worst-first by default, so the link
+    // opens on the riskiest end of the estate without asserting a threshold to get there.
     count: (ctx) => {
       const k = ctx.kpis;
-      if (!k || k.criticalAars === undefined) return null;
+      if (!k || k.aiAssets === undefined) return null;
       return {
-        n: n(k.criticalAars),
-        value: String(n(k.criticalAars)),
-        unit: "assets score Critical",
+        n: n(k.aiAssets),
+        value: String(n(k.aiAssets)),
+        unit: "AI assets carry a score",
         route: "inventory",
-        params: { aarsSeverities: "CRITICAL" },
+        params: {},
       };
     },
+  },
+  {
+    id: "aars-percentile",
+    term: "AARS percentile",
+    aka: "rank within this estate",
+    family: "score",
+    blurb:
+      "Where this asset's score falls among every OTHER scored asset in the estate, 0 to " +
+      "100, using midrank so a tied score is shared rather than arbitrarily broken. It is " +
+      "the lead read for one asset on the Inventory table and the asset sheet — a rank " +
+      "survives the population shift that an absolute band does not, and it MOVES whenever " +
+      "the estate does, even when this asset's own score has not changed at all.",
+    drawnOn: ["inventory"],
+    mark: () => aarsPercentileMark(92, 78),
   },
   {
     id: "aars-band",
@@ -443,7 +462,12 @@ export const ENTRIES = [
       "The level a score falls into. Bands are re-derived from the stored score on every " +
       "read, so moving a threshold applies at once and retroactively — no re-sync, no " +
       "rescore. Changing the POINT model is the other thing entirely, and strands the " +
-      "stored scores until they are recomputed.",
+      "stored scores until they are recomputed. A band is a threshold on the CURRENT " +
+      "scored population, not an absolute rating — the same rule has put nearly an entire " +
+      "estate in CRITICAL on one tenant and nearly an entire estate in INFO on another. " +
+      "It stays legitimate as a MODEL diagnostic (the AARS trend, this page's own band " +
+      "occupancy) and as an opt-in filter; the Inventory table and the asset sheet lead " +
+      "with the percentile above instead of this band for that reason.",
     drawnOn: ["aars", "inventory"],
     mark: () => sevBadge("HIGH"),
     // The model in force, not a measurement — true before the first sync.
@@ -843,6 +867,7 @@ for (const family of CODEBOOK) {
 const MEASURE_ROUTES = {
   "aars-score": ["inventory", "aars"],
   "aars-band": ["inventory", "aars"],
+  "aars-percentile": ["inventory"],
   "aars-distinct-scores": ["aars"],
   "aars-tie-rate": ["aars"],
   "aars-effective-cardinality": ["aars"],

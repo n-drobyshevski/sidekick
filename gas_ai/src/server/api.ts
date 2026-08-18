@@ -857,8 +857,16 @@ function assetsModel(): AssetsModel {
       // "3 of 71 agents"; without this it had to recover the 3 by counting rows, which
       // only works while the client holds every row.
       protectedAgents,
-      criticalAars: assets.filter((a) => a.aarsSeverity === "CRITICAL").length,
-      highAars: assets.filter((a) => a.aarsSeverity === "HIGH").length,
+      // REMOVED (P2c): criticalAars / highAars used to sit here — "N assets score
+      // Critical/High" is a band presented as a decision, the clearest instance of it in
+      // this file (ai/AARS_SCORING_ASSESSMENT.md §3: the same rule put nearly an entire
+      // live estate at INFO and nearly an entire demo estate at CRITICAL). They were also
+      // strictly redundant: aarsSeverityCounts.CRITICAL / .HIGH already ship this same
+      // number on this same payload, as a DISTRIBUTION rather than a per-band KPI tile —
+      // "19 assets are CRITICAL under this rule" stays legitimate exactly the way the AARS
+      // trend and the Rules page's band occupancy do; it just does not need its own field.
+      // Their one live consumer, the Help glossary's "AARS" count, now reads `aiAssets`
+      // instead of a band filter. No persisted value moved — this is `kpis` only.
       guardrailCoveragePct: agents.length
         ? Math.round((protectedAgents / agents.length) * 100)
         : null,
@@ -1085,11 +1093,19 @@ export function getAssetDetail(p?: unknown): ApiResult {
           remediation: f.remediation ?? null,
           frameworkCodes: f.frameworkCodes,
         }));
+      // The SAME percentile the inventory table shows for this asset — read off the one
+      // place it is computed (assetsModel, cached and shared by every reader) rather than
+      // re-derived here over a different population. loadGraphDoc's nodes and loadAssets'
+      // rows carry identical aars/aarsSeverity (both run through withCurrentBands off the
+      // same assetRows), so this id always resolves when the asset is scored.
+      const percentileRow = (cached("assetsModel", null, assetsModel) as AssetsModel).rows
+        .find((r) => r["id"] === id);
       return {
         node: {
           ...assetRow(node),
           aarsPillars: node.aarsPillars ?? null,
           aarsInput: node.aarsInput ?? null,
+          aarsPercentile: percentileRow ? percentileRow["aarsPercentile"] ?? null : null,
         },
         issues,
         neighbors,

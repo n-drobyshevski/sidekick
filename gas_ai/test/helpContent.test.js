@@ -115,7 +115,7 @@ const FULL_CTX = {
   },
   kpis: {
     agents: 14, protectedAgents: 3, sensitiveAccess: 9, internetExposed: 4,
-    internetUnknown: 2, highPrivilege: 6, agenticIdentities: 11, criticalAars: 6,
+    internetUnknown: 2, highPrivilege: 6, agenticIdentities: 11, aiAssets: 22,
     complianceGaps: 18, sensitiveDatastores: 5, dataFindings: 12,
   },
   digest: { totals: { patternsActive: 4, patternsTotal: 4, assetsAffected: 23, reRated: 29, totalOpen: 29 } },

@@ -145,7 +145,12 @@
   box-shadow: none; color: var(--ink);
 }
 .asset-chip:hover, .asset-more:hover { background: var(--surface); border-color: #d9d9de; }
-.asset-chip-score { font-size: 11px; font-weight: 600; border-radius: var(--radius-pill); padding: 0 6px; }
+/* Neutral: the AARS score, never tinted by its band here — see the render call's own
+   comment. Was a `.sev-*` tint before the band stopped being a claim about one asset. */
+.asset-chip-score {
+  font-size: 11px; font-weight: 600; border-radius: var(--radius-pill); padding: 0 6px;
+  background: rgba(0, 0, 0, 0.06); color: var(--text-2);
+}
 .asset-more { color: var(--text-2); font-weight: 600; border-style: dashed; }
 
 .combo-actions { display: flex; gap: 8px; margin-top: 14px; }

@@ -6,6 +6,7 @@
 
 import { categoryOf, kindIcon, kindLabel, svgEl } from "./icons.js";
 import { sevEntries, sevSpoken } from "./ui/severity.js";
+import { tierLabel } from "./ui/posture.js";
 
 // Mirrors SEVERITY_ORDER in src/domain/config.ts, for the same reason egoLayout.js,
 // assetQuery.js and comboView.js each keep their own copy: the client bundle cannot import
@@ -34,7 +35,13 @@ export function nodeAriaLabel(node) {
   const parts = [kindLabel(node.kind), node.name];
   if (node.severity) parts.push("severity " + node.severity);
   if (node.aars !== undefined && node.aars !== null) {
-    parts.push("AARS " + node.aars + (node.aarsSeverity ? " " + node.aarsSeverity : ""));
+    // Posture tier, not the AARS band: a graph node's neighbourhood is a different, smaller
+    // population every time the seed changes, so a percentile computed against it would not
+    // mean what the Inventory table's percentile means, and the band is the population-
+    // dependent read this whole change exists to stop asserting about one asset. The tier is
+    // neither — a lattice read (capability × containment), true independent of population size.
+    const tier = tierLabel(node.postureTier);
+    parts.push("AARS " + node.aars + (tier ? ", posture " + tier : ""));
   }
   if ((node.comboGroups || []).length) parts.push("toxic combination member");
   if (node.guardrailMissing) parts.push("no guardrail");

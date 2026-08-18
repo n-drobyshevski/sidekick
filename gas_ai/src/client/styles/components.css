@@ -207,6 +207,16 @@
 }
 .aars-chip .sev-dot { margin-right: 0; }
 
+/* Neutral variant (ui/severity.js's aarsPercentileMark): a claim about ONE asset leads with
+   its percentile, never coloured by the population-dependent band — see the aars-band help
+   entry. The percentile takes the ink token so it reads as the lead figure; the raw score
+   stays visible but recedes, the same "level tinted, quantity neutral" split aarsMeter
+   already uses beside the (band-carrying) aarsChip. */
+.aars-chip--neutral { background: rgba(0, 0, 0, 0.06); color: var(--text-2); }
+.aars-chip--neutral .aars-chip-p { color: var(--ink); }
+.aars-chip--neutral .aars-chip-score { color: var(--text-3); font-weight: 500; }
+.aars-chip--neutral .aars-chip-score::before { content: "· "; }
+
 /* status pills */
 .pill { gap: 6px; border-radius: var(--radius-pill); padding: 2px 9px; }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }

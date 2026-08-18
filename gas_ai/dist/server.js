@@ -10064,7 +10064,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "bb44bd2c4b5c" : "dev";
+  var BUILD_ID = true ? "7ff893ac6eac" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -14021,8 +14021,16 @@ var Server = (() => {
         // "3 of 71 agents"; without this it had to recover the 3 by counting rows, which
         // only works while the client holds every row.
         protectedAgents,
-        criticalAars: assets.filter((a) => a.aarsSeverity === "CRITICAL").length,
-        highAars: assets.filter((a) => a.aarsSeverity === "HIGH").length,
+        // REMOVED (P2c): criticalAars / highAars used to sit here — "N assets score
+        // Critical/High" is a band presented as a decision, the clearest instance of it in
+        // this file (ai/AARS_SCORING_ASSESSMENT.md §3: the same rule put nearly an entire
+        // live estate at INFO and nearly an entire demo estate at CRITICAL). They were also
+        // strictly redundant: aarsSeverityCounts.CRITICAL / .HIGH already ship this same
+        // number on this same payload, as a DISTRIBUTION rather than a per-band KPI tile —
+        // "19 assets are CRITICAL under this rule" stays legitimate exactly the way the AARS
+        // trend and the Rules page's band occupancy do; it just does not need its own field.
+        // Their one live consumer, the Help glossary's "AARS" count, now reads `aiAssets`
+        // instead of a band filter. No persisted value moved — this is `kpis` only.
         guardrailCoveragePct: agents.length ? Math.round(protectedAgents / agents.length * 100) : null,
         sensitiveAccess: assets.filter(
           (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData
@@ -14195,7 +14203,7 @@ var Server = (() => {
       var _a5;
       const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
       return cached("getAssetDetail", { id }, () => {
-        var _a6, _b;
+        var _a6, _b, _c;
         const doc = loadGraphDoc();
         if (!doc) return null;
         const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
@@ -14215,7 +14223,7 @@ var Server = (() => {
           });
         }
         const findings = loadFindings().filter((f) => f.resourceId === id && isOpenGap(f)).map((f) => {
-          var _a7, _b2, _c;
+          var _a7, _b2, _c2;
           return {
             id: f.id,
             resourceId: f.resourceId,
@@ -14223,15 +14231,17 @@ var Server = (() => {
             ruleName: (_a7 = f.ruleName) != null ? _a7 : null,
             name: (_b2 = f.name) != null ? _b2 : null,
             severity: f.severity,
-            remediation: (_c = f.remediation) != null ? _c : null,
+            remediation: (_c2 = f.remediation) != null ? _c2 : null,
             frameworkCodes: f.frameworkCodes
           };
         });
+        const percentileRow = cached("assetsModel", null, assetsModel).rows.find((r) => r["id"] === id);
         return {
           node: {
             ...assetRow(node2),
             aarsPillars: (_a6 = node2.aarsPillars) != null ? _a6 : null,
-            aarsInput: (_b = node2.aarsInput) != null ? _b : null
+            aarsInput: (_b = node2.aarsInput) != null ? _b : null,
+            aarsPercentile: percentileRow ? (_c = percentileRow["aarsPercentile"]) != null ? _c : null : null
           },
           issues: issues2,
           neighbors,

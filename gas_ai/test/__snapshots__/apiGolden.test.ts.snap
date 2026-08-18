@@ -667,7 +667,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "aiAssets": 0,
         "complianceGaps": 0,
         "complianceGapsUnlinked": 0,
-        "criticalAars": 0,
         "dataFindings": 0,
         "frameworkPosture": {
           "averagePosture": null,
@@ -678,7 +677,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "scoredFrameworks": 0,
         },
         "guardrailCoveragePct": null,
-        "highAars": 0,
         "highPrivilege": 0,
         "humanDormant": 0,
         "humanEffective": 0,
@@ -3914,6 +3912,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         ],
         "internetExposure": "CONFIRMED",
       },
+      "aarsPercentile": 95,
       "aarsPillars": {
         "compliance": 25,
         "data": 22,
@@ -4656,7 +4655,6 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       "aiAssets": 22,
       "complianceGaps": 6,
       "complianceGapsUnlinked": 3,
-      "criticalAars": 2,
       "dataFindings": 6,
       "frameworkPosture": {
         "averagePosture": 94,
@@ -4667,7 +4665,6 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "scoredFrameworks": 4,
       },
       "guardrailCoveragePct": 21,
-      "highAars": 17,
       "highPrivilege": 34,
       "humanDormant": 1,
       "humanEffective": 1,

@@ -58,12 +58,41 @@ Asset has access to data resources (unconfirmed sensitivity)	+10
 Asset has no data access	0
 Global multiplier: 5Rs = 53% → apply ×1.1 to all data-related scores	×1.1
 AARS Score Severity
+
+> **P2c — the Action column above is no longer accurate, and is not fixable by rewording.**
+> This table's original "Action" column tied a remediation SLA to each band — "Immediate
+> remediation required" for CRITICAL, "within 7 days" for HIGH, and so on — which asserts
+> the band means the same thing on every tenant's data. Measured, it does not:
+>
+> - **The demo estate scores 100% CRITICAL; a live estate scores 97.58% INFO** — the
+>   identical rule, the identical thresholds, opposite ends of the scale. A band that holds
+>   an estate's entire working population, or almost none of it, is not naming a remediation
+>   priority; it is naming which estate happened to be measured.
+> - **Tie rate 0.30, effective cardinality 3.67** against a `distinctScores` of 5 on the
+>   seed estate (`test/scoreOrdinality.test.ts`, `rankStats.ts`) — nearly a third of scored
+>   asset pairs cannot be separated at all, and the five distinct values behave like three
+>   and a half.
+> - **Pillar ablation: τ-b 0.863 when pillar A (toxic-combination participation) is zeroed,
+>   0.987 when B (compliance) or C (data) is zeroed** — pillar A does nearly all of the
+>   ranking work; the other 50 of 100 points move the ranking by about 1.3% between them.
+>   A band built from a sum where two of three pillars barely move the order is not a
+>   finer-grained read than pillar A alone would give.
+>
+> See [AARS_SCORING_ASSESSMENT.md](AARS_SCORING_ASSESSMENT.md) §3 ("A — Actionable and
+> Assignable: fails") for the full measurement. The product now leads a reader looking at
+> ONE asset with `aarsPercentile` — a rank within the CURRENT scored population, which
+> survives the exact inversion above — and keeps the band only where it was always honest:
+> a distribution over time (the AARS trend) or a diagnostic about the MODEL rather than
+> about one asset (the AARS Rules page's band occupancy). The Score / Risk Level columns
+> below are unchanged and remain the normative threshold definition for `DEFAULT_AARS_RULE
+> .bands`; only the claim that a band is a scheduling decision is retired.
+
 Score	Risk Level	Action
-70–100	🔴 CRITICAL	Immediate remediation required
-50–69	🟠 HIGH	Remediate within 7 days
-30–49	🟡 MEDIUM	Remediate within 30 days
-10–29	🔵 LOW	Monitor and review quarterly
-0–9	✅ INFO	No action required
+70–100	🔴 CRITICAL	Model diagnostic threshold — not a standalone SLA; see the caveat above
+50–69	🟠 HIGH	Model diagnostic threshold — not a standalone SLA; see the caveat above
+30–49	🟡 MEDIUM	Model diagnostic threshold — not a standalone SLA; see the caveat above
+10–29	🔵 LOW	Model diagnostic threshold — not a standalone SLA; see the caveat above
+0–9	✅ INFO	Model diagnostic threshold — not a standalone SLA; see the caveat above
 📊 Applied AARS — Your AI Assets (Top Scored)
 Asset	Toxic Issues	Compliance Gaps	Data Exposure	AARS Score	Risk Level	Parent Project
 Agent-A	MEDIUM ×1 (20)	LLM06 gap +10, No guardrail +10	Sensitive data ×1.1 = +22	62	🟠 HIGH	PROJECT-BETA, PROJECT-ALPHA, gcp-account-01

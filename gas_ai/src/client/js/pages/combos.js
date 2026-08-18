@@ -563,12 +563,13 @@ export async function renderCombos(main, params) {
       "aria-label": a.name + ", AARS " + (a.aars === null || a.aars === undefined ? "unscored" : a.aars),
     },
       el("span", { class: "asset-chip-name" }, a.name),
-      a.aarsSeverity
-        ? el("span", {
-          class: "asset-chip-score num sev-" + a.aarsSeverity,
-          "aria-hidden": "true",
-        }, String(a.aars))
-        : null));
+      // The score, never colour-coded by the AARS band here — a claim about one asset (see
+      // aars-band's own caveat, and ui/severity.js's aarsPercentileMark, this list's own
+      // asset-chip is too small to also carry a percentile). aria-hidden: the button's own
+      // aria-label already speaks the number.
+      a.aars === null || a.aars === undefined
+        ? null
+        : el("span", { class: "asset-chip-score num", "aria-hidden": "true" }, String(a.aars))));
 
     const head = chips.slice(0, ASSET_PREVIEW);
     const tail = chips.slice(ASSET_PREVIEW);

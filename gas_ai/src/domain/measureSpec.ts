@@ -131,8 +131,13 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
   {
     id: "aars-band",
     goal:
-      "Turn the continuous AARS score into a small, nameable set of levels an analyst can "
-      + "scan a table by, without re-reading the number on every row.",
+      "Turn the continuous AARS score into a small, nameable set of levels — legitimate as "
+      + "a MODEL diagnostic (the AARS trend, the AARS Rules page's band occupancy) and as "
+      + "an opt-in filter, over its own scored population every time. NOT a claim about one "
+      + "asset (P2c): the same rule has put nearly an entire estate in CRITICAL on one "
+      + "tenant and nearly an entire estate in INFO on another under identical thresholds, "
+      + "so the Inventory table and the asset sheet lead with aars-percentile instead — see "
+      + "that record.",
     scope: "Every AI asset carrying an aars_severity value.",
     measure: "AARS band: CRITICAL / HIGH / MEDIUM / LOW / INFO, re-derived from the stored "
       + "score against the rule's band thresholds on every read.",
@@ -148,7 +153,10 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     timeBasedReference: "Read live against the rule in force. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "AARS Rules page operator (thresholds); security analysts (the read).",
     dataSource: "ai_assets.aars, ai_assets.aars_severity",
-    reportingFormat: "AI Inventory table; bootstrap KPI counts (byAarsSeverity); Help's aars-band entry.",
+    reportingFormat: "AI Inventory filter drawer (aarsSeverities) and asset-sheet secondary "
+      + "chip (with a population-dependence caveat); AARS trend chart; AARS Rules page band "
+      + "occupancy; bootstrap KPI counts (byAarsSeverity); Help's aars-band entry. NOT the "
+      + "Inventory table's primary AARS column as of P2c — see aars-percentile.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
@@ -174,7 +182,10 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "ranks [a,b], percentile = ((a+b)/2 - 0.5) / N × 100. Run once over every scored "
       + "asset's aars in src/server/api.ts's assetsModel() and looked up per row; never "
       + "computed per-asset in isolation, since a percentile has nothing to rank against on "
-      + "its own.",
+      + "its own. getAssetDetail reuses the same cached assetsModel() row rather than "
+      + "re-deriving one over doc.nodes' own (identical, but separately loaded) population, "
+      + "so the Inventory table and the asset sheet can never disagree about one asset's "
+      + "percentile.",
     target: "No numeric target — a percentile is a position within a distribution, not a "
       + "pass/fail measure. Watching one asset's percentile move across successive syncs, or "
       + "reading it beside the population's own shape, is the intended use; a single asset's "
@@ -190,7 +201,8 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + NO_PER_ENTITY_HISTORY,
     responsibleParties: "Security analysts, reading one asset's standing against its estate.",
     dataSource: "ai_assets.aars",
-    reportingFormat: "AI Inventory table (aars percentile field on each row).",
+    reportingFormat: "AI Inventory table's primary AARS column (P2c); the asset detail "
+      + "sheet's lead verdict figure, beside the raw score.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },

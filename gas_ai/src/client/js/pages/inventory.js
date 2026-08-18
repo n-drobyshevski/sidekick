@@ -29,8 +29,8 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  aarsChip, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el, emptyState,
-  errorState,
+  aarsPercentileMark, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
+  emptyState, errorState,
   fmtDate, kpiCard, meter, pager, plural, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tierBadge, toast,
 } from "../ui.js";
@@ -88,10 +88,9 @@ const VIEW_PARAMS = [
 // -------------------------------------------------------------------- small helpers
 
 /**
- * The score as a quantity beside the chip that gives its level. Neutral graphite on
- * purpose: the level is already colored on the chip, and fifty tinted bars down a page is
- * the wall of color PRODUCT.md rejects. Decorative because aarsChip already names both
- * the number and the level — one announcement per cell, not two.
+ * The score as a quantity beside the percentile mark. Neutral graphite, same as the mark
+ * itself — see aarsPercentileMark's own header. Decorative because the mark already names
+ * both the number and the percentile — one announcement per cell, not two.
  */
 function aarsMeter(score) {
   return meter(score, { decorative: true, className: "meter--score" });
@@ -879,10 +878,14 @@ export async function renderInventory(main, params) {
       kind: (row) => kindLabel(row.kind),
       cloud: (row) => row.cloud || "—",
       region: (row) => row.region || "—",
+      // Percentile leads — a rank within THIS estate, not the population-dependent band
+      // (see aars-band's own caveat and ai/AARS_SCORING_ASSESSMENT.md §3). The posture
+      // tier sits in its own column right beside this one and must stay visibly
+      // independent of it — a tier is not a restatement of the score.
       aars: (row) => (row.aars === null || row.aars === undefined
         ? el("span", { class: "muted small" }, "—")
         : el("span", { class: "aars-cell" },
-            aarsChip(row.aars, row.aarsSeverity), aarsMeter(row.aars))),
+            aarsPercentileMark(row.aarsPercentile, row.aars), aarsMeter(row.aars))),
       postureTier: (row) => tierBadge(row.postureTier),
       severity: (row) => (row.severity
         ? el("span", { class: "issue-cell" }, sevBadge(row.severity), issueBars(row.issuesBySeverity))
@@ -926,7 +929,7 @@ export async function renderInventory(main, params) {
           el("span", { class: "asset-card-name" }, row.name),
           row.aars === null || row.aars === undefined
             ? null
-            : aarsChip(row.aars, row.aarsSeverity)),
+            : aarsPercentileMark(row.aarsPercentile, row.aars)),
         row.aars === null || row.aars === undefined ? null : aarsMeter(row.aars),
         el("div", { class: "asset-card-marks" },
           row.postureTier ? tierBadge(row.postureTier) : null,

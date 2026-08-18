@@ -23,7 +23,7 @@
 export { clear, downloadText, el, motionOk } from "./ui/dom.js";
 export { DISPLAY_TZ, fmtDate, fmtDateTime, plural, pluralize, sevRank } from "./ui/format.js";
 export {
-  aarsChip, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
+  aarsChip, aarsPercentileMark, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
 } from "./ui/severity.js";
 export { dataTable, meter, pager, progressBar } from "./ui/data.js";
 export {

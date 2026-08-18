@@ -29,10 +29,13 @@ export const MEASURE_ENTRIES = [
   },
   {
     id: "aars-band", measure: "AARS band", type: "impact", measurementMethod: "Objective",
-    goal: "The score's own severity level, re-derived from the rule in force on every read.",
+    goal: "The score's own severity level, re-derived from the rule in force on every read. "
+      + "A MODEL diagnostic and an opt-in filter, not a claim about one asset (P2c) — the "
+      + "Inventory table and the asset sheet lead with aars-percentile instead.",
     formula: "bandRanges(rule.bands) applied to the stored aars — no re-sync required.",
     dataSource: "ai_assets.aars, ai_assets.aars_severity",
-    reportingFormat: "AI Inventory table; bootstrap KPI counts.",
+    reportingFormat: "AI Inventory filter drawer and asset-sheet secondary chip; AARS trend "
+      + "chart; AARS Rules page band occupancy; bootstrap KPI counts.",
     revisionDue: "2027-08-13",
   },
   {
@@ -45,7 +48,8 @@ export const MEASURE_ENTRIES = [
       + "block's average rank (rankStats.ts), computed fresh over the scored population on "
       + "every read.",
     dataSource: "ai_assets.aars",
-    reportingFormat: "AI Inventory table (aars percentile field on each row).",
+    reportingFormat: "AI Inventory table's primary AARS column; the asset detail sheet's "
+      + "lead verdict figure.",
     revisionDue: "2027-08-13",
   },
   {

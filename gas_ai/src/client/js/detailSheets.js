@@ -15,8 +15,9 @@ import {
   assetSections, configFindingSections, issueSections, recordCursor,
 } from "./recordSections.js";
 import {
-  aarsChip, clear, codeBlock, copyButton, el, emptyState, errorState, fmtDate, fmtDateTime,
-  meter, openSheet, plural, sevBadge, sheetRow, sheetSection, skeleton, statusPill, uiIcon,
+  aarsChip, aarsPercentileMark, clear, codeBlock, copyButton, el, emptyState, errorState,
+  fmtDate, fmtDateTime, helpTip, meter, openSheet, plural, sevBadge, sheetRow, sheetSection,
+  skeleton, statusPill, uiIcon,
 } from "./ui.js";
 
 /** Fallback only — the caps in force ride on the bootstrap payload. */
@@ -530,10 +531,31 @@ export function openAssetSheet(assetId, opts = {}) {
           })),
         ],
         chips: [
-          // Two severity-shaped chips sit side by side here — the asset's AARS level and
-          // its worst open issue. They routinely disagree, so each is named.
+          // The percentile leads — a rank within THIS estate, not the population-dependent
+          // band (ai/AARS_SCORING_ASSESSMENT.md §3: the same rule put nearly an entire live
+          // estate at INFO and an entire demo estate at CRITICAL). The band still follows,
+          // wrapped in its own caveat, rather than dropped outright — a reader who came from
+          // a band-sorted worklist still needs to see the word this asset was filed under.
           el("span", { class: "sheet-chip-label" }, "AARS"),
-          aarsChip(node.aars, node.aarsSeverity),
+          aarsPercentileMark(node.aarsPercentile, node.aars),
+          node.aarsSeverity
+            ? helpTip(
+                aarsChip(node.aars, node.aarsSeverity),
+                [
+                  "A threshold on the CURRENT scored population, not an absolute rating — " +
+                    "the same rule can put nearly an entire estate in CRITICAL on one " +
+                    "tenant and in INFO on another.",
+                  "The percentile above is the comparison that survives that shift.",
+                ],
+                // helpTip's own `label`, when given, REPLACES the wrapped content's
+                // accessible name rather than adding to it (see graph.js's "capped"/
+                // "partial" pills) — fine where the wrapped mark is redundant with text
+                // already announced beside it, wrong here, where the band word is the
+                // only place it is said at all. So the label STATES the value rather than
+                // only naming the reveal.
+                { label: `AARS band ${node.aarsSeverity}`, term: "aars-band" },
+              )
+            : null,
           node.severity ? el("span", { class: "sheet-chip-label" }, "Worst issue") : null,
           node.severity ? sevBadge(node.severity) : null,
           ...(node.comboGroups || []).map((g) => el("span", { class: "pill bad" }, comboTitle(g))),
@@ -559,6 +581,10 @@ export function openAssetSheet(assetId, opts = {}) {
                 el("div", { class: "sheet-verdict" },
                   el("span", { class: "aars-total" }, String(node.aars)),
                   el("span", { class: "muted small" }, "AARS out of 100")),
+                node.aarsPercentile !== null && node.aarsPercentile !== undefined
+                  ? el("p", { class: "sheet-caption" },
+                      `Percentile ${Math.round(node.aarsPercentile)} of the scored estate`)
+                  : null,
                 p
                   ? el("p", { class: "sheet-caption" },
                       `Toxic ${p.toxic ?? 0} · Compliance ${p.compliance ?? 0} · Data ${p.data ?? 0}`)
