@@ -2,6 +2,6 @@
 // (see esbuild.config.mjs and dist/entry.js).
 export { doGet, include } from "./main";
 export { setup } from "./setup";
-export { wizDiagnostic, aarsDiagnostic } from "./diagnostics";
+export { wizDiagnostic, aarsDiagnostic, registerScopeDiagnostic } from "./diagnostics";
 export * as api from "./api";
 export * as jobs from "./syncJobs";

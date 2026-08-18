@@ -13,6 +13,7 @@ function setup() { return Server.setup(); }
 // which auth/query step fails (secret-safe) to the execution log. Never used by a sync.
 function wizDiagnostic() { return Server.wizDiagnostic(); }
 function aarsDiagnostic() { return Server.aarsDiagnostic(); }
+function registerScopeDiagnostic() { return Server.registerScopeDiagnostic(); }
 
 // Trigger handlers (names referenced by ScriptApp.newTrigger calls).
 function trigger_dailySync() { Server.jobs.dailySync(); }

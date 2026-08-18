@@ -26,6 +26,7 @@ var Server = (() => {
     doGet: () => doGet,
     include: () => include,
     jobs: () => syncJobs_exports,
+    registerScopeDiagnostic: () => registerScopeDiagnostic,
     setup: () => setup,
     wizDiagnostic: () => wizDiagnostic
   });
@@ -2394,6 +2395,107 @@ var Server = (() => {
       }
     } catch (e) {
       log(`Drive snapshot unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    log("=== end ===");
+    return lines.join("\n");
+  }
+  function registerScopeDiagnostic() {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    const lines = [];
+    const log = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    const pct3 = (n, d) => d > 0 ? `${(100 * n / d).toFixed(1)}%` : "\u2014";
+    log("=== AI register scope diagnostic ===");
+    let issueAssetIds = /* @__PURE__ */ new Set();
+    let findingResourceIds = /* @__PURE__ */ new Set();
+    try {
+      for (const r of readAll(TABS.issues)) {
+        if (isUnresolvedIssue({ status: String((_a5 = r["status"]) != null ? _a5 : "") })) {
+          issueAssetIds.add(String((_b = r["asset_id"]) != null ? _b : ""));
+        }
+      }
+      for (const r of readAll(TABS.findings)) {
+        const gap2 = isOpenGap({
+          result: (_c = r["result"]) != null ? _c : void 0,
+          status: (_d = r["status"]) != null ? _d : void 0,
+          deleted: r["deleted"] === true || r["deleted"] === "TRUE"
+        });
+        if (gap2) findingResourceIds.add(String((_e = r["resource_id"]) != null ? _e : ""));
+      }
+    } catch (e) {
+      log(`issues/findings unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    try {
+      const rows = readAll(TABS.assets);
+      log(`ai_assets rows: ${rows.length}`);
+      if (!rows.length) {
+        log("The assets tab is empty \u2014 run a sync first.");
+      } else {
+        const byKind = /* @__PURE__ */ new Map();
+        let aiKinded = 0;
+        let anySignal = 0;
+        for (const r of rows) {
+          const kind = String((_f = r["kind"]) != null ? _f : "(blank)");
+          const id = String((_g = r["id"]) != null ? _g : "");
+          const held = r["sensitive_data"] === true || r["sensitive_access"] === true || r["high_priv"] === true || r["admin_priv"] === true || r["guardrail_missing"] === true || r["internet"] === true;
+          const signal = issueAssetIds.has(id) || findingResourceIds.has(id) || held;
+          const slot = (_h = byKind.get(kind)) != null ? _h : { total: 0, signal: 0 };
+          slot.total += 1;
+          if (signal) slot.signal += 1;
+          byKind.set(kind, slot);
+          if (AI_ASSET_KINDS.indexOf(kind) >= 0) aiKinded += 1;
+          if (signal) anySignal += 1;
+        }
+        const ordered = [...byKind.entries()].sort((a, b) => b[1].total - a[1].total);
+        log("");
+        log("  by kind, most rows first \u2014 kind / rows / share / carrying signal:");
+        for (const [kind, s] of ordered) {
+          log(
+            `    ${kind.padEnd(26)} ${String(s.total).padStart(7)}  ${pct3(s.total, rows.length).padStart(6)}   signal ${String(s.signal).padStart(6)} (${pct3(s.signal, s.total)})`
+          );
+        }
+        const aiOrdered = ordered.filter(
+          ([k]) => AI_ASSET_KINDS.indexOf(k) >= 0
+        );
+        const topAi = aiOrdered[0];
+        log("");
+        log(`  distinct kinds:        ${ordered.length}`);
+        log(`  carrying any signal:   ${anySignal} of ${rows.length} (${pct3(anySignal, rows.length)})`);
+        log("");
+        log(`  in AI_ASSET_KINDS:     ${aiKinded} of ${rows.length} (${pct3(aiKinded, rows.length)})`);
+        log("    the rest is substrate the exposure / identity / data-reach traversals pull in");
+        log("    so the graph has something to draw a path through. Expected, not a fault.");
+        if (topAi) {
+          log(
+            `  largest AI kind:       ${topAi[0]} at ${topAi[1].total} rows \u2014 ${pct3(topAi[1].total, aiKinded)} of the AI estate, ${pct3(topAi[1].signal, topAi[1].total)} of it carrying signal`
+          );
+        }
+        log("");
+        log("  Read it this way, and let the numbers decide rather than a threshold picked here:");
+        log("  \xB7 ONE AI kind holding most of the AI rows, and carrying little signal, means the");
+        log("    register is wider than the AI estate a reader pictures. Every distribution");
+        log("    downstream is then a statement about that kind, not about AI risk. Check what");
+        log("    that Wiz type actually enumerates before reading any model as degenerate.");
+        log("  \xB7 AI kinds spread across agents / models / pipelines / datasets, most without");
+        log("    signal, means the register is right and the estate is genuinely unassessed \u2014");
+        log("    a visibility finding, and the models were never the problem.");
+      }
+    } catch (e) {
+      log(`ai_assets unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    try {
+      const rows = readAll(TABS.edges);
+      const seen = /* @__PURE__ */ new Set();
+      for (const r of rows) seen.add(String((_i = r["type"]) != null ? _i : ""));
+      const dead = EDGE_TYPES.filter((t) => !seen.has(t));
+      log("");
+      log(`  edge rows: ${rows.length}`);
+      log(`  populated edge types:  ${EDGE_TYPES.length - dead.length} of ${EDGE_TYPES.length}`);
+      if (dead.length) log(`  never populated:       ${dead.join(", ")}`);
+    } catch (e) {
+      log(`ai_edges unreadable: ${String(e instanceof Error ? e.message : e)}`);
     }
     log("=== end ===");
     return lines.join("\n");
@@ -9631,7 +9733,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "378883bd4e34" : "dev";
+  var BUILD_ID = true ? "b29b2c0a31d7" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
