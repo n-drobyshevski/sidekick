@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  KIND_VALUES, OUTCOME_RANK, PROBLEM_COMPARATORS, PROBLEM_SORT_DESC,
+  KIND_VALUES, MODE_VALUES, OUTCOME_RANK, PROBLEM_COMPARATORS, PROBLEM_SORT_DESC,
   applyProblemFilters, problemFilterOptions, problemParamPatch, readProblemParams,
   sortProblems,
 } from "../src/client/js/pages/problemView.js";
@@ -34,7 +34,7 @@ describe("URL round-trip", () => {
       outcome: "attend", kind: "finding", q: "agent", sort: "due", dir: "-1", page: "3",
     });
     expect(state).toEqual({
-      outcome: "ATTEND", kind: "FINDING", q: "agent",
+      mode: "actions", outcome: "ATTEND", kind: "FINDING", q: "agent",
       sort: "due", dir: -1, page: 2, // 1-based in the URL, 0-based in the page
     });
   });
@@ -55,14 +55,48 @@ describe("URL round-trip", () => {
   it("round-trips through problemParamPatch, dropping only what is empty", () => {
     const state = readProblemParams({ outcome: "act", q: "x", sort: "due", dir: "-1", page: "2" });
     expect(problemParamPatch(state)).toEqual({
-      outcome: "ACT", kind: "", q: "x", sort: "due", dir: "-1", page: "2",
+      mode: "", outcome: "ACT", kind: "", q: "x", sort: "due", dir: "-1", page: "2",
     });
   });
 
   it("clears dir and page from the patch once their driving state clears", () => {
     expect(problemParamPatch({})).toEqual({
-      outcome: "", kind: "", q: "", sort: "", dir: "", page: "",
+      mode: "", outcome: "", kind: "", q: "", sort: "", dir: "", page: "",
     });
+  });
+});
+
+describe("mode round-trip", () => {
+  it("defaults to actions when absent", () => {
+    expect(readProblemParams({}).mode).toBe("actions");
+  });
+
+  it("reads a valid mode back out of the hash", () => {
+    expect(readProblemParams({ mode: "problems" }).mode).toBe("problems");
+    expect(readProblemParams({ mode: "ACTIONS" }).mode).toBe("actions"); // case-insensitive
+  });
+
+  it("drops an unknown mode to the default", () => {
+    expect(readProblemParams({ mode: "bogus" }).mode).toBe("actions");
+  });
+
+  it("lists exactly the two modes this page offers", () => {
+    expect(MODE_VALUES).toEqual(["actions", "problems"]);
+  });
+
+  it("serializes the default mode to null so it never appears in the URL", () => {
+    expect(problemParamPatch({ mode: "actions" }).mode).toBe("");
+    expect(problemParamPatch({}).mode).toBe("");
+  });
+
+  it("serializes the non-default mode explicitly", () => {
+    expect(problemParamPatch({ mode: "problems" }).mode).toBe("problems");
+  });
+
+  it("round-trips a non-default mode through read → patch → read", () => {
+    const state = readProblemParams({ mode: "problems" });
+    const patch = problemParamPatch(state);
+    expect(readProblemParams(patch).mode).toBe("problems");
   });
 });
 

@@ -22,6 +22,17 @@ export const OUTCOME_RANK = ["ACT", "ATTEND", "TRACK_STAR", "TRACK"];
 export const KIND_VALUES = ["ISSUE", "FINDING"];
 export const SEVERITY_RANK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 
+/**
+ * The page's two register modes — collapsed-to-actions (P1b) or the original one-row-per-
+ * problem table. "actions" is the DEFAULT: the self-evidencing "N problems collapse to M
+ * actions" headline is the thing worth opening on, the same reason `config.js` opens on
+ * BY CONTROL rather than BY FINDING. Because it is the default, it serializes to `null` in
+ * `problemParamPatch` below — exactly how `config.js:113` keeps ITS default mode out of the
+ * URL — so the common case never grows a `?mode=actions` nobody chose. An unknown or absent
+ * value reads as "actions", never as an error.
+ */
+export const MODE_VALUES = ["actions", "problems"];
+
 /** Rows fetched, filtered and sorted entirely client-side under this ceiling — mirrors the
  *  server's own `PROBLEMS_CLIENT_ALL_MAX` (src/domain/problems.ts). Past it `getProblems`
  *  pages server-side and this page forwards the outcome filter and the page number to it. */
@@ -34,8 +45,10 @@ export function readProblemParams(params) {
   const p = params || {};
   const outcome = String(p.outcome || "").toUpperCase();
   const kind = String(p.kind || "").toUpperCase();
+  const mode = String(p.mode || "").toLowerCase();
   const page = Number(p.page);
   return {
+    mode: MODE_VALUES.indexOf(mode) >= 0 ? mode : "actions",
     outcome: OUTCOME_RANK.indexOf(outcome) >= 0 ? outcome : "",
     kind: KIND_VALUES.indexOf(kind) >= 0 ? kind : "",
     q: p.q || "",
@@ -53,6 +66,10 @@ export function readProblemParams(params) {
 export function problemParamPatch(state) {
   const s = state || {};
   return {
+    // Same "the default is null" rule config.js:113 states for its own mode param — the
+    // whole reason problems mode carries a URL param at all is so an "actions" reader's
+    // link never grows one.
+    mode: s.mode && s.mode !== "actions" ? s.mode : "",
     outcome: s.outcome || "",
     kind: s.kind || "",
     q: s.q || "",

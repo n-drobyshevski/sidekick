@@ -665,7 +665,7 @@ export const ENTRIES = [
       "bucket, never a value the API returns. Every severity on every screen is a coloured " +
       "DOT plus the level WORD — the red, orange and amber sit close enough together that " +
       "the redundant cue is load-bearing, not decorative.",
-    drawnOn: ["combos", "inventory", "graph"],
+    drawnOn: ["combos", "inventory", "graph", "problems"],
     mark: () => sevBadge("CRITICAL"),
     count: (ctx) => {
       const c = ctx.boot.counts;
@@ -730,7 +730,7 @@ export const ENTRIES = [
       "graphical mark on white; the text token is tuned to clear 4.5:1 on the pale tint " +
       "behind it. Setting a label in the fill colour would fail contrast, so the split is " +
       "deliberate and must not be collapsed.",
-    drawnOn: ["inventory", "combos", "graph"],
+    drawnOn: ["inventory", "combos", "graph", "problems"],
     mark: () => el("span", { class: "help-twotoken", "aria-hidden": "true" }),
   },
 
@@ -848,6 +848,7 @@ const MEASURE_ROUTES = {
   "aars-effective-cardinality": ["aars"],
   "aars-pillar-saturation": ["aars"],
   "problem-outcome-distribution": ["problems", "combos", "config"],
+  "action-concentration-ratio": ["problems"],
   "problem-axis-unknown-rate": ["aars"],
   "posture-tier-distribution": ["inventory", "problems"],
   "issue-sla-tally": ["combos", "problems"],
