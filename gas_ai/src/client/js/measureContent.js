@@ -36,6 +36,19 @@ export const MEASURE_ENTRIES = [
     revisionDue: "2027-08-13",
   },
   {
+    id: "aars-percentile", measure: "aarsPercentile", type: "impact", measurementMethod: "Objective",
+    goal: "A statement about RANK WITHIN THIS ESTATE, not absolute risk — the same rule put "
+      + "100% of the demo estate in CRITICAL and 97.58% of a live estate in INFO under "
+      + "identical bands. Moves whenever the ESTATE moves, even when this asset's own score "
+      + "does not.",
+    formula: "midrankPercentiles(scores): for a tied score, every member shares the tie "
+      + "block's average rank (rankStats.ts), computed fresh over the scored population on "
+      + "every read.",
+    dataSource: "ai_assets.aars",
+    reportingFormat: "AI Inventory table (aars percentile field on each row).",
+    revisionDue: "2027-08-13",
+  },
+  {
     id: "aars-distinct-scores", measure: "distinctScores", type: "effectiveness",
     measurementMethod: "Objective",
     goal: "Measures the MODEL's separating power, not the estate's risk — a rule can render "

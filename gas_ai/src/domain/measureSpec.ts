@@ -152,7 +152,48 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
-
+  {
+    id: "aars-percentile",
+    goal:
+      "A percentile is a statement about RANK WITHIN THIS ESTATE, not about absolute risk — "
+      + "the same AARS rule put 100% of the demo estate in CRITICAL and 97.58% of a live "
+      + "estate in INFO under the identical absolute bands, which is what makes an absolute "
+      + "band incomparable across populations while a percentile stays comparable. This "
+      + "figure MOVES WHENEVER THE ESTATE MOVES — a new sync, a rescore, an asset added or "
+      + "removed — even when the asset's own AARS score does not change at all, and a reader "
+      + "must not mistake that movement for the asset itself having gotten better or worse.",
+    scope: "Every AI asset in the currently-scored population (the same population "
+      + "aars-distinct-scores and its siblings measure) carrying a numeric aars value.",
+    measure: "aarsPercentile: 0-100 rank position of the asset's score within that "
+      + "population, using MIDRANK (average) percentile so every member of a tied score "
+      + "shares one value rather than an arbitrary tie-break inventing an ordering the model "
+      + "does not have. Tied scores are common on live data — the seed estate's own tie rate "
+      + "is 0.30, meaning nearly a third of asset pairs cannot be separated at all.",
+    type: "impact",
+    formula: "rankStats.midrankPercentiles(scores) — for a tie block spanning 1-indexed "
+      + "ranks [a,b], percentile = ((a+b)/2 - 0.5) / N × 100. Run once over every scored "
+      + "asset's aars in src/server/api.ts's assetsModel() and looked up per row; never "
+      + "computed per-asset in isolation, since a percentile has nothing to rank against on "
+      + "its own.",
+    target: "No numeric target — a percentile is a position within a distribution, not a "
+      + "pass/fail measure. Watching one asset's percentile move across successive syncs, or "
+      + "reading it beside the population's own shape, is the intended use; a single asset's "
+      + "percentile in isolation says nothing a target could usefully bound.",
+    implementationEvidence: "Computed over the exact same scored population "
+      + "ruleDiscrimination() already measures for the AARS Rules preview (both read "
+      + "`typeof aars === \"number\"` over the same asset list), so the two can never "
+      + "disagree about which assets count as 'in' the estate for this purpose.",
+    timeBasedReference: "Computed fresh on every read, over the scored population as it "
+      + "reads right now. Deliberately NOT a persisted column: persisting it would go stale "
+      + "silently the moment the estate changed without this one asset being rescored, which "
+      + "is exactly the failure mode `withCurrentBands` was built to avoid for the band. "
+      + NO_PER_ENTITY_HISTORY,
+    responsibleParties: "Security analysts, reading one asset's standing against its estate.",
+    dataSource: "ai_assets.aars",
+    reportingFormat: "AI Inventory table (aars percentile field on each row).",
+    measurementMethod: "Objective",
+    revisionDue: REVISION_DUE,
+  },
   // ----------------------------------------------------- the model's own discrimination
   {
     id: "aars-distinct-scores",

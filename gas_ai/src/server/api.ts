@@ -157,6 +157,7 @@ import {
   type NodeKind,
 } from "../domain/graphTypes";
 import { DATASTORE_KINDS } from "../domain/graphEnrich";
+import { midrankPercentiles } from "../domain/rankStats";
 import { comboDigest } from "../domain/comboDigest";
 import { comboGroupById, comboSummary, REGISTER_GROUPS } from "../domain/toxicCombos";
 import { clampInt, nowIso, type Rec } from "../domain/util";
@@ -685,8 +686,17 @@ function assetRow(n: GNode): Rec {
  * The inventory table's own projection: the dozen fields the row actually renders, out of
  * the ~25 assetRow carries. The table is the one place that ships every asset at once, so
  * everything the drill-down needs and the list doesn't stays behind getAssetDetail.
+ *
+ * `aarsPercentile` arrives precomputed (`assetsModel`'s `aarsPercentileById`) rather than
+ * being derived per-row here: a percentile is a fact about the whole SCORED POPULATION
+ * (rankStats.midrankPercentiles), not about one asset, so it has to be computed once over
+ * every scored asset together — a per-row call here would have nothing to rank against.
  */
-function assetTableRow(n: GNode, issuesBySeverity?: Record<string, number>): Rec {
+function assetTableRow(
+  n: GNode,
+  issuesBySeverity?: Record<string, number>,
+  aarsPercentile?: number | null,
+): Rec {
   const row: Rec = {
     id: n.id,
     name: n.name,
@@ -696,6 +706,12 @@ function assetTableRow(n: GNode, issuesBySeverity?: Record<string, number>): Rec
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aarsSeverity: n.aarsSeverity ?? null,
+    // A RANK, not a risk level — read this against the population, not the scale. See
+    // rankStats.midrankPercentiles's own header and the aars-percentile measure spec. Never
+    // persisted: it is recomputed from the currently-scored population on every read
+    // (assetsModel below), so it moves whenever the ESTATE changes even when this asset's
+    // own score does not, and would go stale silently the moment it was stored instead.
+    aarsPercentile: aarsPercentile ?? null,
     // Phase 6: BESIDE aars — the two must be visibly independent columns, never merged.
     postureTier: n.postureTier ?? null,
     worstOpenProblem: n.worstOpenProblem ?? null,
@@ -787,8 +803,20 @@ function assetsModel(): AssetsModel {
   const agents = assets.filter((a) => a.kind === "AI_AGENT");
   const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
   const issueRollup = issuesBySeverityByAsset(issues);
+  // Read-time, over the population as it scores RIGHT NOW — never persisted (see
+  // assetTableRow's own doc comment). Computed once here, over every scored asset together,
+  // and looked up per row below rather than recomputed per row: midrankPercentiles needs the
+  // whole population to rank against, and one pass keeps that population identical for every
+  // row instead of risking each row seeing a subtly different snapshot of `assets`.
+  const scoredForPercentile = assets.filter(
+    (a): a is GNode & { aars: number } => typeof a.aars === "number",
+  );
+  const percentileValues = midrankPercentiles(scoredForPercentile.map((a) => a.aars));
+  const aarsPercentileById = new Map<string, number>(
+    scoredForPercentile.map((a, i) => [a.id, Math.round(percentileValues[i]!)]),
+  );
   const rows = assets
-    .map((a) => assetTableRow(a, issueRollup.get(a.id)))
+    .map((a) => assetTableRow(a, issueRollup.get(a.id), aarsPercentileById.get(a.id) ?? null))
     .sort(ASSET_COMPARATORS.aars);
 
   const aarsSeverityCounts: Record<string, number> = {};

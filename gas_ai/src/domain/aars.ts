@@ -455,6 +455,36 @@ export const AARS_V3_RULE: AarsRule = {
 export const AARS_MAX_SCORE = 100;
 
 /**
+ * The highest score a rule can actually produce — pillar A's cap + pillar B's cap +
+ * pillar C's cap + the largest of pillar D's three exposure prices, clamped to
+ * `AARS_MAX_SCORE` exactly as `computeAars`'s own final `Math.min` clamps the score itself.
+ *
+ * Exists because `AarsRule`'s four caps are independently tunable and nothing ever required
+ * them to sum to 100. A live tenant's tuned rule (pillar caps 45/25/6, pillar D off) sums to
+ * 76 — but its bands were left at the spec defaults, CRITICAL at 70 and HIGH at 50. Against
+ * an achievable maximum of 76, CRITICAL needs 92% of everything the rule can ever award and
+ * HIGH needs 66%; on that tenant's data zero assets ever reached either band. Nothing told
+ * the operator, because nothing compared a band threshold to the ceiling the rule's OWN caps
+ * impose — every check in `validateAarsRule` was local to the bands or to one pillar's own
+ * table, none of them ever added the caps up. `validateAarsRule` uses this to catch exactly
+ * that shape before a rule is saved; the AARS Rules page's "Pillar caps total N" line is a
+ * near-miss at the same fact, computed separately from pillar C's exposure tier alone
+ * (excluding the finding term and pillar D entirely) for its stacked-bar illustration — this
+ * function is the one place that adds up every term a score can actually contain.
+ */
+export function achievableMax(rule: AarsRule): number {
+  const maxExposure = Math.max(
+    rule.exposurePoints.CONFIRMED,
+    rule.exposurePoints.UNDETERMINED,
+    rule.exposurePoints.NONE,
+  );
+  return Math.min(
+    AARS_MAX_SCORE,
+    rule.pillarACap + rule.pillarBCap + rule.pillarCCap + maxExposure,
+  );
+}
+
+/**
  * A short, human-readable fingerprint of the knobs that change WHICH GAPS EXIST, as
  * opposed to how they price — `gapUnit` plus `gapSources`'s four flags. `gapUnit` had to
  * join this the day it existed, not later: it decides whether pillar B's gaps are framework

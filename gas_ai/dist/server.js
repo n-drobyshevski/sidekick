@@ -2872,6 +2872,17 @@ var Server = (() => {
     ]
   };
   var AARS_MAX_SCORE = 100;
+  function achievableMax(rule) {
+    const maxExposure = Math.max(
+      rule.exposurePoints.CONFIRMED,
+      rule.exposurePoints.UNDETERMINED,
+      rule.exposurePoints.NONE
+    );
+    return Math.min(
+      AARS_MAX_SCORE,
+      rule.pillarACap + rule.pillarBCap + rule.pillarCCap + maxExposure
+    );
+  }
   function derivationSignature(rule) {
     const s = rule.gapSources;
     return [
@@ -2996,6 +3007,22 @@ var Server = (() => {
     }
     return Math.exp(entropy);
   }
+  function midrankPercentiles(values) {
+    const n = values.length;
+    if (n === 0) return [];
+    const order = values.map((_, i2) => i2).sort((a, b) => values[a] - values[b]);
+    const percentiles = new Array(n);
+    let i = 0;
+    while (i < n) {
+      let j = i;
+      while (j + 1 < n && values[order[j + 1]] === values[order[i]]) j++;
+      const midrank = (i + 1 + (j + 1)) / 2;
+      const percentile = (midrank - 0.5) / n * 100;
+      for (let k = i; k <= j; k++) percentiles[order[k]] = percentile;
+      i = j + 1;
+    }
+    return percentiles;
+  }
 
   // src/domain/aarsRule.ts
   var POINTS_MIN = 0;
@@ -3008,6 +3035,7 @@ var Server = (() => {
   var BAND_MAX = 100;
   var CODE_MAX_LEN = 64;
   var MAX_GAP_RULES = 60;
+  var BAND_SHARE_WARNING_THRESHOLD = 0.85;
   var SEVERITY_KEYS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
   var EXPOSURE_KEYS = ["SENSITIVE", "DATA_ACCESS", "NONE"];
   var INTERNET_EXPOSURE_KEYS = ["CONFIRMED", "UNDETERMINED", "NONE"];
@@ -3147,6 +3175,23 @@ var Server = (() => {
       if (rule.bands[upper] <= rule.bands[lower]) {
         errors.push(
           `The ${BAND_LABELS[upper]} threshold (${rule.bands[upper]}) must sit above the ${BAND_LABELS[lower]} threshold (${rule.bands[lower]}) \u2014 otherwise no score can land in ${BAND_LABELS[lower]}.`
+        );
+      }
+    }
+    const max = achievableMax(rule);
+    for (const key of BAND_KEYS) {
+      const threshold = rule.bands[key];
+      if (threshold > max) {
+        const sharePct2 = max > 0 ? Math.round(threshold / max * 100) : null;
+        errors.push(
+          `${BAND_LABELS[key]} at ${threshold} is unreachable \u2014 no asset can ever score above the achievable maximum of ${max} under this rule's pillar caps` + (sharePct2 === null ? "" : ` (${sharePct2}% of it)`) + `, so ${BAND_LABELS[key]} can never hold a single asset.`
+        );
+        continue;
+      }
+      const sharePct = Math.round(threshold / max * 100);
+      if (threshold / max >= BAND_SHARE_WARNING_THRESHOLD) {
+        errors.push(
+          `${BAND_LABELS[key]} at ${threshold} needs ${sharePct}% of the achievable ${max} \u2014 reachable only when nearly every pillar lands at or near its own cap on the same asset, which real estates rarely do all at once. Consider lowering the threshold or raising the pillar caps.`
         );
       }
     }
@@ -3332,6 +3377,7 @@ var Server = (() => {
     return n === 1 ? "1 point" : `${n} points`;
   }
   function ruleSummary(rule) {
+    const achievableMaxForRule = achievableMax(rule);
     const sev = SEVERITY_KEYS.map((k) => `${k} ${rule.severityPoints[k]}`).join(", ");
     const exposure = `sensitive data ${rule.dataExposurePoints.SENSITIVE}, unconfirmed data access ${rule.dataExposurePoints.DATA_ACCESS}, none ${rule.dataExposurePoints.NONE}`;
     const amplified = EXPOSURE_KEYS.map(
@@ -3346,7 +3392,11 @@ var Server = (() => {
       `Pillar B \u2014 compliance gaps, capped at ${rule.pillarBCap}. ${gapUnitClause} ${rule.gapPoints.length} pricing rules are tried in order, first match wins; an unmatched code scores ${pointsPhrase(rule.gapFallbackPoints)}. ${gapClause[0].toUpperCase()}${gapClause.slice(1)}.`,
       `Pillar C \u2014 data exposure, capped at ${rule.pillarCCap}: ${exposure}, all amplified by \xD7${rule.dataAmplifier} (\u2192 ${amplified}). ${findingClause}`,
       rule.exposurePoints.CONFIRMED === 0 && rule.exposurePoints.UNDETERMINED === 0 && rule.exposurePoints.NONE === 0 ? `Pillar D \u2014 internet exposure scores nothing; reachability is reported beside the score but never added to it.` : `Pillar D \u2014 internet exposure: confirmed ${rule.exposurePoints.CONFIRMED}, undetermined ${rule.exposurePoints.UNDETERMINED}, none ${rule.exposurePoints.NONE}. Not amplified \u2014 the 5Rs signal says nothing about reachability.`,
-      `Levels \u2014 CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. Scores are clamped to 100.`
+      `Levels \u2014 CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. Scores are clamped to 100.` + // Said only when it changes what a reader should expect: at 100 this sentence would
+      // repeat the clamp just stated and add nothing. Below 100 it is a material fact about
+      // the rule — a band at or near the scale's top may sit above what this rule's own
+      // pillar caps can ever actually deliver; see achievableMax's own doc comment.
+      (achievableMaxForRule < 100 ? ` This rule's pillar caps top out at ${achievableMaxForRule}, not 100 \u2014 no score under it can ever exceed that, whatever the bands above say.` : "")
     ];
   }
   function bandRanges(bands) {
@@ -9887,7 +9937,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "736b1845d7eb" : "dev";
+  var BUILD_ID = true ? "033b6f73e526" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -13737,7 +13787,7 @@ var Server = (() => {
       }))
     };
   }
-  function assetTableRow(n, issuesBySeverity) {
+  function assetTableRow(n, issuesBySeverity, aarsPercentile) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     const row = {
       id: n.id,
@@ -13748,6 +13798,12 @@ var Server = (() => {
       severity: (_c = n.severity) != null ? _c : null,
       aars: (_d = n.aars) != null ? _d : null,
       aarsSeverity: (_e = n.aarsSeverity) != null ? _e : null,
+      // A RANK, not a risk level — read this against the population, not the scale. See
+      // rankStats.midrankPercentiles's own header and the aars-percentile measure spec. Never
+      // persisted: it is recomputed from the currently-scored population on every read
+      // (assetsModel below), so it moves whenever the ESTATE changes even when this asset's
+      // own score does not, and would go stale silently the moment it was stored instead.
+      aarsPercentile: aarsPercentile != null ? aarsPercentile : null,
       // Phase 6: BESIDE aars — the two must be visibly independent columns, never merged.
       postureTier: (_f = n.postureTier) != null ? _f : null,
       worstOpenProblem: (_g = n.worstOpenProblem) != null ? _g : null,
@@ -13792,7 +13848,17 @@ var Server = (() => {
     const agents = assets.filter((a) => a.kind === "AI_AGENT");
     const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
     const issueRollup = issuesBySeverityByAsset(issues2);
-    const rows = assets.map((a) => assetTableRow(a, issueRollup.get(a.id))).sort(ASSET_COMPARATORS.aars);
+    const scoredForPercentile = assets.filter(
+      (a) => typeof a.aars === "number"
+    );
+    const percentileValues = midrankPercentiles(scoredForPercentile.map((a) => a.aars));
+    const aarsPercentileById = new Map(
+      scoredForPercentile.map((a, i) => [a.id, Math.round(percentileValues[i])])
+    );
+    const rows = assets.map((a) => {
+      var _a6;
+      return assetTableRow(a, issueRollup.get(a.id), (_a6 = aarsPercentileById.get(a.id)) != null ? _a6 : null);
+    }).sort(ASSET_COMPARATORS.aars);
     const aarsSeverityCounts = {};
     const kinds = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();

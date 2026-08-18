@@ -8,8 +8,12 @@ import {
   cohensKappa,
   effectiveCardinality,
   kendallTauB,
+  midrankPercentiles,
   tieRate,
 } from "../src/domain/rankStats";
+import { DEFAULT_AARS_RULE } from "../src/domain/aars";
+import { enrichGraphDoc } from "../src/domain/graphEnrich";
+import { SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
 describe("kendallTauB", () => {
   it("is 1 for perfect agreement", () => {
@@ -147,5 +151,66 @@ describe("bootstrapCI — the determinism contract", () => {
       expect(ci.lo).toBeGreaterThanOrEqual(Math.min(...values));
       expect(ci.hi).toBeLessThanOrEqual(Math.max(...values));
     }
+  });
+});
+
+describe("midrankPercentiles", () => {
+  it("returns [] for an empty list — nothing to rank against", () => {
+    expect(midrankPercentiles([])).toEqual([]);
+  });
+
+  it("gives a single value the 50th percentile — the sole reasonable reading with no peers", () => {
+    // n=1: the one "tie block" spans rank [1,1], midrank 1, (1-0.5)/1*100 = 50.
+    expect(midrankPercentiles([42])).toEqual([50]);
+  });
+
+  it("gives every member of an all-tied list the same 50th percentile, whatever N is", () => {
+    // n=4, one block spanning ranks [1,4]: midrank (1+4)/2 = 2.5, (2.5-0.5)/4*100 = 50.
+    expect(midrankPercentiles([7, 7, 7, 7])).toEqual([50, 50, 50, 50]);
+    // n=3, one block spanning ranks [1,3]: midrank (1+3)/2 = 2, (2-0.5)/3*100 = 50.
+    expect(midrankPercentiles([9, 9, 9])).toEqual([50, 50, 50]);
+  });
+
+  it("matches the familiar percentile-rank ladder for a clean (all-distinct) ordering", () => {
+    // n=4, no ties: ranks 1,2,3,4 → (rank-0.5)/4*100 = 12.5, 37.5, 62.5, 87.5.
+    expect(midrankPercentiles([10, 20, 30, 40])).toEqual([12.5, 37.5, 62.5, 87.5]);
+  });
+
+  it("preserves the CALLER's order, not sorted order", () => {
+    // Same four values as above, shuffled. midrankPercentiles must zip back onto the
+    // original positions, not return them sorted.
+    expect(midrankPercentiles([30, 10, 40, 20])).toEqual([62.5, 12.5, 87.5, 37.5]);
+  });
+
+  it("hand-computed: a tie block in the middle shares one midrank, the untied ends do not", () => {
+    // [10, 20, 20, 20, 30], n=5.
+    //   10 is alone at rank 1: (1-0.5)/5*100 = 10.
+    //   20 ties ranks 2-4: midrank (2+4)/2 = 3, (3-0.5)/5*100 = 50.
+    //   30 is alone at rank 5: (5-0.5)/5*100 = 90.
+    const result = midrankPercentiles([10, 20, 20, 20, 30]);
+    expect(result).toEqual([10, 50, 50, 50, 90]);
+    // Every member of the tie block shares the identical value — not merely close.
+    expect(new Set(result.slice(1, 4)).size).toBe(1);
+  });
+
+  it("the tie rate this whole function exists for: the seed estate's 14-asset block at 72 "
+    + "(DEFAULT_AARS_RULE, live path) all receive one identical percentile", () => {
+    // Same reproduction path as test/scoreOrdinality.test.ts: `deriveAarsInput` via
+    // `enrichGraphDoc`, which is where the doc-pinned largestTieGroup of 14 (tieRate 0.30,
+    // 30 scored assets) comes from — the measured tie rate this file's own header cites.
+    const doc = enrichGraphDoc(seedGraphDoc("T"), SEED_ISSUES, undefined, DEFAULT_AARS_RULE);
+    const scored = doc.nodes.filter((n): n is typeof n & { aars: number } => typeof n.aars === "number");
+    const scores = scored.map((n) => n.aars);
+    const percentiles = midrankPercentiles(scores);
+
+    const tiedAt72 = scored
+      .map((n, i) => ({ id: n.id, score: n.aars, pct: percentiles[i]! }))
+      .filter((x) => x.score === 72);
+
+    // Pinned by test/scoreOrdinality.test.ts's `largestTieGroup` assertion — kept as a
+    // literal here too so a change to either number is caught in both places independently.
+    expect(tiedAt72.length).toBe(14);
+    expect(new Set(tiedAt72.map((x) => x.pct)).size).toBe(1);
+    expect(scored.length).toBe(30);
   });
 });
