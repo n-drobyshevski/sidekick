@@ -9850,6 +9850,133 @@ var Server = (() => {
     };
   }
 
+  // src/domain/reach.ts
+  var READ_TIME_EDGE_TYPES = [
+    "HAS_ISSUE",
+    "HAS_SENSITIVE_DATA",
+    "HAS_ACCESS_TO_SENSITIVE_DATA",
+    "EXPOSED_TO_INTERNET",
+    "HAS_EXCESSIVE_PRIVILEGE",
+    "HAS_DATA_FINDING"
+  ];
+  function isDecidedRow(row) {
+    return !!row.problemOutcome && !!row.problemInput && OUTCOME_VALUES.includes(row.problemOutcome);
+  }
+  function isEnriched(edgeTouched, a) {
+    var _a5, _b, _c, _d, _e, _f, _g;
+    if (edgeTouched.has(a.id)) return true;
+    const ev2 = a.exposureEvidence;
+    if (ev2 && (((_b = (_a5 = ev2.hostIds) == null ? void 0 : _a5.length) != null ? _b : 0) > 0 || ((_d = (_c = ev2.endpointIds) == null ? void 0 : _c.length) != null ? _d : 0) > 0)) return true;
+    return ((_g = (_f = (_e = a.humanAccess) == null ? void 0 : _e.identityIds) == null ? void 0 : _f.length) != null ? _g : 0) > 0;
+  }
+  function estateReach(input) {
+    var _a5;
+    const { assets, issues: issues2, findings, edges: edges2 } = input;
+    const unresolvedIssues = issues2.filter(isUnresolvedIssue);
+    const openFindings = findings.filter(isOpenGap);
+    const issueAssetIds = new Set(unresolvedIssues.map((i) => i.assetId));
+    const findingResourceIds = new Set(openFindings.map((f) => f.resourceId));
+    const edgeTouched = /* @__PURE__ */ new Set();
+    for (const e of edges2) {
+      edgeTouched.add(e.src);
+      edgeTouched.add(e.dst);
+    }
+    const hasSignal = (a) => issueAssetIds.has(a.id) || findingResourceIds.has(a.id) || CONDITION_KEYS.some((k) => conditionHolds(a, k));
+    const byKind = /* @__PURE__ */ new Map();
+    for (const a of assets) {
+      const slot = (_a5 = byKind.get(a.kind)) != null ? _a5 : { total: 0, signal: 0 };
+      slot.total += 1;
+      if (hasSignal(a)) slot.signal += 1;
+      byKind.set(a.kind, slot);
+    }
+    const kinds = [...byKind.entries()].sort((a, b) => b[1].total - a[1].total).map(([kind, s]) => ({
+      kind,
+      total: s.total,
+      signal: s.signal,
+      ai: AI_ASSET_KINDS.includes(kind)
+    }));
+    const aiAssets = assets.filter((a) => AI_ASSET_KINDS.includes(a.kind));
+    const stages = [
+      // 1. IN REGISTER. Denominator: every row on ai_assets (assets.length). Covered: the
+      // AI-kinded subset (AI_ASSET_KINDS membership on ai_assets.kind) — the same number
+      // registerScopeDiagnostic prints as "in AI_ASSET_KINDS". Everything past this stage is
+      // scoped to that covered count, which is why it becomes every later stage's total.
+      { key: "register", label: "In register", covered: aiAssets.length, total: assets.length },
+      // 2. OBSERVED. Denominator: the AI-kinded population stage 1 established. Covered: AI
+      // assets where hasSignal() holds — ai_issues.status (unresolved), ai_findings.result /
+      // .status (open gap), or ai_assets' four condition columns (sensitive_data,
+      // sensitive_access, high_priv, admin_priv, guardrail_missing, internet /
+      // exposure_evidence_json) via conditionHolds. An asset with none of these contributes
+      // nothing any scoring model can read — "carrying any signal" in
+      // registerScopeDiagnostic's own words.
+      {
+        key: "observed",
+        label: "Observed",
+        covered: aiAssets.filter(hasSignal).length,
+        total: aiAssets.length
+      },
+      // 3. ENRICHED. Denominator: the AI-kinded population. Covered: AI assets a graph
+      // traversal actually reached — participates in a row of ai_edges (src or dst), or
+      // carries folded exposure evidence (ai_assets.exposure_evidence_json) or human-access
+      // evidence (ai_assets.human_access_json). An asset with none of these was never walked
+      // by anything past the mandatory inventory query.
+      {
+        key: "enriched",
+        label: "Enriched",
+        covered: aiAssets.filter((a) => isEnriched(edgeTouched, a)).length,
+        total: aiAssets.length
+      },
+      // 4. ATTRIBUTED. Denominator: the AI-kinded population. Covered: AI assets carrying a
+      // business-impact tier (ai_assets.business_impact) — Wiz's own HBI/MBI/LBI read off the
+      // asset's projects, folded at enrich time. Absent means no project reported one, or the
+      // asset carries no project at all; never read as LOW (graphTypes.ts's own doc comment).
+      {
+        key: "attributed",
+        label: "Attributed",
+        covered: aiAssets.filter((a) => !!a.businessImpact).length,
+        total: aiAssets.length
+      },
+      // 5. DECIDED. Denominator: the AI-kinded population. Covered: AI assets carrying a
+      // problem verdict (ai_assets.worst_open_problem, folded from the Phase 4 tree onto the
+      // asset by graphEnrich.withProblemVerdicts) OR a persisted AARS score (ai_assets.aars).
+      // Either is a model having reached a conclusion about this asset; an asset with neither
+      // sits in the register unscored and unrouted.
+      {
+        key: "decided",
+        label: "Decided",
+        covered: aiAssets.filter((a) => typeof a.aars === "number" || a.worstOpenProblem !== void 0).length,
+        total: aiAssets.length
+      }
+    ];
+    const seenTypes = new Set(edges2.map((e) => e.type));
+    const populated = EDGE_TYPES.filter((t) => seenTypes.has(t));
+    const unseen = EDGE_TYPES.filter((t) => !seenTypes.has(t));
+    const synthetic = unseen.filter((t) => READ_TIME_EDGE_TYPES.includes(t));
+    const dead = unseen.filter((t) => !READ_TIME_EDGE_TYPES.includes(t));
+    const decidedRows = [...issues2, ...findings].filter(isDecidedRow);
+    const decided = decidedRows.map((r) => ({
+      outcome: r.problemOutcome,
+      vector: r.problemInput.vector,
+      unknowns: r.problemInput.unknowns
+    }));
+    const td = treeDiscrimination(decided);
+    const n = decided.length;
+    const axisKnown = (rate) => n > 0 ? 1 - rate : 0;
+    const axes = {
+      exploitation: axisKnown(td.unknownRate.exploitation),
+      impact: axisKnown(td.unknownRate.impact),
+      exposure: axisKnown(td.unknownRate.exposure),
+      mission: axisKnown(td.unknownRate.mission)
+    };
+    return {
+      stages,
+      kinds,
+      edges: { populated, dead, synthetic, declared: EDGE_TYPES.length },
+      axes,
+      axesPopulation: n
+    };
+  }
+
   // src/server/jobsStore.ts
   var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
   function normError(v) {
@@ -9937,7 +10064,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "033b6f73e526" : "dev";
+  var BUILD_ID = true ? "bb44bd2c4b5c" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -12492,6 +12619,7 @@ var Server = (() => {
   }
   var graphDocMemo;
   var assetsMemo;
+  var edgesMemo;
   var issuesMemo;
   var findingsMemo;
   var dataFindingsMemo;
@@ -12503,6 +12631,7 @@ var Server = (() => {
   function invalidateReadMemos() {
     graphDocMemo = void 0;
     assetsMemo = void 0;
+    edgesMemo = void 0;
     issuesMemo = void 0;
     findingsMemo = void 0;
     dataFindingsMemo = void 0;
@@ -12606,6 +12735,10 @@ var Server = (() => {
   }
   function loadAssets() {
     return withCurrentBands(loadAssetsRaw(), currentBands());
+  }
+  function loadEdges() {
+    if (edgesMemo === void 0) edgesMemo = readAll(TABS.edges).map(rowToEdge);
+    return edgesMemo;
   }
   function loadIssues() {
     if (issuesMemo === void 0) issuesMemo = readAll(TABS.issues).map(rowToIssue);
@@ -13841,6 +13974,12 @@ var Server = (() => {
     const trend = aarsTrendFromHistory(syncHistory());
     const assets = loadAssets();
     const issues2 = openIssues();
+    const reach = estateReach({
+      assets,
+      issues: loadIssues(),
+      findings: loadFindings(),
+      edges: loadEdges()
+    });
     const assetIds = {};
     for (const a of assets) assetIds[a.id] = true;
     const openGaps = loadFindings().filter(isOpenGap);
@@ -13972,6 +14111,7 @@ var Server = (() => {
       // Recorded per sync, so the window is short at first and cannot be backfilled.
       aarsTrend: trend,
       aarsTrendRuleChanges: ruleChangePoints(trend),
+      reach,
       facets: {
         kinds: [...kinds].sort(),
         clouds: [...clouds].sort(),
@@ -13993,6 +14133,7 @@ var Server = (() => {
         aarsTrend: model.aarsTrend,
         aarsTrendRuleChanges: model.aarsTrendRuleChanges,
         aarsDeltas: aarsDeltas(model.aarsTrend, model.aarsSeverityCounts),
+        reach: model.reach,
         facets: model.facets,
         pageSize: query.pageSize,
         sort: query.sort,

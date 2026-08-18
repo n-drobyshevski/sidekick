@@ -17,7 +17,7 @@
 // The filter/sort/facet logic itself lives in ../assetQuery.js, a hand-kept mirror of
 // src/domain/assetTable.ts that test/assetQueryMirror.test.ts holds to it.
 
-import { bootstrap, listJoin, navigate, setParams, swrCall } from "../store.js";
+import { bootstrap, buildHash, listJoin, navigate, setParams, swrCall } from "../store.js";
 import { openAssetSheet } from "../detailSheets.js";
 import { trendLine } from "../charts.js";
 import {
@@ -31,7 +31,7 @@ import {
 import {
   aarsChip, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el, emptyState,
   errorState,
-  fmtDate, meter, pager, plural, sectionLabel, sevBadge, sevEntries, sevKeyRow,
+  fmtDate, kpiCard, meter, pager, plural, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tierBadge, toast,
 } from "../ui.js";
 
@@ -383,6 +383,8 @@ export async function renderInventory(main, params) {
     }
 
     host.append(postureHeader(kpis, fresh, bandLabel));
+    const reachCard = reachHeadline(fresh.reach);
+    if (reachCard) host.append(reachCard);
     host.append(toolbar());
     host.append(panel.chips);
     panel.chips.classList.add("inv-chips");
@@ -398,6 +400,30 @@ export async function renderInventory(main, params) {
     // so leave the address bar describing the filters that are actually applied.
     persistParams();
     if (panelName === "filters") panel.open(false);
+  }
+
+  // ---- one-glance reach headline, linking to the Scans page's full stage ladder. Placed
+  // beside the posture header rather than inside it: postureHeader answers "what did we
+  // find"; this answers "how much of the estate did the pipeline ever reach" — a different
+  // question, and folding it into the same header would read as one more posture number
+  // rather than the coverage caveat it actually is.
+  function reachHeadline(reach) {
+    if (!reach) return null;
+    const observed = reach.stages.find((s) => s.key === "observed");
+    if (!observed) return null;
+    const known = observed.total > 0;
+    const link = el(
+      "a",
+      { class: "link", href: buildHash("scans", { anchor: "reach" }), target: "_self" },
+      known ? observed.covered + " of " + observed.total : "—",
+    );
+    return el("div", { class: "kpi-row" },
+      kpiCard(
+        "Estate reach — observed",
+        link,
+        "AI-kinded assets carrying any signal, of the register's AI estate — open Wiz Scans "
+          + "for the full five-stage ladder.",
+      ));
   }
 
   // ---- posture header: one hero, one distribution, one stat list

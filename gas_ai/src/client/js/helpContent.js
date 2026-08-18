@@ -857,6 +857,9 @@ const MEASURE_ROUTES = {
   "guardrail-coverage-pct": ["scans"],
   "toxic-combo-patterns-active": ["combos"],
   "framework-average-posture": ["compliance"],
+  "estate-reach-stages": ["scans", "inventory"],
+  "estate-reach-edge-census": ["scans"],
+  "estate-reach-axis-known-rate": ["scans"],
 };
 
 // One entry per measureSpec.ts record — pure documentation, no `count`, so it renders as a

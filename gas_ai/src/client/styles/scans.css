@@ -219,6 +219,46 @@
   border-radius: var(--radius-md); padding: 8px 10px; margin: 8px 0 0;
 }
 
+/* --------------------------------------------------------------------- estate reach */
+/* P2b: the estate-grain coverage roll-up (reach.ts). The ladder deliberately does NOT
+   reuse .cov-bar/.cov-keys — those are a TALLY over discrete states (live/partial/
+   unscanned); a stage here is a continuous covered-of-total fraction, and the shared
+   `.meter` recipe (components.css) is the right primitive for that, not a re-purposed
+   severity or coverage bar. */
+.reach-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+.reach-ladder { display: flex; flex-direction: column; gap: 9px; margin: 10px 0 18px; }
+.reach-stage {
+  display: grid; grid-template-columns: minmax(120px, 190px) 1fr 48px;
+  align-items: center; gap: 12px;
+}
+.reach-stage-label { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.reach-stage-figure { display: flex; align-items: center; gap: 10px; }
+.reach-stage-count {
+  min-width: 84px; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--ink);
+}
+.reach-stage-figure .meter { height: 8px; }
+.reach-stage-bar-empty {
+  flex: 1; height: 8px; border-radius: var(--radius-pill);
+  background: repeating-linear-gradient(
+    45deg, var(--track-bg), var(--track-bg) 4px, transparent 4px, transparent 8px
+  );
+}
+.reach-stage-pct {
+  font-size: 12px; color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums;
+}
+
+.reach-kind-ai { font-weight: 600; color: var(--ink); }
+.reach-kinds td .num { font-variant-numeric: tabular-nums; }
+
+.reach-edges { margin-top: 4px; }
+.reach-chip-dead { color: var(--text-3); opacity: 0.75; }
+
+@media (max-width: 620px) {
+  .reach-stage { grid-template-columns: 1fr; gap: 4px; }
+  .reach-stage-pct { text-align: left; }
+}
+
 /* ------------------------------------------------------------------- narrow widths */
 @media (max-width: 980px) {
   .cov-header { grid-template-columns: 1fr 1fr; }

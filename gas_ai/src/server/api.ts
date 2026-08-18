@@ -159,6 +159,7 @@ import {
 import { DATASTORE_KINDS } from "../domain/graphEnrich";
 import { midrankPercentiles } from "../domain/rankStats";
 import { comboDigest } from "../domain/comboDigest";
+import { estateReach, type EstateReach } from "../domain/reach";
 import { comboGroupById, comboSummary, REGISTER_GROUPS } from "../domain/toxicCombos";
 import { clampInt, nowIso, type Rec } from "../domain/util";
 import { archiveBytes } from "./archiveStore";
@@ -761,6 +762,8 @@ interface AssetsModel {
   aarsTrend: AarsTrendPoint[];
   /** Indices in aarsTrend where the scoring model changed — the chart marks them. */
   aarsTrendRuleChanges: number[];
+  /** The estate-grain coverage roll-up (reach.ts) — see the Wiz Scans REACH section. */
+  reach: EstateReach;
   facets: {
     kinds: string[];
     clouds: string[];
@@ -782,6 +785,17 @@ function assetsModel(): AssetsModel {
   const trend = aarsTrendFromHistory(syncStore.syncHistory());
   const assets = syncStore.loadAssets();
   const issues = openIssues();
+  // reach.ts wants the WHOLE issues/findings population (resolved and passing rows
+  // included) because it does its own admission filtering per stage — unlike every KPI
+  // below, which reads `issues` (open only) or `openGaps` (failing only) because those
+  // numbers ARE the filtered count. Reading `loadIssues`/`loadFindings` again here costs
+  // nothing extra: both are memoized per execution (syncStore's read-memo discipline).
+  const reach = estateReach({
+    assets,
+    issues: syncStore.loadIssues(),
+    findings: syncStore.loadFindings(),
+    edges: syncStore.loadEdges(),
+  });
   // The two compliance numbers, computed together so they cannot drift.
   //
   // `complianceGaps` used to be `loadFindings().length` — every stored row, including the
@@ -918,6 +932,7 @@ function assetsModel(): AssetsModel {
     // Recorded per sync, so the window is short at first and cannot be backfilled.
     aarsTrend: trend,
     aarsTrendRuleChanges: ruleChangePoints(trend),
+    reach,
     facets: {
       kinds: [...kinds].sort(),
       clouds: [...clouds].sort(),
@@ -945,6 +960,7 @@ export function getAssets(p?: unknown): ApiResult {
       aarsTrend: model.aarsTrend,
       aarsTrendRuleChanges: model.aarsTrendRuleChanges,
       aarsDeltas: aarsDeltas(model.aarsTrend, model.aarsSeverityCounts),
+      reach: model.reach,
       facets: model.facets,
       pageSize: query.pageSize,
       sort: query.sort,
