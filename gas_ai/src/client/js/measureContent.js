@@ -19,20 +19,40 @@
 
 export const MEASURE_ENTRIES = [
   {
-    id: "aars-score", measure: "AARS score", type: "impact", measurementMethod: "Objective",
-    goal: "One comparable risk number per AI asset, priced from what a sync actually "
-      + "collected — never asserted.",
+    id: "aars-score", measure: "Findings score", type: "impact",
+    measurementMethod: "Objective",
+    goal: "One comparable number per AI asset for what has already been FOUND on it, priced "
+      + "from what a sync actually collected — never asserted.",
     formula: "computeAars(aarsInput, aarsRule): four pillars, summed and clamped to 0–100.",
     dataSource: "ai_assets.aars, ai_assets.aars_input_json",
-    reportingFormat: "AI Inventory table; asset detail sheet's pillar bars.",
+    reportingFormat: "AI Inventory register, beside its percentile; asset detail sheet's "
+      + "verdict number and pillar bars.",
     revisionDue: "2027-08-13",
   },
   {
-    id: "aars-band", measure: "AARS band", type: "impact", measurementMethod: "Objective",
-    goal: "The score's own severity level, re-derived from the rule in force on every read.",
+    id: "aars-band", measure: "Findings score level", type: "impact",
+    measurementMethod: "Objective",
+    goal: "The score's own level, re-derived from the rule in force on every read. Context "
+      + "beside a score and a distribution over the estate — not a per-asset decision, "
+      + "because on this landscape its top level holds most of the scored assets.",
     formula: "bandRanges(rule.bands) applied to the stored aars — no re-sync required.",
     dataSource: "ai_assets.aars, ai_assets.aars_severity",
-    reportingFormat: "AI Inventory table; bootstrap KPI counts.",
+    reportingFormat: "AI Inventory register and asset sheet (as a plain word); the level "
+      + "strip and trend chart (as a distribution); AARS Rules page (as a rule diagnostic, "
+      + "the one surface that still tints it).",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "aars-percentile", measure: "Findings score percentile", type: "impact",
+    measurementMethod: "Objective",
+    goal: "Where one asset's score sits in the estate that was actually scored — the "
+      + "placement an analyst can read, given that the score's levels barely separate "
+      + "assets on this landscape.",
+    formula: "midrankPercentiles(scores) = (count below + count equal / 2) / N, whole "
+      + "percent. Tied scores share one percentile by construction.",
+    dataSource: "ai_assets.aars",
+    reportingFormat: "AI Inventory register (leads the score cell); asset detail sheet's "
+      + "verdict line, with the population size; security graph node badge.",
     revisionDue: "2027-08-13",
   },
   {

@@ -54,6 +54,7 @@ import {
 } from "./graphQuery.js";
 import { queryBar } from "./graphQueryBar.js";
 import {
+  FINDINGS_SCORE_LABEL,
   clear, confirmDialog, el, emptyState, filterChipRow, helpTip, motionOk, onPageTeardown,
   openPopover, portalsOpen, segmented, selectField, sevBadge, toast, togglePills,
   uiIcon,
@@ -577,7 +578,7 @@ export async function renderGraphPage(main, params, _ctx) {
   const orderSel = el("select", { "aria-label": "Order nodes" },
     el("option", { value: "" }, "Smart order"),
     el("option", { value: "severity" }, "Severity first"),
-    el("option", { value: "aars" }, "Highest AARS"),
+    el("option", { value: "aars" }, "Highest " + FINDINGS_SCORE_LABEL.toLowerCase()),
     el("option", { value: "name" }, "Name (A–Z)"),
   );
   orderSel.addEventListener("change", () => update({ sort: orderSel.value, pos: "" }));

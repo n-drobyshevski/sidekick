@@ -1,8 +1,15 @@
 /* ------------------------------------------------------- AI Inventory: posture header */
-/* Three levels rather than eight peers: the hero says what the landscape IS, the strip says
-   what shape its risk has, the stat list carries the supporting facts. Hero and strip are
-   deliberately borderless — DESIGN.md's Hero Stat takes its dominance from size and
-   position, never from a card, a gradient or an accent stripe. */
+/* Four levels rather than eight peers: the hero says what the landscape IS, the verdict row
+   says which assets carry an action, the strip says what shape the findings score has, and
+   the stat list carries the supporting facts. Hero, verdict and strip are deliberately
+   borderless — DESIGN.md's Hero Stat takes its dominance from size and position, never from
+   a card, a gradient or an accent stripe.
+
+   READING ORDER IS THE ARGUMENT HERE. The verdict shares the top row with the hero and the
+   score distribution sits underneath both, because the posture tier cuts a queue and the
+   score's levels do not (ai/AARS_SCORING_ASSESSMENT.md §3: the top level holds 19 of 30
+   scored assets, two levels hold none). The strip was on the top row before this and read
+   as the page's headline. */
 .inv-header {
   display: grid;
   grid-template-columns: minmax(150px, 0.45fr) minmax(320px, 2fr);
@@ -10,6 +17,17 @@
   margin: 0 0 18px; padding-bottom: 4px; border-bottom: 1px solid var(--hairline);
 }
 .inv-hero-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+
+/* The verdict row: the two posture tiers that carry an action. Read-outs, not controls —
+   this table has no posture facet, and a chip shaped like the strip's filter keys but inert
+   would read as a broken control. */
+.inv-verdict { display: flex; flex-direction: column; gap: 8px; }
+.inv-tier-row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; }
+.inv-tier { display: inline-flex; align-items: baseline; gap: 8px; }
+.inv-tier-n { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Full width, under the hero and the verdict. */
+.inv-header .sev-strip { grid-column: 1 / -1; }
 
 /* The distribution strip. The bar is a graphic; the keys under it are the controls, so
    the cross-filter has a real keyboard path (a canvas would not). Both are the shared

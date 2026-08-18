@@ -8,6 +8,7 @@ import {
   cohensKappa,
   effectiveCardinality,
   kendallTauB,
+  midrankPercentiles,
   tieRate,
 } from "../src/domain/rankStats";
 
@@ -93,6 +94,66 @@ describe("effectiveCardinality", () => {
 
   it("is 0 for an empty list", () => {
     expect(effectiveCardinality([])).toBe(0);
+  });
+});
+
+describe("midrankPercentiles", () => {
+  it("puts the middle of an odd all-distinct list at 50", () => {
+    // Five distinct values, so each block has size 1. For the median value 3: two values
+    // below, so (2 + 1/2)/5 = 0.5.
+    expect(midrankPercentiles([1, 2, 3, 4, 5])[2]).toBeCloseTo(50, 12);
+  });
+
+  it("gives a constant list 50 everywhere — one block, centred, separating nothing", () => {
+    // One block of 5: below = 0, so (0 + 5/2)/5 = 0.5 for every member. This is the same
+    // message tieRate returns 1.0 for, and it is deliberately not 100.
+    expect(midrankPercentiles([9, 9, 9, 9, 9])).toEqual([50, 50, 50, 50, 50]);
+  });
+
+  it("keeps the input's index order rather than returning a sorted list", () => {
+    // The caller zips these back onto nodes by position, so alignment is the contract.
+    // Sorted the list reads [10, 20, 30]; midranks are 16.667 / 50 / 83.333 by VALUE, and
+    // the answer has to come back in the order the values were handed over.
+    const out = midrankPercentiles([30, 10, 20]);
+    expect(out[0]).toBeCloseTo(83.3333, 4);
+    expect(out[1]).toBeCloseTo(16.6667, 4);
+    expect(out[2]).toBeCloseTo(50, 12);
+  });
+
+  it("reproduces the seed estate's shape: one tie block, one shared percentile", () => {
+    // The live-path AARS distribution over the seed landscape — 30 scored assets in five
+    // blocks sized 8 / 1 / 2 / 14 / 5 at scores 0 / 22 / 29 / 72 / 76. This is the shape
+    // that reproduces ruleDiscrimination's pinned tieRate 0.30 and effectiveCardinality
+    // 3.67 (test/scoreOrdinality.test.ts §2), so it is the right fixture to pin here.
+    //
+    //   0  → (0  + 8/2)/30  = 13.333
+    //   22 → (8  + 1/2)/30  = 28.333
+    //   29 → (9  + 2/2)/30  = 33.333
+    //   72 → (11 + 14/2)/30 = 60      ← the 14-asset block, one number, not fourteen
+    //   76 → (25 + 5/2)/30  = 91.667
+    const scores = [
+      ...Array(8).fill(0), 22, 29, 29, ...Array(14).fill(72), ...Array(5).fill(76),
+    ] as number[];
+    const out = midrankPercentiles(scores);
+    const byScore = new Map(scores.map((s, i) => [s, out[i]!]));
+
+    expect(byScore.get(0)).toBeCloseTo(13.3333, 4);
+    expect(byScore.get(22)).toBeCloseTo(28.3333, 4);
+    expect(byScore.get(29)).toBeCloseTo(33.3333, 4);
+    expect(byScore.get(72)).toBeCloseTo(60, 12);
+    expect(byScore.get(76)).toBeCloseTo(91.6667, 4);
+
+    // The claim the whole change rests on, asserted rather than described: the 14 tied
+    // assets share ONE percentile. A CDF percentile would give them 86.667 — the top of
+    // their own block — which reads as "these beat the five assets above them".
+    const tied = out.filter((_, i) => scores[i] === 72);
+    expect(tied).toHaveLength(14);
+    expect(new Set(tied).size).toBe(1);
+  });
+
+  it("is 50 for a single value and empty for an empty list", () => {
+    expect(midrankPercentiles([7])).toEqual([50]);
+    expect(midrankPercentiles([])).toEqual([]);
   });
 });
 

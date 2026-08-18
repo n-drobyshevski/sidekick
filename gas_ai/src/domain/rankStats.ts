@@ -106,6 +106,54 @@ export function effectiveCardinality(values: number[]): number {
 }
 
 /**
+ * Where each value sits in its own list, as a percentile of the whole — the statistic that
+ * replaces the AARS BAND wherever a surface used to present a band as a decision.
+ *
+ * WHY THIS EXISTS AT ALL. `ai/AARS_SCORING_ASSESSMENT.md` §3 measured what the bands do on
+ * live data: 19 of 30 scored assets land CRITICAL, HIGH and MEDIUM are both empty, tieRate
+ * is 0.30 and effectiveCardinality 3.67 against 5 distinct scores. A band holding the
+ * entire working population names no action and cuts no queue. A percentile makes the same
+ * score say the only thing it can honestly say — where this asset sits relative to the rest
+ * of the estate — and says it against a denominator the caller has to publish.
+ *
+ * MIDRANK, NOT CDF, AND THE CHOICE IS THE POINT. The obvious form, `(below + equal) / N`,
+ * puts every member of a tie block at the block's TOP: the 14 seed assets tied at 72 would
+ * all read as the 87th percentile, which is a claim that they beat the 8 assets above
+ * them — they do not, they are tied with each other and below those 8. The midrank form,
+ * `(below + equal/2) / N`, puts the whole block at its own middle (those 14 read 60), so a
+ * tie block gets ONE shared percentile that is honest about being a block. Using the CDF
+ * form here would reintroduce exactly the false ordering this statistic was added to stop.
+ *
+ * Returns exact, unrounded percentages in the input's own index order, never sorted — a
+ * caller zipping these back onto nodes by position must be able to trust the alignment.
+ * Rounding is the caller's decision and belongs where the population size is known
+ * (`syncStore.withAarsPercentile` rounds to whole percent, because 1/30 of an estate is
+ * ~3.3 points and a decimal would imply precision the population does not have).
+ *
+ * A constant list gives every entry 50 — one block spanning the whole estate, centred.
+ * That is the correct reading of "this model separates nothing", and it is the same
+ * message `tieRate` returns 1.0 for.
+ */
+export function midrankPercentiles(values: number[]): number[] {
+  const n = values.length;
+  if (n === 0) return [];
+  const counts = new Map<number, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  // One pass up the distinct values accumulates each block's `below` count, so the
+  // per-value percentile is computed once per BLOCK rather than once per element — and
+  // every member of a block therefore reads back a bit-identical number, which is the
+  // property the whole doc-comment above turns on.
+  const percentileOf = new Map<number, number>();
+  let below = 0;
+  for (const value of [...counts.keys()].sort((a, b) => a - b)) {
+    const size = counts.get(value)!;
+    percentileOf.set(value, ((below + size / 2) / n) * 100);
+    below += size;
+  }
+  return values.map((v) => percentileOf.get(v)!);
+}
+
+/**
  * Cohen's kappa — chance-corrected agreement between two equal-length CATEGORICAL codings
  * over the same items, e.g. the severity band two rules assign the same asset. Plain percent
  * agreement (po) is inflated by however skewed the category is (if 90% of assets are

@@ -13,6 +13,38 @@
 
 import type { AarsSeverity, Severity } from "./config";
 
+/**
+ * What the UI calls this model on any surface ABOUT AN ASSET. The one place the string
+ * lives, so it cannot drift between a column header, a chip, a sheet caption and a query
+ * field label.
+ *
+ * THE IDENTIFIER AND THE LABEL ARE DELIBERATELY DIFFERENT, and the difference is load-bearing
+ * in both directions.
+ *
+ * The LABEL changed because "AI Asset Risk Score" overclaims. This model is a weighted sum
+ * over issues, compliance gaps and data exposure that have already been FOUND; "risk"
+ * implies forward-looking consequence, and that is the AssetPosture tier's job (posture.ts:
+ * capability × containment × consequence). Calling a backward-looking total a risk score is
+ * what let its bands be read as an SLA — see ai/AARS_SCORING_ASSESSMENT.md §3, where the top
+ * band holds 19 of 30 scored assets.
+ *
+ * The IDENTIFIERS did not change, and must not. Eight of them are persisted —
+ * `ai_assets.aars` / `aars_severity` / `aars_pillars_json` / `aars_input_json`,
+ * `sync_history.aars_severity_json` / `aars_rule_version`, and the `aars_rule` /
+ * `aars_scored_version` settings keys — and `sheetsDb.ensureHeaders` only ever APPENDS: it
+ * has no rename path and no drop path, so a renamed column would sit beside its predecessor
+ * in every tenant's sheet permanently. The evidence is already in the tree: renaming the
+ * single field `aarsBand` → `aarsSeverity` still costs four maintained code paths today
+ * (`normalizeLegacyAars`, `rowToAsset`'s dual read, and two branches in diagnostics.ts). A
+ * label is free to change; a column name is a migration this app cannot perform.
+ *
+ * The acronym AARS survives on the AARS Rules page, where it names a specific tunable model
+ * rather than making a claim about an asset. `src/client/js/ui/findingsScore.js` mirrors
+ * this constant for the client bundle (which cannot import a TS module) and
+ * test/assetQueryMirror.test.ts asserts the two agree.
+ */
+export const AARS_DISPLAY_LABEL = "Findings score";
+
 export type DataExposure = "SENSITIVE" | "DATA_ACCESS" | "NONE";
 
 /**

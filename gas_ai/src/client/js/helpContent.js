@@ -35,7 +35,9 @@
 import { CODEBOOK, FAMILY_GROUP } from "./codebook.js";
 import { MEASURE_ENTRIES } from "./measureContent.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, kindIconSvg } from "./icons.js";
-import { aarsChip, el, outcomeBadge, pluralize, sevBadge, statusPill, tierBadge } from "./ui.js";
+import {
+  aarsChip, el, outcomeBadge, pluralize, scoreChip, sevBadge, statusPill, tierBadge,
+} from "./ui.js";
 
 /** The six headings, in reading order. Six headings and find-in-page beat a search box. */
 export const FAMILIES = [
@@ -413,37 +415,50 @@ export const ENTRIES = [
   // ------------------------------------------------------------------------- the score
   {
     id: "aars",
-    term: "AARS",
-    aka: "AI Asset Risk Score",
+    term: "Findings score",
+    aka: "AARS — the identifier every column and route still uses",
     family: "score",
     blurb:
       "One number per asset, 0 to 100, summed across four pillars and clamped. It is this " +
       "app's own score, not a Wiz field: it prices what the sync collected, so the model " +
-      "that produces it is editable and its inputs are persisted beside every score.",
+      "that produces it is editable and its inputs are persisted beside every score. It " +
+      "counts what has already been FOUND — issues, compliance gaps, data exposure — which " +
+      "is why it is not called a risk score; forward-looking consequence is the posture " +
+      "tier's job. Surfaces show it as a percentile of the scored estate, because the raw " +
+      "number is only meaningful against the other assets.",
     drawnOn: ["inventory", "graph", "aars"],
-    mark: () => aarsChip(78, "HIGH"),
+    mark: () => scoreChip(78, 92, "HIGH"),
     count: (ctx) => {
+      // The scored POPULATION, not a count of one level. This read `criticalAars` until
+      // that KPI was withdrawn: on live data the top level holds 19 of 30 scored assets,
+      // so "N assets score Critical" was a restatement of "N assets are scored" wearing a
+      // verdict's clothes. The denominator is the honest figure, and it is the one the
+      // percentile beside every score is a percentile OF.
       const k = ctx.kpis;
-      if (!k || k.criticalAars === undefined) return null;
+      if (!k || k.aarsScored === undefined) return null;
       return {
-        n: n(k.criticalAars),
-        value: String(n(k.criticalAars)),
-        unit: "assets score Critical",
+        n: n(k.aarsScored),
+        value: String(n(k.aarsScored)),
+        unit: "assets scored",
         route: "inventory",
-        params: { aarsSeverities: "CRITICAL" },
+        params: {},
       };
     },
   },
   {
     id: "aars-band",
-    term: "AARS band",
-    aka: "the score's own severity",
+    term: "Findings score level",
+    aka: "context beside a score, not a verdict",
     family: "score",
     blurb:
       "The level a score falls into. Bands are re-derived from the stored score on every " +
       "read, so moving a threshold applies at once and retroactively — no re-sync, no " +
       "rescore. Changing the POINT model is the other thing entirely, and strands the " +
-      "stored scores until they are recomputed.",
+      "stored scores until they are recomputed. A level is not a queue: on this estate the " +
+      "top one holds most of the scored assets and two hold none, so it is drawn tinted " +
+      "only on the AARS Rules page, where the thresholds themselves are the subject, and " +
+      "plain everywhere else. Its two honest readings are the distribution the trend " +
+      "charts over time and the occupancy the rule editor reports.",
     drawnOn: ["aars", "inventory"],
     mark: () => sevBadge("HIGH"),
     // The model in force, not a measurement — true before the first sync.
@@ -593,7 +608,8 @@ export const ENTRIES = [
     blurb:
       "A 54-leaf decision tree — exploitation × technical impact × system exposure × " +
       "mission — that routes one issue or finding into one of four queues, first match " +
-      "wins over an ordered cascade. It answers a different question than AARS: not a " +
+      "wins over an ordered cascade. It answers a different question than the findings " +
+      "score: not a " +
       "rank, a queue, and it is built so most leaves land in Track or Track ★ and only a " +
       "documented, auditable minority reach Act. The AARS Rules page carries its editor on " +
       "a second tab.",
@@ -612,7 +628,8 @@ export const ENTRIES = [
       "question: not what has been FOUND on an asset, but what it could DO and what " +
       "stands in its way. An agent with zero open issues and unrestricted access to " +
       "sensitive data is not a low tier just because nothing has been found yet — this is " +
-      "the one reading on the Inventory that is not an aggregate of AARS or of the " +
+      "the one reading on the Inventory that is not an aggregate of the findings score or " +
+      "of the " +
       "Problem tree's outcomes, deliberately drawn beside them rather than blended in.",
     drawnOn: ["aars", "inventory", "problems"],
     mark: () => tierBadge(4),
@@ -843,6 +860,7 @@ for (const family of CODEBOOK) {
 const MEASURE_ROUTES = {
   "aars-score": ["inventory", "aars"],
   "aars-band": ["inventory", "aars"],
+  "aars-percentile": ["inventory", "graph"],
   "aars-distinct-scores": ["aars"],
   "aars-tie-rate": ["aars"],
   "aars-effective-cardinality": ["aars"],
