@@ -7,6 +7,7 @@ import {
   derivePostureInput,
   enumeratePostureVectors,
   postureVectorMatches,
+  tierEstablished,
   worstOpenProblem,
   type PostureVector,
 } from "../src/domain/posture";
@@ -189,10 +190,31 @@ describe("decidePosture — first match wins, fallback is -1", () => {
   });
 
   it("falls back with matchedRuleIndex -1 when nothing matches", () => {
+    // A rule with NO trailing wildcard row — `decidePosture`'s raw fallback contract,
+    // tested independent of DEFAULT_POSTURE_RULE's own shape. DEFAULT_POSTURE_RULE no
+    // longer exercises matchedRuleIndex -1 at all (see the test right after this one):
+    // it ends in an explicit `when: {}` row precisely so a fully-known vector always
+    // matches a NAMED row rather than the bare fallback — see postureRule.ts's own
+    // comment on `DEFAULT_POSTURE_RULE` for why.
+    const bare: PostureRule = {
+      tierRules: [{ when: { consequence: "SEVERE" }, tier: 2 }], fallbackTier: 1, topTierCeiling: 1,
+    };
+    const vector: PostureVector = { capability: "SCOPED", containment: "PARTIAL", consequence: "MODERATE" };
+    const { tier, matchedRuleIndex } = decidePosture(vector, bare);
+    expect(tier).toBe(bare.fallbackTier);
+    expect(matchedRuleIndex).toBe(-1);
+  });
+
+  it("DEFAULT_POSTURE_RULE's own trailing row claims what used to be the bare fallback", () => {
+    // The exact vector the test above used to exercise as a fallback now matches the
+    // cascade's own last row (index 9: `{ when: {}, tier: 1 }`) instead — a named row,
+    // not `matchedRuleIndex: -1`. That is Change 2's whole point: a FULLY KNOWN vector
+    // ("SCOPED/PARTIAL/MODERATE" is not missing any axis) still gets an explicit,
+    // auditable answer rather than a silent default.
     const vector: PostureVector = { capability: "SCOPED", containment: "PARTIAL", consequence: "MODERATE" };
     const { tier, matchedRuleIndex } = decidePosture(vector, RULE);
-    expect(tier).toBe(RULE.fallbackTier);
-    expect(matchedRuleIndex).toBe(-1);
+    expect(tier).toBe(1);
+    expect(matchedRuleIndex).toBe(RULE.tierRules.length - 1);
   });
 
   it("every one of the 27 leaves decides to a tier in {1,2,3,4}", () => {
@@ -224,6 +246,34 @@ describe("worstOpenProblem — the MAX of a typed ordinal, never a mean", () => 
   it("order of the input list never matters — only rank does", () => {
     expect(worstOpenProblem(["TRACK", "TRACK_STAR", "ACT", "ATTEND"])).toBe("ACT");
     expect(worstOpenProblem(["ACT", "TRACK", "TRACK_STAR", "ATTEND"])).toBe("ACT");
+  });
+});
+
+// -------------------------------------------------------------------- tierEstablished
+
+describe("tierEstablished — a posture that was never observed is never placed", () => {
+  it("true when every axis was observed, whatever it read", () => {
+    expect(tierEstablished([])).toBe(true);
+  });
+
+  it("false the moment even ONE axis is unknown — not only when all three are", () => {
+    expect(tierEstablished(["consequence"])).toBe(false);
+    expect(tierEstablished(["capability"])).toBe(false);
+    expect(tierEstablished(["capability", "consequence"])).toBe(false);
+    expect(tierEstablished(["capability", "containment", "consequence"])).toBe(false);
+  });
+
+  it("agrees with derivePostureInput's own unknowns on a real node", () => {
+    const partiallyObserved = nodeFixture({ hasAdminPrivileges: true, guardrailMissing: true });
+    const { unknowns } = derivePostureInput(partiallyObserved, RULE);
+    // capability and containment are observed above; consequence never is.
+    expect(unknowns).toEqual(["consequence"]);
+    expect(tierEstablished(unknowns)).toBe(false);
+
+    const fullyObserved = nodeFixture({
+      hasAdminPrivileges: true, guardrailMissing: true, businessImpact: "HBI",
+    });
+    expect(tierEstablished(derivePostureInput(fullyObserved, RULE).unknowns)).toBe(true);
   });
 });
 

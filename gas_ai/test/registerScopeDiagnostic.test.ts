@@ -1,4 +1,4 @@
-// `registerScopeDiagnostic` is run by hand from the Apps Script editor when the estate's
+// `registerScopeDiagnostic` is run by hand from the Apps Script editor when the landscape's
 // headline numbers look wrong in a way no rule change explains. Nothing else calls it, so
 // a throw would surface to a maintainer mid-investigation — these cases boot the real
 // server and call it for effect, once on an empty ledger and once after a sync.

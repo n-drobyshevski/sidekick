@@ -298,7 +298,7 @@ function bootstrapCore(): Rec {
       totalAssets: assets.length,
       openIssues: issues.length,
       bySeverity,
-      // A DISTRIBUTION, kept: this is the shape of the score across the estate, which is a
+      // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is a
       // legitimate thing to publish and is the same object the trend charts over time. It
       // is not the per-asset claim; that moved to `aarsPercentile`.
       byAarsSeverity,
@@ -639,7 +639,7 @@ function assetRow(n: GNode): Rec {
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aarsSeverity: n.aarsSeverity ?? null,
-    // The estate percentile, which is what the asset surfaces LEAD with now — the band
+    // The landscape percentile, which is what the asset surfaces LEAD with now — the band
     // beside it is context. Read-derived (syncStore.withAarsPercentile), so null here
     // means "not in the scored population", never "we have not computed it yet".
     aarsPercentile: n.aarsPercentile ?? null,
@@ -768,7 +768,7 @@ interface AssetsModel {
   aarsTrend: AarsTrendPoint[];
   /** Indices in aarsTrend where the scoring model changed — the chart marks them. */
   aarsTrendRuleChanges: number[];
-  /** The estate-grain coverage roll-up (reach.ts) — see the Wiz Scans REACH section. */
+  /** The landscape-grain coverage roll-up (reach.ts) — see the Wiz Scans REACH section. */
   reach: EstateReach;
   facets: {
     kinds: string[];
@@ -1678,7 +1678,7 @@ export function getProblems(p?: unknown): ApiResult {
  * gets the true top 10, computed against every open problem, not against a pre-trimmed
  * slice of them.
  *
- * `total` is the count of DISTINCT ACTIONS the whole estate collapses to; `totalProblems`
+ * `total` is the count of DISTINCT ACTIONS the whole landscape collapses to; `totalProblems`
  * is the union total `getProblems.total` already reports — the same "N problems collapse
  * to M actions" pair PRODUCT.md's own headline names. `curve` and `concentration` are
  * always computed over the FULL ranked list, never the `limit`-truncated `rows` a caller
@@ -2218,20 +2218,29 @@ export function setPostureRule(p?: unknown): ApiResult {
 
 /**
  * The decided population `postureDiscrimination` wants: tier + vector + unknowns, read off
- * whichever nodes a preview actually folded a tier onto. Mirrors `decidedForDiscrimination`
+ * whichever nodes a preview actually derived a vector for. Mirrors `decidedForDiscrimination`
  * (the problem-rule preview's identical filter) — a node with no `postureInput` (never
  * folded, or a synthetic node the fold skipped) is excluded rather than guessed at.
+ *
+ * A node IS included with `tier: undefined` when it carries `postureInput` but no
+ * `postureTier` — `posture.tierEstablished` refused to place it (see that function's own
+ * header) — rather than being dropped the way the old admission test dropped it. Dropping
+ * it here would silently remove exactly the population this whole change exists to
+ * surface: `postureDiscrimination.unknownRate.tier` (postureRule.ts) has nothing to count
+ * if this filter throws its numerator away before that function ever sees it.
  */
 function decidedForPostureDiscrimination(
   nodes: ReadonlyArray<{ postureTier?: number; postureInput?: { capability: string; containment: string; consequence: string; unknowns?: string[] } }>,
-): Array<{ tier: Tier; vector: PostureVector; unknowns: string[] }> {
-  const out: Array<{ tier: Tier; vector: PostureVector; unknowns: string[] }> = [];
+): Array<{ tier: Tier | undefined; vector: PostureVector; unknowns: string[] }> {
+  const out: Array<{ tier: Tier | undefined; vector: PostureVector; unknowns: string[] }> = [];
   for (const node of nodes) {
-    const tier = node.postureTier;
     const input = node.postureInput;
-    if (!input || !(TIER_VALUES as readonly number[]).includes(tier as number)) continue;
+    if (!input) continue;
+    const tier = (TIER_VALUES as readonly number[]).includes(node.postureTier as number)
+      ? (node.postureTier as Tier)
+      : undefined;
     out.push({
-      tier: tier as Tier,
+      tier,
       vector: {
         capability: input.capability as PostureVector["capability"],
         containment: input.containment as PostureVector["containment"],

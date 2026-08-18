@@ -127,7 +127,7 @@ export function trendLine(canvas, points, { yLabel, series } = {}) {
  *
  * `opts.yLabel` names the y axis, matching `trendLine`'s own option; the y axis is always
  * a 0–100 percentage (the `share` field, not the raw `cumulative` count) so the curve reads
- * on the same scale regardless of how many total problems the estate carries.
+ * on the same scale regardless of how many total problems the landscape carries.
  */
 export function coverCurve(canvas, curve, { yLabel = "cumulative share of problems closed" } = {}) {
   destroyExisting(canvas);

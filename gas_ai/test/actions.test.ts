@@ -309,7 +309,7 @@ describe("coverCurve and concentrationRatio", () => {
   });
 });
 
-describe("the seed estate's concentration", () => {
+describe("the seed landscape's concentration", () => {
   it("38 open problems collapse to 12 distinct actions, and the top action alone closes 13", () => {
     const assetsById = new Map<string, GNode>();
     const rows = buildProblemRows(SEED_ISSUES, SEED_FINDINGS, assetsById);
@@ -328,7 +328,7 @@ describe("the seed estate's concentration", () => {
     expect(withAuto[0]!.ruleId).toBe("wc-id-3217");
 
     console.log(
-      `seed estate: ${totalProblems} problems -> ${concentration.actions} actions, `
+      `seed landscape: ${totalProblems} problems -> ${concentration.actions} actions, `
       + `top10Share=${concentration.top10Share.toFixed(3)}, `
       + `top3=${withAuto.slice(0, 3).map((a) => `${a.key} (${a.problems})`).join(", ")}`,
     );

@@ -442,7 +442,7 @@ export async function renderProblems(main, params) {
     if (!total) {
       host.append(emptyState(
         "No open problems.",
-        "The estate has nothing to remediate right now — every issue and finding is resolved.",
+        "The landscape has nothing to remediate right now — every issue and finding is resolved.",
       ));
       return;
     }
@@ -710,7 +710,7 @@ export async function renderProblems(main, params) {
     }
     if (memberAll === false) {
       return el("p", { class: "muted small" },
-        "This estate holds more open problems than the browser keeps in hand at once, so " +
+        "This landscape holds more open problems than the browser keeps in hand at once, so " +
         "the individual rows can't be listed here without pulling the whole board across " +
         "many requests. The " + plural(action.problems, "problem") + " above is this " +
         "action's own exact count — to see the rows themselves, switch to “By problem” " +

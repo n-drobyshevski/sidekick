@@ -17,13 +17,13 @@ export const REACH_AXES = [
  * is the one sentence in the whole panel most likely to be read out of context.
  */
 export const AXIS_KNOWN_WARNING =
-  "A low known% here does NOT mean the estate is safe — it means the decision tree cannot " +
+  "A low known% here does NOT mean the landscape is safe — it means the decision tree cannot " +
   "prioritise, because the evidence one of its four axes needs was never collected. Reading " +
   "it as reassurance is the single most dangerous misuse of this number.";
 
 /** The one sentence that keeps the scan-area register and this section from reading as duplicates. */
 export const REACH_VS_SCAN_AREA_NOTE =
-  "Scan area coverage above answers “did the collection run.” Estate reach below answers " +
-  "“how much of the estate did it touch” — a scan area can report a live figure while most " +
-  "of the AI estate it feeds still sits unobserved, if the traversal that step runs never " +
+  "Scan area coverage above answers “did the collection run.” Landscape reach below answers " +
+  "“how much of the landscape did it touch” — a scan area can report a live figure while most " +
+  "of the AI landscape it feeds still sits unobserved, if the traversal that step runs never " +
   "reached those particular assets.";

@@ -16,7 +16,7 @@ const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 /**
  * What the score badge prints. The PERCENTILE, not the raw score, because a graph card is
  * the one surface with no column of neighbours to read a 0–100 number against — "72" alone
- * says nothing about whether 72 is unusual here, and on this estate it is not (14 assets
+ * says nothing about whether 72 is unusual here, and on this landscape it is not (14 assets
  * share it). "p60" says where the asset sits, which is the only comparison a card can
  * usefully make. The raw score is still spoken in the accessible name and shown in full on
  * the detail sheet.

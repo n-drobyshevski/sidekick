@@ -542,8 +542,15 @@ export function openAssetSheet(assetId, opts = {}) {
           // Order is the argument: the two models that decide something lead, and the
           // findings score follows as context. Each is named, because they routinely
           // disagree and an unlabelled row of pills would read as one escalating scale.
-          node.postureTier ? el("span", { class: "sheet-chip-label" }, "Posture") : null,
-          node.postureTier ? tierBadge(node.postureTier) : null,
+          //
+          // Keyed on `postureInput`, not `postureTier` — a real node the fold reached
+          // always carries `postureInput` (the vector it derived), whether or not it could
+          // PLACE that vector on a numbered tier (see posture.ts's `tierEstablished`). A
+          // node with `postureInput` but no `postureTier` is "assessed, not established",
+          // and `tierBadge` already renders that as an explicit dash rather than a tier —
+          // showing nothing here would read as "never assessed", which is a different claim.
+          node.postureInput ? el("span", { class: "sheet-chip-label" }, "Posture") : null,
+          node.postureInput ? tierBadge(node.postureTier) : null,
           node.worstOpenProblem
             ? el("span", { class: "sheet-chip-label" }, "Worst problem") : null,
           node.worstOpenProblem ? outcomeBadge(node.worstOpenProblem) : null,

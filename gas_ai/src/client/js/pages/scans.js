@@ -276,22 +276,22 @@ export async function renderScans(main, params, ctx) {
       meta.label);
   }
 
-  // ------------------------------------------------------------------ estate reach
+  // ------------------------------------------------------------------ landscape reach
   function reachSection(reach) {
     const wrap = el("div", {
       id: "scan-reach-section", class: "reach-wrap", tabindex: "-1",
-      "aria-label": "Estate reach",
+      "aria-label": "Landscape reach",
     });
     if (!reach) {
       wrap.append(
-        sectionLabel("Estate reach"),
+        sectionLabel("Landscape reach"),
         emptyState("Not available.", "This server build did not report a reach payload."),
       );
       return wrap;
     }
 
     wrap.append(
-      sectionLabel("Estate reach"),
+      sectionLabel("Landscape reach"),
       el("p", { class: "page-sub" },
         "Of everything on the AI register, how much did the pipeline actually touch — five " +
         "paired counts, never a bare percentage, because an empty denominator is a fact " +
@@ -365,7 +365,7 @@ export async function renderScans(main, params, ctx) {
           cell: (k) => el("span", { class: "num" }, k.signal + " of " + k.total),
         },
         {
-          key: "ai", label: "AI estate",
+          key: "ai", label: "AI landscape",
           cell: (k) => (k.ai
             ? el("span", { class: "pill ok" }, "AI")
             : el("span", { class: "cov-none" }, "substrate")),
@@ -382,7 +382,7 @@ export async function renderScans(main, params, ctx) {
     wrap.append(
       el("p", { class: "page-sub" },
         edges.populated.length + " of " + edges.declared + " relationship types populated " +
-        "on this estate's persisted graph."),
+        "on this landscape's persisted graph."),
       el("div", { class: "chipset" },
         ...edges.populated.map((t) => el("span", { class: "chip" }, t)),
         !edges.populated.length ? el("span", { class: "chipset-empty" }, "none populated") : null,

@@ -107,12 +107,21 @@ describe("cellCoverage — the 27-cell lattice, computed, not hardcoded", () => 
     // Computed by walking all 27 leaves through decidePosture — see postureRule.ts's
     // DEFAULT_POSTURE_RULE comment for the algebra and the instruction this reports rather
     // than adjusts the shape.
-    expect(coverage.byTier).toEqual({ 1: 2, 2: 18, 3: 6, 4: 1 });
+    //
+    // MOVED from { 1: 2, 2: 18, 3: 6, 4: 1 }: the trailing `{ when: {}, tier: 1 }` row
+    // (Change 2 — see DEFAULT_POSTURE_RULE's own comment) claims the six cells that used
+    // to fall through to the bare `fallbackTier`, all of which read tier 1 rather than
+    // tier 2 — none of the three axes is at its worst on any of them.
+    expect(coverage.byTier).toEqual({ 1: 8, 2: 12, 3: 6, 4: 1 });
     // The lethal-trifecta row (index 0) claims nothing; row 1 (BROAD+WEAK+SEVERE) is the
     // real tier-4 row and claims exactly the one leaf it names.
     expect(coverage.byRow[0]).toBe(0);
     expect(coverage.byRow[1]).toBe(1);
-    expect(coverage.byFallback).toBe(6);
+    // The bare fallback claims NOTHING now — the trailing wildcard row (last in
+    // `tierRules`) claims all six cells that used to reach it. `fallbackTier` survives
+    // only as a defensive floor for a hand-edited rule that removes that row.
+    expect(coverage.byFallback).toBe(0);
+    expect(coverage.byRow[coverage.byRow.length - 1]).toBe(6);
 
     const tier4Share = coverage.byTier[4] / coverage.total;
     expect(tier4Share).toBeCloseTo(1 / 27, 12);
@@ -279,8 +288,33 @@ describe("postureDiscrimination", () => {
       return { tier, vector, unknowns: [] as string[] };
     });
     const d = postureDiscrimination(decided);
-    expect(d.tierOccupancy).toEqual({ 1: 2, 2: 18, 3: 6, 4: 1 });
+    // Moved with cellCoverage's own pinned distribution above — see that test's comment.
+    expect(d.tierOccupancy).toEqual({ 1: 8, 2: 12, 3: 6, 4: 1 });
     expect(d.cellsReached).toBe(27);
+    // Every one of the 27 canonical leaves carries `unknowns: []` — the lattice has no
+    // notion of an unobserved axis, only a derived vector does (see posture.ts's own
+    // comment on `decidePosture`) — so none of this population is unestablished.
+    expect(d.unknownRate.tier).toBe(0);
+  });
+
+  it("reports the not-established share separately, never folded into tierOccupancy", () => {
+    const decided = [
+      { tier: 2 as const, vector: { capability: "MINIMAL", containment: "PARTIAL", consequence: "LIMITED" } as PostureVector, unknowns: [] },
+      // An unknown axis: decidePosture still returns SOME tier for the defaulted vector
+      // (it has no way to refuse), but the caller (graphEnrich.withPostureTiers) never
+      // would have kept it — so this fixture models that by passing `tier: undefined`,
+      // exactly the shape `decidedForPostureDiscrimination` (api.ts) now produces.
+      { tier: undefined, vector: { capability: "MINIMAL", containment: "PARTIAL", consequence: "LIMITED" } as PostureVector, unknowns: ["consequence"] },
+    ];
+    const d = postureDiscrimination(decided);
+    // The established item alone claims its tier and its cell.
+    expect(d.tierOccupancy).toEqual({ 1: 0, 2: 1, 3: 0, 4: 0 });
+    expect(d.cellsReached).toBe(1);
+    // Half the population could not be placed — reported here, not as a phantom tier.
+    expect(d.unknownRate.tier).toBeCloseTo(0.5, 12);
+    expect(d.unknownRate.consequence).toBeCloseTo(0.5, 12);
+    // The population itself is NOT dropped — both items are still in `decided`.
+    expect(d.decided).toHaveLength(2);
   });
 
   it("reports per-axis unknown rates over a population with gaps", () => {

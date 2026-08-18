@@ -178,7 +178,7 @@ export async function renderInventory(main, params) {
     el("p", { class: "page-sub" },
       "Every AI asset and its supporting identity/data surface from the last sync, " +
       "ranked by posture tier and by where its " + FINDINGS_SCORE_LABEL.toLowerCase() +
-      " sits in the estate."),
+      " sits in the landscape."),
   );
 
   if (!boot.latestSync) {
@@ -410,7 +410,7 @@ export async function renderInventory(main, params) {
 
   // ---- one-glance reach headline, linking to the Scans page's full stage ladder. Placed
   // beside the posture header rather than inside it: postureHeader answers "what did we
-  // find"; this answers "how much of the estate did the pipeline ever reach" — a different
+  // find"; this answers "how much of the landscape did the pipeline ever reach" — a different
   // question, and folding it into the same header would read as one more posture number
   // rather than the coverage caveat it actually is.
   function reachHeadline(reach) {
@@ -425,9 +425,9 @@ export async function renderInventory(main, params) {
     );
     return el("div", { class: "kpi-row" },
       kpiCard(
-        "Estate reach — observed",
+        "Landscape reach — observed",
         link,
-        "AI-kinded assets carrying any signal, of the register's AI estate — open Wiz Scans "
+        "AI-kinded assets carrying any signal, of the register's AI landscape — open Wiz Scans "
           + "for the full five-stage ladder.",
       ));
   }
@@ -506,7 +506,7 @@ export async function renderInventory(main, params) {
       keys,
       // The note says what the levels ARE, because the widest misreading of this strip is
       // that its top segment is a work queue. It is the shape of one distribution over the
-      // estate — the same object the trend below charts over time — and a level is a cut
+      // landscape — the same object the trend below charts over time — and a level is a cut
       // of the score, not an instruction. The per-asset reading is the percentile in the
       // table's score column.
       el("p", { class: "sev-strip-note" },
@@ -914,7 +914,7 @@ export async function renderInventory(main, params) {
       kind: (row) => kindLabel(row.kind),
       cloud: (row) => row.cloud || "—",
       region: (row) => row.region || "—",
-      // Percentile leads — a rank within THIS estate, not the population-dependent band
+      // Percentile leads — a rank within THIS landscape, not the population-dependent band
       // (see aars-band's own caveat and ai/AARS_SCORING_ASSESSMENT.md §3). The posture
       // tier sits in its own column right beside this one and must stay visibly
       // independent of it — a tier is not a restatement of the score.

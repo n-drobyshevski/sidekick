@@ -33,7 +33,7 @@ export const MEASURE_ENTRIES = [
     id: "aars-band", measure: "Findings score level", type: "impact",
     measurementMethod: "Objective",
     goal: "The score's own level, re-derived from the rule in force on every read. Context "
-      + "beside a score and a distribution over the estate — not a per-asset decision, "
+      + "beside a score and a distribution over the landscape — not a per-asset decision, "
       + "because on this landscape its top level holds most of the scored assets.",
     formula: "bandRanges(rule.bands) applied to the stored aars — no re-sync required.",
     dataSource: "ai_assets.aars, ai_assets.aars_severity",
@@ -45,7 +45,7 @@ export const MEASURE_ENTRIES = [
   {
     id: "aars-percentile", measure: "Findings score percentile", type: "impact",
     measurementMethod: "Objective",
-    goal: "Where one asset's score sits in the estate that was actually scored — the "
+    goal: "Where one asset's score sits in the landscape that was actually scored — the "
       + "placement an analyst can read, given that the score's levels barely separate "
       + "assets on this landscape.",
     formula: "midrankPercentiles(scores) = (count below + count equal / 2) / N, whole "
@@ -187,7 +187,7 @@ export const MEASURE_ENTRIES = [
   {
     id: "action-concentration-ratio", measure: "Action concentration",
     type: "impact", measurementMethod: "Objective",
-    goal: "Whether the estate has LEVERAGE to exploit \u2014 whether a handful of fixes closes "
+    goal: "Whether the landscape has LEVERAGE to exploit \u2014 whether a handful of fixes closes "
       + "most of the open board. A ratio near 1:1 is not a healthy reading: it means every "
       + "problem is its own distinct fix and ranking actions buys nothing over ranking "
       + "problems.",
@@ -198,20 +198,20 @@ export const MEASURE_ENTRIES = [
     revisionDue: "2027-08-13",
   },
   {
-    id: "estate-reach-stages", measure: "Estate reach stage ladder", type: "impact",
+    id: "landscape-reach-stages", measure: "Landscape reach stage ladder", type: "impact",
     measurementMethod: "Objective",
-    goal: "What fraction of the AI estate a sync actually touched, in paired counts — never "
+    goal: "What fraction of the AI landscape a sync actually touched, in paired counts — never "
       + "a bare percentage, so a stage with nothing behind it (‘0 of 22 attributed’) "
       + "cannot be misread as a clean result.",
     formula: "estateReach(...).stages: in register, observed, enriched, attributed, decided "
       + "— each { covered, total } over the AI-kinded register.",
     dataSource: "ai_assets.kind, ai_assets.business_impact, ai_assets.worst_open_problem, "
       + "ai_assets.aars, ai_edges.type, ai_issues.status, ai_findings.result",
-    reportingFormat: "Wiz Scans page, Estate reach section; AI Inventory headline card.",
+    reportingFormat: "Wiz Scans page, Landscape reach section; AI Inventory headline card.",
     revisionDue: "2027-08-13",
   },
   {
-    id: "estate-reach-edge-census", measure: "Edge census", type: "implementation",
+    id: "landscape-reach-edge-census", measure: "Edge census", type: "implementation",
     measurementMethod: "Objective",
     goal: "Which of the 23 declared graph relationship types this deployment has ever "
       + "populated — a dead type quietly removes a class of question the graph looks "
@@ -219,20 +219,20 @@ export const MEASURE_ENTRIES = [
     formula: "estateReach(...).edges: ai_edges.type censused against EDGE_TYPES, the same "
       + "logic registerScopeDiagnostic already runs by hand.",
     dataSource: "ai_edges.type",
-    reportingFormat: "Wiz Scans page, Estate reach section's edge census.",
+    reportingFormat: "Wiz Scans page, Landscape reach section's edge census.",
     revisionDue: "2027-08-13",
   },
   {
-    id: "estate-reach-axis-known-rate", measure: "Per-axis known %", type: "implementation",
+    id: "landscape-reach-axis-known-rate", measure: "Per-axis known %", type: "implementation",
     measurementMethod: "Objective",
     goal: "THE SAME WARNING AS Per-axis unknown rate, restated positively: a high known% "
-      + "does NOT mean the estate is safe — it means the decision tree cannot "
+      + "does NOT mean the landscape is safe — it means the decision tree cannot "
       + "prioritise on that axis until it does not. An empty population reads 0%, never a "
       + "false 100%.",
     formula: "1 − treeDiscrimination(decided).unknownRate per axis, inverted at reach.ts's "
       + "own boundary; 0 when nothing has ever been decided.",
     dataSource: "ai_issues.problem_input_json, ai_findings.problem_input_json",
-    reportingFormat: "Wiz Scans page, Estate reach section's axis-coverage panel.",
+    reportingFormat: "Wiz Scans page, Landscape reach section's axis-coverage panel.",
     revisionDue: "2027-08-13",
   },
 ];

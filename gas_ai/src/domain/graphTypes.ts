@@ -383,7 +383,7 @@ export interface GNode {
   aars?: number;            // findings score 0–100 (AI assets only) — see AARS_DISPLAY_LABEL
   aarsSeverity?: AarsSeverity;
   /**
-   * Where `aars` sits in the whole scored estate, as a whole-percent midrank percentile.
+   * Where `aars` sits in the whole scored landscape, as a whole-percent midrank percentile.
    *
    * DERIVED ON READ, NEVER PERSISTED, and unlike `aarsSeverity` it has no persisted
    * fallback at all — because it is not a statement about this asset. It is a statement
@@ -440,7 +440,16 @@ export interface GNode {
   // (AARS) and `withProblemVerdicts` (the decision tree) — same independent-rerunnability
   // reason those two are separate from each other. See posture.ts's own header for why a
   // posture tier is deliberately not derived from what has been FOUND on the asset.
-  /** 1–4, 4 = worst. Absent on a node the fold never reached (a synthetic node) or one never enriched. */
+  /**
+   * 1–4, 4 = worst. Absent for THREE distinct reasons, never one collapsed into another:
+   * a synthetic node (ISSUE / SUMMARY) the fold never reached; a real node never enriched
+   * at all; or a real node the fold DID reach and derive a vector for, but could not PLACE
+   * on a numbered tier because at least one of capability/containment/consequence was
+   * never observed for it — `posture.tierEstablished` says no, and `graphEnrich.
+   * withPostureTiers` withholds the tier rather than deciding one from a defaulted axis.
+   * That third case still carries `postureInput` (below) with a non-empty `unknowns`, so
+   * "why no tier" is always answerable; only the first two leave `postureInput` absent too.
+   */
   postureTier?: number;
   /**
    * What the tier was decided FROM — `PostureVector` plus which axes came back UNKNOWN.

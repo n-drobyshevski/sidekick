@@ -1,9 +1,9 @@
-// REACH — the estate-grain coverage roll-up. Phase P2b of the AARS scoring assessment
+// REACH — the landscape-grain coverage roll-up. Phase P2b of the AARS scoring assessment
 // (ai/AARS_SCORING_ASSESSMENT.md §3, the Specific test) asks a blunt question this app
-// could not answer with a single number before this file: what fraction of the AI estate
+// could not answer with a single number before this file: what fraction of the AI landscape
 // did a sync actually TOUCH? A live tenant showing 97.58% of assets at AARS INFO and 97.2%
-// of them landing on the posture fallback tier reads as "an exceptionally clean estate" and
-// reads equally well as "the estate was never assessed" — `registerScopeDiagnostic`
+// of them landing on the posture fallback tier reads as "an exceptionally clean landscape" and
+// reads equally well as "the landscape was never assessed" — `registerScopeDiagnostic`
 // (server/diagnostics.ts) exists because those two readings call for opposite responses
 // and nothing distinguished them. REACH is the same distinguishing question, computed once,
 // pure, and shipped to every page instead of run by hand from the Apps Script editor.
@@ -35,7 +35,7 @@
 // and hosts by design, exactly as `registerScopeDiagnostic`'s own header documents) and
 // reports how much of it is AI-kinded. Stages 2 through 5 are then measured over THAT
 // AI-kinded subset only: once the register's own scope question is answered, the funnel
-// that follows is a claim about the AI estate, not about the substrate that happens to
+// that follows is a claim about the AI landscape, not about the substrate that happens to
 // share a tab with it. Each stage's own comment below names the exact predicate and the
 // exact stored fields it reads.
 //

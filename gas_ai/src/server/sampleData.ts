@@ -35,6 +35,18 @@ interface NodeSeed {
   status?: string;
   account?: { id: string; name: string };
   projects?: string[];
+  /**
+   * Wiz's own HBI/MBI/LBI read on the node's project(s) — the SAME signal
+   * `graphEnrich.enrichGraphDoc` folds into `GNode.businessImpact` via `worstBusinessImpact`,
+   * never the issue/finding-level `businessImpact` field those rows already carry (a
+   * different thing — see `posture.ts`'s `consequenceOf`). `node()` stamps it onto every one
+   * of the seed's `projects` entries below rather than leaving it for the enrich pass to
+   * invent, because there is nothing to invent it FROM otherwise: a seed with no project ever
+   * carrying an impact tier folds to `undefined` forever, no matter what enrichment runs
+   * over it. Left unset on purpose for a few seeds — see AGENTS's own comment for why an
+   * absence here is load-bearing, not an oversight.
+   */
+  businessImpact?: string;
   internet?: boolean | null;
   openInternet?: boolean | null;
   sensitiveData?: boolean;
@@ -80,7 +92,17 @@ function node(seed: NodeSeed): GNode {
     hasAdminPrivileges: seed.adminPriv ?? false,
     guardrailMissing: seed.guardrailMissing ?? false,
     cloudAccount: seed.account ? { id: seed.account.id, name: seed.account.name } : undefined,
-    projects: (seed.projects ?? []).map((name) => ({ id: `proj-${name.toLowerCase()}`, name })),
+    // `businessImpact` is spread onto every project entry rather than left off, so
+    // `worstBusinessImpact` (syncNormalize.ts) — which `enrichGraphDoc` calls on every
+    // enrich pass, exactly as a live sync would — has something real to fold into
+    // `GNode.businessImpact`. Omitted entirely (never `businessImpact: undefined`) when the
+    // seed itself carries none, matching the "absent key, not an undefined one" discipline
+    // `tags` and `exposureEvidence` already keep on this same object.
+    projects: (seed.projects ?? []).map((name) => ({
+      id: `proj-${name.toLowerCase()}`,
+      name,
+      ...(seed.businessImpact ? { businessImpact: seed.businessImpact } : {}),
+    })),
     technologyCategories: seed.techCats,
     identityPurpose: seed.identityPurpose,
     issueAnalytics: seed.issueAnalytics,
@@ -128,6 +150,24 @@ function gcpAgent(seed: AgentSeed): NodeSeed {
   };
 }
 
+// BUSINESS IMPACT, SPREAD DELIBERATELY, NOT FILLED. Every agent below carries the same three
+// project-access shape (sensitive data, high privilege, missing guardrail) — that sameness is
+// what the toxic-combination groups need to demonstrate their pattern, but it means impact
+// tier is the ONE axis this cohort could otherwise flatten into a uniform fill, and a uniform
+// fill is exactly the "reads as clean, means never populated" failure this seed exists to
+// refuse (see CLAUDE.md's own framing of this fix). So the spread below is a real one: agents
+// actually reaching customer/finance PII (a, b, autogen, the internet-exposed e, the
+// public-facing chatbot h, and i, which still HOLDS sensitive access despite being inactive)
+// read HBI; the two pricing agents and the partner-data agent read MBI; the two dev/staging
+// agents and the healthy, guardrail-protected support agent read LBI.
+//
+// agent-j and agent-k are left WITHOUT a businessImpact, on purpose. They are the two agents
+// this cohort already marks `sensitiveAccess: false` — a real tenant's project-attribution
+// coverage does not track its data-access coverage, and a register that attributed impact to
+// every project regardless would make `estateReach`'s ATTRIBUTED stage and
+// `postureDiscrimination.unknownRate.consequence` both read a false 0: nothing left to prove
+// either one is doing its job. Three of the eight AWS roles below carry the identical gap for
+// the identical reason.
 const AGENTS: NodeSeed[] = [
   gcpAgent({
     id: "agent-a", name: "Agent-A", region: "europe-west1",
@@ -135,6 +175,7 @@ const AGENTS: NodeSeed[] = [
     account: { id: "gcp-account-01", name: "gcp-account-01" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
+    businessImpact: "HBI", // reaches bucket-customer-pii and db-customer-core
     // Two of the fourteen carry a publisher, matching the shape of the real tenant, where the
     // field is populated for a handful of hand-built agents and null for the rest. The dry run
     // has to exercise BOTH paths or the "—" cell never gets looked at.
@@ -146,18 +187,21 @@ const AGENTS: NodeSeed[] = [
     account: { id: "gcp-account-01", name: "gcp-account-01" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
+    businessImpact: "HBI", // reaches bucket-customer-pii
   }),
   gcpAgent({
     id: "agent-autogen", name: "AGENT_AUTOGEN_DO_NOT_DELETE", region: "us-west1",
     account: { id: "gcp-account-01", name: "gcp-account-01" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, adminPriv: true, guardrailMissing: true,
+    businessImpact: "HBI", // reaches bucket-finance-reports and db-customer-core
   }),
   gcpAgent({
     id: "agent-d-test", name: "dev-agent-D-test", region: "europe-west3",
     account: { id: "gcp-account-02", name: "gcp-account-02" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
+    businessImpact: "LBI", // dev/test — prod-level IAM on a project that isn't
   }),
   gcpAgent({
     id: "agent-d", name: "dev-agent-D", region: "europe-west3",
@@ -165,6 +209,7 @@ const AGENTS: NodeSeed[] = [
     account: { id: "gcp-account-02", name: "gcp-account-02" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
+    businessImpact: "LBI", // staging counterpart of agent-d-test
   }),
   gcpAgent({
     id: "agent-e", name: "Agent-E", region: "us-west1",
@@ -172,21 +217,25 @@ const AGENTS: NodeSeed[] = [
     projects: ["PROJECT-ALPHA", "PROJECT-GAMMA"],
     internet: true, openInternet: true, // demonstrates the internet-exposure topology node
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
+    businessImpact: "HBI", // internet-exposed AND reaches bucket-customer-pii
   }),
   gcpAgent({
     id: "agent-f", name: "agent-F", region: "europe-west4",
     projects: ["PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
+    businessImpact: "MBI", // pricing agent — financial data, not customer PII
   }),
   gcpAgent({
     id: "agent-f-preprod", name: "agent-F-preprod", region: "europe-west4",
     projects: ["PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
+    businessImpact: "MBI", // "same risk as prod" per its own issue text above
   }),
   gcpAgent({
     id: "agent-g", name: "Agent-G", region: "europe-west4",
     projects: ["PROJECT-ALPHA", "PROJECT-ETA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
+    businessImpact: "MBI", // business-partner data, not customer PII
   }),
   gcpAgent({
     id: "agent-h-chatbot", name: "agent-H-chatbot", region: "europe-west1",
@@ -195,6 +244,7 @@ const AGENTS: NodeSeed[] = [
     projects: ["PROJECT-ALPHA", "PROJECT-DELTA", "PROJECT-EPSILON"],
     internet: null, openInternet: null, // hosted: exposure inherited from the Cloud Run service
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
+    businessImpact: "HBI", // public-facing chatbot reaching db-customer-core
   }),
   gcpAgent({
     id: "agent-i", name: "agent-I", region: "europe-west4",
@@ -203,24 +253,29 @@ const AGENTS: NodeSeed[] = [
     projects: ["PROJECT-ALPHA", "PROJECT-ZETA"],
     internet: null, openInternet: null, // hosted: exposure inherited from the VM
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
+    businessImpact: "HBI", // inactive, but still holds sensitive access — the whole point of G3
   }),
   gcpAgent({
     id: "agent-j", name: "agent-J", region: "europe-west1",
     account: { id: "gcp-account-07", name: "gcp-account-07" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: false, highPriv: true, guardrailMissing: false,
+    // No businessImpact — see this array's own header. Pairs with `sensitiveAccess: false`:
+    // a project Wiz never classified for an agent that never reached classified data.
   }),
   gcpAgent({
     id: "agent-k", name: "agent-K", region: "europe-west1",
     account: { id: "gcp-account-07", name: "gcp-account-07" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: false, highPriv: true, guardrailMissing: false,
+    // No businessImpact — see this array's own header, same pairing as agent-j.
   }),
   // A guardrail-protected agent with no issues — the healthy contrast case.
   gcpAgent({
     id: "agent-l-support", name: "Agent-L-support", region: "europe-west1",
     account: { id: "gcp-account-03", name: "gcp-account-03" },
     projects: ["PROJECT-ALPHA"],
+    businessImpact: "LBI", // healthy AND classified — low impact is a real reading, not a gap
   }),
 ];
 
@@ -228,6 +283,14 @@ const AGENTS: NodeSeed[] = [
 
 const AWS_ROLE_COUNT = 8;
 const awsRoles: NodeSeed[] = [];
+// Same "spread, not fill" discipline as AGENTS above, applied to a cohort that would
+// otherwise be eight IDENTICAL rows (same role name pattern, same account, same project):
+// three read MBI (finance data, the role's own name), three are left unattributed — a
+// realistic gap for AWS IAM roles, whose project tagging lags their creation more often than
+// a GCP-native agent's does — and two read LBI.
+const AWS_ROLE_BUSINESS_IMPACT: Array<string | undefined> = [
+  "MBI", "MBI", "MBI", undefined, undefined, undefined, "LBI", "LBI",
+];
 for (let i = 1; i <= AWS_ROLE_COUNT; i++) {
   const n = String(i).padStart(2, "0");
   awsRoles.push({
@@ -240,23 +303,31 @@ for (let i = 1; i <= AWS_ROLE_COUNT; i++) {
     projects: ["PROJECT-ALPHA"],
     highPriv: true,
     sensitiveAccess: true,
+    businessImpact: AWS_ROLE_BUSINESS_IMPACT[i - 1],
   });
 }
 
 // ------------------------------------------------------------- supporting entities
 
 const SUPPORT: NodeSeed[] = [
-  // Guardrails (3 in the tenant; only Agent-L is actually protected)
-  { id: "guardrail-alpha", kind: "AI_GUARDRAIL", name: "guardrail-alpha", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"] },
-  { id: "guardrail-beta", kind: "AI_GUARDRAIL", name: "guardrail-beta", cloud: "GCP", region: "europe-west4", projects: ["PROJECT-ALPHA"] },
+  // Guardrails (3 in the tenant; only Agent-L is actually protected). These, and the models,
+  // MCP server, pipeline and dataset below, are the OTHER eight members of the 22-node
+  // AI_ASSET_KINDS population `estateReach`'s ATTRIBUTED stage measures — AGENTS above supply
+  // 14, these eight the rest. Same spread discipline as AGENTS's own header: guardrail-bedrock
+  // and pipeline-training-01 are left WITHOUT a businessImpact on purpose, so the stage's
+  // denominator still has real absences to report honestly rather than reading a clean 22 of 22.
+  { id: "guardrail-alpha", kind: "AI_GUARDRAIL", name: "guardrail-alpha", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"], businessImpact: "LBI" },
+  { id: "guardrail-beta", kind: "AI_GUARDRAIL", name: "guardrail-beta", cloud: "GCP", region: "europe-west4", projects: ["PROJECT-ALPHA"], businessImpact: "MBI" },
+  // No businessImpact — the AWS-native guardrail Wiz discovered but never got a project tag.
   { id: "guardrail-bedrock", kind: "AI_GUARDRAIL", name: "bedrock-guardrail-default", cloud: "AWS", projects: ["PROJECT-ALPHA"] },
   // Models
-  { id: "model-bedrock-claude", kind: "AI_MODEL", name: "anthropic.claude-3-5-sonnet", nativeType: "bedrock#foundationModel", cloud: "AWS", account: { id: "aws-account-prod-01", name: "aws-account-prod-01" }, projects: ["PROJECT-ALPHA"] },
-  { id: "model-text-embedding-005", kind: "AI_MODEL", name: "text-embedding-005", nativeType: "aiplatform#model", cloud: "GCP", region: "us-west1", status: "Deprecated", projects: ["PROJECT-ALPHA"] },
+  { id: "model-bedrock-claude", kind: "AI_MODEL", name: "anthropic.claude-3-5-sonnet", nativeType: "bedrock#foundationModel", cloud: "AWS", account: { id: "aws-account-prod-01", name: "aws-account-prod-01" }, projects: ["PROJECT-ALPHA"], businessImpact: "MBI" },
+  { id: "model-text-embedding-005", kind: "AI_MODEL", name: "text-embedding-005", nativeType: "aiplatform#model", cloud: "GCP", region: "us-west1", status: "Deprecated", projects: ["PROJECT-ALPHA"], businessImpact: "LBI" },
   // MCP server + pipeline + dataset
-  { id: "mcp-internal-tools", kind: "MCP_SERVER", name: "mcp-internal-tools", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"] },
+  { id: "mcp-internal-tools", kind: "MCP_SERVER", name: "mcp-internal-tools", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"], businessImpact: "MBI" },
+  // No businessImpact — a training pipeline Wiz never mapped to a classified project.
   { id: "pipeline-training-01", kind: "AI_PIPELINE", name: "pipeline-training-01", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
-  { id: "dataset-support-transcripts", kind: "AI_DATASET", name: "dataset-support-transcripts", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
+  { id: "dataset-support-transcripts", kind: "AI_DATASET", name: "dataset-support-transcripts", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], businessImpact: "HBI" },
   // Data resources
   { id: "bucket-customer-pii", kind: "BUCKET", name: "bucket-customer-pii", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
   { id: "bucket-finance-reports", kind: "BUCKET", name: "bucket-finance-reports", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-BETA"] },

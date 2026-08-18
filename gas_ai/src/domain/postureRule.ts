@@ -20,6 +20,7 @@ import {
   enumeratePostureVectors,
   postureKey,
   postureVectorMatches,
+  tierEstablished,
   type Capability,
   type Consequence,
   type Containment,
@@ -97,10 +98,48 @@ function rec(v: unknown): Loose {
  * one non-negotiable design call, named verbatim in the spec that produced this file.
  *
  * The eight rows below the trifecta row are the spec's own order, taken as given rather
- * than re-derived: `postureRule.test.ts` computes and pins the resulting 27-cell
- * distribution (tier4 1/27, tier3 6/27, tier2 18/27, tier1 2/27) rather than asserting a
- * hand-picked "better" one, per the spec's own instruction to report the shape rather than
- * tune the cascade to make a number look good.
+ * than re-derived. A NINTH real row and a lowered `fallbackTier` were added after the
+ * spec's own rows, below — see that row's own comment for why.
+ *
+ * THE FALLBACK WAS PRODUCING A FABRICATED MIDDLE. `cellCoverage`'s original shape (tier4
+ * 1/27, tier3 6/27, tier2 18/27 — 12 of those 18 by an explicit row, 6 by the bare
+ * `fallbackTier: 2`, tier1 2/27) reported the LATTICE as if it were fully explained; it was
+ * not. On a real tenant, 97.2% of assets (13,584 of 13,972) reached tier 2 through that
+ * bare fallback — the cascade had matched NOTHING about them, and `fallbackTier` told them
+ * they were "Tier 2 of 4" anyway. An unknown asset scored 0/INFO by AARS on the same
+ * missing evidence at least reads as unscored; the fallback read the identical asset as a
+ * real, moderate number. Two fixes, both from this file's own `DEFAULT_POSTURE_RULE`
+ * comment before this paragraph existed — "lowering [the fallback], adding cascade rows to
+ * cover the MINIMAL/PARTIAL region, or both" — and both are applied:
+ *
+ *   1. `posture.tierEstablished` (see its own header) now refuses to place ANY vector built
+ *      from a defaulted axis — an asset with an unread capability, containment or
+ *      consequence never reaches `decidePosture` with real inputs, so it can no longer
+ *      land on this fallback (or any row) by accident. That is the change that actually
+ *      shrinks the 97.2% figure: most of that population was never observed on some axis
+ *      in the first place, which is exactly what defaulted every one of its readings to
+ *      the SAFE end (MINIMAL / PARTIAL / LIMITED) and walked it straight into the six
+ *      fallback cells below.
+ *   2. For the population that IS fully readable and still matches none of the eight rows
+ *      above — a real `SCOPED` capability or a real gap between `PARTIAL` containment and
+ *      `STRONG`, paired with a non-`SEVERE` consequence — the cascade now says so
+ *      EXPLICITLY rather than through a hidden default: the wildcard row below claims
+ *      exactly those six cells (verified by `cellCoverage`'s pinned distribution in
+ *      postureRule.test.ts) and reads them as tier 1. None of the three axes is at its
+ *      worst reading for any of the six — no `BROAD`, no `WEAK`, no `SEVERE` — which is the
+ *      same "mildest tier" argument row 9 (`MINIMAL` + `STRONG`) already makes for the two
+ *      cells it claims; this row extends that argument to the rest of the "nothing is
+ *      actually bad here" region instead of leaving it to an unlabelled fallback. Because
+ *      the wildcard row is now the CASCADE's own last word, `fallbackTier` (lowered to 1
+ *      to match, from 2) is a defensive floor for a hand-edited rule that removes this row,
+ *      never the number a stock sync actually produces — `unreachableTierRules` does not
+ *      flag it because `cleanPostureRule`/an operator edit can always delete the wildcard
+ *      row and make it live again.
+ *
+ * `postureRule.test.ts` computes and pins the resulting 27-cell distribution (tier4 1/27,
+ * tier3 6/27, tier2 12/27, tier1 8/27) rather than asserting a hand-picked "better" one, per
+ * the spec's own instruction to report the shape rather than tune the cascade to make a
+ * number look good.
  */
 export const DEFAULT_POSTURE_RULE: PostureRule = {
   tierRules: [
@@ -114,8 +153,13 @@ export const DEFAULT_POSTURE_RULE: PostureRule = {
     { when: { containment: "WEAK" }, tier: 2 },
     { when: { consequence: "SEVERE" }, tier: 2 },
     { when: { capability: "MINIMAL", containment: "STRONG" }, tier: 1 },
+    // The former bare fallback, made an explicit row — see this const's own comment. Only
+    // reachable by a vector with none of BROAD capability, WEAK containment or SEVERE
+    // consequence (every rule above already claims those), so "nothing here reads at its
+    // worst" is exactly what tier 1 already means for row 9 immediately above it.
+    { when: {}, tier: 1 },
   ],
-  fallbackTier: 2,
+  fallbackTier: 1,
   topTierCeiling: 0.15,
 };
 
@@ -313,32 +357,63 @@ export function cellCoverage(rule: PostureRule): CellCoverage {
  * landed, how many of the 27 possible cells any asset actually reached, and how often
  * each axis could not be established. Structural port of `problem.treeDiscrimination`,
  * with tie-rate machinery left out for the reason this file's own header gives.
+ *
+ * `tier` is `Tier | undefined` on each decided item — undefined exactly when
+ * `posture.tierEstablished` refused to place the vector (see that function's own header).
+ * That population is NOT dropped from `decided`: it is the whole reason this interface
+ * exists rather than a plain tally, the same "excluded population reported beside the
+ * count, never silently" discipline `reach.ts`'s header states outright. Dropping it here
+ * would let `tierOccupancy` read as complete when it is really "of the assets we could
+ * place" — precisely the false-green failure the surrounding VERIFY constraints call out.
  */
 export interface PostureDiscrimination {
-  decided: Array<{ tier: Tier; vector: PostureVector; unknowns: string[] }>;
-  /** All four tiers, zeros kept — a tier nothing reached is the finding, not an absence. */
+  decided: Array<{ tier: Tier | undefined; vector: PostureVector; unknowns: string[] }>;
+  /**
+   * All four tiers, zeros kept — a tier nothing reached is the finding, not an absence.
+   * Counts ONLY the ESTABLISHED subset of `decided`; an item with `tier: undefined`
+   * contributes to `unknownRate.tier` below instead, never to a tier bucket it was never
+   * placed in.
+   */
   tierOccupancy: Record<Tier, number>;
-  /** Distinct cells any decided asset actually landed on, out of the 27 possible. */
+  /** Distinct cells any ESTABLISHED asset actually landed on, out of the 27 possible. */
   cellsReached: number;
-  /** Sparse — only cells at least one asset reached; size equals `cellsReached`. */
+  /**
+   * Sparse — only cells at least one ESTABLISHED asset reached; size equals `cellsReached`.
+   * A not-established item's vector is excluded here too: at least one of its own axes is a
+   * default rather than a reading, so its cell would misreport a guess as an occupied cell.
+   */
   cellOccupancy: Record<string, number>;
-  /** Share of decided assets whose reading on that axis was unknown, one entry per axis. */
-  unknownRate: Record<"capability" | "containment" | "consequence", number>;
+  /**
+   * Share of the WHOLE `decided` population (established and not) whose reading on that
+   * axis was unknown — one entry per axis, plus `tier`: the share that landed in the
+   * not-established state overall (equivalently, whose `unknowns` was non-empty on ANY
+   * axis — see `tierEstablished`). `tier` is reported here, EXTENDING this same record,
+   * rather than as a parallel `notEstablishedCount` structure next to `tierOccupancy`: the
+   * constraint this satisfies is "report it separately from tier occupancy", not "invent a
+   * second shape for it".
+   */
+  unknownRate: Record<"capability" | "containment" | "consequence" | "tier", number>;
 }
 
 export function postureDiscrimination(
-  decided: Array<{ tier: Tier; vector: PostureVector; unknowns: string[] }>,
+  decided: Array<{ tier: Tier | undefined; vector: PostureVector; unknowns: string[] }>,
 ): PostureDiscrimination {
   const tierOccupancy: Record<Tier, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
   const cellOccupancy: Record<string, number> = {};
   const unknownCounts: Record<"capability" | "containment" | "consequence", number> = {
     capability: 0, containment: 0, consequence: 0,
   };
+  let notEstablished = 0;
 
   for (const d of decided) {
-    tierOccupancy[d.tier]++;
-    const key = postureKey(d.vector);
-    cellOccupancy[key] = (cellOccupancy[key] ?? 0) + 1;
+    const established = tierEstablished(d.unknowns);
+    if (established && d.tier !== undefined) {
+      tierOccupancy[d.tier]++;
+      const key = postureKey(d.vector);
+      cellOccupancy[key] = (cellOccupancy[key] ?? 0) + 1;
+    } else {
+      notEstablished++;
+    }
     for (const u of d.unknowns) {
       if (u === "capability" || u === "containment" || u === "consequence") unknownCounts[u]++;
     }
@@ -356,6 +431,7 @@ export function postureDiscrimination(
       capability: rate(unknownCounts.capability),
       containment: rate(unknownCounts.containment),
       consequence: rate(unknownCounts.consequence),
+      tier: rate(notEstablished),
     },
   };
 }

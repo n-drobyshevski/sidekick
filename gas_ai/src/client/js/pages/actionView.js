@@ -43,7 +43,7 @@ function outcomeIndex(o) {
 
 /**
  * Row-level filters over the whole ranked action list `getActions` already sent — every
- * action fits in one payload (the estate collapses 38 problems to 12 actions on the seed
+ * action fits in one payload (the landscape collapses 38 problems to 12 actions on the seed
  * tenant), so unlike `applyProblemFilters` there is no server-paged half to defer to.
  */
 export function applyActionFilters(rows, state) {

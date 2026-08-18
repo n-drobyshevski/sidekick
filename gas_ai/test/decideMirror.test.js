@@ -391,10 +391,14 @@ describe("seeded fuzz: ~200 generated rules, coverage must deep-equal", () => {
 // --------------------------------------------------------------------------------- sanity net
 
 describe("sanity net — the two facts the domain files document", () => {
-  it("DEFAULT_POSTURE_RULE yields tier4 1, tier3 6, tier2 18, tier1 2 of 27", () => {
+  it("DEFAULT_POSTURE_RULE yields tier4 1, tier3 6, tier2 12, tier1 8 of 27", () => {
+    // Moved from { 1: 2, 2: 18, 3: 6, 4: 1 } — Change 2 (postureRule.ts's own
+    // DEFAULT_POSTURE_RULE comment) added a trailing `{ when: {}, tier: 1 }` row that
+    // claims the six cells that used to reach the bare fallback (tier 2), and reads them
+    // as tier 1 instead.
     const coverage = mirror.cellCoverage(tsPostureRule.DEFAULT_POSTURE_RULE);
     expect(coverage.total).toBe(27);
-    expect(coverage.byTier).toEqual({ 1: 2, 2: 18, 3: 6, 4: 1 });
+    expect(coverage.byTier).toEqual({ 1: 8, 2: 12, 3: 6, 4: 1 });
   });
 
   it("DEFAULT_PROBLEM_RULE yields ACT 6 of 54, and shadowedOutcomeRules is []", () => {

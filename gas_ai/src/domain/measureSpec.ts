@@ -136,8 +136,8 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       "Turn the continuous AARS score into a small, nameable set of levels — legitimate as "
       + "a MODEL diagnostic (the AARS trend, the AARS Rules page's band occupancy) and as "
       + "an opt-in filter, over its own scored population every time. NOT a claim about one "
-      + "asset (P2c): the same rule has put nearly an entire estate in CRITICAL on one "
-      + "tenant and nearly an entire estate in INFO on another under identical thresholds, "
+      + "asset (P2c): the same rule has put nearly an entire landscape in CRITICAL on one "
+      + "tenant and nearly an entire landscape in INFO on another under identical thresholds, "
       + "so the Inventory table and the asset sheet lead with aars-percentile instead — see "
       + "that record.",
     scope: "Every AI asset carrying an aars_severity value.",
@@ -151,9 +151,9 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     target:
       "No numeric target — see aars-score. A skewed distribution (most assets in one band) "
       + "is itself the signal aars-tie-rate and aars-effective-cardinality quantify, and on "
-      + "the seed estate it is severe: 19 of 30 scored assets in the top band with two "
+      + "the seed landscape it is severe: 19 of 30 scored assets in the top band with two "
       + "bands empty. The band is therefore published as CONTEXT beside a score and as a "
-      + "distribution over the estate, never as a per-asset decision; aars-percentile is "
+      + "distribution over the landscape, never as a per-asset decision; aars-percentile is "
       + "the placement statistic that replaced it in that role.",
     implementationEvidence: "aarsRule.bands on the settings row (settingsStore.getAarsRule) "
       + "carries four distinct, ordered thresholds — validateAarsRule rejects a rule that does not.",
@@ -174,7 +174,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
   {
     id: "aars-percentile",
     goal:
-      "Say where one asset's findings score sits in the estate that was actually scored, "
+      "Say where one asset's findings score sits in the landscape that was actually scored, "
       + "so a reader can act on a placement instead of on a band that does not separate "
       + "assets. The band it replaces in this role holds 19 of 30 scored assets in its top "
       + "level on the seed landscape, with two levels empty.",
@@ -190,7 +190,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     formula:
       "midrankPercentiles(scores) = (count below + count equal / 2) / N, rounded to whole "
       + "percent when published. The midrank form rather than the cumulative one: with a "
-      + "14-asset tie block on the seed estate, cumulative would read every member at the "
+      + "14-asset tie block on the seed landscape, cumulative would read every member at the "
       + "top of its own block and claim it beat the assets genuinely above it.",
     target:
       "No target — a placement is not a threshold. The diagnostic reading is the opposite "
@@ -420,7 +420,13 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     target: "No numeric target — a distribution weighted toward tier 4 is the finding a "
       + "reader is meant to notice, not a threshold this app enforces.",
     implementationEvidence: "posture_input_json is populated on every asset this tally "
-      + "counts — a node the posture fold never reached carries no postureTier and is excluded.",
+      + "counts, but posture_input_json alone does not guarantee inclusion: a node the "
+      + "posture fold never reached carries neither field and is excluded, and a node the "
+      + "fold DID reach but could not place a tier for (posture.tierEstablished said no — "
+      + "at least one of capability/containment/consequence was never observed) carries "
+      + "posture_input_json with no posture_tier and is excluded from THIS tally the same "
+      + "way, though never silently: previewPostureRule's postureDiscrimination.unknownRate."
+      + "tier reports exactly that population, separately from tier occupancy.",
     timeBasedReference: "Snapshotted at each sync's completion (or the last Recompute "
       + "postures run). " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "Security analysts; AARS Rules page operator (the Posture tab).",
@@ -599,10 +605,10 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
   {
     id: "action-concentration-ratio",
     goal:
-      "Show whether the estate has LEVERAGE to exploit — whether a small number of fixes "
+      "Show whether the landscape has LEVERAGE to exploit — whether a small number of fixes "
       + "closes most of the open-problem board — or whether it does not. A ratio near "
       + "1:1 (N actions for N problems) is not a healthy reading: it means every open "
-      + "problem is its own distinct fix, the estate carries no repeated pattern this "
+      + "problem is its own distinct fix, the landscape carries no repeated pattern this "
       + "feature can collapse, and ranking actions instead of problems buys this reader "
       + "nothing over `problems.ts`'s own Priorities ranking. The feature is only useful "
       + "on data where a handful of actions dominate, the way `configFindings.ts`'s own "
@@ -613,16 +619,16 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     measure: "concentrationRatio: {actions, problems, top10Share} — the distinct action "
       + "count the union collapses to, the union total it sums back to, and the share of "
       + "that total the top 10 ranked actions alone close.",
-    // Impact, not effectiveness: this is a fact about the ESTATE's own shape (how much its
+    // Impact, not effectiveness: this is a fact about the LANDSCAPE's own shape (how much its
     // open problems repeat one fix), unlike the aars-distinct-scores family above, which is
-    // effectiveness because it measures the MODEL's discriminative power over that estate.
+    // effectiveness because it measures the MODEL's discriminative power over that landscape.
     type: "impact",
     formula: "actions.ts's concentrationRatio(rankActionsByCover(problemRows), total) — "
       + "problems is Σ ActionRow.problems over the ranked list (always equal to `total` "
       + "when the ranked list is not itself truncated); top10Share is Σ the first 10 "
       + "ActionRow.problems divided by `total`.",
     target: "No numeric target — same reasoning as the AARS discrimination records above: "
-      + "this measures a property of the CURRENT estate's shape, not a house threshold. A "
+      + "this measures a property of the CURRENT landscape's shape, not a house threshold. A "
       + "reader comparing actions/problems across two syncs, or top10Share moving toward or "
       + "away from 1.0, is the intended use; a single snapshot has nothing to be compared "
       + "against.",
@@ -645,10 +651,10 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
 
   // ------------------------------------------------------------------------ P2b: reach
   {
-    id: "estate-reach-stages",
+    id: "landscape-reach-stages",
     goal:
       "Answer, in paired counts a reader cannot mistake for a percentage-only score, what "
-      + "fraction of the AI estate a sync actually TOUCHED — the honest answer on an estate "
+      + "fraction of the AI landscape a sync actually TOUCHED — the honest answer on a landscape "
       + "where a live tenant shows 97.58% of assets at AARS INFO and 97.2% reaching the "
       + "posture fallback tier, figures that read as 'clean' and read equally well as "
       + "'never assessed'. A reader seeing '0 of 22 attributed' must see the 22, never a "
@@ -656,7 +662,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "instead of naming exactly how much is unknown.",
     scope: "In register: every row on ai_assets, substrate included. Observed / enriched / "
       + "attributed / decided: the AI-kinded subset that stage establishes (AI_ASSET_KINDS "
-      + "membership on ai_assets.kind) — a claim about the AI estate, not about the buckets "
+      + "membership on ai_assets.kind) — a claim about the AI landscape, not about the buckets "
       + "and service accounts the exposure/identity/data-reach traversals pull in alongside it.",
     measure: "Five { covered, total } pairs: in register (AI-kinded of every row), observed "
       + "(carrying an unresolved issue, an open failing finding, or a held risk condition), "
@@ -668,7 +674,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "loadAssets()/loadIssues()/loadFindings()/loadEdges(), never a re-derivation of "
       + "isUnresolvedIssue/isOpenGap/conditionHolds, which this reuses verbatim.",
     target: "No numeric target — a funnel narrowing toward 0 IS the finding this measure "
-      + "exists to surface, not a threshold this deployment enforces. The seed estate's own "
+      + "exists to surface, not a threshold this deployment enforces. The seed landscape's own "
       + "'0 of 22 attributed' is the demonstration: no house-wide floor would make that "
       + "number less true.",
     implementationEvidence: "Each stage's covered count is recomputable from the SAME "
@@ -677,17 +683,17 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "Apps Script editor.",
     timeBasedReference: "Snapshotted at each sync's completion, over the register as it "
       + "reads right now. " + NO_PER_ENTITY_HISTORY,
-    responsibleParties: "Security analysts (reading estate posture); the operator deciding "
+    responsibleParties: "Security analysts (reading landscape posture); the operator deciding "
       + "whether a low stage matters for THIS tenant's traversal footprint.",
     dataSource: "ai_assets.kind, ai_assets.business_impact, ai_assets.worst_open_problem, "
       + "ai_assets.aars, ai_edges.type, ai_issues.status, ai_findings.result",
-    reportingFormat: "Wiz Scans page, Estate reach section's stage ladder; AI Inventory's "
+    reportingFormat: "Wiz Scans page, Landscape reach section's stage ladder; AI Inventory's "
       + "one-glance headline card.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
   {
-    id: "estate-reach-edge-census",
+    id: "landscape-reach-edge-census",
     goal:
       "Name which of the 23 declared graph relationship types this deployment's queries "
       + "have ever actually populated, and which have not — a dead relationship type "
@@ -713,15 +719,15 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     responsibleParties: "The operator deciding whether to widen the sync's graph queries; "
       + "security analysts relying on a graph-drawn relationship that may not be populated.",
     dataSource: "ai_edges.type",
-    reportingFormat: "Wiz Scans page, Estate reach section's edge census.",
+    reportingFormat: "Wiz Scans page, Landscape reach section's edge census.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
   {
-    id: "estate-reach-axis-known-rate",
+    id: "landscape-reach-axis-known-rate",
     goal:
       "THE SAME WARNING AS problem-axis-unknown-rate, restated for the KNOWN framing this "
-      + "panel reports instead: a high known% here does NOT mean the estate is safe, and a "
+      + "panel reports instead: a high known% here does NOT mean the landscape is safe, and a "
       + "low one does NOT mean it is unsafe — it means the decision tree CANNOT PRIORITISE "
       + "on that axis, because the evidence it needs was never collected. Reading a high "
       + "known% as reassurance, or a low one as a body of confirmed-safe findings, is the "
@@ -751,7 +757,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     responsibleParties: "Security analysts (reading the queue); Wiz tenant administrators "
       + "(the upstream evidence-collection controls this rate reports on).",
     dataSource: "ai_issues.problem_input_json, ai_findings.problem_input_json",
-    reportingFormat: "Wiz Scans page, Estate reach section's axis-coverage panel.",
+    reportingFormat: "Wiz Scans page, Landscape reach section's axis-coverage panel.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
