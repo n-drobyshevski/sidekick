@@ -739,6 +739,10 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
             "HAS_DATA_FINDING",
           ],
         },
+        "impactTagged": {
+          "covered": 0,
+          "total": 0,
+        },
         "kinds": [],
         "stages": [
           {
@@ -757,12 +761,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
             "covered": 0,
             "key": "enriched",
             "label": "Enriched",
-            "total": 0,
-          },
-          {
-            "covered": 0,
-            "key": "attributed",
-            "label": "Attributed",
             "total": 0,
           },
           {
@@ -4749,6 +4747,10 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
           "HAS_DATA_FINDING",
         ],
       },
+      "impactTagged": {
+        "covered": 18,
+        "total": 22,
+      },
       "kinds": [
         {
           "ai": false,
@@ -4885,13 +4887,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
           "total": 22,
         },
         {
-          "covered": 18,
-          "key": "attributed",
-          "label": "Attributed",
-          "total": 22,
-        },
-        {
-          "covered": 22,
+          "covered": 13,
           "key": "decided",
           "label": "Decided",
           "total": 22,

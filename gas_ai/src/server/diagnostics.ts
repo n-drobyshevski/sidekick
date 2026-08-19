@@ -17,7 +17,9 @@ import {
 } from "./wizClientAi";
 import { aiFlavored, aiInventoryVariables, Q_AI_INVENTORY } from "./wizQueriesAi";
 import { readAll, TABS } from "./sheetsDb";
+import { parseBool, parseTri } from "./syncStore";
 import { AI_ASSET_KINDS, EDGE_TYPES } from "../domain/graphTypes";
+import { READ_TIME_EDGE_TYPES } from "../domain/reach";
 import { isOpenGap, isUnresolvedIssue } from "../domain/config";
 import { readGraphSnapshot } from "./archiveStore";
 import type { Rec } from "../domain/util";
@@ -271,7 +273,12 @@ export function registerScopeDiagnostic(): string {
       const gap = isOpenGap({
         result: (r["result"] as string) ?? undefined,
         status: (r["status"] as string) ?? undefined,
-        deleted: r["deleted"] === true || r["deleted"] === "TRUE",
+        // `parseTri`, not a comparison against a JS boolean: the tab is plain text and
+        // `triCell` writes the lowercase strings "true"/"false"/"null". The first version of
+        // this line tested `=== true || === "TRUE"` and matched neither, so every tombstoned
+        // finding was counted as an open gap. `null` (a legacy row with no cell) is not
+        // deleted, which is the same reading `rowToFinding` takes.
+        deleted: parseTri(r["deleted"]) === true,
       });
       if (gap) findingResourceIds.add(String(r["resource_id"] ?? ""));
     }
@@ -293,14 +300,25 @@ export function registerScopeDiagnostic(): string {
         const kind = String(r["kind"] ?? "(blank)");
         const id = String(r["id"] ?? "");
         // "Signal" is anything a model could read: outstanding work, a failing control, or
-        // a risk condition the graph established. The four condition columns are read
-        // directly rather than through riskConditions.conditionState because that predicate
-        // wants a GNode and this diagnostic deliberately reads the flat ledger — the tab is
-        // what the register IS, and a snapshot disagreeing with it is itself a finding.
+        // a risk condition the graph established. The condition columns are read directly
+        // rather than through riskConditions.conditionState because that predicate wants a
+        // GNode and this diagnostic deliberately reads the flat ledger — the tab is what the
+        // register IS, and a snapshot disagreeing with it is itself a finding.
+        //
+        // Through `parseBool`/`parseTri`, never a bare `=== true`. Cells are plain text and
+        // hold the strings "true"/"false"/"null" (syncStore's boolCell/triCell), so the
+        // original `r["sensitive_data"] === true` was dead: it could not fire on any row this
+        // app has ever written, and the diagnostic reported a register carrying no risk
+        // conditions at all. Sharing the ledger's own decoder is what keeps that impossible.
+        //
+        // `open_internet` is tested beside `internet` because conditionState treats
+        // openToAllInternet as the STRONGER of the two (riskConditions.ts) — reading only the
+        // weaker column is a second, quieter undercount of the same kind.
         const held =
-          r["sensitive_data"] === true || r["sensitive_access"] === true ||
-          r["high_priv"] === true || r["admin_priv"] === true ||
-          r["guardrail_missing"] === true || r["internet"] === true;
+          parseBool(r["sensitive_data"]) || parseBool(r["sensitive_access"]) ||
+          parseBool(r["high_priv"]) || parseBool(r["admin_priv"]) ||
+          parseBool(r["guardrail_missing"]) ||
+          parseTri(r["internet"]) === true || parseTri(r["open_internet"]) === true;
         const signal = issueAssetIds.has(id) || findingResourceIds.has(id) || held;
 
         const slot = byKind.get(kind) ?? { total: 0, signal: 0 };
@@ -359,18 +377,54 @@ export function registerScopeDiagnostic(): string {
     log(`ai_assets unreadable: ${String(e instanceof Error ? e.message : e)}`);
   }
 
-  // The edge census. Eleven of the declared relationship types have never been observed to
-  // populate on a live tenant, and each dead one silently removes a class of question the
-  // product appears able to answer — tool use, model provenance, agent-to-agent trust.
+  // The edge census — against the REACHABLE ceiling, not against the declared vocabulary.
+  //
+  // This block used to print "populated edge types: N of 23", counting every member of
+  // EDGE_TYPES as something a sync could have produced. It cannot. Of the 23:
+  //   · SIX are drawn at graph-READ time by graphEnrich's stub folds (READ_TIME_EDGE_TYPES in
+  //     domain/reach.ts) and are correctly absent from the persisted tab — so they are excluded
+  //     from the denominator entirely rather than counted as a shortfall;
+  //   · SEVENTEEN can in principle land on the tab, which is the denominator printed below;
+  //   · but only FIVE are produced by any sync NORMALIZER — RUNS_AS, HAS_FINDING,
+  //     ALLOWS_ACCESS_TO, HOSTED_ON, SERVES (a `type: "…"` census of domain/syncNormalize.ts
+  //     returns exactly those). The other twelve reach the tab only on the bundled sample
+  //     dataset, which hand-authors them.
+  // So a live tenant tops out at 5, and printing "N of 23" made that ceiling read as a
+  // catastrophic shortfall on every healthy sync — the opposite of this diagnostic's job. It
+  // hid the reverse too: on a tenant where the traversals genuinely produced nothing, "0 of 23"
+  // looked like the same routine gap the eighteen always cause.
+  //
+  // The split itself is imported from reach.ts rather than restated, so the panel an analyst
+  // reads and the log an operator reads cannot drift into two different censuses.
   try {
     const rows = readAll(TABS.edges);
     const seen = new Set<string>();
     for (const r of rows) seen.add(String(r["type"] ?? ""));
-    const dead = (EDGE_TYPES as readonly string[]).filter((t) => !seen.has(t));
+    const unseen = (EDGE_TYPES as readonly string[]).filter((t) => !seen.has(t));
+    const readTime = (t: string) => (READ_TIME_EDGE_TYPES as readonly string[]).includes(t);
+    const syntheticMissing = unseen.filter(readTime);
+    const dead = unseen.filter((t) => !readTime(t));
+    const persistable = (EDGE_TYPES as readonly string[]).filter((t) => !readTime(t));
+    const populated = persistable.length - dead.length;
     log("");
     log(`  edge rows: ${rows.length}`);
-    log(`  populated edge types:  ${EDGE_TYPES.length - dead.length} of ${EDGE_TYPES.length}`);
+    log(`  populated edge types:  ${populated} of ${persistable.length} persistable`);
+    log(`    (${EDGE_TYPES.length} declared; ${syntheticMissing.length} of those are drawn at`);
+    log("     read time and are not expected on this tab. A LIVE sync normalizes only five:");
+    log("     RUNS_AS, HAS_FINDING, ALLOWS_ACCESS_TO, HOSTED_ON, SERVES — the rest reach this");
+    log("     tab only on the bundled sample dataset.)");
     if (dead.length) log(`  never populated:       ${dead.join(", ")}`);
+    if (!rows.length) {
+      log("");
+      log("  ZERO edges. Every persisted edge comes from one of six optional graphSearch steps");
+      log("  (RUNS_AS, SA_FINDINGS, SENSITIVE_DATA_ACCESS, HOST_EXPOSURE, ENDPOINT_EXPOSURE,");
+      log("  IDENTITY_ACCESS). A step that the tenant ACCEPTS and that matches nothing is");
+      log("  recorded nowhere — not skipped, not truncated — so this reading alone cannot say");
+      log("  whether those queries were rejected or simply found nothing. Check");
+      log("  last_skipped_steps on the settings tab first; if it is empty, probe a step");
+      log("  directly: probeSyncStep(\"HOST_EXPOSURE\") from this editor reports the row count,");
+      log("  what the normalizer made of those rows, and a sample of what the tenant returned.");
+    }
   } catch (e) {
     log(`ai_edges unreadable: ${String(e instanceof Error ? e.message : e)}`);
   }

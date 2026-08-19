@@ -890,6 +890,8 @@ const MEASURE_ROUTES = {
   "toxic-combo-patterns-active": ["combos"],
   "framework-average-posture": ["compliance"],
   "landscape-reach-stages": ["scans", "inventory"],
+  "landscape-impact-tagged": ["scans"],
+  "sync-step-yield": ["scans"],
   "landscape-reach-edge-census": ["scans"],
   "landscape-reach-axis-known-rate": ["scans"],
 };

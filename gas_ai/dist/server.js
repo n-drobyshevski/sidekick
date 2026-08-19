@@ -2245,517 +2245,6 @@ var Server = (() => {
     return { rows: [obj], hasNextPage: false, endCursor: null, totalCount: 1 };
   }
 
-  // src/server/diagnostics.ts
-  function preview(value) {
-    if (!value || !value.trim()) return "(unset)";
-    const v = value.trim();
-    if (v.length <= 10) return `${v.length} chars`;
-    return `${v.length} chars, ${v.slice(0, 4)}\u2026${v.slice(-4)}`;
-  }
-  function secretPreview(value) {
-    return value && value.trim() ? `(set, ${value.trim().length} chars)` : "(unset)";
-  }
-  function wizDiagnostic() {
-    var _a5;
-    const lines = [];
-    const log = (m) => {
-      lines.push(m);
-      console.log(m);
-    };
-    const apiUrl = getProp(PROP_KEYS.wizApiUrl);
-    const authUrl = (_a5 = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a5 : DEFAULT_WIZ_AUTH_URL;
-    const token = getProp(PROP_KEYS.wizApiToken);
-    const clientId = getProp(PROP_KEYS.wizClientId);
-    const clientSecret = getProp(PROP_KEYS.wizClientSecret);
-    const projectId = getProp(PROP_KEYS.wizProjectIdV2);
-    const mode = resolveWizAuthMode(token, clientId, clientSecret);
-    log("=== Wiz SIDEKICK AI diagnostic ===");
-    log(`WIZ_API_URL:        ${apiUrl || "(unset!)"}`);
-    log(`Auth mode:          ${mode != null ? mode : "(none)"}`);
-    log(`WIZ_API_TOKEN:      ${preview(token)}`);
-    log(`WIZ_CLIENT_ID:      ${preview(clientId)}`);
-    log(`WIZ_CLIENT_SECRET:  ${secretPreview(clientSecret)}`);
-    if (mode === "oauth") log(`WIZ_AUTH_URL:       ${authUrl}`);
-    log(`WIZ_PROJECT_ID_V2:  ${projectId || "(unset \u2014 querying all projects)"}`);
-    if (!apiUrl) {
-      log("FAIL: WIZ_API_URL is required, e.g. https://api.<region>.app.wiz.io/graphql.");
-      return lines.join("\n");
-    }
-    if (mode === null) {
-      log(
-        "FAIL: no usable credentials \u2014 the app runs in dry-run mode. Set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET."
-      );
-      return lines.join("\n");
-    }
-    try {
-      const bearer = getToken(true);
-      log(
-        mode === "token" ? `Step 1 OK: using raw WIZ_API_TOKEN (${preview(bearer)}).` : `Step 1 OK: OAuth exchange minted an access token (${preview(bearer)}).`
-      );
-    } catch (e) {
-      log(`Step 1 FAIL: could not obtain a token \u2014 ${e.message}`);
-      log(
-        mode === "oauth" ? "\u2192 The token endpoint rejected the client credentials. Verify WIZ_CLIENT_ID / WIZ_CLIENT_SECRET (regenerate the service account in Wiz), and that WIZ_AUTH_URL matches the auth host shown on the service-account page." : "\u2192 WIZ_API_TOKEN is unusable. A Wiz GraphQL service account gives a client id + secret, not a durable token; use WIZ_CLIENT_ID / WIZ_CLIENT_SECRET."
-      );
-      return lines.join("\n");
-    }
-    let chosen;
-    try {
-      chosen = resolveAiResourceTypes(log);
-      log("Step 2 OK: AI resource types resolved.");
-    } catch (e) {
-      log(`Step 2 FAIL: ${e.message}`);
-      return lines.join("\n");
-    }
-    const graphEnum = fetchEnumValues("GraphEntityTypeValue");
-    if (graphEnum) {
-      log(
-        `Graph entity types: ${graphEnum.length} members; AI-flavored: ${aiFlavored(graphEnum).join(", ") || "(none \u2014 graph relationship steps will be skipped)"}.`
-      );
-    } else {
-      log(
-        "Graph entity introspection unavailable \u2014 graph relationship steps will be skipped automatically if this tenant rejects their queries."
-      );
-    }
-    try {
-      const page = fetchCloudResourcesPage({
-        query: Q_AI_INVENTORY,
-        first: 1,
-        extraVariables: aiInventoryVariables(chosen.types)
-      });
-      log(
-        `Step 3 OK: query succeeded \u2014 ${page.rows.length} AI asset(s) on page 1` + (page.totalCount !== null ? ` of ${page.totalCount} total` : "") + "."
-      );
-      log("=== All checks passed. Live syncs should work. ===");
-    } catch (e) {
-      const msg = e.message;
-      log(`Step 3 FAIL: the query was rejected \u2014 ${msg}`);
-      if (/HTTP 401|HTTP 403|Unauthorized/i.test(msg)) {
-        log(
-          "\u2192 401/403/Unauthorized: the token was not accepted (expired, invalid, or minted for a different tenant). Confirm the service account targets this tenant."
-        );
-      } else if (/HTTP 404/i.test(msg)) {
-        log(
-          "\u2192 404: WIZ_API_URL host/path is wrong \u2014 it must be https://api.<region>.app.wiz.io/graphql for your tenant's region."
-        );
-      } else if (/cannot represent value/i.test(msg)) {
-        log(
-          "\u2192 The tenant rejected one of the resolved type values. Set the WIZ_AI_RESOURCE_TYPES Script Property to the exact enum values your tenant accepts (comma-separated) and rerun this diagnostic."
-        );
-      } else {
-        log(
-          '\u2192 If the body names a field (e.g. "Cannot query field"), the service account lacks permission for it or the tenant schema differs \u2014 capture the response into ai/queries/reponse_schemas/ and reconcile the normalizers.'
-        );
-      }
-      return lines.join("\n");
-    }
-    return lines.join("\n");
-  }
-  function aarsDiagnostic() {
-    const lines = [];
-    const log = (m) => {
-      lines.push(m);
-      console.log(m);
-    };
-    log("=== AARS ledger diagnostic ===");
-    try {
-      const rows = readAll(TABS.assets);
-      log(`ai_assets rows: ${rows.length}`);
-      if (!rows.length) {
-        log("The assets tab is empty \u2014 run a sync first.");
-      } else {
-        const cols = Object.keys(rows[0]);
-        const has = (c) => cols.indexOf(c) >= 0 ? "present" : "MISSING";
-        log(`column aars:          ${has("aars")}`);
-        log(`column aars_severity: ${has("aars_severity")}`);
-        log(`column aars_band:     ${has("aars_band")} (pre-rename name; harmless if present)`);
-        const scored = rows.filter((r) => r["aars"] !== null && r["aars"] !== void 0).length;
-        const sev = rows.filter((r) => r["aars_severity"] || r["aars_band"]).length;
-        log(`rows with a score:    ${scored} of ${rows.length}`);
-        log(`rows with a severity: ${sev} of ${rows.length}`);
-        if (scored && !sev) {
-          log("\u2192 Scores survived but severities did not: the tab was written by a build whose schema had a column this sheet lacks. Deploy a build that adds missing headers on write, then run one sync.");
-        }
-      }
-    } catch (e) {
-      log(`ai_assets unreadable: ${String(e instanceof Error ? e.message : e)}`);
-    }
-    try {
-      const snap = readGraphSnapshot();
-      if (!snap) log("Drive snapshot: none (the graph falls back to the tabs)");
-      else {
-        const scored = snap.nodes.filter((n) => {
-          var _a5;
-          return ((_a5 = n.aars) != null ? _a5 : null) !== null;
-        }).length;
-        const sev = snap.nodes.filter(
-          (n) => n.aarsSeverity || n.aarsBand
-        ).length;
-        log(`Drive snapshot: ${snap.nodes.length} nodes, ${scored} scored, ${sev} with a severity`);
-      }
-    } catch (e) {
-      log(`Drive snapshot unreadable: ${String(e instanceof Error ? e.message : e)}`);
-    }
-    log("=== end ===");
-    return lines.join("\n");
-  }
-  function registerScopeDiagnostic() {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
-    const lines = [];
-    const log = (m) => {
-      lines.push(m);
-      console.log(m);
-    };
-    const pct3 = (n, d) => d > 0 ? `${(100 * n / d).toFixed(1)}%` : "\u2014";
-    log("=== AI register scope diagnostic ===");
-    let issueAssetIds = /* @__PURE__ */ new Set();
-    let findingResourceIds = /* @__PURE__ */ new Set();
-    try {
-      for (const r of readAll(TABS.issues)) {
-        if (isUnresolvedIssue({ status: String((_a5 = r["status"]) != null ? _a5 : "") })) {
-          issueAssetIds.add(String((_b = r["asset_id"]) != null ? _b : ""));
-        }
-      }
-      for (const r of readAll(TABS.findings)) {
-        const gap2 = isOpenGap({
-          result: (_c = r["result"]) != null ? _c : void 0,
-          status: (_d = r["status"]) != null ? _d : void 0,
-          deleted: r["deleted"] === true || r["deleted"] === "TRUE"
-        });
-        if (gap2) findingResourceIds.add(String((_e = r["resource_id"]) != null ? _e : ""));
-      }
-    } catch (e) {
-      log(`issues/findings unreadable: ${String(e instanceof Error ? e.message : e)}`);
-    }
-    try {
-      const rows = readAll(TABS.assets);
-      log(`ai_assets rows: ${rows.length}`);
-      if (!rows.length) {
-        log("The assets tab is empty \u2014 run a sync first.");
-      } else {
-        const byKind = /* @__PURE__ */ new Map();
-        let aiKinded = 0;
-        let anySignal = 0;
-        for (const r of rows) {
-          const kind = String((_f = r["kind"]) != null ? _f : "(blank)");
-          const id = String((_g = r["id"]) != null ? _g : "");
-          const held = r["sensitive_data"] === true || r["sensitive_access"] === true || r["high_priv"] === true || r["admin_priv"] === true || r["guardrail_missing"] === true || r["internet"] === true;
-          const signal = issueAssetIds.has(id) || findingResourceIds.has(id) || held;
-          const slot = (_h = byKind.get(kind)) != null ? _h : { total: 0, signal: 0 };
-          slot.total += 1;
-          if (signal) slot.signal += 1;
-          byKind.set(kind, slot);
-          if (AI_ASSET_KINDS.indexOf(kind) >= 0) aiKinded += 1;
-          if (signal) anySignal += 1;
-        }
-        const ordered = [...byKind.entries()].sort((a, b) => b[1].total - a[1].total);
-        log("");
-        log("  by kind, most rows first \u2014 kind / rows / share / carrying signal:");
-        for (const [kind, s] of ordered) {
-          log(
-            `    ${kind.padEnd(26)} ${String(s.total).padStart(7)}  ${pct3(s.total, rows.length).padStart(6)}   signal ${String(s.signal).padStart(6)} (${pct3(s.signal, s.total)})`
-          );
-        }
-        const aiOrdered = ordered.filter(
-          ([k]) => AI_ASSET_KINDS.indexOf(k) >= 0
-        );
-        const topAi = aiOrdered[0];
-        log("");
-        log(`  distinct kinds:        ${ordered.length}`);
-        log(`  carrying any signal:   ${anySignal} of ${rows.length} (${pct3(anySignal, rows.length)})`);
-        log("");
-        log(`  in AI_ASSET_KINDS:     ${aiKinded} of ${rows.length} (${pct3(aiKinded, rows.length)})`);
-        log("    the rest is substrate the exposure / identity / data-reach traversals pull in");
-        log("    so the graph has something to draw a path through. Expected, not a fault.");
-        if (topAi) {
-          log(
-            `  largest AI kind:       ${topAi[0]} at ${topAi[1].total} rows \u2014 ${pct3(topAi[1].total, aiKinded)} of the AI landscape, ${pct3(topAi[1].signal, topAi[1].total)} of it carrying signal`
-          );
-        }
-        log("");
-        log("  Read it this way, and let the numbers decide rather than a threshold picked here:");
-        log("  \xB7 ONE AI kind holding most of the AI rows, and carrying little signal, means the");
-        log("    register is wider than the AI landscape a reader pictures. Every distribution");
-        log("    downstream is then a statement about that kind, not about AI risk. Check what");
-        log("    that Wiz type actually enumerates before reading any model as degenerate.");
-        log("  \xB7 AI kinds spread across agents / models / pipelines / datasets, most without");
-        log("    signal, means the register is right and the landscape is genuinely unassessed \u2014");
-        log("    a visibility finding, and the models were never the problem.");
-      }
-    } catch (e) {
-      log(`ai_assets unreadable: ${String(e instanceof Error ? e.message : e)}`);
-    }
-    try {
-      const rows = readAll(TABS.edges);
-      const seen = /* @__PURE__ */ new Set();
-      for (const r of rows) seen.add(String((_i = r["type"]) != null ? _i : ""));
-      const dead = EDGE_TYPES.filter((t) => !seen.has(t));
-      log("");
-      log(`  edge rows: ${rows.length}`);
-      log(`  populated edge types:  ${EDGE_TYPES.length - dead.length} of ${EDGE_TYPES.length}`);
-      if (dead.length) log(`  never populated:       ${dead.join(", ")}`);
-    } catch (e) {
-      log(`ai_edges unreadable: ${String(e instanceof Error ? e.message : e)}`);
-    }
-    log("=== end ===");
-    return lines.join("\n");
-  }
-
-  // src/server/api.ts
-  var api_exports = {};
-  __export(api_exports, {
-    bootstrap: () => bootstrap,
-    cancelSync: () => cancelSync2,
-    expandAsset: () => expandAsset,
-    getAarsRule: () => getAarsRule3,
-    getActions: () => getActions,
-    getAssetDetail: () => getAssetDetail,
-    getAssetOptions: () => getAssetOptions,
-    getAssets: () => getAssets,
-    getCompliance: () => getCompliance,
-    getConfigFindingDetail: () => getConfigFindingDetail,
-    getConfigFindings: () => getConfigFindings,
-    getGraph: () => getGraph,
-    getIssueDetail: () => getIssueDetail,
-    getIssues: () => getIssues,
-    getJobStatus: () => getJobStatus,
-    getPostureRule: () => getPostureRule3,
-    getProblemRule: () => getProblemRule3,
-    getProblems: () => getProblems,
-    getQueryVocabulary: () => getQueryVocabulary,
-    getScanQueries: () => getScanQueries,
-    getSettings: () => getSettings,
-    getStorageStats: () => getStorageStats,
-    getSyncHistory: () => getSyncHistory,
-    getToxicCombos: () => getToxicCombos,
-    previewAarsRule: () => previewAarsRule,
-    previewPostureRule: () => previewPostureRule,
-    previewProblemRule: () => previewProblemRule,
-    recomputePostures: () => recomputePostures2,
-    recomputeProblems: () => recomputeProblems,
-    rescoreAars: () => rescoreAars,
-    resetData: () => resetData2,
-    runGraphQuery: () => runGraphQuery,
-    runSync: () => runSync,
-    scoreAarsSample: () => scoreAarsSample,
-    setAarsRule: () => setAarsRule2,
-    setPostureRule: () => setPostureRule2,
-    setProblemRule: () => setProblemRule2,
-    setScanVars: () => setScanVars2,
-    setSelectedFrameworks: () => setSelectedFrameworks2,
-    setSettings: () => setSettings,
-    testScanVars: () => testScanVars
-  });
-
-  // src/domain/assetTable.ts
-  var ASSET_SORTS = [
-    "aars",
-    "postureTier",
-    "name",
-    "kind",
-    "cloud",
-    "region",
-    "severity",
-    "combos"
-  ];
-  var DEFAULT_SORT_DIR = {
-    aars: "desc",
-    postureTier: "desc",
-    severity: "desc",
-    combos: "desc",
-    name: "asc",
-    kind: "asc",
-    cloud: "asc",
-    region: "asc"
-  };
-  var DEFAULT_PAGE_SIZE = 50;
-  var MAX_PAGE_SIZE = 500;
-  var CLIENT_ALL_MAX = 1500;
-  var FACET_KEYS = [
-    "aarsSeverities",
-    "severities",
-    "kinds",
-    "clouds",
-    "regions",
-    "projects",
-    "flags"
-  ];
-  var ASSET_FLAGS = ["combo", "guardrail", "agentic", "datafindings"];
-  function score(v) {
-    const n = Number(v != null ? v : -1);
-    return Number.isFinite(n) ? n : -1;
-  }
-  var SEV_RANK = {};
-  SEVERITY_ORDER.forEach((sev, i) => {
-    SEV_RANK[sev] = SEVERITY_ORDER.length - i;
-  });
-  function sevRank(v) {
-    var _a5;
-    return (_a5 = SEV_RANK[toStr(v).toUpperCase()]) != null ? _a5 : -1;
-  }
-  function list(v) {
-    const raw = Array.isArray(v) ? v : toStr(v).split(",");
-    const out = [];
-    for (const item of raw) {
-      const s = toStr(item).trim();
-      if (s && out.indexOf(s) < 0) out.push(s);
-    }
-    return out;
-  }
-  function listWithLegacy(...sources) {
-    for (const src of sources) {
-      const parsed = list(src);
-      if (parsed.length) return parsed;
-    }
-    return [];
-  }
-  function keepValid(values, allowed) {
-    return values.map((v) => v.toUpperCase()).filter((v) => allowed.indexOf(v) >= 0);
-  }
-  function resolveAssetQuery(params) {
-    const sort = toStr(params["sort"]);
-    const resolvedSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
-    const dir = toStr(params["dir"]).toLowerCase();
-    const page = Number(params["page"]);
-    const pageSize = Number(params["pageSize"]);
-    const aarsSeverities = listWithLegacy(
-      params["aarsSeverities"],
-      params["aarsSeverity"],
-      params["band"]
-    ).map((v) => {
-      var _a5;
-      return (_a5 = normalizeAarsSeverity(v)) != null ? _a5 : "";
-    }).filter((v, i, all) => v !== "" && all.indexOf(v) === i);
-    return {
-      q: toStr(params["q"]).trim().toLowerCase(),
-      aarsSeverities,
-      severities: keepValid(
-        listWithLegacy(params["severities"], params["severity"]),
-        SEVERITY_ORDER
-      ),
-      kinds: listWithLegacy(params["kinds"], params["kind"]),
-      clouds: listWithLegacy(params["clouds"], params["cloud"]),
-      regions: listWithLegacy(params["regions"], params["region"]),
-      projects: listWithLegacy(params["projects"], params["project"]),
-      flags: list(params["flags"]).map((v) => v.toLowerCase()).filter((v) => ASSET_FLAGS.indexOf(v) >= 0),
-      sort: resolvedSort,
-      dir: dir === "asc" || dir === "desc" ? dir : DEFAULT_SORT_DIR[resolvedSort],
-      page: Number.isFinite(page) ? Math.max(0, Math.floor(page)) : 0,
-      pageSize: Number.isFinite(pageSize) && pageSize >= 1 ? Math.min(Math.floor(pageSize), MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE
-    };
-  }
-  function hasAssetFlag(row, flag) {
-    if (flag === "combo") return toNum(row["combos"]) > 0;
-    if (flag === "guardrail") return row["guardrailMissing"] === true;
-    if (flag === "agentic") return row["agentic"] === true;
-    if (flag === "datafindings") return toNum(row["dataFindings"]) > 0;
-    return false;
-  }
-  function rowProjects(row) {
-    const v = row["projects"];
-    return Array.isArray(v) ? v.map((v2) => toStr(v2)).filter(Boolean) : [];
-  }
-  function matchesAssetQuery(row, q) {
-    if (q.q && !toStr(row["name"]).toLowerCase().includes(q.q)) return false;
-    if (q.kinds.length && q.kinds.indexOf(toStr(row["kind"])) < 0) return false;
-    if (q.clouds.length && q.clouds.indexOf(toStr(row["cloud"])) < 0) return false;
-    if (q.regions.length && q.regions.indexOf(toStr(row["region"])) < 0) return false;
-    if (q.aarsSeverities.length && q.aarsSeverities.indexOf(toStr(row["aarsSeverity"])) < 0) {
-      return false;
-    }
-    if (q.severities.length && q.severities.indexOf(toStr(row["severity"])) < 0) return false;
-    if (q.projects.length) {
-      const mine = rowProjects(row);
-      if (!q.projects.some((p) => mine.indexOf(p) >= 0)) return false;
-    }
-    if (q.flags.length && !q.flags.every((f) => hasAssetFlag(row, f))) return false;
-    return true;
-  }
-  function filterAssetRows(rows, q) {
-    return rows.filter((r) => matchesAssetQuery(r, q));
-  }
-  var PRIMARY = {
-    aars: (a, b) => score(a["aars"]) - score(b["aars"]),
-    // Same "missing sorts last" convention as `aars`: `score()` reads a missing tier as -1,
-    // and 4 (worst) already sorts above 1 (best) under the ascending primary, matching AARS's
-    // own "higher number is worse" direction — so `desc` (this column's default) reads worst
-    // tier first, exactly like `aars` reads worst score first.
-    postureTier: (a, b) => score(a["postureTier"]) - score(b["postureTier"]),
-    name: (a, b) => toStr(a["name"]).localeCompare(toStr(b["name"])),
-    kind: (a, b) => toStr(a["kind"]).localeCompare(toStr(b["kind"])),
-    cloud: (a, b) => toStr(a["cloud"]).localeCompare(toStr(b["cloud"])),
-    region: (a, b) => toStr(a["region"]).localeCompare(toStr(b["region"])),
-    severity: (a, b) => sevRank(a["severity"]) - sevRank(b["severity"]),
-    combos: (a, b) => toNum(a["combos"]) - toNum(b["combos"])
-  };
-  var byScoreDesc = (a, b) => score(b["aars"]) - score(a["aars"]);
-  function assetComparator(sort, dir) {
-    var _a5;
-    const primary = (_a5 = PRIMARY[sort]) != null ? _a5 : PRIMARY.aars;
-    const sign = dir === "desc" ? -1 : 1;
-    return (a, b) => sign * primary(a, b) || byScoreDesc(a, b);
-  }
-  var ASSET_COMPARATORS = ASSET_SORTS.reduce((acc, s) => {
-    acc[s] = assetComparator(s, DEFAULT_SORT_DIR[s]);
-    return acc;
-  }, {});
-  function sortAssetRows(rows, sort, dir) {
-    const resolved = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
-    return [...rows].sort(assetComparator(resolved, dir != null ? dir : DEFAULT_SORT_DIR[resolved]));
-  }
-  function facetValues(key, row) {
-    if (key === "kinds") return [toStr(row["kind"])].filter(Boolean);
-    if (key === "clouds") return [toStr(row["cloud"])].filter(Boolean);
-    if (key === "regions") return [toStr(row["region"])].filter(Boolean);
-    if (key === "aarsSeverities") return [toStr(row["aarsSeverity"])].filter(Boolean);
-    if (key === "severities") return [toStr(row["severity"])].filter(Boolean);
-    if (key === "projects") return rowProjects(row);
-    return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f));
-  }
-  function facetSorter(key) {
-    if (key === "aarsSeverities") {
-      const order = AARS_SEVERITY_ORDER;
-      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
-    }
-    if (key === "severities") {
-      const order = SEVERITY_ORDER;
-      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
-    }
-    if (key === "flags") {
-      const order = ASSET_FLAGS;
-      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
-    }
-    return (a, b) => a.value.localeCompare(b.value);
-  }
-  function facetCounts(rows, q) {
-    var _a5;
-    const out = { matched: 0 };
-    for (const key of FACET_KEYS) {
-      const scope = key === "flags" ? q : { ...q, [key]: [] };
-      const counts = /* @__PURE__ */ new Map();
-      for (const row of rows) {
-        if (!matchesAssetQuery(row, scope)) continue;
-        for (const value of facetValues(key, row)) {
-          counts.set(value, ((_a5 = counts.get(value)) != null ? _a5 : 0) + 1);
-        }
-      }
-      for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
-      out[key] = Array.from(counts, ([value, count2]) => ({ value, count: count2 })).sort(facetSorter(key));
-    }
-    out.matched = rows.reduce((n, row) => matchesAssetQuery(row, q) ? n + 1 : n, 0);
-    return out;
-  }
-  function pageOf(rows, page, pageSize) {
-    const size = Math.max(1, Math.floor(pageSize));
-    const pageCount = Math.max(1, Math.ceil(rows.length / size));
-    const clamped = Math.min(Math.max(Math.floor(page) || 0, 0), pageCount - 1);
-    return {
-      rows: rows.slice(clamped * size, (clamped + 1) * size),
-      page: clamped,
-      pageCount
-    };
-  }
-
   // src/domain/aars.ts
   var DEFAULT_AARS_RULE = {
     severityPoints: { CRITICAL: 50, HIGH: 35, MEDIUM: 20, LOW: 8 },
@@ -2980,442 +2469,6 @@ var Server = (() => {
     });
   }
 
-  // src/domain/rankStats.ts
-  function tiedPairCount(values) {
-    var _a5;
-    const counts = /* @__PURE__ */ new Map();
-    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
-    let pairs = 0;
-    for (const c of counts.values()) pairs += c * (c - 1) / 2;
-    return pairs;
-  }
-  function tieRate(values) {
-    const n = values.length;
-    if (n < 2) return 0;
-    return tiedPairCount(values) / (n * (n - 1) / 2);
-  }
-  function effectiveCardinality(values) {
-    var _a5;
-    const n = values.length;
-    if (n === 0) return 0;
-    const counts = /* @__PURE__ */ new Map();
-    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
-    let entropy = 0;
-    for (const c of counts.values()) {
-      const p = c / n;
-      entropy += -p * Math.log(p);
-    }
-    return Math.exp(entropy);
-  }
-  function midrankPercentiles(values) {
-    var _a5;
-    const n = values.length;
-    if (n === 0) return [];
-    const counts = /* @__PURE__ */ new Map();
-    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
-    const percentileOf = /* @__PURE__ */ new Map();
-    let below = 0;
-    for (const value of [...counts.keys()].sort((a, b) => a - b)) {
-      const size = counts.get(value);
-      percentileOf.set(value, (below + size / 2) / n * 100);
-      below += size;
-    }
-    return values.map((v) => percentileOf.get(v));
-  }
-
-  // src/domain/aarsRule.ts
-  var POINTS_MIN = 0;
-  var POINTS_MAX = 100;
-  var MULTIPLIER_MIN = 1;
-  var MULTIPLIER_MAX = 3;
-  var WEIGHT_MIN = 0;
-  var WEIGHT_MAX = 3;
-  var BAND_MIN = 1;
-  var BAND_MAX = 100;
-  var CODE_MAX_LEN = 64;
-  var MAX_GAP_RULES = 60;
-  var BAND_SHARE_WARNING_THRESHOLD = 0.85;
-  var SEVERITY_KEYS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
-  var EXPOSURE_KEYS = ["SENSITIVE", "DATA_ACCESS", "NONE"];
-  var INTERNET_EXPOSURE_KEYS = ["CONFIRMED", "UNDETERMINED", "NONE"];
-  var BAND_KEYS = ["critical", "high", "medium", "low"];
-  var BAND_LABELS = {
-    critical: "CRITICAL",
-    high: "HIGH",
-    medium: "MEDIUM",
-    low: "LOW"
-  };
-  function rec(v) {
-    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
-  }
-  function clampMultiplier(v, fallback) {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return fallback;
-    const rounded = Math.round(n * 100) / 100;
-    return Math.min(MULTIPLIER_MAX, Math.max(MULTIPLIER_MIN, rounded));
-  }
-  function clampWeight(v, fallback) {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return fallback;
-    const rounded = Math.round(n * 100) / 100;
-    return Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, rounded));
-  }
-  function cleanGapCode(v) {
-    return String(v != null ? v : "").trim().toUpperCase().slice(0, CODE_MAX_LEN);
-  }
-  function cleanGapRule(v) {
-    const raw = rec(v);
-    const code = cleanGapCode(raw["code"]);
-    if (!code) return null;
-    const match = raw["match"] === "prefix" ? "prefix" : "exact";
-    return { match, code, points: clampInt(raw["points"], 0, POINTS_MIN, POINTS_MAX) };
-  }
-  function cleanAarsRule(raw) {
-    const r = rec(raw);
-    const sevRaw = rec(r["severityPoints"]);
-    const severityPoints = {};
-    for (const k of SEVERITY_KEYS) {
-      severityPoints[k] = clampInt(sevRaw[k], DEFAULT_AARS_RULE.severityPoints[k], POINTS_MIN, POINTS_MAX);
-    }
-    const expRaw = rec(r["dataExposurePoints"]);
-    const dataExposurePoints = {};
-    for (const k of EXPOSURE_KEYS) {
-      dataExposurePoints[k] = clampInt(
-        expRaw[k],
-        DEFAULT_AARS_RULE.dataExposurePoints[k],
-        POINTS_MIN,
-        POINTS_MAX
-      );
-    }
-    const srcRaw = rec(r["gapSources"]);
-    const gapSources = {
-      fiveRs: srcRaw["fiveRs"] === true,
-      deprecatedModel: srcRaw["deprecatedModel"] === true,
-      inactiveAgent: srcRaw["inactiveAgent"] === true,
-      frameworkMapping: srcRaw["frameworkMapping"] === true
-    };
-    const fswRaw = rec(r["findingSeverityWeights"]);
-    const findingSeverityWeights = {};
-    for (const k of SEVERITY_KEYS) {
-      findingSeverityWeights[k] = clampWeight(
-        fswRaw[k],
-        DEFAULT_AARS_RULE.findingSeverityWeights[k]
-      );
-    }
-    const dfpRaw = rec(r["dataFindingPoints"]);
-    const dataFindingPoints = {};
-    for (const k of SEVERITY_KEYS) {
-      dataFindingPoints[k] = clampInt(
-        dfpRaw[k],
-        DEFAULT_AARS_RULE.dataFindingPoints[k],
-        POINTS_MIN,
-        POINTS_MAX
-      );
-    }
-    const expoRaw = rec(r["exposurePoints"]);
-    const exposurePoints = {};
-    for (const k of INTERNET_EXPOSURE_KEYS) {
-      exposurePoints[k] = clampInt(
-        expoRaw[k],
-        DEFAULT_AARS_RULE.exposurePoints[k],
-        POINTS_MIN,
-        POINTS_MAX
-      );
-    }
-    const bandRaw = rec(r["bands"]);
-    const bands = {};
-    for (const k of BAND_KEYS) {
-      bands[k] = clampInt(bandRaw[k], DEFAULT_AARS_RULE.bands[k], BAND_MIN, BAND_MAX);
-    }
-    const gapsRaw = Array.isArray(r["gapPoints"]) ? r["gapPoints"] : null;
-    const gapPoints = gapsRaw ? gapsRaw.map(cleanGapRule).filter((g) => g !== null).slice(0, MAX_GAP_RULES) : DEFAULT_AARS_RULE.gapPoints.map((g) => ({ ...g }));
-    const multiIssueScaling = r["multiIssueScaling"] === "log2" ? "log2" : "flat";
-    const gapAggregation = r["gapAggregation"] === "rss" ? "rss" : "sum";
-    const dataFindingScaling = r["dataFindingScaling"] === "log2" ? "log2" : "flat";
-    const gapUnit = r["gapUnit"] === "condition" ? "condition" : "code";
-    return {
-      severityPoints,
-      multiIssueMultiplier: clampMultiplier(
-        r["multiIssueMultiplier"],
-        DEFAULT_AARS_RULE.multiIssueMultiplier
-      ),
-      multiIssueScaling,
-      pillarACap: clampInt(r["pillarACap"], DEFAULT_AARS_RULE.pillarACap, POINTS_MIN, POINTS_MAX),
-      gapUnit,
-      gapPoints,
-      gapFallbackPoints: clampInt(
-        r["gapFallbackPoints"],
-        DEFAULT_AARS_RULE.gapFallbackPoints,
-        POINTS_MIN,
-        POINTS_MAX
-      ),
-      gapAggregation,
-      gapSources,
-      findingSeverityWeights,
-      pillarBCap: clampInt(r["pillarBCap"], DEFAULT_AARS_RULE.pillarBCap, POINTS_MIN, POINTS_MAX),
-      dataExposurePoints,
-      dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),
-      dataFindingPoints,
-      dataFindingScaling,
-      dataFindingMultiplier: clampMultiplier(
-        r["dataFindingMultiplier"],
-        DEFAULT_AARS_RULE.dataFindingMultiplier
-      ),
-      pillarCCap: clampInt(r["pillarCCap"], DEFAULT_AARS_RULE.pillarCCap, POINTS_MIN, POINTS_MAX),
-      exposurePoints,
-      bands
-    };
-  }
-  function validateAarsRule(rule) {
-    const errors = [];
-    for (let i = 1; i < BAND_KEYS.length; i++) {
-      const upper = BAND_KEYS[i - 1];
-      const lower = BAND_KEYS[i];
-      if (rule.bands[upper] <= rule.bands[lower]) {
-        errors.push(
-          `The ${BAND_LABELS[upper]} threshold (${rule.bands[upper]}) must sit above the ${BAND_LABELS[lower]} threshold (${rule.bands[lower]}) \u2014 otherwise no score can land in ${BAND_LABELS[lower]}.`
-        );
-      }
-    }
-    const max = achievableMax(rule);
-    for (const key of BAND_KEYS) {
-      const threshold = rule.bands[key];
-      if (threshold > max) {
-        const sharePct2 = max > 0 ? Math.round(threshold / max * 100) : null;
-        errors.push(
-          `${BAND_LABELS[key]} at ${threshold} is unreachable \u2014 no asset can ever score above the achievable maximum of ${max} under this rule's pillar caps` + (sharePct2 === null ? "" : ` (${sharePct2}% of it)`) + `, so ${BAND_LABELS[key]} can never hold a single asset.`
-        );
-        continue;
-      }
-      const sharePct = Math.round(threshold / max * 100);
-      if (threshold / max >= BAND_SHARE_WARNING_THRESHOLD) {
-        errors.push(
-          `${BAND_LABELS[key]} at ${threshold} needs ${sharePct}% of the achievable ${max} \u2014 reachable only when nearly every pillar lands at or near its own cap on the same asset, which real landscapes rarely do all at once. Consider lowering the threshold or raising the pillar caps.`
-        );
-      }
-    }
-    const { CONFIRMED, UNDETERMINED, NONE } = rule.exposurePoints;
-    if (UNDETERMINED > CONFIRMED) {
-      errors.push(
-        `Undetermined internet exposure (${UNDETERMINED}) must not score above confirmed exposure (${CONFIRMED}) \u2014 "we haven't checked" cannot outrank "yes, it is reachable".`
-      );
-    }
-    if (NONE > UNDETERMINED) {
-      errors.push(
-        `No internet exposure (${NONE}) must not score above undetermined exposure (${UNDETERMINED}).`
-      );
-    }
-    for (let i = 1; i < SEVERITY_KEYS.length; i++) {
-      const worse = SEVERITY_KEYS[i - 1];
-      const milder = SEVERITY_KEYS[i];
-      if (rule.dataFindingPoints[milder] > rule.dataFindingPoints[worse]) {
-        errors.push(
-          `A ${milder.toLowerCase()} data finding (${rule.dataFindingPoints[milder]}) must not score above a ${worse.toLowerCase()} one (${rule.dataFindingPoints[worse]}).`
-        );
-      }
-    }
-    if (!rule.gapPoints.length) {
-      errors.push(
-        "The compliance-gap cascade has no rules; every gap would price at the fallback. Add a rule or set the fallback deliberately."
-      );
-    }
-    if (rule.gapPoints.length > MAX_GAP_RULES) {
-      errors.push(`The compliance-gap cascade is limited to ${MAX_GAP_RULES} rules.`);
-    }
-    const seen = /* @__PURE__ */ new Set();
-    rule.gapPoints.forEach((g, i) => {
-      if (!g.code) {
-        errors.push(`Compliance-gap rule ${i + 1} has no code.`);
-        return;
-      }
-      const key = `${g.match}:${g.code}`;
-      if (seen.has(key)) {
-        errors.push(`Compliance-gap rule ${i + 1} repeats ${g.match} "${g.code}".`);
-      }
-      seen.add(key);
-    });
-    return errors;
-  }
-  function shadowedGapRules(rule) {
-    const dead = [];
-    rule.gapPoints.forEach((row, i) => {
-      for (let j = 0; j < i; j++) {
-        const earlier = rule.gapPoints[j];
-        const shadows = earlier.match === "prefix" ? row.code.startsWith(earlier.code) : row.match === "exact" && row.code === earlier.code;
-        if (shadows) {
-          dead.push(i);
-          return;
-        }
-      }
-    });
-    return dead;
-  }
-  var DERIVABLE_PREFIXES = ["LLM", "ASI", "ML_", "5R_"];
-  var DERIVABLE_EXACT = ["NO_GUARDRAIL", "DEPRECATED_MODEL", "INACTIVE_AGENT", "FIVE_RS"];
-  var CONDITION_GAP_CODES = CONDITION_KEYS.map((k) => `COND_${k}`);
-  function isDerivable(code, rule) {
-    const c = cleanGapCode(code);
-    if (!c) return false;
-    if (c === "DEPRECATED_MODEL") return rule.gapSources.deprecatedModel === true;
-    if (c === "INACTIVE_AGENT") return rule.gapSources.inactiveAgent === true;
-    if (rule.gapUnit === "condition") {
-      if (CONDITION_GAP_CODES.includes(c)) return true;
-      return c.startsWith("COMBO_");
-    }
-    if (c.startsWith("5R_")) {
-      return rule.gapSources.fiveRs === true || rule.gapSources.frameworkMapping === true;
-    }
-    if (c === "FIVE_RS") return false;
-    if (DERIVABLE_EXACT.includes(c)) return true;
-    return DERIVABLE_PREFIXES.some((p) => c.startsWith(p));
-  }
-  function prefixFamilyIsDerivable(prefix, rule) {
-    const isComboFamily = prefix.startsWith("COMBO");
-    if (rule.gapUnit === "condition") {
-      return isComboFamily;
-    }
-    if (isComboFamily) return false;
-    return !(prefix.startsWith("5R") && rule.gapSources.fiveRs !== true && rule.gapSources.frameworkMapping !== true);
-  }
-  function unreachableGapRules(rule) {
-    const dead = [];
-    const checkedExact = [...DERIVABLE_EXACT, ...CONDITION_GAP_CODES];
-    rule.gapPoints.forEach((row, i) => {
-      const claimsDerivedFamily = row.match === "prefix" ? !prefixFamilyIsDerivable(row.code, rule) : checkedExact.includes(cleanGapCode(row.code)) && !isDerivable(row.code, rule);
-      if (claimsDerivedFamily) dead.push(i);
-    });
-    return dead;
-  }
-  var EMPTY_DISCRIMINATION = {
-    scored: 0,
-    distinctScores: 0,
-    largestTieGroup: 0,
-    tieRate: 0,
-    effectiveCardinality: 0,
-    bandOccupancy: {},
-    range: { min: 0, max: 0 },
-    saturated: { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 }
-  };
-  function ruleDiscrimination(nodes, rule) {
-    var _a5, _b, _c;
-    const scores = [];
-    const counts = {};
-    for (const b of ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]) counts[b] = 0;
-    const saturated = { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 };
-    const maxData = Math.min(
-      rule.pillarCCap,
-      Math.round(
-        (Math.max(...EXPOSURE_KEYS.map((k) => rule.dataExposurePoints[k])) + Math.max(...SEVERITY_KEYS.map((k) => rule.dataFindingPoints[k]))) * rule.dataAmplifier
-      )
-    );
-    const maxExposure = Math.max(...INTERNET_EXPOSURE_KEYS.map((k) => rule.exposurePoints[k]));
-    for (const n of nodes) {
-      if (typeof n.aars !== "number") continue;
-      scores.push(n.aars);
-      const band = String((_a5 = n.aarsSeverity) != null ? _a5 : "");
-      if (band in counts) counts[band] = counts[band] + 1;
-      const p = n.aarsPillars;
-      if (p) {
-        if (p.toxic >= rule.pillarACap) saturated.toxic++;
-        if (p.compliance >= rule.pillarBCap) saturated.compliance++;
-        if (maxData > 0 && p.data >= maxData) saturated.data++;
-        if (maxExposure > 0 && ((_b = p.exposure) != null ? _b : 0) >= maxExposure) saturated.exposure++;
-      }
-      if (n.aars >= 100) saturated.score++;
-    }
-    if (!scores.length) return { ...EMPTY_DISCRIMINATION, bandOccupancy: counts };
-    const byScore = /* @__PURE__ */ new Map();
-    for (const s of scores) byScore.set(s, ((_c = byScore.get(s)) != null ? _c : 0) + 1);
-    return {
-      scored: scores.length,
-      distinctScores: byScore.size,
-      largestTieGroup: Math.max(...byScore.values()),
-      // Both delegate to rankStats rather than repeating Σ C(nₖ,2)/C(N,2) and exp(-Σ pₖ ln pₖ)
-      // here. They group `scores` again internally, which cannot disagree with `byScore` —
-      // same array, same grouping — and one implementation of each formula is one place for it
-      // to be wrong. rankStats is deliberately free of any AARS import so it stays the shared
-      // home for these the day something other than a score needs measuring.
-      tieRate: tieRate(scores),
-      effectiveCardinality: effectiveCardinality(scores),
-      bandOccupancy: counts,
-      range: { min: Math.min(...scores), max: Math.max(...scores) },
-      saturated
-    };
-  }
-  function gapMatchTally(rule, codeLists) {
-    var _a5;
-    const perRule = rule.gapPoints.map(() => 0);
-    const byCode = {};
-    let fallback = 0;
-    let total2 = 0;
-    for (const list2 of codeLists != null ? codeLists : []) {
-      if (!Array.isArray(list2)) continue;
-      const seen = /* @__PURE__ */ new Set();
-      for (const raw of list2) {
-        const code = cleanGapCode(raw);
-        if (!code || seen.has(code)) continue;
-        seen.add(code);
-        byCode[code] = ((_a5 = byCode[code]) != null ? _a5 : 0) + 1;
-        total2++;
-        let matched = false;
-        for (let i = 0; i < rule.gapPoints.length; i++) {
-          const row = rule.gapPoints[i];
-          const hit = row.match === "exact" ? code === row.code : code.startsWith(row.code);
-          if (hit) {
-            perRule[i] = perRule[i] + 1;
-            matched = true;
-            break;
-          }
-        }
-        if (!matched) fallback++;
-      }
-    }
-    return { perRule, fallback, total: total2, byCode };
-  }
-  function pointsPhrase(n) {
-    return n === 1 ? "1 point" : `${n} points`;
-  }
-  function ruleSummary(rule) {
-    const achievableMaxForRule = achievableMax(rule);
-    const sev = SEVERITY_KEYS.map((k) => `${k} ${rule.severityPoints[k]}`).join(", ");
-    const exposure = `sensitive data ${rule.dataExposurePoints.SENSITIVE}, unconfirmed data access ${rule.dataExposurePoints.DATA_ACCESS}, none ${rule.dataExposurePoints.NONE}`;
-    const amplified = EXPOSURE_KEYS.map(
-      (k) => String(Math.round(rule.dataExposurePoints[k] * rule.dataAmplifier))
-    ).join(" / ");
-    const countClause = rule.multiIssueScaling === "log2" ? `each doubling of the open-issue count multiplies that by a further \xD7${rule.multiIssueMultiplier} step (two issues \xD7${rule.multiIssueMultiplier}, four \xD7${(1 + (rule.multiIssueMultiplier - 1) * 2).toFixed(2)}, eight \xD7${(1 + (rule.multiIssueMultiplier - 1) * 3).toFixed(2)})` : `more than one open issue multiplies that by \xD7${rule.multiIssueMultiplier}, however many there are`;
-    const gapClause = rule.gapAggregation === "rss" ? `matched prices combine as a root-sum-square, so each further gap adds less than the last` : `matched prices are added up`;
-    const gapUnitClause = rule.gapUnit === "condition" ? `Priced per CONDITION, not per framework code: one charge for each risk condition held (missing guardrail, excessive privilege, sensitive data, internet exposure) and one more per distinct toxic-combination group the asset's issues fall into. The framework codes on those issues still render on the detail sheet and the compliance rollups \u2014 they are just not what pillar B counts.` : `Priced per CODE: one charge for each distinct framework code (OWASP LLM / Agentic / ML, 5Rs) the asset's open issues carry.`;
-    const findingClause = SEVERITY_KEYS.every((k) => rule.dataFindingPoints[k] === 0) ? `The data findings an asset can reach score nothing; they are drawn on the graph but never added to the score.` : `The worst data finding it can reach adds ` + SEVERITY_KEYS.map((k) => `${k.toLowerCase()} ${rule.dataFindingPoints[k]}`).join(" / ") + (rule.dataFindingScaling === "log2" ? `, and each doubling of the finding count multiplies that by a further \xD7${rule.dataFindingMultiplier} step.` : `, however many it reaches.`);
-    return [
-      `Pillar A \u2014 toxic combinations, capped at ${rule.pillarACap}. The asset's worst open issue scores ${sev}; ${countClause}.`,
-      `Pillar B \u2014 compliance gaps, capped at ${rule.pillarBCap}. ${gapUnitClause} ${rule.gapPoints.length} pricing rules are tried in order, first match wins; an unmatched code scores ${pointsPhrase(rule.gapFallbackPoints)}. ${gapClause[0].toUpperCase()}${gapClause.slice(1)}.`,
-      `Pillar C \u2014 data exposure, capped at ${rule.pillarCCap}: ${exposure}, all amplified by \xD7${rule.dataAmplifier} (\u2192 ${amplified}). ${findingClause}`,
-      rule.exposurePoints.CONFIRMED === 0 && rule.exposurePoints.UNDETERMINED === 0 && rule.exposurePoints.NONE === 0 ? `Pillar D \u2014 internet exposure scores nothing; reachability is reported beside the score but never added to it.` : `Pillar D \u2014 internet exposure: confirmed ${rule.exposurePoints.CONFIRMED}, undetermined ${rule.exposurePoints.UNDETERMINED}, none ${rule.exposurePoints.NONE}. Not amplified \u2014 the 5Rs signal says nothing about reachability.`,
-      `Levels \u2014 CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. Scores are clamped to 100.` + // Said only when it changes what a reader should expect: at 100 this sentence would
-      // repeat the clamp just stated and add nothing. Below 100 it is a material fact about
-      // the rule — a band at or near the scale's top may sit above what this rule's own
-      // pillar caps can ever actually deliver; see achievableMax's own doc comment.
-      (achievableMaxForRule < 100 ? ` This rule's pillar caps top out at ${achievableMaxForRule}, not 100 \u2014 no score under it can ever exceed that, whatever the bands above say.` : "")
-    ];
-  }
-  function bandRanges(bands) {
-    return [
-      { severity: "CRITICAL", min: bands.critical, max: 100 },
-      { severity: "HIGH", min: bands.high, max: bands.critical - 1 },
-      { severity: "MEDIUM", min: bands.medium, max: bands.high - 1 },
-      { severity: "LOW", min: bands.low, max: bands.medium - 1 },
-      { severity: "INFO", min: 0, max: bands.low - 1 }
-    ].map((b) => ({ ...b, label: `score ${b.min}\u2013${b.max}` }));
-  }
-  function scoringEqual(a, b) {
-    const withoutBands = (r) => {
-      const c = cleanAarsRule(r);
-      delete c.bands;
-      return JSON.stringify(c);
-    };
-    return withoutBands(a) === withoutBands(b);
-  }
-
   // src/domain/riskConditions.ts
   function conditionState(node2, key) {
     var _a5, _b;
@@ -3612,78 +2665,19 @@ var Server = (() => {
     };
   }
 
-  // src/domain/aarsTrend.ts
-  function countAarsSeverities(nodes) {
-    const counts = {};
-    for (const sev of AARS_SEVERITY_ORDER) counts[sev] = 0;
-    for (const n of nodes) {
-      const sev = normalizeAarsSeverity(n.aarsSeverity);
-      if (sev) counts[sev] += 1;
-    }
-    return counts;
-  }
-  function parseCounts(v, keys) {
-    if (typeof v !== "string" || !v) return null;
-    let parsed;
-    try {
-      parsed = JSON.parse(v);
-    } catch {
-      return null;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const raw = parsed;
-    const counts = {};
-    for (const k of keys) {
-      const n = Number(raw[k]);
-      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
-    }
-    return counts;
-  }
-  function trendFromHistory(rows, spec, limit = 90) {
-    var _a5;
-    const points = [];
-    for (const r of rows) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const counts = parseCounts(r[spec.countsColumn], spec.keys);
-      if (!counts) continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      if (!at) continue;
-      const v = Number(r[spec.versionColumn]);
-      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
-      points.push({ at, counts, ruleVersion });
-    }
-    points.sort(cmpBy((p) => p.at));
-    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
-  }
-  var AARS_SEVERITY_SPEC = {
-    keys: AARS_SEVERITY_ORDER,
-    countsColumn: "aars_severity_json",
-    versionColumn: "aars_rule_version"
-  };
-  function aarsTrendFromHistory(rows, limit = 90) {
-    return trendFromHistory(rows, AARS_SEVERITY_SPEC, limit);
-  }
-  function ruleChangePoints(points) {
-    const marks = [];
-    for (let i = 1; i < points.length; i++) {
-      if (points[i].ruleVersion !== points[i - 1].ruleVersion) marks.push(i);
-    }
-    return marks;
-  }
-
   // src/domain/problemRule.ts
   var AXIS_KEYS = ["exploitation", "impact", "exposure", "mission"];
   var MAX_OUTCOME_RULES = 40;
   var MAX_EXPLOITATION_RULES = 200;
   var MAX_VERDICTS = 20;
   var MAX_TOTAL_IMPACT_GROUPS = 40;
-  var CODE_MAX_LEN2 = 128;
+  var CODE_MAX_LEN = 128;
   var ACT_CEILING_FLOOR = 1e-3;
-  function rec2(v) {
+  function rec(v) {
     return v && typeof v === "object" && !Array.isArray(v) ? v : {};
   }
   function cleanCode(v) {
-    return String(v != null ? v : "").trim().slice(0, CODE_MAX_LEN2);
+    return String(v != null ? v : "").trim().slice(0, CODE_MAX_LEN);
   }
   var DEFAULT_PROBLEM_RULE = {
     outcomeRules: [
@@ -3709,7 +2703,7 @@ var Server = (() => {
     actLeafCeiling: 0.15
   };
   function cleanWhen(v) {
-    const raw = rec2(v);
+    const raw = rec(v);
     const when = {};
     if (EXPLOITATION_VALUES.includes(raw["exploitation"])) {
       when.exploitation = raw["exploitation"];
@@ -3729,11 +2723,11 @@ var Server = (() => {
     return OUTCOME_VALUES.includes(v) ? v : fallback;
   }
   function cleanOutcomeRule(v, fallback) {
-    const raw = rec2(v);
+    const raw = rec(v);
     return { when: cleanWhen(raw["when"]), outcome: cleanOutcome(raw["outcome"], fallback) };
   }
   function cleanExploitationRuleRow(v) {
-    const raw = rec2(v);
+    const raw = rec(v);
     const ruleId = cleanCode(raw["ruleId"]);
     if (!ruleId) return null;
     const maturityRaw = raw["maturity"];
@@ -3751,7 +2745,7 @@ var Server = (() => {
     return out;
   }
   function cleanProblemRule(raw) {
-    const r = rec2(raw);
+    const r = rec(raw);
     const fallbackOutcome = cleanOutcome(r["fallbackOutcome"], DEFAULT_PROBLEM_RULE.fallbackOutcome);
     const rowsRaw = Array.isArray(r["outcomeRules"]) ? r["outcomeRules"] : null;
     const outcomeRules = rowsRaw ? rowsRaw.slice(0, MAX_OUTCOME_RULES).map((row) => cleanOutcomeRule(row, fallbackOutcome)) : DEFAULT_PROBLEM_RULE.outcomeRules.map((row) => ({ when: { ...row.when }, outcome: row.outcome }));
@@ -4011,883 +3005,6 @@ var Server = (() => {
       }
     }
     return worst;
-  }
-
-  // src/domain/problems.ts
-  var PROBLEMS_CLIENT_ALL_MAX = 1e3;
-  function issueToProblemRow(issue2, node2) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h;
-    return {
-      id: issue2.id,
-      kind: "ISSUE",
-      title: issue2.ruleName,
-      assetId: issue2.assetId || null,
-      assetName: issue2.assetName,
-      problemOutcome: (_a5 = issue2.problemOutcome) != null ? _a5 : "",
-      vector: (_c = (_b = issue2.problemInput) == null ? void 0 : _b.vector) != null ? _c : null,
-      unknowns: (_e = (_d = issue2.problemInput) == null ? void 0 : _d.unknowns) != null ? _e : [],
-      dueAt: (_f = issue2.dueAt) != null ? _f : null,
-      postureTier: (_g = node2 == null ? void 0 : node2.postureTier) != null ? _g : null,
-      amplification: nodeAmplificationVector(node2),
-      severity: (_h = issue2.adjustedSeverity) != null ? _h : null,
-      ruleId: issue2.ruleId || void 0,
-      businessImpact: issue2.businessImpact,
-      // No IaC link and no ignore-rule list on an issue — see this field's own doc comment.
-      iac: false,
-      ignored: false,
-      firstSeenAt: issue2.createdAt,
-      ruleRemediation: issue2.resolutionRecommendation
-    };
-  }
-  function findingToProblemRow(finding, node2) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
-    return {
-      id: finding.id,
-      kind: "FINDING",
-      title: finding.ruleName || finding.ruleShortId || "",
-      assetId: node2 ? node2.id : null,
-      assetName: node2 ? node2.name : finding.resourceName || finding.resourceId,
-      problemOutcome: (_a5 = finding.problemOutcome) != null ? _a5 : "",
-      vector: (_c = (_b = finding.problemInput) == null ? void 0 : _b.vector) != null ? _c : null,
-      unknowns: (_e = (_d = finding.problemInput) == null ? void 0 : _d.unknowns) != null ? _e : [],
-      // FindingRow carries no SLA deadline — Wiz's config-finding evaluations have no dueAt
-      // field, only issuesV2 does. Null, never a made-up date.
-      dueAt: null,
-      postureTier: (_f = node2 == null ? void 0 : node2.postureTier) != null ? _f : null,
-      amplification: nodeAmplificationVector(node2),
-      severity: (_g = finding.severity) != null ? _g : null,
-      ruleId: finding.ruleId,
-      ruleShortId: finding.ruleShortId || void 0,
-      businessImpact: finding.businessImpact,
-      iac: ((_h = finding.iacFindingIds) != null ? _h : []).length > 0,
-      ignored: ((_i = finding.ignoreRuleIds) != null ? _i : []).length > 0,
-      firstSeenAt: finding.firstSeenAt,
-      ruleRemediation: finding.remediationInstructions
-    };
-  }
-  function buildProblemRows(issues2, findings, assetsById) {
-    const rows = [];
-    for (const issue2 of issues2) {
-      if (!isUnresolvedIssue(issue2)) continue;
-      rows.push(issueToProblemRow(issue2, assetsById.get(issue2.assetId)));
-    }
-    for (const finding of findings) {
-      if (!isOpenGap(finding)) continue;
-      rows.push(findingToProblemRow(finding, assetsById.get(finding.resourceId)));
-    }
-    return rows;
-  }
-  function outcomeRank(o) {
-    const i = OUTCOME_VALUES.indexOf(o);
-    return i < 0 ? OUTCOME_VALUES.length : i;
-  }
-  function postureRank(t) {
-    return t === null ? 0 : t;
-  }
-  function slaRank(dueAt) {
-    const t = Date.parse(dueAt || "");
-    return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
-  }
-  var AMPLIFICATION_KEYS = ["tools", "identity", "persistence", "multiAgent", "context", "language"];
-  function amplificationFactorRank(v) {
-    return v === null || v === void 0 ? -1 : v;
-  }
-  function compareProblems(a, b) {
-    const outcome = outcomeRank(a.problemOutcome) - outcomeRank(b.problemOutcome);
-    if (outcome !== 0) return outcome;
-    const posture = postureRank(b.postureTier) - postureRank(a.postureTier);
-    if (posture !== 0) return posture;
-    const sla = slaRank(a.dueAt) - slaRank(b.dueAt);
-    if (sla !== 0) return sla;
-    for (const key of AMPLIFICATION_KEYS) {
-      const diff = amplificationFactorRank(b.amplification[key]) - amplificationFactorRank(a.amplification[key]);
-      if (diff !== 0) return diff;
-    }
-    return a.id.localeCompare(b.id);
-  }
-  function rankProblems(rows) {
-    return [...rows].sort(compareProblems);
-  }
-  function countProblemRowsByOutcome(rows) {
-    var _a5;
-    const counts = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0, "": 0 };
-    for (const r of rows) counts[r.problemOutcome] = ((_a5 = counts[r.problemOutcome]) != null ? _a5 : 0) + 1;
-    return counts;
-  }
-
-  // src/domain/actions.ts
-  function actionKeyOf(row) {
-    var _a5, _b;
-    return `${row.kind}|${(_a5 = row.ruleId) != null ? _a5 : ""}|${(_b = row.ruleShortId) != null ? _b : ""}`;
-  }
-  var NO_OUTCOME = "";
-  function outcomeRank2(o) {
-    const i = OUTCOME_VALUES.indexOf(o);
-    return i < 0 ? OUTCOME_VALUES.length : i;
-  }
-  function candidatesFrom(pool) {
-    const groups = /* @__PURE__ */ new Map();
-    for (const row of pool) {
-      const key = actionKeyOf(row);
-      const bucket = groups.get(key);
-      if (bucket) bucket.push(row);
-      else groups.set(key, [row]);
-    }
-    return groups;
-  }
-  function scoreCandidate(key, rows) {
-    let worstRank = OUTCOME_VALUES.length;
-    const assetIds = /* @__PURE__ */ new Set();
-    for (const row of rows) {
-      const rank = outcomeRank2(row.problemOutcome);
-      if (rank < worstRank) worstRank = rank;
-      if (row.assetId) assetIds.add(row.assetId);
-    }
-    return { key, rows, worstRank, assetCount: assetIds.size };
-  }
-  function compareCandidates(a, b) {
-    if (a.worstRank !== b.worstRank) return a.worstRank - b.worstRank;
-    if (a.rows.length !== b.rows.length) return b.rows.length - a.rows.length;
-    if (a.assetCount !== b.assetCount) return b.assetCount - a.assetCount;
-    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
-  }
-  function buildActionRow(key, rows) {
-    var _a5, _b;
-    const sorted = [...rows].sort((a, b) => a.id.localeCompare(b.id));
-    const first = sorted[0];
-    const assetIds = /* @__PURE__ */ new Set();
-    const outcomeMix = {};
-    const severityMix = {};
-    const businessImpacts = /* @__PURE__ */ new Set();
-    let worstRank = OUTCOME_VALUES.length;
-    let worstOutcome = NO_OUTCOME;
-    let iac = 0;
-    let ignored = 0;
-    let firstSeenAt = "";
-    let title = "";
-    let remediation;
-    for (const row of sorted) {
-      if (row.assetId) assetIds.add(row.assetId);
-      outcomeMix[row.problemOutcome] = ((_a5 = outcomeMix[row.problemOutcome]) != null ? _a5 : 0) + 1;
-      if (row.severity) severityMix[row.severity] = ((_b = severityMix[row.severity]) != null ? _b : 0) + 1;
-      if (row.businessImpact) businessImpacts.add(row.businessImpact);
-      const rank = outcomeRank2(row.problemOutcome);
-      if (rank < worstRank) {
-        worstRank = rank;
-        worstOutcome = row.problemOutcome;
-      }
-      if (row.iac) iac += 1;
-      if (row.ignored) ignored += 1;
-      if (row.firstSeenAt && (!firstSeenAt || row.firstSeenAt < firstSeenAt)) {
-        firstSeenAt = row.firstSeenAt;
-      }
-      if (!title && row.title) title = row.title;
-      if (!remediation && row.ruleRemediation) remediation = row.ruleRemediation;
-    }
-    return {
-      key,
-      kind: first.kind,
-      ruleId: first.ruleId,
-      ruleShortId: first.ruleShortId,
-      title: title || first.title,
-      problems: rows.length,
-      assets: assetIds.size,
-      worstOutcome,
-      outcomeMix,
-      severityMix,
-      businessImpacts: [...businessImpacts].sort(),
-      autoRemediable: false,
-      iac,
-      ignored,
-      firstSeenAt: firstSeenAt || void 0,
-      remediation
-    };
-  }
-  function rankActionsByCover(rows, limit) {
-    let remaining = rows.slice();
-    const ranked = [];
-    while (remaining.length > 0) {
-      const groups = candidatesFrom(remaining);
-      let best = null;
-      for (const [key, groupRows] of groups) {
-        const candidate = scoreCandidate(key, groupRows);
-        if (!best || compareCandidates(candidate, best) < 0) best = candidate;
-      }
-      if (!best) break;
-      ranked.push(buildActionRow(best.key, best.rows));
-      const covered = new Set(best.rows.map((r) => r.id));
-      remaining = remaining.filter((r) => !covered.has(r.id));
-    }
-    return limit !== void 0 && limit >= 0 ? ranked.slice(0, limit) : ranked;
-  }
-  function withAutoRemediation(actions, policies) {
-    const byId = /* @__PURE__ */ new Map();
-    const byShortId = /* @__PURE__ */ new Map();
-    for (const p of policies) {
-      if (p.hasAutoRemediation !== true) continue;
-      byId.set(p.policyId, true);
-      if (p.shortId) byShortId.set(p.shortId, true);
-    }
-    return actions.map((a) => {
-      const auto = a.ruleId !== void 0 && byId.get(a.ruleId) === true || a.ruleShortId !== void 0 && byShortId.get(a.ruleShortId) === true;
-      return auto ? { ...a, autoRemediable: true } : a;
-    });
-  }
-  function coverCurve(ranked, total2) {
-    const out = [];
-    let cumulative = 0;
-    let rank = 0;
-    for (const a of ranked) {
-      rank += 1;
-      cumulative += a.problems;
-      out.push({ rank, cumulative, share: total2 > 0 ? cumulative / total2 : 0 });
-    }
-    return out;
-  }
-  function concentrationRatio(ranked, total2) {
-    const problems = ranked.reduce((n, a) => n + a.problems, 0);
-    const top10 = ranked.slice(0, 10).reduce((n, a) => n + a.problems, 0);
-    return {
-      actions: ranked.length,
-      problems,
-      top10Share: total2 > 0 ? top10 / total2 : 0
-    };
-  }
-
-  // src/domain/postureRule.ts
-  var AXIS_KEYS2 = ["capability", "containment", "consequence"];
-  var TRIFECTA_KEYS = ["privateData", "untrustedIngress", "externalEgress"];
-  var WHEN_KEYS = [...AXIS_KEYS2, ...TRIFECTA_KEYS];
-  var MAX_TIER_RULES = 40;
-  var TIER_CEILING_FLOOR = 1e-3;
-  function rec3(v) {
-    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
-  }
-  var DEFAULT_POSTURE_RULE = {
-    tierRules: [
-      // The lethal-trifecta row — UNREACHABLE by construction. See this const's own comment.
-      { when: { privateData: true, untrustedIngress: true, externalEgress: true }, tier: 4 },
-      { when: { capability: "BROAD", containment: "WEAK", consequence: "SEVERE" }, tier: 4 },
-      { when: { capability: "BROAD", containment: "WEAK" }, tier: 3 },
-      { when: { capability: "BROAD", consequence: "SEVERE" }, tier: 3 },
-      { when: { containment: "WEAK", consequence: "SEVERE" }, tier: 3 },
-      { when: { capability: "BROAD" }, tier: 2 },
-      { when: { containment: "WEAK" }, tier: 2 },
-      { when: { consequence: "SEVERE" }, tier: 2 },
-      { when: { capability: "MINIMAL", containment: "STRONG" }, tier: 1 },
-      // The former bare fallback, made an explicit row — see this const's own comment. Only
-      // reachable by a vector with none of BROAD capability, WEAK containment or SEVERE
-      // consequence (every rule above already claims those), so "nothing here reads at its
-      // worst" is exactly what tier 1 already means for row 9 immediately above it.
-      { when: {}, tier: 1 }
-    ],
-    fallbackTier: 1,
-    topTierCeiling: 0.15
-  };
-  function cleanTier(v, fallback) {
-    const n = Number(v);
-    return n === 1 || n === 2 || n === 3 || n === 4 ? n : fallback;
-  }
-  function cleanWhen2(v) {
-    const raw = rec3(v);
-    const when = {};
-    if (CAPABILITY_VALUES.includes(raw["capability"])) {
-      when.capability = raw["capability"];
-    }
-    if (CONTAINMENT_VALUES.includes(raw["containment"])) {
-      when.containment = raw["containment"];
-    }
-    if (CONSEQUENCE_VALUES.includes(raw["consequence"])) {
-      when.consequence = raw["consequence"];
-    }
-    for (const key of TRIFECTA_KEYS) {
-      if (typeof raw[key] === "boolean") when[key] = raw[key];
-    }
-    return when;
-  }
-  function cleanTierRule(v, fallback) {
-    const raw = rec3(v);
-    return { when: cleanWhen2(raw["when"]), tier: cleanTier(raw["tier"], fallback) };
-  }
-  function cleanPostureRule(raw) {
-    const r = rec3(raw);
-    const fallbackTier = cleanTier(r["fallbackTier"], DEFAULT_POSTURE_RULE.fallbackTier);
-    const rowsRaw = Array.isArray(r["tierRules"]) ? r["tierRules"] : null;
-    const tierRules = rowsRaw ? rowsRaw.slice(0, MAX_TIER_RULES).map((row) => cleanTierRule(row, fallbackTier)) : DEFAULT_POSTURE_RULE.tierRules.map((row) => ({ when: { ...row.when }, tier: row.tier }));
-    const ceilingRaw = Number(r["topTierCeiling"]);
-    const topTierCeiling = Number.isFinite(ceilingRaw) ? Math.min(1, Math.max(TIER_CEILING_FLOOR, ceilingRaw)) : DEFAULT_POSTURE_RULE.topTierCeiling;
-    return { tierRules, fallbackTier, topTierCeiling };
-  }
-  function pct2(share) {
-    return `${(share * 100).toFixed(1)}%`;
-  }
-  function validatePostureRule(rule) {
-    const errors = [];
-    if (!rule.tierRules.length) {
-      errors.push(
-        "The tier cascade has no rules; every vector would route to the fallback tier. Add a rule or accept the fallback deliberately."
-      );
-    }
-    if (rule.tierRules.length > MAX_TIER_RULES) {
-      errors.push(`The tier cascade is limited to ${MAX_TIER_RULES} rules.`);
-    }
-    rule.tierRules.forEach((row, i) => {
-      const isEmpty = WHEN_KEYS.every((k) => row.when[k] === void 0);
-      if (isEmpty && i !== rule.tierRules.length - 1) {
-        errors.push(
-          `Tier rule ${i + 1} has no conditions, so it matches every remaining vector and swallows every rule after it. Move it last or give it a condition.`
-        );
-      }
-    });
-    const seen = /* @__PURE__ */ new Map();
-    rule.tierRules.forEach((row, i) => {
-      const isEmpty = WHEN_KEYS.every((k) => row.when[k] === void 0);
-      if (isEmpty) return;
-      const key = WHEN_KEYS.filter((k) => row.when[k] !== void 0).map((k) => `${k}:${row.when[k]}`).join("|");
-      const earlier = seen.get(key);
-      if (earlier !== void 0) {
-        errors.push(`Tier rule ${i + 1} repeats the same condition as rule ${earlier + 1}.`);
-      } else {
-        seen.set(key, i);
-      }
-    });
-    const coverage = cellCoverage(rule);
-    const tier4Share = coverage.total ? coverage.byTier[4] / coverage.total : 0;
-    if (tier4Share > rule.topTierCeiling) {
-      errors.push(
-        `This rule sends ${coverage.byTier[4]} of ${coverage.total} cells to tier 4 (${pct2(tier4Share)}) \u2014 above the ${pct2(rule.topTierCeiling)} ceiling.`
-      );
-    }
-    return errors;
-  }
-  function shadowedTierRules(rule) {
-    const leaves = enumeratePostureVectors();
-    const dead = [];
-    rule.tierRules.forEach((row, i) => {
-      const rowLeaves = leaves.filter((v) => postureVectorMatches(v, row.when));
-      if (!rowLeaves.length) return;
-      const allClaimedEarlier = rowLeaves.every(
-        (v) => rule.tierRules.slice(0, i).some((earlier) => postureVectorMatches(v, earlier.when))
-      );
-      if (allClaimedEarlier) dead.push(i);
-    });
-    return dead;
-  }
-  function unreachableTierRules(rule) {
-    const leaves = enumeratePostureVectors();
-    const dead = [];
-    rule.tierRules.forEach((row, i) => {
-      const matchesAny = leaves.some((v) => postureVectorMatches(v, row.when));
-      if (!matchesAny) dead.push(i);
-    });
-    return dead;
-  }
-  function cellCoverage(rule) {
-    const leaves = enumeratePostureVectors();
-    const byRow = rule.tierRules.map(() => 0);
-    const byTier = { 1: 0, 2: 0, 3: 0, 4: 0 };
-    let byFallback = 0;
-    for (const v of leaves) {
-      const { tier, matchedRuleIndex } = decidePosture(v, rule);
-      if (matchedRuleIndex === -1) byFallback++;
-      else byRow[matchedRuleIndex] += 1;
-      byTier[tier]++;
-    }
-    return { total: leaves.length, byRow, byFallback, byTier };
-  }
-  function postureDiscrimination(decided) {
-    var _a5;
-    const tierOccupancy = { 1: 0, 2: 0, 3: 0, 4: 0 };
-    const cellOccupancy = {};
-    const unknownCounts = {
-      capability: 0,
-      containment: 0,
-      consequence: 0
-    };
-    let notEstablished = 0;
-    for (const d of decided) {
-      const established = tierEstablished(d.unknowns);
-      if (established && d.tier !== void 0) {
-        tierOccupancy[d.tier]++;
-        const key = postureKey(d.vector);
-        cellOccupancy[key] = ((_a5 = cellOccupancy[key]) != null ? _a5 : 0) + 1;
-      } else {
-        notEstablished++;
-      }
-      for (const u of d.unknowns) {
-        if (u === "capability" || u === "containment" || u === "consequence") unknownCounts[u]++;
-      }
-    }
-    const n = decided.length;
-    const rate = (count2) => n ? count2 / n : 0;
-    return {
-      decided,
-      tierOccupancy,
-      cellsReached: Object.keys(cellOccupancy).length,
-      cellOccupancy,
-      unknownRate: {
-        capability: rate(unknownCounts.capability),
-        containment: rate(unknownCounts.containment),
-        consequence: rate(unknownCounts.consequence),
-        tier: rate(notEstablished)
-      }
-    };
-  }
-  function postureRuleSummary(rule) {
-    const coverage = cellCoverage(rule);
-    const tier4Share = coverage.total ? coverage.byTier[4] / coverage.total : 0;
-    const unreachable = unreachableTierRules(rule);
-    return [
-      `${rule.tierRules.length} tier rules are tried in order, first match wins; a vector matching none of them falls back to tier ${rule.fallbackTier}.`,
-      `Tier 4 claims ${coverage.byTier[4]} of ${coverage.total} cells (${pct2(tier4Share)}), against a ceiling of ${pct2(rule.topTierCeiling)}.`,
-      unreachable.length ? `${unreachable.length} row(s) can never fire against any cell this app can derive \u2014 the lethal-trifecta row, kept as a documented gap rather than fed a guess.` : `Every row can fire against at least one of the 27 cells.`,
-      `Posture is a capability envelope against a containment, not a sum of open problems: an asset with zero open findings can still sit at a high tier.`
-    ];
-  }
-  function tierEqual(a, b) {
-    const withoutCeiling = (r) => {
-      const c = cleanPostureRule(r);
-      delete c.topTierCeiling;
-      return JSON.stringify(c);
-    };
-    return withoutCeiling(a) === withoutCeiling(b);
-  }
-
-  // src/domain/configFindings.ts
-  var CONFIG_SORTS = [
-    "severity",
-    "rule",
-    "resource",
-    "firstSeen",
-    "status",
-    "priority"
-  ];
-  var DEFAULT_CONFIG_SORT_DIR = {
-    severity: "desc",
-    firstSeen: "desc",
-    rule: "asc",
-    resource: "asc",
-    status: "asc",
-    // Phase 5: the problem tree's outcome, worst (ACT) first — same convention as severity.
-    priority: "desc"
-  };
-  var DEFAULT_CONFIG_PAGE_SIZE = 50;
-  var MAX_CONFIG_PAGE_SIZE = 500;
-  var CONFIG_CLIENT_ALL_MAX = 1e3;
-  var CONFIG_FACET_KEYS = [
-    "severities",
-    "statuses",
-    "clouds",
-    "resourceTypes",
-    "rules",
-    "projects",
-    "linkage",
-    "flags",
-    "outcomes"
-  ];
-  var LINKAGE_VALUES = ["linked", "unlinked"];
-  var CONFIG_FLAGS = ["gap", "ignored", "iac"];
-  var sevRank2 = (s) => {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i < 0 ? SEVERITY_ORDER.length : i;
-  };
-  var priorityRank = (o) => {
-    const i = OUTCOME_VALUES.indexOf(o);
-    return i < 0 ? OUTCOME_VALUES.length : i;
-  };
-  function toConfigView(f, linked) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
-    return {
-      id: f.id,
-      name: (_b = (_a5 = f.name) != null ? _a5 : f.ruleName) != null ? _b : "",
-      severity: (_c = f.severity) != null ? _c : "UNKNOWN",
-      status: (_d = f.status) != null ? _d : "",
-      result: (_e = f.result) != null ? _e : "",
-      ruleShortId: (_f = f.ruleShortId) != null ? _f : "",
-      ruleName: (_g = f.ruleName) != null ? _g : "",
-      resourceId: f.resourceId,
-      resourceName: (_h = f.resourceName) != null ? _h : "",
-      resourceType: (_i = f.resourceType) != null ? _i : "",
-      cloud: (_j = f.cloudProvider) != null ? _j : "",
-      subscriptionName: (_k = f.subscriptionName) != null ? _k : "",
-      projects: ((_l = f.projects) != null ? _l : []).map((p) => p.name).filter(Boolean),
-      businessImpact: (_m = f.businessImpact) != null ? _m : "",
-      firstSeenAt: (_n = f.firstSeenAt) != null ? _n : "",
-      analyzedAt: (_o = f.analyzedAt) != null ? _o : "",
-      risks: (_p = f.risks) != null ? _p : [],
-      linked,
-      ignored: ((_q = f.ignoreRuleIds) != null ? _q : []).length > 0,
-      iac: ((_r = f.iacFindingIds) != null ? _r : []).length > 0,
-      gap: isOpenGap(f),
-      problemOutcome: (_s = f.problemOutcome) != null ? _s : ""
-    };
-  }
-  function listParam(v) {
-    if (Array.isArray(v)) return v.map((x) => String(x)).filter(Boolean);
-    const s = toStr(v);
-    return s ? s.split(",").map((x) => x.trim()).filter(Boolean) : [];
-  }
-  function resolveConfigQuery(params) {
-    var _a5;
-    return {
-      q: ((_a5 = toStr(params["q"])) != null ? _a5 : "").trim().toLowerCase(),
-      severities: listParam(params["severities"]),
-      statuses: listParam(params["statuses"]),
-      clouds: listParam(params["clouds"]),
-      resourceTypes: listParam(params["resourceTypes"]),
-      rules: listParam(params["rules"]),
-      projects: listParam(params["projects"]),
-      linkage: listParam(params["linkage"]).filter(
-        (v) => LINKAGE_VALUES.indexOf(v) >= 0
-      ),
-      flags: listParam(params["flags"]).filter(
-        (v) => CONFIG_FLAGS.indexOf(v) >= 0
-      ),
-      outcomes: listParam(params["outcomes"]).filter(
-        (v) => OUTCOME_VALUES.indexOf(v) >= 0
-      )
-    };
-  }
-  function hasConfigFlag(row, flag) {
-    if (flag === "gap") return row.gap;
-    if (flag === "ignored") return row.ignored;
-    if (flag === "iac") return row.iac;
-    return false;
-  }
-  function anyOf(selected, value) {
-    return selected.length === 0 || selected.indexOf(value) >= 0;
-  }
-  function matchesConfigQuery(row, q) {
-    if (!anyOf(q.severities, row.severity)) return false;
-    if (!anyOf(q.statuses, row.status)) return false;
-    if (!anyOf(q.clouds, row.cloud)) return false;
-    if (!anyOf(q.resourceTypes, row.resourceType)) return false;
-    if (!anyOf(q.rules, row.ruleShortId)) return false;
-    if (q.projects.length && !row.projects.some((p) => q.projects.indexOf(p) >= 0)) return false;
-    if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
-    if (!anyOf(q.outcomes, row.problemOutcome)) return false;
-    for (const flag of q.flags) if (!hasConfigFlag(row, flag)) return false;
-    if (q.q) {
-      const hay = [
-        row.name,
-        row.ruleShortId,
-        row.ruleName,
-        row.resourceName,
-        row.resourceType,
-        row.subscriptionName
-      ].join(" ").toLowerCase();
-      if (hay.indexOf(q.q) < 0) return false;
-    }
-    return true;
-  }
-  function filterConfigRows(rows, q) {
-    return rows.filter((r) => matchesConfigQuery(r, q));
-  }
-  function configComparator(sort, dir) {
-    const d = (dir != null ? dir : DEFAULT_CONFIG_SORT_DIR[sort]) === "asc" ? 1 : -1;
-    const tie = (a, b) => a.id.localeCompare(b.id);
-    return (a, b) => {
-      let cmp2 = 0;
-      if (sort === "severity") cmp2 = sevRank2(b.severity) - sevRank2(a.severity);
-      else if (sort === "rule") cmp2 = a.ruleShortId.localeCompare(b.ruleShortId);
-      else if (sort === "resource") cmp2 = a.resourceName.localeCompare(b.resourceName);
-      else if (sort === "status") cmp2 = a.status.localeCompare(b.status);
-      else if (sort === "firstSeen") cmp2 = a.firstSeenAt.localeCompare(b.firstSeenAt);
-      else if (sort === "priority") cmp2 = priorityRank(b.problemOutcome) - priorityRank(a.problemOutcome);
-      return cmp2 !== 0 ? cmp2 * d : tie(a, b);
-    };
-  }
-  function sortConfigRows(rows, sort, dir) {
-    return rows.slice().sort(configComparator(sort, dir));
-  }
-  function facetValues2(key, row) {
-    if (key === "severities") return [row.severity].filter(Boolean);
-    if (key === "statuses") return [row.status].filter(Boolean);
-    if (key === "clouds") return [row.cloud].filter(Boolean);
-    if (key === "resourceTypes") return [row.resourceType].filter(Boolean);
-    if (key === "rules") return [row.ruleShortId].filter(Boolean);
-    if (key === "projects") return row.projects;
-    if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
-    if (key === "outcomes") return row.problemOutcome ? [row.problemOutcome] : [];
-    return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f));
-  }
-  function facetSorter2(key) {
-    if (key === "severities") return (a, b) => sevRank2(a.value) - sevRank2(b.value);
-    if (key === "outcomes") return (a, b) => priorityRank(a.value) - priorityRank(b.value);
-    if (key === "flags") {
-      const order = CONFIG_FLAGS;
-      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
-    }
-    if (key === "linkage") {
-      const order = LINKAGE_VALUES;
-      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
-    }
-    return (a, b) => a.value.localeCompare(b.value);
-  }
-  function configFacetCounts(rows, q) {
-    var _a5;
-    const out = { matched: 0 };
-    for (const key of CONFIG_FACET_KEYS) {
-      const scope = key === "flags" ? q : { ...q, [key]: [] };
-      const counts = /* @__PURE__ */ new Map();
-      for (const row of rows) {
-        if (!matchesConfigQuery(row, scope)) continue;
-        for (const value of facetValues2(key, row)) {
-          counts.set(value, ((_a5 = counts.get(value)) != null ? _a5 : 0) + 1);
-        }
-      }
-      for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
-      out[key] = Array.from(counts, ([value, count2]) => ({ value, count: count2 })).sort(facetSorter2(key));
-    }
-    out.matched = rows.reduce((n, row) => matchesConfigQuery(row, q) ? n + 1 : n, 0);
-    return out;
-  }
-  function rollupByControl(rows) {
-    var _a5;
-    const byRule = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      const key = row.ruleShortId || row.ruleName || "\u2014";
-      const bucket = byRule.get(key);
-      if (bucket) bucket.push(row);
-      else byRule.set(key, [row]);
-    }
-    const out = [];
-    for (const [ruleShortId, group] of byRule) {
-      const resources = /* @__PURE__ */ new Set();
-      const gapResources = /* @__PURE__ */ new Set();
-      const unlinkedGapResources = /* @__PURE__ */ new Set();
-      const clouds = /* @__PURE__ */ new Set();
-      const projects = /* @__PURE__ */ new Set();
-      const risks = /* @__PURE__ */ new Set();
-      const severityMix = {};
-      let worst = "UNKNOWN";
-      let firstSeenAt = "";
-      let gaps = 0;
-      let linked = 0;
-      let unlinked = 0;
-      let ignored = 0;
-      let iac = 0;
-      for (const row of group) {
-        resources.add(row.resourceId);
-        if (row.cloud) clouds.add(row.cloud);
-        for (const p of row.projects) projects.add(p);
-        for (const r of row.risks) risks.add(r);
-        severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
-        if (sevRank2(row.severity) < sevRank2(worst)) worst = row.severity;
-        if (row.firstSeenAt && (!firstSeenAt || row.firstSeenAt < firstSeenAt)) {
-          firstSeenAt = row.firstSeenAt;
-        }
-        if (row.gap) {
-          gaps += 1;
-          gapResources.add(row.resourceId);
-          if (!row.linked) unlinkedGapResources.add(row.resourceId);
-        }
-        if (row.linked) linked += 1;
-        else unlinked += 1;
-        if (row.ignored) ignored += 1;
-        if (row.iac) iac += 1;
-      }
-      out.push({
-        ruleShortId,
-        ruleName: group[0].ruleName || group[0].name || "",
-        severity: worst,
-        risks: [...risks].sort(),
-        findings: group.length,
-        gaps,
-        resources: resources.size,
-        gapResources: gapResources.size,
-        unlinkedGapResources: unlinkedGapResources.size,
-        linked,
-        unlinked,
-        ignored,
-        iac,
-        clouds: [...clouds].sort(),
-        projects: [...projects].sort(),
-        severityMix,
-        firstSeenAt
-      });
-    }
-    return out.sort((a, b) => sevRank2(a.severity) - sevRank2(b.severity) || b.gaps - a.gaps || b.resources - a.resources || a.ruleShortId.localeCompare(b.ruleShortId));
-  }
-  function configTotals(rows) {
-    var _a5;
-    const controls = /* @__PURE__ */ new Set();
-    const resources = /* @__PURE__ */ new Set();
-    const severityMix = {};
-    let gaps = 0;
-    let unlinkedGaps = 0;
-    let ignored = 0;
-    let iac = 0;
-    for (const row of rows) {
-      if (row.ruleShortId) controls.add(row.ruleShortId);
-      resources.add(row.resourceId);
-      if (row.gap) {
-        gaps += 1;
-        severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
-        if (!row.linked) unlinkedGaps += 1;
-      }
-      if (row.ignored) ignored += 1;
-      if (row.iac) iac += 1;
-    }
-    return {
-      findings: rows.length,
-      gaps,
-      controls: controls.size,
-      resources: resources.size,
-      unlinkedGaps,
-      ignored,
-      iac,
-      severityMix
-    };
-  }
-
-  // src/domain/complianceOverview.ts
-  function severityRank2(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  var STATE_KEYS = ["scored", "noResources", "noPolicies", "unknown"];
-  function frameworkRail(trees) {
-    return trees.map((tree) => ({
-      frameworkId: tree.frameworkId,
-      name: tree.name,
-      posturePct: tree.posturePct,
-      state: tree.state,
-      postureBand: tree.postureBand,
-      emptyPostureReason: tree.emptyPostureReason,
-      categoryCount: tree.categories.length,
-      // From stateCounts, not from the listed nodes: the tree lists only scored
-      // subcategories (compliancePosture.ts), and a rail that counted those would report a
-      // framework's size as the part of it that happened to score.
-      subcategoryCount: STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0),
-      policyCount: tree.policyCount,
-      failingPolicyCount: tree.failingPolicyCount,
-      worstFailingSeverity: tree.worstFailingSeverity,
-      // Copied rather than aliased: a caller holding this row must not be able to mutate
-      // the FrameworkTree it was built from by mutating what looks like its own object.
-      stateCounts: { ...tree.stateCounts }
-    }));
-  }
-  function isScoredRow(row) {
-    return row.state === "scored";
-  }
-  function weakestAreas(trees, limit) {
-    const rows = [];
-    for (const tree of trees) {
-      for (const category of tree.categories) {
-        for (const sub of category.subcategories) {
-          if (sub.state === "scored" && !sub.policies.length) continue;
-          rows.push({
-            frameworkId: tree.frameworkId,
-            frameworkName: tree.name,
-            categoryExternalId: category.externalId,
-            categoryTitle: category.title,
-            externalId: sub.externalId,
-            showExternalId: sub.showExternalId,
-            title: sub.title,
-            posturePct: sub.posturePct,
-            state: sub.state,
-            emptyPostureReason: sub.emptyPostureReason,
-            passCount: sub.passCount,
-            failCount: sub.failCount,
-            // Distinct policies THIS subcategory carries. buildFrameworkTree already
-            // deduped `policies` to that scope (compliancePosture.ts:190), so re-deduping
-            // here would be the wrong scope all over again — count the list as given.
-            policyCount: sub.policies.length,
-            failingPolicyCount: sub.failingPolicyCount,
-            postureBand: sub.postureBand
-          });
-        }
-      }
-    }
-    const scored = rows.filter(isScoredRow);
-    scored.sort((a, b) => a.posturePct - b.posturePct || b.failingPolicyCount - a.failingPolicyCount || (a.frameworkName < b.frameworkName ? -1 : a.frameworkName > b.frameworkName ? 1 : 0) || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
-    return typeof limit === "number" ? scored.slice(0, limit) : scored;
-  }
-  function sharedControls(trees) {
-    const byPolicy = /* @__PURE__ */ new Map();
-    for (const tree of trees) {
-      for (const category of tree.categories) {
-        for (const sub of category.subcategories) {
-          for (const p of sub.policies) {
-            let acc = byPolicy.get(p.policyId);
-            if (!acc) {
-              acc = {
-                policyId: p.policyId,
-                shortId: p.shortId,
-                name: p.name,
-                policyKind: p.policyKind,
-                severity: p.severity,
-                severityRank: severityRank2(p.severity),
-                hasAutoRemediation: p.hasAutoRemediation === true,
-                frameworkIds: [],
-                frameworkNames: [],
-                subcategoryKeys: /* @__PURE__ */ new Set(),
-                failCount: 0
-              };
-              byPolicy.set(p.policyId, acc);
-            }
-            const rank = severityRank2(p.severity);
-            if (rank < acc.severityRank) {
-              acc.severityRank = rank;
-              acc.severity = p.severity;
-              acc.shortId = p.shortId;
-              acc.name = p.name;
-              acc.policyKind = p.policyKind;
-              acc.hasAutoRemediation = p.hasAutoRemediation === true;
-            }
-            if (acc.frameworkIds.indexOf(tree.frameworkId) === -1) {
-              acc.frameworkIds.push(tree.frameworkId);
-              acc.frameworkNames.push(tree.name);
-            }
-            acc.subcategoryKeys.add(`${tree.frameworkId}|${sub.externalId}`);
-            if (p.failCount > acc.failCount) acc.failCount = p.failCount;
-          }
-        }
-      }
-    }
-    const rows = [];
-    for (const acc of byPolicy.values()) {
-      if (acc.failCount <= 0) continue;
-      rows.push({
-        policyId: acc.policyId,
-        shortId: acc.shortId,
-        name: acc.name,
-        policyKind: acc.policyKind,
-        severity: acc.severity,
-        hasAutoRemediation: acc.hasAutoRemediation,
-        frameworkIds: acc.frameworkIds,
-        frameworkNames: acc.frameworkNames,
-        frameworkCount: acc.frameworkIds.length,
-        subcategoryCount: acc.subcategoryKeys.size,
-        failCount: acc.failCount
-      });
-    }
-    rows.sort((a, b) => b.frameworkCount - a.frameworkCount || severityRank2(a.severity) - severityRank2(b.severity) || b.failCount - a.failCount || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    return rows;
-  }
-  function coverageSummary(trees, catalogue) {
-    const stateCounts = {
-      scored: 0,
-      noResources: 0,
-      noPolicies: 0,
-      unknown: 0
-    };
-    let subcategoryCount = 0;
-    for (const tree of trees) {
-      stateCounts.scored += tree.stateCounts.scored;
-      stateCounts.noResources += tree.stateCounts.noResources;
-      stateCounts.noPolicies += tree.stateCounts.noPolicies;
-      stateCounts.unknown += tree.stateCounts.unknown;
-      subcategoryCount += STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
-    }
-    return {
-      collected: trees.length,
-      catalogued: catalogue.length,
-      scoredFrameworks: trees.filter((t) => t.state === "scored").length,
-      stateCounts,
-      subcategoryCount
-    };
   }
 
   // src/domain/syncNormalize.ts
@@ -5865,395 +3982,1449 @@ var Server = (() => {
     };
   }
 
-  // src/domain/complianceScope.ts
-  function severityRank3(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  function isAiFamily(family) {
-    return family === "OWASP_ASI" || family === "OWASP_LLM" || family === "OWASP_ML";
-  }
-  function scopeFiveRs(trees, findings, aiAssetIds, pins) {
-    var _a5, _b, _c, _d;
-    const fiveRsTree = trees.find((t) => frameworkFamily(t.name) === "WIZ_5RS");
-    if (!fiveRsTree) {
-      return {
-        frameworkId: null,
-        frameworkName: "",
-        policies: [],
-        selected: 0,
-        total: 0
-      };
+  // src/domain/graphEnrich.ts
+  function worstSeverity(severities) {
+    let worst;
+    for (const s of severities) {
+      if (worst === void 0 || severityRank(s) < severityRank(worst)) worst = s;
     }
-    const mappedByPolicy = /* @__PURE__ */ new Map();
-    for (const tree of trees) {
-      if (tree === fiveRsTree) continue;
-      if (!isAiFamily(frameworkFamily(tree.name))) continue;
-      for (const category of tree.categories) {
-        for (const sub of category.subcategories) {
-          for (const p of sub.policies) {
-            const names = (_a5 = mappedByPolicy.get(p.policyId)) != null ? _a5 : /* @__PURE__ */ new Set();
-            names.add(tree.name);
-            mappedByPolicy.set(p.policyId, names);
-          }
-        }
-      }
-    }
-    const aiOpenFindings = findings.filter(
-      (f) => isOpenGap(f) && aiAssetIds[f.resourceId] === true
-    );
-    const findingsByRuleId = /* @__PURE__ */ new Map();
-    const findingsByShortId = /* @__PURE__ */ new Map();
-    for (const f of aiOpenFindings) {
-      if (f.ruleId) pushInto(findingsByRuleId, f.ruleId, f);
-      if (f.ruleShortId) pushInto(findingsByShortId, f.ruleShortId, f);
-    }
-    const pinnedOut = new Set(pins.out);
-    const pinnedIn = new Set(pins.in);
-    const byPolicy = /* @__PURE__ */ new Map();
-    for (const category of fiveRsTree.categories) {
-      for (const sub of category.subcategories) {
-        for (const p of sub.policies) {
-          let acc = byPolicy.get(p.policyId);
-          if (!acc) {
-            acc = {
-              policyId: p.policyId,
-              shortId: p.shortId,
-              name: p.name,
-              policyKind: p.policyKind,
-              severity: p.severity,
-              categoryExternalId: category.externalId,
-              subcategoryExternalId: sub.externalId,
-              subcategoryTitle: sub.title,
-              failCount: 0,
-              passCount: 0,
-              // Sticky-false's INITIAL reading — see the PolicyScope.enabled doc comment.
-              enabled: p.enabled
-            };
-            byPolicy.set(p.policyId, acc);
-          }
-          if (p.failCount > acc.failCount) acc.failCount = p.failCount;
-          if (p.passCount > acc.passCount) acc.passCount = p.passCount;
-          if (p.enabled === false) acc.enabled = false;
-        }
-      }
-    }
-    const policies = [];
-    for (const acc of byPolicy.values()) {
-      const mappedBy = [...(_b = mappedByPolicy.get(acc.policyId)) != null ? _b : []].sort();
-      const crossMapped = mappedBy.length > 0;
-      const matched = /* @__PURE__ */ new Map();
-      for (const f of (_c = findingsByRuleId.get(acc.policyId)) != null ? _c : []) matched.set(f.id, f);
-      if (acc.shortId) {
-        for (const f of (_d = findingsByShortId.get(acc.shortId)) != null ? _d : []) matched.set(f.id, f);
-      }
-      const aiFindingCount = matched.size;
-      let selected;
-      let reason;
-      if (pinnedOut.has(acc.policyId)) {
-        selected = false;
-        reason = "pinnedOut";
-      } else if (pinnedIn.has(acc.policyId)) {
-        selected = true;
-        reason = "pinnedIn";
-      } else if (crossMapped) {
-        selected = true;
-        reason = "crossMapped";
-      } else if (aiFindingCount > 0) {
-        selected = true;
-        reason = "linkedFindings";
-      } else {
-        selected = false;
-        reason = "noAiLink";
-      }
-      policies.push({
-        policyId: acc.policyId,
-        shortId: acc.shortId,
-        name: acc.name,
-        policyKind: acc.policyKind,
-        severity: acc.severity,
-        categoryExternalId: acc.categoryExternalId,
-        subcategoryExternalId: acc.subcategoryExternalId,
-        subcategoryTitle: acc.subcategoryTitle,
-        selected,
-        reason,
-        mappedBy,
-        aiFindingCount,
-        failCount: acc.failCount,
-        passCount: acc.passCount,
-        enabled: acc.enabled
-      });
-    }
-    policies.sort((a, b) => (a.selected === b.selected ? 0 : a.selected ? 1 : -1) || severityRank3(a.severity) - severityRank3(b.severity) || b.failCount - a.failCount || cmp(a.name, b.name));
-    return {
-      frameworkId: fiveRsTree.frameworkId,
-      frameworkName: fiveRsTree.name,
-      policies,
-      selected: policies.filter((p) => p.selected).length,
-      total: policies.length
-    };
-  }
-  function unselectedPolicyIds(scope) {
-    return scope.policies.filter((p) => !p.selected).map((p) => p.policyId);
-  }
-
-  // src/domain/compliancePosture.ts
-  var POSTURE_BANDS = {
-    strong: { min: 90, label: "Strong" },
-    fair: { min: 70, label: "Work to do" },
-    weak: { min: 0, label: "Materially failing" }
-  };
-  function postureBandOf(posturePct2) {
-    if (posturePct2 === null || posturePct2 === void 0) return null;
-    if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
-    if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
-    return "weak";
-  }
-  function postureState(posturePct2, emptyPostureReason) {
-    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
-    if (reason === "NO_RESOURCES") return "noResources";
-    if (reason === "NO_POLICIES") return "noPolicies";
-    if (reason) return "unknown";
-    return posturePct2 === null ? "unknown" : "scored";
-  }
-  function titleRepeatsExternalId(externalId, title) {
-    const id = String(externalId != null ? externalId : "").trim();
-    const t = String(title != null ? title : "").trim();
-    if (!id || !t) return false;
-    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
-    const next = t.charAt(id.length);
-    return next === "" || next === " " || next === "	";
-  }
-  function severityRank4(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  function worstOf(a, b) {
-    if (a === null) return b;
-    if (b === null) return a;
-    return severityRank4(b) < severityRank4(a) ? b : a;
-  }
-  function worstFailingSeverityOf(policies) {
-    let worst = null;
-    for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
     return worst;
   }
-  function emptyStateCounts() {
-    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
+  function dataExposureOf(node2) {
+    if (node2.hasAccessToSensitiveData || node2.hasSensitiveData) return "SENSITIVE";
+    if (node2.hasHighPrivileges || node2.hasAdminPrivileges) return "DATA_ACCESS";
+    return "NONE";
   }
-  function isAssessedPolicy(p) {
-    return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
+  function internetExposureOf(node2) {
+    const state = conditionState(node2, "INTERNET_EXPOSURE");
+    if (state === true) return "CONFIRMED";
+    if (state === null) return "UNDETERMINED";
+    return "NONE";
   }
-  function toNode(row, externalId) {
+  function deriveAarsInput(node2, nodeIssues, rule = DEFAULT_AARS_RULE) {
+    var _a5;
+    const gaps = rule.gapUnit === "condition" ? conditionGaps(node2, nodeIssues) : frameworkCodeGaps(node2, nodeIssues, rule);
+    const status = String((_a5 = node2.status) != null ? _a5 : "").trim().toUpperCase();
+    if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
+    if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
+    const dataExposure = dataExposureOf(node2);
     return {
-      frameworkId: row.frameworkId,
-      externalId,
-      // Suppressed when the title already opens with it, so an OWASP LLM row reads
-      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
-      showExternalId: !titleRepeatsExternalId(externalId, row.title),
-      title: row.title,
-      description: row.description,
-      posturePct: row.posturePct,
-      state: postureState(row.posturePct, row.emptyPostureReason),
-      // Read off the state, not off the number: a row carrying both a percentage and an
-      // emptyPostureReason is one postureState declines to score, and banding the number it
-      // just disowned would put a colour back on a row that has no posture.
-      postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored" ? postureBandOf(row.posturePct) : null,
-      passCount: row.passCount,
-      failCount: row.failCount,
-      emptyPostureReason: row.emptyPostureReason
+      // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
+      // ai/custom_score.md: MEDIUM ×1.2 = 24); the adjusted severity is a display
+      // lens, not a scoring input — using it would double-count the 5Rs amplifier.
+      issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
+      gaps,
+      dataExposure,
+      internetExposure: internetExposureOf(node2)
     };
   }
-  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
-    const rows = posture.filter((p) => p.frameworkId === frameworkId);
-    if (!rows.length) return null;
-    const frameworkRow = rows.find((p) => p.level === "framework");
-    const catalogue = frameworks.find((f) => f.id === frameworkId);
-    const policiesBySub = /* @__PURE__ */ new Map();
-    for (const p of policies) {
-      if (p.frameworkId !== frameworkId) continue;
-      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
-      list2.push(p);
-      policiesBySub.set(p.subcategoryExternalId, list2);
-    }
-    const stateCounts = emptyStateCounts();
-    const unassessedIds = /* @__PURE__ */ new Set();
-    const subsByCategory = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      if (row.level !== "subcategory") continue;
-      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
-      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
-      const seen = /* @__PURE__ */ new Set();
-      const deduped = raw.filter((p) => {
-        if (seen.has(p.policyId)) return false;
-        seen.add(p.policyId);
-        return true;
-      });
-      deduped.sort(
-        (a, b) => severityRank4(a.severity) - severityRank4(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-      );
-      const assessed = [];
-      for (const p of deduped) {
-        if (isAssessedPolicy(p)) assessed.push(p);
-        else unassessedIds.add(p.policyId);
+  function frameworkCodeGaps(node2, nodeIssues, rule) {
+    var _a5, _b, _c, _d, _e;
+    const codes = /* @__PURE__ */ new Set();
+    for (const issue2 of nodeIssues) {
+      const fw = (_a5 = issue2.frameworks) != null ? _a5 : {};
+      for (const c of (_b = fw.owaspLlm) != null ? _b : []) codes.add(c);
+      for (const c of (_c = fw.owaspAgentic) != null ? _c : []) codes.add(c);
+      for (const c of (_d = fw.owaspMl) != null ? _d : []) codes.add(`ML_${c.replace(/\s+/g, "_").toUpperCase()}`);
+      if (rule.gapSources.fiveRs) {
+        for (const c of (_e = fw.fiveRs) != null ? _e : []) codes.add(`5R_${c.replace(/\s+/g, "_").toUpperCase()}`);
       }
-      const node2 = {
-        ...toNode(row, externalId),
-        assessmentScope: row.assessmentScope,
-        mappingRationale: row.mappingRationale,
-        policies: assessed,
-        failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
-        unassessedPolicyCount: deduped.length - assessed.length,
-        // From the LISTED policies, so the tint on this row and the rules the row expands to
-        // show can never name different severities.
-        worstFailingSeverity: worstFailingSeverityOf(assessed)
-      };
-      stateCounts[node2.state] += 1;
-      if (node2.state !== "scored") continue;
-      const key = (_d = row.categoryExternalId) != null ? _d : "";
-      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
-      list2.push(node2);
-      subsByCategory.set(key, list2);
     }
-    const categories = rows.filter((r) => r.level === "category").map((row) => {
-      var _a6, _b2;
-      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
-      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
-      return {
-        ...toNode(row, externalId),
-        subcategories,
-        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId,
-        worstFailingSeverity: subcategories.reduce(
-          (worst, sub) => worstOf(worst, sub.worstFailingSeverity),
-          null
-        )
-      };
-    }).filter((cat) => cat.subcategories.length > 0);
-    const distinct = /* @__PURE__ */ new Map();
-    for (const cat of categories) {
-      for (const sub of cat.subcategories) {
-        for (const p of sub.policies) {
-          distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
+    const gaps = [...codes].sort().map((c) => gap(c));
+    if (node2.guardrailMissing) gaps.push(gap("NO_GUARDRAIL"));
+    return gaps;
+  }
+  function conditionGaps(node2, nodeIssues) {
+    const gaps = [];
+    for (const key of CONDITION_KEYS) {
+      if (conditionState(node2, key) === true) gaps.push(gap(`COND_${key}`));
+    }
+    const groups = /* @__PURE__ */ new Set();
+    for (const issue2 of nodeIssues) if (issue2.comboGroup) groups.add(issue2.comboGroup);
+    for (const g of [...groups].sort()) gaps.push(gap(comboGapCode(g)));
+    return gaps;
+  }
+  function weightedGap(code, severity, rule) {
+    var _a5;
+    const w = severity === void 0 ? 1 : (_a5 = rule.findingSeverityWeights[severity]) != null ? _a5 : 1;
+    if (w === 1) return gap(code);
+    return gap(code, Math.max(0, Math.round(gapPointsFor(code, rule) * w)));
+  }
+  function buildAarsHintsFromFindings(findings, doc, issues2, rule = DEFAULT_AARS_RULE) {
+    var _a5;
+    const open = issues2.filter(isUnresolvedIssue);
+    const issuesByAsset = groupBy(open, (i) => i.assetId);
+    const codesByResource = /* @__PURE__ */ new Map();
+    const worstByCode = /* @__PURE__ */ new Map();
+    for (const f of findings.filter(isOpenGap)) {
+      pushInto(codesByResource, f.resourceId, ...f.frameworkCodes);
+      for (const c of f.frameworkCodes) {
+        const key = `${f.resourceId}|${c}`;
+        const prev = worstByCode.get(key);
+        if (prev === void 0 || severityRank(f.severity) < severityRank(prev)) {
+          worstByCode.set(key, f.severity);
         }
       }
     }
-    const worstFailingSeverity = categories.reduce(
-      (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
-      null
-    );
-    const frameworkState = postureState(
-      (_g = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _g : null,
-      (_h = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _h : null
-    );
-    return {
-      frameworkId,
-      name: (_j = (_i = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _i : catalogue == null ? void 0 : catalogue.name) != null ? _j : frameworkId,
-      description: (_k = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _k : catalogue == null ? void 0 : catalogue.description,
-      posturePct: (_l = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _l : null,
-      state: frameworkState,
-      // Same guard toNode applies one level down: only a row that actually scored gets a
-      // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
-      postureBand: frameworkState === "scored" ? postureBandOf((_m = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _m : null) : null,
-      emptyPostureReason: (_n = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _n : null,
-      passSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _o : 0,
-      failSubCategoryCount: (_p = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _p : 0,
-      categories,
-      stateCounts,
-      policyCount: distinct.size,
-      failingPolicyCount: [...distinct.values()].filter(Boolean).length,
-      // Only ids that appear NOWHERE in the listed tree. A control mapped under six
-      // subcategories and evaluated under one of them is a listed policy, not a dropped one,
-      // and counting it in both places would describe the same rule twice.
-      unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
-      worstFailingSeverity
-    };
+    const nodeById = indexBy(doc.nodes, (n) => n.id);
+    const hints = {};
+    for (const [resourceId, codes] of codesByResource) {
+      const node2 = nodeById.get(resourceId);
+      if (!node2) continue;
+      const base = deriveAarsInput(node2, (_a5 = issuesByAsset.get(resourceId)) != null ? _a5 : [], rule);
+      const seen = new Set(base.gaps.map((g) => g.code));
+      const gaps = [...base.gaps];
+      if (rule.gapUnit !== "condition") {
+        for (const c of codes) {
+          if (c && !seen.has(c)) {
+            seen.add(c);
+            gaps.push(weightedGap(c, worstByCode.get(`${resourceId}|${c}`), rule));
+          }
+        }
+      }
+      hints[resourceId] = {
+        gaps,
+        dataExposure: base.dataExposure,
+        internetExposure: base.internetExposure,
+        // This hint IS a fresh derivation under `rule` — `base` came straight out of
+        // `deriveAarsInput(rule)` two lines up — so it is stamped exactly like the no-hint
+        // branch of `enrichGraphDoc` would be, and `enrichFromTabs` can trust the signature.
+        derivedUnder: derivationSignature(rule)
+      };
+    }
+    return hints;
   }
-  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
-    const ids = [];
-    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
-    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
-    trees.sort((a, b) => {
-      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
-      if (a.posturePct === null) return 1;
-      if (b.posturePct === null) return -1;
-      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
+  function enrichGraphDoc(doc, issues2, hints, rule = DEFAULT_AARS_RULE) {
+    const open = issues2.filter(isUnresolvedIssue);
+    const byAsset = groupBy(open, (i) => i.assetId);
+    const reach = dataFindingReach(doc);
+    const nodes = doc.nodes.map((raw) => {
+      var _a5, _b, _c;
+      const node2 = { ...raw };
+      const nodeIssues = (_a5 = byAsset.get(node2.id)) != null ? _a5 : [];
+      if ((_b = node2.projects) == null ? void 0 : _b.length) {
+        const impact = worstBusinessImpact(node2.projects);
+        if (impact) node2.businessImpact = impact;
+      }
+      if (nodeIssues.length) {
+        node2.severity = worstSeverity(nodeIssues.map((i) => i.adjustedSeverity));
+        const groups = [];
+        for (const i of nodeIssues) {
+          if (i.comboGroup && !groups.includes(i.comboGroup)) groups.push(i.comboGroup);
+        }
+        node2.comboGroups = groups;
+      }
+      const hint = hints == null ? void 0 : hints[node2.id];
+      const scorable = node2.kind !== "ISSUE" && node2.kind !== "SUMMARY" && (AI_ASSET_KINDS.includes(node2.kind) || nodeIssues.length > 0 || hint !== void 0);
+      if (scorable) {
+        const base = hint ? {
+          issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
+          ...hint,
+          // A hint written before pillar D existed carries no exposure; re-derive it
+          // rather than let `undefined` read as NONE.
+          internetExposure: (_c = hint.internetExposure) != null ? _c : internetExposureOf(node2)
+        } : deriveAarsInput(node2, nodeIssues, rule);
+        const reached = reach.get(node2.id);
+        const input = reached ? { ...base, dataFindingSeverities: reached } : base;
+        const result = computeAars(input, rule);
+        node2.aars = result.score;
+        node2.aarsSeverity = result.severity;
+        node2.aarsPillars = result.pillars;
+        node2.aarsInput = {
+          gaps: input.gaps,
+          dataExposure: input.dataExposure,
+          internetExposure: input.internetExposure,
+          // Propagate the hint's own signature rather than re-stamping today's: a REUSED
+          // persisted input (the hint `enrichFromTabs` passes through when its signature
+          // still matches) must keep saying what it was actually derived under, and a
+          // pinned dry-run hint must keep saying nothing. Only the no-hint branch — a genuine
+          // fresh derivation right here, under `rule` — earns today's signature.
+          derivedUnder: hint ? hint.derivedUnder : derivationSignature(rule)
+        };
+        if (reached) {
+          node2.aarsInput.dataFindings = countBySeverity(reached);
+        }
+      }
+      return node2;
     });
-    return trees;
-  }
-  function complianceKpis(posture, policies = []) {
-    const frameworkRows = posture.filter((p) => p.level === "framework");
-    const scored = frameworkRows.filter(
-      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
-    );
-    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
-      var _a5;
-      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
-    }, 0) / scored.length) : null;
-    const failingSubcategories = posture.filter(
-      (p) => p.level === "subcategory" && p.failCount > 0
-    ).length;
-    const failing = /* @__PURE__ */ new Set();
-    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
+    const issueNodes = open.map((issue2) => ({
+      id: issue2.id,
+      kind: "ISSUE",
+      name: issue2.ruleName,
+      severity: issue2.adjustedSeverity,
+      comboGroups: issue2.comboGroup ? [issue2.comboGroup] : [],
+      status: issue2.status
+    }));
+    const issueEdges = open.map((issue2) => ({
+      id: edgeId(issue2.assetId, "HAS_ISSUE", issue2.id),
+      src: issue2.assetId,
+      dst: issue2.id,
+      type: "HAS_ISSUE"
+    }));
     return {
-      frameworks: frameworkRows.length,
-      scoredFrameworks: scored.length,
-      averagePosture,
-      averagePostureBand: postureBandOf(averagePosture),
-      failingSubcategories,
-      failingPolicies: failing.size
+      nodes: [...nodes, ...issueNodes],
+      edges: [...doc.edges, ...issueEdges],
+      syncedAt: doc.syncedAt
     };
+  }
+  function withProblemVerdicts(doc, issues2, findings, rule, ruleVersion) {
+    const byId = indexBy(doc.nodes, (n) => n.id);
+    const sig = vectorSignature(rule);
+    const decidedIssues = issues2.map((issue2) => {
+      if (!isUnresolvedIssue(issue2)) return stripProblemFields(issue2);
+      const input = deriveProblemInput(issue2, byId.get(issue2.assetId), rule);
+      const { outcome } = decideProblem(input.vector, rule);
+      return {
+        ...issue2,
+        problemOutcome: outcome,
+        problemInput: { ...input, derivedUnder: sig },
+        problemRuleVersion: ruleVersion
+      };
+    });
+    const decidedFindings = findings.map((finding) => {
+      if (!isOpenGap(finding)) return stripProblemFields(finding);
+      const input = deriveFindingProblemInput(finding, byId.get(finding.resourceId), rule);
+      const { outcome } = decideProblem(input.vector, rule);
+      return {
+        ...finding,
+        problemOutcome: outcome,
+        problemInput: { ...input, derivedUnder: sig },
+        problemRuleVersion: ruleVersion
+      };
+    });
+    return { issues: decidedIssues, findings: decidedFindings };
+  }
+  function withPostureTiers(doc, issues2, findings, rule) {
+    const outcomesByAsset = /* @__PURE__ */ new Map();
+    for (const issue2 of issues2) {
+      if (issue2.problemOutcome) pushInto(outcomesByAsset, issue2.assetId, issue2.problemOutcome);
+    }
+    for (const finding of findings) {
+      if (finding.problemOutcome) pushInto(outcomesByAsset, finding.resourceId, finding.problemOutcome);
+    }
+    const nodes = doc.nodes.map((node2) => {
+      var _a5;
+      if (node2.kind === "ISSUE" || node2.kind === "SUMMARY") return node2;
+      const { vector, unknowns } = derivePostureInput(node2, rule);
+      const { tier } = decidePosture(vector, rule);
+      const worst = worstOpenProblem((_a5 = outcomesByAsset.get(node2.id)) != null ? _a5 : []);
+      const next = {
+        ...node2,
+        postureInput: unknowns.length ? { ...vector, unknowns } : { ...vector }
+      };
+      if (tierEstablished(unknowns)) next.postureTier = tier;
+      else delete next.postureTier;
+      if (worst) next.worstOpenProblem = worst;
+      else delete next.worstOpenProblem;
+      return next;
+    });
+    return { ...doc, nodes };
+  }
+  function withDerivedNodes(doc, spec) {
+    const existing = new Set(doc.nodes.filter((n) => n.kind === spec.kind).map((n) => n.id));
+    const suppressed = spec.suppress ? spec.suppress(doc) : null;
+    const added = [];
+    const addedEdges = [];
+    for (const node2 of doc.nodes) {
+      if (node2.kind === spec.kind) continue;
+      if (!conditionHolds(node2, spec.kind)) continue;
+      if (suppressed && suppressed.has(node2.id)) continue;
+      const id = `${spec.prefix}|${node2.id}`;
+      if (existing.has(id)) continue;
+      const type = typeof spec.edgeType === "function" ? spec.edgeType(node2) : spec.edgeType;
+      added.push({
+        id,
+        kind: spec.kind,
+        name: typeof spec.name === "function" ? spec.name(node2) : spec.name
+      });
+      const edge2 = { id: edgeId(node2.id, type, id, spec.negated), src: node2.id, dst: id, type };
+      if (spec.negated) edge2.negated = true;
+      addedEdges.push(edge2);
+    }
+    if (!added.length) return doc;
+    return {
+      nodes: [...doc.nodes, ...added],
+      edges: [...doc.edges, ...addedEdges],
+      syncedAt: doc.syncedAt
+    };
+  }
+  var DATASTORE_KINDS = ["BUCKET", "DATABASE", "DATABASE_SERVER"];
+  function countBySeverity(severities) {
+    var _a5;
+    const counts = {};
+    for (const s of severities) counts[s] = ((_a5 = counts[s]) != null ? _a5 : 0) + 1;
+    return Object.keys(counts).sort((a, b) => severityRank(a) - severityRank(b)).map((severity) => ({ severity, count: counts[severity] }));
+  }
+  function dataFindingReach(doc) {
+    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
+    const findingsOf = (store) => {
+      var _a5;
+      const out = [];
+      for (const [severity, count2] of Object.entries((_a5 = store.dataFindingSeverities) != null ? _a5 : {})) {
+        for (let i = 0; i < count2; i++) out.push(severity);
+      }
+      return out;
+    };
+    const reach = /* @__PURE__ */ new Map();
+    const add = (id, severities) => {
+      if (!severities.length) return;
+      const prev = reach.get(id);
+      if (prev) prev.push(...severities);
+      else reach.set(id, [...severities]);
+    };
+    for (const node2 of doc.nodes) {
+      if (!DATASTORE_KINDS.includes(node2.kind)) continue;
+      add(node2.id, findingsOf(node2));
+    }
+    const identityReach = /* @__PURE__ */ new Map();
+    for (const e of doc.edges) {
+      if (e.type !== "ALLOWS_ACCESS_TO") continue;
+      const store = byId.get(e.dst);
+      if (!store || !DATASTORE_KINDS.includes(store.kind)) continue;
+      const found = findingsOf(store);
+      if (!found.length) continue;
+      const prev = identityReach.get(e.src);
+      if (prev) prev.push(...found);
+      else identityReach.set(e.src, [...found]);
+    }
+    for (const [id, severities] of identityReach) add(id, severities);
+    for (const e of doc.edges) {
+      if (e.type !== "RUNS_AS") continue;
+      const viaIdentity = identityReach.get(e.dst);
+      if (viaIdentity) add(e.src, viaIdentity);
+    }
+    return reach;
+  }
+  function assetsOnDataPath(doc) {
+    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
+    const onPath = /* @__PURE__ */ new Set();
+    const reachers = /* @__PURE__ */ new Set();
+    for (const e of doc.edges) {
+      if (e.type !== "ALLOWS_ACCESS_TO") continue;
+      const store = byId.get(e.dst);
+      if (!store || !DATASTORE_KINDS.includes(store.kind)) continue;
+      if (store.hasSensitiveData !== true) continue;
+      onPath.add(store.id);
+      reachers.add(e.src);
+    }
+    for (const id of reachers) onPath.add(id);
+    for (const e of doc.edges) {
+      if (e.type === "RUNS_AS" && reachers.has(e.dst)) onPath.add(e.src);
+    }
+    return onPath;
+  }
+  function withSensitiveDataNodes(doc) {
+    return withDerivedNodes(doc, {
+      kind: "SENSITIVE_DATA",
+      prefix: "sensitive",
+      name: "Sensitive data",
+      edgeType: (n) => n.hasSensitiveData ? "HAS_SENSITIVE_DATA" : "HAS_ACCESS_TO_SENSITIVE_DATA",
+      suppress: assetsOnDataPath
+    });
+  }
+  function withDataFindingNodes(doc) {
+    var _a5, _b;
+    const existing = new Set(doc.nodes.filter((n) => n.kind === "DATA_FINDING").map((n) => n.id));
+    const added = [];
+    const addedEdges = [];
+    for (const node2 of doc.nodes) {
+      if (!DATASTORE_KINDS.includes(node2.kind)) continue;
+      const count2 = (_a5 = node2.dataFindingCount) != null ? _a5 : 0;
+      if (count2 <= 0) continue;
+      const id = `datafinding|${node2.id}`;
+      if (existing.has(id)) continue;
+      const mix = (_b = node2.dataFindingSeverities) != null ? _b : {};
+      const finding = {
+        id,
+        kind: "DATA_FINDING",
+        name: "Data Findings",
+        // summaryCount, not a bespoke field: the client already reads it for the collapse
+        // stubs, so the count badge and its aria text come for free.
+        summaryCount: count2,
+        dataFindingSeverities: mix
+      };
+      const worst = Object.keys(mix).sort((a, b) => severityRank(a) - severityRank(b))[0];
+      if (worst && severityRank(worst) < SEVERITY_ORDER.length) finding.severity = worst;
+      added.push(finding);
+      addedEdges.push({
+        id: edgeId(node2.id, "HAS_DATA_FINDING", id),
+        src: node2.id,
+        dst: id,
+        type: "HAS_DATA_FINDING"
+      });
+    }
+    if (!added.length) return doc;
+    return {
+      nodes: [...doc.nodes, ...added],
+      edges: [...doc.edges, ...addedEdges],
+      syncedAt: doc.syncedAt
+    };
+  }
+  function withInternetExposureNodes(doc) {
+    return withDerivedNodes(doc, {
+      kind: "INTERNET_EXPOSURE",
+      prefix: "internet",
+      name: (n) => {
+        var _a5, _b;
+        const evidence = n.exposureEvidence;
+        if ((_a5 = evidence == null ? void 0 : evidence.endpointIds) == null ? void 0 : _a5.length) return "Internet exposure \xB7 validated endpoint";
+        if ((_b = evidence == null ? void 0 : evidence.hostIds) == null ? void 0 : _b.length) return "Internet exposure \xB7 exposed host";
+        return "Internet exposure";
+      },
+      edgeType: "EXPOSED_TO_INTERNET"
+    });
+  }
+  function withHumanAccess(doc, evidence = {}) {
+    var _a5, _b, _c, _d, _e;
+    const reach = new Set(HUMAN_ACCESS_TYPES);
+    const byId = indexBy(doc.nodes, (n) => n.id);
+    const humans = new Set(doc.nodes.filter((n) => n.kind === "USER_ACCOUNT").map((n) => n.id));
+    const reachedBy = /* @__PURE__ */ new Map();
+    const admins = /* @__PURE__ */ new Set();
+    for (const edge2 of doc.edges) {
+      if (edge2.type !== "ALLOWS_ACCESS_TO") continue;
+      if (!edge2.accessType || !reach.has(edge2.accessType)) continue;
+      if (!humans.has(edge2.src)) continue;
+      const target = byId.get(edge2.dst);
+      if (!target || !AI_ASSET_KINDS.includes(target.kind)) continue;
+      pushInto(reachedBy, edge2.dst, edge2.src);
+      if (edge2.accessType === "ADMIN") admins.add(edge2.dst);
+    }
+    const effectiveBy = /* @__PURE__ */ new Map();
+    const permsBy = /* @__PURE__ */ new Map();
+    const policiesBy = /* @__PURE__ */ new Map();
+    for (const entry of (_a5 = evidence.effectiveAccess) != null ? _a5 : []) {
+      const target = byId.get(entry.resourceId);
+      if (!target || !AI_ASSET_KINDS.includes(target.kind)) continue;
+      const seen = (_b = effectiveBy.get(entry.resourceId)) != null ? _b : [];
+      if (seen.indexOf(entry.identityId) < 0) pushInto(effectiveBy, entry.resourceId, entry.identityId);
+      const perms = (_c = permsBy.get(entry.resourceId)) != null ? _c : [];
+      for (const p of entry.permissions) if (perms.indexOf(p) < 0) perms.push(p);
+      permsBy.set(entry.resourceId, perms);
+      const policies = (_d = policiesBy.get(entry.resourceId)) != null ? _d : [];
+      for (const p of entry.policyIds) if (policies.indexOf(p) < 0) policies.push(p);
+      policiesBy.set(entry.resourceId, policies);
+    }
+    if (!reachedBy.size && !effectiveBy.size) return doc;
+    const noMfa = /* @__PURE__ */ new Set();
+    const dormant = /* @__PURE__ */ new Set();
+    for (const finding of (_e = evidence.identityFindings) != null ? _e : []) {
+      if (!isOpenGap(finding)) continue;
+      if (finding.hygiene === "MFA") noMfa.add(finding.resourceId);
+      else dormant.add(finding.resourceId);
+    }
+    return {
+      nodes: doc.nodes.map((node2) => {
+        var _a6, _b2, _c2, _d2;
+        const identityIds = (_a6 = reachedBy.get(node2.id)) != null ? _a6 : [];
+        const effectiveIds = (_b2 = effectiveBy.get(node2.id)) != null ? _b2 : [];
+        if (!identityIds.length && !effectiveIds.length) return node2;
+        const access = { identityIds };
+        if (admins.has(node2.id)) access.admin = true;
+        const all = identityIds.slice();
+        for (const id of effectiveIds) if (all.indexOf(id) < 0) all.push(id);
+        const inactiveCount = all.filter((id) => {
+          var _a7;
+          return ((_a7 = byId.get(id)) == null ? void 0 : _a7.inactive) === true;
+        }).length;
+        if (inactiveCount) access.inactiveCount = inactiveCount;
+        const noMfaCount = all.filter((id) => noMfa.has(id)).length;
+        if (noMfaCount) access.noMfaCount = noMfaCount;
+        const dormantFindingCount = all.filter((id) => dormant.has(id)).length;
+        if (dormantFindingCount) access.dormantFindingCount = dormantFindingCount;
+        if (effectiveIds.length) {
+          access.effectiveIds = effectiveIds;
+          const perms = (_c2 = permsBy.get(node2.id)) != null ? _c2 : [];
+          if (perms.length) access.permissionCount = perms.length;
+          const policies = (_d2 = policiesBy.get(node2.id)) != null ? _d2 : [];
+          if (policies.length) access.policyIds = policies;
+        }
+        return { ...node2, humanAccess: access };
+      }),
+      edges: doc.edges,
+      syncedAt: doc.syncedAt
+    };
+  }
+  function withExposureEvidence(doc) {
+    const byId = indexBy(doc.nodes, (n) => n.id);
+    const hostsOf = /* @__PURE__ */ new Map();
+    const servesOf = /* @__PURE__ */ new Map();
+    for (const edge2 of doc.edges) {
+      if (edge2.type === "HOSTED_ON") pushInto(hostsOf, edge2.src, edge2.dst);
+      else if (edge2.type === "SERVES") pushInto(servesOf, edge2.src, edge2.dst);
+    }
+    if (!hostsOf.size && !servesOf.size) return doc;
+    let touched = false;
+    const nodes = doc.nodes.map((node2) => {
+      var _a5, _b, _c, _d, _e, _f, _g;
+      if (!AI_ASSET_KINDS.includes(node2.kind)) return node2;
+      const hostIds = ((_a5 = hostsOf.get(node2.id)) != null ? _a5 : []).filter((id) => {
+        const host = byId.get(id);
+        return !!host && conditionHolds(host, "INTERNET_EXPOSURE");
+      });
+      const endpointIds = [];
+      let worst;
+      const consider = (id) => {
+        const endpoint = byId.get(id);
+        if (!endpoint || endpoint.kind !== "ENDPOINT") return;
+        if (!isRatedExposure(endpoint.exposureLevel, endpoint.portValidation)) return;
+        if (endpointIds.indexOf(id) < 0) endpointIds.push(id);
+        worst = worseExposureLevel(worst, endpoint.exposureLevel);
+      };
+      for (const id of (_b = servesOf.get(node2.id)) != null ? _b : []) consider(id);
+      for (const hostId of (_c = hostsOf.get(node2.id)) != null ? _c : []) {
+        for (const id of (_d = servesOf.get(hostId)) != null ? _d : []) consider(id);
+      }
+      const ports = [];
+      const sourceIpRanges = [];
+      for (const hostId of hostIds) {
+        const evidence2 = (_e = byId.get(hostId)) == null ? void 0 : _e.exposureEvidence;
+        for (const p of (_f = evidence2 == null ? void 0 : evidence2.ports) != null ? _f : []) if (ports.indexOf(p) < 0) ports.push(p);
+        for (const r of (_g = evidence2 == null ? void 0 : evidence2.sourceIpRanges) != null ? _g : []) {
+          if (sourceIpRanges.indexOf(r) < 0) sourceIpRanges.push(r);
+        }
+      }
+      if (!hostIds.length && !endpointIds.length) return node2;
+      const evidence = {};
+      if (hostIds.length) evidence.hostIds = hostIds;
+      if (endpointIds.length) evidence.endpointIds = endpointIds;
+      if (worst) evidence.exposureLevel = worst;
+      if (ports.length) evidence.ports = ports;
+      if (sourceIpRanges.length) evidence.sourceIpRanges = sourceIpRanges;
+      touched = true;
+      return { ...node2, exposureEvidence: evidence };
+    });
+    return touched ? { nodes, edges: doc.edges, syncedAt: doc.syncedAt } : doc;
+  }
+  function withExcessivePrivilegeNodes(doc) {
+    return withDerivedNodes(doc, {
+      kind: "EXCESSIVE_PRIVILEGE",
+      prefix: "excessive",
+      // ADMIN wins over HIGH when both are set — it is the stronger claim.
+      name: (n) => n.hasAdminPrivileges ? "Admin privileges" : "Excessive rights",
+      edgeType: "HAS_EXCESSIVE_PRIVILEGE",
+      suppress: (d) => {
+        const kindById = new Map(d.nodes.map((n) => [n.id, n.kind]));
+        const withRealFinding = /* @__PURE__ */ new Set();
+        for (const e of d.edges) {
+          if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
+            withRealFinding.add(e.src);
+          }
+        }
+        return withRealFinding;
+      }
+    });
+  }
+  function withIdentityAccessNodes(doc) {
+    const HUMAN_REACH = new Set(HUMAN_ACCESS_TYPES);
+    const aiAssets = new Set(
+      doc.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind)).map((n) => n.id)
+    );
+    const humans = new Set(doc.nodes.filter((n) => n.kind === "USER_ACCOUNT").map((n) => n.id));
+    const existing = new Set(
+      doc.nodes.filter((n) => n.kind === "IDENTITY_ACCESS_FINDING").map((n) => n.id)
+    );
+    const kindById = new Map(doc.nodes.map((n) => [n.id, n.kind]));
+    const withRealFinding = /* @__PURE__ */ new Set();
+    for (const e of doc.edges) {
+      if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
+        withRealFinding.add(e.src);
+      }
+    }
+    const reached = /* @__PURE__ */ new Set();
+    for (const e of doc.edges) {
+      if (e.type !== "ALLOWS_ACCESS_TO") continue;
+      if (!e.accessType || !HUMAN_REACH.has(e.accessType)) continue;
+      if (!humans.has(e.src) || !aiAssets.has(e.dst)) continue;
+      if (withRealFinding.has(e.dst)) continue;
+      reached.add(e.dst);
+    }
+    const added = [];
+    const addedEdges = [];
+    for (const assetId of reached) {
+      const id = `identityaccess|${assetId}`;
+      if (existing.has(id)) continue;
+      added.push({ id, kind: "IDENTITY_ACCESS_FINDING", name: "Human access" });
+      addedEdges.push({
+        id: edgeId(assetId, "HAS_FINDING", id),
+        src: assetId,
+        dst: id,
+        type: "HAS_FINDING"
+      });
+    }
+    if (!added.length) return doc;
+    return {
+      nodes: [...doc.nodes, ...added],
+      edges: [...doc.edges, ...addedEdges],
+      syncedAt: doc.syncedAt
+    };
+  }
+  function withMissingGuardrailNodes(doc) {
+    return withDerivedNodes(doc, {
+      kind: "MISSING_GUARDRAIL",
+      prefix: "noguardrail",
+      name: "No guardrail",
+      edgeType: "PROTECTED_BY",
+      negated: true
+    });
   }
 
-  // src/domain/fiveRsPosture.ts
-  function isActiveFiveRsPolicy(p) {
-    return p.selected && p.enabled !== false;
-  }
-  function clampAwayFromFalseExtreme(rounded, hasFailing, hasPassing) {
-    if (rounded === 100 && hasFailing) return 99;
-    if (rounded === 0 && hasPassing) return 1;
-    return rounded;
-  }
-  function fiveRsDerivedPosture(scope, wizPosturePct) {
-    if (scope.frameworkId === null) return null;
-    let passCount = 0;
-    let failCount = 0;
-    let cleanPolicyCount = 0;
-    let failingPolicyCount = 0;
-    let activePolicyCount = 0;
-    let disabledPolicyCount = 0;
-    for (const p of scope.policies) {
-      if (p.selected && p.enabled === false) disabledPolicyCount += 1;
-      if (!isActiveFiveRsPolicy(p)) continue;
-      activePolicyCount += 1;
-      passCount += p.passCount;
-      failCount += p.failCount;
-      if (p.failCount === 0) cleanPolicyCount += 1;
-      else failingPolicyCount += 1;
+  // src/domain/aarsTrend.ts
+  function countAarsSeverities(nodes) {
+    const counts = {};
+    for (const sev of AARS_SEVERITY_ORDER) counts[sev] = 0;
+    for (const n of nodes) {
+      const sev = normalizeAarsSeverity(n.aarsSeverity);
+      if (sev) counts[sev] += 1;
     }
-    const posturePct2 = activePolicyCount === 0 || passCount + failCount === 0 ? null : clampAwayFromFalseExtreme(
-      Math.round(100 * passCount / (passCount + failCount)),
-      failCount > 0,
-      passCount > 0
-    );
-    const controlPassPct = activePolicyCount === 0 ? null : clampAwayFromFalseExtreme(
-      Math.round(100 * cleanPolicyCount / activePolicyCount),
-      failingPolicyCount > 0,
-      cleanPolicyCount > 0
-    );
-    return {
-      frameworkId: scope.frameworkId,
-      posturePct: posturePct2,
-      postureBand: postureBandOf(posturePct2),
-      controlPassPct,
-      cleanPolicyCount,
-      failingPolicyCount,
-      activePolicyCount,
-      disabledPolicyCount,
-      passCount,
-      failCount,
-      wizPosturePct
+    return counts;
+  }
+  function parseCounts(v, keys) {
+    if (typeof v !== "string" || !v) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const raw = parsed;
+    const counts = {};
+    for (const k of keys) {
+      const n = Number(raw[k]);
+      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+    }
+    return counts;
+  }
+  function trendFromHistory(rows, spec, limit = 90) {
+    var _a5;
+    const points = [];
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const counts = parseCounts(r[spec.countsColumn], spec.keys);
+      if (!counts) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const v = Number(r[spec.versionColumn]);
+      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+      points.push({ at, counts, ruleVersion });
+    }
+    points.sort(cmpBy((p) => p.at));
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  var AARS_SEVERITY_SPEC = {
+    keys: AARS_SEVERITY_ORDER,
+    countsColumn: "aars_severity_json",
+    versionColumn: "aars_rule_version"
+  };
+  function aarsTrendFromHistory(rows, limit = 90) {
+    return trendFromHistory(rows, AARS_SEVERITY_SPEC, limit);
+  }
+  function ruleChangePoints(points) {
+    const marks = [];
+    for (let i = 1; i < points.length; i++) {
+      if (points[i].ruleVersion !== points[i - 1].ruleVersion) marks.push(i);
+    }
+    return marks;
+  }
+
+  // src/domain/rankStats.ts
+  function tiedPairCount(values) {
+    var _a5;
+    const counts = /* @__PURE__ */ new Map();
+    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
+    let pairs = 0;
+    for (const c of counts.values()) pairs += c * (c - 1) / 2;
+    return pairs;
+  }
+  function tieRate(values) {
+    const n = values.length;
+    if (n < 2) return 0;
+    return tiedPairCount(values) / (n * (n - 1) / 2);
+  }
+  function effectiveCardinality(values) {
+    var _a5;
+    const n = values.length;
+    if (n === 0) return 0;
+    const counts = /* @__PURE__ */ new Map();
+    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
+    let entropy = 0;
+    for (const c of counts.values()) {
+      const p = c / n;
+      entropy += -p * Math.log(p);
+    }
+    return Math.exp(entropy);
+  }
+  function midrankPercentiles(values) {
+    var _a5;
+    const n = values.length;
+    if (n === 0) return [];
+    const counts = /* @__PURE__ */ new Map();
+    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
+    const percentileOf = /* @__PURE__ */ new Map();
+    let below = 0;
+    for (const value of [...counts.keys()].sort((a, b) => a - b)) {
+      const size = counts.get(value);
+      percentileOf.set(value, (below + size / 2) / n * 100);
+      below += size;
+    }
+    return values.map((v) => percentileOf.get(v));
+  }
+
+  // src/domain/sha1.ts
+  function utf8Bytes(s) {
+    const out = [];
+    for (let i = 0; i < s.length; i++) {
+      let c = s.charCodeAt(i);
+      if (c < 128) {
+        out.push(c);
+      } else if (c < 2048) {
+        out.push(192 | c >> 6, 128 | c & 63);
+      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
+        const c2 = s.charCodeAt(++i);
+        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
+        out.push(
+          240 | cp >> 18,
+          128 | cp >> 12 & 63,
+          128 | cp >> 6 & 63,
+          128 | cp & 63
+        );
+      } else {
+        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
+      }
+    }
+    return out;
+  }
+  function rotl(n, b) {
+    return (n << b | n >>> 32 - b) >>> 0;
+  }
+  function sha1Hex(input) {
+    const bytes = utf8Bytes(input);
+    const bitLen = bytes.length * 8;
+    bytes.push(128);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    const hi = Math.floor(bitLen / 4294967296);
+    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
+    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
+    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
+    const w = new Array(80);
+    for (let block = 0; block < bytes.length; block += 64) {
+      for (let i = 0; i < 16; i++) {
+        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
+      }
+      for (let i = 16; i < 80; i++) {
+        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+      }
+      let a = h0, b = h1, c = h2, d = h3, e = h4;
+      for (let i = 0; i < 80; i++) {
+        let f, k;
+        if (i < 20) {
+          f = b & c | ~b & d;
+          k = 1518500249;
+        } else if (i < 40) {
+          f = b ^ c ^ d;
+          k = 1859775393;
+        } else if (i < 60) {
+          f = b & c | b & d | c & d;
+          k = 2400959708;
+        } else {
+          f = b ^ c ^ d;
+          k = 3395469782;
+        }
+        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
+        e = d;
+        d = c;
+        c = rotl(b, 30);
+        b = a;
+        a = t;
+      }
+      h0 = h0 + a >>> 0;
+      h1 = h1 + b >>> 0;
+      h2 = h2 + c >>> 0;
+      h3 = h3 + d >>> 0;
+      h4 = h4 + e >>> 0;
+    }
+    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
+  }
+
+  // src/server/buildInfo.ts
+  var BUILD_ID = true ? "934629089b6f" : "dev";
+  function buildInfo() {
+    return { id: BUILD_ID };
+  }
+
+  // src/server/serverCache.ts
+  var VERSION_PROP = "DATA_VERSION";
+  var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
+  var KEY_PREFIX = `wsk.${BUILD_ID}`;
+  var CHUNK_CHARS = 9e4;
+  var DEFAULT_TTL_SEC = 21600;
+  function dataVersion() {
+    var _a5;
+    return (_a5 = getProp(VERSION_PROP)) != null ? _a5 : "0";
+  }
+  function bumpDataVersion() {
+    setProp(VERSION_PROP, String(Date.now()));
+  }
+  function wizDataVersion() {
+    var _a5;
+    return (_a5 = getProp(WIZ_VERSION_PROP)) != null ? _a5 : "0";
+  }
+  function bumpWizDataVersion() {
+    setProp(WIZ_VERSION_PROP, String(Date.now()));
+  }
+  function cacheKey(name, params, version) {
+    const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
+    return `${KEY_PREFIX}:${version}:${name}:${paramsHash}`;
+  }
+  function splitChunks(s, size = CHUNK_CHARS) {
+    const out = [];
+    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
+    return out.length ? out : [""];
+  }
+  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
+    const json = JSON.stringify(value);
+    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
+    const packed = Utilities.base64Encode(gz.getBytes());
+    const chunks = splitChunks(packed, chunkChars);
+    const entries = { [`${key}:m`]: String(chunks.length) };
+    chunks.forEach((c, i) => {
+      entries[`${key}:${i}`] = c;
+    });
+    CacheService.getScriptCache().putAll(entries, ttlSec);
+  }
+  function cacheGetJson(key) {
+    const cache = CacheService.getScriptCache();
+    const meta = cache.get(`${key}:m`);
+    if (!meta) return void 0;
+    const n = Number(meta);
+    if (!Number.isInteger(n) || n < 1) return void 0;
+    const names = [];
+    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
+    const got = cache.getAll(names);
+    let packed = "";
+    for (const name of names) {
+      const chunk = got[name];
+      if (chunk === void 0 || chunk === null) return void 0;
+      packed += chunk;
+    }
+    const bytes = Utilities.base64Decode(packed);
+    const json = Utilities.ungzip(
+      Utilities.newBlob(bytes, "application/x-gzip")
+    ).getDataAsString("UTF-8");
+    return JSON.parse(json);
+  }
+  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
+    let key = null;
+    try {
+      key = cacheKey(name, params, version != null ? version : dataVersion());
+      const hit = cacheGetJson(key);
+      if (hit !== void 0) return hit;
+    } catch (e) {
+      console.warn(`Cache read failed for ${name}: ${e}`);
+      key = null;
+    }
+    const value = compute();
+    if (key) {
+      try {
+        cachePutJson(key, value, ttlSec);
+      } catch (e) {
+        console.warn(`Cache write failed for ${name}: ${e}`);
+      }
+    }
+    return value;
+  }
+
+  // src/domain/aarsRule.ts
+  var POINTS_MIN = 0;
+  var POINTS_MAX = 100;
+  var MULTIPLIER_MIN = 1;
+  var MULTIPLIER_MAX = 3;
+  var WEIGHT_MIN = 0;
+  var WEIGHT_MAX = 3;
+  var BAND_MIN = 1;
+  var BAND_MAX = 100;
+  var CODE_MAX_LEN2 = 64;
+  var MAX_GAP_RULES = 60;
+  var BAND_SHARE_WARNING_THRESHOLD = 0.85;
+  var SEVERITY_KEYS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+  var EXPOSURE_KEYS = ["SENSITIVE", "DATA_ACCESS", "NONE"];
+  var INTERNET_EXPOSURE_KEYS = ["CONFIRMED", "UNDETERMINED", "NONE"];
+  var BAND_KEYS = ["critical", "high", "medium", "low"];
+  var BAND_LABELS = {
+    critical: "CRITICAL",
+    high: "HIGH",
+    medium: "MEDIUM",
+    low: "LOW"
+  };
+  function rec2(v) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  }
+  function clampMultiplier(v, fallback) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    const rounded = Math.round(n * 100) / 100;
+    return Math.min(MULTIPLIER_MAX, Math.max(MULTIPLIER_MIN, rounded));
+  }
+  function clampWeight(v, fallback) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    const rounded = Math.round(n * 100) / 100;
+    return Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, rounded));
+  }
+  function cleanGapCode(v) {
+    return String(v != null ? v : "").trim().toUpperCase().slice(0, CODE_MAX_LEN2);
+  }
+  function cleanGapRule(v) {
+    const raw = rec2(v);
+    const code = cleanGapCode(raw["code"]);
+    if (!code) return null;
+    const match = raw["match"] === "prefix" ? "prefix" : "exact";
+    return { match, code, points: clampInt(raw["points"], 0, POINTS_MIN, POINTS_MAX) };
+  }
+  function cleanAarsRule(raw) {
+    const r = rec2(raw);
+    const sevRaw = rec2(r["severityPoints"]);
+    const severityPoints = {};
+    for (const k of SEVERITY_KEYS) {
+      severityPoints[k] = clampInt(sevRaw[k], DEFAULT_AARS_RULE.severityPoints[k], POINTS_MIN, POINTS_MAX);
+    }
+    const expRaw = rec2(r["dataExposurePoints"]);
+    const dataExposurePoints = {};
+    for (const k of EXPOSURE_KEYS) {
+      dataExposurePoints[k] = clampInt(
+        expRaw[k],
+        DEFAULT_AARS_RULE.dataExposurePoints[k],
+        POINTS_MIN,
+        POINTS_MAX
+      );
+    }
+    const srcRaw = rec2(r["gapSources"]);
+    const gapSources = {
+      fiveRs: srcRaw["fiveRs"] === true,
+      deprecatedModel: srcRaw["deprecatedModel"] === true,
+      inactiveAgent: srcRaw["inactiveAgent"] === true,
+      frameworkMapping: srcRaw["frameworkMapping"] === true
     };
+    const fswRaw = rec2(r["findingSeverityWeights"]);
+    const findingSeverityWeights = {};
+    for (const k of SEVERITY_KEYS) {
+      findingSeverityWeights[k] = clampWeight(
+        fswRaw[k],
+        DEFAULT_AARS_RULE.findingSeverityWeights[k]
+      );
+    }
+    const dfpRaw = rec2(r["dataFindingPoints"]);
+    const dataFindingPoints = {};
+    for (const k of SEVERITY_KEYS) {
+      dataFindingPoints[k] = clampInt(
+        dfpRaw[k],
+        DEFAULT_AARS_RULE.dataFindingPoints[k],
+        POINTS_MIN,
+        POINTS_MAX
+      );
+    }
+    const expoRaw = rec2(r["exposurePoints"]);
+    const exposurePoints = {};
+    for (const k of INTERNET_EXPOSURE_KEYS) {
+      exposurePoints[k] = clampInt(
+        expoRaw[k],
+        DEFAULT_AARS_RULE.exposurePoints[k],
+        POINTS_MIN,
+        POINTS_MAX
+      );
+    }
+    const bandRaw = rec2(r["bands"]);
+    const bands = {};
+    for (const k of BAND_KEYS) {
+      bands[k] = clampInt(bandRaw[k], DEFAULT_AARS_RULE.bands[k], BAND_MIN, BAND_MAX);
+    }
+    const gapsRaw = Array.isArray(r["gapPoints"]) ? r["gapPoints"] : null;
+    const gapPoints = gapsRaw ? gapsRaw.map(cleanGapRule).filter((g) => g !== null).slice(0, MAX_GAP_RULES) : DEFAULT_AARS_RULE.gapPoints.map((g) => ({ ...g }));
+    const multiIssueScaling = r["multiIssueScaling"] === "log2" ? "log2" : "flat";
+    const gapAggregation = r["gapAggregation"] === "rss" ? "rss" : "sum";
+    const dataFindingScaling = r["dataFindingScaling"] === "log2" ? "log2" : "flat";
+    const gapUnit = r["gapUnit"] === "condition" ? "condition" : "code";
+    return {
+      severityPoints,
+      multiIssueMultiplier: clampMultiplier(
+        r["multiIssueMultiplier"],
+        DEFAULT_AARS_RULE.multiIssueMultiplier
+      ),
+      multiIssueScaling,
+      pillarACap: clampInt(r["pillarACap"], DEFAULT_AARS_RULE.pillarACap, POINTS_MIN, POINTS_MAX),
+      gapUnit,
+      gapPoints,
+      gapFallbackPoints: clampInt(
+        r["gapFallbackPoints"],
+        DEFAULT_AARS_RULE.gapFallbackPoints,
+        POINTS_MIN,
+        POINTS_MAX
+      ),
+      gapAggregation,
+      gapSources,
+      findingSeverityWeights,
+      pillarBCap: clampInt(r["pillarBCap"], DEFAULT_AARS_RULE.pillarBCap, POINTS_MIN, POINTS_MAX),
+      dataExposurePoints,
+      dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),
+      dataFindingPoints,
+      dataFindingScaling,
+      dataFindingMultiplier: clampMultiplier(
+        r["dataFindingMultiplier"],
+        DEFAULT_AARS_RULE.dataFindingMultiplier
+      ),
+      pillarCCap: clampInt(r["pillarCCap"], DEFAULT_AARS_RULE.pillarCCap, POINTS_MIN, POINTS_MAX),
+      exposurePoints,
+      bands
+    };
+  }
+  function validateAarsRule(rule) {
+    const errors = [];
+    for (let i = 1; i < BAND_KEYS.length; i++) {
+      const upper = BAND_KEYS[i - 1];
+      const lower = BAND_KEYS[i];
+      if (rule.bands[upper] <= rule.bands[lower]) {
+        errors.push(
+          `The ${BAND_LABELS[upper]} threshold (${rule.bands[upper]}) must sit above the ${BAND_LABELS[lower]} threshold (${rule.bands[lower]}) \u2014 otherwise no score can land in ${BAND_LABELS[lower]}.`
+        );
+      }
+    }
+    const max = achievableMax(rule);
+    for (const key of BAND_KEYS) {
+      const threshold = rule.bands[key];
+      if (threshold > max) {
+        const sharePct2 = max > 0 ? Math.round(threshold / max * 100) : null;
+        errors.push(
+          `${BAND_LABELS[key]} at ${threshold} is unreachable \u2014 no asset can ever score above the achievable maximum of ${max} under this rule's pillar caps` + (sharePct2 === null ? "" : ` (${sharePct2}% of it)`) + `, so ${BAND_LABELS[key]} can never hold a single asset.`
+        );
+        continue;
+      }
+      const sharePct = Math.round(threshold / max * 100);
+      if (threshold / max >= BAND_SHARE_WARNING_THRESHOLD) {
+        errors.push(
+          `${BAND_LABELS[key]} at ${threshold} needs ${sharePct}% of the achievable ${max} \u2014 reachable only when nearly every pillar lands at or near its own cap on the same asset, which real landscapes rarely do all at once. Consider lowering the threshold or raising the pillar caps.`
+        );
+      }
+    }
+    const { CONFIRMED, UNDETERMINED, NONE } = rule.exposurePoints;
+    if (UNDETERMINED > CONFIRMED) {
+      errors.push(
+        `Undetermined internet exposure (${UNDETERMINED}) must not score above confirmed exposure (${CONFIRMED}) \u2014 "we haven't checked" cannot outrank "yes, it is reachable".`
+      );
+    }
+    if (NONE > UNDETERMINED) {
+      errors.push(
+        `No internet exposure (${NONE}) must not score above undetermined exposure (${UNDETERMINED}).`
+      );
+    }
+    for (let i = 1; i < SEVERITY_KEYS.length; i++) {
+      const worse = SEVERITY_KEYS[i - 1];
+      const milder = SEVERITY_KEYS[i];
+      if (rule.dataFindingPoints[milder] > rule.dataFindingPoints[worse]) {
+        errors.push(
+          `A ${milder.toLowerCase()} data finding (${rule.dataFindingPoints[milder]}) must not score above a ${worse.toLowerCase()} one (${rule.dataFindingPoints[worse]}).`
+        );
+      }
+    }
+    if (!rule.gapPoints.length) {
+      errors.push(
+        "The compliance-gap cascade has no rules; every gap would price at the fallback. Add a rule or set the fallback deliberately."
+      );
+    }
+    if (rule.gapPoints.length > MAX_GAP_RULES) {
+      errors.push(`The compliance-gap cascade is limited to ${MAX_GAP_RULES} rules.`);
+    }
+    const seen = /* @__PURE__ */ new Set();
+    rule.gapPoints.forEach((g, i) => {
+      if (!g.code) {
+        errors.push(`Compliance-gap rule ${i + 1} has no code.`);
+        return;
+      }
+      const key = `${g.match}:${g.code}`;
+      if (seen.has(key)) {
+        errors.push(`Compliance-gap rule ${i + 1} repeats ${g.match} "${g.code}".`);
+      }
+      seen.add(key);
+    });
+    return errors;
+  }
+  function shadowedGapRules(rule) {
+    const dead = [];
+    rule.gapPoints.forEach((row, i) => {
+      for (let j = 0; j < i; j++) {
+        const earlier = rule.gapPoints[j];
+        const shadows = earlier.match === "prefix" ? row.code.startsWith(earlier.code) : row.match === "exact" && row.code === earlier.code;
+        if (shadows) {
+          dead.push(i);
+          return;
+        }
+      }
+    });
+    return dead;
+  }
+  var DERIVABLE_PREFIXES = ["LLM", "ASI", "ML_", "5R_"];
+  var DERIVABLE_EXACT = ["NO_GUARDRAIL", "DEPRECATED_MODEL", "INACTIVE_AGENT", "FIVE_RS"];
+  var CONDITION_GAP_CODES = CONDITION_KEYS.map((k) => `COND_${k}`);
+  function isDerivable(code, rule) {
+    const c = cleanGapCode(code);
+    if (!c) return false;
+    if (c === "DEPRECATED_MODEL") return rule.gapSources.deprecatedModel === true;
+    if (c === "INACTIVE_AGENT") return rule.gapSources.inactiveAgent === true;
+    if (rule.gapUnit === "condition") {
+      if (CONDITION_GAP_CODES.includes(c)) return true;
+      return c.startsWith("COMBO_");
+    }
+    if (c.startsWith("5R_")) {
+      return rule.gapSources.fiveRs === true || rule.gapSources.frameworkMapping === true;
+    }
+    if (c === "FIVE_RS") return false;
+    if (DERIVABLE_EXACT.includes(c)) return true;
+    return DERIVABLE_PREFIXES.some((p) => c.startsWith(p));
+  }
+  function prefixFamilyIsDerivable(prefix, rule) {
+    const isComboFamily = prefix.startsWith("COMBO");
+    if (rule.gapUnit === "condition") {
+      return isComboFamily;
+    }
+    if (isComboFamily) return false;
+    return !(prefix.startsWith("5R") && rule.gapSources.fiveRs !== true && rule.gapSources.frameworkMapping !== true);
+  }
+  function unreachableGapRules(rule) {
+    const dead = [];
+    const checkedExact = [...DERIVABLE_EXACT, ...CONDITION_GAP_CODES];
+    rule.gapPoints.forEach((row, i) => {
+      const claimsDerivedFamily = row.match === "prefix" ? !prefixFamilyIsDerivable(row.code, rule) : checkedExact.includes(cleanGapCode(row.code)) && !isDerivable(row.code, rule);
+      if (claimsDerivedFamily) dead.push(i);
+    });
+    return dead;
+  }
+  var EMPTY_DISCRIMINATION = {
+    scored: 0,
+    distinctScores: 0,
+    largestTieGroup: 0,
+    tieRate: 0,
+    effectiveCardinality: 0,
+    bandOccupancy: {},
+    range: { min: 0, max: 0 },
+    saturated: { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 }
+  };
+  function ruleDiscrimination(nodes, rule) {
+    var _a5, _b, _c;
+    const scores = [];
+    const counts = {};
+    for (const b of ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]) counts[b] = 0;
+    const saturated = { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 };
+    const maxData = Math.min(
+      rule.pillarCCap,
+      Math.round(
+        (Math.max(...EXPOSURE_KEYS.map((k) => rule.dataExposurePoints[k])) + Math.max(...SEVERITY_KEYS.map((k) => rule.dataFindingPoints[k]))) * rule.dataAmplifier
+      )
+    );
+    const maxExposure = Math.max(...INTERNET_EXPOSURE_KEYS.map((k) => rule.exposurePoints[k]));
+    for (const n of nodes) {
+      if (typeof n.aars !== "number") continue;
+      scores.push(n.aars);
+      const band = String((_a5 = n.aarsSeverity) != null ? _a5 : "");
+      if (band in counts) counts[band] = counts[band] + 1;
+      const p = n.aarsPillars;
+      if (p) {
+        if (p.toxic >= rule.pillarACap) saturated.toxic++;
+        if (p.compliance >= rule.pillarBCap) saturated.compliance++;
+        if (maxData > 0 && p.data >= maxData) saturated.data++;
+        if (maxExposure > 0 && ((_b = p.exposure) != null ? _b : 0) >= maxExposure) saturated.exposure++;
+      }
+      if (n.aars >= 100) saturated.score++;
+    }
+    if (!scores.length) return { ...EMPTY_DISCRIMINATION, bandOccupancy: counts };
+    const byScore = /* @__PURE__ */ new Map();
+    for (const s of scores) byScore.set(s, ((_c = byScore.get(s)) != null ? _c : 0) + 1);
+    return {
+      scored: scores.length,
+      distinctScores: byScore.size,
+      largestTieGroup: Math.max(...byScore.values()),
+      // Both delegate to rankStats rather than repeating Σ C(nₖ,2)/C(N,2) and exp(-Σ pₖ ln pₖ)
+      // here. They group `scores` again internally, which cannot disagree with `byScore` —
+      // same array, same grouping — and one implementation of each formula is one place for it
+      // to be wrong. rankStats is deliberately free of any AARS import so it stays the shared
+      // home for these the day something other than a score needs measuring.
+      tieRate: tieRate(scores),
+      effectiveCardinality: effectiveCardinality(scores),
+      bandOccupancy: counts,
+      range: { min: Math.min(...scores), max: Math.max(...scores) },
+      saturated
+    };
+  }
+  function gapMatchTally(rule, codeLists) {
+    var _a5;
+    const perRule = rule.gapPoints.map(() => 0);
+    const byCode = {};
+    let fallback = 0;
+    let total2 = 0;
+    for (const list2 of codeLists != null ? codeLists : []) {
+      if (!Array.isArray(list2)) continue;
+      const seen = /* @__PURE__ */ new Set();
+      for (const raw of list2) {
+        const code = cleanGapCode(raw);
+        if (!code || seen.has(code)) continue;
+        seen.add(code);
+        byCode[code] = ((_a5 = byCode[code]) != null ? _a5 : 0) + 1;
+        total2++;
+        let matched = false;
+        for (let i = 0; i < rule.gapPoints.length; i++) {
+          const row = rule.gapPoints[i];
+          const hit = row.match === "exact" ? code === row.code : code.startsWith(row.code);
+          if (hit) {
+            perRule[i] = perRule[i] + 1;
+            matched = true;
+            break;
+          }
+        }
+        if (!matched) fallback++;
+      }
+    }
+    return { perRule, fallback, total: total2, byCode };
+  }
+  function pointsPhrase(n) {
+    return n === 1 ? "1 point" : `${n} points`;
+  }
+  function ruleSummary(rule) {
+    const achievableMaxForRule = achievableMax(rule);
+    const sev = SEVERITY_KEYS.map((k) => `${k} ${rule.severityPoints[k]}`).join(", ");
+    const exposure = `sensitive data ${rule.dataExposurePoints.SENSITIVE}, unconfirmed data access ${rule.dataExposurePoints.DATA_ACCESS}, none ${rule.dataExposurePoints.NONE}`;
+    const amplified = EXPOSURE_KEYS.map(
+      (k) => String(Math.round(rule.dataExposurePoints[k] * rule.dataAmplifier))
+    ).join(" / ");
+    const countClause = rule.multiIssueScaling === "log2" ? `each doubling of the open-issue count multiplies that by a further \xD7${rule.multiIssueMultiplier} step (two issues \xD7${rule.multiIssueMultiplier}, four \xD7${(1 + (rule.multiIssueMultiplier - 1) * 2).toFixed(2)}, eight \xD7${(1 + (rule.multiIssueMultiplier - 1) * 3).toFixed(2)})` : `more than one open issue multiplies that by \xD7${rule.multiIssueMultiplier}, however many there are`;
+    const gapClause = rule.gapAggregation === "rss" ? `matched prices combine as a root-sum-square, so each further gap adds less than the last` : `matched prices are added up`;
+    const gapUnitClause = rule.gapUnit === "condition" ? `Priced per CONDITION, not per framework code: one charge for each risk condition held (missing guardrail, excessive privilege, sensitive data, internet exposure) and one more per distinct toxic-combination group the asset's issues fall into. The framework codes on those issues still render on the detail sheet and the compliance rollups \u2014 they are just not what pillar B counts.` : `Priced per CODE: one charge for each distinct framework code (OWASP LLM / Agentic / ML, 5Rs) the asset's open issues carry.`;
+    const findingClause = SEVERITY_KEYS.every((k) => rule.dataFindingPoints[k] === 0) ? `The data findings an asset can reach score nothing; they are drawn on the graph but never added to the score.` : `The worst data finding it can reach adds ` + SEVERITY_KEYS.map((k) => `${k.toLowerCase()} ${rule.dataFindingPoints[k]}`).join(" / ") + (rule.dataFindingScaling === "log2" ? `, and each doubling of the finding count multiplies that by a further \xD7${rule.dataFindingMultiplier} step.` : `, however many it reaches.`);
+    return [
+      `Pillar A \u2014 toxic combinations, capped at ${rule.pillarACap}. The asset's worst open issue scores ${sev}; ${countClause}.`,
+      `Pillar B \u2014 compliance gaps, capped at ${rule.pillarBCap}. ${gapUnitClause} ${rule.gapPoints.length} pricing rules are tried in order, first match wins; an unmatched code scores ${pointsPhrase(rule.gapFallbackPoints)}. ${gapClause[0].toUpperCase()}${gapClause.slice(1)}.`,
+      `Pillar C \u2014 data exposure, capped at ${rule.pillarCCap}: ${exposure}, all amplified by \xD7${rule.dataAmplifier} (\u2192 ${amplified}). ${findingClause}`,
+      rule.exposurePoints.CONFIRMED === 0 && rule.exposurePoints.UNDETERMINED === 0 && rule.exposurePoints.NONE === 0 ? `Pillar D \u2014 internet exposure scores nothing; reachability is reported beside the score but never added to it.` : `Pillar D \u2014 internet exposure: confirmed ${rule.exposurePoints.CONFIRMED}, undetermined ${rule.exposurePoints.UNDETERMINED}, none ${rule.exposurePoints.NONE}. Not amplified \u2014 the 5Rs signal says nothing about reachability.`,
+      `Levels \u2014 CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. Scores are clamped to 100.` + // Said only when it changes what a reader should expect: at 100 this sentence would
+      // repeat the clamp just stated and add nothing. Below 100 it is a material fact about
+      // the rule — a band at or near the scale's top may sit above what this rule's own
+      // pillar caps can ever actually deliver; see achievableMax's own doc comment.
+      (achievableMaxForRule < 100 ? ` This rule's pillar caps top out at ${achievableMaxForRule}, not 100 \u2014 no score under it can ever exceed that, whatever the bands above say.` : "")
+    ];
+  }
+  function bandRanges(bands) {
+    return [
+      { severity: "CRITICAL", min: bands.critical, max: 100 },
+      { severity: "HIGH", min: bands.high, max: bands.critical - 1 },
+      { severity: "MEDIUM", min: bands.medium, max: bands.high - 1 },
+      { severity: "LOW", min: bands.low, max: bands.medium - 1 },
+      { severity: "INFO", min: 0, max: bands.low - 1 }
+    ].map((b) => ({ ...b, label: `score ${b.min}\u2013${b.max}` }));
+  }
+  function scoringEqual(a, b) {
+    const withoutBands = (r) => {
+      const c = cleanAarsRule(r);
+      delete c.bands;
+      return JSON.stringify(c);
+    };
+    return withoutBands(a) === withoutBands(b);
+  }
+
+  // src/domain/postureRule.ts
+  var AXIS_KEYS2 = ["capability", "containment", "consequence"];
+  var TRIFECTA_KEYS = ["privateData", "untrustedIngress", "externalEgress"];
+  var WHEN_KEYS = [...AXIS_KEYS2, ...TRIFECTA_KEYS];
+  var MAX_TIER_RULES = 40;
+  var TIER_CEILING_FLOOR = 1e-3;
+  function rec3(v) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  }
+  var DEFAULT_POSTURE_RULE = {
+    tierRules: [
+      // The lethal-trifecta row — UNREACHABLE by construction. See this const's own comment.
+      { when: { privateData: true, untrustedIngress: true, externalEgress: true }, tier: 4 },
+      { when: { capability: "BROAD", containment: "WEAK", consequence: "SEVERE" }, tier: 4 },
+      { when: { capability: "BROAD", containment: "WEAK" }, tier: 3 },
+      { when: { capability: "BROAD", consequence: "SEVERE" }, tier: 3 },
+      { when: { containment: "WEAK", consequence: "SEVERE" }, tier: 3 },
+      { when: { capability: "BROAD" }, tier: 2 },
+      { when: { containment: "WEAK" }, tier: 2 },
+      { when: { consequence: "SEVERE" }, tier: 2 },
+      { when: { capability: "MINIMAL", containment: "STRONG" }, tier: 1 },
+      // The former bare fallback, made an explicit row — see this const's own comment. Only
+      // reachable by a vector with none of BROAD capability, WEAK containment or SEVERE
+      // consequence (every rule above already claims those), so "nothing here reads at its
+      // worst" is exactly what tier 1 already means for row 9 immediately above it.
+      { when: {}, tier: 1 }
+    ],
+    fallbackTier: 1,
+    topTierCeiling: 0.15
+  };
+  function cleanTier(v, fallback) {
+    const n = Number(v);
+    return n === 1 || n === 2 || n === 3 || n === 4 ? n : fallback;
+  }
+  function cleanWhen2(v) {
+    const raw = rec3(v);
+    const when = {};
+    if (CAPABILITY_VALUES.includes(raw["capability"])) {
+      when.capability = raw["capability"];
+    }
+    if (CONTAINMENT_VALUES.includes(raw["containment"])) {
+      when.containment = raw["containment"];
+    }
+    if (CONSEQUENCE_VALUES.includes(raw["consequence"])) {
+      when.consequence = raw["consequence"];
+    }
+    for (const key of TRIFECTA_KEYS) {
+      if (typeof raw[key] === "boolean") when[key] = raw[key];
+    }
+    return when;
+  }
+  function cleanTierRule(v, fallback) {
+    const raw = rec3(v);
+    return { when: cleanWhen2(raw["when"]), tier: cleanTier(raw["tier"], fallback) };
+  }
+  function cleanPostureRule(raw) {
+    const r = rec3(raw);
+    const fallbackTier = cleanTier(r["fallbackTier"], DEFAULT_POSTURE_RULE.fallbackTier);
+    const rowsRaw = Array.isArray(r["tierRules"]) ? r["tierRules"] : null;
+    const tierRules = rowsRaw ? rowsRaw.slice(0, MAX_TIER_RULES).map((row) => cleanTierRule(row, fallbackTier)) : DEFAULT_POSTURE_RULE.tierRules.map((row) => ({ when: { ...row.when }, tier: row.tier }));
+    const ceilingRaw = Number(r["topTierCeiling"]);
+    const topTierCeiling = Number.isFinite(ceilingRaw) ? Math.min(1, Math.max(TIER_CEILING_FLOOR, ceilingRaw)) : DEFAULT_POSTURE_RULE.topTierCeiling;
+    return { tierRules, fallbackTier, topTierCeiling };
+  }
+  function pct2(share) {
+    return `${(share * 100).toFixed(1)}%`;
+  }
+  function validatePostureRule(rule) {
+    const errors = [];
+    if (!rule.tierRules.length) {
+      errors.push(
+        "The tier cascade has no rules; every vector would route to the fallback tier. Add a rule or accept the fallback deliberately."
+      );
+    }
+    if (rule.tierRules.length > MAX_TIER_RULES) {
+      errors.push(`The tier cascade is limited to ${MAX_TIER_RULES} rules.`);
+    }
+    rule.tierRules.forEach((row, i) => {
+      const isEmpty = WHEN_KEYS.every((k) => row.when[k] === void 0);
+      if (isEmpty && i !== rule.tierRules.length - 1) {
+        errors.push(
+          `Tier rule ${i + 1} has no conditions, so it matches every remaining vector and swallows every rule after it. Move it last or give it a condition.`
+        );
+      }
+    });
+    const seen = /* @__PURE__ */ new Map();
+    rule.tierRules.forEach((row, i) => {
+      const isEmpty = WHEN_KEYS.every((k) => row.when[k] === void 0);
+      if (isEmpty) return;
+      const key = WHEN_KEYS.filter((k) => row.when[k] !== void 0).map((k) => `${k}:${row.when[k]}`).join("|");
+      const earlier = seen.get(key);
+      if (earlier !== void 0) {
+        errors.push(`Tier rule ${i + 1} repeats the same condition as rule ${earlier + 1}.`);
+      } else {
+        seen.set(key, i);
+      }
+    });
+    const coverage = cellCoverage(rule);
+    const tier4Share = coverage.total ? coverage.byTier[4] / coverage.total : 0;
+    if (tier4Share > rule.topTierCeiling) {
+      errors.push(
+        `This rule sends ${coverage.byTier[4]} of ${coverage.total} cells to tier 4 (${pct2(tier4Share)}) \u2014 above the ${pct2(rule.topTierCeiling)} ceiling.`
+      );
+    }
+    return errors;
+  }
+  function shadowedTierRules(rule) {
+    const leaves = enumeratePostureVectors();
+    const dead = [];
+    rule.tierRules.forEach((row, i) => {
+      const rowLeaves = leaves.filter((v) => postureVectorMatches(v, row.when));
+      if (!rowLeaves.length) return;
+      const allClaimedEarlier = rowLeaves.every(
+        (v) => rule.tierRules.slice(0, i).some((earlier) => postureVectorMatches(v, earlier.when))
+      );
+      if (allClaimedEarlier) dead.push(i);
+    });
+    return dead;
+  }
+  function unreachableTierRules(rule) {
+    const leaves = enumeratePostureVectors();
+    const dead = [];
+    rule.tierRules.forEach((row, i) => {
+      const matchesAny = leaves.some((v) => postureVectorMatches(v, row.when));
+      if (!matchesAny) dead.push(i);
+    });
+    return dead;
+  }
+  function cellCoverage(rule) {
+    const leaves = enumeratePostureVectors();
+    const byRow = rule.tierRules.map(() => 0);
+    const byTier = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    let byFallback = 0;
+    for (const v of leaves) {
+      const { tier, matchedRuleIndex } = decidePosture(v, rule);
+      if (matchedRuleIndex === -1) byFallback++;
+      else byRow[matchedRuleIndex] += 1;
+      byTier[tier]++;
+    }
+    return { total: leaves.length, byRow, byFallback, byTier };
+  }
+  function postureDiscrimination(decided) {
+    var _a5;
+    const tierOccupancy = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    const cellOccupancy = {};
+    const unknownCounts = {
+      capability: 0,
+      containment: 0,
+      consequence: 0
+    };
+    let notEstablished = 0;
+    for (const d of decided) {
+      const established = tierEstablished(d.unknowns);
+      if (established && d.tier !== void 0) {
+        tierOccupancy[d.tier]++;
+        const key = postureKey(d.vector);
+        cellOccupancy[key] = ((_a5 = cellOccupancy[key]) != null ? _a5 : 0) + 1;
+      } else {
+        notEstablished++;
+      }
+      for (const u of d.unknowns) {
+        if (u === "capability" || u === "containment" || u === "consequence") unknownCounts[u]++;
+      }
+    }
+    const n = decided.length;
+    const rate = (count2) => n ? count2 / n : 0;
+    return {
+      decided,
+      tierOccupancy,
+      cellsReached: Object.keys(cellOccupancy).length,
+      cellOccupancy,
+      unknownRate: {
+        capability: rate(unknownCounts.capability),
+        containment: rate(unknownCounts.containment),
+        consequence: rate(unknownCounts.consequence),
+        tier: rate(notEstablished)
+      }
+    };
+  }
+  function postureRuleSummary(rule) {
+    const coverage = cellCoverage(rule);
+    const tier4Share = coverage.total ? coverage.byTier[4] / coverage.total : 0;
+    const unreachable = unreachableTierRules(rule);
+    return [
+      `${rule.tierRules.length} tier rules are tried in order, first match wins; a vector matching none of them falls back to tier ${rule.fallbackTier}.`,
+      `Tier 4 claims ${coverage.byTier[4]} of ${coverage.total} cells (${pct2(tier4Share)}), against a ceiling of ${pct2(rule.topTierCeiling)}.`,
+      unreachable.length ? `${unreachable.length} row(s) can never fire against any cell this app can derive \u2014 the lethal-trifecta row, kept as a documented gap rather than fed a guess.` : `Every row can fire against at least one of the 27 cells.`,
+      `Posture is a capability envelope against a containment, not a sum of open problems: an asset with zero open findings can still sit at a high tier.`
+    ];
+  }
+  function tierEqual(a, b) {
+    const withoutCeiling = (r) => {
+      const c = cleanPostureRule(r);
+      delete c.topTierCeiling;
+      return JSON.stringify(c);
+    };
+    return withoutCeiling(a) === withoutCeiling(b);
   }
 
   // src/domain/scanVars.ts
@@ -6728,6 +5899,19 @@ var Server = (() => {
     const list2 = Array.isArray(steps) ? steps.map((v) => String(v != null ? v : "")).filter(Boolean) : [];
     return { ...settings, last_truncated_steps: list2 };
   }
+  function getStepRows(settings) {
+    const raw = settings["last_step_rows"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      const n = Number(v);
+      if (k && Number.isFinite(n)) out[k] = n;
+    }
+    return out;
+  }
+  function withStepRows(settings, rows) {
+    return { ...settings, last_step_rows: getStepRows({ last_step_rows: rows }) };
+  }
   var DEFAULT_FRAMEWORK_IDS = [
     "wf-id-275",
     // OWASP Top 10 For Agentic Applications 2026
@@ -6801,6 +5985,2901 @@ var Server = (() => {
     return {
       in: base.in.filter((id) => known.has(id)),
       out: base.out.filter((id) => known.has(id))
+    };
+  }
+
+  // src/server/settingsStore.ts
+  var settingsMemo;
+  function loadSettings() {
+    if (settingsMemo !== void 0) return settingsMemo;
+    const out = {};
+    for (const row of readAll(TABS.settings)) {
+      const key = row["key"];
+      const raw = row["value_json"];
+      if (typeof key !== "string" || !key) continue;
+      if (typeof raw !== "string" || raw === "") {
+        out[key] = null;
+        continue;
+      }
+      try {
+        out[key] = JSON.parse(raw);
+      } catch {
+        console.warn(`Unreadable settings value for ${key}; ignoring`);
+      }
+    }
+    settingsMemo = out;
+    return out;
+  }
+  function saveSettings(settings) {
+    overwrite(
+      TABS.settings,
+      Object.entries(settings).map(([key, value]) => ({
+        key,
+        value_json: JSON.stringify(value != null ? value : null)
+      }))
+    );
+    settingsMemo = settings;
+    bumpDataVersion();
+  }
+  var getDefaultDepth2 = () => getDefaultDepth(loadSettings());
+  var getMaxNodes2 = () => getMaxNodes(loadSettings());
+  var getAutoExpand2 = () => getAutoExpand(loadSettings());
+  function setDefaultDepth(depth) {
+    saveSettings(withDefaultDepth(loadSettings(), depth));
+  }
+  function setMaxNodes(maxNodes) {
+    saveSettings(withMaxNodes(loadSettings(), maxNodes));
+  }
+  function setAutoExpand(on) {
+    saveSettings(withAutoExpand(loadSettings(), on));
+  }
+  var getAarsRule2 = () => getAarsRule(loadSettings());
+  function setAarsRule(rule) {
+    const settings = loadSettings();
+    const before = getAarsRule(settings);
+    const scoresWereCurrent = getScoredRuleVersion(settings) === before.version;
+    let next = withAarsRule(settings, rule);
+    const stored = getAarsRule(next);
+    if (scoresWereCurrent && scoringEqual(before.rule, stored.rule)) {
+      next = withScoredRuleVersion(next, stored.version);
+    }
+    saveSettings(next);
+    return stored;
+  }
+  var getProblemRule2 = () => getProblemRule(loadSettings());
+  function setProblemRule(rule) {
+    const settings = loadSettings();
+    const before = getProblemRule(settings);
+    const verdictsWereCurrent = getDecidedRuleVersion(settings) === before.version;
+    let next = withProblemRule(settings, rule);
+    const stored = getProblemRule(next);
+    if (verdictsWereCurrent && decisionEqual(before.rule, stored.rule)) {
+      next = withDecidedRuleVersion(next, stored.version);
+    }
+    saveSettings(next);
+    return stored;
+  }
+  var getPostureRule2 = () => getPostureRule(loadSettings());
+  function setPostureRule(rule) {
+    const settings = loadSettings();
+    const before = getPostureRule(settings);
+    const tiersWereCurrent = getComputedPostureVersion(settings) === before.version;
+    let next = withPostureRule(settings, rule);
+    const stored = getPostureRule(next);
+    if (tiersWereCurrent && tierEqual(before.rule, stored.rule)) {
+      next = withComputedPostureVersion(next, stored.version);
+    }
+    saveSettings(next);
+    return stored;
+  }
+  var getSkippedSteps2 = () => getSkippedSteps(loadSettings());
+  function setSkippedSteps(steps) {
+    const settings = loadSettings();
+    const next = withSkippedSteps(settings, steps);
+    const before = getSkippedSteps(settings).join(" ");
+    if (getSkippedSteps(next).join(" ") === before) return;
+    saveSettings(next);
+  }
+  var getTruncatedSteps2 = () => getTruncatedSteps(loadSettings());
+  function setTruncatedSteps(steps) {
+    const settings = loadSettings();
+    const next = withTruncatedSteps(settings, steps);
+    const before = getTruncatedSteps(settings).join(" ");
+    if (getTruncatedSteps(next).join(" ") === before) return;
+    saveSettings(next);
+  }
+  var getStepRows2 = () => getStepRows(loadSettings());
+  function setStepRows(rows) {
+    const settings = loadSettings();
+    const next = withStepRows(settings, rows);
+    const key = (r) => Object.keys(r).sort().map((k) => `${k}=${r[k]}`).join(" ");
+    if (key(getStepRows(next)) === key(getStepRows(settings))) return;
+    saveSettings(next);
+  }
+  function getSelectedFrameworks2(catalogue) {
+    const settings = loadSettings();
+    if (Array.isArray(settings["selected_frameworks"])) {
+      return getSelectedFrameworks(settings);
+    }
+    const rows = catalogue ? catalogue() : [];
+    return rows.length ? resolveDefaultFrameworks(rows) : getSelectedFrameworks(settings);
+  }
+  function setSelectedFrameworks(ids) {
+    saveSettings(withSelectedFrameworks(loadSettings(), ids));
+    return getSelectedFrameworks2();
+  }
+  var getFiveRsPins2 = () => getFiveRsPins(loadSettings());
+  function setFiveRsPins(pins) {
+    const settings = loadSettings();
+    const next = withFiveRsPins(settings, pins);
+    const key = (p) => `${p.in.join(" ")}|${p.out.join(" ")}`;
+    if (key(getFiveRsPins(next)) === key(getFiveRsPins(settings))) {
+      return getFiveRsPins(settings);
+    }
+    saveSettings(next);
+    return getFiveRsPins2();
+  }
+  var getScanVars2 = () => getScanVars(loadSettings());
+  function setScanVars(stepId, vars) {
+    saveSettings(withScanVars(loadSettings(), stepId, vars));
+    return getScanVars2();
+  }
+  var getScoredRuleVersion2 = () => getScoredRuleVersion(loadSettings());
+  function setScoredRuleVersion(version) {
+    const settings = loadSettings();
+    const next = withScoredRuleVersion(settings, version);
+    if (getScoredRuleVersion(next) === getScoredRuleVersion(settings)) return;
+    saveSettings(next);
+  }
+  var getDecidedRuleVersion2 = () => getDecidedRuleVersion(loadSettings());
+  function setDecidedRuleVersion(version) {
+    const settings = loadSettings();
+    const next = withDecidedRuleVersion(settings, version);
+    if (getDecidedRuleVersion(next) === getDecidedRuleVersion(settings)) return;
+    saveSettings(next);
+  }
+  var getComputedPostureVersion2 = () => getComputedPostureVersion(loadSettings());
+  function setComputedPostureVersion(version) {
+    const settings = loadSettings();
+    const next = withComputedPostureVersion(settings, version);
+    if (getComputedPostureVersion(next) === getComputedPostureVersion(settings)) return;
+    saveSettings(next);
+  }
+  function configRulesAreFresh2(hasRows, now) {
+    return configRulesAreFresh(loadSettings(), hasRows, now);
+  }
+  function setConfigRulesSyncedAt(at) {
+    saveSettings(withConfigRulesSyncedAt(loadSettings(), at));
+  }
+
+  // src/server/syncStore.ts
+  function boolCell(v) {
+    return v ? "true" : "false";
+  }
+  function triCell(v) {
+    return v === null || v === void 0 ? "null" : v ? "true" : "false";
+  }
+  function parseBool(v) {
+    return String(v) === "true";
+  }
+  function parseTri(v) {
+    const s = String(v);
+    return s === "true" ? true : s === "false" ? false : null;
+  }
+  function parseJson(v, fallback) {
+    if (typeof v !== "string" || v === "") return fallback;
+    try {
+      return JSON.parse(v);
+    } catch {
+      return fallback;
+    }
+  }
+  function parseAssetProjects(v) {
+    const raw = parseJson(v, []);
+    if (typeof raw[0] === "string") {
+      return raw.map((name) => ({
+        id: `proj-${String(name).toLowerCase()}`,
+        name: String(name)
+      }));
+    }
+    return raw;
+  }
+  function assetToRow(n) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B;
+    return {
+      id: n.id,
+      kind: n.kind,
+      name: n.name,
+      native_type: (_a5 = n.nativeType) != null ? _a5 : null,
+      cloud: (_b = n.cloudPlatform) != null ? _b : null,
+      region: (_c = n.region) != null ? _c : null,
+      status: (_d = n.status) != null ? _d : null,
+      account_id: (_f = (_e = n.cloudAccount) == null ? void 0 : _e.id) != null ? _f : null,
+      account_name: (_h = (_g = n.cloudAccount) == null ? void 0 : _g.name) != null ? _h : null,
+      // Full project objects, not just names: `rowToAsset` used to fabricate a `proj-<name>`
+      // id and drop `businessImpact` entirely on the way back in, which is what stranded the
+      // signal ai/AARS_ASSESSMENT.md §7 named as the highest-value follow-up. A row this
+      // writes is always read back through the object branch of `rowToAsset`'s two-branch
+      // reader below; the legacy string-array branch exists only for rows an OLDER version
+      // wrote.
+      projects_json: JSON.stringify((_i = n.projects) != null ? _i : []),
+      // The asset-level worst-of `enrichGraphDoc` folds from `projects[].businessImpact` —
+      // `?? null`, never a default, so an asset Wiz reported no impact for reads back
+      // undefined rather than as a false "LBI".
+      business_impact: (_j = n.businessImpact) != null ? _j : null,
+      first_seen: (_k = n.firstSeen) != null ? _k : null,
+      last_seen: (_l = n.lastSeen) != null ? _l : null,
+      internet: triCell(n.isAccessibleFromInternet),
+      open_internet: triCell(n.isOpenToAllInternet),
+      sensitive_data: boolCell(n.hasSensitiveData),
+      sensitive_access: boolCell(n.hasAccessToSensitiveData),
+      high_priv: boolCell(n.hasHighPrivileges),
+      admin_priv: boolCell(n.hasAdminPrivileges),
+      guardrail_missing: boolCell(n.guardrailMissing),
+      technology_categories: ((_m = n.technologyCategories) != null ? _m : []).join(","),
+      severity: (_n = n.severity) != null ? _n : null,
+      aars: (_o = n.aars) != null ? _o : null,
+      aars_severity: (_p = n.aarsSeverity) != null ? _p : null,
+      aars_pillars_json: n.aarsPillars ? JSON.stringify(n.aarsPillars) : null,
+      aars_input_json: n.aarsInput ? JSON.stringify(n.aarsInput) : null,
+      combo_groups: ((_q = n.comboGroups) != null ? _q : []).join(","),
+      tags_json: n.tags ? JSON.stringify(n.tags) : null,
+      identity_purpose: (_r = n.identityPurpose) != null ? _r : null,
+      issue_analytics_json: n.issueAnalytics ? JSON.stringify(n.issueAnalytics) : null,
+      // `?? null` rather than `?? 0`: a store the traversal never reached must read back as
+      // undefined, not as "zero findings". The graph draws no aggregate for either, but the
+      // pillar-C knob and the DSPM coverage state both need to tell them apart.
+      data_finding_count: (_s = n.dataFindingCount) != null ? _s : null,
+      data_findings_json: n.dataFindingSeverities ? JSON.stringify(n.dataFindingSeverities) : null,
+      exposure_level: (_t = n.exposureLevel) != null ? _t : null,
+      port_validation: (_u = n.portValidation) != null ? _u : null,
+      // `null` rather than `"{}"` when there is no evidence, and rowToAsset reads it back as
+      // undefined: an asset the exposure steps never reached must not become one they reached
+      // and found clean. conditionState falls through to the flags for the first and would
+      // have to keep falling through for the second — but only one of them is honest about it.
+      exposure_evidence_json: n.exposureEvidence ? JSON.stringify(n.exposureEvidence) : null,
+      // `?? null`, never `?? false`: an identity row the tenant reported no dormancy for must
+      // read back as undefined. "Not reported" and "in use" are different answers.
+      inactive: n.inactive === void 0 ? null : boolCell(n.inactive),
+      inactive_timeframe: (_v = n.inactiveTimeframe) != null ? _v : null,
+      human_access_json: n.humanAccess ? JSON.stringify(n.humanAccess) : null,
+      display_name: (_w = n.displayName) != null ? _w : null,
+      email: (_x = n.email) != null ? _x : null,
+      publisher: (_y = n.publisher) != null ? _y : null,
+      discovery_methods: ((_z = n.discoveryMethods) != null ? _z : []).join(","),
+      // Phase 6: the Asset Posture Tier — `?? null`, never a default: a synthetic node, or a
+      // real one the fold never reached, must read back as undefined rather than as tier 0.
+      posture_tier: (_A = n.postureTier) != null ? _A : null,
+      posture_input_json: n.postureInput ? JSON.stringify(n.postureInput) : null,
+      worst_open_problem: (_B = n.worstOpenProblem) != null ? _B : null
+    };
+  }
+  function rowToAsset(r) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
+    const node2 = {
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
+      kind: String((_b = r["kind"]) != null ? _b : "AI_AGENT"),
+      name: String((_c = r["name"]) != null ? _c : ""),
+      nativeType: (_d = r["native_type"]) != null ? _d : void 0,
+      cloudPlatform: (_e = r["cloud"]) != null ? _e : void 0,
+      region: (_f = r["region"]) != null ? _f : void 0,
+      status: (_g = r["status"]) != null ? _g : void 0,
+      firstSeen: (_h = r["first_seen"]) != null ? _h : void 0,
+      lastSeen: (_i = r["last_seen"]) != null ? _i : void 0,
+      isAccessibleFromInternet: parseTri(r["internet"]),
+      isOpenToAllInternet: parseTri(r["open_internet"]),
+      hasSensitiveData: parseBool(r["sensitive_data"]),
+      hasAccessToSensitiveData: parseBool(r["sensitive_access"]),
+      hasHighPrivileges: parseBool(r["high_priv"]),
+      hasAdminPrivileges: parseBool(r["admin_priv"]),
+      guardrailMissing: parseBool(r["guardrail_missing"]),
+      projects: parseAssetProjects(r["projects_json"])
+    };
+    const account = (_j = r["account_id"]) != null ? _j : null;
+    if (account) {
+      node2.cloudAccount = { id: account, name: String((_k = r["account_name"]) != null ? _k : account) };
+    }
+    const businessImpact = (_l = r["business_impact"]) != null ? _l : null;
+    if (businessImpact) node2.businessImpact = businessImpact;
+    const severity = (_m = r["severity"]) != null ? _m : null;
+    if (severity) node2.severity = severity;
+    if (r["aars"] !== null && r["aars"] !== void 0) node2.aars = Number(r["aars"]);
+    const aarsSev = normalizeAarsSeverity((_n = r["aars_severity"]) != null ? _n : r["aars_band"]);
+    if (aarsSev) node2.aarsSeverity = aarsSev;
+    const pillars = parseJson(r["aars_pillars_json"], null);
+    if (pillars) node2.aarsPillars = pillars;
+    const aarsInput = parseJson(r["aars_input_json"], null);
+    if (aarsInput) node2.aarsInput = aarsInput;
+    const combos = String((_o = r["combo_groups"]) != null ? _o : "");
+    if (combos) node2.comboGroups = combos.split(",").filter(Boolean);
+    const tags = parseJson(r["tags_json"], null);
+    if (tags) node2.tags = tags;
+    const techCats = String((_p = r["technology_categories"]) != null ? _p : "").split(",").filter(Boolean);
+    if (techCats.length) node2.technologyCategories = techCats;
+    const purpose = (_q = r["identity_purpose"]) != null ? _q : null;
+    if (purpose) node2.identityPurpose = purpose;
+    const analytics = parseJson(r["issue_analytics_json"], null);
+    if (analytics) node2.issueAnalytics = analytics;
+    const findingCount = r["data_finding_count"];
+    if (findingCount !== null && findingCount !== void 0 && String(findingCount) !== "") {
+      node2.dataFindingCount = Number(findingCount);
+    }
+    const findingSevs = parseJson(r["data_findings_json"], null);
+    if (findingSevs) node2.dataFindingSeverities = findingSevs;
+    const exposureLevel = (_r = r["exposure_level"]) != null ? _r : null;
+    if (exposureLevel) node2.exposureLevel = exposureLevel;
+    const portValidation = (_s = r["port_validation"]) != null ? _s : null;
+    if (portValidation) node2.portValidation = portValidation;
+    const evidence = parseJson(r["exposure_evidence_json"], null);
+    if (evidence) node2.exposureEvidence = evidence;
+    const inactive = parseTri(r["inactive"]);
+    if (inactive !== null) node2.inactive = inactive;
+    const inactiveTimeframe = (_t = r["inactive_timeframe"]) != null ? _t : null;
+    if (inactiveTimeframe) node2.inactiveTimeframe = inactiveTimeframe;
+    const humanAccess = parseJson(r["human_access_json"], null);
+    if (humanAccess) node2.humanAccess = humanAccess;
+    const displayName = (_u = r["display_name"]) != null ? _u : null;
+    if (displayName) node2.displayName = displayName;
+    const email = (_v = r["email"]) != null ? _v : null;
+    if (email) node2.email = email;
+    const publisher = (_w = r["publisher"]) != null ? _w : null;
+    if (publisher) node2.publisher = publisher;
+    const methods = String((_x = r["discovery_methods"]) != null ? _x : "").split(",").filter(Boolean);
+    if (methods.length) node2.discoveryMethods = methods;
+    const postureTier = r["posture_tier"];
+    if (postureTier !== null && postureTier !== void 0 && String(postureTier) !== "") {
+      node2.postureTier = Number(postureTier);
+    }
+    const postureInput = parseJson(r["posture_input_json"], null);
+    if (postureInput) node2.postureInput = postureInput;
+    const worstOpenProblem2 = (_y = r["worst_open_problem"]) != null ? _y : null;
+    if (worstOpenProblem2) node2.worstOpenProblem = worstOpenProblem2;
+    return node2;
+  }
+  function edgeToRow(e) {
+    var _a5;
+    return {
+      id: e.id,
+      src: e.src,
+      dst: e.dst,
+      type: e.type,
+      negated: boolCell(e.negated),
+      access_type: (_a5 = e.accessType) != null ? _a5 : null
+    };
+  }
+  function rowToEdge(r) {
+    var _a5, _b, _c, _d, _e;
+    const e = {
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
+      src: String((_b = r["src"]) != null ? _b : ""),
+      dst: String((_c = r["dst"]) != null ? _c : ""),
+      type: String((_d = r["type"]) != null ? _d : "USES")
+    };
+    if (parseBool(r["negated"])) e.negated = true;
+    const access = (_e = r["access_type"]) != null ? _e : null;
+    if (access) e.accessType = access;
+    return e;
+  }
+  function issueToRow(i) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z;
+    return {
+      id: i.id,
+      rule_id: i.ruleId,
+      rule_name: i.ruleName,
+      combo_group: i.comboGroup,
+      native_severity: i.nativeSeverity,
+      adjusted_severity: i.adjustedSeverity,
+      status: i.status,
+      asset_id: i.assetId,
+      asset_name: i.assetName,
+      region: (_a5 = i.region) != null ? _a5 : null,
+      account: (_b = i.account) != null ? _b : null,
+      projects_json: JSON.stringify((_c = i.projects) != null ? _c : []),
+      frameworks_json: JSON.stringify((_d = i.frameworks) != null ? _d : {}),
+      justification: (_e = i.justification) != null ? _e : null,
+      created_at: (_f = i.createdAt) != null ? _f : null,
+      due_at: (_g = i.dueAt) != null ? _g : null,
+      resolution_recommendation: (_h = i.resolutionRecommendation) != null ? _h : null,
+      remediation: (_i = i.remediation) != null ? _i : null,
+      issue_type: (_j = i.issueType) != null ? _j : null,
+      updated_at: (_k = i.updatedAt) != null ? _k : null,
+      resolved_at: (_l = i.resolvedAt) != null ? _l : null,
+      resolution_reason: (_m = i.resolutionReason) != null ? _m : null,
+      resolved_by: (_n = i.resolvedBy) != null ? _n : null,
+      assignee: (_o = i.assignee) != null ? _o : null,
+      // Comma-joined, matching combo_groups / technology_categories on ai_assets; the
+      // _json suffix is reserved for structured values.
+      environments: ((_p = i.environments) != null ? _p : []).join(","),
+      validated_exploitable: boolCell(i.validatedAsExploitable),
+      business_impact: (_q = i.businessImpact) != null ? _q : null,
+      entity_status: (_r = i.entityStatus) != null ? _r : null,
+      subscription_id: (_s = i.subscriptionId) != null ? _s : null,
+      ignore_note: (_t = i.ignoreNote) != null ? _t : null,
+      ignore_expired_at: (_u = i.ignoreExpiredAt) != null ? _u : null,
+      ticket_urls: ((_v = i.ticketUrls) != null ? _v : []).join(","),
+      ai_verdict: (_w = i.aiVerdict) != null ? _w : null,
+      ai_recommended_severity: (_x = i.aiRecommendedSeverity) != null ? _x : null,
+      // Phase 4: the Problem/Decision-Vector verdict. `?? null`, never a default: a resolved
+      // issue (or one synced before this phase) carries none of the three, and reading that
+      // as some fallback outcome would assert a decision nobody made.
+      problem_outcome: (_y = i.problemOutcome) != null ? _y : null,
+      problem_input_json: i.problemInput ? JSON.stringify(i.problemInput) : null,
+      problem_rule_version: (_z = i.problemRuleVersion) != null ? _z : null
+    };
+  }
+  function rowToIssue(r) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F;
+    const issue2 = {
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
+      ruleId: String((_b = r["rule_id"]) != null ? _b : ""),
+      ruleName: String((_c = r["rule_name"]) != null ? _c : ""),
+      // A ledger written before the Other bucket existed holds "" for every unclassified
+      // issue. Without this fallback those rows keep falling out of every rollup until
+      // someone happens to re-sync.
+      comboGroup: String((_d = r["combo_group"]) != null ? _d : "") || OTHER_GROUP_ID,
+      nativeSeverity: String((_e = r["native_severity"]) != null ? _e : "UNKNOWN"),
+      adjustedSeverity: String((_f = r["adjusted_severity"]) != null ? _f : "UNKNOWN"),
+      status: String((_g = r["status"]) != null ? _g : "OPEN"),
+      assetId: String((_h = r["asset_id"]) != null ? _h : ""),
+      assetName: String((_i = r["asset_name"]) != null ? _i : ""),
+      region: (_j = r["region"]) != null ? _j : void 0,
+      account: (_k = r["account"]) != null ? _k : void 0,
+      projects: parseJson(r["projects_json"], []),
+      frameworks: parseJson(r["frameworks_json"], {}),
+      justification: (_l = r["justification"]) != null ? _l : void 0,
+      createdAt: (_m = r["created_at"]) != null ? _m : void 0,
+      dueAt: (_n = r["due_at"]) != null ? _n : void 0,
+      resolutionRecommendation: (_o = r["resolution_recommendation"]) != null ? _o : void 0,
+      remediation: (_p = r["remediation"]) != null ? _p : void 0,
+      issueType: (_q = r["issue_type"]) != null ? _q : void 0,
+      updatedAt: (_r = r["updated_at"]) != null ? _r : void 0,
+      resolvedAt: (_s = r["resolved_at"]) != null ? _s : void 0,
+      resolutionReason: (_t = r["resolution_reason"]) != null ? _t : void 0,
+      resolvedBy: (_u = r["resolved_by"]) != null ? _u : void 0,
+      assignee: (_v = r["assignee"]) != null ? _v : void 0,
+      businessImpact: (_w = r["business_impact"]) != null ? _w : void 0,
+      entityStatus: (_x = r["entity_status"]) != null ? _x : void 0,
+      subscriptionId: (_y = r["subscription_id"]) != null ? _y : void 0,
+      ignoreNote: (_z = r["ignore_note"]) != null ? _z : void 0,
+      ignoreExpiredAt: (_A = r["ignore_expired_at"]) != null ? _A : void 0,
+      aiVerdict: (_B = r["ai_verdict"]) != null ? _B : void 0,
+      aiRecommendedSeverity: (_C = r["ai_recommended_severity"]) != null ? _C : void 0
+    };
+    const environments = String((_D = r["environments"]) != null ? _D : "").split(",").filter(Boolean);
+    if (environments.length) issue2.environments = environments;
+    const ticketUrls = String((_E = r["ticket_urls"]) != null ? _E : "").split(",").filter(Boolean);
+    if (ticketUrls.length) issue2.ticketUrls = ticketUrls;
+    if (parseBool(r["validated_exploitable"])) issue2.validatedAsExploitable = true;
+    const problemOutcome = (_F = r["problem_outcome"]) != null ? _F : null;
+    if (problemOutcome) issue2.problemOutcome = problemOutcome;
+    const problemInput = parseJson(r["problem_input_json"], null);
+    if (problemInput) issue2.problemInput = problemInput;
+    const problemRuleVersion = r["problem_rule_version"];
+    if (problemRuleVersion !== null && problemRuleVersion !== void 0 && String(problemRuleVersion) !== "") {
+      issue2.problemRuleVersion = Number(problemRuleVersion);
+    }
+    return issue2;
+  }
+  var CELL_MAX = 5e4;
+  var CLAMP_MARKER = "\n\u2026 truncated for storage";
+  function cell(v) {
+    if (v === void 0) return null;
+    if (v.length <= CELL_MAX) return v;
+    return v.slice(0, CELL_MAX - CLAMP_MARKER.length) + CLAMP_MARKER;
+  }
+  function optional(v) {
+    return v === null || v === void 0 || v === "" ? void 0 : String(v);
+  }
+  function findingToRow(f) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t;
+    return {
+      id: f.id,
+      resource_id: f.resourceId,
+      rule_short_id: f.ruleShortId,
+      severity: f.severity,
+      remediation: cell(f.remediation),
+      framework_codes: ((_a5 = f.frameworkCodes) != null ? _a5 : []).join(","),
+      name: (_b = f.name) != null ? _b : null,
+      status: (_c = f.status) != null ? _c : null,
+      result: (_d = f.result) != null ? _d : null,
+      // Tri-state, like the internet flag: "null" for a response that never carried the
+      // field. isOpenGap only tombstones on an explicit true, so absent must not read false.
+      deleted: triCell(f.deleted),
+      first_seen_at: (_e = f.firstSeenAt) != null ? _e : null,
+      analyzed_at: (_f = f.analyzedAt) != null ? _f : null,
+      rule_id: (_g = f.ruleId) != null ? _g : null,
+      rule_graph_id: (_h = f.ruleGraphId) != null ? _h : null,
+      rule_name: (_i = f.ruleName) != null ? _i : null,
+      rule_description: cell(f.ruleDescription),
+      remediation_instructions: cell(f.remediationInstructions),
+      opa_policy: cell(f.opaPolicy),
+      risks_json: f.risks && f.risks.length ? JSON.stringify(f.risks) : null,
+      threats_json: f.threats && f.threats.length ? JSON.stringify(f.threats) : null,
+      resource_name: (_j = f.resourceName) != null ? _j : null,
+      resource_type: (_k = f.resourceType) != null ? _k : null,
+      resource_status: (_l = f.resourceStatus) != null ? _l : null,
+      target_external_id: (_m = f.targetExternalId) != null ? _m : null,
+      source: (_n = f.source) != null ? _n : null,
+      subscription_id: (_o = f.subscriptionId) != null ? _o : null,
+      subscription_name: (_p = f.subscriptionName) != null ? _p : null,
+      cloud_provider: (_q = f.cloudProvider) != null ? _q : null,
+      projects_json: f.projects && f.projects.length ? JSON.stringify(f.projects) : null,
+      business_impact: (_r = f.businessImpact) != null ? _r : null,
+      ignore_rule_ids_json: f.ignoreRuleIds && f.ignoreRuleIds.length ? JSON.stringify(f.ignoreRuleIds) : null,
+      iac_finding_ids_json: f.iacFindingIds && f.iacFindingIds.length ? JSON.stringify(f.iacFindingIds) : null,
+      // Phase 4: the Problem/Decision-Vector verdict — same three columns, same `?? null`
+      // convention, as ai_issues above.
+      problem_outcome: (_s = f.problemOutcome) != null ? _s : null,
+      problem_input_json: f.problemInput ? JSON.stringify(f.problemInput) : null,
+      problem_rule_version: (_t = f.problemRuleVersion) != null ? _t : null
+    };
+  }
+  function rowToFinding(r) {
+    var _a5, _b, _c, _d, _e, _f;
+    const finding = {
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
+      resourceId: String((_b = r["resource_id"]) != null ? _b : ""),
+      ruleShortId: String((_c = r["rule_short_id"]) != null ? _c : ""),
+      severity: String((_d = r["severity"]) != null ? _d : "UNKNOWN"),
+      remediation: optional(r["remediation"]),
+      frameworkCodes: String((_e = r["framework_codes"]) != null ? _e : "").split(",").filter(Boolean),
+      name: optional(r["name"]),
+      status: optional(r["status"]),
+      result: optional(r["result"]),
+      firstSeenAt: optional(r["first_seen_at"]),
+      analyzedAt: optional(r["analyzed_at"]),
+      ruleId: optional(r["rule_id"]),
+      ruleGraphId: optional(r["rule_graph_id"]),
+      ruleName: optional(r["rule_name"]),
+      ruleDescription: optional(r["rule_description"]),
+      remediationInstructions: optional(r["remediation_instructions"]),
+      opaPolicy: optional(r["opa_policy"]),
+      risks: parseJson(r["risks_json"], []),
+      threats: parseJson(r["threats_json"], []),
+      resourceName: optional(r["resource_name"]),
+      resourceType: optional(r["resource_type"]),
+      resourceStatus: optional(r["resource_status"]),
+      targetExternalId: optional(r["target_external_id"]),
+      source: optional(r["source"]),
+      subscriptionId: optional(r["subscription_id"]),
+      subscriptionName: optional(r["subscription_name"]),
+      cloudProvider: optional(r["cloud_provider"]),
+      projects: parseJson(r["projects_json"], []),
+      businessImpact: optional(r["business_impact"]),
+      ignoreRuleIds: parseJson(r["ignore_rule_ids_json"], []),
+      iacFindingIds: parseJson(r["iac_finding_ids_json"], [])
+    };
+    const deleted = parseTri(r["deleted"]);
+    if (deleted !== null) finding.deleted = deleted;
+    const problemOutcome = (_f = r["problem_outcome"]) != null ? _f : null;
+    if (problemOutcome) finding.problemOutcome = problemOutcome;
+    const problemInput = parseJson(r["problem_input_json"], null);
+    if (problemInput) finding.problemInput = problemInput;
+    const problemRuleVersion = r["problem_rule_version"];
+    if (problemRuleVersion !== null && problemRuleVersion !== void 0 && String(problemRuleVersion) !== "") {
+      finding.problemRuleVersion = Number(problemRuleVersion);
+    }
+    return finding;
+  }
+  function dataFindingToRow(f) {
+    return {
+      id: f.id,
+      resource_id: f.resourceId,
+      name: f.name,
+      severity: f.severity
+    };
+  }
+  function frameworkToRow(f) {
+    var _a5, _b;
+    return {
+      id: f.id,
+      name: f.name,
+      description: (_a5 = f.description) != null ? _a5 : "",
+      builtin: f.builtin,
+      enabled: f.enabled,
+      policy_types: ((_b = f.policyTypes) != null ? _b : []).join(",")
+    };
+  }
+  function rowToFramework(r) {
+    var _a5, _b, _c, _d;
+    return {
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
+      name: String((_b = r["name"]) != null ? _b : ""),
+      description: String((_c = r["description"]) != null ? _c : "") || void 0,
+      builtin: r["builtin"] === true || r["builtin"] === "TRUE" || r["builtin"] === "true",
+      enabled: r["enabled"] === true || r["enabled"] === "TRUE" || r["enabled"] === "true",
+      policyTypes: String((_d = r["policy_types"]) != null ? _d : "").split(",").filter(Boolean),
+      // Never stored. Resolved against the settings selection by the API model, which is the
+      // only place that knows.
+      selected: false
+    };
+  }
+  function configRuleToRow(r) {
+    var _a5, _b;
+    return {
+      id: r.id,
+      short_id: r.shortId,
+      name: r.name,
+      subject_entity_type: (_a5 = r.subjectEntityType) != null ? _a5 : "",
+      external_refs: ((_b = r.externalRefs) != null ? _b : []).join(",")
+    };
+  }
+  function rowToConfigRule(r) {
+    var _a5, _b, _c, _d, _e;
+    return {
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
+      shortId: String((_b = r["short_id"]) != null ? _b : ""),
+      name: String((_c = r["name"]) != null ? _c : ""),
+      subjectEntityType: String((_d = r["subject_entity_type"]) != null ? _d : "") || void 0,
+      externalRefs: String((_e = r["external_refs"]) != null ? _e : "").split(",").filter(Boolean)
+    };
+  }
+  function identityFindingToRow(f) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
+    return {
+      id: f.id,
+      resource_id: f.resourceId,
+      resource_name: (_a5 = f.resourceName) != null ? _a5 : null,
+      rule_id: (_b = f.ruleId) != null ? _b : null,
+      rule_short_id: f.ruleShortId,
+      rule_name: (_c = f.ruleName) != null ? _c : null,
+      severity: f.severity,
+      status: (_d = f.status) != null ? _d : null,
+      result: (_e = f.result) != null ? _e : null,
+      first_seen_at: (_f = f.firstSeenAt) != null ? _f : null,
+      analyzed_at: (_g = f.analyzedAt) != null ? _g : null,
+      remediation: (_h = f.remediation) != null ? _h : null,
+      hygiene: f.hygiene
+    };
+  }
+  function rowToIdentityFinding(r) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    return {
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
+      resourceId: String((_b = r["resource_id"]) != null ? _b : ""),
+      resourceName: (_c = r["resource_name"]) != null ? _c : void 0,
+      ruleId: (_d = r["rule_id"]) != null ? _d : void 0,
+      ruleShortId: String((_e = r["rule_short_id"]) != null ? _e : ""),
+      ruleName: (_f = r["rule_name"]) != null ? _f : void 0,
+      severity: String((_g = r["severity"]) != null ? _g : "UNKNOWN"),
+      status: (_h = r["status"]) != null ? _h : void 0,
+      result: (_i = r["result"]) != null ? _i : void 0,
+      firstSeenAt: (_j = r["first_seen_at"]) != null ? _j : void 0,
+      analyzedAt: (_k = r["analyzed_at"]) != null ? _k : void 0,
+      remediation: (_l = r["remediation"]) != null ? _l : void 0,
+      // Defaulted rather than validated: the column is written by this app from the matcher's
+      // verdict, so an unrecognised value means a hand-edited cell, and MFA is the reading that
+      // over-reports rather than under-reports.
+      hygiene: String((_m = r["hygiene"]) != null ? _m : "MFA") === "DORMANT" ? "DORMANT" : "MFA"
+    };
+  }
+  function cellPct(v) {
+    if (v === "" || v === null || v === void 0) return null;
+    const n = Number(v);
+    return isFinite(n) ? n : null;
+  }
+  function postureToRow(p) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    return {
+      framework_id: p.frameworkId,
+      level: p.level,
+      category_external_id: (_a5 = p.categoryExternalId) != null ? _a5 : "",
+      subcategory_external_id: (_b = p.subcategoryExternalId) != null ? _b : "",
+      node_id: (_c = p.nodeId) != null ? _c : "",
+      title: p.title,
+      description: (_d = p.description) != null ? _d : "",
+      // Null stays empty rather than becoming 0 — see cellPct.
+      posture_pct: p.posturePct === null ? "" : p.posturePct,
+      pass_count: p.passCount,
+      fail_count: p.failCount,
+      pass_subcategory_count: (_e = p.passSubCategoryCount) != null ? _e : "",
+      fail_subcategory_count: (_f = p.failSubCategoryCount) != null ? _f : "",
+      empty_posture_reason: (_g = p.emptyPostureReason) != null ? _g : "",
+      assessment_scope: (_h = p.assessmentScope) != null ? _h : "",
+      mapping_rationale: (_i = p.mappingRationale) != null ? _i : "",
+      tags_json: p.tags && p.tags.length ? JSON.stringify(p.tags) : ""
+    };
+  }
+  function rowToPosture(r) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    const num = (v) => {
+      const n = Number(v != null ? v : 0);
+      return isFinite(n) ? n : 0;
+    };
+    const optNum = (v) => v === "" || v === null || v === void 0 ? void 0 : num(v);
+    return {
+      frameworkId: String((_a5 = r["framework_id"]) != null ? _a5 : ""),
+      level: String((_b = r["level"]) != null ? _b : "subcategory"),
+      categoryExternalId: String((_c = r["category_external_id"]) != null ? _c : "") || void 0,
+      subcategoryExternalId: String((_d = r["subcategory_external_id"]) != null ? _d : "") || void 0,
+      nodeId: String((_e = r["node_id"]) != null ? _e : "") || void 0,
+      title: String((_f = r["title"]) != null ? _f : ""),
+      description: String((_g = r["description"]) != null ? _g : "") || void 0,
+      posturePct: cellPct(r["posture_pct"]),
+      passCount: num(r["pass_count"]),
+      failCount: num(r["fail_count"]),
+      passSubCategoryCount: optNum(r["pass_subcategory_count"]),
+      failSubCategoryCount: optNum(r["fail_subcategory_count"]),
+      emptyPostureReason: String((_h = r["empty_posture_reason"]) != null ? _h : "") || null,
+      assessmentScope: String((_i = r["assessment_scope"]) != null ? _i : "") || void 0,
+      mappingRationale: String((_j = r["mapping_rationale"]) != null ? _j : "") || void 0,
+      tags: parseJson(r["tags_json"], [])
+    };
+  }
+  function frameworkPolicyToRow(p) {
+    var _a5, _b, _c, _d, _e, _f, _g;
+    return {
+      framework_id: p.frameworkId,
+      category_external_id: p.categoryExternalId,
+      subcategory_external_id: p.subcategoryExternalId,
+      policy_id: p.policyId,
+      policy_kind: p.policyKind,
+      short_id: (_a5 = p.shortId) != null ? _a5 : "",
+      name: p.name,
+      severity: p.severity,
+      enabled: (_b = p.enabled) != null ? _b : "",
+      builtin: (_c = p.builtin) != null ? _c : "",
+      pass_count: p.passCount,
+      fail_count: p.failCount,
+      assessed_count: p.assessedCount,
+      rejected_count: p.rejectedCount,
+      no_resource_to_assess: p.noResourceToAssess,
+      target_native_type: (_d = p.targetNativeType) != null ? _d : "",
+      subject_entity_type: (_e = p.subjectEntityType) != null ? _e : "",
+      cloud_provider: (_f = p.cloudProvider) != null ? _f : "",
+      has_auto_remediation: (_g = p.hasAutoRemediation) != null ? _g : ""
+    };
+  }
+  function rowToFrameworkPolicy(r) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    const num = (v) => {
+      const n = Number(v != null ? v : 0);
+      return isFinite(n) ? n : 0;
+    };
+    const optBool = (v) => v === "" || v === null || v === void 0 ? void 0 : v === true || v === "TRUE" || v === "true";
+    return {
+      frameworkId: String((_a5 = r["framework_id"]) != null ? _a5 : ""),
+      categoryExternalId: String((_b = r["category_external_id"]) != null ? _b : ""),
+      subcategoryExternalId: String((_c = r["subcategory_external_id"]) != null ? _c : ""),
+      policyId: String((_d = r["policy_id"]) != null ? _d : ""),
+      policyKind: String((_e = r["policy_kind"]) != null ? _e : "CONTROL"),
+      shortId: String((_f = r["short_id"]) != null ? _f : "") || void 0,
+      name: String((_g = r["name"]) != null ? _g : ""),
+      severity: String((_h = r["severity"]) != null ? _h : "UNKNOWN"),
+      enabled: optBool(r["enabled"]),
+      builtin: optBool(r["builtin"]),
+      passCount: num(r["pass_count"]),
+      failCount: num(r["fail_count"]),
+      assessedCount: num(r["assessed_count"]),
+      rejectedCount: num(r["rejected_count"]),
+      noResourceToAssess: r["no_resource_to_assess"] === true || r["no_resource_to_assess"] === "TRUE" || r["no_resource_to_assess"] === "true",
+      targetNativeType: String((_i = r["target_native_type"]) != null ? _i : "") || void 0,
+      subjectEntityType: String((_j = r["subject_entity_type"]) != null ? _j : "") || void 0,
+      cloudProvider: String((_k = r["cloud_provider"]) != null ? _k : "") || void 0,
+      hasAutoRemediation: optBool(r["has_auto_remediation"])
+    };
+  }
+  function persistSync(rawDoc, issues2, hints, meta, now, findings = [], dataFindings = [], frameworks = [], posture = [], frameworkPolicies = [], extras = {}) {
+    var _a5, _b, _c, _d;
+    const { version: ruleVersion, rule } = getAarsRule2();
+    const counted = withDataFindingCounts(rawDoc, dataFindings);
+    const exposed = withExposureEvidence(counted);
+    const reachable2 = withHumanAccess(exposed, {
+      identityFindings: (_a5 = extras.identityFindings) != null ? _a5 : [],
+      effectiveAccess: (_b = extras.effectiveAccess) != null ? _b : []
+    });
+    const enriched = enrichGraphDoc(reachable2, issues2, hints, rule);
+    const { version: problemRuleVersion, rule: problemRule } = getProblemRule2();
+    const { issues: decidedIssues, findings: decidedFindings } = withProblemVerdicts(
+      enriched,
+      issues2,
+      findings,
+      problemRule,
+      problemRuleVersion
+    );
+    const { version: postureRuleVersion, rule: postureRule } = getPostureRule2();
+    const postured = withPostureTiers(enriched, decidedIssues, decidedFindings, postureRule);
+    const assetNodes = realNodes(postured.nodes);
+    const assetEdges = postured.edges.filter((e) => e.type !== "HAS_ISSUE");
+    overwrite(TABS.assets, assetNodes.map(assetToRow));
+    overwrite(TABS.edges, assetEdges.map(edgeToRow));
+    overwrite(TABS.issues, decidedIssues.map(issueToRow));
+    overwrite(TABS.findings, decidedFindings.map(findingToRow));
+    overwrite(TABS.dataFindings, dataFindings.map(dataFindingToRow));
+    if (frameworks.length) overwrite(TABS.frameworks, frameworks.map(frameworkToRow));
+    if (posture.length) overwrite(TABS.frameworkPosture, posture.map(postureToRow));
+    if (frameworkPolicies.length) {
+      overwrite(TABS.frameworkPolicies, frameworkPolicies.map(frameworkPolicyToRow));
+    }
+    const configRules = (_c = extras.configRules) != null ? _c : [];
+    if (configRules.length) overwrite(TABS.configRules, configRules.map(configRuleToRow));
+    overwrite(TABS.identityFindings, ((_d = extras.identityFindings) != null ? _d : []).map(identityFindingToRow));
+    const snapshotRef = writeGraphSnapshot(postured);
+    appendRows(TABS.syncHistory, [{
+      sync_id: meta.syncId,
+      started_at: meta.startedAt,
+      finished_at: nowIso(now),
+      status: "SUCCESS",
+      mode: meta.mode,
+      node_count: postured.nodes.length,
+      edge_count: postured.edges.length,
+      issue_count: issues2.length,
+      api_calls: meta.apiCalls,
+      snapshot_ref: snapshotRef,
+      error: null,
+      // The AARS distribution at this sync — the only record of it, since the snapshot
+      // this row points at is overwritten by the next sync. Feeds the inventory trend.
+      aars_severity_json: JSON.stringify(countAarsSeverities(postured.nodes)),
+      // Which scoring model produced that distribution: counts from two versions are not
+      // on the same scale, and the trend chart says so rather than drawing a false step.
+      aars_rule_version: ruleVersion,
+      // The outcome distribution this sync decided, over BOTH decided populations at once —
+      // mirrors aars_severity_json exactly, one row down.
+      problem_outcome_json: JSON.stringify(countProblemOutcomes([...decidedIssues, ...decidedFindings])),
+      // Which problem rule produced it — mirrors aars_rule_version, and moves independently
+      // of it, exactly as the two settings keys (aars_rule / problem_rule) do.
+      problem_rule_version: problemRuleVersion
+    }]);
+    setScoredRuleVersion(ruleVersion);
+    setDecidedRuleVersion(problemRuleVersion);
+    setComputedPostureVersion(postureRuleVersion);
+    commit();
+    return postured;
+  }
+  function rescoreInventory() {
+    const { version, rule } = getAarsRule2();
+    const enriched = enrichFromTabs(rule);
+    if (!enriched) {
+      setScoredRuleVersion(version);
+      return { version, assetCount: 0, counts: countAarsSeverities([]) };
+    }
+    const assetNodes = realNodes(enriched.nodes);
+    overwrite(TABS.assets, assetNodes.map(assetToRow));
+    writeGraphSnapshot(enriched);
+    setScoredRuleVersion(version);
+    commit();
+    return {
+      version,
+      assetCount: assetNodes.length,
+      counts: countAarsSeverities(enriched.nodes)
+    };
+  }
+  function scoreAssetsWith(rule) {
+    const enriched = enrichFromTabs(rule);
+    if (!enriched) return [];
+    return realNodes(enriched.nodes);
+  }
+  function enrichFromTabs(rule) {
+    const base = loadRawGraph();
+    if (!base) return null;
+    const issues2 = loadIssues();
+    const hints = { ...buildAarsHintsFromFindings(loadFindings(), base, issues2, rule) };
+    const sig = derivationSignature(rule);
+    for (const node2 of base.nodes) {
+      const input = node2.aarsInput;
+      if (input && (input.derivedUnder === void 0 || input.derivedUnder === sig)) {
+        hints[node2.id] = input;
+      }
+    }
+    return enrichGraphDoc(base, issues2, hints, rule);
+  }
+  function redecideFromTabs(rule, ruleVersion) {
+    const byId = new Map(loadAssetsRaw().map((n) => [n.id, n]));
+    const sig = vectorSignature(rule);
+    const reuseOrDerive = (row, node2, derive) => {
+      const persisted = row.problemInput;
+      if (persisted && (persisted.derivedUnder === void 0 || persisted.derivedUnder === sig)) {
+        return persisted;
+      }
+      return { ...derive(), derivedUnder: sig };
+    };
+    const stampVersion = (row) => {
+      if (ruleVersion === void 0) {
+        if (row.problemRuleVersion === void 0) return row;
+        const next = { ...row };
+        delete next.problemRuleVersion;
+        return next;
+      }
+      return { ...row, problemRuleVersion: ruleVersion };
+    };
+    const issues2 = loadIssues().map((issue2) => {
+      if (!isUnresolvedIssue(issue2)) return stripProblemFields(issue2);
+      const input = reuseOrDerive(issue2, byId.get(issue2.assetId), () => deriveProblemInput(issue2, byId.get(issue2.assetId), rule));
+      const { outcome } = decideProblem(input.vector, rule);
+      return stampVersion({ ...issue2, problemOutcome: outcome, problemInput: input });
+    });
+    const findings = loadFindings().map((finding) => {
+      if (!isOpenGap(finding)) return stripProblemFields(finding);
+      const input = reuseOrDerive(finding, byId.get(finding.resourceId), () => deriveFindingProblemInput(finding, byId.get(finding.resourceId), rule));
+      const { outcome } = decideProblem(input.vector, rule);
+      return stampVersion({ ...finding, problemOutcome: outcome, problemInput: input });
+    });
+    return { issues: issues2, findings };
+  }
+  function redecideProblems() {
+    const { version, rule } = getProblemRule2();
+    const { issues: issues2, findings } = redecideFromTabs(rule, version);
+    overwrite(TABS.issues, issues2.map(issueToRow));
+    overwrite(TABS.findings, findings.map(findingToRow));
+    setDecidedRuleVersion(version);
+    commit();
+    return {
+      version,
+      issueCount: issues2.filter((i) => i.problemOutcome !== void 0).length,
+      findingCount: findings.filter((f) => f.problemOutcome !== void 0).length,
+      outcomes: countProblemOutcomes([...issues2, ...findings])
+    };
+  }
+  function decideProblemsWith(rule) {
+    return redecideFromTabs(rule, void 0);
+  }
+  function postureFromTabs(rule) {
+    const nodes = loadAssetsRaw();
+    if (!nodes.length) return [];
+    const doc = { nodes, edges: [], syncedAt: "" };
+    return withPostureTiers(doc, loadIssues(), loadFindings(), rule).nodes;
+  }
+  function posturesWith(rule) {
+    return postureFromTabs(rule);
+  }
+  function recomputePostures() {
+    const { version, rule } = getPostureRule2();
+    const nodes = postureFromTabs(rule);
+    overwrite(TABS.assets, nodes.map(assetToRow));
+    setComputedPostureVersion(version);
+    commit();
+    return { version, assetCount: nodes.length, tierCounts: countPostureTiers(nodes) };
+  }
+  function loadRawGraph() {
+    var _a5;
+    const nodes = loadAssetsRaw();
+    if (!nodes.length) return null;
+    const edges2 = readAll(TABS.edges).map(rowToEdge);
+    const latest = latestSync();
+    return {
+      nodes: nodes.map(stripAarsScore),
+      edges: edges2,
+      syncedAt: latest ? String((_a5 = latest["finished_at"]) != null ? _a5 : "") : ""
+    };
+  }
+  function stripAarsScore(n) {
+    if (n.aars === void 0 && n.aarsSeverity === void 0 && n.aarsPillars === void 0) return n;
+    const next = { ...n };
+    delete next.aars;
+    delete next.aarsSeverity;
+    delete next.aarsPillars;
+    delete next.aarsPercentile;
+    return next;
+  }
+  var graphDocMemo;
+  var assetsMemo;
+  var edgesMemo;
+  var issuesMemo;
+  var findingsMemo;
+  var dataFindingsMemo;
+  var frameworksMemo;
+  var postureMemo;
+  var frameworkPoliciesMemo;
+  var configRulesMemo;
+  var identityFindingsMemo;
+  var derivedAssetsMemo;
+  function invalidateReadMemos() {
+    graphDocMemo = void 0;
+    assetsMemo = void 0;
+    derivedAssetsMemo = void 0;
+    issuesMemo = void 0;
+    findingsMemo = void 0;
+    dataFindingsMemo = void 0;
+    frameworksMemo = void 0;
+    postureMemo = void 0;
+    frameworkPoliciesMemo = void 0;
+    configRulesMemo = void 0;
+    identityFindingsMemo = void 0;
+  }
+  function commit() {
+    bumpDataVersion();
+    bumpWizDataVersion();
+    invalidateReadMemos();
+  }
+  function realNodes(nodes) {
+    return nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+  }
+  function loadGraphDoc() {
+    if (graphDocMemo !== void 0) return graphDocMemo;
+    graphDocMemo = loadGraphDocUncached();
+    return graphDocMemo;
+  }
+  function normalizeLegacyAars(doc) {
+    let touched = false;
+    const nodes = doc.nodes.map((n) => {
+      var _a5;
+      const loose = n;
+      if (loose.aarsBand === void 0 && n.aarsSeverity === void 0) return n;
+      touched = true;
+      const next = { ...loose };
+      delete next.aarsBand;
+      const sev = normalizeAarsSeverity((_a5 = n.aarsSeverity) != null ? _a5 : loose.aarsBand);
+      if (sev) next.aarsSeverity = sev;
+      else delete next.aarsSeverity;
+      return next;
+    });
+    return touched ? { ...doc, nodes } : doc;
+  }
+  function withRiskNodes(doc) {
+    return withMissingGuardrailNodes(
+      withIdentityAccessNodes(
+        withExcessivePrivilegeNodes(
+          withInternetExposureNodes(withSensitiveDataNodes(withDataFindingNodes(doc)))
+        )
+      )
+    );
+  }
+  function withCurrentBands(nodes, bands) {
+    let touched = false;
+    const out = nodes.map((n) => {
+      if (typeof n.aars !== "number") return n;
+      const sev = aarsSeverity(n.aars, bands);
+      if (sev === n.aarsSeverity) return n;
+      touched = true;
+      return { ...n, aarsSeverity: sev };
+    });
+    return touched ? out : nodes;
+  }
+  function withAarsPercentile(nodes) {
+    const scored = [];
+    for (const n of nodes) if (typeof n.aars === "number") scored.push(n.aars);
+    if (!scored.length) return nodes;
+    const percentiles = midrankPercentiles(scored);
+    let i = 0;
+    return nodes.map((n) => {
+      if (typeof n.aars !== "number") return n;
+      return { ...n, aarsPercentile: Math.round(percentiles[i++]) };
+    });
+  }
+  function currentBands() {
+    return getAarsRule2().rule.bands;
+  }
+  function withAarsReadDerivations(nodes) {
+    return withAarsPercentile(withCurrentBands(nodes, currentBands()));
+  }
+  function withBandsApplied(doc) {
+    const nodes = withAarsReadDerivations(doc.nodes);
+    return nodes === doc.nodes ? doc : { ...doc, nodes };
+  }
+  function loadGraphDocUncached() {
+    var _a5;
+    const snap = readGraphSnapshot();
+    if (snap) return withRiskNodes(withBandsApplied(normalizeLegacyAars(snap)));
+    const assetRows = readAll(TABS.assets);
+    if (!assetRows.length) return null;
+    const nodes = withAarsReadDerivations(assetRows.map(rowToAsset));
+    const edges2 = readAll(TABS.edges).map(rowToEdge);
+    const issues2 = loadIssues().filter(isUnresolvedIssue);
+    for (const issue2 of issues2) {
+      nodes.push({
+        id: issue2.id,
+        kind: "ISSUE",
+        name: issue2.ruleName,
+        severity: issue2.adjustedSeverity,
+        comboGroups: issue2.comboGroup ? [issue2.comboGroup] : [],
+        status: issue2.status
+      });
+      edges2.push({
+        id: edgeId(issue2.assetId, "HAS_ISSUE", issue2.id),
+        src: issue2.assetId,
+        dst: issue2.id,
+        type: "HAS_ISSUE"
+      });
+    }
+    const latest = latestSync();
+    return withRiskNodes({
+      nodes,
+      edges: edges2,
+      syncedAt: latest ? String((_a5 = latest["finished_at"]) != null ? _a5 : "") : ""
+    });
+  }
+  function loadAssetsRaw() {
+    if (assetsMemo === void 0) assetsMemo = readAll(TABS.assets).map(rowToAsset);
+    return assetsMemo;
+  }
+  function loadAssets() {
+    const raw = loadAssetsRaw();
+    const bands = currentBands();
+    const bandKey = `${bands.critical}|${bands.high}|${bands.medium}|${bands.low}`;
+    const memo = derivedAssetsMemo;
+    if (memo && memo.raw === raw && memo.bandKey === bandKey) return memo.out;
+    const out = withAarsReadDerivations(raw);
+    derivedAssetsMemo = { raw, bandKey, out };
+    return out;
+  }
+  function loadEdges() {
+    if (edgesMemo === void 0) edgesMemo = readAll(TABS.edges).map(rowToEdge);
+    return edgesMemo;
+  }
+  function loadIssues() {
+    if (issuesMemo === void 0) issuesMemo = readAll(TABS.issues).map(rowToIssue);
+    return issuesMemo;
+  }
+  function loadFindings() {
+    if (findingsMemo === void 0) findingsMemo = readAll(TABS.findings).map(rowToFinding);
+    return findingsMemo;
+  }
+  function loadFrameworks() {
+    if (frameworksMemo === void 0) frameworksMemo = readAll(TABS.frameworks).map(rowToFramework);
+    return frameworksMemo;
+  }
+  function loadConfigRules() {
+    if (configRulesMemo === void 0) {
+      configRulesMemo = readAll(TABS.configRules).map(rowToConfigRule);
+    }
+    return configRulesMemo;
+  }
+  function loadIdentityFindings() {
+    if (identityFindingsMemo === void 0) {
+      identityFindingsMemo = readAll(TABS.identityFindings).map(rowToIdentityFinding);
+    }
+    return identityFindingsMemo;
+  }
+  function loadPosture() {
+    if (postureMemo === void 0) postureMemo = readAll(TABS.frameworkPosture).map(rowToPosture);
+    return postureMemo;
+  }
+  function loadFrameworkPolicies() {
+    if (frameworkPoliciesMemo === void 0) {
+      frameworkPoliciesMemo = readAll(TABS.frameworkPolicies).map(rowToFrameworkPolicy);
+    }
+    return frameworkPoliciesMemo;
+  }
+  function syncHistory() {
+    return readAll(TABS.syncHistory);
+  }
+  function latestSync() {
+    const rows = syncHistory();
+    return rows.length ? rows[rows.length - 1] : null;
+  }
+  function resetData() {
+    overwrite(TABS.assets, []);
+    overwrite(TABS.edges, []);
+    overwrite(TABS.issues, []);
+    overwrite(TABS.findings, []);
+    overwrite(TABS.dataFindings, []);
+    overwrite(TABS.syncHistory, []);
+    trashGraphSnapshot();
+    commit();
+  }
+
+  // src/domain/reach.ts
+  var READ_TIME_EDGE_TYPES = [
+    "HAS_ISSUE",
+    "HAS_SENSITIVE_DATA",
+    "HAS_ACCESS_TO_SENSITIVE_DATA",
+    "EXPOSED_TO_INTERNET",
+    "HAS_EXCESSIVE_PRIVILEGE",
+    "HAS_DATA_FINDING"
+  ];
+  function isDecidedRow(row) {
+    return !!row.problemOutcome && !!row.problemInput && OUTCOME_VALUES.includes(row.problemOutcome);
+  }
+  function isEnriched(edgeTouched, a) {
+    var _a5, _b, _c, _d, _e, _f, _g;
+    if (edgeTouched.has(a.id)) return true;
+    const ev2 = a.exposureEvidence;
+    if (ev2 && (((_b = (_a5 = ev2.hostIds) == null ? void 0 : _a5.length) != null ? _b : 0) > 0 || ((_d = (_c = ev2.endpointIds) == null ? void 0 : _c.length) != null ? _d : 0) > 0)) return true;
+    return ((_g = (_f = (_e = a.humanAccess) == null ? void 0 : _e.identityIds) == null ? void 0 : _f.length) != null ? _g : 0) > 0;
+  }
+  function estateReach(input) {
+    var _a5;
+    const { assets, issues: issues2, findings, edges: edges2 } = input;
+    const unresolvedIssues = issues2.filter(isUnresolvedIssue);
+    const openFindings = findings.filter(isOpenGap);
+    const issueAssetIds = new Set(unresolvedIssues.map((i) => i.assetId));
+    const findingResourceIds = new Set(openFindings.map((f) => f.resourceId));
+    const edgeTouched = /* @__PURE__ */ new Set();
+    for (const e of edges2) {
+      edgeTouched.add(e.src);
+      edgeTouched.add(e.dst);
+    }
+    const hasSignal = (a) => issueAssetIds.has(a.id) || findingResourceIds.has(a.id) || CONDITION_KEYS.some((k) => conditionHolds(a, k));
+    const byKind = /* @__PURE__ */ new Map();
+    for (const a of assets) {
+      const slot = (_a5 = byKind.get(a.kind)) != null ? _a5 : { total: 0, signal: 0 };
+      slot.total += 1;
+      if (hasSignal(a)) slot.signal += 1;
+      byKind.set(a.kind, slot);
+    }
+    const kinds = [...byKind.entries()].sort((a, b) => b[1].total - a[1].total).map(([kind, s]) => ({
+      kind,
+      total: s.total,
+      signal: s.signal,
+      ai: AI_ASSET_KINDS.includes(kind)
+    }));
+    const aiAssets = assets.filter((a) => AI_ASSET_KINDS.includes(a.kind));
+    const stages = [
+      // 1. IN REGISTER. Denominator: every row on ai_assets (assets.length). Covered: the
+      // AI-kinded subset (AI_ASSET_KINDS membership on ai_assets.kind) — the same number
+      // registerScopeDiagnostic prints as "in AI_ASSET_KINDS". Everything past this stage is
+      // scoped to that covered count, which is why it becomes every later stage's total.
+      { key: "register", label: "In register", covered: aiAssets.length, total: assets.length },
+      // 2. OBSERVED. Denominator: the AI-kinded population stage 1 established. Covered: AI
+      // assets where hasSignal() holds — ai_issues.status (unresolved), ai_findings.result /
+      // .status (open gap), or ai_assets' four condition columns (sensitive_data,
+      // sensitive_access, high_priv, admin_priv, guardrail_missing, internet /
+      // exposure_evidence_json) via conditionHolds. An asset with none of these contributes
+      // nothing any scoring model can read — "carrying any signal" in
+      // registerScopeDiagnostic's own words.
+      {
+        key: "observed",
+        label: "Observed",
+        covered: aiAssets.filter(hasSignal).length,
+        total: aiAssets.length
+      },
+      // 3. ENRICHED. Denominator: the AI-kinded population. Covered: AI assets a graph
+      // traversal actually reached — participates in a row of ai_edges (src or dst), or
+      // carries folded exposure evidence (ai_assets.exposure_evidence_json) or human-access
+      // evidence (ai_assets.human_access_json). An asset with none of these was never walked
+      // by anything past the mandatory inventory query.
+      {
+        key: "enriched",
+        label: "Enriched",
+        covered: aiAssets.filter((a) => isEnriched(edgeTouched, a)).length,
+        total: aiAssets.length
+      },
+      // 4. DECIDED. Denominator: the AI-kinded population. Covered: AI assets carrying a
+      // problem verdict (ai_assets.worst_open_problem, folded from the Phase 4 tree onto the
+      // asset by graphEnrich.withProblemVerdicts). An asset without one sits in the register
+      // unrouted: no cascade row matched it because nothing was known about it.
+      //
+      // A PERSISTED AARS SCORE DOES NOT COUNT, and this stage used to accept one. That made it
+      // a tautology: `enrichGraphDoc` scores every AI-kinded node unconditionally, so
+      // `typeof a.aars === "number"` is true for the whole population and the stage reported
+      // 100% by construction on every tenant. It did so most loudly on the tenant it mattered
+      // for — a green 100% Decided printed directly under a 0% Enriched, which is exactly the
+      // false-green this file's header says it exists to refuse. A score of 0 on an asset with
+      // no issue, no finding, no edge and no evidence is the ABSENCE of a conclusion; counting
+      // it as one is counting the scorer having run.
+      {
+        key: "decided",
+        label: "Decided",
+        covered: aiAssets.filter((a) => a.worstOpenProblem !== void 0).length,
+        total: aiAssets.length
+      }
+    ];
+    const seenTypes = new Set(edges2.map((e) => e.type));
+    const populated = EDGE_TYPES.filter((t) => seenTypes.has(t));
+    const unseen = EDGE_TYPES.filter((t) => !seenTypes.has(t));
+    const synthetic = unseen.filter((t) => READ_TIME_EDGE_TYPES.includes(t));
+    const dead = unseen.filter((t) => !READ_TIME_EDGE_TYPES.includes(t));
+    const decidedRows = [...issues2, ...findings].filter(isDecidedRow);
+    const decided = decidedRows.map((r) => ({
+      outcome: r.problemOutcome,
+      vector: r.problemInput.vector,
+      unknowns: r.problemInput.unknowns
+    }));
+    const td = treeDiscrimination(decided);
+    const n = decided.length;
+    const axisKnown = (rate) => n > 0 ? 1 - rate : 0;
+    const axes = {
+      exploitation: axisKnown(td.unknownRate.exploitation),
+      impact: axisKnown(td.unknownRate.impact),
+      exposure: axisKnown(td.unknownRate.exposure),
+      mission: axisKnown(td.unknownRate.mission)
+    };
+    return {
+      stages,
+      kinds,
+      edges: { populated, dead, synthetic, declared: EDGE_TYPES.length },
+      axes,
+      axesPopulation: n,
+      impactTagged: {
+        covered: aiAssets.filter((a) => !!a.businessImpact).length,
+        total: aiAssets.length
+      }
+    };
+  }
+
+  // src/server/diagnostics.ts
+  function preview(value) {
+    if (!value || !value.trim()) return "(unset)";
+    const v = value.trim();
+    if (v.length <= 10) return `${v.length} chars`;
+    return `${v.length} chars, ${v.slice(0, 4)}\u2026${v.slice(-4)}`;
+  }
+  function secretPreview(value) {
+    return value && value.trim() ? `(set, ${value.trim().length} chars)` : "(unset)";
+  }
+  function wizDiagnostic() {
+    var _a5;
+    const lines = [];
+    const log = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    const apiUrl = getProp(PROP_KEYS.wizApiUrl);
+    const authUrl = (_a5 = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a5 : DEFAULT_WIZ_AUTH_URL;
+    const token = getProp(PROP_KEYS.wizApiToken);
+    const clientId = getProp(PROP_KEYS.wizClientId);
+    const clientSecret = getProp(PROP_KEYS.wizClientSecret);
+    const projectId = getProp(PROP_KEYS.wizProjectIdV2);
+    const mode = resolveWizAuthMode(token, clientId, clientSecret);
+    log("=== Wiz SIDEKICK AI diagnostic ===");
+    log(`WIZ_API_URL:        ${apiUrl || "(unset!)"}`);
+    log(`Auth mode:          ${mode != null ? mode : "(none)"}`);
+    log(`WIZ_API_TOKEN:      ${preview(token)}`);
+    log(`WIZ_CLIENT_ID:      ${preview(clientId)}`);
+    log(`WIZ_CLIENT_SECRET:  ${secretPreview(clientSecret)}`);
+    if (mode === "oauth") log(`WIZ_AUTH_URL:       ${authUrl}`);
+    log(`WIZ_PROJECT_ID_V2:  ${projectId || "(unset \u2014 querying all projects)"}`);
+    if (!apiUrl) {
+      log("FAIL: WIZ_API_URL is required, e.g. https://api.<region>.app.wiz.io/graphql.");
+      return lines.join("\n");
+    }
+    if (mode === null) {
+      log(
+        "FAIL: no usable credentials \u2014 the app runs in dry-run mode. Set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET."
+      );
+      return lines.join("\n");
+    }
+    try {
+      const bearer = getToken(true);
+      log(
+        mode === "token" ? `Step 1 OK: using raw WIZ_API_TOKEN (${preview(bearer)}).` : `Step 1 OK: OAuth exchange minted an access token (${preview(bearer)}).`
+      );
+    } catch (e) {
+      log(`Step 1 FAIL: could not obtain a token \u2014 ${e.message}`);
+      log(
+        mode === "oauth" ? "\u2192 The token endpoint rejected the client credentials. Verify WIZ_CLIENT_ID / WIZ_CLIENT_SECRET (regenerate the service account in Wiz), and that WIZ_AUTH_URL matches the auth host shown on the service-account page." : "\u2192 WIZ_API_TOKEN is unusable. A Wiz GraphQL service account gives a client id + secret, not a durable token; use WIZ_CLIENT_ID / WIZ_CLIENT_SECRET."
+      );
+      return lines.join("\n");
+    }
+    let chosen;
+    try {
+      chosen = resolveAiResourceTypes(log);
+      log("Step 2 OK: AI resource types resolved.");
+    } catch (e) {
+      log(`Step 2 FAIL: ${e.message}`);
+      return lines.join("\n");
+    }
+    const graphEnum = fetchEnumValues("GraphEntityTypeValue");
+    if (graphEnum) {
+      log(
+        `Graph entity types: ${graphEnum.length} members; AI-flavored: ${aiFlavored(graphEnum).join(", ") || "(none \u2014 graph relationship steps will be skipped)"}.`
+      );
+    } else {
+      log(
+        "Graph entity introspection unavailable \u2014 graph relationship steps will be skipped automatically if this tenant rejects their queries."
+      );
+    }
+    try {
+      const page = fetchCloudResourcesPage({
+        query: Q_AI_INVENTORY,
+        first: 1,
+        extraVariables: aiInventoryVariables(chosen.types)
+      });
+      log(
+        `Step 3 OK: query succeeded \u2014 ${page.rows.length} AI asset(s) on page 1` + (page.totalCount !== null ? ` of ${page.totalCount} total` : "") + "."
+      );
+      log("=== All checks passed. Live syncs should work. ===");
+    } catch (e) {
+      const msg = e.message;
+      log(`Step 3 FAIL: the query was rejected \u2014 ${msg}`);
+      if (/HTTP 401|HTTP 403|Unauthorized/i.test(msg)) {
+        log(
+          "\u2192 401/403/Unauthorized: the token was not accepted (expired, invalid, or minted for a different tenant). Confirm the service account targets this tenant."
+        );
+      } else if (/HTTP 404/i.test(msg)) {
+        log(
+          "\u2192 404: WIZ_API_URL host/path is wrong \u2014 it must be https://api.<region>.app.wiz.io/graphql for your tenant's region."
+        );
+      } else if (/cannot represent value/i.test(msg)) {
+        log(
+          "\u2192 The tenant rejected one of the resolved type values. Set the WIZ_AI_RESOURCE_TYPES Script Property to the exact enum values your tenant accepts (comma-separated) and rerun this diagnostic."
+        );
+      } else {
+        log(
+          '\u2192 If the body names a field (e.g. "Cannot query field"), the service account lacks permission for it or the tenant schema differs \u2014 capture the response into ai/queries/reponse_schemas/ and reconcile the normalizers.'
+        );
+      }
+      return lines.join("\n");
+    }
+    return lines.join("\n");
+  }
+  function aarsDiagnostic() {
+    const lines = [];
+    const log = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    log("=== AARS ledger diagnostic ===");
+    try {
+      const rows = readAll(TABS.assets);
+      log(`ai_assets rows: ${rows.length}`);
+      if (!rows.length) {
+        log("The assets tab is empty \u2014 run a sync first.");
+      } else {
+        const cols = Object.keys(rows[0]);
+        const has = (c) => cols.indexOf(c) >= 0 ? "present" : "MISSING";
+        log(`column aars:          ${has("aars")}`);
+        log(`column aars_severity: ${has("aars_severity")}`);
+        log(`column aars_band:     ${has("aars_band")} (pre-rename name; harmless if present)`);
+        const scored = rows.filter((r) => r["aars"] !== null && r["aars"] !== void 0).length;
+        const sev = rows.filter((r) => r["aars_severity"] || r["aars_band"]).length;
+        log(`rows with a score:    ${scored} of ${rows.length}`);
+        log(`rows with a severity: ${sev} of ${rows.length}`);
+        if (scored && !sev) {
+          log("\u2192 Scores survived but severities did not: the tab was written by a build whose schema had a column this sheet lacks. Deploy a build that adds missing headers on write, then run one sync.");
+        }
+      }
+    } catch (e) {
+      log(`ai_assets unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    try {
+      const snap = readGraphSnapshot();
+      if (!snap) log("Drive snapshot: none (the graph falls back to the tabs)");
+      else {
+        const scored = snap.nodes.filter((n) => {
+          var _a5;
+          return ((_a5 = n.aars) != null ? _a5 : null) !== null;
+        }).length;
+        const sev = snap.nodes.filter(
+          (n) => n.aarsSeverity || n.aarsBand
+        ).length;
+        log(`Drive snapshot: ${snap.nodes.length} nodes, ${scored} scored, ${sev} with a severity`);
+      }
+    } catch (e) {
+      log(`Drive snapshot unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    log("=== end ===");
+    return lines.join("\n");
+  }
+  function registerScopeDiagnostic() {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    const lines = [];
+    const log = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    const pct3 = (n, d) => d > 0 ? `${(100 * n / d).toFixed(1)}%` : "\u2014";
+    log("=== AI register scope diagnostic ===");
+    let issueAssetIds = /* @__PURE__ */ new Set();
+    let findingResourceIds = /* @__PURE__ */ new Set();
+    try {
+      for (const r of readAll(TABS.issues)) {
+        if (isUnresolvedIssue({ status: String((_a5 = r["status"]) != null ? _a5 : "") })) {
+          issueAssetIds.add(String((_b = r["asset_id"]) != null ? _b : ""));
+        }
+      }
+      for (const r of readAll(TABS.findings)) {
+        const gap2 = isOpenGap({
+          result: (_c = r["result"]) != null ? _c : void 0,
+          status: (_d = r["status"]) != null ? _d : void 0,
+          // `parseTri`, not a comparison against a JS boolean: the tab is plain text and
+          // `triCell` writes the lowercase strings "true"/"false"/"null". The first version of
+          // this line tested `=== true || === "TRUE"` and matched neither, so every tombstoned
+          // finding was counted as an open gap. `null` (a legacy row with no cell) is not
+          // deleted, which is the same reading `rowToFinding` takes.
+          deleted: parseTri(r["deleted"]) === true
+        });
+        if (gap2) findingResourceIds.add(String((_e = r["resource_id"]) != null ? _e : ""));
+      }
+    } catch (e) {
+      log(`issues/findings unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    try {
+      const rows = readAll(TABS.assets);
+      log(`ai_assets rows: ${rows.length}`);
+      if (!rows.length) {
+        log("The assets tab is empty \u2014 run a sync first.");
+      } else {
+        const byKind = /* @__PURE__ */ new Map();
+        let aiKinded = 0;
+        let anySignal = 0;
+        for (const r of rows) {
+          const kind = String((_f = r["kind"]) != null ? _f : "(blank)");
+          const id = String((_g = r["id"]) != null ? _g : "");
+          const held = parseBool(r["sensitive_data"]) || parseBool(r["sensitive_access"]) || parseBool(r["high_priv"]) || parseBool(r["admin_priv"]) || parseBool(r["guardrail_missing"]) || parseTri(r["internet"]) === true || parseTri(r["open_internet"]) === true;
+          const signal = issueAssetIds.has(id) || findingResourceIds.has(id) || held;
+          const slot = (_h = byKind.get(kind)) != null ? _h : { total: 0, signal: 0 };
+          slot.total += 1;
+          if (signal) slot.signal += 1;
+          byKind.set(kind, slot);
+          if (AI_ASSET_KINDS.indexOf(kind) >= 0) aiKinded += 1;
+          if (signal) anySignal += 1;
+        }
+        const ordered = [...byKind.entries()].sort((a, b) => b[1].total - a[1].total);
+        log("");
+        log("  by kind, most rows first \u2014 kind / rows / share / carrying signal:");
+        for (const [kind, s] of ordered) {
+          log(
+            `    ${kind.padEnd(26)} ${String(s.total).padStart(7)}  ${pct3(s.total, rows.length).padStart(6)}   signal ${String(s.signal).padStart(6)} (${pct3(s.signal, s.total)})`
+          );
+        }
+        const aiOrdered = ordered.filter(
+          ([k]) => AI_ASSET_KINDS.indexOf(k) >= 0
+        );
+        const topAi = aiOrdered[0];
+        log("");
+        log(`  distinct kinds:        ${ordered.length}`);
+        log(`  carrying any signal:   ${anySignal} of ${rows.length} (${pct3(anySignal, rows.length)})`);
+        log("");
+        log(`  in AI_ASSET_KINDS:     ${aiKinded} of ${rows.length} (${pct3(aiKinded, rows.length)})`);
+        log("    the rest is substrate the exposure / identity / data-reach traversals pull in");
+        log("    so the graph has something to draw a path through. Expected, not a fault.");
+        if (topAi) {
+          log(
+            `  largest AI kind:       ${topAi[0]} at ${topAi[1].total} rows \u2014 ${pct3(topAi[1].total, aiKinded)} of the AI landscape, ${pct3(topAi[1].signal, topAi[1].total)} of it carrying signal`
+          );
+        }
+        log("");
+        log("  Read it this way, and let the numbers decide rather than a threshold picked here:");
+        log("  \xB7 ONE AI kind holding most of the AI rows, and carrying little signal, means the");
+        log("    register is wider than the AI landscape a reader pictures. Every distribution");
+        log("    downstream is then a statement about that kind, not about AI risk. Check what");
+        log("    that Wiz type actually enumerates before reading any model as degenerate.");
+        log("  \xB7 AI kinds spread across agents / models / pipelines / datasets, most without");
+        log("    signal, means the register is right and the landscape is genuinely unassessed \u2014");
+        log("    a visibility finding, and the models were never the problem.");
+      }
+    } catch (e) {
+      log(`ai_assets unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    try {
+      const rows = readAll(TABS.edges);
+      const seen = /* @__PURE__ */ new Set();
+      for (const r of rows) seen.add(String((_i = r["type"]) != null ? _i : ""));
+      const unseen = EDGE_TYPES.filter((t) => !seen.has(t));
+      const readTime = (t) => READ_TIME_EDGE_TYPES.includes(t);
+      const syntheticMissing = unseen.filter(readTime);
+      const dead = unseen.filter((t) => !readTime(t));
+      const persistable = EDGE_TYPES.filter((t) => !readTime(t));
+      const populated = persistable.length - dead.length;
+      log("");
+      log(`  edge rows: ${rows.length}`);
+      log(`  populated edge types:  ${populated} of ${persistable.length} persistable`);
+      log(`    (${EDGE_TYPES.length} declared; ${syntheticMissing.length} of those are drawn at`);
+      log("     read time and are not expected on this tab. A LIVE sync normalizes only five:");
+      log("     RUNS_AS, HAS_FINDING, ALLOWS_ACCESS_TO, HOSTED_ON, SERVES \u2014 the rest reach this");
+      log("     tab only on the bundled sample dataset.)");
+      if (dead.length) log(`  never populated:       ${dead.join(", ")}`);
+      if (!rows.length) {
+        log("");
+        log("  ZERO edges. Every persisted edge comes from one of six optional graphSearch steps");
+        log("  (RUNS_AS, SA_FINDINGS, SENSITIVE_DATA_ACCESS, HOST_EXPOSURE, ENDPOINT_EXPOSURE,");
+        log("  IDENTITY_ACCESS). A step that the tenant ACCEPTS and that matches nothing is");
+        log("  recorded nowhere \u2014 not skipped, not truncated \u2014 so this reading alone cannot say");
+        log("  whether those queries were rejected or simply found nothing. Check");
+        log("  last_skipped_steps on the settings tab first; if it is empty, probe a step");
+        log('  directly: probeSyncStep("HOST_EXPOSURE") from this editor reports the row count,');
+        log("  what the normalizer made of those rows, and a sample of what the tenant returned.");
+      }
+    } catch (e) {
+      log(`ai_edges unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    log("=== end ===");
+    return lines.join("\n");
+  }
+
+  // src/server/api.ts
+  var api_exports = {};
+  __export(api_exports, {
+    bootstrap: () => bootstrap,
+    cancelSync: () => cancelSync2,
+    expandAsset: () => expandAsset,
+    getAarsRule: () => getAarsRule3,
+    getActions: () => getActions,
+    getAssetDetail: () => getAssetDetail,
+    getAssetOptions: () => getAssetOptions,
+    getAssets: () => getAssets,
+    getCompliance: () => getCompliance,
+    getConfigFindingDetail: () => getConfigFindingDetail,
+    getConfigFindings: () => getConfigFindings,
+    getGraph: () => getGraph,
+    getIssueDetail: () => getIssueDetail,
+    getIssues: () => getIssues,
+    getJobStatus: () => getJobStatus,
+    getPostureRule: () => getPostureRule3,
+    getProblemRule: () => getProblemRule3,
+    getProblems: () => getProblems,
+    getQueryVocabulary: () => getQueryVocabulary,
+    getScanQueries: () => getScanQueries,
+    getSettings: () => getSettings,
+    getStorageStats: () => getStorageStats,
+    getSyncHistory: () => getSyncHistory,
+    getToxicCombos: () => getToxicCombos,
+    previewAarsRule: () => previewAarsRule,
+    previewPostureRule: () => previewPostureRule,
+    previewProblemRule: () => previewProblemRule,
+    probeSyncStep: () => probeSyncStep,
+    recomputePostures: () => recomputePostures2,
+    recomputeProblems: () => recomputeProblems,
+    rescoreAars: () => rescoreAars,
+    resetData: () => resetData2,
+    runGraphQuery: () => runGraphQuery,
+    runSync: () => runSync,
+    scoreAarsSample: () => scoreAarsSample,
+    setAarsRule: () => setAarsRule2,
+    setPostureRule: () => setPostureRule2,
+    setProblemRule: () => setProblemRule2,
+    setScanVars: () => setScanVars2,
+    setSelectedFrameworks: () => setSelectedFrameworks2,
+    setSettings: () => setSettings,
+    testScanVars: () => testScanVars
+  });
+
+  // src/domain/assetTable.ts
+  var ASSET_SORTS = [
+    "aars",
+    "postureTier",
+    "name",
+    "kind",
+    "cloud",
+    "region",
+    "severity",
+    "combos"
+  ];
+  var DEFAULT_SORT_DIR = {
+    aars: "desc",
+    postureTier: "desc",
+    severity: "desc",
+    combos: "desc",
+    name: "asc",
+    kind: "asc",
+    cloud: "asc",
+    region: "asc"
+  };
+  var DEFAULT_PAGE_SIZE = 50;
+  var MAX_PAGE_SIZE = 500;
+  var CLIENT_ALL_MAX = 1500;
+  var FACET_KEYS = [
+    "aarsSeverities",
+    "severities",
+    "kinds",
+    "clouds",
+    "regions",
+    "projects",
+    "flags"
+  ];
+  var ASSET_FLAGS = ["combo", "guardrail", "agentic", "datafindings"];
+  function score(v) {
+    const n = Number(v != null ? v : -1);
+    return Number.isFinite(n) ? n : -1;
+  }
+  var SEV_RANK = {};
+  SEVERITY_ORDER.forEach((sev, i) => {
+    SEV_RANK[sev] = SEVERITY_ORDER.length - i;
+  });
+  function sevRank(v) {
+    var _a5;
+    return (_a5 = SEV_RANK[toStr(v).toUpperCase()]) != null ? _a5 : -1;
+  }
+  function list(v) {
+    const raw = Array.isArray(v) ? v : toStr(v).split(",");
+    const out = [];
+    for (const item of raw) {
+      const s = toStr(item).trim();
+      if (s && out.indexOf(s) < 0) out.push(s);
+    }
+    return out;
+  }
+  function listWithLegacy(...sources) {
+    for (const src of sources) {
+      const parsed = list(src);
+      if (parsed.length) return parsed;
+    }
+    return [];
+  }
+  function keepValid(values, allowed) {
+    return values.map((v) => v.toUpperCase()).filter((v) => allowed.indexOf(v) >= 0);
+  }
+  function resolveAssetQuery(params) {
+    const sort = toStr(params["sort"]);
+    const resolvedSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
+    const dir = toStr(params["dir"]).toLowerCase();
+    const page = Number(params["page"]);
+    const pageSize = Number(params["pageSize"]);
+    const aarsSeverities = listWithLegacy(
+      params["aarsSeverities"],
+      params["aarsSeverity"],
+      params["band"]
+    ).map((v) => {
+      var _a5;
+      return (_a5 = normalizeAarsSeverity(v)) != null ? _a5 : "";
+    }).filter((v, i, all) => v !== "" && all.indexOf(v) === i);
+    return {
+      q: toStr(params["q"]).trim().toLowerCase(),
+      aarsSeverities,
+      severities: keepValid(
+        listWithLegacy(params["severities"], params["severity"]),
+        SEVERITY_ORDER
+      ),
+      kinds: listWithLegacy(params["kinds"], params["kind"]),
+      clouds: listWithLegacy(params["clouds"], params["cloud"]),
+      regions: listWithLegacy(params["regions"], params["region"]),
+      projects: listWithLegacy(params["projects"], params["project"]),
+      flags: list(params["flags"]).map((v) => v.toLowerCase()).filter((v) => ASSET_FLAGS.indexOf(v) >= 0),
+      sort: resolvedSort,
+      dir: dir === "asc" || dir === "desc" ? dir : DEFAULT_SORT_DIR[resolvedSort],
+      page: Number.isFinite(page) ? Math.max(0, Math.floor(page)) : 0,
+      pageSize: Number.isFinite(pageSize) && pageSize >= 1 ? Math.min(Math.floor(pageSize), MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE
+    };
+  }
+  function hasAssetFlag(row, flag) {
+    if (flag === "combo") return toNum(row["combos"]) > 0;
+    if (flag === "guardrail") return row["guardrailMissing"] === true;
+    if (flag === "agentic") return row["agentic"] === true;
+    if (flag === "datafindings") return toNum(row["dataFindings"]) > 0;
+    return false;
+  }
+  function rowProjects(row) {
+    const v = row["projects"];
+    return Array.isArray(v) ? v.map((v2) => toStr(v2)).filter(Boolean) : [];
+  }
+  function matchesAssetQuery(row, q) {
+    if (q.q && !toStr(row["name"]).toLowerCase().includes(q.q)) return false;
+    if (q.kinds.length && q.kinds.indexOf(toStr(row["kind"])) < 0) return false;
+    if (q.clouds.length && q.clouds.indexOf(toStr(row["cloud"])) < 0) return false;
+    if (q.regions.length && q.regions.indexOf(toStr(row["region"])) < 0) return false;
+    if (q.aarsSeverities.length && q.aarsSeverities.indexOf(toStr(row["aarsSeverity"])) < 0) {
+      return false;
+    }
+    if (q.severities.length && q.severities.indexOf(toStr(row["severity"])) < 0) return false;
+    if (q.projects.length) {
+      const mine = rowProjects(row);
+      if (!q.projects.some((p) => mine.indexOf(p) >= 0)) return false;
+    }
+    if (q.flags.length && !q.flags.every((f) => hasAssetFlag(row, f))) return false;
+    return true;
+  }
+  function filterAssetRows(rows, q) {
+    return rows.filter((r) => matchesAssetQuery(r, q));
+  }
+  var PRIMARY = {
+    aars: (a, b) => score(a["aars"]) - score(b["aars"]),
+    // Same "missing sorts last" convention as `aars`: `score()` reads a missing tier as -1,
+    // and 4 (worst) already sorts above 1 (best) under the ascending primary, matching AARS's
+    // own "higher number is worse" direction — so `desc` (this column's default) reads worst
+    // tier first, exactly like `aars` reads worst score first.
+    postureTier: (a, b) => score(a["postureTier"]) - score(b["postureTier"]),
+    name: (a, b) => toStr(a["name"]).localeCompare(toStr(b["name"])),
+    kind: (a, b) => toStr(a["kind"]).localeCompare(toStr(b["kind"])),
+    cloud: (a, b) => toStr(a["cloud"]).localeCompare(toStr(b["cloud"])),
+    region: (a, b) => toStr(a["region"]).localeCompare(toStr(b["region"])),
+    severity: (a, b) => sevRank(a["severity"]) - sevRank(b["severity"]),
+    combos: (a, b) => toNum(a["combos"]) - toNum(b["combos"])
+  };
+  var byScoreDesc = (a, b) => score(b["aars"]) - score(a["aars"]);
+  function assetComparator(sort, dir) {
+    var _a5;
+    const primary = (_a5 = PRIMARY[sort]) != null ? _a5 : PRIMARY.aars;
+    const sign = dir === "desc" ? -1 : 1;
+    return (a, b) => sign * primary(a, b) || byScoreDesc(a, b);
+  }
+  var ASSET_COMPARATORS = ASSET_SORTS.reduce((acc, s) => {
+    acc[s] = assetComparator(s, DEFAULT_SORT_DIR[s]);
+    return acc;
+  }, {});
+  function sortAssetRows(rows, sort, dir) {
+    const resolved = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
+    return [...rows].sort(assetComparator(resolved, dir != null ? dir : DEFAULT_SORT_DIR[resolved]));
+  }
+  function facetValues(key, row) {
+    if (key === "kinds") return [toStr(row["kind"])].filter(Boolean);
+    if (key === "clouds") return [toStr(row["cloud"])].filter(Boolean);
+    if (key === "regions") return [toStr(row["region"])].filter(Boolean);
+    if (key === "aarsSeverities") return [toStr(row["aarsSeverity"])].filter(Boolean);
+    if (key === "severities") return [toStr(row["severity"])].filter(Boolean);
+    if (key === "projects") return rowProjects(row);
+    return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f));
+  }
+  function facetSorter(key) {
+    if (key === "aarsSeverities") {
+      const order = AARS_SEVERITY_ORDER;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
+    }
+    if (key === "severities") {
+      const order = SEVERITY_ORDER;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
+    }
+    if (key === "flags") {
+      const order = ASSET_FLAGS;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
+    }
+    return (a, b) => a.value.localeCompare(b.value);
+  }
+  function facetCounts(rows, q) {
+    var _a5;
+    const out = { matched: 0 };
+    for (const key of FACET_KEYS) {
+      const scope = key === "flags" ? q : { ...q, [key]: [] };
+      const counts = /* @__PURE__ */ new Map();
+      for (const row of rows) {
+        if (!matchesAssetQuery(row, scope)) continue;
+        for (const value of facetValues(key, row)) {
+          counts.set(value, ((_a5 = counts.get(value)) != null ? _a5 : 0) + 1);
+        }
+      }
+      for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
+      out[key] = Array.from(counts, ([value, count2]) => ({ value, count: count2 })).sort(facetSorter(key));
+    }
+    out.matched = rows.reduce((n, row) => matchesAssetQuery(row, q) ? n + 1 : n, 0);
+    return out;
+  }
+  function pageOf(rows, page, pageSize) {
+    const size = Math.max(1, Math.floor(pageSize));
+    const pageCount = Math.max(1, Math.ceil(rows.length / size));
+    const clamped = Math.min(Math.max(Math.floor(page) || 0, 0), pageCount - 1);
+    return {
+      rows: rows.slice(clamped * size, (clamped + 1) * size),
+      page: clamped,
+      pageCount
+    };
+  }
+
+  // src/domain/problems.ts
+  var PROBLEMS_CLIENT_ALL_MAX = 1e3;
+  function issueToProblemRow(issue2, node2) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
+    return {
+      id: issue2.id,
+      kind: "ISSUE",
+      title: issue2.ruleName,
+      assetId: issue2.assetId || null,
+      assetName: issue2.assetName,
+      problemOutcome: (_a5 = issue2.problemOutcome) != null ? _a5 : "",
+      vector: (_c = (_b = issue2.problemInput) == null ? void 0 : _b.vector) != null ? _c : null,
+      unknowns: (_e = (_d = issue2.problemInput) == null ? void 0 : _d.unknowns) != null ? _e : [],
+      dueAt: (_f = issue2.dueAt) != null ? _f : null,
+      postureTier: (_g = node2 == null ? void 0 : node2.postureTier) != null ? _g : null,
+      amplification: nodeAmplificationVector(node2),
+      severity: (_h = issue2.adjustedSeverity) != null ? _h : null,
+      ruleId: issue2.ruleId || void 0,
+      businessImpact: issue2.businessImpact,
+      // No IaC link and no ignore-rule list on an issue — see this field's own doc comment.
+      iac: false,
+      ignored: false,
+      firstSeenAt: issue2.createdAt,
+      ruleRemediation: issue2.resolutionRecommendation
+    };
+  }
+  function findingToProblemRow(finding, node2) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    return {
+      id: finding.id,
+      kind: "FINDING",
+      title: finding.ruleName || finding.ruleShortId || "",
+      assetId: node2 ? node2.id : null,
+      assetName: node2 ? node2.name : finding.resourceName || finding.resourceId,
+      problemOutcome: (_a5 = finding.problemOutcome) != null ? _a5 : "",
+      vector: (_c = (_b = finding.problemInput) == null ? void 0 : _b.vector) != null ? _c : null,
+      unknowns: (_e = (_d = finding.problemInput) == null ? void 0 : _d.unknowns) != null ? _e : [],
+      // FindingRow carries no SLA deadline — Wiz's config-finding evaluations have no dueAt
+      // field, only issuesV2 does. Null, never a made-up date.
+      dueAt: null,
+      postureTier: (_f = node2 == null ? void 0 : node2.postureTier) != null ? _f : null,
+      amplification: nodeAmplificationVector(node2),
+      severity: (_g = finding.severity) != null ? _g : null,
+      ruleId: finding.ruleId,
+      ruleShortId: finding.ruleShortId || void 0,
+      businessImpact: finding.businessImpact,
+      iac: ((_h = finding.iacFindingIds) != null ? _h : []).length > 0,
+      ignored: ((_i = finding.ignoreRuleIds) != null ? _i : []).length > 0,
+      firstSeenAt: finding.firstSeenAt,
+      ruleRemediation: finding.remediationInstructions
+    };
+  }
+  function buildProblemRows(issues2, findings, assetsById) {
+    const rows = [];
+    for (const issue2 of issues2) {
+      if (!isUnresolvedIssue(issue2)) continue;
+      rows.push(issueToProblemRow(issue2, assetsById.get(issue2.assetId)));
+    }
+    for (const finding of findings) {
+      if (!isOpenGap(finding)) continue;
+      rows.push(findingToProblemRow(finding, assetsById.get(finding.resourceId)));
+    }
+    return rows;
+  }
+  function outcomeRank(o) {
+    const i = OUTCOME_VALUES.indexOf(o);
+    return i < 0 ? OUTCOME_VALUES.length : i;
+  }
+  function postureRank(t) {
+    return t === null ? 0 : t;
+  }
+  function slaRank(dueAt) {
+    const t = Date.parse(dueAt || "");
+    return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
+  }
+  var AMPLIFICATION_KEYS = ["tools", "identity", "persistence", "multiAgent", "context", "language"];
+  function amplificationFactorRank(v) {
+    return v === null || v === void 0 ? -1 : v;
+  }
+  function compareProblems(a, b) {
+    const outcome = outcomeRank(a.problemOutcome) - outcomeRank(b.problemOutcome);
+    if (outcome !== 0) return outcome;
+    const posture = postureRank(b.postureTier) - postureRank(a.postureTier);
+    if (posture !== 0) return posture;
+    const sla = slaRank(a.dueAt) - slaRank(b.dueAt);
+    if (sla !== 0) return sla;
+    for (const key of AMPLIFICATION_KEYS) {
+      const diff = amplificationFactorRank(b.amplification[key]) - amplificationFactorRank(a.amplification[key]);
+      if (diff !== 0) return diff;
+    }
+    return a.id.localeCompare(b.id);
+  }
+  function rankProblems(rows) {
+    return [...rows].sort(compareProblems);
+  }
+  function countProblemRowsByOutcome(rows) {
+    var _a5;
+    const counts = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0, "": 0 };
+    for (const r of rows) counts[r.problemOutcome] = ((_a5 = counts[r.problemOutcome]) != null ? _a5 : 0) + 1;
+    return counts;
+  }
+
+  // src/domain/actions.ts
+  function actionKeyOf(row) {
+    var _a5, _b;
+    return `${row.kind}|${(_a5 = row.ruleId) != null ? _a5 : ""}|${(_b = row.ruleShortId) != null ? _b : ""}`;
+  }
+  var NO_OUTCOME = "";
+  function outcomeRank2(o) {
+    const i = OUTCOME_VALUES.indexOf(o);
+    return i < 0 ? OUTCOME_VALUES.length : i;
+  }
+  function candidatesFrom(pool) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const row of pool) {
+      const key = actionKeyOf(row);
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(row);
+      else groups.set(key, [row]);
+    }
+    return groups;
+  }
+  function scoreCandidate(key, rows) {
+    let worstRank = OUTCOME_VALUES.length;
+    const assetIds = /* @__PURE__ */ new Set();
+    for (const row of rows) {
+      const rank = outcomeRank2(row.problemOutcome);
+      if (rank < worstRank) worstRank = rank;
+      if (row.assetId) assetIds.add(row.assetId);
+    }
+    return { key, rows, worstRank, assetCount: assetIds.size };
+  }
+  function compareCandidates(a, b) {
+    if (a.worstRank !== b.worstRank) return a.worstRank - b.worstRank;
+    if (a.rows.length !== b.rows.length) return b.rows.length - a.rows.length;
+    if (a.assetCount !== b.assetCount) return b.assetCount - a.assetCount;
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  }
+  function buildActionRow(key, rows) {
+    var _a5, _b;
+    const sorted = [...rows].sort((a, b) => a.id.localeCompare(b.id));
+    const first = sorted[0];
+    const assetIds = /* @__PURE__ */ new Set();
+    const outcomeMix = {};
+    const severityMix = {};
+    const businessImpacts = /* @__PURE__ */ new Set();
+    let worstRank = OUTCOME_VALUES.length;
+    let worstOutcome = NO_OUTCOME;
+    let iac = 0;
+    let ignored = 0;
+    let firstSeenAt = "";
+    let title = "";
+    let remediation;
+    for (const row of sorted) {
+      if (row.assetId) assetIds.add(row.assetId);
+      outcomeMix[row.problemOutcome] = ((_a5 = outcomeMix[row.problemOutcome]) != null ? _a5 : 0) + 1;
+      if (row.severity) severityMix[row.severity] = ((_b = severityMix[row.severity]) != null ? _b : 0) + 1;
+      if (row.businessImpact) businessImpacts.add(row.businessImpact);
+      const rank = outcomeRank2(row.problemOutcome);
+      if (rank < worstRank) {
+        worstRank = rank;
+        worstOutcome = row.problemOutcome;
+      }
+      if (row.iac) iac += 1;
+      if (row.ignored) ignored += 1;
+      if (row.firstSeenAt && (!firstSeenAt || row.firstSeenAt < firstSeenAt)) {
+        firstSeenAt = row.firstSeenAt;
+      }
+      if (!title && row.title) title = row.title;
+      if (!remediation && row.ruleRemediation) remediation = row.ruleRemediation;
+    }
+    return {
+      key,
+      kind: first.kind,
+      ruleId: first.ruleId,
+      ruleShortId: first.ruleShortId,
+      title: title || first.title,
+      problems: rows.length,
+      assets: assetIds.size,
+      worstOutcome,
+      outcomeMix,
+      severityMix,
+      businessImpacts: [...businessImpacts].sort(),
+      autoRemediable: false,
+      iac,
+      ignored,
+      firstSeenAt: firstSeenAt || void 0,
+      remediation
+    };
+  }
+  function rankActionsByCover(rows, limit) {
+    let remaining = rows.slice();
+    const ranked = [];
+    while (remaining.length > 0) {
+      const groups = candidatesFrom(remaining);
+      let best = null;
+      for (const [key, groupRows] of groups) {
+        const candidate = scoreCandidate(key, groupRows);
+        if (!best || compareCandidates(candidate, best) < 0) best = candidate;
+      }
+      if (!best) break;
+      ranked.push(buildActionRow(best.key, best.rows));
+      const covered = new Set(best.rows.map((r) => r.id));
+      remaining = remaining.filter((r) => !covered.has(r.id));
+    }
+    return limit !== void 0 && limit >= 0 ? ranked.slice(0, limit) : ranked;
+  }
+  function withAutoRemediation(actions, policies) {
+    const byId = /* @__PURE__ */ new Map();
+    const byShortId = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.hasAutoRemediation !== true) continue;
+      byId.set(p.policyId, true);
+      if (p.shortId) byShortId.set(p.shortId, true);
+    }
+    return actions.map((a) => {
+      const auto = a.ruleId !== void 0 && byId.get(a.ruleId) === true || a.ruleShortId !== void 0 && byShortId.get(a.ruleShortId) === true;
+      return auto ? { ...a, autoRemediable: true } : a;
+    });
+  }
+  function coverCurve(ranked, total2) {
+    const out = [];
+    let cumulative = 0;
+    let rank = 0;
+    for (const a of ranked) {
+      rank += 1;
+      cumulative += a.problems;
+      out.push({ rank, cumulative, share: total2 > 0 ? cumulative / total2 : 0 });
+    }
+    return out;
+  }
+  function concentrationRatio(ranked, total2) {
+    const problems = ranked.reduce((n, a) => n + a.problems, 0);
+    const top10 = ranked.slice(0, 10).reduce((n, a) => n + a.problems, 0);
+    return {
+      actions: ranked.length,
+      problems,
+      top10Share: total2 > 0 ? top10 / total2 : 0
+    };
+  }
+
+  // src/domain/configFindings.ts
+  var CONFIG_SORTS = [
+    "severity",
+    "rule",
+    "resource",
+    "firstSeen",
+    "status",
+    "priority"
+  ];
+  var DEFAULT_CONFIG_SORT_DIR = {
+    severity: "desc",
+    firstSeen: "desc",
+    rule: "asc",
+    resource: "asc",
+    status: "asc",
+    // Phase 5: the problem tree's outcome, worst (ACT) first — same convention as severity.
+    priority: "desc"
+  };
+  var DEFAULT_CONFIG_PAGE_SIZE = 50;
+  var MAX_CONFIG_PAGE_SIZE = 500;
+  var CONFIG_CLIENT_ALL_MAX = 1e3;
+  var CONFIG_FACET_KEYS = [
+    "severities",
+    "statuses",
+    "clouds",
+    "resourceTypes",
+    "rules",
+    "projects",
+    "linkage",
+    "flags",
+    "outcomes"
+  ];
+  var LINKAGE_VALUES = ["linked", "unlinked"];
+  var CONFIG_FLAGS = ["gap", "ignored", "iac"];
+  var sevRank2 = (s) => {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i < 0 ? SEVERITY_ORDER.length : i;
+  };
+  var priorityRank = (o) => {
+    const i = OUTCOME_VALUES.indexOf(o);
+    return i < 0 ? OUTCOME_VALUES.length : i;
+  };
+  function toConfigView(f, linked) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
+    return {
+      id: f.id,
+      name: (_b = (_a5 = f.name) != null ? _a5 : f.ruleName) != null ? _b : "",
+      severity: (_c = f.severity) != null ? _c : "UNKNOWN",
+      status: (_d = f.status) != null ? _d : "",
+      result: (_e = f.result) != null ? _e : "",
+      ruleShortId: (_f = f.ruleShortId) != null ? _f : "",
+      ruleName: (_g = f.ruleName) != null ? _g : "",
+      resourceId: f.resourceId,
+      resourceName: (_h = f.resourceName) != null ? _h : "",
+      resourceType: (_i = f.resourceType) != null ? _i : "",
+      cloud: (_j = f.cloudProvider) != null ? _j : "",
+      subscriptionName: (_k = f.subscriptionName) != null ? _k : "",
+      projects: ((_l = f.projects) != null ? _l : []).map((p) => p.name).filter(Boolean),
+      businessImpact: (_m = f.businessImpact) != null ? _m : "",
+      firstSeenAt: (_n = f.firstSeenAt) != null ? _n : "",
+      analyzedAt: (_o = f.analyzedAt) != null ? _o : "",
+      risks: (_p = f.risks) != null ? _p : [],
+      linked,
+      ignored: ((_q = f.ignoreRuleIds) != null ? _q : []).length > 0,
+      iac: ((_r = f.iacFindingIds) != null ? _r : []).length > 0,
+      gap: isOpenGap(f),
+      problemOutcome: (_s = f.problemOutcome) != null ? _s : ""
+    };
+  }
+  function listParam(v) {
+    if (Array.isArray(v)) return v.map((x) => String(x)).filter(Boolean);
+    const s = toStr(v);
+    return s ? s.split(",").map((x) => x.trim()).filter(Boolean) : [];
+  }
+  function resolveConfigQuery(params) {
+    var _a5;
+    return {
+      q: ((_a5 = toStr(params["q"])) != null ? _a5 : "").trim().toLowerCase(),
+      severities: listParam(params["severities"]),
+      statuses: listParam(params["statuses"]),
+      clouds: listParam(params["clouds"]),
+      resourceTypes: listParam(params["resourceTypes"]),
+      rules: listParam(params["rules"]),
+      projects: listParam(params["projects"]),
+      linkage: listParam(params["linkage"]).filter(
+        (v) => LINKAGE_VALUES.indexOf(v) >= 0
+      ),
+      flags: listParam(params["flags"]).filter(
+        (v) => CONFIG_FLAGS.indexOf(v) >= 0
+      ),
+      outcomes: listParam(params["outcomes"]).filter(
+        (v) => OUTCOME_VALUES.indexOf(v) >= 0
+      )
+    };
+  }
+  function hasConfigFlag(row, flag) {
+    if (flag === "gap") return row.gap;
+    if (flag === "ignored") return row.ignored;
+    if (flag === "iac") return row.iac;
+    return false;
+  }
+  function anyOf(selected, value) {
+    return selected.length === 0 || selected.indexOf(value) >= 0;
+  }
+  function matchesConfigQuery(row, q) {
+    if (!anyOf(q.severities, row.severity)) return false;
+    if (!anyOf(q.statuses, row.status)) return false;
+    if (!anyOf(q.clouds, row.cloud)) return false;
+    if (!anyOf(q.resourceTypes, row.resourceType)) return false;
+    if (!anyOf(q.rules, row.ruleShortId)) return false;
+    if (q.projects.length && !row.projects.some((p) => q.projects.indexOf(p) >= 0)) return false;
+    if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
+    if (!anyOf(q.outcomes, row.problemOutcome)) return false;
+    for (const flag of q.flags) if (!hasConfigFlag(row, flag)) return false;
+    if (q.q) {
+      const hay = [
+        row.name,
+        row.ruleShortId,
+        row.ruleName,
+        row.resourceName,
+        row.resourceType,
+        row.subscriptionName
+      ].join(" ").toLowerCase();
+      if (hay.indexOf(q.q) < 0) return false;
+    }
+    return true;
+  }
+  function filterConfigRows(rows, q) {
+    return rows.filter((r) => matchesConfigQuery(r, q));
+  }
+  function configComparator(sort, dir) {
+    const d = (dir != null ? dir : DEFAULT_CONFIG_SORT_DIR[sort]) === "asc" ? 1 : -1;
+    const tie = (a, b) => a.id.localeCompare(b.id);
+    return (a, b) => {
+      let cmp2 = 0;
+      if (sort === "severity") cmp2 = sevRank2(b.severity) - sevRank2(a.severity);
+      else if (sort === "rule") cmp2 = a.ruleShortId.localeCompare(b.ruleShortId);
+      else if (sort === "resource") cmp2 = a.resourceName.localeCompare(b.resourceName);
+      else if (sort === "status") cmp2 = a.status.localeCompare(b.status);
+      else if (sort === "firstSeen") cmp2 = a.firstSeenAt.localeCompare(b.firstSeenAt);
+      else if (sort === "priority") cmp2 = priorityRank(b.problemOutcome) - priorityRank(a.problemOutcome);
+      return cmp2 !== 0 ? cmp2 * d : tie(a, b);
+    };
+  }
+  function sortConfigRows(rows, sort, dir) {
+    return rows.slice().sort(configComparator(sort, dir));
+  }
+  function facetValues2(key, row) {
+    if (key === "severities") return [row.severity].filter(Boolean);
+    if (key === "statuses") return [row.status].filter(Boolean);
+    if (key === "clouds") return [row.cloud].filter(Boolean);
+    if (key === "resourceTypes") return [row.resourceType].filter(Boolean);
+    if (key === "rules") return [row.ruleShortId].filter(Boolean);
+    if (key === "projects") return row.projects;
+    if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
+    if (key === "outcomes") return row.problemOutcome ? [row.problemOutcome] : [];
+    return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f));
+  }
+  function facetSorter2(key) {
+    if (key === "severities") return (a, b) => sevRank2(a.value) - sevRank2(b.value);
+    if (key === "outcomes") return (a, b) => priorityRank(a.value) - priorityRank(b.value);
+    if (key === "flags") {
+      const order = CONFIG_FLAGS;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
+    }
+    if (key === "linkage") {
+      const order = LINKAGE_VALUES;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
+    }
+    return (a, b) => a.value.localeCompare(b.value);
+  }
+  function configFacetCounts(rows, q) {
+    var _a5;
+    const out = { matched: 0 };
+    for (const key of CONFIG_FACET_KEYS) {
+      const scope = key === "flags" ? q : { ...q, [key]: [] };
+      const counts = /* @__PURE__ */ new Map();
+      for (const row of rows) {
+        if (!matchesConfigQuery(row, scope)) continue;
+        for (const value of facetValues2(key, row)) {
+          counts.set(value, ((_a5 = counts.get(value)) != null ? _a5 : 0) + 1);
+        }
+      }
+      for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
+      out[key] = Array.from(counts, ([value, count2]) => ({ value, count: count2 })).sort(facetSorter2(key));
+    }
+    out.matched = rows.reduce((n, row) => matchesConfigQuery(row, q) ? n + 1 : n, 0);
+    return out;
+  }
+  function rollupByControl(rows) {
+    var _a5;
+    const byRule = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const key = row.ruleShortId || row.ruleName || "\u2014";
+      const bucket = byRule.get(key);
+      if (bucket) bucket.push(row);
+      else byRule.set(key, [row]);
+    }
+    const out = [];
+    for (const [ruleShortId, group] of byRule) {
+      const resources = /* @__PURE__ */ new Set();
+      const gapResources = /* @__PURE__ */ new Set();
+      const unlinkedGapResources = /* @__PURE__ */ new Set();
+      const clouds = /* @__PURE__ */ new Set();
+      const projects = /* @__PURE__ */ new Set();
+      const risks = /* @__PURE__ */ new Set();
+      const severityMix = {};
+      let worst = "UNKNOWN";
+      let firstSeenAt = "";
+      let gaps = 0;
+      let linked = 0;
+      let unlinked = 0;
+      let ignored = 0;
+      let iac = 0;
+      for (const row of group) {
+        resources.add(row.resourceId);
+        if (row.cloud) clouds.add(row.cloud);
+        for (const p of row.projects) projects.add(p);
+        for (const r of row.risks) risks.add(r);
+        severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
+        if (sevRank2(row.severity) < sevRank2(worst)) worst = row.severity;
+        if (row.firstSeenAt && (!firstSeenAt || row.firstSeenAt < firstSeenAt)) {
+          firstSeenAt = row.firstSeenAt;
+        }
+        if (row.gap) {
+          gaps += 1;
+          gapResources.add(row.resourceId);
+          if (!row.linked) unlinkedGapResources.add(row.resourceId);
+        }
+        if (row.linked) linked += 1;
+        else unlinked += 1;
+        if (row.ignored) ignored += 1;
+        if (row.iac) iac += 1;
+      }
+      out.push({
+        ruleShortId,
+        ruleName: group[0].ruleName || group[0].name || "",
+        severity: worst,
+        risks: [...risks].sort(),
+        findings: group.length,
+        gaps,
+        resources: resources.size,
+        gapResources: gapResources.size,
+        unlinkedGapResources: unlinkedGapResources.size,
+        linked,
+        unlinked,
+        ignored,
+        iac,
+        clouds: [...clouds].sort(),
+        projects: [...projects].sort(),
+        severityMix,
+        firstSeenAt
+      });
+    }
+    return out.sort((a, b) => sevRank2(a.severity) - sevRank2(b.severity) || b.gaps - a.gaps || b.resources - a.resources || a.ruleShortId.localeCompare(b.ruleShortId));
+  }
+  function configTotals(rows) {
+    var _a5;
+    const controls = /* @__PURE__ */ new Set();
+    const resources = /* @__PURE__ */ new Set();
+    const severityMix = {};
+    let gaps = 0;
+    let unlinkedGaps = 0;
+    let ignored = 0;
+    let iac = 0;
+    for (const row of rows) {
+      if (row.ruleShortId) controls.add(row.ruleShortId);
+      resources.add(row.resourceId);
+      if (row.gap) {
+        gaps += 1;
+        severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
+        if (!row.linked) unlinkedGaps += 1;
+      }
+      if (row.ignored) ignored += 1;
+      if (row.iac) iac += 1;
+    }
+    return {
+      findings: rows.length,
+      gaps,
+      controls: controls.size,
+      resources: resources.size,
+      unlinkedGaps,
+      ignored,
+      iac,
+      severityMix
+    };
+  }
+
+  // src/domain/complianceOverview.ts
+  function severityRank2(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  var STATE_KEYS = ["scored", "noResources", "noPolicies", "unknown"];
+  function frameworkRail(trees) {
+    return trees.map((tree) => ({
+      frameworkId: tree.frameworkId,
+      name: tree.name,
+      posturePct: tree.posturePct,
+      state: tree.state,
+      postureBand: tree.postureBand,
+      emptyPostureReason: tree.emptyPostureReason,
+      categoryCount: tree.categories.length,
+      // From stateCounts, not from the listed nodes: the tree lists only scored
+      // subcategories (compliancePosture.ts), and a rail that counted those would report a
+      // framework's size as the part of it that happened to score.
+      subcategoryCount: STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0),
+      policyCount: tree.policyCount,
+      failingPolicyCount: tree.failingPolicyCount,
+      worstFailingSeverity: tree.worstFailingSeverity,
+      // Copied rather than aliased: a caller holding this row must not be able to mutate
+      // the FrameworkTree it was built from by mutating what looks like its own object.
+      stateCounts: { ...tree.stateCounts }
+    }));
+  }
+  function isScoredRow(row) {
+    return row.state === "scored";
+  }
+  function weakestAreas(trees, limit) {
+    const rows = [];
+    for (const tree of trees) {
+      for (const category of tree.categories) {
+        for (const sub of category.subcategories) {
+          if (sub.state === "scored" && !sub.policies.length) continue;
+          rows.push({
+            frameworkId: tree.frameworkId,
+            frameworkName: tree.name,
+            categoryExternalId: category.externalId,
+            categoryTitle: category.title,
+            externalId: sub.externalId,
+            showExternalId: sub.showExternalId,
+            title: sub.title,
+            posturePct: sub.posturePct,
+            state: sub.state,
+            emptyPostureReason: sub.emptyPostureReason,
+            passCount: sub.passCount,
+            failCount: sub.failCount,
+            // Distinct policies THIS subcategory carries. buildFrameworkTree already
+            // deduped `policies` to that scope (compliancePosture.ts:190), so re-deduping
+            // here would be the wrong scope all over again — count the list as given.
+            policyCount: sub.policies.length,
+            failingPolicyCount: sub.failingPolicyCount,
+            postureBand: sub.postureBand
+          });
+        }
+      }
+    }
+    const scored = rows.filter(isScoredRow);
+    scored.sort((a, b) => a.posturePct - b.posturePct || b.failingPolicyCount - a.failingPolicyCount || (a.frameworkName < b.frameworkName ? -1 : a.frameworkName > b.frameworkName ? 1 : 0) || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
+    return typeof limit === "number" ? scored.slice(0, limit) : scored;
+  }
+  function sharedControls(trees) {
+    const byPolicy = /* @__PURE__ */ new Map();
+    for (const tree of trees) {
+      for (const category of tree.categories) {
+        for (const sub of category.subcategories) {
+          for (const p of sub.policies) {
+            let acc = byPolicy.get(p.policyId);
+            if (!acc) {
+              acc = {
+                policyId: p.policyId,
+                shortId: p.shortId,
+                name: p.name,
+                policyKind: p.policyKind,
+                severity: p.severity,
+                severityRank: severityRank2(p.severity),
+                hasAutoRemediation: p.hasAutoRemediation === true,
+                frameworkIds: [],
+                frameworkNames: [],
+                subcategoryKeys: /* @__PURE__ */ new Set(),
+                failCount: 0
+              };
+              byPolicy.set(p.policyId, acc);
+            }
+            const rank = severityRank2(p.severity);
+            if (rank < acc.severityRank) {
+              acc.severityRank = rank;
+              acc.severity = p.severity;
+              acc.shortId = p.shortId;
+              acc.name = p.name;
+              acc.policyKind = p.policyKind;
+              acc.hasAutoRemediation = p.hasAutoRemediation === true;
+            }
+            if (acc.frameworkIds.indexOf(tree.frameworkId) === -1) {
+              acc.frameworkIds.push(tree.frameworkId);
+              acc.frameworkNames.push(tree.name);
+            }
+            acc.subcategoryKeys.add(`${tree.frameworkId}|${sub.externalId}`);
+            if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+          }
+        }
+      }
+    }
+    const rows = [];
+    for (const acc of byPolicy.values()) {
+      if (acc.failCount <= 0) continue;
+      rows.push({
+        policyId: acc.policyId,
+        shortId: acc.shortId,
+        name: acc.name,
+        policyKind: acc.policyKind,
+        severity: acc.severity,
+        hasAutoRemediation: acc.hasAutoRemediation,
+        frameworkIds: acc.frameworkIds,
+        frameworkNames: acc.frameworkNames,
+        frameworkCount: acc.frameworkIds.length,
+        subcategoryCount: acc.subcategoryKeys.size,
+        failCount: acc.failCount
+      });
+    }
+    rows.sort((a, b) => b.frameworkCount - a.frameworkCount || severityRank2(a.severity) - severityRank2(b.severity) || b.failCount - a.failCount || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    return rows;
+  }
+  function coverageSummary(trees, catalogue) {
+    const stateCounts = {
+      scored: 0,
+      noResources: 0,
+      noPolicies: 0,
+      unknown: 0
+    };
+    let subcategoryCount = 0;
+    for (const tree of trees) {
+      stateCounts.scored += tree.stateCounts.scored;
+      stateCounts.noResources += tree.stateCounts.noResources;
+      stateCounts.noPolicies += tree.stateCounts.noPolicies;
+      stateCounts.unknown += tree.stateCounts.unknown;
+      subcategoryCount += STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
+    }
+    return {
+      collected: trees.length,
+      catalogued: catalogue.length,
+      scoredFrameworks: trees.filter((t) => t.state === "scored").length,
+      stateCounts,
+      subcategoryCount
+    };
+  }
+
+  // src/domain/complianceScope.ts
+  function severityRank3(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function isAiFamily(family) {
+    return family === "OWASP_ASI" || family === "OWASP_LLM" || family === "OWASP_ML";
+  }
+  function scopeFiveRs(trees, findings, aiAssetIds, pins) {
+    var _a5, _b, _c, _d;
+    const fiveRsTree = trees.find((t) => frameworkFamily(t.name) === "WIZ_5RS");
+    if (!fiveRsTree) {
+      return {
+        frameworkId: null,
+        frameworkName: "",
+        policies: [],
+        selected: 0,
+        total: 0
+      };
+    }
+    const mappedByPolicy = /* @__PURE__ */ new Map();
+    for (const tree of trees) {
+      if (tree === fiveRsTree) continue;
+      if (!isAiFamily(frameworkFamily(tree.name))) continue;
+      for (const category of tree.categories) {
+        for (const sub of category.subcategories) {
+          for (const p of sub.policies) {
+            const names = (_a5 = mappedByPolicy.get(p.policyId)) != null ? _a5 : /* @__PURE__ */ new Set();
+            names.add(tree.name);
+            mappedByPolicy.set(p.policyId, names);
+          }
+        }
+      }
+    }
+    const aiOpenFindings = findings.filter(
+      (f) => isOpenGap(f) && aiAssetIds[f.resourceId] === true
+    );
+    const findingsByRuleId = /* @__PURE__ */ new Map();
+    const findingsByShortId = /* @__PURE__ */ new Map();
+    for (const f of aiOpenFindings) {
+      if (f.ruleId) pushInto(findingsByRuleId, f.ruleId, f);
+      if (f.ruleShortId) pushInto(findingsByShortId, f.ruleShortId, f);
+    }
+    const pinnedOut = new Set(pins.out);
+    const pinnedIn = new Set(pins.in);
+    const byPolicy = /* @__PURE__ */ new Map();
+    for (const category of fiveRsTree.categories) {
+      for (const sub of category.subcategories) {
+        for (const p of sub.policies) {
+          let acc = byPolicy.get(p.policyId);
+          if (!acc) {
+            acc = {
+              policyId: p.policyId,
+              shortId: p.shortId,
+              name: p.name,
+              policyKind: p.policyKind,
+              severity: p.severity,
+              categoryExternalId: category.externalId,
+              subcategoryExternalId: sub.externalId,
+              subcategoryTitle: sub.title,
+              failCount: 0,
+              passCount: 0,
+              // Sticky-false's INITIAL reading — see the PolicyScope.enabled doc comment.
+              enabled: p.enabled
+            };
+            byPolicy.set(p.policyId, acc);
+          }
+          if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+          if (p.passCount > acc.passCount) acc.passCount = p.passCount;
+          if (p.enabled === false) acc.enabled = false;
+        }
+      }
+    }
+    const policies = [];
+    for (const acc of byPolicy.values()) {
+      const mappedBy = [...(_b = mappedByPolicy.get(acc.policyId)) != null ? _b : []].sort();
+      const crossMapped = mappedBy.length > 0;
+      const matched = /* @__PURE__ */ new Map();
+      for (const f of (_c = findingsByRuleId.get(acc.policyId)) != null ? _c : []) matched.set(f.id, f);
+      if (acc.shortId) {
+        for (const f of (_d = findingsByShortId.get(acc.shortId)) != null ? _d : []) matched.set(f.id, f);
+      }
+      const aiFindingCount = matched.size;
+      let selected;
+      let reason;
+      if (pinnedOut.has(acc.policyId)) {
+        selected = false;
+        reason = "pinnedOut";
+      } else if (pinnedIn.has(acc.policyId)) {
+        selected = true;
+        reason = "pinnedIn";
+      } else if (crossMapped) {
+        selected = true;
+        reason = "crossMapped";
+      } else if (aiFindingCount > 0) {
+        selected = true;
+        reason = "linkedFindings";
+      } else {
+        selected = false;
+        reason = "noAiLink";
+      }
+      policies.push({
+        policyId: acc.policyId,
+        shortId: acc.shortId,
+        name: acc.name,
+        policyKind: acc.policyKind,
+        severity: acc.severity,
+        categoryExternalId: acc.categoryExternalId,
+        subcategoryExternalId: acc.subcategoryExternalId,
+        subcategoryTitle: acc.subcategoryTitle,
+        selected,
+        reason,
+        mappedBy,
+        aiFindingCount,
+        failCount: acc.failCount,
+        passCount: acc.passCount,
+        enabled: acc.enabled
+      });
+    }
+    policies.sort((a, b) => (a.selected === b.selected ? 0 : a.selected ? 1 : -1) || severityRank3(a.severity) - severityRank3(b.severity) || b.failCount - a.failCount || cmp(a.name, b.name));
+    return {
+      frameworkId: fiveRsTree.frameworkId,
+      frameworkName: fiveRsTree.name,
+      policies,
+      selected: policies.filter((p) => p.selected).length,
+      total: policies.length
+    };
+  }
+  function unselectedPolicyIds(scope) {
+    return scope.policies.filter((p) => !p.selected).map((p) => p.policyId);
+  }
+
+  // src/domain/compliancePosture.ts
+  var POSTURE_BANDS = {
+    strong: { min: 90, label: "Strong" },
+    fair: { min: 70, label: "Work to do" },
+    weak: { min: 0, label: "Materially failing" }
+  };
+  function postureBandOf(posturePct2) {
+    if (posturePct2 === null || posturePct2 === void 0) return null;
+    if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
+    if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
+    return "weak";
+  }
+  function postureState(posturePct2, emptyPostureReason) {
+    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
+    if (reason === "NO_RESOURCES") return "noResources";
+    if (reason === "NO_POLICIES") return "noPolicies";
+    if (reason) return "unknown";
+    return posturePct2 === null ? "unknown" : "scored";
+  }
+  function titleRepeatsExternalId(externalId, title) {
+    const id = String(externalId != null ? externalId : "").trim();
+    const t = String(title != null ? title : "").trim();
+    if (!id || !t) return false;
+    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
+    const next = t.charAt(id.length);
+    return next === "" || next === " " || next === "	";
+  }
+  function severityRank4(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function worstOf(a, b) {
+    if (a === null) return b;
+    if (b === null) return a;
+    return severityRank4(b) < severityRank4(a) ? b : a;
+  }
+  function worstFailingSeverityOf(policies) {
+    let worst = null;
+    for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
+    return worst;
+  }
+  function emptyStateCounts() {
+    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
+  }
+  function isAssessedPolicy(p) {
+    return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
+  }
+  function toNode(row, externalId) {
+    return {
+      frameworkId: row.frameworkId,
+      externalId,
+      // Suppressed when the title already opens with it, so an OWASP LLM row reads
+      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
+      showExternalId: !titleRepeatsExternalId(externalId, row.title),
+      title: row.title,
+      description: row.description,
+      posturePct: row.posturePct,
+      state: postureState(row.posturePct, row.emptyPostureReason),
+      // Read off the state, not off the number: a row carrying both a percentage and an
+      // emptyPostureReason is one postureState declines to score, and banding the number it
+      // just disowned would put a colour back on a row that has no posture.
+      postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored" ? postureBandOf(row.posturePct) : null,
+      passCount: row.passCount,
+      failCount: row.failCount,
+      emptyPostureReason: row.emptyPostureReason
+    };
+  }
+  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    const rows = posture.filter((p) => p.frameworkId === frameworkId);
+    if (!rows.length) return null;
+    const frameworkRow = rows.find((p) => p.level === "framework");
+    const catalogue = frameworks.find((f) => f.id === frameworkId);
+    const policiesBySub = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.frameworkId !== frameworkId) continue;
+      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
+      list2.push(p);
+      policiesBySub.set(p.subcategoryExternalId, list2);
+    }
+    const stateCounts = emptyStateCounts();
+    const unassessedIds = /* @__PURE__ */ new Set();
+    const subsByCategory = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      if (row.level !== "subcategory") continue;
+      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
+      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
+      const seen = /* @__PURE__ */ new Set();
+      const deduped = raw.filter((p) => {
+        if (seen.has(p.policyId)) return false;
+        seen.add(p.policyId);
+        return true;
+      });
+      deduped.sort(
+        (a, b) => severityRank4(a.severity) - severityRank4(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+      );
+      const assessed = [];
+      for (const p of deduped) {
+        if (isAssessedPolicy(p)) assessed.push(p);
+        else unassessedIds.add(p.policyId);
+      }
+      const node2 = {
+        ...toNode(row, externalId),
+        assessmentScope: row.assessmentScope,
+        mappingRationale: row.mappingRationale,
+        policies: assessed,
+        failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
+        unassessedPolicyCount: deduped.length - assessed.length,
+        // From the LISTED policies, so the tint on this row and the rules the row expands to
+        // show can never name different severities.
+        worstFailingSeverity: worstFailingSeverityOf(assessed)
+      };
+      stateCounts[node2.state] += 1;
+      if (node2.state !== "scored") continue;
+      const key = (_d = row.categoryExternalId) != null ? _d : "";
+      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
+      list2.push(node2);
+      subsByCategory.set(key, list2);
+    }
+    const categories = rows.filter((r) => r.level === "category").map((row) => {
+      var _a6, _b2;
+      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
+      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
+      return {
+        ...toNode(row, externalId),
+        subcategories,
+        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId,
+        worstFailingSeverity: subcategories.reduce(
+          (worst, sub) => worstOf(worst, sub.worstFailingSeverity),
+          null
+        )
+      };
+    }).filter((cat) => cat.subcategories.length > 0);
+    const distinct = /* @__PURE__ */ new Map();
+    for (const cat of categories) {
+      for (const sub of cat.subcategories) {
+        for (const p of sub.policies) {
+          distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
+        }
+      }
+    }
+    const worstFailingSeverity = categories.reduce(
+      (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
+      null
+    );
+    const frameworkState = postureState(
+      (_g = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _g : null,
+      (_h = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _h : null
+    );
+    return {
+      frameworkId,
+      name: (_j = (_i = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _i : catalogue == null ? void 0 : catalogue.name) != null ? _j : frameworkId,
+      description: (_k = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _k : catalogue == null ? void 0 : catalogue.description,
+      posturePct: (_l = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _l : null,
+      state: frameworkState,
+      // Same guard toNode applies one level down: only a row that actually scored gets a
+      // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
+      postureBand: frameworkState === "scored" ? postureBandOf((_m = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _m : null) : null,
+      emptyPostureReason: (_n = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _n : null,
+      passSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _o : 0,
+      failSubCategoryCount: (_p = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _p : 0,
+      categories,
+      stateCounts,
+      policyCount: distinct.size,
+      failingPolicyCount: [...distinct.values()].filter(Boolean).length,
+      // Only ids that appear NOWHERE in the listed tree. A control mapped under six
+      // subcategories and evaluated under one of them is a listed policy, not a dropped one,
+      // and counting it in both places would describe the same rule twice.
+      unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
+      worstFailingSeverity
+    };
+  }
+  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
+    const ids = [];
+    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
+    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
+    trees.sort((a, b) => {
+      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
+      if (a.posturePct === null) return 1;
+      if (b.posturePct === null) return -1;
+      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
+    });
+    return trees;
+  }
+  function complianceKpis(posture, policies = []) {
+    const frameworkRows = posture.filter((p) => p.level === "framework");
+    const scored = frameworkRows.filter(
+      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
+    );
+    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
+      var _a5;
+      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
+    }, 0) / scored.length) : null;
+    const failingSubcategories = posture.filter(
+      (p) => p.level === "subcategory" && p.failCount > 0
+    ).length;
+    const failing = /* @__PURE__ */ new Set();
+    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
+    return {
+      frameworks: frameworkRows.length,
+      scoredFrameworks: scored.length,
+      averagePosture,
+      averagePostureBand: postureBandOf(averagePosture),
+      failingSubcategories,
+      failingPolicies: failing.size
+    };
+  }
+
+  // src/domain/fiveRsPosture.ts
+  function isActiveFiveRsPolicy(p) {
+    return p.selected && p.enabled !== false;
+  }
+  function clampAwayFromFalseExtreme(rounded, hasFailing, hasPassing) {
+    if (rounded === 100 && hasFailing) return 99;
+    if (rounded === 0 && hasPassing) return 1;
+    return rounded;
+  }
+  function fiveRsDerivedPosture(scope, wizPosturePct) {
+    if (scope.frameworkId === null) return null;
+    let passCount = 0;
+    let failCount = 0;
+    let cleanPolicyCount = 0;
+    let failingPolicyCount = 0;
+    let activePolicyCount = 0;
+    let disabledPolicyCount = 0;
+    for (const p of scope.policies) {
+      if (p.selected && p.enabled === false) disabledPolicyCount += 1;
+      if (!isActiveFiveRsPolicy(p)) continue;
+      activePolicyCount += 1;
+      passCount += p.passCount;
+      failCount += p.failCount;
+      if (p.failCount === 0) cleanPolicyCount += 1;
+      else failingPolicyCount += 1;
+    }
+    const posturePct2 = activePolicyCount === 0 || passCount + failCount === 0 ? null : clampAwayFromFalseExtreme(
+      Math.round(100 * passCount / (passCount + failCount)),
+      failCount > 0,
+      passCount > 0
+    );
+    const controlPassPct = activePolicyCount === 0 ? null : clampAwayFromFalseExtreme(
+      Math.round(100 * cleanPolicyCount / activePolicyCount),
+      failingPolicyCount > 0,
+      cleanPolicyCount > 0
+    );
+    return {
+      frameworkId: scope.frameworkId,
+      posturePct: posturePct2,
+      postureBand: postureBandOf(posturePct2),
+      controlPassPct,
+      cleanPolicyCount,
+      failingPolicyCount,
+      activePolicyCount,
+      disabledPolicyCount,
+      passCount,
+      failCount,
+      wizPosturePct
     };
   }
 
@@ -9182,593 +11261,6 @@ var Server = (() => {
     return cells;
   }
 
-  // src/domain/graphEnrich.ts
-  function worstSeverity(severities) {
-    let worst;
-    for (const s of severities) {
-      if (worst === void 0 || severityRank(s) < severityRank(worst)) worst = s;
-    }
-    return worst;
-  }
-  function dataExposureOf(node2) {
-    if (node2.hasAccessToSensitiveData || node2.hasSensitiveData) return "SENSITIVE";
-    if (node2.hasHighPrivileges || node2.hasAdminPrivileges) return "DATA_ACCESS";
-    return "NONE";
-  }
-  function internetExposureOf(node2) {
-    const state = conditionState(node2, "INTERNET_EXPOSURE");
-    if (state === true) return "CONFIRMED";
-    if (state === null) return "UNDETERMINED";
-    return "NONE";
-  }
-  function deriveAarsInput(node2, nodeIssues, rule = DEFAULT_AARS_RULE) {
-    var _a5;
-    const gaps = rule.gapUnit === "condition" ? conditionGaps(node2, nodeIssues) : frameworkCodeGaps(node2, nodeIssues, rule);
-    const status = String((_a5 = node2.status) != null ? _a5 : "").trim().toUpperCase();
-    if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
-    if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
-    const dataExposure = dataExposureOf(node2);
-    return {
-      // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
-      // ai/custom_score.md: MEDIUM ×1.2 = 24); the adjusted severity is a display
-      // lens, not a scoring input — using it would double-count the 5Rs amplifier.
-      issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
-      gaps,
-      dataExposure,
-      internetExposure: internetExposureOf(node2)
-    };
-  }
-  function frameworkCodeGaps(node2, nodeIssues, rule) {
-    var _a5, _b, _c, _d, _e;
-    const codes = /* @__PURE__ */ new Set();
-    for (const issue2 of nodeIssues) {
-      const fw = (_a5 = issue2.frameworks) != null ? _a5 : {};
-      for (const c of (_b = fw.owaspLlm) != null ? _b : []) codes.add(c);
-      for (const c of (_c = fw.owaspAgentic) != null ? _c : []) codes.add(c);
-      for (const c of (_d = fw.owaspMl) != null ? _d : []) codes.add(`ML_${c.replace(/\s+/g, "_").toUpperCase()}`);
-      if (rule.gapSources.fiveRs) {
-        for (const c of (_e = fw.fiveRs) != null ? _e : []) codes.add(`5R_${c.replace(/\s+/g, "_").toUpperCase()}`);
-      }
-    }
-    const gaps = [...codes].sort().map((c) => gap(c));
-    if (node2.guardrailMissing) gaps.push(gap("NO_GUARDRAIL"));
-    return gaps;
-  }
-  function conditionGaps(node2, nodeIssues) {
-    const gaps = [];
-    for (const key of CONDITION_KEYS) {
-      if (conditionState(node2, key) === true) gaps.push(gap(`COND_${key}`));
-    }
-    const groups = /* @__PURE__ */ new Set();
-    for (const issue2 of nodeIssues) if (issue2.comboGroup) groups.add(issue2.comboGroup);
-    for (const g of [...groups].sort()) gaps.push(gap(comboGapCode(g)));
-    return gaps;
-  }
-  function weightedGap(code, severity, rule) {
-    var _a5;
-    const w = severity === void 0 ? 1 : (_a5 = rule.findingSeverityWeights[severity]) != null ? _a5 : 1;
-    if (w === 1) return gap(code);
-    return gap(code, Math.max(0, Math.round(gapPointsFor(code, rule) * w)));
-  }
-  function buildAarsHintsFromFindings(findings, doc, issues2, rule = DEFAULT_AARS_RULE) {
-    var _a5;
-    const open = issues2.filter(isUnresolvedIssue);
-    const issuesByAsset = groupBy(open, (i) => i.assetId);
-    const codesByResource = /* @__PURE__ */ new Map();
-    const worstByCode = /* @__PURE__ */ new Map();
-    for (const f of findings.filter(isOpenGap)) {
-      pushInto(codesByResource, f.resourceId, ...f.frameworkCodes);
-      for (const c of f.frameworkCodes) {
-        const key = `${f.resourceId}|${c}`;
-        const prev = worstByCode.get(key);
-        if (prev === void 0 || severityRank(f.severity) < severityRank(prev)) {
-          worstByCode.set(key, f.severity);
-        }
-      }
-    }
-    const nodeById = indexBy(doc.nodes, (n) => n.id);
-    const hints = {};
-    for (const [resourceId, codes] of codesByResource) {
-      const node2 = nodeById.get(resourceId);
-      if (!node2) continue;
-      const base = deriveAarsInput(node2, (_a5 = issuesByAsset.get(resourceId)) != null ? _a5 : [], rule);
-      const seen = new Set(base.gaps.map((g) => g.code));
-      const gaps = [...base.gaps];
-      if (rule.gapUnit !== "condition") {
-        for (const c of codes) {
-          if (c && !seen.has(c)) {
-            seen.add(c);
-            gaps.push(weightedGap(c, worstByCode.get(`${resourceId}|${c}`), rule));
-          }
-        }
-      }
-      hints[resourceId] = {
-        gaps,
-        dataExposure: base.dataExposure,
-        internetExposure: base.internetExposure,
-        // This hint IS a fresh derivation under `rule` — `base` came straight out of
-        // `deriveAarsInput(rule)` two lines up — so it is stamped exactly like the no-hint
-        // branch of `enrichGraphDoc` would be, and `enrichFromTabs` can trust the signature.
-        derivedUnder: derivationSignature(rule)
-      };
-    }
-    return hints;
-  }
-  function enrichGraphDoc(doc, issues2, hints, rule = DEFAULT_AARS_RULE) {
-    const open = issues2.filter(isUnresolvedIssue);
-    const byAsset = groupBy(open, (i) => i.assetId);
-    const reach = dataFindingReach(doc);
-    const nodes = doc.nodes.map((raw) => {
-      var _a5, _b, _c;
-      const node2 = { ...raw };
-      const nodeIssues = (_a5 = byAsset.get(node2.id)) != null ? _a5 : [];
-      if ((_b = node2.projects) == null ? void 0 : _b.length) {
-        const impact = worstBusinessImpact(node2.projects);
-        if (impact) node2.businessImpact = impact;
-      }
-      if (nodeIssues.length) {
-        node2.severity = worstSeverity(nodeIssues.map((i) => i.adjustedSeverity));
-        const groups = [];
-        for (const i of nodeIssues) {
-          if (i.comboGroup && !groups.includes(i.comboGroup)) groups.push(i.comboGroup);
-        }
-        node2.comboGroups = groups;
-      }
-      const hint = hints == null ? void 0 : hints[node2.id];
-      const scorable = node2.kind !== "ISSUE" && node2.kind !== "SUMMARY" && (AI_ASSET_KINDS.includes(node2.kind) || nodeIssues.length > 0 || hint !== void 0);
-      if (scorable) {
-        const base = hint ? {
-          issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
-          ...hint,
-          // A hint written before pillar D existed carries no exposure; re-derive it
-          // rather than let `undefined` read as NONE.
-          internetExposure: (_c = hint.internetExposure) != null ? _c : internetExposureOf(node2)
-        } : deriveAarsInput(node2, nodeIssues, rule);
-        const reached = reach.get(node2.id);
-        const input = reached ? { ...base, dataFindingSeverities: reached } : base;
-        const result = computeAars(input, rule);
-        node2.aars = result.score;
-        node2.aarsSeverity = result.severity;
-        node2.aarsPillars = result.pillars;
-        node2.aarsInput = {
-          gaps: input.gaps,
-          dataExposure: input.dataExposure,
-          internetExposure: input.internetExposure,
-          // Propagate the hint's own signature rather than re-stamping today's: a REUSED
-          // persisted input (the hint `enrichFromTabs` passes through when its signature
-          // still matches) must keep saying what it was actually derived under, and a
-          // pinned dry-run hint must keep saying nothing. Only the no-hint branch — a genuine
-          // fresh derivation right here, under `rule` — earns today's signature.
-          derivedUnder: hint ? hint.derivedUnder : derivationSignature(rule)
-        };
-        if (reached) {
-          node2.aarsInput.dataFindings = countBySeverity(reached);
-        }
-      }
-      return node2;
-    });
-    const issueNodes = open.map((issue2) => ({
-      id: issue2.id,
-      kind: "ISSUE",
-      name: issue2.ruleName,
-      severity: issue2.adjustedSeverity,
-      comboGroups: issue2.comboGroup ? [issue2.comboGroup] : [],
-      status: issue2.status
-    }));
-    const issueEdges = open.map((issue2) => ({
-      id: edgeId(issue2.assetId, "HAS_ISSUE", issue2.id),
-      src: issue2.assetId,
-      dst: issue2.id,
-      type: "HAS_ISSUE"
-    }));
-    return {
-      nodes: [...nodes, ...issueNodes],
-      edges: [...doc.edges, ...issueEdges],
-      syncedAt: doc.syncedAt
-    };
-  }
-  function withProblemVerdicts(doc, issues2, findings, rule, ruleVersion) {
-    const byId = indexBy(doc.nodes, (n) => n.id);
-    const sig = vectorSignature(rule);
-    const decidedIssues = issues2.map((issue2) => {
-      if (!isUnresolvedIssue(issue2)) return stripProblemFields(issue2);
-      const input = deriveProblemInput(issue2, byId.get(issue2.assetId), rule);
-      const { outcome } = decideProblem(input.vector, rule);
-      return {
-        ...issue2,
-        problemOutcome: outcome,
-        problemInput: { ...input, derivedUnder: sig },
-        problemRuleVersion: ruleVersion
-      };
-    });
-    const decidedFindings = findings.map((finding) => {
-      if (!isOpenGap(finding)) return stripProblemFields(finding);
-      const input = deriveFindingProblemInput(finding, byId.get(finding.resourceId), rule);
-      const { outcome } = decideProblem(input.vector, rule);
-      return {
-        ...finding,
-        problemOutcome: outcome,
-        problemInput: { ...input, derivedUnder: sig },
-        problemRuleVersion: ruleVersion
-      };
-    });
-    return { issues: decidedIssues, findings: decidedFindings };
-  }
-  function withPostureTiers(doc, issues2, findings, rule) {
-    const outcomesByAsset = /* @__PURE__ */ new Map();
-    for (const issue2 of issues2) {
-      if (issue2.problemOutcome) pushInto(outcomesByAsset, issue2.assetId, issue2.problemOutcome);
-    }
-    for (const finding of findings) {
-      if (finding.problemOutcome) pushInto(outcomesByAsset, finding.resourceId, finding.problemOutcome);
-    }
-    const nodes = doc.nodes.map((node2) => {
-      var _a5;
-      if (node2.kind === "ISSUE" || node2.kind === "SUMMARY") return node2;
-      const { vector, unknowns } = derivePostureInput(node2, rule);
-      const { tier } = decidePosture(vector, rule);
-      const worst = worstOpenProblem((_a5 = outcomesByAsset.get(node2.id)) != null ? _a5 : []);
-      const next = {
-        ...node2,
-        postureInput: unknowns.length ? { ...vector, unknowns } : { ...vector }
-      };
-      if (tierEstablished(unknowns)) next.postureTier = tier;
-      else delete next.postureTier;
-      if (worst) next.worstOpenProblem = worst;
-      else delete next.worstOpenProblem;
-      return next;
-    });
-    return { ...doc, nodes };
-  }
-  function withDerivedNodes(doc, spec) {
-    const existing = new Set(doc.nodes.filter((n) => n.kind === spec.kind).map((n) => n.id));
-    const suppressed = spec.suppress ? spec.suppress(doc) : null;
-    const added = [];
-    const addedEdges = [];
-    for (const node2 of doc.nodes) {
-      if (node2.kind === spec.kind) continue;
-      if (!conditionHolds(node2, spec.kind)) continue;
-      if (suppressed && suppressed.has(node2.id)) continue;
-      const id = `${spec.prefix}|${node2.id}`;
-      if (existing.has(id)) continue;
-      const type = typeof spec.edgeType === "function" ? spec.edgeType(node2) : spec.edgeType;
-      added.push({
-        id,
-        kind: spec.kind,
-        name: typeof spec.name === "function" ? spec.name(node2) : spec.name
-      });
-      const edge2 = { id: edgeId(node2.id, type, id, spec.negated), src: node2.id, dst: id, type };
-      if (spec.negated) edge2.negated = true;
-      addedEdges.push(edge2);
-    }
-    if (!added.length) return doc;
-    return {
-      nodes: [...doc.nodes, ...added],
-      edges: [...doc.edges, ...addedEdges],
-      syncedAt: doc.syncedAt
-    };
-  }
-  var DATASTORE_KINDS = ["BUCKET", "DATABASE", "DATABASE_SERVER"];
-  function countBySeverity(severities) {
-    var _a5;
-    const counts = {};
-    for (const s of severities) counts[s] = ((_a5 = counts[s]) != null ? _a5 : 0) + 1;
-    return Object.keys(counts).sort((a, b) => severityRank(a) - severityRank(b)).map((severity) => ({ severity, count: counts[severity] }));
-  }
-  function dataFindingReach(doc) {
-    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
-    const findingsOf = (store) => {
-      var _a5;
-      const out = [];
-      for (const [severity, count2] of Object.entries((_a5 = store.dataFindingSeverities) != null ? _a5 : {})) {
-        for (let i = 0; i < count2; i++) out.push(severity);
-      }
-      return out;
-    };
-    const reach = /* @__PURE__ */ new Map();
-    const add = (id, severities) => {
-      if (!severities.length) return;
-      const prev = reach.get(id);
-      if (prev) prev.push(...severities);
-      else reach.set(id, [...severities]);
-    };
-    for (const node2 of doc.nodes) {
-      if (!DATASTORE_KINDS.includes(node2.kind)) continue;
-      add(node2.id, findingsOf(node2));
-    }
-    const identityReach = /* @__PURE__ */ new Map();
-    for (const e of doc.edges) {
-      if (e.type !== "ALLOWS_ACCESS_TO") continue;
-      const store = byId.get(e.dst);
-      if (!store || !DATASTORE_KINDS.includes(store.kind)) continue;
-      const found = findingsOf(store);
-      if (!found.length) continue;
-      const prev = identityReach.get(e.src);
-      if (prev) prev.push(...found);
-      else identityReach.set(e.src, [...found]);
-    }
-    for (const [id, severities] of identityReach) add(id, severities);
-    for (const e of doc.edges) {
-      if (e.type !== "RUNS_AS") continue;
-      const viaIdentity = identityReach.get(e.dst);
-      if (viaIdentity) add(e.src, viaIdentity);
-    }
-    return reach;
-  }
-  function assetsOnDataPath(doc) {
-    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
-    const onPath = /* @__PURE__ */ new Set();
-    const reachers = /* @__PURE__ */ new Set();
-    for (const e of doc.edges) {
-      if (e.type !== "ALLOWS_ACCESS_TO") continue;
-      const store = byId.get(e.dst);
-      if (!store || !DATASTORE_KINDS.includes(store.kind)) continue;
-      if (store.hasSensitiveData !== true) continue;
-      onPath.add(store.id);
-      reachers.add(e.src);
-    }
-    for (const id of reachers) onPath.add(id);
-    for (const e of doc.edges) {
-      if (e.type === "RUNS_AS" && reachers.has(e.dst)) onPath.add(e.src);
-    }
-    return onPath;
-  }
-  function withSensitiveDataNodes(doc) {
-    return withDerivedNodes(doc, {
-      kind: "SENSITIVE_DATA",
-      prefix: "sensitive",
-      name: "Sensitive data",
-      edgeType: (n) => n.hasSensitiveData ? "HAS_SENSITIVE_DATA" : "HAS_ACCESS_TO_SENSITIVE_DATA",
-      suppress: assetsOnDataPath
-    });
-  }
-  function withDataFindingNodes(doc) {
-    var _a5, _b;
-    const existing = new Set(doc.nodes.filter((n) => n.kind === "DATA_FINDING").map((n) => n.id));
-    const added = [];
-    const addedEdges = [];
-    for (const node2 of doc.nodes) {
-      if (!DATASTORE_KINDS.includes(node2.kind)) continue;
-      const count2 = (_a5 = node2.dataFindingCount) != null ? _a5 : 0;
-      if (count2 <= 0) continue;
-      const id = `datafinding|${node2.id}`;
-      if (existing.has(id)) continue;
-      const mix = (_b = node2.dataFindingSeverities) != null ? _b : {};
-      const finding = {
-        id,
-        kind: "DATA_FINDING",
-        name: "Data Findings",
-        // summaryCount, not a bespoke field: the client already reads it for the collapse
-        // stubs, so the count badge and its aria text come for free.
-        summaryCount: count2,
-        dataFindingSeverities: mix
-      };
-      const worst = Object.keys(mix).sort((a, b) => severityRank(a) - severityRank(b))[0];
-      if (worst && severityRank(worst) < SEVERITY_ORDER.length) finding.severity = worst;
-      added.push(finding);
-      addedEdges.push({
-        id: edgeId(node2.id, "HAS_DATA_FINDING", id),
-        src: node2.id,
-        dst: id,
-        type: "HAS_DATA_FINDING"
-      });
-    }
-    if (!added.length) return doc;
-    return {
-      nodes: [...doc.nodes, ...added],
-      edges: [...doc.edges, ...addedEdges],
-      syncedAt: doc.syncedAt
-    };
-  }
-  function withInternetExposureNodes(doc) {
-    return withDerivedNodes(doc, {
-      kind: "INTERNET_EXPOSURE",
-      prefix: "internet",
-      name: (n) => {
-        var _a5, _b;
-        const evidence = n.exposureEvidence;
-        if ((_a5 = evidence == null ? void 0 : evidence.endpointIds) == null ? void 0 : _a5.length) return "Internet exposure \xB7 validated endpoint";
-        if ((_b = evidence == null ? void 0 : evidence.hostIds) == null ? void 0 : _b.length) return "Internet exposure \xB7 exposed host";
-        return "Internet exposure";
-      },
-      edgeType: "EXPOSED_TO_INTERNET"
-    });
-  }
-  function withHumanAccess(doc, evidence = {}) {
-    var _a5, _b, _c, _d, _e;
-    const reach = new Set(HUMAN_ACCESS_TYPES);
-    const byId = indexBy(doc.nodes, (n) => n.id);
-    const humans = new Set(doc.nodes.filter((n) => n.kind === "USER_ACCOUNT").map((n) => n.id));
-    const reachedBy = /* @__PURE__ */ new Map();
-    const admins = /* @__PURE__ */ new Set();
-    for (const edge2 of doc.edges) {
-      if (edge2.type !== "ALLOWS_ACCESS_TO") continue;
-      if (!edge2.accessType || !reach.has(edge2.accessType)) continue;
-      if (!humans.has(edge2.src)) continue;
-      const target = byId.get(edge2.dst);
-      if (!target || !AI_ASSET_KINDS.includes(target.kind)) continue;
-      pushInto(reachedBy, edge2.dst, edge2.src);
-      if (edge2.accessType === "ADMIN") admins.add(edge2.dst);
-    }
-    const effectiveBy = /* @__PURE__ */ new Map();
-    const permsBy = /* @__PURE__ */ new Map();
-    const policiesBy = /* @__PURE__ */ new Map();
-    for (const entry of (_a5 = evidence.effectiveAccess) != null ? _a5 : []) {
-      const target = byId.get(entry.resourceId);
-      if (!target || !AI_ASSET_KINDS.includes(target.kind)) continue;
-      const seen = (_b = effectiveBy.get(entry.resourceId)) != null ? _b : [];
-      if (seen.indexOf(entry.identityId) < 0) pushInto(effectiveBy, entry.resourceId, entry.identityId);
-      const perms = (_c = permsBy.get(entry.resourceId)) != null ? _c : [];
-      for (const p of entry.permissions) if (perms.indexOf(p) < 0) perms.push(p);
-      permsBy.set(entry.resourceId, perms);
-      const policies = (_d = policiesBy.get(entry.resourceId)) != null ? _d : [];
-      for (const p of entry.policyIds) if (policies.indexOf(p) < 0) policies.push(p);
-      policiesBy.set(entry.resourceId, policies);
-    }
-    if (!reachedBy.size && !effectiveBy.size) return doc;
-    const noMfa = /* @__PURE__ */ new Set();
-    const dormant = /* @__PURE__ */ new Set();
-    for (const finding of (_e = evidence.identityFindings) != null ? _e : []) {
-      if (!isOpenGap(finding)) continue;
-      if (finding.hygiene === "MFA") noMfa.add(finding.resourceId);
-      else dormant.add(finding.resourceId);
-    }
-    return {
-      nodes: doc.nodes.map((node2) => {
-        var _a6, _b2, _c2, _d2;
-        const identityIds = (_a6 = reachedBy.get(node2.id)) != null ? _a6 : [];
-        const effectiveIds = (_b2 = effectiveBy.get(node2.id)) != null ? _b2 : [];
-        if (!identityIds.length && !effectiveIds.length) return node2;
-        const access = { identityIds };
-        if (admins.has(node2.id)) access.admin = true;
-        const all = identityIds.slice();
-        for (const id of effectiveIds) if (all.indexOf(id) < 0) all.push(id);
-        const inactiveCount = all.filter((id) => {
-          var _a7;
-          return ((_a7 = byId.get(id)) == null ? void 0 : _a7.inactive) === true;
-        }).length;
-        if (inactiveCount) access.inactiveCount = inactiveCount;
-        const noMfaCount = all.filter((id) => noMfa.has(id)).length;
-        if (noMfaCount) access.noMfaCount = noMfaCount;
-        const dormantFindingCount = all.filter((id) => dormant.has(id)).length;
-        if (dormantFindingCount) access.dormantFindingCount = dormantFindingCount;
-        if (effectiveIds.length) {
-          access.effectiveIds = effectiveIds;
-          const perms = (_c2 = permsBy.get(node2.id)) != null ? _c2 : [];
-          if (perms.length) access.permissionCount = perms.length;
-          const policies = (_d2 = policiesBy.get(node2.id)) != null ? _d2 : [];
-          if (policies.length) access.policyIds = policies;
-        }
-        return { ...node2, humanAccess: access };
-      }),
-      edges: doc.edges,
-      syncedAt: doc.syncedAt
-    };
-  }
-  function withExposureEvidence(doc) {
-    const byId = indexBy(doc.nodes, (n) => n.id);
-    const hostsOf = /* @__PURE__ */ new Map();
-    const servesOf = /* @__PURE__ */ new Map();
-    for (const edge2 of doc.edges) {
-      if (edge2.type === "HOSTED_ON") pushInto(hostsOf, edge2.src, edge2.dst);
-      else if (edge2.type === "SERVES") pushInto(servesOf, edge2.src, edge2.dst);
-    }
-    if (!hostsOf.size && !servesOf.size) return doc;
-    let touched = false;
-    const nodes = doc.nodes.map((node2) => {
-      var _a5, _b, _c, _d, _e, _f, _g;
-      if (!AI_ASSET_KINDS.includes(node2.kind)) return node2;
-      const hostIds = ((_a5 = hostsOf.get(node2.id)) != null ? _a5 : []).filter((id) => {
-        const host = byId.get(id);
-        return !!host && conditionHolds(host, "INTERNET_EXPOSURE");
-      });
-      const endpointIds = [];
-      let worst;
-      const consider = (id) => {
-        const endpoint = byId.get(id);
-        if (!endpoint || endpoint.kind !== "ENDPOINT") return;
-        if (!isRatedExposure(endpoint.exposureLevel, endpoint.portValidation)) return;
-        if (endpointIds.indexOf(id) < 0) endpointIds.push(id);
-        worst = worseExposureLevel(worst, endpoint.exposureLevel);
-      };
-      for (const id of (_b = servesOf.get(node2.id)) != null ? _b : []) consider(id);
-      for (const hostId of (_c = hostsOf.get(node2.id)) != null ? _c : []) {
-        for (const id of (_d = servesOf.get(hostId)) != null ? _d : []) consider(id);
-      }
-      const ports = [];
-      const sourceIpRanges = [];
-      for (const hostId of hostIds) {
-        const evidence2 = (_e = byId.get(hostId)) == null ? void 0 : _e.exposureEvidence;
-        for (const p of (_f = evidence2 == null ? void 0 : evidence2.ports) != null ? _f : []) if (ports.indexOf(p) < 0) ports.push(p);
-        for (const r of (_g = evidence2 == null ? void 0 : evidence2.sourceIpRanges) != null ? _g : []) {
-          if (sourceIpRanges.indexOf(r) < 0) sourceIpRanges.push(r);
-        }
-      }
-      if (!hostIds.length && !endpointIds.length) return node2;
-      const evidence = {};
-      if (hostIds.length) evidence.hostIds = hostIds;
-      if (endpointIds.length) evidence.endpointIds = endpointIds;
-      if (worst) evidence.exposureLevel = worst;
-      if (ports.length) evidence.ports = ports;
-      if (sourceIpRanges.length) evidence.sourceIpRanges = sourceIpRanges;
-      touched = true;
-      return { ...node2, exposureEvidence: evidence };
-    });
-    return touched ? { nodes, edges: doc.edges, syncedAt: doc.syncedAt } : doc;
-  }
-  function withExcessivePrivilegeNodes(doc) {
-    return withDerivedNodes(doc, {
-      kind: "EXCESSIVE_PRIVILEGE",
-      prefix: "excessive",
-      // ADMIN wins over HIGH when both are set — it is the stronger claim.
-      name: (n) => n.hasAdminPrivileges ? "Admin privileges" : "Excessive rights",
-      edgeType: "HAS_EXCESSIVE_PRIVILEGE",
-      suppress: (d) => {
-        const kindById = new Map(d.nodes.map((n) => [n.id, n.kind]));
-        const withRealFinding = /* @__PURE__ */ new Set();
-        for (const e of d.edges) {
-          if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
-            withRealFinding.add(e.src);
-          }
-        }
-        return withRealFinding;
-      }
-    });
-  }
-  function withIdentityAccessNodes(doc) {
-    const HUMAN_REACH = new Set(HUMAN_ACCESS_TYPES);
-    const aiAssets = new Set(
-      doc.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind)).map((n) => n.id)
-    );
-    const humans = new Set(doc.nodes.filter((n) => n.kind === "USER_ACCOUNT").map((n) => n.id));
-    const existing = new Set(
-      doc.nodes.filter((n) => n.kind === "IDENTITY_ACCESS_FINDING").map((n) => n.id)
-    );
-    const kindById = new Map(doc.nodes.map((n) => [n.id, n.kind]));
-    const withRealFinding = /* @__PURE__ */ new Set();
-    for (const e of doc.edges) {
-      if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
-        withRealFinding.add(e.src);
-      }
-    }
-    const reached = /* @__PURE__ */ new Set();
-    for (const e of doc.edges) {
-      if (e.type !== "ALLOWS_ACCESS_TO") continue;
-      if (!e.accessType || !HUMAN_REACH.has(e.accessType)) continue;
-      if (!humans.has(e.src) || !aiAssets.has(e.dst)) continue;
-      if (withRealFinding.has(e.dst)) continue;
-      reached.add(e.dst);
-    }
-    const added = [];
-    const addedEdges = [];
-    for (const assetId of reached) {
-      const id = `identityaccess|${assetId}`;
-      if (existing.has(id)) continue;
-      added.push({ id, kind: "IDENTITY_ACCESS_FINDING", name: "Human access" });
-      addedEdges.push({
-        id: edgeId(assetId, "HAS_FINDING", id),
-        src: assetId,
-        dst: id,
-        type: "HAS_FINDING"
-      });
-    }
-    if (!added.length) return doc;
-    return {
-      nodes: [...doc.nodes, ...added],
-      edges: [...doc.edges, ...addedEdges],
-      syncedAt: doc.syncedAt
-    };
-  }
-  function withMissingGuardrailNodes(doc) {
-    return withDerivedNodes(doc, {
-      kind: "MISSING_GUARDRAIL",
-      prefix: "noguardrail",
-      name: "No guardrail",
-      edgeType: "PROTECTED_BY",
-      negated: true
-    });
-  }
-
   // src/domain/severity.ts
   function normalizeSeverity(sev) {
     if (typeof sev !== "string") return "UNKNOWN";
@@ -9882,133 +11374,6 @@ var Server = (() => {
     };
   }
 
-  // src/domain/reach.ts
-  var READ_TIME_EDGE_TYPES = [
-    "HAS_ISSUE",
-    "HAS_SENSITIVE_DATA",
-    "HAS_ACCESS_TO_SENSITIVE_DATA",
-    "EXPOSED_TO_INTERNET",
-    "HAS_EXCESSIVE_PRIVILEGE",
-    "HAS_DATA_FINDING"
-  ];
-  function isDecidedRow(row) {
-    return !!row.problemOutcome && !!row.problemInput && OUTCOME_VALUES.includes(row.problemOutcome);
-  }
-  function isEnriched(edgeTouched, a) {
-    var _a5, _b, _c, _d, _e, _f, _g;
-    if (edgeTouched.has(a.id)) return true;
-    const ev2 = a.exposureEvidence;
-    if (ev2 && (((_b = (_a5 = ev2.hostIds) == null ? void 0 : _a5.length) != null ? _b : 0) > 0 || ((_d = (_c = ev2.endpointIds) == null ? void 0 : _c.length) != null ? _d : 0) > 0)) return true;
-    return ((_g = (_f = (_e = a.humanAccess) == null ? void 0 : _e.identityIds) == null ? void 0 : _f.length) != null ? _g : 0) > 0;
-  }
-  function estateReach(input) {
-    var _a5;
-    const { assets, issues: issues2, findings, edges: edges2 } = input;
-    const unresolvedIssues = issues2.filter(isUnresolvedIssue);
-    const openFindings = findings.filter(isOpenGap);
-    const issueAssetIds = new Set(unresolvedIssues.map((i) => i.assetId));
-    const findingResourceIds = new Set(openFindings.map((f) => f.resourceId));
-    const edgeTouched = /* @__PURE__ */ new Set();
-    for (const e of edges2) {
-      edgeTouched.add(e.src);
-      edgeTouched.add(e.dst);
-    }
-    const hasSignal = (a) => issueAssetIds.has(a.id) || findingResourceIds.has(a.id) || CONDITION_KEYS.some((k) => conditionHolds(a, k));
-    const byKind = /* @__PURE__ */ new Map();
-    for (const a of assets) {
-      const slot = (_a5 = byKind.get(a.kind)) != null ? _a5 : { total: 0, signal: 0 };
-      slot.total += 1;
-      if (hasSignal(a)) slot.signal += 1;
-      byKind.set(a.kind, slot);
-    }
-    const kinds = [...byKind.entries()].sort((a, b) => b[1].total - a[1].total).map(([kind, s]) => ({
-      kind,
-      total: s.total,
-      signal: s.signal,
-      ai: AI_ASSET_KINDS.includes(kind)
-    }));
-    const aiAssets = assets.filter((a) => AI_ASSET_KINDS.includes(a.kind));
-    const stages = [
-      // 1. IN REGISTER. Denominator: every row on ai_assets (assets.length). Covered: the
-      // AI-kinded subset (AI_ASSET_KINDS membership on ai_assets.kind) — the same number
-      // registerScopeDiagnostic prints as "in AI_ASSET_KINDS". Everything past this stage is
-      // scoped to that covered count, which is why it becomes every later stage's total.
-      { key: "register", label: "In register", covered: aiAssets.length, total: assets.length },
-      // 2. OBSERVED. Denominator: the AI-kinded population stage 1 established. Covered: AI
-      // assets where hasSignal() holds — ai_issues.status (unresolved), ai_findings.result /
-      // .status (open gap), or ai_assets' four condition columns (sensitive_data,
-      // sensitive_access, high_priv, admin_priv, guardrail_missing, internet /
-      // exposure_evidence_json) via conditionHolds. An asset with none of these contributes
-      // nothing any scoring model can read — "carrying any signal" in
-      // registerScopeDiagnostic's own words.
-      {
-        key: "observed",
-        label: "Observed",
-        covered: aiAssets.filter(hasSignal).length,
-        total: aiAssets.length
-      },
-      // 3. ENRICHED. Denominator: the AI-kinded population. Covered: AI assets a graph
-      // traversal actually reached — participates in a row of ai_edges (src or dst), or
-      // carries folded exposure evidence (ai_assets.exposure_evidence_json) or human-access
-      // evidence (ai_assets.human_access_json). An asset with none of these was never walked
-      // by anything past the mandatory inventory query.
-      {
-        key: "enriched",
-        label: "Enriched",
-        covered: aiAssets.filter((a) => isEnriched(edgeTouched, a)).length,
-        total: aiAssets.length
-      },
-      // 4. ATTRIBUTED. Denominator: the AI-kinded population. Covered: AI assets carrying a
-      // business-impact tier (ai_assets.business_impact) — Wiz's own HBI/MBI/LBI read off the
-      // asset's projects, folded at enrich time. Absent means no project reported one, or the
-      // asset carries no project at all; never read as LOW (graphTypes.ts's own doc comment).
-      {
-        key: "attributed",
-        label: "Attributed",
-        covered: aiAssets.filter((a) => !!a.businessImpact).length,
-        total: aiAssets.length
-      },
-      // 5. DECIDED. Denominator: the AI-kinded population. Covered: AI assets carrying a
-      // problem verdict (ai_assets.worst_open_problem, folded from the Phase 4 tree onto the
-      // asset by graphEnrich.withProblemVerdicts) OR a persisted AARS score (ai_assets.aars).
-      // Either is a model having reached a conclusion about this asset; an asset with neither
-      // sits in the register unscored and unrouted.
-      {
-        key: "decided",
-        label: "Decided",
-        covered: aiAssets.filter((a) => typeof a.aars === "number" || a.worstOpenProblem !== void 0).length,
-        total: aiAssets.length
-      }
-    ];
-    const seenTypes = new Set(edges2.map((e) => e.type));
-    const populated = EDGE_TYPES.filter((t) => seenTypes.has(t));
-    const unseen = EDGE_TYPES.filter((t) => !seenTypes.has(t));
-    const synthetic = unseen.filter((t) => READ_TIME_EDGE_TYPES.includes(t));
-    const dead = unseen.filter((t) => !READ_TIME_EDGE_TYPES.includes(t));
-    const decidedRows = [...issues2, ...findings].filter(isDecidedRow);
-    const decided = decidedRows.map((r) => ({
-      outcome: r.problemOutcome,
-      vector: r.problemInput.vector,
-      unknowns: r.problemInput.unknowns
-    }));
-    const td = treeDiscrimination(decided);
-    const n = decided.length;
-    const axisKnown = (rate) => n > 0 ? 1 - rate : 0;
-    const axes = {
-      exploitation: axisKnown(td.unknownRate.exploitation),
-      impact: axisKnown(td.unknownRate.impact),
-      exposure: axisKnown(td.unknownRate.exposure),
-      mission: axisKnown(td.unknownRate.mission)
-    };
-    return {
-      stages,
-      kinds,
-      edges: { populated, dead, synthetic, declared: EDGE_TYPES.length },
-      axes,
-      axesPopulation: n
-    };
-  }
-
   // src/server/jobsStore.ts
   var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
   function normError(v) {
@@ -10093,326 +11458,6 @@ var Server = (() => {
         error: "Recovered: execution died mid-sync; the last committed snapshot is unchanged."
       });
     }
-  }
-
-  // src/server/buildInfo.ts
-  var BUILD_ID = true ? "8810e0972040" : "dev";
-  function buildInfo() {
-    return { id: BUILD_ID };
-  }
-
-  // src/domain/sha1.ts
-  function utf8Bytes(s) {
-    const out = [];
-    for (let i = 0; i < s.length; i++) {
-      let c = s.charCodeAt(i);
-      if (c < 128) {
-        out.push(c);
-      } else if (c < 2048) {
-        out.push(192 | c >> 6, 128 | c & 63);
-      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
-        const c2 = s.charCodeAt(++i);
-        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
-        out.push(
-          240 | cp >> 18,
-          128 | cp >> 12 & 63,
-          128 | cp >> 6 & 63,
-          128 | cp & 63
-        );
-      } else {
-        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
-      }
-    }
-    return out;
-  }
-  function rotl(n, b) {
-    return (n << b | n >>> 32 - b) >>> 0;
-  }
-  function sha1Hex(input) {
-    const bytes = utf8Bytes(input);
-    const bitLen = bytes.length * 8;
-    bytes.push(128);
-    while (bytes.length % 64 !== 56) bytes.push(0);
-    const hi = Math.floor(bitLen / 4294967296);
-    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
-    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
-    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
-    const w = new Array(80);
-    for (let block = 0; block < bytes.length; block += 64) {
-      for (let i = 0; i < 16; i++) {
-        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
-      }
-      for (let i = 16; i < 80; i++) {
-        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
-      }
-      let a = h0, b = h1, c = h2, d = h3, e = h4;
-      for (let i = 0; i < 80; i++) {
-        let f, k;
-        if (i < 20) {
-          f = b & c | ~b & d;
-          k = 1518500249;
-        } else if (i < 40) {
-          f = b ^ c ^ d;
-          k = 1859775393;
-        } else if (i < 60) {
-          f = b & c | b & d | c & d;
-          k = 2400959708;
-        } else {
-          f = b ^ c ^ d;
-          k = 3395469782;
-        }
-        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
-        e = d;
-        d = c;
-        c = rotl(b, 30);
-        b = a;
-        a = t;
-      }
-      h0 = h0 + a >>> 0;
-      h1 = h1 + b >>> 0;
-      h2 = h2 + c >>> 0;
-      h3 = h3 + d >>> 0;
-      h4 = h4 + e >>> 0;
-    }
-    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
-  }
-
-  // src/server/serverCache.ts
-  var VERSION_PROP = "DATA_VERSION";
-  var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
-  var KEY_PREFIX = `wsk.${BUILD_ID}`;
-  var CHUNK_CHARS = 9e4;
-  var DEFAULT_TTL_SEC = 21600;
-  function dataVersion() {
-    var _a5;
-    return (_a5 = getProp(VERSION_PROP)) != null ? _a5 : "0";
-  }
-  function bumpDataVersion() {
-    setProp(VERSION_PROP, String(Date.now()));
-  }
-  function wizDataVersion() {
-    var _a5;
-    return (_a5 = getProp(WIZ_VERSION_PROP)) != null ? _a5 : "0";
-  }
-  function bumpWizDataVersion() {
-    setProp(WIZ_VERSION_PROP, String(Date.now()));
-  }
-  function cacheKey(name, params, version) {
-    const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
-    return `${KEY_PREFIX}:${version}:${name}:${paramsHash}`;
-  }
-  function splitChunks(s, size = CHUNK_CHARS) {
-    const out = [];
-    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
-    return out.length ? out : [""];
-  }
-  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
-    const json = JSON.stringify(value);
-    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
-    const packed = Utilities.base64Encode(gz.getBytes());
-    const chunks = splitChunks(packed, chunkChars);
-    const entries = { [`${key}:m`]: String(chunks.length) };
-    chunks.forEach((c, i) => {
-      entries[`${key}:${i}`] = c;
-    });
-    CacheService.getScriptCache().putAll(entries, ttlSec);
-  }
-  function cacheGetJson(key) {
-    const cache = CacheService.getScriptCache();
-    const meta = cache.get(`${key}:m`);
-    if (!meta) return void 0;
-    const n = Number(meta);
-    if (!Number.isInteger(n) || n < 1) return void 0;
-    const names = [];
-    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
-    const got = cache.getAll(names);
-    let packed = "";
-    for (const name of names) {
-      const chunk = got[name];
-      if (chunk === void 0 || chunk === null) return void 0;
-      packed += chunk;
-    }
-    const bytes = Utilities.base64Decode(packed);
-    const json = Utilities.ungzip(
-      Utilities.newBlob(bytes, "application/x-gzip")
-    ).getDataAsString("UTF-8");
-    return JSON.parse(json);
-  }
-  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
-    let key = null;
-    try {
-      key = cacheKey(name, params, version != null ? version : dataVersion());
-      const hit = cacheGetJson(key);
-      if (hit !== void 0) return hit;
-    } catch (e) {
-      console.warn(`Cache read failed for ${name}: ${e}`);
-      key = null;
-    }
-    const value = compute();
-    if (key) {
-      try {
-        cachePutJson(key, value, ttlSec);
-      } catch (e) {
-        console.warn(`Cache write failed for ${name}: ${e}`);
-      }
-    }
-    return value;
-  }
-
-  // src/server/settingsStore.ts
-  var settingsMemo;
-  function loadSettings() {
-    if (settingsMemo !== void 0) return settingsMemo;
-    const out = {};
-    for (const row of readAll(TABS.settings)) {
-      const key = row["key"];
-      const raw = row["value_json"];
-      if (typeof key !== "string" || !key) continue;
-      if (typeof raw !== "string" || raw === "") {
-        out[key] = null;
-        continue;
-      }
-      try {
-        out[key] = JSON.parse(raw);
-      } catch {
-        console.warn(`Unreadable settings value for ${key}; ignoring`);
-      }
-    }
-    settingsMemo = out;
-    return out;
-  }
-  function saveSettings(settings) {
-    overwrite(
-      TABS.settings,
-      Object.entries(settings).map(([key, value]) => ({
-        key,
-        value_json: JSON.stringify(value != null ? value : null)
-      }))
-    );
-    settingsMemo = settings;
-    bumpDataVersion();
-  }
-  var getDefaultDepth2 = () => getDefaultDepth(loadSettings());
-  var getMaxNodes2 = () => getMaxNodes(loadSettings());
-  var getAutoExpand2 = () => getAutoExpand(loadSettings());
-  function setDefaultDepth(depth) {
-    saveSettings(withDefaultDepth(loadSettings(), depth));
-  }
-  function setMaxNodes(maxNodes) {
-    saveSettings(withMaxNodes(loadSettings(), maxNodes));
-  }
-  function setAutoExpand(on) {
-    saveSettings(withAutoExpand(loadSettings(), on));
-  }
-  var getAarsRule2 = () => getAarsRule(loadSettings());
-  function setAarsRule(rule) {
-    const settings = loadSettings();
-    const before = getAarsRule(settings);
-    const scoresWereCurrent = getScoredRuleVersion(settings) === before.version;
-    let next = withAarsRule(settings, rule);
-    const stored = getAarsRule(next);
-    if (scoresWereCurrent && scoringEqual(before.rule, stored.rule)) {
-      next = withScoredRuleVersion(next, stored.version);
-    }
-    saveSettings(next);
-    return stored;
-  }
-  var getProblemRule2 = () => getProblemRule(loadSettings());
-  function setProblemRule(rule) {
-    const settings = loadSettings();
-    const before = getProblemRule(settings);
-    const verdictsWereCurrent = getDecidedRuleVersion(settings) === before.version;
-    let next = withProblemRule(settings, rule);
-    const stored = getProblemRule(next);
-    if (verdictsWereCurrent && decisionEqual(before.rule, stored.rule)) {
-      next = withDecidedRuleVersion(next, stored.version);
-    }
-    saveSettings(next);
-    return stored;
-  }
-  var getPostureRule2 = () => getPostureRule(loadSettings());
-  function setPostureRule(rule) {
-    const settings = loadSettings();
-    const before = getPostureRule(settings);
-    const tiersWereCurrent = getComputedPostureVersion(settings) === before.version;
-    let next = withPostureRule(settings, rule);
-    const stored = getPostureRule(next);
-    if (tiersWereCurrent && tierEqual(before.rule, stored.rule)) {
-      next = withComputedPostureVersion(next, stored.version);
-    }
-    saveSettings(next);
-    return stored;
-  }
-  var getSkippedSteps2 = () => getSkippedSteps(loadSettings());
-  function setSkippedSteps(steps) {
-    const settings = loadSettings();
-    const next = withSkippedSteps(settings, steps);
-    const before = getSkippedSteps(settings).join(" ");
-    if (getSkippedSteps(next).join(" ") === before) return;
-    saveSettings(next);
-  }
-  var getTruncatedSteps2 = () => getTruncatedSteps(loadSettings());
-  function setTruncatedSteps(steps) {
-    const settings = loadSettings();
-    const next = withTruncatedSteps(settings, steps);
-    const before = getTruncatedSteps(settings).join(" ");
-    if (getTruncatedSteps(next).join(" ") === before) return;
-    saveSettings(next);
-  }
-  function getSelectedFrameworks2(catalogue) {
-    const settings = loadSettings();
-    if (Array.isArray(settings["selected_frameworks"])) {
-      return getSelectedFrameworks(settings);
-    }
-    const rows = catalogue ? catalogue() : [];
-    return rows.length ? resolveDefaultFrameworks(rows) : getSelectedFrameworks(settings);
-  }
-  function setSelectedFrameworks(ids) {
-    saveSettings(withSelectedFrameworks(loadSettings(), ids));
-    return getSelectedFrameworks2();
-  }
-  var getFiveRsPins2 = () => getFiveRsPins(loadSettings());
-  function setFiveRsPins(pins) {
-    const settings = loadSettings();
-    const next = withFiveRsPins(settings, pins);
-    const key = (p) => `${p.in.join(" ")}|${p.out.join(" ")}`;
-    if (key(getFiveRsPins(next)) === key(getFiveRsPins(settings))) {
-      return getFiveRsPins(settings);
-    }
-    saveSettings(next);
-    return getFiveRsPins2();
-  }
-  var getScanVars2 = () => getScanVars(loadSettings());
-  function setScanVars(stepId, vars) {
-    saveSettings(withScanVars(loadSettings(), stepId, vars));
-    return getScanVars2();
-  }
-  var getScoredRuleVersion2 = () => getScoredRuleVersion(loadSettings());
-  function setScoredRuleVersion(version) {
-    const settings = loadSettings();
-    const next = withScoredRuleVersion(settings, version);
-    if (getScoredRuleVersion(next) === getScoredRuleVersion(settings)) return;
-    saveSettings(next);
-  }
-  var getDecidedRuleVersion2 = () => getDecidedRuleVersion(loadSettings());
-  function setDecidedRuleVersion(version) {
-    const settings = loadSettings();
-    const next = withDecidedRuleVersion(settings, version);
-    if (getDecidedRuleVersion(next) === getDecidedRuleVersion(settings)) return;
-    saveSettings(next);
-  }
-  var getComputedPostureVersion2 = () => getComputedPostureVersion(loadSettings());
-  function setComputedPostureVersion(version) {
-    const settings = loadSettings();
-    const next = withComputedPostureVersion(settings, version);
-    if (getComputedPostureVersion(next) === getComputedPostureVersion(settings)) return;
-    saveSettings(next);
-  }
-  function configRulesAreFresh2(hasRows, now) {
-    return configRulesAreFresh(loadSettings(), hasRows, now);
-  }
-  function setConfigRulesSyncedAt(at) {
-    saveSettings(withConfigRulesSyncedAt(loadSettings(), at));
   }
 
   // src/server/syncJobs.ts
@@ -11906,1002 +12951,6 @@ var Server = (() => {
     }
   ];
 
-  // src/server/syncStore.ts
-  function boolCell(v) {
-    return v ? "true" : "false";
-  }
-  function triCell(v) {
-    return v === null || v === void 0 ? "null" : v ? "true" : "false";
-  }
-  function parseBool(v) {
-    return String(v) === "true";
-  }
-  function parseTri(v) {
-    const s = String(v);
-    return s === "true" ? true : s === "false" ? false : null;
-  }
-  function parseJson(v, fallback) {
-    if (typeof v !== "string" || v === "") return fallback;
-    try {
-      return JSON.parse(v);
-    } catch {
-      return fallback;
-    }
-  }
-  function parseAssetProjects(v) {
-    const raw = parseJson(v, []);
-    if (typeof raw[0] === "string") {
-      return raw.map((name) => ({
-        id: `proj-${String(name).toLowerCase()}`,
-        name: String(name)
-      }));
-    }
-    return raw;
-  }
-  function assetToRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B;
-    return {
-      id: n.id,
-      kind: n.kind,
-      name: n.name,
-      native_type: (_a5 = n.nativeType) != null ? _a5 : null,
-      cloud: (_b = n.cloudPlatform) != null ? _b : null,
-      region: (_c = n.region) != null ? _c : null,
-      status: (_d = n.status) != null ? _d : null,
-      account_id: (_f = (_e = n.cloudAccount) == null ? void 0 : _e.id) != null ? _f : null,
-      account_name: (_h = (_g = n.cloudAccount) == null ? void 0 : _g.name) != null ? _h : null,
-      // Full project objects, not just names: `rowToAsset` used to fabricate a `proj-<name>`
-      // id and drop `businessImpact` entirely on the way back in, which is what stranded the
-      // signal ai/AARS_ASSESSMENT.md §7 named as the highest-value follow-up. A row this
-      // writes is always read back through the object branch of `rowToAsset`'s two-branch
-      // reader below; the legacy string-array branch exists only for rows an OLDER version
-      // wrote.
-      projects_json: JSON.stringify((_i = n.projects) != null ? _i : []),
-      // The asset-level worst-of `enrichGraphDoc` folds from `projects[].businessImpact` —
-      // `?? null`, never a default, so an asset Wiz reported no impact for reads back
-      // undefined rather than as a false "LBI".
-      business_impact: (_j = n.businessImpact) != null ? _j : null,
-      first_seen: (_k = n.firstSeen) != null ? _k : null,
-      last_seen: (_l = n.lastSeen) != null ? _l : null,
-      internet: triCell(n.isAccessibleFromInternet),
-      open_internet: triCell(n.isOpenToAllInternet),
-      sensitive_data: boolCell(n.hasSensitiveData),
-      sensitive_access: boolCell(n.hasAccessToSensitiveData),
-      high_priv: boolCell(n.hasHighPrivileges),
-      admin_priv: boolCell(n.hasAdminPrivileges),
-      guardrail_missing: boolCell(n.guardrailMissing),
-      technology_categories: ((_m = n.technologyCategories) != null ? _m : []).join(","),
-      severity: (_n = n.severity) != null ? _n : null,
-      aars: (_o = n.aars) != null ? _o : null,
-      aars_severity: (_p = n.aarsSeverity) != null ? _p : null,
-      aars_pillars_json: n.aarsPillars ? JSON.stringify(n.aarsPillars) : null,
-      aars_input_json: n.aarsInput ? JSON.stringify(n.aarsInput) : null,
-      combo_groups: ((_q = n.comboGroups) != null ? _q : []).join(","),
-      tags_json: n.tags ? JSON.stringify(n.tags) : null,
-      identity_purpose: (_r = n.identityPurpose) != null ? _r : null,
-      issue_analytics_json: n.issueAnalytics ? JSON.stringify(n.issueAnalytics) : null,
-      // `?? null` rather than `?? 0`: a store the traversal never reached must read back as
-      // undefined, not as "zero findings". The graph draws no aggregate for either, but the
-      // pillar-C knob and the DSPM coverage state both need to tell them apart.
-      data_finding_count: (_s = n.dataFindingCount) != null ? _s : null,
-      data_findings_json: n.dataFindingSeverities ? JSON.stringify(n.dataFindingSeverities) : null,
-      exposure_level: (_t = n.exposureLevel) != null ? _t : null,
-      port_validation: (_u = n.portValidation) != null ? _u : null,
-      // `null` rather than `"{}"` when there is no evidence, and rowToAsset reads it back as
-      // undefined: an asset the exposure steps never reached must not become one they reached
-      // and found clean. conditionState falls through to the flags for the first and would
-      // have to keep falling through for the second — but only one of them is honest about it.
-      exposure_evidence_json: n.exposureEvidence ? JSON.stringify(n.exposureEvidence) : null,
-      // `?? null`, never `?? false`: an identity row the tenant reported no dormancy for must
-      // read back as undefined. "Not reported" and "in use" are different answers.
-      inactive: n.inactive === void 0 ? null : boolCell(n.inactive),
-      inactive_timeframe: (_v = n.inactiveTimeframe) != null ? _v : null,
-      human_access_json: n.humanAccess ? JSON.stringify(n.humanAccess) : null,
-      display_name: (_w = n.displayName) != null ? _w : null,
-      email: (_x = n.email) != null ? _x : null,
-      publisher: (_y = n.publisher) != null ? _y : null,
-      discovery_methods: ((_z = n.discoveryMethods) != null ? _z : []).join(","),
-      // Phase 6: the Asset Posture Tier — `?? null`, never a default: a synthetic node, or a
-      // real one the fold never reached, must read back as undefined rather than as tier 0.
-      posture_tier: (_A = n.postureTier) != null ? _A : null,
-      posture_input_json: n.postureInput ? JSON.stringify(n.postureInput) : null,
-      worst_open_problem: (_B = n.worstOpenProblem) != null ? _B : null
-    };
-  }
-  function rowToAsset(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
-    const node2 = {
-      id: String((_a5 = r["id"]) != null ? _a5 : ""),
-      kind: String((_b = r["kind"]) != null ? _b : "AI_AGENT"),
-      name: String((_c = r["name"]) != null ? _c : ""),
-      nativeType: (_d = r["native_type"]) != null ? _d : void 0,
-      cloudPlatform: (_e = r["cloud"]) != null ? _e : void 0,
-      region: (_f = r["region"]) != null ? _f : void 0,
-      status: (_g = r["status"]) != null ? _g : void 0,
-      firstSeen: (_h = r["first_seen"]) != null ? _h : void 0,
-      lastSeen: (_i = r["last_seen"]) != null ? _i : void 0,
-      isAccessibleFromInternet: parseTri(r["internet"]),
-      isOpenToAllInternet: parseTri(r["open_internet"]),
-      hasSensitiveData: parseBool(r["sensitive_data"]),
-      hasAccessToSensitiveData: parseBool(r["sensitive_access"]),
-      hasHighPrivileges: parseBool(r["high_priv"]),
-      hasAdminPrivileges: parseBool(r["admin_priv"]),
-      guardrailMissing: parseBool(r["guardrail_missing"]),
-      projects: parseAssetProjects(r["projects_json"])
-    };
-    const account = (_j = r["account_id"]) != null ? _j : null;
-    if (account) {
-      node2.cloudAccount = { id: account, name: String((_k = r["account_name"]) != null ? _k : account) };
-    }
-    const businessImpact = (_l = r["business_impact"]) != null ? _l : null;
-    if (businessImpact) node2.businessImpact = businessImpact;
-    const severity = (_m = r["severity"]) != null ? _m : null;
-    if (severity) node2.severity = severity;
-    if (r["aars"] !== null && r["aars"] !== void 0) node2.aars = Number(r["aars"]);
-    const aarsSev = normalizeAarsSeverity((_n = r["aars_severity"]) != null ? _n : r["aars_band"]);
-    if (aarsSev) node2.aarsSeverity = aarsSev;
-    const pillars = parseJson(r["aars_pillars_json"], null);
-    if (pillars) node2.aarsPillars = pillars;
-    const aarsInput = parseJson(r["aars_input_json"], null);
-    if (aarsInput) node2.aarsInput = aarsInput;
-    const combos = String((_o = r["combo_groups"]) != null ? _o : "");
-    if (combos) node2.comboGroups = combos.split(",").filter(Boolean);
-    const tags = parseJson(r["tags_json"], null);
-    if (tags) node2.tags = tags;
-    const techCats = String((_p = r["technology_categories"]) != null ? _p : "").split(",").filter(Boolean);
-    if (techCats.length) node2.technologyCategories = techCats;
-    const purpose = (_q = r["identity_purpose"]) != null ? _q : null;
-    if (purpose) node2.identityPurpose = purpose;
-    const analytics = parseJson(r["issue_analytics_json"], null);
-    if (analytics) node2.issueAnalytics = analytics;
-    const findingCount = r["data_finding_count"];
-    if (findingCount !== null && findingCount !== void 0 && String(findingCount) !== "") {
-      node2.dataFindingCount = Number(findingCount);
-    }
-    const findingSevs = parseJson(r["data_findings_json"], null);
-    if (findingSevs) node2.dataFindingSeverities = findingSevs;
-    const exposureLevel = (_r = r["exposure_level"]) != null ? _r : null;
-    if (exposureLevel) node2.exposureLevel = exposureLevel;
-    const portValidation = (_s = r["port_validation"]) != null ? _s : null;
-    if (portValidation) node2.portValidation = portValidation;
-    const evidence = parseJson(r["exposure_evidence_json"], null);
-    if (evidence) node2.exposureEvidence = evidence;
-    const inactive = parseTri(r["inactive"]);
-    if (inactive !== null) node2.inactive = inactive;
-    const inactiveTimeframe = (_t = r["inactive_timeframe"]) != null ? _t : null;
-    if (inactiveTimeframe) node2.inactiveTimeframe = inactiveTimeframe;
-    const humanAccess = parseJson(r["human_access_json"], null);
-    if (humanAccess) node2.humanAccess = humanAccess;
-    const displayName = (_u = r["display_name"]) != null ? _u : null;
-    if (displayName) node2.displayName = displayName;
-    const email = (_v = r["email"]) != null ? _v : null;
-    if (email) node2.email = email;
-    const publisher = (_w = r["publisher"]) != null ? _w : null;
-    if (publisher) node2.publisher = publisher;
-    const methods = String((_x = r["discovery_methods"]) != null ? _x : "").split(",").filter(Boolean);
-    if (methods.length) node2.discoveryMethods = methods;
-    const postureTier = r["posture_tier"];
-    if (postureTier !== null && postureTier !== void 0 && String(postureTier) !== "") {
-      node2.postureTier = Number(postureTier);
-    }
-    const postureInput = parseJson(r["posture_input_json"], null);
-    if (postureInput) node2.postureInput = postureInput;
-    const worstOpenProblem2 = (_y = r["worst_open_problem"]) != null ? _y : null;
-    if (worstOpenProblem2) node2.worstOpenProblem = worstOpenProblem2;
-    return node2;
-  }
-  function edgeToRow(e) {
-    var _a5;
-    return {
-      id: e.id,
-      src: e.src,
-      dst: e.dst,
-      type: e.type,
-      negated: boolCell(e.negated),
-      access_type: (_a5 = e.accessType) != null ? _a5 : null
-    };
-  }
-  function rowToEdge(r) {
-    var _a5, _b, _c, _d, _e;
-    const e = {
-      id: String((_a5 = r["id"]) != null ? _a5 : ""),
-      src: String((_b = r["src"]) != null ? _b : ""),
-      dst: String((_c = r["dst"]) != null ? _c : ""),
-      type: String((_d = r["type"]) != null ? _d : "USES")
-    };
-    if (parseBool(r["negated"])) e.negated = true;
-    const access = (_e = r["access_type"]) != null ? _e : null;
-    if (access) e.accessType = access;
-    return e;
-  }
-  function issueToRow(i) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z;
-    return {
-      id: i.id,
-      rule_id: i.ruleId,
-      rule_name: i.ruleName,
-      combo_group: i.comboGroup,
-      native_severity: i.nativeSeverity,
-      adjusted_severity: i.adjustedSeverity,
-      status: i.status,
-      asset_id: i.assetId,
-      asset_name: i.assetName,
-      region: (_a5 = i.region) != null ? _a5 : null,
-      account: (_b = i.account) != null ? _b : null,
-      projects_json: JSON.stringify((_c = i.projects) != null ? _c : []),
-      frameworks_json: JSON.stringify((_d = i.frameworks) != null ? _d : {}),
-      justification: (_e = i.justification) != null ? _e : null,
-      created_at: (_f = i.createdAt) != null ? _f : null,
-      due_at: (_g = i.dueAt) != null ? _g : null,
-      resolution_recommendation: (_h = i.resolutionRecommendation) != null ? _h : null,
-      remediation: (_i = i.remediation) != null ? _i : null,
-      issue_type: (_j = i.issueType) != null ? _j : null,
-      updated_at: (_k = i.updatedAt) != null ? _k : null,
-      resolved_at: (_l = i.resolvedAt) != null ? _l : null,
-      resolution_reason: (_m = i.resolutionReason) != null ? _m : null,
-      resolved_by: (_n = i.resolvedBy) != null ? _n : null,
-      assignee: (_o = i.assignee) != null ? _o : null,
-      // Comma-joined, matching combo_groups / technology_categories on ai_assets; the
-      // _json suffix is reserved for structured values.
-      environments: ((_p = i.environments) != null ? _p : []).join(","),
-      validated_exploitable: boolCell(i.validatedAsExploitable),
-      business_impact: (_q = i.businessImpact) != null ? _q : null,
-      entity_status: (_r = i.entityStatus) != null ? _r : null,
-      subscription_id: (_s = i.subscriptionId) != null ? _s : null,
-      ignore_note: (_t = i.ignoreNote) != null ? _t : null,
-      ignore_expired_at: (_u = i.ignoreExpiredAt) != null ? _u : null,
-      ticket_urls: ((_v = i.ticketUrls) != null ? _v : []).join(","),
-      ai_verdict: (_w = i.aiVerdict) != null ? _w : null,
-      ai_recommended_severity: (_x = i.aiRecommendedSeverity) != null ? _x : null,
-      // Phase 4: the Problem/Decision-Vector verdict. `?? null`, never a default: a resolved
-      // issue (or one synced before this phase) carries none of the three, and reading that
-      // as some fallback outcome would assert a decision nobody made.
-      problem_outcome: (_y = i.problemOutcome) != null ? _y : null,
-      problem_input_json: i.problemInput ? JSON.stringify(i.problemInput) : null,
-      problem_rule_version: (_z = i.problemRuleVersion) != null ? _z : null
-    };
-  }
-  function rowToIssue(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F;
-    const issue2 = {
-      id: String((_a5 = r["id"]) != null ? _a5 : ""),
-      ruleId: String((_b = r["rule_id"]) != null ? _b : ""),
-      ruleName: String((_c = r["rule_name"]) != null ? _c : ""),
-      // A ledger written before the Other bucket existed holds "" for every unclassified
-      // issue. Without this fallback those rows keep falling out of every rollup until
-      // someone happens to re-sync.
-      comboGroup: String((_d = r["combo_group"]) != null ? _d : "") || OTHER_GROUP_ID,
-      nativeSeverity: String((_e = r["native_severity"]) != null ? _e : "UNKNOWN"),
-      adjustedSeverity: String((_f = r["adjusted_severity"]) != null ? _f : "UNKNOWN"),
-      status: String((_g = r["status"]) != null ? _g : "OPEN"),
-      assetId: String((_h = r["asset_id"]) != null ? _h : ""),
-      assetName: String((_i = r["asset_name"]) != null ? _i : ""),
-      region: (_j = r["region"]) != null ? _j : void 0,
-      account: (_k = r["account"]) != null ? _k : void 0,
-      projects: parseJson(r["projects_json"], []),
-      frameworks: parseJson(r["frameworks_json"], {}),
-      justification: (_l = r["justification"]) != null ? _l : void 0,
-      createdAt: (_m = r["created_at"]) != null ? _m : void 0,
-      dueAt: (_n = r["due_at"]) != null ? _n : void 0,
-      resolutionRecommendation: (_o = r["resolution_recommendation"]) != null ? _o : void 0,
-      remediation: (_p = r["remediation"]) != null ? _p : void 0,
-      issueType: (_q = r["issue_type"]) != null ? _q : void 0,
-      updatedAt: (_r = r["updated_at"]) != null ? _r : void 0,
-      resolvedAt: (_s = r["resolved_at"]) != null ? _s : void 0,
-      resolutionReason: (_t = r["resolution_reason"]) != null ? _t : void 0,
-      resolvedBy: (_u = r["resolved_by"]) != null ? _u : void 0,
-      assignee: (_v = r["assignee"]) != null ? _v : void 0,
-      businessImpact: (_w = r["business_impact"]) != null ? _w : void 0,
-      entityStatus: (_x = r["entity_status"]) != null ? _x : void 0,
-      subscriptionId: (_y = r["subscription_id"]) != null ? _y : void 0,
-      ignoreNote: (_z = r["ignore_note"]) != null ? _z : void 0,
-      ignoreExpiredAt: (_A = r["ignore_expired_at"]) != null ? _A : void 0,
-      aiVerdict: (_B = r["ai_verdict"]) != null ? _B : void 0,
-      aiRecommendedSeverity: (_C = r["ai_recommended_severity"]) != null ? _C : void 0
-    };
-    const environments = String((_D = r["environments"]) != null ? _D : "").split(",").filter(Boolean);
-    if (environments.length) issue2.environments = environments;
-    const ticketUrls = String((_E = r["ticket_urls"]) != null ? _E : "").split(",").filter(Boolean);
-    if (ticketUrls.length) issue2.ticketUrls = ticketUrls;
-    if (parseBool(r["validated_exploitable"])) issue2.validatedAsExploitable = true;
-    const problemOutcome = (_F = r["problem_outcome"]) != null ? _F : null;
-    if (problemOutcome) issue2.problemOutcome = problemOutcome;
-    const problemInput = parseJson(r["problem_input_json"], null);
-    if (problemInput) issue2.problemInput = problemInput;
-    const problemRuleVersion = r["problem_rule_version"];
-    if (problemRuleVersion !== null && problemRuleVersion !== void 0 && String(problemRuleVersion) !== "") {
-      issue2.problemRuleVersion = Number(problemRuleVersion);
-    }
-    return issue2;
-  }
-  var CELL_MAX = 5e4;
-  var CLAMP_MARKER = "\n\u2026 truncated for storage";
-  function cell(v) {
-    if (v === void 0) return null;
-    if (v.length <= CELL_MAX) return v;
-    return v.slice(0, CELL_MAX - CLAMP_MARKER.length) + CLAMP_MARKER;
-  }
-  function optional(v) {
-    return v === null || v === void 0 || v === "" ? void 0 : String(v);
-  }
-  function findingToRow(f) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t;
-    return {
-      id: f.id,
-      resource_id: f.resourceId,
-      rule_short_id: f.ruleShortId,
-      severity: f.severity,
-      remediation: cell(f.remediation),
-      framework_codes: ((_a5 = f.frameworkCodes) != null ? _a5 : []).join(","),
-      name: (_b = f.name) != null ? _b : null,
-      status: (_c = f.status) != null ? _c : null,
-      result: (_d = f.result) != null ? _d : null,
-      // Tri-state, like the internet flag: "null" for a response that never carried the
-      // field. isOpenGap only tombstones on an explicit true, so absent must not read false.
-      deleted: triCell(f.deleted),
-      first_seen_at: (_e = f.firstSeenAt) != null ? _e : null,
-      analyzed_at: (_f = f.analyzedAt) != null ? _f : null,
-      rule_id: (_g = f.ruleId) != null ? _g : null,
-      rule_graph_id: (_h = f.ruleGraphId) != null ? _h : null,
-      rule_name: (_i = f.ruleName) != null ? _i : null,
-      rule_description: cell(f.ruleDescription),
-      remediation_instructions: cell(f.remediationInstructions),
-      opa_policy: cell(f.opaPolicy),
-      risks_json: f.risks && f.risks.length ? JSON.stringify(f.risks) : null,
-      threats_json: f.threats && f.threats.length ? JSON.stringify(f.threats) : null,
-      resource_name: (_j = f.resourceName) != null ? _j : null,
-      resource_type: (_k = f.resourceType) != null ? _k : null,
-      resource_status: (_l = f.resourceStatus) != null ? _l : null,
-      target_external_id: (_m = f.targetExternalId) != null ? _m : null,
-      source: (_n = f.source) != null ? _n : null,
-      subscription_id: (_o = f.subscriptionId) != null ? _o : null,
-      subscription_name: (_p = f.subscriptionName) != null ? _p : null,
-      cloud_provider: (_q = f.cloudProvider) != null ? _q : null,
-      projects_json: f.projects && f.projects.length ? JSON.stringify(f.projects) : null,
-      business_impact: (_r = f.businessImpact) != null ? _r : null,
-      ignore_rule_ids_json: f.ignoreRuleIds && f.ignoreRuleIds.length ? JSON.stringify(f.ignoreRuleIds) : null,
-      iac_finding_ids_json: f.iacFindingIds && f.iacFindingIds.length ? JSON.stringify(f.iacFindingIds) : null,
-      // Phase 4: the Problem/Decision-Vector verdict — same three columns, same `?? null`
-      // convention, as ai_issues above.
-      problem_outcome: (_s = f.problemOutcome) != null ? _s : null,
-      problem_input_json: f.problemInput ? JSON.stringify(f.problemInput) : null,
-      problem_rule_version: (_t = f.problemRuleVersion) != null ? _t : null
-    };
-  }
-  function rowToFinding(r) {
-    var _a5, _b, _c, _d, _e, _f;
-    const finding = {
-      id: String((_a5 = r["id"]) != null ? _a5 : ""),
-      resourceId: String((_b = r["resource_id"]) != null ? _b : ""),
-      ruleShortId: String((_c = r["rule_short_id"]) != null ? _c : ""),
-      severity: String((_d = r["severity"]) != null ? _d : "UNKNOWN"),
-      remediation: optional(r["remediation"]),
-      frameworkCodes: String((_e = r["framework_codes"]) != null ? _e : "").split(",").filter(Boolean),
-      name: optional(r["name"]),
-      status: optional(r["status"]),
-      result: optional(r["result"]),
-      firstSeenAt: optional(r["first_seen_at"]),
-      analyzedAt: optional(r["analyzed_at"]),
-      ruleId: optional(r["rule_id"]),
-      ruleGraphId: optional(r["rule_graph_id"]),
-      ruleName: optional(r["rule_name"]),
-      ruleDescription: optional(r["rule_description"]),
-      remediationInstructions: optional(r["remediation_instructions"]),
-      opaPolicy: optional(r["opa_policy"]),
-      risks: parseJson(r["risks_json"], []),
-      threats: parseJson(r["threats_json"], []),
-      resourceName: optional(r["resource_name"]),
-      resourceType: optional(r["resource_type"]),
-      resourceStatus: optional(r["resource_status"]),
-      targetExternalId: optional(r["target_external_id"]),
-      source: optional(r["source"]),
-      subscriptionId: optional(r["subscription_id"]),
-      subscriptionName: optional(r["subscription_name"]),
-      cloudProvider: optional(r["cloud_provider"]),
-      projects: parseJson(r["projects_json"], []),
-      businessImpact: optional(r["business_impact"]),
-      ignoreRuleIds: parseJson(r["ignore_rule_ids_json"], []),
-      iacFindingIds: parseJson(r["iac_finding_ids_json"], [])
-    };
-    const deleted = parseTri(r["deleted"]);
-    if (deleted !== null) finding.deleted = deleted;
-    const problemOutcome = (_f = r["problem_outcome"]) != null ? _f : null;
-    if (problemOutcome) finding.problemOutcome = problemOutcome;
-    const problemInput = parseJson(r["problem_input_json"], null);
-    if (problemInput) finding.problemInput = problemInput;
-    const problemRuleVersion = r["problem_rule_version"];
-    if (problemRuleVersion !== null && problemRuleVersion !== void 0 && String(problemRuleVersion) !== "") {
-      finding.problemRuleVersion = Number(problemRuleVersion);
-    }
-    return finding;
-  }
-  function dataFindingToRow(f) {
-    return {
-      id: f.id,
-      resource_id: f.resourceId,
-      name: f.name,
-      severity: f.severity
-    };
-  }
-  function frameworkToRow(f) {
-    var _a5, _b;
-    return {
-      id: f.id,
-      name: f.name,
-      description: (_a5 = f.description) != null ? _a5 : "",
-      builtin: f.builtin,
-      enabled: f.enabled,
-      policy_types: ((_b = f.policyTypes) != null ? _b : []).join(",")
-    };
-  }
-  function rowToFramework(r) {
-    var _a5, _b, _c, _d;
-    return {
-      id: String((_a5 = r["id"]) != null ? _a5 : ""),
-      name: String((_b = r["name"]) != null ? _b : ""),
-      description: String((_c = r["description"]) != null ? _c : "") || void 0,
-      builtin: r["builtin"] === true || r["builtin"] === "TRUE" || r["builtin"] === "true",
-      enabled: r["enabled"] === true || r["enabled"] === "TRUE" || r["enabled"] === "true",
-      policyTypes: String((_d = r["policy_types"]) != null ? _d : "").split(",").filter(Boolean),
-      // Never stored. Resolved against the settings selection by the API model, which is the
-      // only place that knows.
-      selected: false
-    };
-  }
-  function configRuleToRow(r) {
-    var _a5, _b;
-    return {
-      id: r.id,
-      short_id: r.shortId,
-      name: r.name,
-      subject_entity_type: (_a5 = r.subjectEntityType) != null ? _a5 : "",
-      external_refs: ((_b = r.externalRefs) != null ? _b : []).join(",")
-    };
-  }
-  function rowToConfigRule(r) {
-    var _a5, _b, _c, _d, _e;
-    return {
-      id: String((_a5 = r["id"]) != null ? _a5 : ""),
-      shortId: String((_b = r["short_id"]) != null ? _b : ""),
-      name: String((_c = r["name"]) != null ? _c : ""),
-      subjectEntityType: String((_d = r["subject_entity_type"]) != null ? _d : "") || void 0,
-      externalRefs: String((_e = r["external_refs"]) != null ? _e : "").split(",").filter(Boolean)
-    };
-  }
-  function identityFindingToRow(f) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h;
-    return {
-      id: f.id,
-      resource_id: f.resourceId,
-      resource_name: (_a5 = f.resourceName) != null ? _a5 : null,
-      rule_id: (_b = f.ruleId) != null ? _b : null,
-      rule_short_id: f.ruleShortId,
-      rule_name: (_c = f.ruleName) != null ? _c : null,
-      severity: f.severity,
-      status: (_d = f.status) != null ? _d : null,
-      result: (_e = f.result) != null ? _e : null,
-      first_seen_at: (_f = f.firstSeenAt) != null ? _f : null,
-      analyzed_at: (_g = f.analyzedAt) != null ? _g : null,
-      remediation: (_h = f.remediation) != null ? _h : null,
-      hygiene: f.hygiene
-    };
-  }
-  function rowToIdentityFinding(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
-    return {
-      id: String((_a5 = r["id"]) != null ? _a5 : ""),
-      resourceId: String((_b = r["resource_id"]) != null ? _b : ""),
-      resourceName: (_c = r["resource_name"]) != null ? _c : void 0,
-      ruleId: (_d = r["rule_id"]) != null ? _d : void 0,
-      ruleShortId: String((_e = r["rule_short_id"]) != null ? _e : ""),
-      ruleName: (_f = r["rule_name"]) != null ? _f : void 0,
-      severity: String((_g = r["severity"]) != null ? _g : "UNKNOWN"),
-      status: (_h = r["status"]) != null ? _h : void 0,
-      result: (_i = r["result"]) != null ? _i : void 0,
-      firstSeenAt: (_j = r["first_seen_at"]) != null ? _j : void 0,
-      analyzedAt: (_k = r["analyzed_at"]) != null ? _k : void 0,
-      remediation: (_l = r["remediation"]) != null ? _l : void 0,
-      // Defaulted rather than validated: the column is written by this app from the matcher's
-      // verdict, so an unrecognised value means a hand-edited cell, and MFA is the reading that
-      // over-reports rather than under-reports.
-      hygiene: String((_m = r["hygiene"]) != null ? _m : "MFA") === "DORMANT" ? "DORMANT" : "MFA"
-    };
-  }
-  function cellPct(v) {
-    if (v === "" || v === null || v === void 0) return null;
-    const n = Number(v);
-    return isFinite(n) ? n : null;
-  }
-  function postureToRow(p) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
-    return {
-      framework_id: p.frameworkId,
-      level: p.level,
-      category_external_id: (_a5 = p.categoryExternalId) != null ? _a5 : "",
-      subcategory_external_id: (_b = p.subcategoryExternalId) != null ? _b : "",
-      node_id: (_c = p.nodeId) != null ? _c : "",
-      title: p.title,
-      description: (_d = p.description) != null ? _d : "",
-      // Null stays empty rather than becoming 0 — see cellPct.
-      posture_pct: p.posturePct === null ? "" : p.posturePct,
-      pass_count: p.passCount,
-      fail_count: p.failCount,
-      pass_subcategory_count: (_e = p.passSubCategoryCount) != null ? _e : "",
-      fail_subcategory_count: (_f = p.failSubCategoryCount) != null ? _f : "",
-      empty_posture_reason: (_g = p.emptyPostureReason) != null ? _g : "",
-      assessment_scope: (_h = p.assessmentScope) != null ? _h : "",
-      mapping_rationale: (_i = p.mappingRationale) != null ? _i : "",
-      tags_json: p.tags && p.tags.length ? JSON.stringify(p.tags) : ""
-    };
-  }
-  function rowToPosture(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
-    const num = (v) => {
-      const n = Number(v != null ? v : 0);
-      return isFinite(n) ? n : 0;
-    };
-    const optNum = (v) => v === "" || v === null || v === void 0 ? void 0 : num(v);
-    return {
-      frameworkId: String((_a5 = r["framework_id"]) != null ? _a5 : ""),
-      level: String((_b = r["level"]) != null ? _b : "subcategory"),
-      categoryExternalId: String((_c = r["category_external_id"]) != null ? _c : "") || void 0,
-      subcategoryExternalId: String((_d = r["subcategory_external_id"]) != null ? _d : "") || void 0,
-      nodeId: String((_e = r["node_id"]) != null ? _e : "") || void 0,
-      title: String((_f = r["title"]) != null ? _f : ""),
-      description: String((_g = r["description"]) != null ? _g : "") || void 0,
-      posturePct: cellPct(r["posture_pct"]),
-      passCount: num(r["pass_count"]),
-      failCount: num(r["fail_count"]),
-      passSubCategoryCount: optNum(r["pass_subcategory_count"]),
-      failSubCategoryCount: optNum(r["fail_subcategory_count"]),
-      emptyPostureReason: String((_h = r["empty_posture_reason"]) != null ? _h : "") || null,
-      assessmentScope: String((_i = r["assessment_scope"]) != null ? _i : "") || void 0,
-      mappingRationale: String((_j = r["mapping_rationale"]) != null ? _j : "") || void 0,
-      tags: parseJson(r["tags_json"], [])
-    };
-  }
-  function frameworkPolicyToRow(p) {
-    var _a5, _b, _c, _d, _e, _f, _g;
-    return {
-      framework_id: p.frameworkId,
-      category_external_id: p.categoryExternalId,
-      subcategory_external_id: p.subcategoryExternalId,
-      policy_id: p.policyId,
-      policy_kind: p.policyKind,
-      short_id: (_a5 = p.shortId) != null ? _a5 : "",
-      name: p.name,
-      severity: p.severity,
-      enabled: (_b = p.enabled) != null ? _b : "",
-      builtin: (_c = p.builtin) != null ? _c : "",
-      pass_count: p.passCount,
-      fail_count: p.failCount,
-      assessed_count: p.assessedCount,
-      rejected_count: p.rejectedCount,
-      no_resource_to_assess: p.noResourceToAssess,
-      target_native_type: (_d = p.targetNativeType) != null ? _d : "",
-      subject_entity_type: (_e = p.subjectEntityType) != null ? _e : "",
-      cloud_provider: (_f = p.cloudProvider) != null ? _f : "",
-      has_auto_remediation: (_g = p.hasAutoRemediation) != null ? _g : ""
-    };
-  }
-  function rowToFrameworkPolicy(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
-    const num = (v) => {
-      const n = Number(v != null ? v : 0);
-      return isFinite(n) ? n : 0;
-    };
-    const optBool = (v) => v === "" || v === null || v === void 0 ? void 0 : v === true || v === "TRUE" || v === "true";
-    return {
-      frameworkId: String((_a5 = r["framework_id"]) != null ? _a5 : ""),
-      categoryExternalId: String((_b = r["category_external_id"]) != null ? _b : ""),
-      subcategoryExternalId: String((_c = r["subcategory_external_id"]) != null ? _c : ""),
-      policyId: String((_d = r["policy_id"]) != null ? _d : ""),
-      policyKind: String((_e = r["policy_kind"]) != null ? _e : "CONTROL"),
-      shortId: String((_f = r["short_id"]) != null ? _f : "") || void 0,
-      name: String((_g = r["name"]) != null ? _g : ""),
-      severity: String((_h = r["severity"]) != null ? _h : "UNKNOWN"),
-      enabled: optBool(r["enabled"]),
-      builtin: optBool(r["builtin"]),
-      passCount: num(r["pass_count"]),
-      failCount: num(r["fail_count"]),
-      assessedCount: num(r["assessed_count"]),
-      rejectedCount: num(r["rejected_count"]),
-      noResourceToAssess: r["no_resource_to_assess"] === true || r["no_resource_to_assess"] === "TRUE" || r["no_resource_to_assess"] === "true",
-      targetNativeType: String((_i = r["target_native_type"]) != null ? _i : "") || void 0,
-      subjectEntityType: String((_j = r["subject_entity_type"]) != null ? _j : "") || void 0,
-      cloudProvider: String((_k = r["cloud_provider"]) != null ? _k : "") || void 0,
-      hasAutoRemediation: optBool(r["has_auto_remediation"])
-    };
-  }
-  function persistSync(rawDoc, issues2, hints, meta, now, findings = [], dataFindings = [], frameworks = [], posture = [], frameworkPolicies = [], extras = {}) {
-    var _a5, _b, _c, _d;
-    const { version: ruleVersion, rule } = getAarsRule2();
-    const counted = withDataFindingCounts(rawDoc, dataFindings);
-    const exposed = withExposureEvidence(counted);
-    const reachable2 = withHumanAccess(exposed, {
-      identityFindings: (_a5 = extras.identityFindings) != null ? _a5 : [],
-      effectiveAccess: (_b = extras.effectiveAccess) != null ? _b : []
-    });
-    const enriched = enrichGraphDoc(reachable2, issues2, hints, rule);
-    const { version: problemRuleVersion, rule: problemRule } = getProblemRule2();
-    const { issues: decidedIssues, findings: decidedFindings } = withProblemVerdicts(
-      enriched,
-      issues2,
-      findings,
-      problemRule,
-      problemRuleVersion
-    );
-    const { version: postureRuleVersion, rule: postureRule } = getPostureRule2();
-    const postured = withPostureTiers(enriched, decidedIssues, decidedFindings, postureRule);
-    const assetNodes = realNodes(postured.nodes);
-    const assetEdges = postured.edges.filter((e) => e.type !== "HAS_ISSUE");
-    overwrite(TABS.assets, assetNodes.map(assetToRow));
-    overwrite(TABS.edges, assetEdges.map(edgeToRow));
-    overwrite(TABS.issues, decidedIssues.map(issueToRow));
-    overwrite(TABS.findings, decidedFindings.map(findingToRow));
-    overwrite(TABS.dataFindings, dataFindings.map(dataFindingToRow));
-    if (frameworks.length) overwrite(TABS.frameworks, frameworks.map(frameworkToRow));
-    if (posture.length) overwrite(TABS.frameworkPosture, posture.map(postureToRow));
-    if (frameworkPolicies.length) {
-      overwrite(TABS.frameworkPolicies, frameworkPolicies.map(frameworkPolicyToRow));
-    }
-    const configRules = (_c = extras.configRules) != null ? _c : [];
-    if (configRules.length) overwrite(TABS.configRules, configRules.map(configRuleToRow));
-    overwrite(TABS.identityFindings, ((_d = extras.identityFindings) != null ? _d : []).map(identityFindingToRow));
-    const snapshotRef = writeGraphSnapshot(postured);
-    appendRows(TABS.syncHistory, [{
-      sync_id: meta.syncId,
-      started_at: meta.startedAt,
-      finished_at: nowIso(now),
-      status: "SUCCESS",
-      mode: meta.mode,
-      node_count: postured.nodes.length,
-      edge_count: postured.edges.length,
-      issue_count: issues2.length,
-      api_calls: meta.apiCalls,
-      snapshot_ref: snapshotRef,
-      error: null,
-      // The AARS distribution at this sync — the only record of it, since the snapshot
-      // this row points at is overwritten by the next sync. Feeds the inventory trend.
-      aars_severity_json: JSON.stringify(countAarsSeverities(postured.nodes)),
-      // Which scoring model produced that distribution: counts from two versions are not
-      // on the same scale, and the trend chart says so rather than drawing a false step.
-      aars_rule_version: ruleVersion,
-      // The outcome distribution this sync decided, over BOTH decided populations at once —
-      // mirrors aars_severity_json exactly, one row down.
-      problem_outcome_json: JSON.stringify(countProblemOutcomes([...decidedIssues, ...decidedFindings])),
-      // Which problem rule produced it — mirrors aars_rule_version, and moves independently
-      // of it, exactly as the two settings keys (aars_rule / problem_rule) do.
-      problem_rule_version: problemRuleVersion
-    }]);
-    setScoredRuleVersion(ruleVersion);
-    setDecidedRuleVersion(problemRuleVersion);
-    setComputedPostureVersion(postureRuleVersion);
-    commit();
-    return postured;
-  }
-  function rescoreInventory() {
-    const { version, rule } = getAarsRule2();
-    const enriched = enrichFromTabs(rule);
-    if (!enriched) {
-      setScoredRuleVersion(version);
-      return { version, assetCount: 0, counts: countAarsSeverities([]) };
-    }
-    const assetNodes = realNodes(enriched.nodes);
-    overwrite(TABS.assets, assetNodes.map(assetToRow));
-    writeGraphSnapshot(enriched);
-    setScoredRuleVersion(version);
-    commit();
-    return {
-      version,
-      assetCount: assetNodes.length,
-      counts: countAarsSeverities(enriched.nodes)
-    };
-  }
-  function scoreAssetsWith(rule) {
-    const enriched = enrichFromTabs(rule);
-    if (!enriched) return [];
-    return realNodes(enriched.nodes);
-  }
-  function enrichFromTabs(rule) {
-    const base = loadRawGraph();
-    if (!base) return null;
-    const issues2 = loadIssues();
-    const hints = { ...buildAarsHintsFromFindings(loadFindings(), base, issues2, rule) };
-    const sig = derivationSignature(rule);
-    for (const node2 of base.nodes) {
-      const input = node2.aarsInput;
-      if (input && (input.derivedUnder === void 0 || input.derivedUnder === sig)) {
-        hints[node2.id] = input;
-      }
-    }
-    return enrichGraphDoc(base, issues2, hints, rule);
-  }
-  function redecideFromTabs(rule, ruleVersion) {
-    const byId = new Map(loadAssetsRaw().map((n) => [n.id, n]));
-    const sig = vectorSignature(rule);
-    const reuseOrDerive = (row, node2, derive) => {
-      const persisted = row.problemInput;
-      if (persisted && (persisted.derivedUnder === void 0 || persisted.derivedUnder === sig)) {
-        return persisted;
-      }
-      return { ...derive(), derivedUnder: sig };
-    };
-    const stampVersion = (row) => {
-      if (ruleVersion === void 0) {
-        if (row.problemRuleVersion === void 0) return row;
-        const next = { ...row };
-        delete next.problemRuleVersion;
-        return next;
-      }
-      return { ...row, problemRuleVersion: ruleVersion };
-    };
-    const issues2 = loadIssues().map((issue2) => {
-      if (!isUnresolvedIssue(issue2)) return stripProblemFields(issue2);
-      const input = reuseOrDerive(issue2, byId.get(issue2.assetId), () => deriveProblemInput(issue2, byId.get(issue2.assetId), rule));
-      const { outcome } = decideProblem(input.vector, rule);
-      return stampVersion({ ...issue2, problemOutcome: outcome, problemInput: input });
-    });
-    const findings = loadFindings().map((finding) => {
-      if (!isOpenGap(finding)) return stripProblemFields(finding);
-      const input = reuseOrDerive(finding, byId.get(finding.resourceId), () => deriveFindingProblemInput(finding, byId.get(finding.resourceId), rule));
-      const { outcome } = decideProblem(input.vector, rule);
-      return stampVersion({ ...finding, problemOutcome: outcome, problemInput: input });
-    });
-    return { issues: issues2, findings };
-  }
-  function redecideProblems() {
-    const { version, rule } = getProblemRule2();
-    const { issues: issues2, findings } = redecideFromTabs(rule, version);
-    overwrite(TABS.issues, issues2.map(issueToRow));
-    overwrite(TABS.findings, findings.map(findingToRow));
-    setDecidedRuleVersion(version);
-    commit();
-    return {
-      version,
-      issueCount: issues2.filter((i) => i.problemOutcome !== void 0).length,
-      findingCount: findings.filter((f) => f.problemOutcome !== void 0).length,
-      outcomes: countProblemOutcomes([...issues2, ...findings])
-    };
-  }
-  function decideProblemsWith(rule) {
-    return redecideFromTabs(rule, void 0);
-  }
-  function postureFromTabs(rule) {
-    const nodes = loadAssetsRaw();
-    if (!nodes.length) return [];
-    const doc = { nodes, edges: [], syncedAt: "" };
-    return withPostureTiers(doc, loadIssues(), loadFindings(), rule).nodes;
-  }
-  function posturesWith(rule) {
-    return postureFromTabs(rule);
-  }
-  function recomputePostures() {
-    const { version, rule } = getPostureRule2();
-    const nodes = postureFromTabs(rule);
-    overwrite(TABS.assets, nodes.map(assetToRow));
-    setComputedPostureVersion(version);
-    commit();
-    return { version, assetCount: nodes.length, tierCounts: countPostureTiers(nodes) };
-  }
-  function loadRawGraph() {
-    var _a5;
-    const nodes = loadAssetsRaw();
-    if (!nodes.length) return null;
-    const edges2 = readAll(TABS.edges).map(rowToEdge);
-    const latest = latestSync();
-    return {
-      nodes: nodes.map(stripAarsScore),
-      edges: edges2,
-      syncedAt: latest ? String((_a5 = latest["finished_at"]) != null ? _a5 : "") : ""
-    };
-  }
-  function stripAarsScore(n) {
-    if (n.aars === void 0 && n.aarsSeverity === void 0 && n.aarsPillars === void 0) return n;
-    const next = { ...n };
-    delete next.aars;
-    delete next.aarsSeverity;
-    delete next.aarsPillars;
-    delete next.aarsPercentile;
-    return next;
-  }
-  var graphDocMemo;
-  var assetsMemo;
-  var edgesMemo;
-  var issuesMemo;
-  var findingsMemo;
-  var dataFindingsMemo;
-  var frameworksMemo;
-  var postureMemo;
-  var frameworkPoliciesMemo;
-  var configRulesMemo;
-  var identityFindingsMemo;
-  var derivedAssetsMemo;
-  function invalidateReadMemos() {
-    graphDocMemo = void 0;
-    assetsMemo = void 0;
-    derivedAssetsMemo = void 0;
-    issuesMemo = void 0;
-    findingsMemo = void 0;
-    dataFindingsMemo = void 0;
-    frameworksMemo = void 0;
-    postureMemo = void 0;
-    frameworkPoliciesMemo = void 0;
-    configRulesMemo = void 0;
-    identityFindingsMemo = void 0;
-  }
-  function commit() {
-    bumpDataVersion();
-    bumpWizDataVersion();
-    invalidateReadMemos();
-  }
-  function realNodes(nodes) {
-    return nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
-  }
-  function loadGraphDoc() {
-    if (graphDocMemo !== void 0) return graphDocMemo;
-    graphDocMemo = loadGraphDocUncached();
-    return graphDocMemo;
-  }
-  function normalizeLegacyAars(doc) {
-    let touched = false;
-    const nodes = doc.nodes.map((n) => {
-      var _a5;
-      const loose = n;
-      if (loose.aarsBand === void 0 && n.aarsSeverity === void 0) return n;
-      touched = true;
-      const next = { ...loose };
-      delete next.aarsBand;
-      const sev = normalizeAarsSeverity((_a5 = n.aarsSeverity) != null ? _a5 : loose.aarsBand);
-      if (sev) next.aarsSeverity = sev;
-      else delete next.aarsSeverity;
-      return next;
-    });
-    return touched ? { ...doc, nodes } : doc;
-  }
-  function withRiskNodes(doc) {
-    return withMissingGuardrailNodes(
-      withIdentityAccessNodes(
-        withExcessivePrivilegeNodes(
-          withInternetExposureNodes(withSensitiveDataNodes(withDataFindingNodes(doc)))
-        )
-      )
-    );
-  }
-  function withCurrentBands(nodes, bands) {
-    let touched = false;
-    const out = nodes.map((n) => {
-      if (typeof n.aars !== "number") return n;
-      const sev = aarsSeverity(n.aars, bands);
-      if (sev === n.aarsSeverity) return n;
-      touched = true;
-      return { ...n, aarsSeverity: sev };
-    });
-    return touched ? out : nodes;
-  }
-  function withAarsPercentile(nodes) {
-    const scored = [];
-    for (const n of nodes) if (typeof n.aars === "number") scored.push(n.aars);
-    if (!scored.length) return nodes;
-    const percentiles = midrankPercentiles(scored);
-    let i = 0;
-    return nodes.map((n) => {
-      if (typeof n.aars !== "number") return n;
-      return { ...n, aarsPercentile: Math.round(percentiles[i++]) };
-    });
-  }
-  function currentBands() {
-    return getAarsRule2().rule.bands;
-  }
-  function withAarsReadDerivations(nodes) {
-    return withAarsPercentile(withCurrentBands(nodes, currentBands()));
-  }
-  function withBandsApplied(doc) {
-    const nodes = withAarsReadDerivations(doc.nodes);
-    return nodes === doc.nodes ? doc : { ...doc, nodes };
-  }
-  function loadGraphDocUncached() {
-    var _a5;
-    const snap = readGraphSnapshot();
-    if (snap) return withRiskNodes(withBandsApplied(normalizeLegacyAars(snap)));
-    const assetRows = readAll(TABS.assets);
-    if (!assetRows.length) return null;
-    const nodes = withAarsReadDerivations(assetRows.map(rowToAsset));
-    const edges2 = readAll(TABS.edges).map(rowToEdge);
-    const issues2 = loadIssues().filter(isUnresolvedIssue);
-    for (const issue2 of issues2) {
-      nodes.push({
-        id: issue2.id,
-        kind: "ISSUE",
-        name: issue2.ruleName,
-        severity: issue2.adjustedSeverity,
-        comboGroups: issue2.comboGroup ? [issue2.comboGroup] : [],
-        status: issue2.status
-      });
-      edges2.push({
-        id: edgeId(issue2.assetId, "HAS_ISSUE", issue2.id),
-        src: issue2.assetId,
-        dst: issue2.id,
-        type: "HAS_ISSUE"
-      });
-    }
-    const latest = latestSync();
-    return withRiskNodes({
-      nodes,
-      edges: edges2,
-      syncedAt: latest ? String((_a5 = latest["finished_at"]) != null ? _a5 : "") : ""
-    });
-  }
-  function loadAssetsRaw() {
-    if (assetsMemo === void 0) assetsMemo = readAll(TABS.assets).map(rowToAsset);
-    return assetsMemo;
-  }
-  function loadAssets() {
-    const raw = loadAssetsRaw();
-    const bands = currentBands();
-    const bandKey = `${bands.critical}|${bands.high}|${bands.medium}|${bands.low}`;
-    const memo = derivedAssetsMemo;
-    if (memo && memo.raw === raw && memo.bandKey === bandKey) return memo.out;
-    const out = withAarsReadDerivations(raw);
-    derivedAssetsMemo = { raw, bandKey, out };
-    return out;
-  }
-  function loadEdges() {
-    if (edgesMemo === void 0) edgesMemo = readAll(TABS.edges).map(rowToEdge);
-    return edgesMemo;
-  }
-  function loadIssues() {
-    if (issuesMemo === void 0) issuesMemo = readAll(TABS.issues).map(rowToIssue);
-    return issuesMemo;
-  }
-  function loadFindings() {
-    if (findingsMemo === void 0) findingsMemo = readAll(TABS.findings).map(rowToFinding);
-    return findingsMemo;
-  }
-  function loadFrameworks() {
-    if (frameworksMemo === void 0) frameworksMemo = readAll(TABS.frameworks).map(rowToFramework);
-    return frameworksMemo;
-  }
-  function loadConfigRules() {
-    if (configRulesMemo === void 0) {
-      configRulesMemo = readAll(TABS.configRules).map(rowToConfigRule);
-    }
-    return configRulesMemo;
-  }
-  function loadIdentityFindings() {
-    if (identityFindingsMemo === void 0) {
-      identityFindingsMemo = readAll(TABS.identityFindings).map(rowToIdentityFinding);
-    }
-    return identityFindingsMemo;
-  }
-  function loadPosture() {
-    if (postureMemo === void 0) postureMemo = readAll(TABS.frameworkPosture).map(rowToPosture);
-    return postureMemo;
-  }
-  function loadFrameworkPolicies() {
-    if (frameworkPoliciesMemo === void 0) {
-      frameworkPoliciesMemo = readAll(TABS.frameworkPolicies).map(rowToFrameworkPolicy);
-    }
-    return frameworkPoliciesMemo;
-  }
-  function syncHistory() {
-    return readAll(TABS.syncHistory);
-  }
-  function latestSync() {
-    const rows = syncHistory();
-    return rows.length ? rows[rows.length - 1] : null;
-  }
-  function resetData() {
-    overwrite(TABS.assets, []);
-    overwrite(TABS.edges, []);
-    overwrite(TABS.issues, []);
-    overwrite(TABS.findings, []);
-    overwrite(TABS.dataFindings, []);
-    overwrite(TABS.syncHistory, []);
-    trashGraphSnapshot();
-    commit();
-  }
-
   // src/server/syncJobs.ts
   var CANCEL_PROP = "CANCEL_SYNC_JOB_ID";
   var CONTINUE_HANDLER = "trigger_continueSync";
@@ -13402,13 +13451,23 @@ var Server = (() => {
   function strList(v) {
     return Array.isArray(v) ? v.map(String) : [];
   }
+  function numMap(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out = {};
+    for (const [k, n] of Object.entries(v)) {
+      const num = Number(n);
+      if (Number.isFinite(num)) out[k] = num;
+    }
+    return out;
+  }
   function jobParams(job) {
     var _a5;
     const parsed = parseJson(job.params_json, {});
     return {
       apiCalls: Number((_a5 = parsed["apiCalls"]) != null ? _a5 : 0),
       skippedSteps: strList(parsed["skippedSteps"]),
-      truncatedSteps: strList(parsed["truncatedSteps"])
+      truncatedSteps: strList(parsed["truncatedSteps"]),
+      stepRows: numMap(parsed["stepRows"])
     };
   }
   function partRefs(job) {
@@ -13452,7 +13511,7 @@ var Server = (() => {
     ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(CONTINUE_DELAY_MS).create();
   }
   function runBattery(job, opts) {
-    var _a5, _b;
+    var _a5, _b, _c;
     const deadline = Date.now() + opts.budgetMs;
     const syncId = (_a5 = job.sync_id) != null ? _a5 : job.job_id;
     const refs = partRefs(job);
@@ -13514,6 +13573,7 @@ var Server = (() => {
           params.apiCalls += 1;
           page += 1;
           nodesSoFar += result.rows.length;
+          params.stepRows[step.id] = ((_b = params.stepRows[step.id]) != null ? _b : 0) + result.rows.length;
           writeSyncPage(syncId, stepIndex, page, result.rows);
           try {
             appendPart(hopPart, step.normalize(result.rows));
@@ -13531,7 +13591,7 @@ var Server = (() => {
               cursor: result.endCursor,
               page,
               nodes_so_far: nodesSoFar,
-              total_count: (_b = result.totalCount) != null ? _b : 0,
+              total_count: (_c = result.totalCount) != null ? _c : 0,
               params_json: JSON.stringify(params)
             });
             lastCheckpoint = Date.now();
@@ -13611,6 +13671,7 @@ var Server = (() => {
         );
         setSkippedSteps(params.skippedSteps);
         setTruncatedSteps(params.truncatedSteps);
+        setStepRows(params.stepRows);
         if (merged.configRules.length) setConfigRulesSyncedAt(Date.now());
       };
       if (opts.lockHeld) persist();
@@ -14771,6 +14832,12 @@ var Server = (() => {
       // Reported separately from the skips: these steps ran and were answered, we just
       // stopped asking at the page cap, so their rows are a prefix rather than an absence.
       truncatedSteps: getTruncatedSteps2(),
+      // Rows each step returned on the last committed sync. A THIRD reading, and the only one
+      // that can say "this step ran and matched nothing" — the two lists above record refusals
+      // and page caps, and a zero-yield step is neither. An id absent here means not recorded
+      // (a deployment that last synced before this shipped), which the client must not render
+      // as 0. See settingsLogic.getStepRows.
+      stepRows: getStepRows2(),
       hasCredentials: hasWizCredentials(),
       limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
       // Named rather than folded into `variables`: the transport adds these to every request,
@@ -14810,6 +14877,19 @@ var Server = (() => {
         );
       }
       return testStepVariables(stepId, proposed);
+    });
+  }
+  function probeSyncStep(p) {
+    return run(() => {
+      var _a5;
+      const stepId = String((_a5 = (p != null ? p : {})["stepId"]) != null ? _a5 : "");
+      if (!stepId) throw new Error("A step id is required.");
+      if (!hasWizCredentials()) {
+        throw new Error(
+          "A probe calls Wiz, and no credentials are configured \u2014 this deployment is in dry-run. Add credentials in Settings to probe a step against the tenant."
+        );
+      }
+      return testStepVariables(stepId, null);
     });
   }
   function getSettings(_p) {

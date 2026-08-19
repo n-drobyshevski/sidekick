@@ -12,7 +12,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bootServer, teardownServer } from "./gasEnv";
 import {
   getTruncatedSteps,
+  getStepRows,
   withSkippedSteps,
+  withStepRows,
   withTruncatedSteps,
 } from "../src/domain/settingsLogic";
 import {
@@ -118,6 +120,50 @@ describe("the page cap is recorded, not silent", () => {
     expect(getTruncatedSteps({})).toEqual([]);
     expect(getTruncatedSteps({ last_truncated_steps: "EFFECTIVE_ACCESS" })).toEqual([]);
     expect(getTruncatedSteps({ last_truncated_steps: [null, "", "A"] })).toEqual(["A"]);
+  });
+});
+
+describe("a step that ran and matched nothing is recorded too", () => {
+  it("keeps the ZERO, which is the entire reason the map exists", () => {
+    // The two lists above cover a refusal and a page cap. Neither can say "the tenant
+    // accepted this query and it matched nothing", which is the state all six edge-producing
+    // traversals were in on a tenant carrying 13,932 assets and no edges at all. A falsy-eliding
+    // reader would collapse that back into the absence it has to be distinguished from.
+    const s = withStepRows({}, { RUNS_AS: 0, INVENTORY_AI: 13932 });
+    expect(getStepRows(s)).toEqual({ RUNS_AS: 0, INVENTORY_AI: 13932 });
+    expect(Object.prototype.hasOwnProperty.call(getStepRows(s), "RUNS_AS")).toBe(true);
+  });
+
+  it("distinguishes ran-and-empty from never-recorded", () => {
+    const rows = getStepRows(withStepRows({}, { RUNS_AS: 0 }));
+    expect(rows["RUNS_AS"]).toBe(0);          // ran, matched nothing
+    expect(rows["HOST_EXPOSURE"]).toBeUndefined(); // no claim either way
+  });
+
+  it("reads an absent or malformed map as empty rather than throwing", () => {
+    expect(getStepRows({})).toEqual({});
+    expect(getStepRows({ last_step_rows: "RUNS_AS" })).toEqual({});
+    expect(getStepRows({ last_step_rows: ["RUNS_AS"] })).toEqual({});
+    expect(getStepRows({ last_step_rows: { A: "12", B: "nope", "": 4 } })).toEqual({ A: 12 });
+  });
+
+  it("does not disturb the two lists it sits beside", () => {
+    const s = withStepRows(withSkippedSteps({}, ["CONFIG_FINDINGS"]), { RUNS_AS: 0 });
+    expect(s["last_skipped_steps"]).toEqual(["CONFIG_FINDINGS"]);
+    expect(getStepRows(s)).toEqual({ RUNS_AS: 0 });
+  });
+
+  it("is surfaced by the endpoint the Scans page reads", async () => {
+    const server = await bootServer();
+    server.setup();
+    const res = server.api.getScanQueries({}) as {
+      ok: boolean;
+      data?: { stepRows: Record<string, number> };
+    };
+    expect(res.ok).toBe(true);
+    // An object, never undefined — the client renders a missing id as "not recorded", and a
+    // missing FIELD would make every id read that way on a deployment that has synced.
+    expect(res.data!.stepRows).toEqual({});
   });
 
   it("is surfaced by the endpoint the Scans page reads", async () => {

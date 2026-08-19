@@ -728,11 +728,35 @@ interface JobParams {
   apiCalls: number;
   skippedSteps: string[];
   truncatedSteps: string[];
+  /**
+   * Raw rows each step returned, by step id, summed across pages and resume hops.
+   *
+   * `skippedSteps` records only the two ways a step can REFUSE — an HTTP 400 on an optional
+   * step, and a normalizer's FilterNotHonouredError. A step the tenant accepts and that matches
+   * nothing breaks out of the page loop looking exactly like success: not skipped, not
+   * truncated, no trace anywhere. On a live tenant that produced 13,932 assets and zero edges,
+   * that gap was the difference between "the six traversals were rejected" and "the six
+   * traversals ran and found nothing" — two diagnoses with opposite responses, and nothing
+   * stored could tell them apart. A step id present here with 0 is the second story; absent
+   * from here entirely is the first.
+   */
+  stepRows: Record<string, number>;
 }
 
 /** Strings out of a parsed blob — a checkpoint field can be anything after a schema change. */
 function strList(v: unknown): string[] {
   return Array.isArray(v) ? v.map(String) : [];
+}
+
+/** Numbers out of a parsed blob, same tolerance: a job checkpointed before this field existed. */
+function numMap(v: unknown): Record<string, number> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  const out: Record<string, number> = {};
+  for (const [k, n] of Object.entries(v as Rec)) {
+    const num = Number(n);
+    if (Number.isFinite(num)) out[k] = num;
+  }
+  return out;
 }
 
 function jobParams(job: JobRow): JobParams {
@@ -741,6 +765,7 @@ function jobParams(job: JobRow): JobParams {
     apiCalls: Number(parsed["apiCalls"] ?? 0),
     skippedSteps: strList(parsed["skippedSteps"]),
     truncatedSteps: strList(parsed["truncatedSteps"]),
+    stepRows: numMap(parsed["stepRows"]),
   };
 }
 
@@ -869,6 +894,10 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
         params.apiCalls += 1;
         page += 1;
         nodesSoFar += result.rows.length;
+        // Recorded even when it is 0, and recorded HERE rather than at the step boundary: the
+        // zero is the whole point (see JobParams.stepRows), and a step that spans resume hops
+        // must accumulate across them rather than report its last hop.
+        params.stepRows[step.id] = (params.stepRows[step.id] ?? 0) + result.rows.length;
 
         // Raw page archive: debugging aid AND the response-capture source for
         // reconciling the normalizers (ai/queries/reponse_schemas/).
@@ -1014,6 +1043,7 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
       // moment the job goes terminal, which is why it could not be read back before.
       settingsStore.setSkippedSteps(params.skippedSteps);
       settingsStore.setTruncatedSteps(params.truncatedSteps);
+      settingsStore.setStepRows(params.stepRows);
       // Stamped only when the catalogue actually came back with rows, which is what starts
       // the 30-day clock. A run that skipped the step (fresh) or had it rejected leaves the
       // old timestamp alone, so a rejection retries tomorrow rather than being remembered as

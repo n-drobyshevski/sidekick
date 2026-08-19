@@ -14,6 +14,14 @@ function setup() { return Server.setup(); }
 function wizDiagnostic() { return Server.wizDiagnostic(); }
 function aarsDiagnostic() { return Server.aarsDiagnostic(); }
 function registerScopeDiagnostic() { return Server.registerScopeDiagnostic(); }
+// Probe ONE sync step against the tenant and log what came back: rows, what the step's own
+// normalizer made of them, and a sample row. Edit the id below and run from the editor.
+// e.g. probeSyncStep("HOST_EXPOSURE") — see api.probeSyncStep for why this is ungated.
+function probeSyncStep(stepId) {
+  var res = Server.api.probeSyncStep({ stepId: stepId });
+  console.log(JSON.stringify(res, null, 2));
+  return res;
+}
 
 // Trigger handlers (names referenced by ScriptApp.newTrigger calls).
 function trigger_dailySync() { Server.jobs.dailySync(); }
@@ -52,6 +60,7 @@ function api_getSyncHistory(p) { return timedApi_("getSyncHistory", p); }
 function api_getScanQueries(p) { return timedApi_("getScanQueries", p); }
 function api_setScanVars(p) { return timedApi_("setScanVars", p); }
 function api_testScanVars(p) { return timedApi_("testScanVars", p); }
+function api_probeSyncStep(p) { return timedApi_("probeSyncStep", p); }
 function api_getSettings(p) { return timedApi_("getSettings", p); }
 function api_setSettings(p) { return timedApi_("setSettings", p); }
 function api_getAarsRule(p) { return timedApi_("getAarsRule", p); }

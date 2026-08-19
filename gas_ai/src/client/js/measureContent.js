@@ -203,11 +203,42 @@ export const MEASURE_ENTRIES = [
     goal: "What fraction of the AI landscape a sync actually touched, in paired counts — never "
       + "a bare percentage, so a stage with nothing behind it (‘0 of 22 attributed’) "
       + "cannot be misread as a clean result.",
-    formula: "estateReach(...).stages: in register, observed, enriched, attributed, decided "
-      + "— each { covered, total } over the AI-kinded register.",
-    dataSource: "ai_assets.kind, ai_assets.business_impact, ai_assets.worst_open_problem, "
-      + "ai_assets.aars, ai_edges.type, ai_issues.status, ai_findings.result",
+    formula: "estateReach(...).stages: in register, observed, enriched, decided — each "
+      + "{ covered, total } over the AI-kinded register. Four, not five: business-impact "
+      + "tagging left the ladder (it arrives on the inventory hop, so it does not depend on "
+      + "the stages above it), and ‘decided’ no longer accepts a bare AARS score, which "
+      + "every AI-kinded asset carries and which made the stage a permanent 100%.",
+    dataSource: "ai_assets.kind, ai_assets.worst_open_problem, ai_edges.type, "
+      + "ai_assets.exposure_evidence_json, ai_assets.human_access_json, ai_issues.status, "
+      + "ai_findings.result",
     reportingFormat: "Wiz Scans page, Landscape reach section; AI Inventory headline card.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "landscape-impact-tagged", measure: "Impact-tagged share", type: "implementation",
+    measurementMethod: "Objective",
+    goal: "How much of the AI register carries a Wiz business-impact tier — the tenant's "
+      + "project-tagging discipline, not this pipeline's reach. It sat in the reach ladder "
+      + "until a live tenant printed 95% of it above 1% observed.",
+    formula: "estateReach(...).impactTagged: AI-kinded rows with a non-empty "
+      + "business_impact, over all AI-kinded rows.",
+    dataSource: "ai_assets.business_impact, ai_assets.kind",
+    reportingFormat: "Wiz Scans page, Landscape reach section — beside the ladder, not in it.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "sync-step-yield", measure: "Rows returned per sync step", type: "implementation",
+    measurementMethod: "Objective",
+    goal: "Tell a step that ran and matched nothing apart from a step that was never reached. "
+      + "The skipped list records refusals and the truncated list records page caps; a step "
+      + "the tenant accepts that returns zero rows was in neither.",
+    formula: "Raw response rows per step id, summed across pages and resume hops, persisted "
+      + "with the commit. Present with 0 means ran-and-empty; absent means not recorded.",
+    dataSource: "settings.key / settings.value_json — the settings tab is a key/value "
+      + "store, and this reading lives under the last_step_rows key, beside "
+      + "last_skipped_steps and last_truncated_steps.",
+    reportingFormat: "Wiz Scans page, each area's drill-down — a pill beside the existing "
+      + "skipped and truncated pills.",
     revisionDue: "2027-08-13",
   },
   {

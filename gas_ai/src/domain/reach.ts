@@ -112,6 +112,22 @@ export interface EstateReach {
    * every stage below is held to.
    */
   axesPopulation: number;
+  /**
+   * AI-kinded rows carrying a Wiz business-impact tier (ai_assets.business_impact).
+   *
+   * DELIBERATELY NOT A STAGE. `businessImpact` is folded from the asset's OWN `projects`
+   * array (graphEnrich.worstBusinessImpact), and `projects { riskProfile { businessImpact } }`
+   * is selected by the mandatory inventory query — the first hop, before any traversal. So it
+   * reads high on a tenant where not one graph step produced a result, which is the opposite
+   * of what a reach funnel claims. It sat between Observed and Decided in `stages` until the
+   * live tenant printed 95% attributed above 1% observed and made the non-monotonicity
+   * impossible to miss.
+   *
+   * It is kept, beside the ladder rather than inside it, because it is worth knowing: it
+   * measures the TENANT's project-tagging discipline, which is what the `mission` axis of the
+   * decision tree reads and the only reason that axis is at 100% known.
+   */
+  impactTagged: { covered: number; total: number };
 }
 
 export interface EstateReachInput {
@@ -232,22 +248,22 @@ export function estateReach(input: EstateReachInput): EstateReach {
       key: "enriched", label: "Enriched",
       covered: aiAssets.filter((a) => isEnriched(edgeTouched, a)).length, total: aiAssets.length,
     },
-    // 4. ATTRIBUTED. Denominator: the AI-kinded population. Covered: AI assets carrying a
-    // business-impact tier (ai_assets.business_impact) — Wiz's own HBI/MBI/LBI read off the
-    // asset's projects, folded at enrich time. Absent means no project reported one, or the
-    // asset carries no project at all; never read as LOW (graphTypes.ts's own doc comment).
-    {
-      key: "attributed", label: "Attributed",
-      covered: aiAssets.filter((a) => !!a.businessImpact).length, total: aiAssets.length,
-    },
-    // 5. DECIDED. Denominator: the AI-kinded population. Covered: AI assets carrying a
+    // 4. DECIDED. Denominator: the AI-kinded population. Covered: AI assets carrying a
     // problem verdict (ai_assets.worst_open_problem, folded from the Phase 4 tree onto the
-    // asset by graphEnrich.withProblemVerdicts) OR a persisted AARS score (ai_assets.aars).
-    // Either is a model having reached a conclusion about this asset; an asset with neither
-    // sits in the register unscored and unrouted.
+    // asset by graphEnrich.withProblemVerdicts). An asset without one sits in the register
+    // unrouted: no cascade row matched it because nothing was known about it.
+    //
+    // A PERSISTED AARS SCORE DOES NOT COUNT, and this stage used to accept one. That made it
+    // a tautology: `enrichGraphDoc` scores every AI-kinded node unconditionally, so
+    // `typeof a.aars === "number"` is true for the whole population and the stage reported
+    // 100% by construction on every tenant. It did so most loudly on the tenant it mattered
+    // for — a green 100% Decided printed directly under a 0% Enriched, which is exactly the
+    // false-green this file's header says it exists to refuse. A score of 0 on an asset with
+    // no issue, no finding, no edge and no evidence is the ABSENCE of a conclusion; counting
+    // it as one is counting the scorer having run.
     {
       key: "decided", label: "Decided",
-      covered: aiAssets.filter((a) => typeof a.aars === "number" || a.worstOpenProblem !== undefined).length,
+      covered: aiAssets.filter((a) => a.worstOpenProblem !== undefined).length,
       total: aiAssets.length,
     },
   ];
@@ -296,5 +312,9 @@ export function estateReach(input: EstateReachInput): EstateReach {
     edges: { populated, dead, synthetic, declared: EDGE_TYPES.length },
     axes,
     axesPopulation: n,
+    impactTagged: {
+      covered: aiAssets.filter((a) => !!a.businessImpact).length,
+      total: aiAssets.length,
+    },
   };
 }

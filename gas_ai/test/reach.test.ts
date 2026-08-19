@@ -25,7 +25,11 @@ describe("estateReach — empty landscape", () => {
 
   it("throws on nothing, and every stage reads 0 of 0", () => {
     const out = estateReach(empty);
-    expect(out.stages).toHaveLength(5);
+    // FOUR, not five. `attributed` left the ladder: businessImpact arrives on the mandatory
+    // inventory hop, so it does not depend on the stages above it and a funnel must not
+    // contain a stage that can outrun its own predecessor. It is asserted as `impactTagged`
+    // below instead.
+    expect(out.stages).toHaveLength(4);
     for (const s of out.stages) {
       expect(s.covered, s.key).toBe(0);
       expect(s.total, s.key).toBe(0);
@@ -144,28 +148,54 @@ describe("estateReach — stage 3, enriched", () => {
   });
 });
 
-describe("estateReach — stage 4, attributed", () => {
+describe("estateReach — impactTagged, deliberately NOT a stage", () => {
   it("counts an AI asset with a business-impact tier, never one with none", () => {
     const hbi = nodeFixture({ id: "hbi", kind: "AI_AGENT", businessImpact: "HBI" });
     const none = nodeFixture({ id: "none", kind: "AI_AGENT" });
     const out = estateReach({ assets: [hbi, none], issues: [], findings: [], edges: [] });
-    const stage = stageOf(out, "attributed");
-    expect(stage.covered).toBe(1);
-    expect(stage.total).toBe(2);
+    expect(out.impactTagged).toEqual({ covered: 1, total: 2 });
+  });
+
+  it("is absent from the stage ladder", () => {
+    const hbi = nodeFixture({ id: "hbi", kind: "AI_AGENT", businessImpact: "HBI" });
+    const out = estateReach({ assets: [hbi], issues: [], findings: [], edges: [] });
+    expect(out.stages.map((s) => s.key)).not.toContain("attributed");
+  });
+
+  it("can exceed every stage below In register, which is why it cannot be one", () => {
+    // The live-tenant shape that forced this out of the ladder: an asset the inventory hop
+    // tagged and nothing else ever touched. As a stage it printed 100% under a 0% Enriched.
+    const tagged = nodeFixture({ id: "tagged", kind: "AI_AGENT", businessImpact: "HBI" });
+    const out = estateReach({ assets: [tagged], issues: [], findings: [], edges: [] });
+    expect(out.impactTagged.covered).toBe(1);
+    expect(stageOf(out, "observed").covered).toBe(0);
+    expect(stageOf(out, "enriched").covered).toBe(0);
+    expect(stageOf(out, "decided").covered).toBe(0);
   });
 });
 
-describe("estateReach — stage 5, decided", () => {
-  it("counts an AI asset with a persisted AARS score, or a folded problem verdict — never neither", () => {
+describe("estateReach — stage 4, decided", () => {
+  it("counts a folded problem verdict, and never a bare AARS score", () => {
+    // `aars` is assigned to EVERY AI-kinded node by enrichGraphDoc, unconditionally. Accepting
+    // it here made the stage a restatement of aiAssets.length — 100% on every tenant, printed
+    // green directly beneath a 0% Enriched on the one tenant where it mattered.
     const scored = nodeFixture({ id: "scored", kind: "AI_AGENT", aars: 62 });
+    const zeroScored = nodeFixture({ id: "zero", kind: "AI_AGENT", aars: 0 });
     const routed = nodeFixture({ id: "routed", kind: "AI_AGENT", worstOpenProblem: "ACT" });
     const neither = nodeFixture({ id: "neither", kind: "AI_AGENT" });
     const out = estateReach({
-      assets: [scored, routed, neither], issues: [], findings: [], edges: [],
+      assets: [scored, zeroScored, routed, neither], issues: [], findings: [], edges: [],
     });
     const stage = stageOf(out, "decided");
-    expect(stage.covered).toBe(2);
-    expect(stage.total).toBe(3);
+    expect(stage.covered).toBe(1);
+    expect(stage.total).toBe(4);
+  });
+
+  it("cannot report 100% on a landscape where nothing was traversed", () => {
+    const assets = Array.from({ length: 20 }, (_, i) =>
+      nodeFixture({ id: `a${i}`, kind: "AI_AGENT", aars: 0 }));
+    const out = estateReach({ assets, issues: [], findings: [], edges: [] });
+    expect(stageOf(out, "decided")).toMatchObject({ covered: 0, total: 20 });
   });
 });
 

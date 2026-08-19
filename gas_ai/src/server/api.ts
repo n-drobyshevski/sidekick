@@ -1744,6 +1744,12 @@ export function getScanQueries(_p?: unknown): ApiResult {
     // Reported separately from the skips: these steps ran and were answered, we just
     // stopped asking at the page cap, so their rows are a prefix rather than an absence.
     truncatedSteps: settingsStore.getTruncatedSteps(),
+    // Rows each step returned on the last committed sync. A THIRD reading, and the only one
+    // that can say "this step ran and matched nothing" — the two lists above record refusals
+    // and page caps, and a zero-yield step is neither. An id absent here means not recorded
+    // (a deployment that last synced before this shipped), which the client must not render
+    // as 0. See settingsLogic.getStepRows.
+    stepRows: settingsStore.getStepRows(),
     hasCredentials: hasWizCredentials(),
     limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
     // Named rather than folded into `variables`: the transport adds these to every request,
@@ -1793,6 +1799,43 @@ export function testScanVars(p?: unknown): ApiResult {
       );
     }
     return syncJobs.testStepVariables(stepId, proposed);
+  });
+}
+
+/**
+ * Send one page for a step with its CONFIGURED variables and report what came back — the same
+ * probe `testScanVars` runs, without the editable-variables gate.
+ *
+ * That gate is `isEditableStep`, i.e. `spec.fields.length > 0` (domain/scanVars.ts), and it is
+ * the right guard for the operation it was written for: proposing new variable values only
+ * makes sense on a step that declares editable ones. It is the wrong guard for asking a step
+ * whether it works, and the two shared one door.
+ *
+ * The cost of that conflation showed up on a live tenant with 13,932 assets and ZERO rows on
+ * `ai_edges`. The six steps that produce persisted edges — RUNS_AS, SA_FINDINGS,
+ * SENSITIVE_DATA_ACCESS, HOST_EXPOSURE, ENDPOINT_EXPOSURE, IDENTITY_ACCESS — all declare
+ * `fields: []`, so every one of them was un-probeable, and `testScanVars`'s own header describes
+ * precisely the failure they were exhibiting: an optional step swallows an HTTP 400, so a filter
+ * the tenant rejects looks exactly like a tenant with nothing to report. The instrument existed
+ * and could not be aimed at the problem.
+ *
+ * NOT `cached()`, unlike most of this file. A probe whose answer can be an hour old answers a
+ * question nobody asked; the whole point is what the tenant says right now.
+ */
+export function probeSyncStep(p?: unknown): ApiResult {
+  return run(() => {
+    const stepId = String(((p ?? {}) as Rec)["stepId"] ?? "");
+    if (!stepId) throw new Error("A step id is required.");
+    if (!hasWizCredentials()) {
+      throw new Error(
+        "A probe calls Wiz, and no credentials are configured — this deployment is in " +
+        "dry-run. Add credentials in Settings to probe a step against the tenant.",
+      );
+    }
+    // `null` vars, so the probe sends exactly what the battery sends: stored overrides laid
+    // over the step's own defaults (testStepVariables resolves both). A probe that sent
+    // something else would answer about a query the sync does not run.
+    return syncJobs.testStepVariables(stepId, null);
   });
 }
 

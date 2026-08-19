@@ -61,10 +61,19 @@ function boolCell(v: boolean | undefined): string {
 function triCell(v: boolean | null | undefined): string {
   return v === null || v === undefined ? "null" : v ? "true" : "false";
 }
-function parseBool(v: unknown): boolean {
+/**
+ * Exported, unlike the `boolCell`/`triCell` half of the pair, because a reader that walks the
+ * ledger DIRECTLY still has to decode it. `registerScopeDiagnostic` deliberately reads the flat
+ * tab rather than a parsed `GNode` (see its own comment), and the first version of it compared
+ * the cell against a JS `true` — which the tab, being plain text, can never hold. That bug was
+ * silent: it reported "no risk conditions" on a register full of them. Sharing the decoder is
+ * what makes that class of mistake impossible rather than merely unlikely.
+ */
+export function parseBool(v: unknown): boolean {
   return String(v) === "true";
 }
-function parseTri(v: unknown): boolean | null {
+/** See `parseBool` for why this is exported. */
+export function parseTri(v: unknown): boolean | null {
   const s = String(v);
   return s === "true" ? true : s === "false" ? false : null;
 }
@@ -840,6 +849,17 @@ export function persistSync(
   const assetNodes = realNodes(postured.nodes);
   const assetEdges = postured.edges.filter((e) => e.type !== "HAS_ISSUE");
   overwrite(TABS.assets, assetNodes.map(assetToRow));
+  // UNGUARDED ON PURPOSE, unlike the framework/posture writes forty lines down. Those are
+  // guarded because their steps are per-framework and genuinely optional per tenant, so an
+  // empty result there means "not asked" and blanking would lose a good answer.
+  //
+  // Here an empty result means the six graph traversals produced nothing, and that is a
+  // finding — the most important one this app can surface. Guarding it would carry the
+  // previous sync's edges forward through a collection failure and make the failure invisible
+  // for as long as one old sync happened to have worked, which is the one outcome worth
+  // avoiding more than the data loss. So the wipe is real and deliberate: a zero-edge sync
+  // erases the last one's edges, and the answer to that is to make the emptiness LOUD
+  // (JobParams.stepRows, and the reach panel's Enriched stage) rather than to hide it.
   overwrite(TABS.edges, assetEdges.map(edgeToRow));
   overwrite(TABS.issues, decidedIssues.map(issueToRow));
   overwrite(TABS.findings, decidedFindings.map(findingToRow));

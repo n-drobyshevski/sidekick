@@ -18,6 +18,8 @@ import {
   writePath,
 } from "../src/domain/scanVars";
 import { getScanVars, withScanVars } from "../src/domain/settingsLogic";
+import { readFileSync } from "node:fs";
+import { bootServer } from "./gasEnv";
 import { aiIssuesVariables } from "../src/server/wizQueriesAi";
 import { RISK_CATEGORY_ID } from "../src/domain/toxicCombos";
 
@@ -276,5 +278,49 @@ describe("the generated posture step family", () => {
 
   it("a step in no spec at all still resolves to null", () => {
     expect(varSpecFor("NOT_A_STEP")).toBeNull();
+  });
+});
+
+describe("probing a step is not the same permission as editing its variables", () => {
+  // The six steps that write to ai_edges. They declare no editable fields — correctly, since
+  // their normalizers assert things about the response that a changed filter would break — and
+  // for as long as `testScanVars` was the only door, `isEditableStep` locked every one of them
+  // out of the probe as well. On a tenant carrying 13,932 assets and zero rows on ai_edges,
+  // that meant the one instrument built for the failure could not be pointed at any of the six
+  // steps exhibiting it. api.probeSyncStep is the separate door.
+  const EDGE_STEPS = [
+    "RUNS_AS", "SA_FINDINGS", "SENSITIVE_DATA_ACCESS",
+    "HOST_EXPOSURE", "ENDPOINT_EXPOSURE", "IDENTITY_ACCESS",
+  ];
+
+  it("every edge-producing step is un-editable, which is why the probe had to be separate", () => {
+    for (const id of EDGE_STEPS) {
+      expect(isEditableStep(id), `${id} should declare no editable fields`).toBe(false);
+    }
+  });
+
+  it("api.probeSyncStep does not consult isEditableStep", () => {
+    const src = readFileSync(
+      new URL("../src/server/api.ts", import.meta.url), "utf8",
+    );
+    const body = src.slice(
+      src.indexOf("export function probeSyncStep"),
+      src.indexOf("// -----", src.indexOf("export function probeSyncStep")),
+    );
+    expect(body).toContain("testStepVariables");
+    expect(body).not.toContain("isEditableStep");
+    // Credentials ARE still required — a probe calls Wiz, and a dry-run deployment must say
+    // so rather than fail somewhere deeper.
+    expect(body).toContain("hasWizCredentials");
+    // Never cached: a probe whose answer can be an hour old answers a question nobody asked.
+    expect(body).not.toContain("cached(");
+  });
+
+  it("still refuses a step id the battery does not have", async () => {
+    const server = await bootServer();
+    server.setup();
+    const res = server.api.probeSyncStep({ stepId: "" }) as { ok: boolean; error?: string };
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toMatch(/step id is required/i);
   });
 });
