@@ -12,8 +12,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bootServer, teardownServer } from "./gasEnv";
 import {
   getTruncatedSteps,
+  getSkipReasons,
   getStepRows,
   withSkippedSteps,
+  withSkipReasons,
   withStepRows,
   withTruncatedSteps,
 } from "../src/domain/settingsLogic";
@@ -164,6 +166,57 @@ describe("a step that ran and matched nothing is recorded too", () => {
     // An object, never undefined — the client renders a missing id as "not recorded", and a
     // missing FIELD would make every id read that way on a deployment that has synced.
     expect(res.data!.stepRows).toEqual({});
+  });
+});
+
+describe("a skip keeps the tenant's own reason, not just the step id", () => {
+  // `skippedSteps` says WHICH step was refused; only the message says WHAT the tenant objected
+  // to, and it is the message that names the enum member the schema does not have. It was
+  // written to a Cloud Logging line and discarded, so recovering it on a live tenant took a
+  // code change and a re-sync — after the app had already been told.
+  const MSG = "Wiz query failed (HTTP 400): Enum \"GraphRelationshipType\" cannot represent "
+    + "value: \"RUNS_AS\"";
+
+  it("round-trips a reason verbatim", () => {
+    const s = withSkipReasons({}, { RUNS_AS: MSG });
+    expect(getSkipReasons(s)["RUNS_AS"]).toBe(MSG);
+  });
+
+  it("distinguishes a skip with no recorded reason from one with an empty reason", () => {
+    // An empty string is dropped rather than stored, so the reader has exactly two states:
+    // a reason, or nothing. "Skipped, reason: (blank)" would read as the tenant declining to
+    // explain itself, which is not what happened.
+    const s = withSkipReasons({}, { RUNS_AS: MSG, SA_FINDINGS: "" });
+    expect(getSkipReasons(s)["RUNS_AS"]).toBe(MSG);
+    expect(getSkipReasons(s)["SA_FINDINGS"]).toBeUndefined();
+  });
+
+  it("reads an absent or malformed map as empty rather than throwing", () => {
+    expect(getSkipReasons({})).toEqual({});
+    expect(getSkipReasons({ last_skip_reasons: MSG })).toEqual({});
+    expect(getSkipReasons({ last_skip_reasons: [MSG] })).toEqual({});
+    expect(getSkipReasons({ last_skip_reasons: { A: 12, B: MSG } })).toEqual({ B: MSG });
+  });
+
+  it("does not disturb the lists it sits beside", () => {
+    const s = withSkipReasons(
+      withStepRows(withSkippedSteps({}, ["RUNS_AS"]), { HOST_EXPOSURE: 0 }),
+      { RUNS_AS: MSG },
+    );
+    expect(s["last_skipped_steps"]).toEqual(["RUNS_AS"]);
+    expect(getStepRows(s)).toEqual({ HOST_EXPOSURE: 0 });
+    expect(getSkipReasons(s)).toEqual({ RUNS_AS: MSG });
+  });
+
+  it("is surfaced by the endpoint the Scans page reads", async () => {
+    const server = await bootServer();
+    server.setup();
+    const res = server.api.getScanQueries({}) as {
+      ok: boolean;
+      data?: { skipReasons: Record<string, string> };
+    };
+    expect(res.ok).toBe(true);
+    expect(res.data!.skipReasons).toEqual({});
   });
 
   it("is surfaced by the endpoint the Scans page reads", async () => {

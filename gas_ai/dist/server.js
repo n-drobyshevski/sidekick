@@ -4748,7 +4748,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "934629089b6f" : "dev";
+  var BUILD_ID = true ? "e9f690d8f361" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -5912,6 +5912,18 @@ var Server = (() => {
   function withStepRows(settings, rows) {
     return { ...settings, last_step_rows: getStepRows({ last_step_rows: rows }) };
   }
+  function getSkipReasons(settings) {
+    const raw = settings["last_skip_reasons"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (k && typeof v === "string" && v) out[k] = v;
+    }
+    return out;
+  }
+  function withSkipReasons(settings, reasons) {
+    return { ...settings, last_skip_reasons: getSkipReasons({ last_skip_reasons: reasons }) };
+  }
   var DEFAULT_FRAMEWORK_IDS = [
     "wf-id-275",
     // OWASP Top 10 For Agentic Applications 2026
@@ -6094,6 +6106,14 @@ var Server = (() => {
     const next = withStepRows(settings, rows);
     const key = (r) => Object.keys(r).sort().map((k) => `${k}=${r[k]}`).join(" ");
     if (key(getStepRows(next)) === key(getStepRows(settings))) return;
+    saveSettings(next);
+  }
+  var getSkipReasons2 = () => getSkipReasons(loadSettings());
+  function setSkipReasons(reasons) {
+    const settings = loadSettings();
+    const next = withSkipReasons(settings, reasons);
+    const key = (r) => Object.keys(r).sort().map((k) => `${k}=${r[k]}`).join("\0");
+    if (key(getSkipReasons(next)) === key(getSkipReasons(settings))) return;
     saveSettings(next);
   }
   function getSelectedFrameworks2(catalogue) {
@@ -12958,6 +12978,7 @@ var Server = (() => {
   var FIRST_STEP_BUDGET_MS = 45e3;
   var BUDGET_MS = 27e4;
   var CHECKPOINT_MS = 8e3;
+  var SKIP_REASON_MAX = 400;
   function syncSteps(aiTypes) {
     const types = aiTypes != null ? aiTypes : resolveAiResourceTypes().types;
     const frameworkIds = getSelectedFrameworks2(() => loadFrameworks());
@@ -13451,6 +13472,14 @@ var Server = (() => {
   function strList(v) {
     return Array.isArray(v) ? v.map(String) : [];
   }
+  function strMap(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out = {};
+    for (const [k, s] of Object.entries(v)) {
+      if (k && typeof s === "string" && s) out[k] = s;
+    }
+    return out;
+  }
   function numMap(v) {
     if (!v || typeof v !== "object" || Array.isArray(v)) return {};
     const out = {};
@@ -13467,7 +13496,8 @@ var Server = (() => {
       apiCalls: Number((_a5 = parsed["apiCalls"]) != null ? _a5 : 0),
       skippedSteps: strList(parsed["skippedSteps"]),
       truncatedSteps: strList(parsed["truncatedSteps"]),
-      stepRows: numMap(parsed["stepRows"])
+      stepRows: numMap(parsed["stepRows"]),
+      skipReasons: strMap(parsed["skipReasons"])
     };
   }
   function partRefs(job) {
@@ -13565,6 +13595,7 @@ var Server = (() => {
             if (step.optional && /HTTP 400/.test(msg)) {
               params.apiCalls += 1;
               params.skippedSteps.push(step.id);
+              params.skipReasons[step.id] = msg.slice(0, SKIP_REASON_MAX);
               console.warn(`Sync step ${step.id} skipped \u2014 tenant rejected its query: ${msg}`);
               break;
             }
@@ -13580,6 +13611,7 @@ var Server = (() => {
           } catch (e) {
             if (step.optional && e instanceof FilterNotHonouredError) {
               params.skippedSteps.push(step.id);
+              params.skipReasons[step.id] = e.message.slice(0, SKIP_REASON_MAX);
               console.warn(`Sync step ${step.id} skipped \u2014 ${e.message}`);
               break;
             }
@@ -13672,6 +13704,7 @@ var Server = (() => {
         setSkippedSteps(params.skippedSteps);
         setTruncatedSteps(params.truncatedSteps);
         setStepRows(params.stepRows);
+        setSkipReasons(params.skipReasons);
         if (merged.configRules.length) setConfigRulesSyncedAt(Date.now());
       };
       if (opts.lockHeld) persist();
@@ -14838,6 +14871,11 @@ var Server = (() => {
       // (a deployment that last synced before this shipped), which the client must not render
       // as 0. See settingsLogic.getStepRows.
       stepRows: getStepRows2(),
+      // Why each skipped step was skipped — Wiz's own message. `skippedSteps` says WHICH, this
+      // says WHAT the tenant objected to, and only the second is actionable. A step id in the
+      // skip list with no entry here was skipped before this was recorded; the client must render
+      // that as "no reason recorded", never as an empty explanation.
+      skipReasons: getSkipReasons2(),
       hasCredentials: hasWizCredentials(),
       limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
       // Named rather than folded into `variables`: the transport adds these to every request,
