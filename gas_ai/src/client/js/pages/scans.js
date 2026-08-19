@@ -302,6 +302,7 @@ export async function renderScans(main, params, ctx) {
       reachKindTable(reach.kinds),
       sectionLabel("Edge census"),
       reachEdgeCensus(reach.edges),
+      reachImpactTagged(reach.impactTagged),
       sectionLabel("Decision-tree axis coverage"),
       el("p", { class: "cov-note" }, AXIS_KNOWN_WARNING),
       reachAxes(reach.axes, reach.axesPopulation),
@@ -329,6 +330,31 @@ export async function renderScans(main, params, ctx) {
       );
     });
     return el("div", { class: "reach-ladder" }, ...rows);
+  }
+
+  /**
+   * Business-impact tagging, BESIDE the ladder rather than in it.
+   *
+   * It was a fifth stage until a live tenant printed 95% attributed directly above 1%
+   * observed. businessImpact is folded from the asset's own projects on the mandatory
+   * inventory hop, so it needs no traversal and reads high on a landscape where nothing was
+   * traversed at all — a stage that does not depend on the ones above it is not a funnel
+   * stage, and rendering it as one made the panel claim work the pipeline had not done.
+   */
+  function reachImpactTagged(tagged) {
+    if (!tagged) return null;
+    const known = tagged.total > 0;
+    const pct = known ? Math.round((tagged.covered / tagged.total) * 100) : null;
+    return el("div", { class: "card stat-list" },
+      statRow(
+        "Impact-tagged",
+        known ? tagged.covered + " of " + tagged.total : "—",
+        "carry a Wiz business-impact tier — read off the asset's own projects on the "
+        + "inventory hop, so this measures the tenant's tagging discipline, not what this "
+        + "pipeline reached",
+        pct,
+      ),
+    );
   }
 
   function reachKindSummary(reach) {
@@ -439,6 +465,10 @@ export async function renderScans(main, params, ctx) {
       specs: (queries && queries.specs) || [],
       skippedSteps: (queries && queries.skippedSteps) || [],
       truncatedSteps: (queries && queries.truncatedSteps) || [],
+      // Left as an EMPTY OBJECT when absent, never defaulted per-step to 0: an id missing
+      // from this map means the last sync predates the recording, which is a different
+      // statement from "this step returned no rows". See settingsLogic.getStepRows.
+      stepRows: (queries && queries.stepRows) || {},
       transportVariables: (queries && queries.transportVariables) || [],
       hasCredentials: queries ? queries.hasCredentials : boot.hasCredentials,
       combosError,

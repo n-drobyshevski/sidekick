@@ -162,6 +162,18 @@ export function setTruncatedSteps(steps: unknown): void {
   saveSettings(next);
 }
 
+export const getStepRows = (): Record<string, number> => logic.getStepRows(loadSettings());
+
+/** Record what each step yielded. Same no-op-on-unchanged guard as the two lists above. */
+export function setStepRows(rows: unknown): void {
+  const settings = loadSettings();
+  const next = logic.withStepRows(settings, rows);
+  const key = (r: Record<string, number>): string =>
+    Object.keys(r).sort().map((k) => `${k}=${r[k]}`).join(" ");
+  if (key(logic.getStepRows(next)) === key(logic.getStepRows(settings))) return;
+  saveSettings(next);
+}
+
 /**
  * The framework selection, resolved against the synced catalogue on first use.
  *

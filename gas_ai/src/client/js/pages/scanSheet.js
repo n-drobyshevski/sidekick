@@ -144,12 +144,20 @@ function uniq(list) {
 function stepSection(step, skipped, truncated, ctx) {
   const wasSkipped = skipped.has(step.id);
   const wasTruncated = truncated.has(step.id);
+  // A THIRD reading, and the only one that can say the step ran and matched nothing. The two
+  // sets above record refusals and page caps; a step the tenant accepts that returns no rows
+  // is in neither, and used to be indistinguishable from a step that was never reached.
+  // An undefined value means not recorded (last synced before this shipped) and must NOT render as 0.
+  const rows = (ctx.stepRows || {})[step.id];
+  const ranEmpty = rows === 0 && !wasSkipped;
   const head = el("div", { class: "step-head" },
     el("span", { class: "step-id" }, step.id),
     wasSkipped
       ? el("span", { class: "pill warn" }, "Skipped last sync")
       : el("span", { class: "pill neutral" }, step.optional ? "Optional" : "Required"),
     wasTruncated ? el("span", { class: "pill warn" }, "Stopped at the page cap") : null,
+    ranEmpty ? el("span", { class: "pill warn" }, "Ran, returned nothing") : null,
+    rows ? el("span", { class: "pill ok" }, plural(rows, "row") + " last sync") : null,
     step.overridden && step.overridden.length
       ? el("span", { class: "pill ok" }, plural(step.overridden.length, "override"))
       : null,
@@ -161,6 +169,14 @@ function stepSection(step, skipped, truncated, ctx) {
     kids.push(el("p", { class: "cov-note" },
       "The tenant rejected this query on the last sync, so the step was skipped rather " +
       "than failing the run. Everything this step feeds is missing from the figures above."));
+  }
+
+  if (ranEmpty) {
+    kids.push(el("p", { class: "cov-note" },
+      "The last sync ran this step and Wiz answered with zero rows. That is not a rejection " +
+      "— the query was accepted — so it means either the landscape genuinely has nothing of " +
+      "this shape, or the filter asks for something this tenant spells differently. Probe it " +
+      "below: the sample row is what settles which."));
   }
 
   if (wasTruncated) {
@@ -188,9 +204,49 @@ function stepSection(step, skipped, truncated, ctx) {
 
   const spec = (ctx.specs || []).filter((s) => s.stepId === step.id)[0];
   if (step.editable && spec) kids.push(varsEditor(step, spec, ctx));
-  else kids.push(lockedNote(spec));
+  else kids.push(lockedNote(spec), probeOnly(step, ctx));
 
   return sheetSection("Query · " + step.id, ...kids.filter(Boolean));
+}
+
+/**
+ * A probe for a step with no editable variables — the same one-page test the variables editor
+ * offers, minus the editor.
+ *
+ * It exists because the gate was in the wrong place. testScanVars refuses any step where
+ * fields.length === 0, which is right for proposing new variable values and wrong for asking
+ * a step whether it works. Every step that writes an edge — RUNS_AS, SA_FINDINGS,
+ * SENSITIVE_DATA_ACCESS, HOST_EXPOSURE, ENDPOINT_EXPOSURE, IDENTITY_ACCESS — declares no
+ * editable fields, so on a tenant with zero rows on ai_edges the one instrument built for
+ * that exact failure could not be pointed at a single one of the six steps causing it.
+ *
+ * Sends no variables: api_probeSyncStep resolves the step's configured ones server-side, so
+ * what the probe asks is what the battery asks. Renders through the same testResult the
+ * editor uses — one reading of "rows returned vs rows the normalizer kept", not two.
+ */
+function probeOnly(step, ctx) {
+  if (ctx.hasCredentials === false) return null;
+  const out = el("div", { class: "vars-test" });
+  const btn = el("button", {}, "Probe this step");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    clear(out).append(el("p", { class: "vars-test-line" }, "Asking Wiz for one page…"));
+    try {
+      const res = await call("api_probeSyncStep", { stepId: step.id });
+      clear(out).append(testResult(res));
+    } catch (e) {
+      clear(out).append(
+        el("p", { class: "vars-test-line is-bad" }, String((e && e.message) || e)));
+    }
+    btn.disabled = false;
+  });
+  return el("div", { class: "vars" },
+    el("div", { class: "vars-bar" },
+      el("span", { class: "small muted" },
+        "Sends one page with this step's configured variables. Nothing is persisted."),
+      btn),
+    out,
+  );
 }
 
 function lockedNote(spec) {

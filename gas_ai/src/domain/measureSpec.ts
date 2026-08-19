@@ -664,11 +664,15 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "attributed / decided: the AI-kinded subset that stage establishes (AI_ASSET_KINDS "
       + "membership on ai_assets.kind) — a claim about the AI landscape, not about the buckets "
       + "and service accounts the exposure/identity/data-reach traversals pull in alongside it.",
-    measure: "Five { covered, total } pairs: in register (AI-kinded of every row), observed "
+    measure: "FOUR { covered, total } pairs: in register (AI-kinded of every row), observed "
       + "(carrying an unresolved issue, an open failing finding, or a held risk condition), "
       + "enriched (touched by a persisted edge, or carrying exposure/human-access evidence), "
-      + "attributed (a folded business-impact tier), decided (a persisted AARS score or a "
-      + "folded problem verdict).",
+      + "decided (a folded problem verdict). Two stages were removed from the ladder rather "
+      + "than kept: `decided` used to accept a persisted AARS score, which enrichGraphDoc "
+      + "assigns to every AI-kinded node unconditionally, making the stage a restatement of "
+      + "the denominator and a permanent 100%; and `attributed` (a folded business-impact "
+      + "tier) moved out of the ladder entirely because it arrives on the mandatory inventory "
+      + "hop and so does not depend on the stages above it — see landscape-impact-tagged.",
     type: "impact",
     formula: "reach.ts's estateReach(...).stages — one filter per stage over syncStore."
       + "loadAssets()/loadIssues()/loadFindings()/loadEdges(), never a re-derivation of "
@@ -685,10 +689,85 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "reads right now. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "Security analysts (reading landscape posture); the operator deciding "
       + "whether a low stage matters for THIS tenant's traversal footprint.",
-    dataSource: "ai_assets.kind, ai_assets.business_impact, ai_assets.worst_open_problem, "
-      + "ai_assets.aars, ai_edges.type, ai_issues.status, ai_findings.result",
+    dataSource: "ai_assets.kind, ai_assets.worst_open_problem, ai_edges.type, "
+      + "ai_assets.exposure_evidence_json, ai_assets.human_access_json, ai_issues.status, "
+      + "ai_findings.result",
     reportingFormat: "Wiz Scans page, Landscape reach section's stage ladder; AI Inventory's "
       + "one-glance headline card.",
+    measurementMethod: "Objective",
+    revisionDue: REVISION_DUE,
+  },
+  {
+    id: "landscape-impact-tagged",
+    goal:
+      "Report how much of the AI register carries a Wiz business-impact tier, WITHOUT "
+      + "implying the pipeline put it there. It was a fifth reach stage until a live tenant "
+      + "printed 95% attributed directly above 1% observed and 0% enriched — a funnel whose "
+      + "fourth stage outran its second, which is not a funnel. Kept as its own reading "
+      + "because the decision tree's mission axis reads exactly this field, and it is the "
+      + "only reason that axis sits at 100% known on a landscape nothing else reached.",
+    scope: "The AI-kinded subset of ai_assets (AI_ASSET_KINDS membership on ai_assets.kind) — "
+      + "the same denominator every reach stage below In register uses.",
+    measure: "One { covered, total } pair: AI-kinded rows where ai_assets.business_impact is "
+      + "non-empty, over all AI-kinded rows.",
+    type: "implementation",
+    formula: "reach.ts's estateReach(...).impactTagged — a single filter on GNode."
+      + "businessImpact, which graphEnrich folds from the asset's own projects array via "
+      + "worstBusinessImpact.",
+    target: "No numeric target. It measures the TENANT's project-tagging discipline, not this "
+      + "deployment's collection, so a house-wide floor would be a threshold on somebody "
+      + "else's data hygiene.",
+    implementationEvidence: "projects { riskProfile { businessImpact } } is selected by the "
+      + "mandatory AI inventory query (wizQueriesAi.ts), i.e. on the first hop, before any "
+      + "traversal runs. That is precisely why it cannot be read as pipeline reach: it is high "
+      + "on a tenant where not one graph step produced a result.",
+    timeBasedReference: "Snapshotted at each sync's completion. " + NO_PER_ENTITY_HISTORY,
+    responsibleParties: "Security analysts reading the mission axis; the cloud owners who "
+      + "maintain project risk profiles in Wiz.",
+    dataSource: "ai_assets.business_impact, ai_assets.kind",
+    reportingFormat: "Wiz Scans page, Landscape reach section — beside the stage ladder, "
+      + "deliberately not inside it.",
+    measurementMethod: "Objective",
+    revisionDue: REVISION_DUE,
+  },
+  {
+    id: "sync-step-yield",
+    goal:
+      "Distinguish a sync step that RAN AND MATCHED NOTHING from one that was never reached, "
+      + "which nothing stored could do before. The two lists that existed record refusals "
+      + "(last_skipped_steps, written on an HTTP 400 or a normalizer's FilterNotHonoured) and "
+      + "page caps (last_truncated_steps); a step the tenant accepts that returns zero rows is "
+      + "in neither and breaks out of the page loop looking exactly like success. On a live "
+      + "tenant carrying 13,932 assets and zero rows on ai_edges, that gap was the whole "
+      + "question: all six edge-producing steps are optional graphSearch traversals, and "
+      + "'the tenant rejected these' and 'the landscape has nothing of this shape' call for "
+      + "opposite responses.",
+    scope: "Every step of the last COMMITTED sync's battery, by step id. A sync that failed "
+      + "never reaches the persist closure, so this describes the last run that finished — "
+      + "the same rule last_skipped_steps already follows.",
+    measure: "Raw rows returned per step id, summed across pages and resume hops. A step id "
+      + "present with 0 ran and matched nothing; a step id ABSENT was not reached, or the "
+      + "deployment last synced before this was recorded. Absent must never render as 0.",
+    type: "implementation",
+    formula: "syncJobs' JobParams.stepRows, accumulated at the fetch site as "
+      + "result.rows.length per page and persisted by settingsStore.setStepRows alongside "
+      + "the skipped and truncated lists.",
+    target: "No target. A zero is a finding to investigate, not a threshold breach — and for "
+      + "several steps (IDENTITY_HYGIENE on a first sync, per-framework posture on an "
+      + "unselected framework) zero is the correct answer.",
+    implementationEvidence: "Recorded inside the same commit that writes the ledger, so what "
+      + "the Scans page reports always describes the sync whose numbers it is showing. Row "
+      + "counts are the RAW response rows, before normalization — pairing them with the "
+      + "step probe's normalized counts is what separates 'Wiz returned nothing' from 'the "
+      + "normalizer kept nothing'.",
+    timeBasedReference: "Overwritten by each committed sync; no history is kept. "
+      + NO_PER_ENTITY_HISTORY,
+    responsibleParties: "The operator diagnosing why an area reports no figure.",
+    dataSource: "settings.key / settings.value_json — the settings tab is a key/value "
+      + "store, and this reading lives under the `last_step_rows` key, beside "
+      + "last_skipped_steps and last_truncated_steps.",
+    reportingFormat: "Wiz Scans page, each area's drill-down — a per-step pill beside the "
+      + "existing skipped/truncated pills.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },

@@ -353,6 +353,38 @@ export function withTruncatedSteps(settings: Rec, steps: unknown): Rec {
 }
 
 /**
+ * Raw rows each step returned on the last committed sync, by step id.
+ *
+ * A THIRD list, for the case neither of the two above can express: the step ran, the tenant
+ * accepted it, and it matched nothing. That path records nothing today — it breaks out of the
+ * page loop exactly the way a successful step does — so a zero-yield step and a step that was
+ * never reached are the same absence of evidence. They are not the same finding: one says the
+ * landscape has nothing of that shape, the other says the query never got to ask.
+ *
+ * A step id present here with a value of 0 is the first. Absent from here while present in the
+ * battery is the second. That distinction is the entire reason this exists, so the zero must be
+ * WRITTEN, never elided as falsy.
+ *
+ * Absent for a deployment that last synced before this shipped, and the reader must render that
+ * as "not recorded" rather than as 0 — the same absent-is-not-zero discipline getSkippedSteps
+ * carries.
+ */
+export function getStepRows(settings: Rec): Record<string, number> {
+  const raw = settings["last_step_rows"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Rec)) {
+    const n = Number(v);
+    if (k && Number.isFinite(n)) out[k] = n;
+  }
+  return out;
+}
+
+export function withStepRows(settings: Rec, rows: unknown): Rec {
+  return { ...settings, last_step_rows: getStepRows({ last_step_rows: rows }) };
+}
+
+/**
  * The AI-relevant frameworks this app syncs posture for, out of the box.
  *
  * Ids observed on the tenant this was built against. They are a STARTING POINT, not a
