@@ -477,9 +477,15 @@ edges.push(edge("agent-a", "USES_MODEL", "model-text-embedding-005"));
 edges.push(edge("agent-b", "USES_MODEL", "model-text-embedding-005"));
 edges.push(edge("agent-h-chatbot", "INVOKES_TOOL", "mcp-internal-tools"));
 edges.push(edge("agent-l-support", "INVOKES_TOOL", "mcp-internal-tools"));
-edges.push(edge("pipeline-training-01", "USES_DATASET", "dataset-support-transcripts"));
-edges.push(edge("dataset-support-transcripts", "STORED_IN", "bucket-customer-pii"));
-edges.push(edge("agent-e", "USES_DATASET", "dataset-support-transcripts"));
+// Lineage, in the vocabulary the LINEAGE step actually persists (domain/lineageQuery.ts).
+// These three used to read USES_DATASET / STORED_IN — names this tenant does not have and
+// no live query has ever produced. The demo told the pipeline-lineage story in a vocabulary
+// production could not, so `npm run dev` showed connected pipelines where a real sync showed
+// none. Same three facts, said the way the tenant says them.
+edges.push(edge("pipeline-training-01", "READS_DATA_FROM", "dataset-support-transcripts"));
+edges.push(edge("pipeline-training-01", "PRODUCES", "model-text-embedding-005"));
+edges.push(edge("dataset-support-transcripts", "STORES_DATA_IN", "bucket-customer-pii"));
+edges.push(edge("agent-e", "READS_DATA_FROM", "dataset-support-transcripts"));
 
 // Volume amplifiers (cap/collapse demos): the autogen service account reaches many
 // buckets; many human identities can reach the customer-facing chatbot.

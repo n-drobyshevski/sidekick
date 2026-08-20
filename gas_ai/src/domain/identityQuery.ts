@@ -1,6 +1,40 @@
 // Human identity access: who can reach an AI asset, and whether that identity is still in
 // use.
 //
+// ⚠ THIS TRAVERSAL RETURNS NOTHING ON THE TENANT, AND THE REASON IS NOT A NAME OR A FLAG.
+//
+// Probed live 2026-08-20, tenant-wide, with `npm run probe -- --diagnose`. The shape below is
+// correct in every detail this file argues for — the names are the tenant's, the directions are
+// re-anchored, the binding is unselected — and it still matches zero rows. So does every
+// variation tried:
+//
+//   AI asset <-ALLOWS_ACCESS_TO- ACCESS_ROLE_BINDING                    0 rows
+//   AI asset <-ALLOWS_ACCESS_TO- IAM_BINDING (the kind CIEM gets rows for)  0 rows
+//
+// A discovery sweep then asked [every AI type] -REL-> [USER_ACCOUNT, SERVICE_ACCOUNT,
+// PRINCIPAL, IAM_BINDING, ACCESS_ROLE, ACCESS_ROLE_BINDING], forward and reversed, for ten
+// candidate relationships. Exactly one answered:
+//
+//   AI asset -ACTING_AS-> identity     440 rows     (AI_AGENT -> SERVICE_ACCOUNT)
+//
+// ACTING_AS was in that sweep as a POSITIVE CONTROL, and it is the reason the zeros can be
+// believed: a sweep that only ever returns zero looks identical whether the graph is empty or
+// the loop is broken. It returned, so the loop works, so the other zeros are the tenant.
+//
+// What that says: on this tenant an AI asset is the SUBJECT of an identity relationship — it
+// acts as a service account — and never the OBJECT of one. Nothing is entitled TO an AI asset.
+// `ALLOWS_ACCESS_TO` is anchored at a binding and lands on DATA resources (see
+// agentPathQuery.sensitiveDataAccessSpec, which was fixed by routing through that binding).
+//
+// So this step asks a question the graph does not model, and no rename fixes that. Answering
+// "which humans can reach this agent" needs a different source — Wiz's IAM/effective-access
+// surface rather than the security graph, or the project/subscription the asset sits in. Until
+// that is designed, the step is kept, runs, and reports zero honestly; `stepRows.IDENTITY_ACCESS
+// = 0` is the truthful reading and the Scans page says so. It is NOT evidence that no human has
+// access.
+//
+// ------------------------------------------------------------------------------------------
+//
 // The traversal is Wiz's own shape — an AI asset is reached THROUGH a role binding, never
 // directly, so the binding is walked but not selected:
 //

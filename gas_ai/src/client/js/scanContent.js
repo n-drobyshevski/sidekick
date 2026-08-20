@@ -147,8 +147,11 @@ export const SCAN_AREAS = [
   {
     id: "dspm",
     title: "Sensitive Data (DSPM)",
-    query: "graphSearch · ACTING_AS → ALLOWS_ACCESS_TO → HAS_DATA_FINDING",
-    what: "Walks each agent's execution identity to the buckets and databases it can reach, " +
+    query: "graphSearch · ACTING_AS → ENTITLES rev → ALLOWS_ACCESS_TO → HAS_DATA_FINDING " +
+      "(SENSITIVE_DATA_ACCESS, every AI kind); " +
+      "PRODUCES, READS_DATA_FROM, STORES_DATA_IN from AI_PIPELINE | AI_DATASET (LINEAGE)",
+    what: "Walks every AI asset's execution identity — through the IAM binding that actually " +
+      "carries the grant — to the buckets and databases it can reach, " +
       "keeps the ones Wiz classified as holding sensitive data, and collects the findings " +
       "on them. The reachability is what the toxic combinations price, not the storage.",
     lands: "graph",
@@ -182,7 +185,7 @@ export const SCAN_AREAS = [
     // LATERAL_MOVEMENT_FINDING nodes, but they live in the graph document and nothing
     // totals them — so the prose claims the privilege reading the figure can actually back,
     // and the findings are named in the detail sheet where the graph link sits beside them.
-    query: "graphSearch · ACTING_AS, CONTAINS (RUNS_AS, SA_FINDINGS)",
+    query: "graphSearch · ACTING_AS, CONTAINS (RUNS_AS, SA_FINDINGS; every AI kind, not agents only)",
     what: "Reads effective permissions on every identity an AI asset runs as, flagging the " +
       "admin and high-privilege ones. Excessive-access and lateral-movement findings on " +
       "those service accounts are drawn on the graph beside the identity they belong to.",

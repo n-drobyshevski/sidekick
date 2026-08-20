@@ -17,11 +17,13 @@
 
 import { effectiveAccessFilter } from "../domain/effectiveAccess";
 import {
-  agentRunsAsSpec, noGuardrailSpec, saExcessiveAccessSpec, sensitiveDataAccessSpec,
+  agentRunsAsSpec, guardrailRoots, noGuardrailSpec, saExcessiveAccessSpec,
+  sensitiveDataAccessSpec,
 } from "../domain/agentPathQuery";
 import { endpointExposureSpec, hostExposureSpec } from "../domain/exposureQuery";
 import { toGraphEntityQuery, type SelectSpec } from "../domain/graphExpand";
 import { identityAccessSpec } from "../domain/identityQuery";
+import { lineageRoots, lineageSpec } from "../domain/lineageQuery";
 import { RISK_CATEGORY_ID } from "../domain/toxicCombos";
 import type { Rec } from "../domain/util";
 
@@ -302,14 +304,37 @@ function agentPathVariables(spec: SelectSpec, scope: string[] | null): Rec {
   };
 }
 
-export const noGuardrailVariables = (scope: string[] | null): Rec =>
-  agentPathVariables(noGuardrailSpec(), scope);
-export const agentRunsAsVariables = (scope: string[] | null): Rec =>
-  agentPathVariables(agentRunsAsSpec(), scope);
-export const saExcessiveAccessVariables = (scope: string[] | null): Rec =>
-  agentPathVariables(saExcessiveAccessSpec(), scope);
-export const sensitiveDataAccessVariables = (scope: string[] | null): Rec =>
-  agentPathVariables(sensitiveDataAccessSpec(), scope);
+/**
+ * GUARDRAIL_GAPS keeps the AI_AGENT root while the other three widen, and that asymmetry is
+ * deliberate. Its absence-of-a-guardrail is the ONLY producer of `guardrailMissing`, which
+ * `conditionState` reads as the MISSING_GUARDRAIL risk condition and AARS prices in pillar B.
+ * Rooting it at every AI kind would flag ~9,767 pipelines and ~3,141 datasets as unprotected —
+ * assets a guardrail does not attach to — and that is not a wider net, it is a fabricated
+ * finding on 79% of the register. Widening it is a product decision with a number attached;
+ * `npm run probe -- --diagnose` measures it.
+ */
+export const noGuardrailVariables = (types: readonly string[], scope: string[] | null): Rec =>
+  agentPathVariables(noGuardrailSpec(guardrailRoots(types)), scope);
+
+/**
+ * The three identity-and-data traversals, rooted at the tenant-resolved AI type list.
+ *
+ * They ran on the literal AI_AGENT until a probe measured what that cost: standing at every AI
+ * kind, `ACTING_AS` returns 440 rows against 190 from agents alone. A model with its own
+ * service account, a gateway with a binding — invisible, with nothing on the page to say so.
+ * The normalizers were changed in the same commit to anchor on the ROOT rather than on
+ * AI_AGENT; without that they would have discarded every widened row.
+ */
+export const agentRunsAsVariables = (types: readonly string[], scope: string[] | null): Rec =>
+  agentPathVariables(agentRunsAsSpec(types), scope);
+export const saExcessiveAccessVariables = (
+  types: readonly string[],
+  scope: string[] | null,
+): Rec => agentPathVariables(saExcessiveAccessSpec(types), scope);
+export const sensitiveDataAccessVariables = (
+  types: readonly string[],
+  scope: string[] | null,
+): Rec => agentPathVariables(sensitiveDataAccessSpec(types), scope);
 
 /**
  * A graphSearch document whose traversal arrives as the `$query` VARIABLE rather than inline.
@@ -362,6 +387,30 @@ export function identityAccessVariables(
 ): Rec {
   return {
     query: toGraphEntityQuery(identityAccessSpec(types)),
+    projectId: scope && scope.length ? scope[0] : null,
+  };
+}
+
+/**
+ * Pipeline / dataset lineage: what a pipeline produces, ingests and writes.
+ *
+ * The traversal is `lineageSpec` (domain/lineageQuery.ts), passed as `$query`. It is the
+ * first battery traversal rooted at anything other than AI_AGENT or the whole AI type list,
+ * and it exists because AI_PIPELINE and AI_DATASET are 79% of the register with nothing ever
+ * asked about them. Every relationship it sends is already carried by AGENT_EXPANSION.
+ */
+export const Q_LINEAGE = graphSearchVarQuery("SidekickAiLineage");
+
+/**
+ * The `$query` / `$projectId` variables for Q_LINEAGE. Pure — scope is a parameter.
+ *
+ * The caller passes `null`: scoping this step would cap the reachable population at one
+ * project while the inventory that found the pipelines is tenant-wide, so a low Enriched
+ * number would be guaranteed by construction rather than measured. See lineageQuery.ts.
+ */
+export function lineageVariables(types: readonly string[], scope: string[] | null): Rec {
+  return {
+    query: toGraphEntityQuery(lineageSpec(lineageRoots(types))),
     projectId: scope && scope.length ? scope[0] : null,
   };
 }

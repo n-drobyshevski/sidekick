@@ -3,7 +3,7 @@
 exports[`dry-run sync > produces the sample landscape 1`] = `
 {
   "jobId": null,
-  "message": "Dry-run sync complete: 119 nodes, 117 edges, 32 issues (sample data).",
+  "message": "Dry-run sync complete: 119 nodes, 118 edges, 32 issues (sample data).",
 }
 `;
 
@@ -727,8 +727,11 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
             "BOUND_TO",
             "PERMITS_ACCESS_ROLE",
             "SERVES",
+            "PRODUCES",
+            "READS_DATA_FROM",
+            "STORES_DATA_IN",
           ],
-          "declared": 23,
+          "declared": 26,
           "populated": [],
           "synthetic": [
             "HAS_ISSUE",
@@ -1657,7 +1660,7 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       "aars_rule_version": 0,
       "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
       "api_calls": 0,
-      "edge_count": 117,
+      "edge_count": 118,
       "error": null,
       "finished_at": "2026-08-13T09:00:00Z",
       "issue_count": 32,
@@ -4719,10 +4722,12 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "dead": [
           "USES",
           "USES_TOOL",
+          "USES_DATASET",
+          "STORED_IN",
           "BOUND_TO",
           "PERMITS_ACCESS_ROLE",
         ],
-        "declared": 23,
+        "declared": 26,
         "populated": [
           "PROTECTED_BY",
           "RUNS_AS",
@@ -4730,13 +4735,14 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
           "HAS_FINDING",
           "INVOKES_TOOL",
           "USES_MODEL",
-          "USES_DATASET",
-          "STORED_IN",
           "HOSTED_ON",
           "BUILT_FROM",
           "CAN_INVOKE",
           "ENFORCES",
           "SERVES",
+          "PRODUCES",
+          "READS_DATA_FROM",
+          "STORES_DATA_IN",
         ],
         "synthetic": [
           "HAS_ISSUE",
@@ -7003,7 +7009,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       "capped": true,
       "shownEdges": 86,
       "shownNodes": 99,
-      "totalEdges": 186,
+      "totalEdges": 187,
       "totalNodes": 188,
     },
     "edges": [
@@ -7212,16 +7218,16 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "type": "PROTECTED_BY",
       },
       {
+        "dst": "dataset-support-transcripts",
+        "id": "agent-e|READS_DATA_FROM|dataset-support-transcripts",
+        "src": "agent-e",
+        "type": "READS_DATA_FROM",
+      },
+      {
         "dst": "sa-agent-e",
         "id": "agent-e|RUNS_AS|sa-agent-e",
         "src": "agent-e",
         "type": "RUNS_AS",
-      },
-      {
-        "dst": "dataset-support-transcripts",
-        "id": "agent-e|USES_DATASET|dataset-support-transcripts",
-        "src": "agent-e",
-        "type": "USES_DATASET",
       },
       {
         "dst": "excessive|agent-f-preprod",
@@ -15365,6 +15371,12 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
         },
         {
           "count": 1,
+          "edge": "READS_DATA_FROM",
+          "kind": "AI_DATASET",
+          "reverse": false,
+        },
+        {
+          "count": 1,
           "edge": "RUNS_AS",
           "kind": "ACCESS_KEY",
           "reverse": false,
@@ -15373,12 +15385,6 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
           "count": 1,
           "edge": "SERVES",
           "kind": "ENDPOINT",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "USES_DATASET",
-          "kind": "AI_DATASET",
           "reverse": false,
         },
       ],
@@ -15391,19 +15397,19 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
         },
         {
           "count": 1,
-          "edge": "STORED_IN",
+          "edge": "STORES_DATA_IN",
           "kind": "BUCKET",
           "reverse": false,
         },
         {
           "count": 1,
-          "edge": "USES_DATASET",
+          "edge": "READS_DATA_FROM",
           "kind": "AI_AGENT",
           "reverse": true,
         },
         {
           "count": 1,
-          "edge": "USES_DATASET",
+          "edge": "READS_DATA_FROM",
           "kind": "AI_PIPELINE",
           "reverse": true,
         },
@@ -15441,11 +15447,23 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
           "kind": "AI_GUARDRAIL",
           "reverse": false,
         },
+        {
+          "count": 1,
+          "edge": "PRODUCES",
+          "kind": "AI_PIPELINE",
+          "reverse": true,
+        },
       ],
       "AI_PIPELINE": [
         {
           "count": 1,
-          "edge": "USES_DATASET",
+          "edge": "PRODUCES",
+          "kind": "AI_MODEL",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "READS_DATA_FROM",
           "kind": "AI_DATASET",
           "reverse": false,
         },
@@ -15465,7 +15483,7 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
         },
         {
           "count": 1,
-          "edge": "STORED_IN",
+          "edge": "STORES_DATA_IN",
           "kind": "AI_DATASET",
           "reverse": true,
         },
@@ -16214,6 +16232,12 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
         },
         {
           "count": 1,
+          "edge": "READS_DATA_FROM",
+          "kind": "AI_DATASET",
+          "reverse": false,
+        },
+        {
+          "count": 1,
           "edge": "RUNS_AS",
           "kind": "ACCESS_KEY",
           "reverse": false,
@@ -16222,12 +16246,6 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
           "count": 1,
           "edge": "SERVES",
           "kind": "ENDPOINT",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "USES_DATASET",
-          "kind": "AI_DATASET",
           "reverse": false,
         },
       ],
@@ -16240,19 +16258,19 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
         },
         {
           "count": 1,
-          "edge": "STORED_IN",
+          "edge": "STORES_DATA_IN",
           "kind": "BUCKET",
           "reverse": false,
         },
         {
           "count": 1,
-          "edge": "USES_DATASET",
+          "edge": "READS_DATA_FROM",
           "kind": "AI_AGENT",
           "reverse": true,
         },
         {
           "count": 1,
-          "edge": "USES_DATASET",
+          "edge": "READS_DATA_FROM",
           "kind": "AI_PIPELINE",
           "reverse": true,
         },
@@ -16290,11 +16308,23 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
           "kind": "AI_GUARDRAIL",
           "reverse": false,
         },
+        {
+          "count": 1,
+          "edge": "PRODUCES",
+          "kind": "AI_PIPELINE",
+          "reverse": true,
+        },
       ],
       "AI_PIPELINE": [
         {
           "count": 1,
-          "edge": "USES_DATASET",
+          "edge": "PRODUCES",
+          "kind": "AI_MODEL",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "READS_DATA_FROM",
           "kind": "AI_DATASET",
           "reverse": false,
         },
@@ -16314,7 +16344,7 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
         },
         {
           "count": 1,
-          "edge": "STORED_IN",
+          "edge": "STORES_DATA_IN",
           "kind": "AI_DATASET",
           "reverse": true,
         },
@@ -16814,12 +16844,12 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 87450,
+    "archiveBytes": 87616,
     "cellCount": 40300,
     "rows": {
       "assets": 87,
       "dataFindings": 6,
-      "edges": 85,
+      "edges": 86,
       "issues": 32,
       "syncs": 9,
     },
@@ -16836,7 +16866,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "aars_rule_version": 0,
         "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
         "api_calls": 0,
-        "edge_count": 117,
+        "edge_count": 118,
         "error": null,
         "finished_at": "2026-08-13T09:00:00Z",
         "issue_count": 32,
@@ -24529,7 +24559,7 @@ exports[`the persisted ledger > writes the tabs the schema declares 1`] = `
   "ai_assets": 87,
   "ai_config_rules": 5,
   "ai_data_findings": 6,
-  "ai_edges": 85,
+  "ai_edges": 86,
   "ai_findings": 7,
   "ai_framework_policies": 17,
   "ai_framework_posture": 28,

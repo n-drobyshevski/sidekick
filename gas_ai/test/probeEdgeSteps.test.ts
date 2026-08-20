@@ -49,15 +49,18 @@ describe("probeEdgeSteps", () => {
     expect(res.ok).toBe(true);
     const ids = edgeStepIds(res.data!.steps);
 
-    // The six traversals this whole investigation is about. Named here as a READING of the
+    // The traversals this whole investigation is about. Named here as a READING of the
     // battery, not as the source of truth: if a step's `writes` stops claiming ai_edges, or a
     // new traversal starts claiming it, this list moves and the probe's coverage moves with it.
+    // LINEAGE did exactly that — it was added claiming three edge types and appears here
+    // without probeEdgeSteps being told about it, which is the derivation doing its job.
     expect(ids).toEqual([
       "RUNS_AS",
       "SA_FINDINGS",
       "SENSITIVE_DATA_ACCESS",
       "HOST_EXPOSURE",
       "ENDPOINT_EXPOSURE",
+      "LINEAGE",
       "IDENTITY_ACCESS",
     ]);
   });
@@ -73,7 +76,7 @@ describe("probeEdgeSteps", () => {
     const steps = (res.data!.steps ?? []).filter((s) =>
       edgeStepIds(res.data!.steps).includes(String(s["id"])),
     );
-    expect(steps).toHaveLength(6);
+    expect(steps).toHaveLength(7);
     for (const s of steps) expect(s["optional"], String(s["id"])).toBe(true);
   });
 });

@@ -11,8 +11,11 @@
 
 import { SEVERITY_ORDER, type Severity } from "./config";
 import { toEffectiveAccessRow, type EffectiveAccessRow } from "./effectiveAccess";
+import { GUARDRAIL_SUBJECT_KINDS } from "./agentPathQuery";
 import { HOST_KINDS } from "./exposureQuery";
+import { flattenSlots } from "./graphExpand";
 import { normalizeAccessType, normalizeIdentityPurpose } from "./identityQuery";
+import { lineageSpec } from "./lineageQuery";
 import {
   AI_ASSET_KINDS,
   edgeId,
@@ -1062,6 +1065,21 @@ export function frameworkCodeLookup(
   return byKey;
 }
 
+/**
+ * The AI asset a path row is rooted at, whatever kind it is.
+ *
+ * It is `entities[0]` because the root is first in the spec's pre-order walk and is never
+ * `optional`, so it cannot be the null that padding would shift — the kind check is the guard,
+ * not the lookup. These three traversals used to read `find(e => e.kind === "AI_AGENT")`, which
+ * was correct only while their root list was the literal AI_AGENT. Widening the root without
+ * this would have collected rows the normalizer then silently discarded: more Wiz calls, the
+ * same numbers, and nothing to say why.
+ */
+function rootAiAsset(entities: GNode[]): GNode | undefined {
+  const first = entities[0];
+  return first && (AI_ASSET_KINDS as readonly string[]).includes(first.kind) ? first : undefined;
+}
+
 function entitiesOf(row: Rec): GNode[] {
   if (!row || typeof row !== "object") return [];
   const entities = row["entities"];
@@ -1071,12 +1089,20 @@ function entitiesOf(row: Rec): GNode[] {
     .filter((n): n is GNode => n !== null);
 }
 
-/** graphSearch "agents without guardrail" page → agents flagged guardrailMissing. */
+/**
+ * graphSearch "AI assets without a guardrail" page → those assets flagged guardrailMissing.
+ *
+ * The kind check is `GUARDRAIL_SUBJECT_KINDS`, not the literal AI_AGENT it used to be. That
+ * filter was doing real work — it is what stops an unexpected entity being flagged — but once
+ * the traversal roots at models and services too, testing for AI_AGENT would have collected
+ * 1,760 rows and flagged the 690 agents among them. The step would have cost three times the
+ * Wiz calls and reported exactly the number it did before, with nothing to say why.
+ */
 export function normalizeNoGuardrailPage(rows: Rec[]): NormalizedPart {
   const part = emptyPart();
   for (const row of rows) {
     for (const node of entitiesOf(row)) {
-      if (node.kind !== "AI_AGENT") continue;
+      if (!(GUARDRAIL_SUBJECT_KINDS as readonly string[]).includes(node.kind)) continue;
       node.guardrailMissing = true;
       part.nodes.push(node);
     }
@@ -1092,7 +1118,7 @@ export function normalizeRunsAsPage(rows: Rec[]): NormalizedPart {
   const part = emptyPart();
   for (const row of rows) {
     const entities = entitiesOf(row);
-    const agent = entities.find((e) => e.kind === "AI_AGENT");
+    const agent = rootAiAsset(entities);
     const sa = entities.find((e) => e.kind === "SERVICE_ACCOUNT");
     const findings = entities.filter(
       (e) => e.kind === "EXCESSIVE_ACCESS_FINDING" || e.kind === "LATERAL_MOVEMENT_FINDING",
@@ -1126,6 +1152,63 @@ export function normalizeRunsAsPage(rows: Rec[]): NormalizedPart {
 // for something that can no longer arrive. Its sibling DATASTORE_KINDS in graphEnrich is a
 // different list over the persisted ledger and still needs the kind, so it keeps it.
 const DATA_STORE_KINDS: ReadonlySet<string> = new Set(["BUCKET", "DATABASE"]);
+
+/**
+ * Entities of a graphSearch row WITH the null padding kept, so index === slot index.
+ *
+ * `entitiesOf` drops nulls, which is right for the shallow traversals that identify their
+ * entities by type. It is fatal for a slot decode: an unmatched `optional` leg is returned
+ * as a literal null, and compacting the array silently shifts every entity after it into
+ * the wrong slot — the edges would still be built, still look plausible, and be wrong.
+ * Unmappable kinds become null here too rather than disappearing, for the same reason.
+ */
+function slotEntitiesOf(row: Rec): (GNode | null)[] {
+  if (!row || typeof row !== "object") return [];
+  const entities = row["entities"];
+  if (!Array.isArray(entities)) return [];
+  return entities.map((e) => (e ? normalizeCloudResource(e as Rec) : null));
+}
+
+/**
+ * graphSearch lineage page → the pipeline/dataset lineage edges.
+ *
+ * POSITIONAL, and it has no choice. `lineageSpec` puts BUCKET in three different slots —
+ * the ingest leg, the store-behind-the-dataset leg and the write leg — so the type of a
+ * returned entity says nothing about which relationship reached it. Only its index does.
+ * This is the same constraint AGENT_EXPANSION documents at length; the difference is that
+ * this traversal persists what it decodes, so getting it wrong writes bad edges rather than
+ * drawing a bad picture.
+ *
+ * The edge plan is not a hand-written table. `flattenSlots` already knows each slot's
+ * parent and the relationship that reached it, so the walk below is derived from the spec
+ * itself and cannot drift from what was sent.
+ *
+ * A row whose entity count does not match the slot count is SKIPPED, not partially decoded.
+ * Arity is the whole basis of the alignment: if the tenant returns a different shape than
+ * the spec describes, every index is suspect and a half-read row is worse than no row.
+ */
+export function normalizeLineagePage(rows: Rec[]): NormalizedPart {
+  const part = emptyPart();
+  const slots = flattenSlots(lineageSpec());
+  for (const row of rows) {
+    const entities = slotEntitiesOf(row);
+    if (entities.length !== slots.length) continue;
+    for (const node of entities) if (node) part.nodes.push(node);
+    for (const slot of slots) {
+      if (slot.parentIndex === null || !slot.edgeType) continue;
+      const child = entities[slot.index];
+      const parent = entities[slot.parentIndex];
+      if (!child || !parent) continue;
+      // `reverse` means the tenant's edge runs child → parent; nothing in lineageSpec is
+      // reversed today, and the flip is here so that adding one cannot quietly invert an edge.
+      const src = slot.reverse ? child.id : parent.id;
+      const dst = slot.reverse ? parent.id : child.id;
+      const type = slot.edgeType as GEdge["type"];
+      part.edges.push({ id: edgeId(src, type, dst), src, dst, type });
+    }
+  }
+  return part;
+}
 
 /**
  * Raw entities of a graphSearch row, untouched.
@@ -1166,7 +1249,7 @@ export function normalizeSensitiveDataAccessPage(rows: Rec[]): NormalizedPart {
   const part = emptyPart();
   for (const row of rows) {
     const entities = entitiesOf(row);
-    const agent = entities.find((e) => e.kind === "AI_AGENT");
+    const agent = rootAiAsset(entities);
     const sa = entities.find((e) => e.kind === "SERVICE_ACCOUNT");
     const stores = entities.filter((e) => DATA_STORE_KINDS.has(e.kind));
 

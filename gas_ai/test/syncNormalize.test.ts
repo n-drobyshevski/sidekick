@@ -191,10 +191,27 @@ describe("page normalizers", () => {
     expect(issue.status).toBe("OPEN");
   });
 
-  it("no-guardrail page flags agents (and only agents)", () => {
+  it("no-guardrail page flags the guardrail subjects, and nothing else", () => {
     const part = normalizeNoGuardrailPage([{ entities: [AGENT_RAW, SA_RAW] }]);
     expect(part.nodes).toHaveLength(1);
     expect(part.nodes[0].guardrailMissing).toBe(true);
+
+    // Models and services are subjects too, since the traversal widened to them. Testing for
+    // AI_AGENT here would have collected 1,760 rows and flagged the 690 agents among them —
+    // three times the Wiz calls for exactly the number the step reported before.
+    for (const type of ["AI_MODEL", "AI_SERVICE"]) {
+      const p = normalizeNoGuardrailPage([{ entities: [{ id: "x1", type, name: type }] }]);
+      expect(p.nodes.map((n) => n.guardrailMissing), type).toEqual([true]);
+    }
+
+    // And the narrowness is the point, not an oversight. `guardrailMissing` is the only
+    // producer of MISSING_GUARDRAIL, which AARS prices in pillar B, so flagging a pipeline or
+    // a dataset would not widen the net — it would assert a missing control on an asset a
+    // guardrail does not attach to, ~10,000 times over on this tenant.
+    for (const type of ["AI_PIPELINE", "AI_DATASET", "BUCKET"]) {
+      const p = normalizeNoGuardrailPage([{ entities: [{ id: "x2", type, name: type }] }]);
+      expect(p.nodes, type).toEqual([]);
+    }
   });
 
   it("runs-as page implies RUNS_AS (+ HAS_FINDING) edges from the path entities", () => {
@@ -207,6 +224,36 @@ describe("page normalizers", () => {
     // A row without a service account yields nodes but no edges.
     const partial = normalizeRunsAsPage([{ entities: [AGENT_RAW] }]);
     expect(partial.edges).toHaveLength(0);
+  });
+
+  it("anchors on the ROOT AI asset, not on AI_AGENT, so a widened root still lands", () => {
+    // These traversals used to read find(kind === "AI_AGENT"), which was right only while
+    // their root list was the literal AI_AGENT. Rooting them at the tenant-resolved AI types
+    // without this change would have collected every widened row and then discarded it —
+    // more Wiz calls, identical numbers, and nothing anywhere to say why. A live probe put
+    // 440 rows behind ACTING_AS across all AI kinds against 190 from agents alone, so the
+    // rows are real and this is what keeps them.
+    const model = { id: "m1", type: "AI_MODEL", name: "text-embedding-005" };
+    const gateway = { id: "g1", type: "AI_GATEWAY", name: "prod-gateway" };
+    for (const root of [model, gateway]) {
+      const part = normalizeRunsAsPage([{ entities: [root, SA_RAW] }]);
+      expect(part.edges, root.type).toEqual([
+        expect.objectContaining({ src: root.id, dst: "wiz-node-sa-1", type: "RUNS_AS" }),
+      ]);
+    }
+
+    // Same for the sensitive-data path, which anchors the same way.
+    const store = { id: "b1", type: "BUCKET", name: "customer-pii" };
+    const dataPart = normalizeSensitiveDataAccessPage([{ entities: [model, SA_RAW, store] }]);
+    expect(dataPart.edges.map((e) => `${e.src}|${e.type}|${e.dst}`)).toEqual([
+      "m1|RUNS_AS|wiz-node-sa-1",
+      "wiz-node-sa-1|ALLOWS_ACCESS_TO|b1",
+    ]);
+
+    // And the guard still holds: a row whose first entity is NOT an AI asset has no root, so
+    // nothing is attributed to whatever happened to come back first.
+    const rootless = normalizeRunsAsPage([{ entities: [SA_RAW, store] }]);
+    expect(rootless.edges).toHaveLength(0);
   });
 
   it("identity-access page implies identity → ALLOWS_ACCESS_TO → agent", () => {
