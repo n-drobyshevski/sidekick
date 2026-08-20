@@ -4,8 +4,19 @@
 // The traversal is Wiz's own shape — an AI asset is reached THROUGH a role binding, never
 // directly, so the binding is walked but not selected:
 //
-//   AI asset <-ALLOWS_ACCESS_TO- ACCESS_ROLE_BINDING -BOUND_TO->        USER_ACCOUNT / SERVICE_ACCOUNT
-//                                                   -PERMITS_ACCESS_ROLE-> ACCESS_ROLE[accessType]
+//   AI asset <-ALLOWS_ACCESS_TO- ACCESS_ROLE_BINDING -ENTITLES->  USER_ACCOUNT / SERVICE_ACCOUNT
+//                                                    -ALLOWS->     ACCESS_ROLE[accessTypes]
+//
+// Those are the TENANT's relationship names, taken from `HOP` (graphExpand.ts). This traversal
+// used to send `BOUND_TO` and `PERMITS_ACCESS_ROLE`, which exist in no Wiz schema this app has
+// ever talked to — an introspection probe returned 100 relationship members and neither was
+// among them.
+//
+// DIRECTION IS A PROPERTY OF WHERE THE TRAVERSAL STANDS, not of the relationship, and this is
+// the spec where that nearly went wrong. The capture proving `ENTITLES` stands at the PRINCIPAL
+// and carries `reverse: true`; this spec stands at the BINDING and walks the same edge FORWARD.
+// Copying the flag across without re-anchoring would have inverted the hop — and the symptom
+// would have been zero rows, not an error, so nothing would have said so.
 //
 // TWO THINGS THIS MODULE EXISTS TO KEEP HONEST.
 //
@@ -48,7 +59,7 @@ export const HUMAN_ACCESS_TYPES = ["ADMIN", "HIGH_PRIVILEGE"] as const;
  */
 const WIRE_ACCESS_TYPES = ["Admin", "HighPrivilege"] as const;
 
-/** The identity kinds the `BOUND_TO` leg can return. */
+/** The identity kinds the ENTITLES leg can return. */
 export const BOUND_IDENTITY_KINDS = ["USER_ACCOUNT", "SERVICE_ACCOUNT"] as const;
 
 /**

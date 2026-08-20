@@ -15,10 +15,19 @@
 // and a bare string cannot be one of those no matter what it spells.
 //
 // So these four never reached vocabulary validation at all. Every quoted value failed first, and
-// the rejection said nothing about whether `RUNS_AS` is the right name for that hop. That
-// question is still open, and it is answerable only now that the shape is out of the way —
-// which is the entire reason the names below are UNCHANGED from the inline versions. Fixing two
-// things at once would leave the next probe unable to say which one it was reporting on.
+// the rejection said nothing about whether `RUNS_AS` was the right name for that hop.
+//
+// TWO FIXES, IN THAT ORDER, AND THE ORDER WAS THE POINT. The shape fix shipped first with the
+// names left alone, so that the next probe had one variable to report on. It came back with all
+// four steps failing the same way — `invalid type for variable: 'query'`, one cause instead of
+// two — and an introspection probe then returned the tenant's 100 relationship members. Of the
+// 23 this app declares, five exist here, and every name these traversals sent was absent.
+//
+// So the names below are NOT the inline versions' names any more. They are the tenant's, taken
+// from `HOP` (graphExpand.ts), where each one is pinned to the capture that proves it:
+// RUNS_AS → ACTING_AS, HAS_FINDING → CONTAINS, PROTECTED_BY → PROTECTS reversed. What a
+// normalizer PERSISTS on ai_edges keeps the old names and is a separate namespace on purpose —
+// these specs send ACTING_AS and `normalizeRunsAsPage` writes RUNS_AS.
 //
 // WHAT IS DELIBERATELY NOT CHANGED HERE, and why each is its own decision:
 //
@@ -49,8 +58,8 @@ export const AGENT_PATH_ROOTS: readonly string[] = ["AI_AGENT"];
  *
  * The negated node is walked and not selected: it must not exist, so there is nothing of it to
  * put in a slot. `negate` is the one construct in this file with no capture behind it — no
- * request in exemples/ carries the key — so if this step keeps failing after the shape fix while
- * the other three pass, `negate` is the first thing to suspect rather than `PROTECTED_BY`.
+ * request in exemples/ carries the key — so if this step alone keeps failing once the shape and
+ * the vocabulary are both fixed, `negate` is the first thing to suspect, ahead of `PROTECTS`.
  *
  * It matters more than its size suggests: `normalizeNoGuardrailPage` is the ONLY producer of
  * `guardrailMissing` anywhere in this codebase, and `conditionState` reads that flag as the
