@@ -1109,7 +1109,11 @@ export function normalizeRunsAsPage(rows: Rec[]): NormalizedPart {
 }
 
 /** The datastore kinds the sensitive-data traversal asks for. */
-const DATA_STORE_KINDS: ReadonlySet<string> = new Set(["BUCKET", "DATABASE", "DATABASE_SERVER"]);
+// Read-side: which returned entities count as the store on a sensitive-data row. DATABASE_SERVER
+// left the QUERY (the tenant's schema has no such type), and leaving it here would be a filter
+// for something that can no longer arrive. Its sibling DATASTORE_KINDS in graphEnrich is a
+// different list over the persisted ledger and still needs the kind, so it keeps it.
+const DATA_STORE_KINDS: ReadonlySet<string> = new Set(["BUCKET", "DATABASE"]);
 
 /**
  * Raw entities of a graphSearch row, untouched.

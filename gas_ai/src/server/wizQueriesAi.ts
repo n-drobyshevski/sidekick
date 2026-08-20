@@ -266,7 +266,7 @@ export const Q_RULE_ASSETS =
   "  }\n" +
   "}\n";
 
-/** Guardrail-coverage gap: agents with NO PROTECTED_BY edge to any guardrail. */
+/** Guardrail-coverage gap: agents no guardrail PROTECTS. The negated leg, see noGuardrailSpec. */
 /**
  * The four agent-rooted traversals — documents only. The traversals themselves are
  * `SelectSpec`s in domain/agentPathQuery.ts and arrive as the `$query` variable.

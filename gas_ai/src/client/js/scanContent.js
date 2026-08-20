@@ -125,8 +125,8 @@ export const SCAN_AREAS = [
   {
     id: "guardrails",
     title: "Guardrail Coverage",
-    query: "graphSearch · PROTECTED_BY with negate:true (GUARDRAIL_GAPS)",
-    what: "Checks the PROTECTED_BY relationship between agents/models and guardrails; an " +
+    query: "graphSearch · PROTECTS reversed, negate:true (GUARDRAIL_GAPS)",
+    what: "Checks the guardrail relationship between agents/models and guardrails; an " +
       "absent edge marks the asset “no guardrail” — the strongest single " +
       "amplifier in the toxic combinations.",
     lands: "graph",
@@ -147,7 +147,7 @@ export const SCAN_AREAS = [
   {
     id: "dspm",
     title: "Sensitive Data (DSPM)",
-    query: "graphSearch · RUNS_AS → ALLOWS_ACCESS_TO → HAS_DATA_FINDING",
+    query: "graphSearch · ACTING_AS → ALLOWS_ACCESS_TO → HAS_DATA_FINDING",
     what: "Walks each agent's execution identity to the buckets and databases it can reach, " +
       "keeps the ones Wiz classified as holding sensitive data, and collects the findings " +
       "on them. The reachability is what the toxic combinations price, not the storage.",
@@ -170,13 +170,19 @@ export const SCAN_AREAS = [
     },
   },
   {
+    // The `query` lines above and below name what goes ON THE WIRE — the tenant's relationship
+    // vocabulary — because that is what this panel documents. The STEP IDS beside them
+    // (RUNS_AS, SA_FINDINGS) are labels and do not move, and neither do the edge types a
+    // normalizer persists on ai_edges. Sent and persisted are two namespaces on purpose; the
+    // day they quietly shared a word is the day four traversals shipped asking for names no
+    // tenant had.
     id: "ciem",
     title: "CIEM / IAM Analysis",
     // Narrowed deliberately. The SA_FINDINGS step does produce EXCESSIVE_ACCESS_FINDING and
     // LATERAL_MOVEMENT_FINDING nodes, but they live in the graph document and nothing
     // totals them — so the prose claims the privilege reading the figure can actually back,
     // and the findings are named in the detail sheet where the graph link sits beside them.
-    query: "graphSearch · RUNS_AS, HAS_FINDING (RUNS_AS, SA_FINDINGS)",
+    query: "graphSearch · ACTING_AS, CONTAINS (RUNS_AS, SA_FINDINGS)",
     what: "Reads effective permissions on every identity an AI asset runs as, flagging the " +
       "admin and high-privilege ones. Excessive-access and lateral-movement findings on " +
       "those service accounts are drawn on the graph beside the identity they belong to.",

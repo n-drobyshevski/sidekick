@@ -20,8 +20,14 @@ import { aiFlavored, aiInventoryVariables, Q_AI_INVENTORY } from "./wizQueriesAi
 import { readAll, TABS } from "./sheetsDb";
 import { describeSyncSteps, testStepVariables } from "./syncJobs";
 import { parseBool, parseTri } from "./syncStore";
-import { AI_ASSET_KINDS, EDGE_TYPES, NODE_KINDS } from "../domain/graphTypes";
+import { AI_ASSET_KINDS, EDGE_TYPES } from "../domain/graphTypes";
 import { READ_TIME_EDGE_TYPES } from "../domain/reach";
+import {
+  agentRunsAsSpec, noGuardrailSpec, saExcessiveAccessSpec, sensitiveDataAccessSpec,
+} from "../domain/agentPathQuery";
+import { endpointExposureSpec, hostExposureSpec } from "../domain/exposureQuery";
+import { AGENT_EXPANSION, specVocabulary, type SelectSpec } from "../domain/graphExpand";
+import { identityAccessSpec } from "../domain/identityQuery";
 import { isOpenGap, isUnresolvedIssue } from "../domain/config";
 import { readGraphSnapshot } from "./archiveStore";
 import type { Rec } from "../domain/util";
@@ -611,8 +617,15 @@ function graphVocabulary(log: (m: string) => void): void {
     }
   };
 
+  // What the app WILL SEND, not what it persists. `NODE_KINDS`/`EDGE_TYPES` are the model's own
+  // vocabularies — they carry read-time synthetics and names no query has ever named — and the
+  // two namespaces diverge on purpose: the battery sends ACTING_AS and persists RUNS_AS. Checking
+  // the persisted lists against a tenant reported absences for names nobody sends, which buries
+  // the real ones. These come off the shipped traversals themselves.
+  const sent = sentVocabulary();
+
   if (entity && entity.enumValues.length) {
-    report("Graph entity types (GraphEntityType)", NODE_KINDS, entity.enumValues);
+    report("Graph entity types (GraphEntityType)", sent.entities, entity.enumValues);
     const ai = aiFlavored(entity.enumValues);
     log(`    AI-flavored members: ${ai.join(", ") || "(none)"}`);
   } else {
@@ -638,7 +651,7 @@ function graphVocabulary(log: (m: string) => void): void {
   for (const field of candidates) {
     const probe = fetchTypeShape(relEnumName(field));
     if (probe && probe.enumValues.length) {
-      report(`Graph relationships (via ${field})`, EDGE_TYPES, probe.enumValues);
+      report(`Graph relationships (via ${field})`, sent.edges, probe.enumValues);
       // The whole vocabulary, once, sorted. A hundred names is a paragraph, and it is the
       // paragraph that ends the guessing: with it in hand nobody has to infer this tenant's
       // relationship names from a capture, a planning doc, or a hopeful substitution again.
@@ -662,4 +675,39 @@ function graphVocabulary(log: (m: string) => void): void {
  */
 function relEnumName(field: string): string {
   return field === "type" ? "GraphRelationshipType" : `Graph${field}Type`;
+}
+
+
+/**
+ * Every entity type and relationship name the shipped traversals will send, deduped and sorted.
+ *
+ * One entry per spec builder, listed by hand because that is the honest shape: a new traversal is
+ * a new call site here, and a traversal missing from this list is one the vocabulary check cannot
+ * warn about. `AGENT_EXPANSION` is included even though it is not a battery step — `expandAsset`
+ * runs it live against the same tenant, so a name it carries can be refused the same way.
+ *
+ * `describeAiTypes()` is deliberately NOT consulted for the type-dependent specs: their root list
+ * is the AI resource vocabulary, which `resolveAiResourceTypes` has already checked against the
+ * tenant by the time this runs. Passing an empty root here keeps this check about the names this
+ * codebase hardcodes, which are the ones nothing else validates.
+ */
+function sentVocabulary(): { entities: string[]; edges: string[] } {
+  const specs: SelectSpec[] = [
+    noGuardrailSpec(),
+    agentRunsAsSpec(),
+    saExcessiveAccessSpec(),
+    sensitiveDataAccessSpec(),
+    identityAccessSpec([]),
+    hostExposureSpec([]),
+    endpointExposureSpec([]),
+    AGENT_EXPANSION,
+  ];
+  const entities = new Set<string>();
+  const edges = new Set<string>();
+  for (const spec of specs) {
+    const v = specVocabulary(spec);
+    for (const e of v.entities) entities.add(e);
+    for (const e of v.edges) edges.add(e);
+  }
+  return { entities: [...entities].sort(), edges: [...edges].sort() };
 }
