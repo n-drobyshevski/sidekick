@@ -23,6 +23,7 @@
 //   outcome.js   the problem tree's ACT/ATTEND/TRACK*/TRACK badge
 //   posture.js   the posture lattice's Tier 1..4 badge
 //   lattice.js   the decision lattice: 54 leaves or 27 cells as a grid of cells
+//   axisBar.js   what one decision axis actually read across the landscape
 //   claimRail.js how much of a closed space one cascade row claims, on a shared axis
 //   rowReorder.js the cascade grip: drag as the shortcut, the row's arrows as the control
 //   diagList.js  the "is this rule quietly failing" read-out, shared by all three cascades
@@ -57,6 +58,7 @@ export { debounce, onPageTeardown, runPageTeardown } from "./ui/timing.js";
 export { outcomeBadge, outcomeLabel } from "./ui/outcome.js";
 export { tierBadge, tierLabel } from "./ui/posture.js";
 export { latticeGrid } from "./ui/lattice.js";
+export { axisBar, axisTally } from "./ui/axisBar.js";
 export { latticeSection } from "./ui/latticeSection.js";
 export { claimRail, claimOffsets } from "./ui/claimRail.js";
 export { rowDrag, ruleGrip } from "./ui/rowReorder.js";

@@ -23,6 +23,8 @@
 import { call } from "../api.js";
 import {
   aarsChip,
+  axisBar,
+  axisTally,
   claimOffsets,
   diagRow,
   claimRail,
@@ -348,9 +350,15 @@ function axisBlock({ name, values, ordered, lede, steps, note }) {
   const rateText = el("span", {});
   const rate = el("span", { class: "axis-block__rate" }, rateMark, rateText);
 
+  // What the axis actually read across the landscape. The prose above says how a value is
+  // derived; this says what that derivation produced, which is the half no wording can
+  // carry — a knob deciding nothing looks exactly like a knob deciding everything until the
+  // distribution is drawn.
+  const bar = axisBar({ values, unit: "decided rows" });
+
   const list = el(ordered ? "ol" : "ul", { class: "axis-steps" });
   for (const step of steps || []) {
-    list.append(el(
+    const li = el(
       "li",
       { class: "axis-step" },
       el(
@@ -368,7 +376,19 @@ function axisBlock({ name, values, ordered, lede, steps, note }) {
         step.origin ? el("span", { class: "axis-step__origin" }, step.origin) : null,
       ),
       step.control ? el("div", { class: "axis-step__control" }, step.control) : null,
-    ));
+    );
+    // Hovering or focusing a step lights the part of the bar that step produced — the same
+    // picture-to-row link the lattice and the cascade already have, so the gesture means the
+    // same thing in a third place. Focus counts as much as hover, per scans.js's rule.
+    if (step.lights) {
+      const on = () => bar.light(step.lights);
+      const off = () => bar.light(null);
+      li.addEventListener("mouseenter", on);
+      li.addEventListener("mouseleave", off);
+      li.addEventListener("focusin", on);
+      li.addEventListener("focusout", off);
+    }
+    list.append(li);
   }
 
   const node = el(
@@ -382,6 +402,7 @@ function axisBlock({ name, values, ordered, lede, steps, note }) {
       rate,
     ),
     lede ? el("p", { class: "axis-block__lede small muted" }, lede) : null,
+    bar,
     steps && steps.length ? list : null,
     note || null,
   );
@@ -403,6 +424,8 @@ function axisBlock({ name, values, ordered, lede, steps, note }) {
     node.classList.toggle("axis-block--high", !!high);
   };
   node.paintRate(null);
+  /** The distribution, from the decided population the impact pane already receives. */
+  node.paintReading = (tally) => bar.paint(tally);
   return node;
 }
 
@@ -2674,11 +2697,13 @@ export async function renderAarsRules(main, _params, ctx) {
           signal: "Wiz has validated the issue as exploitable",
           yields: "ACTIVE",
           origin: "Wiz signal · issues only",
+          lights: "ACTIVE",
         },
         {
           signal: "A Wiz combo rule you list reports REALIZED or DEMONSTRATED",
           yields: "SUSPECTED",
           origin: "your table",
+          lights: "SUSPECTED",
           control: el(
             "div",
             {},
@@ -2696,12 +2721,14 @@ export async function renderAarsRules(main, _params, ctx) {
           signal: "The AI remediation verdict is one you name",
           yields: "SUSPECTED",
           origin: "your list · issues only",
+          lights: "SUSPECTED",
           control: pRemediateTokens,
         },
         {
           signal: "Nothing above matched",
           yields: "UNKNOWN",
-          origin: "the rate below counts these",
+          origin: "the rate above counts these",
+          lights: "UNKNOWN",
         },
       ],
     });
@@ -2715,12 +2742,13 @@ export async function renderAarsRules(main, _params, ctx) {
         "value — it counts the rows where none of the three produced a signal either way, " +
         "which is a coverage gap the two values cannot show on their own.",
       steps: [
-        { signal: "The asset has admin privileges", yields: "TOTAL", origin: "Wiz signal" },
-        { signal: "A human holds admin access to it", yields: "TOTAL", origin: "Wiz signal" },
+        { signal: "The asset has admin privileges", yields: "TOTAL", origin: "Wiz signal", lights: "TOTAL" },
+        { signal: "A human holds admin access to it", yields: "TOTAL", origin: "Wiz signal", lights: "TOTAL" },
         {
           signal: "The issue’s combo group is one you name",
           yields: "TOTAL",
           origin: "your list · issues only",
+          lights: "TOTAL",
           control: pGroupsTokens,
         },
       ],
@@ -2752,14 +2780,28 @@ export async function renderAarsRules(main, _params, ctx) {
           signal: "Wiz classifies the asset HBI, MBI or LBI",
           yields: "HIGH / MEDIUM / LOW",
           origin: "Wiz signal",
+          // Not one value — every row Wiz actually classified, whichever way it fell.
+          lights: "known",
         },
         {
           signal: "Wiz classifies it as none of those",
           origin: "your default",
+          // The hatched share, wherever it landed: exactly the rows the fallback decided,
+          // which is the one thing this knob's owner wants to know.
+          lights: "unknown",
           control: el("div", { class: "rule-row" }, pMissionField.node),
         },
       ],
     });
+
+    // Keyed by axis so sync() can walk AXIS_DEFS — the same order the cascade's columns and
+    // the impact pane's unknown-rate rows already use, so all three read as one vocabulary.
+    const pAxisBlocks = {
+      exploitation: pExploitationAxis,
+      impact: pImpactAxis,
+      exposure: pExposureAxis,
+      mission: pMissionAxis,
+    };
 
     // ------------------------------------------------------------------ the lattice hero
     // The same structural slot the AARS tab opens with: one picture of the whole model,
@@ -2820,7 +2862,9 @@ export async function renderAarsRules(main, _params, ctx) {
         "How the four axes are read",
         "Separate from the cascade above, which only decides what a VECTOR routes to once " +
           "it exists. These decide what the vector IS. Each axis lists the signals that " +
-          "produce it, in the order they are tried, and how often it could not be read at all.",
+          "produce it, in the order they are tried, and the bar beneath shows what those " +
+          "signals actually read across the landscape — hatched wherever nothing could be " +
+          "established. Hover or focus a signal to light the part of the bar it decided.",
         [pExploitationAxis, pImpactAxis, pExposureAxis, pMissionAxis],
       ),
       section(
@@ -3077,14 +3121,15 @@ export async function renderAarsRules(main, _params, ctx) {
       // can be folded away entirely.
       const axisRates = (problemPreview && problemPreview.treeDiscrimination
         && problemPreview.treeDiscrimination.unknownRate) || null;
-      [
-        [pExploitationAxis, "exploitation"],
-        [pImpactAxis, "impact"],
-        [pExposureAxis, "exposure"],
-        [pMissionAxis, "mission"],
-      ].forEach(([block, key]) => {
-        const share = axisRates ? axisRates[key] || 0 : null;
+      const decided = (problemPreview && problemPreview.treeDiscrimination
+        && problemPreview.treeDiscrimination.decided) || null;
+      AXIS_DEFS.forEach((axis) => {
+        const block = pAxisBlocks[axis.key];
+        const share = axisRates ? axisRates[axis.key] || 0 : null;
         block.paintRate(share, share !== null && share >= UNKNOWN_WARN_THRESHOLD);
+        // One pass over a population the impact pane already receives — no new endpoint,
+        // and the bar and the rate above it cannot disagree, because both read that array.
+        block.paintReading(decided ? axisTally(decided, axis.key, axis.values) : null);
       });
 
       // Cascade row notes: shadowed, and how many leaves each row claims — both come from
