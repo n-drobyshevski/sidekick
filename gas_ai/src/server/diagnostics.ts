@@ -582,8 +582,33 @@ function graphVocabulary(log: (m: string) => void): void {
     // The absent list IS the finding. Printed in full, never truncated to a count: a name this
     // app sends that the tenant does not have is a query that will be refused, and which one it
     // is happens to be the entire content of the answer.
-    if (absent.length) log(`    ABSENT HERE: ${absent.join(", ")}`);
-    else log("    every declared name exists on this tenant.");
+    if (!absent.length) {
+      log("    every declared name exists on this tenant.");
+      return;
+    }
+    log(`    ABSENT HERE: ${absent.join(", ")}`);
+    // For each absent name, the tenant members that SHARE A WORD with it.
+    //
+    // Knowing RUNS_AS does not exist is half an answer; the other half is what this tenant
+    // calls that hop, and it is already in `members` — the probe fetched all of them and the
+    // first version of this block threw them away to print a count. A name is a name, so the
+    // match is on underscore-separated words and nothing cleverer.
+    //
+    // STRING SIMILARITY IS NOT SEMANTIC EQUIVALENCE, and this block must never be read as if
+    // it were. `HAS_FINDING` sharing a word with `HAS_DATA_FINDING` says the two are spelled
+    // alike, not that they mean the same hop — the only authority on that is a query the Wiz
+    // console built and the tenant answered. These are leads to check, not substitutions to
+    // make.
+    for (const name of absent) {
+      const words = new Set(name.split("_"));
+      const near = members
+        .map((m) => ({ m, hits: m.split("_").filter((w) => words.has(w)).length }))
+        .filter((x) => x.hits > 0)
+        .sort((a, b) => b.hits - a.hits || a.m.length - b.m.length)
+        .slice(0, 6)
+        .map((x) => x.m);
+      log(`      ${name} → ${near.length ? near.join(", ") : "(nothing spelled like it)"}`);
+    }
   };
 
   if (entity && entity.enumValues.length) {
@@ -614,6 +639,11 @@ function graphVocabulary(log: (m: string) => void): void {
     const probe = fetchTypeShape(relEnumName(field));
     if (probe && probe.enumValues.length) {
       report(`Graph relationships (via ${field})`, EDGE_TYPES, probe.enumValues);
+      // The whole vocabulary, once, sorted. A hundred names is a paragraph, and it is the
+      // paragraph that ends the guessing: with it in hand nobody has to infer this tenant's
+      // relationship names from a capture, a planning doc, or a hopeful substitution again.
+      log("    every relationship this tenant has:");
+      log(`      ${[...probe.enumValues].sort().join(", ")}`);
       return;
     }
   }
