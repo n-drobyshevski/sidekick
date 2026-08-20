@@ -135,6 +135,49 @@ export function fetchEnumValues(enumName: string): string[] | null {
   }
 }
 
+/**
+ * The kind and members of ANY schema type — an enum's values, or an input object's field names.
+ *
+ * `fetchEnumValues` above asks only for `enumValues`, so it answers `null` for a type that is not
+ * an enum. That collapsed three very different situations into one: the type does not exist, the
+ * type exists but is not an enum, and introspection is switched off. The cost of that collapse
+ * was real — `registerScopeDiagnostic` probed "GraphEntityTypeValue" for as long as this app has
+ * existed, the tenant's schema calls it `GraphEntityType`, and the null came back looking exactly
+ * like "this tenant blocks introspection". The one instrument that could have listed the valid
+ * graph vocabulary was quietly answering "can't tell" to a question it was asking wrong.
+ *
+ * `kind` is what separates those cases: a null result now means only "no such type or no
+ * introspection", and everything else is described rather than guessed at.
+ */
+export function fetchTypeShape(
+  name: string,
+): { kind: string; enumValues: string[]; inputFields: string[] } | null {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return null;
+  const q =
+    "query SidekickTypeProbe {\n" +
+    "  __type(name: \"" + name + "\") {\n" +
+    "    kind\n" +
+    "    enumValues { name }\n" +
+    "    inputFields { name }\n" +
+    "  }\n" +
+    "}\n";
+  try {
+    const data = gqlPost(q, {});
+    const t = data["__type"] as Rec | null;
+    if (!t) return null;
+    const names = (v: unknown): string[] =>
+      Array.isArray(v) ? (v as Rec[]).map((e) => String(e["name"])).filter(Boolean) : [];
+    return {
+      kind: String(t["kind"] ?? ""),
+      enumValues: names(t["enumValues"]),
+      inputFields: names(t["inputFields"]),
+    };
+  } catch (e) {
+    console.warn(`Type probe for ${name} failed: ${e}`);
+    return null;
+  }
+}
+
 export interface AiTypeResolution {
   types: string[];
   source: string;

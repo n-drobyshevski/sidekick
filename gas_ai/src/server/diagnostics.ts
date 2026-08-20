@@ -12,7 +12,7 @@ import {
 } from "./props";
 import {
   fetchCloudResourcesPage,
-  fetchEnumValues,
+  fetchTypeShape,
   getToken,
   resolveAiResourceTypes,
 } from "./wizClientAi";
@@ -20,7 +20,7 @@ import { aiFlavored, aiInventoryVariables, Q_AI_INVENTORY } from "./wizQueriesAi
 import { readAll, TABS } from "./sheetsDb";
 import { describeSyncSteps, testStepVariables } from "./syncJobs";
 import { parseBool, parseTri } from "./syncStore";
-import { AI_ASSET_KINDS, EDGE_TYPES } from "../domain/graphTypes";
+import { AI_ASSET_KINDS, EDGE_TYPES, NODE_KINDS } from "../domain/graphTypes";
 import { READ_TIME_EDGE_TYPES } from "../domain/reach";
 import { isOpenGap, isUnresolvedIssue } from "../domain/config";
 import { readGraphSnapshot } from "./archiveStore";
@@ -108,19 +108,20 @@ export function wizDiagnostic(): string {
     return lines.join("\n");
   }
 
-  // Informational: the graph-relationship steps use the graph entity vocabulary.
-  const graphEnum = fetchEnumValues("GraphEntityTypeValue");
-  if (graphEnum) {
-    log(
-      `Graph entity types: ${graphEnum.length} members; AI-flavored: ` +
-        `${aiFlavored(graphEnum).join(", ") || "(none — graph relationship steps will be skipped)"}.`,
-    );
-  } else {
-    log(
-      "Graph entity introspection unavailable — graph relationship steps will be " +
-        "skipped automatically if this tenant rejects their queries.",
-    );
-  }
+  // The graph vocabulary, checked against what this app actually SENDS.
+  //
+  // This block used to probe "GraphEntityTypeValue" and print a member count. It never worked:
+  // the tenant's own rejection messages name the type `GraphEntityType`, so the probe asked for
+  // a type that does not exist, `fetchEnumValues` answered null, and the code logged a soothing
+  // "introspection unavailable". For as long as this app has existed, the one instrument that
+  // could have listed the valid graph vocabulary was reporting "can't tell" to a question it was
+  // asking wrong — which is exactly how four traversals shipped with names this tenant refuses.
+  //
+  // A member COUNT was never the useful output either. What an operator needs is the comparison:
+  // of the names this codebase declares and sends, which does this tenant not have. That is the
+  // difference between "your graph has 214 types" and "you are asking for RUNS_AS and it does
+  // not exist here".
+  graphVocabulary(log);
 
   // Step 3 — a minimal 1-row inventory query, exercising the real request path
   // with the types resolved above (filter passed as the $filterBy variable,
@@ -552,4 +553,83 @@ export function probeEdgeSteps(): string {
 
   log("=== end ===");
   return lines.join("\n");
+}
+
+
+/**
+ * Report this tenant's graph vocabulary against the names this codebase declares.
+ *
+ * TWO SCHEMA TYPES, both named by the tenant's own HTTP 400 bodies rather than guessed:
+ * `GraphEntityType` for entities, `GraphDirectedRelationshipTypeInput` for relationships. The
+ * second is an input OBJECT, not an enum — a relationship is sent as `[{ type, reverse }]` — so
+ * its members live behind one of its fields, and the probe follows that hop rather than assuming
+ * a name for it.
+ *
+ * Best-effort throughout: a tenant with introspection disabled must get a diagnostic that says
+ * so, not one that throws. Every branch prints why it could not answer.
+ */
+function graphVocabulary(log: (m: string) => void): void {
+  const entity = fetchTypeShape("GraphEntityType");
+  const rel = fetchTypeShape("GraphDirectedRelationshipTypeInput");
+
+  const report = (label: string, declared: readonly string[], members: string[]): void => {
+    const have = new Set(members);
+    const absent = declared.filter((d) => !have.has(d));
+    log(
+      `  ${label}: ${members.length} members on this tenant; this app declares ` +
+      `${declared.length}, ${declared.length - absent.length} present.`,
+    );
+    // The absent list IS the finding. Printed in full, never truncated to a count: a name this
+    // app sends that the tenant does not have is a query that will be refused, and which one it
+    // is happens to be the entire content of the answer.
+    if (absent.length) log(`    ABSENT HERE: ${absent.join(", ")}`);
+    else log("    every declared name exists on this tenant.");
+  };
+
+  if (entity && entity.enumValues.length) {
+    report("Graph entity types (GraphEntityType)", NODE_KINDS, entity.enumValues);
+    const ai = aiFlavored(entity.enumValues);
+    log(`    AI-flavored members: ${ai.join(", ") || "(none)"}`);
+  } else {
+    log(
+      `  Graph entity types: could not read GraphEntityType` +
+      `${entity ? ` (kind ${entity.kind}, no enum members)` : " (no such type, or introspection " +
+      "is disabled)"}. Graph traversals cannot be checked ahead of time on this tenant.`,
+    );
+  }
+
+  if (!rel) {
+    log(
+      "  Graph relationships: could not read GraphDirectedRelationshipTypeInput (no such type, " +
+      "or introspection is disabled).",
+    );
+    return;
+  }
+  // The relationship enum sits behind a field of the input object. `type` is the field the
+  // working queries populate, so try it first and then anything else the object declares —
+  // named rather than assumed, because a wrong guess here is what this whole block exists to
+  // stop happening again.
+  const candidates = ["type", ...rel.inputFields.filter((f) => f !== "type")];
+  for (const field of candidates) {
+    const probe = fetchTypeShape(relEnumName(field));
+    if (probe && probe.enumValues.length) {
+      report(`Graph relationships (via ${field})`, EDGE_TYPES, probe.enumValues);
+      return;
+    }
+  }
+  log(
+    `  Graph relationships: GraphDirectedRelationshipTypeInput has fields ` +
+    `[${rel.inputFields.join(", ") || "none readable"}], but none of them resolved to an enum ` +
+    "this probe could read. Relationship names cannot be checked ahead of time; the probe in " +
+    "probeEdgeSteps() reports what the tenant says about them instead.",
+  );
+}
+
+/**
+ * The conventional enum name behind an input-object field. A guess by construction — which is
+ * why every caller treats a miss as "could not read" and falls through, rather than reporting an
+ * empty vocabulary as if it had been measured.
+ */
+function relEnumName(field: string): string {
+  return field === "type" ? "GraphRelationshipType" : `Graph${field}Type`;
 }

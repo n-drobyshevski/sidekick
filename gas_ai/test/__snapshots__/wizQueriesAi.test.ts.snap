@@ -24,31 +24,14 @@ exports[`query documents > Q_AGENT_EXPANSION is unchanged 1`] = `
 `;
 
 exports[`query documents > Q_AGENT_SENSITIVE_DATA_ACCESS is unchanged 1`] = `
-"query SidekickAiAgentSensitiveDataAccess($quick: Boolean, $first: Int, $after: String) {
-  graphSearch(quick: $quick, first: $first, after: $after, query: {
-    type: "AI_AGENT"
-    select: true
-    relationships: [{
-      type: "RUNS_AS"
-      with: {
-        type: "SERVICE_ACCOUNT"
-        select: true
-        relationships: [{
-          type: "ALLOWS_ACCESS_TO"
-          with: {
-            type: ["BUCKET", "DATABASE", "DATABASE_SERVER"]
-            select: true
-            where: { hasSensitiveData: { EQUALS: true } }
-            relationships: [{
-              type: "HAS_DATA_FINDING"
-              optional: true
-              with: { type: "DATA_FINDING", select: true }
-            }]
-          }
-        }]
-      }
-    }]
-  }) {
+"query SidekickAiAgentSensitiveDataAccess($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {
+  graphSearch(
+    quick: $quick
+    first: $first
+    after: $after
+    query: $query
+    projectId: $projectId
+  ) {
     totalCount
     pageInfo { hasNextPage endCursor }
     nodes {
@@ -65,16 +48,14 @@ exports[`query documents > Q_AGENT_SENSITIVE_DATA_ACCESS is unchanged 1`] = `
 `;
 
 exports[`query documents > Q_AGENTS_NO_GUARDRAIL is unchanged 1`] = `
-"query SidekickAiAgentsWithoutGuardrail($quick: Boolean, $first: Int, $after: String) {
-  graphSearch(quick: $quick, first: $first, after: $after, query: {
-    type: "AI_AGENT"
-    select: true
-    relationships: [{
-      type: "PROTECTED_BY"
-      with: { type: "AI_GUARDRAIL", select: false }
-      negate: true
-    }]
-  }) {
+"query SidekickAiAgentsWithoutGuardrail($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {
+  graphSearch(
+    quick: $quick
+    first: $first
+    after: $after
+    query: $query
+    projectId: $projectId
+  ) {
     totalCount
     pageInfo { hasNextPage endCursor }
     nodes {

@@ -16,8 +16,11 @@
 // the same root captured earlier under a narrower, project-scoped filter.
 
 import { effectiveAccessFilter } from "../domain/effectiveAccess";
+import {
+  agentRunsAsSpec, noGuardrailSpec, saExcessiveAccessSpec, sensitiveDataAccessSpec,
+} from "../domain/agentPathQuery";
 import { endpointExposureSpec, hostExposureSpec } from "../domain/exposureQuery";
-import { toGraphEntityQuery } from "../domain/graphExpand";
+import { toGraphEntityQuery, type SelectSpec } from "../domain/graphExpand";
 import { identityAccessSpec } from "../domain/identityQuery";
 import { RISK_CATEGORY_ID } from "../domain/toxicCombos";
 import type { Rec } from "../domain/util";
@@ -141,40 +144,24 @@ const ENTITY_FIELDS =
   indented(IDENTITY_FIELDS, 8) +
   "        properties\n";
 
-// (Inline filter literals proved fragile against the tenant's gateway — the
-// working capture passes the whole filter as a $filterBy variable, so the
-// inventory query does the same and its document stays static.)
+// A DATA_FINDING's severity used to need its own `... on DataFinding` fragment, because the
+// flat fields came from `... on CloudResource` and a finding is not one. Both fragments are
+// gone: `properties` carries severity directly — the capture shows `"severity":
+// "SeverityMedium"` in the bag on the EXCESSIVE_ACCESS_FINDING entity — so the fragment bought
+// nothing and cost another spread the tenant could reject the way it rejected CloudResource.
 
-/**
- * A DATA_FINDING's severity used to need its own `... on DataFinding` fragment, because
- * the flat fields came from `... on CloudResource` and a finding is not one.
- *
- * Both fragments are gone. `properties` carries severity directly — the capture shows
- * `"severity": "SeverityMedium"` in the bag on the EXCESSIVE_ACCESS_FINDING entity — so
- * the fragment bought nothing and cost another spread the tenant could reject the same way
- * it rejected CloudResource. One field set now serves every graphSearch document.
- */
-function graphSearchQueryWith(name: string, queryBody: string, entityFields: string): string {
-  return (
-    "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n" +
-    "  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" +
-    queryBody +
-    "  }) {\n" +
-    "    totalCount\n" +
-    "    pageInfo { hasNextPage endCursor }\n" +
-    "    nodes {\n" +
-    "      entities {\n" +
-    entityFields +
-    "      }\n" +
-    "    }\n" +
-    "  }\n" +
-    "}\n"
-  );
-}
-
-function graphSearchQuery(name: string, queryBody: string): string {
-  return graphSearchQueryWith(name, queryBody, ENTITY_FIELDS);
-}
+// INLINE LITERALS DO NOT SURVIVE THIS GATEWAY, and the lesson had to be learned twice.
+//
+// First for the inventory filter: the working capture passes the whole filter as a $filterBy
+// variable, so the inventory query does the same and its document stays static.
+//
+// Then again, expensively, for the graph traversals. Four of them were built by a pair of
+// helpers that string-built `type: "AI_AGENT"` / `type: "RUNS_AS"` into the document body, and
+// a live tenant refused all four with `GraphEntityType cannot represent value: "AI_AGENT"` —
+// the same name it accepted, in the same execution, inside the variable-borne root of the
+// exposure traversals. Those helpers are deleted rather than left unused: every graphSearch
+// document in this file now takes its traversal as `$query`, and the way to keep that true is
+// to leave no builder that can do otherwise.
 
 /**
  * The AI resource-type vocabulary, in the API's enum-style spelling. Verified
@@ -280,94 +267,49 @@ export const Q_RULE_ASSETS =
   "}\n";
 
 /** Guardrail-coverage gap: agents with NO PROTECTED_BY edge to any guardrail. */
-export const Q_AGENTS_NO_GUARDRAIL = graphSearchQuery(
-  "SidekickAiAgentsWithoutGuardrail",
-  "    type: \"AI_AGENT\"\n" +
-  "    select: true\n" +
-  "    relationships: [{\n" +
-  "      type: \"PROTECTED_BY\"\n" +
-  "      with: { type: \"AI_GUARDRAIL\", select: false }\n" +
-  "      negate: true\n" +
-  "    }]\n",
-);
-
-/** Execution identity: agent → RUNS_AS → service account. */
-export const Q_AGENT_RUNS_AS = graphSearchQuery(
-  "SidekickAiAgentRunsAs",
-  "    type: \"AI_AGENT\"\n" +
-  "    select: true\n" +
-  "    relationships: [{\n" +
-  "      type: \"RUNS_AS\"\n" +
-  "      with: { type: \"SERVICE_ACCOUNT\", select: true }\n" +
-  "    }]\n",
-);
-
-/** CIEM: agent → RUNS_AS → service account → HAS_FINDING → excessive access. */
-export const Q_SA_EXCESSIVE_ACCESS = graphSearchQuery(
-  "SidekickAiAgentSaExcessiveAccess",
-  "    type: \"AI_AGENT\"\n" +
-  "    select: true\n" +
-  "    relationships: [{\n" +
-  "      type: \"RUNS_AS\"\n" +
-  "      with: {\n" +
-  "        type: \"SERVICE_ACCOUNT\"\n" +
-  "        select: true\n" +
-  "        relationships: [{\n" +
-  "          type: \"HAS_FINDING\"\n" +
-  "          with: { type: \"EXCESSIVE_ACCESS_FINDING\", select: true }\n" +
-  "        }]\n" +
-  "      }\n" +
-  "    }]\n",
-);
+/**
+ * The four agent-rooted traversals — documents only. The traversals themselves are
+ * `SelectSpec`s in domain/agentPathQuery.ts and arrive as the `$query` variable.
+ *
+ * All four were inline GraphQL source until a live tenant refused every one of them with
+ * `GraphEntityType cannot represent value: "AI_AGENT"` and
+ * `GraphDirectedRelationshipTypeInput cannot represent value: "RUNS_AS"` — while accepting
+ * `AI_AGENT` in the variable-borne root of the exposure traversals in the same execution. The
+ * names were never reached; the quoted-literal form failed first. See agentPathQuery.ts's header.
+ */
+export const Q_AGENTS_NO_GUARDRAIL = graphSearchVarQuery("SidekickAiAgentsWithoutGuardrail");
+export const Q_AGENT_RUNS_AS = graphSearchVarQuery("SidekickAiAgentRunsAs");
+export const Q_SA_EXCESSIVE_ACCESS = graphSearchVarQuery("SidekickAiAgentSaExcessiveAccess");
+export const Q_AGENT_SENSITIVE_DATA_ACCESS =
+  graphSearchVarQuery("SidekickAiAgentSensitiveDataAccess");
 
 /**
- * The data-exposure attack path, end to end:
- *   AI_AGENT → RUNS_AS → SERVICE_ACCOUNT → ALLOWS_ACCESS_TO → classified store → findings.
+ * The `$query` / `$projectId` variables for the four traversals above.
  *
- * Wiz's own shape, not ours. The tenant capture in exemples/toxic_combos_response.js
- * echoes control wc-id-3217's query back, whose block named "Sensitive Data Access" ends
- * `-ALLOWS_ACCESS_TO→ DATA_RESOURCE[hasSensitiveData] -HAS_DATA_FINDING→ DATA_FINDING`;
- * ai/queries/6_IAM.MD hand-writes the RUNS_AS form of the same traversal.
- *
- * Until this existed, sensitive data was two booleans on the agent and the data lane was
- * empty on every live tenant — BUCKET and DATABASE were declared kinds that only the
- * dry-run fixture ever instantiated.
- *
- * `HAS_DATA_FINDING` is optional; the other two are not. A store Wiz has classified but on
- * which no finding rule has fired must still draw — requiring the finding would collapse
- * the whole path back to nothing, which is the state this query exists to end. Requiring
- * the first two costs nothing, because without them there is no path to draw.
- *
- * DATABASE_SERVER is in the type list because `kindFromWizType` returns null for kinds the
- * model has never declared and the normalizer then drops the ENTIRE row — losing the agent
- * and the service account, not just the store.
+ * `scope` is a parameter and every caller currently passes `null`, which is what these steps
+ * send today — they carry no `projectId` at all, unlike IDENTITY_ACCESS and the two exposure
+ * steps. Switching them to `projectScope()` would narrow results on any tenant with
+ * WIZ_PROJECT_ID_V2 set, so it is a population change and belongs in its own commit, not
+ * smuggled into a fix for the query's shape. Two facts for whoever makes that call: a
+ * multi-project scope is truncated to `scope[0]` here exactly as it is for the identity
+ * traversal, and SENSITIVE_DATA_ACCESS re-emits assets the CIEM steps already landed, so
+ * scoping one and not the others makes them disagree about the same asset.
  */
-export const Q_AGENT_SENSITIVE_DATA_ACCESS = graphSearchQueryWith(
-  "SidekickAiAgentSensitiveDataAccess",
-  "    type: \"AI_AGENT\"\n" +
-  "    select: true\n" +
-  "    relationships: [{\n" +
-  "      type: \"RUNS_AS\"\n" +
-  "      with: {\n" +
-  "        type: \"SERVICE_ACCOUNT\"\n" +
-  "        select: true\n" +
-  "        relationships: [{\n" +
-  "          type: \"ALLOWS_ACCESS_TO\"\n" +
-  "          with: {\n" +
-  "            type: [\"BUCKET\", \"DATABASE\", \"DATABASE_SERVER\"]\n" +
-  "            select: true\n" +
-  "            where: { hasSensitiveData: { EQUALS: true } }\n" +
-  "            relationships: [{\n" +
-  "              type: \"HAS_DATA_FINDING\"\n" +
-  "              optional: true\n" +
-  "              with: { type: \"DATA_FINDING\", select: true }\n" +
-  "            }]\n" +
-  "          }\n" +
-  "        }]\n" +
-  "      }\n" +
-  "    }]\n",
-  ENTITY_FIELDS,
-);
+function agentPathVariables(spec: SelectSpec, scope: string[] | null): Rec {
+  return {
+    query: toGraphEntityQuery(spec),
+    projectId: scope && scope.length ? scope[0] : null,
+  };
+}
+
+export const noGuardrailVariables = (scope: string[] | null): Rec =>
+  agentPathVariables(noGuardrailSpec(), scope);
+export const agentRunsAsVariables = (scope: string[] | null): Rec =>
+  agentPathVariables(agentRunsAsSpec(), scope);
+export const saExcessiveAccessVariables = (scope: string[] | null): Rec =>
+  agentPathVariables(saExcessiveAccessSpec(), scope);
+export const sensitiveDataAccessVariables = (scope: string[] | null): Rec =>
+  agentPathVariables(sensitiveDataAccessSpec(), scope);
 
 /**
  * A graphSearch document whose traversal arrives as the `$query` VARIABLE rather than inline.
