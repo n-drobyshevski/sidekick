@@ -21,6 +21,7 @@ import {
   Q_PRINCIPALS,
   Q_RULE_ASSETS,
   Q_SECURITY_FRAMEWORKS,
+  agentRunsAsVariables,
   aiCompliancePostureVariables,
   aiConfigFindingsVariables,
   aiInventoryVariables,
@@ -29,6 +30,9 @@ import {
   aiSecurityFrameworksVariables,
   chooseAiResourceTypes,
   isInvalidEnumValueError,
+  noGuardrailVariables,
+  saExcessiveAccessVariables,
+  sensitiveDataAccessVariables,
 } from "../src/server/wizQueriesAi";
 import { errorDigest } from "../src/server/wizClientAi";
 import { RISK_CATEGORY_ID } from "../src/domain/toxicCombos";
@@ -409,12 +413,87 @@ describe("query documents", () => {
     // The two outer legs are the path; without them there is nothing to draw. The finding
     // leg is optional because a store Wiz classified but has found nothing specific in must
     // still appear — requiring it collapses the chain back to nothing.
-    for (const token of ["RUNS_AS", "SERVICE_ACCOUNT", "ALLOWS_ACCESS_TO", "BUCKET",
-      "DATABASE_SERVER", "hasSensitiveData", "HAS_DATA_FINDING"]) {
-      expect(Q_AGENT_SENSITIVE_DATA_ACCESS, `chain is missing ${token}`).toContain(token);
+    //
+    // Asserted on the rendered $query rather than on the document, because the traversal no
+    // longer lives in the document. One toEqual pins what seven toContains and a regex count
+    // used to: the type lists, the edge names, the `where`, and the single `optional`.
+    expect(sensitiveDataAccessVariables(null)["query"]).toEqual({
+      type: ["AI_AGENT"],
+      select: true,
+      relationships: [{
+        type: [{ type: "RUNS_AS" }],
+        with: {
+          type: ["SERVICE_ACCOUNT"],
+          select: true,
+          relationships: [{
+            type: [{ type: "ALLOWS_ACCESS_TO" }],
+            with: {
+              type: ["BUCKET", "DATABASE", "DATABASE_SERVER"],
+              select: true,
+              where: { hasSensitiveData: { EQUALS: true } },
+              relationships: [{
+                type: [{ type: "HAS_DATA_FINDING" }],
+                with: { type: ["DATA_FINDING"], select: true },
+                optional: true,
+              }],
+            },
+          }],
+        },
+      }],
+    });
+  });
+
+  it("the guardrail traversal negates an unselected leg", () => {
+    // `select: false` renders as an ABSENT key, not `select: false` — the console does the
+    // same (43 `"select": true` across a 45-node capture whose two unselected nodes carry no
+    // key at all), and the tenant answered that request.
+    //
+    // `negate` is the one construct here with no capture behind it. If this step keeps failing
+    // after the shape fix while the other three pass, `negate` is the first thing to suspect.
+    expect(noGuardrailVariables(null)["query"]).toEqual({
+      type: ["AI_AGENT"],
+      select: true,
+      relationships: [{
+        type: [{ type: "PROTECTED_BY" }],
+        with: { type: ["AI_GUARDRAIL"] },
+        negate: true,
+      }],
+    });
+  });
+
+  it("runs the agent-rooted traversals tenant-wide, as they always have", () => {
+    // Not projectScope(). These four carried no projectId before the shape fix and carry none
+    // after it — narrowing them is a population change and does not belong in a change about
+    // how the query is spelled.
+    for (const vars of [
+      noGuardrailVariables(null), agentRunsAsVariables(null),
+      saExcessiveAccessVariables(null), sensitiveDataAccessVariables(null),
+    ]) {
+      expect(vars["projectId"]).toBeNull();
     }
-    const optionalLegs = Q_AGENT_SENSITIVE_DATA_ACCESS.match(/optional: true/g) ?? [];
-    expect(optionalLegs).toHaveLength(1);
+    expect(sensitiveDataAccessVariables(["p-1", "p-2"])["projectId"]).toBe("p-1");
+  });
+
+  it("no graphSearch document carries a quoted enum value any more", () => {
+    // THE regression guard for the defect this phase existed to fix. A live tenant refused
+    // four traversals with `GraphEntityType cannot represent value: "AI_AGENT"` — the same
+    // name it accepted seconds later inside a variable-borne root. Every traversal now travels
+    // as `$query`, and a document that spells a type or a relationship inline has reintroduced
+    // the bug.
+    const GRAPH_DOCS: Array<[string, string]> = [
+      ["Q_AGENTS_NO_GUARDRAIL", Q_AGENTS_NO_GUARDRAIL],
+      ["Q_AGENT_RUNS_AS", Q_AGENT_RUNS_AS],
+      ["Q_SA_EXCESSIVE_ACCESS", Q_SA_EXCESSIVE_ACCESS],
+      ["Q_AGENT_SENSITIVE_DATA_ACCESS", Q_AGENT_SENSITIVE_DATA_ACCESS],
+      ["Q_IDENTITY_ACCESS", Q_IDENTITY_ACCESS],
+    ];
+    for (const [name, doc] of GRAPH_DOCS) {
+      expect(doc, `${name} must take its traversal as a variable`)
+        .toContain("$query: GraphEntityQueryInput");
+      expect(doc, `${name} must pass that variable through`).toContain("query: $query");
+      expect(doc, `${name} still spells a traversal inline`).not.toContain("relationships:");
+      expect(doc, `${name} still names an entity type inline`).not.toMatch(/type: "[A-Z_]+"/);
+    }
   });
 });
 

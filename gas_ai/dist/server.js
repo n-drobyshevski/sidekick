@@ -835,6 +835,56 @@ var Server = (() => {
     };
   }
 
+  // src/domain/agentPathQuery.ts
+  var AGENT_PATH_ROOTS = ["AI_AGENT"];
+  function noGuardrailSpec(roots = AGENT_PATH_ROOTS) {
+    return {
+      type: [...roots],
+      relationships: [
+        { type: "AI_GUARDRAIL", select: false, negate: true, edge: { type: "PROTECTED_BY" } }
+      ]
+    };
+  }
+  function agentRunsAsSpec(roots = AGENT_PATH_ROOTS) {
+    return {
+      type: [...roots],
+      relationships: [{ type: "SERVICE_ACCOUNT", edge: { type: "RUNS_AS" } }]
+    };
+  }
+  function saExcessiveAccessSpec(roots = AGENT_PATH_ROOTS) {
+    return {
+      type: [...roots],
+      relationships: [
+        {
+          type: "SERVICE_ACCOUNT",
+          edge: { type: "RUNS_AS" },
+          relationships: [{ type: "EXCESSIVE_ACCESS_FINDING", edge: { type: "HAS_FINDING" } }]
+        }
+      ]
+    };
+  }
+  function sensitiveDataAccessSpec(roots = AGENT_PATH_ROOTS) {
+    return {
+      type: [...roots],
+      relationships: [
+        {
+          type: "SERVICE_ACCOUNT",
+          edge: { type: "RUNS_AS" },
+          relationships: [
+            {
+              type: ["BUCKET", "DATABASE", "DATABASE_SERVER"],
+              edge: { type: "ALLOWS_ACCESS_TO" },
+              where: { hasSensitiveData: { EQUALS: true } },
+              relationships: [
+                { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+  }
+
   // src/domain/exposureQuery.ts
   var RATED_EXPOSURE_LEVELS = ["High", "Medium"];
   var VALIDATED_PORT_STATE = "Open";
@@ -1787,12 +1837,6 @@ var Server = (() => {
   }
   var RESOURCE_FIELDS = indented(IDENTITY_FIELDS, 6) + indented(CLOUD_RESOURCE_FIELDS, 6);
   var ENTITY_FIELDS = indented(IDENTITY_FIELDS, 8) + "        properties\n";
-  function graphSearchQueryWith(name, queryBody, entityFields) {
-    return "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" + queryBody + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + entityFields + "      }\n    }\n  }\n}\n";
-  }
-  function graphSearchQuery(name, queryBody) {
-    return graphSearchQueryWith(name, queryBody, ENTITY_FIELDS);
-  }
   var AI_RESOURCE_TYPE_CANDIDATES = [
     "AI_AGENT",
     "AI_AGENT_REGISTRY",
@@ -1836,23 +1880,20 @@ var Server = (() => {
     return { filterBy: { type: { equals: [...types] } } };
   }
   var Q_RULE_ASSETS = 'query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: {\n    relatedIssue: { sourceRuleId: { equals: $ruleIds }, status: { equals: ["OPEN"] } }\n  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n' + RESOURCE_FIELDS + "    }\n  }\n}\n";
-  var Q_AGENTS_NO_GUARDRAIL = graphSearchQuery(
-    "SidekickAiAgentsWithoutGuardrail",
-    '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "PROTECTED_BY"\n      with: { type: "AI_GUARDRAIL", select: false }\n      negate: true\n    }]\n'
-  );
-  var Q_AGENT_RUNS_AS = graphSearchQuery(
-    "SidekickAiAgentRunsAs",
-    '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "RUNS_AS"\n      with: { type: "SERVICE_ACCOUNT", select: true }\n    }]\n'
-  );
-  var Q_SA_EXCESSIVE_ACCESS = graphSearchQuery(
-    "SidekickAiAgentSaExcessiveAccess",
-    '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "RUNS_AS"\n      with: {\n        type: "SERVICE_ACCOUNT"\n        select: true\n        relationships: [{\n          type: "HAS_FINDING"\n          with: { type: "EXCESSIVE_ACCESS_FINDING", select: true }\n        }]\n      }\n    }]\n'
-  );
-  var Q_AGENT_SENSITIVE_DATA_ACCESS = graphSearchQueryWith(
-    "SidekickAiAgentSensitiveDataAccess",
-    '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "RUNS_AS"\n      with: {\n        type: "SERVICE_ACCOUNT"\n        select: true\n        relationships: [{\n          type: "ALLOWS_ACCESS_TO"\n          with: {\n            type: ["BUCKET", "DATABASE", "DATABASE_SERVER"]\n            select: true\n            where: { hasSensitiveData: { EQUALS: true } }\n            relationships: [{\n              type: "HAS_DATA_FINDING"\n              optional: true\n              with: { type: "DATA_FINDING", select: true }\n            }]\n          }\n        }]\n      }\n    }]\n',
-    ENTITY_FIELDS
-  );
+  var Q_AGENTS_NO_GUARDRAIL = graphSearchVarQuery("SidekickAiAgentsWithoutGuardrail");
+  var Q_AGENT_RUNS_AS = graphSearchVarQuery("SidekickAiAgentRunsAs");
+  var Q_SA_EXCESSIVE_ACCESS = graphSearchVarQuery("SidekickAiAgentSaExcessiveAccess");
+  var Q_AGENT_SENSITIVE_DATA_ACCESS = graphSearchVarQuery("SidekickAiAgentSensitiveDataAccess");
+  function agentPathVariables(spec, scope) {
+    return {
+      query: toGraphEntityQuery(spec),
+      projectId: scope && scope.length ? scope[0] : null
+    };
+  }
+  var noGuardrailVariables = (scope) => agentPathVariables(noGuardrailSpec(), scope);
+  var agentRunsAsVariables = (scope) => agentPathVariables(agentRunsAsSpec(), scope);
+  var saExcessiveAccessVariables = (scope) => agentPathVariables(saExcessiveAccessSpec(), scope);
+  var sensitiveDataAccessVariables = (scope) => agentPathVariables(sensitiveDataAccessSpec(), scope);
   function graphSearchVarQuery(name) {
     return "query " + name + "($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   }
@@ -2036,6 +2077,25 @@ var Server = (() => {
       return values.map((v) => String(v["name"])).filter(Boolean);
     } catch (e) {
       console.warn(`Enum probe for ${enumName} failed: ${e}`);
+      return null;
+    }
+  }
+  function fetchTypeShape(name) {
+    var _a5;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return null;
+    const q = 'query SidekickTypeProbe {\n  __type(name: "' + name + '") {\n    kind\n    enumValues { name }\n    inputFields { name }\n  }\n}\n';
+    try {
+      const data = gqlPost(q, {});
+      const t = data["__type"];
+      if (!t) return null;
+      const names = (v) => Array.isArray(v) ? v.map((e) => String(e["name"])).filter(Boolean) : [];
+      return {
+        kind: String((_a5 = t["kind"]) != null ? _a5 : ""),
+        enumValues: names(t["enumValues"]),
+        inputFields: names(t["inputFields"])
+      };
+    } catch (e) {
+      console.warn(`Type probe for ${name} failed: ${e}`);
       return null;
     }
   }
@@ -7432,7 +7492,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "f380d1cdc27d" : "dev";
+  var BUILD_ID = true ? "7b42c1bed893" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8926,6 +8986,9 @@ var Server = (() => {
         writes: ["ai_assets.guardrail_missing"],
         run: "graphSearch",
         query: Q_AGENTS_NO_GUARDRAIL,
+        // `null`, not projectScope(): these four have always run tenant-wide, and this change is
+        // about the query's SHAPE. See agentPathVariables in wizQueriesAi.ts.
+        extraVariables: noGuardrailVariables(null),
         normalize: normalizeNoGuardrailPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -8936,6 +8999,7 @@ var Server = (() => {
         writes: ["ai_edges (RUNS_AS)", "ai_assets"],
         run: "graphSearch",
         query: Q_AGENT_RUNS_AS,
+        extraVariables: agentRunsAsVariables(null),
         normalize: normalizeRunsAsPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -8946,6 +9010,7 @@ var Server = (() => {
         writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
         run: "graphSearch",
         query: Q_SA_EXCESSIVE_ACCESS,
+        extraVariables: saExcessiveAccessVariables(null),
         normalize: normalizeRunsAsPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -8963,6 +9028,7 @@ var Server = (() => {
         ],
         run: "graphSearch",
         query: Q_AGENT_SENSITIVE_DATA_ACCESS,
+        extraVariables: sensitiveDataAccessVariables(null),
         normalize: normalizeSensitiveDataAccessPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9713,16 +9779,7 @@ var Server = (() => {
       log(`Step 2 FAIL: ${e.message}`);
       return lines.join("\n");
     }
-    const graphEnum = fetchEnumValues("GraphEntityTypeValue");
-    if (graphEnum) {
-      log(
-        `Graph entity types: ${graphEnum.length} members; AI-flavored: ${aiFlavored(graphEnum).join(", ") || "(none \u2014 graph relationship steps will be skipped)"}.`
-      );
-    } else {
-      log(
-        "Graph entity introspection unavailable \u2014 graph relationship steps will be skipped automatically if this tenant rejects their queries."
-      );
-    }
+    graphVocabulary(log);
     try {
       const page = fetchCloudResourcesPage({
         query: Q_AI_INVENTORY,
@@ -10002,6 +10059,48 @@ var Server = (() => {
     log("    dropping what came back \u2014 read `sample` for the entity types the tenant returned.");
     log("=== end ===");
     return lines.join("\n");
+  }
+  function graphVocabulary(log) {
+    const entity = fetchTypeShape("GraphEntityType");
+    const rel = fetchTypeShape("GraphDirectedRelationshipTypeInput");
+    const report = (label, declared, members) => {
+      const have = new Set(members);
+      const absent = declared.filter((d) => !have.has(d));
+      log(
+        `  ${label}: ${members.length} members on this tenant; this app declares ${declared.length}, ${declared.length - absent.length} present.`
+      );
+      if (absent.length) log(`    ABSENT HERE: ${absent.join(", ")}`);
+      else log("    every declared name exists on this tenant.");
+    };
+    if (entity && entity.enumValues.length) {
+      report("Graph entity types (GraphEntityType)", NODE_KINDS, entity.enumValues);
+      const ai = aiFlavored(entity.enumValues);
+      log(`    AI-flavored members: ${ai.join(", ") || "(none)"}`);
+    } else {
+      log(
+        `  Graph entity types: could not read GraphEntityType${entity ? ` (kind ${entity.kind}, no enum members)` : " (no such type, or introspection is disabled)"}. Graph traversals cannot be checked ahead of time on this tenant.`
+      );
+    }
+    if (!rel) {
+      log(
+        "  Graph relationships: could not read GraphDirectedRelationshipTypeInput (no such type, or introspection is disabled)."
+      );
+      return;
+    }
+    const candidates = ["type", ...rel.inputFields.filter((f) => f !== "type")];
+    for (const field of candidates) {
+      const probe = fetchTypeShape(relEnumName(field));
+      if (probe && probe.enumValues.length) {
+        report(`Graph relationships (via ${field})`, EDGE_TYPES, probe.enumValues);
+        return;
+      }
+    }
+    log(
+      `  Graph relationships: GraphDirectedRelationshipTypeInput has fields [${rel.inputFields.join(", ") || "none readable"}], but none of them resolved to an enum this probe could read. Relationship names cannot be checked ahead of time; the probe in probeEdgeSteps() reports what the tenant says about them instead.`
+    );
+  }
+  function relEnumName(field) {
+    return field === "type" ? "GraphRelationshipType" : `Graph${field}Type`;
   }
 
   // src/server/api.ts
