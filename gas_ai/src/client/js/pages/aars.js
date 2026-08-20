@@ -43,6 +43,7 @@ import {
   openSheet,
   outcomeBadge,
   outcomeLabel,
+  tierLabel,
   paintUnknownRates,
   pointRail,
   railScale,
@@ -62,6 +63,8 @@ import {
 } from "../ui.js";
 import { POSTURE_LATTICE, PROBLEM_LATTICE, toneForKey } from "../lattice.js";
 import {
+  OUTCOME_VALUES,
+  TIER_VALUES,
   cellCoverage as mirrorCellCoverage,
   cellOccupancyByRow as mirrorCellOccupancyByRow,
   leafOccupancyByRow as mirrorLeafOccupancyByRow,
@@ -2259,15 +2262,12 @@ export async function renderAarsRules(main, _params, ctx) {
     { key: "exposure", label: "System exposure", values: ["OPEN", "CONTROLLED", "UNVERIFIED"] },
     { key: "mission", label: "Mission", values: ["HIGH", "MEDIUM", "LOW"] },
   ];
-  // Mirrors OUTCOME_VALUES (src/domain/problem.ts), worst first — the outcome dropdowns
-  // and the occupancy strip both walk this order, so a row's options and its place in the
-  // strip never disagree about which end of the scale is worse.
-  const OUTCOME_OPTIONS = [
-    { value: "ACT", label: "Act" },
-    { value: "ATTEND", label: "Attend" },
-    { value: "TRACK_STAR", label: "Track ★" },
-    { value: "TRACK", label: "Track" },
-  ];
+  // DERIVED from OUTCOME_VALUES (src/domain/problem.ts) and outcomeLabel(), worst first, so
+  // the dropdowns and the occupancy strip walk one order and print one set of words. It used
+  // to be a hand-written copy of both, and renaming `Track ★` to CISA's `Track*` had to be
+  // applied to three separate copies of the same four strings to keep them agreeing — which
+  // is the drift this now cannot have.
+  const OUTCOME_OPTIONS = OUTCOME_VALUES.map((value) => ({ value, label: outcomeLabel(value) }));
   const AXIS_LABELS = {
     exploitation: "Exploitation", impact: "Technical impact",
     exposure: "System exposure", mission: "Mission",
@@ -3329,14 +3329,10 @@ export async function renderAarsRules(main, _params, ctx) {
   const POSTURE_WHEN_KEYS = [
     "capability", "containment", "consequence", "privateData", "untrustedIngress", "externalEgress",
   ];
-  // Worst first — 4 down to 1 — mirrors TIER_VALUES (src/domain/posture.ts) reversed, the
-  // same "worst end of the scale leads" convention OUTCOME_OPTIONS keeps for the tree.
-  const TIER_OPTIONS = [
-    { value: "4", label: "Tier 4" },
-    { value: "3", label: "Tier 3" },
-    { value: "2", label: "Tier 2" },
-    { value: "1", label: "Tier 1" },
-  ];
+  // Same derivation as OUTCOME_OPTIONS above — TIER_VALUES (src/domain/posture.ts) and
+  // tierLabel() — reversed, because TIER_VALUES ascends and every control on this page leads
+  // with the worst end of the scale.
+  const TIER_OPTIONS = [...TIER_VALUES].reverse().map((t) => ({ value: String(t), label: tierLabel(t) }));
   const POSTURE_AXIS_LABELS = { capability: "Capability", containment: "Containment", consequence: "Consequence" };
   const POSTURE_UNKNOWN_WARN_THRESHOLD = 0.5;
   const POSTURE_MOVERS_INLINE = 8;

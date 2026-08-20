@@ -3,19 +3,59 @@
 // ATTEND, TRACK_STAR, TRACK, worst first — and problemRule.test.ts pins that order; if it
 // ever changes there, OUTCOME_META below has to change with it or a queue reads wrong.
 //
-// The four .pill kinds (bad/warn/neutral/ok) already exist for this app's other verdicts
-// (statusPill's "Failing" / "In progress" / "Open"), so this reuses them rather than
-// inventing a fifth severity-shaped palette: ACT is bad, ATTEND is warn, TRACK_STAR is
-// neutral (a coverage gap, neither good nor bad), and TRACK — nothing here needs action —
-// is the one outcome that earns "ok".
+// THE FOUR NAMES ARE CISA'S, NOT OURS, and the asterisk is theirs too. This was borrowed
+// verbatim from CISA's SSVC decision tree and went undocumented for long enough that
+// "why is it called Track*" had no answer anywhere in the repo. CISA's own definitions:
+//
+//   Track   — does not require action at this time; keep tracking and reassess if new
+//             information becomes available.
+//   Track*  — "contains specific characteristics that MAY REQUIRE CLOSER MONITORING for
+//             changes". The asterisk is CISA's notation for exactly that, and it is why
+//             this outcome outranks plain Track instead of being a footnote to it.
+//   Attend  — needs attention from internal, supervisory-level individuals.
+//   Act     — needs attention from supervisory-level AND leadership-level individuals.
+//
+// So it is written `Track*`, the way CISA writes it and the way this repo's own design note
+// writes it (ai/AARS_SCORING_ASSESSMENT.md). It used to render as `Track ★` — a filled star
+// is a local embellishment that reads as decoration or as a footnote marker, which is the
+// opposite of what the mark means, and it made the term harder to recognise for the
+// analysts most likely to already know it.
+// https://www.cisa.gov/stakeholder-specific-vulnerability-categorization-ssvc
+//
+// AN OUTCOME IS ORDINAL, AND IT IS PAINTED ON THE ORDINAL RAMP (--rank-N-* in tokens.css),
+// NOT ON THE FOUR .pill KINDS. This file used to argue the opposite — that TRACK_STAR was
+// "a coverage gap, neither good nor bad" and so earned the neutral grey. That sentence is
+// true about the outcome's MEANING and silent about its RANK, and the rank is what the app
+// actually sorts on: problem.ts documents OUTCOME_VALUES as worst-first with an order that
+// is "load-bearing wherever a caller sorts by it", and both compareProblems (problems.ts)
+// and pickAction (actions.ts) spell out ACT < ATTEND < TRACK_STAR < TRACK.
+//
+// So TRACK_STAR ranks WORSE than plain TRACK, and grey-then-green painted it as the quieter
+// of the two — inverting, in colour, the one relationship the column beside it is sorted by.
+//
+// TRACK_STAR is both a rung and an epistemic state ("nobody has checked something that
+// matters"). The ★ in its label already carries the epistemic half, which frees the fill to
+// carry the rank. Both facts are encoded and neither is carried by colour alone.
+//
+// The ramp is SHARED with the posture tiers rather than forked from them, because the two
+// are the same kind of scale — four steps, worst first — and because problems.js draws an
+// outcome, a tier and a severity in ONE table row: a second warm ramp there would be three
+// ordinal ramps competing in one line. The word says which scale you are reading; the fill
+// says where on it you are. .pill.ok/.warn/.bad/.neutral stay for statusPill, whose labels
+// ("Failing", "In progress", "Issue") really are categorical.
 
 import { el } from "./dom.js";
 
+// `spoken` exists only where the written label contains a mark a screen reader cannot make
+// sense of. The badge's accessible name used to be built from the label alone, so TRACK_STAR
+// announced as "Priority Track black star" — the one outcome whose name carries meaning in a
+// glyph was the one whose meaning was lost when read aloud. Everything else falls back to
+// `label`, so this stays a two-line exception rather than a parallel vocabulary.
 const OUTCOME_META = {
-  ACT: { kind: "bad", label: "Act" },
-  ATTEND: { kind: "warn", label: "Attend" },
-  TRACK_STAR: { kind: "neutral", label: "Track ★" },
-  TRACK: { kind: "ok", label: "Track" },
+  ACT: { kind: "pill--rank4", label: "Act" },
+  ATTEND: { kind: "pill--rank3", label: "Attend" },
+  TRACK_STAR: { kind: "pill--rank2", label: "Track*", spoken: "Track, closer monitoring" },
+  TRACK: { kind: "pill--rank1", label: "Track" },
 };
 
 /** The outcome's plain-text label, for a `<select>` option or a sentence. */
@@ -34,7 +74,7 @@ export function outcomeBadge(outcome) {
   if (!meta) return el("span", { class: "small muted" }, "—");
   return el(
     "span",
-    { class: `pill ${meta.kind}`, role: "img", "aria-label": `Priority ${meta.label}` },
+    { class: `pill ${meta.kind}`, role: "img", "aria-label": `Priority ${meta.spoken || meta.label}` },
     meta.label,
   );
 }

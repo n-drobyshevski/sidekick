@@ -4,24 +4,28 @@
 // always one of the four; if the tier's meaning ever changes there, TIER_META below has to
 // change with it or the Inventory's Posture column reads wrong.
 //
-// A SCALE OF ITS OWN, where the outcome badge reuses the four .pill kinds. The divergence is
-// the point rather than an oversight. An outcome scale is categorical and has a real unknown
-// bucket — `Track ★` means "a coverage gap, neither good nor bad", and a neutral grey is the
-// honest paint for that. A tier scale is ordinal: tier 2 is the middle rung of four, not an
-// unknown, and grey there reads as DISABLED. That is what an operator reported, and it is a
-// property of the encoding rather than of the particular grey.
+// THE ORDINAL RAMP (--rank-N-* in tokens.css), which is what a tier is: four steps read in
+// one direction. It used to be the four .pill kinds, which made tier 2 the neutral grey —
+// and grey for a middle rung reads as DISABLED, which is what an operator reported. That is
+// a property of the encoding, not of the particular grey.
 //
-// The four steps live in tokens.css as --tier-N-*, adopted against a measurement: every
-// adjacent pair of solids clears the OKLab separation floor (15) and the dichromatic floor
-// (8), which the previous amber/orange pair missed by more than half.
+// The ramp is SHARED with the problem outcomes, which turn out to be ordinal too; ui/outcome.js
+// carries that argument and the reason one ramp beats two. A tier and an outcome can appear in
+// the SAME table row (problems.js's Priority and Posture columns), so they are told apart by
+// their words — "Tier 4" against "Act" — while the fill says the same thing in both places:
+// this is the bad end of the scale.
+//
+// The steps were adopted against a measurement rather than a preference: every adjacent pair
+// of solids clears the OKLab separation floor (15) and the dichromatic floor (8), which the
+// previous amber/orange pair missed by more than half.
 
 import { el } from "./dom.js";
 
 const TIER_META = {
-  4: { kind: "pill--tier4", label: "Tier 4" },
-  3: { kind: "pill--tier3", label: "Tier 3" },
-  2: { kind: "pill--tier2", label: "Tier 2" },
-  1: { kind: "pill--tier1", label: "Tier 1" },
+  4: { kind: "pill--rank4", label: "Tier 4" },
+  3: { kind: "pill--rank3", label: "Tier 3" },
+  2: { kind: "pill--rank2", label: "Tier 2" },
+  1: { kind: "pill--rank1", label: "Tier 1" },
 };
 
 /** The tier's plain-text label, for a `<select>` option or a sentence. */

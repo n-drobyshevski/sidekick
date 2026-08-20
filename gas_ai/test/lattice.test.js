@@ -189,23 +189,20 @@ describe("vectorSentence", () => {
 const CELLS = latticeCells(PROBLEM_LATTICE);
 const POSTURE_CELLS = latticeCells(POSTURE_LATTICE);
 /**
- * The whole tone vocabulary, and the reason it is two sets rather than one.
+ * The whole tone vocabulary, and the reason it is ONE ramp rather than two palettes.
  *
- * A problem OUTCOME is categorical: Act, Attend, Track ★ and Track are four kinds of
- * answer, and `Track ★` is a genuine unknown rather than a step between Attend and Track —
- * so it keeps the neutral pill and the four keep the semantic tones.
+ * Both scales are ordinal and both are sorted on in the domain: `OUTCOME_VALUES` is
+ * documented worst-first with an order that is "load-bearing wherever a caller sorts by
+ * it", and compareProblems (problems.ts) and pickAction (actions.ts) independently spell
+ * out ACT < ATTEND < TRACK_STAR < TRACK. Tiers are 4..1 the same way. So an outcome and a
+ * tier at the same rank paint the same step, and the WORD tells you which scale you are
+ * reading — which matters, because problems.js draws an outcome and a tier in one row.
  *
- * A posture TIER is ordinal: 1 through 4 is one scale read in one direction, and painting
- * it with the semantic four made Tier 2 the neutral grey, which reads as "disabled" rather
- * than "second of four". The tier steps are that scale.
- *
- * The pin still means what it always meant — a painter may not invent a fifth kind — but
- * it now has to name eight, and which set a cell draws from depends on which lattice it
- * belongs to. That is the fork, asserted below rather than described.
+ * `neutral` is in the list but nothing routes to it: paintCells falls back to it for a key
+ * no tone map recognises. It is the fallback, not a fifth step.
  */
-const OUTCOME_TONES = ["bad", "warn", "neutral", "ok"];
-const TIER_TONES = ["tier1", "tier2", "tier3", "tier4"];
-const TONES = [...OUTCOME_TONES, ...TIER_TONES];
+const RANK_TONES = ["rank1", "rank2", "rank3", "rank4"];
+const TONES = [...RANK_TONES, "neutral"];
 /** A stand-in decide: ACT for the first leaf, TRACK for everything else. */
 const decideA = (v) => (v.exploitation === "ACTIVE" ? { outcome: "ACT", matchedRuleIndex: 0 }
   : { outcome: "TRACK", matchedRuleIndex: -1 });
@@ -231,12 +228,31 @@ describe("paintCells", () => {
     }
   });
 
-  it("keeps the two vocabularies apart: outcomes are categorical, tiers are the ordinal scale", () => {
+  it("paints both scales from the one ordinal ramp", () => {
     const outcomes = paintCells(CELLS, { mode: "rule", decide: decideA });
-    for (const cell of outcomes) expect(OUTCOME_TONES).toContain(cell.tone);
+    for (const cell of outcomes) expect(RANK_TONES).toContain(cell.tone);
 
     const tiers = paintCells(POSTURE_CELLS, { mode: "rule", decide: decideTier });
-    for (const cell of tiers) expect(TIER_TONES).toContain(cell.tone);
+    for (const cell of tiers) expect(RANK_TONES).toContain(cell.tone);
+  });
+
+  /**
+   * The ramp is ordered, and the order is the domain's. A rank that drifted out of step
+   * with OUTCOME_VALUES or the tier numbering would paint a worse thing more quietly than
+   * the thing it outranks — exactly the defect this ramp replaced, where TRACK_STAR was
+   * neutral grey while ranking above the green TRACK.
+   */
+  it("ranks each scale worst-first, and the two agree", () => {
+    const rankOf = (cells, result) =>
+      Number(paintCells(cells, { mode: "rule", decide: () => result })[0].tone.replace("rank", ""));
+    const outcome = (o) => rankOf(CELLS, { outcome: o, matchedRuleIndex: 0 });
+    const tier = (t) => rankOf(POSTURE_CELLS, { tier: t, matchedRuleIndex: 0 });
+
+    expect([outcome("ACT"), outcome("ATTEND"), outcome("TRACK_STAR"), outcome("TRACK")])
+      .toEqual([4, 3, 2, 1]);
+    expect([tier(4), tier(3), tier(2), tier(1)]).toEqual([4, 3, 2, 1]);
+    // TRACK_STAR outranks TRACK — the relationship the old neutral grey inverted.
+    expect(outcome("TRACK_STAR")).toBeGreaterThan(outcome("TRACK"));
   });
 
   it("rule mode counts nothing and carries the deciding row", () => {

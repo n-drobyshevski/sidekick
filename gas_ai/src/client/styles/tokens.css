@@ -49,14 +49,14 @@
      simulation, against floors of 15 and 8. That is the property the old scale lacked — its
      amber and orange sat 6.7 apart, so they read as one block however the alphas were
      tuned, which is what made the tier mass strip illegible. */
-  --tier-1-solid: #16a34a; --tier-1-tint: rgba(22, 163, 74, 0.20);
-  --tier-1-text: #08732f;  --tier-1-edge: #9dd8b3;
-  --tier-2-solid: #ffcb13; --tier-2-tint: rgba(255, 203, 19, 0.28);
-  --tier-2-text: #7f6405;  --tier-2-edge: #ffe074;
-  --tier-3-solid: #ff8605; --tier-3-tint: rgba(255, 134, 5, 0.36);
-  --tier-3-text: #894a06;  --tier-3-edge: #ffa442;
-  --tier-4-solid: #dc2626; --tier-4-tint: rgba(220, 38, 38, 0.52);
-  --tier-4-text: #790b0b;  --tier-4-edge: #e03c3c;
+  --rank-1-solid: #16a34a; --rank-1-tint: rgba(22, 163, 74, 0.20);
+  --rank-1-text: #08732f;  --rank-1-edge: #9dd8b3;
+  --rank-2-solid: #ffcb13; --rank-2-tint: rgba(255, 203, 19, 0.28);
+  --rank-2-text: #7f6405;  --rank-2-edge: #ffe074;
+  --rank-3-solid: #ff8605; --rank-3-tint: rgba(255, 134, 5, 0.36);
+  --rank-3-text: #894a06;  --rank-3-edge: #ffa442;
+  --rank-4-solid: #dc2626; --rank-4-tint: rgba(220, 38, 38, 0.52);
+  --rank-4-text: #790b0b;  --rank-4-edge: #e03c3c;
 
   /* Graph node categories — reinforce the kind icon + label, never the only cue. These are
      Wiz's own cluster hues, so a category means the same colour here as in the console the

@@ -35,8 +35,19 @@ export const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNK
 // what the server would have answered.
 export const OUTCOME_RANK = ["ACT", "ATTEND", "TRACK_STAR", "TRACK"];
 
+/**
+ * The same four words `ui/outcome.js`'s `outcomeLabel()` prints, DUPLICATED, and for this
+ * file's own stated reason rather than by neglect: everything here is DOM-free so that
+ * test/configViewMirror.test.js can run it under plain node, and importing ui/outcome.js
+ * would put `ui/dom.js` one import away from that. It is the boundary js/lattice.js keeps
+ * its own tone tables for.
+ *
+ * So: CHANGE ONE, CHANGE THE OTHER. Renaming `Track ★` to CISA's `Track*` had to be applied
+ * here by hand, which is exactly the cost this duplication carries and the reason it is
+ * written down now instead of being rediscovered next time.
+ */
 export const OUTCOME_LABELS = {
-  ACT: "Act", ATTEND: "Attend", TRACK_STAR: "Track ★", TRACK: "Track",
+  ACT: "Act", ATTEND: "Attend", TRACK_STAR: "Track*", TRACK: "Track",
 };
 
 export const LINKAGE_VALUES = ["linked", "unlinked"];

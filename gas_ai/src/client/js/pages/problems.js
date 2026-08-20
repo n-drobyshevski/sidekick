@@ -225,7 +225,7 @@ export async function renderProblems(main, params) {
     const cards = [
       kpiCard("Act", String(counts.ACT || 0), "a human interrupts today"),
       kpiCard("Attend", String(counts.ATTEND || 0), "on this week's plan"),
-      kpiCard("Track ★", String(counts.TRACK_STAR || 0), "an unresolved coverage gap"),
+      kpiCard("Track*", String(counts.TRACK_STAR || 0), "an unresolved coverage gap"),
       kpiCard("Track", String(counts.TRACK || 0), "no action implied"),
     ];
     if (undecided) {

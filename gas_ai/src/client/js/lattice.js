@@ -35,14 +35,15 @@
 // a DOM boundary instead of a TS/JS one. TONE_BY_OUTCOME / TONE_BY_TIER below must be kept
 // byte-for-byte in sync with OUTCOME_META (ui/outcome.js) and TIER_META (ui/posture.js).
 //
-// "DO NOT INVENT A FIFTH PALETTE" IS NARROWED HERE, NOT DROPPED. Outcomes still wear the
-// four .pill kinds, because an outcome scale is CATEGORICAL and has a genuine unknown
-// bucket: `Track ★` is documented as "a coverage gap, neither good nor bad", which is
-// exactly what a neutral grey should mean. A tier scale is ORDINAL — tier 2 is a middle
-// rung, not an unknown — and the same grey there reads as an absence, which is what an
-// operator reported it as. So tiers carry their own four steps (--tier-N-* in tokens.css)
-// and outcomes are untouched. The rule this protects is "no UNPLANNED palette"; this one is
-// planned, measured, and stops at two.
+// BOTH MAPS POINT AT ONE RAMP, AND THAT IS THE WHOLE POINT. An outcome and a tier are the
+// same kind of scale — four steps, worst first, and both sorted on in the domain (see
+// problems.ts's compareProblems and actions.ts's pickAction, which agree that
+// ACT < ATTEND < TRACK_STAR < TRACK). So they share the ordinal ramp (--rank-N-* in
+// tokens.css) rather than each minting a palette. "Do not invent a fifth palette" is
+// honoured by there being ONE new scale here, not two: what changed is that the app now
+// separates ORDINAL scales from CATEGORICAL marks, instead of separating outcomes from
+// tiers. ui/outcome.js carries the argument, including why the previous neutral grey for
+// `Track ★` inverted the ranking it sat next to.
 
 import {
   OUTCOME_VALUES,
@@ -315,20 +316,21 @@ export function vectorSentence(spec, vector) {
 // imported. `word` matches those modules' own labels exactly (so an aria-label built from
 // this table reads identically to a badge built from theirs); `glyph` is new to this file —
 // a short in-cell mark for a 34px-tall grid square (lattice.css's `.lat-cell__mark`) where
-// the full word does not fit next to the leaf's occupancy count. TRACK_STAR keeps its ★ in
-// the glyph, same as `outcomeBadge`'s "Track ★" label does, so the same shape reads the same
-// way at both sizes.
+// the full word does not fit next to the leaf's occupancy count. TRACK_STAR keeps its
+// asterisk in the glyph, same as `outcomeBadge`'s "Track*" label does, so the same shape
+// reads the same way at both sizes. The asterisk is CISA's own notation for "may require
+// closer monitoring" — ui/outcome.js carries the provenance and the definitions.
 const TONE_BY_OUTCOME = {
-  ACT: { tone: "bad", word: "Act", glyph: "ACT" },
-  ATTEND: { tone: "warn", word: "Attend", glyph: "ATT" },
-  TRACK_STAR: { tone: "neutral", word: "Track ★", glyph: "TR★" },
-  TRACK: { tone: "ok", word: "Track", glyph: "TRK" },
+  ACT: { tone: "rank4", word: "Act", glyph: "ACT" },
+  ATTEND: { tone: "rank3", word: "Attend", glyph: "ATT" },
+  TRACK_STAR: { tone: "rank2", word: "Track*", glyph: "TR*" },
+  TRACK: { tone: "rank1", word: "Track", glyph: "TRK" },
 };
 const TONE_BY_TIER = {
-  4: { tone: "tier4", word: "Tier 4", glyph: "T4" },
-  3: { tone: "tier3", word: "Tier 3", glyph: "T3" },
-  2: { tone: "tier2", word: "Tier 2", glyph: "T2" },
-  1: { tone: "tier1", word: "Tier 1", glyph: "T1" },
+  4: { tone: "rank4", word: "Tier 4", glyph: "T4" },
+  3: { tone: "rank3", word: "Tier 3", glyph: "T3" },
+  2: { tone: "rank2", word: "Tier 2", glyph: "T2" },
+  1: { tone: "rank1", word: "Tier 1", glyph: "T1" },
 };
 
 /**

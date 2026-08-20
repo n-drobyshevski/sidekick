@@ -244,10 +244,10 @@
 /* The posture tiers, which are their OWN four steps rather than the four kinds above —
    ui/posture.js carries the argument. Each keeps the dot the other pills have, so a tier is
    never colour alone. */
-.pill--tier1 { color: var(--tier-1-text); background: var(--tier-1-tint); }
-.pill--tier2 { color: var(--tier-2-text); background: var(--tier-2-tint); }
-.pill--tier3 { color: var(--tier-3-text); background: var(--tier-3-tint); }
-.pill--tier4 { color: var(--tier-4-text); background: var(--tier-4-tint); }
+.pill--rank1 { color: var(--rank-1-text); background: var(--rank-1-tint); }
+.pill--rank2 { color: var(--rank-2-text); background: var(--rank-2-tint); }
+.pill--rank3 { color: var(--rank-3-text); background: var(--rank-3-tint); }
+.pill--rank4 { color: var(--rank-4-text); background: var(--rank-4-tint); }
 
 .domain-chip { font-size: 12px; }
 

@@ -38,6 +38,13 @@ import type { ProblemRule } from "./problemRule";
  * information — nobody has checked something that matters"; `TRACK` means "the register
  * has this, no action implied". The order is load-bearing wherever a caller sorts by it
  * (worst-first, matching `SEVERITY_ORDER` and `AARS_SEVERITY_ORDER` in config.ts).
+ *
+ * THESE FOUR NAMES ARE CISA'S SSVC OUTCOMES, taken verbatim — Track, Track*, Attend, Act —
+ * and the readings above are this domain's restatement of CISA's own definitions, not a
+ * local invention. `TRACK_STAR` is CISA's `Track*`, whose asterisk means "contains specific
+ * characteristics that may require closer monitoring for changes"; that is precisely why it
+ * outranks plain `TRACK` here rather than reading as a footnote to it.
+ * https://www.cisa.gov/stakeholder-specific-vulnerability-categorization-ssvc
  */
 export type Outcome = "ACT" | "ATTEND" | "TRACK_STAR" | "TRACK";
 export const OUTCOME_VALUES: readonly Outcome[] = ["ACT", "ATTEND", "TRACK_STAR", "TRACK"];
@@ -71,8 +78,11 @@ export type Mission = "HIGH" | "MEDIUM" | "LOW";
 export const MISSION_VALUES: readonly Mission[] = ["HIGH", "MEDIUM", "LOW"];
 
 /**
- * The tree's own vocabulary — SSVC's four axes (exploitation, technical impact, system
- * exposure, mission/well-being) renamed to this product's domain, nothing more. 3 × 2 ×
+ * The tree's own vocabulary — SSVC's four axes brought into this product's domain. THREE
+ * were renamed and ONE was replaced, which the previous "nothing more" undersold: CISA's
+ * decision points are Exploitation, Automatable, Technical Impact and Mission & Well-Being,
+ * and `exposure` stands where `Automatable` does, because what this register can actually
+ * read off an asset is reachability, not whether an exploit can be automated. 3 × 2 ×
  * 3 × 3 = 54 leaves; `enumerateDecisionVectors` below is what actually counts them, so
  * this comment cannot drift from the code the way a hardcoded "54" scattered through the
  * module could.
