@@ -8,6 +8,7 @@ import {
   getProp,
   PROP_KEYS,
   resolveWizAuthMode,
+  hasWizCredentials,
 } from "./props";
 import {
   fetchCloudResourcesPage,
@@ -17,6 +18,7 @@ import {
 } from "./wizClientAi";
 import { aiFlavored, aiInventoryVariables, Q_AI_INVENTORY } from "./wizQueriesAi";
 import { readAll, TABS } from "./sheetsDb";
+import { describeSyncSteps, testStepVariables } from "./syncJobs";
 import { parseBool, parseTri } from "./syncStore";
 import { AI_ASSET_KINDS, EDGE_TYPES } from "../domain/graphTypes";
 import { READ_TIME_EDGE_TYPES } from "../domain/reach";
@@ -428,6 +430,125 @@ export function registerScopeDiagnostic(): string {
   } catch (e) {
     log(`ai_edges unreadable: ${String(e instanceof Error ? e.message : e)}`);
   }
+
+  log("=== end ===");
+  return lines.join("\n");
+}
+
+/**
+ * Probe every sync step that writes a graph edge, in one editor run.
+ *
+ * WHY THIS EXISTS AS A SEPARATE, ZERO-ARGUMENT FUNCTION. `api.probeSyncStep` takes a step id,
+ * and the Apps Script editor's Run control invokes the selected global with NO arguments — there
+ * is no way to pass one from the dropdown. So the parameterised probe is reachable only from the
+ * Scans drill-down button, one step per click across four different area drawers. When the
+ * question is "which of the six traversals is my tenant refusing, and what does it say", that is
+ * four clicks and four page-loads to assemble one answer. Every other editor-run entry point in
+ * this file is deliberately zero-argument for the same reason.
+ *
+ * WHY IT LIVES HERE AND NOT IN api.ts. Everything api.ts exports acquires a google.script.run
+ * delegator — the dist/entry.js drift guard in esbuild.config.mjs enforces exactly that. A helper
+ * that makes one live Wiz call PER STEP should not acquire a client-callable surface as a side
+ * effect of where its source file sits.
+ *
+ * THE STEP LIST IS DERIVED, NOT WRITTEN DOWN. Every edge-producing step already declares itself
+ * through `writes`, so a seventh traversal added tomorrow is probed by this without anyone
+ * remembering to come back here. A hand-written array would be the fourth copy of that list in
+ * this codebase and the first one able to go quietly stale.
+ *
+ * COST: one live page request per step, six today, and the two exposure documents each spread
+ * three ten-wide nested sub-connections per entity — this is not six cheap pings. If it ever
+ * approaches the Apps Script execution ceiling, probe one step at a time from the Scans drawer
+ * instead; that path is already shipped and does the same thing.
+ *
+ * Nothing is persisted, no job is created, and a rejected step is reported as a value rather
+ * than thrown (see syncJobs.testStepVariables), so one refusal cannot abort the run.
+ */
+export function probeEdgeSteps(): string {
+  const lines: string[] = [];
+  const log = (m: string) => {
+    lines.push(m);
+    console.log(m);
+  };
+
+  log("=== edge-producing step probe ===");
+
+  if (!hasWizCredentials()) {
+    log(
+      "A probe calls Wiz, and no credentials are configured — this deployment is in dry-run. " +
+      "Add credentials in Settings to probe a step against the tenant.",
+    );
+    log("=== end ===");
+    return lines.join("\n");
+  }
+
+  let steps: Rec[];
+  try {
+    // `describeSyncSteps`, not the private `syncSteps`: it is already exported, already
+    // resolves the tenant's AI type list the way the battery will, and already returns the
+    // `writes` declaration this filter reads. Nothing new has to be made public.
+    steps = describeSyncSteps().filter((s) =>
+      ((s["writes"] as string[]) ?? []).some((w: string) => String(w).indexOf("ai_edges") === 0),
+    );
+  } catch (e) {
+    log(`Could not describe the battery: ${String(e instanceof Error ? e.message : e)}`);
+    log("=== end ===");
+    return lines.join("\n");
+  }
+
+  if (!steps.length) {
+    log("No step in this battery writes to ai_edges — nothing to probe.");
+    log("=== end ===");
+    return lines.join("\n");
+  }
+
+  // Two passes over the same results: the summary first, because it is the part worth reading at
+  // a glance and the part worth pasting into a conversation. Probing once and rendering twice —
+  // never probing twice — because each probe is a live call.
+  const results: Array<{ id: string; area: string; res: Rec }> = [];
+  for (const step of steps) {
+    const id = String(step["id"] ?? "");
+    results.push({
+      id,
+      area: String(step["area"] ?? ""),
+      res: testStepVariables(id, null),
+    });
+  }
+
+  const width = Math.max(...results.map((r) => r.id.length));
+  const pad = (s: string) => s + " ".repeat(Math.max(0, width - s.length));
+  log("");
+  for (const { id, res } of results) {
+    if (res["ok"] === false) {
+      log(`  ${pad(id)}  REJECTED  ${String(res["error"] ?? "").slice(0, 160)}`);
+      continue;
+    }
+    const n = (res["normalized"] as Rec) ?? {};
+    log(
+      `  ${pad(id)}  ok        ${Number(res["rows"] ?? 0)} rows → ` +
+      `${Number(n["nodes"] ?? 0)} nodes, ${Number(n["edges"] ?? 0)} edges` +
+      (res["hasNextPage"] ? " (more pages)" : ""),
+    );
+  }
+
+  // Then the detail. `variables` is included deliberately: it echoes the resolved projectId and
+  // the root type list, which are the two moving parts behind an accepted-but-empty step, and
+  // neither is visible anywhere else without reading Script Properties by hand.
+  for (const { id, area, res } of results) {
+    log("");
+    log(`--- ${id} (${area}) ---`);
+    log(JSON.stringify(res, null, 2));
+  }
+
+  log("");
+  log("Read it this way:");
+  log("  · REJECTED means the tenant refused the document — the message names the token its");
+  log("    schema does not have, and the fix is this app's query, not your permissions.");
+  log("  · ok with 0 rows means the query was accepted and matched nothing. Check the echoed");
+  log("    `variables.projectId` and `variables.query.type` before concluding anything: the");
+  log("    mandatory inventory query is tenant-wide while these steps are project-scoped.");
+  log("  · ok with rows but 0 normalized edges means the query works and the NORMALIZER is");
+  log("    dropping what came back — read `sample` for the entity types the tenant returned.");
 
   log("=== end ===");
   return lines.join("\n");
