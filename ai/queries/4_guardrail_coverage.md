@@ -1,3 +1,10 @@
+> [!WARNING]
+> **Historical planning notes.** Every `graphSearch` query below is refused by this tenant as
+> written, and several name relationships it does not have. These were drafted before the repo
+> held a single captured request or response. See **[README.md](README.md)** for both defects,
+> the name substitutions, and where the real traversals live. The `cloudResourcesV2`
+> pre-computed-flag queries in this file are unaffected.
+
 Here are the production-ready GraphQL queries for **Guardrail Coverage (Pillar B)**:
 
 ---
@@ -64,7 +71,11 @@ query AIAgentsSensitiveDataNoGuardrailFlag(
 
 ### 4.2 — All AI Agents Without Any Guardrail (Graph Traversal)
 
-Core graph query — finds agents with no `PROTECTED_BY` edge to any guardrail:
+Core graph query — finds agents with no guardrail edge. On this tenant the relationship is
+`PROTECTS`, walked **reversed** from the asset, because the tenant’s edge runs guardrail →
+asset. `PROTECTED_BY` below is the model’s name for that hop, not a name the wire accepts:
+
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `PROTECTED_BY`, which this tenant does not have. See [README](README.md).
 
 ```graphql
 query AIAgentsWithoutGuardrail(
@@ -135,6 +146,8 @@ query AIAgentsWithoutGuardrail(
 
 High-priority subset — privileged agents with no guardrail:
 
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `PROTECTED_BY`, which this tenant does not have. See [README](README.md).
+
 ```graphql
 query PrivilegedAIAgentsWithoutGuardrail(
   $quick: Boolean
@@ -200,6 +213,8 @@ query PrivilegedAIAgentsWithoutGuardrail(
 
 AWS-specific — Bedrock agents with no guardrail configuration:
 
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `PROTECTED_BY`, which this tenant does not have. See [README](README.md).
+
 ```graphql
 query BedrockAgentsWithoutGuardrail(
   $quick: Boolean
@@ -261,6 +276,8 @@ query BedrockAgentsWithoutGuardrail(
 ### 4.5 — GCP Vertex AI Agents Without Guardrail
 
 GCP-specific — Vertex AI ReasoningEngine agents with no guardrail:
+
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `PROTECTED_BY`, which this tenant does not have. See [README](README.md).
 
 ```graphql
 query VertexAIAgentsWithoutGuardrail(
@@ -418,6 +435,8 @@ query AIAgentsMisconfiguredGuardrail(
 
 Inventory of all existing guardrails — to cross-reference against agent count:
 
+> ⚠️ **Refused as written** — quoted enum in GraphQL source. See [README](README.md).
+
 ```graphql
 query AIGuardrailInventoryWithCoverage(
   $quick: Boolean
@@ -499,6 +518,8 @@ query TotalAIAgentsPerProject(
 ```
 
 **Step 2 — Agents WITH guardrail per project:**
+
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `PROTECTED_BY`, which this tenant does not have. See [README](README.md).
 
 ```graphql
 query AIAgentsWithGuardrailPerProject(
@@ -592,7 +613,7 @@ coverage_pct = (agents_with_guardrail / total_agents) * 100
 
 | Point | Detail |
 |---|---|
-| **`PROTECTED_BY`** | Edge from AI_AGENT → AI_GUARDRAIL — verify in Graph Explorer |
+| **`PROTECTED_BY`** | The model’s name for the hop, and what `ai_edges` persists. On the wire it is **`PROTECTS`, reversed** — the tenant’s edge runs AI_GUARDRAIL → asset. No longer needs verifying in Graph Explorer: see `HOP.PROTECTED_BY` in `gas_ai/src/domain/graphExpand.ts`. |
 | **`negate: true`** | Inverts the relationship — finds agents where the edge does NOT exist |
 | **Your env coverage** | Only **3 guardrails** for **71 agents** = **4.2% coverage** — the lowest possible Pillar B score |
 | **`wc-id-3038`** | "Highly privileged AI agent not protected by AI guardrails" — HIGH severity |

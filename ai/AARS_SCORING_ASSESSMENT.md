@@ -131,7 +131,9 @@ in `wizQueriesAi.ts`, normalized or not, and lost at the sheet boundary:
 
 ### 2.3 The coverage ceiling in the graph
 
-`EDGE_TYPES` declares **23** kinds (`graphTypes.ts:183-212`). On a live tenant:
+`EDGE_TYPES` declares **23** kinds (the `EDGE_TYPES` constant in `graphTypes.ts` — cited by
+symbol because this line originally read `graphTypes.ts:183-212`, which has since drifted to
+`:202-231` while still reading as precise). On a live tenant:
 
 | source | count | which |
 |---|---|---|
@@ -140,6 +142,27 @@ in `wizQueriesAi.ts`, normalized or not, and lost at the sheet boundary:
 | `sampleData.ts` only | 7 | `INVOKES_TOOL`, `USES_MODEL`, `USES_DATASET`, `STORED_IN`, `BUILT_FROM`, `CAN_INVOKE`, `ENFORCES` |
 | on-demand expansion, never persisted | 1 | `USES` |
 | declared and never constructed | 3 | `USES_TOOL`, `BOUND_TO`, `PERMITS_ACCESS_ROLE` |
+
+
+> [!IMPORTANT]
+> **Correction, 2026-08-20 — the top row measured zero.** The census above states design
+> *intent*: those are the five kinds a normalizer would write if its traversal returned rows.
+> On the live tenant it returned none. All four `graphSearch` traversals in the battery were
+> being refused outright — they sent their query as GraphQL source with quoted enum values,
+> and separately named five relationships this tenant does not have. So the honest reading of
+> this table today is that **no** edge kind appears on the persisted graph, not eleven of
+> twenty-three: `ai_edges` holds zero rows and `Reach · Enriched` is 0%.
+>
+> That makes the section's conclusion stronger rather than weaker — it is a query problem, and
+> a larger one than it looked.
+>
+> **Both defects are fixed, and as of 2026-08-20 both are verified against the tenant.** A live
+> probe (`cd gas_ai && npm run probe`) had `RUNS_AS` return 190 rows, `SA_FINDINGS` 49,
+> `GUARDRAIL_GAPS` 710 and the new `LINEAGE` step 9,767 — where every one of them had been
+> refused outright. Every relationship and entity type the app sends is confirmed present on
+> the tenant's schema, checked offline by `gas_ai/test/tenantVocabulary.test.js`. What has not
+> happened yet is a *sync*: `ai_edges` stays at zero rows until the fixed build is deployed and
+> run, so the census above still describes the persisted graph. See `ai/queries/README.md`.
 
 **Eleven of twenty-three never appear on a live tenant's persisted graph.** Any factor a scoring
 model wants to read about tool scope, model provenance, memory persistence or agent-to-agent trust

@@ -251,6 +251,11 @@ not hold is a claim that expires quietly.
   `INVOKES_TOOL`, `USES_MODEL`, `HOSTED_ON` and the rest. Agent-to-agent trust (ASI07),
   MCP/tool supply chain (ASI04) and model provenance (LLM03) are a coverage ceiling that
   needs new Wiz queries, not new rules.
+
+  > **Correction, 2026-08-20.** Understated, and in the direction that mattered. The live
+  > tenant produced **no** edges of any kind: the battery's graph traversals were refused for
+  > shape and for vocabulary, so the coverage ceiling this bullet describes applied to the
+  > whole graph, not to twelve of twenty-one kinds. See `ai/queries/README.md`.
 - **The seed estate has no CRITICAL or HIGH native issue severities**, so its top score under
   v2 is 69 and CRITICAL looks empty. That is the demo's shape, not the rule's: a
   CRITICAL-issue asset that is internet-exposed and holds sensitive data reaches 100.
