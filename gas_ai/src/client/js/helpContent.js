@@ -36,7 +36,8 @@ import { CODEBOOK, FAMILY_GROUP } from "./codebook.js";
 import { MEASURE_ENTRIES } from "./measureContent.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, kindIconSvg } from "./icons.js";
 import {
-  aarsChip, el, outcomeBadge, pluralize, scoreChip, sevBadge, statusPill, tierBadge,
+  aarsChip, aarsPercentileMark, el, outcomeBadge, pluralize, scoreChip, sevBadge, statusPill,
+  tierBadge,
 } from "./ui.js";
 
 /** The six headings, in reading order. Six headings and find-in-page beat a search box. */

@@ -114,6 +114,13 @@
 .lat-cell[data-tone="warn"]    { background: rgba(161, 98, 7, 0.12); color: var(--warn); }
 .lat-cell[data-tone="neutral"] { background: rgba(0, 0, 0, 0.06); color: var(--text-2); }
 .lat-cell[data-tone="ok"]      { background: rgba(21, 128, 61, 0.12); color: var(--ok); }
+/* The posture tiers get their own four (tokens.css) — the fork ui/posture.js argues for.
+   Each carries an edge as well as a fill: 27 cells at 1px apart is not enough separation
+   for a tint, and the edge costs no ink of its own. */
+.lat-cell[data-tone="tier1"] { background: var(--tier-1-tint); color: var(--tier-1-text); border-color: var(--tier-1-edge); }
+.lat-cell[data-tone="tier2"] { background: var(--tier-2-tint); color: var(--tier-2-text); border-color: var(--tier-2-edge); }
+.lat-cell[data-tone="tier3"] { background: var(--tier-3-tint); color: var(--tier-3-text); border-color: var(--tier-3-edge); }
+.lat-cell[data-tone="tier4"] { background: var(--tier-4-tint); color: var(--tier-4-text); border-color: var(--tier-4-edge); }
 
 /* Landscape buckets. Four steps, not a ramp, and the count is printed in every one of them. */
 .lat-cell[data-bucket="1"] { background: rgba(0, 0, 0, 0.05); color: var(--text-2); }
@@ -184,16 +191,36 @@
 .lat-mass__frame { position: relative; padding-top: 15px; }
 .lat-mass__bar {
   display: flex;
-  height: 12px;
+  /* 16, not 12: a thin strip gives each fill so few pixels that its edges dominate it. */
+  height: 16px;
   border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--track-bg);
 }
-.lat-mass__seg { display: block; min-width: 2px; }
+/* THE SEPARATOR. Four saturated fills meeting edge to edge assimilate at the shared edge,
+   which is why this strip read as one smear however the palette was cut. `border-right`,
+   never `gap`: the ceiling marker below is positioned by the same percentages these
+   segments are sized by, and a gap would drift every boundary away from the ceiling it is
+   being compared against. With box-sizing:border-box the border is drawn INSIDE the
+   percentage, so the geometry is bit-for-bit unchanged. */
+.lat-mass__seg { display: block; min-width: 2px; border-right: 2px solid var(--page); }
+.lat-mass__seg:last-child { border-right: none; }
+/* A tier with no cells is not "a little": it gets no sliver at all, and the legend beneath
+   still prints its 0, which is where a zero belongs. */
+.lat-mass__seg[data-zero] { min-width: 0; border-right: none; }
+/* And the last fill that actually draws carries no separator, because a separator is a
+   thing BETWEEN fills. `:last-child` cannot say this on its own: when the trailing tiers
+   are empty the last element is a zero-width band, and the bar would end two pixels short
+   of its frame — reading as if it had not reached the end. paintMass marks it. */
+.lat-mass__seg[data-last-fill] { border-right: none; }
 .lat-mass__seg[data-tone="bad"]     { background: var(--bad); }
 .lat-mass__seg[data-tone="warn"]    { background: var(--warn); }
 .lat-mass__seg[data-tone="neutral"] { background: rgba(0, 0, 0, 0.42); }
 .lat-mass__seg[data-tone="ok"]      { background: var(--ok); }
+.lat-mass__seg[data-tone="tier1"]   { background: var(--tier-1-solid); }
+.lat-mass__seg[data-tone="tier2"]   { background: var(--tier-2-solid); }
+.lat-mass__seg[data-tone="tier3"]   { background: var(--tier-3-solid); }
+.lat-mass__seg[data-tone="tier4"]   { background: var(--tier-4-solid); }
 .lat-mass__mark {
   position: absolute;
   top: 9px;
@@ -365,6 +392,10 @@ table.data tr.rule-won > td:first-child {
 .lat-icicle rect[data-tone="warn"]    { fill: rgba(161, 98, 7, 0.16); }
 .lat-icicle rect[data-tone="neutral"] { fill: rgba(0, 0, 0, 0.08); }
 .lat-icicle rect[data-tone="ok"]      { fill: rgba(21, 128, 61, 0.16); }
+.lat-icicle rect[data-tone="tier1"]   { fill: var(--tier-1-tint); }
+.lat-icicle rect[data-tone="tier2"]   { fill: var(--tier-2-tint); }
+.lat-icicle rect[data-tone="tier3"]   { fill: var(--tier-3-tint); }
+.lat-icicle rect[data-tone="tier4"]   { fill: var(--tier-4-tint); }
 .lat-icicle rect[data-bucket="0"]     { fill: rgba(0, 0, 0, 0.03); }
 .lat-icicle rect[data-bucket="1"]     { fill: rgba(0, 0, 0, 0.08); }
 .lat-icicle rect[data-bucket="2"]     { fill: rgba(0, 0, 0, 0.18); }

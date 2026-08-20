@@ -187,21 +187,56 @@ describe("vectorSentence", () => {
 // -------------------------------------------------------------------------------- paintCells
 
 const CELLS = latticeCells(PROBLEM_LATTICE);
-const TONES = ["bad", "warn", "neutral", "ok"];
+const POSTURE_CELLS = latticeCells(POSTURE_LATTICE);
+/**
+ * The whole tone vocabulary, and the reason it is two sets rather than one.
+ *
+ * A problem OUTCOME is categorical: Act, Attend, Track ★ and Track are four kinds of
+ * answer, and `Track ★` is a genuine unknown rather than a step between Attend and Track —
+ * so it keeps the neutral pill and the four keep the semantic tones.
+ *
+ * A posture TIER is ordinal: 1 through 4 is one scale read in one direction, and painting
+ * it with the semantic four made Tier 2 the neutral grey, which reads as "disabled" rather
+ * than "second of four". The tier steps are that scale.
+ *
+ * The pin still means what it always meant — a painter may not invent a fifth kind — but
+ * it now has to name eight, and which set a cell draws from depends on which lattice it
+ * belongs to. That is the fork, asserted below rather than described.
+ */
+const OUTCOME_TONES = ["bad", "warn", "neutral", "ok"];
+const TIER_TONES = ["tier1", "tier2", "tier3", "tier4"];
+const TONES = [...OUTCOME_TONES, ...TIER_TONES];
 /** A stand-in decide: ACT for the first leaf, TRACK for everything else. */
 const decideA = (v) => (v.exploitation === "ACTIVE" ? { outcome: "ACT", matchedRuleIndex: 0 }
   : { outcome: "TRACK", matchedRuleIndex: -1 });
 const decideB = (v) => (v.exploitation === "ACTIVE" ? { outcome: "ATTEND", matchedRuleIndex: 0 }
   : { outcome: "TRACK", matchedRuleIndex: -1 });
+/**
+ * The posture side of the same stand-in. `decide` is handed the vector and nothing else, so
+ * the tier is derived from the vector rather than a counter, and the mapping is chosen so
+ * that all four steps are actually reached across the 27 cells.
+ */
+const decideTier = (v) => ({
+  tier: v.capability === "BROAD" ? 4 : v.containment === "WEAK" ? 3 : v.consequence === "SEVERE" ? 2 : 1,
+  matchedRuleIndex: 0,
+});
 
 describe("paintCells", () => {
-  it("never mints a tone outside the four existing pill kinds", () => {
+  it("never mints a tone outside the existing pill kinds", () => {
     for (const mode of ["rule", "landscape", "change", "impact"]) {
       const painted = paintCells(CELLS, {
         mode, decide: decideA, savedDecide: decideB, occupancy: {}, occupancyKnown: true,
       });
       for (const cell of painted) expect(TONES).toContain(cell.tone);
     }
+  });
+
+  it("keeps the two vocabularies apart: outcomes are categorical, tiers are the ordinal scale", () => {
+    const outcomes = paintCells(CELLS, { mode: "rule", decide: decideA });
+    for (const cell of outcomes) expect(OUTCOME_TONES).toContain(cell.tone);
+
+    const tiers = paintCells(POSTURE_CELLS, { mode: "rule", decide: decideTier });
+    for (const cell of tiers) expect(TIER_TONES).toContain(cell.tone);
   });
 
   it("rule mode counts nothing and carries the deciding row", () => {

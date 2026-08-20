@@ -96,6 +96,7 @@ export function axisBar({ values, unit = "rows" }) {
       for (const { seg, hatch } of segs.values()) {
         seg.style.width = "0%";
         hatch.style.width = "0%";
+        seg.dataset.zero = "";
       }
       legend.append(el("span", { class: "muted" }, "not measured yet"));
       return;
@@ -106,6 +107,12 @@ export function axisBar({ values, unit = "rows" }) {
       if (!hit) continue;
       hit.seg.style.width = `${s.share * 100}%`;
       hit.hatch.style.width = `${s.unknownShare * 100}%`;
+      // Unlike the legend below it, the BAR has nothing to say about a value nothing
+      // reached: a zero-width segment still carrying its separator would print two pixels
+      // of page colour and read as a boundary between fills that are not there. The zero
+      // is a finding and it is reported — in words, in the key, where it can be read.
+      if (s.count) delete hit.seg.dataset.zero;
+      else hit.seg.dataset.zero = "";
       // A value nothing reached still keeps its legend entry — a zero here is a finding
       // ("no reading on this axis ever came out ACTIVE"), not an absence to hide.
       const key = el(
@@ -122,6 +129,13 @@ export function axisBar({ values, unit = "rows" }) {
       legend.append(key);
     }
     legend.append(el("span", { class: "axis-bar__total muted" }, `of ${tally.total} ${unit}`));
+    // A separator sits BETWEEN fills, so the last one that actually draws does not get one.
+    // `:last-child` cannot say this when the trailing values are empty — the bar would stop
+    // two pixels short of its track and read as not reaching the end.
+    const drawn = [...segs.values()].map((h) => h.seg);
+    for (const seg of drawn) delete seg.dataset.lastFill;
+    const lastFill = drawn.filter((n) => n.dataset.zero === undefined).pop();
+    if (lastFill) lastFill.dataset.lastFill = "";
   };
 
   node.light = (what) => {

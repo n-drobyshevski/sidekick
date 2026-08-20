@@ -33,8 +33,16 @@
 // identical reason (that file's own comment: "the client bundle cannot import the domain
 // layer, and the order must still agree with it") — this is the same discipline applied to
 // a DOM boundary instead of a TS/JS one. TONE_BY_OUTCOME / TONE_BY_TIER below must be kept
-// byte-for-byte in sync with OUTCOME_META (ui/outcome.js) and TIER_META (ui/posture.js);
-// `paintCells`'s own doc comment repeats "do not invent a fifth palette" as the reason.
+// byte-for-byte in sync with OUTCOME_META (ui/outcome.js) and TIER_META (ui/posture.js).
+//
+// "DO NOT INVENT A FIFTH PALETTE" IS NARROWED HERE, NOT DROPPED. Outcomes still wear the
+// four .pill kinds, because an outcome scale is CATEGORICAL and has a genuine unknown
+// bucket: `Track ★` is documented as "a coverage gap, neither good nor bad", which is
+// exactly what a neutral grey should mean. A tier scale is ORDINAL — tier 2 is a middle
+// rung, not an unknown — and the same grey there reads as an absence, which is what an
+// operator reported it as. So tiers carry their own four steps (--tier-N-* in tokens.css)
+// and outcomes are untouched. The rule this protects is "no UNPLANNED palette"; this one is
+// planned, measured, and stops at two.
 
 import {
   OUTCOME_VALUES,
@@ -317,10 +325,10 @@ const TONE_BY_OUTCOME = {
   TRACK: { tone: "ok", word: "Track", glyph: "TRK" },
 };
 const TONE_BY_TIER = {
-  4: { tone: "bad", word: "Tier 4", glyph: "T4" },
-  3: { tone: "warn", word: "Tier 3", glyph: "T3" },
-  2: { tone: "neutral", word: "Tier 2", glyph: "T2" },
-  1: { tone: "ok", word: "Tier 1", glyph: "T1" },
+  4: { tone: "tier4", word: "Tier 4", glyph: "T4" },
+  3: { tone: "tier3", word: "Tier 3", glyph: "T3" },
+  2: { tone: "tier2", word: "Tier 2", glyph: "T2" },
+  1: { tone: "tier1", word: "Tier 1", glyph: "T1" },
 };
 
 /**

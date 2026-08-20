@@ -96,7 +96,14 @@
   display: flex; align-items: center; justify-content: center;
   min-width: 0; overflow: hidden;
   font-size: 11px; font-weight: 600; letter-spacing: 0.03em; white-space: nowrap;
+  /* A page-coloured edge, not a `gap`: this bar is drawn on the same 0-100 axis as the
+     band rail below it, and a gap would consume width the percentages do not know about,
+     sliding every pillar boundary off the rail figure it is meant to line up with.
+     `border-box` draws this inside the percentage, so the axis is untouched. A border
+     rather than a second `box-shadow` so it cannot collide with the `.is-lit` ink ring. */
+  border-right: 2px solid var(--page);
 }
+.model-stack__seg:last-child { border-right: none; }
 .model-stack__seg--a { background: rgba(0, 0, 0, 0.78); color: var(--on-graphite); }
 .model-stack__seg--b { background: rgba(0, 0, 0, 0.46); color: var(--on-graphite); }
 .model-stack__seg--c { background: rgba(0, 0, 0, 0.14); color: var(--ink); }
@@ -354,6 +361,13 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent); }
 .verdict-select[data-tone="warn"]    { background: rgba(161, 98, 7, 0.12);  color: var(--warn); }
 .verdict-select[data-tone="neutral"] { background: rgba(0, 0, 0, 0.06);     color: var(--text-2); }
 .verdict-select[data-tone="ok"]      { background: rgba(21, 128, 61, 0.12); color: var(--ok); }
+/* The posture cascade's verdicts are tiers, not outcomes, and they read on the ordinal
+   scale the lattice cells above them are painted from — same tokens, so the control and
+   the picture still cannot disagree. The dot stays: tint is never the only signal. */
+.verdict-select[data-tone="tier4"] { background: var(--tier-4-tint); color: var(--tier-4-text); }
+.verdict-select[data-tone="tier3"] { background: var(--tier-3-tint); color: var(--tier-3-text); }
+.verdict-select[data-tone="tier2"] { background: var(--tier-2-tint); color: var(--tier-2-text); }
+.verdict-select[data-tone="tier1"] { background: var(--tier-1-tint); color: var(--tier-1-text); }
 
 /* A condition the editor holds but does not offer. A posture `when` can carry the three
    lethal-trifecta legs, and POSTURE_AXIS_DEFS renders none of them — so the default first
@@ -483,7 +497,11 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent); }
   display: block;
   min-width: 0;
   transition: opacity var(--dur-fast) var(--ease-out);
+  border-right: 2px solid var(--page);
 }
+.axis-bar__seg:last-child,
+.axis-bar__seg[data-zero],
+.axis-bar__seg[data-last-fill] { border-right: none; }
 /* Dark to light in the axis's own declared order — the one ordering these values genuinely
    have. Five steps because no axis declares more than three, with room to spare. */
 .axis-bar__seg[data-rank="0"], .axis-bar__swatch[data-rank="0"] { background: rgba(0, 0, 0, 0.62); }
