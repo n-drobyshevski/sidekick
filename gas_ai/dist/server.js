@@ -912,6 +912,14 @@ var Server = (() => {
     "ACCESS_ROLE",
     "ACCESS_ROLE_BINDING",
     "ACCESS_KEY",
+    // The binding and permission entities the tenant ACTUALLY returns. A console export of
+    // "AI assets whose identity holds high privileges" walks
+    // PRINCIPAL <-ENTITLES- IAM_BINDING -ALLOWS-> ACCESS_ROLE_PERMISSION and came back with 12
+    // rows; ACCESS_ROLE_BINDING and ACCESS_ROLE above are declared here and exist in the
+    // tenant's schema, but no capture walks them. Both pairs are kept: dropping the older two
+    // would orphan rows already on the ledger.
+    "IAM_BINDING",
+    "ACCESS_ROLE_PERMISSION",
     // data
     "BUCKET",
     "DATABASE",
@@ -1117,6 +1125,19 @@ var Server = (() => {
      * one and say so.
      */
     BOUND_TO: { type: "ENTITLES" },
+    /**
+     * Standing at the PRINCIPAL → the binding that entitles it. The SAME relationship as
+     * `BOUND_TO` above, walked from the other end, which is why it is a separate member rather
+     * than a `reverse` flag some caller remembers to set.
+     *
+     * Both are capture-proven and they disagree on the flag: the console's high-privilege export
+     * stands at the principal and sends `reverse: true`, `identityAccessSpec` stands at the
+     * binding and sends nothing. One shared constant with one flag would silently invert whichever
+     * caller it did not belong to, and an inverted hop returns zero rows rather than an error.
+     */
+    ENTITLED_BY: { type: "ENTITLES", reverse: true },
+    /** Standing at the BINDING → the permission it grants. */
+    GRANTS_PERMISSION: { type: "ALLOWS" },
     /** Standing at the ROLE BINDING → the permission it grants. Forward, per the same capture. */
     PERMITS_ACCESS_ROLE: { type: "ALLOWS" }
   };
@@ -1553,6 +1574,51 @@ var Server = (() => {
     };
   }
 
+  // src/domain/identityQuery.ts
+  var HUMAN_ACCESS_TYPES = ["ADMIN", "HIGH_PRIVILEGE"];
+  var WIRE_ACCESS_TYPES = ["Admin", "HighPrivilege"];
+  var BOUND_IDENTITY_KINDS = ["USER_ACCOUNT", "SERVICE_ACCOUNT"];
+  function identityAccessSpec(types) {
+    return {
+      type: [...types],
+      relationships: [
+        {
+          type: "ACCESS_ROLE_BINDING",
+          select: false,
+          edge: { type: "ALLOWS_ACCESS_TO", reverse: true },
+          relationships: [
+            {
+              type: [...BOUND_IDENTITY_KINDS],
+              edge: HOP.BOUND_TO
+            },
+            {
+              type: "ACCESS_ROLE",
+              edge: HOP.PERMITS_ACCESS_ROLE,
+              // `accessTypes`, plural, per the capture — the singular form matched nothing.
+              where: { accessTypes: { EQUALS: [...WIRE_ACCESS_TYPES] } }
+            }
+          ]
+        }
+      ]
+    };
+  }
+  function normalizeIdentityPurpose(v) {
+    if (typeof v !== "string" || !v.trim()) return void 0;
+    return v.trim().replace(/^IdentityPurpose/i, "").toUpperCase();
+  }
+  function normalizeAccessType(v) {
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        const hit = normalizeAccessType(item);
+        if (hit) return hit;
+      }
+      return void 0;
+    }
+    if (typeof v !== "string" || !v.trim()) return void 0;
+    const norm = v.trim().replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+    return HUMAN_ACCESS_TYPES.indexOf(norm) >= 0 ? norm : void 0;
+  }
+
   // src/domain/agentPathQuery.ts
   var AGENT_PATH_ROOTS = ["AI_AGENT"];
   function noGuardrailSpec(roots = AGENT_PATH_ROOTS) {
@@ -1574,9 +1640,26 @@ var Server = (() => {
       type: [...roots],
       relationships: [
         {
-          type: "SERVICE_ACCOUNT",
+          type: "PRINCIPAL",
           edge: HOP.RUNS_AS,
-          relationships: [{ type: "EXCESSIVE_ACCESS_FINDING", edge: HOP.HAS_FINDING }]
+          where: { hasHighPrivileges: { EQUALS: true } },
+          relationships: [
+            {
+              type: "IAM_BINDING",
+              edge: HOP.ENTITLED_BY,
+              optional: true,
+              where: { accessTypes: { EQUALS: [...WIRE_ACCESS_TYPES] } },
+              relationships: [
+                {
+                  type: "ACCESS_ROLE_PERMISSION",
+                  edge: HOP.GRANTS_PERMISSION,
+                  optional: true,
+                  where: { accessTypes: { EQUALS: [...WIRE_ACCESS_TYPES] } }
+                }
+              ]
+            },
+            { type: "EXCESSIVE_ACCESS_FINDING", edge: HOP.HAS_FINDING, optional: true }
+          ]
         }
       ]
     };
@@ -1646,51 +1729,6 @@ var Server = (() => {
     if (a === void 0) return b;
     if (b === void 0) return a;
     return rank(a) <= rank(b) ? a : b;
-  }
-
-  // src/domain/identityQuery.ts
-  var HUMAN_ACCESS_TYPES = ["ADMIN", "HIGH_PRIVILEGE"];
-  var WIRE_ACCESS_TYPES = ["Admin", "HighPrivilege"];
-  var BOUND_IDENTITY_KINDS = ["USER_ACCOUNT", "SERVICE_ACCOUNT"];
-  function identityAccessSpec(types) {
-    return {
-      type: [...types],
-      relationships: [
-        {
-          type: "ACCESS_ROLE_BINDING",
-          select: false,
-          edge: { type: "ALLOWS_ACCESS_TO", reverse: true },
-          relationships: [
-            {
-              type: [...BOUND_IDENTITY_KINDS],
-              edge: HOP.BOUND_TO
-            },
-            {
-              type: "ACCESS_ROLE",
-              edge: HOP.PERMITS_ACCESS_ROLE,
-              // `accessTypes`, plural, per the capture — the singular form matched nothing.
-              where: { accessTypes: { EQUALS: [...WIRE_ACCESS_TYPES] } }
-            }
-          ]
-        }
-      ]
-    };
-  }
-  function normalizeIdentityPurpose(v) {
-    if (typeof v !== "string" || !v.trim()) return void 0;
-    return v.trim().replace(/^IdentityPurpose/i, "").toUpperCase();
-  }
-  function normalizeAccessType(v) {
-    if (Array.isArray(v)) {
-      for (const item of v) {
-        const hit = normalizeAccessType(item);
-        if (hit) return hit;
-      }
-      return void 0;
-    }
-    if (typeof v !== "string" || !v.trim()) return void 0;
-    const norm = v.trim().replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase().replace(/[^A-Z0-9]+/g, "_");
-    return HUMAN_ACCESS_TYPES.indexOf(norm) >= 0 ? norm : void 0;
   }
 
   // src/domain/toxicCombos.ts
@@ -3021,11 +3059,20 @@ var Server = (() => {
       const findings = entities.filter(
         (e) => e.kind === "EXCESSIVE_ACCESS_FINDING" || e.kind === "LATERAL_MOVEMENT_FINDING"
       );
+      const binding = entities.find((e) => e.kind === "IAM_BINDING");
       part.nodes.push(...entities);
       if (agent && sa) {
         part.edges.push({ id: edgeId(agent.id, "RUNS_AS", sa.id), src: agent.id, dst: sa.id, type: "RUNS_AS" });
         for (const f of findings) {
           part.edges.push({ id: edgeId(sa.id, "HAS_FINDING", f.id), src: sa.id, dst: f.id, type: "HAS_FINDING" });
+        }
+        if (binding) {
+          part.edges.push({
+            id: edgeId(sa.id, "BOUND_TO", binding.id),
+            src: sa.id,
+            dst: binding.id,
+            type: "BOUND_TO"
+          });
         }
       }
     }
@@ -7542,7 +7589,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "15ede8dd7fd9" : "dev";
+  var BUILD_ID = true ? "fbcd765d8360" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -11711,6 +11758,8 @@ var Server = (() => {
     USER_ACCOUNT: 2,
     ACCESS_ROLE: 2,
     ACCESS_ROLE_BINDING: 2,
+    IAM_BINDING: 2,
+    ACCESS_ROLE_PERMISSION: 2,
     BUCKET: 3,
     DATABASE: 3,
     DATABASE_SERVER: 3,

@@ -51,13 +51,17 @@ export const HUMAN_ACCESS_TYPES = ["ADMIN", "HIGH_PRIVILEGE"] as const;
  * `"Data"`, camelCase, and the singular SCREAMING_SNAKE form this query used to send matches
  * nothing on this tenant.
  *
- * `"Admin"` is INFERRED, not captured — the only two values any capture shows are
- * `"HighPrivilege"` and `"Data"`, and `"Admin"` is that convention applied to the level this app
- * also wants. It is the one element of this traversal that neither the tenant's schema probe nor
- * a capture confirms, which makes it the first thing to suspect if IDENTITY_ACCESS keeps failing
- * while the other traversals start working.
+ * BOTH VALUES ARE NOW CAPTURED. `"Admin"` was an inferred guess for one release — the only
+ * values any capture showed were `"HighPrivilege"` and `"Data"`, and a reading of those twelve
+ * returned bindings was briefly mistaken for the tenant's whole vocabulary. A second console
+ * export settled it: the tenant builds `accessTypes: { EQUALS: ["Admin"] }` and answers it with
+ * `"nodes": []`. Accepted, and empty — this estate has no AI asset running as an admin identity,
+ * which is a fact about the estate rather than about the filter.
+ *
+ * Exported because `saExcessiveAccessSpec` (agentPathQuery.ts) filters the same axis on the same
+ * two values, and two copies of a wire vocabulary is how the first one drifts.
  */
-const WIRE_ACCESS_TYPES = ["Admin", "HighPrivilege"] as const;
+export const WIRE_ACCESS_TYPES = ["Admin", "HighPrivilege"] as const;
 
 /** The identity kinds the ENTITLES leg can return. */
 export const BOUND_IDENTITY_KINDS = ["USER_ACCOUNT", "SERVICE_ACCOUNT"] as const;

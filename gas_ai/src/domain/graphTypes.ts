@@ -37,6 +37,13 @@ export const NODE_KINDS = [
   "AI_SERVICE", "AI_SKILL", "AI_SKILL_TEMPLATE", "AI_TOOL",
   // identities
   "SERVICE_ACCOUNT", "USER_ACCOUNT", "ACCESS_ROLE", "ACCESS_ROLE_BINDING", "ACCESS_KEY",
+  // The binding and permission entities the tenant ACTUALLY returns. A console export of
+  // "AI assets whose identity holds high privileges" walks
+  // PRINCIPAL <-ENTITLES- IAM_BINDING -ALLOWS-> ACCESS_ROLE_PERMISSION and came back with 12
+  // rows; ACCESS_ROLE_BINDING and ACCESS_ROLE above are declared here and exist in the
+  // tenant's schema, but no capture walks them. Both pairs are kept: dropping the older two
+  // would orphan rows already on the ledger.
+  "IAM_BINDING", "ACCESS_ROLE_PERMISSION",
   // data
   "BUCKET", "DATABASE",
   // compute / supply chain

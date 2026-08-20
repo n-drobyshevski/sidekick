@@ -49,6 +49,7 @@
 // traversal whose two unselected nodes have no `select` key at all, and the tenant answered it.
 
 import { HOP, type SelectSpec } from "./graphExpand";
+import { WIRE_ACCESS_TYPES } from "./identityQuery";
 
 /** The AI kinds these traversals are rooted at. See the header for why this is not widened. */
 export const AGENT_PATH_ROOTS: readonly string[] = ["AI_AGENT"];
@@ -83,15 +84,68 @@ export function agentRunsAsSpec(roots: readonly string[] = AGENT_PATH_ROOTS): Se
   };
 }
 
-/** CIEM: the agent's service account and any excessive-access finding on it. */
+/**
+ * CIEM: AI assets whose execution identity holds high privileges, and what grants them.
+ *
+ * TRANSCRIBED FROM A CONSOLE EXPORT, not composed here. The Wiz console's own
+ * "AI assets with a high-privileged identity" query, exported as code against this tenant,
+ * returned TWELVE rows — each an AI_AGENT, a SERVICE_ACCOUNT and an IAM_BINDING. That is the
+ * only version of this traversal anything has ever proved works, so it is the one shipped.
+ *
+ * THREE THINGS THE EXPORT CHANGED, each of which this spec had wrong:
+ *
+ * 1. It asks for `PRINCIPAL`, not `SERVICE_ACCOUNT`. The tenant answers with the concrete
+ *    subtype — all twelve rows came back `SERVICE_ACCOUNT` — so `normalizeRunsAsPage`'s
+ *    `find(kind === "SERVICE_ACCOUNT")` still matches, and asking for the supertype also
+ *    catches a user-backed identity this spec could never see before.
+ *
+ * 2. The privilege test is a PROPERTY on the principal — `hasHighPrivileges: { EQUALS: true }` —
+ *    not a hop to a finding. That is the direct route to the EXCESSIVE_PRIVILEGE risk condition,
+ *    and `normalizeCloudResource` already reads that flag off any entity's properties, so the
+ *    scored signal arrives with no normalizer change at all.
+ *
+ * 3. The binding is `IAM_BINDING`, reached by walking `ENTITLES` REVERSED from the principal —
+ *    the opposite flag from `identityAccessSpec`, which stands at the binding instead. Same
+ *    relationship, two standing points; see HOP in graphExpand.ts.
+ *
+ * The finding leg is KEPT, and optional. It is independently proven — AGENT_EXPANSION's capture
+ * decodes slot 2 as `CONTAINS -> EXCESSIVE_ACCESS_FINDING` — and `normalizeRunsAsPage` already
+ * emits an edge for it, so dropping it would lose a working signal in exchange for nothing. Every
+ * leg below the principal is optional for the same reason the console makes them so: a
+ * high-privileged identity is worth reporting whether or not the binding that granted it, or a
+ * finding about it, comes back in the same row.
+ *
+ * NOT TRANSCRIBED: the export's final `ALLOWS_ACCESS_TO -> SUBSCRIPTION | CLOUD_ORGANIZATION`
+ * leg. It names the blast radius of the binding, which is worth having, but neither kind is
+ * declared in NODE_KINDS and both returned nothing in the captures — so it would be two more
+ * kinds to declare, an icon and a layout rank each, for a leg with no observed rows. Its own
+ * change, with its own evidence.
+ */
 export function saExcessiveAccessSpec(roots: readonly string[] = AGENT_PATH_ROOTS): SelectSpec {
   return {
     type: [...roots],
     relationships: [
       {
-        type: "SERVICE_ACCOUNT",
+        type: "PRINCIPAL",
         edge: HOP.RUNS_AS,
-        relationships: [{ type: "EXCESSIVE_ACCESS_FINDING", edge: HOP.HAS_FINDING }],
+        where: { hasHighPrivileges: { EQUALS: true } },
+        relationships: [
+          {
+            type: "IAM_BINDING",
+            edge: HOP.ENTITLED_BY,
+            optional: true,
+            where: { accessTypes: { EQUALS: [...WIRE_ACCESS_TYPES] } },
+            relationships: [
+              {
+                type: "ACCESS_ROLE_PERMISSION",
+                edge: HOP.GRANTS_PERMISSION,
+                optional: true,
+                where: { accessTypes: { EQUALS: [...WIRE_ACCESS_TYPES] } },
+              },
+            ],
+          },
+          { type: "EXCESSIVE_ACCESS_FINDING", edge: HOP.HAS_FINDING, optional: true },
+        ],
       },
     ],
   };

@@ -132,6 +132,22 @@ const PATHS = {
     "M8 9 a1.5 1.5 0 1 0 0 -3 a1.5 1.5 0 0 0 0 3",
     "M5.8 12 a2.4 2 0 0 1 4.4 0",
   ],
+  // Two interlocking links: a binding is the JOIN between a principal and a permission, and
+  // that is the one thing distinguishing it from the role it grants. Distinct from
+  // ACCESS_ROLE_BINDING's triangle below — both are bindings, but only one of them is a kind
+  // this tenant's own queries actually walk.
+  IAM_BINDING: [
+    "M4.4 6.3 h1.9 a2.35 2.35 0 0 1 0 4.7 h-1.9 a2.35 2.35 0 0 1 0 -4.7 z",
+    "M9.7 6.3 h1.9 a2.35 2.35 0 0 1 0 4.7 h-1.9 a2.35 2.35 0 0 1 0 -4.7 z",
+    "M6.6 8.65 h2.8",
+  ],
+  // A key over a bar: the grant itself, rather than the thing it is attached to.
+  ACCESS_ROLE_PERMISSION: [
+    "M6.2 6.4 a2.3 2.3 0 1 0 0 4.6 a2.3 2.3 0 0 0 0 -4.6",
+    "M8.5 8.7 H13.4",
+    "M11.4 8.7 V11.2",
+    "M13.4 8.7 V10.6",
+  ],
   ACCESS_ROLE_BINDING: [
     "M8 2 L14 13.5 H2 Z",
     "M8 7 a1.3 1.3 0 1 0 0 2.6 a1.3 1.3 0 0 0 0 -2.6",
@@ -280,6 +296,8 @@ export const KIND_LABELS = {
   USER_ACCOUNT: "User",
   ACCESS_ROLE: "IAM Role",
   ACCESS_ROLE_BINDING: "Role Binding",
+  IAM_BINDING: "IAM Binding",
+  ACCESS_ROLE_PERMISSION: "Role Permission",
   // The one NODE_KINDS entry that had no gloss, so it printed as the raw enum wherever a
   // key turned up as a node's kind.
   ACCESS_KEY: "Access Key",
@@ -464,7 +482,7 @@ export const KIND_CATEGORY = {
   // IAM / access (purple). ACCESS_KEY was missing here for as long as it has existed, so a
   // credential rendered in the asset tint while its own label said "Access Key".
   SERVICE_ACCOUNT: "iam", USER_ACCOUNT: "iam", ACCESS_ROLE: "iam", ACCESS_ROLE_BINDING: "iam",
-  ACCESS_KEY: "iam",
+  ACCESS_KEY: "iam", IAM_BINDING: "iam", ACCESS_ROLE_PERMISSION: "iam",
   // vulnerabilities & misconfigurations (red)
   ISSUE: "vuln", EXCESSIVE_ACCESS_FINDING: "vuln", IDENTITY_ACCESS_FINDING: "vuln",
   LATERAL_MOVEMENT_FINDING: "vuln",
