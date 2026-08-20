@@ -105,6 +105,19 @@ export const HOP = {
    * one and say so.
    */
   BOUND_TO: { type: "ENTITLES" },
+  /**
+   * Standing at the PRINCIPAL → the binding that entitles it. The SAME relationship as
+   * `BOUND_TO` above, walked from the other end, which is why it is a separate member rather
+   * than a `reverse` flag some caller remembers to set.
+   *
+   * Both are capture-proven and they disagree on the flag: the console's high-privilege export
+   * stands at the principal and sends `reverse: true`, `identityAccessSpec` stands at the
+   * binding and sends nothing. One shared constant with one flag would silently invert whichever
+   * caller it did not belong to, and an inverted hop returns zero rows rather than an error.
+   */
+  ENTITLED_BY: { type: "ENTITLES", reverse: true },
+  /** Standing at the BINDING → the permission it grants. */
+  GRANTS_PERMISSION: { type: "ALLOWS" },
   /** Standing at the ROLE BINDING → the permission it grants. Forward, per the same capture. */
   PERMITS_ACCESS_ROLE: { type: "ALLOWS" },
 } as const;

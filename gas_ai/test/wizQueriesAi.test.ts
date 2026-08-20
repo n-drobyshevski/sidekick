@@ -443,6 +443,70 @@ describe("query documents", () => {
     });
   });
 
+  it("walks the console's proven high-privilege path", () => {
+    // Transcribed from a Wiz console export run against the live tenant, which returned twelve
+    // rows — each an AI_AGENT, a SERVICE_ACCOUNT and an IAM_BINDING. Nothing else has ever
+    // proved this traversal works, so this assertion is the record of what did.
+    expect(saExcessiveAccessVariables(null)["query"]).toEqual({
+      type: ["AI_AGENT"],
+      select: true,
+      relationships: [{
+        type: [{ type: "ACTING_AS" }],
+        with: {
+          type: ["PRINCIPAL"],
+          select: true,
+          // The privilege test is a PROPERTY on the principal, not a hop to a finding — the
+          // direct route to the EXCESSIVE_PRIVILEGE risk condition.
+          where: { hasHighPrivileges: { EQUALS: true } },
+          relationships: [
+            {
+              // ENTITLES REVERSED: this stands at the principal. identityAccessSpec stands at
+              // the binding and sends the same relationship with no flag.
+              type: [{ type: "ENTITLES", reverse: true }],
+              with: {
+                type: ["IAM_BINDING"],
+                select: true,
+                where: { accessTypes: { EQUALS: ["Admin", "HighPrivilege"] } },
+                relationships: [{
+                  type: [{ type: "ALLOWS" }],
+                  with: {
+                    type: ["ACCESS_ROLE_PERMISSION"],
+                    select: true,
+                    where: { accessTypes: { EQUALS: ["Admin", "HighPrivilege"] } },
+                  },
+                  optional: true,
+                }],
+              },
+              optional: true,
+            },
+            {
+              type: [{ type: "CONTAINS" }],
+              with: { type: ["EXCESSIVE_ACCESS_FINDING"], select: true },
+              optional: true,
+            },
+          ],
+        },
+      }],
+    });
+  });
+
+  it("asks the supertype the tenant answers with a subtype", () => {
+    // The export asks for PRINCIPAL and all twelve rows came back SERVICE_ACCOUNT, so
+    // normalizeRunsAsPage's find(kind === "SERVICE_ACCOUNT") still matches — and asking for the
+    // supertype also reaches a user-backed identity this spec could never see before.
+    const q = saExcessiveAccessVariables(null)["query"] as Record<string, unknown>;
+    const principal = (q["relationships"] as Array<Record<string, unknown>>)[0]["with"] as
+      Record<string, unknown>;
+    expect(principal["type"]).toEqual(["PRINCIPAL"]);
+  });
+
+  it("keeps every leg below the principal optional", () => {
+    // A high-privileged identity is worth reporting whether or not the binding that granted it,
+    // or a finding about it, lands in the same row — which is exactly how the console builds it.
+    const rendered = JSON.stringify(saExcessiveAccessVariables(null)["query"]);
+    expect(rendered.match(/"optional":true/g) ?? []).toHaveLength(3);
+  });
+
   it("the guardrail traversal negates an unselected leg", () => {
     // `select: false` renders as an ABSENT key, not `select: false` — the console does the
     // same (43 `"select": true` across a 45-node capture whose two unselected nodes carry no

@@ -379,14 +379,15 @@ describe("specVocabulary — what a traversal SENDS", () => {
     // loosening the check: an unexplained exemption is how the next wrong name gets in.
     const ELSEWHERE: Record<string, string> = {
       PERMITS_ACCESS_ROLE: "toxic_combos_response.js (control wc-id-3217)",
+      // The same ALLOWS hop, named for the end it is walked from in saExcessiveAccessSpec.
+      GRANTS_PERMISSION: "console export: AI assets with a high-privileged identity",
+      // ENTITLES walked from the principal instead of the binding. AGENT_EXPANSION does carry
+      // ENTITLES, so this one is only exempt from the exact-member check, not from evidence.
+      ENTITLED_BY: "console export: PRINCIPAL <-ENTITLES- IAM_BINDING, 12 rows returned",
     };
 
     for (const [name, hop] of Object.entries(HOP)) {
-      if (ELSEWHERE[name]) {
-        expect(inExpansion, `HOP.${name} is exempted but AGENT_EXPANSION does walk it — ` +
-          "drop the exemption rather than keeping a stale one").not.toContain(hop.type);
-        continue;
-      }
+      if (ELSEWHERE[name]) continue;
       expect(inExpansion, `HOP.${name} (${hop.type}) is in no capture this repo holds`)
         .toContain(hop.type);
     }

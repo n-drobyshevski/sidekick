@@ -1097,11 +1097,23 @@ export function normalizeRunsAsPage(rows: Rec[]): NormalizedPart {
     const findings = entities.filter(
       (e) => e.kind === "EXCESSIVE_ACCESS_FINDING" || e.kind === "LATERAL_MOVEMENT_FINDING",
     );
+    // The binding that entitles the identity. SA_FINDINGS now walks the console's proven
+    // high-privilege path, which ends at an IAM_BINDING rather than only at a finding, and an
+    // entity nothing draws an edge for is an entity the graph cannot explain. `BOUND_TO` is the
+    // MODEL's name for this edge — the wire asks `ENTITLES` reversed — and it was declared in
+    // EDGE_TYPES and produced by nothing until now.
+    const binding = entities.find((e) => e.kind === "IAM_BINDING");
     part.nodes.push(...entities);
     if (agent && sa) {
       part.edges.push({ id: edgeId(agent.id, "RUNS_AS", sa.id), src: agent.id, dst: sa.id, type: "RUNS_AS" });
       for (const f of findings) {
         part.edges.push({ id: edgeId(sa.id, "HAS_FINDING", f.id), src: sa.id, dst: f.id, type: "HAS_FINDING" });
+      }
+      if (binding) {
+        part.edges.push({
+          id: edgeId(sa.id, "BOUND_TO", binding.id),
+          src: sa.id, dst: binding.id, type: "BOUND_TO",
+        });
       }
     }
   }

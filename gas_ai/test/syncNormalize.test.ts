@@ -751,3 +751,46 @@ describe("normalizePrincipalsPage (agentic identities)", () => {
     expect(part.nodes[0].identityPurpose).toBe("AGENTIC");
   });
 });
+
+describe("normalizeRunsAsPage — the binding the high-privilege path now returns", () => {
+  const ent = (id: string, type: string, props: Record<string, unknown> = {}) =>
+    ({ id, type, properties: { name: id, ...props } });
+
+  it("draws SERVICE_ACCOUNT -BOUND_TO-> IAM_BINDING when the binding comes back", () => {
+    // SA_FINDINGS now walks the console's proven path, which ends at an IAM_BINDING rather than
+    // only at a finding. An entity nothing draws an edge for is an entity the graph cannot
+    // explain, and BOUND_TO was declared in EDGE_TYPES and produced by nothing until now.
+    const part = normalizeRunsAsPage([{
+      entities: [
+        ent("agent-1", "AI_AGENT"),
+        ent("sa-1", "SERVICE_ACCOUNT", { hasHighPrivileges: true }),
+        ent("bind-1", "IAM_BINDING", { accessTypes: ["HighPrivilege"] }),
+      ],
+    }]);
+    const types = part.edges.map((e) => e.type).sort();
+    expect(types).toEqual(["BOUND_TO", "RUNS_AS"]);
+    const bound = part.edges.filter((e) => e.type === "BOUND_TO")[0];
+    expect(bound.src).toBe("sa-1");
+    expect(bound.dst).toBe("bind-1");
+  });
+
+  it("still draws the finding edge, which the export did not replace", () => {
+    const part = normalizeRunsAsPage([{
+      entities: [
+        ent("agent-1", "AI_AGENT"),
+        ent("sa-1", "SERVICE_ACCOUNT"),
+        ent("find-1", "EXCESSIVE_ACCESS_FINDING"),
+      ],
+    }]);
+    expect(part.edges.map((e) => e.type).sort()).toEqual(["HAS_FINDING", "RUNS_AS"]);
+  });
+
+  it("emits no binding edge when the optional leg came back empty", () => {
+    // Every leg below the principal is optional, so a high-privileged identity with no binding
+    // in the row is the normal case, not a defect.
+    const part = normalizeRunsAsPage([{
+      entities: [ent("agent-1", "AI_AGENT"), ent("sa-1", "SERVICE_ACCOUNT")],
+    }]);
+    expect(part.edges.map((e) => e.type)).toEqual(["RUNS_AS"]);
+  });
+});
