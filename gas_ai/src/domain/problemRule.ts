@@ -509,3 +509,64 @@ export function decisionEqual(a: ProblemRule, b: ProblemRule): boolean {
   };
   return withoutCeiling(a) === withoutCeiling(b);
 }
+
+/**
+ * What this tenant actually carries on the two axes an operator can name values for.
+ *
+ * The two fields at issue — `remediateVerdicts` and `totalImpactGroups` — are free lists of
+ * opaque strings matched literally, so a typo does not fail: it silently matches nothing,
+ * and the axis quietly reads UNKNOWN for the rest of the landscape. The editor's only
+ * defence against that is being able to show what the strings could be, which is exactly
+ * what `tenantCodeOptions` does for gap codes on the AARS tab.
+ *
+ * DELIBERATELY SHAPE-TYPED RATHER THAN TAKING `IssueRow`. This module is pure rule
+ * semantics and imports nothing from the graph vocabulary; a structural parameter keeps it
+ * that way and makes the function trivially testable.
+ *
+ * ISSUES ONLY, and the type says so rather than a comment: both fields are issue
+ * vocabulary, and a `FindingRow` carries neither. Widening the parameter to accept the
+ * union would need a cast — TypeScript's weak-type check rejects a type with no properties
+ * in common — and would imply findings contribute to a census they cannot reach.
+ *
+ * `OTHER_GROUP_ID` is excluded on purpose: it is `syncNormalize`'s "no rule pattern
+ * matched" sentinel, so offering it as a group that grants code execution would invite an
+ * operator to hand TOTAL impact to every unclassified issue in the tenant.
+ */
+export const PROBLEM_CENSUS_MAX = 200;
+const OTHER_COMBO_GROUP = "other-ai-risk";
+
+export interface CensusEntry {
+  value: string;
+  /** Issues carrying it — the prevalence the picker prints, and the reason to trust it. */
+  issues: number;
+}
+
+export interface ProblemCensus {
+  verdicts: CensusEntry[];
+  comboGroups: CensusEntry[];
+}
+
+export function problemCensus(
+  rows: ReadonlyArray<{ aiVerdict?: string; comboGroup?: string }>,
+): ProblemCensus {
+  const verdicts: Record<string, number> = {};
+  const groups: Record<string, number> = {};
+
+  for (const row of rows ?? []) {
+    if (!row) continue;
+    const verdict = String(row.aiVerdict ?? "").trim();
+    if (verdict) verdicts[verdict] = (verdicts[verdict] ?? 0) + 1;
+    const group = String(row.comboGroup ?? "").trim();
+    if (group && group !== OTHER_COMBO_GROUP) groups[group] = (groups[group] ?? 0) + 1;
+  }
+
+  // Commonest first, then alphabetical — a stable order across two previews of the same
+  // landscape, so the list under an open picker does not reshuffle on every keystroke.
+  const rank = (counts: Record<string, number>): CensusEntry[] =>
+    Object.keys(counts)
+      .map((value) => ({ value, issues: counts[value]! }))
+      .sort((a, b) => b.issues - a.issues || a.value.localeCompare(b.value))
+      .slice(0, PROBLEM_CENSUS_MAX);
+
+  return { verdicts: rank(verdicts), comboGroups: rank(groups) };
+}

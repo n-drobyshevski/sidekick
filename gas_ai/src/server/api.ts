@@ -55,6 +55,7 @@ import {
   cleanProblemRule,
   leafCoverage,
   MAX_OUTCOME_RULES,
+  problemCensus,
   problemRuleSummary,
   shadowedOutcomeRules,
   treeDiscrimination,
@@ -2164,7 +2165,12 @@ export function previewProblemRule(p?: unknown): ApiResult {
     const errors = validateProblemRule(proposed);
     if (errors.length) throw new Error(errors.join(" "));
 
-    const beforeAll: Array<IssueRow | FindingRow> = [...syncStore.loadIssues(), ...syncStore.loadFindings()];
+    // Issues held separately as well as in the union: the census below is over issues
+    // alone, because `aiVerdict` and `comboGroup` are issue vocabulary and a FindingRow
+    // carries neither. Passing the union would typecheck only behind a cast and would say
+    // something untrue about where the values come from.
+    const beforeIssues = syncStore.loadIssues();
+    const beforeAll: Array<IssueRow | FindingRow> = [...beforeIssues, ...syncStore.loadFindings()];
     const beforeById = new Map(beforeAll.map((r) => [r.id, r.problemOutcome]));
 
     const after = syncStore.decideProblemsWith(proposed);
@@ -2207,6 +2213,12 @@ export function previewProblemRule(p?: unknown): ApiResult {
       shadowedOutcomeRules: shadowedOutcomeRules(proposed),
       validation: validateProblemRule(proposed),
       treeDiscrimination: treeDiscrimination(decidedForDiscrimination(afterAll)),
+      // What the landscape actually carries on the two axes an operator names values for.
+      // Costs nothing extra: `beforeAll` is already loaded above, the same argument
+      // `gapCensus` makes for itself on the AARS preview. It rides THIS endpoint and never
+      // getProblemRule for the same two reasons that one gives — opening the rules page must
+      // not trigger a pass over the register, and the load endpoint's shape is pinned.
+      census: problemCensus(beforeIssues),
       movers: movers.slice(0, PREVIEW_MOVERS_MAX),
       moverCount: movers.length,
       truncated: movers.length > PREVIEW_MOVERS_MAX,

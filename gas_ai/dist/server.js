@@ -4054,6 +4054,22 @@ var Server = (() => {
     };
     return withoutCeiling(a) === withoutCeiling(b);
   }
+  var PROBLEM_CENSUS_MAX = 200;
+  var OTHER_COMBO_GROUP = "other-ai-risk";
+  function problemCensus(rows) {
+    var _a5, _b, _c, _d;
+    const verdicts = {};
+    const groups = {};
+    for (const row of rows != null ? rows : []) {
+      if (!row) continue;
+      const verdict = String((_a5 = row.aiVerdict) != null ? _a5 : "").trim();
+      if (verdict) verdicts[verdict] = ((_b = verdicts[verdict]) != null ? _b : 0) + 1;
+      const group = String((_c = row.comboGroup) != null ? _c : "").trim();
+      if (group && group !== OTHER_COMBO_GROUP) groups[group] = ((_d = groups[group]) != null ? _d : 0) + 1;
+    }
+    const rank = (counts) => Object.keys(counts).map((value) => ({ value, issues: counts[value] })).sort((a, b) => b.issues - a.issues || a.value.localeCompare(b.value)).slice(0, PROBLEM_CENSUS_MAX);
+    return { verdicts: rank(verdicts), comboGroups: rank(groups) };
+  }
 
   // src/domain/posture.ts
   var CAPABILITY_VALUES = ["BROAD", "SCOPED", "MINIMAL"];
@@ -7600,7 +7616,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "32b56b9ea69e" : "dev";
+  var BUILD_ID = true ? "cf6fcd6b7974" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -15772,7 +15788,8 @@ var Server = (() => {
       const proposed = cleanProblemRule(params["rule"]);
       const errors = validateProblemRule(proposed);
       if (errors.length) throw new Error(errors.join(" "));
-      const beforeAll = [...loadIssues(), ...loadFindings()];
+      const beforeIssues = loadIssues();
+      const beforeAll = [...beforeIssues, ...loadFindings()];
       const beforeById = new Map(beforeAll.map((r) => [r.id, r.problemOutcome]));
       const after = decideProblemsWith(proposed);
       const afterAll = [...after.issues, ...after.findings];
@@ -15809,6 +15826,12 @@ var Server = (() => {
         shadowedOutcomeRules: shadowedOutcomeRules(proposed),
         validation: validateProblemRule(proposed),
         treeDiscrimination: treeDiscrimination(decidedForDiscrimination(afterAll)),
+        // What the landscape actually carries on the two axes an operator names values for.
+        // Costs nothing extra: `beforeAll` is already loaded above, the same argument
+        // `gapCensus` makes for itself on the AARS preview. It rides THIS endpoint and never
+        // getProblemRule for the same two reasons that one gives — opening the rules page must
+        // not trigger a pass over the register, and the load endpoint's shape is pinned.
+        census: problemCensus(beforeIssues),
         movers: movers.slice(0, PREVIEW_MOVERS_MAX),
         moverCount: movers.length,
         truncated: movers.length > PREVIEW_MOVERS_MAX

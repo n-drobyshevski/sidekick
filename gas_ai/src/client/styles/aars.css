@@ -440,6 +440,95 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent); }
 .rule-fallback td { border-top: 1px solid var(--hairline); }
 .rule-fallback__name { display: inline; font-size: 12px; color: var(--text-2); }
 
+/* --- the four axes ------------------------------------------------------------------ */
+/* One block per axis, hairline-divided rather than boxed: four cards would read as four
+   unrelated settings, and DESIGN.md has these sections divide ONE surface. */
+.axis-block { padding: 16px 0; border-top: 1px solid var(--hairline); }
+.axis-block:first-child { border-top: none; padding-top: 4px; }
+.axis-block__head {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+  margin-bottom: 2px;
+}
+.axis-block__name { margin: 0; font-size: 0.9375rem; font-weight: 600; }
+/* The values the axis can take. Uppercase already, so no transform — these are the literal
+   tokens the cascade's own dropdowns offer, and re-casing them would make them look like
+   prose rather than the vocabulary they are. */
+.axis-block__values {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--text-3);
+}
+/* Pushed to the far edge: it is a reading about the axis, not part of its name. */
+.axis-block__rate {
+  margin-left: auto;
+  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-2);
+}
+.axis-block__mark { margin-right: 4px; }
+/* Over the threshold the whole reading changes colour AND gains the ▲ diagList already
+   uses, so the finding never rests on colour alone. */
+.axis-block--high .axis-block__rate { color: var(--warn); font-weight: 600; }
+.axis-block__lede { margin: 0 0 10px; max-width: var(--measure); }
+
+/* The signal ladder. `<ol>` for a first-match axis and `<ul>` for an any-of one — the
+   marker is the difference, so the numbers only appear where position carries meaning. */
+.axis-steps { margin: 0; padding: 0 0 0 22px; display: flex; flex-direction: column; gap: 10px; }
+ol.axis-steps > li::marker { font-size: 11px; font-weight: 600; color: var(--text-3); }
+ul.axis-steps { list-style: none; padding-left: 0; }
+.axis-step { font-size: 13px; }
+ul.axis-steps > .axis-step { padding-left: 14px; position: relative; }
+ul.axis-steps > .axis-step::before {
+  content: ""; position: absolute; left: 0; top: 8px;
+  width: 5px; height: 5px; border-radius: 50%; background: rgba(0, 0, 0, 0.28);
+}
+.axis-step__line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.axis-step__signal { color: var(--ink); }
+.axis-step__yield { font-weight: 600; color: var(--text-2); font-size: 12px; }
+/* Whose reading it is. A step the operator cannot move is as much a part of the answer as
+   the ones they can, so it is marked rather than left to be inferred from the absence of a
+   control. */
+.axis-step__origin {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-3);
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  padding: 0 5px;
+}
+.axis-step__control { margin-top: 8px; }
+.axis-step__hint { margin: 0 0 8px; max-width: var(--measure); }
+
+/* Exposure's block: not a warning — nothing is wrong — but a fact the reader cannot get
+   anywhere else, so it carries a mark and sits on a wash rather than reading as a lede. */
+.axis-note {
+  display: flex; gap: 8px; margin: 0;
+  padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  color: var(--text-2); max-width: var(--measure);
+}
+.axis-note__mark { flex: none; color: var(--text-3); }
+
+/* --- token lists -------------------------------------------------------------------- */
+/* A rule field holding a LIST of opaque strings. See ui/tokenList.js for why this is not
+   filterChipRow and why the picker is filterCombobox. */
+.token-list { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.token-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Monospace, like every other opaque identifier on this page (`.rule-code`): these are
+   matched literally, and a proportional face invites reading them as words. */
+.token {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px 2px 2px 9px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.token-x {
+  min-height: 20px; min-width: 20px; padding: 0 4px;
+  border: none; box-shadow: none; background: none;
+  border-radius: var(--radius-pill);
+  color: var(--text-3); font-size: 11px; line-height: 1;
+}
+.token-x:hover { background: var(--wash-hover); color: var(--bad); border-color: transparent; }
+.token-empty { font-style: normal; }
+.token-input { width: 220px; }
+
 /* --- impact pane --------------------------------------------------------------------- */
 .impact-strip { display: flex; flex-direction: column; gap: 2px; margin: 10px 0 14px; }
 .impact-row {
