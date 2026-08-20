@@ -6,3 +6,7 @@ node_modules/
 # The scriptId points at ONE Apps Script project, so it belongs to whoever is
 # deploying, not to the repo. `clasp create` writes this file — see the README.
 .clasp.json
+
+# Raw probe output. The committed capture is exemples/tenant_vocabulary.js; this is the
+# re-runnable dump you diff against it.
+probe-vocabulary.json
