@@ -1,3 +1,31 @@
+> [!WARNING]
+> **A wish list, not a specification.** This is the earliest artifact in `ai/` — arrow sketches
+> of the queries the AARS table was imagined to need, written before this repo held a single
+> captured Wiz request or response. Most of the relationship names below have never been seen
+> on the wire. See **[queries/README.md](queries/README.md)** for the two defects that reached
+> the code from documents like this one.
+>
+> | arrow as written here | status | what the code actually walks |
+> |---|---|---|
+> | `RUNS_AS` | model name | `ACTING_AS`, forward from the agent — capture-proven |
+> | `HAS_FINDING` | model name | `CONTAINS`, forward from the principal — capture-proven |
+> | `HAS_PERMISSION` | no evidence in this repo | the grant is binding-mediated: `ALLOWS_ACCESS_TO` reversed → `ACCESS_ROLE_BINDING` → `ENTITLES` / `ALLOWS` |
+> | `HAS_EXCESSIVE_ACCESS_FINDING` | not a relationship | `CONTAINS` → `EXCESSIVE_ACCESS_FINDING` |
+> | `USES_TOOL` | no evidence in this repo | `USES` → `AI_TOOL` |
+> | `USES_MODEL` | no evidence in this repo | `USES` → `AI_MODEL` |
+> | `USES_DATASET` | no evidence in this repo | `READS_DATA_FROM` → `AI_DATASET` / `BUCKET` |
+> | `STORED_IN` | no evidence in this repo | `STORES_DATA_IN` → `BUCKET` |
+> | `ENFORCES` | no evidence in this repo | guardrails are `PROTECTS`, reversed from the asset |
+> | `CAN_INVOKE` | no evidence in this repo | nothing |
+> | `BUILT_FROM` | **exists on the tenant** | nothing — `syncNormalize.ts` declines to guess a chain against a payload nobody has seen |
+>
+> Settled 2026-08-20 against the tenant's own schema
+> ([`gas_ai/exemples/tenant_vocabulary.js`](../gas_ai/exemples/tenant_vocabulary.js)): every
+> name marked "no evidence in this repo" above except `BUILT_FROM` is genuinely **absent from
+> this tenant**, so those arrows were never going to work. `BUILT_FROM` is real vocabulary and
+> the supply-chain area could be built on it — what is missing there is an observed payload,
+> not a name.
+
 Based on everything we've built in this conversation, here's a summary of the **security graph queries** needed to populate each column of the AARS table:
 
 ---

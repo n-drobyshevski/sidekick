@@ -228,6 +228,20 @@ export const EDGE_TYPES = [
   // AI asset / compute → ENDPOINT. Wiz's own relationship name, kept verbatim — it is what
   // the endpoint-exposure traversal walks (domain/exposureQuery.ts).
   "SERVES",
+  // ---- lineage (domain/lineageQuery.ts) ----
+  //
+  // These three keep Wiz's own names rather than being mapped onto the model's older
+  // vocabulary, and that is a deliberate reversal of what the five names above do.
+  // `USES_DATASET`, `STORED_IN` and `USES_MODEL` were the obvious targets — all three are
+  // declared here already and produced by nothing but sampleData.ts — but none of them is
+  // the same fact. `READS_DATA_FROM` lands on AI_DATASET, BUCKET *or* DATABASE depending on
+  // the leg, `USES_MODEL` means agent → model rather than pipeline → model, and `STORED_IN`
+  // describes only the dataset-rooted half of `STORES_DATA_IN`. A name-to-name table would
+  // be wrong exactly where the leg matters, which is the same reason graphExpand's
+  // `expandEdgeId` does not translate either.
+  "PRODUCES",         // AI_PIPELINE → AI_MODEL / AI_SERVICE (what the pipeline produces)
+  "READS_DATA_FROM",  // AI_PIPELINE / AI_DATASET → AI_DATASET / BUCKET / DATABASE (ingest)
+  "STORES_DATA_IN",   // AI_PIPELINE / AI_DATASET → BUCKET (where it writes)
 ] as const;
 export type EdgeType = (typeof EDGE_TYPES)[number];
 

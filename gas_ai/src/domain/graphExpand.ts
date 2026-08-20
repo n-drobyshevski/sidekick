@@ -120,6 +120,27 @@ export const HOP = {
   GRANTS_PERMISSION: { type: "ALLOWS" },
   /** Standing at the ROLE BINDING → the permission it grants. Forward, per the same capture. */
   PERMITS_ACCESS_ROLE: { type: "ALLOWS" },
+  /**
+   * Standing at the PIPELINE → what it produces. FORWARD, and this is the third member whose
+   * flag had to be re-anchored rather than transcribed.
+   *
+   * AGENT_EXPANSION carries `PRODUCES` with `reverse: true`, because it stands at the AI_MODEL
+   * and asks which pipeline produced it. The tenant's edge therefore runs pipeline → model, so
+   * from the pipeline the same hop is forward. Copying the capture's flag here would invert it,
+   * and an inverted hop returns zero rows rather than an error.
+   */
+  PRODUCES: { type: "PRODUCES" },
+  /** Standing at the PIPELINE or DATASET → the data it ingests. Forward, as in AGENT_EXPANSION. */
+  READS_DATA_FROM: { type: "READS_DATA_FROM" },
+  /**
+   * Standing at the PIPELINE or DATASET → the store it writes to. Forward.
+   *
+   * The only hop in this table with an OBSERVED row rather than only an accepted name: slot 7
+   * of exemples/ai_agent_expand_response.js is a real bucket, reached this way from an agent.
+   * The relationship is proven; standing at a pipeline instead of an agent is not, which is
+   * what LINEAGE exists to find out.
+   */
+  STORES_DATA_IN: { type: "STORES_DATA_IN" },
 } as const;
 
 function typeList(t: string | string[]): string[] {

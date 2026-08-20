@@ -21,6 +21,7 @@ import {
   normalizeIdentityFindingsPage,
   normalizeHostExposurePage,
   normalizeIdentityAccessPage,
+  normalizeLineagePage,
   normalizeInventoryPage,
   normalizeIssuesPage,
   frameworkCodeLookup,
@@ -75,6 +76,7 @@ import {
   agentRunsAsVariables,
   hostExposureVariables,
   identityAccessVariables,
+  lineageVariables,
   noGuardrailVariables,
   saExcessiveAccessVariables,
   sensitiveDataAccessVariables,
@@ -91,6 +93,7 @@ import {
   Q_AI_INVENTORY,
   Q_CONFIG_FINDINGS,
   Q_IDENTITY_ACCESS,
+  Q_LINEAGE,
   Q_ISSUES,
   Q_COMPLIANCE_POSTURE,
   Q_AI_PROPERTIES,
@@ -360,7 +363,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       query: Q_AGENTS_NO_GUARDRAIL,
       // `null`, not projectScope(): these four have always run tenant-wide, and this change is
       // about the query's SHAPE. See agentPathVariables in wizQueriesAi.ts.
-      extraVariables: noGuardrailVariables(null),
+      extraVariables: noGuardrailVariables(types, null),
       normalize: normalizeNoGuardrailPage,
       optional: true,
       pageSize: PAGE_SIZE_TRAVERSAL,
@@ -371,7 +374,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       writes: ["ai_edges (RUNS_AS)", "ai_assets"],
       run: "graphSearch",
       query: Q_AGENT_RUNS_AS,
-      extraVariables: agentRunsAsVariables(null),
+      extraVariables: agentRunsAsVariables(types, null),
       normalize: normalizeRunsAsPage,
       optional: true,
       pageSize: PAGE_SIZE_TRAVERSAL,
@@ -382,7 +385,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
       run: "graphSearch",
       query: Q_SA_EXCESSIVE_ACCESS,
-      extraVariables: saExcessiveAccessVariables(null),
+      extraVariables: saExcessiveAccessVariables(types, null),
       normalize: normalizeRunsAsPage,
       optional: true,
       pageSize: PAGE_SIZE_TRAVERSAL,
@@ -400,7 +403,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       ],
       run: "graphSearch",
       query: Q_AGENT_SENSITIVE_DATA_ACCESS,
-      extraVariables: sensitiveDataAccessVariables(null),
+      extraVariables: sensitiveDataAccessVariables(types, null),
       normalize: normalizeSensitiveDataAccessPage,
       optional: true,
       pageSize: PAGE_SIZE_TRAVERSAL,
@@ -437,6 +440,25 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       extraVariables: endpointExposureVariables(types, projectScope()),
       normalize: normalizeEndpointExposurePage,
       optional: true,
+    },
+    {
+      // The lineage step: the first traversal rooted at anything but AI_AGENT or the whole
+      // AI type list. AI_PIPELINE + AI_DATASET are 79% of the register and no query has ever
+      // stood at one. `null`, not `projectScope()`: scoping it would cap the population at
+      // one project while the inventory that found the pipelines is tenant-wide, so a low
+      // Enriched number would be built in rather than measured. See domain/lineageQuery.ts.
+      id: "LINEAGE",
+      area: "dspm",
+      writes: [
+        "ai_edges (PRODUCES, READS_DATA_FROM, STORES_DATA_IN)",
+        "ai_assets (AI_MODEL/AI_SERVICE/AI_DATASET/BUCKET/DATABASE rows)",
+      ],
+      run: "graphSearch",
+      query: Q_LINEAGE,
+      extraVariables: lineageVariables(types, null),
+      normalize: normalizeLineagePage,
+      optional: true,
+      pageSize: PAGE_SIZE_TRAVERSAL,
     },
     {
       id: "IDENTITY_ACCESS",
@@ -486,7 +508,10 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
 /** Steps whose variables embed the tenant-resolved AI resource types. */
 const TYPE_DEPENDENT_STEPS: ReadonlySet<string> = new Set([
   "INVENTORY_AI", "AI_ASSET_PROPERTIES", "HOST_EXPOSURE", "ENDPOINT_EXPOSURE", "IDENTITY_ACCESS",
-  "EFFECTIVE_ACCESS",
+  "EFFECTIVE_ACCESS", "LINEAGE",
+  // Widened from the literal AI_AGENT. GUARDRAIL_GAPS widens to the three kinds a guardrail
+  // fronts rather than to every AI kind — see GUARDRAIL_SUBJECT_KINDS.
+  "GUARDRAIL_GAPS", "RUNS_AS", "SA_FINDINGS", "SENSITIVE_DATA_ACCESS",
 ]);
 
 /** The connection field a step reads its rows from — the one the response must carry. */
@@ -589,6 +614,18 @@ function defaultStepVariables(stepId: string, withOverride: Rec, aiTypes?: reado
       return endpointExposureVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     case "IDENTITY_ACCESS":
       return identityAccessVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
+    case "LINEAGE":
+      // `null` scope, matching what the step sends — see its declaration in syncSteps().
+      return lineageVariables(aiTypes ?? resolveAiResourceTypes().types, null);
+    // The widened agent-path traversals. `null` scope, as they have always sent.
+    case "GUARDRAIL_GAPS":
+      return noGuardrailVariables(aiTypes ?? resolveAiResourceTypes().types, null);
+    case "RUNS_AS":
+      return agentRunsAsVariables(aiTypes ?? resolveAiResourceTypes().types, null);
+    case "SA_FINDINGS":
+      return saExcessiveAccessVariables(aiTypes ?? resolveAiResourceTypes().types, null);
+    case "SENSITIVE_DATA_ACCESS":
+      return sensitiveDataAccessVariables(aiTypes ?? resolveAiResourceTypes().types, null);
     case "EFFECTIVE_ACCESS":
       return effectiveAccessVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     case "IDENTITY_HYGIENE":

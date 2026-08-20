@@ -1101,7 +1101,24 @@ var Server = (() => {
     "HAS_DATA_FINDING",
     // AI asset / compute → ENDPOINT. Wiz's own relationship name, kept verbatim — it is what
     // the endpoint-exposure traversal walks (domain/exposureQuery.ts).
-    "SERVES"
+    "SERVES",
+    // ---- lineage (domain/lineageQuery.ts) ----
+    //
+    // These three keep Wiz's own names rather than being mapped onto the model's older
+    // vocabulary, and that is a deliberate reversal of what the five names above do.
+    // `USES_DATASET`, `STORED_IN` and `USES_MODEL` were the obvious targets — all three are
+    // declared here already and produced by nothing but sampleData.ts — but none of them is
+    // the same fact. `READS_DATA_FROM` lands on AI_DATASET, BUCKET *or* DATABASE depending on
+    // the leg, `USES_MODEL` means agent → model rather than pipeline → model, and `STORED_IN`
+    // describes only the dataset-rooted half of `STORES_DATA_IN`. A name-to-name table would
+    // be wrong exactly where the leg matters, which is the same reason graphExpand's
+    // `expandEdgeId` does not translate either.
+    "PRODUCES",
+    // AI_PIPELINE → AI_MODEL / AI_SERVICE (what the pipeline produces)
+    "READS_DATA_FROM",
+    // AI_PIPELINE / AI_DATASET → AI_DATASET / BUCKET / DATABASE (ingest)
+    "STORES_DATA_IN"
+    // AI_PIPELINE / AI_DATASET → BUCKET (where it writes)
   ];
   function edgeId(src, type, dst, negated) {
     return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
@@ -1141,7 +1158,28 @@ var Server = (() => {
     /** Standing at the BINDING → the permission it grants. */
     GRANTS_PERMISSION: { type: "ALLOWS" },
     /** Standing at the ROLE BINDING → the permission it grants. Forward, per the same capture. */
-    PERMITS_ACCESS_ROLE: { type: "ALLOWS" }
+    PERMITS_ACCESS_ROLE: { type: "ALLOWS" },
+    /**
+     * Standing at the PIPELINE → what it produces. FORWARD, and this is the third member whose
+     * flag had to be re-anchored rather than transcribed.
+     *
+     * AGENT_EXPANSION carries `PRODUCES` with `reverse: true`, because it stands at the AI_MODEL
+     * and asks which pipeline produced it. The tenant's edge therefore runs pipeline → model, so
+     * from the pipeline the same hop is forward. Copying the capture's flag here would invert it,
+     * and an inverted hop returns zero rows rather than an error.
+     */
+    PRODUCES: { type: "PRODUCES" },
+    /** Standing at the PIPELINE or DATASET → the data it ingests. Forward, as in AGENT_EXPANSION. */
+    READS_DATA_FROM: { type: "READS_DATA_FROM" },
+    /**
+     * Standing at the PIPELINE or DATASET → the store it writes to. Forward.
+     *
+     * The only hop in this table with an OBSERVED row rather than only an accepted name: slot 7
+     * of exemples/ai_agent_expand_response.js is a real bucket, reached this way from an agent.
+     * The relationship is proven; standing at a pipeline instead of an agent is not, which is
+     * what LINEAGE exists to find out.
+     */
+    STORES_DATA_IN: { type: "STORES_DATA_IN" }
   };
   function typeList(t) {
     return Array.isArray(t) ? t : [t];
@@ -1623,7 +1661,13 @@ var Server = (() => {
 
   // src/domain/agentPathQuery.ts
   var AGENT_PATH_ROOTS = ["AI_AGENT"];
-  function noGuardrailSpec(roots = AGENT_PATH_ROOTS) {
+  var GUARDRAIL_SUBJECT_KINDS = ["AI_AGENT", "AI_MODEL", "AI_SERVICE"];
+  function guardrailRoots(types) {
+    const declared = new Set(types);
+    const narrowed = GUARDRAIL_SUBJECT_KINDS.filter((t) => declared.has(t));
+    return narrowed.length ? narrowed : [...GUARDRAIL_SUBJECT_KINDS];
+  }
+  function noGuardrailSpec(roots = GUARDRAIL_SUBJECT_KINDS) {
     return {
       type: [...roots],
       relationships: [
@@ -1671,15 +1715,30 @@ var Server = (() => {
       type: [...roots],
       relationships: [
         {
-          type: "SERVICE_ACCOUNT",
+          // PRINCIPAL, not SERVICE_ACCOUNT, for the reason saExcessiveAccessSpec records: the
+          // tenant answers the supertype with the concrete subtype, so the normalizer's
+          // `find(kind === "SERVICE_ACCOUNT")` still matches and a user-backed identity stops
+          // being invisible.
+          type: "PRINCIPAL",
           edge: HOP.RUNS_AS,
           relationships: [
             {
-              type: ["BUCKET", "DATABASE"],
-              edge: { type: "ALLOWS_ACCESS_TO" },
-              where: { hasSensitiveData: { EQUALS: true } },
+              // The waypoint that makes the whole path resolve, and it is not selected: a
+              // binding is how the grant is modelled, not a fact this step reports. The edge
+              // the normalizer writes stays identity → store, which is what EDGE_TYPES means by
+              // ALLOWS_ACCESS_TO and what the graph draws.
+              type: "IAM_BINDING",
+              select: false,
+              edge: HOP.ENTITLED_BY,
               relationships: [
-                { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
+                {
+                  type: ["BUCKET", "DATABASE"],
+                  edge: { type: "ALLOWS_ACCESS_TO" },
+                  where: { hasSensitiveData: { EQUALS: true } },
+                  relationships: [
+                    { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
+                  ]
+                }
               ]
             }
           ]
@@ -1731,6 +1790,31 @@ var Server = (() => {
     if (a === void 0) return b;
     if (b === void 0) return a;
     return rank(a) <= rank(b) ? a : b;
+  }
+
+  // src/domain/lineageQuery.ts
+  var LINEAGE_ROOT_CANDIDATES = ["AI_PIPELINE", "AI_DATASET"];
+  function lineageRoots(types) {
+    const declared = new Set(types);
+    const narrowed = LINEAGE_ROOT_CANDIDATES.filter((t) => declared.has(t));
+    return narrowed.length ? narrowed : [...LINEAGE_ROOT_CANDIDATES];
+  }
+  function lineageSpec(roots = LINEAGE_ROOT_CANDIDATES) {
+    return {
+      type: [...roots],
+      relationships: [
+        { type: ["AI_MODEL", "AI_SERVICE"], optional: true, edge: HOP.PRODUCES },
+        {
+          type: ["AI_DATASET", "BUCKET"],
+          optional: true,
+          edge: HOP.READS_DATA_FROM,
+          relationships: [
+            { type: ["BUCKET", "DATABASE"], optional: true, edge: HOP.READS_DATA_FROM }
+          ]
+        },
+        { type: "BUCKET", optional: true, edge: HOP.STORES_DATA_IN }
+      ]
+    };
   }
 
   // src/domain/toxicCombos.ts
@@ -1980,10 +2064,10 @@ var Server = (() => {
       projectId: scope && scope.length ? scope[0] : null
     };
   }
-  var noGuardrailVariables = (scope) => agentPathVariables(noGuardrailSpec(), scope);
-  var agentRunsAsVariables = (scope) => agentPathVariables(agentRunsAsSpec(), scope);
-  var saExcessiveAccessVariables = (scope) => agentPathVariables(saExcessiveAccessSpec(), scope);
-  var sensitiveDataAccessVariables = (scope) => agentPathVariables(sensitiveDataAccessSpec(), scope);
+  var noGuardrailVariables = (types, scope) => agentPathVariables(noGuardrailSpec(guardrailRoots(types)), scope);
+  var agentRunsAsVariables = (types, scope) => agentPathVariables(agentRunsAsSpec(types), scope);
+  var saExcessiveAccessVariables = (types, scope) => agentPathVariables(saExcessiveAccessSpec(types), scope);
+  var sensitiveDataAccessVariables = (types, scope) => agentPathVariables(sensitiveDataAccessSpec(types), scope);
   function graphSearchVarQuery(name) {
     return "query " + name + "($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   }
@@ -1991,6 +2075,13 @@ var Server = (() => {
   function identityAccessVariables(types, scope) {
     return {
       query: toGraphEntityQuery(identityAccessSpec(types)),
+      projectId: scope && scope.length ? scope[0] : null
+    };
+  }
+  var Q_LINEAGE = graphSearchVarQuery("SidekickAiLineage");
+  function lineageVariables(types, scope) {
+    return {
+      query: toGraphEntityQuery(lineageSpec(lineageRoots(types))),
       projectId: scope && scope.length ? scope[0] : null
     };
   }
@@ -3035,6 +3126,10 @@ var Server = (() => {
     }
     return byKey;
   }
+  function rootAiAsset(entities) {
+    const first = entities[0];
+    return first && AI_ASSET_KINDS.includes(first.kind) ? first : void 0;
+  }
   function entitiesOf(row) {
     if (!row || typeof row !== "object") return [];
     const entities = row["entities"];
@@ -3045,7 +3140,7 @@ var Server = (() => {
     const part = emptyPart();
     for (const row of rows) {
       for (const node2 of entitiesOf(row)) {
-        if (node2.kind !== "AI_AGENT") continue;
+        if (!GUARDRAIL_SUBJECT_KINDS.includes(node2.kind)) continue;
         node2.guardrailMissing = true;
         part.nodes.push(node2);
       }
@@ -3056,7 +3151,7 @@ var Server = (() => {
     const part = emptyPart();
     for (const row of rows) {
       const entities = entitiesOf(row);
-      const agent = entities.find((e) => e.kind === "AI_AGENT");
+      const agent = rootAiAsset(entities);
       const sa = entities.find((e) => e.kind === "SERVICE_ACCOUNT");
       const findings = entities.filter(
         (e) => e.kind === "EXCESSIVE_ACCESS_FINDING" || e.kind === "LATERAL_MOVEMENT_FINDING"
@@ -3081,6 +3176,32 @@ var Server = (() => {
     return part;
   }
   var DATA_STORE_KINDS = /* @__PURE__ */ new Set(["BUCKET", "DATABASE"]);
+  function slotEntitiesOf(row) {
+    if (!row || typeof row !== "object") return [];
+    const entities = row["entities"];
+    if (!Array.isArray(entities)) return [];
+    return entities.map((e) => e ? normalizeCloudResource(e) : null);
+  }
+  function normalizeLineagePage(rows) {
+    const part = emptyPart();
+    const slots = flattenSlots(lineageSpec());
+    for (const row of rows) {
+      const entities = slotEntitiesOf(row);
+      if (entities.length !== slots.length) continue;
+      for (const node2 of entities) if (node2) part.nodes.push(node2);
+      for (const slot of slots) {
+        if (slot.parentIndex === null || !slot.edgeType) continue;
+        const child = entities[slot.index];
+        const parent = entities[slot.parentIndex];
+        if (!child || !parent) continue;
+        const src = slot.reverse ? child.id : parent.id;
+        const dst = slot.reverse ? parent.id : child.id;
+        const type = slot.edgeType;
+        part.edges.push({ id: edgeId(src, type, dst), src, dst, type });
+      }
+    }
+    return part;
+  }
   function rawEntitiesOf(row) {
     const entities = row["entities"];
     if (!Array.isArray(entities)) return [];
@@ -3093,7 +3214,7 @@ var Server = (() => {
     const part = emptyPart();
     for (const row of rows) {
       const entities = entitiesOf(row);
-      const agent = entities.find((e) => e.kind === "AI_AGENT");
+      const agent = rootAiAsset(entities);
       const sa = entities.find((e) => e.kind === "SERVICE_ACCOUNT");
       const stores = entities.filter((e) => DATA_STORE_KINDS.has(e.kind));
       part.nodes.push(...entities.filter((e) => e.kind !== "DATA_FINDING"));
@@ -4933,6 +5054,16 @@ var Server = (() => {
       locked: "This step has no editable filter: its access-type list is what the area's own figure claims to count, so widening it here would change what the number means without changing what the page says it means."
     },
     {
+      stepId: "LINEAGE",
+      // Nothing to edit, and the reason is the root list rather than a filter. lineageRoots()
+      // intersects AI_PIPELINE / AI_DATASET with what the tenant declares before the query is
+      // built, because an entity type the tenant does not have fails coercion of the WHOLE
+      // $query variable and empties the step. An operator-supplied root would reintroduce
+      // exactly that, and its symptom would be a refusal naming the type, not the traversal.
+      fields: [],
+      locked: "This step has no editable filter: its traversal is built from lineageSpec and its root types are resolved against the tenant first, so an edited root could only make the whole query fail coercion. probeEdgeSteps() reports what it came back with."
+    },
+    {
       stepId: "IDENTITY_ACCESS",
       // Its traversal is a $query variable now, so in principle the access-level list is a
       // path an override could reach. Withheld for the reason ENDPOINT_EXPOSURE's is: those two
@@ -5614,9 +5745,10 @@ var Server = (() => {
   edges.push(edge("agent-b", "USES_MODEL", "model-text-embedding-005"));
   edges.push(edge("agent-h-chatbot", "INVOKES_TOOL", "mcp-internal-tools"));
   edges.push(edge("agent-l-support", "INVOKES_TOOL", "mcp-internal-tools"));
-  edges.push(edge("pipeline-training-01", "USES_DATASET", "dataset-support-transcripts"));
-  edges.push(edge("dataset-support-transcripts", "STORED_IN", "bucket-customer-pii"));
-  edges.push(edge("agent-e", "USES_DATASET", "dataset-support-transcripts"));
+  edges.push(edge("pipeline-training-01", "READS_DATA_FROM", "dataset-support-transcripts"));
+  edges.push(edge("pipeline-training-01", "PRODUCES", "model-text-embedding-005"));
+  edges.push(edge("dataset-support-transcripts", "STORES_DATA_IN", "bucket-customer-pii"));
+  edges.push(edge("agent-e", "READS_DATA_FROM", "dataset-support-transcripts"));
   for (let i = 1; i <= 14; i++) {
     const n = String(i).padStart(2, "0");
     const id = `bucket-autogen-scratch-${n}`;
@@ -7616,7 +7748,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "bbf91fc36e4b" : "dev";
+  var BUILD_ID = true ? "c5c84178d587" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -9116,7 +9248,7 @@ var Server = (() => {
         query: Q_AGENTS_NO_GUARDRAIL,
         // `null`, not projectScope(): these four have always run tenant-wide, and this change is
         // about the query's SHAPE. See agentPathVariables in wizQueriesAi.ts.
-        extraVariables: noGuardrailVariables(null),
+        extraVariables: noGuardrailVariables(types, null),
         normalize: normalizeNoGuardrailPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9127,7 +9259,7 @@ var Server = (() => {
         writes: ["ai_edges (RUNS_AS)", "ai_assets"],
         run: "graphSearch",
         query: Q_AGENT_RUNS_AS,
-        extraVariables: agentRunsAsVariables(null),
+        extraVariables: agentRunsAsVariables(types, null),
         normalize: normalizeRunsAsPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9138,7 +9270,7 @@ var Server = (() => {
         writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
         run: "graphSearch",
         query: Q_SA_EXCESSIVE_ACCESS,
-        extraVariables: saExcessiveAccessVariables(null),
+        extraVariables: saExcessiveAccessVariables(types, null),
         normalize: normalizeRunsAsPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9156,7 +9288,7 @@ var Server = (() => {
         ],
         run: "graphSearch",
         query: Q_AGENT_SENSITIVE_DATA_ACCESS,
-        extraVariables: sensitiveDataAccessVariables(null),
+        extraVariables: sensitiveDataAccessVariables(types, null),
         normalize: normalizeSensitiveDataAccessPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9193,6 +9325,25 @@ var Server = (() => {
         extraVariables: endpointExposureVariables(types, projectScope()),
         normalize: normalizeEndpointExposurePage,
         optional: true
+      },
+      {
+        // The lineage step: the first traversal rooted at anything but AI_AGENT or the whole
+        // AI type list. AI_PIPELINE + AI_DATASET are 79% of the register and no query has ever
+        // stood at one. `null`, not `projectScope()`: scoping it would cap the population at
+        // one project while the inventory that found the pipelines is tenant-wide, so a low
+        // Enriched number would be built in rather than measured. See domain/lineageQuery.ts.
+        id: "LINEAGE",
+        area: "dspm",
+        writes: [
+          "ai_edges (PRODUCES, READS_DATA_FROM, STORES_DATA_IN)",
+          "ai_assets (AI_MODEL/AI_SERVICE/AI_DATASET/BUCKET/DATABASE rows)"
+        ],
+        run: "graphSearch",
+        query: Q_LINEAGE,
+        extraVariables: lineageVariables(types, null),
+        normalize: normalizeLineagePage,
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
       },
       {
         id: "IDENTITY_ACCESS",
@@ -9244,7 +9395,14 @@ var Server = (() => {
     "HOST_EXPOSURE",
     "ENDPOINT_EXPOSURE",
     "IDENTITY_ACCESS",
-    "EFFECTIVE_ACCESS"
+    "EFFECTIVE_ACCESS",
+    "LINEAGE",
+    // Widened from the literal AI_AGENT. GUARDRAIL_GAPS widens to the three kinds a guardrail
+    // fronts rather than to every AI kind — see GUARDRAIL_SUBJECT_KINDS.
+    "GUARDRAIL_GAPS",
+    "RUNS_AS",
+    "SA_FINDINGS",
+    "SENSITIVE_DATA_ACCESS"
   ]);
   function rootFieldOf(step) {
     var _a5;
@@ -9321,6 +9479,16 @@ var Server = (() => {
         return endpointExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "IDENTITY_ACCESS":
         return identityAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "LINEAGE":
+        return lineageVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+      case "GUARDRAIL_GAPS":
+        return noGuardrailVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+      case "RUNS_AS":
+        return agentRunsAsVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+      case "SA_FINDINGS":
+        return saExcessiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+      case "SENSITIVE_DATA_ACCESS":
+        return sensitiveDataAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
       case "EFFECTIVE_ACCESS":
         return effectiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "IDENTITY_HYGIENE":

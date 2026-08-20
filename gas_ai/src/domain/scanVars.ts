@@ -217,6 +217,18 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
       "without changing what the page says it means.",
   },
   {
+    stepId: "LINEAGE",
+    // Nothing to edit, and the reason is the root list rather than a filter. lineageRoots()
+    // intersects AI_PIPELINE / AI_DATASET with what the tenant declares before the query is
+    // built, because an entity type the tenant does not have fails coercion of the WHOLE
+    // $query variable and empties the step. An operator-supplied root would reintroduce
+    // exactly that, and its symptom would be a refusal naming the type, not the traversal.
+    fields: [],
+    locked: "This step has no editable filter: its traversal is built from lineageSpec and " +
+      "its root types are resolved against the tenant first, so an edited root could only " +
+      "make the whole query fail coercion. probeEdgeSteps() reports what it came back with.",
+  },
+  {
     stepId: "IDENTITY_ACCESS",
     // Its traversal is a $query variable now, so in principle the access-level list is a
     // path an override could reach. Withheld for the reason ENDPOINT_EXPOSURE's is: those two

@@ -409,32 +409,47 @@ describe("query documents", () => {
     expect(Q_AGENT_EXPANSION).toContain("$projectId: String)");
   });
 
-  it("asks for the whole chain, with only the finding leg optional", () => {
-    // The two outer legs are the path; without them there is nothing to draw. The finding
-    // leg is optional because a store Wiz classified but has found nothing specific in must
-    // still appear — requiring it collapses the chain back to nothing.
+  it("reaches the store through the binding, which is the hop that makes it return", () => {
+    // The path legs are required; without them there is nothing to draw. The finding leg is
+    // optional because a store Wiz classified but has found nothing specific in must still
+    // appear — requiring it collapses the chain back to nothing.
     //
-    // Asserted on the rendered $query rather than on the document, because the traversal no
-    // longer lives in the document. One toEqual pins what seven toContains and a regex count
-    // used to: the type lists, the edge names, the `where`, and the single `optional`.
-    expect(sensitiveDataAccessVariables(null)["query"]).toEqual({
+    // THE IAM_BINDING IS WHY THIS TEST CHANGED. Without it the traversal asked
+    // `SERVICE_ACCOUNT -ALLOWS_ACCESS_TO-> store`, which on this tenant matches nothing:
+    // ALLOWS_ACCESS_TO is anchored at the BINDING. Three live probes, one variable each:
+    // 0 rows through the service account, 160 through the binding, 147 with hasSensitiveData
+    // still applied. The old shape was not narrow, it was unmatchable — and it said so by
+    // returning zero rows and no error for the life of the app.
+    //
+    // The binding is `select: false`, so it consumes no slot and the edge the normalizer
+    // writes stays identity → store. Asserted on the rendered $query rather than the document,
+    // because the traversal no longer lives in the document.
+    expect(sensitiveDataAccessVariables(["AI_AGENT"], null)["query"]).toEqual({
       type: ["AI_AGENT"],
       select: true,
       relationships: [{
         type: [{ type: "ACTING_AS" }],
         with: {
-          type: ["SERVICE_ACCOUNT"],
+          // The supertype, answered with the concrete subtype — same as the CIEM traversal.
+          type: ["PRINCIPAL"],
           select: true,
           relationships: [{
-            type: [{ type: "ALLOWS_ACCESS_TO" }],
+            // ENTITLES reversed: standing at the principal, not at the binding.
+            type: [{ type: "ENTITLES", reverse: true }],
             with: {
-              type: ["BUCKET", "DATABASE"],
-              select: true,
-              where: { hasSensitiveData: { EQUALS: true } },
+              type: ["IAM_BINDING"],
               relationships: [{
-                type: [{ type: "HAS_DATA_FINDING" }],
-                with: { type: ["DATA_FINDING"], select: true },
-                optional: true,
+                type: [{ type: "ALLOWS_ACCESS_TO" }],
+                with: {
+                  type: ["BUCKET", "DATABASE"],
+                  select: true,
+                  where: { hasSensitiveData: { EQUALS: true } },
+                  relationships: [{
+                    type: [{ type: "HAS_DATA_FINDING" }],
+                    with: { type: ["DATA_FINDING"], select: true },
+                    optional: true,
+                  }],
+                },
               }],
             },
           }],
@@ -447,7 +462,7 @@ describe("query documents", () => {
     // Transcribed from a Wiz console export run against the live tenant, which returned twelve
     // rows — each an AI_AGENT, a SERVICE_ACCOUNT and an IAM_BINDING. Nothing else has ever
     // proved this traversal works, so this assertion is the record of what did.
-    expect(saExcessiveAccessVariables(null)["query"]).toEqual({
+    expect(saExcessiveAccessVariables(["AI_AGENT"], null)["query"]).toEqual({
       type: ["AI_AGENT"],
       select: true,
       relationships: [{
@@ -494,7 +509,7 @@ describe("query documents", () => {
     // The export asks for PRINCIPAL and all twelve rows came back SERVICE_ACCOUNT, so
     // normalizeRunsAsPage's find(kind === "SERVICE_ACCOUNT") still matches — and asking for the
     // supertype also reaches a user-backed identity this spec could never see before.
-    const q = saExcessiveAccessVariables(null)["query"] as Record<string, unknown>;
+    const q = saExcessiveAccessVariables(["AI_AGENT"], null)["query"] as Record<string, unknown>;
     const principal = (q["relationships"] as Array<Record<string, unknown>>)[0]["with"] as
       Record<string, unknown>;
     expect(principal["type"]).toEqual(["PRINCIPAL"]);
@@ -503,7 +518,7 @@ describe("query documents", () => {
   it("keeps every leg below the principal optional", () => {
     // A high-privileged identity is worth reporting whether or not the binding that granted it,
     // or a finding about it, lands in the same row — which is exactly how the console builds it.
-    const rendered = JSON.stringify(saExcessiveAccessVariables(null)["query"]);
+    const rendered = JSON.stringify(saExcessiveAccessVariables(["AI_AGENT"], null)["query"]);
     expect(rendered.match(/"optional":true/g) ?? []).toHaveLength(3);
   });
 
@@ -514,7 +529,7 @@ describe("query documents", () => {
     //
     // `negate` is the one construct here with no capture behind it. If this step keeps failing
     // after the shape fix while the other three pass, `negate` is the first thing to suspect.
-    expect(noGuardrailVariables(null)["query"]).toEqual({
+    expect(noGuardrailVariables(["AI_AGENT"], null)["query"]).toEqual({
       type: ["AI_AGENT"],
       select: true,
       relationships: [{
@@ -528,14 +543,16 @@ describe("query documents", () => {
   it("runs the agent-rooted traversals tenant-wide, as they always have", () => {
     // Not projectScope(). These four carried no projectId before the shape fix and carry none
     // after it — narrowing them is a population change and does not belong in a change about
-    // how the query is spelled.
+    // how the query is spelled. Three of them now take a resolved type list; the scope argument
+    // is the one this test is about and it stayed where it was.
+    const AI = ["AI_AGENT", "AI_MODEL"];
     for (const vars of [
-      noGuardrailVariables(null), agentRunsAsVariables(null),
-      saExcessiveAccessVariables(null), sensitiveDataAccessVariables(null),
+      noGuardrailVariables(AI, null), agentRunsAsVariables(AI, null),
+      saExcessiveAccessVariables(AI, null), sensitiveDataAccessVariables(AI, null),
     ]) {
       expect(vars["projectId"]).toBeNull();
     }
-    expect(sensitiveDataAccessVariables(["p-1", "p-2"])["projectId"]).toBe("p-1");
+    expect(sensitiveDataAccessVariables(AI, ["p-1", "p-2"])["projectId"]).toBe("p-1");
   });
 
   it("no graphSearch document carries a quoted enum value any more", () => {

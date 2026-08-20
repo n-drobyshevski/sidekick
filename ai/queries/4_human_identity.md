@@ -1,3 +1,10 @@
+> [!WARNING]
+> **Historical planning notes.** Every `graphSearch` query below is refused by this tenant as
+> written, and several name relationships it does not have. These were drafted before the repo
+> held a single captured request or response. See **[README.md](README.md)** for both defects,
+> the name substitutions, and where the real traversals live. The `cloudResourcesV2`
+> pre-computed-flag queries in this file are unaffected.
+
 Here are the production-ready GraphQL queries for **Human Identity → AI Asset Access**:
 
 ---
@@ -5,6 +12,8 @@ Here are the production-ready GraphQL queries for **Human Identity → AI Asset 
 ## 4. 👤 Human Identity → AI Asset Access
 
 ### 4.1 — Users/Roles with Write or Admin Access to AI Agents
+
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `BOUND_TO`, `PERMITS_ACCESS_ROLE`, which this tenant does not have. See [README](README.md).
 
 ```graphql
 query IdentitiesWithAccessToAIAgents(
@@ -88,6 +97,8 @@ query IdentitiesWithAccessToAIAgents(
 
 ### 4.2 — Inactive Users with Access to AI Agents
 
+> ⚠️ **Refused as written** — quoted enum in GraphQL source. See [README](README.md).
+
 ```graphql
 query InactiveUsersWithAIAgentAccess(
   $quick: Boolean
@@ -143,6 +154,8 @@ query InactiveUsersWithAIAgentAccess(
 
 ### 4.3 — Users WITHOUT MFA Who Have Access to AI Agents
 
+> ⚠️ **Refused as written** — quoted enum in GraphQL source. See [README](README.md).
+
 ```graphql
 query NoMFAUsersWithAIAgentAccess(
   $quick: Boolean
@@ -195,6 +208,8 @@ query NoMFAUsersWithAIAgentAccess(
 
 ### 4.4 — External / Third-Party Identities with Access to AI Agents
 
+> ⚠️ **Refused as written** — quoted enum in GraphQL source. See [README](README.md).
+
 ```graphql
 query ExternalIdentitiesWithAIAgentAccess(
   $quick: Boolean
@@ -246,6 +261,8 @@ query ExternalIdentitiesWithAIAgentAccess(
 ---
 
 ### 4.5 — Service Accounts with Admin/High Privileges Running AI Agents
+
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `RUNS_AS`, which this tenant does not have. See [README](README.md).
 
 ```graphql
 query PrivilegedServiceAccountsRunningAIAgents(
@@ -305,6 +322,8 @@ query PrivilegedServiceAccountsRunningAIAgents(
 ---
 
 ### 4.6 — Service Accounts Running AI Agents with Excessive Access Findings
+
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `RUNS_AS`, `HAS_FINDING`, which this tenant does not have. See [README](README.md).
 
 ```graphql
 query AIAgentServiceAccountExcessiveAccess(
@@ -367,6 +386,8 @@ query AIAgentServiceAccountExcessiveAccess(
 
 ### 4.7 — Users Who Can Modify AI Agent Source Code Buckets
 
+> ⚠️ **Refused as written** — quoted enum in GraphQL source. See [README](README.md).
+
 ```graphql
 query UsersWithWriteAccessToAIAgentCodeBuckets(
   $quick: Boolean
@@ -428,6 +449,8 @@ query UsersWithWriteAccessToAIAgentCodeBuckets(
 ---
 
 ### 4.8 — Combined High-Risk: Inactive + No MFA + AI Agent Access
+
+> ⚠️ **Refused as written** — quoted enum in GraphQL source. See [README](README.md).
 
 ```graphql
 query HighRiskIdentitiesWithAIAgentAccess(
@@ -514,7 +537,7 @@ query HighRiskIdentitiesWithAIAgentAccess(
 | Point | Detail |
 |---|---|
 | **`ALLOWS_ACCESS_TO`** | Primary IAM edge in Wiz graph — connects identities to resources they can access |
-| **`RUNS_AS`** | Connects AI_AGENT → SERVICE_ACCOUNT — the execution identity |
+| **`RUNS_AS`** | The model’s name for the hop, and what `ai_edges` persists. On the wire it is **`ACTING_AS`**, forward from the agent to a `PRINCIPAL` — which the tenant answers with the concrete `SERVICE_ACCOUNT` subtype. |
 | **`lastActivity: { BEFORE: "now-90d" }`** | ⚠️ **Unverified.** No capture in this repo uses this filter. Dormancy is available as a *returned property* instead — see "What is implemented" below. |
 | **`mfaEnabled: false`** | ⚠️ **Wrong shape, and it does not matter.** No capture carries an `mfa*` field on any entity, so this filter is unverified — but MFA turned out not to be a property at all. It is a RULE: `IAM-159`, `IAM-048`, `IAM-208`, evaluated against `USER_ACCOUNT` and reported through `configurationFindings`. See 4.3 below. |
 | **`accessType`** | Filter on the relationship edge — values: `READ`, `WRITE`, `ADMIN`, `HIGH_PRIVILEGE` |
@@ -534,8 +557,13 @@ Query 4.1, **re-rooted and de-stamped**. `Q_IDENTITY_ACCESS` in
 `gas_ai/src/server/wizQueriesAi.ts`, traversal in `gas_ai/src/domain/identityQuery.ts`:
 
 ```
-AI asset  <-ALLOWS_ACCESS_TO-  ACCESS_ROLE_BINDING  -BOUND_TO->            USER_ACCOUNT / SERVICE_ACCOUNT
-                                                    -PERMITS_ACCESS_ROLE-> ACCESS_ROLE[accessType Admin|High]
+AI asset  <-ALLOWS_ACCESS_TO-  ACCESS_ROLE_BINDING  -ENTITLES->  USER_ACCOUNT / SERVICE_ACCOUNT
+                                                    -ALLOWS->    ACCESS_ROLE[accessTypes Admin|HighPrivilege]
+
+Wire names, standing at the binding. The model calls those two hops BOUND_TO and
+PERMITS_ACCESS_ROLE (HOP, graphExpand.ts) and ai_edges persists the model names, not these.
+`reverse` belongs to the standing point, not the relationship: ENTITLES is forward from the
+binding and reversed from the principal.
 ```
 
 Three differences from 4.1 as written above, each of which was a way the old figure could have

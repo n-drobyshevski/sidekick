@@ -1,3 +1,10 @@
+> [!WARNING]
+> **Historical planning notes.** Every `graphSearch` query below is refused by this tenant as
+> written, and several name relationships it does not have. These were drafted before the repo
+> held a single captured request or response. See **[README.md](README.md)** for both defects,
+> the name substitutions, and where the real traversals live. The `cloudResourcesV2`
+> pre-computed-flag queries in this file are unaffected.
+
 Here are the production-ready GraphQL queries for **IAM Over-Privilege (Pillar A + C combined)**:
 
 ---
@@ -70,6 +77,8 @@ query AIAgentsWithHighPrivileges(
 ### 6.2 — AI Agent → Service Account → Excessive Access Finding
 
 Full graph path — agent execution identity flagged by Wiz CIEM for unused permissions:
+
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `RUNS_AS`, `HAS_FINDING`, which this tenant does not have. See [README](README.md).
 
 ```graphql
 query AIAgentServiceAccountExcessiveAccess(
@@ -147,6 +156,8 @@ query AIAgentServiceAccountExcessiveAccess(
 ### 6.3 — AI Agent → Service Account → Sensitive Data Resource (Full IAM Chain)
 
 Traces the complete privilege chain from agent to sensitive data:
+
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `RUNS_AS`, which this tenant does not have. See [README](README.md).
 
 ```graphql
 query AIAgentFullPrivilegeChainToSensitiveData(
@@ -229,6 +240,8 @@ query AIAgentFullPrivilegeChainToSensitiveData(
 ### 6.4 — AI Agent Using Lambda Tool with Excessive Permissions
 
 AWS-specific — Bedrock agents invoking Lambda functions with over-privileged IAM:
+
+> ⚠️ **Refused as written** — quoted enum in GraphQL source. See [README](README.md).
 
 ```graphql
 query AIAgentLambdaToolExcessivePermissions(
@@ -341,6 +354,8 @@ query AIAgentsOverlyPermissiveIdentity(
 
 Detects agents whose identity can access resources in OTHER cloud accounts — lateral movement risk:
 
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `RUNS_AS`, which this tenant does not have. See [README](README.md).
+
 ```graphql
 query AIAgentCrossAccountPrivileges(
   $quick: Boolean
@@ -411,6 +426,8 @@ query AIAgentCrossAccountPrivileges(
 
 Detects agents whose execution identity has a lateral movement path to admin privileges:
 
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `RUNS_AS`, `HAS_FINDING`, which this tenant does not have. See [README](README.md).
+
 ```graphql
 query AIAgentLateralMovementToAdmin(
   $quick: Boolean
@@ -477,6 +494,8 @@ query AIAgentLateralMovementToAdmin(
 
 Your 8 AWS issues — full detail with role ARN and account:
 
+> ⚠️ **Refused as written** — quoted enum in GraphQL source. See [README](README.md).
+
 ```graphql
 query BedrockRolesNoGuardrailDetail(
   $quick: Boolean
@@ -540,6 +559,8 @@ query BedrockRolesNoGuardrailDetail(
 ### 6.9 — Combined Highest Risk: High Privilege + Sensitive Data + No Guardrail
 
 The single most important query for AARS — all three Pillar A+C risk factors combined:
+
+> ⚠️ **Refused as written** — quoted enum in GraphQL source; names `PROTECTED_BY`, which this tenant does not have. See [README](README.md).
 
 ```graphql
 query AIAgentTripleRisk(
@@ -654,9 +675,9 @@ query AIAgentTripleRisk(
 |---|---|
 | **`hasHighPrivileges`** | Pre-computed by Wiz IAM analysis — covers both direct and inherited permissions |
 | **`hasAdminPrivileges`** | Subset of `hasHighPrivileges` — wildcard or subscription-level permissions |
-| **`RUNS_AS`** | Primary edge connecting AI_AGENT → SERVICE_ACCOUNT execution identity |
-| **`HAS_FINDING` → `EXCESSIVE_ACCESS_FINDING`** | CIEM finding — Wiz analyzed actual usage vs granted permissions |
-| **`HAS_FINDING` → `LATERAL_MOVEMENT_FINDING`** | Attack path finding — privilege escalation route exists |
+| **`RUNS_AS`** | The model’s name for the hop, and what `ai_edges` persists. On the wire it is **`ACTING_AS`**, forward from the agent to a `PRINCIPAL` — which the tenant answers with the concrete `SERVICE_ACCOUNT` subtype. |
+| **`HAS_FINDING` → `EXCESSIVE_ACCESS_FINDING`** | Model name; on the wire the hop is **`CONTAINS`**, forward from the principal. CIEM finding — Wiz analyzed actual usage vs granted permissions. |
+| **`HAS_FINDING` → `LATERAL_MOVEMENT_FINDING`** | Model name; same **`CONTAINS`** hop. Attack path finding — privilege escalation route exists. |
 | **Query 6.9** | Most valuable single query for AARS — combines all three risk dimensions |
 | **Your env** | `agent-J` and `agent-K` → query 6.2 and 6.5; all 13 GCP managed agents → query 6.3 |
 | **`quick: true`** | Recommended for all graph queries — prevents timeout on large tenants |
