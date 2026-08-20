@@ -21,6 +21,12 @@ function registerScopeDiagnostic() { return Server.registerScopeDiagnostic(); }
 // One live Wiz page per step. Nothing is persisted.
 function probeEdgeSteps() { return Server.probeEdgeSteps(); }
 
+// Did a change actually improve anything. Run pinPostureBaseline() BEFORE deploying a change,
+// then postureDelta() after re-syncing — pinning afterwards measures the new build against
+// itself and reports no movement, which looks like a result and is not.
+function pinPostureBaseline() { return Server.pinPostureBaseline(); }
+function postureDelta() { return Server.postureDelta(); }
+
 // One named step, for a caller that can pass an argument: the Scans drill-down's "Probe this
 // step" button (via api_probeSyncStep), or the editor's debugger. NOT runnable from the editor's
 // Run dropdown — `stepId` would arrive undefined and the call would refuse. Use probeEdgeSteps()

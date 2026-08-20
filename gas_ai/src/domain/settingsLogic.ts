@@ -385,6 +385,29 @@ export function withStepRows(settings: Rec, rows: unknown): Rec {
 }
 
 /**
+ * The pinned posture baseline — the snapshot a later run is compared against.
+ *
+ * Stored whole and opaque rather than field-by-field, because a baseline's job is to be the
+ * EXACT thing that was measured. Reshaping it on the way in or out would mean a comparison
+ * against a reconstruction, and the one property this has to keep is that the numbers on the
+ * left of the delta are the numbers that were on the screen the day it was pinned.
+ *
+ * `null` when nothing has been pinned, and that is a distinct answer from an empty snapshot: it
+ * is the difference between "nothing to compare against" and "we measured and found nothing",
+ * which is the same distinction getStepRows exists for.
+ */
+export function getPostureBaseline(settings: Rec): Rec | null {
+  const raw = settings["posture_baseline"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const snap = raw as Rec;
+  return Array.isArray(snap["measures"]) ? snap : null;
+}
+
+export function withPostureBaseline(settings: Rec, snapshot: unknown): Rec {
+  return { ...settings, posture_baseline: snapshot ?? null };
+}
+
+/**
  * Why each skipped step was skipped on the last committed sync — the tenant's own message.
  *
  * `getSkippedSteps` answers WHICH steps were refused; this answers WHAT the tenant said, and

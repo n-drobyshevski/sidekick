@@ -26,6 +26,8 @@ var Server = (() => {
     doGet: () => doGet,
     include: () => include,
     jobs: () => syncJobs_exports,
+    pinPostureBaseline: () => pinPostureBaseline,
+    postureDelta: () => postureDelta,
     probeEdgeSteps: () => probeEdgeSteps,
     registerScopeDiagnostic: () => registerScopeDiagnostic,
     setup: () => setup,
@@ -7424,6 +7426,15 @@ var Server = (() => {
   function withStepRows(settings, rows) {
     return { ...settings, last_step_rows: getStepRows({ last_step_rows: rows }) };
   }
+  function getPostureBaseline(settings) {
+    const raw = settings["posture_baseline"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const snap = raw;
+    return Array.isArray(snap["measures"]) ? snap : null;
+  }
+  function withPostureBaseline(settings, snapshot) {
+    return { ...settings, posture_baseline: snapshot != null ? snapshot : null };
+  }
   function getSkipReasons(settings) {
     const raw = settings["last_skip_reasons"];
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -7589,7 +7600,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "fbcd765d8360" : "dev";
+  var BUILD_ID = true ? "ae0ed7fcb833" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -7783,6 +7794,10 @@ var Server = (() => {
     const key = (r) => Object.keys(r).sort().map((k) => `${k}=${r[k]}`).join(" ");
     if (key(getStepRows(next)) === key(getStepRows(settings))) return;
     saveSettings(next);
+  }
+  var getPostureBaseline2 = () => getPostureBaseline(loadSettings());
+  function setPostureBaseline(snapshot) {
+    saveSettings(withPostureBaseline(loadSettings(), snapshot));
   }
   var getSkipReasons2 = () => getSkipReasons(loadSettings());
   function setSkipReasons(reasons) {
@@ -9814,6 +9829,173 @@ var Server = (() => {
     };
   }
 
+  // src/domain/postureDelta.ts
+  function hasRate(v, t) {
+    return v !== null && typeof t === "number" && t > 0;
+  }
+  function compareSnapshots(before, after) {
+    var _a5;
+    const prior = /* @__PURE__ */ new Map();
+    for (const m of (_a5 = before == null ? void 0 : before.measures) != null ? _a5 : []) prior.set(m.key, m);
+    return after.measures.map((m) => {
+      const b = prior.get(m.key);
+      const beforeVal = b ? b.value : null;
+      const beforeTot = b && b.total !== void 0 ? b.total : null;
+      const afterTot = m.total !== void 0 ? m.total : null;
+      const rateDeltaPct = hasRate(beforeVal, beforeTot) && hasRate(m.value, afterTot) ? (m.value / afterTot - beforeVal / beforeTot) * 100 : null;
+      const delta = beforeVal !== null && m.value !== null ? m.value - beforeVal : null;
+      let verdict;
+      if (m.value === null) verdict = "not-recorded";
+      else if (!b || beforeVal === null) verdict = "no-baseline";
+      else {
+        const moved = rateDeltaPct !== null ? rateDeltaPct : delta;
+        if (moved === 0) verdict = "unchanged";
+        else if (m.rising === "neither") verdict = "unchanged";
+        else verdict = moved > 0 === (m.rising === "better") ? "better" : "worse";
+      }
+      return {
+        key: m.key,
+        label: m.label,
+        before: beforeVal,
+        after: m.value,
+        beforeTotal: beforeTot,
+        afterTotal: afterTot,
+        delta,
+        rateDeltaPct,
+        verdict,
+        rising: m.rising,
+        ...m.confound ? { confound: m.confound } : {}
+      };
+    });
+  }
+  function unconfounded(deltas) {
+    return deltas.filter((d) => !d.confound && d.rising !== "neither");
+  }
+  function regressions(deltas) {
+    return deltas.filter((d) => d.verdict === "worse");
+  }
+  var SIGNAL_CONFOUND = "rises on the diagnostic's own boolean fix alone \u2014 not evidence any traversal ran";
+  var AARS_CONFOUND = "also moves when MISSING_GUARDRAIL starts being collected \u2014 a query fix, not an edge fix";
+  var AXIS_LABELS = {
+    exploitation: "Axis known \xB7 exploitation",
+    impact: "Axis known \xB7 technical impact",
+    exposure: "Axis known \xB7 system exposure",
+    mission: "Axis known \xB7 mission"
+  };
+  function buildSnapshot(input) {
+    var _a5;
+    const m = [];
+    m.push({
+      key: "edge-rows",
+      label: "Rows on ai_edges",
+      value: input.edgeRows,
+      rising: "better"
+    });
+    m.push({
+      key: "edge-types-populated",
+      label: "Edge types populated",
+      value: input.reach.edges.populated.length,
+      total: input.reach.edges.populated.length + input.reach.edges.dead.length,
+      rising: "better"
+    });
+    for (const s of input.reach.stages) {
+      m.push({
+        key: `reach-${s.key}`,
+        label: `Reach \xB7 ${s.label}`,
+        value: s.covered,
+        total: s.total,
+        // `register` is the AI-kinded share of the whole tab: a denominator for everything below
+        // it and a statement about the tenant's inventory, not about this pipeline's reach.
+        rising: s.key === "register" ? "neither" : "better"
+      });
+    }
+    if (input.reach.impactTagged) {
+      m.push({
+        key: "reach-impact-tagged",
+        label: "Impact-tagged (tenant project tagging)",
+        value: input.reach.impactTagged.covered,
+        total: input.reach.impactTagged.total,
+        // Folded from the asset's own projects on the mandatory inventory hop. It reads high on a
+        // landscape where nothing was traversed, which is exactly why it is not a reach stage and
+        // why a rise here says nothing about this pipeline.
+        rising: "neither"
+      });
+    }
+    for (const [axis, rate] of Object.entries(input.reach.axes)) {
+      m.push({
+        key: `axis-${axis}`,
+        label: (_a5 = AXIS_LABELS[axis]) != null ? _a5 : `Axis known \xB7 ${axis}`,
+        // Stored as a percentage so a delta reads in points rather than in thousandths.
+        value: Math.round(rate * 1e3) / 10,
+        rising: "better"
+      });
+    }
+    m.push({
+      key: "axes-population",
+      label: "Items the tree decided (axis denominator)",
+      value: input.reach.axesPopulation,
+      rising: "neither"
+    });
+    if (input.aars) {
+      m.push({
+        key: "aars-distinct-scores",
+        label: "AARS distinct scores",
+        value: input.aars.distinctScores,
+        total: input.aars.scored,
+        rising: "better",
+        confound: AARS_CONFOUND
+      });
+      m.push({
+        key: "aars-largest-tie",
+        label: "AARS largest tie block",
+        value: input.aars.largestTieGroup,
+        total: input.aars.scored,
+        // The one measure here where DOWN is the win: it is the block a "top N" cuts blindly into.
+        rising: "worse",
+        confound: AARS_CONFOUND
+      });
+      m.push({
+        key: "aars-tie-rate",
+        label: "AARS tie rate (% of pairs unseparated)",
+        value: Math.round(input.aars.tieRate * 1e3) / 10,
+        rising: "worse",
+        confound: AARS_CONFOUND
+      });
+      m.push({
+        key: "aars-effective-cardinality",
+        label: "AARS effective distinct scores",
+        value: Math.round(input.aars.effectiveCardinality * 100) / 100,
+        rising: "better",
+        confound: AARS_CONFOUND
+      });
+      m.push({
+        key: "aars-scored",
+        label: "Assets carrying a score",
+        value: input.aars.scored,
+        rising: "neither"
+      });
+    }
+    for (const id of Object.keys(input.stepRows).sort()) {
+      m.push({
+        key: `step-${id}`,
+        label: `Step yield \xB7 ${id}`,
+        value: input.stepRows[id],
+        rising: "better"
+      });
+    }
+    if (input.signal) {
+      m.push({
+        key: "register-signal",
+        label: "Assets carrying any signal",
+        value: input.signal.covered,
+        total: input.signal.total,
+        rising: "better",
+        confound: SIGNAL_CONFOUND
+      });
+    }
+    return { at: input.at, ...input.syncId ? { syncId: input.syncId } : {}, measures: m };
+  }
+
   // src/server/diagnostics.ts
   function preview(value) {
     if (!value || !value.trim()) return "(unset)";
@@ -9958,6 +10140,30 @@ var Server = (() => {
     }
     log("=== end ===");
     return lines.join("\n");
+  }
+  function signalCarriers() {
+    var _a5, _b, _c, _d, _e, _f, _g;
+    const issueAssetIds = /* @__PURE__ */ new Set();
+    const findingResourceIds = /* @__PURE__ */ new Set();
+    for (const r of readAll(TABS.issues)) {
+      if (isUnresolvedIssue({ status: String((_a5 = r["status"]) != null ? _a5 : "") })) {
+        issueAssetIds.add(String((_b = r["asset_id"]) != null ? _b : ""));
+      }
+    }
+    for (const r of readAll(TABS.findings)) {
+      const gap2 = isOpenGap({
+        result: (_c = r["result"]) != null ? _c : void 0,
+        status: (_d = r["status"]) != null ? _d : void 0,
+        deleted: parseTri(r["deleted"]) === true
+      });
+      if (gap2) findingResourceIds.add(String((_e = r["resource_id"]) != null ? _e : ""));
+    }
+    let n = 0;
+    for (const r of readAll(TABS.assets)) {
+      const held = parseBool(r["sensitive_data"]) || parseBool(r["sensitive_access"]) || parseBool(r["high_priv"]) || parseBool(r["admin_priv"]) || parseBool(r["guardrail_missing"]) || parseTri(r["internet"]) === true || parseTri(r["open_internet"]) === true;
+      if (held || issueAssetIds.has(String((_f = r["id"]) != null ? _f : "")) || findingResourceIds.has(String((_g = r["id"]) != null ? _g : ""))) n += 1;
+    }
+    return n;
   }
   function registerScopeDiagnostic() {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
@@ -10229,6 +10435,108 @@ var Server = (() => {
       for (const e of v.edges) edges2.add(e);
     }
     return { entities: [...entities].sort(), edges: [...edges2].sort() };
+  }
+  function currentSnapshot() {
+    var _a5;
+    const assets = loadAssets();
+    const reach = estateReach({
+      assets,
+      issues: loadIssues(),
+      findings: loadFindings(),
+      edges: loadEdges()
+    });
+    let aars = null;
+    try {
+      aars = ruleDiscrimination(assets, getAarsRule2().rule);
+    } catch (e) {
+      console.warn(`AARS discrimination unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    let edgeRows = null;
+    try {
+      edgeRows = readAll(TABS.edges).length;
+    } catch (e) {
+      console.warn(`ai_edges unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    let signal;
+    try {
+      signal = { covered: signalCarriers(), total: readAll(TABS.assets).length };
+    } catch (e) {
+      console.warn(`signal count unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    const history = syncHistory();
+    const last = history.length ? history[history.length - 1] : void 0;
+    return buildSnapshot({
+      at: (_a5 = toIso(Date.now())) != null ? _a5 : "",
+      ...last && last["sync_id"] ? { syncId: String(last["sync_id"]) } : {},
+      reach,
+      aars,
+      edgeRows,
+      stepRows: getStepRows2(),
+      ...signal ? { signal } : {}
+    });
+  }
+  function pinPostureBaseline() {
+    const lines = [];
+    const log = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    log("=== pin posture baseline ===");
+    const snap = currentSnapshot();
+    setPostureBaseline(snap);
+    log(`Pinned ${snap.measures.length} measures at ${snap.at}` + (snap.syncId ? ` (sync ${snap.syncId})` : " (no sync recorded)"));
+    for (const m of snap.measures) {
+      const v = m.value === null ? "not recorded" : String(m.value);
+      log(`  ${m.label}: ${v}${typeof m.total === "number" ? ` of ${m.total}` : ""}`);
+    }
+    log("Deploy the change, re-sync, then run postureDelta().");
+    log("=== end ===");
+    return lines.join("\n");
+  }
+  function postureDelta() {
+    const lines = [];
+    const log = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    log("=== posture delta ===");
+    const stored = getPostureBaseline2();
+    const before = stored ? stored : null;
+    if (!before) {
+      log("No baseline pinned. Run pinPostureBaseline() BEFORE the change you want to measure \u2014");
+      log("pinning after it measures the new build against itself and reports no movement.");
+    } else {
+      log(`Baseline pinned ${before.at}${before.syncId ? ` (sync ${before.syncId})` : ""}.`);
+    }
+    const after = currentSnapshot();
+    log(`Current ${after.at}${after.syncId ? ` (sync ${after.syncId})` : ""}.`);
+    const deltas = compareSnapshots(before, after);
+    const fmt = (d) => {
+      const pair = (v, t) => v === null ? "\u2014" : t !== null ? `${v}/${t}` : String(v);
+      const move = d.rateDeltaPct !== null ? `${d.rateDeltaPct >= 0 ? "+" : ""}${d.rateDeltaPct.toFixed(1)}pp` : d.delta !== null ? `${d.delta >= 0 ? "+" : ""}${d.delta}` : "\u2014";
+      return `${pair(d.before, d.beforeTotal)} \u2192 ${pair(d.after, d.afterTotal)}  (${move})`;
+    };
+    const block = (title, rows) => {
+      if (!rows.length) return;
+      log("");
+      log(title);
+      for (const d of rows) {
+        log(`  [${d.verdict.toUpperCase()}] ${d.label}: ${fmt(d)}`);
+        if (d.confound) log(`      \u26A0 ${d.confound}`);
+      }
+    };
+    block("MOVED THE WRONG WAY", regressions(deltas));
+    block("EVIDENCE (unconfounded)", unconfounded(deltas));
+    block("CONFOUNDED \u2014 worth watching, not evidence", deltas.filter((d) => !!d.confound));
+    block("CONTEXT (denominators and tenant facts)", deltas.filter((d) => d.rising === "neither"));
+    log("");
+    log("Read it this way:");
+    log("  \xB7 Reach \xB7 Enriched is the one measure only an edge can move. If it did not move,");
+    log("    nothing about collection improved, whatever else reads better.");
+    log("  \xB7 A measure with \u26A0 moved for a reason named beside it. It is not evidence.");
+    log("  \xB7 NO-BASELINE means the pinned snapshot predates the measure, not that it was zero.");
+    log("=== end ===");
+    return lines.join("\n");
   }
 
   // src/server/api.ts
