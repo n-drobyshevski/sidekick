@@ -229,12 +229,17 @@
    row 1 takes [0,3), row 2 [3,5), the fallback takes the tail. That is what "order is
    meaning" actually looks like. aria-hidden beside its own number, per ui/data.js's
    decorative-meter rule. */
-.claim-rail { display: flex; align-items: center; gap: 6px; }
+/* inline-flex, not flex: the printed number is a SIBLING of this element inside the cell
+   (see ui/claimRail.js), so a block-level flex container pushed it onto a second line —
+   which is why the count has been sitting under its own bar rather than "beside" it, as
+   that file has always said it should. Harmless while the column sat mid-table at 44px;
+   as the spine it is the first thing read. */
+.claim-rail { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
 .claim-rail__track {
   position: relative;
   flex: 1;
   height: 8px;
-  min-width: 60px;
+  min-width: 72px;
   border-radius: 2px;
   overflow: hidden;
   background: var(--track-bg);
@@ -248,6 +253,9 @@
   background: rgba(0, 0, 0, 0.55);
 }
 .claim-rail__n {
+  /* inline-block so `min-width` and `text-align` apply at all — they are what keep a 3 and
+     a 12 on the same right edge down the column, and on an inline box both are inert. */
+  display: inline-block;
   min-width: 15px;
   text-align: right;
   font-size: 11px;
@@ -255,8 +263,15 @@
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
 }
-/* A row that claims nothing gets a hatched lane rather than an empty one: "never fires" is
-   a finding to report, not an absence to leave blank. */
+/* THREE STATES, THREE MARKS. A row that claims nothing gets a hatched lane rather than an
+   empty one — "never fires" is a finding to report, not an absence to leave blank — and a
+   row nothing has measured yet gets an outline with no fill and no number. The column used
+   to make that last distinction by disappearing, which was fine in the middle of the table
+   and reflows the whole ladder now that it is the spine. */
+.claim-rail.is-unmeasured .claim-rail__track {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
 .claim-rail.is-dead .claim-rail__track {
   background: repeating-linear-gradient(
     45deg, transparent, transparent 3px, rgba(0, 0, 0, 0.09) 3px, rgba(0, 0, 0, 0.09) 6px);
@@ -365,6 +380,14 @@ table.data tr.rule-won > td:first-child {
    says "this rule works and had nothing to do", and an operator asked to act on them would
    act differently. A hairline marker, not a fade. */
 table.data tr.rule-unused > td:first-child { box-shadow: inset 2px 0 0 var(--hairline); }
+
+/* A lit row, marked rather than merely washed. `tr.is-lit`'s wash above is the same
+   --wash-hover the row hover already uses, so on its own it says "the pointer is somewhere
+   near" and not "THIS is the row that claims the cell you are pointing at". The ink edge is
+   the row-scale answer to `.lat-cell.is-lit`'s ink ring — one link, drawn the same way at
+   both ends. After .rule-unused on purpose: the two tie on specificity, so whichever is
+   later wins, and "this is the row you are looking for" outranks "this row is idle". */
+table.data tr.is-lit > td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
 
 /* -------------------------------------------------------------- the AARS hero's link */
 /* The same row-to-picture link the lattices have, applied to the stacked pillar bar: a

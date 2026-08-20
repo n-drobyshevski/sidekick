@@ -270,6 +270,125 @@
    and inputs sit together as one readable rule rather than drifting apart. */
 .rule-table td, .rule-table th { vertical-align: middle; width: 1%; white-space: nowrap; }
 .rule-table select { min-width: 112px; }
+
+/* --- the cascade ladder ------------------------------------------------------------- */
+/* THE HEADER HAS NEVER ACTUALLY STUCK. `table.data th` sets `position: sticky; top: 0`
+   (tables.css), but the nearest scrollport is `.table-wrap`, whose `overflow-x: auto`
+   computes the block axis to `auto` as well — making it a scroll container that never
+   scrolls vertically, so the sticky resolves against a box that cannot move. The cascade
+   tables opt out of that box at the width where they fit anyway, and the header then sticks
+   to `.rule-editor`, which is the pane actually doing the scrolling. Below the split point
+   the wrap goes back to scrolling sideways, because there the table genuinely is too wide. */
+@media (min-width: 1100px) {
+  .table-wrap--cascade { overflow: visible; }
+}
+
+/* The index cell leads with the handle: the row's first column is where you reach for it,
+   and the number beside it is what the notes and errors call it. */
+.rule-idxcell { padding-right: 4px; }
+.rule-idx { display: flex; align-items: center; gap: 6px; }
+.rule-idx__n { font-variant-numeric: tabular-nums; }
+/* Pointer-only by construction (aria-hidden, out of the tab order) — the row's ↑ ↓ buttons
+   are the accessible path, and WCAG 2.5.7 wants the non-dragging alternative to be the
+   real one. See ui/rowReorder.js for why `draggable` is armed from here rather than left on. */
+.rule-grip {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  color: rgba(0, 0, 0, 0.3);
+  cursor: grab;
+}
+.rule-grip:hover { color: var(--ink); background: var(--wash-hover); }
+.rule-grip:active { cursor: grabbing; }
+.rule-grip svg { display: block; }
+tr.rule-dragging > td { opacity: 0.4; }
+/* Where it would land. The one place the accent appears inside a cascade, which is what
+   makes it read as the answer to "where am I dropping this". */
+tr.rule-drop-before > td { box-shadow: inset 0 2px 0 var(--accent); }
+tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* THE WILDCARD RECEDES. An axis left on "any" is what makes a rule greedy — the most
+   consequential cell in the row, and until now the one that looked most like every other.
+   DMN writes an irrelevant input as `-`; this is that convention inside a native control.
+   The signal is border STYLE and weight, never colour, so it survives every colour-vision
+   profile — and what it buys is the ability to read a rule's condition SHAPE straight down
+   the column, which is the whole reason this stays a table rather than becoming cards. */
+.rule-table select.is-any {
+  border-style: dashed;
+  color: var(--text-3);
+  background: transparent;
+}
+
+/* THE VERDICT WEARS THE PILL IT ALREADY IS. Everywhere else an outcome or a tier is a
+   tinted pill — outcomeBadge, tierBadge, every lattice cell directly above this table — and
+   the one place you SET it was a grey select. The tone comes from lattice.js's toneForKey
+   and the fills are `.lat-cell[data-tone]`'s own values, so the ladder and the picture above
+   it cannot mint two palettes. The word stays and the dot is added, so the tint is never
+   the only signal. */
+.verdict-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 10px;
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-2);
+}
+.verdict-select::before {
+  content: "";
+  flex: none;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.verdict-select select {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: inherit;
+  font-weight: 600;
+  padding-left: 6px;
+  min-width: 96px;
+}
+.verdict-select[data-tone="bad"]     { background: rgba(185, 28, 28, 0.12); color: var(--bad); }
+.verdict-select[data-tone="warn"]    { background: rgba(161, 98, 7, 0.12);  color: var(--warn); }
+.verdict-select[data-tone="neutral"] { background: rgba(0, 0, 0, 0.06);     color: var(--text-2); }
+.verdict-select[data-tone="ok"]      { background: rgba(21, 128, 61, 0.12); color: var(--ok); }
+
+/* A condition the editor holds but does not offer. A posture `when` can carry the three
+   lethal-trifecta legs, and POSTURE_AXIS_DEFS renders none of them — so the default first
+   row reads "any / any / any → Tier 4", which looks like a rule that swallows the whole
+   table, and only its note says otherwise. Dashed, like the wildcard two columns over,
+   because the border style means the same thing in both places: this is not a value you
+   set here. */
+/* Posture's meta cell is the only one with permanent children, so its note gets a line of
+   its own under the chips rather than sharing theirs. */
+.rule-rownote { display: block; }
+.rule-leg {
+  display: inline-block;
+  margin: 0 4px 2px 0;
+  padding: 1px 8px;
+  border: 1px dashed var(--hairline);
+  border-radius: var(--radius-pill);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+/* DMN's completeness reading, put where the editing happens. Every figure already existed
+   in the preview response and was reported only in the impact pane, on the far side of the
+   screen from the table you are editing. */
+.rule-summary {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: 4px 14px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.rule-summary__k { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); }
+.rule-summary__warn { color: var(--warn); font-weight: 600; }
+.rule-summary__sep { color: rgba(0, 0, 0, 0.25); }
 /* The match type is a two-state operator, not chrome — but it sits in a table cell, so it
    loses the standalone control's padding. */
 .seg--cell button { padding: 4px 10px; font-size: 12px; min-height: 30px; }

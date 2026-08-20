@@ -51,11 +51,13 @@ import {
   sheetSection,
   skeleton,
   statusPill,
+  rowDrag,
+  ruleGrip,
   tierBadge,
   toast,
   uiIcon,
 } from "../ui.js";
-import { POSTURE_LATTICE, PROBLEM_LATTICE } from "../lattice.js";
+import { POSTURE_LATTICE, PROBLEM_LATTICE, toneForKey } from "../lattice.js";
 import {
   cellCoverage as mirrorCellCoverage,
   cellOccupancyByRow as mirrorCellOccupancyByRow,
@@ -222,6 +224,99 @@ function numberInput(id, { value, min, max, step }) {
     value: String(value),
     class: "rule-num",
   });
+}
+
+/**
+ * A cascade row's first cell: the drag handle, then the number the notes and the validation
+ * errors call the row by. The handle is decorative (see ui/rowReorder.js) — the row's ↑ ↓
+ * buttons are the reorder control and this is the shortcut.
+ */
+function idxCell(i) {
+  return el(
+    "td",
+    { class: "num muted small rule-idxcell" },
+    el("div", { class: "rule-idx" }, ruleGrip(), el("span", { class: "rule-idx__n" }, String(i + 1))),
+  );
+}
+
+/**
+ * A verdict `<select>` wearing the pill its own value already wears everywhere else —
+ * `outcomeBadge`, `tierBadge`, and every lattice cell directly above the table. `toneForKey`
+ * is the same map the lattice paints from, so the ladder and the picture cannot disagree
+ * about which of the four `.pill` kinds an outcome is.
+ *
+ * Returns the wrapper with `.paint(value)` on it: rule 2 of this file says a control is
+ * built once and thereafter mutated, so the tone is repainted in place rather than by
+ * rebuilding the cell around it.
+ */
+function verdictSelect(sel) {
+  const wrap = el("span", { class: "verdict-select" }, sel);
+  wrap.paint = (value) => {
+    const tone = toneForKey(value);
+    setAttr(wrap, "data-tone", (tone && tone.tone) || "neutral");
+  };
+  wrap.paint(sel.value);
+  return wrap;
+}
+
+/**
+ * The completeness line over a cascade: how many rules, how much of the closed space they
+ * claim between them, what falls through, and whether any of them cannot fire.
+ *
+ * This is DMN's own reading of a decision table — is it complete, and is any rule
+ * redundant — and every figure was already in the preview response. It was just reported in
+ * the impact pane, on the far side of the screen from the ladder it is about.
+ *
+ * `total === null` means no preview has landed. It says so in words rather than printing a
+ * zero it has not earned, the same contract claimRail's unmeasured lane keeps.
+ */
+function paintCascadeSummary(node, { rules, total, fallback, dead, unit }) {
+  clear(node);
+  const k = (n) => el("span", { class: "rule-summary__k" }, String(n));
+  const sep = () => el("span", { class: "rule-summary__sep", "aria-hidden": "true" }, "·");
+  node.append(el("span", {}, k(rules), ` ${rules === 1 ? "rule" : "rules"}`));
+  if (total === null || total === undefined) {
+    node.append(sep(), el("span", { class: "muted" }, "coverage not measured yet"));
+    return;
+  }
+  node.append(
+    sep(),
+    el("span", {}, k(total - fallback), " of ", k(total), ` ${unit} claimed`),
+    sep(),
+    el("span", {}, "fallback takes ", k(fallback)),
+  );
+  if (dead > 0) {
+    node.append(
+      sep(),
+      el("span", { class: "rule-summary__warn" },
+        `${dead} never ${dead === 1 ? "fires" : "fire"}`),
+    );
+  }
+}
+
+/**
+ * The three lethal-trifecta legs a posture `when` can carry. They sit OFF the 27 cells the
+ * lattice draws, which is exactly why a row naming them can never fire — and why a row
+ * naming them looks, in a table that renders only the three axes, like a row with no
+ * conditions at all.
+ */
+const POSTURE_LEGS = ["privateData", "untrustedIngress", "externalEgress"];
+
+/** One read-only chip per off-lattice leg a row matches on. Empty for every ordinary row. */
+function postureLegChips(when) {
+  return POSTURE_LEGS
+    .filter((k) => when[k] !== undefined)
+    .map((k) => el("span", { class: "rule-leg" }, when[k] === false ? `no ${k}` : k));
+}
+
+/**
+ * Mark an axis select that is sitting on its "any" placeholder. A wildcard is what makes a
+ * rule greedy, so it is the cell that most needs to be legible at a glance — and the mark
+ * is a dashed border rather than a colour, so the reading survives every colour-vision
+ * profile. Called on build and again on every change.
+ */
+function markAny(sel) {
+  sel.classList.toggle("is-any", !sel.value);
 }
 
 export async function renderAarsRules(main, _params, ctx) {
@@ -652,14 +747,14 @@ export async function renderAarsRules(main, _params, ctx) {
 
   // ============================================================ section B — pillar B
   const cascadeBody = el("tbody", {});
-  // Hidden until the first preview lands, because the count it carries comes from the
-  // inventory rather than from the rule. A column of empty cells would read as "nothing
-  // matches" rather than "not measured yet".
-  const pricesTh = el("th", { class: "rule-prices", hidden: true }, "Prices");
+  // The claim spine, second from the left. It used to sit between Points and Note and hide
+  // itself until the first preview landed; claimRail now draws an explicit unmeasured lane
+  // instead, so the column is always there and the table never reflows under the reader.
+  const pricesTh = el("th", { class: "rule-prices" }, "Prices");
   // Pillar B's host is linked below, once the table element exists.
   const cascadeTable = el(
     "div",
-    { class: "table-wrap" },
+    { class: "table-wrap table-wrap--cascade" },
     el(
       "table",
       { class: "data rule-table" },
@@ -672,10 +767,10 @@ export async function renderAarsRules(main, _params, ctx) {
           "tr",
           {},
           el("th", {}, "#"),
+          pricesTh,
           el("th", {}, "When the code"),
           el("th", {}, "Code"),
           el("th", {}, "Points"),
-          pricesTh,
           el("th", { class: "rule-noteh" }, "Note"),
           el("th", {}, el("span", { class: "visually-hidden" }, "Actions")),
         ),
@@ -685,6 +780,17 @@ export async function renderAarsRules(main, _params, ctx) {
   );
 
   linkPillar("b", cascadeTable);
+
+  // Drag reordering, wired ONCE on the body: the rows are rebuilt on every structural
+  // change, so per-row listeners would be re-attached on every add, remove and move. The
+  // splice below is the one the ↑ ↓ buttons already do — see ui/rowReorder.js.
+  onPageTeardown(rowDrag(cascadeBody, (from, to) => {
+    const moved = draft.gapPoints.splice(from, 1)[0];
+    draft.gapPoints.splice(to, 0, moved);
+    renderCascade();
+    focusRow(to);
+    onEdit();
+  }));
 
   const addBtn = el("button", {}, "Add rule");
   addBtn.addEventListener("click", () => {
@@ -713,7 +819,7 @@ export async function renderAarsRules(main, _params, ctx) {
     { class: "field-label rule-fallback__name", for: fbId },
     "Everything that falls through",
   );
-  const fbCount = el("td", { class: "rule-prices num", hidden: true });
+  const fbCount = el("td", { class: "rule-prices num" });
   const fbField = {
     input: fbInput,
     setChanged(changed, savedValue) {
@@ -1119,15 +1225,15 @@ export async function renderAarsRules(main, _params, ctx) {
       });
 
       const meta = el("td", { class: "rule-rowmeta small muted" });
-      const prices = el("td", { class: "rule-prices num", hidden: true });
+      const prices = el("td", { class: "rule-prices num" });
       const tr = el(
         "tr",
         { "data-idx": String(i) },
-        el("td", { class: "num muted small" }, String(i + 1)),
+        idxCell(i),
+        prices,
         el("td", {}, matchSel),
         el("td", { class: "rule-codecell" }, codeBox, gloss),
         el("td", {}, pointsInput),
-        prices,
         meta,
         el("td", { class: "rule-rowbtns" }, up, down, del),
       );
@@ -1141,9 +1247,9 @@ export async function renderAarsRules(main, _params, ctx) {
         "tr",
         { class: "rule-fallback" },
         el("td", { class: "num muted small", "aria-hidden": "true" }, "↳"),
+        fbCount,
         el("td", { colspan: "2" }, fbLabel),
         el("td", {}, fbInput),
-        fbCount,
         el("td", { class: "rule-rowmeta small muted" }, "governs tenant-specific finding IDs"),
         el("td", {}),
       ),
@@ -1554,7 +1660,6 @@ export async function renderAarsRules(main, _params, ctx) {
       offset: gapOffsets[gapOffsets.length - 1] || 0,
       unit: "gap instances",
     });
-    pricesTh.hidden = !matchCounts;
     syncSandboxPrices();
 
     // --- toolbar
@@ -2147,10 +2252,15 @@ export async function renderAarsRules(main, _params, ctx) {
 
     // ---------------------------------------------------------------- cascade (editor)
     const pCascadeBody = el("tbody", {});
-    const pClaimsTh = el("th", { class: "rule-prices", hidden: true }, "Leaves");
+    const pClaimsTh = el("th", { class: "rule-prices" }, "Leaves");
+    // DMN's completeness reading — how much of the closed space is claimed, and whether any
+    // rule cannot fire — over the table it is about. Every figure already came back in the
+    // preview and was reported only in the impact pane, on the far side of the screen from
+    // the ladder being edited.
+    const pSummary = el("p", { class: "rule-summary" });
     const pCascadeTable = el(
       "div",
-      { class: "table-wrap" },
+      { class: "table-wrap table-wrap--cascade" },
       el(
         "table",
         { class: "data rule-table" },
@@ -2162,9 +2272,9 @@ export async function renderAarsRules(main, _params, ctx) {
             "tr",
             {},
             el("th", {}, "#"),
+            pClaimsTh,
             ...AXIS_DEFS.map((a) => el("th", {}, a.label)),
             el("th", {}, "Outcome"),
-            pClaimsTh,
             el("th", { class: "rule-noteh" }, "Note"),
             el("th", {}, el("span", { class: "visually-hidden" }, "Actions")),
           ),
@@ -2172,6 +2282,17 @@ export async function renderAarsRules(main, _params, ctx) {
         pCascadeBody,
       ),
     );
+
+    // Wired ONCE on the body — the rows are rebuilt on every structural change. The splice
+    // is the one the ↑ ↓ buttons already do; see ui/rowReorder.js for why drag is the
+    // shortcut and those buttons stay the control.
+    onPageTeardown(rowDrag(pCascadeBody, (from, to) => {
+      const moved = problemDraft.outcomeRules.splice(from, 1)[0];
+      problemDraft.outcomeRules.splice(to, 0, moved);
+      renderProblemCascade();
+      focusProblemRow(to);
+      onProblemEdit();
+    }));
 
     const pAddBtn = el("button", {}, "Add rule");
     pAddBtn.addEventListener("click", () => {
@@ -2202,9 +2323,11 @@ export async function renderAarsRules(main, _params, ctx) {
             onChange: (v) => {
               if (v) row.when[axis.key] = v;
               else delete row.when[axis.key];
+              markAny(sel);
               onProblemEdit();
             },
           });
+          markAny(sel);
           return el("td", {}, sel);
         });
         const outcomeSel = select({
@@ -2213,9 +2336,11 @@ export async function renderAarsRules(main, _params, ctx) {
           ariaLabel: `Outcome, rule ${i + 1}`,
           onChange: (v) => {
             row.outcome = v;
+            outcomeCell.paint(v);
             onProblemEdit();
           },
         });
+        const outcomeCell = verdictSelect(outcomeSel);
 
         const move = (delta) => {
           const to = i + delta;
@@ -2248,14 +2373,14 @@ export async function renderAarsRules(main, _params, ctx) {
         });
 
         const meta = el("td", { class: "rule-rowmeta small muted" });
-        const claims = el("td", { class: "rule-prices num", hidden: true });
+        const claims = el("td", { class: "rule-prices num" });
         const tr = el(
           "tr",
           { "data-idx": String(i) },
-          el("td", { class: "num muted small" }, String(i + 1)),
-          ...axisCells,
-          el("td", {}, outcomeSel),
+          idxCell(i),
           claims,
+          ...axisCells,
+          el("td", {}, outcomeCell),
           meta,
           el("td", { class: "rule-rowbtns" }, up, down, del),
         );
@@ -2279,17 +2404,19 @@ export async function renderAarsRules(main, _params, ctx) {
         ariaLabel: "Fallback outcome",
         onChange: (v) => {
           problemDraft.fallbackOutcome = v;
+          fbCell.paint(v);
           onProblemEdit();
         },
       });
+      const fbCell = verdictSelect(fbSel);
       pCascadeBody.append(
         el(
           "tr",
           { class: "rule-fallback" },
           el("td", { class: "num muted small", "aria-hidden": "true" }, "↳"),
+          el("td", { class: "rule-prices num" }),
           el("td", { colspan: String(AXIS_DEFS.length) }, "Matches no rule above"),
-          el("td", {}, fbSel),
-          el("td", { class: "rule-prices num", hidden: true }),
+          el("td", {}, fbCell),
           el("td", { class: "rule-rowmeta small muted" }, "the tree's fallback outcome"),
           el("td", {}),
         ),
@@ -2478,7 +2605,7 @@ export async function renderAarsRules(main, _params, ctx) {
         "Each row is tried in order; the first whose conditions ALL match wins. An axis " +
           "left on “any” is a wildcard, not a value — a row with no conditions at all " +
           "matches every remaining vector.",
-        [pCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, pAddBtn)],
+        [pSummary, pCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, pAddBtn)],
       ),
       section(
         "How the four axes are read",
@@ -2771,7 +2898,13 @@ export async function renderAarsRules(main, _params, ctx) {
           unit: "leaves",
         });
       }
-      pClaimsTh.hidden = !coverage;
+      paintCascadeSummary(pSummary, {
+        rules: problemDraft.outcomeRules.length,
+        total: coverage ? coverage.total : null,
+        fallback: coverage ? coverage.byFallback : 0,
+        dead: shadowed.length,
+        unit: "leaves",
+      });
 
       syncProblemRecompute();
     }
@@ -3025,10 +3158,11 @@ export async function renderAarsRules(main, _params, ctx) {
 
     // ---------------------------------------------------------------- cascade (editor)
     const uCascadeBody = el("tbody", {});
-    const uClaimsTh = el("th", { class: "rule-prices", hidden: true }, "Cells");
+    const uClaimsTh = el("th", { class: "rule-prices" }, "Cells");
+    const uSummary = el("p", { class: "rule-summary" });
     const uCascadeTable = el(
       "div",
-      { class: "table-wrap" },
+      { class: "table-wrap table-wrap--cascade" },
       el(
         "table",
         { class: "data rule-table" },
@@ -3040,9 +3174,9 @@ export async function renderAarsRules(main, _params, ctx) {
             "tr",
             {},
             el("th", {}, "#"),
+            uClaimsTh,
             ...POSTURE_AXIS_DEFS.map((a) => el("th", {}, a.label)),
             el("th", {}, "Tier"),
-            uClaimsTh,
             el("th", { class: "rule-noteh" }, "Note"),
             el("th", {}, el("span", { class: "visually-hidden" }, "Actions")),
           ),
@@ -3050,6 +3184,15 @@ export async function renderAarsRules(main, _params, ctx) {
         uCascadeBody,
       ),
     );
+
+    // Wired ONCE on the body, like the other two cascades — see ui/rowReorder.js.
+    onPageTeardown(rowDrag(uCascadeBody, (from, to) => {
+      const moved = postureDraft.tierRules.splice(from, 1)[0];
+      postureDraft.tierRules.splice(to, 0, moved);
+      renderPostureCascade();
+      focusPostureRow(to);
+      onPostureEdit();
+    }));
 
     const uAddBtn = el("button", {}, "Add rule");
     uAddBtn.addEventListener("click", () => {
@@ -3080,9 +3223,11 @@ export async function renderAarsRules(main, _params, ctx) {
             onChange: (v) => {
               if (v) row.when[axis.key] = v;
               else delete row.when[axis.key];
+              markAny(sel);
               onPostureEdit();
             },
           });
+          markAny(sel);
           return el("td", {}, sel);
         });
         const tierSel = select({
@@ -3091,9 +3236,12 @@ export async function renderAarsRules(main, _params, ctx) {
           ariaLabel: `Tier, rule ${i + 1}`,
           onChange: (v) => {
             row.tier = Number(v);
+            tierCell.paint(Number(v));
             onPostureEdit();
           },
         });
+        const tierCell = verdictSelect(tierSel);
+        tierCell.paint(row.tier);
 
         const move = (delta) => {
           const to = i + delta;
@@ -3125,15 +3273,28 @@ export async function renderAarsRules(main, _params, ctx) {
           onPostureEdit();
         });
 
-        const meta = el("td", { class: "rule-rowmeta small muted" });
-        const claims = el("td", { class: "rule-prices num", hidden: true });
+        // A `when` can carry the three lethal-trifecta legs, and POSTURE_AXIS_DEFS renders
+        // none of them — so DEFAULT_POSTURE_RULE's first row shows "any / any / any → Tier
+        // 4" and reads as a rule that swallows the whole table, when in fact it matches on
+        // signals that sit off the 27 cells entirely and can never fire. The legs are drawn
+        // here as read-only chips, dashed like the wildcard two columns over because the
+        // border style means the same thing in both places: not a value you set here. The
+        // editor still never WRITES them (see DEFAULT_POSTURE_RULE row 0's own comment).
+        // The note goes in a span of its own rather than straight into the cell: this is the
+        // one cascade whose meta cell has permanent children, and setText on the `td` would
+        // take the chips with it.
+        const meta = el(
+          "td", { class: "rule-rowmeta small muted" },
+          ...postureLegChips(row.when), el("span", { class: "rule-rownote" }),
+        );
+        const claims = el("td", { class: "rule-prices num" });
         const tr = el(
           "tr",
           { "data-idx": String(i) },
-          el("td", { class: "num muted small" }, String(i + 1)),
-          ...axisCells,
-          el("td", {}, tierSel),
+          idxCell(i),
           claims,
+          ...axisCells,
+          el("td", {}, tierCell),
           meta,
           el("td", { class: "rule-rowbtns" }, up, down, del),
         );
@@ -3157,17 +3318,20 @@ export async function renderAarsRules(main, _params, ctx) {
         ariaLabel: "Fallback tier",
         onChange: (v) => {
           postureDraft.fallbackTier = Number(v);
+          fbCell.paint(Number(v));
           onPostureEdit();
         },
       });
+      const fbCell = verdictSelect(fbSel);
+      fbCell.paint(postureDraft.fallbackTier);
       uCascadeBody.append(
         el(
           "tr",
           { class: "rule-fallback" },
           el("td", { class: "num muted small", "aria-hidden": "true" }, "↳"),
+          el("td", { class: "rule-prices num" }),
           el("td", { colspan: String(POSTURE_AXIS_DEFS.length) }, "Matches no rule above"),
-          el("td", {}, fbSel),
-          el("td", { class: "rule-prices num", hidden: true }),
+          el("td", {}, fbCell),
           el("td", { class: "rule-rowmeta small muted" }, "the lattice's fallback tier"),
           el("td", {}),
         ),
@@ -3254,7 +3418,7 @@ export async function renderAarsRules(main, _params, ctx) {
           "left on “any” is a wildcard, not a value — a row with no conditions at all " +
           "matches every remaining vector. A capability envelope, not an aggregate of open " +
           "issues: nothing here reads a problem verdict.",
-        [uCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, uAddBtn)],
+        [uSummary, uCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, uAddBtn)],
       ),
       section(
         "Validation only",
@@ -3496,7 +3660,7 @@ export async function renderAarsRules(main, _params, ctx) {
           && (coverage.byRow[i] || 0) > 0 && uLandscapeByRow[i] === 0;
         tr.classList.toggle("rule-unused", !!unused);
         setText(
-          meta,
+          meta.querySelector(".rule-rownote"),
           isShadow
             ? "never fires — an earlier rule already claims every cell it could match"
             : isUnreachable
@@ -3522,7 +3686,13 @@ export async function renderAarsRules(main, _params, ctx) {
           unit: "cells",
         });
       }
-      uClaimsTh.hidden = !coverage;
+      paintCascadeSummary(uSummary, {
+        rules: postureDraft.tierRules.length,
+        total: coverage ? coverage.total : null,
+        fallback: coverage ? coverage.byFallback : 0,
+        dead: shadowed.length + unreachable.length,
+        unit: "cells",
+      });
 
       syncPostureRecompute();
     }

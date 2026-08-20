@@ -31,16 +31,19 @@ import { el } from "./dom.js";
  * Paint one row's claim in place. Built once per cell and thereafter mutated — rule 2 of
  * pages/aars.js: a rebuilt control drops the keystroke of anyone typing beside it.
  *
- * `count === null` means NOT MEASURED YET (no preview has landed) and hides the cell
- * entirely, which is a different statement from a measured zero — the same distinction the
- * function this replaces already kept, and the one the lattice's landscape mode turns on.
+ * `count === null` means NOT MEASURED YET (no preview has landed), which is a different
+ * statement from a measured zero — the same distinction the function this replaces already
+ * kept, and the one the lattice's landscape mode turns on.
+ *
+ * It used to make that distinction by hiding the cell. That worked while the column sat in
+ * the middle of the table; as the spine immediately after `#` it would reflow the whole
+ * ladder the first time a preview landed. So the lane is always drawn and the UNMEASURED
+ * state is a lane with nothing in it — an outline, no fill, no number — which says "no
+ * answer yet" where the hatch says "the answer is none". Three states, three marks, and the
+ * table stops moving underneath the reader.
  */
 export function claimRail(td, { count, total, offset = 0, unit = "leaves", dead = false }) {
   if (!td) return;
-  if (count === null || count === undefined) {
-    td.hidden = true;
-    return;
-  }
   if (!td.firstChild) {
     td.append(
       el("span", { class: "claim-rail", "aria-hidden": "true" },
@@ -52,6 +55,15 @@ export function claimRail(td, { count, total, offset = 0, unit = "leaves", dead 
 
   const rail = td.firstChild;
   const fill = rail.firstChild.firstChild;
+  const measured = count !== null && count !== undefined;
+  rail.classList.toggle("is-unmeasured", !measured);
+  if (!measured) {
+    fill.style.display = "none";
+    rail.classList.remove("is-dead");
+    td.lastChild.textContent = "";
+    td.setAttribute("aria-label", `not measured yet, in ${unit}`);
+    return;
+  }
   const span = total ? (count / total) * 100 : 0;
   const start = total ? (Math.min(offset, total) / total) * 100 : 0;
   fill.style.left = `${start}%`;
