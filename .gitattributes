@@ -1,0 +1,15 @@
+# Line endings are load-bearing here, not cosmetic.
+#
+# gas_ai/buildStamp.mjs `sourceStamp` hashes the RAW BYTES of src/, and that hash IS the
+# build id the deployed app reports in Settings and that `npm run which-build` resolves
+# back to commits. A CRLF checkout hashes the same source to a different id than every
+# build made on CI or Linux — so a Windows-built bundle lands in its own id namespace and
+# "is my fix live?" stops having an answer. Measured: LF -> bbf91fc36e4b, CRLF -> 57f7858a075e.
+#
+# Ten gas_ai tests also assert on source TEXT, some with hardcoded \n anchors
+# (test/syncPageOverhead.test.ts slices on "spillHopPart();\n      stepIndex += 1;"), so
+# they fail on a CRLF checkout and only there.
+#
+# core.autocrlf defaults to true on Windows; this overrides it. Every blob already in the
+# object database is LF, so this changes no committed content — only what gets written out.
+* text=auto eol=lf
