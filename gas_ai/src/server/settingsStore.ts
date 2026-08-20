@@ -174,6 +174,18 @@ export function setStepRows(rows: unknown): void {
   saveSettings(next);
 }
 
+export const getSkipReasons = (): Record<string, string> => logic.getSkipReasons(loadSettings());
+
+/** Record why each step was skipped. Same no-op-on-unchanged guard as its neighbours. */
+export function setSkipReasons(reasons: unknown): void {
+  const settings = loadSettings();
+  const next = logic.withSkipReasons(settings, reasons);
+  const key = (r: Record<string, string>): string =>
+    Object.keys(r).sort().map((k) => `${k}=${r[k]}`).join("\u0000");
+  if (key(logic.getSkipReasons(next)) === key(logic.getSkipReasons(settings))) return;
+  saveSettings(next);
+}
+
 /**
  * The framework selection, resolved against the synced catalogue on first use.
  *

@@ -14,9 +14,17 @@ function setup() { return Server.setup(); }
 function wizDiagnostic() { return Server.wizDiagnostic(); }
 function aarsDiagnostic() { return Server.aarsDiagnostic(); }
 function registerScopeDiagnostic() { return Server.registerScopeDiagnostic(); }
-// Probe ONE sync step against the tenant and log what came back: rows, what the step's own
-// normalizer made of them, and a sample row. Edit the id below and run from the editor.
-// e.g. probeSyncStep("HOST_EXPOSURE") — see api.probeSyncStep for why this is ungated.
+// Probe every step that writes a graph edge and log what each one came back with: rejected
+// (with the tenant's own message), or accepted with a row count and what the normalizer kept.
+// Zero-argument, like the three diagnostics above, BECAUSE the editor's Run control invokes the
+// selected global with no arguments — a probe that takes a step id cannot be run from there.
+// One live Wiz page per step. Nothing is persisted.
+function probeEdgeSteps() { return Server.probeEdgeSteps(); }
+
+// One named step, for a caller that can pass an argument: the Scans drill-down's "Probe this
+// step" button (via api_probeSyncStep), or the editor's debugger. NOT runnable from the editor's
+// Run dropdown — `stepId` would arrive undefined and the call would refuse. Use probeEdgeSteps()
+// above for the whole set, or the Scans button for one step.
 function probeSyncStep(stepId) {
   var res = Server.api.probeSyncStep({ stepId: stepId });
   console.log(JSON.stringify(res, null, 2));

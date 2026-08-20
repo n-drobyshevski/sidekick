@@ -385,6 +385,28 @@ export function withStepRows(settings: Rec, rows: unknown): Rec {
 }
 
 /**
+ * Why each skipped step was skipped on the last committed sync — the tenant's own message.
+ *
+ * `getSkippedSteps` answers WHICH steps were refused; this answers WHAT the tenant said, and
+ * only the second one is actionable. A step id in the skip list with no entry here is a skip
+ * recorded before this existed, which a reader must render as "no reason recorded" rather than
+ * as an empty explanation — the same absent-is-not-zero discipline getStepRows carries.
+ */
+export function getSkipReasons(settings: Rec): Record<string, string> {
+  const raw = settings["last_skip_reasons"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Rec)) {
+    if (k && typeof v === "string" && v) out[k] = v;
+  }
+  return out;
+}
+
+export function withSkipReasons(settings: Rec, reasons: unknown): Rec {
+  return { ...settings, last_skip_reasons: getSkipReasons({ last_skip_reasons: reasons }) };
+}
+
+/**
  * The AI-relevant frameworks this app syncs posture for, out of the box.
  *
  * Ids observed on the tenant this was built against. They are a STARTING POINT, not a

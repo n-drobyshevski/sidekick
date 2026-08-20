@@ -115,6 +115,17 @@ const BUDGET_MS = 270_000;
 // card the job is alive — a longer gap makes it report "Waiting for next step…" mid-fetch.
 const CHECKPOINT_MS = 8_000;
 
+/**
+ * How much of a rejection message is kept per step.
+ *
+ * Deliberately shorter than wizClientAi's own ERROR_BODY_MAX (800): that cap bounds ONE error
+ * body headed for a log line, while this bounds a map of them headed for a settings cell that
+ * also has to survive JSON.stringify into params_json on every checkpoint write. A GraphQL
+ * validation error names the offending token in its first clause, so the head is the part
+ * worth keeping.
+ */
+const SKIP_REASON_MAX = 400;
+
 interface SyncStepDef {
   id: string;
   // The Wiz Scans area this step feeds, and the ledger it writes. Metadata rather than a
@@ -741,11 +752,34 @@ interface JobParams {
    * from here entirely is the first.
    */
   stepRows: Record<string, number>;
+  /**
+   * Why each skipped step was skipped, by step id — Wiz's own message, verbatim.
+   *
+   * `skippedSteps` stores the id and nothing else, so the single most diagnostic fact this app
+   * ever learns about a tenant was written to a Cloud Logging line and then discarded. On a live
+   * tenant, four of the six edge-producing traversals were being refused with an HTTP 400 whose
+   * body names the exact token the schema does not have; recovering that took a code change and
+   * a re-sync, when the app had already been told and had thrown the answer away.
+   *
+   * Verbatim on purpose. A paraphrase of a GraphQL validation error is worth nothing — the value
+   * is in the offending name, which only the original string carries.
+   */
+  skipReasons: Record<string, string>;
 }
 
 /** Strings out of a parsed blob — a checkpoint field can be anything after a schema change. */
 function strList(v: unknown): string[] {
   return Array.isArray(v) ? v.map(String) : [];
+}
+
+/** Strings out of a parsed blob, same tolerance as numMap and for the same reason. */
+function strMap(v: unknown): Record<string, string> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, s] of Object.entries(v as Rec)) {
+    if (k && typeof s === "string" && s) out[k] = s;
+  }
+  return out;
 }
 
 /** Numbers out of a parsed blob, same tolerance: a job checkpointed before this field existed. */
@@ -766,6 +800,7 @@ function jobParams(job: JobRow): JobParams {
     skippedSteps: strList(parsed["skippedSteps"]),
     truncatedSteps: strList(parsed["truncatedSteps"]),
     stepRows: numMap(parsed["stepRows"]),
+    skipReasons: strMap(parsed["skipReasons"]),
   };
 }
 
@@ -886,6 +921,11 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
           if (step.optional && /HTTP 400/.test(msg)) {
             params.apiCalls += 1;
             params.skippedSteps.push(step.id);
+            // Kept, not just logged. `msg` carries errorDigest's extraction of Wiz's own
+            // `errors[].message`, which names the enum member or field this tenant's schema
+            // does not have — the difference between "this step is broken" and "this step
+            // asks for RUNS_AS and your tenant calls it something else".
+            params.skipReasons[step.id] = msg.slice(0, SKIP_REASON_MAX);
             console.warn(`Sync step ${step.id} skipped — tenant rejected its query: ${msg}`);
             break;
           }
@@ -916,6 +956,9 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
         } catch (e) {
           if (step.optional && e instanceof FilterNotHonouredError) {
             params.skippedSteps.push(step.id);
+            // Same treatment as the 400 above: this message names WHICH filter the tenant
+            // accepted and then ignored, which is the whole content of the finding.
+            params.skipReasons[step.id] = e.message.slice(0, SKIP_REASON_MAX);
             console.warn(`Sync step ${step.id} skipped — ${e.message}`);
             break;
           }
@@ -1044,6 +1087,7 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
       settingsStore.setSkippedSteps(params.skippedSteps);
       settingsStore.setTruncatedSteps(params.truncatedSteps);
       settingsStore.setStepRows(params.stepRows);
+      settingsStore.setSkipReasons(params.skipReasons);
       // Stamped only when the catalogue actually came back with rows, which is what starts
       // the 30-day clock. A run that skipped the step (fresh) or had it rejected leaves the
       // old timestamp alone, so a rejection retries tomorrow rather than being remembered as

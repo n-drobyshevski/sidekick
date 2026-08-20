@@ -219,6 +219,22 @@
   border-radius: var(--radius-md); padding: 8px 10px; margin: 8px 0 0;
 }
 
+/* The tenant's own rejection message, verbatim. Monospace and wrapped rather than truncated:
+   a GraphQL validation error names the offending token, and an ellipsis is as likely to cut
+   the name as the boilerplate. Scrolls in its own box so a long message cannot widen the
+   drawer — the page body must never scroll sideways. */
+.cov-reason {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px; line-height: 1.55; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  margin: 8px 0 0; padding: 10px 12px;
+  max-height: 160px; overflow: auto;
+  /* `pre-wrap`, unlike .code-block's `pre`: a GraphQL document's indentation is how it is
+     read, but an error message is a sentence and wrapping it costs nothing. */
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
 /* --------------------------------------------------------------------- landscape reach */
 /* P2b: the landscape-grain coverage roll-up (reach.ts). The ladder deliberately does NOT
    reuse .cov-bar/.cov-keys — those are a TALLY over discrete states (live/partial/

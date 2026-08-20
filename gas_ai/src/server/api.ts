@@ -1750,6 +1750,11 @@ export function getScanQueries(_p?: unknown): ApiResult {
     // (a deployment that last synced before this shipped), which the client must not render
     // as 0. See settingsLogic.getStepRows.
     stepRows: settingsStore.getStepRows(),
+    // Why each skipped step was skipped — Wiz's own message. `skippedSteps` says WHICH, this
+    // says WHAT the tenant objected to, and only the second is actionable. A step id in the
+    // skip list with no entry here was skipped before this was recorded; the client must render
+    // that as "no reason recorded", never as an empty explanation.
+    skipReasons: settingsStore.getSkipReasons(),
     hasCredentials: hasWizCredentials(),
     limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
     // Named rather than folded into `variables`: the transport adds these to every request,

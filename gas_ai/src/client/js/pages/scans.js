@@ -469,6 +469,7 @@ export async function renderScans(main, params, ctx) {
       // from this map means the last sync predates the recording, which is a different
       // statement from "this step returned no rows". See settingsLogic.getStepRows.
       stepRows: (queries && queries.stepRows) || {},
+      skipReasons: (queries && queries.skipReasons) || {},
       transportVariables: (queries && queries.transportVariables) || [],
       hasCredentials: queries ? queries.hasCredentials : boot.hasCredentials,
       combosError,

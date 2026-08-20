@@ -26,6 +26,7 @@ var Server = (() => {
     doGet: () => doGet,
     include: () => include,
     jobs: () => syncJobs_exports,
+    probeEdgeSteps: () => probeEdgeSteps,
     registerScopeDiagnostic: () => registerScopeDiagnostic,
     setup: () => setup,
     wizDiagnostic: () => wizDiagnostic
@@ -2245,767 +2246,19 @@ var Server = (() => {
     return { rows: [obj], hasNextPage: false, endCursor: null, totalCount: 1 };
   }
 
-  // src/domain/aars.ts
-  var DEFAULT_AARS_RULE = {
-    severityPoints: { CRITICAL: 50, HIGH: 35, MEDIUM: 20, LOW: 8 },
-    multiIssueMultiplier: 1.2,
-    multiIssueScaling: "flat",
-    pillarACap: 50,
-    // "code": the spec's unit — one gap per distinct framework code. See `GapUnit`.
-    gapUnit: "code",
-    gapPoints: [
-      { match: "exact", code: "NO_GUARDRAIL", points: 10 },
-      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
-      { match: "exact", code: "LLM04", points: 5 },
-      { match: "exact", code: "LLM05", points: 5 },
-      { match: "prefix", code: "LLM", points: 10 },
-      { match: "prefix", code: "ASI", points: 10 },
-      { match: "prefix", code: "ML", points: 5 },
-      { match: "exact", code: "FIVE_RS", points: 5 },
-      { match: "prefix", code: "5R", points: 5 }
-    ],
-    gapFallbackPoints: 5,
-    gapAggregation: "sum",
-    // Off: switching any of these on adds gaps the doc's applied table never priced.
-    gapSources: {
-      fiveRs: false,
-      deprecatedModel: false,
-      inactiveAgent: false,
-      frameworkMapping: false
-    },
-    // All 1: the spec reads a failing control as present-or-absent, never as more or less
-    // severe. Kept as a knob because ai_findings.severity is already persisted and unused.
-    findingSeverityWeights: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 },
-    pillarBCap: 30,
-    dataExposurePoints: { SENSITIVE: 20, DATA_ACCESS: 10, NONE: 0 },
-    // 5Rs framework at 53% — data-exposure controls are systemically weak, so all
-    // data-related points are amplified (ai/custom_score.md Pillar C).
-    dataAmplifier: 1.1,
-    // OFF: every point zero, so the term contributes nothing and pillar C is arithmetically
-    // what it has always been. ai/custom_score.md's applied 14-row table — which pins
-    // test/aars.test.ts — therefore keeps passing untouched. Sixth knob to follow that
-    // convention, after multiIssueScaling, gapAggregation, gapSources, findingSeverityWeights
-    // and exposurePoints.
-    dataFindingPoints: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
-    dataFindingScaling: "flat",
-    dataFindingMultiplier: 1,
-    // 22 = the old implicit ceiling (20 × 1.1), so naming it changes no score.
-    pillarCCap: 22,
-    // Pillar D is OFF in the spec rule. The doc reports internet exposure beside the score
-    // but never adds it to one, so scoring it here would change every published number.
-    exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
-    bands: { critical: 70, high: 50, medium: 30, low: 10 }
-  };
-  var AARS_V2_RULE = {
-    severityPoints: { CRITICAL: 40, HIGH: 28, MEDIUM: 16, LOW: 6 },
-    multiIssueMultiplier: 1.2,
-    multiIssueScaling: "log2",
-    pillarACap: 45,
-    // Stays "code", same reasoning as `frameworkMapping` below: this preset was calibrated
-    // against the code-unit shape, and switching the unit is a bigger act than this pass —
-    // `AARS_V3_RULE` is that act, kept separate so v2 keeps meaning what it always meant.
-    gapUnit: "code",
-    gapPoints: [
-      { match: "exact", code: "NO_GUARDRAIL", points: 10 },
-      { match: "exact", code: "INACTIVE_AGENT", points: 10 },
-      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
-      { match: "exact", code: "LLM04", points: 5 },
-      { match: "exact", code: "LLM05", points: 5 },
-      { match: "prefix", code: "LLM", points: 10 },
-      { match: "prefix", code: "ASI", points: 10 },
-      { match: "prefix", code: "ML", points: 5 },
-      { match: "exact", code: "FIVE_RS", points: 5 },
-      { match: "prefix", code: "5R", points: 5 }
-    ],
-    gapFallbackPoints: 5,
-    gapAggregation: "rss",
-    // frameworkMapping stays OFF even here, where every other dormant source is on. Two
-    // reasons, and neither is timidity: ai/AARS_ASSESSMENT.md calibrated this preset before
-    // posture was collected at all, so switching it on would make the preset differ from the
-    // measurement that justifies its numbers; and its effect is DATA-DEPENDENT — it does
-    // nothing until a posture sync has run, then changes scores — so a preset carrying it
-    // would silently re-score a landscape on the strength of an unrelated sync finishing.
-    // It is switched on deliberately, through the Rules page, with the same preview.
-    gapSources: {
-      fiveRs: true,
-      deprecatedModel: true,
-      inactiveAgent: true,
-      frameworkMapping: false
-    },
-    findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
-    pillarBCap: 25,
-    // Split, so the pillar takes more than two values. Reaching sensitive data is worth 6 —
-    // half what it was, because it is what most of the landscape shares — and what you reach is
-    // worth up to 6 more. An asset with one MEDIUM finding scores 6+2=8; one with three
-    // CRITICALs scores 6+7=13, clamped to the 12 cap. Two values become five.
-    dataExposurePoints: { SENSITIVE: 6, DATA_ACCESS: 3, NONE: 0 },
-    dataAmplifier: 1,
-    dataFindingPoints: { CRITICAL: 6, HIGH: 4, MEDIUM: 2, LOW: 1 },
-    dataFindingScaling: "log2",
-    dataFindingMultiplier: 1.2,
-    pillarCCap: 12,
-    exposurePoints: { CONFIRMED: 18, UNDETERMINED: 7, NONE: 0 },
-    bands: { critical: 70, high: 50, medium: 30, low: 10 }
-  };
-  var AARS_V3_RULE = {
-    ...AARS_V2_RULE,
-    gapUnit: "condition",
-    gapPoints: [
-      { match: "exact", code: "INACTIVE_AGENT", points: 10 },
-      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
-      { match: "exact", code: "COND_MISSING_GUARDRAIL", points: 10 },
-      { match: "exact", code: "COND_SENSITIVE_DATA", points: 8 },
-      { match: "exact", code: "COND_EXCESSIVE_PRIVILEGE", points: 8 },
-      { match: "exact", code: "COND_INTERNET_EXPOSURE", points: 6 },
-      { match: "prefix", code: "COMBO_", points: 5 }
-    ]
-  };
-  var AARS_MAX_SCORE = 100;
-  function achievableMax(rule) {
-    const maxExposure = Math.max(
-      rule.exposurePoints.CONFIRMED,
-      rule.exposurePoints.UNDETERMINED,
-      rule.exposurePoints.NONE
-    );
-    return Math.min(
-      AARS_MAX_SCORE,
-      rule.pillarACap + rule.pillarBCap + rule.pillarCCap + maxExposure
-    );
-  }
-  function derivationSignature(rule) {
-    const s = rule.gapSources;
-    return [
-      `gapUnit:${rule.gapUnit}`,
-      `fiveRs:${s.fiveRs ? 1 : 0}`,
-      `deprecatedModel:${s.deprecatedModel ? 1 : 0}`,
-      `inactiveAgent:${s.inactiveAgent ? 1 : 0}`,
-      `frameworkMapping:${s.frameworkMapping ? 1 : 0}`
-    ].join("|");
-  }
-  function gapPointsFor(code, rule = DEFAULT_AARS_RULE) {
-    const c = String(code != null ? code : "").trim().toUpperCase();
-    for (const row of rule.gapPoints) {
-      const hit = row.match === "exact" ? c === row.code : c.startsWith(row.code);
-      if (hit) return row.points;
-    }
-    return rule.gapFallbackPoints;
-  }
-  function gap(code, points) {
-    return points === void 0 ? { code } : { code, points };
-  }
-  function aarsSeverity(score2, bands = DEFAULT_AARS_RULE.bands) {
-    if (score2 >= bands.critical) return "CRITICAL";
-    if (score2 >= bands.high) return "HIGH";
-    if (score2 >= bands.medium) return "MEDIUM";
-    if (score2 >= bands.low) return "LOW";
-    return "INFO";
-  }
-  function worstPoints(severities, points) {
-    var _a5;
-    let worst = 0;
-    for (const s of severities) {
-      const p = (_a5 = points[s]) != null ? _a5 : 0;
-      if (p > worst) worst = p;
-    }
-    return worst;
-  }
-  function worstSeverityPoints(severities, rule) {
-    return worstPoints(severities, rule.severityPoints);
-  }
-  function countFactor(count2, scaling, multiplier) {
-    if (count2 <= 1) return 1;
-    if (scaling === "log2") return 1 + (multiplier - 1) * Math.log2(count2);
-    return multiplier;
-  }
-  function multiIssueFactor(count2, rule) {
-    return countFactor(count2, rule.multiIssueScaling, rule.multiIssueMultiplier);
-  }
-  function dataFindingPointsFor(severities, rule) {
-    if (!severities.length) return 0;
-    return Math.round(
-      worstPoints(severities, rule.dataFindingPoints) * countFactor(severities.length, rule.dataFindingScaling, rule.dataFindingMultiplier)
-    );
-  }
-  function aggregateGapPoints(points, rule) {
-    if (rule.gapAggregation === "rss") {
-      return Math.round(Math.sqrt(points.reduce((acc, p) => acc + p * p, 0)));
-    }
-    return points.reduce((acc, p) => acc + p, 0);
-  }
-  function computeAars(input, rule = DEFAULT_AARS_RULE) {
-    var _a5, _b, _c, _d;
-    let toxic = worstSeverityPoints(input.issueSeverities, rule);
-    toxic *= multiIssueFactor(input.issueSeverities.length, rule);
-    toxic = Math.min(rule.pillarACap, Math.round(toxic));
-    const compliance = Math.min(
-      rule.pillarBCap,
-      aggregateGapPoints(
-        input.gaps.map((g) => {
-          var _a6;
-          return (_a6 = g.points) != null ? _a6 : gapPointsFor(g.code, rule);
-        }),
-        rule
-      )
-    );
-    const dataTier = (_a5 = rule.dataExposurePoints[input.dataExposure]) != null ? _a5 : 0;
-    const dataFound = dataFindingPointsFor((_b = input.dataFindingSeverities) != null ? _b : [], rule);
-    const data = Math.min(rule.pillarCCap, Math.round((dataTier + dataFound) * rule.dataAmplifier));
-    const exposure = (_d = rule.exposurePoints[(_c = input.internetExposure) != null ? _c : "NONE"]) != null ? _d : 0;
-    const score2 = Math.min(AARS_MAX_SCORE, toxic + compliance + data + exposure);
-    return {
-      score: score2,
-      severity: aarsSeverity(score2, rule.bands),
-      pillars: { toxic, compliance, data, exposure }
-    };
-  }
-  function gapBreakdown(gaps, rule = DEFAULT_AARS_RULE) {
-    return gaps.map((g) => {
-      var _a5;
-      return {
-        code: g.code,
-        points: (_a5 = g.points) != null ? _a5 : gapPointsFor(g.code, rule),
-        overridden: g.points !== void 0
-      };
-    });
-  }
-
-  // src/domain/riskConditions.ts
-  function conditionState(node2, key) {
-    var _a5, _b;
-    switch (key) {
-      case "MISSING_GUARDRAIL":
-        return node2.guardrailMissing === true;
-      case "EXCESSIVE_PRIVILEGE":
-        return node2.hasAdminPrivileges === true || node2.hasHighPrivileges === true;
-      case "SENSITIVE_DATA":
-        return node2.hasSensitiveData === true || node2.hasAccessToSensitiveData === true;
-      case "INTERNET_EXPOSURE": {
-        const evidence = node2.exposureEvidence;
-        if (evidence) {
-          const hosts = (_a5 = evidence.hostIds) != null ? _a5 : [];
-          const endpoints = (_b = evidence.endpointIds) != null ? _b : [];
-          if (hosts.length > 0 || endpoints.length > 0) return true;
-        }
-        const reachable2 = node2.isAccessibleFromInternet;
-        const openToAll = node2.isOpenToAllInternet;
-        if (reachable2 === true || openToAll === true) return true;
-        const unknown = (v) => v === null || v === void 0;
-        return unknown(reachable2) || unknown(openToAll) ? null : false;
-      }
-    }
-  }
-  function conditionHolds(node2, key) {
-    return conditionState(node2, key) === true;
-  }
-
-  // src/domain/problem.ts
-  var OUTCOME_VALUES = ["ACT", "ATTEND", "TRACK_STAR", "TRACK"];
-  var EXPLOITATION_VALUES = ["ACTIVE", "SUSPECTED", "UNKNOWN"];
-  var IMPACT_VALUES = ["TOTAL", "PARTIAL"];
-  var EXPOSURE_VALUES = ["OPEN", "CONTROLLED", "UNVERIFIED"];
-  var MISSION_VALUES = ["HIGH", "MEDIUM", "LOW"];
-  function enumerateDecisionVectors() {
-    const out = [];
-    for (const exploitation of EXPLOITATION_VALUES) {
-      for (const impact of IMPACT_VALUES) {
-        for (const exposure of EXPOSURE_VALUES) {
-          for (const mission of MISSION_VALUES) {
-            out.push({ exploitation, impact, exposure, mission });
-          }
-        }
-      }
-    }
-    return out;
-  }
-  function leafKey(v) {
-    return `${v.exploitation}|${v.impact}|${v.exposure}|${v.mission}`;
-  }
-  function vectorMatches(vector, when) {
-    if (when.exploitation !== void 0 && when.exploitation !== vector.exploitation) return false;
-    if (when.impact !== void 0 && when.impact !== vector.impact) return false;
-    if (when.exposure !== void 0 && when.exposure !== vector.exposure) return false;
-    if (when.mission !== void 0 && when.mission !== vector.mission) return false;
-    return true;
-  }
-  function decideProblem(vector, rule) {
-    for (let i = 0; i < rule.outcomeRules.length; i++) {
-      const row = rule.outcomeRules[i];
-      if (vectorMatches(vector, row.when)) return { outcome: row.outcome, matchedRuleIndex: i };
-    }
-    return { outcome: rule.fallbackOutcome, matchedRuleIndex: -1 };
-  }
-  var REALIZED_OR_DEMONSTRATED = /* @__PURE__ */ new Set(["REALIZED", "DEMONSTRATED"]);
-  function exploitationOfIssue(issue2, rule) {
-    if (issue2.validatedAsExploitable === true) return { exploitation: "ACTIVE", source: "validated" };
-    const row = rule.exploitationByRuleId.find((r) => r.ruleId === issue2.ruleId);
-    if (row && REALIZED_OR_DEMONSTRATED.has(row.maturity)) {
-      return { exploitation: "SUSPECTED", source: "ruleTable" };
-    }
-    if (issue2.aiVerdict && rule.remediateVerdicts.includes(issue2.aiVerdict)) {
-      return { exploitation: "SUSPECTED", source: "aiVerdict" };
-    }
-    return { exploitation: "UNKNOWN", source: "none" };
-  }
-  function exploitationOfFinding(finding, rule) {
-    const row = rule.exploitationByRuleId.find((r) => r.ruleId === finding.ruleShortId);
-    if (row && REALIZED_OR_DEMONSTRATED.has(row.maturity)) {
-      return { exploitation: "SUSPECTED", source: "ruleTable" };
-    }
-    return { exploitation: "UNKNOWN", source: "none" };
-  }
-  function impactOf(node2, comboGroup, rule) {
-    var _a5;
-    const groupMatch = rule.totalImpactGroups.includes(comboGroup != null ? comboGroup : "");
-    const total2 = (node2 == null ? void 0 : node2.hasAdminPrivileges) === true || ((_a5 = node2 == null ? void 0 : node2.humanAccess) == null ? void 0 : _a5.admin) === true || groupMatch;
-    const unknown = (node2 == null ? void 0 : node2.hasAdminPrivileges) === void 0 && !(node2 == null ? void 0 : node2.humanAccess) && !groupMatch;
-    return { impact: total2 ? "TOTAL" : "PARTIAL", unknown };
-  }
-  function exposureOf(node2) {
-    var _a5, _b, _c, _d;
-    if (!node2) return { exposure: "UNVERIFIED", unknown: true, evidenced: false };
-    const state = conditionState(node2, "INTERNET_EXPOSURE");
-    const exposure = state === true ? "OPEN" : state === false ? "CONTROLLED" : "UNVERIFIED";
-    const evidence = node2.exposureEvidence;
-    const evidenced = !!evidence && (((_b = (_a5 = evidence.hostIds) == null ? void 0 : _a5.length) != null ? _b : 0) > 0 || ((_d = (_c = evidence.endpointIds) == null ? void 0 : _c.length) != null ? _d : 0) > 0);
-    return { exposure, unknown: state === null, evidenced };
-  }
-  function missionOf(node2, fallbackBusinessImpact, rule) {
-    var _a5;
-    const raw = (_a5 = node2 == null ? void 0 : node2.businessImpact) != null ? _a5 : fallbackBusinessImpact;
-    if (raw === "HBI") return { mission: "HIGH", unknown: false };
-    if (raw === "MBI") return { mission: "MEDIUM", unknown: false };
-    if (raw === "LBI") return { mission: "LOW", unknown: false };
-    return { mission: rule.missingMission, unknown: true };
-  }
-  function deriveProblemInput(issue2, node2, rule) {
-    const unknowns = [];
-    const { exploitation, source } = exploitationOfIssue(issue2, rule);
-    if (exploitation === "UNKNOWN") unknowns.push("exploitation");
-    const { impact, unknown: impactUnknown } = impactOf(node2, issue2.comboGroup, rule);
-    if (impactUnknown) unknowns.push("impact");
-    const { exposure, unknown: exposureUnknown, evidenced } = exposureOf(node2);
-    if (exposureUnknown) unknowns.push("exposure");
-    const { mission, unknown: missionUnknown } = missionOf(node2, issue2.businessImpact, rule);
-    if (missionUnknown) unknowns.push("mission");
-    return { vector: { exploitation, impact, exposure, mission }, unknowns, evidenced, exploitationSource: source };
-  }
-  function deriveFindingProblemInput(finding, node2, rule) {
-    const unknowns = [];
-    const { exploitation, source } = exploitationOfFinding(finding, rule);
-    if (exploitation === "UNKNOWN") unknowns.push("exploitation");
-    const { impact, unknown: impactUnknown } = impactOf(node2, void 0, rule);
-    if (impactUnknown) unknowns.push("impact");
-    const { exposure, unknown: exposureUnknown, evidenced } = exposureOf(node2);
-    if (exposureUnknown) unknowns.push("exposure");
-    const { mission, unknown: missionUnknown } = missionOf(node2, finding.businessImpact, rule);
-    if (missionUnknown) unknowns.push("mission");
-    return { vector: { exploitation, impact, exposure, mission }, unknowns, evidenced, exploitationSource: source };
-  }
-  function stripProblemFields(row) {
-    if (row.problemOutcome === void 0 && row.problemInput === void 0 && row.problemRuleVersion === void 0) {
-      return row;
-    }
-    const next = { ...row };
-    delete next.problemOutcome;
-    delete next.problemInput;
-    delete next.problemRuleVersion;
-    return next;
-  }
-  function countProblemOutcomes(rows) {
-    const counts = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0 };
-    for (const r of rows) {
-      const o = r.problemOutcome;
-      if (o && OUTCOME_VALUES.includes(o)) counts[o]++;
-    }
-    return counts;
-  }
-  var AGENTIC_ASSET_KINDS = [
-    "AI_AGENT",
-    "AI_AGENT_REGISTRY",
-    "MCP_SERVER",
-    "AI_SKILL",
-    "AI_SKILL_TEMPLATE",
-    "AI_TOOL",
-    "AI_EXTENSION",
-    "AI_GATEWAY",
-    "AI_SERVICE",
-    "AI_DEPLOYMENT"
-  ];
-  function identityFactor(node2) {
-    var _a5;
-    if (!node2) return null;
-    if (node2.hasAdminPrivileges === true) return 1;
-    const permissionCount = (_a5 = node2.humanAccess) == null ? void 0 : _a5.permissionCount;
-    if (node2.hasHighPrivileges === true || typeof permissionCount === "number" && permissionCount > 0) {
-      return 0.5;
-    }
-    if (node2.hasAdminPrivileges === false || node2.hasHighPrivileges === false || node2.humanAccess) return 0;
-    return null;
-  }
-  function contextFactor(node2) {
-    if (!node2) return null;
-    if (node2.hasSensitiveData === true || node2.hasAccessToSensitiveData === true) return 1;
-    const findingCount = node2.dataFindingCount;
-    if (typeof findingCount === "number") return findingCount > 0 ? 0.5 : 0;
-    if (node2.hasSensitiveData === false || node2.hasAccessToSensitiveData === false) return 0;
-    return null;
-  }
-  function languageFactor(node2) {
-    if (!node2) return null;
-    return AGENTIC_ASSET_KINDS.includes(node2.kind) ? 1 : null;
-  }
-  function nodeAmplificationVector(node2) {
-    return {
-      tools: null,
-      identity: identityFactor(node2),
-      persistence: null,
-      multiAgent: null,
-      context: contextFactor(node2),
-      language: languageFactor(node2)
-    };
-  }
-
-  // src/domain/problemRule.ts
-  var AXIS_KEYS = ["exploitation", "impact", "exposure", "mission"];
-  var MAX_OUTCOME_RULES = 40;
-  var MAX_EXPLOITATION_RULES = 200;
-  var MAX_VERDICTS = 20;
-  var MAX_TOTAL_IMPACT_GROUPS = 40;
-  var CODE_MAX_LEN = 128;
-  var ACT_CEILING_FLOOR = 1e-3;
-  function rec(v) {
-    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
-  }
-  function cleanCode(v) {
-    return String(v != null ? v : "").trim().slice(0, CODE_MAX_LEN);
-  }
-  var DEFAULT_PROBLEM_RULE = {
-    outcomeRules: [
-      { when: { exploitation: "ACTIVE", impact: "TOTAL", exposure: "OPEN" }, outcome: "ACT" },
-      { when: { exploitation: "ACTIVE", impact: "TOTAL", mission: "HIGH" }, outcome: "ACT" },
-      { when: { exploitation: "ACTIVE", exposure: "OPEN", mission: "HIGH" }, outcome: "ACT" },
-      { when: { exploitation: "ACTIVE" }, outcome: "ATTEND" },
-      { when: { impact: "TOTAL", exposure: "OPEN", mission: "HIGH" }, outcome: "ATTEND" },
-      { when: { exploitation: "SUSPECTED", exposure: "OPEN" }, outcome: "ATTEND" },
-      { when: { exposure: "UNVERIFIED" }, outcome: "TRACK_STAR" },
-      { when: { mission: "HIGH" }, outcome: "TRACK_STAR" }
-    ],
-    fallbackOutcome: "TRACK",
-    exploitationByRuleId: [],
-    remediateVerdicts: ["REMEDIATE"],
-    // wc-id-3230 (gcp-hosted-privileged) is the one combo pattern whose OWASP Agentic
-    // mapping names ASI05 (toxicCombos.ts) — Excessive Agency / remote-code-execution shape
-    // — alongside its excessive-privilege and sensitive-data conditions. That is what
-    // "grants code execution" means operationally for this axis: not merely elevated IAM,
-    // but the specific pattern whose own framework tags say RCE.
-    totalImpactGroups: ["gcp-hosted-privileged"],
-    missingMission: "MEDIUM",
-    actLeafCeiling: 0.15
-  };
-  function cleanWhen(v) {
-    const raw = rec(v);
-    const when = {};
-    if (EXPLOITATION_VALUES.includes(raw["exploitation"])) {
-      when.exploitation = raw["exploitation"];
-    }
-    if (IMPACT_VALUES.includes(raw["impact"])) {
-      when.impact = raw["impact"];
-    }
-    if (EXPOSURE_VALUES.includes(raw["exposure"])) {
-      when.exposure = raw["exposure"];
-    }
-    if (MISSION_VALUES.includes(raw["mission"])) {
-      when.mission = raw["mission"];
-    }
-    return when;
-  }
-  function cleanOutcome(v, fallback) {
-    return OUTCOME_VALUES.includes(v) ? v : fallback;
-  }
-  function cleanOutcomeRule(v, fallback) {
-    const raw = rec(v);
-    return { when: cleanWhen(raw["when"]), outcome: cleanOutcome(raw["outcome"], fallback) };
-  }
-  function cleanExploitationRuleRow(v) {
-    const raw = rec(v);
-    const ruleId = cleanCode(raw["ruleId"]);
-    if (!ruleId) return null;
-    const maturityRaw = raw["maturity"];
-    const maturity = maturityRaw === "REALIZED" || maturityRaw === "DEMONSTRATED" || maturityRaw === "FEASIBLE" ? maturityRaw : "FEASIBLE";
-    return { ruleId, maturity };
-  }
-  function cleanCodeList(v, fallback, max) {
-    if (!Array.isArray(v)) return [...fallback];
-    const out = [];
-    for (const item of v) {
-      const c = cleanCode(item);
-      if (c) out.push(c);
-      if (out.length >= max) break;
-    }
-    return out;
-  }
-  function cleanProblemRule(raw) {
-    const r = rec(raw);
-    const fallbackOutcome = cleanOutcome(r["fallbackOutcome"], DEFAULT_PROBLEM_RULE.fallbackOutcome);
-    const rowsRaw = Array.isArray(r["outcomeRules"]) ? r["outcomeRules"] : null;
-    const outcomeRules = rowsRaw ? rowsRaw.slice(0, MAX_OUTCOME_RULES).map((row) => cleanOutcomeRule(row, fallbackOutcome)) : DEFAULT_PROBLEM_RULE.outcomeRules.map((row) => ({ when: { ...row.when }, outcome: row.outcome }));
-    const exploitationRaw = Array.isArray(r["exploitationByRuleId"]) ? r["exploitationByRuleId"] : null;
-    const exploitationByRuleId = exploitationRaw ? exploitationRaw.slice(0, MAX_EXPLOITATION_RULES).map(cleanExploitationRuleRow).filter((row) => row !== null) : DEFAULT_PROBLEM_RULE.exploitationByRuleId.map((row) => ({ ...row }));
-    const remediateVerdicts = cleanCodeList(
-      r["remediateVerdicts"],
-      DEFAULT_PROBLEM_RULE.remediateVerdicts,
-      MAX_VERDICTS
-    );
-    const totalImpactGroups = cleanCodeList(
-      r["totalImpactGroups"],
-      DEFAULT_PROBLEM_RULE.totalImpactGroups,
-      MAX_TOTAL_IMPACT_GROUPS
-    );
-    const missingMission = MISSION_VALUES.includes(r["missingMission"]) ? r["missingMission"] : DEFAULT_PROBLEM_RULE.missingMission;
-    const ceilingRaw = Number(r["actLeafCeiling"]);
-    const actLeafCeiling = Number.isFinite(ceilingRaw) ? Math.min(1, Math.max(ACT_CEILING_FLOOR, ceilingRaw)) : DEFAULT_PROBLEM_RULE.actLeafCeiling;
-    return {
-      outcomeRules,
-      fallbackOutcome,
-      exploitationByRuleId,
-      remediateVerdicts,
-      totalImpactGroups,
-      missingMission,
-      actLeafCeiling
-    };
-  }
-  function pct(share) {
-    return `${(share * 100).toFixed(1)}%`;
-  }
-  function validateProblemRule(rule) {
-    const errors = [];
-    if (!rule.outcomeRules.length) {
-      errors.push(
-        "The outcome cascade has no rules; every vector would route to the fallback outcome. Add a rule or accept the fallback deliberately."
-      );
-    }
-    if (rule.outcomeRules.length > MAX_OUTCOME_RULES) {
-      errors.push(`The outcome cascade is limited to ${MAX_OUTCOME_RULES} rules.`);
-    }
-    rule.outcomeRules.forEach((row, i) => {
-      const isEmpty = AXIS_KEYS.every((k) => row.when[k] === void 0);
-      if (isEmpty && i !== rule.outcomeRules.length - 1) {
-        errors.push(
-          `Outcome rule ${i + 1} has no conditions, so it matches every remaining vector and swallows every rule after it. Move it last or give it a condition.`
-        );
-      }
-    });
-    const seen = /* @__PURE__ */ new Map();
-    rule.outcomeRules.forEach((row, i) => {
-      const isEmpty = AXIS_KEYS.every((k) => row.when[k] === void 0);
-      if (isEmpty) return;
-      const key = AXIS_KEYS.filter((k) => row.when[k] !== void 0).map((k) => `${k}:${row.when[k]}`).join("|");
-      const earlier = seen.get(key);
-      if (earlier !== void 0) {
-        errors.push(`Outcome rule ${i + 1} repeats the same condition as rule ${earlier + 1}.`);
-      } else {
-        seen.set(key, i);
-      }
-    });
-    const coverage = leafCoverage(rule);
-    const actShare = coverage.total ? coverage.byOutcome.ACT / coverage.total : 0;
-    if (actShare > rule.actLeafCeiling) {
-      errors.push(
-        `This rule sends ${coverage.byOutcome.ACT} of ${coverage.total} leaves to ACT (${pct(actShare)}) \u2014 above the ${pct(rule.actLeafCeiling)} ceiling.`
-      );
-    }
-    return errors;
-  }
-  function shadowedOutcomeRules(rule) {
-    const leaves = enumerateDecisionVectors();
-    const dead = [];
-    rule.outcomeRules.forEach((row, i) => {
-      const rowLeaves = leaves.filter((v) => vectorMatches(v, row.when));
-      if (!rowLeaves.length) return;
-      const allClaimedEarlier = rowLeaves.every(
-        (v) => rule.outcomeRules.slice(0, i).some((earlier) => vectorMatches(v, earlier.when))
-      );
-      if (allClaimedEarlier) dead.push(i);
-    });
-    return dead;
-  }
-  function leafCoverage(rule) {
-    const leaves = enumerateDecisionVectors();
-    const byRow = rule.outcomeRules.map(() => 0);
-    const byOutcome = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0 };
-    let byFallback = 0;
-    for (const v of leaves) {
-      const { outcome, matchedRuleIndex } = decideProblem(v, rule);
-      if (matchedRuleIndex === -1) byFallback++;
-      else byRow[matchedRuleIndex] += 1;
-      byOutcome[outcome]++;
-    }
-    return { total: leaves.length, byRow, byFallback, byOutcome };
-  }
-  function treeDiscrimination(decided) {
-    var _a5;
-    const outcomeOccupancy = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0 };
-    const leafOccupancy = {};
-    const unknownCounts = {
-      exploitation: 0,
-      impact: 0,
-      exposure: 0,
-      mission: 0
-    };
-    for (const d of decided) {
-      outcomeOccupancy[d.outcome]++;
-      const key = leafKey(d.vector);
-      leafOccupancy[key] = ((_a5 = leafOccupancy[key]) != null ? _a5 : 0) + 1;
-      for (const u of d.unknowns) {
-        if (u === "exploitation" || u === "impact" || u === "exposure" || u === "mission") {
-          unknownCounts[u]++;
-        }
-      }
-    }
-    const n = decided.length;
-    const rate = (count2) => n ? count2 / n : 0;
-    return {
-      decided,
-      outcomeOccupancy,
-      leavesReached: Object.keys(leafOccupancy).length,
-      leafOccupancy,
-      unknownRate: {
-        exploitation: rate(unknownCounts.exploitation),
-        impact: rate(unknownCounts.impact),
-        exposure: rate(unknownCounts.exposure),
-        mission: rate(unknownCounts.mission)
-      }
-    };
-  }
-  function problemRuleSummary(rule) {
-    const coverage = leafCoverage(rule);
-    const actShare = coverage.total ? coverage.byOutcome.ACT / coverage.total : 0;
-    return [
-      `${rule.outcomeRules.length} outcome rules are tried in order, first match wins; a vector matching none of them falls back to ${rule.fallbackOutcome}.`,
-      `ACT claims ${coverage.byOutcome.ACT} of ${coverage.total} leaves (${pct(actShare)}), against a ceiling of ${pct(rule.actLeafCeiling)}.`,
-      `Exploitation reaches ACTIVE only from Wiz's own validated-exploitable flag. It reaches SUSPECTED from ${rule.exploitationByRuleId.length} rule-table row(s) at REALIZED or DEMONSTRATED maturity, or from an AI verdict of ${rule.remediateVerdicts.length ? rule.remediateVerdicts.join("/") : "(none configured)"} \u2014 never both the way to ACTIVE.`,
-      `Technical impact reads TOTAL from admin privileges, admin-level human access, or membership in ${rule.totalImpactGroups.length ? rule.totalImpactGroups.join(", ") : "(no configured groups)"}; otherwise PARTIAL.`,
-      `A missing business-impact tier reads as ${rule.missingMission}, never LOW.`
-    ];
-  }
-  function vectorSignature(rule) {
-    const exploitation = rule.exploitationByRuleId.map((r) => `${r.ruleId}:${r.maturity}`).join(",");
-    return [
-      `exploitationByRuleId:${exploitation}`,
-      `remediateVerdicts:${rule.remediateVerdicts.join(",")}`,
-      `totalImpactGroups:${rule.totalImpactGroups.join(",")}`,
-      `missingMission:${rule.missingMission}`
-    ].join("|");
-  }
-  function decisionEqual(a, b) {
-    const withoutCeiling = (r) => {
-      const c = cleanProblemRule(r);
-      delete c.actLeafCeiling;
-      return JSON.stringify(c);
-    };
-    return withoutCeiling(a) === withoutCeiling(b);
-  }
-
-  // src/domain/posture.ts
-  var CAPABILITY_VALUES = ["BROAD", "SCOPED", "MINIMAL"];
-  var CONTAINMENT_VALUES = ["WEAK", "PARTIAL", "STRONG"];
-  var CONSEQUENCE_VALUES = ["SEVERE", "MODERATE", "LIMITED"];
-  var TIER_VALUES = [1, 2, 3, 4];
-  function enumeratePostureVectors() {
-    const out = [];
-    for (const capability of CAPABILITY_VALUES) {
-      for (const containment of CONTAINMENT_VALUES) {
-        for (const consequence of CONSEQUENCE_VALUES) {
-          out.push({ capability, containment, consequence });
-        }
-      }
-    }
-    return out;
-  }
-  function postureKey(v) {
-    return `${v.capability}|${v.containment}|${v.consequence}`;
-  }
-  function postureVectorMatches(vector, when) {
-    if (when.capability !== void 0 && when.capability !== vector.capability) return false;
-    if (when.containment !== void 0 && when.containment !== vector.containment) return false;
-    if (when.consequence !== void 0 && when.consequence !== vector.consequence) return false;
-    if (when.privateData !== void 0 && when.privateData !== vector.privateData) return false;
-    if (when.untrustedIngress !== void 0 && when.untrustedIngress !== vector.untrustedIngress) return false;
-    if (when.externalEgress !== void 0 && when.externalEgress !== vector.externalEgress) return false;
-    return true;
-  }
-  function tierEstablished(unknowns) {
-    return unknowns.length === 0;
-  }
-  function decidePosture(vector, rule) {
-    for (let i = 0; i < rule.tierRules.length; i++) {
-      const row = rule.tierRules[i];
-      if (postureVectorMatches(vector, row.when)) return { tier: row.tier, matchedRuleIndex: i };
-    }
-    return { tier: rule.fallbackTier, matchedRuleIndex: -1 };
-  }
-  function capabilityOf(node2) {
-    var _a5;
-    const admin = node2 == null ? void 0 : node2.hasAdminPrivileges;
-    const highPriv = node2 == null ? void 0 : node2.hasHighPrivileges;
-    const sensitiveAccess = node2 == null ? void 0 : node2.hasAccessToSensitiveData;
-    const humanAdmin = (_a5 = node2 == null ? void 0 : node2.humanAccess) == null ? void 0 : _a5.admin;
-    const broad = admin === true || humanAdmin === true || highPriv === true && sensitiveAccess === true;
-    const scoped = highPriv === true || sensitiveAccess === true;
-    const capability = broad ? "BROAD" : scoped ? "SCOPED" : "MINIMAL";
-    const unknown = admin === void 0 && highPriv === void 0 && sensitiveAccess === void 0 && !(node2 == null ? void 0 : node2.humanAccess);
-    return { capability, unknown };
-  }
-  function containmentOf(node2) {
-    const missing = node2 == null ? void 0 : node2.guardrailMissing;
-    if (missing === true) return { containment: "WEAK", unknown: false };
-    const notExposed = node2 !== void 0 && conditionState(node2, "INTERNET_EXPOSURE") === false;
-    const confirmedContained = missing === false && notExposed;
-    return { containment: confirmedContained ? "STRONG" : "PARTIAL", unknown: missing === void 0 };
-  }
-  function consequenceOf(node2) {
-    var _a5, _b, _c;
-    const businessImpact = node2 == null ? void 0 : node2.businessImpact;
-    const severities = (_a5 = node2 == null ? void 0 : node2.dataFindingSeverities) != null ? _a5 : {};
-    const worstCritical = ((_b = severities["CRITICAL"]) != null ? _b : 0) > 0;
-    const anyFinding = ((_c = node2 == null ? void 0 : node2.dataFindingCount) != null ? _c : 0) > 0 || Object.values(severities).some((c) => c > 0);
-    const severe = businessImpact === "HBI" || worstCritical;
-    const moderate = businessImpact === "MBI" || anyFinding;
-    const consequence = severe ? "SEVERE" : moderate ? "MODERATE" : "LIMITED";
-    const unknown = businessImpact === void 0 && (node2 == null ? void 0 : node2.dataFindingCount) === void 0;
-    return { consequence, unknown };
-  }
-  function derivePostureInput(node2, rule) {
-    const unknowns = [];
-    const { capability, unknown: capabilityUnknown } = capabilityOf(node2);
-    if (capabilityUnknown) unknowns.push("capability");
-    const { containment, unknown: containmentUnknown } = containmentOf(node2);
-    if (containmentUnknown) unknowns.push("containment");
-    const { consequence, unknown: consequenceUnknown } = consequenceOf(node2);
-    if (consequenceUnknown) unknowns.push("consequence");
-    return { vector: { capability, containment, consequence }, unknowns };
-  }
-  function countPostureTiers(nodes) {
-    const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
-    for (const n of nodes) {
-      const t = n.postureTier;
-      if (t === 1 || t === 2 || t === 3 || t === 4) counts[t]++;
-    }
-    return counts;
-  }
-  function worstOpenProblem(outcomes) {
-    let worstIndex = -1;
-    let worst;
-    for (const o of outcomes) {
-      const idx = OUTCOME_VALUES.indexOf(o);
-      if (idx === -1) continue;
-      if (worstIndex === -1 || idx < worstIndex) {
-        worstIndex = idx;
-        worst = o;
-      }
-    }
-    return worst;
-  }
+  // src/server/syncJobs.ts
+  var syncJobs_exports = {};
+  __export(syncJobs_exports, {
+    cancelRequested: () => cancelRequested,
+    cancelSync: () => cancelSync,
+    clearCancelFlag: () => clearCancelFlag,
+    continueJob: () => continueJob,
+    dailySync: () => dailySync,
+    describeSyncSteps: () => describeSyncSteps,
+    jobStatus: () => jobStatus,
+    startSync: () => startSync,
+    testStepVariables: () => testStepVariables
+  });
 
   // src/domain/syncNormalize.ts
   function str3(v) {
@@ -3982,6 +3235,768 @@ var Server = (() => {
     };
   }
 
+  // src/domain/aars.ts
+  var DEFAULT_AARS_RULE = {
+    severityPoints: { CRITICAL: 50, HIGH: 35, MEDIUM: 20, LOW: 8 },
+    multiIssueMultiplier: 1.2,
+    multiIssueScaling: "flat",
+    pillarACap: 50,
+    // "code": the spec's unit — one gap per distinct framework code. See `GapUnit`.
+    gapUnit: "code",
+    gapPoints: [
+      { match: "exact", code: "NO_GUARDRAIL", points: 10 },
+      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
+      { match: "exact", code: "LLM04", points: 5 },
+      { match: "exact", code: "LLM05", points: 5 },
+      { match: "prefix", code: "LLM", points: 10 },
+      { match: "prefix", code: "ASI", points: 10 },
+      { match: "prefix", code: "ML", points: 5 },
+      { match: "exact", code: "FIVE_RS", points: 5 },
+      { match: "prefix", code: "5R", points: 5 }
+    ],
+    gapFallbackPoints: 5,
+    gapAggregation: "sum",
+    // Off: switching any of these on adds gaps the doc's applied table never priced.
+    gapSources: {
+      fiveRs: false,
+      deprecatedModel: false,
+      inactiveAgent: false,
+      frameworkMapping: false
+    },
+    // All 1: the spec reads a failing control as present-or-absent, never as more or less
+    // severe. Kept as a knob because ai_findings.severity is already persisted and unused.
+    findingSeverityWeights: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 },
+    pillarBCap: 30,
+    dataExposurePoints: { SENSITIVE: 20, DATA_ACCESS: 10, NONE: 0 },
+    // 5Rs framework at 53% — data-exposure controls are systemically weak, so all
+    // data-related points are amplified (ai/custom_score.md Pillar C).
+    dataAmplifier: 1.1,
+    // OFF: every point zero, so the term contributes nothing and pillar C is arithmetically
+    // what it has always been. ai/custom_score.md's applied 14-row table — which pins
+    // test/aars.test.ts — therefore keeps passing untouched. Sixth knob to follow that
+    // convention, after multiIssueScaling, gapAggregation, gapSources, findingSeverityWeights
+    // and exposurePoints.
+    dataFindingPoints: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
+    dataFindingScaling: "flat",
+    dataFindingMultiplier: 1,
+    // 22 = the old implicit ceiling (20 × 1.1), so naming it changes no score.
+    pillarCCap: 22,
+    // Pillar D is OFF in the spec rule. The doc reports internet exposure beside the score
+    // but never adds it to one, so scoring it here would change every published number.
+    exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
+    bands: { critical: 70, high: 50, medium: 30, low: 10 }
+  };
+  var AARS_V2_RULE = {
+    severityPoints: { CRITICAL: 40, HIGH: 28, MEDIUM: 16, LOW: 6 },
+    multiIssueMultiplier: 1.2,
+    multiIssueScaling: "log2",
+    pillarACap: 45,
+    // Stays "code", same reasoning as `frameworkMapping` below: this preset was calibrated
+    // against the code-unit shape, and switching the unit is a bigger act than this pass —
+    // `AARS_V3_RULE` is that act, kept separate so v2 keeps meaning what it always meant.
+    gapUnit: "code",
+    gapPoints: [
+      { match: "exact", code: "NO_GUARDRAIL", points: 10 },
+      { match: "exact", code: "INACTIVE_AGENT", points: 10 },
+      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
+      { match: "exact", code: "LLM04", points: 5 },
+      { match: "exact", code: "LLM05", points: 5 },
+      { match: "prefix", code: "LLM", points: 10 },
+      { match: "prefix", code: "ASI", points: 10 },
+      { match: "prefix", code: "ML", points: 5 },
+      { match: "exact", code: "FIVE_RS", points: 5 },
+      { match: "prefix", code: "5R", points: 5 }
+    ],
+    gapFallbackPoints: 5,
+    gapAggregation: "rss",
+    // frameworkMapping stays OFF even here, where every other dormant source is on. Two
+    // reasons, and neither is timidity: ai/AARS_ASSESSMENT.md calibrated this preset before
+    // posture was collected at all, so switching it on would make the preset differ from the
+    // measurement that justifies its numbers; and its effect is DATA-DEPENDENT — it does
+    // nothing until a posture sync has run, then changes scores — so a preset carrying it
+    // would silently re-score a landscape on the strength of an unrelated sync finishing.
+    // It is switched on deliberately, through the Rules page, with the same preview.
+    gapSources: {
+      fiveRs: true,
+      deprecatedModel: true,
+      inactiveAgent: true,
+      frameworkMapping: false
+    },
+    findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
+    pillarBCap: 25,
+    // Split, so the pillar takes more than two values. Reaching sensitive data is worth 6 —
+    // half what it was, because it is what most of the landscape shares — and what you reach is
+    // worth up to 6 more. An asset with one MEDIUM finding scores 6+2=8; one with three
+    // CRITICALs scores 6+7=13, clamped to the 12 cap. Two values become five.
+    dataExposurePoints: { SENSITIVE: 6, DATA_ACCESS: 3, NONE: 0 },
+    dataAmplifier: 1,
+    dataFindingPoints: { CRITICAL: 6, HIGH: 4, MEDIUM: 2, LOW: 1 },
+    dataFindingScaling: "log2",
+    dataFindingMultiplier: 1.2,
+    pillarCCap: 12,
+    exposurePoints: { CONFIRMED: 18, UNDETERMINED: 7, NONE: 0 },
+    bands: { critical: 70, high: 50, medium: 30, low: 10 }
+  };
+  var AARS_V3_RULE = {
+    ...AARS_V2_RULE,
+    gapUnit: "condition",
+    gapPoints: [
+      { match: "exact", code: "INACTIVE_AGENT", points: 10 },
+      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
+      { match: "exact", code: "COND_MISSING_GUARDRAIL", points: 10 },
+      { match: "exact", code: "COND_SENSITIVE_DATA", points: 8 },
+      { match: "exact", code: "COND_EXCESSIVE_PRIVILEGE", points: 8 },
+      { match: "exact", code: "COND_INTERNET_EXPOSURE", points: 6 },
+      { match: "prefix", code: "COMBO_", points: 5 }
+    ]
+  };
+  var AARS_MAX_SCORE = 100;
+  function achievableMax(rule) {
+    const maxExposure = Math.max(
+      rule.exposurePoints.CONFIRMED,
+      rule.exposurePoints.UNDETERMINED,
+      rule.exposurePoints.NONE
+    );
+    return Math.min(
+      AARS_MAX_SCORE,
+      rule.pillarACap + rule.pillarBCap + rule.pillarCCap + maxExposure
+    );
+  }
+  function derivationSignature(rule) {
+    const s = rule.gapSources;
+    return [
+      `gapUnit:${rule.gapUnit}`,
+      `fiveRs:${s.fiveRs ? 1 : 0}`,
+      `deprecatedModel:${s.deprecatedModel ? 1 : 0}`,
+      `inactiveAgent:${s.inactiveAgent ? 1 : 0}`,
+      `frameworkMapping:${s.frameworkMapping ? 1 : 0}`
+    ].join("|");
+  }
+  function gapPointsFor(code, rule = DEFAULT_AARS_RULE) {
+    const c = String(code != null ? code : "").trim().toUpperCase();
+    for (const row of rule.gapPoints) {
+      const hit = row.match === "exact" ? c === row.code : c.startsWith(row.code);
+      if (hit) return row.points;
+    }
+    return rule.gapFallbackPoints;
+  }
+  function gap(code, points) {
+    return points === void 0 ? { code } : { code, points };
+  }
+  function aarsSeverity(score2, bands = DEFAULT_AARS_RULE.bands) {
+    if (score2 >= bands.critical) return "CRITICAL";
+    if (score2 >= bands.high) return "HIGH";
+    if (score2 >= bands.medium) return "MEDIUM";
+    if (score2 >= bands.low) return "LOW";
+    return "INFO";
+  }
+  function worstPoints(severities, points) {
+    var _a5;
+    let worst = 0;
+    for (const s of severities) {
+      const p = (_a5 = points[s]) != null ? _a5 : 0;
+      if (p > worst) worst = p;
+    }
+    return worst;
+  }
+  function worstSeverityPoints(severities, rule) {
+    return worstPoints(severities, rule.severityPoints);
+  }
+  function countFactor(count2, scaling, multiplier) {
+    if (count2 <= 1) return 1;
+    if (scaling === "log2") return 1 + (multiplier - 1) * Math.log2(count2);
+    return multiplier;
+  }
+  function multiIssueFactor(count2, rule) {
+    return countFactor(count2, rule.multiIssueScaling, rule.multiIssueMultiplier);
+  }
+  function dataFindingPointsFor(severities, rule) {
+    if (!severities.length) return 0;
+    return Math.round(
+      worstPoints(severities, rule.dataFindingPoints) * countFactor(severities.length, rule.dataFindingScaling, rule.dataFindingMultiplier)
+    );
+  }
+  function aggregateGapPoints(points, rule) {
+    if (rule.gapAggregation === "rss") {
+      return Math.round(Math.sqrt(points.reduce((acc, p) => acc + p * p, 0)));
+    }
+    return points.reduce((acc, p) => acc + p, 0);
+  }
+  function computeAars(input, rule = DEFAULT_AARS_RULE) {
+    var _a5, _b, _c, _d;
+    let toxic = worstSeverityPoints(input.issueSeverities, rule);
+    toxic *= multiIssueFactor(input.issueSeverities.length, rule);
+    toxic = Math.min(rule.pillarACap, Math.round(toxic));
+    const compliance = Math.min(
+      rule.pillarBCap,
+      aggregateGapPoints(
+        input.gaps.map((g) => {
+          var _a6;
+          return (_a6 = g.points) != null ? _a6 : gapPointsFor(g.code, rule);
+        }),
+        rule
+      )
+    );
+    const dataTier = (_a5 = rule.dataExposurePoints[input.dataExposure]) != null ? _a5 : 0;
+    const dataFound = dataFindingPointsFor((_b = input.dataFindingSeverities) != null ? _b : [], rule);
+    const data = Math.min(rule.pillarCCap, Math.round((dataTier + dataFound) * rule.dataAmplifier));
+    const exposure = (_d = rule.exposurePoints[(_c = input.internetExposure) != null ? _c : "NONE"]) != null ? _d : 0;
+    const score2 = Math.min(AARS_MAX_SCORE, toxic + compliance + data + exposure);
+    return {
+      score: score2,
+      severity: aarsSeverity(score2, rule.bands),
+      pillars: { toxic, compliance, data, exposure }
+    };
+  }
+  function gapBreakdown(gaps, rule = DEFAULT_AARS_RULE) {
+    return gaps.map((g) => {
+      var _a5;
+      return {
+        code: g.code,
+        points: (_a5 = g.points) != null ? _a5 : gapPointsFor(g.code, rule),
+        overridden: g.points !== void 0
+      };
+    });
+  }
+
+  // src/domain/riskConditions.ts
+  function conditionState(node2, key) {
+    var _a5, _b;
+    switch (key) {
+      case "MISSING_GUARDRAIL":
+        return node2.guardrailMissing === true;
+      case "EXCESSIVE_PRIVILEGE":
+        return node2.hasAdminPrivileges === true || node2.hasHighPrivileges === true;
+      case "SENSITIVE_DATA":
+        return node2.hasSensitiveData === true || node2.hasAccessToSensitiveData === true;
+      case "INTERNET_EXPOSURE": {
+        const evidence = node2.exposureEvidence;
+        if (evidence) {
+          const hosts = (_a5 = evidence.hostIds) != null ? _a5 : [];
+          const endpoints = (_b = evidence.endpointIds) != null ? _b : [];
+          if (hosts.length > 0 || endpoints.length > 0) return true;
+        }
+        const reachable2 = node2.isAccessibleFromInternet;
+        const openToAll = node2.isOpenToAllInternet;
+        if (reachable2 === true || openToAll === true) return true;
+        const unknown = (v) => v === null || v === void 0;
+        return unknown(reachable2) || unknown(openToAll) ? null : false;
+      }
+    }
+  }
+  function conditionHolds(node2, key) {
+    return conditionState(node2, key) === true;
+  }
+
+  // src/domain/problem.ts
+  var OUTCOME_VALUES = ["ACT", "ATTEND", "TRACK_STAR", "TRACK"];
+  var EXPLOITATION_VALUES = ["ACTIVE", "SUSPECTED", "UNKNOWN"];
+  var IMPACT_VALUES = ["TOTAL", "PARTIAL"];
+  var EXPOSURE_VALUES = ["OPEN", "CONTROLLED", "UNVERIFIED"];
+  var MISSION_VALUES = ["HIGH", "MEDIUM", "LOW"];
+  function enumerateDecisionVectors() {
+    const out = [];
+    for (const exploitation of EXPLOITATION_VALUES) {
+      for (const impact of IMPACT_VALUES) {
+        for (const exposure of EXPOSURE_VALUES) {
+          for (const mission of MISSION_VALUES) {
+            out.push({ exploitation, impact, exposure, mission });
+          }
+        }
+      }
+    }
+    return out;
+  }
+  function leafKey(v) {
+    return `${v.exploitation}|${v.impact}|${v.exposure}|${v.mission}`;
+  }
+  function vectorMatches(vector, when) {
+    if (when.exploitation !== void 0 && when.exploitation !== vector.exploitation) return false;
+    if (when.impact !== void 0 && when.impact !== vector.impact) return false;
+    if (when.exposure !== void 0 && when.exposure !== vector.exposure) return false;
+    if (when.mission !== void 0 && when.mission !== vector.mission) return false;
+    return true;
+  }
+  function decideProblem(vector, rule) {
+    for (let i = 0; i < rule.outcomeRules.length; i++) {
+      const row = rule.outcomeRules[i];
+      if (vectorMatches(vector, row.when)) return { outcome: row.outcome, matchedRuleIndex: i };
+    }
+    return { outcome: rule.fallbackOutcome, matchedRuleIndex: -1 };
+  }
+  var REALIZED_OR_DEMONSTRATED = /* @__PURE__ */ new Set(["REALIZED", "DEMONSTRATED"]);
+  function exploitationOfIssue(issue2, rule) {
+    if (issue2.validatedAsExploitable === true) return { exploitation: "ACTIVE", source: "validated" };
+    const row = rule.exploitationByRuleId.find((r) => r.ruleId === issue2.ruleId);
+    if (row && REALIZED_OR_DEMONSTRATED.has(row.maturity)) {
+      return { exploitation: "SUSPECTED", source: "ruleTable" };
+    }
+    if (issue2.aiVerdict && rule.remediateVerdicts.includes(issue2.aiVerdict)) {
+      return { exploitation: "SUSPECTED", source: "aiVerdict" };
+    }
+    return { exploitation: "UNKNOWN", source: "none" };
+  }
+  function exploitationOfFinding(finding, rule) {
+    const row = rule.exploitationByRuleId.find((r) => r.ruleId === finding.ruleShortId);
+    if (row && REALIZED_OR_DEMONSTRATED.has(row.maturity)) {
+      return { exploitation: "SUSPECTED", source: "ruleTable" };
+    }
+    return { exploitation: "UNKNOWN", source: "none" };
+  }
+  function impactOf(node2, comboGroup, rule) {
+    var _a5;
+    const groupMatch = rule.totalImpactGroups.includes(comboGroup != null ? comboGroup : "");
+    const total2 = (node2 == null ? void 0 : node2.hasAdminPrivileges) === true || ((_a5 = node2 == null ? void 0 : node2.humanAccess) == null ? void 0 : _a5.admin) === true || groupMatch;
+    const unknown = (node2 == null ? void 0 : node2.hasAdminPrivileges) === void 0 && !(node2 == null ? void 0 : node2.humanAccess) && !groupMatch;
+    return { impact: total2 ? "TOTAL" : "PARTIAL", unknown };
+  }
+  function exposureOf(node2) {
+    var _a5, _b, _c, _d;
+    if (!node2) return { exposure: "UNVERIFIED", unknown: true, evidenced: false };
+    const state = conditionState(node2, "INTERNET_EXPOSURE");
+    const exposure = state === true ? "OPEN" : state === false ? "CONTROLLED" : "UNVERIFIED";
+    const evidence = node2.exposureEvidence;
+    const evidenced = !!evidence && (((_b = (_a5 = evidence.hostIds) == null ? void 0 : _a5.length) != null ? _b : 0) > 0 || ((_d = (_c = evidence.endpointIds) == null ? void 0 : _c.length) != null ? _d : 0) > 0);
+    return { exposure, unknown: state === null, evidenced };
+  }
+  function missionOf(node2, fallbackBusinessImpact, rule) {
+    var _a5;
+    const raw = (_a5 = node2 == null ? void 0 : node2.businessImpact) != null ? _a5 : fallbackBusinessImpact;
+    if (raw === "HBI") return { mission: "HIGH", unknown: false };
+    if (raw === "MBI") return { mission: "MEDIUM", unknown: false };
+    if (raw === "LBI") return { mission: "LOW", unknown: false };
+    return { mission: rule.missingMission, unknown: true };
+  }
+  function deriveProblemInput(issue2, node2, rule) {
+    const unknowns = [];
+    const { exploitation, source } = exploitationOfIssue(issue2, rule);
+    if (exploitation === "UNKNOWN") unknowns.push("exploitation");
+    const { impact, unknown: impactUnknown } = impactOf(node2, issue2.comboGroup, rule);
+    if (impactUnknown) unknowns.push("impact");
+    const { exposure, unknown: exposureUnknown, evidenced } = exposureOf(node2);
+    if (exposureUnknown) unknowns.push("exposure");
+    const { mission, unknown: missionUnknown } = missionOf(node2, issue2.businessImpact, rule);
+    if (missionUnknown) unknowns.push("mission");
+    return { vector: { exploitation, impact, exposure, mission }, unknowns, evidenced, exploitationSource: source };
+  }
+  function deriveFindingProblemInput(finding, node2, rule) {
+    const unknowns = [];
+    const { exploitation, source } = exploitationOfFinding(finding, rule);
+    if (exploitation === "UNKNOWN") unknowns.push("exploitation");
+    const { impact, unknown: impactUnknown } = impactOf(node2, void 0, rule);
+    if (impactUnknown) unknowns.push("impact");
+    const { exposure, unknown: exposureUnknown, evidenced } = exposureOf(node2);
+    if (exposureUnknown) unknowns.push("exposure");
+    const { mission, unknown: missionUnknown } = missionOf(node2, finding.businessImpact, rule);
+    if (missionUnknown) unknowns.push("mission");
+    return { vector: { exploitation, impact, exposure, mission }, unknowns, evidenced, exploitationSource: source };
+  }
+  function stripProblemFields(row) {
+    if (row.problemOutcome === void 0 && row.problemInput === void 0 && row.problemRuleVersion === void 0) {
+      return row;
+    }
+    const next = { ...row };
+    delete next.problemOutcome;
+    delete next.problemInput;
+    delete next.problemRuleVersion;
+    return next;
+  }
+  function countProblemOutcomes(rows) {
+    const counts = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0 };
+    for (const r of rows) {
+      const o = r.problemOutcome;
+      if (o && OUTCOME_VALUES.includes(o)) counts[o]++;
+    }
+    return counts;
+  }
+  var AGENTIC_ASSET_KINDS = [
+    "AI_AGENT",
+    "AI_AGENT_REGISTRY",
+    "MCP_SERVER",
+    "AI_SKILL",
+    "AI_SKILL_TEMPLATE",
+    "AI_TOOL",
+    "AI_EXTENSION",
+    "AI_GATEWAY",
+    "AI_SERVICE",
+    "AI_DEPLOYMENT"
+  ];
+  function identityFactor(node2) {
+    var _a5;
+    if (!node2) return null;
+    if (node2.hasAdminPrivileges === true) return 1;
+    const permissionCount = (_a5 = node2.humanAccess) == null ? void 0 : _a5.permissionCount;
+    if (node2.hasHighPrivileges === true || typeof permissionCount === "number" && permissionCount > 0) {
+      return 0.5;
+    }
+    if (node2.hasAdminPrivileges === false || node2.hasHighPrivileges === false || node2.humanAccess) return 0;
+    return null;
+  }
+  function contextFactor(node2) {
+    if (!node2) return null;
+    if (node2.hasSensitiveData === true || node2.hasAccessToSensitiveData === true) return 1;
+    const findingCount = node2.dataFindingCount;
+    if (typeof findingCount === "number") return findingCount > 0 ? 0.5 : 0;
+    if (node2.hasSensitiveData === false || node2.hasAccessToSensitiveData === false) return 0;
+    return null;
+  }
+  function languageFactor(node2) {
+    if (!node2) return null;
+    return AGENTIC_ASSET_KINDS.includes(node2.kind) ? 1 : null;
+  }
+  function nodeAmplificationVector(node2) {
+    return {
+      tools: null,
+      identity: identityFactor(node2),
+      persistence: null,
+      multiAgent: null,
+      context: contextFactor(node2),
+      language: languageFactor(node2)
+    };
+  }
+
+  // src/domain/problemRule.ts
+  var AXIS_KEYS = ["exploitation", "impact", "exposure", "mission"];
+  var MAX_OUTCOME_RULES = 40;
+  var MAX_EXPLOITATION_RULES = 200;
+  var MAX_VERDICTS = 20;
+  var MAX_TOTAL_IMPACT_GROUPS = 40;
+  var CODE_MAX_LEN = 128;
+  var ACT_CEILING_FLOOR = 1e-3;
+  function rec(v) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  }
+  function cleanCode(v) {
+    return String(v != null ? v : "").trim().slice(0, CODE_MAX_LEN);
+  }
+  var DEFAULT_PROBLEM_RULE = {
+    outcomeRules: [
+      { when: { exploitation: "ACTIVE", impact: "TOTAL", exposure: "OPEN" }, outcome: "ACT" },
+      { when: { exploitation: "ACTIVE", impact: "TOTAL", mission: "HIGH" }, outcome: "ACT" },
+      { when: { exploitation: "ACTIVE", exposure: "OPEN", mission: "HIGH" }, outcome: "ACT" },
+      { when: { exploitation: "ACTIVE" }, outcome: "ATTEND" },
+      { when: { impact: "TOTAL", exposure: "OPEN", mission: "HIGH" }, outcome: "ATTEND" },
+      { when: { exploitation: "SUSPECTED", exposure: "OPEN" }, outcome: "ATTEND" },
+      { when: { exposure: "UNVERIFIED" }, outcome: "TRACK_STAR" },
+      { when: { mission: "HIGH" }, outcome: "TRACK_STAR" }
+    ],
+    fallbackOutcome: "TRACK",
+    exploitationByRuleId: [],
+    remediateVerdicts: ["REMEDIATE"],
+    // wc-id-3230 (gcp-hosted-privileged) is the one combo pattern whose OWASP Agentic
+    // mapping names ASI05 (toxicCombos.ts) — Excessive Agency / remote-code-execution shape
+    // — alongside its excessive-privilege and sensitive-data conditions. That is what
+    // "grants code execution" means operationally for this axis: not merely elevated IAM,
+    // but the specific pattern whose own framework tags say RCE.
+    totalImpactGroups: ["gcp-hosted-privileged"],
+    missingMission: "MEDIUM",
+    actLeafCeiling: 0.15
+  };
+  function cleanWhen(v) {
+    const raw = rec(v);
+    const when = {};
+    if (EXPLOITATION_VALUES.includes(raw["exploitation"])) {
+      when.exploitation = raw["exploitation"];
+    }
+    if (IMPACT_VALUES.includes(raw["impact"])) {
+      when.impact = raw["impact"];
+    }
+    if (EXPOSURE_VALUES.includes(raw["exposure"])) {
+      when.exposure = raw["exposure"];
+    }
+    if (MISSION_VALUES.includes(raw["mission"])) {
+      when.mission = raw["mission"];
+    }
+    return when;
+  }
+  function cleanOutcome(v, fallback) {
+    return OUTCOME_VALUES.includes(v) ? v : fallback;
+  }
+  function cleanOutcomeRule(v, fallback) {
+    const raw = rec(v);
+    return { when: cleanWhen(raw["when"]), outcome: cleanOutcome(raw["outcome"], fallback) };
+  }
+  function cleanExploitationRuleRow(v) {
+    const raw = rec(v);
+    const ruleId = cleanCode(raw["ruleId"]);
+    if (!ruleId) return null;
+    const maturityRaw = raw["maturity"];
+    const maturity = maturityRaw === "REALIZED" || maturityRaw === "DEMONSTRATED" || maturityRaw === "FEASIBLE" ? maturityRaw : "FEASIBLE";
+    return { ruleId, maturity };
+  }
+  function cleanCodeList(v, fallback, max) {
+    if (!Array.isArray(v)) return [...fallback];
+    const out = [];
+    for (const item of v) {
+      const c = cleanCode(item);
+      if (c) out.push(c);
+      if (out.length >= max) break;
+    }
+    return out;
+  }
+  function cleanProblemRule(raw) {
+    const r = rec(raw);
+    const fallbackOutcome = cleanOutcome(r["fallbackOutcome"], DEFAULT_PROBLEM_RULE.fallbackOutcome);
+    const rowsRaw = Array.isArray(r["outcomeRules"]) ? r["outcomeRules"] : null;
+    const outcomeRules = rowsRaw ? rowsRaw.slice(0, MAX_OUTCOME_RULES).map((row) => cleanOutcomeRule(row, fallbackOutcome)) : DEFAULT_PROBLEM_RULE.outcomeRules.map((row) => ({ when: { ...row.when }, outcome: row.outcome }));
+    const exploitationRaw = Array.isArray(r["exploitationByRuleId"]) ? r["exploitationByRuleId"] : null;
+    const exploitationByRuleId = exploitationRaw ? exploitationRaw.slice(0, MAX_EXPLOITATION_RULES).map(cleanExploitationRuleRow).filter((row) => row !== null) : DEFAULT_PROBLEM_RULE.exploitationByRuleId.map((row) => ({ ...row }));
+    const remediateVerdicts = cleanCodeList(
+      r["remediateVerdicts"],
+      DEFAULT_PROBLEM_RULE.remediateVerdicts,
+      MAX_VERDICTS
+    );
+    const totalImpactGroups = cleanCodeList(
+      r["totalImpactGroups"],
+      DEFAULT_PROBLEM_RULE.totalImpactGroups,
+      MAX_TOTAL_IMPACT_GROUPS
+    );
+    const missingMission = MISSION_VALUES.includes(r["missingMission"]) ? r["missingMission"] : DEFAULT_PROBLEM_RULE.missingMission;
+    const ceilingRaw = Number(r["actLeafCeiling"]);
+    const actLeafCeiling = Number.isFinite(ceilingRaw) ? Math.min(1, Math.max(ACT_CEILING_FLOOR, ceilingRaw)) : DEFAULT_PROBLEM_RULE.actLeafCeiling;
+    return {
+      outcomeRules,
+      fallbackOutcome,
+      exploitationByRuleId,
+      remediateVerdicts,
+      totalImpactGroups,
+      missingMission,
+      actLeafCeiling
+    };
+  }
+  function pct(share) {
+    return `${(share * 100).toFixed(1)}%`;
+  }
+  function validateProblemRule(rule) {
+    const errors = [];
+    if (!rule.outcomeRules.length) {
+      errors.push(
+        "The outcome cascade has no rules; every vector would route to the fallback outcome. Add a rule or accept the fallback deliberately."
+      );
+    }
+    if (rule.outcomeRules.length > MAX_OUTCOME_RULES) {
+      errors.push(`The outcome cascade is limited to ${MAX_OUTCOME_RULES} rules.`);
+    }
+    rule.outcomeRules.forEach((row, i) => {
+      const isEmpty = AXIS_KEYS.every((k) => row.when[k] === void 0);
+      if (isEmpty && i !== rule.outcomeRules.length - 1) {
+        errors.push(
+          `Outcome rule ${i + 1} has no conditions, so it matches every remaining vector and swallows every rule after it. Move it last or give it a condition.`
+        );
+      }
+    });
+    const seen = /* @__PURE__ */ new Map();
+    rule.outcomeRules.forEach((row, i) => {
+      const isEmpty = AXIS_KEYS.every((k) => row.when[k] === void 0);
+      if (isEmpty) return;
+      const key = AXIS_KEYS.filter((k) => row.when[k] !== void 0).map((k) => `${k}:${row.when[k]}`).join("|");
+      const earlier = seen.get(key);
+      if (earlier !== void 0) {
+        errors.push(`Outcome rule ${i + 1} repeats the same condition as rule ${earlier + 1}.`);
+      } else {
+        seen.set(key, i);
+      }
+    });
+    const coverage = leafCoverage(rule);
+    const actShare = coverage.total ? coverage.byOutcome.ACT / coverage.total : 0;
+    if (actShare > rule.actLeafCeiling) {
+      errors.push(
+        `This rule sends ${coverage.byOutcome.ACT} of ${coverage.total} leaves to ACT (${pct(actShare)}) \u2014 above the ${pct(rule.actLeafCeiling)} ceiling.`
+      );
+    }
+    return errors;
+  }
+  function shadowedOutcomeRules(rule) {
+    const leaves = enumerateDecisionVectors();
+    const dead = [];
+    rule.outcomeRules.forEach((row, i) => {
+      const rowLeaves = leaves.filter((v) => vectorMatches(v, row.when));
+      if (!rowLeaves.length) return;
+      const allClaimedEarlier = rowLeaves.every(
+        (v) => rule.outcomeRules.slice(0, i).some((earlier) => vectorMatches(v, earlier.when))
+      );
+      if (allClaimedEarlier) dead.push(i);
+    });
+    return dead;
+  }
+  function leafCoverage(rule) {
+    const leaves = enumerateDecisionVectors();
+    const byRow = rule.outcomeRules.map(() => 0);
+    const byOutcome = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0 };
+    let byFallback = 0;
+    for (const v of leaves) {
+      const { outcome, matchedRuleIndex } = decideProblem(v, rule);
+      if (matchedRuleIndex === -1) byFallback++;
+      else byRow[matchedRuleIndex] += 1;
+      byOutcome[outcome]++;
+    }
+    return { total: leaves.length, byRow, byFallback, byOutcome };
+  }
+  function treeDiscrimination(decided) {
+    var _a5;
+    const outcomeOccupancy = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0 };
+    const leafOccupancy = {};
+    const unknownCounts = {
+      exploitation: 0,
+      impact: 0,
+      exposure: 0,
+      mission: 0
+    };
+    for (const d of decided) {
+      outcomeOccupancy[d.outcome]++;
+      const key = leafKey(d.vector);
+      leafOccupancy[key] = ((_a5 = leafOccupancy[key]) != null ? _a5 : 0) + 1;
+      for (const u of d.unknowns) {
+        if (u === "exploitation" || u === "impact" || u === "exposure" || u === "mission") {
+          unknownCounts[u]++;
+        }
+      }
+    }
+    const n = decided.length;
+    const rate = (count2) => n ? count2 / n : 0;
+    return {
+      decided,
+      outcomeOccupancy,
+      leavesReached: Object.keys(leafOccupancy).length,
+      leafOccupancy,
+      unknownRate: {
+        exploitation: rate(unknownCounts.exploitation),
+        impact: rate(unknownCounts.impact),
+        exposure: rate(unknownCounts.exposure),
+        mission: rate(unknownCounts.mission)
+      }
+    };
+  }
+  function problemRuleSummary(rule) {
+    const coverage = leafCoverage(rule);
+    const actShare = coverage.total ? coverage.byOutcome.ACT / coverage.total : 0;
+    return [
+      `${rule.outcomeRules.length} outcome rules are tried in order, first match wins; a vector matching none of them falls back to ${rule.fallbackOutcome}.`,
+      `ACT claims ${coverage.byOutcome.ACT} of ${coverage.total} leaves (${pct(actShare)}), against a ceiling of ${pct(rule.actLeafCeiling)}.`,
+      `Exploitation reaches ACTIVE only from Wiz's own validated-exploitable flag. It reaches SUSPECTED from ${rule.exploitationByRuleId.length} rule-table row(s) at REALIZED or DEMONSTRATED maturity, or from an AI verdict of ${rule.remediateVerdicts.length ? rule.remediateVerdicts.join("/") : "(none configured)"} \u2014 never both the way to ACTIVE.`,
+      `Technical impact reads TOTAL from admin privileges, admin-level human access, or membership in ${rule.totalImpactGroups.length ? rule.totalImpactGroups.join(", ") : "(no configured groups)"}; otherwise PARTIAL.`,
+      `A missing business-impact tier reads as ${rule.missingMission}, never LOW.`
+    ];
+  }
+  function vectorSignature(rule) {
+    const exploitation = rule.exploitationByRuleId.map((r) => `${r.ruleId}:${r.maturity}`).join(",");
+    return [
+      `exploitationByRuleId:${exploitation}`,
+      `remediateVerdicts:${rule.remediateVerdicts.join(",")}`,
+      `totalImpactGroups:${rule.totalImpactGroups.join(",")}`,
+      `missingMission:${rule.missingMission}`
+    ].join("|");
+  }
+  function decisionEqual(a, b) {
+    const withoutCeiling = (r) => {
+      const c = cleanProblemRule(r);
+      delete c.actLeafCeiling;
+      return JSON.stringify(c);
+    };
+    return withoutCeiling(a) === withoutCeiling(b);
+  }
+
+  // src/domain/posture.ts
+  var CAPABILITY_VALUES = ["BROAD", "SCOPED", "MINIMAL"];
+  var CONTAINMENT_VALUES = ["WEAK", "PARTIAL", "STRONG"];
+  var CONSEQUENCE_VALUES = ["SEVERE", "MODERATE", "LIMITED"];
+  var TIER_VALUES = [1, 2, 3, 4];
+  function enumeratePostureVectors() {
+    const out = [];
+    for (const capability of CAPABILITY_VALUES) {
+      for (const containment of CONTAINMENT_VALUES) {
+        for (const consequence of CONSEQUENCE_VALUES) {
+          out.push({ capability, containment, consequence });
+        }
+      }
+    }
+    return out;
+  }
+  function postureKey(v) {
+    return `${v.capability}|${v.containment}|${v.consequence}`;
+  }
+  function postureVectorMatches(vector, when) {
+    if (when.capability !== void 0 && when.capability !== vector.capability) return false;
+    if (when.containment !== void 0 && when.containment !== vector.containment) return false;
+    if (when.consequence !== void 0 && when.consequence !== vector.consequence) return false;
+    if (when.privateData !== void 0 && when.privateData !== vector.privateData) return false;
+    if (when.untrustedIngress !== void 0 && when.untrustedIngress !== vector.untrustedIngress) return false;
+    if (when.externalEgress !== void 0 && when.externalEgress !== vector.externalEgress) return false;
+    return true;
+  }
+  function tierEstablished(unknowns) {
+    return unknowns.length === 0;
+  }
+  function decidePosture(vector, rule) {
+    for (let i = 0; i < rule.tierRules.length; i++) {
+      const row = rule.tierRules[i];
+      if (postureVectorMatches(vector, row.when)) return { tier: row.tier, matchedRuleIndex: i };
+    }
+    return { tier: rule.fallbackTier, matchedRuleIndex: -1 };
+  }
+  function capabilityOf(node2) {
+    var _a5;
+    const admin = node2 == null ? void 0 : node2.hasAdminPrivileges;
+    const highPriv = node2 == null ? void 0 : node2.hasHighPrivileges;
+    const sensitiveAccess = node2 == null ? void 0 : node2.hasAccessToSensitiveData;
+    const humanAdmin = (_a5 = node2 == null ? void 0 : node2.humanAccess) == null ? void 0 : _a5.admin;
+    const broad = admin === true || humanAdmin === true || highPriv === true && sensitiveAccess === true;
+    const scoped = highPriv === true || sensitiveAccess === true;
+    const capability = broad ? "BROAD" : scoped ? "SCOPED" : "MINIMAL";
+    const unknown = admin === void 0 && highPriv === void 0 && sensitiveAccess === void 0 && !(node2 == null ? void 0 : node2.humanAccess);
+    return { capability, unknown };
+  }
+  function containmentOf(node2) {
+    const missing = node2 == null ? void 0 : node2.guardrailMissing;
+    if (missing === true) return { containment: "WEAK", unknown: false };
+    const notExposed = node2 !== void 0 && conditionState(node2, "INTERNET_EXPOSURE") === false;
+    const confirmedContained = missing === false && notExposed;
+    return { containment: confirmedContained ? "STRONG" : "PARTIAL", unknown: missing === void 0 };
+  }
+  function consequenceOf(node2) {
+    var _a5, _b, _c;
+    const businessImpact = node2 == null ? void 0 : node2.businessImpact;
+    const severities = (_a5 = node2 == null ? void 0 : node2.dataFindingSeverities) != null ? _a5 : {};
+    const worstCritical = ((_b = severities["CRITICAL"]) != null ? _b : 0) > 0;
+    const anyFinding = ((_c = node2 == null ? void 0 : node2.dataFindingCount) != null ? _c : 0) > 0 || Object.values(severities).some((c) => c > 0);
+    const severe = businessImpact === "HBI" || worstCritical;
+    const moderate = businessImpact === "MBI" || anyFinding;
+    const consequence = severe ? "SEVERE" : moderate ? "MODERATE" : "LIMITED";
+    const unknown = businessImpact === void 0 && (node2 == null ? void 0 : node2.dataFindingCount) === void 0;
+    return { consequence, unknown };
+  }
+  function derivePostureInput(node2, rule) {
+    const unknowns = [];
+    const { capability, unknown: capabilityUnknown } = capabilityOf(node2);
+    if (capabilityUnknown) unknowns.push("capability");
+    const { containment, unknown: containmentUnknown } = containmentOf(node2);
+    if (containmentUnknown) unknowns.push("containment");
+    const { consequence, unknown: consequenceUnknown } = consequenceOf(node2);
+    if (consequenceUnknown) unknowns.push("consequence");
+    return { vector: { capability, containment, consequence }, unknowns };
+  }
+  function countPostureTiers(nodes) {
+    const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    for (const n of nodes) {
+      const t = n.postureTier;
+      if (t === 1 || t === 2 || t === 3 || t === 4) counts[t]++;
+    }
+    return counts;
+  }
+  function worstOpenProblem(outcomes) {
+    let worstIndex = -1;
+    let worst;
+    for (const o of outcomes) {
+      const idx = OUTCOME_VALUES.indexOf(o);
+      if (idx === -1) continue;
+      if (worstIndex === -1 || idx < worstIndex) {
+        worstIndex = idx;
+        worst = o;
+      }
+    }
+    return worst;
+  }
+
   // src/domain/graphEnrich.ts
   function worstSeverity(severities) {
     let worst;
@@ -4569,64 +4584,1871 @@ var Server = (() => {
     });
   }
 
-  // src/domain/aarsTrend.ts
-  function countAarsSeverities(nodes) {
-    const counts = {};
-    for (const sev of AARS_SEVERITY_ORDER) counts[sev] = 0;
-    for (const n of nodes) {
-      const sev = normalizeAarsSeverity(n.aarsSeverity);
-      if (sev) counts[sev] += 1;
+  // src/domain/identityHygiene.ts
+  var HYGIENE_SUBJECT = "USER_ACCOUNT";
+  var MATCHERS = [
+    // "multi-factor authentication (MFA)" and bare "MFA enabled" both appear in the catalogue.
+    { kind: "MFA", test: /multi-factor|\bMFA\b/i },
+    // "should not be inactive for more than 90 days" and "should have recent login activity".
+    // Deliberately NOT a bare /inactive/ — "Uninstalled Connected App should not be inactive"
+    // is a SERVICE_ACCOUNT rule about an app, and the subject guard below already excludes it,
+    // but the phrase is specific enough not to lean on that alone.
+    { kind: "DORMANT", test: /inactive for more than|recent login activity/i }
+  ];
+  function hygieneKindOf(rule) {
+    if (rule.subjectEntityType !== HYGIENE_SUBJECT) return null;
+    for (const m of MATCHERS) {
+      if (m.test.test(rule.name)) return m.kind;
     }
-    return counts;
+    return null;
   }
-  function parseCounts(v, keys) {
-    if (typeof v !== "string" || !v) return null;
-    let parsed;
-    try {
-      parsed = JSON.parse(v);
-    } catch {
-      return null;
+  function resolveHygieneRules(catalogue) {
+    const byId = {};
+    const ids = [];
+    const shortIds = [];
+    for (const rule of catalogue) {
+      const kind = hygieneKindOf(rule);
+      if (!kind || !rule.id) continue;
+      byId[rule.id] = kind;
+      ids.push(rule.id);
+      if (rule.shortId) shortIds.push(rule.shortId);
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const raw = parsed;
-    const counts = {};
-    for (const k of keys) {
-      const n = Number(raw[k]);
-      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
-    }
-    return counts;
+    return { byId, ids, shortIds };
   }
-  function trendFromHistory(rows, spec, limit = 90) {
+
+  // src/domain/scanVars.ts
+  var MAX_LIST_VALUES = 40;
+  var MAX_VALUE_LEN = 120;
+  var ISSUE_STATUSES = ["OPEN", "IN_PROGRESS", "RESOLVED", "REJECTED"];
+  var ORDER_DIRECTIONS = ["ASC", "DESC"];
+  var STEP_VAR_SPECS = [
+    {
+      stepId: "INVENTORY_AI",
+      fields: [
+        {
+          path: "filterBy.type.equals",
+          label: "Resource types",
+          help: "The Wiz resource types treated as AI assets. Resolved against this tenant's schema by default; setting them here pins the list instead.",
+          kind: "list",
+          required: true
+        }
+      ]
+    },
+    {
+      stepId: "ISSUES_TOXIC",
+      fields: [
+        {
+          path: "filterBy.status",
+          label: "Issue status",
+          help: "Which issue states to collect. Narrowing to OPEN drops in-progress work from the register and from AARS pillar A.",
+          kind: "list",
+          options: ISSUE_STATUSES,
+          required: true
+        },
+        {
+          path: "filterBy.type",
+          label: "Issue types",
+          // Optional, and empty is the default: the sync sends no type filter at all, so
+          // the category decides what is collected and Wiz's taxonomy does not. Marking it
+          // required would be incoherent now — an empty list and an absent one both mean
+          // "every type", and only one of them would be rejected.
+          help: "Empty (the default) collects every issue type in the AI risk category \u2014 including kinds this register has never modelled, which land in Other AI risk. Naming types here NARROWS that: each one left out disappears from the register total and from AARS pillar A with nothing on the page to mark its absence. Pinning TOXIC_COMBINATION and CLOUD_CONFIGURATION is what once hid every threat detection in the category.",
+          kind: "list",
+          options: ["TOXIC_COMBINATION", "CLOUD_CONFIGURATION", "THREAT_DETECTION"]
+        },
+        {
+          path: "filterBy.project",
+          label: "Project scope",
+          help: "Wiz project ids to restrict to. Empty means the whole tenant.",
+          kind: "list"
+        },
+        {
+          path: "orderBy.direction",
+          label: "Order direction",
+          help: "Which end of the severity order the paging walks first.",
+          kind: "enum",
+          options: ORDER_DIRECTIONS
+        }
+      ],
+      // Deliberately NOT offering filterBy.frameworkCategory. Every figure this app
+      // publishes — the issue count, AARS pillar A, the Toxic Combinations page, the tab
+      // literally called ai_issues — is scoped to wct-id-1998 and labelled AI. Nothing in
+      // the response says "this is an AI issue"; the category filter IS the claim. Widen it
+      // and "AI issues" silently means "all issues", with no field to catch it. Same reason
+      // AGENTIC_IDENTITIES locks its purpose filter.
+      locked: "The AI risk category (wct-id-1998) is fixed: it is what makes these issues AI issues, so widening it would relabel the whole register rather than extend it."
+    },
+    {
+      stepId: "AI_ASSET_PROPERTIES",
+      fields: [],
+      // The step exists only to fetch the properties bag for the SAME assets INVENTORY_AI
+      // already collected. Its type filter is not a knob: narrow it and some assets silently
+      // lose their publisher while others keep theirs, which looks like missing data rather
+      // than a setting. Widen it and the bag arrives for resources this app does not model.
+      locked: "This step mirrors the AI inventory's own type list \u2014 it exists to add two fields to assets already collected, so filtering it separately could only make the two disagree about which assets exist."
+    },
+    {
+      stepId: "CONFIG_FINDINGS",
+      fields: [
+        {
+          path: "filterBy.status",
+          label: "Finding status",
+          help: "Compliance findings are additionally filtered to result FAIL after they arrive, so widening this collects more rows but stores only failures.",
+          kind: "list",
+          options: ["OPEN", "RESOLVED", "REJECTED"],
+          required: true
+        },
+        {
+          path: "orderBy.direction",
+          label: "Order direction",
+          help: "Which end of the severity order the paging walks first.",
+          kind: "enum",
+          options: ORDER_DIRECTIONS
+        }
+      ]
+    },
+    {
+      stepId: "AGENTIC_IDENTITIES",
+      fields: [
+        {
+          path: "filterBy.type.equals",
+          label: "Identity types",
+          help: "Which principal types to collect.",
+          kind: "list",
+          required: true
+        }
+      ],
+      // Still NOT offering filterBy.identityPurpose, but the reason has narrowed. Wiz DOES
+      // return the purpose — `IdentityPurposeAgentic`, in the graph entity's properties bag —
+      // and Q_PRINCIPALS now selects that bag, so a collected row normally carries its own
+      // label. The stamp survives as the fallback for a tenant whose schema rejects
+      // `graphEntity`, and that fallback is what a widened filter would turn into a mislabel:
+      // every row it collected would come back stamped AGENTIC with nothing to catch it.
+      locked: "The agentic-purpose filter is fixed: where the tenant does not return an identity's own purpose the sync falls back to labelling what this query returns as agentic, so widening it would mislabel exactly the identities it could not verify."
+    },
+    {
+      stepId: "SENSITIVE_DATA_ACCESS",
+      // No fields at all, so isEditableStep is false and the panel offers no control. Stated
+      // here rather than left to fall through, because "nothing to edit" and "editing this
+      // would be unsafe" are different facts and only the second one needs saying.
+      fields: [],
+      locked: "This step has no editable filter: normalizeSensitiveDataAccessPage rebuilds the chain's edges from which entity TYPES a row carries, so a changed selection set would yield confidently wrong edges rather than an error."
+    },
+    {
+      stepId: "CONFIG_RULES",
+      fields: [],
+      locked: "This step takes no variables at all: it walks Wiz's whole rule catalogue unfiltered, deliberately \u2014 the filter input's type is unverified here, and naming an input type wrong fails the document while sending none cannot."
+    },
+    {
+      stepId: "IDENTITY_HYGIENE",
+      // The rule list looks like the obvious knob and is the one thing that must not be one:
+      // it is not a preference, it is the resolution of a name match over the synced catalogue,
+      // and normalizeIdentityFindingsPage refuses any row whose rule is not in it. An operator
+      // who pasted an extra id would get the whole step aborted as an unhonoured filter.
+      fields: [],
+      locked: "This step's rule list is resolved from the synced rule catalogue by name, not chosen: the normalizer refuses any finding whose rule is not in that resolved set, so an edited list would abort the step rather than widen it."
+    },
+    {
+      stepId: "EFFECTIVE_ACCESS",
+      // `accessTypes: [DATA]` is the knob it appears to have. Withheld because the area's prose
+      // says "can reach the asset's data" — widening the filter would change what the figure
+      // means with nothing on the page to say so, which is the failure the whole Scans page is
+      // built to prevent.
+      fields: [],
+      locked: "This step has no editable filter: its access-type list is what the area's own figure claims to count, so widening it here would change what the number means without changing what the page says it means."
+    },
+    {
+      stepId: "IDENTITY_ACCESS",
+      // Its traversal is a $query variable now, so in principle the access-level list is a
+      // path an override could reach. Withheld for the reason ENDPOINT_EXPOSURE's is: those two
+      // values also live in HUMAN_ACCESS_TYPES (domain/identityQuery.ts), which is what
+      // withHumanAccess and withIdentityAccessNodes judge an edge by. Widening the filter would
+      // collect READ bindings the figure then refuses to count.
+      fields: [],
+      locked: "This step has no editable filter: the ADMIN / HIGH_PRIVILEGE bar is applied again when the reach is totalled and drawn, so widening it here would collect bindings that never reach a number."
+    },
+    {
+      stepId: "HOST_EXPOSURE",
+      fields: [],
+      locked: "This step has no editable filter: normalizeHostExposurePage rebuilds the HOSTED_ON and SERVES edges from which entity TYPES a row carries, and its whole claim is `accessibleFrom.internet` on the compute \u2014 widen that and the step reports unreachable hosts as reachable ones."
+    },
+    {
+      stepId: "ENDPOINT_EXPOSURE",
+      // No knob, and the exposure-level list is exactly the knob it looks like it should have.
+      // It is withheld because the same two values appear in a SECOND place: RATED_EXPOSURE_LEVELS
+      // in domain/exposureQuery.ts, which is what withExposureEvidence tests the returned level
+      // against. That double reading is deliberate — ENDPOINT rows also arrive from
+      // HOST_EXPOSURE, unfiltered and (in the capture) rated Low, so the bar has to be applied
+      // to the payload rather than assumed from the query. An operator who widened the filter
+      // here would collect Low-rated endpoints as graph nodes and see the exposure figure not
+      // move, which is a worse answer than no knob at all.
+      fields: [],
+      locked: "This step has no editable filter: the High/Medium bar is also applied to the endpoints the host-exposure step returns unfiltered, so moving it here would widen what is collected without moving what counts as an exposure."
+    },
+    {
+      stepId: "FRAMEWORKS_LIST",
+      // Declared with no fields rather than left out of this list entirely: an absent spec
+      // renders as the generic "no spec" fallback, which reads as an oversight, and someone
+      // will eventually "fix" it. Its only variable is a boolean, and the panel's controls
+      // are list/enum — a third field kind bought for one flag that changes nothing about
+      // what is collected is not worth the machinery.
+      fields: [],
+      locked: "This step's only filter picks whether disabled frameworks appear in the Settings picker. It does not decide what posture is collected \u2014 the framework selection does \u2014 so there is nothing here worth tuning per tenant."
+    },
+    {
+      // Matches every generated posture step (COMPLIANCE_POSTURE_wf-id-275, …) so the family
+      // shares one lock reason instead of falling through to the generic "no spec" text.
+      stepId: "COMPLIANCE_POSTURE_",
+      prefix: true,
+      fields: [],
+      locked: "This step takes no editable variable: its `id` is not a filter \u2014 it selects WHICH framework is fetched, so editing it here would make a step whose name says one framework report another. Choose frameworks in Settings instead."
+    }
+  ];
+  var SPEC_BY_STEP = {};
+  for (const spec of STEP_VAR_SPECS) SPEC_BY_STEP[spec.stepId] = spec;
+  function varSpecFor(stepId) {
+    const exact = SPEC_BY_STEP[stepId];
+    if (exact) return exact;
+    for (const spec of STEP_VAR_SPECS) {
+      if (spec.prefix && stepId.indexOf(spec.stepId) === 0) return spec;
+    }
+    return null;
+  }
+  function isEditableStep(stepId) {
+    const spec = varSpecFor(stepId);
+    return !!spec && spec.fields.length > 0;
+  }
+  function readPath(obj, path) {
+    let cur = obj;
+    for (const key of path.split(".")) {
+      if (!cur || typeof cur !== "object") return void 0;
+      cur = cur[key];
+    }
+    return cur;
+  }
+  function writePath(obj, path, value) {
+    const keys = path.split(".");
+    let cur = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+      const key = keys[i];
+      const next = cur[key];
+      if (!next || typeof next !== "object" || Array.isArray(next)) cur[key] = {};
+      cur = cur[keys[i]];
+    }
+    cur[keys[keys.length - 1]] = value;
+  }
+  function cleanValue(v) {
+    return String(v != null ? v : "").trim().slice(0, MAX_VALUE_LEN);
+  }
+  function cleanList(v) {
+    if (!Array.isArray(v)) return [];
+    const out = [];
+    for (const raw of v) {
+      const s = cleanValue(raw);
+      if (s && out.indexOf(s) < 0) out.push(s);
+      if (out.length >= MAX_LIST_VALUES) break;
+    }
+    return out;
+  }
+  function cleanStepVars(stepId, raw) {
+    const spec = varSpecFor(stepId);
+    if (!spec || !raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const out = {};
+    let touched = false;
+    for (const field of spec.fields) {
+      const value = readPath(raw, field.path);
+      if (value === void 0 || value === null) continue;
+      if (field.kind === "list") {
+        const list2 = cleanList(value);
+        writePath(out, field.path, list2);
+        touched = true;
+      } else {
+        const s = cleanValue(value).toUpperCase();
+        if (!s) continue;
+        if (field.options && field.options.indexOf(s) < 0) continue;
+        writePath(out, field.path, s);
+        touched = true;
+      }
+    }
+    return touched ? out : null;
+  }
+  function validateStepVars(stepId, vars) {
+    const spec = varSpecFor(stepId);
+    if (!spec) return [`${stepId} does not take editable variables.`];
+    if (!vars) return [];
+    const errors = [];
+    for (const field of spec.fields) {
+      const value = readPath(vars, field.path);
+      if (value === void 0) continue;
+      if (field.kind === "list") {
+        const list2 = Array.isArray(value) ? value : [];
+        if (field.required && !list2.length) {
+          errors.push(
+            `${field.label} cannot be empty \u2014 an empty filter asks Wiz for everything, which is not what this step normalizes.`
+          );
+        }
+        if (list2.length >= MAX_LIST_VALUES) {
+          errors.push(`${field.label} is capped at ${MAX_LIST_VALUES} values.`);
+        }
+      }
+    }
+    return errors;
+  }
+  function effectiveStepVars(stepId, base, override) {
+    const clean2 = cleanStepVars(stepId, override);
+    if (!clean2) return base;
+    const spec = varSpecFor(stepId);
+    const merged = JSON.parse(JSON.stringify(base != null ? base : {}));
+    for (const field of spec ? spec.fields : []) {
+      const value = readPath(clean2, field.path);
+      if (value === void 0) continue;
+      writePath(merged, field.path, value);
+    }
+    return merged;
+  }
+  function changedPaths(stepId, base, override) {
+    const clean2 = cleanStepVars(stepId, override);
+    if (!clean2) return [];
+    const spec = varSpecFor(stepId);
+    const out = [];
+    for (const field of spec ? spec.fields : []) {
+      const next = readPath(clean2, field.path);
+      if (next === void 0) continue;
+      if (JSON.stringify(next) !== JSON.stringify(readPath(base, field.path))) out.push(field.path);
+    }
+    return out;
+  }
+
+  // src/server/jobsStore.ts
+  var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
+  function normError(v) {
+    const s = v == null ? "" : String(v).trim();
+    return s === "" || s === "null" || s === "undefined" ? null : s;
+  }
+  function newJobId(kind, now) {
+    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
+  }
+  function createJob(row, now) {
+    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
+    appendRows(TABS.jobs, [full]);
+    setProp(ACTIVE_JOB_PROP, full.job_id);
+    return full;
+  }
+  function updateJob(jobId, patch, now) {
+    updateWhere(TABS.jobs, "job_id", jobId, {
+      ...patch,
+      updated_at: nowIso(now)
+    });
+    if (patch.phase && TERMINAL.includes(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
+  }
+  function listJobs() {
+    return readAll(TABS.jobs).map((r) => {
+      var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+      return {
+        job_id: String((_a5 = r["job_id"]) != null ? _a5 : ""),
+        kind: (_b = r["kind"]) != null ? _b : "sync",
+        phase: (_c = r["phase"]) != null ? _c : "FAILED",
+        sync_id: (_d = r["sync_id"]) != null ? _d : null,
+        step_index: Number((_e = r["step_index"]) != null ? _e : 0),
+        cursor: (_f = r["cursor"]) != null ? _f : null,
+        page: Number((_g = r["page"]) != null ? _g : 0),
+        nodes_so_far: Number((_h = r["nodes_so_far"]) != null ? _h : 0),
+        total_count: Number((_i = r["total_count"]) != null ? _i : 0),
+        part_refs_json: (_j = r["part_refs_json"]) != null ? _j : null,
+        params_json: (_k = r["params_json"]) != null ? _k : null,
+        error: normError(r["error"]),
+        started_at: String((_l = r["started_at"]) != null ? _l : ""),
+        updated_at: String((_m = r["updated_at"]) != null ? _m : "")
+      };
+    });
+  }
+  function getJob(jobId) {
     var _a5;
-    const points = [];
-    for (const r of rows) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const counts = parseCounts(r[spec.countsColumn], spec.keys);
-      if (!counts) continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      if (!at) continue;
-      const v = Number(r[spec.versionColumn]);
-      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
-      points.push({ at, counts, ruleVersion });
-    }
-    points.sort(cmpBy((p) => p.at));
-    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+    return (_a5 = listJobs().find((j) => j.job_id === jobId)) != null ? _a5 : null;
   }
-  var AARS_SEVERITY_SPEC = {
-    keys: AARS_SEVERITY_ORDER,
-    countsColumn: "aars_severity_json",
-    versionColumn: "aars_rule_version"
+  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
+  function activeJob() {
+    var _a5;
+    if (!getProp(ACTIVE_JOB_PROP)) return null;
+    const job = (_a5 = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a5 : null;
+    if (!job) deleteProp(ACTIVE_JOB_PROP);
+    return job;
+  }
+
+  // src/server/locks.ts
+  var LedgerBusyError = class extends Error {
   };
-  function aarsTrendFromHistory(rows, limit = 90) {
-    return trendFromHistory(rows, AARS_SEVERITY_SPEC, limit);
-  }
-  function ruleChangePoints(points) {
-    const marks = [];
-    for (let i = 1; i < points.length; i++) {
-      if (points[i].ruleVersion !== points[i - 1].ruleVersion) marks.push(i);
+  var DEAD_JOB_MS = 30 * 60 * 1e3;
+  function withScriptLock(fn, timeoutMs = 3e4) {
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(timeoutMs)) {
+      throw new LedgerBusyError(
+        "The data store is busy (a sync is writing). Try again shortly."
+      );
     }
-    return marks;
+    try {
+      return fn();
+    } finally {
+      lock.releaseLock();
+    }
   }
+  function recoverIfNeeded(now) {
+    const job = activeJob();
+    if (!job) return;
+    const updated = parseTs(job.updated_at);
+    const ageMs = updated === null ? Infinity : (now != null ? now : Date.now()) - updated;
+    if (job.phase === "PERSISTING" || ageMs > DEAD_JOB_MS) {
+      updateJob(job.job_id, {
+        phase: "FAILED",
+        error: "Recovered: execution died mid-sync; the last committed snapshot is unchanged."
+      });
+    }
+  }
+
+  // src/server/sampleData.ts
+  var T0 = "2026-04-02T08:00:00Z";
+  var T1 = "2026-06-28T05:00:00Z";
+  function node(seed) {
+    var _a5, _b, _c, _d, _e, _f, _g;
+    return {
+      id: seed.id,
+      kind: seed.kind,
+      name: seed.name,
+      nativeType: seed.nativeType,
+      cloudPlatform: seed.cloud,
+      // The cloud tags. Only some seeds carry them, and the ones that do carry DIFFERENT sets —
+      // a dry run has to be able to tell "contains any" from "contains all", and it cannot if
+      // every node is tagged the same way or none is tagged at all.
+      tags: seed.tags,
+      region: seed.region,
+      status: (_a5 = seed.status) != null ? _a5 : "Active",
+      firstSeen: T0,
+      lastSeen: T1,
+      isAccessibleFromInternet: seed.internet === void 0 ? false : seed.internet,
+      isOpenToAllInternet: seed.openInternet === void 0 ? false : seed.openInternet,
+      hasSensitiveData: (_b = seed.sensitiveData) != null ? _b : false,
+      hasAccessToSensitiveData: (_c = seed.sensitiveAccess) != null ? _c : false,
+      hasHighPrivileges: (_d = seed.highPriv) != null ? _d : false,
+      hasAdminPrivileges: (_e = seed.adminPriv) != null ? _e : false,
+      guardrailMissing: (_f = seed.guardrailMissing) != null ? _f : false,
+      cloudAccount: seed.account ? { id: seed.account.id, name: seed.account.name } : void 0,
+      // `businessImpact` is spread onto every project entry rather than left off, so
+      // `worstBusinessImpact` (syncNormalize.ts) — which `enrichGraphDoc` calls on every
+      // enrich pass, exactly as a live sync would — has something real to fold into
+      // `GNode.businessImpact`. Omitted entirely (never `businessImpact: undefined`) when the
+      // seed itself carries none, matching the "absent key, not an undefined one" discipline
+      // `tags` and `exposureEvidence` already keep on this same object.
+      projects: ((_g = seed.projects) != null ? _g : []).map((name) => ({
+        id: `proj-${name.toLowerCase()}`,
+        name,
+        ...seed.businessImpact ? { businessImpact: seed.businessImpact } : {}
+      })),
+      technologyCategories: seed.techCats,
+      identityPurpose: seed.identityPurpose,
+      issueAnalytics: seed.issueAnalytics,
+      // Left undefined unless a seed sets them, so every node that is not an endpoint or an
+      // exposed host reads back exactly as it did before these columns existed.
+      exposureLevel: seed.exposureLevel,
+      portValidation: seed.portValidation,
+      exposureEvidence: seed.exposureEvidence,
+      inactive: seed.inactive,
+      inactiveTimeframe: seed.inactiveTimeframe,
+      displayName: seed.displayName,
+      email: seed.email,
+      publisher: seed.publisher,
+      discoveryMethods: seed.discoveryMethods
+    };
+  }
+  function edge(src, type, dst, accessType) {
+    return { id: edgeId(src, type, dst), src, dst, type, accessType };
+  }
+  var GCP_MANAGED = "aiplatform#ReasoningEngine";
+  var GCP_HOSTED = "hostedAiAgent";
+  function gcpAgent(seed) {
+    var _a5, _b, _c, _d;
+    const nativeType = (_a5 = seed.nativeType) != null ? _a5 : GCP_MANAGED;
+    return {
+      ...seed,
+      kind: "AI_AGENT",
+      cloud: (_b = seed.cloud) != null ? _b : "GCP",
+      nativeType,
+      techCats: (_c = seed.techCats) != null ? _c : ["AI Service"],
+      // How Wiz found it, mirroring the tenant capture: a managed ReasoningEngine comes from the
+      // cloud API, a hosted agent from scanning the workload it runs in. `publisher` is
+      // deliberately NOT defaulted — it is null on most agents in that same capture, and the
+      // register has to render that honestly rather than showing a value for everything.
+      discoveryMethods: (_d = seed.discoveryMethods) != null ? _d : [nativeType === GCP_HOSTED ? "MethodWorkloadScanning" : "MethodCloudScanning"]
+    };
+  }
+  var AGENTS = [
+    gcpAgent({
+      id: "agent-a",
+      name: "Agent-A",
+      region: "europe-west1",
+      tags: [{ key: "env", value: "prod" }, { key: "team", value: "ml" }, { key: "owner", value: "platform" }],
+      account: { id: "gcp-account-01", name: "gcp-account-01" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true,
+      businessImpact: "HBI",
+      // reaches bucket-customer-pii and db-customer-core
+      // Two of the fourteen carry a publisher, matching the shape of the real tenant, where the
+      // field is populated for a handful of hand-built agents and null for the rest. The dry run
+      // has to exercise BOTH paths or the "—" cell never gets looked at.
+      publisher: "Platform Engineering"
+    }),
+    gcpAgent({
+      id: "agent-b",
+      name: "Agent-B",
+      region: "us-west1",
+      tags: [{ key: "env", value: "prod" }, { key: "team", value: "search" }],
+      account: { id: "gcp-account-01", name: "gcp-account-01" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true,
+      businessImpact: "HBI"
+      // reaches bucket-customer-pii
+    }),
+    gcpAgent({
+      id: "agent-autogen",
+      name: "AGENT_AUTOGEN_DO_NOT_DELETE",
+      region: "us-west1",
+      account: { id: "gcp-account-01", name: "gcp-account-01" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      adminPriv: true,
+      guardrailMissing: true,
+      businessImpact: "HBI"
+      // reaches bucket-finance-reports and db-customer-core
+    }),
+    gcpAgent({
+      id: "agent-d-test",
+      name: "dev-agent-D-test",
+      region: "europe-west3",
+      account: { id: "gcp-account-02", name: "gcp-account-02" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true,
+      businessImpact: "LBI"
+      // dev/test — prod-level IAM on a project that isn't
+    }),
+    gcpAgent({
+      id: "agent-d",
+      name: "dev-agent-D",
+      region: "europe-west3",
+      tags: [{ key: "env", value: "staging" }, { key: "team", value: "ml" }],
+      account: { id: "gcp-account-02", name: "gcp-account-02" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true,
+      businessImpact: "LBI"
+      // staging counterpart of agent-d-test
+    }),
+    gcpAgent({
+      id: "agent-e",
+      name: "Agent-E",
+      region: "us-west1",
+      account: { id: "gcp-account-03", name: "gcp-account-03" },
+      projects: ["PROJECT-ALPHA", "PROJECT-GAMMA"],
+      internet: true,
+      openInternet: true,
+      // demonstrates the internet-exposure topology node
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true,
+      businessImpact: "HBI"
+      // internet-exposed AND reaches bucket-customer-pii
+    }),
+    gcpAgent({
+      id: "agent-f",
+      name: "agent-F",
+      region: "europe-west4",
+      projects: ["PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true,
+      businessImpact: "MBI"
+      // pricing agent — financial data, not customer PII
+    }),
+    gcpAgent({
+      id: "agent-f-preprod",
+      name: "agent-F-preprod",
+      region: "europe-west4",
+      projects: ["PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true,
+      businessImpact: "MBI"
+      // "same risk as prod" per its own issue text above
+    }),
+    gcpAgent({
+      id: "agent-g",
+      name: "Agent-G",
+      region: "europe-west4",
+      projects: ["PROJECT-ALPHA", "PROJECT-ETA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true,
+      businessImpact: "MBI"
+      // business-partner data, not customer PII
+    }),
+    gcpAgent({
+      id: "agent-h-chatbot",
+      name: "agent-H-chatbot",
+      region: "europe-west1",
+      nativeType: GCP_HOSTED,
+      account: { id: "gcp-account-05", name: "gcp-account-05" },
+      projects: ["PROJECT-ALPHA", "PROJECT-DELTA", "PROJECT-EPSILON"],
+      internet: null,
+      openInternet: null,
+      // hosted: exposure inherited from the Cloud Run service
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true,
+      businessImpact: "HBI"
+      // public-facing chatbot reaching db-customer-core
+    }),
+    gcpAgent({
+      id: "agent-i",
+      name: "agent-I",
+      region: "europe-west4",
+      nativeType: GCP_HOSTED,
+      status: "Inactive",
+      account: { id: "gcp-account-04", name: "gcp-account-04" },
+      projects: ["PROJECT-ALPHA", "PROJECT-ZETA"],
+      internet: null,
+      openInternet: null,
+      // hosted: exposure inherited from the VM
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true,
+      businessImpact: "HBI"
+      // inactive, but still holds sensitive access — the whole point of G3
+    }),
+    gcpAgent({
+      id: "agent-j",
+      name: "agent-J",
+      region: "europe-west1",
+      account: { id: "gcp-account-07", name: "gcp-account-07" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: false,
+      highPriv: true,
+      guardrailMissing: false
+      // No businessImpact — see this array's own header. Pairs with `sensitiveAccess: false`:
+      // a project Wiz never classified for an agent that never reached classified data.
+    }),
+    gcpAgent({
+      id: "agent-k",
+      name: "agent-K",
+      region: "europe-west1",
+      account: { id: "gcp-account-07", name: "gcp-account-07" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: false,
+      highPriv: true,
+      guardrailMissing: false
+      // No businessImpact — see this array's own header, same pairing as agent-j.
+    }),
+    // A guardrail-protected agent with no issues — the healthy contrast case.
+    gcpAgent({
+      id: "agent-l-support",
+      name: "Agent-L-support",
+      region: "europe-west1",
+      account: { id: "gcp-account-03", name: "gcp-account-03" },
+      projects: ["PROJECT-ALPHA"],
+      businessImpact: "LBI"
+      // healthy AND classified — low impact is a real reading, not a gap
+    })
+  ];
+  var AWS_ROLE_COUNT = 8;
+  var awsRoles = [];
+  var AWS_ROLE_BUSINESS_IMPACT = [
+    "MBI",
+    "MBI",
+    "MBI",
+    void 0,
+    void 0,
+    void 0,
+    "LBI",
+    "LBI"
+  ];
+  for (let i = 1; i <= AWS_ROLE_COUNT; i++) {
+    const n = String(i).padStart(2, "0");
+    awsRoles.push({
+      id: `role-finance-admin-${n}`,
+      kind: "ACCESS_ROLE",
+      name: `AWSReservedSSO_FinanceAdmin_${n}`,
+      nativeType: "role",
+      cloud: "AWS",
+      account: { id: "aws-account-prod-01", name: "aws-account-prod-01" },
+      projects: ["PROJECT-ALPHA"],
+      highPriv: true,
+      sensitiveAccess: true,
+      businessImpact: AWS_ROLE_BUSINESS_IMPACT[i - 1]
+    });
+  }
+  var SUPPORT = [
+    // Guardrails (3 in the tenant; only Agent-L is actually protected). These, and the models,
+    // MCP server, pipeline and dataset below, are the OTHER eight members of the 22-node
+    // AI_ASSET_KINDS population `estateReach`'s ATTRIBUTED stage measures — AGENTS above supply
+    // 14, these eight the rest. Same spread discipline as AGENTS's own header: guardrail-bedrock
+    // and pipeline-training-01 are left WITHOUT a businessImpact on purpose, so the stage's
+    // denominator still has real absences to report honestly rather than reading a clean 22 of 22.
+    { id: "guardrail-alpha", kind: "AI_GUARDRAIL", name: "guardrail-alpha", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"], businessImpact: "LBI" },
+    { id: "guardrail-beta", kind: "AI_GUARDRAIL", name: "guardrail-beta", cloud: "GCP", region: "europe-west4", projects: ["PROJECT-ALPHA"], businessImpact: "MBI" },
+    // No businessImpact — the AWS-native guardrail Wiz discovered but never got a project tag.
+    { id: "guardrail-bedrock", kind: "AI_GUARDRAIL", name: "bedrock-guardrail-default", cloud: "AWS", projects: ["PROJECT-ALPHA"] },
+    // Models
+    { id: "model-bedrock-claude", kind: "AI_MODEL", name: "anthropic.claude-3-5-sonnet", nativeType: "bedrock#foundationModel", cloud: "AWS", account: { id: "aws-account-prod-01", name: "aws-account-prod-01" }, projects: ["PROJECT-ALPHA"], businessImpact: "MBI" },
+    { id: "model-text-embedding-005", kind: "AI_MODEL", name: "text-embedding-005", nativeType: "aiplatform#model", cloud: "GCP", region: "us-west1", status: "Deprecated", projects: ["PROJECT-ALPHA"], businessImpact: "LBI" },
+    // MCP server + pipeline + dataset
+    { id: "mcp-internal-tools", kind: "MCP_SERVER", name: "mcp-internal-tools", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"], businessImpact: "MBI" },
+    // No businessImpact — a training pipeline Wiz never mapped to a classified project.
+    { id: "pipeline-training-01", kind: "AI_PIPELINE", name: "pipeline-training-01", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
+    { id: "dataset-support-transcripts", kind: "AI_DATASET", name: "dataset-support-transcripts", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], businessImpact: "HBI" },
+    // Data resources
+    { id: "bucket-customer-pii", kind: "BUCKET", name: "bucket-customer-pii", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
+    { id: "bucket-finance-reports", kind: "BUCKET", name: "bucket-finance-reports", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-BETA"] },
+    { id: "bucket-partner-data", kind: "BUCKET", name: "bucket-partner-data", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ETA"] },
+    { id: "bucket-pricing-models", kind: "BUCKET", name: "bucket-pricing-models", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
+    { id: "bucket-training-data", kind: "BUCKET", name: "bucket-training-data", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
+    { id: "db-customer-core", kind: "DATABASE", name: "db-customer-core", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
+    { id: "db-analytics", kind: "DATABASE", name: "db-analytics", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-DELTA"] },
+    // Compute / supply chain for the hosted agents
+    { id: "vm-agent-i-host", kind: "VIRTUAL_MACHINE", name: "vm-agent-i-host", cloud: "GCP", region: "europe-west4", internet: false, projects: ["PROJECT-ZETA"] },
+    { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, openInternet: true, projects: ["PROJECT-DELTA"], exposureEvidence: { ports: ["443", "80"], sourceIpRanges: ["0.0.0.0/0"] } },
+    // Network exposure, seeded to put BOTH grades of evidence on one screen and to make them
+    // visibly disagree — which is the whole reason the two queries are two steps.
+    //
+    //   endpoint-agent-h   Low  + Open, on the internet-reachable Cloud Run revision.
+    //                      This is the capture's own shape (exemples/ai_exposure_host_response.js):
+    //                      openToAllInternet, ports 80 and 443 open to 0.0.0.0/0, and both
+    //                      endpoints rated Low because they redirect to SSO. agent-h-chatbot
+    //                      is therefore exposed VIA ITS HOST and NOT validated.
+    //   endpoint-agent-i   High + Open, served directly by an agent whose VM is NOT reachable.
+    //                      The mirror image: validated, with no host exposure behind it.
+    //
+    // Between them the dry run exercises every branch of withExposureEvidence, including the
+    // one that must NOT fire.
+    { id: "endpoint-agent-h", kind: "ENDPOINT", name: "https://agent-h-chatbot.a.run.app:443", cloud: "GCP", region: "europe-west1", exposureLevel: "Low", portValidation: "Open", projects: ["PROJECT-DELTA"] },
+    { id: "endpoint-agent-i", kind: "ENDPOINT", name: "https://agent-i.internal-tools.example:8443", cloud: "GCP", region: "europe-west4", exposureLevel: "High", portValidation: "Open", projects: ["PROJECT-ZETA"] },
+    { id: "img-agent-h", kind: "CONTAINER_IMAGE", name: "img-agent-h:latest", cloud: "GCP", projects: ["PROJECT-DELTA"] },
+    { id: "repo-agent-h", kind: "REPOSITORY", name: "repo-agent-h", projects: ["PROJECT-DELTA"] },
+    // CIEM findings
+    { id: "finding-ea-autogen", kind: "EXCESSIVE_ACCESS_FINDING", name: "Excessive access: sa-agent-autogen", cloud: "GCP" },
+    { id: "finding-ea-agent-h", kind: "EXCESSIVE_ACCESS_FINDING", name: "Excessive access: sa-agent-h", cloud: "GCP" },
+    { id: "finding-lm-agent-i", kind: "LATERAL_MOVEMENT_FINDING", name: "Lateral movement: sa-agent-i", cloud: "GCP" }
+  ];
+  var edges = [];
+  var extraNodes = [];
+  var GCP_AGENT_IDS = [
+    "agent-a",
+    "agent-b",
+    "agent-autogen",
+    "agent-d-test",
+    "agent-d",
+    "agent-e",
+    "agent-f",
+    "agent-f-preprod",
+    "agent-g",
+    "agent-h-chatbot",
+    "agent-i",
+    "agent-j",
+    "agent-k",
+    "agent-l-support"
+  ];
+  var SA_DISPLAY_NAMES = {
+    "agent-a": "Vertex AI Agent Service Account",
+    "agent-b": "Vertex AI Reasoning Agent Identity",
+    "agent-h-chatbot": "Support chatbot runtime identity",
+    "agent-l-support": "Support agent (read-only)"
+  };
+  for (const agentId of GCP_AGENT_IDS) {
+    const saId = `sa-${agentId}`;
+    const highPriv = agentId !== "agent-l-support";
+    extraNodes.push({
+      id: saId,
+      kind: "SERVICE_ACCOUNT",
+      name: `${saId}@iam.gserviceaccount.com`,
+      displayName: SA_DISPLAY_NAMES[agentId],
+      email: `${saId}@iam.gserviceaccount.com`,
+      cloud: "GCP",
+      highPriv,
+      sensitiveAccess: !["agent-j", "agent-k", "agent-l-support"].includes(agentId),
+      // These execution identities are agentic (identityPurpose:AGENTIC in Wiz); a small
+      // related-issue rollup drives the inventory "Agentic identities" KPI + the badge.
+      identityPurpose: "AGENTIC",
+      techCats: ["Identity"],
+      issueAnalytics: highPriv ? { total: 1, info: 0, low: 0, medium: 1, high: 0, critical: 0 } : { total: 0, info: 0, low: 0, medium: 0, high: 0, critical: 0 }
+    });
+    edges.push(edge(agentId, "RUNS_AS", saId));
+  }
+  extraNodes.push({
+    id: "key-agent-autogen",
+    kind: "ACCESS_KEY",
+    name: "AKIA-AUTOGEN-AGENT-KEY",
+    cloud: "AWS",
+    identityPurpose: "AGENTIC",
+    sensitiveAccess: true,
+    issueAnalytics: { total: 2, info: 0, low: 1, medium: 1, high: 0, critical: 0 }
+  });
+  edges.push(edge("agent-autogen", "RUNS_AS", "key-agent-autogen"));
+  var SA_ACCESS = [
+    ["sa-agent-a", "bucket-customer-pii", "HIGH_PRIVILEGE"],
+    ["sa-agent-a", "db-customer-core", "READ"],
+    ["sa-agent-b", "bucket-customer-pii", "HIGH_PRIVILEGE"],
+    ["sa-agent-autogen", "bucket-finance-reports", "ADMIN"],
+    ["sa-agent-autogen", "db-customer-core", "HIGH_PRIVILEGE"],
+    ["sa-agent-d-test", "bucket-training-data", "WRITE"],
+    ["sa-agent-d-test", "db-customer-core", "READ"],
+    ["sa-agent-d", "bucket-training-data", "WRITE"],
+    ["sa-agent-d", "db-customer-core", "READ"],
+    ["sa-agent-e", "bucket-customer-pii", "HIGH_PRIVILEGE"],
+    ["sa-agent-f", "bucket-pricing-models", "HIGH_PRIVILEGE"],
+    ["sa-agent-f-preprod", "bucket-pricing-models", "HIGH_PRIVILEGE"],
+    ["sa-agent-g", "bucket-partner-data", "HIGH_PRIVILEGE"],
+    ["sa-agent-h-chatbot", "db-customer-core", "HIGH_PRIVILEGE"],
+    ["sa-agent-h-chatbot", "db-analytics", "READ"],
+    ["sa-agent-i", "bucket-customer-pii", "HIGH_PRIVILEGE"],
+    ["sa-agent-j", "db-analytics", "READ"],
+    ["sa-agent-k", "db-analytics", "READ"]
+  ];
+  for (const [sa, target, accessType] of SA_ACCESS) {
+    edges.push(edge(sa, "ALLOWS_ACCESS_TO", target, accessType));
+  }
+  edges.push(edge("sa-agent-autogen", "HAS_FINDING", "finding-ea-autogen"));
+  edges.push(edge("sa-agent-h-chatbot", "HAS_FINDING", "finding-ea-agent-h"));
+  edges.push(edge("sa-agent-i", "HAS_FINDING", "finding-lm-agent-i"));
+  for (const role of awsRoles) {
+    role.guardrailMissing = true;
+    edges.push(edge(role.id, "CAN_INVOKE", "model-bedrock-claude"));
+  }
+  edges.push(edge("agent-l-support", "PROTECTED_BY", "guardrail-alpha"));
+  edges.push(edge("model-bedrock-claude", "ENFORCES", "guardrail-bedrock"));
+  edges.push(edge("agent-i", "HOSTED_ON", "vm-agent-i-host"));
+  edges.push(edge("agent-h-chatbot", "HOSTED_ON", "run-agent-h"));
+  edges.push(edge("run-agent-h", "SERVES", "endpoint-agent-h"));
+  edges.push(edge("agent-i", "SERVES", "endpoint-agent-i"));
+  edges.push(edge("agent-h-chatbot", "BUILT_FROM", "img-agent-h"));
+  edges.push(edge("img-agent-h", "BUILT_FROM", "repo-agent-h"));
+  edges.push(edge("agent-a", "USES_MODEL", "model-text-embedding-005"));
+  edges.push(edge("agent-b", "USES_MODEL", "model-text-embedding-005"));
+  edges.push(edge("agent-h-chatbot", "INVOKES_TOOL", "mcp-internal-tools"));
+  edges.push(edge("agent-l-support", "INVOKES_TOOL", "mcp-internal-tools"));
+  edges.push(edge("pipeline-training-01", "USES_DATASET", "dataset-support-transcripts"));
+  edges.push(edge("dataset-support-transcripts", "STORED_IN", "bucket-customer-pii"));
+  edges.push(edge("agent-e", "USES_DATASET", "dataset-support-transcripts"));
+  for (let i = 1; i <= 14; i++) {
+    const n = String(i).padStart(2, "0");
+    const id = `bucket-autogen-scratch-${n}`;
+    extraNodes.push({ id, kind: "BUCKET", name: `bucket-autogen-scratch-${n}`, cloud: "GCP", region: "us-west1", projects: ["PROJECT-BETA"] });
+    edges.push(edge("sa-agent-autogen", "ALLOWS_ACCESS_TO", id, "WRITE"));
+  }
+  for (let i = 1; i <= 12; i++) {
+    const n = String(i).padStart(2, "0");
+    const id = `user-ops-${n}`;
+    const seed = {
+      id,
+      kind: "USER_ACCOUNT",
+      name: `ops.user${n}@example.com`,
+      cloud: "GCP"
+    };
+    if (i === 2) {
+      seed.inactive = true;
+      seed.inactiveTimeframe = "Inactive90Days";
+    } else if (i === 3) {
+      seed.inactive = false;
+      seed.inactiveTimeframe = "Active";
+    }
+    extraNodes.push(seed);
+    edges.push(edge(id, "ALLOWS_ACCESS_TO", "agent-h-chatbot", i <= 2 ? "ADMIN" : "READ"));
+  }
+  function issue(seed) {
+    var _a5, _b, _c, _d;
+    const group = classifyIssue({ sourceRuleId: seed.ruleId, ruleName: seed.ruleName });
+    const row = {
+      id: seed.id,
+      ruleId: seed.ruleId,
+      ruleName: seed.ruleName,
+      // An unmodelled rule lands in Other rather than "" — the same bucket a live sync
+      // would give it, so the dry-run demo shows the register the real one produces.
+      comboGroup: group ? group.id : OTHER_GROUP_ID,
+      nativeSeverity: seed.nativeSeverity,
+      adjustedSeverity: group ? group.adjustedSeverity : seed.nativeSeverity,
+      status: (_a5 = seed.status) != null ? _a5 : "OPEN",
+      assetId: seed.assetId,
+      assetName: seed.assetName,
+      region: seed.region,
+      account: seed.account,
+      projects: seed.projects,
+      frameworks: seed.frameworks,
+      justification: seed.justification,
+      createdAt: seed.createdAt,
+      dueAt: seed.dueAt,
+      resolutionRecommendation: seed.resolutionRecommendation,
+      issueType: (_b = seed.issueType) != null ? _b : "TOXIC_COMBINATION",
+      updatedAt: seed.updatedAt,
+      assignee: seed.assignee,
+      businessImpact: seed.businessImpact,
+      entityStatus: seed.entityStatus,
+      ignoreNote: seed.ignoreNote,
+      ignoreExpiredAt: seed.ignoreExpiredAt,
+      aiVerdict: seed.aiVerdict,
+      aiRecommendedSeverity: seed.aiRecommendedSeverity
+    };
+    if ((_c = seed.environments) == null ? void 0 : _c.length) row.environments = seed.environments;
+    if ((_d = seed.ticketUrls) == null ? void 0 : _d.length) row.ticketUrls = seed.ticketUrls;
+    return row;
+  }
+  var RULE_G1 = "Allow model invoke without Guardrail for user or role";
+  var RULE_G2 = "Managed AI Agent with high privileges or sensitive data access";
+  var RULE_G3 = "AI Agent hosted on VM/serverless with high privileges or sensitive data access";
+  var RULE_G4 = "AI resource using overly permissive execution identity";
+  var issues = [];
+  var issueSeq = 0;
+  function nextIssueId() {
+    issueSeq += 1;
+    return `iss-${String(issueSeq).padStart(3, "0")}`;
+  }
+  awsRoles.forEach((role, n) => {
+    const lapsed = n === 0;
+    const working = n === 1;
+    issues.push(issue({
+      id: nextIssueId(),
+      ruleId: "wc-id-2742",
+      ruleName: RULE_G1,
+      assetId: role.id,
+      assetName: role.name,
+      nativeSeverity: "MEDIUM",
+      account: "aws-account-prod-01",
+      projects: ["PROJECT-ALPHA"],
+      justification: "No content filtering, data protection, or compliance enforcement on AI model calls.",
+      frameworks: { owaspLlm: ["LLM06", "LLM02"], owaspAgentic: ["ASI02", "ASI03"], fiveRs: ["Restrict"] },
+      createdAt: "2026-05-14T09:12:00Z",
+      // TOXIC_COMBINATION (the default), because that is what the tenant returns for
+      // wc-id-2742 — every node in exemples/risk_issues_response.js carries that type,
+      // guardrail rule included. Wiz's issue TYPE and this register's pattern grouping are
+      // independent axes, and the seed must not imply they line up.
+      updatedAt: "2026-08-13T10:29:28Z",
+      environments: ["PRODUCTION"],
+      entityStatus: "Active",
+      businessImpact: "MBI",
+      // Ignored by design until the guardrail baseline landed, then reopened when the
+      // ignore date passed. The expiry is the structured field, never parsed out of the note.
+      ignoreNote: lapsed ? "Ignored (By Design) by MANSUY.\nExplanation: guardrails are being rolled out per project team; a baseline has to be agreed before they can be enforced.\n\nIgnored until: Feb 1, 2026" : void 0,
+      ignoreExpiredAt: lapsed ? "2026-02-01T00:00:00Z" : void 0,
+      // Remediation under way: the status the register collected and never counted.
+      status: working ? "IN_PROGRESS" : void 0,
+      assignee: working ? "platform-security@example.com" : void 0,
+      ticketUrls: working ? ["https://example.slack.com/archives/C0AGUF82MM1/p1775622232097139"] : void 0,
+      aiVerdict: working ? "REMEDIATE" : void 0,
+      aiRecommendedSeverity: working ? "MEDIUM" : void 0
+    }));
+  });
+  var G2 = [
+    { assetId: "agent-a", count: 1, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Prompt injection reaches PII and credentials; 5Rs gap confirms data is not restricted." },
+    { assetId: "agent-b", count: 1, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Over-privileged IAM on a customer-facing managed agent." },
+    { assetId: "agent-autogen", count: 4, llm: ["LLM06", "LLM07"], asi: ["ASI10"], ml: ["Supply Chain"], fiveRs: ["Reduce", "Restrict"], why: "Auto-generated agent \u2014 likely forgotten, still over-privileged." },
+    { assetId: "agent-d-test", count: 1, llm: ["LLM06", "LLM04"], asi: ["ASI03", "ASI06"], ml: ["Data Poisoning"], fiveRs: ["Reconfigure"], why: "Dev/test agent with prod-level IAM \u2014 violates least privilege." },
+    { assetId: "agent-d", count: 1, llm: ["LLM06", "LLM04"], asi: ["ASI03", "ASI06"], ml: ["Data Poisoning"], fiveRs: ["Reconfigure"], why: "Dev agent with excessive IAM \u2014 training-data exposure risk." },
+    { assetId: "agent-e", count: 1, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI01"], ml: ["Input Manipulation"], fiveRs: ["Restrict"], why: "Innovation agent with sensitive data access and no guardrail." },
+    { assetId: "agent-f", count: 1, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI02"], ml: ["Model Theft"], fiveRs: ["Restrict"], why: "Pricing agent with financial data access \u2014 high business impact." },
+    { assetId: "agent-f-preprod", count: 1, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI02"], ml: ["Model Theft"], fiveRs: ["Reconfigure"], why: "Pre-prod pricing agent \u2014 same risk as prod." },
+    { assetId: "agent-g", count: 2, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Business-partner data agent \u2014 PII and partner-data exposure risk." }
+  ];
+  var _a;
+  for (const g of G2) {
+    const asset = AGENTS.find((a) => a.id === g.assetId);
+    for (let i = 0; i < g.count; i++) {
+      issues.push(issue({
+        id: nextIssueId(),
+        ruleId: "wc-id-3217",
+        ruleName: RULE_G2,
+        assetId: asset.id,
+        assetName: asset.name,
+        nativeSeverity: "MEDIUM",
+        region: asset.region,
+        account: (_a = asset.account) == null ? void 0 : _a.name,
+        projects: asset.projects,
+        justification: g.why,
+        frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, owaspMl: g.ml, fiveRs: g.fiveRs },
+        createdAt: "2026-05-20T11:40:00Z",
+        dueAt: "2026-08-18T11:40:00Z",
+        resolutionRecommendation: "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime."
+      }));
+    }
+  }
+  var G3 = [
+    { assetId: "agent-i", count: 4, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI05"], fiveRs: ["Restrict", "Reduce"], why: "Inactive agents still holding sensitive data access \u2014 lateral-movement risk via compromised compute." },
+    { assetId: "agent-h-chatbot", count: 2, llm: ["LLM06", "LLM02", "LLM05"], asi: ["ASI02", "ASI03"], fiveRs: ["Restrict"], why: "Chatbot agent on serverless with excessive IAM \u2014 user-facing attack surface." }
+  ];
+  var _a2;
+  for (const g of G3) {
+    const asset = AGENTS.find((a) => a.id === g.assetId);
+    for (let i = 0; i < g.count; i++) {
+      issues.push(issue({
+        id: nextIssueId(),
+        ruleId: "wc-id-3230",
+        ruleName: RULE_G3,
+        assetId: asset.id,
+        assetName: asset.name,
+        nativeSeverity: "MEDIUM",
+        region: asset.region,
+        account: (_a2 = asset.account) == null ? void 0 : _a2.name,
+        projects: asset.projects,
+        justification: g.why,
+        frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, fiveRs: g.fiveRs },
+        createdAt: "2026-06-03T07:25:00Z"
+      }));
+    }
+  }
+  var _a3;
+  for (const assetId of ["agent-j", "agent-k"]) {
+    const asset = AGENTS.find((a) => a.id === assetId);
+    issues.push(issue({
+      id: nextIssueId(),
+      ruleId: "wc-id-3123",
+      ruleName: RULE_G4,
+      assetId: asset.id,
+      assetName: asset.name,
+      nativeSeverity: "LOW",
+      region: asset.region,
+      account: (_a3 = asset.account) == null ? void 0 : _a3.name,
+      projects: asset.projects,
+      justification: "Latent privileges \u2014 a compromised agent inherits every permission of its execution identity.",
+      frameworks: { owaspAgentic: ["ASI03"], fiveRs: ["Reconfigure"] },
+      createdAt: "2026-06-10T15:02:00Z"
+    }));
+  }
+  var _a4;
+  {
+    const asset = AGENTS.find((a) => a.id === "agent-e");
+    const OTHER_SEEDS = [
+      {
+        ruleId: "wc-id-4101",
+        ruleName: "AI model endpoint without request logging",
+        sev: "LOW",
+        why: "Model invocations are not logged, so misuse leaves no trail to investigate."
+      },
+      {
+        ruleId: "wc-id-4102",
+        ruleName: "AI training dataset stored without encryption at rest",
+        sev: "MEDIUM",
+        why: "Training data is readable to anyone who reaches the bucket."
+      },
+      {
+        ruleId: "wc-id-4103",
+        ruleName: "AI service account key older than 90 days",
+        sev: "LOW",
+        why: "A long-lived static key on an AI workload widens the window for credential theft."
+      }
+    ];
+    for (const seed of OTHER_SEEDS) {
+      issues.push(issue({
+        id: nextIssueId(),
+        ruleId: seed.ruleId,
+        ruleName: seed.ruleName,
+        // CLOUD_CONFIGURATION: the type the register used to filter out entirely, so the
+        // demo shows the Type column carrying something other than the tenant's default.
+        // Illustrative rather than transcribed — these rule ids are invented, and the Other
+        // bucket is defined by its rule not being modelled, never by its Wiz issue type.
+        issueType: "CLOUD_CONFIGURATION",
+        assetId: asset.id,
+        assetName: asset.name,
+        nativeSeverity: seed.sev,
+        region: asset.region,
+        account: (_a4 = asset.account) == null ? void 0 : _a4.name,
+        projects: asset.projects,
+        justification: seed.why,
+        // No frameworks: an unmodelled rule contributes no AARS gap codes, so pillar B is
+        // left exactly where it was. Deriving codes from the rule's own risks/tags would
+        // re-price every asset with no way to attribute the movement.
+        frameworks: void 0,
+        createdAt: "2026-07-02T08:15:00Z",
+        environments: ["PRODUCTION"],
+        businessImpact: "MBI",
+        entityStatus: "Active",
+        updatedAt: "2026-08-13T10:30:01Z"
+      }));
+    }
+  }
+  var HINTS = {
+    "agent-a": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-b": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-autogen": { gaps: [gap("LLM06"), gap("ASI10"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-d-test": { gaps: [gap("LLM04"), gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-d": { gaps: [gap("LLM04"), gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-e": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-f": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-f-preprod": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-g": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-h-chatbot": { gaps: [gap("LLM06"), gap("LLM05"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-i": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-j": { gaps: [gap("ASI03")], dataExposure: "DATA_ACCESS" },
+    "agent-k": { gaps: [gap("ASI03")], dataExposure: "DATA_ACCESS" },
+    // Deprecated-model usage shows up on the model itself, not the agents.
+    "model-text-embedding-005": { gaps: [gap("DEPRECATED_MODEL")], dataExposure: "NONE" }
+  };
+  for (const role of awsRoles) {
+    HINTS[role.id] = {
+      gaps: [gap("LLM01"), gap("LLM02"), gap("ASI02")],
+      dataExposure: "DATA_ACCESS"
+    };
+  }
+  var SEED_FINDINGS_DATA = [
+    {
+      id: "cfg-001",
+      resourceId: "agent-a",
+      ruleShortId: "SUB-082",
+      severity: "MEDIUM",
+      remediation: "Encrypt the Vertex AI metadata store with a customer-managed key and restrict the agent service account's access to it.",
+      frameworkCodes: ["SUB-082", "LLM06"],
+      name: "Vertex AI Metadata Store is not encrypted with a customer-managed key",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-06-12T19:42:35Z",
+      analyzedAt: "2026-07-07T15:59:10Z",
+      ruleId: "60442ee5-452a-48cb-8694-9061c920e10d",
+      ruleName: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
+      ruleDescription: "This rule checks whether the Vertex AI Metadata Store is encrypted with a customer-managed key. It fails if kms_key_name is not configured.",
+      remediationInstructions: "Delete the current Vertex AI Metadata Store, then create a new one with a customer-managed key. Encryption cannot be changed after creation.",
+      opaPolicy: 'package wiz\n\ndefault result = "pass"\n\nresult = "fail" {\n	not input.vertexAIMetadataStoreConfiguration.encryption_spec.kms_key_name\n}\n',
+      risks: ["AI_SECURITY", "UNPROTECTED_DATA"],
+      threats: [],
+      resourceName: "Agent A",
+      resourceType: "AI_AGENT",
+      resourceStatus: "Active",
+      source: "WIZ_CSPM",
+      subscriptionName: "gcp-account-01",
+      cloudProvider: "GCP",
+      projects: [
+        { id: "proj-project-beta", name: "PROJECT-BETA", businessImpact: "MBI" },
+        { id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }
+      ],
+      businessImpact: "MBI",
+      ignoreRuleIds: [],
+      iacFindingIds: []
+    },
+    {
+      id: "cfg-002",
+      resourceId: "agent-h-chatbot",
+      ruleShortId: "SUB-114",
+      severity: "HIGH",
+      remediation: "Disable public ingress on the Cloud Run service hosting the agent, or place it behind an authenticated load balancer.",
+      frameworkCodes: ["SUB-114"],
+      name: "AI agent host is reachable from the public internet",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-05-02T08:15:00Z",
+      analyzedAt: "2026-07-13T21:52:08Z",
+      ruleName: "AI agent hosts should not be open to all internet",
+      ruleDescription: "This rule checks whether the compute hosting an AI agent accepts ingress from 0.0.0.0/0. It fails when no authenticating front end sits in front of it.",
+      risks: ["AI_SECURITY"],
+      threats: [],
+      resourceName: "agent-H-chatbot",
+      resourceType: "AI_AGENT",
+      resourceStatus: "Active",
+      source: "WIZ_CSPM",
+      subscriptionName: "gcp-account-05",
+      cloudProvider: "GCP",
+      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+      businessImpact: "LBI",
+      // Traced to IaC: the register's shift-left link, and the only seeded row that has one.
+      iacFindingIds: ["iac-cloudrun-ingress-1"],
+      ignoreRuleIds: []
+    },
+    {
+      id: "cfg-003",
+      resourceId: "agent-e",
+      ruleShortId: "SUB-047",
+      severity: "MEDIUM",
+      remediation: "Enable audit logging for all data access performed by the agent identity.",
+      frameworkCodes: ["SUB-047"],
+      name: "Data access by the AI agent identity is not audited",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-06-25T08:43:01Z",
+      analyzedAt: "2026-07-13T21:52:13Z",
+      ruleName: "AI agent identities should have data access logging enabled",
+      risks: ["AI_SECURITY"],
+      threats: [],
+      resourceName: "Agent E",
+      resourceType: "AI_AGENT",
+      resourceStatus: "Active",
+      source: "WIZ_CSPM",
+      subscriptionName: "gcp-account-03",
+      cloudProvider: "GCP",
+      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+      businessImpact: "LBI",
+      ignoreRuleIds: [],
+      iacFindingIds: []
+    },
+    // ---- keyed to resources the AI graph does not model ----
+    {
+      id: "cfg-004",
+      // A REGION. Not a NodeKind, so this prices no AARS score and shows as off-inventory.
+      resourceId: "region-europe-west1-packaging",
+      ruleShortId: "SUB-082",
+      severity: "MEDIUM",
+      remediation: "Delete and recreate the metadata store with a customer-managed key. Encryption cannot be changed after creation.",
+      frameworkCodes: ["SUB-082", "LLM06"],
+      name: "Vertex AI Metadata Store is not encrypted with a customer-managed key",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-06-12T19:42:35Z",
+      analyzedAt: "2026-06-19T10:27:22Z",
+      ruleId: "60442ee5-452a-48cb-8694-9061c920e10d",
+      ruleName: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
+      ruleDescription: "This rule checks whether the Vertex AI Metadata Store is encrypted with a customer-managed key. It fails if kms_key_name is not configured.",
+      opaPolicy: 'package wiz\n\ndefault result = "pass"\n\nresult = "fail" {\n	not input.vertexAIMetadataStoreConfiguration.encryption_spec.kms_key_name\n}\n',
+      risks: ["AI_SECURITY", "UNPROTECTED_DATA"],
+      threats: [],
+      resourceName: "europe-west1 (packaging-data)",
+      resourceType: "REGION",
+      resourceStatus: "Active",
+      targetExternalId: "packaging-data/europe-west1",
+      source: "WIZ_CSPM",
+      subscriptionName: "packaging-data",
+      cloudProvider: "GCP",
+      projects: [{ id: "proj-project-gamma", name: "PROJECT-GAMMA", businessImpact: "MBI" }],
+      businessImpact: "MBI",
+      ignoreRuleIds: [],
+      iacFindingIds: []
+    },
+    {
+      id: "cfg-005",
+      // A RAW_ACCESS_POLICY — an IAM policy document, likewise absent from the graph.
+      resourceId: "policy-bedrock-invoke-1",
+      ruleShortId: "IAM-267",
+      severity: "MEDIUM",
+      remediation: "Add a bedrock:GuardrailIdentifier condition to the policy statement that allows bedrock:InvokeModel, or add a Deny that requires one.",
+      frameworkCodes: ["IAM-267", "LLM06"],
+      name: "IAM policy allows Bedrock model invocation without guardrail condition",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-07-21T16:03:20Z",
+      analyzedAt: "2026-08-03T23:20:36Z",
+      ruleId: "a1f587c5-32ac-4c08-8d91-e53d2d6db828",
+      ruleName: "IAM Policy Bedrock Model Invocation should include Guardrail Condition",
+      ruleDescription: "This rule checks whether IAM policies that allow Bedrock model invocation include guardrail conditions. Amazon Bedrock foundation models can process sensitive data and generate harmful content; guardrails enforce content filtering and usage policy.",
+      remediationInstructions: `aws iam create-policy-version --policy-arn {{policyArn}} --set-as-default --policy-document '{ \u2026 "Condition": { "StringEquals": { "bedrock:GuardrailIdentifier": "<YOUR_GUARDRAIL_ID>" } } \u2026 }'`,
+      risks: ["AI_SECURITY"],
+      threats: [],
+      resourceName: "AIFFORECASTSUPPLY-DEMANDFORECASTEU-IAM-V2-2",
+      resourceType: "RAW_ACCESS_POLICY",
+      source: "WIZ_CSPM",
+      subscriptionName: "aws-account-prod-01",
+      cloudProvider: "AWS",
+      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+      businessImpact: "LBI",
+      // An accepted risk that still fails: the register shows the exception rather than
+      // quietly dropping the row out of the gap count.
+      ignoreRuleIds: ["ignore-bedrock-guardrail-waiver"],
+      iacFindingIds: []
+    },
+    {
+      id: "cfg-006",
+      // A SERVICE_ACCOUNT no agent in this landscape runs as, so still off-inventory.
+      resourceId: "sa-bigdata-ai-weatherforecast-pp",
+      ruleShortId: "IAM-236",
+      severity: "HIGH",
+      remediation: "Add an aws:SourceAccount or aws:SourceArn condition to the role's trust policy so only Bedrock in your own account can assume it.",
+      frameworkCodes: ["IAM-236"],
+      name: "Bedrock Service Role missing conditions to prevent confused deputy attacks",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-01-06T10:48:24Z",
+      analyzedAt: "2026-08-07T07:37:39Z",
+      ruleId: "1a1b2762-dee3-434f-b5b4-41597c48052b",
+      ruleName: "Bedrock Service Roles should prevent confused deputy attacks",
+      ruleDescription: "Fails when a role trusted by bedrock.amazonaws.com has no Condition with aws:SourceAccount or aws:SourceArn. A service with access to several accounts can otherwise be tricked into acting on an unintended one.",
+      risks: ["AI_SECURITY"],
+      threats: [],
+      resourceName: "BIGDATA-AI-AIGEN-WEATHERFORECAST-PP",
+      resourceType: "SERVICE_ACCOUNT",
+      resourceStatus: "Active",
+      targetExternalId: "arn:aws:iam::614303399241:role/BIGDATA-AI-AIGEN-WEATHERFORECAST-PP",
+      source: "WIZ_CSPM",
+      subscriptionName: "aws-account-prod-01",
+      cloudProvider: "AWS",
+      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+      businessImpact: "LBI",
+      ignoreRuleIds: [],
+      iacFindingIds: []
+    },
+    {
+      id: "cfg-007",
+      // RESOLVED, and therefore PASS. Stored for the lifecycle clock, counted by nothing:
+      // isOpenGap keeps it out of complianceGaps, AARS pillar B and the severity strip.
+      resourceId: "agent-a",
+      ruleShortId: "SUB-114",
+      severity: "HIGH",
+      remediation: "Public ingress was removed from the service hosting this agent.",
+      frameworkCodes: ["SUB-114"],
+      name: "AI agent host is reachable from the public internet",
+      status: "RESOLVED",
+      result: "PASS",
+      firstSeenAt: "2026-03-11T09:00:00Z",
+      analyzedAt: "2026-08-07T07:37:41Z",
+      ruleName: "AI agent hosts should not be open to all internet",
+      risks: ["AI_SECURITY"],
+      threats: [],
+      resourceName: "Agent A",
+      resourceType: "AI_AGENT",
+      resourceStatus: "Active",
+      source: "WIZ_CSPM",
+      subscriptionName: "gcp-account-01",
+      cloudProvider: "GCP",
+      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+      businessImpact: "LBI",
+      ignoreRuleIds: [],
+      iacFindingIds: []
+    }
+  ];
+  var SEED_NODES = [...AGENTS, ...awsRoles, ...SUPPORT, ...extraNodes].map(node);
+  var SEED_EDGES = edges;
+  var SEED_ISSUES = issues;
+  var SEED_FINDINGS = SEED_FINDINGS_DATA;
+  var SEED_AARS_HINTS = HINTS;
+  var SEED_DATA_FINDINGS = [
+    { id: "df-pii-01", resourceId: "bucket-customer-pii", name: "PII: email addresses (12,400 rows)", severity: "CRITICAL" },
+    { id: "df-pii-02", resourceId: "bucket-customer-pii", name: "PII: national identification numbers", severity: "HIGH" },
+    { id: "df-pii-03", resourceId: "bucket-customer-pii", name: "PCI: primary account numbers", severity: "HIGH" },
+    { id: "df-core-01", resourceId: "db-customer-core", name: "PII: postal addresses", severity: "CRITICAL" },
+    { id: "df-core-02", resourceId: "db-customer-core", name: "PII: dates of birth", severity: "MEDIUM" },
+    { id: "df-fin-01", resourceId: "bucket-finance-reports", name: "Financial: unpublished results", severity: "HIGH" }
+  ];
+  var SEED_FRAMEWORKS = [
+    {
+      id: "wf-id-275",
+      name: "OWASP Top 10 For Agentic Applications 2026",
+      description: "Agentic-application risks: goal hijack, tool misuse, rogue agents.",
+      builtin: true,
+      enabled: true,
+      policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
+      selected: true
+    },
+    {
+      id: "wf-id-214",
+      name: "5Rs - Wiz for Data Security",
+      description: "Wiz's data-security response taxonomy: Reduce, Restrict, Relabel, \u2026",
+      builtin: true,
+      enabled: true,
+      policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
+      selected: true
+    },
+    {
+      id: "wf-id-106",
+      name: "OWASP ML Security Top 10",
+      description: "Machine-learning security risks: poisoning, inversion, model theft.",
+      builtin: true,
+      enabled: true,
+      policyTypes: ["CONTROL"],
+      selected: true
+    },
+    {
+      id: "wf-id-201",
+      name: "OWASP LLM Security Top 10",
+      description: "LLM application risks: prompt injection, disclosure, poisoning.",
+      builtin: true,
+      enabled: true,
+      policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
+      selected: true
+    },
+    // Present in the tenant, NOT selected — so the Settings picker has something to show
+    // that is off, and the page can prove selection is this app's decision rather than a
+    // list of everything Wiz has.
+    {
+      id: "wf-id-042",
+      name: "CIS Amazon Web Services Foundations Benchmark v3.0",
+      description: "General cloud hardening. No AI vocabulary \u2014 posture is not collected.",
+      builtin: true,
+      enabled: true,
+      policyTypes: ["CLOUD_CONFIGURATION_RULE"],
+      selected: false
+    }
+  ];
+  function seedCategory(frameworkId, externalId, title, posturePct2, passCount, failCount, emptyPostureReason = null) {
+    return {
+      frameworkId,
+      level: "category",
+      categoryExternalId: externalId,
+      nodeId: `wct-seed-${frameworkId}-${externalId}`,
+      title,
+      posturePct: posturePct2,
+      passCount,
+      failCount,
+      passSubCategoryCount: posturePct2 === null ? 0 : 1,
+      failSubCategoryCount: failCount > 0 ? 1 : 0,
+      emptyPostureReason
+    };
+  }
+  function seedSubCategory(frameworkId, categoryExternalId, externalId, title, posturePct2, passCount, failCount, emptyPostureReason = null) {
+    return {
+      frameworkId,
+      level: "subcategory",
+      categoryExternalId,
+      subcategoryExternalId: externalId,
+      nodeId: `wsct-seed-${frameworkId}-${externalId}`,
+      title,
+      posturePct: posturePct2,
+      passCount,
+      failCount,
+      emptyPostureReason,
+      tags: []
+    };
+  }
+  var SEED_POSTURE = [
+    // ---- OWASP Agentic 2026 ----
+    {
+      frameworkId: "wf-id-275",
+      level: "framework",
+      nodeId: "wf-id-275",
+      title: "OWASP Top 10 For Agentic Applications 2026",
+      posturePct: 96,
+      passCount: 0,
+      failCount: 0,
+      passSubCategoryCount: 2,
+      failSubCategoryCount: 2,
+      emptyPostureReason: null
+    },
+    seedCategory("wf-id-275", "ASI01", "ASI01 Agent Goal Hijack", 93, 144, 10),
+    seedSubCategory("wf-id-275", "ASI01", "ASI01", "ASI01 Agent Goal Hijack", 93, 144, 10),
+    seedCategory("wf-id-275", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
+    seedSubCategory("wf-id-275", "ASI03", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
+    // The empty category: nothing in this landscape to assess. Posture null, reason given —
+    // the case the page must never render as 0%.
+    seedCategory("wf-id-275", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
+    seedSubCategory("wf-id-275", "ASI08", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
+    seedCategory("wf-id-275", "ASI10", "ASI10 Rogue Agents", 99, 16703, 87),
+    seedSubCategory("wf-id-275", "ASI10", "ASI10", "ASI10 Rogue Agents", 99, 16703, 87),
+    // ---- Wiz 5Rs ----
+    {
+      frameworkId: "wf-id-214",
+      level: "framework",
+      nodeId: "wf-id-214",
+      title: "5Rs - Wiz for Data Security",
+      posturePct: 85,
+      passCount: 0,
+      failCount: 0,
+      // Five categories now, one of which reports nothing. The framework percentage stays
+      // 85 and is deliberately NOT the mean of its categories (62/91/78/85/null averages to
+      // 79) — Wiz's aggregation is undocumented, and this row exists partly to keep a naive
+      // CATEGORY-MEAN recomputation from ever accidentally looking correct. That guard is
+      // unrelated to the AI-scoped posture in fiveRsPosture.ts: that figure is derived from
+      // a different set of inputs (active in-scope policies' own pass/fail counts, not a
+      // mean of category percentages) and is EXPECTED to differ from 85 — see that module.
+      passSubCategoryCount: 1,
+      failSubCategoryCount: 4,
+      emptyPostureReason: null
+    },
+    // NO_POLICIES is a DIFFERENT emptiness from NO_RESOURCES: nothing was written to assess,
+    // rather than nothing existing to assess against. Both must read as their own state.
+    seedCategory("wf-id-214", "1", "Reduce", null, 0, 0, "NO_RESOURCES"),
+    seedSubCategory("wf-id-214", "1", "1.1", "Stale data resources", null, 0, 0, "NO_POLICIES"),
+    seedCategory("wf-id-214", "2", "Restrict", 85, 194309, 71),
+    seedSubCategory("wf-id-214", "2", "2.1", "Public data exposure", 85, 194309, 71),
+    // The other three Rs, and the reason they are seeded at all: this is a DATA-security
+    // framework collected by an AI product, and until now the sample carried only the two
+    // categories whose rules happen to be about AI (a Bedrock trust policy, a training
+    // bucket). A landscape that agrees with the product's focus cannot demonstrate the scope
+    // feature, and worse, cannot catch it silently excluding nothing.
+    //
+    // Note the check counts. 2.1 reports 194,309 passing against ASI01's 144 — three orders
+    // of magnitude, because Wiz is scoring the WHOLE data landscape here, not the AI slice of
+    // it. That gap is the framework's non-AI character showing up in the numbers, and these
+    // rows keep it visible.
+    seedCategory("wf-id-214", "3", "Relabel", 62, 88412, 1204),
+    seedSubCategory("wf-id-214", "3", "3.1", "Unlabelled sensitive data", 62, 88412, 1204),
+    seedCategory("wf-id-214", "4", "Relocate", 91, 40210, 331),
+    seedSubCategory("wf-id-214", "4", "4.1", "Data residency", 91, 40210, 331),
+    seedCategory("wf-id-214", "5", "Reconfigure", 78, 120044, 2210),
+    seedSubCategory("wf-id-214", "5", "5.1", "Encryption and retention", 78, 120044, 2210),
+    // ---- OWASP ML ----
+    {
+      frameworkId: "wf-id-106",
+      level: "framework",
+      nodeId: "wf-id-106",
+      title: "OWASP ML Security Top 10",
+      posturePct: 100,
+      passCount: 0,
+      failCount: 0,
+      passSubCategoryCount: 1,
+      failSubCategoryCount: 0,
+      emptyPostureReason: null
+    },
+    seedCategory("wf-id-106", "ML02", "Data Poisoning Attack", 100, 126e3, 0),
+    seedSubCategory("wf-id-106", "ML02", "ML02", "Data Poisoning Attack", 100, 126e3, 0),
+    // ---- OWASP LLM ----
+    // The awkward shape: NUMERIC external ids, with the OWASP code carried in the category
+    // NAME and stamped with its edition. Seeded so the dry run exercises the one framework
+    // whose codes cannot be read off an id.
+    {
+      frameworkId: "wf-id-201",
+      level: "framework",
+      nodeId: "wf-id-201",
+      title: "OWASP LLM Security Top 10",
+      posturePct: 95,
+      passCount: 0,
+      failCount: 0,
+      passSubCategoryCount: 1,
+      failSubCategoryCount: 1,
+      emptyPostureReason: null
+    },
+    seedCategory("wf-id-201", "1", "1 LLM01:2025 Prompt Injection", 90, 691, 70),
+    seedSubCategory("wf-id-201", "1", "1.1", "1.1  Prompt Injection", 90, 691, 70),
+    seedCategory("wf-id-201", "2", "2 LLM02:2025 Sensitive Information Disclosure", 98, 5929, 100),
+    seedSubCategory("wf-id-201", "2", "2.1", "2.1 Sensitive Information Disclosure", 98, 5929, 100)
+  ];
+  function seedPolicy(frameworkId, categoryExternalId, subcategoryExternalId, shortId, name, severity, passCount, failCount) {
+    return {
+      frameworkId,
+      categoryExternalId,
+      subcategoryExternalId,
+      policyId: `pol-${shortId}`,
+      policyKind: "CLOUD_RULE",
+      shortId,
+      name,
+      severity,
+      enabled: true,
+      builtin: true,
+      passCount,
+      failCount,
+      assessedCount: passCount + failCount,
+      rejectedCount: 0,
+      noResourceToAssess: passCount + failCount === 0,
+      cloudProvider: "AWS"
+    };
+  }
+  var SEED_FRAMEWORK_POLICIES = [
+    // SUB-082 under TWO subcategories of the same framework — the many-to-many, in the
+    // simplest form. Summing these rows as distinct policies would double-count it.
+    seedPolicy(
+      "wf-id-275",
+      "ASI01",
+      "ASI01",
+      "SUB-082",
+      "Vertex AI Metadata Store must use a customer-managed key",
+      "MEDIUM",
+      21,
+      2
+    ),
+    seedPolicy(
+      "wf-id-275",
+      "ASI10",
+      "ASI10",
+      "SUB-082",
+      "Vertex AI Metadata Store must use a customer-managed key",
+      "MEDIUM",
+      21,
+      2
+    ),
+    // IAM-236 under ASI03 *and* under 5Rs Restrict — the many-to-many ACROSS frameworks,
+    // which is why the join key is (framework, subcategory, policy) and not the policy.
+    seedPolicy(
+      "wf-id-275",
+      "ASI03",
+      "ASI03",
+      "IAM-236",
+      "Bedrock service roles must prevent confused-deputy access",
+      "HIGH",
+      1718,
+      18
+    ),
+    seedPolicy(
+      "wf-id-214",
+      "2",
+      "2.1",
+      "IAM-236",
+      "Bedrock service roles must prevent confused-deputy access",
+      "HIGH",
+      1718,
+      18
+    ),
+    seedPolicy(
+      "wf-id-275",
+      "ASI03",
+      "ASI03",
+      "IAM-267",
+      "Agent service accounts must not hold wildcard data permissions",
+      "HIGH",
+      42,
+      3
+    ),
+    // SUB-114 under ASI10 and under the ML framework — so it picks up an ASI code and an
+    // ML_ one, proving the two spellings coexist on one finding.
+    seedPolicy(
+      "wf-id-275",
+      "ASI10",
+      "ASI10",
+      "SUB-114",
+      "Agent must be attached to a guardrail",
+      "HIGH",
+      9,
+      5
+    ),
+    seedPolicy(
+      "wf-id-106",
+      "ML02",
+      "ML02",
+      "SUB-114",
+      "Agent must be attached to a guardrail",
+      "HIGH",
+      9,
+      5
+    ),
+    seedPolicy(
+      "wf-id-214",
+      "2",
+      "2.1",
+      "SUB-047",
+      "Training bucket must not allow public write",
+      "CRITICAL",
+      30,
+      1
+    ),
+    // The 5Rs rules this product has no use for: general cloud data governance, evaluated
+    // against the whole landscape. None is mapped into an OWASP framework and none has a
+    // finding on an AI asset, so the derived scope files all four out — which is the point
+    // of seeding them. Without these the scope excludes nothing and a broken filter looks
+    // exactly like a working one.
+    seedPolicy(
+      "wf-id-214",
+      "3",
+      "3.1",
+      "DATA-311",
+      "Object storage buckets must carry a data-sensitivity label",
+      "MEDIUM",
+      62108,
+      1204
+    ),
+    seedPolicy(
+      "wf-id-214",
+      "3",
+      "3.1",
+      "DATA-318",
+      "Managed databases must declare a classification tag",
+      "LOW",
+      26304,
+      486
+    ),
+    seedPolicy(
+      "wf-id-214",
+      "4",
+      "4.1",
+      "DATA-402",
+      "Customer data must not leave its declared residency region",
+      "HIGH",
+      40210,
+      331
+    ),
+    seedPolicy(
+      "wf-id-214",
+      "5",
+      "5.1",
+      "DATA-514",
+      "Object storage must define a retention policy",
+      "MEDIUM",
+      98720,
+      2210
+    ),
+    // ...and one that stays. SUB-082 already sits under ASI01 and ASI10, so Wiz itself
+    // files it under an AI framework and the cross-mapping signal keeps it in scope. It is
+    // here so that "Reconfigure" cannot be read as "a category that is entirely off":
+    // scope is a property of a rule, not of the R it happens to live under.
+    seedPolicy(
+      "wf-id-214",
+      "5",
+      "5.1",
+      "SUB-082",
+      "Vertex AI Metadata Store must use a customer-managed key",
+      "MEDIUM",
+      21,
+      2
+    ),
+    // SUB-114 also lands under LLM01, so one finding ends up carrying an ASI code, an ML_
+    // code AND an LLM code — three vocabularies on one failing control, which is the point.
+    seedPolicy(
+      "wf-id-201",
+      "1",
+      "1.1",
+      "SUB-114",
+      "Agent must be attached to a guardrail",
+      "HIGH",
+      9,
+      5
+    ),
+    seedPolicy(
+      "wf-id-201",
+      "2",
+      "2.1",
+      "IAM-267",
+      "Agent service accounts must not hold wildcard data permissions",
+      "HIGH",
+      42,
+      3
+    ),
+    // Nothing to assess: every count zero AND the flag set. Renders as its own state, never
+    // as a 0% score.
+    {
+      frameworkId: "wf-id-275",
+      categoryExternalId: "ASI08",
+      subcategoryExternalId: "ASI08",
+      policyId: "pol-AIService-009",
+      policyKind: "CLOUD_RULE",
+      shortId: "AIService-009",
+      name: "Agent orchestration must bound retry fan-out",
+      severity: "MEDIUM",
+      enabled: true,
+      builtin: true,
+      passCount: 0,
+      failCount: 0,
+      assessedCount: 0,
+      rejectedCount: 0,
+      noResourceToAssess: true,
+      cloudProvider: "Azure"
+    },
+    // A Control rather than a cloud rule — no shortId at all, so the finding join can only
+    // reach it by uuid. Both keys exist in the lookup for exactly this reason.
+    {
+      frameworkId: "wf-id-275",
+      categoryExternalId: "ASI01",
+      subcategoryExternalId: "ASI01",
+      policyId: "667e01f9-1105-42d5-a66a-e7f739fb4c4f",
+      policyKind: "CONTROL",
+      name: "Highly privileged AI agent is not protected by AI guardrails",
+      severity: "MEDIUM",
+      enabled: true,
+      builtin: true,
+      passCount: 72,
+      failCount: 0,
+      assessedCount: 72,
+      rejectedCount: 0,
+      noResourceToAssess: false
+    }
+  ];
+  function seedGraphDoc(syncedAt) {
+    return { nodes: SEED_NODES, edges: SEED_EDGES, syncedAt };
+  }
+  var SEED_TREND = [
+    { CRITICAL: 5, HIGH: 12, MEDIUM: 0, LOW: 2, INFO: 11 },
+    { CRITICAL: 5, HIGH: 13, MEDIUM: 0, LOW: 2, INFO: 10 },
+    { CRITICAL: 4, HIGH: 15, MEDIUM: 0, LOW: 3, INFO: 9 },
+    { CRITICAL: 4, HIGH: 16, MEDIUM: 0, LOW: 3, INFO: 9 },
+    { CRITICAL: 3, HIGH: 16, MEDIUM: 0, LOW: 3, INFO: 8 },
+    { CRITICAL: 3, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
+    { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
+    { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 }
+  ];
+  var SEED_CONFIG_RULES = [
+    {
+      id: "rule-iam-159",
+      shortId: "IAM-159",
+      name: "User should have MFA enabled",
+      subjectEntityType: "USER_ACCOUNT",
+      externalRefs: []
+    },
+    {
+      id: "rule-iam-208",
+      shortId: "IAM-208",
+      name: "User with password-based authentication should have multi-factor authentication (MFA) enabled",
+      subjectEntityType: "USER_ACCOUNT",
+      externalRefs: []
+    },
+    {
+      id: "rule-iam-235",
+      shortId: "IAM-235",
+      name: "User should not be inactive for more than 90 days",
+      subjectEntityType: "USER_ACCOUNT",
+      externalRefs: []
+    },
+    {
+      // The gloss the AARS cascade has always lacked: SEED_FINDINGS prices SUB-082 and the
+      // codebook has never been able to render what it means.
+      id: "rule-sub-082",
+      shortId: "SUB-082",
+      name: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
+      subjectEntityType: "REGION",
+      externalRefs: ["CKV_GCP_96", "CKV2_GCP_25"]
+    },
+    {
+      id: "rule-idp-012",
+      shortId: "IDP-012",
+      name: "WorkSpaces Directory should have multi-factor authentication enabled",
+      subjectEntityType: "IDENTITY_PROVIDER",
+      externalRefs: []
+    }
+  ];
+  var SEED_IDENTITY_FINDINGS = [
+    {
+      id: "idf-001",
+      resourceId: "user-ops-01",
+      resourceName: "ops.user01@example.com",
+      ruleId: "rule-iam-159",
+      ruleShortId: "IAM-159",
+      ruleName: "User should have MFA enabled",
+      severity: "HIGH",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-05-02T09:14:00Z",
+      analyzedAt: "2026-08-13T04:00:00Z",
+      remediation: "Enrol this account in multi-factor authentication.",
+      hygiene: "MFA"
+    },
+    {
+      id: "idf-002",
+      resourceId: "user-ops-02",
+      resourceName: "ops.user02@example.com",
+      ruleId: "rule-iam-235",
+      ruleShortId: "IAM-235",
+      ruleName: "User should not be inactive for more than 90 days",
+      severity: "MEDIUM",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-04-18T11:02:00Z",
+      analyzedAt: "2026-08-13T04:00:00Z",
+      remediation: "Disable or remove accounts that are no longer in use.",
+      hygiene: "DORMANT"
+    },
+    {
+      id: "idf-003",
+      resourceId: "user-ops-05",
+      resourceName: "ops.user05@example.com",
+      ruleId: "rule-iam-159",
+      ruleShortId: "IAM-159",
+      ruleName: "User should have MFA enabled",
+      severity: "HIGH",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-05-02T09:14:00Z",
+      analyzedAt: "2026-08-13T04:00:00Z",
+      hygiene: "MFA"
+    }
+  ];
+  var SEED_EFFECTIVE_ACCESS = [
+    {
+      identityId: "user-ops-01",
+      identityName: "ops.user01@example.com",
+      resourceId: "agent-h-chatbot",
+      accessTypes: ["DATA"],
+      permissions: ["aiplatform.endpoints.predict", "storage.objects.get"],
+      policyIds: ["policy-ops-admin"],
+      policyNames: ["ops-admin-binding"]
+    },
+    {
+      identityId: "user-ops-07",
+      identityName: "ops.user07@example.com",
+      resourceId: "agent-h-chatbot",
+      accessTypes: ["DATA"],
+      permissions: ["storage.objects.get"],
+      policyIds: ["policy-ops-reader"],
+      policyNames: ["ops-reader-binding"]
+    }
+  ];
 
   // src/domain/rankStats.ts
   function tiedPairCount(values) {
@@ -4669,170 +6491,6 @@ var Server = (() => {
       below += size;
     }
     return values.map((v) => percentileOf.get(v));
-  }
-
-  // src/domain/sha1.ts
-  function utf8Bytes(s) {
-    const out = [];
-    for (let i = 0; i < s.length; i++) {
-      let c = s.charCodeAt(i);
-      if (c < 128) {
-        out.push(c);
-      } else if (c < 2048) {
-        out.push(192 | c >> 6, 128 | c & 63);
-      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
-        const c2 = s.charCodeAt(++i);
-        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
-        out.push(
-          240 | cp >> 18,
-          128 | cp >> 12 & 63,
-          128 | cp >> 6 & 63,
-          128 | cp & 63
-        );
-      } else {
-        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
-      }
-    }
-    return out;
-  }
-  function rotl(n, b) {
-    return (n << b | n >>> 32 - b) >>> 0;
-  }
-  function sha1Hex(input) {
-    const bytes = utf8Bytes(input);
-    const bitLen = bytes.length * 8;
-    bytes.push(128);
-    while (bytes.length % 64 !== 56) bytes.push(0);
-    const hi = Math.floor(bitLen / 4294967296);
-    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
-    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
-    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
-    const w = new Array(80);
-    for (let block = 0; block < bytes.length; block += 64) {
-      for (let i = 0; i < 16; i++) {
-        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
-      }
-      for (let i = 16; i < 80; i++) {
-        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
-      }
-      let a = h0, b = h1, c = h2, d = h3, e = h4;
-      for (let i = 0; i < 80; i++) {
-        let f, k;
-        if (i < 20) {
-          f = b & c | ~b & d;
-          k = 1518500249;
-        } else if (i < 40) {
-          f = b ^ c ^ d;
-          k = 1859775393;
-        } else if (i < 60) {
-          f = b & c | b & d | c & d;
-          k = 2400959708;
-        } else {
-          f = b ^ c ^ d;
-          k = 3395469782;
-        }
-        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
-        e = d;
-        d = c;
-        c = rotl(b, 30);
-        b = a;
-        a = t;
-      }
-      h0 = h0 + a >>> 0;
-      h1 = h1 + b >>> 0;
-      h2 = h2 + c >>> 0;
-      h3 = h3 + d >>> 0;
-      h4 = h4 + e >>> 0;
-    }
-    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
-  }
-
-  // src/server/buildInfo.ts
-  var BUILD_ID = true ? "934629089b6f" : "dev";
-  function buildInfo() {
-    return { id: BUILD_ID };
-  }
-
-  // src/server/serverCache.ts
-  var VERSION_PROP = "DATA_VERSION";
-  var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
-  var KEY_PREFIX = `wsk.${BUILD_ID}`;
-  var CHUNK_CHARS = 9e4;
-  var DEFAULT_TTL_SEC = 21600;
-  function dataVersion() {
-    var _a5;
-    return (_a5 = getProp(VERSION_PROP)) != null ? _a5 : "0";
-  }
-  function bumpDataVersion() {
-    setProp(VERSION_PROP, String(Date.now()));
-  }
-  function wizDataVersion() {
-    var _a5;
-    return (_a5 = getProp(WIZ_VERSION_PROP)) != null ? _a5 : "0";
-  }
-  function bumpWizDataVersion() {
-    setProp(WIZ_VERSION_PROP, String(Date.now()));
-  }
-  function cacheKey(name, params, version) {
-    const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
-    return `${KEY_PREFIX}:${version}:${name}:${paramsHash}`;
-  }
-  function splitChunks(s, size = CHUNK_CHARS) {
-    const out = [];
-    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
-    return out.length ? out : [""];
-  }
-  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
-    const json = JSON.stringify(value);
-    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
-    const packed = Utilities.base64Encode(gz.getBytes());
-    const chunks = splitChunks(packed, chunkChars);
-    const entries = { [`${key}:m`]: String(chunks.length) };
-    chunks.forEach((c, i) => {
-      entries[`${key}:${i}`] = c;
-    });
-    CacheService.getScriptCache().putAll(entries, ttlSec);
-  }
-  function cacheGetJson(key) {
-    const cache = CacheService.getScriptCache();
-    const meta = cache.get(`${key}:m`);
-    if (!meta) return void 0;
-    const n = Number(meta);
-    if (!Number.isInteger(n) || n < 1) return void 0;
-    const names = [];
-    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
-    const got = cache.getAll(names);
-    let packed = "";
-    for (const name of names) {
-      const chunk = got[name];
-      if (chunk === void 0 || chunk === null) return void 0;
-      packed += chunk;
-    }
-    const bytes = Utilities.base64Decode(packed);
-    const json = Utilities.ungzip(
-      Utilities.newBlob(bytes, "application/x-gzip")
-    ).getDataAsString("UTF-8");
-    return JSON.parse(json);
-  }
-  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
-    let key = null;
-    try {
-      key = cacheKey(name, params, version != null ? version : dataVersion());
-      const hit = cacheGetJson(key);
-      if (hit !== void 0) return hit;
-    } catch (e) {
-      console.warn(`Cache read failed for ${name}: ${e}`);
-      key = null;
-    }
-    const value = compute();
-    if (key) {
-      try {
-        cachePutJson(key, value, ttlSec);
-      } catch (e) {
-        console.warn(`Cache write failed for ${name}: ${e}`);
-      }
-    }
-    return value;
   }
 
   // src/domain/aarsRule.ts
@@ -5427,309 +7085,6 @@ var Server = (() => {
     return withoutCeiling(a) === withoutCeiling(b);
   }
 
-  // src/domain/scanVars.ts
-  var MAX_LIST_VALUES = 40;
-  var MAX_VALUE_LEN = 120;
-  var ISSUE_STATUSES = ["OPEN", "IN_PROGRESS", "RESOLVED", "REJECTED"];
-  var ORDER_DIRECTIONS = ["ASC", "DESC"];
-  var STEP_VAR_SPECS = [
-    {
-      stepId: "INVENTORY_AI",
-      fields: [
-        {
-          path: "filterBy.type.equals",
-          label: "Resource types",
-          help: "The Wiz resource types treated as AI assets. Resolved against this tenant's schema by default; setting them here pins the list instead.",
-          kind: "list",
-          required: true
-        }
-      ]
-    },
-    {
-      stepId: "ISSUES_TOXIC",
-      fields: [
-        {
-          path: "filterBy.status",
-          label: "Issue status",
-          help: "Which issue states to collect. Narrowing to OPEN drops in-progress work from the register and from AARS pillar A.",
-          kind: "list",
-          options: ISSUE_STATUSES,
-          required: true
-        },
-        {
-          path: "filterBy.type",
-          label: "Issue types",
-          // Optional, and empty is the default: the sync sends no type filter at all, so
-          // the category decides what is collected and Wiz's taxonomy does not. Marking it
-          // required would be incoherent now — an empty list and an absent one both mean
-          // "every type", and only one of them would be rejected.
-          help: "Empty (the default) collects every issue type in the AI risk category \u2014 including kinds this register has never modelled, which land in Other AI risk. Naming types here NARROWS that: each one left out disappears from the register total and from AARS pillar A with nothing on the page to mark its absence. Pinning TOXIC_COMBINATION and CLOUD_CONFIGURATION is what once hid every threat detection in the category.",
-          kind: "list",
-          options: ["TOXIC_COMBINATION", "CLOUD_CONFIGURATION", "THREAT_DETECTION"]
-        },
-        {
-          path: "filterBy.project",
-          label: "Project scope",
-          help: "Wiz project ids to restrict to. Empty means the whole tenant.",
-          kind: "list"
-        },
-        {
-          path: "orderBy.direction",
-          label: "Order direction",
-          help: "Which end of the severity order the paging walks first.",
-          kind: "enum",
-          options: ORDER_DIRECTIONS
-        }
-      ],
-      // Deliberately NOT offering filterBy.frameworkCategory. Every figure this app
-      // publishes — the issue count, AARS pillar A, the Toxic Combinations page, the tab
-      // literally called ai_issues — is scoped to wct-id-1998 and labelled AI. Nothing in
-      // the response says "this is an AI issue"; the category filter IS the claim. Widen it
-      // and "AI issues" silently means "all issues", with no field to catch it. Same reason
-      // AGENTIC_IDENTITIES locks its purpose filter.
-      locked: "The AI risk category (wct-id-1998) is fixed: it is what makes these issues AI issues, so widening it would relabel the whole register rather than extend it."
-    },
-    {
-      stepId: "AI_ASSET_PROPERTIES",
-      fields: [],
-      // The step exists only to fetch the properties bag for the SAME assets INVENTORY_AI
-      // already collected. Its type filter is not a knob: narrow it and some assets silently
-      // lose their publisher while others keep theirs, which looks like missing data rather
-      // than a setting. Widen it and the bag arrives for resources this app does not model.
-      locked: "This step mirrors the AI inventory's own type list \u2014 it exists to add two fields to assets already collected, so filtering it separately could only make the two disagree about which assets exist."
-    },
-    {
-      stepId: "CONFIG_FINDINGS",
-      fields: [
-        {
-          path: "filterBy.status",
-          label: "Finding status",
-          help: "Compliance findings are additionally filtered to result FAIL after they arrive, so widening this collects more rows but stores only failures.",
-          kind: "list",
-          options: ["OPEN", "RESOLVED", "REJECTED"],
-          required: true
-        },
-        {
-          path: "orderBy.direction",
-          label: "Order direction",
-          help: "Which end of the severity order the paging walks first.",
-          kind: "enum",
-          options: ORDER_DIRECTIONS
-        }
-      ]
-    },
-    {
-      stepId: "AGENTIC_IDENTITIES",
-      fields: [
-        {
-          path: "filterBy.type.equals",
-          label: "Identity types",
-          help: "Which principal types to collect.",
-          kind: "list",
-          required: true
-        }
-      ],
-      // Still NOT offering filterBy.identityPurpose, but the reason has narrowed. Wiz DOES
-      // return the purpose — `IdentityPurposeAgentic`, in the graph entity's properties bag —
-      // and Q_PRINCIPALS now selects that bag, so a collected row normally carries its own
-      // label. The stamp survives as the fallback for a tenant whose schema rejects
-      // `graphEntity`, and that fallback is what a widened filter would turn into a mislabel:
-      // every row it collected would come back stamped AGENTIC with nothing to catch it.
-      locked: "The agentic-purpose filter is fixed: where the tenant does not return an identity's own purpose the sync falls back to labelling what this query returns as agentic, so widening it would mislabel exactly the identities it could not verify."
-    },
-    {
-      stepId: "SENSITIVE_DATA_ACCESS",
-      // No fields at all, so isEditableStep is false and the panel offers no control. Stated
-      // here rather than left to fall through, because "nothing to edit" and "editing this
-      // would be unsafe" are different facts and only the second one needs saying.
-      fields: [],
-      locked: "This step has no editable filter: normalizeSensitiveDataAccessPage rebuilds the chain's edges from which entity TYPES a row carries, so a changed selection set would yield confidently wrong edges rather than an error."
-    },
-    {
-      stepId: "CONFIG_RULES",
-      fields: [],
-      locked: "This step takes no variables at all: it walks Wiz's whole rule catalogue unfiltered, deliberately \u2014 the filter input's type is unverified here, and naming an input type wrong fails the document while sending none cannot."
-    },
-    {
-      stepId: "IDENTITY_HYGIENE",
-      // The rule list looks like the obvious knob and is the one thing that must not be one:
-      // it is not a preference, it is the resolution of a name match over the synced catalogue,
-      // and normalizeIdentityFindingsPage refuses any row whose rule is not in it. An operator
-      // who pasted an extra id would get the whole step aborted as an unhonoured filter.
-      fields: [],
-      locked: "This step's rule list is resolved from the synced rule catalogue by name, not chosen: the normalizer refuses any finding whose rule is not in that resolved set, so an edited list would abort the step rather than widen it."
-    },
-    {
-      stepId: "EFFECTIVE_ACCESS",
-      // `accessTypes: [DATA]` is the knob it appears to have. Withheld because the area's prose
-      // says "can reach the asset's data" — widening the filter would change what the figure
-      // means with nothing on the page to say so, which is the failure the whole Scans page is
-      // built to prevent.
-      fields: [],
-      locked: "This step has no editable filter: its access-type list is what the area's own figure claims to count, so widening it here would change what the number means without changing what the page says it means."
-    },
-    {
-      stepId: "IDENTITY_ACCESS",
-      // Its traversal is a $query variable now, so in principle the access-level list is a
-      // path an override could reach. Withheld for the reason ENDPOINT_EXPOSURE's is: those two
-      // values also live in HUMAN_ACCESS_TYPES (domain/identityQuery.ts), which is what
-      // withHumanAccess and withIdentityAccessNodes judge an edge by. Widening the filter would
-      // collect READ bindings the figure then refuses to count.
-      fields: [],
-      locked: "This step has no editable filter: the ADMIN / HIGH_PRIVILEGE bar is applied again when the reach is totalled and drawn, so widening it here would collect bindings that never reach a number."
-    },
-    {
-      stepId: "HOST_EXPOSURE",
-      fields: [],
-      locked: "This step has no editable filter: normalizeHostExposurePage rebuilds the HOSTED_ON and SERVES edges from which entity TYPES a row carries, and its whole claim is `accessibleFrom.internet` on the compute \u2014 widen that and the step reports unreachable hosts as reachable ones."
-    },
-    {
-      stepId: "ENDPOINT_EXPOSURE",
-      // No knob, and the exposure-level list is exactly the knob it looks like it should have.
-      // It is withheld because the same two values appear in a SECOND place: RATED_EXPOSURE_LEVELS
-      // in domain/exposureQuery.ts, which is what withExposureEvidence tests the returned level
-      // against. That double reading is deliberate — ENDPOINT rows also arrive from
-      // HOST_EXPOSURE, unfiltered and (in the capture) rated Low, so the bar has to be applied
-      // to the payload rather than assumed from the query. An operator who widened the filter
-      // here would collect Low-rated endpoints as graph nodes and see the exposure figure not
-      // move, which is a worse answer than no knob at all.
-      fields: [],
-      locked: "This step has no editable filter: the High/Medium bar is also applied to the endpoints the host-exposure step returns unfiltered, so moving it here would widen what is collected without moving what counts as an exposure."
-    },
-    {
-      stepId: "FRAMEWORKS_LIST",
-      // Declared with no fields rather than left out of this list entirely: an absent spec
-      // renders as the generic "no spec" fallback, which reads as an oversight, and someone
-      // will eventually "fix" it. Its only variable is a boolean, and the panel's controls
-      // are list/enum — a third field kind bought for one flag that changes nothing about
-      // what is collected is not worth the machinery.
-      fields: [],
-      locked: "This step's only filter picks whether disabled frameworks appear in the Settings picker. It does not decide what posture is collected \u2014 the framework selection does \u2014 so there is nothing here worth tuning per tenant."
-    },
-    {
-      // Matches every generated posture step (COMPLIANCE_POSTURE_wf-id-275, …) so the family
-      // shares one lock reason instead of falling through to the generic "no spec" text.
-      stepId: "COMPLIANCE_POSTURE_",
-      prefix: true,
-      fields: [],
-      locked: "This step takes no editable variable: its `id` is not a filter \u2014 it selects WHICH framework is fetched, so editing it here would make a step whose name says one framework report another. Choose frameworks in Settings instead."
-    }
-  ];
-  var SPEC_BY_STEP = {};
-  for (const spec of STEP_VAR_SPECS) SPEC_BY_STEP[spec.stepId] = spec;
-  function varSpecFor(stepId) {
-    const exact = SPEC_BY_STEP[stepId];
-    if (exact) return exact;
-    for (const spec of STEP_VAR_SPECS) {
-      if (spec.prefix && stepId.indexOf(spec.stepId) === 0) return spec;
-    }
-    return null;
-  }
-  function isEditableStep(stepId) {
-    const spec = varSpecFor(stepId);
-    return !!spec && spec.fields.length > 0;
-  }
-  function readPath(obj, path) {
-    let cur = obj;
-    for (const key of path.split(".")) {
-      if (!cur || typeof cur !== "object") return void 0;
-      cur = cur[key];
-    }
-    return cur;
-  }
-  function writePath(obj, path, value) {
-    const keys = path.split(".");
-    let cur = obj;
-    for (let i = 0; i < keys.length - 1; i++) {
-      const key = keys[i];
-      const next = cur[key];
-      if (!next || typeof next !== "object" || Array.isArray(next)) cur[key] = {};
-      cur = cur[keys[i]];
-    }
-    cur[keys[keys.length - 1]] = value;
-  }
-  function cleanValue(v) {
-    return String(v != null ? v : "").trim().slice(0, MAX_VALUE_LEN);
-  }
-  function cleanList(v) {
-    if (!Array.isArray(v)) return [];
-    const out = [];
-    for (const raw of v) {
-      const s = cleanValue(raw);
-      if (s && out.indexOf(s) < 0) out.push(s);
-      if (out.length >= MAX_LIST_VALUES) break;
-    }
-    return out;
-  }
-  function cleanStepVars(stepId, raw) {
-    const spec = varSpecFor(stepId);
-    if (!spec || !raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-    const out = {};
-    let touched = false;
-    for (const field of spec.fields) {
-      const value = readPath(raw, field.path);
-      if (value === void 0 || value === null) continue;
-      if (field.kind === "list") {
-        const list2 = cleanList(value);
-        writePath(out, field.path, list2);
-        touched = true;
-      } else {
-        const s = cleanValue(value).toUpperCase();
-        if (!s) continue;
-        if (field.options && field.options.indexOf(s) < 0) continue;
-        writePath(out, field.path, s);
-        touched = true;
-      }
-    }
-    return touched ? out : null;
-  }
-  function validateStepVars(stepId, vars) {
-    const spec = varSpecFor(stepId);
-    if (!spec) return [`${stepId} does not take editable variables.`];
-    if (!vars) return [];
-    const errors = [];
-    for (const field of spec.fields) {
-      const value = readPath(vars, field.path);
-      if (value === void 0) continue;
-      if (field.kind === "list") {
-        const list2 = Array.isArray(value) ? value : [];
-        if (field.required && !list2.length) {
-          errors.push(
-            `${field.label} cannot be empty \u2014 an empty filter asks Wiz for everything, which is not what this step normalizes.`
-          );
-        }
-        if (list2.length >= MAX_LIST_VALUES) {
-          errors.push(`${field.label} is capped at ${MAX_LIST_VALUES} values.`);
-        }
-      }
-    }
-    return errors;
-  }
-  function effectiveStepVars(stepId, base, override) {
-    const clean2 = cleanStepVars(stepId, override);
-    if (!clean2) return base;
-    const spec = varSpecFor(stepId);
-    const merged = JSON.parse(JSON.stringify(base != null ? base : {}));
-    for (const field of spec ? spec.fields : []) {
-      const value = readPath(clean2, field.path);
-      if (value === void 0) continue;
-      writePath(merged, field.path, value);
-    }
-    return merged;
-  }
-  function changedPaths(stepId, base, override) {
-    const clean2 = cleanStepVars(stepId, override);
-    if (!clean2) return [];
-    const spec = varSpecFor(stepId);
-    const out = [];
-    for (const field of spec ? spec.fields : []) {
-      const next = readPath(clean2, field.path);
-      if (next === void 0) continue;
-      if (JSON.stringify(next) !== JSON.stringify(readPath(base, field.path))) out.push(field.path);
-    }
-    return out;
-  }
-
   // src/domain/settingsLogic.ts
   function clampDepth(v) {
     return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
@@ -5912,6 +7267,18 @@ var Server = (() => {
   function withStepRows(settings, rows) {
     return { ...settings, last_step_rows: getStepRows({ last_step_rows: rows }) };
   }
+  function getSkipReasons(settings) {
+    const raw = settings["last_skip_reasons"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (k && typeof v === "string" && v) out[k] = v;
+    }
+    return out;
+  }
+  function withSkipReasons(settings, reasons) {
+    return { ...settings, last_skip_reasons: getSkipReasons({ last_skip_reasons: reasons }) };
+  }
   var DEFAULT_FRAMEWORK_IDS = [
     "wf-id-275",
     // OWASP Top 10 For Agentic Applications 2026
@@ -5986,6 +7353,170 @@ var Server = (() => {
       in: base.in.filter((id) => known.has(id)),
       out: base.out.filter((id) => known.has(id))
     };
+  }
+
+  // src/domain/sha1.ts
+  function utf8Bytes(s) {
+    const out = [];
+    for (let i = 0; i < s.length; i++) {
+      let c = s.charCodeAt(i);
+      if (c < 128) {
+        out.push(c);
+      } else if (c < 2048) {
+        out.push(192 | c >> 6, 128 | c & 63);
+      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
+        const c2 = s.charCodeAt(++i);
+        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
+        out.push(
+          240 | cp >> 18,
+          128 | cp >> 12 & 63,
+          128 | cp >> 6 & 63,
+          128 | cp & 63
+        );
+      } else {
+        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
+      }
+    }
+    return out;
+  }
+  function rotl(n, b) {
+    return (n << b | n >>> 32 - b) >>> 0;
+  }
+  function sha1Hex(input) {
+    const bytes = utf8Bytes(input);
+    const bitLen = bytes.length * 8;
+    bytes.push(128);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    const hi = Math.floor(bitLen / 4294967296);
+    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
+    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
+    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
+    const w = new Array(80);
+    for (let block = 0; block < bytes.length; block += 64) {
+      for (let i = 0; i < 16; i++) {
+        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
+      }
+      for (let i = 16; i < 80; i++) {
+        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+      }
+      let a = h0, b = h1, c = h2, d = h3, e = h4;
+      for (let i = 0; i < 80; i++) {
+        let f, k;
+        if (i < 20) {
+          f = b & c | ~b & d;
+          k = 1518500249;
+        } else if (i < 40) {
+          f = b ^ c ^ d;
+          k = 1859775393;
+        } else if (i < 60) {
+          f = b & c | b & d | c & d;
+          k = 2400959708;
+        } else {
+          f = b ^ c ^ d;
+          k = 3395469782;
+        }
+        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
+        e = d;
+        d = c;
+        c = rotl(b, 30);
+        b = a;
+        a = t;
+      }
+      h0 = h0 + a >>> 0;
+      h1 = h1 + b >>> 0;
+      h2 = h2 + c >>> 0;
+      h3 = h3 + d >>> 0;
+      h4 = h4 + e >>> 0;
+    }
+    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
+  }
+
+  // src/server/buildInfo.ts
+  var BUILD_ID = true ? "f380d1cdc27d" : "dev";
+  function buildInfo() {
+    return { id: BUILD_ID };
+  }
+
+  // src/server/serverCache.ts
+  var VERSION_PROP = "DATA_VERSION";
+  var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
+  var KEY_PREFIX = `wsk.${BUILD_ID}`;
+  var CHUNK_CHARS = 9e4;
+  var DEFAULT_TTL_SEC = 21600;
+  function dataVersion() {
+    var _a5;
+    return (_a5 = getProp(VERSION_PROP)) != null ? _a5 : "0";
+  }
+  function bumpDataVersion() {
+    setProp(VERSION_PROP, String(Date.now()));
+  }
+  function wizDataVersion() {
+    var _a5;
+    return (_a5 = getProp(WIZ_VERSION_PROP)) != null ? _a5 : "0";
+  }
+  function bumpWizDataVersion() {
+    setProp(WIZ_VERSION_PROP, String(Date.now()));
+  }
+  function cacheKey(name, params, version) {
+    const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
+    return `${KEY_PREFIX}:${version}:${name}:${paramsHash}`;
+  }
+  function splitChunks(s, size = CHUNK_CHARS) {
+    const out = [];
+    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
+    return out.length ? out : [""];
+  }
+  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
+    const json = JSON.stringify(value);
+    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
+    const packed = Utilities.base64Encode(gz.getBytes());
+    const chunks = splitChunks(packed, chunkChars);
+    const entries = { [`${key}:m`]: String(chunks.length) };
+    chunks.forEach((c, i) => {
+      entries[`${key}:${i}`] = c;
+    });
+    CacheService.getScriptCache().putAll(entries, ttlSec);
+  }
+  function cacheGetJson(key) {
+    const cache = CacheService.getScriptCache();
+    const meta = cache.get(`${key}:m`);
+    if (!meta) return void 0;
+    const n = Number(meta);
+    if (!Number.isInteger(n) || n < 1) return void 0;
+    const names = [];
+    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
+    const got = cache.getAll(names);
+    let packed = "";
+    for (const name of names) {
+      const chunk = got[name];
+      if (chunk === void 0 || chunk === null) return void 0;
+      packed += chunk;
+    }
+    const bytes = Utilities.base64Decode(packed);
+    const json = Utilities.ungzip(
+      Utilities.newBlob(bytes, "application/x-gzip")
+    ).getDataAsString("UTF-8");
+    return JSON.parse(json);
+  }
+  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
+    let key = null;
+    try {
+      key = cacheKey(name, params, version != null ? version : dataVersion());
+      const hit = cacheGetJson(key);
+      if (hit !== void 0) return hit;
+    } catch (e) {
+      console.warn(`Cache read failed for ${name}: ${e}`);
+      key = null;
+    }
+    const value = compute();
+    if (key) {
+      try {
+        cachePutJson(key, value, ttlSec);
+      } catch (e) {
+        console.warn(`Cache write failed for ${name}: ${e}`);
+      }
+    }
+    return value;
   }
 
   // src/server/settingsStore.ts
@@ -6096,6 +7627,14 @@ var Server = (() => {
     if (key(getStepRows(next)) === key(getStepRows(settings))) return;
     saveSettings(next);
   }
+  var getSkipReasons2 = () => getSkipReasons(loadSettings());
+  function setSkipReasons(reasons) {
+    const settings = loadSettings();
+    const next = withSkipReasons(settings, reasons);
+    const key = (r) => Object.keys(r).sort().map((k) => `${k}=${r[k]}`).join("\0");
+    if (key(getSkipReasons(next)) === key(getSkipReasons(settings))) return;
+    saveSettings(next);
+  }
   function getSelectedFrameworks2(catalogue) {
     const settings = loadSettings();
     if (Array.isArray(settings["selected_frameworks"])) {
@@ -6150,6 +7689,65 @@ var Server = (() => {
   }
   function setConfigRulesSyncedAt(at) {
     saveSettings(withConfigRulesSyncedAt(loadSettings(), at));
+  }
+
+  // src/domain/aarsTrend.ts
+  function countAarsSeverities(nodes) {
+    const counts = {};
+    for (const sev of AARS_SEVERITY_ORDER) counts[sev] = 0;
+    for (const n of nodes) {
+      const sev = normalizeAarsSeverity(n.aarsSeverity);
+      if (sev) counts[sev] += 1;
+    }
+    return counts;
+  }
+  function parseCounts(v, keys) {
+    if (typeof v !== "string" || !v) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const raw = parsed;
+    const counts = {};
+    for (const k of keys) {
+      const n = Number(raw[k]);
+      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+    }
+    return counts;
+  }
+  function trendFromHistory(rows, spec, limit = 90) {
+    var _a5;
+    const points = [];
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const counts = parseCounts(r[spec.countsColumn], spec.keys);
+      if (!counts) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const v = Number(r[spec.versionColumn]);
+      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+      points.push({ at, counts, ruleVersion });
+    }
+    points.sort(cmpBy((p) => p.at));
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  var AARS_SEVERITY_SPEC = {
+    keys: AARS_SEVERITY_ORDER,
+    countsColumn: "aars_severity_json",
+    versionColumn: "aars_rule_version"
+  };
+  function aarsTrendFromHistory(rows, limit = 90) {
+    return trendFromHistory(rows, AARS_SEVERITY_SPEC, limit);
+  }
+  function ruleChangePoints(points) {
+    const marks = [];
+    for (let i = 1; i < points.length; i++) {
+      if (points[i].ruleVersion !== points[i - 1].ruleVersion) marks.push(i);
+    }
+    return marks;
   }
 
   // src/server/syncStore.ts
@@ -7148,6 +8746,782 @@ var Server = (() => {
     commit();
   }
 
+  // src/server/syncJobs.ts
+  var CANCEL_PROP = "CANCEL_SYNC_JOB_ID";
+  var CONTINUE_HANDLER = "trigger_continueSync";
+  var CONTINUE_DELAY_MS = 3e4;
+  var FIRST_STEP_BUDGET_MS = 45e3;
+  var BUDGET_MS = 27e4;
+  var CHECKPOINT_MS = 8e3;
+  var SKIP_REASON_MAX = 400;
+  function syncSteps(aiTypes) {
+    const types = aiTypes != null ? aiTypes : resolveAiResourceTypes().types;
+    const frameworkIds = getSelectedFrameworks2(() => loadFrameworks());
+    const overrides = getScanVars2();
+    const vars = (stepId, base) => effectiveStepVars(stepId, base, overrides[stepId]);
+    const selectedFrameworks = () => frameworkIds;
+    const catalogue = loadConfigRules();
+    const catalogueFresh = configRulesAreFresh2(catalogue.length > 0, Date.now());
+    const hygieneRules = resolveHygieneRules(catalogue);
+    return [
+      {
+        id: "INVENTORY_AI",
+        area: "aispm",
+        writes: ["ai_assets"],
+        run: "cloudResources",
+        query: Q_AI_INVENTORY,
+        extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types)),
+        normalize: normalizeInventoryPage,
+        pageSize: PAGE_SIZE_WIDE
+      },
+      // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
+      // issue for that rule (issue rows are reconstructed one-per-asset).
+      ...COMBO_GROUPS.map((group) => ({
+        id: `ISSUES_${group.ruleId}`,
+        area: "toxic",
+        writes: ["ai_assets", "ai_issues"],
+        run: "cloudResources",
+        query: Q_RULE_ASSETS,
+        extraVariables: { ruleIds: [group.ruleId] },
+        normalize: (rows) => normalizeRuleAssetsPage(rows, group),
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
+      })),
+      // Real toxic-combination issues (issuesV2). Runs alongside the per-rule steps
+      // above; reconcileIssues drops the synthetic per-rule rows these supersede.
+      {
+        id: "ISSUES_TOXIC",
+        area: "toxic",
+        writes: ["ai_issues", "ai_assets"],
+        run: "connection",
+        connectionField: "issuesV2",
+        query: Q_ISSUES,
+        extraVariables: vars("ISSUES_TOXIC", aiIssuesVariables(projectScope())),
+        normalize: normalizeIssuesPage,
+        optional: true
+      },
+      // Real compliance findings (configurationFindings) — feeds AARS pillar B.
+      {
+        id: "CONFIG_FINDINGS",
+        area: "configFindings",
+        writes: ["ai_findings"],
+        run: "connection",
+        connectionField: "configurationFindings",
+        query: Q_CONFIG_FINDINGS,
+        extraVariables: vars("CONFIG_FINDINGS", aiConfigFindingsVariables(projectScope())),
+        normalize: normalizeConfigFindingsPage,
+        optional: true
+      },
+      // Wiz's cloud-configuration RULE CATALOGUE — reference data, and the only step here whose
+      // contents describe the product rather than the landscape. It is what glosses an opaque
+      // `SUB-082` in the AARS cascade, and what the identity-hygiene matchers resolve against
+      // instead of hardcoding MFA rule ids that differ per cloud.
+      //
+      // GATED, not unconditional. ~3,858 rules is ~39 pages against a battery that is otherwise
+      // ~10–20 calls, to re-collect a list that changes when Wiz ships rules. `catalogueFresh`
+      // is resolved once, above, and a skip here is recorded as SCHEDULED rather than joining
+      // `skippedSteps` — that list means "the tenant refused this", and a step we chose not to
+      // run must not be reported as a rejection.
+      ...catalogueFresh ? [] : [{
+        id: "CONFIG_RULES",
+        area: "configFindings",
+        writes: ["ai_config_rules"],
+        run: "connection",
+        connectionField: "cloudConfigurationRules",
+        query: Q_CONFIG_RULES,
+        normalize: normalizeConfigRulesPage,
+        optional: true,
+        // The big one: ~3,858 rules is 39 pages at PAGE_SIZE and 8 at PAGE_SIZE_WIDE, and
+        // the document is five flat scalars per node.
+        pageSize: PAGE_SIZE_WIDE
+      }],
+      // MFA and dormancy on the humans who can reach an AI asset. The rules come from the
+      // catalogue, matched by name (domain/identityHygiene.ts), so this step exists only once
+      // the catalogue has been collected at least once — on a first sync it resolves to nothing
+      // and is skipped, and the following sync has it.
+      ...hygieneRules.ids.length ? [{
+        id: "IDENTITY_HYGIENE",
+        area: "identity",
+        writes: ["ai_identity_findings"],
+        run: "connection",
+        connectionField: "configurationFindings",
+        query: Q_CONFIG_FINDINGS,
+        extraVariables: aiIdentityHygieneVariables(hygieneRules.ids, projectScope()),
+        // Closed over the resolved map, the way the per-rule combo steps close over their group.
+        // It is also what lets the normalizer verify the filter was honoured at all.
+        normalize: (rows) => normalizeIdentityFindingsPage(rows, hygieneRules.byId),
+        optional: true
+      }] : [],
+      // Effective permissions on those same assets: not who holds a role, but what they can do
+      // and which policy says so. Runs BESIDE IDENTITY_ACCESS rather than replacing it — that
+      // step draws the graph's ALLOWS_ACCESS_TO edges and speaks ADMIN/HIGH_PRIVILEGE, this one
+      // speaks DATA, and withHumanAccess keeps the two in separate fields.
+      {
+        id: "EFFECTIVE_ACCESS",
+        area: "identity",
+        writes: ["ai_assets (human_access_json)"],
+        run: "connection",
+        connectionField: "entityEffectiveAccessEntries",
+        query: Q_EFFECTIVE_ACCESS,
+        extraVariables: effectiveAccessVariables(types, projectScope()),
+        normalize: normalizeEffectiveAccessPage,
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
+      },
+      // The framework catalogue. Populates the Settings picker; it does NOT decide the
+      // battery — see the posture steps below for why.
+      //
+      // `area` is the posture one, not the configuration-findings one. The tag is what the
+      // Wiz Scans drill-down filters on (scanSheet.js), so it decides which area DISPLAYS
+      // this document — it is a join key, not a label. Both this step and the posture steps
+      // below spent a release tagged "compliance", which left the posture area rendering
+      // "No sync step issues a query for this area" beside its own live figure. Pinned by
+      // test/scanAreaSteps.test.ts.
+      {
+        id: "FRAMEWORKS_LIST",
+        area: "posture",
+        writes: ["ai_frameworks"],
+        run: "connection",
+        connectionField: "securityFrameworks",
+        query: Q_SECURITY_FRAMEWORKS,
+        extraVariables: vars("FRAMEWORKS_LIST", aiSecurityFrameworksVariables()),
+        normalize: normalizeFrameworksPage,
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
+      },
+      // Per-framework compliance posture — ONE STEP PER FRAMEWORK, because the query takes a
+      // framework id and returns one object. Generated the same way the per-rule combo steps
+      // above are, so the budget/resume machinery needs no special case.
+      //
+      // Driven by the SELECTION, not by the catalogue: posture costs a round trip per
+      // framework and a tenant can carry a hundred builtin ones this app has no vocabulary
+      // for. Each step is optional, so a framework id that is wrong on this tenant costs a
+      // recorded skip rather than a failed sync.
+      ...selectedFrameworks().map((frameworkId) => ({
+        id: `COMPLIANCE_POSTURE_${frameworkId}`,
+        area: "posture",
+        writes: ["ai_framework_posture", "ai_framework_policies"],
+        run: "single",
+        connectionField: "securityFramework",
+        query: Q_COMPLIANCE_POSTURE,
+        // No `vars()` indirection here on purpose: these steps are LOCKED. Overrides are
+        // stored per step id, and every posture step has its own (`COMPLIANCE_POSTURE_<id>`),
+        // so reading them under a shared "COMPLIANCE_POSTURE" key would be an override slot
+        // nothing can ever write to — dead indirection that reads like a feature.
+        //
+        // They are locked because the framework id is not a filter. The existing rule is that
+        // a variable may narrow a selection set but never change it; an id that selects WHICH
+        // OBJECT the selection set is applied to is further outside that line, not inside it.
+        // Choosing frameworks is Settings' job.
+        extraVariables: {
+          ...aiCompliancePostureVariables(projectScope()),
+          id: frameworkId
+        },
+        normalize: normalizeCompliancePosturePage,
+        optional: true
+      })),
+      {
+        id: "GUARDRAIL_GAPS",
+        area: "guardrails",
+        writes: ["ai_assets.guardrail_missing"],
+        run: "graphSearch",
+        query: Q_AGENTS_NO_GUARDRAIL,
+        normalize: normalizeNoGuardrailPage,
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
+      },
+      {
+        id: "RUNS_AS",
+        area: "ciem",
+        writes: ["ai_edges (RUNS_AS)", "ai_assets"],
+        run: "graphSearch",
+        query: Q_AGENT_RUNS_AS,
+        normalize: normalizeRunsAsPage,
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
+      },
+      {
+        id: "SA_FINDINGS",
+        area: "ciem",
+        writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
+        run: "graphSearch",
+        query: Q_SA_EXCESSIVE_ACCESS,
+        normalize: normalizeRunsAsPage,
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
+      },
+      // The data-exposure chain. Runs AFTER the two CIEM steps on purpose: it re-emits the
+      // agent and its service account, and mergeParts lets later truthy values win field-wise,
+      // so landing the richer CIEM projections first means this step can only add to them.
+      {
+        id: "SENSITIVE_DATA_ACCESS",
+        area: "dspm",
+        writes: [
+          "ai_edges (RUNS_AS, ALLOWS_ACCESS_TO)",
+          "ai_assets (BUCKET/DATABASE rows, data_finding_count)",
+          "ai_data_findings"
+        ],
+        run: "graphSearch",
+        query: Q_AGENT_SENSITIVE_DATA_ACCESS,
+        normalize: normalizeSensitiveDataAccessPage,
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
+      },
+      // Network exposure, in two steps because they are two claims. HOST_EXPOSURE says the
+      // compute under an AI asset is reachable; ENDPOINT_EXPOSURE says Wiz's scanner reached a
+      // live endpoint it serves and policy rates that a real exposure. The capture proves they
+      // can disagree — a Cloud Run revision that is openToAllInternet, serving endpoints rated
+      // Low because they redirect to SSO. See domain/exposureQuery.ts.
+      //
+      // Both run AFTER the CIEM and DSPM steps for the reason SENSITIVE_DATA_ACCESS gives:
+      // they re-emit the AI asset as a thin projection, and mergeParts lets later truthy
+      // values win field-wise, so landing the richer projections first means these can only
+      // add to them.
+      {
+        id: "HOST_EXPOSURE",
+        area: "exposure",
+        writes: [
+          "ai_edges (HOSTED_ON, SERVES)",
+          "ai_assets (VM/SERVERLESS + ENDPOINT rows, exposure_evidence_json)"
+        ],
+        run: "graphSearch",
+        query: Q_AI_EXPOSURE,
+        extraVariables: hostExposureVariables(types, projectScope()),
+        normalize: normalizeHostExposurePage,
+        optional: true
+      },
+      {
+        id: "ENDPOINT_EXPOSURE",
+        area: "exposure",
+        writes: ["ai_edges (SERVES)", "ai_assets (ENDPOINT rows, exposure_level, port_validation)"],
+        run: "graphSearch",
+        query: Q_AI_EXPOSURE,
+        extraVariables: endpointExposureVariables(types, projectScope()),
+        normalize: normalizeEndpointExposurePage,
+        optional: true
+      },
+      {
+        id: "IDENTITY_ACCESS",
+        area: "identity",
+        writes: [
+          "ai_edges (ALLOWS_ACCESS_TO)",
+          "ai_assets (USER_ACCOUNT/ACCESS_ROLE rows, inactive, human_access_json)"
+        ],
+        run: "graphSearch",
+        query: Q_IDENTITY_ACCESS,
+        extraVariables: identityAccessVariables(types, projectScope()),
+        normalize: normalizeIdentityAccessPage,
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
+      },
+      // AI-asset provenance: publisher + how Wiz discovered it. Optional and separate from
+      // INVENTORY_AI on purpose — see the note on Q_AI_PROPERTIES. Losing it costs two columns.
+      {
+        id: "AI_ASSET_PROPERTIES",
+        area: "aispm",
+        writes: ["ai_assets.publisher", "ai_assets.discovery_methods"],
+        run: "cloudResources",
+        query: Q_AI_PROPERTIES,
+        extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types)),
+        // The same normalizer the inventory step uses. Safe because mergeParts merges
+        // field-wise and skips undefined — this step's narrower rows fill in the two provenance
+        // fields without erasing the projects, tags or analytics INVENTORY_AI established.
+        normalize: normalizeInventoryPage,
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
+      },
+      // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
+      {
+        id: "AGENTIC_IDENTITIES",
+        area: "ciem",
+        writes: ["ai_assets.identity_purpose"],
+        run: "cloudResources",
+        query: Q_PRINCIPALS,
+        extraVariables: vars("AGENTIC_IDENTITIES", aiPrincipalsVariables(projectScope())),
+        normalize: normalizePrincipalsPage,
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
+      }
+    ];
+  }
+  var TYPE_DEPENDENT_STEPS = /* @__PURE__ */ new Set([
+    "INVENTORY_AI",
+    "AI_ASSET_PROPERTIES",
+    "HOST_EXPOSURE",
+    "ENDPOINT_EXPOSURE",
+    "IDENTITY_ACCESS",
+    "EFFECTIVE_ACCESS"
+  ]);
+  function rootFieldOf(step) {
+    var _a5;
+    if (step.run === "cloudResources") return "cloudResourcesV2";
+    if (step.run === "graphSearch") return "graphSearch";
+    return (_a5 = step.connectionField) != null ? _a5 : "";
+  }
+  function fetcherFor(step) {
+    if (step.run === "graphSearch") return fetchGraphSearchPage;
+    if (step.run === "cloudResources") return fetchCloudResourcesPage;
+    if (step.run === "single") return (o) => {
+      var _a5;
+      return fetchSingleObject((_a5 = step.connectionField) != null ? _a5 : "", o);
+    };
+    return (o) => {
+      var _a5;
+      return fetchConnectionPage((_a5 = step.connectionField) != null ? _a5 : "", o);
+    };
+  }
+  function describeSyncSteps() {
+    const overrides = getScanVars2();
+    const resolved = describeAiTypes();
+    return syncSteps(resolved.types).map((step) => {
+      var _a5, _b, _c;
+      const base = defaultStepVariables(step.id, (_a5 = step.extraVariables) != null ? _a5 : {}, resolved.types);
+      return {
+        id: step.id,
+        area: step.area,
+        writes: step.writes,
+        rootField: rootFieldOf(step),
+        run: step.run,
+        optional: !!step.optional,
+        document: step.query,
+        // What this step will actually send, overrides included. `first`, `after` and (for
+        // graphSearch) `quick` are added by the transport on every request and are named in
+        // the panel rather than folded in here, so what is shown is what is configured.
+        variables: (_b = step.extraVariables) != null ? _b : {},
+        // The `first` the transport will send for THIS step. Named because it is no longer one
+        // number for the whole battery: the panel would otherwise list `first` as a transport
+        // variable whose value the operator cannot see and cannot predict.
+        pageSize: (_c = step.pageSize) != null ? _c : PAGE_SIZE,
+        defaultVariables: base,
+        editable: isEditableStep(step.id),
+        overridden: changedPaths(step.id, base, overrides[step.id]),
+        // Three steps build their filter from the tenant-resolved AI type list, so only those
+        // three can be described provisionally. Said out loud rather than shown as settled
+        // fact — this page's whole job is not doing that.
+        typesResolved: TYPE_DEPENDENT_STEPS.has(step.id) ? resolved.resolved : true
+      };
+    });
+  }
+  function describeAiTypes() {
+    try {
+      return { types: resolveAiResourceTypes().types, resolved: true };
+    } catch (e) {
+      return { types: AI_RESOURCE_TYPE_CANDIDATES, resolved: false };
+    }
+  }
+  function defaultStepVariables(stepId, withOverride, aiTypes) {
+    switch (stepId) {
+      case "INVENTORY_AI":
+        return aiInventoryVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types);
+      case "ISSUES_TOXIC":
+        return aiIssuesVariables(projectScope());
+      case "CONFIG_FINDINGS":
+        return aiConfigFindingsVariables(projectScope());
+      case "AI_ASSET_PROPERTIES":
+        return aiPropertiesVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types);
+      case "AGENTIC_IDENTITIES":
+        return aiPrincipalsVariables(projectScope());
+      case "HOST_EXPOSURE":
+        return hostExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "ENDPOINT_EXPOSURE":
+        return endpointExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "IDENTITY_ACCESS":
+        return identityAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "EFFECTIVE_ACCESS":
+        return effectiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "IDENTITY_HYGIENE":
+        return aiIdentityHygieneVariables(
+          resolveHygieneRules(loadConfigRules()).ids,
+          projectScope()
+        );
+      case "FRAMEWORKS_LIST":
+        return aiSecurityFrameworksVariables();
+      default:
+        if (stepId.indexOf("COMPLIANCE_POSTURE_") === 0) {
+          return {
+            ...aiCompliancePostureVariables(projectScope()),
+            id: stepId.slice("COMPLIANCE_POSTURE_".length)
+          };
+        }
+        return withOverride;
+    }
+  }
+  function testStepVariables(stepId, vars) {
+    var _a5;
+    const step = syncSteps().filter((s) => s.id === stepId)[0];
+    if (!step) throw new Error(`No sync step called ${stepId}.`);
+    const proposed = effectiveStepVars(
+      stepId,
+      defaultStepVariables(stepId, (_a5 = step.extraVariables) != null ? _a5 : {}),
+      vars
+    );
+    const opts = { query: step.query, cursor: null, extraVariables: proposed };
+    let result;
+    try {
+      result = fetcherFor(step)(opts);
+    } catch (e) {
+      return {
+        ok: false,
+        stepId,
+        variables: proposed,
+        error: String(e instanceof Error ? e.message : e)
+      };
+    }
+    const part = step.normalize(result.rows);
+    return {
+      ok: true,
+      stepId,
+      variables: proposed,
+      rows: result.rows.length,
+      totalCount: result.totalCount,
+      hasNextPage: result.hasNextPage,
+      normalized: {
+        nodes: part.nodes.length,
+        edges: part.edges.length,
+        issues: part.issues.length,
+        findings: part.findings.length
+      },
+      // One row, so the operator can see the shape came back as expected. Stringified and
+      // capped: a raw Wiz row can be large, and this rides a google.script.run response.
+      sample: result.rows.length ? JSON.stringify(result.rows[0]).slice(0, 1200) : ""
+    };
+  }
+  function startSync() {
+    const existing = activeJob();
+    if (existing) {
+      return { jobId: existing.job_id, message: "A sync is already running." };
+    }
+    if (!hasWizCredentials()) return dryRunSync();
+    return startLiveSync();
+  }
+  function seedTrendHistory(endIso) {
+    if (dataRowCount(TABS.syncHistory) > 0) return;
+    const DAY_MS2 = 864e5;
+    const end = new Date(endIso).getTime();
+    appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
+      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS2).toISOString();
+      return {
+        sync_id: `sync-sample-${String(i + 1).padStart(2, "0")}`,
+        started_at: at,
+        finished_at: at,
+        status: "SUCCESS",
+        mode: "dry-run",
+        node_count: null,
+        edge_count: null,
+        issue_count: null,
+        api_calls: 0,
+        snapshot_ref: null,
+        error: null,
+        aars_severity_json: JSON.stringify(counts)
+      };
+    }));
+  }
+  function dryRunSync() {
+    const startedAt = nowIso();
+    seedTrendHistory(startedAt);
+    const syncId = `sync-${startedAt.replace(/[:]/g, "")}`;
+    const doc = persistSync(
+      seedGraphDoc(startedAt),
+      SEED_ISSUES,
+      SEED_AARS_HINTS,
+      { syncId, mode: "dry-run", startedAt, apiCalls: 0 },
+      void 0,
+      SEED_FINDINGS,
+      SEED_DATA_FINDINGS,
+      SEED_FRAMEWORKS,
+      SEED_POSTURE,
+      SEED_FRAMEWORK_POLICIES,
+      {
+        configRules: SEED_CONFIG_RULES,
+        identityFindings: SEED_IDENTITY_FINDINGS,
+        effectiveAccess: SEED_EFFECTIVE_ACCESS
+      }
+    );
+    setSkippedSteps([]);
+    setTruncatedSteps([]);
+    return {
+      jobId: null,
+      message: `Dry-run sync complete: ${doc.nodes.length} nodes, ${doc.edges.length} edges, ${SEED_ISSUES.length} issues (sample data).`
+    };
+  }
+  function strList(v) {
+    return Array.isArray(v) ? v.map(String) : [];
+  }
+  function strMap(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out = {};
+    for (const [k, s] of Object.entries(v)) {
+      if (k && typeof s === "string" && s) out[k] = s;
+    }
+    return out;
+  }
+  function numMap(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out = {};
+    for (const [k, n] of Object.entries(v)) {
+      const num = Number(n);
+      if (Number.isFinite(num)) out[k] = num;
+    }
+    return out;
+  }
+  function jobParams(job) {
+    var _a5;
+    const parsed = parseJson(job.params_json, {});
+    return {
+      apiCalls: Number((_a5 = parsed["apiCalls"]) != null ? _a5 : 0),
+      skippedSteps: strList(parsed["skippedSteps"]),
+      truncatedSteps: strList(parsed["truncatedSteps"]),
+      stepRows: numMap(parsed["stepRows"]),
+      skipReasons: strMap(parsed["skipReasons"])
+    };
+  }
+  function partRefs(job) {
+    return strList(parseJson(job.part_refs_json, []));
+  }
+  function startLiveSync() {
+    const now = nowIso();
+    const job = createJob({
+      job_id: newJobId("sync"),
+      kind: "sync",
+      phase: "FETCHING",
+      sync_id: `sync-${now.replace(/[:]/g, "")}`,
+      step_index: 0,
+      cursor: null,
+      page: 0,
+      nodes_so_far: 0,
+      total_count: 0,
+      part_refs_json: "[]",
+      params_json: JSON.stringify({ apiCalls: 0 }),
+      error: null
+    });
+    runBattery(job, { budgetMs: FIRST_STEP_BUDGET_MS, lockHeld: true });
+    const after = getJob(job.job_id);
+    return {
+      jobId: job.job_id,
+      message: after && after.phase === "DONE" ? "Sync complete." : "Sync started \u2014 it continues in the background."
+    };
+  }
+  function continueJob(_e) {
+    clearContinuationTriggers();
+    const job = activeJob();
+    if (!job || job.kind !== "sync" || job.phase !== "FETCHING") return;
+    runBattery(job, { budgetMs: BUDGET_MS, lockHeld: false });
+  }
+  function clearContinuationTriggers() {
+    for (const t of ScriptApp.getProjectTriggers()) {
+      if (t.getHandlerFunction() === CONTINUE_HANDLER) ScriptApp.deleteTrigger(t);
+    }
+  }
+  function scheduleContinuation() {
+    ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(CONTINUE_DELAY_MS).create();
+  }
+  function runBattery(job, opts) {
+    var _a5, _b, _c;
+    const deadline = Date.now() + opts.budgetMs;
+    const syncId = (_a5 = job.sync_id) != null ? _a5 : job.job_id;
+    const refs = partRefs(job);
+    const params = jobParams(job);
+    let stepIndex = job.step_index;
+    let cursor = job.cursor;
+    let page = job.page;
+    let nodesSoFar = job.nodes_so_far;
+    let hopPart = emptyPart();
+    let lastCheckpoint = Date.now();
+    const spillHopPart = () => {
+      if (partIsEmpty(hopPart)) return;
+      const name = `normalized-part-${String(refs.length + 1).padStart(3, "0")}.json.gz`;
+      refs.push(writeGzJson(syncFolder(syncId), name, hopPart).getId());
+      hopPart = emptyPart();
+    };
+    try {
+      const steps = syncSteps();
+      while (stepIndex < steps.length) {
+        const step = steps[stepIndex];
+        for (; ; ) {
+          if (cancelRequested(job.job_id)) {
+            clearCancelFlag();
+            updateJob(job.job_id, { phase: "CANCELLED" });
+            return;
+          }
+          if (Date.now() >= deadline) {
+            spillHopPart();
+            updateJob(job.job_id, {
+              step_index: stepIndex,
+              cursor,
+              page,
+              nodes_so_far: nodesSoFar,
+              part_refs_json: JSON.stringify(refs),
+              params_json: JSON.stringify(params)
+            });
+            scheduleContinuation();
+            return;
+          }
+          const fetcher = fetcherFor(step);
+          let result;
+          try {
+            result = fetcher({
+              query: step.query,
+              cursor,
+              extraVariables: step.extraVariables,
+              first: step.pageSize
+            });
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (step.optional && /HTTP 400/.test(msg)) {
+              params.apiCalls += 1;
+              params.skippedSteps.push(step.id);
+              params.skipReasons[step.id] = msg.slice(0, SKIP_REASON_MAX);
+              console.warn(`Sync step ${step.id} skipped \u2014 tenant rejected its query: ${msg}`);
+              break;
+            }
+            throw e;
+          }
+          params.apiCalls += 1;
+          page += 1;
+          nodesSoFar += result.rows.length;
+          params.stepRows[step.id] = ((_b = params.stepRows[step.id]) != null ? _b : 0) + result.rows.length;
+          writeSyncPage(syncId, stepIndex, page, result.rows);
+          try {
+            appendPart(hopPart, step.normalize(result.rows));
+          } catch (e) {
+            if (step.optional && e instanceof FilterNotHonouredError) {
+              params.skippedSteps.push(step.id);
+              params.skipReasons[step.id] = e.message.slice(0, SKIP_REASON_MAX);
+              console.warn(`Sync step ${step.id} skipped \u2014 ${e.message}`);
+              break;
+            }
+            throw e;
+          }
+          if (page === 1 || Date.now() - lastCheckpoint >= CHECKPOINT_MS) {
+            updateJob(job.job_id, {
+              step_index: stepIndex,
+              cursor: result.endCursor,
+              page,
+              nodes_so_far: nodesSoFar,
+              total_count: (_c = result.totalCount) != null ? _c : 0,
+              params_json: JSON.stringify(params)
+            });
+            lastCheckpoint = Date.now();
+          }
+          if (!result.hasNextPage) break;
+          if (page >= MAX_PAGES) {
+            params.truncatedSteps.push(step.id);
+            console.warn(
+              `Sync step ${step.id} stopped at the ${MAX_PAGES}-page cap with more rows available.`
+            );
+            break;
+          }
+          cursor = result.endCursor;
+        }
+        spillHopPart();
+        stepIndex += 1;
+        cursor = null;
+        page = 0;
+        updateJob(job.job_id, {
+          step_index: stepIndex,
+          cursor: null,
+          page: 0,
+          // Carried here because the page loop no longer writes it on every page: without it a
+          // throttled tail would leave the row reporting the count from the last checkpoint.
+          nodes_so_far: nodesSoFar,
+          part_refs_json: JSON.stringify(refs),
+          params_json: JSON.stringify(params)
+        });
+        lastCheckpoint = Date.now();
+      }
+      updateJob(job.job_id, { phase: "RECONCILING" });
+      const parts = [];
+      for (const ref of refs) {
+        const parsed = readGzJsonFile(ref);
+        if (parsed && Array.isArray(parsed.nodes)) parts.push(parsed);
+      }
+      const startedAt = job.started_at;
+      const merged = mergeParts(parts, nowIso());
+      const doc = merged.doc;
+      const issues2 = reconcileIssues(merged.issues);
+      const aarsRule = getAarsRule2().rule;
+      const findings = aarsRule.gapSources.frameworkMapping === true ? withFrameworkCodes(
+        merged.findings,
+        frameworkCodeLookup(merged.frameworkPolicies, merged.posture, merged.frameworks)
+      ) : merged.findings;
+      if (!doc.nodes.length) {
+        updateJob(job.job_id, {
+          phase: "FAILED",
+          error: "Sync fetched no assets \u2014 check the service account's scope and permissions."
+        });
+        return;
+      }
+      updateJob(job.job_id, { phase: "PERSISTING" });
+      const hints = buildAarsHintsFromFindings(findings, doc, issues2, aarsRule);
+      const persist = () => {
+        persistSync(
+          doc,
+          issues2,
+          hints,
+          {
+            syncId,
+            mode: "live",
+            startedAt,
+            apiCalls: params.apiCalls
+          },
+          void 0,
+          findings,
+          merged.dataFindings,
+          merged.frameworks,
+          merged.posture,
+          merged.frameworkPolicies,
+          {
+            configRules: merged.configRules,
+            identityFindings: merged.identityFindings,
+            effectiveAccess: merged.effectiveAccess
+          }
+        );
+        setSkippedSteps(params.skippedSteps);
+        setTruncatedSteps(params.truncatedSteps);
+        setStepRows(params.stepRows);
+        setSkipReasons(params.skipReasons);
+        if (merged.configRules.length) setConfigRulesSyncedAt(Date.now());
+      };
+      if (opts.lockHeld) persist();
+      else withScriptLock(persist);
+      updateJob(job.job_id, { phase: "DONE" });
+    } catch (e) {
+      updateJob(job.job_id, {
+        phase: "FAILED",
+        error: String(e instanceof Error ? e.message : e).slice(0, 800)
+      });
+    }
+  }
+  function dailySync() {
+    if (!hasWizCredentials()) return;
+    withScriptLock(() => {
+      startSyncFromTrigger();
+    });
+  }
+  function startSyncFromTrigger() {
+    const existing = activeJob();
+    if (existing) return;
+    startLiveSync();
+  }
+  function cancelSync(jobId) {
+    const job = getJob(jobId);
+    if (!job) return { message: "No such sync job." };
+    if (job.phase === "DONE" || job.phase === "FAILED" || job.phase === "CANCELLED") {
+      return { message: "The sync already finished." };
+    }
+    setProp(CANCEL_PROP, jobId);
+    return { message: "Stopping sync\u2026" };
+  }
+  function cancelRequested(jobId) {
+    return getProp(CANCEL_PROP) === jobId;
+  }
+  function clearCancelFlag() {
+    deleteProp(CANCEL_PROP);
+  }
+  function jobStatus(jobId) {
+    return getJob(jobId);
+  }
+
   // src/domain/reach.ts
   var READ_TIME_EDGE_TYPES = [
     "HAS_ISSUE",
@@ -7554,6 +9928,78 @@ var Server = (() => {
     } catch (e) {
       log(`ai_edges unreadable: ${String(e instanceof Error ? e.message : e)}`);
     }
+    log("=== end ===");
+    return lines.join("\n");
+  }
+  function probeEdgeSteps() {
+    var _a5, _b, _c, _d, _e, _f, _g;
+    const lines = [];
+    const log = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    log("=== edge-producing step probe ===");
+    if (!hasWizCredentials()) {
+      log(
+        "A probe calls Wiz, and no credentials are configured \u2014 this deployment is in dry-run. Add credentials in Settings to probe a step against the tenant."
+      );
+      log("=== end ===");
+      return lines.join("\n");
+    }
+    let steps;
+    try {
+      steps = describeSyncSteps().filter(
+        (s) => {
+          var _a6;
+          return ((_a6 = s["writes"]) != null ? _a6 : []).some((w) => String(w).indexOf("ai_edges") === 0);
+        }
+      );
+    } catch (e) {
+      log(`Could not describe the battery: ${String(e instanceof Error ? e.message : e)}`);
+      log("=== end ===");
+      return lines.join("\n");
+    }
+    if (!steps.length) {
+      log("No step in this battery writes to ai_edges \u2014 nothing to probe.");
+      log("=== end ===");
+      return lines.join("\n");
+    }
+    const results = [];
+    for (const step of steps) {
+      const id = String((_a5 = step["id"]) != null ? _a5 : "");
+      results.push({
+        id,
+        area: String((_b = step["area"]) != null ? _b : ""),
+        res: testStepVariables(id, null)
+      });
+    }
+    const width = Math.max(...results.map((r) => r.id.length));
+    const pad = (s) => s + " ".repeat(Math.max(0, width - s.length));
+    log("");
+    for (const { id, res } of results) {
+      if (res["ok"] === false) {
+        log(`  ${pad(id)}  REJECTED  ${String((_c = res["error"]) != null ? _c : "").slice(0, 160)}`);
+        continue;
+      }
+      const n = (_d = res["normalized"]) != null ? _d : {};
+      log(
+        `  ${pad(id)}  ok        ${Number((_e = res["rows"]) != null ? _e : 0)} rows \u2192 ${Number((_f = n["nodes"]) != null ? _f : 0)} nodes, ${Number((_g = n["edges"]) != null ? _g : 0)} edges` + (res["hasNextPage"] ? " (more pages)" : "")
+      );
+    }
+    for (const { id, area, res } of results) {
+      log("");
+      log(`--- ${id} (${area}) ---`);
+      log(JSON.stringify(res, null, 2));
+    }
+    log("");
+    log("Read it this way:");
+    log("  \xB7 REJECTED means the tenant refused the document \u2014 the message names the token its");
+    log("    schema does not have, and the fix is this app's query, not your permissions.");
+    log("  \xB7 ok with 0 rows means the query was accepted and matched nothing. Check the echoed");
+    log("    `variables.projectId` and `variables.query.type` before concluding anything: the");
+    log("    mandatory inventory query is tenant-wide while these steps are project-scoped.");
+    log("  \xB7 ok with rows but 0 normalized edges means the query works and the NORMALIZER is");
+    log("    dropping what came back \u2014 read `sample` for the entity types the tenant returned.");
     log("=== end ===");
     return lines.join("\n");
   }
@@ -11374,2346 +13820,6 @@ var Server = (() => {
     };
   }
 
-  // src/server/jobsStore.ts
-  var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
-  function normError(v) {
-    const s = v == null ? "" : String(v).trim();
-    return s === "" || s === "null" || s === "undefined" ? null : s;
-  }
-  function newJobId(kind, now) {
-    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
-  }
-  function createJob(row, now) {
-    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
-    appendRows(TABS.jobs, [full]);
-    setProp(ACTIVE_JOB_PROP, full.job_id);
-    return full;
-  }
-  function updateJob(jobId, patch, now) {
-    updateWhere(TABS.jobs, "job_id", jobId, {
-      ...patch,
-      updated_at: nowIso(now)
-    });
-    if (patch.phase && TERMINAL.includes(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
-  }
-  function listJobs() {
-    return readAll(TABS.jobs).map((r) => {
-      var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
-      return {
-        job_id: String((_a5 = r["job_id"]) != null ? _a5 : ""),
-        kind: (_b = r["kind"]) != null ? _b : "sync",
-        phase: (_c = r["phase"]) != null ? _c : "FAILED",
-        sync_id: (_d = r["sync_id"]) != null ? _d : null,
-        step_index: Number((_e = r["step_index"]) != null ? _e : 0),
-        cursor: (_f = r["cursor"]) != null ? _f : null,
-        page: Number((_g = r["page"]) != null ? _g : 0),
-        nodes_so_far: Number((_h = r["nodes_so_far"]) != null ? _h : 0),
-        total_count: Number((_i = r["total_count"]) != null ? _i : 0),
-        part_refs_json: (_j = r["part_refs_json"]) != null ? _j : null,
-        params_json: (_k = r["params_json"]) != null ? _k : null,
-        error: normError(r["error"]),
-        started_at: String((_l = r["started_at"]) != null ? _l : ""),
-        updated_at: String((_m = r["updated_at"]) != null ? _m : "")
-      };
-    });
-  }
-  function getJob(jobId) {
-    var _a5;
-    return (_a5 = listJobs().find((j) => j.job_id === jobId)) != null ? _a5 : null;
-  }
-  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
-  function activeJob() {
-    var _a5;
-    if (!getProp(ACTIVE_JOB_PROP)) return null;
-    const job = (_a5 = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a5 : null;
-    if (!job) deleteProp(ACTIVE_JOB_PROP);
-    return job;
-  }
-
-  // src/server/locks.ts
-  var LedgerBusyError = class extends Error {
-  };
-  var DEAD_JOB_MS = 30 * 60 * 1e3;
-  function withScriptLock(fn, timeoutMs = 3e4) {
-    const lock = LockService.getScriptLock();
-    if (!lock.tryLock(timeoutMs)) {
-      throw new LedgerBusyError(
-        "The data store is busy (a sync is writing). Try again shortly."
-      );
-    }
-    try {
-      return fn();
-    } finally {
-      lock.releaseLock();
-    }
-  }
-  function recoverIfNeeded(now) {
-    const job = activeJob();
-    if (!job) return;
-    const updated = parseTs(job.updated_at);
-    const ageMs = updated === null ? Infinity : (now != null ? now : Date.now()) - updated;
-    if (job.phase === "PERSISTING" || ageMs > DEAD_JOB_MS) {
-      updateJob(job.job_id, {
-        phase: "FAILED",
-        error: "Recovered: execution died mid-sync; the last committed snapshot is unchanged."
-      });
-    }
-  }
-
-  // src/server/syncJobs.ts
-  var syncJobs_exports = {};
-  __export(syncJobs_exports, {
-    cancelRequested: () => cancelRequested,
-    cancelSync: () => cancelSync,
-    clearCancelFlag: () => clearCancelFlag,
-    continueJob: () => continueJob,
-    dailySync: () => dailySync,
-    describeSyncSteps: () => describeSyncSteps,
-    jobStatus: () => jobStatus,
-    startSync: () => startSync,
-    testStepVariables: () => testStepVariables
-  });
-
-  // src/domain/identityHygiene.ts
-  var HYGIENE_SUBJECT = "USER_ACCOUNT";
-  var MATCHERS = [
-    // "multi-factor authentication (MFA)" and bare "MFA enabled" both appear in the catalogue.
-    { kind: "MFA", test: /multi-factor|\bMFA\b/i },
-    // "should not be inactive for more than 90 days" and "should have recent login activity".
-    // Deliberately NOT a bare /inactive/ — "Uninstalled Connected App should not be inactive"
-    // is a SERVICE_ACCOUNT rule about an app, and the subject guard below already excludes it,
-    // but the phrase is specific enough not to lean on that alone.
-    { kind: "DORMANT", test: /inactive for more than|recent login activity/i }
-  ];
-  function hygieneKindOf(rule) {
-    if (rule.subjectEntityType !== HYGIENE_SUBJECT) return null;
-    for (const m of MATCHERS) {
-      if (m.test.test(rule.name)) return m.kind;
-    }
-    return null;
-  }
-  function resolveHygieneRules(catalogue) {
-    const byId = {};
-    const ids = [];
-    const shortIds = [];
-    for (const rule of catalogue) {
-      const kind = hygieneKindOf(rule);
-      if (!kind || !rule.id) continue;
-      byId[rule.id] = kind;
-      ids.push(rule.id);
-      if (rule.shortId) shortIds.push(rule.shortId);
-    }
-    return { byId, ids, shortIds };
-  }
-
-  // src/server/sampleData.ts
-  var T0 = "2026-04-02T08:00:00Z";
-  var T1 = "2026-06-28T05:00:00Z";
-  function node(seed) {
-    var _a5, _b, _c, _d, _e, _f, _g;
-    return {
-      id: seed.id,
-      kind: seed.kind,
-      name: seed.name,
-      nativeType: seed.nativeType,
-      cloudPlatform: seed.cloud,
-      // The cloud tags. Only some seeds carry them, and the ones that do carry DIFFERENT sets —
-      // a dry run has to be able to tell "contains any" from "contains all", and it cannot if
-      // every node is tagged the same way or none is tagged at all.
-      tags: seed.tags,
-      region: seed.region,
-      status: (_a5 = seed.status) != null ? _a5 : "Active",
-      firstSeen: T0,
-      lastSeen: T1,
-      isAccessibleFromInternet: seed.internet === void 0 ? false : seed.internet,
-      isOpenToAllInternet: seed.openInternet === void 0 ? false : seed.openInternet,
-      hasSensitiveData: (_b = seed.sensitiveData) != null ? _b : false,
-      hasAccessToSensitiveData: (_c = seed.sensitiveAccess) != null ? _c : false,
-      hasHighPrivileges: (_d = seed.highPriv) != null ? _d : false,
-      hasAdminPrivileges: (_e = seed.adminPriv) != null ? _e : false,
-      guardrailMissing: (_f = seed.guardrailMissing) != null ? _f : false,
-      cloudAccount: seed.account ? { id: seed.account.id, name: seed.account.name } : void 0,
-      // `businessImpact` is spread onto every project entry rather than left off, so
-      // `worstBusinessImpact` (syncNormalize.ts) — which `enrichGraphDoc` calls on every
-      // enrich pass, exactly as a live sync would — has something real to fold into
-      // `GNode.businessImpact`. Omitted entirely (never `businessImpact: undefined`) when the
-      // seed itself carries none, matching the "absent key, not an undefined one" discipline
-      // `tags` and `exposureEvidence` already keep on this same object.
-      projects: ((_g = seed.projects) != null ? _g : []).map((name) => ({
-        id: `proj-${name.toLowerCase()}`,
-        name,
-        ...seed.businessImpact ? { businessImpact: seed.businessImpact } : {}
-      })),
-      technologyCategories: seed.techCats,
-      identityPurpose: seed.identityPurpose,
-      issueAnalytics: seed.issueAnalytics,
-      // Left undefined unless a seed sets them, so every node that is not an endpoint or an
-      // exposed host reads back exactly as it did before these columns existed.
-      exposureLevel: seed.exposureLevel,
-      portValidation: seed.portValidation,
-      exposureEvidence: seed.exposureEvidence,
-      inactive: seed.inactive,
-      inactiveTimeframe: seed.inactiveTimeframe,
-      displayName: seed.displayName,
-      email: seed.email,
-      publisher: seed.publisher,
-      discoveryMethods: seed.discoveryMethods
-    };
-  }
-  function edge(src, type, dst, accessType) {
-    return { id: edgeId(src, type, dst), src, dst, type, accessType };
-  }
-  var GCP_MANAGED = "aiplatform#ReasoningEngine";
-  var GCP_HOSTED = "hostedAiAgent";
-  function gcpAgent(seed) {
-    var _a5, _b, _c, _d;
-    const nativeType = (_a5 = seed.nativeType) != null ? _a5 : GCP_MANAGED;
-    return {
-      ...seed,
-      kind: "AI_AGENT",
-      cloud: (_b = seed.cloud) != null ? _b : "GCP",
-      nativeType,
-      techCats: (_c = seed.techCats) != null ? _c : ["AI Service"],
-      // How Wiz found it, mirroring the tenant capture: a managed ReasoningEngine comes from the
-      // cloud API, a hosted agent from scanning the workload it runs in. `publisher` is
-      // deliberately NOT defaulted — it is null on most agents in that same capture, and the
-      // register has to render that honestly rather than showing a value for everything.
-      discoveryMethods: (_d = seed.discoveryMethods) != null ? _d : [nativeType === GCP_HOSTED ? "MethodWorkloadScanning" : "MethodCloudScanning"]
-    };
-  }
-  var AGENTS = [
-    gcpAgent({
-      id: "agent-a",
-      name: "Agent-A",
-      region: "europe-west1",
-      tags: [{ key: "env", value: "prod" }, { key: "team", value: "ml" }, { key: "owner", value: "platform" }],
-      account: { id: "gcp-account-01", name: "gcp-account-01" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true,
-      businessImpact: "HBI",
-      // reaches bucket-customer-pii and db-customer-core
-      // Two of the fourteen carry a publisher, matching the shape of the real tenant, where the
-      // field is populated for a handful of hand-built agents and null for the rest. The dry run
-      // has to exercise BOTH paths or the "—" cell never gets looked at.
-      publisher: "Platform Engineering"
-    }),
-    gcpAgent({
-      id: "agent-b",
-      name: "Agent-B",
-      region: "us-west1",
-      tags: [{ key: "env", value: "prod" }, { key: "team", value: "search" }],
-      account: { id: "gcp-account-01", name: "gcp-account-01" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true,
-      businessImpact: "HBI"
-      // reaches bucket-customer-pii
-    }),
-    gcpAgent({
-      id: "agent-autogen",
-      name: "AGENT_AUTOGEN_DO_NOT_DELETE",
-      region: "us-west1",
-      account: { id: "gcp-account-01", name: "gcp-account-01" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      adminPriv: true,
-      guardrailMissing: true,
-      businessImpact: "HBI"
-      // reaches bucket-finance-reports and db-customer-core
-    }),
-    gcpAgent({
-      id: "agent-d-test",
-      name: "dev-agent-D-test",
-      region: "europe-west3",
-      account: { id: "gcp-account-02", name: "gcp-account-02" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true,
-      businessImpact: "LBI"
-      // dev/test — prod-level IAM on a project that isn't
-    }),
-    gcpAgent({
-      id: "agent-d",
-      name: "dev-agent-D",
-      region: "europe-west3",
-      tags: [{ key: "env", value: "staging" }, { key: "team", value: "ml" }],
-      account: { id: "gcp-account-02", name: "gcp-account-02" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true,
-      businessImpact: "LBI"
-      // staging counterpart of agent-d-test
-    }),
-    gcpAgent({
-      id: "agent-e",
-      name: "Agent-E",
-      region: "us-west1",
-      account: { id: "gcp-account-03", name: "gcp-account-03" },
-      projects: ["PROJECT-ALPHA", "PROJECT-GAMMA"],
-      internet: true,
-      openInternet: true,
-      // demonstrates the internet-exposure topology node
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true,
-      businessImpact: "HBI"
-      // internet-exposed AND reaches bucket-customer-pii
-    }),
-    gcpAgent({
-      id: "agent-f",
-      name: "agent-F",
-      region: "europe-west4",
-      projects: ["PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true,
-      businessImpact: "MBI"
-      // pricing agent — financial data, not customer PII
-    }),
-    gcpAgent({
-      id: "agent-f-preprod",
-      name: "agent-F-preprod",
-      region: "europe-west4",
-      projects: ["PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true,
-      businessImpact: "MBI"
-      // "same risk as prod" per its own issue text above
-    }),
-    gcpAgent({
-      id: "agent-g",
-      name: "Agent-G",
-      region: "europe-west4",
-      projects: ["PROJECT-ALPHA", "PROJECT-ETA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true,
-      businessImpact: "MBI"
-      // business-partner data, not customer PII
-    }),
-    gcpAgent({
-      id: "agent-h-chatbot",
-      name: "agent-H-chatbot",
-      region: "europe-west1",
-      nativeType: GCP_HOSTED,
-      account: { id: "gcp-account-05", name: "gcp-account-05" },
-      projects: ["PROJECT-ALPHA", "PROJECT-DELTA", "PROJECT-EPSILON"],
-      internet: null,
-      openInternet: null,
-      // hosted: exposure inherited from the Cloud Run service
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true,
-      businessImpact: "HBI"
-      // public-facing chatbot reaching db-customer-core
-    }),
-    gcpAgent({
-      id: "agent-i",
-      name: "agent-I",
-      region: "europe-west4",
-      nativeType: GCP_HOSTED,
-      status: "Inactive",
-      account: { id: "gcp-account-04", name: "gcp-account-04" },
-      projects: ["PROJECT-ALPHA", "PROJECT-ZETA"],
-      internet: null,
-      openInternet: null,
-      // hosted: exposure inherited from the VM
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true,
-      businessImpact: "HBI"
-      // inactive, but still holds sensitive access — the whole point of G3
-    }),
-    gcpAgent({
-      id: "agent-j",
-      name: "agent-J",
-      region: "europe-west1",
-      account: { id: "gcp-account-07", name: "gcp-account-07" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: false,
-      highPriv: true,
-      guardrailMissing: false
-      // No businessImpact — see this array's own header. Pairs with `sensitiveAccess: false`:
-      // a project Wiz never classified for an agent that never reached classified data.
-    }),
-    gcpAgent({
-      id: "agent-k",
-      name: "agent-K",
-      region: "europe-west1",
-      account: { id: "gcp-account-07", name: "gcp-account-07" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: false,
-      highPriv: true,
-      guardrailMissing: false
-      // No businessImpact — see this array's own header, same pairing as agent-j.
-    }),
-    // A guardrail-protected agent with no issues — the healthy contrast case.
-    gcpAgent({
-      id: "agent-l-support",
-      name: "Agent-L-support",
-      region: "europe-west1",
-      account: { id: "gcp-account-03", name: "gcp-account-03" },
-      projects: ["PROJECT-ALPHA"],
-      businessImpact: "LBI"
-      // healthy AND classified — low impact is a real reading, not a gap
-    })
-  ];
-  var AWS_ROLE_COUNT = 8;
-  var awsRoles = [];
-  var AWS_ROLE_BUSINESS_IMPACT = [
-    "MBI",
-    "MBI",
-    "MBI",
-    void 0,
-    void 0,
-    void 0,
-    "LBI",
-    "LBI"
-  ];
-  for (let i = 1; i <= AWS_ROLE_COUNT; i++) {
-    const n = String(i).padStart(2, "0");
-    awsRoles.push({
-      id: `role-finance-admin-${n}`,
-      kind: "ACCESS_ROLE",
-      name: `AWSReservedSSO_FinanceAdmin_${n}`,
-      nativeType: "role",
-      cloud: "AWS",
-      account: { id: "aws-account-prod-01", name: "aws-account-prod-01" },
-      projects: ["PROJECT-ALPHA"],
-      highPriv: true,
-      sensitiveAccess: true,
-      businessImpact: AWS_ROLE_BUSINESS_IMPACT[i - 1]
-    });
-  }
-  var SUPPORT = [
-    // Guardrails (3 in the tenant; only Agent-L is actually protected). These, and the models,
-    // MCP server, pipeline and dataset below, are the OTHER eight members of the 22-node
-    // AI_ASSET_KINDS population `estateReach`'s ATTRIBUTED stage measures — AGENTS above supply
-    // 14, these eight the rest. Same spread discipline as AGENTS's own header: guardrail-bedrock
-    // and pipeline-training-01 are left WITHOUT a businessImpact on purpose, so the stage's
-    // denominator still has real absences to report honestly rather than reading a clean 22 of 22.
-    { id: "guardrail-alpha", kind: "AI_GUARDRAIL", name: "guardrail-alpha", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"], businessImpact: "LBI" },
-    { id: "guardrail-beta", kind: "AI_GUARDRAIL", name: "guardrail-beta", cloud: "GCP", region: "europe-west4", projects: ["PROJECT-ALPHA"], businessImpact: "MBI" },
-    // No businessImpact — the AWS-native guardrail Wiz discovered but never got a project tag.
-    { id: "guardrail-bedrock", kind: "AI_GUARDRAIL", name: "bedrock-guardrail-default", cloud: "AWS", projects: ["PROJECT-ALPHA"] },
-    // Models
-    { id: "model-bedrock-claude", kind: "AI_MODEL", name: "anthropic.claude-3-5-sonnet", nativeType: "bedrock#foundationModel", cloud: "AWS", account: { id: "aws-account-prod-01", name: "aws-account-prod-01" }, projects: ["PROJECT-ALPHA"], businessImpact: "MBI" },
-    { id: "model-text-embedding-005", kind: "AI_MODEL", name: "text-embedding-005", nativeType: "aiplatform#model", cloud: "GCP", region: "us-west1", status: "Deprecated", projects: ["PROJECT-ALPHA"], businessImpact: "LBI" },
-    // MCP server + pipeline + dataset
-    { id: "mcp-internal-tools", kind: "MCP_SERVER", name: "mcp-internal-tools", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"], businessImpact: "MBI" },
-    // No businessImpact — a training pipeline Wiz never mapped to a classified project.
-    { id: "pipeline-training-01", kind: "AI_PIPELINE", name: "pipeline-training-01", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
-    { id: "dataset-support-transcripts", kind: "AI_DATASET", name: "dataset-support-transcripts", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], businessImpact: "HBI" },
-    // Data resources
-    { id: "bucket-customer-pii", kind: "BUCKET", name: "bucket-customer-pii", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
-    { id: "bucket-finance-reports", kind: "BUCKET", name: "bucket-finance-reports", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-BETA"] },
-    { id: "bucket-partner-data", kind: "BUCKET", name: "bucket-partner-data", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ETA"] },
-    { id: "bucket-pricing-models", kind: "BUCKET", name: "bucket-pricing-models", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
-    { id: "bucket-training-data", kind: "BUCKET", name: "bucket-training-data", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
-    { id: "db-customer-core", kind: "DATABASE", name: "db-customer-core", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
-    { id: "db-analytics", kind: "DATABASE", name: "db-analytics", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-DELTA"] },
-    // Compute / supply chain for the hosted agents
-    { id: "vm-agent-i-host", kind: "VIRTUAL_MACHINE", name: "vm-agent-i-host", cloud: "GCP", region: "europe-west4", internet: false, projects: ["PROJECT-ZETA"] },
-    { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, openInternet: true, projects: ["PROJECT-DELTA"], exposureEvidence: { ports: ["443", "80"], sourceIpRanges: ["0.0.0.0/0"] } },
-    // Network exposure, seeded to put BOTH grades of evidence on one screen and to make them
-    // visibly disagree — which is the whole reason the two queries are two steps.
-    //
-    //   endpoint-agent-h   Low  + Open, on the internet-reachable Cloud Run revision.
-    //                      This is the capture's own shape (exemples/ai_exposure_host_response.js):
-    //                      openToAllInternet, ports 80 and 443 open to 0.0.0.0/0, and both
-    //                      endpoints rated Low because they redirect to SSO. agent-h-chatbot
-    //                      is therefore exposed VIA ITS HOST and NOT validated.
-    //   endpoint-agent-i   High + Open, served directly by an agent whose VM is NOT reachable.
-    //                      The mirror image: validated, with no host exposure behind it.
-    //
-    // Between them the dry run exercises every branch of withExposureEvidence, including the
-    // one that must NOT fire.
-    { id: "endpoint-agent-h", kind: "ENDPOINT", name: "https://agent-h-chatbot.a.run.app:443", cloud: "GCP", region: "europe-west1", exposureLevel: "Low", portValidation: "Open", projects: ["PROJECT-DELTA"] },
-    { id: "endpoint-agent-i", kind: "ENDPOINT", name: "https://agent-i.internal-tools.example:8443", cloud: "GCP", region: "europe-west4", exposureLevel: "High", portValidation: "Open", projects: ["PROJECT-ZETA"] },
-    { id: "img-agent-h", kind: "CONTAINER_IMAGE", name: "img-agent-h:latest", cloud: "GCP", projects: ["PROJECT-DELTA"] },
-    { id: "repo-agent-h", kind: "REPOSITORY", name: "repo-agent-h", projects: ["PROJECT-DELTA"] },
-    // CIEM findings
-    { id: "finding-ea-autogen", kind: "EXCESSIVE_ACCESS_FINDING", name: "Excessive access: sa-agent-autogen", cloud: "GCP" },
-    { id: "finding-ea-agent-h", kind: "EXCESSIVE_ACCESS_FINDING", name: "Excessive access: sa-agent-h", cloud: "GCP" },
-    { id: "finding-lm-agent-i", kind: "LATERAL_MOVEMENT_FINDING", name: "Lateral movement: sa-agent-i", cloud: "GCP" }
-  ];
-  var edges = [];
-  var extraNodes = [];
-  var GCP_AGENT_IDS = [
-    "agent-a",
-    "agent-b",
-    "agent-autogen",
-    "agent-d-test",
-    "agent-d",
-    "agent-e",
-    "agent-f",
-    "agent-f-preprod",
-    "agent-g",
-    "agent-h-chatbot",
-    "agent-i",
-    "agent-j",
-    "agent-k",
-    "agent-l-support"
-  ];
-  var SA_DISPLAY_NAMES = {
-    "agent-a": "Vertex AI Agent Service Account",
-    "agent-b": "Vertex AI Reasoning Agent Identity",
-    "agent-h-chatbot": "Support chatbot runtime identity",
-    "agent-l-support": "Support agent (read-only)"
-  };
-  for (const agentId of GCP_AGENT_IDS) {
-    const saId = `sa-${agentId}`;
-    const highPriv = agentId !== "agent-l-support";
-    extraNodes.push({
-      id: saId,
-      kind: "SERVICE_ACCOUNT",
-      name: `${saId}@iam.gserviceaccount.com`,
-      displayName: SA_DISPLAY_NAMES[agentId],
-      email: `${saId}@iam.gserviceaccount.com`,
-      cloud: "GCP",
-      highPriv,
-      sensitiveAccess: !["agent-j", "agent-k", "agent-l-support"].includes(agentId),
-      // These execution identities are agentic (identityPurpose:AGENTIC in Wiz); a small
-      // related-issue rollup drives the inventory "Agentic identities" KPI + the badge.
-      identityPurpose: "AGENTIC",
-      techCats: ["Identity"],
-      issueAnalytics: highPriv ? { total: 1, info: 0, low: 0, medium: 1, high: 0, critical: 0 } : { total: 0, info: 0, low: 0, medium: 0, high: 0, critical: 0 }
-    });
-    edges.push(edge(agentId, "RUNS_AS", saId));
-  }
-  extraNodes.push({
-    id: "key-agent-autogen",
-    kind: "ACCESS_KEY",
-    name: "AKIA-AUTOGEN-AGENT-KEY",
-    cloud: "AWS",
-    identityPurpose: "AGENTIC",
-    sensitiveAccess: true,
-    issueAnalytics: { total: 2, info: 0, low: 1, medium: 1, high: 0, critical: 0 }
-  });
-  edges.push(edge("agent-autogen", "RUNS_AS", "key-agent-autogen"));
-  var SA_ACCESS = [
-    ["sa-agent-a", "bucket-customer-pii", "HIGH_PRIVILEGE"],
-    ["sa-agent-a", "db-customer-core", "READ"],
-    ["sa-agent-b", "bucket-customer-pii", "HIGH_PRIVILEGE"],
-    ["sa-agent-autogen", "bucket-finance-reports", "ADMIN"],
-    ["sa-agent-autogen", "db-customer-core", "HIGH_PRIVILEGE"],
-    ["sa-agent-d-test", "bucket-training-data", "WRITE"],
-    ["sa-agent-d-test", "db-customer-core", "READ"],
-    ["sa-agent-d", "bucket-training-data", "WRITE"],
-    ["sa-agent-d", "db-customer-core", "READ"],
-    ["sa-agent-e", "bucket-customer-pii", "HIGH_PRIVILEGE"],
-    ["sa-agent-f", "bucket-pricing-models", "HIGH_PRIVILEGE"],
-    ["sa-agent-f-preprod", "bucket-pricing-models", "HIGH_PRIVILEGE"],
-    ["sa-agent-g", "bucket-partner-data", "HIGH_PRIVILEGE"],
-    ["sa-agent-h-chatbot", "db-customer-core", "HIGH_PRIVILEGE"],
-    ["sa-agent-h-chatbot", "db-analytics", "READ"],
-    ["sa-agent-i", "bucket-customer-pii", "HIGH_PRIVILEGE"],
-    ["sa-agent-j", "db-analytics", "READ"],
-    ["sa-agent-k", "db-analytics", "READ"]
-  ];
-  for (const [sa, target, accessType] of SA_ACCESS) {
-    edges.push(edge(sa, "ALLOWS_ACCESS_TO", target, accessType));
-  }
-  edges.push(edge("sa-agent-autogen", "HAS_FINDING", "finding-ea-autogen"));
-  edges.push(edge("sa-agent-h-chatbot", "HAS_FINDING", "finding-ea-agent-h"));
-  edges.push(edge("sa-agent-i", "HAS_FINDING", "finding-lm-agent-i"));
-  for (const role of awsRoles) {
-    role.guardrailMissing = true;
-    edges.push(edge(role.id, "CAN_INVOKE", "model-bedrock-claude"));
-  }
-  edges.push(edge("agent-l-support", "PROTECTED_BY", "guardrail-alpha"));
-  edges.push(edge("model-bedrock-claude", "ENFORCES", "guardrail-bedrock"));
-  edges.push(edge("agent-i", "HOSTED_ON", "vm-agent-i-host"));
-  edges.push(edge("agent-h-chatbot", "HOSTED_ON", "run-agent-h"));
-  edges.push(edge("run-agent-h", "SERVES", "endpoint-agent-h"));
-  edges.push(edge("agent-i", "SERVES", "endpoint-agent-i"));
-  edges.push(edge("agent-h-chatbot", "BUILT_FROM", "img-agent-h"));
-  edges.push(edge("img-agent-h", "BUILT_FROM", "repo-agent-h"));
-  edges.push(edge("agent-a", "USES_MODEL", "model-text-embedding-005"));
-  edges.push(edge("agent-b", "USES_MODEL", "model-text-embedding-005"));
-  edges.push(edge("agent-h-chatbot", "INVOKES_TOOL", "mcp-internal-tools"));
-  edges.push(edge("agent-l-support", "INVOKES_TOOL", "mcp-internal-tools"));
-  edges.push(edge("pipeline-training-01", "USES_DATASET", "dataset-support-transcripts"));
-  edges.push(edge("dataset-support-transcripts", "STORED_IN", "bucket-customer-pii"));
-  edges.push(edge("agent-e", "USES_DATASET", "dataset-support-transcripts"));
-  for (let i = 1; i <= 14; i++) {
-    const n = String(i).padStart(2, "0");
-    const id = `bucket-autogen-scratch-${n}`;
-    extraNodes.push({ id, kind: "BUCKET", name: `bucket-autogen-scratch-${n}`, cloud: "GCP", region: "us-west1", projects: ["PROJECT-BETA"] });
-    edges.push(edge("sa-agent-autogen", "ALLOWS_ACCESS_TO", id, "WRITE"));
-  }
-  for (let i = 1; i <= 12; i++) {
-    const n = String(i).padStart(2, "0");
-    const id = `user-ops-${n}`;
-    const seed = {
-      id,
-      kind: "USER_ACCOUNT",
-      name: `ops.user${n}@example.com`,
-      cloud: "GCP"
-    };
-    if (i === 2) {
-      seed.inactive = true;
-      seed.inactiveTimeframe = "Inactive90Days";
-    } else if (i === 3) {
-      seed.inactive = false;
-      seed.inactiveTimeframe = "Active";
-    }
-    extraNodes.push(seed);
-    edges.push(edge(id, "ALLOWS_ACCESS_TO", "agent-h-chatbot", i <= 2 ? "ADMIN" : "READ"));
-  }
-  function issue(seed) {
-    var _a5, _b, _c, _d;
-    const group = classifyIssue({ sourceRuleId: seed.ruleId, ruleName: seed.ruleName });
-    const row = {
-      id: seed.id,
-      ruleId: seed.ruleId,
-      ruleName: seed.ruleName,
-      // An unmodelled rule lands in Other rather than "" — the same bucket a live sync
-      // would give it, so the dry-run demo shows the register the real one produces.
-      comboGroup: group ? group.id : OTHER_GROUP_ID,
-      nativeSeverity: seed.nativeSeverity,
-      adjustedSeverity: group ? group.adjustedSeverity : seed.nativeSeverity,
-      status: (_a5 = seed.status) != null ? _a5 : "OPEN",
-      assetId: seed.assetId,
-      assetName: seed.assetName,
-      region: seed.region,
-      account: seed.account,
-      projects: seed.projects,
-      frameworks: seed.frameworks,
-      justification: seed.justification,
-      createdAt: seed.createdAt,
-      dueAt: seed.dueAt,
-      resolutionRecommendation: seed.resolutionRecommendation,
-      issueType: (_b = seed.issueType) != null ? _b : "TOXIC_COMBINATION",
-      updatedAt: seed.updatedAt,
-      assignee: seed.assignee,
-      businessImpact: seed.businessImpact,
-      entityStatus: seed.entityStatus,
-      ignoreNote: seed.ignoreNote,
-      ignoreExpiredAt: seed.ignoreExpiredAt,
-      aiVerdict: seed.aiVerdict,
-      aiRecommendedSeverity: seed.aiRecommendedSeverity
-    };
-    if ((_c = seed.environments) == null ? void 0 : _c.length) row.environments = seed.environments;
-    if ((_d = seed.ticketUrls) == null ? void 0 : _d.length) row.ticketUrls = seed.ticketUrls;
-    return row;
-  }
-  var RULE_G1 = "Allow model invoke without Guardrail for user or role";
-  var RULE_G2 = "Managed AI Agent with high privileges or sensitive data access";
-  var RULE_G3 = "AI Agent hosted on VM/serverless with high privileges or sensitive data access";
-  var RULE_G4 = "AI resource using overly permissive execution identity";
-  var issues = [];
-  var issueSeq = 0;
-  function nextIssueId() {
-    issueSeq += 1;
-    return `iss-${String(issueSeq).padStart(3, "0")}`;
-  }
-  awsRoles.forEach((role, n) => {
-    const lapsed = n === 0;
-    const working = n === 1;
-    issues.push(issue({
-      id: nextIssueId(),
-      ruleId: "wc-id-2742",
-      ruleName: RULE_G1,
-      assetId: role.id,
-      assetName: role.name,
-      nativeSeverity: "MEDIUM",
-      account: "aws-account-prod-01",
-      projects: ["PROJECT-ALPHA"],
-      justification: "No content filtering, data protection, or compliance enforcement on AI model calls.",
-      frameworks: { owaspLlm: ["LLM06", "LLM02"], owaspAgentic: ["ASI02", "ASI03"], fiveRs: ["Restrict"] },
-      createdAt: "2026-05-14T09:12:00Z",
-      // TOXIC_COMBINATION (the default), because that is what the tenant returns for
-      // wc-id-2742 — every node in exemples/risk_issues_response.js carries that type,
-      // guardrail rule included. Wiz's issue TYPE and this register's pattern grouping are
-      // independent axes, and the seed must not imply they line up.
-      updatedAt: "2026-08-13T10:29:28Z",
-      environments: ["PRODUCTION"],
-      entityStatus: "Active",
-      businessImpact: "MBI",
-      // Ignored by design until the guardrail baseline landed, then reopened when the
-      // ignore date passed. The expiry is the structured field, never parsed out of the note.
-      ignoreNote: lapsed ? "Ignored (By Design) by MANSUY.\nExplanation: guardrails are being rolled out per project team; a baseline has to be agreed before they can be enforced.\n\nIgnored until: Feb 1, 2026" : void 0,
-      ignoreExpiredAt: lapsed ? "2026-02-01T00:00:00Z" : void 0,
-      // Remediation under way: the status the register collected and never counted.
-      status: working ? "IN_PROGRESS" : void 0,
-      assignee: working ? "platform-security@example.com" : void 0,
-      ticketUrls: working ? ["https://example.slack.com/archives/C0AGUF82MM1/p1775622232097139"] : void 0,
-      aiVerdict: working ? "REMEDIATE" : void 0,
-      aiRecommendedSeverity: working ? "MEDIUM" : void 0
-    }));
-  });
-  var G2 = [
-    { assetId: "agent-a", count: 1, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Prompt injection reaches PII and credentials; 5Rs gap confirms data is not restricted." },
-    { assetId: "agent-b", count: 1, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Over-privileged IAM on a customer-facing managed agent." },
-    { assetId: "agent-autogen", count: 4, llm: ["LLM06", "LLM07"], asi: ["ASI10"], ml: ["Supply Chain"], fiveRs: ["Reduce", "Restrict"], why: "Auto-generated agent \u2014 likely forgotten, still over-privileged." },
-    { assetId: "agent-d-test", count: 1, llm: ["LLM06", "LLM04"], asi: ["ASI03", "ASI06"], ml: ["Data Poisoning"], fiveRs: ["Reconfigure"], why: "Dev/test agent with prod-level IAM \u2014 violates least privilege." },
-    { assetId: "agent-d", count: 1, llm: ["LLM06", "LLM04"], asi: ["ASI03", "ASI06"], ml: ["Data Poisoning"], fiveRs: ["Reconfigure"], why: "Dev agent with excessive IAM \u2014 training-data exposure risk." },
-    { assetId: "agent-e", count: 1, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI01"], ml: ["Input Manipulation"], fiveRs: ["Restrict"], why: "Innovation agent with sensitive data access and no guardrail." },
-    { assetId: "agent-f", count: 1, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI02"], ml: ["Model Theft"], fiveRs: ["Restrict"], why: "Pricing agent with financial data access \u2014 high business impact." },
-    { assetId: "agent-f-preprod", count: 1, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI02"], ml: ["Model Theft"], fiveRs: ["Reconfigure"], why: "Pre-prod pricing agent \u2014 same risk as prod." },
-    { assetId: "agent-g", count: 2, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Business-partner data agent \u2014 PII and partner-data exposure risk." }
-  ];
-  var _a;
-  for (const g of G2) {
-    const asset = AGENTS.find((a) => a.id === g.assetId);
-    for (let i = 0; i < g.count; i++) {
-      issues.push(issue({
-        id: nextIssueId(),
-        ruleId: "wc-id-3217",
-        ruleName: RULE_G2,
-        assetId: asset.id,
-        assetName: asset.name,
-        nativeSeverity: "MEDIUM",
-        region: asset.region,
-        account: (_a = asset.account) == null ? void 0 : _a.name,
-        projects: asset.projects,
-        justification: g.why,
-        frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, owaspMl: g.ml, fiveRs: g.fiveRs },
-        createdAt: "2026-05-20T11:40:00Z",
-        dueAt: "2026-08-18T11:40:00Z",
-        resolutionRecommendation: "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime."
-      }));
-    }
-  }
-  var G3 = [
-    { assetId: "agent-i", count: 4, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI05"], fiveRs: ["Restrict", "Reduce"], why: "Inactive agents still holding sensitive data access \u2014 lateral-movement risk via compromised compute." },
-    { assetId: "agent-h-chatbot", count: 2, llm: ["LLM06", "LLM02", "LLM05"], asi: ["ASI02", "ASI03"], fiveRs: ["Restrict"], why: "Chatbot agent on serverless with excessive IAM \u2014 user-facing attack surface." }
-  ];
-  var _a2;
-  for (const g of G3) {
-    const asset = AGENTS.find((a) => a.id === g.assetId);
-    for (let i = 0; i < g.count; i++) {
-      issues.push(issue({
-        id: nextIssueId(),
-        ruleId: "wc-id-3230",
-        ruleName: RULE_G3,
-        assetId: asset.id,
-        assetName: asset.name,
-        nativeSeverity: "MEDIUM",
-        region: asset.region,
-        account: (_a2 = asset.account) == null ? void 0 : _a2.name,
-        projects: asset.projects,
-        justification: g.why,
-        frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, fiveRs: g.fiveRs },
-        createdAt: "2026-06-03T07:25:00Z"
-      }));
-    }
-  }
-  var _a3;
-  for (const assetId of ["agent-j", "agent-k"]) {
-    const asset = AGENTS.find((a) => a.id === assetId);
-    issues.push(issue({
-      id: nextIssueId(),
-      ruleId: "wc-id-3123",
-      ruleName: RULE_G4,
-      assetId: asset.id,
-      assetName: asset.name,
-      nativeSeverity: "LOW",
-      region: asset.region,
-      account: (_a3 = asset.account) == null ? void 0 : _a3.name,
-      projects: asset.projects,
-      justification: "Latent privileges \u2014 a compromised agent inherits every permission of its execution identity.",
-      frameworks: { owaspAgentic: ["ASI03"], fiveRs: ["Reconfigure"] },
-      createdAt: "2026-06-10T15:02:00Z"
-    }));
-  }
-  var _a4;
-  {
-    const asset = AGENTS.find((a) => a.id === "agent-e");
-    const OTHER_SEEDS = [
-      {
-        ruleId: "wc-id-4101",
-        ruleName: "AI model endpoint without request logging",
-        sev: "LOW",
-        why: "Model invocations are not logged, so misuse leaves no trail to investigate."
-      },
-      {
-        ruleId: "wc-id-4102",
-        ruleName: "AI training dataset stored without encryption at rest",
-        sev: "MEDIUM",
-        why: "Training data is readable to anyone who reaches the bucket."
-      },
-      {
-        ruleId: "wc-id-4103",
-        ruleName: "AI service account key older than 90 days",
-        sev: "LOW",
-        why: "A long-lived static key on an AI workload widens the window for credential theft."
-      }
-    ];
-    for (const seed of OTHER_SEEDS) {
-      issues.push(issue({
-        id: nextIssueId(),
-        ruleId: seed.ruleId,
-        ruleName: seed.ruleName,
-        // CLOUD_CONFIGURATION: the type the register used to filter out entirely, so the
-        // demo shows the Type column carrying something other than the tenant's default.
-        // Illustrative rather than transcribed — these rule ids are invented, and the Other
-        // bucket is defined by its rule not being modelled, never by its Wiz issue type.
-        issueType: "CLOUD_CONFIGURATION",
-        assetId: asset.id,
-        assetName: asset.name,
-        nativeSeverity: seed.sev,
-        region: asset.region,
-        account: (_a4 = asset.account) == null ? void 0 : _a4.name,
-        projects: asset.projects,
-        justification: seed.why,
-        // No frameworks: an unmodelled rule contributes no AARS gap codes, so pillar B is
-        // left exactly where it was. Deriving codes from the rule's own risks/tags would
-        // re-price every asset with no way to attribute the movement.
-        frameworks: void 0,
-        createdAt: "2026-07-02T08:15:00Z",
-        environments: ["PRODUCTION"],
-        businessImpact: "MBI",
-        entityStatus: "Active",
-        updatedAt: "2026-08-13T10:30:01Z"
-      }));
-    }
-  }
-  var HINTS = {
-    "agent-a": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-b": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-autogen": { gaps: [gap("LLM06"), gap("ASI10"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-d-test": { gaps: [gap("LLM04"), gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-d": { gaps: [gap("LLM04"), gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-e": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-f": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-f-preprod": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-g": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-h-chatbot": { gaps: [gap("LLM06"), gap("LLM05"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-i": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-j": { gaps: [gap("ASI03")], dataExposure: "DATA_ACCESS" },
-    "agent-k": { gaps: [gap("ASI03")], dataExposure: "DATA_ACCESS" },
-    // Deprecated-model usage shows up on the model itself, not the agents.
-    "model-text-embedding-005": { gaps: [gap("DEPRECATED_MODEL")], dataExposure: "NONE" }
-  };
-  for (const role of awsRoles) {
-    HINTS[role.id] = {
-      gaps: [gap("LLM01"), gap("LLM02"), gap("ASI02")],
-      dataExposure: "DATA_ACCESS"
-    };
-  }
-  var SEED_FINDINGS_DATA = [
-    {
-      id: "cfg-001",
-      resourceId: "agent-a",
-      ruleShortId: "SUB-082",
-      severity: "MEDIUM",
-      remediation: "Encrypt the Vertex AI metadata store with a customer-managed key and restrict the agent service account's access to it.",
-      frameworkCodes: ["SUB-082", "LLM06"],
-      name: "Vertex AI Metadata Store is not encrypted with a customer-managed key",
-      status: "OPEN",
-      result: "FAIL",
-      firstSeenAt: "2026-06-12T19:42:35Z",
-      analyzedAt: "2026-07-07T15:59:10Z",
-      ruleId: "60442ee5-452a-48cb-8694-9061c920e10d",
-      ruleName: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
-      ruleDescription: "This rule checks whether the Vertex AI Metadata Store is encrypted with a customer-managed key. It fails if kms_key_name is not configured.",
-      remediationInstructions: "Delete the current Vertex AI Metadata Store, then create a new one with a customer-managed key. Encryption cannot be changed after creation.",
-      opaPolicy: 'package wiz\n\ndefault result = "pass"\n\nresult = "fail" {\n	not input.vertexAIMetadataStoreConfiguration.encryption_spec.kms_key_name\n}\n',
-      risks: ["AI_SECURITY", "UNPROTECTED_DATA"],
-      threats: [],
-      resourceName: "Agent A",
-      resourceType: "AI_AGENT",
-      resourceStatus: "Active",
-      source: "WIZ_CSPM",
-      subscriptionName: "gcp-account-01",
-      cloudProvider: "GCP",
-      projects: [
-        { id: "proj-project-beta", name: "PROJECT-BETA", businessImpact: "MBI" },
-        { id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }
-      ],
-      businessImpact: "MBI",
-      ignoreRuleIds: [],
-      iacFindingIds: []
-    },
-    {
-      id: "cfg-002",
-      resourceId: "agent-h-chatbot",
-      ruleShortId: "SUB-114",
-      severity: "HIGH",
-      remediation: "Disable public ingress on the Cloud Run service hosting the agent, or place it behind an authenticated load balancer.",
-      frameworkCodes: ["SUB-114"],
-      name: "AI agent host is reachable from the public internet",
-      status: "OPEN",
-      result: "FAIL",
-      firstSeenAt: "2026-05-02T08:15:00Z",
-      analyzedAt: "2026-07-13T21:52:08Z",
-      ruleName: "AI agent hosts should not be open to all internet",
-      ruleDescription: "This rule checks whether the compute hosting an AI agent accepts ingress from 0.0.0.0/0. It fails when no authenticating front end sits in front of it.",
-      risks: ["AI_SECURITY"],
-      threats: [],
-      resourceName: "agent-H-chatbot",
-      resourceType: "AI_AGENT",
-      resourceStatus: "Active",
-      source: "WIZ_CSPM",
-      subscriptionName: "gcp-account-05",
-      cloudProvider: "GCP",
-      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
-      businessImpact: "LBI",
-      // Traced to IaC: the register's shift-left link, and the only seeded row that has one.
-      iacFindingIds: ["iac-cloudrun-ingress-1"],
-      ignoreRuleIds: []
-    },
-    {
-      id: "cfg-003",
-      resourceId: "agent-e",
-      ruleShortId: "SUB-047",
-      severity: "MEDIUM",
-      remediation: "Enable audit logging for all data access performed by the agent identity.",
-      frameworkCodes: ["SUB-047"],
-      name: "Data access by the AI agent identity is not audited",
-      status: "OPEN",
-      result: "FAIL",
-      firstSeenAt: "2026-06-25T08:43:01Z",
-      analyzedAt: "2026-07-13T21:52:13Z",
-      ruleName: "AI agent identities should have data access logging enabled",
-      risks: ["AI_SECURITY"],
-      threats: [],
-      resourceName: "Agent E",
-      resourceType: "AI_AGENT",
-      resourceStatus: "Active",
-      source: "WIZ_CSPM",
-      subscriptionName: "gcp-account-03",
-      cloudProvider: "GCP",
-      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
-      businessImpact: "LBI",
-      ignoreRuleIds: [],
-      iacFindingIds: []
-    },
-    // ---- keyed to resources the AI graph does not model ----
-    {
-      id: "cfg-004",
-      // A REGION. Not a NodeKind, so this prices no AARS score and shows as off-inventory.
-      resourceId: "region-europe-west1-packaging",
-      ruleShortId: "SUB-082",
-      severity: "MEDIUM",
-      remediation: "Delete and recreate the metadata store with a customer-managed key. Encryption cannot be changed after creation.",
-      frameworkCodes: ["SUB-082", "LLM06"],
-      name: "Vertex AI Metadata Store is not encrypted with a customer-managed key",
-      status: "OPEN",
-      result: "FAIL",
-      firstSeenAt: "2026-06-12T19:42:35Z",
-      analyzedAt: "2026-06-19T10:27:22Z",
-      ruleId: "60442ee5-452a-48cb-8694-9061c920e10d",
-      ruleName: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
-      ruleDescription: "This rule checks whether the Vertex AI Metadata Store is encrypted with a customer-managed key. It fails if kms_key_name is not configured.",
-      opaPolicy: 'package wiz\n\ndefault result = "pass"\n\nresult = "fail" {\n	not input.vertexAIMetadataStoreConfiguration.encryption_spec.kms_key_name\n}\n',
-      risks: ["AI_SECURITY", "UNPROTECTED_DATA"],
-      threats: [],
-      resourceName: "europe-west1 (packaging-data)",
-      resourceType: "REGION",
-      resourceStatus: "Active",
-      targetExternalId: "packaging-data/europe-west1",
-      source: "WIZ_CSPM",
-      subscriptionName: "packaging-data",
-      cloudProvider: "GCP",
-      projects: [{ id: "proj-project-gamma", name: "PROJECT-GAMMA", businessImpact: "MBI" }],
-      businessImpact: "MBI",
-      ignoreRuleIds: [],
-      iacFindingIds: []
-    },
-    {
-      id: "cfg-005",
-      // A RAW_ACCESS_POLICY — an IAM policy document, likewise absent from the graph.
-      resourceId: "policy-bedrock-invoke-1",
-      ruleShortId: "IAM-267",
-      severity: "MEDIUM",
-      remediation: "Add a bedrock:GuardrailIdentifier condition to the policy statement that allows bedrock:InvokeModel, or add a Deny that requires one.",
-      frameworkCodes: ["IAM-267", "LLM06"],
-      name: "IAM policy allows Bedrock model invocation without guardrail condition",
-      status: "OPEN",
-      result: "FAIL",
-      firstSeenAt: "2026-07-21T16:03:20Z",
-      analyzedAt: "2026-08-03T23:20:36Z",
-      ruleId: "a1f587c5-32ac-4c08-8d91-e53d2d6db828",
-      ruleName: "IAM Policy Bedrock Model Invocation should include Guardrail Condition",
-      ruleDescription: "This rule checks whether IAM policies that allow Bedrock model invocation include guardrail conditions. Amazon Bedrock foundation models can process sensitive data and generate harmful content; guardrails enforce content filtering and usage policy.",
-      remediationInstructions: `aws iam create-policy-version --policy-arn {{policyArn}} --set-as-default --policy-document '{ \u2026 "Condition": { "StringEquals": { "bedrock:GuardrailIdentifier": "<YOUR_GUARDRAIL_ID>" } } \u2026 }'`,
-      risks: ["AI_SECURITY"],
-      threats: [],
-      resourceName: "AIFFORECASTSUPPLY-DEMANDFORECASTEU-IAM-V2-2",
-      resourceType: "RAW_ACCESS_POLICY",
-      source: "WIZ_CSPM",
-      subscriptionName: "aws-account-prod-01",
-      cloudProvider: "AWS",
-      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
-      businessImpact: "LBI",
-      // An accepted risk that still fails: the register shows the exception rather than
-      // quietly dropping the row out of the gap count.
-      ignoreRuleIds: ["ignore-bedrock-guardrail-waiver"],
-      iacFindingIds: []
-    },
-    {
-      id: "cfg-006",
-      // A SERVICE_ACCOUNT no agent in this landscape runs as, so still off-inventory.
-      resourceId: "sa-bigdata-ai-weatherforecast-pp",
-      ruleShortId: "IAM-236",
-      severity: "HIGH",
-      remediation: "Add an aws:SourceAccount or aws:SourceArn condition to the role's trust policy so only Bedrock in your own account can assume it.",
-      frameworkCodes: ["IAM-236"],
-      name: "Bedrock Service Role missing conditions to prevent confused deputy attacks",
-      status: "OPEN",
-      result: "FAIL",
-      firstSeenAt: "2026-01-06T10:48:24Z",
-      analyzedAt: "2026-08-07T07:37:39Z",
-      ruleId: "1a1b2762-dee3-434f-b5b4-41597c48052b",
-      ruleName: "Bedrock Service Roles should prevent confused deputy attacks",
-      ruleDescription: "Fails when a role trusted by bedrock.amazonaws.com has no Condition with aws:SourceAccount or aws:SourceArn. A service with access to several accounts can otherwise be tricked into acting on an unintended one.",
-      risks: ["AI_SECURITY"],
-      threats: [],
-      resourceName: "BIGDATA-AI-AIGEN-WEATHERFORECAST-PP",
-      resourceType: "SERVICE_ACCOUNT",
-      resourceStatus: "Active",
-      targetExternalId: "arn:aws:iam::614303399241:role/BIGDATA-AI-AIGEN-WEATHERFORECAST-PP",
-      source: "WIZ_CSPM",
-      subscriptionName: "aws-account-prod-01",
-      cloudProvider: "AWS",
-      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
-      businessImpact: "LBI",
-      ignoreRuleIds: [],
-      iacFindingIds: []
-    },
-    {
-      id: "cfg-007",
-      // RESOLVED, and therefore PASS. Stored for the lifecycle clock, counted by nothing:
-      // isOpenGap keeps it out of complianceGaps, AARS pillar B and the severity strip.
-      resourceId: "agent-a",
-      ruleShortId: "SUB-114",
-      severity: "HIGH",
-      remediation: "Public ingress was removed from the service hosting this agent.",
-      frameworkCodes: ["SUB-114"],
-      name: "AI agent host is reachable from the public internet",
-      status: "RESOLVED",
-      result: "PASS",
-      firstSeenAt: "2026-03-11T09:00:00Z",
-      analyzedAt: "2026-08-07T07:37:41Z",
-      ruleName: "AI agent hosts should not be open to all internet",
-      risks: ["AI_SECURITY"],
-      threats: [],
-      resourceName: "Agent A",
-      resourceType: "AI_AGENT",
-      resourceStatus: "Active",
-      source: "WIZ_CSPM",
-      subscriptionName: "gcp-account-01",
-      cloudProvider: "GCP",
-      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
-      businessImpact: "LBI",
-      ignoreRuleIds: [],
-      iacFindingIds: []
-    }
-  ];
-  var SEED_NODES = [...AGENTS, ...awsRoles, ...SUPPORT, ...extraNodes].map(node);
-  var SEED_EDGES = edges;
-  var SEED_ISSUES = issues;
-  var SEED_FINDINGS = SEED_FINDINGS_DATA;
-  var SEED_AARS_HINTS = HINTS;
-  var SEED_DATA_FINDINGS = [
-    { id: "df-pii-01", resourceId: "bucket-customer-pii", name: "PII: email addresses (12,400 rows)", severity: "CRITICAL" },
-    { id: "df-pii-02", resourceId: "bucket-customer-pii", name: "PII: national identification numbers", severity: "HIGH" },
-    { id: "df-pii-03", resourceId: "bucket-customer-pii", name: "PCI: primary account numbers", severity: "HIGH" },
-    { id: "df-core-01", resourceId: "db-customer-core", name: "PII: postal addresses", severity: "CRITICAL" },
-    { id: "df-core-02", resourceId: "db-customer-core", name: "PII: dates of birth", severity: "MEDIUM" },
-    { id: "df-fin-01", resourceId: "bucket-finance-reports", name: "Financial: unpublished results", severity: "HIGH" }
-  ];
-  var SEED_FRAMEWORKS = [
-    {
-      id: "wf-id-275",
-      name: "OWASP Top 10 For Agentic Applications 2026",
-      description: "Agentic-application risks: goal hijack, tool misuse, rogue agents.",
-      builtin: true,
-      enabled: true,
-      policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
-      selected: true
-    },
-    {
-      id: "wf-id-214",
-      name: "5Rs - Wiz for Data Security",
-      description: "Wiz's data-security response taxonomy: Reduce, Restrict, Relabel, \u2026",
-      builtin: true,
-      enabled: true,
-      policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
-      selected: true
-    },
-    {
-      id: "wf-id-106",
-      name: "OWASP ML Security Top 10",
-      description: "Machine-learning security risks: poisoning, inversion, model theft.",
-      builtin: true,
-      enabled: true,
-      policyTypes: ["CONTROL"],
-      selected: true
-    },
-    {
-      id: "wf-id-201",
-      name: "OWASP LLM Security Top 10",
-      description: "LLM application risks: prompt injection, disclosure, poisoning.",
-      builtin: true,
-      enabled: true,
-      policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
-      selected: true
-    },
-    // Present in the tenant, NOT selected — so the Settings picker has something to show
-    // that is off, and the page can prove selection is this app's decision rather than a
-    // list of everything Wiz has.
-    {
-      id: "wf-id-042",
-      name: "CIS Amazon Web Services Foundations Benchmark v3.0",
-      description: "General cloud hardening. No AI vocabulary \u2014 posture is not collected.",
-      builtin: true,
-      enabled: true,
-      policyTypes: ["CLOUD_CONFIGURATION_RULE"],
-      selected: false
-    }
-  ];
-  function seedCategory(frameworkId, externalId, title, posturePct2, passCount, failCount, emptyPostureReason = null) {
-    return {
-      frameworkId,
-      level: "category",
-      categoryExternalId: externalId,
-      nodeId: `wct-seed-${frameworkId}-${externalId}`,
-      title,
-      posturePct: posturePct2,
-      passCount,
-      failCount,
-      passSubCategoryCount: posturePct2 === null ? 0 : 1,
-      failSubCategoryCount: failCount > 0 ? 1 : 0,
-      emptyPostureReason
-    };
-  }
-  function seedSubCategory(frameworkId, categoryExternalId, externalId, title, posturePct2, passCount, failCount, emptyPostureReason = null) {
-    return {
-      frameworkId,
-      level: "subcategory",
-      categoryExternalId,
-      subcategoryExternalId: externalId,
-      nodeId: `wsct-seed-${frameworkId}-${externalId}`,
-      title,
-      posturePct: posturePct2,
-      passCount,
-      failCount,
-      emptyPostureReason,
-      tags: []
-    };
-  }
-  var SEED_POSTURE = [
-    // ---- OWASP Agentic 2026 ----
-    {
-      frameworkId: "wf-id-275",
-      level: "framework",
-      nodeId: "wf-id-275",
-      title: "OWASP Top 10 For Agentic Applications 2026",
-      posturePct: 96,
-      passCount: 0,
-      failCount: 0,
-      passSubCategoryCount: 2,
-      failSubCategoryCount: 2,
-      emptyPostureReason: null
-    },
-    seedCategory("wf-id-275", "ASI01", "ASI01 Agent Goal Hijack", 93, 144, 10),
-    seedSubCategory("wf-id-275", "ASI01", "ASI01", "ASI01 Agent Goal Hijack", 93, 144, 10),
-    seedCategory("wf-id-275", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
-    seedSubCategory("wf-id-275", "ASI03", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
-    // The empty category: nothing in this landscape to assess. Posture null, reason given —
-    // the case the page must never render as 0%.
-    seedCategory("wf-id-275", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
-    seedSubCategory("wf-id-275", "ASI08", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
-    seedCategory("wf-id-275", "ASI10", "ASI10 Rogue Agents", 99, 16703, 87),
-    seedSubCategory("wf-id-275", "ASI10", "ASI10", "ASI10 Rogue Agents", 99, 16703, 87),
-    // ---- Wiz 5Rs ----
-    {
-      frameworkId: "wf-id-214",
-      level: "framework",
-      nodeId: "wf-id-214",
-      title: "5Rs - Wiz for Data Security",
-      posturePct: 85,
-      passCount: 0,
-      failCount: 0,
-      // Five categories now, one of which reports nothing. The framework percentage stays
-      // 85 and is deliberately NOT the mean of its categories (62/91/78/85/null averages to
-      // 79) — Wiz's aggregation is undocumented, and this row exists partly to keep a naive
-      // CATEGORY-MEAN recomputation from ever accidentally looking correct. That guard is
-      // unrelated to the AI-scoped posture in fiveRsPosture.ts: that figure is derived from
-      // a different set of inputs (active in-scope policies' own pass/fail counts, not a
-      // mean of category percentages) and is EXPECTED to differ from 85 — see that module.
-      passSubCategoryCount: 1,
-      failSubCategoryCount: 4,
-      emptyPostureReason: null
-    },
-    // NO_POLICIES is a DIFFERENT emptiness from NO_RESOURCES: nothing was written to assess,
-    // rather than nothing existing to assess against. Both must read as their own state.
-    seedCategory("wf-id-214", "1", "Reduce", null, 0, 0, "NO_RESOURCES"),
-    seedSubCategory("wf-id-214", "1", "1.1", "Stale data resources", null, 0, 0, "NO_POLICIES"),
-    seedCategory("wf-id-214", "2", "Restrict", 85, 194309, 71),
-    seedSubCategory("wf-id-214", "2", "2.1", "Public data exposure", 85, 194309, 71),
-    // The other three Rs, and the reason they are seeded at all: this is a DATA-security
-    // framework collected by an AI product, and until now the sample carried only the two
-    // categories whose rules happen to be about AI (a Bedrock trust policy, a training
-    // bucket). A landscape that agrees with the product's focus cannot demonstrate the scope
-    // feature, and worse, cannot catch it silently excluding nothing.
-    //
-    // Note the check counts. 2.1 reports 194,309 passing against ASI01's 144 — three orders
-    // of magnitude, because Wiz is scoring the WHOLE data landscape here, not the AI slice of
-    // it. That gap is the framework's non-AI character showing up in the numbers, and these
-    // rows keep it visible.
-    seedCategory("wf-id-214", "3", "Relabel", 62, 88412, 1204),
-    seedSubCategory("wf-id-214", "3", "3.1", "Unlabelled sensitive data", 62, 88412, 1204),
-    seedCategory("wf-id-214", "4", "Relocate", 91, 40210, 331),
-    seedSubCategory("wf-id-214", "4", "4.1", "Data residency", 91, 40210, 331),
-    seedCategory("wf-id-214", "5", "Reconfigure", 78, 120044, 2210),
-    seedSubCategory("wf-id-214", "5", "5.1", "Encryption and retention", 78, 120044, 2210),
-    // ---- OWASP ML ----
-    {
-      frameworkId: "wf-id-106",
-      level: "framework",
-      nodeId: "wf-id-106",
-      title: "OWASP ML Security Top 10",
-      posturePct: 100,
-      passCount: 0,
-      failCount: 0,
-      passSubCategoryCount: 1,
-      failSubCategoryCount: 0,
-      emptyPostureReason: null
-    },
-    seedCategory("wf-id-106", "ML02", "Data Poisoning Attack", 100, 126e3, 0),
-    seedSubCategory("wf-id-106", "ML02", "ML02", "Data Poisoning Attack", 100, 126e3, 0),
-    // ---- OWASP LLM ----
-    // The awkward shape: NUMERIC external ids, with the OWASP code carried in the category
-    // NAME and stamped with its edition. Seeded so the dry run exercises the one framework
-    // whose codes cannot be read off an id.
-    {
-      frameworkId: "wf-id-201",
-      level: "framework",
-      nodeId: "wf-id-201",
-      title: "OWASP LLM Security Top 10",
-      posturePct: 95,
-      passCount: 0,
-      failCount: 0,
-      passSubCategoryCount: 1,
-      failSubCategoryCount: 1,
-      emptyPostureReason: null
-    },
-    seedCategory("wf-id-201", "1", "1 LLM01:2025 Prompt Injection", 90, 691, 70),
-    seedSubCategory("wf-id-201", "1", "1.1", "1.1  Prompt Injection", 90, 691, 70),
-    seedCategory("wf-id-201", "2", "2 LLM02:2025 Sensitive Information Disclosure", 98, 5929, 100),
-    seedSubCategory("wf-id-201", "2", "2.1", "2.1 Sensitive Information Disclosure", 98, 5929, 100)
-  ];
-  function seedPolicy(frameworkId, categoryExternalId, subcategoryExternalId, shortId, name, severity, passCount, failCount) {
-    return {
-      frameworkId,
-      categoryExternalId,
-      subcategoryExternalId,
-      policyId: `pol-${shortId}`,
-      policyKind: "CLOUD_RULE",
-      shortId,
-      name,
-      severity,
-      enabled: true,
-      builtin: true,
-      passCount,
-      failCount,
-      assessedCount: passCount + failCount,
-      rejectedCount: 0,
-      noResourceToAssess: passCount + failCount === 0,
-      cloudProvider: "AWS"
-    };
-  }
-  var SEED_FRAMEWORK_POLICIES = [
-    // SUB-082 under TWO subcategories of the same framework — the many-to-many, in the
-    // simplest form. Summing these rows as distinct policies would double-count it.
-    seedPolicy(
-      "wf-id-275",
-      "ASI01",
-      "ASI01",
-      "SUB-082",
-      "Vertex AI Metadata Store must use a customer-managed key",
-      "MEDIUM",
-      21,
-      2
-    ),
-    seedPolicy(
-      "wf-id-275",
-      "ASI10",
-      "ASI10",
-      "SUB-082",
-      "Vertex AI Metadata Store must use a customer-managed key",
-      "MEDIUM",
-      21,
-      2
-    ),
-    // IAM-236 under ASI03 *and* under 5Rs Restrict — the many-to-many ACROSS frameworks,
-    // which is why the join key is (framework, subcategory, policy) and not the policy.
-    seedPolicy(
-      "wf-id-275",
-      "ASI03",
-      "ASI03",
-      "IAM-236",
-      "Bedrock service roles must prevent confused-deputy access",
-      "HIGH",
-      1718,
-      18
-    ),
-    seedPolicy(
-      "wf-id-214",
-      "2",
-      "2.1",
-      "IAM-236",
-      "Bedrock service roles must prevent confused-deputy access",
-      "HIGH",
-      1718,
-      18
-    ),
-    seedPolicy(
-      "wf-id-275",
-      "ASI03",
-      "ASI03",
-      "IAM-267",
-      "Agent service accounts must not hold wildcard data permissions",
-      "HIGH",
-      42,
-      3
-    ),
-    // SUB-114 under ASI10 and under the ML framework — so it picks up an ASI code and an
-    // ML_ one, proving the two spellings coexist on one finding.
-    seedPolicy(
-      "wf-id-275",
-      "ASI10",
-      "ASI10",
-      "SUB-114",
-      "Agent must be attached to a guardrail",
-      "HIGH",
-      9,
-      5
-    ),
-    seedPolicy(
-      "wf-id-106",
-      "ML02",
-      "ML02",
-      "SUB-114",
-      "Agent must be attached to a guardrail",
-      "HIGH",
-      9,
-      5
-    ),
-    seedPolicy(
-      "wf-id-214",
-      "2",
-      "2.1",
-      "SUB-047",
-      "Training bucket must not allow public write",
-      "CRITICAL",
-      30,
-      1
-    ),
-    // The 5Rs rules this product has no use for: general cloud data governance, evaluated
-    // against the whole landscape. None is mapped into an OWASP framework and none has a
-    // finding on an AI asset, so the derived scope files all four out — which is the point
-    // of seeding them. Without these the scope excludes nothing and a broken filter looks
-    // exactly like a working one.
-    seedPolicy(
-      "wf-id-214",
-      "3",
-      "3.1",
-      "DATA-311",
-      "Object storage buckets must carry a data-sensitivity label",
-      "MEDIUM",
-      62108,
-      1204
-    ),
-    seedPolicy(
-      "wf-id-214",
-      "3",
-      "3.1",
-      "DATA-318",
-      "Managed databases must declare a classification tag",
-      "LOW",
-      26304,
-      486
-    ),
-    seedPolicy(
-      "wf-id-214",
-      "4",
-      "4.1",
-      "DATA-402",
-      "Customer data must not leave its declared residency region",
-      "HIGH",
-      40210,
-      331
-    ),
-    seedPolicy(
-      "wf-id-214",
-      "5",
-      "5.1",
-      "DATA-514",
-      "Object storage must define a retention policy",
-      "MEDIUM",
-      98720,
-      2210
-    ),
-    // ...and one that stays. SUB-082 already sits under ASI01 and ASI10, so Wiz itself
-    // files it under an AI framework and the cross-mapping signal keeps it in scope. It is
-    // here so that "Reconfigure" cannot be read as "a category that is entirely off":
-    // scope is a property of a rule, not of the R it happens to live under.
-    seedPolicy(
-      "wf-id-214",
-      "5",
-      "5.1",
-      "SUB-082",
-      "Vertex AI Metadata Store must use a customer-managed key",
-      "MEDIUM",
-      21,
-      2
-    ),
-    // SUB-114 also lands under LLM01, so one finding ends up carrying an ASI code, an ML_
-    // code AND an LLM code — three vocabularies on one failing control, which is the point.
-    seedPolicy(
-      "wf-id-201",
-      "1",
-      "1.1",
-      "SUB-114",
-      "Agent must be attached to a guardrail",
-      "HIGH",
-      9,
-      5
-    ),
-    seedPolicy(
-      "wf-id-201",
-      "2",
-      "2.1",
-      "IAM-267",
-      "Agent service accounts must not hold wildcard data permissions",
-      "HIGH",
-      42,
-      3
-    ),
-    // Nothing to assess: every count zero AND the flag set. Renders as its own state, never
-    // as a 0% score.
-    {
-      frameworkId: "wf-id-275",
-      categoryExternalId: "ASI08",
-      subcategoryExternalId: "ASI08",
-      policyId: "pol-AIService-009",
-      policyKind: "CLOUD_RULE",
-      shortId: "AIService-009",
-      name: "Agent orchestration must bound retry fan-out",
-      severity: "MEDIUM",
-      enabled: true,
-      builtin: true,
-      passCount: 0,
-      failCount: 0,
-      assessedCount: 0,
-      rejectedCount: 0,
-      noResourceToAssess: true,
-      cloudProvider: "Azure"
-    },
-    // A Control rather than a cloud rule — no shortId at all, so the finding join can only
-    // reach it by uuid. Both keys exist in the lookup for exactly this reason.
-    {
-      frameworkId: "wf-id-275",
-      categoryExternalId: "ASI01",
-      subcategoryExternalId: "ASI01",
-      policyId: "667e01f9-1105-42d5-a66a-e7f739fb4c4f",
-      policyKind: "CONTROL",
-      name: "Highly privileged AI agent is not protected by AI guardrails",
-      severity: "MEDIUM",
-      enabled: true,
-      builtin: true,
-      passCount: 72,
-      failCount: 0,
-      assessedCount: 72,
-      rejectedCount: 0,
-      noResourceToAssess: false
-    }
-  ];
-  function seedGraphDoc(syncedAt) {
-    return { nodes: SEED_NODES, edges: SEED_EDGES, syncedAt };
-  }
-  var SEED_TREND = [
-    { CRITICAL: 5, HIGH: 12, MEDIUM: 0, LOW: 2, INFO: 11 },
-    { CRITICAL: 5, HIGH: 13, MEDIUM: 0, LOW: 2, INFO: 10 },
-    { CRITICAL: 4, HIGH: 15, MEDIUM: 0, LOW: 3, INFO: 9 },
-    { CRITICAL: 4, HIGH: 16, MEDIUM: 0, LOW: 3, INFO: 9 },
-    { CRITICAL: 3, HIGH: 16, MEDIUM: 0, LOW: 3, INFO: 8 },
-    { CRITICAL: 3, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
-    { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
-    { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 }
-  ];
-  var SEED_CONFIG_RULES = [
-    {
-      id: "rule-iam-159",
-      shortId: "IAM-159",
-      name: "User should have MFA enabled",
-      subjectEntityType: "USER_ACCOUNT",
-      externalRefs: []
-    },
-    {
-      id: "rule-iam-208",
-      shortId: "IAM-208",
-      name: "User with password-based authentication should have multi-factor authentication (MFA) enabled",
-      subjectEntityType: "USER_ACCOUNT",
-      externalRefs: []
-    },
-    {
-      id: "rule-iam-235",
-      shortId: "IAM-235",
-      name: "User should not be inactive for more than 90 days",
-      subjectEntityType: "USER_ACCOUNT",
-      externalRefs: []
-    },
-    {
-      // The gloss the AARS cascade has always lacked: SEED_FINDINGS prices SUB-082 and the
-      // codebook has never been able to render what it means.
-      id: "rule-sub-082",
-      shortId: "SUB-082",
-      name: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
-      subjectEntityType: "REGION",
-      externalRefs: ["CKV_GCP_96", "CKV2_GCP_25"]
-    },
-    {
-      id: "rule-idp-012",
-      shortId: "IDP-012",
-      name: "WorkSpaces Directory should have multi-factor authentication enabled",
-      subjectEntityType: "IDENTITY_PROVIDER",
-      externalRefs: []
-    }
-  ];
-  var SEED_IDENTITY_FINDINGS = [
-    {
-      id: "idf-001",
-      resourceId: "user-ops-01",
-      resourceName: "ops.user01@example.com",
-      ruleId: "rule-iam-159",
-      ruleShortId: "IAM-159",
-      ruleName: "User should have MFA enabled",
-      severity: "HIGH",
-      status: "OPEN",
-      result: "FAIL",
-      firstSeenAt: "2026-05-02T09:14:00Z",
-      analyzedAt: "2026-08-13T04:00:00Z",
-      remediation: "Enrol this account in multi-factor authentication.",
-      hygiene: "MFA"
-    },
-    {
-      id: "idf-002",
-      resourceId: "user-ops-02",
-      resourceName: "ops.user02@example.com",
-      ruleId: "rule-iam-235",
-      ruleShortId: "IAM-235",
-      ruleName: "User should not be inactive for more than 90 days",
-      severity: "MEDIUM",
-      status: "OPEN",
-      result: "FAIL",
-      firstSeenAt: "2026-04-18T11:02:00Z",
-      analyzedAt: "2026-08-13T04:00:00Z",
-      remediation: "Disable or remove accounts that are no longer in use.",
-      hygiene: "DORMANT"
-    },
-    {
-      id: "idf-003",
-      resourceId: "user-ops-05",
-      resourceName: "ops.user05@example.com",
-      ruleId: "rule-iam-159",
-      ruleShortId: "IAM-159",
-      ruleName: "User should have MFA enabled",
-      severity: "HIGH",
-      status: "OPEN",
-      result: "FAIL",
-      firstSeenAt: "2026-05-02T09:14:00Z",
-      analyzedAt: "2026-08-13T04:00:00Z",
-      hygiene: "MFA"
-    }
-  ];
-  var SEED_EFFECTIVE_ACCESS = [
-    {
-      identityId: "user-ops-01",
-      identityName: "ops.user01@example.com",
-      resourceId: "agent-h-chatbot",
-      accessTypes: ["DATA"],
-      permissions: ["aiplatform.endpoints.predict", "storage.objects.get"],
-      policyIds: ["policy-ops-admin"],
-      policyNames: ["ops-admin-binding"]
-    },
-    {
-      identityId: "user-ops-07",
-      identityName: "ops.user07@example.com",
-      resourceId: "agent-h-chatbot",
-      accessTypes: ["DATA"],
-      permissions: ["storage.objects.get"],
-      policyIds: ["policy-ops-reader"],
-      policyNames: ["ops-reader-binding"]
-    }
-  ];
-
-  // src/server/syncJobs.ts
-  var CANCEL_PROP = "CANCEL_SYNC_JOB_ID";
-  var CONTINUE_HANDLER = "trigger_continueSync";
-  var CONTINUE_DELAY_MS = 3e4;
-  var FIRST_STEP_BUDGET_MS = 45e3;
-  var BUDGET_MS = 27e4;
-  var CHECKPOINT_MS = 8e3;
-  function syncSteps(aiTypes) {
-    const types = aiTypes != null ? aiTypes : resolveAiResourceTypes().types;
-    const frameworkIds = getSelectedFrameworks2(() => loadFrameworks());
-    const overrides = getScanVars2();
-    const vars = (stepId, base) => effectiveStepVars(stepId, base, overrides[stepId]);
-    const selectedFrameworks = () => frameworkIds;
-    const catalogue = loadConfigRules();
-    const catalogueFresh = configRulesAreFresh2(catalogue.length > 0, Date.now());
-    const hygieneRules = resolveHygieneRules(catalogue);
-    return [
-      {
-        id: "INVENTORY_AI",
-        area: "aispm",
-        writes: ["ai_assets"],
-        run: "cloudResources",
-        query: Q_AI_INVENTORY,
-        extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types)),
-        normalize: normalizeInventoryPage,
-        pageSize: PAGE_SIZE_WIDE
-      },
-      // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
-      // issue for that rule (issue rows are reconstructed one-per-asset).
-      ...COMBO_GROUPS.map((group) => ({
-        id: `ISSUES_${group.ruleId}`,
-        area: "toxic",
-        writes: ["ai_assets", "ai_issues"],
-        run: "cloudResources",
-        query: Q_RULE_ASSETS,
-        extraVariables: { ruleIds: [group.ruleId] },
-        normalize: (rows) => normalizeRuleAssetsPage(rows, group),
-        optional: true,
-        pageSize: PAGE_SIZE_WIDE
-      })),
-      // Real toxic-combination issues (issuesV2). Runs alongside the per-rule steps
-      // above; reconcileIssues drops the synthetic per-rule rows these supersede.
-      {
-        id: "ISSUES_TOXIC",
-        area: "toxic",
-        writes: ["ai_issues", "ai_assets"],
-        run: "connection",
-        connectionField: "issuesV2",
-        query: Q_ISSUES,
-        extraVariables: vars("ISSUES_TOXIC", aiIssuesVariables(projectScope())),
-        normalize: normalizeIssuesPage,
-        optional: true
-      },
-      // Real compliance findings (configurationFindings) — feeds AARS pillar B.
-      {
-        id: "CONFIG_FINDINGS",
-        area: "configFindings",
-        writes: ["ai_findings"],
-        run: "connection",
-        connectionField: "configurationFindings",
-        query: Q_CONFIG_FINDINGS,
-        extraVariables: vars("CONFIG_FINDINGS", aiConfigFindingsVariables(projectScope())),
-        normalize: normalizeConfigFindingsPage,
-        optional: true
-      },
-      // Wiz's cloud-configuration RULE CATALOGUE — reference data, and the only step here whose
-      // contents describe the product rather than the landscape. It is what glosses an opaque
-      // `SUB-082` in the AARS cascade, and what the identity-hygiene matchers resolve against
-      // instead of hardcoding MFA rule ids that differ per cloud.
-      //
-      // GATED, not unconditional. ~3,858 rules is ~39 pages against a battery that is otherwise
-      // ~10–20 calls, to re-collect a list that changes when Wiz ships rules. `catalogueFresh`
-      // is resolved once, above, and a skip here is recorded as SCHEDULED rather than joining
-      // `skippedSteps` — that list means "the tenant refused this", and a step we chose not to
-      // run must not be reported as a rejection.
-      ...catalogueFresh ? [] : [{
-        id: "CONFIG_RULES",
-        area: "configFindings",
-        writes: ["ai_config_rules"],
-        run: "connection",
-        connectionField: "cloudConfigurationRules",
-        query: Q_CONFIG_RULES,
-        normalize: normalizeConfigRulesPage,
-        optional: true,
-        // The big one: ~3,858 rules is 39 pages at PAGE_SIZE and 8 at PAGE_SIZE_WIDE, and
-        // the document is five flat scalars per node.
-        pageSize: PAGE_SIZE_WIDE
-      }],
-      // MFA and dormancy on the humans who can reach an AI asset. The rules come from the
-      // catalogue, matched by name (domain/identityHygiene.ts), so this step exists only once
-      // the catalogue has been collected at least once — on a first sync it resolves to nothing
-      // and is skipped, and the following sync has it.
-      ...hygieneRules.ids.length ? [{
-        id: "IDENTITY_HYGIENE",
-        area: "identity",
-        writes: ["ai_identity_findings"],
-        run: "connection",
-        connectionField: "configurationFindings",
-        query: Q_CONFIG_FINDINGS,
-        extraVariables: aiIdentityHygieneVariables(hygieneRules.ids, projectScope()),
-        // Closed over the resolved map, the way the per-rule combo steps close over their group.
-        // It is also what lets the normalizer verify the filter was honoured at all.
-        normalize: (rows) => normalizeIdentityFindingsPage(rows, hygieneRules.byId),
-        optional: true
-      }] : [],
-      // Effective permissions on those same assets: not who holds a role, but what they can do
-      // and which policy says so. Runs BESIDE IDENTITY_ACCESS rather than replacing it — that
-      // step draws the graph's ALLOWS_ACCESS_TO edges and speaks ADMIN/HIGH_PRIVILEGE, this one
-      // speaks DATA, and withHumanAccess keeps the two in separate fields.
-      {
-        id: "EFFECTIVE_ACCESS",
-        area: "identity",
-        writes: ["ai_assets (human_access_json)"],
-        run: "connection",
-        connectionField: "entityEffectiveAccessEntries",
-        query: Q_EFFECTIVE_ACCESS,
-        extraVariables: effectiveAccessVariables(types, projectScope()),
-        normalize: normalizeEffectiveAccessPage,
-        optional: true,
-        pageSize: PAGE_SIZE_WIDE
-      },
-      // The framework catalogue. Populates the Settings picker; it does NOT decide the
-      // battery — see the posture steps below for why.
-      //
-      // `area` is the posture one, not the configuration-findings one. The tag is what the
-      // Wiz Scans drill-down filters on (scanSheet.js), so it decides which area DISPLAYS
-      // this document — it is a join key, not a label. Both this step and the posture steps
-      // below spent a release tagged "compliance", which left the posture area rendering
-      // "No sync step issues a query for this area" beside its own live figure. Pinned by
-      // test/scanAreaSteps.test.ts.
-      {
-        id: "FRAMEWORKS_LIST",
-        area: "posture",
-        writes: ["ai_frameworks"],
-        run: "connection",
-        connectionField: "securityFrameworks",
-        query: Q_SECURITY_FRAMEWORKS,
-        extraVariables: vars("FRAMEWORKS_LIST", aiSecurityFrameworksVariables()),
-        normalize: normalizeFrameworksPage,
-        optional: true,
-        pageSize: PAGE_SIZE_WIDE
-      },
-      // Per-framework compliance posture — ONE STEP PER FRAMEWORK, because the query takes a
-      // framework id and returns one object. Generated the same way the per-rule combo steps
-      // above are, so the budget/resume machinery needs no special case.
-      //
-      // Driven by the SELECTION, not by the catalogue: posture costs a round trip per
-      // framework and a tenant can carry a hundred builtin ones this app has no vocabulary
-      // for. Each step is optional, so a framework id that is wrong on this tenant costs a
-      // recorded skip rather than a failed sync.
-      ...selectedFrameworks().map((frameworkId) => ({
-        id: `COMPLIANCE_POSTURE_${frameworkId}`,
-        area: "posture",
-        writes: ["ai_framework_posture", "ai_framework_policies"],
-        run: "single",
-        connectionField: "securityFramework",
-        query: Q_COMPLIANCE_POSTURE,
-        // No `vars()` indirection here on purpose: these steps are LOCKED. Overrides are
-        // stored per step id, and every posture step has its own (`COMPLIANCE_POSTURE_<id>`),
-        // so reading them under a shared "COMPLIANCE_POSTURE" key would be an override slot
-        // nothing can ever write to — dead indirection that reads like a feature.
-        //
-        // They are locked because the framework id is not a filter. The existing rule is that
-        // a variable may narrow a selection set but never change it; an id that selects WHICH
-        // OBJECT the selection set is applied to is further outside that line, not inside it.
-        // Choosing frameworks is Settings' job.
-        extraVariables: {
-          ...aiCompliancePostureVariables(projectScope()),
-          id: frameworkId
-        },
-        normalize: normalizeCompliancePosturePage,
-        optional: true
-      })),
-      {
-        id: "GUARDRAIL_GAPS",
-        area: "guardrails",
-        writes: ["ai_assets.guardrail_missing"],
-        run: "graphSearch",
-        query: Q_AGENTS_NO_GUARDRAIL,
-        normalize: normalizeNoGuardrailPage,
-        optional: true,
-        pageSize: PAGE_SIZE_TRAVERSAL
-      },
-      {
-        id: "RUNS_AS",
-        area: "ciem",
-        writes: ["ai_edges (RUNS_AS)", "ai_assets"],
-        run: "graphSearch",
-        query: Q_AGENT_RUNS_AS,
-        normalize: normalizeRunsAsPage,
-        optional: true,
-        pageSize: PAGE_SIZE_TRAVERSAL
-      },
-      {
-        id: "SA_FINDINGS",
-        area: "ciem",
-        writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
-        run: "graphSearch",
-        query: Q_SA_EXCESSIVE_ACCESS,
-        normalize: normalizeRunsAsPage,
-        optional: true,
-        pageSize: PAGE_SIZE_TRAVERSAL
-      },
-      // The data-exposure chain. Runs AFTER the two CIEM steps on purpose: it re-emits the
-      // agent and its service account, and mergeParts lets later truthy values win field-wise,
-      // so landing the richer CIEM projections first means this step can only add to them.
-      {
-        id: "SENSITIVE_DATA_ACCESS",
-        area: "dspm",
-        writes: [
-          "ai_edges (RUNS_AS, ALLOWS_ACCESS_TO)",
-          "ai_assets (BUCKET/DATABASE rows, data_finding_count)",
-          "ai_data_findings"
-        ],
-        run: "graphSearch",
-        query: Q_AGENT_SENSITIVE_DATA_ACCESS,
-        normalize: normalizeSensitiveDataAccessPage,
-        optional: true,
-        pageSize: PAGE_SIZE_TRAVERSAL
-      },
-      // Network exposure, in two steps because they are two claims. HOST_EXPOSURE says the
-      // compute under an AI asset is reachable; ENDPOINT_EXPOSURE says Wiz's scanner reached a
-      // live endpoint it serves and policy rates that a real exposure. The capture proves they
-      // can disagree — a Cloud Run revision that is openToAllInternet, serving endpoints rated
-      // Low because they redirect to SSO. See domain/exposureQuery.ts.
-      //
-      // Both run AFTER the CIEM and DSPM steps for the reason SENSITIVE_DATA_ACCESS gives:
-      // they re-emit the AI asset as a thin projection, and mergeParts lets later truthy
-      // values win field-wise, so landing the richer projections first means these can only
-      // add to them.
-      {
-        id: "HOST_EXPOSURE",
-        area: "exposure",
-        writes: [
-          "ai_edges (HOSTED_ON, SERVES)",
-          "ai_assets (VM/SERVERLESS + ENDPOINT rows, exposure_evidence_json)"
-        ],
-        run: "graphSearch",
-        query: Q_AI_EXPOSURE,
-        extraVariables: hostExposureVariables(types, projectScope()),
-        normalize: normalizeHostExposurePage,
-        optional: true
-      },
-      {
-        id: "ENDPOINT_EXPOSURE",
-        area: "exposure",
-        writes: ["ai_edges (SERVES)", "ai_assets (ENDPOINT rows, exposure_level, port_validation)"],
-        run: "graphSearch",
-        query: Q_AI_EXPOSURE,
-        extraVariables: endpointExposureVariables(types, projectScope()),
-        normalize: normalizeEndpointExposurePage,
-        optional: true
-      },
-      {
-        id: "IDENTITY_ACCESS",
-        area: "identity",
-        writes: [
-          "ai_edges (ALLOWS_ACCESS_TO)",
-          "ai_assets (USER_ACCOUNT/ACCESS_ROLE rows, inactive, human_access_json)"
-        ],
-        run: "graphSearch",
-        query: Q_IDENTITY_ACCESS,
-        extraVariables: identityAccessVariables(types, projectScope()),
-        normalize: normalizeIdentityAccessPage,
-        optional: true,
-        pageSize: PAGE_SIZE_TRAVERSAL
-      },
-      // AI-asset provenance: publisher + how Wiz discovered it. Optional and separate from
-      // INVENTORY_AI on purpose — see the note on Q_AI_PROPERTIES. Losing it costs two columns.
-      {
-        id: "AI_ASSET_PROPERTIES",
-        area: "aispm",
-        writes: ["ai_assets.publisher", "ai_assets.discovery_methods"],
-        run: "cloudResources",
-        query: Q_AI_PROPERTIES,
-        extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types)),
-        // The same normalizer the inventory step uses. Safe because mergeParts merges
-        // field-wise and skips undefined — this step's narrower rows fill in the two provenance
-        // fields without erasing the projects, tags or analytics INVENTORY_AI established.
-        normalize: normalizeInventoryPage,
-        optional: true,
-        pageSize: PAGE_SIZE_WIDE
-      },
-      // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
-      {
-        id: "AGENTIC_IDENTITIES",
-        area: "ciem",
-        writes: ["ai_assets.identity_purpose"],
-        run: "cloudResources",
-        query: Q_PRINCIPALS,
-        extraVariables: vars("AGENTIC_IDENTITIES", aiPrincipalsVariables(projectScope())),
-        normalize: normalizePrincipalsPage,
-        optional: true,
-        pageSize: PAGE_SIZE_WIDE
-      }
-    ];
-  }
-  var TYPE_DEPENDENT_STEPS = /* @__PURE__ */ new Set([
-    "INVENTORY_AI",
-    "AI_ASSET_PROPERTIES",
-    "HOST_EXPOSURE",
-    "ENDPOINT_EXPOSURE",
-    "IDENTITY_ACCESS",
-    "EFFECTIVE_ACCESS"
-  ]);
-  function rootFieldOf(step) {
-    var _a5;
-    if (step.run === "cloudResources") return "cloudResourcesV2";
-    if (step.run === "graphSearch") return "graphSearch";
-    return (_a5 = step.connectionField) != null ? _a5 : "";
-  }
-  function fetcherFor(step) {
-    if (step.run === "graphSearch") return fetchGraphSearchPage;
-    if (step.run === "cloudResources") return fetchCloudResourcesPage;
-    if (step.run === "single") return (o) => {
-      var _a5;
-      return fetchSingleObject((_a5 = step.connectionField) != null ? _a5 : "", o);
-    };
-    return (o) => {
-      var _a5;
-      return fetchConnectionPage((_a5 = step.connectionField) != null ? _a5 : "", o);
-    };
-  }
-  function describeSyncSteps() {
-    const overrides = getScanVars2();
-    const resolved = describeAiTypes();
-    return syncSteps(resolved.types).map((step) => {
-      var _a5, _b, _c;
-      const base = defaultStepVariables(step.id, (_a5 = step.extraVariables) != null ? _a5 : {}, resolved.types);
-      return {
-        id: step.id,
-        area: step.area,
-        writes: step.writes,
-        rootField: rootFieldOf(step),
-        run: step.run,
-        optional: !!step.optional,
-        document: step.query,
-        // What this step will actually send, overrides included. `first`, `after` and (for
-        // graphSearch) `quick` are added by the transport on every request and are named in
-        // the panel rather than folded in here, so what is shown is what is configured.
-        variables: (_b = step.extraVariables) != null ? _b : {},
-        // The `first` the transport will send for THIS step. Named because it is no longer one
-        // number for the whole battery: the panel would otherwise list `first` as a transport
-        // variable whose value the operator cannot see and cannot predict.
-        pageSize: (_c = step.pageSize) != null ? _c : PAGE_SIZE,
-        defaultVariables: base,
-        editable: isEditableStep(step.id),
-        overridden: changedPaths(step.id, base, overrides[step.id]),
-        // Three steps build their filter from the tenant-resolved AI type list, so only those
-        // three can be described provisionally. Said out loud rather than shown as settled
-        // fact — this page's whole job is not doing that.
-        typesResolved: TYPE_DEPENDENT_STEPS.has(step.id) ? resolved.resolved : true
-      };
-    });
-  }
-  function describeAiTypes() {
-    try {
-      return { types: resolveAiResourceTypes().types, resolved: true };
-    } catch (e) {
-      return { types: AI_RESOURCE_TYPE_CANDIDATES, resolved: false };
-    }
-  }
-  function defaultStepVariables(stepId, withOverride, aiTypes) {
-    switch (stepId) {
-      case "INVENTORY_AI":
-        return aiInventoryVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types);
-      case "ISSUES_TOXIC":
-        return aiIssuesVariables(projectScope());
-      case "CONFIG_FINDINGS":
-        return aiConfigFindingsVariables(projectScope());
-      case "AI_ASSET_PROPERTIES":
-        return aiPropertiesVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types);
-      case "AGENTIC_IDENTITIES":
-        return aiPrincipalsVariables(projectScope());
-      case "HOST_EXPOSURE":
-        return hostExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "ENDPOINT_EXPOSURE":
-        return endpointExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "IDENTITY_ACCESS":
-        return identityAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "EFFECTIVE_ACCESS":
-        return effectiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "IDENTITY_HYGIENE":
-        return aiIdentityHygieneVariables(
-          resolveHygieneRules(loadConfigRules()).ids,
-          projectScope()
-        );
-      case "FRAMEWORKS_LIST":
-        return aiSecurityFrameworksVariables();
-      default:
-        if (stepId.indexOf("COMPLIANCE_POSTURE_") === 0) {
-          return {
-            ...aiCompliancePostureVariables(projectScope()),
-            id: stepId.slice("COMPLIANCE_POSTURE_".length)
-          };
-        }
-        return withOverride;
-    }
-  }
-  function testStepVariables(stepId, vars) {
-    var _a5;
-    const step = syncSteps().filter((s) => s.id === stepId)[0];
-    if (!step) throw new Error(`No sync step called ${stepId}.`);
-    const proposed = effectiveStepVars(
-      stepId,
-      defaultStepVariables(stepId, (_a5 = step.extraVariables) != null ? _a5 : {}),
-      vars
-    );
-    const opts = { query: step.query, cursor: null, extraVariables: proposed };
-    let result;
-    try {
-      result = fetcherFor(step)(opts);
-    } catch (e) {
-      return {
-        ok: false,
-        stepId,
-        variables: proposed,
-        error: String(e instanceof Error ? e.message : e)
-      };
-    }
-    const part = step.normalize(result.rows);
-    return {
-      ok: true,
-      stepId,
-      variables: proposed,
-      rows: result.rows.length,
-      totalCount: result.totalCount,
-      hasNextPage: result.hasNextPage,
-      normalized: {
-        nodes: part.nodes.length,
-        edges: part.edges.length,
-        issues: part.issues.length,
-        findings: part.findings.length
-      },
-      // One row, so the operator can see the shape came back as expected. Stringified and
-      // capped: a raw Wiz row can be large, and this rides a google.script.run response.
-      sample: result.rows.length ? JSON.stringify(result.rows[0]).slice(0, 1200) : ""
-    };
-  }
-  function startSync() {
-    const existing = activeJob();
-    if (existing) {
-      return { jobId: existing.job_id, message: "A sync is already running." };
-    }
-    if (!hasWizCredentials()) return dryRunSync();
-    return startLiveSync();
-  }
-  function seedTrendHistory(endIso) {
-    if (dataRowCount(TABS.syncHistory) > 0) return;
-    const DAY_MS2 = 864e5;
-    const end = new Date(endIso).getTime();
-    appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
-      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS2).toISOString();
-      return {
-        sync_id: `sync-sample-${String(i + 1).padStart(2, "0")}`,
-        started_at: at,
-        finished_at: at,
-        status: "SUCCESS",
-        mode: "dry-run",
-        node_count: null,
-        edge_count: null,
-        issue_count: null,
-        api_calls: 0,
-        snapshot_ref: null,
-        error: null,
-        aars_severity_json: JSON.stringify(counts)
-      };
-    }));
-  }
-  function dryRunSync() {
-    const startedAt = nowIso();
-    seedTrendHistory(startedAt);
-    const syncId = `sync-${startedAt.replace(/[:]/g, "")}`;
-    const doc = persistSync(
-      seedGraphDoc(startedAt),
-      SEED_ISSUES,
-      SEED_AARS_HINTS,
-      { syncId, mode: "dry-run", startedAt, apiCalls: 0 },
-      void 0,
-      SEED_FINDINGS,
-      SEED_DATA_FINDINGS,
-      SEED_FRAMEWORKS,
-      SEED_POSTURE,
-      SEED_FRAMEWORK_POLICIES,
-      {
-        configRules: SEED_CONFIG_RULES,
-        identityFindings: SEED_IDENTITY_FINDINGS,
-        effectiveAccess: SEED_EFFECTIVE_ACCESS
-      }
-    );
-    setSkippedSteps([]);
-    setTruncatedSteps([]);
-    return {
-      jobId: null,
-      message: `Dry-run sync complete: ${doc.nodes.length} nodes, ${doc.edges.length} edges, ${SEED_ISSUES.length} issues (sample data).`
-    };
-  }
-  function strList(v) {
-    return Array.isArray(v) ? v.map(String) : [];
-  }
-  function numMap(v) {
-    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
-    const out = {};
-    for (const [k, n] of Object.entries(v)) {
-      const num = Number(n);
-      if (Number.isFinite(num)) out[k] = num;
-    }
-    return out;
-  }
-  function jobParams(job) {
-    var _a5;
-    const parsed = parseJson(job.params_json, {});
-    return {
-      apiCalls: Number((_a5 = parsed["apiCalls"]) != null ? _a5 : 0),
-      skippedSteps: strList(parsed["skippedSteps"]),
-      truncatedSteps: strList(parsed["truncatedSteps"]),
-      stepRows: numMap(parsed["stepRows"])
-    };
-  }
-  function partRefs(job) {
-    return strList(parseJson(job.part_refs_json, []));
-  }
-  function startLiveSync() {
-    const now = nowIso();
-    const job = createJob({
-      job_id: newJobId("sync"),
-      kind: "sync",
-      phase: "FETCHING",
-      sync_id: `sync-${now.replace(/[:]/g, "")}`,
-      step_index: 0,
-      cursor: null,
-      page: 0,
-      nodes_so_far: 0,
-      total_count: 0,
-      part_refs_json: "[]",
-      params_json: JSON.stringify({ apiCalls: 0 }),
-      error: null
-    });
-    runBattery(job, { budgetMs: FIRST_STEP_BUDGET_MS, lockHeld: true });
-    const after = getJob(job.job_id);
-    return {
-      jobId: job.job_id,
-      message: after && after.phase === "DONE" ? "Sync complete." : "Sync started \u2014 it continues in the background."
-    };
-  }
-  function continueJob(_e) {
-    clearContinuationTriggers();
-    const job = activeJob();
-    if (!job || job.kind !== "sync" || job.phase !== "FETCHING") return;
-    runBattery(job, { budgetMs: BUDGET_MS, lockHeld: false });
-  }
-  function clearContinuationTriggers() {
-    for (const t of ScriptApp.getProjectTriggers()) {
-      if (t.getHandlerFunction() === CONTINUE_HANDLER) ScriptApp.deleteTrigger(t);
-    }
-  }
-  function scheduleContinuation() {
-    ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(CONTINUE_DELAY_MS).create();
-  }
-  function runBattery(job, opts) {
-    var _a5, _b, _c;
-    const deadline = Date.now() + opts.budgetMs;
-    const syncId = (_a5 = job.sync_id) != null ? _a5 : job.job_id;
-    const refs = partRefs(job);
-    const params = jobParams(job);
-    let stepIndex = job.step_index;
-    let cursor = job.cursor;
-    let page = job.page;
-    let nodesSoFar = job.nodes_so_far;
-    let hopPart = emptyPart();
-    let lastCheckpoint = Date.now();
-    const spillHopPart = () => {
-      if (partIsEmpty(hopPart)) return;
-      const name = `normalized-part-${String(refs.length + 1).padStart(3, "0")}.json.gz`;
-      refs.push(writeGzJson(syncFolder(syncId), name, hopPart).getId());
-      hopPart = emptyPart();
-    };
-    try {
-      const steps = syncSteps();
-      while (stepIndex < steps.length) {
-        const step = steps[stepIndex];
-        for (; ; ) {
-          if (cancelRequested(job.job_id)) {
-            clearCancelFlag();
-            updateJob(job.job_id, { phase: "CANCELLED" });
-            return;
-          }
-          if (Date.now() >= deadline) {
-            spillHopPart();
-            updateJob(job.job_id, {
-              step_index: stepIndex,
-              cursor,
-              page,
-              nodes_so_far: nodesSoFar,
-              part_refs_json: JSON.stringify(refs),
-              params_json: JSON.stringify(params)
-            });
-            scheduleContinuation();
-            return;
-          }
-          const fetcher = fetcherFor(step);
-          let result;
-          try {
-            result = fetcher({
-              query: step.query,
-              cursor,
-              extraVariables: step.extraVariables,
-              first: step.pageSize
-            });
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            if (step.optional && /HTTP 400/.test(msg)) {
-              params.apiCalls += 1;
-              params.skippedSteps.push(step.id);
-              console.warn(`Sync step ${step.id} skipped \u2014 tenant rejected its query: ${msg}`);
-              break;
-            }
-            throw e;
-          }
-          params.apiCalls += 1;
-          page += 1;
-          nodesSoFar += result.rows.length;
-          params.stepRows[step.id] = ((_b = params.stepRows[step.id]) != null ? _b : 0) + result.rows.length;
-          writeSyncPage(syncId, stepIndex, page, result.rows);
-          try {
-            appendPart(hopPart, step.normalize(result.rows));
-          } catch (e) {
-            if (step.optional && e instanceof FilterNotHonouredError) {
-              params.skippedSteps.push(step.id);
-              console.warn(`Sync step ${step.id} skipped \u2014 ${e.message}`);
-              break;
-            }
-            throw e;
-          }
-          if (page === 1 || Date.now() - lastCheckpoint >= CHECKPOINT_MS) {
-            updateJob(job.job_id, {
-              step_index: stepIndex,
-              cursor: result.endCursor,
-              page,
-              nodes_so_far: nodesSoFar,
-              total_count: (_c = result.totalCount) != null ? _c : 0,
-              params_json: JSON.stringify(params)
-            });
-            lastCheckpoint = Date.now();
-          }
-          if (!result.hasNextPage) break;
-          if (page >= MAX_PAGES) {
-            params.truncatedSteps.push(step.id);
-            console.warn(
-              `Sync step ${step.id} stopped at the ${MAX_PAGES}-page cap with more rows available.`
-            );
-            break;
-          }
-          cursor = result.endCursor;
-        }
-        spillHopPart();
-        stepIndex += 1;
-        cursor = null;
-        page = 0;
-        updateJob(job.job_id, {
-          step_index: stepIndex,
-          cursor: null,
-          page: 0,
-          // Carried here because the page loop no longer writes it on every page: without it a
-          // throttled tail would leave the row reporting the count from the last checkpoint.
-          nodes_so_far: nodesSoFar,
-          part_refs_json: JSON.stringify(refs),
-          params_json: JSON.stringify(params)
-        });
-        lastCheckpoint = Date.now();
-      }
-      updateJob(job.job_id, { phase: "RECONCILING" });
-      const parts = [];
-      for (const ref of refs) {
-        const parsed = readGzJsonFile(ref);
-        if (parsed && Array.isArray(parsed.nodes)) parts.push(parsed);
-      }
-      const startedAt = job.started_at;
-      const merged = mergeParts(parts, nowIso());
-      const doc = merged.doc;
-      const issues2 = reconcileIssues(merged.issues);
-      const aarsRule = getAarsRule2().rule;
-      const findings = aarsRule.gapSources.frameworkMapping === true ? withFrameworkCodes(
-        merged.findings,
-        frameworkCodeLookup(merged.frameworkPolicies, merged.posture, merged.frameworks)
-      ) : merged.findings;
-      if (!doc.nodes.length) {
-        updateJob(job.job_id, {
-          phase: "FAILED",
-          error: "Sync fetched no assets \u2014 check the service account's scope and permissions."
-        });
-        return;
-      }
-      updateJob(job.job_id, { phase: "PERSISTING" });
-      const hints = buildAarsHintsFromFindings(findings, doc, issues2, aarsRule);
-      const persist = () => {
-        persistSync(
-          doc,
-          issues2,
-          hints,
-          {
-            syncId,
-            mode: "live",
-            startedAt,
-            apiCalls: params.apiCalls
-          },
-          void 0,
-          findings,
-          merged.dataFindings,
-          merged.frameworks,
-          merged.posture,
-          merged.frameworkPolicies,
-          {
-            configRules: merged.configRules,
-            identityFindings: merged.identityFindings,
-            effectiveAccess: merged.effectiveAccess
-          }
-        );
-        setSkippedSteps(params.skippedSteps);
-        setTruncatedSteps(params.truncatedSteps);
-        setStepRows(params.stepRows);
-        if (merged.configRules.length) setConfigRulesSyncedAt(Date.now());
-      };
-      if (opts.lockHeld) persist();
-      else withScriptLock(persist);
-      updateJob(job.job_id, { phase: "DONE" });
-    } catch (e) {
-      updateJob(job.job_id, {
-        phase: "FAILED",
-        error: String(e instanceof Error ? e.message : e).slice(0, 800)
-      });
-    }
-  }
-  function dailySync() {
-    if (!hasWizCredentials()) return;
-    withScriptLock(() => {
-      startSyncFromTrigger();
-    });
-  }
-  function startSyncFromTrigger() {
-    const existing = activeJob();
-    if (existing) return;
-    startLiveSync();
-  }
-  function cancelSync(jobId) {
-    const job = getJob(jobId);
-    if (!job) return { message: "No such sync job." };
-    if (job.phase === "DONE" || job.phase === "FAILED" || job.phase === "CANCELLED") {
-      return { message: "The sync already finished." };
-    }
-    setProp(CANCEL_PROP, jobId);
-    return { message: "Stopping sync\u2026" };
-  }
-  function cancelRequested(jobId) {
-    return getProp(CANCEL_PROP) === jobId;
-  }
-  function clearCancelFlag() {
-    deleteProp(CANCEL_PROP);
-  }
-  function jobStatus(jobId) {
-    return getJob(jobId);
-  }
-
   // src/server/api.ts
   function run(fn) {
     try {
@@ -14838,6 +14944,11 @@ var Server = (() => {
       // (a deployment that last synced before this shipped), which the client must not render
       // as 0. See settingsLogic.getStepRows.
       stepRows: getStepRows2(),
+      // Why each skipped step was skipped — Wiz's own message. `skippedSteps` says WHICH, this
+      // says WHAT the tenant objected to, and only the second is actionable. A step id in the
+      // skip list with no entry here was skipped before this was recorded; the client must render
+      // that as "no reason recorded", never as an empty explanation.
+      skipReasons: getSkipReasons2(),
       hasCredentials: hasWizCredentials(),
       limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
       // Named rather than folded into `variables`: the transport adds these to every request,

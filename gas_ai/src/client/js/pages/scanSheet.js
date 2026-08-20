@@ -60,13 +60,16 @@ export function openAreaSheet(area, ctx) {
   // the tenant was still answering. Shown apart so a partial dataset is not read as a
   // rejection and sent to whoever checks permissions.
   const truncated = new Set(ctx.truncatedSteps || []);
+  // Why each skip happened, keyed by step id. A skip with no entry predates the recording and
+  // renders as "no reason recorded" — an absent reason and an empty one are different claims.
+  const skipReasons = ctx.skipReasons || {};
 
   openSheet((body) => {
     const sections = [
       sheetSection("What Wiz does here", el("p", { class: "cov-para" }, area.what)),
       reportedSection(area, meta, ctx),
       provenanceSection(area, steps, ctx),
-      ...steps.map((step) => stepSection(step, skipped, truncated, ctx)),
+      ...steps.map((step) => stepSection(step, skipped, truncated, skipReasons, ctx)),
       steps.length ? null : noStepSection(area, ctx),
       destinationSection(area, ctx),
     ];
@@ -141,7 +144,7 @@ function uniq(list) {
 
 // ------------------------------------------------------------------ one step's query
 
-function stepSection(step, skipped, truncated, ctx) {
+function stepSection(step, skipped, truncated, skipReasons, ctx) {
   const wasSkipped = skipped.has(step.id);
   const wasTruncated = truncated.has(step.id);
   // A THIRD reading, and the only one that can say the step ran and matched nothing. The two
@@ -166,9 +169,18 @@ function stepSection(step, skipped, truncated, ctx) {
   const kids = [head];
 
   if (wasSkipped) {
+    const reason = skipReasons[step.id];
     kids.push(el("p", { class: "cov-note" },
       "The tenant rejected this query on the last sync, so the step was skipped rather " +
       "than failing the run. Everything this step feeds is missing from the figures above."));
+    // Verbatim, and as text — a paraphrase of a GraphQL validation error is worth nothing,
+    // because the value is in the offending name and only the original string carries it.
+    // textContent, never innerHTML: this string came off the wire from another system.
+    kids.push(reason
+      ? el("pre", { class: "cov-reason", "aria-label": step.id + " rejection message" }, reason)
+      : el("p", { class: "small muted" },
+          "No reason recorded — this skip predates the message being kept. Re-run the sync, " +
+          "or probe the step below, to capture what the tenant actually says."));
   }
 
   if (ranEmpty) {
