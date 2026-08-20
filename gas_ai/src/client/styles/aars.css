@@ -40,6 +40,23 @@
   .rule-impact { border-left: none; border-top: 1px solid var(--hairline); }
 }
 
+/* Impact folded away: the editor takes the whole width. The class is on the `.workbench`
+   root, so all three tabs' panes — including the two built lazily on first visit — pick it
+   up without being told. `display: none` rather than a zero column because a 0px pane still
+   holds focusable controls; it also keeps the toggle honest below the split point above,
+   where `.rule-panes` is a plain block and the grid rule is simply inert.
+
+   No transition: the pane leaves rather than resizes, so there is no motion here to pair
+   with a prefers-reduced-motion alternative. */
+.workbench.impact-collapsed .rule-panes { grid-template-columns: minmax(0, 1fr); }
+.workbench.impact-collapsed .rule-impact { display: none; }
+
+/* The toggle carries its state three ways — the chevron's direction, aria-expanded, and a
+   label that says which way it goes — because a glyph's rotation is not a signal on its own. */
+.rule-impact-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.rule-impact-toggle svg { display: block; }
+.workbench.impact-collapsed .rule-impact-toggle svg { transform: rotate(180deg); }
+
 /* Toolbar cluster: version + dirty state, then the actions. */
 .rule-bar-state { display: flex; align-items: center; gap: 8px; }
 

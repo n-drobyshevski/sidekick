@@ -53,6 +53,7 @@ import {
   statusPill,
   tierBadge,
   toast,
+  uiIcon,
 } from "../ui.js";
 import { POSTURE_LATTICE, PROBLEM_LATTICE } from "../lattice.js";
 import {
@@ -108,6 +109,25 @@ const SAMPLE_DEBOUNCE_MS = 250;
 
 // Disclosure state outlives a repaint, so an open sandbox is not slammed shut by an edit.
 let sandboxOpen = false;
+
+// Whether the impact pane is folded away, as a remembered preference rather than a
+// per-visit one — same posture (and same try/catch, since a GAS iframe sandbox can deny web
+// storage) as the record sheet's width in ui/sheet.js and the nav rail's collapse in app.js.
+// Unlike the rail, the default is OPEN: the impact pane is this page's answer to "what does
+// this edit do", so it stays until somebody deliberately puts it away.
+const IMPACT_COLLAPSED_KEY = "sidekickai.aarsImpactCollapsed";
+function loadImpactCollapsed() {
+  try {
+    return localStorage.getItem(IMPACT_COLLAPSED_KEY) === "1";
+  } catch (e) {
+    return false; // storage denied — just don't remember
+  }
+}
+function rememberImpactCollapsed(on) {
+  try {
+    localStorage.setItem(IMPACT_COLLAPSED_KEY, on ? "1" : "0");
+  } catch (e) { /* storage denied — the toggle still works for this session */ }
+}
 
 let uid = 0;
 const nextId = (p) => `${p}-${++uid}`;
@@ -236,7 +256,39 @@ export async function renderAarsRules(main, _params, ctx) {
     ariaLabel: "Scoring model",
     onChange: (v) => selectModelTab(v),
   });
-  bar.append(el("h1", { class: "workbench-title" }, "AARS Rules"), modelTabs);
+  // Fold the impact pane away and give the editor the whole width. The flag rides the
+  // `.workbench` root rather than the panes themselves because all three `.rule-panes` grids
+  // are built LAZILY — the Problem and Posture ones only once their tab has first loaded — so
+  // a pane built ten minutes from now inherits the state through the cascade with nothing to
+  // wire, and exactly one node can disagree with storage.
+  //
+  // It sits beside the tab switch (which model) rather than out with Save / Revert (what to
+  // do about it): both are view controls, and the toolbar's three action clusters are
+  // appended at different times, so "last child of the bar" is not a fixed position anyway.
+  let impactCollapsed = loadImpactCollapsed();
+  const impactToggle = el(
+    "button",
+    { class: "rule-impact-toggle", type: "button" },
+    uiIcon("chevron-right", 14),
+    el("span", {}, "Impact"),
+  );
+  // No aria-controls: it would have to name one of three panes, two of which may not exist
+  // yet — the same reason app.js's rail toggle names only itself.
+  function applyImpactCollapsed() {
+    root.classList.toggle("impact-collapsed", impactCollapsed);
+    const label = impactCollapsed ? "Show impact panel" : "Hide impact panel";
+    impactToggle.setAttribute("aria-expanded", String(!impactCollapsed));
+    impactToggle.setAttribute("aria-label", label);
+    impactToggle.setAttribute("title", label);
+  }
+  impactToggle.addEventListener("click", () => {
+    impactCollapsed = !impactCollapsed;
+    rememberImpactCollapsed(impactCollapsed);
+    applyImpactCollapsed();
+  });
+  applyImpactCollapsed();
+
+  bar.append(el("h1", { class: "workbench-title" }, "AARS Rules"), modelTabs, impactToggle);
 
   // Assigned once the AARS rule loads (below) and once the Problem/Posture tabs have each
   // loaded at least once — `let`, not `const`, so this closure can reach them however far
