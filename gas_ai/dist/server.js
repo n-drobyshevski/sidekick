@@ -7492,7 +7492,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7b42c1bed893" : "dev";
+  var BUILD_ID = true ? "90ff3e1717f7" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -10069,8 +10069,16 @@ var Server = (() => {
       log(
         `  ${label}: ${members.length} members on this tenant; this app declares ${declared.length}, ${declared.length - absent.length} present.`
       );
-      if (absent.length) log(`    ABSENT HERE: ${absent.join(", ")}`);
-      else log("    every declared name exists on this tenant.");
+      if (!absent.length) {
+        log("    every declared name exists on this tenant.");
+        return;
+      }
+      log(`    ABSENT HERE: ${absent.join(", ")}`);
+      for (const name of absent) {
+        const words = new Set(name.split("_"));
+        const near = members.map((m) => ({ m, hits: m.split("_").filter((w) => words.has(w)).length })).filter((x) => x.hits > 0).sort((a, b) => b.hits - a.hits || a.m.length - b.m.length).slice(0, 6).map((x) => x.m);
+        log(`      ${name} \u2192 ${near.length ? near.join(", ") : "(nothing spelled like it)"}`);
+      }
     };
     if (entity && entity.enumValues.length) {
       report("Graph entity types (GraphEntityType)", NODE_KINDS, entity.enumValues);
@@ -10092,6 +10100,8 @@ var Server = (() => {
       const probe = fetchTypeShape(relEnumName(field));
       if (probe && probe.enumValues.length) {
         report(`Graph relationships (via ${field})`, EDGE_TYPES, probe.enumValues);
+        log("    every relationship this tenant has:");
+        log(`      ${[...probe.enumValues].sort().join(", ")}`);
         return;
       }
     }
