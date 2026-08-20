@@ -97,7 +97,7 @@ export const MEASURE_ENTRIES = [
   {
     id: "problem-outcome-distribution", measure: "Problem outcome distribution",
     type: "impact", measurementMethod: "Subjective",
-    goal: "How open issues and failing findings split across Act/Attend/Track ★/Track.",
+    goal: "How open issues and failing findings split across Act/Attend/Track*/Track.",
     formula: "countProblemOutcomes(rows) over OUTCOME_VALUES, zero-filled. One input axis "
       + "(exploitation) can be set via an LLM rater's verdict — see measurementMethod.",
     dataSource: "ai_issues.problem_outcome, ai_findings.problem_outcome",

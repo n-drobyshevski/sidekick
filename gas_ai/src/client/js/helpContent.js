@@ -36,7 +36,8 @@ import { CODEBOOK, FAMILY_GROUP } from "./codebook.js";
 import { MEASURE_ENTRIES } from "./measureContent.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, kindIconSvg } from "./icons.js";
 import {
-  aarsChip, el, outcomeBadge, pluralize, scoreChip, sevBadge, statusPill, tierBadge,
+  aarsChip, aarsPercentileMark, el, outcomeBadge, pluralize, scoreChip, sevBadge, statusPill,
+  tierBadge,
 } from "./ui.js";
 
 /** The six headings, in reading order. Six headings and find-in-page beat a search box. */
@@ -617,14 +618,14 @@ export const ENTRIES = [
   {
     id: "problem-tree",
     term: "Problem tree",
-    aka: "ACT · Attend · Track ★ · Track",
+    aka: "ACT · Attend · Track* · Track",
     family: "score",
     blurb:
       "A 54-leaf decision tree — exploitation × technical impact × system exposure × " +
       "mission — that routes one issue or finding into one of four queues, first match " +
       "wins over an ordered cascade. It answers a different question than the findings " +
       "score: not a " +
-      "rank, a queue, and it is built so most leaves land in Track or Track ★ and only a " +
+      "rank, a queue, and it is built so most leaves land in Track or Track* and only a " +
       "documented, auditable minority reach Act. The AARS Rules page carries its editor on " +
       "a second tab.",
     drawnOn: ["aars", "problems"],
@@ -740,11 +741,11 @@ export const ENTRIES = [
     aka: "the problem tree's outcome, not a severity",
     family: "severity",
     blurb:
-      "The Problem tree's queue for this issue or finding — Act, Attend, Track ★ or Track. " +
+      "The Problem tree's queue for this issue or finding — Act, Attend, Track* or Track. " +
       "It is a SEPARATE reading from the severity beside it, not a restatement of it: an " +
       "issue can be Critical and still read Track if nothing here confirms it is actually " +
       "exploitable, reachable or mission-relevant, and a coverage gap in the axes that " +
-      "would confirm that reads Track ★ rather than being silently dropped. A dash means " +
+      "would confirm that reads Track* rather than being silently dropped. A dash means " +
       "undecided — a resolved row, or one this rule never reached.",
     drawnOn: ["combos", "config", "problems"],
     mark: () => outcomeBadge("TRACK_STAR"),

@@ -14,6 +14,7 @@
 //   feedback.js  loading / empty / error / toast / dialog / help tip
 //   sheet.js     the drill-down overlay and its section+row vocabulary
 //   combobox.js  the searchable portaled listbox
+//   tokenList.js a rule field holding a LIST of opaque strings: chips + that listbox
 //   code.js      a monospace block, and copying out of a sandboxed iframe
 //   uiIcons.js   chrome glyphs (close, chevrons, grip) — icons.js does node kinds
 //   rail.js      one value drawn on the shared 0–100 axis, and edited on it
@@ -22,6 +23,7 @@
 //   outcome.js   the problem tree's ACT/ATTEND/TRACK*/TRACK badge
 //   posture.js   the posture lattice's Tier 1..4 badge
 //   lattice.js   the decision lattice: 54 leaves or 27 cells as a grid of cells
+//   axisBar.js   what one decision axis actually read across the landscape
 //   claimRail.js how much of a closed space one cascade row claims, on a shared axis
 //   rowReorder.js the cascade grip: drag as the shortcut, the row's arrows as the control
 //   diagList.js  the "is this rule quietly failing" read-out, shared by all three cascades
@@ -46,6 +48,7 @@ export {
   closeActiveSheet, openSheet, sectionLabel, sheetRow, sheetSection,
 } from "./ui/sheet.js";
 export { filterCombobox } from "./ui/combobox.js";
+export { tokenList } from "./ui/tokenList.js";
 export { openPopover, popoverDismiss, positionPopover } from "./ui/popover.js";
 export { portalsOpen } from "./ui/portals.js";
 export { codeBlock, copyButton, copyText } from "./ui/code.js";
@@ -55,6 +58,7 @@ export { debounce, onPageTeardown, runPageTeardown } from "./ui/timing.js";
 export { outcomeBadge, outcomeLabel } from "./ui/outcome.js";
 export { tierBadge, tierLabel } from "./ui/posture.js";
 export { latticeGrid } from "./ui/lattice.js";
+export { axisBar, axisTally } from "./ui/axisBar.js";
 export { latticeSection } from "./ui/latticeSection.js";
 export { claimRail, claimOffsets } from "./ui/claimRail.js";
 export { rowDrag, ruleGrip } from "./ui/rowReorder.js";

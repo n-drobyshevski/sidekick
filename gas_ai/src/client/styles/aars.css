@@ -96,7 +96,14 @@
   display: flex; align-items: center; justify-content: center;
   min-width: 0; overflow: hidden;
   font-size: 11px; font-weight: 600; letter-spacing: 0.03em; white-space: nowrap;
+  /* A page-coloured edge, not a `gap`: this bar is drawn on the same 0-100 axis as the
+     band rail below it, and a gap would consume width the percentages do not know about,
+     sliding every pillar boundary off the rail figure it is meant to line up with.
+     `border-box` draws this inside the percentage, so the axis is untouched. A border
+     rather than a second `box-shadow` so it cannot collide with the `.is-lit` ink ring. */
+  border-right: 2px solid var(--page);
 }
+.model-stack__seg:last-child { border-right: none; }
 .model-stack__seg--a { background: rgba(0, 0, 0, 0.78); color: var(--on-graphite); }
 .model-stack__seg--b { background: rgba(0, 0, 0, 0.46); color: var(--on-graphite); }
 .model-stack__seg--c { background: rgba(0, 0, 0, 0.14); color: var(--ink); }
@@ -350,10 +357,17 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent); }
   padding-left: 6px;
   min-width: 96px;
 }
-.verdict-select[data-tone="bad"]     { background: rgba(185, 28, 28, 0.12); color: var(--bad); }
-.verdict-select[data-tone="warn"]    { background: rgba(161, 98, 7, 0.12);  color: var(--warn); }
-.verdict-select[data-tone="neutral"] { background: rgba(0, 0, 0, 0.06);     color: var(--text-2); }
-.verdict-select[data-tone="ok"]      { background: rgba(21, 128, 61, 0.12); color: var(--ok); }
+/* `neutral` is the FALLBACK, not an outcome: latticeSection's paintMass and paintCells
+   both fall back to it for a key no tone map recognises. It stays for exactly that, and
+   nothing routes to it on purpose any more. */
+.verdict-select[data-tone="neutral"] { background: rgba(0, 0, 0, 0.06); color: var(--text-2); }
+/* Both cascades' verdicts read on the ordinal ramp — an outcome and a tier are the same kind
+   of scale, and these are the same tokens the lattice cells above are painted from, so the
+   control and the picture cannot disagree. The dot stays: tint is never the only signal. */
+.verdict-select[data-tone="rank4"] { background: var(--rank-4-tint); color: var(--rank-4-text); }
+.verdict-select[data-tone="rank3"] { background: var(--rank-3-tint); color: var(--rank-3-text); }
+.verdict-select[data-tone="rank2"] { background: var(--rank-2-tint); color: var(--rank-2-text); }
+.verdict-select[data-tone="rank1"] { background: var(--rank-1-tint); color: var(--rank-1-text); }
 
 /* A condition the editor holds but does not offer. A posture `when` can carry the three
    lethal-trifecta legs, and POSTURE_AXIS_DEFS renders none of them — so the default first
@@ -440,6 +454,165 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent); }
 .rule-fallback td { border-top: 1px solid var(--hairline); }
 .rule-fallback__name { display: inline; font-size: 12px; color: var(--text-2); }
 
+/* --- the four axes ------------------------------------------------------------------ */
+/* One block per axis, hairline-divided rather than boxed: four cards would read as four
+   unrelated settings, and DESIGN.md has these sections divide ONE surface. */
+.axis-block { padding: 16px 0; border-top: 1px solid var(--hairline); }
+.axis-block:first-child { border-top: none; padding-top: 4px; }
+.axis-block__head {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+  margin-bottom: 2px;
+}
+.axis-block__name { margin: 0; font-size: 0.9375rem; font-weight: 600; }
+/* The values the axis can take. Uppercase already, so no transform — these are the literal
+   tokens the cascade's own dropdowns offer, and re-casing them would make them look like
+   prose rather than the vocabulary they are. */
+.axis-block__values {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--text-3);
+}
+/* Pushed to the far edge: it is a reading about the axis, not part of its name. */
+.axis-block__rate {
+  margin-left: auto;
+  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-2);
+}
+.axis-block__mark { margin-right: 4px; }
+/* Over the threshold the whole reading changes colour AND gains the ▲ diagList already
+   uses, so the finding never rests on colour alone. */
+.axis-block--high .axis-block__rate { color: var(--warn); font-weight: 600; }
+.axis-block__lede { margin: 0 0 10px; max-width: var(--measure); }
+
+/* What the axis actually read, as one bar. See ui/axisBar.js for why the ramp is monotone
+   ink and not the four .pill kinds: an axis VALUE is not a verdict, and painting ACTIVE red
+   would invent a severity the model does not claim. */
+.axis-bar { margin: 10px 0 14px; max-width: var(--measure); }
+.axis-bar__track {
+  display: flex;
+  height: 10px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--track-bg);
+}
+.axis-bar__seg {
+  position: relative;
+  display: block;
+  min-width: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+  border-right: 2px solid var(--page);
+}
+.axis-bar__seg:last-child,
+.axis-bar__seg[data-zero],
+.axis-bar__seg[data-last-fill] { border-right: none; }
+/* Dark to light in the axis's own declared order — the one ordering these values genuinely
+   have. Five steps because no axis declares more than three, with room to spare. */
+.axis-bar__seg[data-rank="0"], .axis-bar__swatch[data-rank="0"] { background: rgba(0, 0, 0, 0.62); }
+.axis-bar__seg[data-rank="1"], .axis-bar__swatch[data-rank="1"] { background: rgba(0, 0, 0, 0.38); }
+.axis-bar__seg[data-rank="2"], .axis-bar__swatch[data-rank="2"] { background: rgba(0, 0, 0, 0.20); }
+.axis-bar__seg[data-rank="3"], .axis-bar__swatch[data-rank="3"] { background: rgba(0, 0, 0, 0.11); }
+/* The part of a value nothing established. Same hatch claimRail uses for a row that claims
+   nothing: in both places it means "not a real measurement", and one mark for one meaning
+   is worth more than a bespoke one here. Anchored right so it reads as the tail of its own
+   segment rather than as a fifth segment. */
+.axis-bar__hatch {
+  position: absolute; top: 0; bottom: 0; right: 0;
+  background: repeating-linear-gradient(
+    45deg, transparent, transparent 3px, rgba(255, 255, 255, 0.88) 3px, rgba(255, 255, 255, 0.88) 6px);
+}
+.axis-bar--empty .axis-bar__track { background: transparent; box-shadow: inset 0 0 0 1px var(--hairline); }
+
+/* Lighting from a step above. Everything not named recedes rather than the named part
+   brightening — the lattice's own `is-receded` grammar, so a link between a row and a
+   picture behaves the same way in all three places it exists on this page. */
+.axis-bar--lighting .axis-bar__seg { opacity: 0.2; }
+.axis-bar--lighting .axis-bar__seg.is-lit { opacity: 1; }
+.axis-bar--lit-unknown .axis-bar__seg { opacity: 0.2; }
+.axis-bar--lit-unknown .axis-bar__hatch {
+  opacity: 1;
+  background: repeating-linear-gradient(
+    45deg, var(--accent), var(--accent) 3px, transparent 3px, transparent 6px);
+}
+.axis-bar--lit-known .axis-bar__seg { opacity: 1; }
+.axis-bar--lit-known .axis-bar__hatch { opacity: 0.15; }
+@media (prefers-reduced-motion: reduce) {
+  .axis-bar__seg { transition: none; }
+}
+
+/* Every number in words beside the bar, which is aria-hidden — the decorative-meter
+   contract ui/data.js sets and claimRail follows. */
+.axis-bar__legend {
+  display: flex; flex-wrap: wrap; gap: 2px 14px;
+  margin: 6px 0 0;
+  color: var(--text-2);
+}
+.axis-bar__key { display: inline-flex; align-items: center; gap: 5px; }
+.axis-bar__key.is-lit { color: var(--ink); font-weight: 600; }
+.axis-bar__swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.axis-bar__keyname { letter-spacing: 0.02em; }
+.axis-bar__keyn { font-variant-numeric: tabular-nums; color: var(--ink); }
+.axis-bar__keyunk { font-size: 11px; color: var(--text-3); }
+.axis-bar__total { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* The signal ladder. `<ol>` for a first-match axis and `<ul>` for an any-of one — the
+   marker is the difference, so the numbers only appear where position carries meaning. */
+.axis-steps { margin: 0; padding: 0 0 0 22px; display: flex; flex-direction: column; gap: 10px; }
+ol.axis-steps > li::marker { font-size: 11px; font-weight: 600; color: var(--text-3); }
+ul.axis-steps { list-style: none; padding-left: 0; }
+.axis-step { font-size: 13px; }
+ul.axis-steps > .axis-step { padding-left: 14px; position: relative; }
+ul.axis-steps > .axis-step::before {
+  content: ""; position: absolute; left: 0; top: 8px;
+  width: 5px; height: 5px; border-radius: 50%; background: rgba(0, 0, 0, 0.28);
+}
+.axis-step__line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.axis-step__signal { color: var(--ink); }
+.axis-step__yield { font-weight: 600; color: var(--text-2); font-size: 12px; }
+/* Whose reading it is. A step the operator cannot move is as much a part of the answer as
+   the ones they can, so it is marked rather than left to be inferred from the absence of a
+   control. */
+.axis-step__origin {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-3);
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  padding: 0 5px;
+}
+.axis-step__control { margin-top: 8px; }
+.axis-step__hint { margin: 0 0 8px; max-width: var(--measure); }
+
+/* Exposure's block: not a warning — nothing is wrong — but a fact the reader cannot get
+   anywhere else, so it carries a mark and sits on a wash rather than reading as a lede. */
+.axis-note {
+  display: flex; gap: 8px; margin: 0;
+  padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  color: var(--text-2); max-width: var(--measure);
+}
+.axis-note__mark { flex: none; color: var(--text-3); }
+
+/* --- token lists -------------------------------------------------------------------- */
+/* A rule field holding a LIST of opaque strings. See ui/tokenList.js for why this is not
+   filterChipRow and why the picker is filterCombobox. */
+.token-list { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.token-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Monospace, like every other opaque identifier on this page (`.rule-code`): these are
+   matched literally, and a proportional face invites reading them as words. */
+.token {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px 2px 2px 9px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.token-x {
+  min-height: 20px; min-width: 20px; padding: 0 4px;
+  border: none; box-shadow: none; background: none;
+  border-radius: var(--radius-pill);
+  color: var(--text-3); font-size: 11px; line-height: 1;
+}
+.token-x:hover { background: var(--wash-hover); color: var(--bad); border-color: transparent; }
+.token-empty { font-style: normal; }
+.token-input { width: 220px; }
+
 /* --- impact pane --------------------------------------------------------------------- */
 .impact-strip { display: flex; flex-direction: column; gap: 2px; margin: 10px 0 14px; }
 .impact-row {
@@ -448,8 +621,15 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent); }
   border-bottom: 1px solid var(--hairline);
 }
 /* The badge sizes to its label; a grid cell would otherwise stretch it into a bar and it
-   would read as a chart it is not. */
-.impact-row > .sev-badge { justify-self: start; }
+   would read as a chart it is not — one that lies, because every row's bar is the full 1fr
+   track whatever the counts are: `Act 0 → 0` draws exactly what `Track 16 → 16` draws.
+   ANCHORED TO THE CELL, NOT TO A CLASS. This named `.sev-badge` and so covered the AARS
+   severity strip while missing both pill strips (Problem outcomes, Posture tiers), which
+   stretched for as long as they have existed. Position is the durable statement: the first
+   cell holds a badge whatever family it belongs to, so a new badge kind cannot silently
+   fall out of the guard the way `.pill` did. The two `auto` tracks are unaffected —
+   `justify-self` has nothing to stretch there — so __nums and __delta keep their alignment. */
+.impact-row > :first-child { justify-self: start; }
 .impact-row:last-child { border-bottom: none; }
 .impact-row__nums { font-variant-numeric: tabular-nums; color: var(--text-2); }
 .impact-row__delta { font-variant-numeric: tabular-nums; min-width: 46px; text-align: right; }

@@ -115,7 +115,12 @@
   display: flex; width: 100%; height: 14px;
   border-radius: var(--radius-pill); overflow: hidden; background: var(--track-bg);
 }
-.help-lexbar-seg { height: 100%; }
+/* The same page-coloured edge every stacked bar in the app now carries: four fills that
+   meet with no boundary assimilate at the seam and read as fewer bands than there are.
+   Empty buckets are skipped upstream, so no separator ever marks a seam that means
+   nothing. */
+.help-lexbar-seg { height: 100%; border-right: 2px solid var(--page); }
+.help-lexbar-seg:last-child { border-right: none; }
 .help-lexbar-seg[data-bucket="figure"] { background: var(--ok); }
 .help-lexbar-seg[data-bucket="zero"] { background: var(--sev-info); }
 .help-lexbar-seg[data-bucket="uncounted"] { background: var(--warn); }

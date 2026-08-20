@@ -150,7 +150,17 @@
   display: flex; width: 100%; overflow: hidden;
   border-radius: var(--radius-pill); background: var(--track-bg);
 }
-.sevbar-seg { flex-basis: 0; min-width: 3px; transition: opacity 140ms ease-out; }
+/* THE SEPARATOR, and the reason it is a border rather than a gap. Fills that meet edge to
+   edge assimilate at the shared edge, so adjacent hues read as one band — the defect that
+   made the tier mass strip illegible. `border-right` costs NO layout: with the global
+   box-sizing:border-box it is drawn inside the segment's own width, so any percentage
+   geometry (and anything positioned against it, like the mass strip's ceiling marker)
+   stays exactly where it was. A flex `gap` would move every boundary. */
+.sevbar-seg {
+  flex-basis: 0; min-width: 3px; transition: opacity 140ms ease-out;
+  border-right: 2px solid var(--page);
+}
+.sevbar-seg:last-child { border-right: none; }
 .sevbar--xs { display: inline-flex; width: auto; height: 5px; }
 .sevbar--md { height: 10px; }
 .sevbar--lg {
@@ -230,6 +240,14 @@
 .pill.warn { color: var(--warn); background: rgba(161, 98, 7, 0.12); }
 .pill.bad { color: var(--bad); background: rgba(185, 28, 28, 0.12); }
 .pill.neutral { color: var(--text-2); background: rgba(0, 0, 0, 0.06); }
+
+/* The posture tiers, which are their OWN four steps rather than the four kinds above —
+   ui/posture.js carries the argument. Each keeps the dot the other pills have, so a tier is
+   never colour alone. */
+.pill--rank1 { color: var(--rank-1-text); background: var(--rank-1-tint); }
+.pill--rank2 { color: var(--rank-2-text); background: var(--rank-2-tint); }
+.pill--rank3 { color: var(--rank-3-text); background: var(--rank-3-tint); }
+.pill--rank4 { color: var(--rank-4-text); background: var(--rank-4-tint); }
 
 .domain-chip { font-size: 12px; }
 

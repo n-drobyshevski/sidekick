@@ -23,6 +23,8 @@
 import { call } from "../api.js";
 import {
   aarsChip,
+  axisBar,
+  axisTally,
   claimOffsets,
   diagRow,
   claimRail,
@@ -41,6 +43,7 @@ import {
   openSheet,
   outcomeBadge,
   outcomeLabel,
+  tierLabel,
   paintUnknownRates,
   pointRail,
   railScale,
@@ -55,10 +58,13 @@ import {
   ruleGrip,
   tierBadge,
   toast,
+  tokenList,
   uiIcon,
 } from "../ui.js";
 import { POSTURE_LATTICE, PROBLEM_LATTICE, toneForKey } from "../lattice.js";
 import {
+  OUTCOME_VALUES,
+  TIER_VALUES,
   cellCoverage as mirrorCellCoverage,
   cellOccupancyByRow as mirrorCellOccupancyByRow,
   leafOccupancyByRow as mirrorLeafOccupancyByRow,
@@ -307,6 +313,123 @@ function postureLegChips(when) {
   return POSTURE_LEGS
     .filter((k) => when[k] !== undefined)
     .map((k) => el("span", { class: "rule-leg" }, when[k] === false ? `no ${k}` : k));
+}
+
+/**
+ * A census the preview reported, as combobox rows. Same shape and same sentence as
+ * `tenantCodeOptions` gives the gap-code picker on the AARS tab — the count is the point,
+ * because "seen on 42 issues" is what tells an operator a value is worth naming, and the
+ * group header is what stops the list reading as a closed catalogue it is not.
+ */
+function censusOptions(entries, noun) {
+  return (entries || []).map((e) => ({
+    value: e.value,
+    label: e.value,
+    hint: `seen on ${e.issues} ${e.issues === 1 ? noun : noun + "s"}`,
+    group: "Seen in this tenant",
+  }));
+}
+
+/**
+ * One axis of the decision vector, drawn as what it is: an ordered ladder of signals, each
+ * one either a reading Wiz supplies or a list the operator maintains.
+ *
+ * THE SECTION USED TO NOT ANSWER ITS OWN TITLE. "How the four axes are read" showed one of
+ * exploitation's three steps (its second lived in a separate section further down), one of
+ * impact's three sources, nothing whatsoever for exposure, and — filed among them — the ACT
+ * ceiling, which is not an axis reading at all. A reader could not learn from it what any
+ * axis is actually derived from, which is the only question it exists to answer.
+ *
+ * `ordered` is not styling. Exploitation is a FIRST-MATCH ladder, so it is an `<ol>` and
+ * position carries meaning; technical impact is an OR of three sources where order is
+ * irrelevant, so it is a `<ul>`. That difference is true of the model and was invisible.
+ *
+ * Not a card: DESIGN.md has these sections divide one surface with hairlines rather than
+ * float as separate boxes, and four boxed axes would read as four unrelated settings.
+ */
+function axisBlock({ name, values, ordered, lede, steps, note }) {
+  const id = nextId("axis");
+  const rateMark = el("span", { class: "axis-block__mark", "aria-hidden": "true" });
+  const rateText = el("span", {});
+  const rate = el("span", { class: "axis-block__rate" }, rateMark, rateText);
+
+  // What the axis actually read across the landscape. The prose above says how a value is
+  // derived; this says what that derivation produced, which is the half no wording can
+  // carry — a knob deciding nothing looks exactly like a knob deciding everything until the
+  // distribution is drawn.
+  const bar = axisBar({ values, unit: "decided rows" });
+
+  const list = el(ordered ? "ol" : "ul", { class: "axis-steps" });
+  for (const step of steps || []) {
+    const li = el(
+      "li",
+      { class: "axis-step" },
+      el(
+        "div",
+        { class: "axis-step__line" },
+        el("span", { class: "axis-step__signal" }, step.signal),
+        step.yields
+          ? el(
+            "span", { class: "axis-step__yield" },
+            el("span", { class: "visually-hidden" }, "reads "),
+            el("span", { "aria-hidden": "true" }, "→ "),
+            step.yields,
+          )
+          : null,
+        step.origin ? el("span", { class: "axis-step__origin" }, step.origin) : null,
+      ),
+      step.control ? el("div", { class: "axis-step__control" }, step.control) : null,
+    );
+    // Hovering or focusing a step lights the part of the bar that step produced — the same
+    // picture-to-row link the lattice and the cascade already have, so the gesture means the
+    // same thing in a third place. Focus counts as much as hover, per scans.js's rule.
+    if (step.lights) {
+      const on = () => bar.light(step.lights);
+      const off = () => bar.light(null);
+      li.addEventListener("mouseenter", on);
+      li.addEventListener("mouseleave", off);
+      li.addEventListener("focusin", on);
+      li.addEventListener("focusout", off);
+    }
+    list.append(li);
+  }
+
+  const node = el(
+    "section",
+    { class: "axis-block", "aria-labelledby": id },
+    el(
+      "div",
+      { class: "axis-block__head" },
+      el("h3", { class: "axis-block__name", id }, name),
+      el("span", { class: "axis-block__values" }, values.join(" · ")),
+      rate,
+    ),
+    lede ? el("p", { class: "axis-block__lede small muted" }, lede) : null,
+    bar,
+    steps && steps.length ? list : null,
+    note || null,
+  );
+
+  /**
+   * The axis's own unknown rate, beside the knobs that move it. The impact pane keeps the
+   * full diagnostic and its warning cards; this is the reading, and it has to be here
+   * because the impact pane can be folded away entirely.
+   */
+  node.paintRate = (share, high) => {
+    if (share === null || share === undefined) {
+      setText(rateMark, "");
+      setText(rateText, "unknown rate not measured yet");
+      node.classList.remove("axis-block--high");
+      return;
+    }
+    setText(rateMark, high ? "▲" : "");
+    setText(rateText, `${Math.round(share * 1000) / 10}% unknown`);
+    node.classList.toggle("axis-block--high", !!high);
+  };
+  node.paintRate(null);
+  /** The distribution, from the decided population the impact pane already receives. */
+  node.paintReading = (tally) => bar.paint(tally);
+  return node;
 }
 
 /**
@@ -2139,15 +2262,12 @@ export async function renderAarsRules(main, _params, ctx) {
     { key: "exposure", label: "System exposure", values: ["OPEN", "CONTROLLED", "UNVERIFIED"] },
     { key: "mission", label: "Mission", values: ["HIGH", "MEDIUM", "LOW"] },
   ];
-  // Mirrors OUTCOME_VALUES (src/domain/problem.ts), worst first — the outcome dropdowns
-  // and the occupancy strip both walk this order, so a row's options and its place in the
-  // strip never disagree about which end of the scale is worse.
-  const OUTCOME_OPTIONS = [
-    { value: "ACT", label: "Act" },
-    { value: "ATTEND", label: "Attend" },
-    { value: "TRACK_STAR", label: "Track ★" },
-    { value: "TRACK", label: "Track" },
-  ];
+  // DERIVED from OUTCOME_VALUES (src/domain/problem.ts) and outcomeLabel(), worst first, so
+  // the dropdowns and the occupancy strip walk one order and print one set of words. It used
+  // to be a hand-written copy of both, and renaming `Track ★` to CISA's `Track*` had to be
+  // applied to three separate copies of the same four strings to keep them agreeing — which
+  // is the drift this now cannot have.
+  const OUTCOME_OPTIONS = OUTCOME_VALUES.map((value) => ({ value, label: outcomeLabel(value) }));
   const AXIS_LABELS = {
     exploitation: "Exploitation", impact: "Technical impact",
     exposure: "System exposure", mission: "Mission",
@@ -2430,7 +2550,9 @@ export async function renderAarsRules(main, _params, ctx) {
     const pMissionSelect = select({
       options: ["HIGH", "MEDIUM", "LOW"],
       value: problemDraft.missingMission,
-      ariaLabel: "Missing business impact reads as",
+      // No ariaLabel: `field()` below wires a real <label for>, and an aria-label here
+      // would override it — the exact override that file's own header warns breaks voice
+      // control ("address the field by the words next to it").
       onChange: (v) => {
         problemDraft.missingMission = v;
         onProblemEdit();
@@ -2438,7 +2560,7 @@ export async function renderAarsRules(main, _params, ctx) {
     });
     const pMissionId = nextId("pmission");
     pMissionSelect.id = pMissionId;
-    const pMissionField = field(pMissionId, "Missing business impact reads as", pMissionSelect);
+    const pMissionField = field(pMissionId, "Mission then reads", pMissionSelect);
 
     const pCeilingId = nextId("pceil");
     const pCeilingInput = numberInput(pCeilingId, {
@@ -2454,35 +2576,34 @@ export async function renderAarsRules(main, _params, ctx) {
       input: pCeilingInput,
     };
 
-    const pRemediateId = nextId("premed");
-    const pRemediateInput = el("input", { type: "text", id: pRemediateId, class: "rule-code" });
-    pRemediateInput.value = problemDraft.remediateVerdicts.join(", ");
-    pRemediateInput.addEventListener("input", () => {
-      problemDraft.remediateVerdicts =
-        pRemediateInput.value.split(",").map((s) => s.trim()).filter(Boolean);
-      onProblemEdit();
+    // Both of these hold a LIST of opaque strings the cascade matches literally, so a typo
+    // does not fail — it silently matches nothing and the axis reads UNKNOWN for the rest of
+    // the landscape. They were single comma-separated text inputs, which made the separator
+    // invisible grammar AND gave the operator no way to discover what the tenant carries.
+    // The options arrive with the preview (`census`) and are set below in sync().
+    const pRemediateTokens = tokenList({
+      values: problemDraft.remediateVerdicts,
+      ariaLabel: "Add an AI verdict that reaches SUSPECTED",
+      placeholder: "Add a verdict…",
+      emptyText: "No verdict reaches SUSPECTED on its own",
+      onChange: (next) => {
+        problemDraft.remediateVerdicts = next;
+        onProblemEdit();
+      },
     });
-    const pRemediateField = {
-      ...field(
-        pRemediateId, "AI verdicts that reach SUSPECTED", pRemediateInput,
-        "aiRemediationAnalysis.verdict values, comma-separated"),
-      input: pRemediateInput,
-    };
+    onPageTeardown(() => pRemediateTokens.closePopover());
 
-    const pGroupsId = nextId("pgroups");
-    const pGroupsInput = el("input", { type: "text", id: pGroupsId, class: "rule-code" });
-    pGroupsInput.value = problemDraft.totalImpactGroups.join(", ");
-    pGroupsInput.addEventListener("input", () => {
-      problemDraft.totalImpactGroups =
-        pGroupsInput.value.split(",").map((s) => s.trim()).filter(Boolean);
-      onProblemEdit();
+    const pGroupsTokens = tokenList({
+      values: problemDraft.totalImpactGroups,
+      ariaLabel: "Add a combo group that grants code execution",
+      placeholder: "Add a combo group…",
+      emptyText: "No combo group grants TOTAL impact on its own",
+      onChange: (next) => {
+        problemDraft.totalImpactGroups = next;
+        onProblemEdit();
+      },
     });
-    const pGroupsField = {
-      ...field(
-        pGroupsId, "Combo groups that grant code execution", pGroupsInput,
-        "combo-group ids, comma-separated — the third TOTAL-impact source"),
-      input: pGroupsInput,
-    };
+    onPageTeardown(() => pGroupsTokens.closePopover());
 
     // ------------------------------------------------------- exploitation table (editor)
     const pExploitBody = el("tbody", {});
@@ -2507,6 +2628,10 @@ export async function renderAarsRules(main, _params, ctx) {
         pExploitBody,
       ),
     );
+    const pExploitEmpty = el(
+      "p", { class: "axis-step__hint small muted" },
+      "No combo rule is listed, so nothing reaches SUSPECTED this way.",
+    );
     const pExploitAddBtn = el("button", {}, "Add rule");
     pExploitAddBtn.addEventListener("click", () => {
       problemDraft.exploitationByRuleId.unshift({ ruleId: "", maturity: "FEASIBLE" });
@@ -2516,6 +2641,11 @@ export async function renderAarsRules(main, _params, ctx) {
 
     function renderExploitationRows() {
       clear(pExploitBody);
+      // A headers-only table reads as a broken widget, not as "this list is empty" — and
+      // empty is the DEFAULT state of this list, so it is the state most readers meet. The
+      // table hides and says what its emptiness means; the Add button below stays put.
+      pExploitTable.hidden = !problemDraft.exploitationByRuleId.length;
+      pExploitEmpty.hidden = !pExploitTable.hidden;
       problemDraft.exploitationByRuleId.forEach((row, i) => {
         const ruleIdInput = el("input", {
           type: "text", class: "rule-code", value: row.ruleId,
@@ -2551,6 +2681,127 @@ export async function renderAarsRules(main, _params, ctx) {
         );
       });
     }
+
+    // ------------------------------------------------------------------- the four axes
+    // Each block states what problem.ts actually does. Where a step is a Wiz reading the
+    // operator cannot move, it says so — that is as much a part of the answer as the knobs
+    // are, and "there is nothing to configure here" is the single most useful sentence this
+    // section can carry for exposure.
+    const pExploitationAxis = axisBlock({
+      name: "Exploitation",
+      values: ["ACTIVE", "SUSPECTED", "UNKNOWN"],
+      ordered: true,
+      lede: "First match wins, as with the cascade above.",
+      steps: [
+        {
+          signal: "Wiz has validated the issue as exploitable",
+          yields: "ACTIVE",
+          origin: "Wiz signal · issues only",
+          lights: "ACTIVE",
+        },
+        {
+          signal: "A Wiz combo rule you list reports REALIZED or DEMONSTRATED",
+          yields: "SUSPECTED",
+          origin: "your table",
+          lights: "SUSPECTED",
+          control: el(
+            "div",
+            {},
+            el(
+              "p", { class: "axis-step__hint small muted" },
+              "Matched on the issue’s rule id, or a finding’s short id. FEASIBLE does not " +
+                "reach SUSPECTED — “someone could” is not “someone has”.",
+            ),
+            pExploitEmpty,
+            pExploitTable,
+            el("div", { class: "rule-row", style: "margin-top:10px" }, pExploitAddBtn),
+          ),
+        },
+        {
+          signal: "The AI remediation verdict is one you name",
+          yields: "SUSPECTED",
+          origin: "your list · issues only",
+          lights: "SUSPECTED",
+          control: pRemediateTokens,
+        },
+        {
+          signal: "Nothing above matched",
+          yields: "UNKNOWN",
+          origin: "the rate above counts these",
+          lights: "UNKNOWN",
+        },
+      ],
+    });
+
+    const pImpactAxis = axisBlock({
+      name: "Technical impact",
+      values: ["TOTAL", "PARTIAL"],
+      ordered: false,
+      lede:
+        "Any one of these says TOTAL; otherwise PARTIAL. “Unknown” here is not a third " +
+        "value — it counts the rows where none of the three produced a signal either way, " +
+        "which is a coverage gap the two values cannot show on their own.",
+      steps: [
+        { signal: "The asset has admin privileges", yields: "TOTAL", origin: "Wiz signal", lights: "TOTAL" },
+        { signal: "A human holds admin access to it", yields: "TOTAL", origin: "Wiz signal", lights: "TOTAL" },
+        {
+          signal: "The issue’s combo group is one you name",
+          yields: "TOTAL",
+          origin: "your list · issues only",
+          lights: "TOTAL",
+          control: pGroupsTokens,
+        },
+      ],
+    });
+
+    const pExposureAxis = axisBlock({
+      name: "System exposure",
+      values: ["OPEN", "CONTROLLED", "UNVERIFIED"],
+      ordered: false,
+      steps: [],
+      note: el(
+        "p",
+        { class: "axis-note small" },
+        el("span", { class: "axis-note__mark", "aria-hidden": "true" }, "●"),
+        "Nothing to configure. Read from the asset’s INTERNET_EXPOSURE risk condition alone " +
+          "— set is OPEN, cleared is CONTROLLED, and no reading at all is UNVERIFIED. A high " +
+          "unknown rate here is a sync-coverage problem, not a rule problem: no edit on this " +
+          "page can move it.",
+      ),
+    });
+
+    const pMissionAxis = axisBlock({
+      name: "Mission",
+      values: ["HIGH", "MEDIUM", "LOW"],
+      ordered: true,
+      lede: "Wiz’s own business-impact classification, with one fallback you choose.",
+      steps: [
+        {
+          signal: "Wiz classifies the asset HBI, MBI or LBI",
+          yields: "HIGH / MEDIUM / LOW",
+          origin: "Wiz signal",
+          // Not one value — every row Wiz actually classified, whichever way it fell.
+          lights: "known",
+        },
+        {
+          signal: "Wiz classifies it as none of those",
+          origin: "your default",
+          // The hatched share, wherever it landed: exactly the rows the fallback decided,
+          // which is the one thing this knob's owner wants to know.
+          lights: "unknown",
+          control: el("div", { class: "rule-row" }, pMissionField.node),
+        },
+      ],
+    });
+
+    // Keyed by axis so sync() can walk AXIS_DEFS — the same order the cascade's columns and
+    // the impact pane's unknown-rate rows already use, so all three read as one vocabulary.
+    const pAxisBlocks = {
+      exploitation: pExploitationAxis,
+      impact: pImpactAxis,
+      exposure: pExposureAxis,
+      mission: pMissionAxis,
+    };
 
     // ------------------------------------------------------------------ the lattice hero
     // The same structural slot the AARS tab opens with: one picture of the whole model,
@@ -2610,18 +2861,19 @@ export async function renderAarsRules(main, _params, ctx) {
       section(
         "How the four axes are read",
         "Separate from the cascade above, which only decides what a VECTOR routes to once " +
-          "it exists. These decide what the vector IS.",
-        [
-          el("div", { class: "rule-row" }, pMissionField.node, pCeilingField.node),
-          el("div", { class: "rule-row", style: "margin-top:10px" }, pRemediateField.node),
-          el("div", { class: "rule-row", style: "margin-top:10px" }, pGroupsField.node),
-        ],
+          "it exists. These decide what the vector IS. Each axis lists the signals that " +
+          "produce it, in the order they are tried, and the bar beneath shows what those " +
+          "signals actually read across the landscape — hatched wherever nothing could be " +
+          "established. Hover or focus a signal to light the part of the bar it decided.",
+        [pExploitationAxis, pImpactAxis, pExposureAxis, pMissionAxis],
       ),
       section(
-        "Exploitation maturity by Wiz combo rule",
-        "REALIZED or DEMONSTRATED reaches SUSPECTED exploitation on an issue this rule " +
-          "matches; FEASIBLE does not — “someone could” is not “someone has”.",
-        [pExploitTable, el("div", { class: "rule-row", style: "margin-top:10px" }, pExploitAddBtn)],
+        "Validation only",
+        "Moving this never changes which outcome a vector receives — only whether the " +
+          "cascade as a whole still validates. It lived among the axes above, where it read " +
+          "as a fifth thing the tree derives; the Posture tab has always filed its own " +
+          "ceiling here.",
+        [el("div", { class: "rule-row" }, pCeilingField.node)],
       ),
     );
 
@@ -2853,9 +3105,32 @@ export async function renderAarsRules(main, _params, ctx) {
       pSaveBtn.disabled = problemSaving;
 
       setValue(pCeilingInput, Math.round(problemDraft.actLeafCeiling * 1000) / 10);
-      setValue(pRemediateInput, problemDraft.remediateVerdicts.join(", "));
-      setValue(pGroupsInput, problemDraft.totalImpactGroups.join(", "));
+      pRemediateTokens.sync(problemDraft.remediateVerdicts);
+      pGroupsTokens.sync(problemDraft.totalImpactGroups);
       if (document.activeElement !== pMissionSelect) pMissionSelect.value = problemDraft.missingMission;
+
+      // What the landscape actually carries, offered in the two pickers. It arrives with the
+      // preview rather than the rule, so both lists start empty and fill in — `setOptions`
+      // keeps an already-open popover usable rather than closing it under the pointer.
+      const census = problemPreview && problemPreview.census;
+      pRemediateTokens.setOptions(censusOptions(census && census.verdicts, "issue"));
+      pGroupsTokens.setOptions(censusOptions(census && census.comboGroups, "issue"));
+
+      // Each axis's own unknown rate, beside its own knobs. The impact pane keeps the full
+      // diagnostic and its warning cards; this is the reading, and the pane it duplicates
+      // can be folded away entirely.
+      const axisRates = (problemPreview && problemPreview.treeDiscrimination
+        && problemPreview.treeDiscrimination.unknownRate) || null;
+      const decided = (problemPreview && problemPreview.treeDiscrimination
+        && problemPreview.treeDiscrimination.decided) || null;
+      AXIS_DEFS.forEach((axis) => {
+        const block = pAxisBlocks[axis.key];
+        const share = axisRates ? axisRates[axis.key] || 0 : null;
+        block.paintRate(share, share !== null && share >= UNKNOWN_WARN_THRESHOLD);
+        // One pass over a population the impact pane already receives — no new endpoint,
+        // and the bar and the rate above it cannot disagree, because both read that array.
+        block.paintReading(decided ? axisTally(decided, axis.key, axis.values) : null);
+      });
 
       // Cascade row notes: shadowed, and how many leaves each row claims — both come from
       // the preview, which walks the DRAFT, exactly like the AARS cascade's own coverage.
@@ -3054,14 +3329,10 @@ export async function renderAarsRules(main, _params, ctx) {
   const POSTURE_WHEN_KEYS = [
     "capability", "containment", "consequence", "privateData", "untrustedIngress", "externalEgress",
   ];
-  // Worst first — 4 down to 1 — mirrors TIER_VALUES (src/domain/posture.ts) reversed, the
-  // same "worst end of the scale leads" convention OUTCOME_OPTIONS keeps for the tree.
-  const TIER_OPTIONS = [
-    { value: "4", label: "Tier 4" },
-    { value: "3", label: "Tier 3" },
-    { value: "2", label: "Tier 2" },
-    { value: "1", label: "Tier 1" },
-  ];
+  // Same derivation as OUTCOME_OPTIONS above — TIER_VALUES (src/domain/posture.ts) and
+  // tierLabel() — reversed, because TIER_VALUES ascends and every control on this page leads
+  // with the worst end of the scale.
+  const TIER_OPTIONS = [...TIER_VALUES].reverse().map((t) => ({ value: String(t), label: tierLabel(t) }));
   const POSTURE_AXIS_LABELS = { capability: "Capability", containment: "Containment", consequence: "Consequence" };
   const POSTURE_UNKNOWN_WARN_THRESHOLD = 0.5;
   const POSTURE_MOVERS_INLINE = 8;

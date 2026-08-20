@@ -31,9 +31,32 @@
   --sev-info: #64748b;      --sev-info-text: #475569;
   --sev-unknown: #475569;   --sev-unknown-text: #334155;
 
-  --ok: #15803d;
-  --warn: #a16207;
+  /* Darkened from #15803d / #a16207, which measured 4.27:1 and 4.20:1 on their own 0.12
+     tints — under the 4.5:1 bar for the 12-13px badges they carry, and under the bar
+     DESIGN.md says the two-token split exists to clear. Now 5.55 and 5.35. The --sev-*-text
+     tokens always honoured this; these two never did. */
+  --ok: #136c34;
+  --warn: #8a5406;
   --bad: #b91c1c;
+
+  /* THE POSTURE TIER SCALE, which is NOT the four .pill kinds — see ui/posture.js for why
+     an ordinal scale forks from a categorical one. Per step: the fill it wears solid (the
+     mass strip), the tint it wears as a surface (lattice cells, badges), the text that
+     clears 4.5:1 on that tint, and the edge that keeps adjacent cells apart.
+
+     Adopted against a measurement rather than a preference: every adjacent pair of SOLIDS
+     separates by 29.2 / 16.1 / 19.3 in OKLab and 18.0 / 12.0 / 16.5 under dichromatic
+     simulation, against floors of 15 and 8. That is the property the old scale lacked — its
+     amber and orange sat 6.7 apart, so they read as one block however the alphas were
+     tuned, which is what made the tier mass strip illegible. */
+  --rank-1-solid: #16a34a; --rank-1-tint: rgba(22, 163, 74, 0.20);
+  --rank-1-text: #08732f;  --rank-1-edge: #9dd8b3;
+  --rank-2-solid: #ffcb13; --rank-2-tint: rgba(255, 203, 19, 0.28);
+  --rank-2-text: #7f6405;  --rank-2-edge: #ffe074;
+  --rank-3-solid: #ff8605; --rank-3-tint: rgba(255, 134, 5, 0.36);
+  --rank-3-text: #894a06;  --rank-3-edge: #ffa442;
+  --rank-4-solid: #dc2626; --rank-4-tint: rgba(220, 38, 38, 0.52);
+  --rank-4-text: #790b0b;  --rank-4-edge: #e03c3c;
 
   /* Graph node categories — reinforce the kind icon + label, never the only cue. These are
      Wiz's own cluster hues, so a category means the same colour here as in the console the

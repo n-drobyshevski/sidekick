@@ -16,6 +16,8 @@ import {
   DEFAULT_PROBLEM_RULE,
   leafCoverage,
   MAX_OUTCOME_RULES,
+  problemCensus,
+  PROBLEM_CENSUS_MAX,
   problemRuleSummary,
   shadowedOutcomeRules,
   treeDiscrimination,
@@ -356,5 +358,64 @@ describe("treeDiscrimination — the real seed landscape", () => {
       leafOccupancy: d.leafOccupancy,
       unknownRate: d.unknownRate,
     });
+  });
+});
+
+describe("problemCensus", () => {
+  it("counts issues per verdict and per combo group", () => {
+    const c = problemCensus([
+      { aiVerdict: "REMEDIATE", comboGroup: "gcp-hosted-privileged" },
+      { aiVerdict: "REMEDIATE", comboGroup: "public-model-endpoint" },
+      { aiVerdict: "ACCEPT", comboGroup: "gcp-hosted-privileged" },
+    ]);
+    expect(c.verdicts).toEqual([
+      { value: "REMEDIATE", issues: 2 },
+      { value: "ACCEPT", issues: 1 },
+    ]);
+    expect(c.comboGroups).toEqual([
+      { value: "gcp-hosted-privileged", issues: 2 },
+      { value: "public-model-endpoint", issues: 1 },
+    ]);
+  });
+
+  it("orders by count, then alphabetically — so the picker does not reshuffle on a tie", () => {
+    const c = problemCensus([
+      { aiVerdict: "ZEBRA" },
+      { aiVerdict: "ALPHA" },
+      { aiVerdict: "MIDDLE" },
+      { aiVerdict: "MIDDLE" },
+    ]);
+    expect(c.verdicts.map((e) => e.value)).toEqual(["MIDDLE", "ALPHA", "ZEBRA"]);
+  });
+
+  it("excludes OTHER_GROUP_ID — the sentinel is not a group anyone should name", () => {
+    // Naming it would hand TOTAL impact to every unclassified issue in the tenant.
+    const c = problemCensus([
+      { comboGroup: "other-ai-risk" },
+      { comboGroup: "other-ai-risk" },
+      { comboGroup: "real-group" },
+    ]);
+    expect(c.comboGroups).toEqual([{ value: "real-group", issues: 1 }]);
+  });
+
+  it("contributes nothing for rows carrying neither field", () => {
+    // What a FindingRow looks like here: both axes are issue vocabulary.
+    expect(problemCensus([{}, {}, {}])).toEqual({ verdicts: [], comboGroups: [] });
+  });
+
+  it("ignores blank and whitespace-only values rather than counting an empty token", () => {
+    const c = problemCensus([
+      { aiVerdict: "", comboGroup: "   " },
+      { aiVerdict: "  REMEDIATE  ", comboGroup: "g" },
+    ]);
+    expect(c.verdicts).toEqual([{ value: "REMEDIATE", issues: 1 }]);
+    expect(c.comboGroups).toEqual([{ value: "g", issues: 1 }]);
+  });
+
+  it("caps each list, so a pathological tenant cannot inflate a preview response", () => {
+    const rows = Array.from({ length: PROBLEM_CENSUS_MAX + 25 }, (_, i) => ({
+      aiVerdict: `V${String(i).padStart(4, "0")}`,
+    }));
+    expect(problemCensus(rows).verdicts.length).toBe(PROBLEM_CENSUS_MAX);
   });
 });

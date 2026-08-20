@@ -342,12 +342,25 @@ export function latticeSection(opts) {
       "aria-label": mass.segments.map((s) => `${s.count} ${K.label(s.key)}`).join(", ")
         + `, of ${coverage.total} ${unit}; ceiling at ${Math.round(ceiling * 100)} percent`,
     });
+    const bands = [];
     for (const seg of mass.segments) {
       const tone = toneForKey(seg.key);
       const band = el("span", { class: "lat-mass__seg", "data-tone": tone ? tone.tone : "neutral" });
       band.style.width = `${seg.share * 100}%`;
+      // A tier with nothing in it must not leave a sliver. `min-width` keeps a real but
+      // tiny share visible; on a zero it would print two pixels of colour that read as
+      // "a little", and with the separator on, two pixels of white that read as a seam.
+      // The legend below already prints the 0, which is where a zero belongs.
+      if (!seg.count) band.dataset.zero = "";
+      bands.push(band);
       bar.append(band);
     }
+    // The separator belongs BETWEEN fills, so the last one that actually draws must not
+    // carry it — otherwise a bar whose trailing tiers are all empty ends two pixels short
+    // of its own frame and reads as if it did not reach the end. `:last-child` cannot say
+    // this: the last element is often a zero-width band, not the last visible fill.
+    const lastFill = bands.filter((n) => n.dataset.zero === undefined).pop();
+    if (lastFill) lastFill.dataset.lastFill = "";
     const mark = el("div", {
       class: "lat-mass__mark",
       "data-label": `${K.ceilingWord} ceiling ${Math.round(ceiling * 100)}%`,
