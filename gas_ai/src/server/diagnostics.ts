@@ -21,7 +21,15 @@ import { readAll, TABS } from "./sheetsDb";
 import { describeSyncSteps, testStepVariables } from "./syncJobs";
 import { parseBool, parseTri } from "./syncStore";
 import { AI_ASSET_KINDS, EDGE_TYPES } from "../domain/graphTypes";
-import { READ_TIME_EDGE_TYPES } from "../domain/reach";
+import { READ_TIME_EDGE_TYPES, estateReach } from "../domain/reach";
+import { ruleDiscrimination } from "../domain/aarsRule";
+import {
+  buildSnapshot, compareSnapshots, regressions, unconfounded,
+  type PostureSnapshot, type SnapshotInput,
+} from "../domain/postureDelta";
+import * as syncStore from "./syncStore";
+import * as settingsStore from "./settingsStore";
+import { toIso } from "../domain/util";
 import {
   agentRunsAsSpec, noGuardrailSpec, saExcessiveAccessSpec, sensitiveDataAccessSpec,
 } from "../domain/agentPathQuery";
@@ -260,6 +268,47 @@ export function aarsDiagnostic(): string {
  * means "never assessed". Reads the ledger only, prints counts and kind names, and never
  * an asset's identity.
  */
+/**
+ * Assets on the register carrying any signal a model could read: an unresolved issue, an open
+ * failing control, or a held risk condition.
+ *
+ * Factored out of `registerScopeDiagnostic` so the posture delta reports the SAME number rather
+ * than a second reading of the same question. Two counts of one thing is how the sent and
+ * persisted vocabularies came to disagree, and this file has spent enough of this investigation
+ * on that shape of bug to not introduce another.
+ *
+ * Reads the flat ledger through the ledger's own decoders (parseBool/parseTri) — see the note in
+ * the caller below for why a bare `=== true` against a plain-text cell was dead code.
+ */
+export function signalCarriers(): number {
+  const issueAssetIds = new Set<string>();
+  const findingResourceIds = new Set<string>();
+  for (const r of readAll(TABS.issues)) {
+    if (isUnresolvedIssue({ status: String(r["status"] ?? "") })) {
+      issueAssetIds.add(String(r["asset_id"] ?? ""));
+    }
+  }
+  for (const r of readAll(TABS.findings)) {
+    const gap = isOpenGap({
+      result: (r["result"] as string) ?? undefined,
+      status: (r["status"] as string) ?? undefined,
+      deleted: parseTri(r["deleted"]) === true,
+    });
+    if (gap) findingResourceIds.add(String(r["resource_id"] ?? ""));
+  }
+  let n = 0;
+  for (const r of readAll(TABS.assets)) {
+    const held =
+      parseBool(r["sensitive_data"]) || parseBool(r["sensitive_access"]) ||
+      parseBool(r["high_priv"]) || parseBool(r["admin_priv"]) ||
+      parseBool(r["guardrail_missing"]) ||
+      parseTri(r["internet"]) === true || parseTri(r["open_internet"]) === true;
+    if (held || issueAssetIds.has(String(r["id"] ?? "")) ||
+        findingResourceIds.has(String(r["id"] ?? ""))) n += 1;
+  }
+  return n;
+}
+
 export function registerScopeDiagnostic(): string {
   const lines: string[] = [];
   const log = (m: string) => {
@@ -710,4 +759,141 @@ function sentVocabulary(): { entities: string[]; edges: string[] } {
     for (const e of v.edges) edges.add(e);
   }
   return { entities: [...entities].sort(), edges: [...edges].sort() };
+}
+
+// --------------------------------------------------------------------- posture delta
+
+/** Read every measure a snapshot needs off the current ledger. Shared by pin and delta. */
+function currentSnapshot(): PostureSnapshot {
+  const assets = syncStore.loadAssets();
+  const reach = estateReach({
+    assets,
+    issues: syncStore.loadIssues(),
+    findings: syncStore.loadFindings(),
+    edges: syncStore.loadEdges(),
+  });
+
+  let aars: SnapshotInput["aars"] = null;
+  try {
+    aars = ruleDiscrimination(assets, settingsStore.getAarsRule().rule);
+  } catch (e) {
+    // A snapshot missing one block still compares the rest. `null` reaches the delta as
+    // "not-recorded", which is the honest reading and not a zero.
+    console.warn(`AARS discrimination unreadable: ${String(e instanceof Error ? e.message : e)}`);
+  }
+
+  let edgeRows: number | null = null;
+  try {
+    edgeRows = readAll(TABS.edges).length;
+  } catch (e) {
+    console.warn(`ai_edges unreadable: ${String(e instanceof Error ? e.message : e)}`);
+  }
+
+  // The register-wide signal count, read the same way registerScopeDiagnostic reads it so the
+  // two cannot disagree — and carried with its confound attached, never bare.
+  let signal: SnapshotInput["signal"];
+  try {
+    signal = { covered: signalCarriers(), total: readAll(TABS.assets).length };
+  } catch (e) {
+    console.warn(`signal count unreadable: ${String(e instanceof Error ? e.message : e)}`);
+  }
+
+  const history = syncStore.syncHistory();
+  const last = history.length ? history[history.length - 1] : undefined;
+
+  return buildSnapshot({
+    at: toIso(Date.now()) ?? "",
+    ...(last && last["sync_id"] ? { syncId: String(last["sync_id"]) } : {}),
+    reach,
+    aars,
+    edgeRows,
+    stepRows: settingsStore.getStepRows(),
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * Pin the current readings as the baseline a later `postureDelta()` compares against.
+ *
+ * Run this BEFORE deploying a change, not after. A baseline captured after the fact measures the
+ * new build against itself and reports every measure `unchanged`, which is the one answer that
+ * looks like a result and is not.
+ */
+export function pinPostureBaseline(): string {
+  const lines: string[] = [];
+  const log = (m: string) => { lines.push(m); console.log(m); };
+  log("=== pin posture baseline ===");
+  const snap = currentSnapshot();
+  settingsStore.setPostureBaseline(snap);
+  log(`Pinned ${snap.measures.length} measures at ${snap.at}` +
+      (snap.syncId ? ` (sync ${snap.syncId})` : " (no sync recorded)"));
+  for (const m of snap.measures) {
+    const v = m.value === null ? "not recorded" : String(m.value);
+    log(`  ${m.label}: ${v}${typeof m.total === "number" ? ` of ${m.total}` : ""}`);
+  }
+  log("Deploy the change, re-sync, then run postureDelta().");
+  log("=== end ===");
+  return lines.join("\n");
+}
+
+/**
+ * Compare the current readings against the pinned baseline, and say which way each moved.
+ *
+ * DELIBERATELY PRINTS NO OVERALL VERDICT. The states worth surfacing are the mixed ones —
+ * edges landing while the score's largest tie block grows is real and informative, and a single
+ * summary figure would hide exactly that. The confounded measures are printed in their own block
+ * for the same reason: they are worth watching and they are not evidence.
+ */
+export function postureDelta(): string {
+  const lines: string[] = [];
+  const log = (m: string) => { lines.push(m); console.log(m); };
+  log("=== posture delta ===");
+
+  const stored = settingsStore.getPostureBaseline();
+  const before = stored ? (stored as unknown as PostureSnapshot) : null;
+  if (!before) {
+    log("No baseline pinned. Run pinPostureBaseline() BEFORE the change you want to measure —");
+    log("pinning after it measures the new build against itself and reports no movement.");
+  } else {
+    log(`Baseline pinned ${before.at}${before.syncId ? ` (sync ${before.syncId})` : ""}.`);
+  }
+
+  const after = currentSnapshot();
+  log(`Current ${after.at}${after.syncId ? ` (sync ${after.syncId})` : ""}.`);
+  const deltas = compareSnapshots(before, after);
+
+  const fmt = (d: (typeof deltas)[number]): string => {
+    const pair = (v: number | null, t: number | null) =>
+      v === null ? "—" : t !== null ? `${v}/${t}` : String(v);
+    const move = d.rateDeltaPct !== null
+      ? `${d.rateDeltaPct >= 0 ? "+" : ""}${d.rateDeltaPct.toFixed(1)}pp`
+      : d.delta !== null ? `${d.delta >= 0 ? "+" : ""}${d.delta}` : "—";
+    return `${pair(d.before, d.beforeTotal)} → ${pair(d.after, d.afterTotal)}  (${move})`;
+  };
+
+  const block = (title: string, rows: typeof deltas): void => {
+    if (!rows.length) return;
+    log("");
+    log(title);
+    for (const d of rows) {
+      log(`  [${d.verdict.toUpperCase()}] ${d.label}: ${fmt(d)}`);
+      if (d.confound) log(`      ⚠ ${d.confound}`);
+    }
+  };
+
+  // Regressions first, and unconditionally — a reader who stops after the good news should have
+  // been made to read the bad news before it.
+  block("MOVED THE WRONG WAY", regressions(deltas));
+  block("EVIDENCE (unconfounded)", unconfounded(deltas));
+  block("CONFOUNDED — worth watching, not evidence", deltas.filter((d) => !!d.confound));
+  block("CONTEXT (denominators and tenant facts)", deltas.filter((d) => d.rising === "neither"));
+
+  log("");
+  log("Read it this way:");
+  log("  · Reach · Enriched is the one measure only an edge can move. If it did not move,");
+  log("    nothing about collection improved, whatever else reads better.");
+  log("  · A measure with ⚠ moved for a reason named beside it. It is not evidence.");
+  log("  · NO-BASELINE means the pinned snapshot predates the measure, not that it was zero.");
+  log("=== end ===");
+  return lines.join("\n");
 }

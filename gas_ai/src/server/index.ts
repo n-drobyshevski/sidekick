@@ -4,6 +4,7 @@ export { doGet, include } from "./main";
 export { setup } from "./setup";
 export {
   wizDiagnostic, aarsDiagnostic, registerScopeDiagnostic, probeEdgeSteps,
+  pinPostureBaseline, postureDelta,
 } from "./diagnostics";
 export * as api from "./api";
 export * as jobs from "./syncJobs";
