@@ -174,6 +174,13 @@ export function setStepRows(rows: unknown): void {
   saveSettings(next);
 }
 
+export const getPostureBaseline = (): Rec | null => logic.getPostureBaseline(loadSettings());
+
+/** Pin the current snapshot as the baseline. Always writes — pinning twice is the point. */
+export function setPostureBaseline(snapshot: unknown): void {
+  saveSettings(logic.withPostureBaseline(loadSettings(), snapshot));
+}
+
 export const getSkipReasons = (): Record<string, string> => logic.getSkipReasons(loadSettings());
 
 /** Record why each step was skipped. Same no-op-on-unchanged guard as its neighbours. */
