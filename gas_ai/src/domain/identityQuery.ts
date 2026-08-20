@@ -20,7 +20,7 @@
 //    value and made "how many people are ADMIN on an agent" unanswerable. The ACCESS_ROLE
 //    entity is selected, so its own value is right there in the properties bag.
 
-import { type SelectSpec } from "./graphExpand";
+import { HOP, type SelectSpec } from "./graphExpand";
 
 /**
  * The access levels that count as a human reaching an AI asset.
@@ -30,6 +30,23 @@ import { type SelectSpec } from "./graphExpand";
  * to draw a stub. Those three used to hold two copies of this list between them.
  */
 export const HUMAN_ACCESS_TYPES = ["ADMIN", "HIGH_PRIVILEGE"] as const;
+
+/**
+ * The same two levels as the TENANT spells them, for the query filter only.
+ *
+ * TWO VOCABULARIES, and the split is the point. `HUMAN_ACCESS_TYPES` above is this model's —
+ * SCREAMING_SNAKE, what a normalizer persists and every consumer compares against. This is what
+ * goes on the wire: the console capture filters `accessTypes` (PLURAL) on `"HighPrivilege"` and
+ * `"Data"`, camelCase, and the singular SCREAMING_SNAKE form this query used to send matches
+ * nothing on this tenant.
+ *
+ * `"Admin"` is INFERRED, not captured — the only two values any capture shows are
+ * `"HighPrivilege"` and `"Data"`, and `"Admin"` is that convention applied to the level this app
+ * also wants. It is the one element of this traversal that neither the tenant's schema probe nor
+ * a capture confirms, which makes it the first thing to suspect if IDENTITY_ACCESS keeps failing
+ * while the other traversals start working.
+ */
+const WIRE_ACCESS_TYPES = ["Admin", "HighPrivilege"] as const;
 
 /** The identity kinds the `BOUND_TO` leg can return. */
 export const BOUND_IDENTITY_KINDS = ["USER_ACCOUNT", "SERVICE_ACCOUNT"] as const;
@@ -59,12 +76,13 @@ export function identityAccessSpec(types: readonly string[]): SelectSpec {
         relationships: [
           {
             type: [...BOUND_IDENTITY_KINDS],
-            edge: { type: "BOUND_TO" },
+            edge: HOP.BOUND_TO,
           },
           {
             type: "ACCESS_ROLE",
-            edge: { type: "PERMITS_ACCESS_ROLE" },
-            where: { accessType: { EQUALS: [...HUMAN_ACCESS_TYPES] } },
+            edge: HOP.PERMITS_ACCESS_ROLE,
+            // `accessTypes`, plural, per the capture — the singular form matched nothing.
+            where: { accessTypes: { EQUALS: [...WIRE_ACCESS_TYPES] } },
           },
         ],
       },
@@ -95,7 +113,26 @@ export function normalizeIdentityPurpose(v: unknown): string | undefined {
  * it stops having ADMIN reported as HIGH_PRIVILEGE.
  */
 export function normalizeAccessType(v: unknown): string | undefined {
+  // An array first: the field is `accessTypes` plural on the wire, and a tenant that answers in
+  // the spelling it was asked in may well return a list. The old signature took `string` only
+  // and returned undefined for anything else, which is indistinguishable from "not present".
+  if (Array.isArray(v)) {
+    for (const item of v) {
+      const hit = normalizeAccessType(item);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
   if (typeof v !== "string" || !v.trim()) return undefined;
-  const norm = v.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+  // camelCase FIRST, then punctuation. The tenant answers in the spelling it was asked in —
+  // `"HighPrivilege"` — and the old order collapsed that to `HIGHPRIVILEGE`, which matches no
+  // member and returned undefined. The caller's fallback then stamped HIGH_PRIVILEGE on every
+  // edge including the ADMIN ones, which is precisely the bug this function's header says it
+  // exists to end. A separator has to be inserted at the case boundary before anything is
+  // uppercased, or there is no boundary left to find.
+  const norm = v.trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_");
   return (HUMAN_ACCESS_TYPES as readonly string[]).indexOf(norm) >= 0 ? norm : undefined;
 }

@@ -39,7 +39,7 @@
 // same: exemples/ai_agent_expand_request.js carries 43 `"select": true` keys across a 45-node
 // traversal whose two unselected nodes have no `select` key at all, and the tenant answered it.
 
-import { type SelectSpec } from "./graphExpand";
+import { HOP, type SelectSpec } from "./graphExpand";
 
 /** The AI kinds these traversals are rooted at. See the header for why this is not widened. */
 export const AGENT_PATH_ROOTS: readonly string[] = ["AI_AGENT"];
@@ -61,7 +61,7 @@ export function noGuardrailSpec(roots: readonly string[] = AGENT_PATH_ROOTS): Se
   return {
     type: [...roots],
     relationships: [
-      { type: "AI_GUARDRAIL", select: false, negate: true, edge: { type: "PROTECTED_BY" } },
+      { type: "AI_GUARDRAIL", select: false, negate: true, edge: HOP.PROTECTED_BY },
     ],
   };
 }
@@ -70,7 +70,7 @@ export function noGuardrailSpec(roots: readonly string[] = AGENT_PATH_ROOTS): Se
 export function agentRunsAsSpec(roots: readonly string[] = AGENT_PATH_ROOTS): SelectSpec {
   return {
     type: [...roots],
-    relationships: [{ type: "SERVICE_ACCOUNT", edge: { type: "RUNS_AS" } }],
+    relationships: [{ type: "SERVICE_ACCOUNT", edge: HOP.RUNS_AS }],
   };
 }
 
@@ -81,8 +81,8 @@ export function saExcessiveAccessSpec(roots: readonly string[] = AGENT_PATH_ROOT
     relationships: [
       {
         type: "SERVICE_ACCOUNT",
-        edge: { type: "RUNS_AS" },
-        relationships: [{ type: "EXCESSIVE_ACCESS_FINDING", edge: { type: "HAS_FINDING" } }],
+        edge: HOP.RUNS_AS,
+        relationships: [{ type: "EXCESSIVE_ACCESS_FINDING", edge: HOP.HAS_FINDING }],
       },
     ],
   };
@@ -96,9 +96,18 @@ export function saExcessiveAccessSpec(roots: readonly string[] = AGENT_PATH_ROOT
  * and requiring the finding would collapse the whole path back to nothing. Requiring the first
  * two costs nothing, because without them there is no path.
  *
- * DATABASE_SERVER is in the store list because `kindFromWizType` returns null for a kind this
- * model has not declared and the normalizer then drops the ENTIRE row — losing the agent and the
- * service account, not just the store.
+ * DATABASE_SERVER is gone from the store list, and the note that justified it was wrong twice.
+ * It claimed `kindFromWizType` returning null makes the normalizer drop the ENTIRE row; it does
+ * not — `entitiesOf` filters unmappable entities INDIVIDUALLY, so the agent and the service
+ * account survive and only that store is lost. And the tenant's GraphEntityType enum has no
+ * DATABASE_SERVER at all, so asking for it never widened the net: it made the whole `$query`
+ * variable fail coercion, and the step collected nothing whatsoever.
+ *
+ * `DB_SERVER` is this tenant's spelling. Substituting it would make the query legal and change
+ * nothing — the entities would come back and `kindFromWizType` would drop each one, because the
+ * kind is undeclared here. Collecting them means adding it to NODE_KINDS, whose declaration
+ * order drives the grouped layout, plus icon and rank entries. That is a scope change with its
+ * own evidence to gather, not a name fix.
  */
 export function sensitiveDataAccessSpec(
   roots: readonly string[] = AGENT_PATH_ROOTS,
@@ -108,10 +117,10 @@ export function sensitiveDataAccessSpec(
     relationships: [
       {
         type: "SERVICE_ACCOUNT",
-        edge: { type: "RUNS_AS" },
+        edge: HOP.RUNS_AS,
         relationships: [
           {
-            type: ["BUCKET", "DATABASE", "DATABASE_SERVER"],
+            type: ["BUCKET", "DATABASE"],
             edge: { type: "ALLOWS_ACCESS_TO" },
             where: { hasSensitiveData: { EQUALS: true } },
             relationships: [

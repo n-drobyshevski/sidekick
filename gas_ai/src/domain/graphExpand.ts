@@ -62,6 +62,53 @@ export interface Slot {
   reverse?: boolean;
 }
 
+/**
+ * The hops the SYNC BATTERY walks, named once and taken from the capture below.
+ *
+ * WHY THIS EXISTS. The battery hand-wrote its own relationship names from planning docs under
+ * `ai/queries/` — `RUNS_AS`, `HAS_FINDING`, `PROTECTED_BY`, `BOUND_TO`, `PERMITS_ACCESS_ROLE` —
+ * while `AGENT_EXPANSION` below, transcribed verbatim from a console capture and run live by
+ * `api.expandAsset`, walked the same hops under the names the tenant actually has. A live
+ * introspection probe later returned that tenant's 100 relationship members: not one of the
+ * battery's five exists, and all of the expansion's do. Four traversals were refused for as long
+ * as this app has run, and the correct names were one module away the whole time.
+ *
+ * Correcting five strings would fix today's symptom. The disease is two modules independently
+ * naming the same hop, so the names live here, once, and both readers take them from here.
+ *
+ * NOT A TRANSLATION TABLE from the model's edge vocabulary to Wiz's. See this file's note on
+ * `EDGE_TYPES` further down: `CONTAINS` means "principal holds finding" in one subtree and
+ * "cluster holds deployment" in another, so a name-to-name dictionary would be wrong by
+ * construction. These are named HOPS — a direction and a meaning, each one pinned to a line of
+ * `AGENT_EXPANSION` by the test that asserts every member below is used there.
+ *
+ * The keys are the MODEL's names for each hop and the values are the TENANT's, which is the one
+ * place those two vocabularies are allowed to meet. What a normalizer persists on `ai_edges` is
+ * a separate namespace and does not change when a value here does.
+ */
+export const HOP = {
+  /** Standing at the AGENT → the principal it executes as (a SERVICE_ACCOUNT subtype). */
+  RUNS_AS: { type: "ACTING_AS" },
+  /** Standing at the PRINCIPAL → a finding held against it. Forward. */
+  HAS_FINDING: { type: "CONTAINS" },
+  /** Standing at the ASSET → its guardrail. Reversed, because the tenant's edge is guardrail→asset. */
+  PROTECTED_BY: { type: "PROTECTS", reverse: true },
+  /**
+   * Standing at the ROLE BINDING → the identity it entitles. FORWARD, and the direction is the
+   * whole reason each entry above names where it stands.
+   *
+   * The capture that proves `ENTITLES` walks it the other way — it stands at the PRINCIPAL and
+   * carries `reverse: true` (see AGENT_EXPANSION below, which stands there too). Transcribing
+   * that flag into a spec that stands at the binding would invert the hop: same name, opposite
+   * edge, and the symptom would be zero rows rather than an error. `reverse` is a property of
+   * the traversal's standing point, never of the relationship, so a shared constant has to fix
+   * one and say so.
+   */
+  BOUND_TO: { type: "ENTITLES" },
+  /** Standing at the ROLE BINDING → the permission it grants. Forward, per the same capture. */
+  PERMITS_ACCESS_ROLE: { type: "ALLOWS" },
+} as const;
+
 function typeList(t: string | string[]): string[] {
   return Array.isArray(t) ? t : [t];
 }
@@ -408,6 +455,34 @@ export function toGraphEntityQuery(spec: SelectSpec, vertexId?: string): Rec {
  * Depth-first, pre-order, emitting a slot only for selected nodes but descending through
  * unselected ones so their children keep their place in the walk.
  */
+/**
+ * Every entity type and relationship name a spec will SEND — the vocabulary to check a tenant
+ * against.
+ *
+ * NOT `flattenSlots`, which was the obvious candidate and is wrong for this: it walks only
+ * SELECTED nodes, because a slot is a position in the response and an unselected node consumes
+ * none. But an unselected node's names still go on the wire, and they can still be refused — the
+ * guardrail traversal's whole point is a node it does not select, and the identity traversal
+ * reaches its two selected legs THROUGH an unselected binding. Checking only what comes back
+ * would miss exactly the names most likely to be wrong.
+ *
+ * The distinction this exists to serve: `EDGE_TYPES` is what a normalizer PERSISTS and is the
+ * model's own namespace, while these are what a query ASKS FOR and must exist in the tenant's
+ * schema. Those two deliberately differ — the battery sends `ACTING_AS` and persists `RUNS_AS` —
+ * so checking the persisted list against a tenant reports absences for names nobody sends.
+ */
+export function specVocabulary(spec: SelectSpec): { entities: string[]; edges: string[] } {
+  const entities = new Set<string>();
+  const edges = new Set<string>();
+  const walk = (node: SelectSpec): void => {
+    for (const t of typeList(node.type)) entities.add(t);
+    if (node.edge) edges.add(node.edge.type);
+    for (const child of node.relationships ?? []) walk(child);
+  };
+  walk(spec);
+  return { entities: [...entities], edges: [...edges] };
+}
+
 export function flattenSlots(spec: SelectSpec): Slot[] {
   const slots: Slot[] = [];
 

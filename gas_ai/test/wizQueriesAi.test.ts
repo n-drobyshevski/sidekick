@@ -421,14 +421,14 @@ describe("query documents", () => {
       type: ["AI_AGENT"],
       select: true,
       relationships: [{
-        type: [{ type: "RUNS_AS" }],
+        type: [{ type: "ACTING_AS" }],
         with: {
           type: ["SERVICE_ACCOUNT"],
           select: true,
           relationships: [{
             type: [{ type: "ALLOWS_ACCESS_TO" }],
             with: {
-              type: ["BUCKET", "DATABASE", "DATABASE_SERVER"],
+              type: ["BUCKET", "DATABASE"],
               select: true,
               where: { hasSensitiveData: { EQUALS: true } },
               relationships: [{
@@ -454,7 +454,7 @@ describe("query documents", () => {
       type: ["AI_AGENT"],
       select: true,
       relationships: [{
-        type: [{ type: "PROTECTED_BY" }],
+        type: [{ type: "PROTECTS", reverse: true }],
         with: { type: ["AI_GUARDRAIL"] },
         negate: true,
       }],

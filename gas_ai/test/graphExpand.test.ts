@@ -10,10 +10,14 @@
 // here the way test/syncNormalize.test.ts and test/riskIssuesCapture.test.ts inline theirs.
 
 import { describe, expect, it } from "vitest";
+import { noGuardrailSpec } from "../src/domain/agentPathQuery";
+import { identityAccessSpec } from "../src/domain/identityQuery";
 import {
   AGENT_EXPANSION,
   decodeExpansion,
   flattenSlots,
+  HOP,
+  specVocabulary,
   toGraphEntityQuery,
   type Slot,
 } from "../src/domain/graphExpand";
@@ -334,5 +338,67 @@ describe("decodeExpansion — robustness", () => {
   it("tolerates an empty slot list and non-array input", () => {
     expect(decodeExpansion([] as Slot[], null).nodes).toHaveLength(0);
     expect(decodeExpansion(SLOTS, "nope").rowsDecoded).toBe(0);
+  });
+});
+
+describe("specVocabulary — what a traversal SENDS", () => {
+  it("collects unselected nodes, which is why flattenSlots cannot do this job", () => {
+    // The trap this test exists for. `flattenSlots` walks only SELECTED nodes, because a slot is
+    // a position in the RESPONSE and an unselected node consumes none. But an unselected node's
+    // names still go on the wire and can still be refused — and the three places that matters are
+    // the three most likely to be wrong:
+    //   · noGuardrailSpec's entire vocabulary hangs off a `select: false` negated leg;
+    //   · identityAccessSpec reaches both its selected legs THROUGH an unselected binding;
+    //   · AGENT_EXPANSION's two IAM_BINDINGs are unselected.
+    // A census built on flattenSlots would silently omit all of them.
+    const guardrail = specVocabulary(noGuardrailSpec());
+    expect(guardrail.edges).toContain("PROTECTS");
+    expect(guardrail.entities).toContain("AI_GUARDRAIL");
+    // Nothing in that traversal is selected except the root, so flattenSlots sees one slot.
+    expect(flattenSlots(noGuardrailSpec())).toHaveLength(1);
+
+    const identity = specVocabulary(identityAccessSpec(["AI_AGENT"]));
+    expect(identity.edges).toContain("ALLOWS_ACCESS_TO");
+    expect(identity.entities).toContain("ACCESS_ROLE_BINDING");
+  });
+
+  it("every hop names the capture that proves it", () => {
+    // The battery spent four traversals on names hand-written from planning docs under
+    // ai/queries/ while AGENT_EXPANSION — transcribed verbatim from a console capture and run
+    // live by api.expandAsset — walked the same hops under names the tenant actually has. Not
+    // one of the hand-written five exists on the tenant; all of the transcribed ones do.
+    //
+    // So the rule for HOP is provenance, not plausibility: every member is traceable to a
+    // capture, and this test is where that traceability is enforced. A sixth hand-written name
+    // fails HERE rather than on a tenant six weeks later.
+    const inExpansion = new Set(specVocabulary(AGENT_EXPANSION).edges);
+
+    // The one member AGENT_EXPANSION does not walk. Its evidence is the other capture —
+    // exemples/toxic_combos_response.js, builtin control wc-id-3217, standing at the IAM_BINDING
+    // and walking ALLOWS forward to the permission. Exempted by name and by reason, never by
+    // loosening the check: an unexplained exemption is how the next wrong name gets in.
+    const ELSEWHERE: Record<string, string> = {
+      PERMITS_ACCESS_ROLE: "toxic_combos_response.js (control wc-id-3217)",
+    };
+
+    for (const [name, hop] of Object.entries(HOP)) {
+      if (ELSEWHERE[name]) {
+        expect(inExpansion, `HOP.${name} is exempted but AGENT_EXPANSION does walk it — ` +
+          "drop the exemption rather than keeping a stale one").not.toContain(hop.type);
+        continue;
+      }
+      expect(inExpansion, `HOP.${name} (${hop.type}) is in no capture this repo holds`)
+        .toContain(hop.type);
+    }
+  });
+
+  it("pins the direction that is a property of the standing point, not the name", () => {
+    // ENTITLES is walked reversed in AGENT_EXPANSION, which stands at the PRINCIPAL, and forward
+    // by identityAccessSpec, which stands at the BINDING. Same relationship, opposite flag.
+    // Transcribing the capture's flag without re-anchoring would invert the hop, and the symptom
+    // would be zero rows rather than an error — invisible.
+    expect(HOP.BOUND_TO).toEqual({ type: "ENTITLES" });
+    expect(HOP.PERMITS_ACCESS_ROLE).toEqual({ type: "ALLOWS" });
+    expect(HOP.PROTECTED_BY).toEqual({ type: "PROTECTS", reverse: true });
   });
 });

@@ -138,6 +138,13 @@ const PROPERTY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   // the name the app reads it by.
   exposureLevel: ["exposureLevel_name"],
   portValidation: ["portValidationResult"],
+  // ACCESS_ROLE entities. The traversal filters on `accessTypes` (plural) because that is what
+  // the capture sends, and a tenant that answers in the spelling it was asked in would put the
+  // plural key in the bag — where a reader looking only for the singular would not find it, take
+  // the caller's fallback, and report every ADMIN binding as HIGH_PRIVILEGE. No capture shows
+  // this field in a RESPONSE, so which spelling comes back is genuinely unknown; aliasing costs
+  // nothing and covers both.
+  accessType: ["accessTypes"],
 };
 
 /**

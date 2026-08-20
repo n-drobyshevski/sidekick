@@ -835,101 +835,6 @@ var Server = (() => {
     };
   }
 
-  // src/domain/agentPathQuery.ts
-  var AGENT_PATH_ROOTS = ["AI_AGENT"];
-  function noGuardrailSpec(roots = AGENT_PATH_ROOTS) {
-    return {
-      type: [...roots],
-      relationships: [
-        { type: "AI_GUARDRAIL", select: false, negate: true, edge: { type: "PROTECTED_BY" } }
-      ]
-    };
-  }
-  function agentRunsAsSpec(roots = AGENT_PATH_ROOTS) {
-    return {
-      type: [...roots],
-      relationships: [{ type: "SERVICE_ACCOUNT", edge: { type: "RUNS_AS" } }]
-    };
-  }
-  function saExcessiveAccessSpec(roots = AGENT_PATH_ROOTS) {
-    return {
-      type: [...roots],
-      relationships: [
-        {
-          type: "SERVICE_ACCOUNT",
-          edge: { type: "RUNS_AS" },
-          relationships: [{ type: "EXCESSIVE_ACCESS_FINDING", edge: { type: "HAS_FINDING" } }]
-        }
-      ]
-    };
-  }
-  function sensitiveDataAccessSpec(roots = AGENT_PATH_ROOTS) {
-    return {
-      type: [...roots],
-      relationships: [
-        {
-          type: "SERVICE_ACCOUNT",
-          edge: { type: "RUNS_AS" },
-          relationships: [
-            {
-              type: ["BUCKET", "DATABASE", "DATABASE_SERVER"],
-              edge: { type: "ALLOWS_ACCESS_TO" },
-              where: { hasSensitiveData: { EQUALS: true } },
-              relationships: [
-                { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
-              ]
-            }
-          ]
-        }
-      ]
-    };
-  }
-
-  // src/domain/exposureQuery.ts
-  var RATED_EXPOSURE_LEVELS = ["High", "Medium"];
-  var VALIDATED_PORT_STATE = "Open";
-  var HOST_KINDS = ["VIRTUAL_MACHINE", "SERVERLESS"];
-  function hostExposureSpec(types) {
-    return {
-      type: [...types],
-      relationships: [
-        {
-          type: [...HOST_KINDS],
-          edge: { type: "RUNS", reverse: true },
-          where: { "accessibleFrom.internet": { EQUALS: true } }
-        }
-      ]
-    };
-  }
-  function endpointExposureSpec(types) {
-    return {
-      type: [...types],
-      relationships: [
-        {
-          type: "ENDPOINT",
-          edge: { type: "SERVES" },
-          where: {
-            exposureLevel_name: { EQUALS: [...RATED_EXPOSURE_LEVELS] },
-            portValidationResult: { EQUALS: VALIDATED_PORT_STATE }
-          }
-        }
-      ]
-    };
-  }
-  function isRatedExposure(level, portValidation) {
-    if (portValidation !== VALIDATED_PORT_STATE) return false;
-    return RATED_EXPOSURE_LEVELS.indexOf(level != null ? level : "") >= 0;
-  }
-  function worseExposureLevel(a, b) {
-    const rank = (v) => {
-      const i = RATED_EXPOSURE_LEVELS.indexOf(v != null ? v : "");
-      return i === -1 ? RATED_EXPOSURE_LEVELS.length : i;
-    };
-    if (a === void 0) return b;
-    if (b === void 0) return a;
-    return rank(a) <= rank(b) ? a : b;
-  }
-
   // src/domain/config.ts
   var SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
   var UNRESOLVED_ISSUE_STATUSES = ["OPEN", "IN_PROGRESS"];
@@ -1108,7 +1013,14 @@ var Server = (() => {
     // rest of the model has no use for; aliasing them here is what lets the GNode field keep
     // the name the app reads it by.
     exposureLevel: ["exposureLevel_name"],
-    portValidation: ["portValidationResult"]
+    portValidation: ["portValidationResult"],
+    // ACCESS_ROLE entities. The traversal filters on `accessTypes` (plural) because that is what
+    // the capture sends, and a tenant that answers in the spelling it was asked in would put the
+    // plural key in the bag — where a reader looking only for the singular would not find it, take
+    // the caller's fallback, and report every ADMIN binding as HIGH_PRIVILEGE. No capture shows
+    // this field in a RESPONSE, so which spelling comes back is genuinely unknown; aliasing costs
+    // nothing and covers both.
+    accessType: ["accessTypes"]
   };
   function entityField(raw, key) {
     var _a5;
@@ -1186,6 +1098,28 @@ var Server = (() => {
   }
 
   // src/domain/graphExpand.ts
+  var HOP = {
+    /** Standing at the AGENT → the principal it executes as (a SERVICE_ACCOUNT subtype). */
+    RUNS_AS: { type: "ACTING_AS" },
+    /** Standing at the PRINCIPAL → a finding held against it. Forward. */
+    HAS_FINDING: { type: "CONTAINS" },
+    /** Standing at the ASSET → its guardrail. Reversed, because the tenant's edge is guardrail→asset. */
+    PROTECTED_BY: { type: "PROTECTS", reverse: true },
+    /**
+     * Standing at the ROLE BINDING → the identity it entitles. FORWARD, and the direction is the
+     * whole reason each entry above names where it stands.
+     *
+     * The capture that proves `ENTITLES` walks it the other way — it stands at the PRINCIPAL and
+     * carries `reverse: true` (see AGENT_EXPANSION below, which stands there too). Transcribing
+     * that flag into a spec that stands at the binding would invert the hop: same name, opposite
+     * edge, and the symptom would be zero rows rather than an error. `reverse` is a property of
+     * the traversal's standing point, never of the relationship, so a shared constant has to fix
+     * one and say so.
+     */
+    BOUND_TO: { type: "ENTITLES" },
+    /** Standing at the ROLE BINDING → the permission it grants. Forward, per the same capture. */
+    PERMITS_ACCESS_ROLE: { type: "ALLOWS" }
+  };
   function typeList(t) {
     return Array.isArray(t) ? t : [t];
   }
@@ -1500,6 +1434,18 @@ var Server = (() => {
     }
     return out;
   }
+  function specVocabulary(spec) {
+    const entities = /* @__PURE__ */ new Set();
+    const edges2 = /* @__PURE__ */ new Set();
+    const walk = (node2) => {
+      var _a5;
+      for (const t of typeList(node2.type)) entities.add(t);
+      if (node2.edge) edges2.add(node2.edge.type);
+      for (const child of (_a5 = node2.relationships) != null ? _a5 : []) walk(child);
+    };
+    walk(spec);
+    return { entities: [...entities], edges: [...edges2] };
+  }
   function flattenSlots(spec) {
     const slots = [];
     function walk(node2, parentIndex2) {
@@ -1607,8 +1553,104 @@ var Server = (() => {
     };
   }
 
+  // src/domain/agentPathQuery.ts
+  var AGENT_PATH_ROOTS = ["AI_AGENT"];
+  function noGuardrailSpec(roots = AGENT_PATH_ROOTS) {
+    return {
+      type: [...roots],
+      relationships: [
+        { type: "AI_GUARDRAIL", select: false, negate: true, edge: HOP.PROTECTED_BY }
+      ]
+    };
+  }
+  function agentRunsAsSpec(roots = AGENT_PATH_ROOTS) {
+    return {
+      type: [...roots],
+      relationships: [{ type: "SERVICE_ACCOUNT", edge: HOP.RUNS_AS }]
+    };
+  }
+  function saExcessiveAccessSpec(roots = AGENT_PATH_ROOTS) {
+    return {
+      type: [...roots],
+      relationships: [
+        {
+          type: "SERVICE_ACCOUNT",
+          edge: HOP.RUNS_AS,
+          relationships: [{ type: "EXCESSIVE_ACCESS_FINDING", edge: HOP.HAS_FINDING }]
+        }
+      ]
+    };
+  }
+  function sensitiveDataAccessSpec(roots = AGENT_PATH_ROOTS) {
+    return {
+      type: [...roots],
+      relationships: [
+        {
+          type: "SERVICE_ACCOUNT",
+          edge: HOP.RUNS_AS,
+          relationships: [
+            {
+              type: ["BUCKET", "DATABASE"],
+              edge: { type: "ALLOWS_ACCESS_TO" },
+              where: { hasSensitiveData: { EQUALS: true } },
+              relationships: [
+                { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+  }
+
+  // src/domain/exposureQuery.ts
+  var RATED_EXPOSURE_LEVELS = ["High", "Medium"];
+  var VALIDATED_PORT_STATE = "Open";
+  var HOST_KINDS = ["VIRTUAL_MACHINE", "SERVERLESS"];
+  function hostExposureSpec(types) {
+    return {
+      type: [...types],
+      relationships: [
+        {
+          type: [...HOST_KINDS],
+          edge: { type: "RUNS", reverse: true },
+          where: { "accessibleFrom.internet": { EQUALS: true } }
+        }
+      ]
+    };
+  }
+  function endpointExposureSpec(types) {
+    return {
+      type: [...types],
+      relationships: [
+        {
+          type: "ENDPOINT",
+          edge: { type: "SERVES" },
+          where: {
+            exposureLevel_name: { EQUALS: [...RATED_EXPOSURE_LEVELS] },
+            portValidationResult: { EQUALS: VALIDATED_PORT_STATE }
+          }
+        }
+      ]
+    };
+  }
+  function isRatedExposure(level, portValidation) {
+    if (portValidation !== VALIDATED_PORT_STATE) return false;
+    return RATED_EXPOSURE_LEVELS.indexOf(level != null ? level : "") >= 0;
+  }
+  function worseExposureLevel(a, b) {
+    const rank = (v) => {
+      const i = RATED_EXPOSURE_LEVELS.indexOf(v != null ? v : "");
+      return i === -1 ? RATED_EXPOSURE_LEVELS.length : i;
+    };
+    if (a === void 0) return b;
+    if (b === void 0) return a;
+    return rank(a) <= rank(b) ? a : b;
+  }
+
   // src/domain/identityQuery.ts
   var HUMAN_ACCESS_TYPES = ["ADMIN", "HIGH_PRIVILEGE"];
+  var WIRE_ACCESS_TYPES = ["Admin", "HighPrivilege"];
   var BOUND_IDENTITY_KINDS = ["USER_ACCOUNT", "SERVICE_ACCOUNT"];
   function identityAccessSpec(types) {
     return {
@@ -1621,12 +1663,13 @@ var Server = (() => {
           relationships: [
             {
               type: [...BOUND_IDENTITY_KINDS],
-              edge: { type: "BOUND_TO" }
+              edge: HOP.BOUND_TO
             },
             {
               type: "ACCESS_ROLE",
-              edge: { type: "PERMITS_ACCESS_ROLE" },
-              where: { accessType: { EQUALS: [...HUMAN_ACCESS_TYPES] } }
+              edge: HOP.PERMITS_ACCESS_ROLE,
+              // `accessTypes`, plural, per the capture — the singular form matched nothing.
+              where: { accessTypes: { EQUALS: [...WIRE_ACCESS_TYPES] } }
             }
           ]
         }
@@ -1638,8 +1681,15 @@ var Server = (() => {
     return v.trim().replace(/^IdentityPurpose/i, "").toUpperCase();
   }
   function normalizeAccessType(v) {
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        const hit = normalizeAccessType(item);
+        if (hit) return hit;
+      }
+      return void 0;
+    }
     if (typeof v !== "string" || !v.trim()) return void 0;
-    const norm = v.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+    const norm = v.trim().replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase().replace(/[^A-Z0-9]+/g, "_");
     return HUMAN_ACCESS_TYPES.indexOf(norm) >= 0 ? norm : void 0;
   }
 
@@ -2981,7 +3031,7 @@ var Server = (() => {
     }
     return part;
   }
-  var DATA_STORE_KINDS = /* @__PURE__ */ new Set(["BUCKET", "DATABASE", "DATABASE_SERVER"]);
+  var DATA_STORE_KINDS = /* @__PURE__ */ new Set(["BUCKET", "DATABASE"]);
   function rawEntitiesOf(row) {
     const entities = row["entities"];
     if (!Array.isArray(entities)) return [];
@@ -7492,7 +7542,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "90ff3e1717f7" : "dev";
+  var BUILD_ID = true ? "121bd66355f9" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -10080,8 +10130,9 @@ var Server = (() => {
         log(`      ${name} \u2192 ${near.length ? near.join(", ") : "(nothing spelled like it)"}`);
       }
     };
+    const sent = sentVocabulary();
     if (entity && entity.enumValues.length) {
-      report("Graph entity types (GraphEntityType)", NODE_KINDS, entity.enumValues);
+      report("Graph entity types (GraphEntityType)", sent.entities, entity.enumValues);
       const ai = aiFlavored(entity.enumValues);
       log(`    AI-flavored members: ${ai.join(", ") || "(none)"}`);
     } else {
@@ -10099,7 +10150,7 @@ var Server = (() => {
     for (const field of candidates) {
       const probe = fetchTypeShape(relEnumName(field));
       if (probe && probe.enumValues.length) {
-        report(`Graph relationships (via ${field})`, EDGE_TYPES, probe.enumValues);
+        report(`Graph relationships (via ${field})`, sent.edges, probe.enumValues);
         log("    every relationship this tenant has:");
         log(`      ${[...probe.enumValues].sort().join(", ")}`);
         return;
@@ -10111,6 +10162,26 @@ var Server = (() => {
   }
   function relEnumName(field) {
     return field === "type" ? "GraphRelationshipType" : `Graph${field}Type`;
+  }
+  function sentVocabulary() {
+    const specs = [
+      noGuardrailSpec(),
+      agentRunsAsSpec(),
+      saExcessiveAccessSpec(),
+      sensitiveDataAccessSpec(),
+      identityAccessSpec([]),
+      hostExposureSpec([]),
+      endpointExposureSpec([]),
+      AGENT_EXPANSION
+    ];
+    const entities = /* @__PURE__ */ new Set();
+    const edges2 = /* @__PURE__ */ new Set();
+    for (const spec of specs) {
+      const v = specVocabulary(spec);
+      for (const e of v.entities) entities.add(e);
+      for (const e of v.edges) edges2.add(e);
+    }
+    return { entities: [...entities].sort(), edges: [...edges2].sort() };
   }
 
   // src/server/api.ts

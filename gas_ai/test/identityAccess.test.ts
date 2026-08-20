@@ -49,15 +49,15 @@ describe("identityAccessSpec", () => {
             type: ["ACCESS_ROLE_BINDING"],
             relationships: [
               {
-                type: [{ type: "BOUND_TO" }],
+                type: [{ type: "ENTITLES" }],
                 with: { type: [...BOUND_IDENTITY_KINDS], select: true },
               },
               {
-                type: [{ type: "PERMITS_ACCESS_ROLE" }],
+                type: [{ type: "ALLOWS" }],
                 with: {
                   type: ["ACCESS_ROLE"],
                   select: true,
-                  where: { accessType: { EQUALS: ["ADMIN", "HIGH_PRIVILEGE"] } },
+                  where: { accessTypes: { EQUALS: ["Admin", "HighPrivilege"] } },
                 },
               },
             ],
@@ -94,6 +94,38 @@ describe("the identity vocabulary Wiz actually returns", () => {
     // Undefined is what makes the normalizer's fallback safe rather than a silent downgrade.
     expect(normalizeAccessType("READ")).toBeUndefined();
     expect(normalizeAccessType(undefined)).toBeUndefined();
+  });
+
+  it("reads the CamelCase spelling the query now asks in", () => {
+    // The case this test did not cover, and the omission was load-bearing. The filter sends
+    // `accessTypes: ["Admin", "HighPrivilege"]` because that is what the capture sends, and a
+    // tenant answers in the spelling it was asked in. The old normalizer uppercased before
+    // looking for a separator, so "HighPrivilege" became "HIGHPRIVILEGE", matched nothing, and
+    // returned undefined — at which point the caller's `?? "HIGH_PRIVILEGE"` fallback stamped
+    // HIGH_PRIVILEGE on every edge including the ADMIN ones. That is exactly the flattening this
+    // function was written to end, reinstated silently by a spelling.
+    expect(normalizeAccessType("HighPrivilege")).toBe("HIGH_PRIVILEGE");
+    expect(normalizeAccessType("Admin")).toBe("ADMIN");
+  });
+
+  it("reads a plural field that arrives as a list", () => {
+    // `accessTypes` is plural on the wire. A list is a plausible answer and used to fail the
+    // `typeof v !== "string"` guard outright, which is indistinguishable from the field being
+    // absent — and absent takes the fallback.
+    expect(normalizeAccessType(["HighPrivilege"])).toBe("HIGH_PRIVILEGE");
+    expect(normalizeAccessType(["Data", "Admin"])).toBe("ADMIN");
+    expect(normalizeAccessType(["Data"])).toBeUndefined();
+    expect(normalizeAccessType([])).toBeUndefined();
+  });
+
+  it("keeps the wire vocabulary and the model vocabulary apart", () => {
+    // HUMAN_ACCESS_TYPES is what a normalizer persists and every consumer compares against;
+    // the query filter sends the tenant's CamelCase. One constant serving both is what forced
+    // the query and the model to share a spelling they do not share.
+    expect([...HUMAN_ACCESS_TYPES]).toEqual(["ADMIN", "HIGH_PRIVILEGE"]);
+    const roleLeg = identityAccessSpec(["AI_AGENT"])
+      .relationships![0].relationships!.filter((r) => !!r.where)[0];
+    expect(roleLeg.where).toEqual({ accessTypes: { EQUALS: ["Admin", "HighPrivilege"] } });
   });
 });
 
