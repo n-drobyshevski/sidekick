@@ -452,6 +452,15 @@ export interface GNode {
    * sync from findings that may since have changed. Re-pricing these under a new rule is
    * what "recompute" means — re-deriving them would answer a different question.
    */
+  /**
+   * The AARS rule version that produced `aars` on THIS asset.
+   *
+   * Per-asset rather than one number for the register, because a rescore can be scoped to a
+   * project: two assets can carry scores from two different rules at the same time, and a
+   * score is only comparable to another computed under the same rule. `undefined` means the
+   * row predates the column — unknown, never "the current rule".
+   */
+  aarsRuleVersion?: number;
   aarsInput?: {
     gaps: AarsGap[];
     dataExposure: DataExposure;

@@ -31,8 +31,8 @@ import {
 import {
   FINDINGS_SCORE_LABEL, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
   emptyState, errorState,
-  fmtDate, kpiCard, meter, pager, percentileText, plural, scoreChip, sectionLabel,
-  sevBadge, sevEntries, sevKeyRow,
+  fmtDate, kpiCard, meter, pager, percentileText, plural, registerWideNote, scoreChip,
+  sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tierBadge, toast,
 } from "../ui.js";
 
@@ -1005,6 +1005,12 @@ export async function renderInventory(main, params) {
         trend.length >= 2
           ? `${trend.length} syncs · INFO not charted`
           : "One point per sync"),
+      // This series cannot follow the project view, now or ever: sync_history records
+      // register-wide totals with no asset or project on the row, so a past point has nothing
+      // to re-scope BY. Unmarked it sits directly above the scoped distribution strip, and
+      // two charts stacked on one screen read as one population unless something says
+      // otherwise. `null` when no view is set, so nothing changes for an unscoped reader.
+      registerWideNote(boot, "a sync records totals only, so past points cannot be re-scoped"),
       trend.length >= 2
         ? el("div", { class: "chart-box", style: "height:220px" }, canvas)
         : el("div", { class: "chart-empty", role: "status" },

@@ -28,6 +28,54 @@ const snap = (measures: Measure[], at = "2026-08-20T00:00:00Z"): PostureSnapshot
 const one = (deltas: ReturnType<typeof compareSnapshots>, key: string) =>
   deltas.filter((d) => d.key === key)[0];
 
+describe("compareSnapshots — a scope change voids the whole comparison", () => {
+  // The one change that moves EVERY measure here at once. Scope the sync to one business unit
+  // and the edge rows, every reach stage and the signal count all drop together — for a reason
+  // that has nothing to do with the collection this tool exists to verify. Two baselines pinned
+  // across such a change compare different tenants, and without this they say so nowhere.
+  const m: Measure[] = [{ key: "edge-rows", label: "Rows on ai_edges", value: 100, rising: "better" }];
+  const scoped = (scope: string | undefined, value: number): PostureSnapshot => ({
+    at: "2026-08-20T00:00:00Z",
+    ...(scope === undefined ? {} : { scope }),
+    measures: [{ ...m[0]!, value }],
+  });
+
+  it("confounds every measure when the two snapshots disagree about scope", () => {
+    const d = one(compareSnapshots(scoped("", 13932), scoped("proj-value-chain", 826)), "edge-rows");
+    expect(d.confound).toBeTruthy();
+    expect(d.confound).toContain("project scope");
+    // And it must not reach the evidence list — the whole point of a confound.
+    expect(unconfounded(compareSnapshots(scoped("", 13932), scoped("proj-value-chain", 826))))
+      .toHaveLength(0);
+  });
+
+  it("says nothing about scope when it did not change", () => {
+    const d = one(compareSnapshots(scoped("proj-a", 100), scoped("proj-a", 120)), "edge-rows");
+    expect(d.confound).toBeUndefined();
+    expect(d.verdict).toBe("better");
+  });
+
+  it("does not read an unrecorded scope as tenant-wide", () => {
+    // A baseline pinned before the field existed carries `undefined`. Treating that as ""
+    // would invent the very fact in question and fire a confound on every old baseline —
+    // absent is not zero here either.
+    const d = one(compareSnapshots(scoped(undefined, 100), scoped("proj-a", 120)), "edge-rows");
+    expect(d.confound).toBeUndefined();
+  });
+
+  it("keeps a measure's own confound alongside the scope one", () => {
+    const withOwn: Measure[] = [{
+      key: "register-signal", label: "Assets carrying any signal",
+      value: 10, total: 20, rising: "better", confound: "its own reason",
+    }];
+    const before: PostureSnapshot = { at: "x", scope: "", measures: withOwn };
+    const after: PostureSnapshot = { at: "y", scope: "proj-a", measures: withOwn };
+    const d = one(compareSnapshots(before, after), "register-signal");
+    expect(d.confound).toContain("project scope");
+    expect(d.confound).toContain("its own reason");
+  });
+});
+
 describe("compareSnapshots — absent is not zero", () => {
   it("reports no-baseline rather than a rise from nothing", () => {
     // "It went from nothing to 12" and "we did not look last time" are different claims, and a

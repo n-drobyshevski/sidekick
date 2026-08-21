@@ -146,3 +146,35 @@ export function projectScopeControl(bootstrapData, onPick) {
     }, v.caption),
   );
 }
+
+/**
+ * Marks a figure that does NOT follow the project view, and appears only when one is set.
+ *
+ * Some numbers here cannot be scoped and must not pretend to be. `sync_history` stores
+ * register-wide totals with no asset or project on the row, so a trend point can never be
+ * re-scoped; posture percentages are Wiz's own tenant-side aggregates; storage counts describe
+ * the ledger; a rule preview answers what a rule would do to everything it scores. Rendering
+ * any of those beside scoped figures with nothing to tell them apart invites the one reading
+ * that is definitely wrong — that they describe the same population.
+ *
+ * Printed with the figure rather than as a footnote, which is the discipline postureDelta's
+ * `confound` already states: a footnote is read after the reader has decided. And it carries
+ * both counts, because "whole register" only means something next to the number it is not.
+ *
+ * Returns null when no project is selected — unscoped, there is nothing to disambiguate and
+ * a permanent badge saying "register-wide" on a register-wide app is noise.
+ *
+ * @param {object|null} bootstrapData  the bootstrap payload
+ * @param {string} detail  what this particular figure covers, e.g. "every sync recorded"
+ */
+export function registerWideNote(bootstrapData, detail) {
+  const scope = (bootstrapData && bootstrapData.scope) || null;
+  if (!scope || !scope.projectView) return null;
+  return el("p", { class: "register-wide-note" },
+    el("span", { class: "register-wide-tag" }, "Whole register"),
+    el("span", {},
+      `${nf.format(scope.register)} assets, not the ${nf.format(scope.shown)} in view`
+      + (detail ? ` — ${detail}.` : "."),
+    ),
+  );
+}

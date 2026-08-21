@@ -46,10 +46,10 @@
 // to its own defaults. The in-memory `view` fields are untouched by the mode switch, so
 // flipping back to "By framework" restores exactly where the reader left it.
 
-import { setParams, swrCall } from "../store.js";
+import { bootstrapCached, setParams, swrCall } from "../store.js";
 import {
   clear, dataTable, el, emptyState, errorState, filterCombobox, meter, plural,
-  sectionLabel, segmented, sevBadge, skeletonStack, statRow,
+  registerWideNote, sectionLabel, segmented, sevBadge, skeletonStack, statRow,
 } from "../ui.js";
 import {
   checksCell, extChip, fiveRsDerived, postureCell, STATES, STATE_ORDER, stateStrip,
@@ -96,6 +96,12 @@ export async function renderCompliance(main, params, ctx) {
     el("p", { class: "page-sub" },
       "How this landscape scores against the security frameworks Wiz tracks — by category, " +
       "subcategory and the policies behind them."),
+    // The whole page, not one figure on it. These percentages are Wiz's own tenant-side
+    // aggregates: a posture row is keyed by framework, category and subcategory and carries
+    // no asset id, so there is nothing here to filter by project even in principle. Only Wiz
+    // can re-aggregate them. Without this the page would silently ignore the switcher.
+    registerWideNote(bootstrapCached(),
+      "Wiz scores these tenant-wide and a posture row carries no asset to filter by"),
   );
 
   const host = el("div", {});

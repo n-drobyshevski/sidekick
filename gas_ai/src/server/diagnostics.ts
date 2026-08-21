@@ -9,6 +9,7 @@ import {
   PROP_KEYS,
   resolveWizAuthMode,
   hasWizCredentials,
+  projectScope,
 } from "./props";
 import {
   fetchCloudResourcesPage,
@@ -601,8 +602,9 @@ export function probeEdgeSteps(): string {
   log("  · REJECTED means the tenant refused the document — the message names the token its");
   log("    schema does not have, and the fix is this app's query, not your permissions.");
   log("  · ok with 0 rows means the query was accepted and matched nothing. Check the echoed");
-  log("    `variables.projectId` and `variables.query.type` before concluding anything: the");
-  log("    mandatory inventory query is tenant-wide while these steps are project-scoped.");
+  log("    `variables.projectId` and `variables.query.type` before concluding anything: every");
+  log("    step now honours WIZ_PROJECT_ID_V2, the inventory included, so a scoped 0 is a");
+  log("    statement about that project and not about the tenant.");
   log("  · ok with rows but 0 normalized edges means the query works and the NORMALIZER is");
   log("    dropping what came back — read `sample` for the entity types the tenant returned.");
 
@@ -804,6 +806,10 @@ function currentSnapshot(): PostureSnapshot {
   return buildSnapshot({
     at: toIso(Date.now()) ?? "",
     ...(last && last["sync_id"] ? { syncId: String(last["sync_id"]) } : {}),
+    // What the SYNC was scoped to, not what the sidebar is showing — every measure below is
+    // read off the raw ledger. A change here moves all of them at once, and compareSnapshots
+    // confounds the whole delta rather than crediting the collection for it.
+    scope: projectScope()?.[0] ?? "",
     reach,
     aars,
     edgeRows,

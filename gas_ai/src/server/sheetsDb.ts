@@ -67,6 +67,13 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // against a containment, folded BESIDE the AARS score above by graphEnrich.withPostureTiers,
     // never blended into it. Appended, same no-migration contract as every block above.
     "posture_tier", "posture_input_json", "worst_open_problem",
+    // Which AARS rule version produced this row's score. Per-asset rather than one global
+    // marker because a rescore can now be scoped to a project, which leaves the register
+    // holding scores from two rules at once — and `counts from two versions are not on the
+    // same scale` is a rule this ledger already enforces on sync_history's distribution.
+    // Appended, same no-migration contract as every block above: a row written before this
+    // existed reads back undefined, which means "unknown", not "the current rule".
+    "aars_rule_version",
   ],
   [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
   [TABS.issues]: [

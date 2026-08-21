@@ -77,7 +77,11 @@ export const SCAN_AREAS = [
     title: "AI-SPM Inventory",
     query: "cloudResourcesV2 (INVENTORY_AI) + cloudResourcesV2 · graphEntity.properties " +
       "(AI_ASSET_PROPERTIES)",
-    what: "Discovers every AI asset across clouds — agents (managed and hosted), models, " +
+    // "every AI asset" describes what the STEP asks for, and it is scoped twice over before
+    // a number reaches the screen: the sync honours WIZ_PROJECT_ID_V2, and the figure below
+    // then follows the sidebar's project view. Said plainly rather than left to the reader.
+    what: "Discovers the AI assets in the sync's scope across clouds — agents (managed and " +
+      "hosted), models, " +
       "guardrails, pipelines, datasets and MCP servers — with ownership, region and " +
       "project context. A second, optional step re-reads the same assets for the two " +
       "provenance fields that live in the graph entity's properties bag — who published " +
@@ -101,7 +105,12 @@ export const SCAN_AREAS = [
     id: "toxic",
     title: "Toxic Combination Engine",
     query: "issuesV2 (AI risk category, both issue types) + per-rule relatedIssue (ISSUES_*)",
-    what: "Every issue Wiz files under the AI risk category, tenant-wide — both toxic " +
+    // COLLECTION is tenant-wide here and genuinely so: the ISSUES_* steps send no project
+    // filter. The figure beside it is not — it comes through the project view like every
+    // other count on the page — so the two describe different populations and the sentence
+    // has to name which one it means.
+    what: "Every issue Wiz files under the AI risk category — collected tenant-wide, shown " +
+      "through the current project view — both toxic " +
       "combinations and cloud-configuration issues. Four multi-condition patterns are " +
       "modelled and re-rated (privileged agents with sensitive data access, model " +
       "invocation without guardrails, permissive execution identities); everything else " +
@@ -348,8 +357,9 @@ export const SCAN_AREAS = [
       "asked for, so a read-only grant on an agent is real and is not counted here. " +
       "MFA and dormancy are RULES rather than properties: Wiz evaluates " +
       "“User should have MFA enabled” against each account, and this reports the " +
-      "failures on the people who can reach an AI asset — not the tenant-wide count, " +
-      "which is an IAM problem rather than this register's. The rules are matched by name " +
+      "failures on the people who can reach an AI asset in view — not the tenant-wide " +
+      "count, which is an IAM problem rather than this register's. The rules are matched " +
+      "by name " +
       "against the synced rule catalogue and the matched set is listed below, because a " +
       "name match is a heuristic and an operator should be able to see what it caught.",
     figure: (ctx) => {
