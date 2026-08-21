@@ -2071,8 +2071,14 @@ var Server = (() => {
     return /HTTP 400/.test(message) && /cannot represent value/i.test(message);
   }
   var Q_AI_INVENTORY = "query SidekickAiInventory($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + RESOURCE_FIELDS + "    }\n  }\n}\n";
-  function aiInventoryVariables(types) {
-    return { filterBy: { type: { equals: [...types] } } };
+  function cloudResourceProjectFilter(scope) {
+    return scope && scope.length ? { idV2: { equals: [...scope] } } : null;
+  }
+  function aiInventoryVariables(types, scope = null) {
+    const filterBy = { type: { equals: [...types] } };
+    const project = cloudResourceProjectFilter(scope);
+    if (project) filterBy["project"] = project;
+    return { filterBy };
   }
   var Q_RULE_ASSETS = 'query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: {\n    relatedIssue: { sourceRuleId: { equals: $ruleIds }, status: { equals: ["OPEN"] } }\n  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n' + RESOURCE_FIELDS + "    }\n  }\n}\n";
   var Q_AGENTS_NO_GUARDRAIL = graphSearchVarQuery("SidekickAiAgentsWithoutGuardrail");
@@ -2152,8 +2158,11 @@ var Server = (() => {
     return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
   }
   var Q_AI_PROPERTIES = "query SidekickAiAssetProperties($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + indented(IDENTITY_FIELDS, 6) + "      graphEntity { properties }\n    }\n  }\n}\n";
-  function aiPropertiesVariables(types) {
-    return { filterBy: { type: { equals: [...types] } } };
+  function aiPropertiesVariables(types, scope = null) {
+    const filterBy = { type: { equals: [...types] } };
+    const project = cloudResourceProjectFilter(scope);
+    if (project) filterBy["project"] = project;
+    return { filterBy };
   }
   var Q_PRINCIPALS = "query SidekickAiPrincipals($first: Int, $after: String, $filterBy: CloudResourceV2Filters, $orderBy: CloudResourceOrder) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      type\n      nativeType\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      technology { id name categories { id name } }\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      graphEntity { properties }\n      issueAnalytics {\n        issueCount\n        informationalSeverityCount\n        lowSeverityCount\n        mediumSeverityCount\n        highSeverityCount\n        criticalSeverityCount\n      }\n    }\n  }\n}\n";
   function aiPrincipalsVariables(scope) {
@@ -2161,7 +2170,8 @@ var Server = (() => {
       type: { equals: ["SERVICE_ACCOUNT", "ACCESS_KEY"] },
       identityPurpose: { equals: ["AGENTIC"] }
     };
-    if (scope && scope.length) filterBy["projectId"] = scope;
+    const project = cloudResourceProjectFilter(scope);
+    if (project) filterBy["project"] = project;
     return { filterBy, orderBy: { field: "RELATED_ISSUE_SEVERITY", direction: "DESC" } };
   }
   var Q_CONFIG_RULES = "query SidekickAiConfigRules($first: Int, $after: String) {\n  cloudConfigurationRules(first: $first, after: $after) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      shortId\n      subjectEntityType\n      externalReferences { id name }\n    }\n  }\n}\n";
@@ -7788,7 +7798,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "b5cb45cad052" : "dev";
+  var BUILD_ID = true ? "790fe7015c65" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -9130,7 +9140,7 @@ var Server = (() => {
         writes: ["ai_assets"],
         run: "cloudResources",
         query: Q_AI_INVENTORY,
-        extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types)),
+        extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types, projectScope())),
         normalize: normalizeInventoryPage,
         pageSize: PAGE_SIZE_WIDE
       },
@@ -9407,7 +9417,7 @@ var Server = (() => {
         writes: ["ai_assets.publisher", "ai_assets.discovery_methods"],
         run: "cloudResources",
         query: Q_AI_PROPERTIES,
-        extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types)),
+        extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types, projectScope())),
         // The same normalizer the inventory step uses. Safe because mergeParts merges
         // field-wise and skips undefined — this step's narrower rows fill in the two provenance
         // fields without erasing the projects, tags or analytics INVENTORY_AI established.
@@ -9504,13 +9514,13 @@ var Server = (() => {
   function defaultStepVariables(stepId, withOverride, aiTypes) {
     switch (stepId) {
       case "INVENTORY_AI":
-        return aiInventoryVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types);
+        return aiInventoryVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "ISSUES_TOXIC":
         return aiIssuesVariables(projectScope());
       case "CONFIG_FINDINGS":
         return aiConfigFindingsVariables(projectScope());
       case "AI_ASSET_PROPERTIES":
-        return aiPropertiesVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types);
+        return aiPropertiesVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "AGENTIC_IDENTITIES":
         return aiPrincipalsVariables(projectScope());
       case "HOST_EXPOSURE":

@@ -81,7 +81,8 @@ await build({
         Q_AGENT_SENSITIVE_DATA_ACCESS, Q_AI_EXPOSURE, Q_IDENTITY_ACCESS, Q_LINEAGE,
         noGuardrailVariables, agentRunsAsVariables, saExcessiveAccessVariables,
         sensitiveDataAccessVariables, hostExposureVariables, endpointExposureVariables,
-        identityAccessVariables, lineageVariables } from "./src/server/wizQueriesAi";
+        identityAccessVariables, lineageVariables,
+        Q_AI_INVENTORY, aiInventoryVariables } from "./src/server/wizQueriesAi";
       export { normalizeNoGuardrailPage, normalizeRunsAsPage,
         normalizeSensitiveDataAccessPage, normalizeHostExposurePage,
         normalizeEndpointExposurePage, normalizeIdentityAccessPage,
@@ -280,6 +281,38 @@ if (!DRY_RUN) {
   }
   console.log("\n  A field listed here exists; it does not follow that it means what you hope.");
   console.log("  Scope one step, count the rows, and only then scope the rest.");
+
+  // ------------------------------------------------- what scoping the register actually buys
+  //
+  // The whole justification for this change is one number, so it gets measured rather than
+  // assumed. INVENTORY_AI is the step that DEFINES the register — it is the only non-optional
+  // one — so its totalCount is the register size. Asked twice with one variable changed, at
+  // `first: 1`, so the magnitudes arrive without paying for a single row.
+  if (PROJECT_ID) {
+    console.log("\n=== what the project scope costs the register ===");
+    const count = async (scope) => {
+      const r = await post(app.Q_AI_INVENTORY, {
+        first: 1, after: null, ...app.aiInventoryVariables(chosen.types, scope),
+      });
+      if (!r.ok) return r.error.startsWith("UNREACHABLE") ? "UNREACHABLE" : "REFUSED: " + r.error.slice(0, 90);
+      return r.data?.cloudResourcesV2?.totalCount ?? "?";
+    };
+    const all = await count(null);
+    const mine = await count([PROJECT_ID]);
+    console.log(`  tenant-wide            ${all} AI assets`);
+    console.log(`  scoped to ${PROJECT_ID}  ${mine}`);
+    if (typeof all === "number" && typeof mine === "number" && all > 0) {
+      console.log(`  ${Math.round((mine / all) * 100)}% of the register, and the same share of every`);
+      console.log("  number computed over it — AARS distributions, reach percentages, coverage.");
+      if (mine === 0) {
+        console.log("\n  ZERO is a finding, not a success. Either this project holds no AI assets or");
+        console.log("  the filter shape is wrong; a refused query would have said REFUSED, so check");
+        console.log("  the project id before concluding the first.");
+      }
+    }
+  } else {
+    console.log("\n  Set WIZ_PROJECT_ID_V2 to also measure what scoping the register would cost.");
+  }
 }
 
 // -------------------------------------------------------- 3. resolve the AI type list

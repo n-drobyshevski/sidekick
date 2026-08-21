@@ -206,7 +206,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       writes: ["ai_assets"],
       run: "cloudResources",
       query: Q_AI_INVENTORY,
-      extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types)),
+      extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types, projectScope())),
       normalize: normalizeInventoryPage,
       pageSize: PAGE_SIZE_WIDE,
     },
@@ -483,7 +483,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       writes: ["ai_assets.publisher", "ai_assets.discovery_methods"],
       run: "cloudResources",
       query: Q_AI_PROPERTIES,
-      extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types) as Rec),
+      extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types, projectScope()) as Rec),
       // The same normalizer the inventory step uses. Safe because mergeParts merges
       // field-wise and skips undefined — this step's narrower rows fill in the two provenance
       // fields without erasing the projects, tags or analytics INVENTORY_AI established.
@@ -595,13 +595,13 @@ function describeAiTypes(): { types: readonly string[]; resolved: boolean } {
 function defaultStepVariables(stepId: string, withOverride: Rec, aiTypes?: readonly string[]): Rec {
   switch (stepId) {
     case "INVENTORY_AI":
-      return aiInventoryVariables(aiTypes ?? resolveAiResourceTypes().types) as unknown as Rec;
+      return aiInventoryVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope()) as unknown as Rec;
     case "ISSUES_TOXIC":
       return aiIssuesVariables(projectScope()) as unknown as Rec;
     case "CONFIG_FINDINGS":
       return aiConfigFindingsVariables(projectScope()) as unknown as Rec;
     case "AI_ASSET_PROPERTIES":
-      return aiPropertiesVariables(aiTypes ?? resolveAiResourceTypes().types) as unknown as Rec;
+      return aiPropertiesVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope()) as unknown as Rec;
     case "AGENTIC_IDENTITIES":
       return aiPrincipalsVariables(projectScope()) as unknown as Rec;
     // Like INVENTORY_AI, these two build their `$query` from the tenant-resolved AI type

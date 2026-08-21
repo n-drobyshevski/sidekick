@@ -27,6 +27,7 @@ import {
   aiInventoryVariables,
   aiIssuesVariables,
   aiPrincipalsVariables,
+  aiPropertiesVariables,
   aiSecurityFrameworksVariables,
   chooseAiResourceTypes,
   isInvalidEnumValueError,
@@ -292,13 +293,59 @@ describe("Q_PRINCIPALS + aiPrincipalsVariables", () => {
     expect(Q_PRINCIPALS).not.toContain("//");
   });
 
-  it("filters agentic SERVICE_ACCOUNT / ACCESS_KEY identities; project scope is projectId", () => {
+  it("filters agentic identities, and scopes by the field this filter type actually has", () => {
+    // THIS TEST USED TO PIN A BUG. It asserted `filterBy.projectId = ["proj-1"]`, transcribed
+    // from a console capture taken 2026-08-13. Introspection on 2026-08-21 says
+    // CloudResourceV2Filters has no `projectId` at all — it carries one project field,
+    // `project: CloudResourceProjectFilters`, and a live console query for cloudResourcesV2
+    // sends the nested `idV2.equals` form below.
+    //
+    // So on any tenant with WIZ_PROJECT_ID_V2 set, this step was sending a field its own
+    // filter type does not declare. It is `optional: true`, so the 400 was swallowed as a
+    // skip and the step simply produced nothing — which is why a green test sat on top of it
+    // for as long as it did. `npm run probe -- --vocab-only` now flags a builder whose field
+    // its filter type does not declare.
     const v = aiPrincipalsVariables(null) as { filterBy: Record<string, unknown> };
     expect(v.filterBy["type"]).toEqual({ equals: ["SERVICE_ACCOUNT", "ACCESS_KEY"] });
     expect(v.filterBy["identityPurpose"]).toEqual({ equals: ["AGENTIC"] });
+    // Unset scope adds no key at all — a tenant that has not chosen one queries as before.
+    expect(v.filterBy["project"]).toBeUndefined();
     expect(v.filterBy["projectId"]).toBeUndefined();
+
     const scoped = aiPrincipalsVariables(["proj-1"]) as { filterBy: Record<string, unknown> };
-    expect(scoped.filterBy["projectId"]).toEqual(["proj-1"]);
+    expect(scoped.filterBy["project"]).toEqual({ idV2: { equals: ["proj-1"] } });
+    expect(scoped.filterBy["projectId"]).toBeUndefined();
+  });
+});
+
+describe("the cloudResourcesV2 project scope", () => {
+  it("is the same nested shape on every builder that hits that root", () => {
+    // One spelling, stated once, because this app has now needed six of them and picking the
+    // wrong one is a silent zero rather than an error. wizQueriesAi.ts's own note names the
+    // others: filterBy.project (issuesV2, a bare [String!]), filterBy.resource.projectId
+    // (configurationFindings), the scalar graphSearch(projectId:) argument, and
+    // analyticsSelection.projectId.
+    const want = { idV2: { equals: ["p-1"] } };
+    const inv = aiInventoryVariables(["AI_AGENT"], ["p-1"]) as { filterBy: Record<string, unknown> };
+    const props = aiPropertiesVariables(["AI_AGENT"], ["p-1"]) as { filterBy: Record<string, unknown> };
+    const princ = aiPrincipalsVariables(["p-1"]) as { filterBy: Record<string, unknown> };
+    expect(inv.filterBy["project"]).toEqual(want);
+    expect(props.filterBy["project"]).toEqual(want);
+    expect(princ.filterBy["project"]).toEqual(want);
+  });
+
+  it("adds nothing when no project is chosen", () => {
+    // The rule brick's tests already state: "os_vulns.py hardcodes one tenant's projectIdV2;
+    // copying it would silently scope every run to that project." An unset scope must leave
+    // the filter exactly as it was, or every tenant inherits one tenant's org chart.
+    for (const v of [
+      aiInventoryVariables(["AI_AGENT"]),
+      aiPropertiesVariables(["AI_AGENT"]),
+      aiInventoryVariables(["AI_AGENT"], null),
+      aiInventoryVariables(["AI_AGENT"], []),
+    ] as Array<{ filterBy: Record<string, unknown> }>) {
+      expect(Object.keys(v.filterBy)).toEqual(["type"]);
+    }
   });
 });
 
