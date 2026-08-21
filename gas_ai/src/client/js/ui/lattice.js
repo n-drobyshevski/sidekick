@@ -1,7 +1,9 @@
 // The decision lattice, drawn: a CSS grid of <button> cells over `lattice.js`'s pure
-// geometry. One painter serves both tabs — the Problem tree's 54 leaves as a single 6x9
-// grid, and Posture's 27 cells as three 3x3 small multiples, one panel per consequence
-// reading — because they are the same picture at two sizes, not two pictures.
+// geometry. One painter serves both tabs — the Problem tree's 54 leaves as a 6x9 grid and
+// Posture's 27 cells as a 3x9 one — because they are the same picture at two sizes, not two
+// pictures. Same header grammar, same cell, same footprint: the two grids differ only in how
+// many rows they have, and `spec.rowPx` is what makes the shorter one's cell band come to the
+// same height as the taller one's (POSTURE_LATTICE carries that arithmetic).
 //
 // DOM, NOT SVG, and the reason is worth stating because the three other pictures in this
 // app went the other way. `graphView`, `egoGraph` and `scans`'s provenance diagram are SVG
@@ -29,7 +31,7 @@
 // aria-label in place and never touches structure.
 
 import { el } from "./dom.js";
-import { latticeCells, latticeHeaders, vectorSentence } from "../lattice.js";
+import { LATTICE_GUTTER_PX, latticeCells, latticeHeaders, vectorSentence } from "../lattice.js";
 
 /**
  * One tab stop per grid, arrows moving in two dimensions — the APG grid pattern, and the
@@ -90,17 +92,23 @@ function buildGrid(spec, cells, ariaLabel, byKey, hooks) {
   const colAt = (c) => rowLevels + 1 + Math.floor(c / colGroup) * (colGroup + 1) + (c % colGroup);
   const rowAt = (r) => colLevels + 1 + Math.floor(r / rowGroup) * (rowGroup + 1) + (r % rowGroup);
 
+  // A gutter is a track nothing is placed into, so an axis boundary costs width (or height)
+  // and no element. `rowPx` comes off the spec because the two lattices have different row
+  // counts and are meant to end at the same line — see POSTURE_LATTICE for the arithmetic.
+  const gutter = LATTICE_GUTTER_PX + "px";
+  const rowPx = (spec.rowPx || 38) + "px";
+
   const colTracks = [];
   for (let i = 0; i < rowLevels; i++) colTracks.push("auto");
   for (let g = 0; g * colGroup < nCols; g++) {
-    if (g > 0) colTracks.push("9px");
+    if (g > 0) colTracks.push(gutter);
     for (let i = 0; i < colGroup; i++) colTracks.push("minmax(42px, 1fr)");
   }
   const rowTracks = [];
   for (let i = 0; i < colLevels; i++) rowTracks.push("auto");
   for (let g = 0; g * rowGroup < nRows; g++) {
-    if (g > 0) rowTracks.push("9px");
-    for (let i = 0; i < rowGroup; i++) rowTracks.push("38px");
+    if (g > 0) rowTracks.push(gutter);
+    for (let i = 0; i < rowGroup; i++) rowTracks.push(rowPx);
   }
 
   const grid = el("div", {
@@ -225,6 +233,13 @@ export function latticeGrid({ spec, ariaLabel, hooks }) {
   const sentences = new Map(all.map((c) => [c.key, vectorSentence(spec, c.vector)]));
   const node = el("div", { class: "lat-scroll" });
 
+  // NOTHING MOUNTS THE PANELLED BRANCH TODAY. Posture was its only caller and moved its
+  // consequence axis into the column nesting instead, for reasons POSTURE_LATTICE records.
+  // It stays for the same reason `[data-tone="neutral"]` stays in lattice.css: the facility
+  // works, `latticeCells` and `latticeHeaders` are tested against it, and a third lattice
+  // that genuinely wants small multiples should not have to re-derive them. What it must NOT
+  // grow is a second caller added without first checking the measurement that removed the
+  // first one — a panel is a shrink-to-fit flex item and cannot fill the row it sits in.
   if (spec.panel) {
     const panelAxis = spec.axes.find((a) => a.key === spec.panel);
     const panels = el("div", { class: "lat-panels" });

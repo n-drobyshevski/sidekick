@@ -26,9 +26,15 @@
   overflow-x: auto;
   padding-bottom: 4px;
 }
-/* Small multiples: Posture hoists its consequence axis into three panels on one shared
-   scale — the pattern the compliance framework rail already uses. Each panel is its own
-   grid and its own tab stop; see ui/lattice.js for why they are not threaded together. */
+/* Small multiples: a panelled spec draws one grid per value of its panel axis, each its own
+   grid and its own tab stop; see ui/lattice.js for why they are not threaded together.
+
+   NOTHING MOUNTS THIS TODAY. Posture did, and moved its consequence axis into the column
+   nesting instead — a panel is a shrink-to-fit flex item, so `minmax(42px, 1fr)` never
+   spreads and the row was left a quarter empty with cells half the width of the Problem
+   tree's; POSTURE_LATTICE (lattice.js) carries the measurements. These rules stay for the
+   same reason `[data-tone="neutral"]` below does: they work, they are tested, and nothing
+   routes to them on purpose any more. */
 .lat-panels {
   display: flex;
   gap: 26px;

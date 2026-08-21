@@ -12,10 +12,9 @@
 // differently on purpose: PROBLEM's grid rows/cols happen to nest in the same order
 // `enumerateDecisionVectors` enumerates (exploitation, impact outer; exposure, mission
 // inner — see PROBLEM_LATTICE below), so row-major reading order and enumeration order
-// agree there by coincidence, not by design. POSTURE hoists `consequence` out into three
-// side-by-side panels (the same "small multiples on one shared scale" pattern the
-// compliance framework rail already uses), which means its grid order — panel, then
-// capability rows, then containment cols — does NOT match `enumeratePostureVectors`'s own
+// agree there by coincidence, not by design. POSTURE nests `consequence` OUTSIDE
+// `containment` in its columns, which means its grid order — capability rows, then
+// consequence, then containment — does NOT match `enumeratePostureVectors`'s own
 // nesting (capability, containment, consequence). A caller that inferred a cell's identity
 // from its position in the returned array, or from its row/col indices, would get PROBLEM
 // right and POSTURE silently wrong the first time anyone reordered a loop. So every cell
@@ -68,6 +67,14 @@ const POSTURE_AXES = [
 ];
 
 /**
+ * The width of the empty track a renderer puts between two bands of an outer axis. It lives
+ * here rather than in `ui/lattice.js` (which is the only thing that draws it) because the two
+ * specs' `rowPx` are chosen against it — a gutter is height a grid spends without spending a
+ * row — and that arithmetic has to be checkable from the DOM-free side. See POSTURE_LATTICE.
+ */
+export const LATTICE_GUTTER_PX = 9;
+
+/**
  * The Problem tree's 54 leaves as a 6×9 grid: exploitation (3) × impact (2) = 6 rows,
  * exposure (3) × mission (3) = 9 columns, no panel — every leaf fits on one screen at once.
  * `axes` is in ENUMERATION order (matches `enumerateDecisionVectors`'s own nesting), which
@@ -79,22 +86,47 @@ export const PROBLEM_LATTICE = {
   rows: ["exploitation", "impact"],
   cols: ["exposure", "mission"],
   panel: null,
+  // Stated rather than defaulted, because POSTURE_LATTICE's own row height is derived from
+  // this one and a silent default is a poor thing to derive from.
+  rowPx: 38,
   keyOf: leafKey,
   unit: "leaf",
   unitPlural: "leaves",
 };
 
 /**
- * The Posture lattice's 27 cells as three 3×3 panels, one per `consequence` reading: three
- * side-by-side capability × containment grids sharing one scale, so "how does capability
- * against containment play out" can be read across all three consequence severities at a
- * glance instead of flattened into one 3×9 or 9×3 grid that buries the panel structure.
+ * The Posture lattice's 27 cells as one 3×9 grid: capability (3) = 3 rows, consequence (3) ×
+ * containment (3) = 9 columns, no panel — the same shape, and the same header grammar, as
+ * PROBLEM_LATTICE above. One component draws both tabs, and this is what makes them look
+ * like it.
+ *
+ * IT USED TO BE THREE 3×3 PANELS, one per consequence reading, on a "small multiples on one
+ * shared scale" argument that ended with: better this than "flattened into one 3×9 or 9×3
+ * grid that buries the panel structure". Two things were wrong with it. A panelled grid
+ * cannot fill its row — each panel is a shrink-to-fit flex item, so `minmax(42px, 1fr)` never
+ * spreads — and the corner key and the capability labels were reprinted once per panel, which
+ * is the one thing small multiples exist to avoid. Measured in the dev harness at a 1070px
+ * column: 822px used, 248px dead, and 49px cells beside the Problem tree's 98px ones. Two
+ * tabs mounting the same component read as two different-sized pictures.
+ *
+ * And the flattening buries nothing, because the grouping the panels drew is exactly what an
+ * outer column band already draws: three bands, a gutter between them, and the axis name
+ * riding along inside each (`bandLevels`' span rule below). That is how PROBLEM separates its
+ * three exposure bands one tab over, and it is legible there.
  */
 export const POSTURE_LATTICE = {
   axes: POSTURE_AXES,
   rows: ["capability"],
-  cols: ["containment"],
-  panel: "consequence",
+  cols: ["consequence", "containment"],
+  panel: null,
+  // 3 × 82 = 246 = 6 × 38 + 2 × LATTICE_GUTTER_PX, which is PROBLEM's cell band exactly. Half
+  // the rows have to be twice the height for the two grids to end at the same line; the
+  // gutters are in it because PROBLEM spends height on two of them and this grid spends none.
+  // The number that matters is 246, not the 292 the whole block comes to — that total also
+  // counts a header band, and both headers are the same two `auto` rows only because both
+  // specs now have two column levels. test/lattice.test.js pins the 246 so a later edit to
+  // either track fails there rather than quietly desynchronising the tabs again.
+  rowPx: 82,
   keyOf: postureKey,
   unit: "cell",
   unitPlural: "cells",
@@ -225,10 +257,11 @@ function bandLevels(axisKeys, axisMap, canInline) {
      *
      * THE RULE IS ABOUT SPAN, NOT ABOUT WHICH SIDE IT IS ON. Inlining a name is free only
      * when the band spans more than one cell, because then it borrows width the grid had
-     * already committed. The Problem lattice's outer column band spans three (one exposure
-     * over three missions) and the name costs nothing; the Posture lattice's spans exactly
-     * one, and "Containment Weak" widens every column until the third small-multiple panel
-     * no longer fits its row.
+     * already committed. Both lattices' OUTER column band spans three — one exposure over
+     * three missions, one consequence over three containments — so both carry their own name
+     * for nothing. Both INNER bands span exactly one, where "Containment Weak" would widen
+     * every column in the grid to buy room for a word nine columns share, so those are named
+     * in the corner key instead.
      *
      * ROWS NEVER INLINE, whatever their span, and that is not an inconsistency: a row band
      * spans VERTICALLY, and vertical span buys no horizontal room. A row header column
