@@ -14,6 +14,7 @@
 //   feedback.js  loading / empty / error / toast / dialog / help tip
 //   sheet.js     the drill-down overlay and its section+row vocabulary
 //   combobox.js  the searchable portaled listbox
+//   prunePanel.js the Data page's keep-one-project-delete-the-rest control
 //   tokenList.js a rule field holding a LIST of opaque strings: chips + that listbox
 //   code.js      a monospace block, and copying out of a sandboxed iframe
 //   uiIcons.js   chrome glyphs (close, chevrons, grip) — icons.js does node kinds
@@ -48,6 +49,7 @@ export {
   closeActiveSheet, openSheet, sectionLabel, sheetRow, sheetSection,
 } from "./ui/sheet.js";
 export { filterCombobox } from "./ui/combobox.js";
+export { prunePanel, prunePanelView } from "./ui/prunePanel.js";
 export { tokenList } from "./ui/tokenList.js";
 export { openPopover, popoverDismiss, positionPopover } from "./ui/popover.js";
 export { portalsOpen } from "./ui/portals.js";

@@ -1,8 +1,11 @@
 // Data: sync history, storage stats, and the reset control.
 
 import { call, } from "../api.js";
-import { swrCall } from "../store.js";
-import { clear, confirmDialog, el, emptyState, fmtDateTime, sectionLabel, skeleton, statusPill, toast } from "../ui.js";
+import { bootstrapCached, swrCall } from "../store.js";
+import {
+  clear, confirmDialog, el, emptyState, fmtDateTime, prunePanel,
+  sectionLabel, skeleton, statusPill, toast,
+} from "../ui.js";
 
 function fmtBytes(n) {
   if (!Number.isFinite(n)) return "—";
@@ -48,6 +51,11 @@ export async function renderData(main, _params, ctx) {
   }
 
   main.append(sectionLabel("Maintenance"));
+  // Escalating order: the scoped subtraction first, the whole-register wipe last. The prune
+  // reads the bootstrap payload the router has already fetched rather than calling for it —
+  // the project list and the sync scope both ride on it, and a second fetch here could only
+  // disagree with the sidebar switcher reading the same fields.
+  main.append(prunePanel(bootstrapCached(), { refresh: ctx.refresh, call }));
   main.append(
     el("div", { class: "card", style: "display:flex; gap:12px; align-items:center" },
       el("div", { style: "flex:1" },

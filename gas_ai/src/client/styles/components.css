@@ -460,3 +460,57 @@
 /* A column of placeholder lines (ui/feedback.js skeletonStack). Every loading stub had
    written this out as an inline flex-column style. */
 .skeleton-stack { display: flex; flex-direction: column; gap: 10px; }
+
+/* ------------------------------------------------- prune panel (ui/prunePanel.js) */
+/* The Data page's keep-one-project control. A column rather than the Reset card's row:
+   it holds a picker, a census table and an action, and those are three steps of one
+   sequence, not three things side by side. */
+.prune-card { display: flex; flex-direction: column; gap: 10px; }
+.prune-note { max-width: 74ch; }
+.prune-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* Wide enough for a hyphenated project name plus its asset count, capped so the trigger
+   does not stretch to the full card on a wide viewport and strand the button beside it. */
+.prune-combo { flex: 1 1 260px; min-width: 220px; max-width: 420px; }
+.prune-body { display: flex; flex-direction: column; gap: 10px; }
+.prune-body:empty, .prune-actions:empty { display: none; }
+.prune-actions { display: flex; }
+
+/* No wrapper border. Inside a card the table's own hairline rules ARE the structure, and a
+   bordered box here would be a surface inside a surface.
+
+   Sized to its contents rather than to the card. `table.data` is 100% wide because its usual
+   home is a full-page register; six rows of four figures stretched across 1300px puts a hand's
+   width between a row's label and its numbers, and the subtraction stops being readable as one
+   thought. The whole point of this table is that the arithmetic can be checked at a glance.
+
+   Every selector here is qualified with `table.data` on purpose: the base rules are
+   `table.data th` and `table.data tbody tr:hover`, and a bare `.prune-census th` loses to them
+   on specificity. */
+/* `align-self` as well as `width`: .prune-body is a column flex container, so its children
+   stretch to the full card regardless of what width says. */
+table.data.prune-census { width: auto; min-width: min(480px, 100%); align-self: start; }
+table.data.prune-census th { position: static; background: none; }
+/* The base sheet right-aligns numeric CELLS (td.num) but leaves every header left-aligned, so
+   a column heading sits adrift from the figures underneath it. */
+table.data.prune-census th.num { text-align: right; }
+table.data.prune-census td { white-space: nowrap; }
+/* Nothing here is clickable, so a hover band is a promise the row cannot keep. */
+table.data.prune-census tbody tr:hover { background: none; }
+
+/* Verdict line: the pill carries a word and a dot, the sentence carries the reason. Colour
+   is the third signal here, never the only one. */
+.prune-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+
+.prune-error {
+  color: var(--bad); background: rgba(185, 28, 28, 0.08);
+  border-radius: var(--radius-md); padding: 8px 10px; font-size: 13px;
+  max-width: 74ch;
+}
+
+/* The census settling in when a preview lands: a state change, not decoration. The global
+   prefers-reduced-motion rule in overrides.css zeroes the duration. */
+@keyframes prune-settle {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}
+.prune-body > * { animation: prune-settle var(--dur-fast) var(--ease-out); }

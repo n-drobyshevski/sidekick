@@ -164,6 +164,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "projectView": "",
         "register": 0,
         "shown": 0,
+        "syncProjectId": null,
       },
       "settings": {
         "autoExpand": true,
@@ -1767,6 +1768,7 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       "projectView": "",
       "register": 87,
       "shown": 87,
+      "syncProjectId": null,
     },
     "settings": {
       "autoExpand": true,
