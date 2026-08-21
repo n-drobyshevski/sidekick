@@ -204,6 +204,13 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // produced it — the problem-outcome analogue of the two columns just above, feeding
     // aarsTrend.ts's second series. Appended, same no-migration contract.
     "problem_outcome_json", "problem_rule_version",
+    // BOTH distributions again, one level down: `{projectId: {aars, outcome}}`, an entry per
+    // project holding an asset. One cell rather than a tab, because a sync writes one row and
+    // the map is bounded by the project count, not the landscape — see PROJECT_TOTALS_COLUMN
+    // in aarsTrend.ts for the shape and for why an absent entry is never read as a zero.
+    // Appended, same no-migration contract: rows without it have no scoped series, which the
+    // trend reports rather than fabricates.
+    "project_totals_json",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [

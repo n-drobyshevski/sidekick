@@ -31,9 +31,10 @@ import {
 import {
   FINDINGS_SCORE_LABEL, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
   emptyState, errorState,
-  fmtDate, kpiCard, meter, pager, percentileText, plural, registerWideNote, scoreChip,
+  fmtDate, kpiCard, meter, pager, percentileText, plural, scoreChip,
   sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tierBadge, toast,
+  trendScopeNote,
 } from "../ui.js";
 
 const PAGE_SIZES = [25, 50, 100, 250];
@@ -992,6 +993,11 @@ export async function renderInventory(main, params) {
   function trendSection(fresh) {
     const trend = fresh.aarsTrend || [];
     const ruleChanges = fresh.aarsTrendRuleChanges || [];
+    // A stale SWR payload from before this shipped carries no trendScope at all, which reads
+    // as unscoped — the same degradation the rest of the page's optional fields take.
+    const trendScope = fresh.trendScope || null;
+    const scopedGap = Boolean(trendScope && trendScope.scoped
+      && trendScope.points < trendScope.registerPoints);
     const colorOf = (sev) => (boot.palette?.colors || {})[sev];
     const canvas = el("canvas", {
       "aria-label":
@@ -1005,18 +1011,25 @@ export async function renderInventory(main, params) {
         trend.length >= 2
           ? `${trend.length} syncs · INFO not charted`
           : "One point per sync"),
-      // This series cannot follow the project view, now or ever: sync_history records
-      // register-wide totals with no asset or project on the row, so a past point has nothing
-      // to re-scope BY. Unmarked it sits directly above the scoped distribution strip, and
-      // two charts stacked on one screen read as one population unless something says
-      // otherwise. `null` when no view is set, so nothing changes for an unscoped reader.
-      registerWideNote(boot, "a sync records totals only, so past points cannot be re-scoped"),
+      // This series FOLLOWS the project view now, which it could not before: sync_history
+      // carried register-wide totals with nothing on the row to re-scope by, and this note
+      // said so. It now carries a per-project blob beside them, so a scoped read is a
+      // different column rather than a filter — see trendScopeView for the three things this
+      // can say, and why the coverage count is the load-bearing one. `null` when no view is
+      // set, so nothing changes for an unscoped reader.
+      trendScopeNote(fresh.trendScope),
       trend.length >= 2
         ? el("div", { class: "chart-box", style: "height:220px" }, canvas)
         : el("div", { class: "chart-empty", role: "status" },
             trend.length === 1
               ? "One sync recorded so far — the trend draws from the second."
-              : "No history yet. Each sync adds a point; earlier syncs can't be recovered."),
+              // "No history yet" would be a lie under a project view on a ledger that HAS
+              // history: what is missing is the breakdown, not the syncs, and the note above
+              // already carries the count. Saying it twice, differently, is worse than once.
+              : scopedGap
+                ? "No sync has recorded totals for this project yet — the series starts at " +
+                  "the next one."
+                : "No history yet. Each sync adds a point; earlier syncs can't be recovered."),
       // Points scored under different AARS rules are not on the same scale. Rather than
       // let a threshold edit read as the landscape moving, the note names the breaks.
       trend.length >= 2 && ruleChanges.length

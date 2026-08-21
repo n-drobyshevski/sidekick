@@ -5,7 +5,7 @@
 // the stale-scope detection are decisions, and a decision that can be wrong gets a test.
 
 import { describe, expect, it } from "vitest";
-import { projectScopeView, railGlyph } from "../src/client/js/ui/projectScope.js";
+import { projectScopeView, railGlyph, trendScopeView } from "../src/client/js/ui/projectScope.js";
 
 const boot = (scope, projectList) => ({ scope, filterOptions: { projectList } });
 
@@ -93,5 +93,70 @@ describe("railGlyph", () => {
   it("falls back to two characters for a single-word name", () => {
     expect(railGlyph("Production")).toBe("PR");
     expect(railGlyph("")).toBe("?");
+  });
+});
+
+
+// The inventory trend's own scope claim — the last figure in the app that had to refuse the
+// switcher, and the one whose note is easiest to get subtly wrong.
+//
+// A per-project series can only cover syncs recorded after the column shipped, so a project's
+// line can be three points long against a ledger of forty. A chart that starts three points in
+// looks exactly like a landscape that collapsed; "covers 3 of 40" is the difference between a
+// short history and a catastrophe, and it is the whole reason this function exists rather than
+// a bare `registerWideNote` call.
+
+const trendScope = (over) => ({
+  projectId: "p-a", scoped: true, points: 3, registerPoints: 40, ...over,
+});
+
+describe("trendScopeView", () => {
+  it("says nothing when no project is in view", () => {
+    expect(trendScopeView(null).show).toBe(false);
+    expect(trendScopeView(trendScope({ scoped: false, projectId: "" })).show).toBe(false);
+  });
+
+  it("names the coverage when the series is shorter than the ledger", () => {
+    const v = trendScopeView(trendScope());
+    expect(v.show).toBe(true);
+    expect(v.live).toBe(true);
+    expect(v.tag).toBe("This project");
+    expect(v.text).toContain("3 of the 40");
+    // The earlier points are not coming: the ledger never held the dimension, so the note
+    // must not imply a later sync will fill them in.
+    expect(v.text).toContain("register-wide totals only");
+  });
+
+  it("drops the coverage clause once the series covers the whole ledger", () => {
+    const v = trendScopeView(trendScope({ points: 40 }));
+    expect(v.live).toBe(true);
+    expect(v.text).not.toContain(" of the ");
+    expect(v.text).toContain("Every recorded sync");
+  });
+
+  it("does not claim to show the project when it has no points at all", () => {
+    // The chart is EMPTY here. "This project" would label a series that is not on screen, and
+    // "Whole register" would label one that is not on screen either.
+    const v = trendScopeView(trendScope({ points: 0 }));
+    expect(v.tag).toBe("Not yet recorded");
+    expect(v.live).toBe(false);
+    expect(v.text).toContain("next sync");
+    expect(v.text).toContain("cannot be broken down after the fact");
+  });
+
+  it("does not blame history that does not exist yet", () => {
+    // A brand-new ledger: no points for this project because there are no syncs at all, not
+    // because the syncs predate the column. Saying "0 recorded syncs hold register-wide
+    // totals only" would be a sentence about nothing.
+    const v = trendScopeView(trendScope({ points: 0, registerPoints: 0 }));
+    expect(v.text).toBe("Per-project totals start with the first sync.");
+  });
+
+  it("treats a series longer than the register as covered, not as a contradiction", () => {
+    // Cannot happen from the server, which counts both off one history read — but a stale SWR
+    // payload can pair a new series with an old count, and the honest answer to "4 of 3" is
+    // not to print it.
+    expect(trendScopeView(trendScope({ points: 4, registerPoints: 3 })).text)
+      .toContain("Every recorded sync");
   });
 });

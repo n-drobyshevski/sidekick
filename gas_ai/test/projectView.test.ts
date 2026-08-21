@@ -224,6 +224,56 @@ describe("the project view", () => {
     }
   });
 
+  it("scopes the inventory trend, the one series that used to refuse the view", () => {
+    // THE WIRING, not the rule — projectTrend.test.ts proves the counting and the reading.
+    // This proves the sync actually WROTE the per-project blob and the endpoint actually
+    // reads it back for the view, which is the link this file exists to guard: a builder-level
+    // test already sat green through a change that bypassed it.
+    setView("");
+    const wide = ok<Rec>(server.api.getAssets({}));
+    const wideTrend = wide["aarsTrend"] as Array<Rec>;
+    const wideScope = wide["trendScope"] as Rec;
+    expect(wideScope["scoped"]).toBe(false);
+    expect(wideTrend.length).toBeGreaterThan(0);
+
+    setView(SMALL);
+    const scoped = ok<Rec>(server.api.getAssets({}));
+    const scopedTrend = scoped["aarsTrend"] as Array<Rec>;
+    const scopedScope = scoped["trendScope"] as Rec;
+    expect(scopedScope["scoped"]).toBe(true);
+    expect(scopedScope["projectId"]).toBe(SMALL);
+    // The seed syncs all carry the blob, so the scoped series covers the whole ledger — and
+    // the coverage denominator is the register-wide series, not the row count.
+    expect(scopedScope["registerPoints"]).toBe(wideTrend.length);
+    expect(scopedScope["points"]).toBe(scopedTrend.length);
+
+    // DELTA has one scored asset against the register's thirty, so a scoped point must not be
+    // a register-wide point wearing a project label.
+    const lastWide = wideTrend[wideTrend.length - 1]!["counts"] as Record<string, number>;
+    const lastScoped = scopedTrend[scopedTrend.length - 1]!["counts"] as Record<string, number>;
+    const sum = (c: Record<string, number>) => Object.values(c).reduce((n, v) => n + v, 0);
+    expect(sum(lastScoped)).toBeLessThan(sum(lastWide));
+
+    // And the series agrees with the live distribution beside it on the same page — the
+    // pairing that was impossible before, and the reason the AARS delta chips can come back.
+    const liveCounts = scoped["aarsSeverityCounts"] as Record<string, number>;
+    for (const sev of Object.keys(lastScoped)) {
+      expect(lastScoped[sev], `trend and live counts disagree on ${sev}`)
+        .toBe(liveCounts[sev] ?? 0);
+    }
+  });
+
+  it("gives a project outside the register an empty series, not the register's", () => {
+    setView("proj-not-in-this-register");
+    const data = ok<Rec>(server.api.getAssets({}));
+    expect(data["aarsTrend"]).toEqual([]);
+    const scope = data["trendScope"] as Rec;
+    expect(scope["points"]).toBe(0);
+    // registerPoints still stands, so the note can say what the reader is missing rather than
+    // rendering an empty chart with no account of why.
+    expect(scope["registerPoints"]).toBeGreaterThan(0);
+  });
+
   it("narrows the graph endpoints, not just the graph helper", () => {
     // The wiring, not the rule. `graphScope.test.ts` proves scopeGraphDoc filters correctly and
     // says nothing about whether any endpoint calls it — which is the failure this file exists

@@ -591,7 +591,14 @@ var Server = (() => {
       // produced it — the problem-outcome analogue of the two columns just above, feeding
       // aarsTrend.ts's second series. Appended, same no-migration contract.
       "problem_outcome_json",
-      "problem_rule_version"
+      "problem_rule_version",
+      // BOTH distributions again, one level down: `{projectId: {aars, outcome}}`, an entry per
+      // project holding an asset. One cell rather than a tab, because a sync writes one row and
+      // the map is bounded by the project count, not the landscape — see PROJECT_TOTALS_COLUMN
+      // in aarsTrend.ts for the shape and for why an absent entry is never read as a zero.
+      // Appended, same no-migration contract: rows without it have no scoped series, which the
+      // trend reports rather than fabricates.
+      "project_totals_json"
     ],
     [TABS.settings]: ["key", "value_json"],
     [TABS.jobs]: [
@@ -7834,7 +7841,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "45b06595125b" : "dev";
+  var BUILD_ID = true ? "e54fd66900bb" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8110,6 +8117,46 @@ var Server = (() => {
   }
 
   // src/domain/aarsTrend.ts
+  var PROJECT_TOTALS_COLUMN = "project_totals_json";
+  var PROJECT_TOTALS_MAX_CHARS = 45e3;
+  function countProjectTotals(nodes, decided) {
+    var _a5, _b, _c, _d;
+    const totals = {};
+    const projectsByAsset = /* @__PURE__ */ new Map();
+    function entry(projectId) {
+      let t = totals[projectId];
+      if (!t) {
+        const aars = {};
+        for (const sev of AARS_SEVERITY_ORDER) aars[sev] = 0;
+        const outcome = {};
+        for (const o of OUTCOME_VALUES) outcome[o] = 0;
+        t = { aars, outcome };
+        totals[projectId] = t;
+      }
+      return t;
+    }
+    for (const n of nodes) {
+      const projects = (_a5 = n.projects) != null ? _a5 : [];
+      if (!projects.length) continue;
+      projectsByAsset.set(n.id, projects);
+      const sev = normalizeAarsSeverity(n.aarsSeverity);
+      for (const p of projects) {
+        const t = entry(p.id);
+        if (sev) t.aars[sev] += 1;
+      }
+    }
+    for (const r of decided) {
+      const outcome = r.problemOutcome;
+      if (!outcome || !OUTCOME_VALUES.includes(outcome)) continue;
+      const assetId = (_c = (_b = r.assetId) != null ? _b : r.resourceId) != null ? _c : "";
+      for (const p of (_d = projectsByAsset.get(assetId)) != null ? _d : []) entry(p.id).outcome[outcome] += 1;
+    }
+    return totals;
+  }
+  function encodeProjectTotals(totals) {
+    const json = JSON.stringify(totals);
+    return json.length > PROJECT_TOTALS_MAX_CHARS ? null : json;
+  }
   function countAarsSeverities(nodes) {
     const counts = {};
     for (const sev of AARS_SEVERITY_ORDER) counts[sev] = 0;
@@ -8119,14 +8166,7 @@ var Server = (() => {
     }
     return counts;
   }
-  function parseCounts(v, keys) {
-    if (typeof v !== "string" || !v) return null;
-    let parsed;
-    try {
-      parsed = JSON.parse(v);
-    } catch {
-      return null;
-    }
+  function countsFromObject(parsed, keys) {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const raw = parsed;
     const counts = {};
@@ -8136,12 +8176,33 @@ var Server = (() => {
     }
     return counts;
   }
-  function trendFromHistory(rows, spec, limit = 90) {
+  function parseCounts(v, keys) {
+    if (typeof v !== "string" || !v) return null;
+    try {
+      return countsFromObject(JSON.parse(v), keys);
+    } catch {
+      return null;
+    }
+  }
+  function parseProjectCounts(v, projectId, spec) {
+    if (typeof v !== "string" || !v) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const entry = parsed[projectId];
+    if (!entry || typeof entry !== "object") return null;
+    return countsFromObject(entry[spec.projectKey], spec.keys);
+  }
+  function trendFromHistory(rows, spec, limit = 90, projectId = "") {
     var _a5;
     const points = [];
     for (const r of rows) {
       if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const counts = parseCounts(r[spec.countsColumn], spec.keys);
+      const counts = projectId ? parseProjectCounts(r[PROJECT_TOTALS_COLUMN], projectId, spec) : parseCounts(r[spec.countsColumn], spec.keys);
       if (!counts) continue;
       const at = String(r["finished_at"] || r["started_at"] || "");
       if (!at) continue;
@@ -8155,10 +8216,11 @@ var Server = (() => {
   var AARS_SEVERITY_SPEC = {
     keys: AARS_SEVERITY_ORDER,
     countsColumn: "aars_severity_json",
-    versionColumn: "aars_rule_version"
+    versionColumn: "aars_rule_version",
+    projectKey: "aars"
   };
-  function aarsTrendFromHistory(rows, limit = 90) {
-    return trendFromHistory(rows, AARS_SEVERITY_SPEC, limit);
+  function aarsTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, AARS_SEVERITY_SPEC, limit, projectId);
   }
   function ruleChangePoints(points) {
     const marks = [];
@@ -8893,7 +8955,20 @@ var Server = (() => {
       problem_outcome_json: JSON.stringify(countProblemOutcomes([...decidedIssues, ...decidedFindings])),
       // Which problem rule produced it — mirrors aars_rule_version, and moves independently
       // of it, exactly as the two settings keys (aars_rule / problem_rule) do.
-      problem_rule_version: problemRuleVersion
+      problem_rule_version: problemRuleVersion,
+      // The same two distributions per project, so the inventory trend can follow the sidebar
+      // from here forward — the one figure in the app that had to refuse it. Written from the
+      // SAME populations as the two register-wide columns above (`postured.nodes`, and the two
+      // decided sets), so the scoped series and the whole-register series can never be counting
+      // different things.
+      //
+      // Null when the map would not fit in a cell (encodeProjectTotals), and null is a value
+      // this row is allowed to carry: the register-wide totals beside it are unaffected, and a
+      // scoped series with a missing point says so rather than inventing one. A trend
+      // refinement must not be able to fail a commit.
+      project_totals_json: encodeProjectTotals(
+        countProjectTotals(postured.nodes, [...decidedIssues, ...decidedFindings])
+      )
     }]);
     setScoredRuleVersion(ruleVersion);
     setDecidedRuleVersion(problemRuleVersion);
@@ -15427,7 +15502,10 @@ var Server = (() => {
   }
   function assetsModel() {
     var _a5, _b;
-    const trend = aarsTrendFromHistory(syncHistory());
+    const history = syncHistory();
+    const projectView = getProjectView2();
+    const trend = aarsTrendFromHistory(history, 90, projectView);
+    const registerPoints = projectView ? aarsTrendFromHistory(history).length : trend.length;
     const assets = viewAssets();
     const issues2 = openIssues();
     const reach = estateReach({
@@ -15588,6 +15666,12 @@ var Server = (() => {
       // Recorded per sync, so the window is short at first and cannot be backfilled.
       aarsTrend: trend,
       aarsTrendRuleChanges: ruleChangePoints(trend),
+      trendScope: {
+        projectId: projectView,
+        scoped: Boolean(projectView),
+        points: trend.length,
+        registerPoints
+      },
       reach,
       facets: {
         kinds: [...kinds].sort(),
@@ -15609,6 +15693,7 @@ var Server = (() => {
         aarsSeverityCounts: model.aarsSeverityCounts,
         aarsTrend: model.aarsTrend,
         aarsTrendRuleChanges: model.aarsTrendRuleChanges,
+        trendScope: model.trendScope,
         aarsDeltas: aarsDeltas(model.aarsTrend, model.aarsSeverityCounts),
         reach: model.reach,
         facets: model.facets,

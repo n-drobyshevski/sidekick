@@ -170,11 +170,88 @@ export function projectScopeControl(bootstrapData, onPick) {
 export function registerWideNote(bootstrapData, detail) {
   const scope = (bootstrapData && bootstrapData.scope) || null;
   if (!scope || !scope.projectView) return null;
-  return el("p", { class: "register-wide-note" },
-    el("span", { class: "register-wide-tag" }, "Whole register"),
-    el("span", {},
-      `${nf.format(scope.register)} assets, not the ${nf.format(scope.shown)} in view`
+  return scopeNote({
+    tag: "Whole register",
+    text: `${nf.format(scope.register)} assets, not the ${nf.format(scope.shown)} in view`
       + (detail ? ` — ${detail}.` : "."),
-    ),
+  });
+}
+
+/**
+ * The note itself: a tag and a sentence, in the one markup both kinds share.
+ *
+ * Factored out because there are now two kinds and they must not drift into two looks. The
+ * original says a figure does NOT follow the switcher; `scope-live-tag` says one DOES, and
+ * that is the only difference — same chip, same hairline, darker ink. Two hand-written
+ * copies of four `el()` calls in two page files is how a design system quietly acquires a
+ * second style for the same idea.
+ */
+export function scopeNote({ tag, text, live }) {
+  return el("p", { class: "register-wide-note" },
+    el("span", { class: `register-wide-tag${live ? " scope-live-tag" : ""}` }, tag),
+    el("span", {}, text),
   );
+}
+
+/**
+ * What the inventory trend claims about the population it charts.
+ *
+ * DOM-free, like `projectScopeView` above and for the same reason: the wording IS the
+ * decision. This series is the last figure in the app that had to refuse the project
+ * switcher, and the refusal was real — `sync_history` held register-wide totals with nothing
+ * on the row to re-scope BY. It now carries a per-project blob beside them, so a scoped read
+ * is a different column rather than a filter.
+ *
+ * THE COVERAGE SENTENCE IS THE POINT. A blob can only exist for syncs recorded after it
+ * shipped, so a project's series can be three points long against a ledger of forty — and a
+ * chart that starts three points in looks exactly like a landscape that collapsed. Saying
+ * "covers 3 of 40" is the difference between a short history and a catastrophe. Nothing here
+ * is backfillable: the ledger never held the dimension, so the earlier points do not exist to
+ * be recovered, and the note says that rather than implying a later sync will fill them in.
+ *
+ * @param {{projectId: string, scoped: boolean, points: number, registerPoints: number}|null} scope
+ */
+export function trendScopeView(scope) {
+  if (!scope || !scope.scoped) return { show: false, live: false, tag: "", text: "" };
+  const points = Number(scope.points) || 0;
+  const register = Number(scope.registerPoints) || 0;
+
+  // Nothing recorded for this project yet, on a ledger that has history. The chart is empty,
+  // so the tag must not claim to be showing this project's series — it is explaining why
+  // there is none. "Whole register" would be wrong too: nothing register-wide is on screen.
+  if (points === 0) {
+    return {
+      show: true,
+      live: false,
+      tag: "Not yet recorded",
+      text: register
+        ? `Per-project totals start with the next sync. The ${nf.format(register)} `
+          + `${register === 1 ? "sync" : "syncs"} already recorded hold register-wide totals `
+          + "only, and cannot be broken down after the fact."
+        : "Per-project totals start with the first sync.",
+    };
+  }
+
+  if (points >= register) {
+    return {
+      show: true,
+      live: true,
+      tag: "This project",
+      text: "Every recorded sync, counted for the project in view.",
+    };
+  }
+
+  return {
+    show: true,
+    live: true,
+    tag: "This project",
+    text: `Covers ${nf.format(points)} of the ${nf.format(register)} recorded syncs — the `
+      + "earlier ones hold register-wide totals only, so this project has no point on them.",
+  };
+}
+
+/** `trendScopeView`, assembled. Null when no project is in view. */
+export function trendScopeNote(scope) {
+  const v = trendScopeView(scope);
+  return v.show ? scopeNote(v) : null;
 }

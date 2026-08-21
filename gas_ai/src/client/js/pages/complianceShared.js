@@ -14,7 +14,7 @@
 // and glyphs belong in the view, the classification itself always comes from the server
 // (`node.state`), so the two cannot disagree about which state a row is IN.
 
-import { el, fmtDateTime, meter, plural, sevBadge } from "../ui.js";
+import { el, fmtDateTime, meter, plural, scopeNote, sevBadge } from "../ui.js";
 
 /**
  * The four posture states, mirroring domain/compliancePosture.POSTURE_STATES.
@@ -463,12 +463,12 @@ export function postureScopeView(data) {
   };
 }
 
-/** `postureScopeView`, assembled. Null when there is nothing to disambiguate. */
+/**
+ * `postureScopeView`, assembled — through `scopeNote`, the one renderer both scope notes in
+ * this app share, so the compliance note and the inventory trend's cannot drift into two
+ * looks for the same idea.
+ */
 export function postureScopeNote(data) {
   const v = postureScopeView(data);
-  if (!v.show) return null;
-  return el("p", { class: "register-wide-note" },
-    el("span", { class: `register-wide-tag${v.live ? " scope-live-tag" : ""}` }, v.tag),
-    el("span", {}, v.text),
-  );
+  return v.show ? scopeNote(v) : null;
 }
