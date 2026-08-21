@@ -14,7 +14,7 @@
 // and glyphs belong in the view, the classification itself always comes from the server
 // (`node.state`), so the two cannot disagree about which state a row is IN.
 
-import { el, meter, sevBadge } from "../ui.js";
+import { el, fmtDateTime, meter, plural, sevBadge } from "../ui.js";
 
 /**
  * The four posture states, mirroring domain/compliancePosture.POSTURE_STATES.
@@ -349,4 +349,126 @@ export function findSubcategory(trees, frameworkId, categoryExternalId, external
   const sub = (category.subcategories || []).find((s) => s.externalId === externalId);
   if (!sub) return null;
   return { tree, category, sub };
+}
+
+/**
+ * Why a project view is showing register-wide posture anyway, as a sentence.
+ *
+ * Codes come from the server (`postureScope.reason` in api.ts), words are written here —
+ * the STATES rule above, applied to a second small vocabulary: the classification is the
+ * server's, the copy is the view's, and neither can disagree with the other about which
+ * case it is. Each one names the FETCH scope rather than "the tenant", because a scoped
+ * sync is the normal configuration here and the posture it stored is already narrower than
+ * the tenant — calling it tenant-wide would trade one wrong population for another.
+ */
+const SCOPE_REFUSALS = {
+  noCredentials:
+    "Wiz aggregates posture itself, and re-scoring it for one project needs a live call " +
+    "this deployment has no credentials to make",
+  tooManyFrameworks:
+    "too many frameworks are collected to re-score one project live — each costs its own " +
+    "call to Wiz",
+  fetchFailed:
+    "Wiz could not re-score this project just now, so this stays at the scope the sync " +
+    "fetched",
+};
+
+/**
+ * Trim to `max` characters on a word boundary, with an ellipsis. "" for nothing to say.
+ *
+ * The trailing full stop is stripped either way, because the caller supplies its own and
+ * "(HTTP 403).." is the kind of small wrongness that makes a careful page look careless.
+ */
+function clip(text, max) {
+  const s = String(text || "").trim();
+  if (!s) return "";
+  if (s.length <= max) return s.replace(/[.\s]+$/, "");
+  const cut = s.slice(0, max);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[.\s]+$/, "")}…`;
+}
+
+/**
+ * End a sentence, unless it already ends itself.
+ *
+ * An ellipsis IS a sentence ending, so a clipped detail must not collect a full stop after
+ * it — "…." is the kind of small wrongness that makes a careful page look careless.
+ */
+function sentence(text) {
+  return /[.…]$/.test(text) ? text : `${text}.`;
+}
+
+/**
+ * What population the posture figures on this page describe.
+ *
+ * DOM-free, and split from the assembly below for the reason `projectScopeView` is (see
+ * ui/projectScope.js): the wording IS the decision here — which of three things this page
+ * is claiming about its own numbers — and a claim that can be wrong gets a test. The
+ * assembly underneath is four `el()` calls with nothing to get wrong.
+ *
+ * THREE OUTCOMES, and the middle one is why this replaced a fixed `registerWideNote` call:
+ *
+ *   - no project view — `show: false`. Unscoped, there is nothing to disambiguate, and a
+ *     permanent "register-wide" badge on a register-wide page is noise (registerWideNote's
+ *     own rule).
+ *   - a view, and Wiz re-aggregated for it — the figures DO follow the sidebar, so the note
+ *     says so and stamps when it asked. It carries its own clock because the register below
+ *     it comes from the last sync and this came from just now: two clocks on one page have
+ *     to be legible as two, or the older one is read as being as fresh as the newer.
+ *   - a view, and it could not — the register-wide claim, with the reason. Never silence:
+ *     the figure is right for a question the sidebar is not asking, and that is exactly the
+ *     case registerWideNote exists for.
+ *
+ * The claim it used to make — "Wiz scores these tenant-wide and a posture row carries no
+ * asset to filter by" — was half wrong and the wrong half mattered. A posture row really
+ * does carry no asset, so nothing STORED can be re-sliced; but the sync has always sent its
+ * fetch scope in `analyticsSelection.projectId`, so those percentages describe whatever the
+ * sync was scoped to, which on a scoped tenant is not the tenant. "Cannot be re-sliced here"
+ * and "cannot be scoped at all" are different statements, and only the first was ever true.
+ * Every branch below therefore names the FETCH scope, never "the tenant".
+ */
+export function postureScopeView(data) {
+  const scope = (data && data.postureScope) || null;
+  if (!scope || !scope.projectId) return { show: false, live: false, tag: "", text: "" };
+
+  if (scope.source === "live") {
+    return {
+      show: true,
+      live: true,
+      tag: "This project",
+      // NOT "the register below is from the last sync", which was the first wording and was
+      // wrong in the interesting direction: on this branch the trees, the rail and the bands
+      // are ALL rebuilt from the live answer, so nothing below it is the sync's. What is
+      // true, and worth saying, is that this page alone runs on a different clock from the
+      // rest of the app — so that is what it says.
+      text: `Wiz re-scored ${plural(scope.frameworkCount, "framework")} for the project in `
+        + `view, asked at ${fmtDateTime(scope.fetchedAt)} — this page alone is live, the `
+        + "rest of the app is as of the last sync.",
+    };
+  }
+
+  const why = SCOPE_REFUSALS[scope.reason]
+    || "Wiz aggregates these at the scope the sync fetched, and a posture row carries no "
+       + "asset to re-slice here";
+  // The refusal text from Wiz, on the one branch that has one. Printed rather than shipped
+  // and ignored: "could not re-score" tells an operator what happened, and an HTTP code or a
+  // rejected-field message tells them whether to retry, fix a permission, or file it. Capped
+  // because errorDigest allows 800 characters and this is a one-line aside.
+  const detail = scope.reason === "fetchFailed" ? clip(scope.detail, 120) : "";
+  return {
+    show: true,
+    live: false,
+    tag: "Whole register",
+    text: sentence(detail ? `${why} — ${detail}` : why),
+  };
+}
+
+/** `postureScopeView`, assembled. Null when there is nothing to disambiguate. */
+export function postureScopeNote(data) {
+  const v = postureScopeView(data);
+  if (!v.show) return null;
+  return el("p", { class: "register-wide-note" },
+    el("span", { class: `register-wide-tag${v.live ? " scope-live-tag" : ""}` }, v.tag),
+    el("span", {}, v.text),
+  );
 }

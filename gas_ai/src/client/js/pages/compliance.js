@@ -30,6 +30,16 @@
 // subcategories are counted — a register showing twelve of twenty rows has to say twenty
 // somewhere, or it is quietly claiming the landscape is smaller than it is.
 //
+// THE PROJECT SWITCHER REACHES THIS PAGE, and it did not used to. Everything here is a
+// percentage Wiz computed, not a row this app can filter: a posture row is keyed by
+// framework/category/subcategory and carries no asset id, so nothing STORED can be
+// re-sliced by project. But the aggregation itself takes a project — the sync has always
+// sent its fetch scope as `analyticsSelection.projectId` — so the server re-asks Wiz for the
+// project in view and rebuilds the whole payload from that answer (api.ts `scopedPosture`).
+// When it cannot — no credentials, too many frameworks, a refusal — the figures stay the
+// register's and postureScopeNote() says which case it is. The page itself is identical
+// either way; only that one note changes, and it is the only thing on the page that knows.
+//
 // TWO SUB-VIEWS, ONE FETCH, ONE URL. `view.mode` is "overview" (the cross-framework rollup
 // — every framework at once) or "framework" (this file's original register, one framework
 // at a time), read from `?view=` and mirrored back into the hash by pushParams() exactly
@@ -46,14 +56,14 @@
 // to its own defaults. The in-memory `view` fields are untouched by the mode switch, so
 // flipping back to "By framework" restores exactly where the reader left it.
 
-import { bootstrapCached, setParams, swrCall } from "../store.js";
+import { setParams, swrCall } from "../store.js";
 import {
   clear, dataTable, el, emptyState, errorState, filterCombobox, meter, plural,
-  registerWideNote, sectionLabel, segmented, sevBadge, skeletonStack, statRow,
+  sectionLabel, segmented, sevBadge, skeletonStack, statRow,
 } from "../ui.js";
 import {
-  checksCell, extChip, fiveRsDerived, postureCell, STATES, STATE_ORDER, stateStrip,
-  subcategoryDetail,
+  checksCell, extChip, fiveRsDerived, postureCell, postureScopeNote, STATES, STATE_ORDER,
+  stateStrip, subcategoryDetail,
 } from "./complianceShared.js";
 // STATE_ORDER survives the filter's removal as the key order for summing a stateCounts map
 // — the header's "scored of N" denominator. STATES still names the framework-level state in
@@ -96,12 +106,6 @@ export async function renderCompliance(main, params, ctx) {
     el("p", { class: "page-sub" },
       "How this landscape scores against the security frameworks Wiz tracks — by category, " +
       "subcategory and the policies behind them."),
-    // The whole page, not one figure on it. These percentages are Wiz's own tenant-side
-    // aggregates: a posture row is keyed by framework, category and subcategory and carries
-    // no asset id, so there is nothing here to filter by project even in principle. Only Wiz
-    // can re-aggregate them. Without this the page would silently ignore the switcher.
-    registerWideNote(bootstrapCached(),
-      "Wiz scores these tenant-wide and a posture row carries no asset to filter by"),
   );
 
   const host = el("div", {});
@@ -169,6 +173,14 @@ export async function renderCompliance(main, params, ctx) {
   function paint() {
     clear(host);
     const trees = (data && data.trees) || [];
+
+    // THE WHOLE PAGE, not one figure on it — which is why it sits above the view switch
+    // rather than beside a number. It has to be painted here rather than with the heading
+    // above, because what it says depends on the payload: whether Wiz re-aggregated for the
+    // project in view, or the figures are still the register's and why. See
+    // postureScopeNote() for the three outcomes. Absent entirely with no project view set.
+    const scopeNote = postureScopeNote(data);
+    if (scopeNote) host.append(scopeNote);
 
     if (!trees.length) {
       host.append(emptyState(

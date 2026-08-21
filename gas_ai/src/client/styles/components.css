@@ -541,3 +541,13 @@ table.data.prune-census tbody tr:hover { background: none; }
   font-weight: 600;
   white-space: nowrap;
 }
+/* The same note in its other state: the figures DO follow the sidebar because Wiz was asked
+   again for this project (postureScopeNote). Same chip, same hairline, same size — only the
+   word inside it and the ink differ. It is not tinted green or accented: "your scope was
+   honoured" is a statement about the population, not a good or bad result, and a hue here
+   would be inventing a meaning the palette already spends elsewhere. The darker ink is the
+   whole signal, and the word carries it for anyone who cannot see the difference. */
+.scope-live-tag {
+  color: var(--ink);
+  border-color: var(--text-3);
+}

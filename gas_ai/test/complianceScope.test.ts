@@ -22,7 +22,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildAllFrameworkTrees, buildFrameworkTree } from "../src/domain/compliancePosture";
 import {
-  SCOPE_REASONS, scopeFiveRs, unselectedPolicyIds, type ScopeReason,
+  SCOPE_REASONS, scopeFiveRs, unselectedPolicyIds, withCountsFrom, type ScopeReason,
 } from "../src/domain/complianceScope";
 import { fiveRsDerivedPosture } from "../src/domain/fiveRsPosture";
 import type { FindingRow, FrameworkPolicyRow, PostureRow } from "../src/domain/graphTypes";
@@ -458,5 +458,115 @@ describe("SCOPE_REASONS — the UI's only source of label/blurb copy", () => {
       expect(SCOPE_REASONS[reason].label.length).toBeGreaterThan(0);
       expect(SCOPE_REASONS[reason].blurb.length).toBeGreaterThan(0);
     }
+  });
+});
+
+// ------------------------------------------------------------------------------------------
+// withCountsFrom: the same verdicts over a different set of trees.
+//
+// This is what lets a project-scoped compliance page state a derived 5Rs posture without
+// either re-deciding what is in AI scope (a persisted, register-wide call — see
+// scopeFiveRs's own header) or leaving that one figure describing the register while every
+// number beside it describes a project. The split is verdict from arithmetic, and these
+// tests pin the seam: the verdict fields come from the original scope, every count comes
+// from the trees handed in, and a policy those trees do not carry is DROPPED.
+
+/** The 5Rs tree as Wiz would report it for a narrower population. */
+const SCOPED_5RS_POLICIES: FrameworkPolicyRow[] = [
+  {
+    frameworkId: SYNTH_5RS_ID, categoryExternalId: "2", subcategoryExternalId: "2.1",
+    policyId: "policy-linked", policyKind: "CLOUD_RULE", shortId: "LNK-001",
+    name: "Data linked to AI asset", severity: "HIGH",
+    passCount: 40, failCount: 1, assessedCount: 41, rejectedCount: 0, noResourceToAssess: false,
+  },
+  // Multiply-mapped again, with the MAX on a DIFFERENT row than the register-wide fixture
+  // put it: 9 here comes from the second mapping, 3 from the first. A reader of the first
+  // row alone would report 3.
+  {
+    frameworkId: SYNTH_5RS_ID, categoryExternalId: "1", subcategoryExternalId: "1.1",
+    policyId: "policy-multi", policyKind: "CONTROL", shortId: "MULTI-001",
+    name: "Multiply-mapped rule", severity: "LOW", enabled: true,
+    passCount: 3, failCount: 0, assessedCount: 3, rejectedCount: 0, noResourceToAssess: false,
+  },
+  {
+    frameworkId: SYNTH_5RS_ID, categoryExternalId: "2", subcategoryExternalId: "2.1",
+    policyId: "policy-multi", policyKind: "CONTROL", shortId: "MULTI-001",
+    name: "Multiply-mapped rule", severity: "LOW", enabled: false,
+    passCount: 9, failCount: 2, assessedCount: 11, rejectedCount: 0, noResourceToAssess: false,
+  },
+];
+
+const scoped5RsTree = buildFrameworkTree(
+  SYNTH_5RS_ID, SYNTH_5RS_POSTURE, SCOPED_5RS_POLICIES,
+)!;
+
+describe("withCountsFrom", () => {
+  const registerScope = scopeFiveRs(
+    [synth5RsTree, synthAsiTree], findings, aiAssetIds, noPins,
+  );
+  const rescoped = withCountsFrom(registerScope, [scoped5RsTree, synthAsiTree]);
+
+  function policy(scope: typeof registerScope, id: string) {
+    return scope.policies.find((p) => p.policyId === id);
+  }
+
+  it("re-reads the counts off the trees it was handed", () => {
+    expect(policy(registerScope, "policy-linked")!.passCount).toBe(0);
+    expect(policy(rescoped, "policy-linked")!.passCount).toBe(40);
+  });
+
+  it("keeps the verdict, which is the whole point of the split", () => {
+    // The in/out decision is register-wide and PERSISTED (the Settings pin). Re-deriving it
+    // from a narrower population is the failure this function exists to avoid, so every
+    // verdict field has to survive the count swap untouched.
+    for (const before of registerScope.policies) {
+      const after = policy(rescoped, before.policyId);
+      if (!after) continue;
+      expect(after.selected, before.policyId).toBe(before.selected);
+      expect(after.reason, before.policyId).toBe(before.reason);
+      expect(after.mappedBy, before.policyId).toEqual(before.mappedBy);
+      expect(after.aiFindingCount, before.policyId).toBe(before.aiFindingCount);
+    }
+  });
+
+  it("takes the MAX across mappings, mirroring scopeFiveRs", () => {
+    // Both walks see the same policy twice with different counts, and both must answer 9/2
+    // rather than 3/0 (first seen) or 12/2 (summed). Two disciplines that have to agree, so
+    // they are pinned against the same shape.
+    const multi = policy(rescoped, "policy-multi")!;
+    expect(multi.passCount).toBe(9);
+    expect(multi.failCount).toBe(2);
+  });
+
+  it("carries sticky-false through from the scoped rows", () => {
+    expect(policy(rescoped, "policy-multi")!.enabled).toBe(false);
+  });
+
+  it("DROPS a policy the scoped trees never assessed rather than zeroing it", () => {
+    // The trap this function is most likely to be "simplified" into. Zeroed, a rule Wiz
+    // assessed nothing for in this project has failCount 0 — which fiveRsDerivedPosture
+    // counts as a CLEAN CONTROL, lifting controlPassPct on evidence that does not exist.
+    // Absent from the tree means unassessed, not passing.
+    expect(policy(registerScope, "policy-trap-in")).toBeDefined();
+    expect(policy(rescoped, "policy-trap-in")).toBeUndefined();
+    // Only the two the scoped tree carries survive — including `policy-no-ai-link`, which
+    // is dropped for the same reason as the trap rule and not for its verdict.
+    expect(rescoped.policies.map((p) => p.policyId).sort())
+      .toEqual(["policy-linked", "policy-multi"]);
+  });
+
+  it("reports no derived posture — not a zero — when the framework scored nothing here", () => {
+    const empty = withCountsFrom(registerScope, [synthAsiTree]);
+    expect(empty.policies).toEqual([]);
+    expect(empty.total).toBe(0);
+    // The governing rule of the whole compliance feature, at its last mile: a posture that
+    // does not exist is never drawn as a zero.
+    expect(fiveRsDerivedPosture(empty, null)!.posturePct).toBeNull();
+  });
+
+  it("passes a no-5Rs scope straight through", () => {
+    const none = scopeFiveRs([synthAsiTree], findings, aiAssetIds, noPins);
+    expect(none.frameworkId).toBeNull();
+    expect(withCountsFrom(none, [scoped5RsTree])).toBe(none);
   });
 });

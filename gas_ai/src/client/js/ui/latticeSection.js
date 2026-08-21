@@ -85,14 +85,16 @@ export function latticeSection(opts) {
   /**
    * The two painters share one handle shape, so a view switch is a swap and never a fork.
    *
-   * `views: false` suppresses the switch entirely, and Posture passes it. The reason is no
-   * longer the one it used to be — "three consequence panels have no nesting a tree could
-   * show" stopped being true when that lattice was flattened, and its three axes now nest
-   * exactly as the Problem tree's four do. `latticeIcicle` would draw it; `icicleLayout`
-   * reads only `spec.axes`. It stays off because nobody has yet argued that a second view of
-   * 27 cells says anything the matrix does not, and a control that offers a view for the sake
-   * of symmetry is a control the reader has to rule out. Turning it on is deleting one line
-   * in pages/aars.js, and should follow that argument rather than stand in for it.
+   * BOTH LATTICES NOW OFFER BOTH VIEWS. Posture used to pass `views: false`, on the grounds
+   * that three side-by-side consequence panels had no nesting a tree could show. Flattening
+   * that lattice into one 3×9 grid removed the grounds: its three axes nest exactly as the
+   * Problem tree's four do, and the argument for a tree — that the matrix turns the nesting
+   * into a grouping convention you have to know to read, while the tree makes it the picture
+   * — applies to a capability × consequence × containment cascade the same way it applies to
+   * a four-axis one.
+   *
+   * The option stays supported because the argument is per-lattice and a future spec may
+   * genuinely have nothing to nest.
    */
   const painterHooks = {
     onCellEnter: (cell) => {
@@ -248,11 +250,12 @@ export function latticeSection(opts) {
   const legend = el("p", { class: "small muted", style: "margin:12px 0 0" });
   const note = el("div", {});
 
-  // The switch appears only where a second view says something the first does not; the
-  // `views` note on painterHooks above carries why Posture still declines it.
+  // Both lattices offer both views. The titles read from the caller's own vocabulary rather
+  // than saying "leaf" at a tab that has none — the same reason `unit` and `unitOne` are
+  // parameters at all.
   const viewTabs = opts.views === false ? null : segmented({
     options: [
-      { value: "matrix", label: "Matrix", title: "Every leaf on one grid" },
+      { value: "matrix", label: "Matrix", title: `Every ${unitOne} on one grid` },
       { value: "tree", label: "Tree", title: "The axes nested, branch by branch" },
     ],
     value: "matrix",
