@@ -136,6 +136,7 @@ import {
 } from "../domain/scanVars";
 import { layoutGraph } from "../domain/graphLayout";
 import { nodeOrder, projectGraph, type Projection } from "../domain/graphProject";
+import { scopeGraphDoc } from "../domain/graphScope";
 import {
   DEFAULT_QUERY,
   fieldValuesFor,
@@ -244,6 +245,38 @@ function viewAssetIds(): Set<string> | null {
  * a service account no agent runs as — is out of every project view, because there is
  * nothing to attribute it to. It comes back the moment the view is cleared.
  */
+/**
+ * The graph as the current view should draw it.
+ *
+ * The graph needs its own helper rather than reusing `viewAssets()` because a graph cannot be
+ * filtered row by row: dropping a node drops every path through it, and the paths are the
+ * product. `scopeGraphDoc` carries the node rule and the reasoning — evidence rides along with
+ * whatever asset survived, and another project's assets never ride along with it.
+ *
+ * Memoized per execution, mirroring `loadGraphDoc`: three endpoints call this and the walk is
+ * over the whole register.
+ *
+ * Keyed on the view AND on the identity of the raw doc, the same trick `syncStore.loadAssets`
+ * uses. The view alone is not enough and the gap is not obvious: this memo is a module-level
+ * binding in THIS file, so `syncStore.invalidateReadMemos()` does not reach it — it clears
+ * syncStore's own same-named memo. Keyed on the view only, any mutation followed by a graph
+ * read under an unchanged view would serve the pre-mutation graph. No caller does that today
+ * (all three are `run()`, none write first), which is exactly why it would be found late.
+ * `loadGraphDoc` already returns a memoized object that invalidation replaces, so comparing
+ * its identity is exact and costs nothing.
+ */
+let graphDocMemo: { view: string; raw: GraphDoc | null; doc: GraphDoc | null } | null = null;
+function viewGraphDoc(): GraphDoc | null {
+  const view = settingsStore.getProjectView();
+  const raw = syncStore.loadGraphDoc();
+  if (graphDocMemo && graphDocMemo.view === view && graphDocMemo.raw === raw) {
+    return graphDocMemo.doc;
+  }
+  const doc = raw ? scopeGraphDoc(raw, view) : null;
+  graphDocMemo = { view, raw, doc };
+  return doc;
+}
+
 function viewIssues(): IssueRow[] {
   const ids = viewAssetIds();
   const all = syncStore.loadIssues();
@@ -495,7 +528,7 @@ export function getGraph(p?: unknown): ApiResult {
     // and settings defaults live INSIDE the compute; they only change when the
     // data version bumps, and the version is part of the key.
     return cached("getGraph", graphCacheParams(params), () => {
-      const doc = syncStore.loadGraphDoc();
+      const doc = viewGraphDoc();
       if (!doc) return { empty: true };
       const options = resolveGraphParams(params, {
         defaultDepth: settingsStore.getDefaultDepth(),
@@ -551,7 +584,7 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
     : null;
   return run(() =>
     cached("queryVocabulary", { kind }, () => {
-      const doc = syncStore.loadGraphDoc();
+      const doc = viewGraphDoc();
       if (!doc) {
         return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
       }
@@ -603,7 +636,7 @@ export function runGraphQuery(p?: unknown): ApiResult {
     // (an absent `show: true`, a step order the builder rewrote) must not each buy their own
     // cache entry and their own Sheets read.
     return cached("graphQuery", { query, columns, view, maxNodes }, () => {
-      const doc = syncStore.loadGraphDoc();
+      const doc = viewGraphDoc();
       if (!doc) return { empty: true };
       const result = runQuery(doc, query, { columns });
       const projection = inducedProjection(doc, result, maxNodes);
@@ -900,6 +933,12 @@ function assetsModel(): AssetsModel {
     assets,
     issues: viewIssues(),
     findings: viewFindings(),
+    // Unscoped ON PURPOSE, beside three scoped siblings — it reads as an oversight otherwise.
+    // Reach uses edges for two things and both want the whole set. The per-asset "was this
+    // ever walked" test is a join against ids already inside the view, so extra edges cannot
+    // widen it. And the edge-type census asks which relationship types the sync produced AT
+    // ALL: scoped, a type would be reported `dead` merely because this one project has none,
+    // which is the exact false finding reach.ts's populated/dead split exists to prevent.
     edges: syncStore.loadEdges(),
   });
   // The two compliance numbers, computed together so they cannot drift.
@@ -1129,9 +1168,13 @@ export function getAssets(p?: unknown): ApiResult {
  * hedged number:
  *  - fewer than two points: nothing to compare against;
  *  - the scoring rule changed between them: the two points aren't on the same scale;
- *  - the latest point disagrees with the live counts, which means the landscape was rescored
- *    (AARS Rules → Recompute) without a sync — so a delta would explain a figure that
- *    isn't the one on screen.
+ *  - the latest point disagrees with the live counts, which now has TWO causes, and the
+ *    silence is right for both. Either the landscape was rescored (AARS Rules → Recompute)
+ *    without a sync, or a project view is active — `sync_history` records register-wide
+ *    totals only and can never be re-scoped (see aarsTrend.ts), so a scoped live count will
+ *    not match the last point. Either way a delta would explain a figure that is not the one
+ *    on screen. Note this makes the chips vanish under a view while the chart above them
+ *    stays: that is the honest pairing, and the chart carries its own register-wide marker.
  */
 function aarsDeltas(
   trend: AarsTrendPoint[],
@@ -1166,17 +1209,38 @@ export function getAssetOptions(_p?: unknown): ApiResult {
   );
 }
 
+/**
+ * One asset, by id — REGISTER-WIDE, like every other by-id lookup here.
+ *
+ * This sheet is opened from scoped lists AND from unscoped ones: a graph neighbour, a
+ * bookmark, a shared link. Scoping its contents would answer a question nobody asked — the id
+ * already names one asset — and it would answer it with silence: an out-of-view asset rendered
+ * with an empty issue list, which reads as "nothing wrong with this asset" rather than "not in
+ * the project you are looking at". A security tool must not have that failure mode.
+ *
+ * The one exception is `aarsPercentile`, and it is deliberate. A percentile is a rank WITHIN a
+ * population, so it is read off `assetsModel` — the same population the inventory table ranks
+ * against — because a sheet and the row it was opened from disagreeing about the same asset's
+ * rank is the "two answers to one question" failure this codebase spends its comments
+ * avoiding. For an asset outside the current view there is no rank to report, so the field is
+ * absent and the label simply omits it (scoreLabel.js prints the score without a place)
+ * rather than inventing one.
+ */
 export function getAssetDetail(p?: unknown): ApiResult {
   return run(() => {
     const id = String(((p ?? {}) as Rec)["id"] ?? "");
     // Cached: opening the same detail sheet twice must not re-read Drive+Sheets.
     return cached("getAssetDetail", { id }, () => {
+      // Raw, like the rest of this handler — see the header. A by-id sheet is register-wide.
       const doc = syncStore.loadGraphDoc();
       if (!doc) return null;
       const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
       const node = nodeById.get(id);
       if (!node) return null;
-      const issues = openIssues().filter((i) => i.assetId === id);
+      // NOT openIssues(): that one is view-scoped, and this sheet is not. See the header.
+      const issues = syncStore.loadIssues()
+        .filter(isUnresolvedIssue)
+        .filter((i) => i.assetId === id);
       const neighbors: Array<{ edge: GEdge; node: Rec; direction: "out" | "in" }> = [];
       for (const edge of doc.edges) {
         if (edge.src !== id && edge.dst !== id) continue;
@@ -1198,6 +1262,7 @@ export function getAssetDetail(p?: unknown): ApiResult {
       // renders; shipping them would put several kilobytes per finding on the wire for a
       // list that shows a severity, a rule id and one line of fix text. The finding sheet
       // fetches the whole record when someone actually opens one.
+      // Raw, matching the rest of this handler — a by-id sheet is register-wide throughout.
       const findings = syncStore
         .loadFindings()
         .filter((f) => f.resourceId === id && isOpenGap(f))
@@ -1247,10 +1312,17 @@ export function getAssetDetail(p?: unknown): ApiResult {
  * The synced AI assets, as an id set — "did this finding land on something the AI graph
  * models". `loadAssets` is memoized, so calling this more than once per execution costs a
  * map build and nothing else.
+ *
+ * REGISTER-WIDE, and both callers need it that way. The question it answers is a fact about
+ * the FINDING — whether the AI graph models the resource it was evaluated against — and that
+ * does not change with what the sidebar is looking at. Scoped, it silently became a different
+ * question: `configModel` pairs it with `viewFindings()`, whose rows are already selected on
+ * being in view, so the flag read `true` for every row and the linked/unlinked split the
+ * Cloud Configuration page exists to show collapsed to one side.
  */
 function aiAssetIdSet(): Record<string, true> {
   const ids: Record<string, true> = {};
-  for (const a of viewAssets()) ids[a.id] = true;
+  for (const a of syncStore.loadAssets()) ids[a.id] = true;
   return ids;
 }
 
@@ -1277,9 +1349,25 @@ function scopedFrameworkPolicies(): {
   const allPolicies = syncStore.loadFrameworkPolicies();
   const catalogue = syncStore.loadFrameworks();
 
+  // REGISTER-WIDE findings, deliberately — this derivation must not follow the project view.
+  //
+  // Two reasons, and the second is the serious one.
+  //
+  // It cannot be scoped coherently. `scopeFiveRs` decides which 5Rs rules are AI-relevant, and
+  // the pass/fail counts inside the rules it selects are Wiz's own tenant-side totals:
+  // `PostureRow` (domain/graphTypes.ts) is keyed by framework/category/subcategory and carries
+  // no asset id at all, and `posture_pct` is stored exactly as Wiz sent it and never
+  // recomputed. Scoping the selector over an unscopeable population gives one number built
+  // from two populations — a project-selected numerator over a register-wide denominator.
+  //
+  // And it decides something PERSISTED. The Settings 5Rs card renders this scope, and the
+  // toggle beside it writes a global pin (`setFiveRsPins`). Scoped, an operator standing in
+  // one project sees "no AI link" for a rule that is linked in another, pins it out, and it is
+  // pinned out everywhere. A page that stores a register-wide decision has to show the
+  // register-wide evidence for it.
   const scope = scopeFiveRs(
     buildAllFrameworkTrees(posture, allPolicies, catalogue),
-    viewFindings(),
+    syncStore.loadFindings(),
     aiAssetIdSet(),
     settingsStore.getFiveRsPins(),
   );
@@ -1418,7 +1506,11 @@ export function getConfigFindingDetail(p?: unknown): ApiResult {
       // reads as deleted. Lists narrow; links do not break.
       const finding = syncStore.loadFindings().filter((f) => f.id === id)[0];
       if (!finding) return null;
-      const asset = viewAssets().filter((a) => a.id === finding.resourceId)[0];
+      // loadAssets, not viewAssets: the comment above promises links do not break, and a
+      // scoped join breaks them quietly — an out-of-view finding would come back with
+      // `asset: null`, which this pane already uses to mean "no AI asset models this
+      // resource". Two different facts must not share one rendering.
+      const asset = syncStore.loadAssets().filter((a) => a.id === finding.resourceId)[0];
       return {
         finding,
         gap: isOpenGap(finding),
@@ -2030,6 +2122,13 @@ function ruleState(): Rec {
     // Only the point model can strand the persisted scores; bands re-derive on read, and
     // setAarsRule carries the marker forward across a band-only edit.
     stale: scoredVersion !== stored.version,
+    // How many assets sit at each rule version. One entry is the ordinary state; more than
+    // one means a scoped rescore left the register holding scores from two rules, and those
+    // are not on the same scale — the same reason sync_history stamps every distribution
+    // with the version that produced it. The page has to be able to say so, because a
+    // percentile or a band count drawn across a mixed register compares two different
+    // measurements. A sync, or a rescore with no project selected, collapses it back to one.
+    versionSpread: syncStore.aarsVersionSpread(),
     bandRanges: bandRanges(stored.rule.bands),
     limits: {
       pointsMax: POINTS_MAX,

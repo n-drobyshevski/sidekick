@@ -514,3 +514,30 @@ table.data.prune-census tbody tr:hover { background: none; }
   to { opacity: 1; transform: none; }
 }
 .prune-body > * { animation: prune-settle var(--dur-fast) var(--ease-out); }
+
+/* Marks a figure that does not follow the project view. Only rendered while a view is set —
+   see registerWideNote. Reads as an aside rather than a warning: the number is correct, it
+   just answers a wider question than the one the sidebar is asking. Amber would overstate it
+   and the severity palette is spoken for; this is a hairline note, the same register as a
+   table caption. The tag is a shape as well as a colour, so it does not rely on hue alone. */
+.register-wide-note {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.register-wide-tag {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}

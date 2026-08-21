@@ -352,7 +352,14 @@ var Server = (() => {
       // never blended into it. Appended, same no-migration contract as every block above.
       "posture_tier",
       "posture_input_json",
-      "worst_open_problem"
+      "worst_open_problem",
+      // Which AARS rule version produced this row's score. Per-asset rather than one global
+      // marker because a rescore can now be scoped to a project, which leaves the register
+      // holding scores from two rules at once — and `counts from two versions are not on the
+      // same scale` is a rule this ledger already enforces on sync_history's distribution.
+      // Appended, same no-migration contract as every block above: a row written before this
+      // existed reads back undefined, which means "unknown", not "the current rule".
+      "aars_rule_version"
     ],
     [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
     [TABS.issues]: [
@@ -7818,7 +7825,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "6ad5f2f99f46" : "dev";
+  var BUILD_ID = true ? "0b24d714567d" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8167,17 +8174,17 @@ var Server = (() => {
     }
     const id = projectId.trim();
     const known = /* @__PURE__ */ new Set();
-    const unattributed = /* @__PURE__ */ new Set();
+    const unattributed2 = /* @__PURE__ */ new Set();
     const direct = /* @__PURE__ */ new Set();
     for (const a of assets) {
       known.add(a.id);
-      if (!attributed(a)) unattributed.add(a.id);
+      if (!attributed(a)) unattributed2.add(a.id);
       if (inProject(a.projects, id)) direct.add(a.id);
     }
     const attached = /* @__PURE__ */ new Set();
     for (const e of edges2) {
-      if (direct.has(e.src) && unattributed.has(e.dst) && known.has(e.dst)) attached.add(e.dst);
-      if (direct.has(e.dst) && unattributed.has(e.src) && known.has(e.src)) attached.add(e.src);
+      if (direct.has(e.src) && unattributed2.has(e.dst) && known.has(e.dst)) attached.add(e.dst);
+      if (direct.has(e.dst) && unattributed2.has(e.src) && known.has(e.src)) attached.add(e.src);
     }
     const keep = new Set(direct);
     for (const attachedId of attached) keep.add(attachedId);
@@ -8234,7 +8241,7 @@ var Server = (() => {
     return raw;
   }
   function assetToRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C;
     return {
       id: n.id,
       kind: n.kind,
@@ -8269,19 +8276,21 @@ var Server = (() => {
       severity: (_n = n.severity) != null ? _n : null,
       aars: (_o = n.aars) != null ? _o : null,
       aars_severity: (_p = n.aarsSeverity) != null ? _p : null,
+      // `?? null` so an unstamped node stays unstamped rather than being claimed for rule 0.
+      aars_rule_version: (_q = n.aarsRuleVersion) != null ? _q : null,
       aars_pillars_json: n.aarsPillars ? JSON.stringify(n.aarsPillars) : null,
       aars_input_json: n.aarsInput ? JSON.stringify(n.aarsInput) : null,
-      combo_groups: ((_q = n.comboGroups) != null ? _q : []).join(","),
+      combo_groups: ((_r = n.comboGroups) != null ? _r : []).join(","),
       tags_json: n.tags ? JSON.stringify(n.tags) : null,
-      identity_purpose: (_r = n.identityPurpose) != null ? _r : null,
+      identity_purpose: (_s = n.identityPurpose) != null ? _s : null,
       issue_analytics_json: n.issueAnalytics ? JSON.stringify(n.issueAnalytics) : null,
       // `?? null` rather than `?? 0`: a store the traversal never reached must read back as
       // undefined, not as "zero findings". The graph draws no aggregate for either, but the
       // pillar-C knob and the DSPM coverage state both need to tell them apart.
-      data_finding_count: (_s = n.dataFindingCount) != null ? _s : null,
+      data_finding_count: (_t = n.dataFindingCount) != null ? _t : null,
       data_findings_json: n.dataFindingSeverities ? JSON.stringify(n.dataFindingSeverities) : null,
-      exposure_level: (_t = n.exposureLevel) != null ? _t : null,
-      port_validation: (_u = n.portValidation) != null ? _u : null,
+      exposure_level: (_u = n.exposureLevel) != null ? _u : null,
+      port_validation: (_v = n.portValidation) != null ? _v : null,
       // `null` rather than `"{}"` when there is no evidence, and rowToAsset reads it back as
       // undefined: an asset the exposure steps never reached must not become one they reached
       // and found clean. conditionState falls through to the flags for the first and would
@@ -8290,17 +8299,17 @@ var Server = (() => {
       // `?? null`, never `?? false`: an identity row the tenant reported no dormancy for must
       // read back as undefined. "Not reported" and "in use" are different answers.
       inactive: n.inactive === void 0 ? null : boolCell(n.inactive),
-      inactive_timeframe: (_v = n.inactiveTimeframe) != null ? _v : null,
+      inactive_timeframe: (_w = n.inactiveTimeframe) != null ? _w : null,
       human_access_json: n.humanAccess ? JSON.stringify(n.humanAccess) : null,
-      display_name: (_w = n.displayName) != null ? _w : null,
-      email: (_x = n.email) != null ? _x : null,
-      publisher: (_y = n.publisher) != null ? _y : null,
-      discovery_methods: ((_z = n.discoveryMethods) != null ? _z : []).join(","),
+      display_name: (_x = n.displayName) != null ? _x : null,
+      email: (_y = n.email) != null ? _y : null,
+      publisher: (_z = n.publisher) != null ? _z : null,
+      discovery_methods: ((_A = n.discoveryMethods) != null ? _A : []).join(","),
       // Phase 6: the Asset Posture Tier — `?? null`, never a default: a synthetic node, or a
       // real one the fold never reached, must read back as undefined rather than as tier 0.
-      posture_tier: (_A = n.postureTier) != null ? _A : null,
+      posture_tier: (_B = n.postureTier) != null ? _B : null,
       posture_input_json: n.postureInput ? JSON.stringify(n.postureInput) : null,
-      worst_open_problem: (_B = n.worstOpenProblem) != null ? _B : null
+      worst_open_problem: (_C = n.worstOpenProblem) != null ? _C : null
     };
   }
   function rowToAsset(r) {
@@ -8339,6 +8348,10 @@ var Server = (() => {
     if (pillars) node2.aarsPillars = pillars;
     const aarsInput = parseJson(r["aars_input_json"], null);
     if (aarsInput) node2.aarsInput = aarsInput;
+    const ruleVersion = Number(r["aars_rule_version"]);
+    if (r["aars_rule_version"] !== "" && r["aars_rule_version"] !== null && r["aars_rule_version"] !== void 0 && Number.isFinite(ruleVersion)) {
+      node2.aarsRuleVersion = ruleVersion;
+    }
     const combos = String((_o = r["combo_groups"]) != null ? _o : "");
     if (combos) node2.comboGroups = combos.split(",").filter(Boolean);
     const tags = parseJson(r["tags_json"], null);
@@ -8827,7 +8840,11 @@ var Server = (() => {
       problemRuleVersion
     );
     const { version: postureRuleVersion, rule: postureRule } = getPostureRule2();
-    const postured = withPostureTiers(enriched, decidedIssues, decidedFindings, postureRule);
+    const posturedRaw = withPostureTiers(enriched, decidedIssues, decidedFindings, postureRule);
+    const postured = {
+      ...posturedRaw,
+      nodes: posturedRaw.nodes.map((n) => ({ ...n, aarsRuleVersion: ruleVersion }))
+    };
     const assetNodes = realNodes(postured.nodes);
     const assetEdges = postured.edges.filter((e) => e.type !== "HAS_ISSUE");
     overwrite(TABS.assets, assetNodes.map(assetToRow));
@@ -8877,21 +8894,67 @@ var Server = (() => {
   }
   function rescoreInventory() {
     const { version, rule } = getAarsRule2();
+    const view = getProjectView2();
     const enriched = enrichFromTabs(rule);
     if (!enriched) {
       setScoredRuleVersion(version);
-      return { version, assetCount: 0, counts: countAarsSeverities([]) };
+      return { version, assetCount: 0, counts: countAarsSeverities([]), scope: view, untouched: 0 };
     }
-    const assetNodes = realNodes(enriched.nodes);
+    const rescored = realNodes(enriched.nodes).map(
+      (n) => ({ ...n, aarsRuleVersion: version })
+    );
+    const kept = view ? rescored.filter((n) => inProject(n.projects, view)) : rescored;
+    const untouched = rescored.length - kept.length;
+    let assetNodes;
+    let doc = enriched;
+    if (!view) {
+      assetNodes = rescored;
+    } else {
+      const priorById = new Map(loadAssets().map((a) => [a.id, a]));
+      const keptIds = new Set(kept.map((n) => n.id));
+      assetNodes = rescored.map((n) => {
+        var _a5;
+        return keptIds.has(n.id) ? n : (_a5 = priorById.get(n.id)) != null ? _a5 : n;
+      });
+      const mergedById = new Map(assetNodes.map((n) => [n.id, n]));
+      doc = {
+        ...enriched,
+        nodes: enriched.nodes.map((n) => {
+          var _a5;
+          return (_a5 = mergedById.get(n.id)) != null ? _a5 : n;
+        })
+      };
+    }
     overwrite(TABS.assets, assetNodes.map(assetToRow));
-    writeGraphSnapshot(enriched);
-    setScoredRuleVersion(version);
+    writeGraphSnapshot(doc);
+    setScoredRuleVersion(oldestRuleVersion(assetNodes, version));
     commit();
     return {
       version,
-      assetCount: assetNodes.length,
-      counts: countAarsSeverities(enriched.nodes)
+      assetCount: kept.length,
+      counts: countAarsSeverities(doc.nodes),
+      scope: view,
+      untouched
     };
+  }
+  function oldestRuleVersion(nodes, fallback) {
+    var _a5;
+    if (!nodes.length) return fallback;
+    let oldest = Infinity;
+    for (const n of nodes) oldest = Math.min(oldest, (_a5 = n.aarsRuleVersion) != null ? _a5 : 0);
+    return Number.isFinite(oldest) ? oldest : fallback;
+  }
+  function aarsVersionSpread() {
+    var _a5, _b;
+    const byVersion = /* @__PURE__ */ new Map();
+    for (const a of loadAssets()) {
+      const v = (_a5 = a.aarsRuleVersion) != null ? _a5 : null;
+      byVersion.set(v, ((_b = byVersion.get(v)) != null ? _b : 0) + 1);
+    }
+    return [...byVersion.entries()].map(([version, assets]) => ({ version, assets })).sort((x, y) => {
+      var _a6, _b2;
+      return ((_a6 = y.version) != null ? _a6 : -1) - ((_b2 = x.version) != null ? _b2 : -1);
+    });
   }
   function scoreAssetsWith(rule) {
     const enriched = enrichFromTabs(rule);
@@ -10255,6 +10318,7 @@ var Server = (() => {
     var _a5;
     const prior = /* @__PURE__ */ new Map();
     for (const m of (_a5 = before == null ? void 0 : before.measures) != null ? _a5 : []) prior.set(m.key, m);
+    const scopeChanged = before !== null && before.scope !== void 0 && after.scope !== void 0 && before.scope !== after.scope;
     return after.measures.map((m) => {
       const b = prior.get(m.key);
       const beforeVal = b ? b.value : null;
@@ -10282,9 +10346,13 @@ var Server = (() => {
         rateDeltaPct,
         verdict,
         rising: m.rising,
-        ...m.confound ? { confound: m.confound } : {}
+        ...confoundFor(m, scopeChanged) ? { confound: confoundFor(m, scopeChanged) } : {}
       };
     });
+  }
+  function confoundFor(m, scopeChanged) {
+    if (!scopeChanged) return m.confound;
+    return m.confound ? `${SCOPE_CONFOUND}; also: ${m.confound}` : SCOPE_CONFOUND;
   }
   function unconfounded(deltas) {
     return deltas.filter((d) => !d.confound && d.rising !== "neither");
@@ -10294,6 +10362,7 @@ var Server = (() => {
   }
   var SIGNAL_CONFOUND = "rises on the diagnostic's own boolean fix alone \u2014 not evidence any traversal ran";
   var AARS_CONFOUND = "also moves when MISSING_GUARDRAIL starts being collected \u2014 a query fix, not an edge fix";
+  var SCOPE_CONFOUND = "the sync's project scope changed between these snapshots \u2014 a population change, not a collection change; nothing here is evidence either way";
   var AXIS_LABELS = {
     exploitation: "Axis known \xB7 exploitation",
     impact: "Axis known \xB7 technical impact",
@@ -10411,7 +10480,14 @@ var Server = (() => {
         confound: SIGNAL_CONFOUND
       });
     }
-    return { at: input.at, ...input.syncId ? { syncId: input.syncId } : {}, measures: m };
+    return {
+      at: input.at,
+      ...input.syncId ? { syncId: input.syncId } : {},
+      // Recorded even when it is "" (tenant-wide), because "" and `undefined` are different
+      // claims: one says the scope was read and was empty, the other says nobody looked.
+      ...input.scope !== void 0 ? { scope: input.scope } : {},
+      measures: m
+    };
   }
 
   // src/server/diagnostics.ts
@@ -10774,8 +10850,9 @@ var Server = (() => {
     log("  \xB7 REJECTED means the tenant refused the document \u2014 the message names the token its");
     log("    schema does not have, and the fix is this app's query, not your permissions.");
     log("  \xB7 ok with 0 rows means the query was accepted and matched nothing. Check the echoed");
-    log("    `variables.projectId` and `variables.query.type` before concluding anything: the");
-    log("    mandatory inventory query is tenant-wide while these steps are project-scoped.");
+    log("    `variables.projectId` and `variables.query.type` before concluding anything: every");
+    log("    step now honours WIZ_PROJECT_ID_V2, the inventory included, so a scoped 0 is a");
+    log("    statement about that project and not about the tenant.");
     log("  \xB7 ok with rows but 0 normalized edges means the query works and the NORMALIZER is");
     log("    dropping what came back \u2014 read `sample` for the entity types the tenant returned.");
     log("=== end ===");
@@ -10855,7 +10932,7 @@ var Server = (() => {
     return { entities: [...entities].sort(), edges: [...edges2].sort() };
   }
   function currentSnapshot() {
-    var _a5;
+    var _a5, _b, _c;
     const assets = loadAssets();
     const reach = estateReach({
       assets,
@@ -10886,6 +10963,10 @@ var Server = (() => {
     return buildSnapshot({
       at: (_a5 = toIso(Date.now())) != null ? _a5 : "",
       ...last && last["sync_id"] ? { syncId: String(last["sync_id"]) } : {},
+      // What the SYNC was scoped to, not what the sidebar is showing — every measure below is
+      // read off the raw ledger. A change here moves all of them at once, and compareSnapshots
+      // confounds the whole delta rather than crediting the collection for it.
+      scope: (_c = (_b = projectScope()) == null ? void 0 : _b[0]) != null ? _c : "",
       reach,
       aars,
       edgeRows,
@@ -13740,6 +13821,47 @@ var Server = (() => {
     };
   }
 
+  // src/domain/graphScope.ts
+  function unattributed(n) {
+    var _a5;
+    return ((_a5 = n.projects) != null ? _a5 : []).length === 0;
+  }
+  function scopeGraphDoc(doc, projectId) {
+    var _a5;
+    if (!projectId) return doc;
+    const keep = /* @__PURE__ */ new Set();
+    const open = [];
+    for (const n of doc.nodes) {
+      if (inProject(n.projects, projectId)) {
+        keep.add(n.id);
+        open.push(n.id);
+      }
+    }
+    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
+    const adjacency2 = /* @__PURE__ */ new Map();
+    const link = (from, to) => {
+      const seen = adjacency2.get(from);
+      if (seen) seen.push(to);
+      else adjacency2.set(from, [to]);
+    };
+    for (const e of doc.edges) {
+      link(e.src, e.dst);
+      link(e.dst, e.src);
+    }
+    while (open.length) {
+      for (const nextId of (_a5 = adjacency2.get(open.pop())) != null ? _a5 : []) {
+        if (keep.has(nextId)) continue;
+        const next = byId.get(nextId);
+        if (!next || !unattributed(next)) continue;
+        keep.add(nextId);
+        open.push(nextId);
+      }
+    }
+    const nodes = doc.nodes.filter((n) => keep.has(n.id));
+    const edges2 = doc.edges.filter((e) => keep.has(e.src) && keep.has(e.dst));
+    return { nodes, edges: edges2, syncedAt: doc.syncedAt };
+  }
+
   // src/domain/graphQuery.ts
   function kindsOf(node2) {
     return Array.isArray(node2.kind) ? node2.kind : [node2.kind];
@@ -14790,6 +14912,17 @@ var Server = (() => {
     for (const a of viewAssets()) ids.add(a.id);
     return ids;
   }
+  var graphDocMemo2 = null;
+  function viewGraphDoc() {
+    const view = getProjectView2();
+    const raw = loadGraphDoc();
+    if (graphDocMemo2 && graphDocMemo2.view === view && graphDocMemo2.raw === raw) {
+      return graphDocMemo2.doc;
+    }
+    const doc = raw ? scopeGraphDoc(raw, view) : null;
+    graphDocMemo2 = { view, raw, doc };
+    return doc;
+  }
   function viewIssues() {
     const ids = viewAssetIds();
     const all = loadIssues();
@@ -14993,7 +15126,7 @@ var Server = (() => {
       const params = p != null ? p : {};
       return cached("getGraph", graphCacheParams(params), () => {
         var _a5;
-        const doc = loadGraphDoc();
+        const doc = viewGraphDoc();
         if (!doc) return { empty: true };
         const options = resolveGraphParams(params, {
           defaultDepth: getDefaultDepth2(),
@@ -15034,7 +15167,7 @@ var Server = (() => {
     const kind = typeof raw === "string" && (raw === "ANY" || NODE_KINDS.includes(raw)) ? raw : null;
     return run(
       () => cached("queryVocabulary", { kind }, () => {
-        const doc = loadGraphDoc();
+        const doc = viewGraphDoc();
         if (!doc) {
           return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
         }
@@ -15077,7 +15210,7 @@ var Server = (() => {
         MAX_NODES_CEILING
       );
       return cached("graphQuery", { query, columns, view, maxNodes }, () => {
-        const doc = loadGraphDoc();
+        const doc = viewGraphDoc();
         if (!doc) return { empty: true };
         const result = runQuery(doc, query, { columns });
         const projection = inducedProjection(doc, result, maxNodes);
@@ -15262,6 +15395,12 @@ var Server = (() => {
       assets,
       issues: viewIssues(),
       findings: viewFindings(),
+      // Unscoped ON PURPOSE, beside three scoped siblings — it reads as an oversight otherwise.
+      // Reach uses edges for two things and both want the whole set. The per-asset "was this
+      // ever walked" test is a join against ids already inside the view, so extra edges cannot
+      // widen it. And the edge-type census asks which relationship types the sync produced AT
+      // ALL: scoped, a type would be reported `dead` merely because this one project has none,
+      // which is the exact false finding reach.ts's populated/dead split exists to prevent.
       edges: loadEdges()
     });
     const assetIds = {};
@@ -15500,7 +15639,7 @@ var Server = (() => {
         const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
         const node2 = nodeById.get(id);
         if (!node2) return null;
-        const issues2 = openIssues().filter((i) => i.assetId === id);
+        const issues2 = loadIssues().filter(isUnresolvedIssue).filter((i) => i.assetId === id);
         const neighbors = [];
         for (const edge2 of doc.edges) {
           if (edge2.src !== id && edge2.dst !== id) continue;
@@ -15543,7 +15682,7 @@ var Server = (() => {
   }
   function aiAssetIdSet() {
     const ids = {};
-    for (const a of viewAssets()) ids[a.id] = true;
+    for (const a of loadAssets()) ids[a.id] = true;
     return ids;
   }
   function scopedFrameworkPolicies() {
@@ -15552,7 +15691,7 @@ var Server = (() => {
     const catalogue = loadFrameworks();
     const scope = scopeFiveRs(
       buildAllFrameworkTrees(posture, allPolicies, catalogue),
-      viewFindings(),
+      loadFindings(),
       aiAssetIdSet(),
       getFiveRsPins2()
     );
@@ -15644,7 +15783,7 @@ var Server = (() => {
       return cached("getConfigFindingDetail", { id }, () => {
         const finding = loadFindings().filter((f) => f.id === id)[0];
         if (!finding) return null;
-        const asset = viewAssets().filter((a) => a.id === finding.resourceId)[0];
+        const asset = loadAssets().filter((a) => a.id === finding.resourceId)[0];
         return {
           finding,
           gap: isOpenGap(finding),
@@ -16062,6 +16201,13 @@ var Server = (() => {
       // Only the point model can strand the persisted scores; bands re-derive on read, and
       // setAarsRule carries the marker forward across a band-only edit.
       stale: scoredVersion !== stored.version,
+      // How many assets sit at each rule version. One entry is the ordinary state; more than
+      // one means a scoped rescore left the register holding scores from two rules, and those
+      // are not on the same scale — the same reason sync_history stamps every distribution
+      // with the version that produced it. The page has to be able to say so, because a
+      // percentile or a band count drawn across a mixed register compares two different
+      // measurements. A sync, or a rescore with no project selected, collapses it back to one.
+      versionSpread: aarsVersionSpread(),
       bandRanges: bandRanges(stored.rule.bands),
       limits: {
         pointsMax: POINTS_MAX,

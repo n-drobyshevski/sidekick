@@ -3,7 +3,7 @@
 import { call, } from "../api.js";
 import { bootstrapCached, swrCall } from "../store.js";
 import {
-  clear, confirmDialog, el, emptyState, fmtDateTime, prunePanel,
+  clear, confirmDialog, el, emptyState, fmtDateTime, prunePanel, registerWideNote,
   sectionLabel, skeleton, statusPill, toast,
 } from "../ui.js";
 
@@ -93,6 +93,9 @@ export async function renderData(main, _params, ctx) {
       historyHost.append(emptyState("No syncs yet."));
       return;
     }
+    // A sync is a register-wide operation and its row records register-wide totals.
+    historyHost.append(
+      registerWideNote(bootstrapCached(), "a sync collects for the whole register"));
     const tbody = el("tbody", {});
     for (const row of payload.rows) {
       tbody.append(el("tr", {},
@@ -127,7 +130,11 @@ export async function renderData(main, _params, ctx) {
 
   function paintStats(stats) {
     clear(statsHost);
+    // Storage is the ledger's own size, and this page carries the control that wipes it.
+    // Scoping any of it would be actively wrong: someone checking headroom against the 10M
+    // cell ceiling, or about to clear everything, has to see everything.
     statsHost.append(
+      registerWideNote(bootstrapCached(), "storage describes the ledger, not a project"),
       el("div", { class: "kpi-row" },
         el("div", { class: "kpi-card" },
           el("div", { class: "kpi-label" }, "Spreadsheet cells"),

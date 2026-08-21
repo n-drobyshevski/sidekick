@@ -45,7 +45,7 @@ import { OTHER_GROUP_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
 import { countAarsSeverities } from "../domain/aarsTrend";
 import { midrankPercentiles } from "../domain/rankStats";
-import { planPrune, type PruneCensus } from "../domain/prunePlan";
+import { inProject, planPrune, type PruneCensus } from "../domain/prunePlan";
 import { nowIso, type Rec } from "../domain/util";
 import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot } from "./archiveStore";
 import { bumpDataVersion, bumpWizDataVersion } from "./serverCache";
@@ -147,6 +147,8 @@ export function assetToRow(n: GNode): Rec {
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aars_severity: n.aarsSeverity ?? null,
+    // `?? null` so an unstamped node stays unstamped rather than being claimed for rule 0.
+    aars_rule_version: n.aarsRuleVersion ?? null,
     aars_pillars_json: n.aarsPillars ? JSON.stringify(n.aarsPillars) : null,
     aars_input_json: n.aarsInput ? JSON.stringify(n.aarsInput) : null,
     combo_groups: (n.comboGroups ?? []).join(","),
@@ -221,6 +223,13 @@ export function rowToAsset(r: Rec): GNode {
   if (pillars) node.aarsPillars = pillars;
   const aarsInput = parseJson<GNode["aarsInput"] | null>(r["aars_input_json"], null);
   if (aarsInput) node.aarsInput = aarsInput;
+  // Only when the cell holds a real number. A row written before this column existed reads
+  // back undefined — unknown, not "the current rule" and not 0.
+  const ruleVersion = Number(r["aars_rule_version"]);
+  if (r["aars_rule_version"] !== "" && r["aars_rule_version"] !== null
+      && r["aars_rule_version"] !== undefined && Number.isFinite(ruleVersion)) {
+    node.aarsRuleVersion = ruleVersion;
+  }
   const combos = String(r["combo_groups"] ?? "");
   if (combos) node.comboGroups = combos.split(",").filter(Boolean);
   const tags = parseJson<GNode["tags"] | null>(r["tags_json"], null);
@@ -846,7 +855,15 @@ export function persistSync(
   // `enriched.nodes` for the same "freshest businessImpact / exposure join" reason
   // `withProblemVerdicts` does above it.
   const { version: postureRuleVersion, rule: postureRule } = settingsStore.getPostureRule();
-  const postured = withPostureTiers(enriched, decidedIssues, decidedFindings, postureRule);
+  const posturedRaw = withPostureTiers(enriched, decidedIssues, decidedFindings, postureRule);
+
+  // Stamp the rule that produced these scores onto every node, tab and snapshot alike. A sync
+  // scores the whole register in one pass, so this is also what HEALS a register left holding
+  // two versions by a scoped rescore: after a sync there is exactly one version again.
+  const postured: GraphDoc = {
+    ...posturedRaw,
+    nodes: posturedRaw.nodes.map((n) => ({ ...n, aarsRuleVersion: ruleVersion })),
+  };
 
   // Tabs hold the real (non-synthetic) nodes; ISSUE nodes are derivable from ai_issues.
   const assetNodes = realNodes(postured.nodes);
@@ -939,26 +956,95 @@ export function rescoreInventory(): {
   version: number;
   assetCount: number;
   counts: Record<string, number>;
+  /** The project the write was limited to, "" when the whole register was rescored. */
+  scope: string;
+  /** Assets left on an older rule — non-zero only after a scoped rescore. */
+  untouched: number;
 } {
   const { version, rule } = settingsStore.getAarsRule();
+  const view = settingsStore.getProjectView();
   const enriched = enrichFromTabs(rule);
   if (!enriched) {
     settingsStore.setScoredRuleVersion(version);
-    return { version, assetCount: 0, counts: countAarsSeverities([]) };
+    return { version, assetCount: 0, counts: countAarsSeverities([]), scope: view, untouched: 0 };
   }
 
   // Same split as persistSync: the tabs hold the real nodes, ISSUE nodes stay derivable.
-  const assetNodes = realNodes(enriched.nodes);
-  overwrite(TABS.assets, assetNodes.map(assetToRow));
-  writeGraphSnapshot(enriched);
+  const rescored = realNodes(enriched.nodes).map(
+    (n) => ({ ...n, aarsRuleVersion: version }) as GNode,
+  );
 
-  settingsStore.setScoredRuleVersion(version);
+  // ENRICH WIDE, WRITE NARROW. The re-derivation has to run over the whole register even
+  // when the write will not: pillar inputs cross assets (host-exposure inheritance is the
+  // clearest case), so enriching only the in-view subset would score those assets against a
+  // truncated graph and produce numbers that differ from a full rescore of the same rule.
+  const kept = view ? rescored.filter((n) => inProject(n.projects, view)) : rescored;
+  const untouched = rescored.length - kept.length;
+
+  let assetNodes: GNode[];
+  let doc = enriched;
+  if (!view) {
+    assetNodes = rescored;
+  } else {
+    // Merge: out-of-view rows keep the score AND the version they already had. Reading the
+    // prior rows before the write is what makes this a merge rather than a partial wipe.
+    const priorById = new Map(loadAssets().map((a) => [a.id, a]));
+    const keptIds = new Set(kept.map((n) => n.id));
+    assetNodes = rescored.map((n) => (keptIds.has(n.id) ? n : priorById.get(n.id) ?? n));
+    // The snapshot has to agree with the tab. `registerScopeDiagnostic` treats a snapshot
+    // that disagrees with the ledger as a finding in its own right, so a merged tab and a
+    // fully-rescored snapshot would be a self-inflicted one.
+    const mergedById = new Map(assetNodes.map((n) => [n.id, n]));
+    doc = {
+      ...enriched,
+      nodes: enriched.nodes.map((n) => mergedById.get(n.id) ?? n),
+    };
+  }
+
+  overwrite(TABS.assets, assetNodes.map(assetToRow));
+  writeGraphSnapshot(doc);
+
+  // The global marker is now the OLDEST version any asset carries, not simply the version
+  // just written. It drives the "scores are stale" badge, and after a scoped rescore the
+  // register really is partly behind — reporting the new version would say the opposite.
+  // `undefined` (a row predating the column) is unknown and cannot be assumed current, so it
+  // holds the marker back too.
+  settingsStore.setScoredRuleVersion(oldestRuleVersion(assetNodes, version));
   commit();
   return {
     version,
-    assetCount: assetNodes.length,
-    counts: countAarsSeverities(enriched.nodes),
+    assetCount: kept.length,
+    counts: countAarsSeverities(doc.nodes),
+    scope: view,
+    untouched,
   };
+}
+
+/**
+ * The oldest rule version present, or `fallback` on an empty register.
+ *
+ * An asset with no recorded version pins this to 0: it was scored by SOME rule nobody wrote
+ * down, which is exactly the state the staleness badge should keep flagging until a sync or a
+ * full rescore stamps every row.
+ */
+function oldestRuleVersion(nodes: readonly GNode[], fallback: number): number {
+  if (!nodes.length) return fallback;
+  let oldest = Infinity;
+  for (const n of nodes) oldest = Math.min(oldest, n.aarsRuleVersion ?? 0);
+  return Number.isFinite(oldest) ? oldest : fallback;
+}
+
+/** How many assets sit at each AARS rule version — empty until a scoped rescore mixes them. */
+export function aarsVersionSpread(): Array<{ version: number | null; assets: number }> {
+  const byVersion = new Map<number | null, number>();
+  for (const a of loadAssets()) {
+    const v = a.aarsRuleVersion ?? null;
+    byVersion.set(v, (byVersion.get(v) ?? 0) + 1);
+  }
+  return [...byVersion.entries()]
+    .map(([version, assets]) => ({ version, assets }))
+    // Newest first, with the unstamped rows last — they are the least current thing here.
+    .sort((x, y) => (y.version ?? -1) - (x.version ?? -1));
 }
 
 /**

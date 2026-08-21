@@ -55,12 +55,14 @@ import {
   skeleton,
   statusPill,
   rowDrag,
+  registerWideNote,
   ruleGrip,
   tierBadge,
   toast,
   tokenList,
   uiIcon,
 } from "../ui.js";
+import { bootstrapCached } from "../store.js";
 import { POSTURE_LATTICE, PROBLEM_LATTICE, toneForKey } from "../lattice.js";
 import {
   OUTCOME_VALUES,
@@ -1204,6 +1206,8 @@ export async function renderAarsRules(main, _params, ctx) {
 
   impact.append(
     el("h2", { class: "section-label" }, "Impact on the current inventory"),
+      registerWideNote(bootstrapCached(),
+        "a rule preview has to answer for every asset it would rescore"),
     impactState,
     impactStrip,
     impactHeadline,
@@ -1787,8 +1791,14 @@ export async function renderAarsRules(main, _params, ctx) {
 
     // --- toolbar
     setText(versionPill, state.version === 0 ? "Spec defaults" : `Model v${state.version}`);
-    scorePill.className = `pill ${state.stale ? "warn" : "ok"}`;
-    setText(scorePill, state.stale ? "Scores stale" : "Scores current");
+    // Three states, not two. A register holding two rule versions is stale AND incomparable:
+    // scores computed under different rules are not on the same scale, so a band count or a
+    // percentile drawn across them measures two things at once. "Stale" alone would say the
+    // register is merely behind, which understates it.
+    const mixed = (state.versionSpread || []).length > 1;
+    scorePill.className = `pill ${state.stale || mixed ? "warn" : "ok"}`;
+    setText(scorePill, mixed ? "Scores mixed"
+      : state.stale ? "Scores stale" : "Scores current");
     clear(dirtyHost);
     if (isDirty()) dirtyHost.append(statusPill("warn", "Unsaved changes"));
     revertBtn.disabled = !isDirty() || saving;
@@ -1800,18 +1810,39 @@ export async function renderAarsRules(main, _params, ctx) {
   }
 
   function syncRecompute() {
-    const want = state.stale ? "1" : "0";
+    const spread = state.versionSpread || [];
+    const scope = (bootstrapCached() || {}).scope || {};
+    const view = scope.projectView || "";
+    // The signature has to carry everything the block renders, or a change of view or of the
+    // version split would leave the previous render in place.
+    const want = `${state.stale ? 1 : 0}|${spread.length}|${view}`;
     if (recomputeHost.dataset.sig === want) return;
     recomputeHost.dataset.sig = want;
     clear(recomputeHost);
+    if (spread.length > 1) {
+      // Named in full rather than summarised as "mixed": which rule scored how many assets is
+      // the fact an operator needs to decide whether to finish the job.
+      recomputeHost.append(el("p", { class: "small muted" },
+        "This register holds scores from more than one rule — "
+        + spread.map((e) => `${e.version === null ? "unrecorded" : `v${e.version}`}: `
+          + `${e.assets} ${e.assets === 1 ? "asset" : "assets"}`).join(" · ")
+        + ". Scores from different rules are not on the same scale; recompute with no project "
+        + "selected, or sync, to bring the whole register onto one."));
+    }
     if (!state.stale) return;
-    const btn = el("button", {}, "Recompute scores");
+    const btn = el("button", {},
+      view ? "Recompute scores in view" : "Recompute scores");
     btn.addEventListener("click", async () => {
       const ok = await confirmDialog({
-        title: "Recompute every AARS score?",
-        body:
-          "Re-scores the whole inventory under the saved rule and rewrites the asset table " +
-          "and the graph snapshot. No sync history row is written, so the trend is left alone.",
+        title: view ? "Recompute scores for this project?" : "Recompute every AARS score?",
+        body: (view
+          ? "Re-scores only the assets in the current project view. The rest of the register "
+            + "keeps the scores it has, so the register will hold two rule versions at once "
+            + "and scores will not be comparable across them until you recompute with no "
+            + "project selected, or sync. "
+          : "Re-scores the whole inventory under the saved rule. ")
+          + "Rewrites the asset table and the graph snapshot. No sync history row is written, "
+          + "so the trend is left alone.",
         confirmLabel: "Recompute",
       });
       if (!ok) return;
@@ -1821,7 +1852,9 @@ export async function renderAarsRules(main, _params, ctx) {
         const fresh = await call("api_rescoreAars", {});
         state = { ...state, ...fresh };
         saved = cloneRule(state.rule);
-        toast(`Rescored ${fresh.assetCount} assets.`);
+        toast(fresh.untouched
+          ? `Rescored ${fresh.assetCount} assets — ${fresh.untouched} left on an older rule.`
+          : `Rescored ${fresh.assetCount} assets.`);
         sync();
         schedulePreview();
         ctx.refresh();
@@ -2915,6 +2948,8 @@ export async function renderAarsRules(main, _params, ctx) {
       { class: "rule-impact" },
       pLiveNote,
       el("h2", { class: "section-label" }, "Impact on open issues and findings"),
+      registerWideNote(bootstrapCached(),
+        "a rule preview has to answer for every asset it would rescore"),
       pImpactState,
       pImpactStrip,
       pImpactHeadline,
@@ -3733,6 +3768,8 @@ export async function renderAarsRules(main, _params, ctx) {
       { class: "rule-impact" },
       uLiveNote,
       el("h2", { class: "section-label" }, "Impact on the persisted landscape"),
+      registerWideNote(bootstrapCached(),
+        "a rule preview has to answer for every asset it would rescore"),
       uImpactState,
       uImpactStrip,
       uImpactHeadline,

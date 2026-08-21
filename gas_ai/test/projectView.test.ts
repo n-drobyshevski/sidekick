@@ -161,6 +161,102 @@ describe("the project view", () => {
     expect((detail["issue"] as Rec | null)?.["id"]).toBe(anyIssue["id"]);
   });
 
+  it("answers a by-id asset sheet in full, even for an asset out of view", () => {
+    // The sharpest failure this feature can have. The sheet opens from unscoped surfaces too —
+    // a graph neighbour, a bookmark, a shared link — and a scoped issue list renders an
+    // out-of-view asset as having NO issues. "Nothing wrong with this asset" and "not in the
+    // project you are looking at" must never share a rendering in a security tool.
+    setView("");
+    const withIssues = (ok<Rec>(server.api.getIssues({}))["rows"] as Rec[])[0];
+    const assetId = String(withIssues["assetId"]);
+    const wide = ok<Rec>(server.api.getAssetDetail({ id: assetId }));
+    expect((wide["issues"] as unknown[]).length).toBeGreaterThan(0);
+
+    // A view that holds nothing at all — the strongest form of "out of view".
+    setView("proj-not-in-this-register");
+    const scoped = ok<Rec>(server.api.getAssetDetail({ id: assetId }));
+    expect(scoped["node"]).toBeTruthy();
+    expect((scoped["issues"] as unknown[]).length).toBe((wide["issues"] as unknown[]).length);
+    expect((scoped["neighbors"] as unknown[]).length).toBe((wide["neighbors"] as unknown[]).length);
+    expect((scoped["findings"] as unknown[]).length).toBe((wide["findings"] as unknown[]).length);
+  });
+
+  it("keeps a config finding's asset attached when the finding is out of view", () => {
+    // The handler's own comment promises "lists narrow; links do not break". A scoped asset
+    // join breaks them quietly: the finding resolves, but comes back with `asset: null`, which
+    // this pane already uses to mean "no AI asset models this resource".
+    setView("");
+    const linked = (ok<Rec>(server.api.getConfigFindings({}))["rows"] as Rec[])
+      .find((r) => r["onAiAsset"] === true || r["linked"] === true);
+    expect(linked, "seed has no finding linked to an AI asset").toBeDefined();
+    const findingId = String((linked as Rec)["id"]);
+
+    setView("proj-not-in-this-register");
+    const detail = ok<Rec>(server.api.getConfigFindingDetail({ id: findingId }));
+    expect((detail["finding"] as Rec | null)?.["id"]).toBe(findingId);
+    expect(detail["asset"], "the asset join went missing under a view").toBeTruthy();
+  });
+
+  it("decides the 5Rs scope register-wide, because the pin it drives is register-wide", () => {
+    // The only place a project view reached persisted state. `scopeFiveRs` decides which 5Rs
+    // rules are AI-relevant; the Settings card renders that and its toggle writes a GLOBAL
+    // pin. Scoped, an operator in one project sees "no AI link" for a rule linked in another,
+    // pins it out, and it is pinned out everywhere.
+    //
+    // It also could not be scoped coherently: the pass/fail counts inside the selected rules
+    // are Wiz's tenant-side totals, and PostureRow carries no asset id to filter on.
+    setView("");
+    const wide = ok<Rec>(server.api.getCompliance({}));
+    const wideScope = wide["fiveRsScope"] as Rec | undefined;
+    expect(wideScope, "no fiveRsScope on the compliance payload").toBeDefined();
+
+    for (const view of [LEAF, SMALL, "proj-not-in-this-register"]) {
+      setView(view);
+      const scope = ok<Rec>(server.api.getCompliance({}))["fiveRsScope"] as Rec;
+      expect(scope["selected"], `5Rs scope moved under view ${view}`)
+        .toBe((wideScope as Rec)["selected"]);
+      expect(scope["total"], `5Rs total moved under view ${view}`)
+        .toBe((wideScope as Rec)["total"]);
+    }
+  });
+
+  it("narrows the graph endpoints, not just the graph helper", () => {
+    // The wiring, not the rule. `graphScope.test.ts` proves scopeGraphDoc filters correctly and
+    // says nothing about whether any endpoint calls it — which is the failure this file exists
+    // for: a builder-level test already sat green through a change that bypassed it.
+    setView("");
+    const wide = ok<Rec>(server.api.runGraphQuery({}));
+    const wideNodes = ((wide["graph"] ?? wide) as Rec)["nodes"] as unknown[] | undefined;
+    expect(wideNodes, "runGraphQuery returned no nodes").toBeDefined();
+
+    setView(SMALL);
+    const scoped = ok<Rec>(server.api.runGraphQuery({}));
+    const scopedNodes = ((scoped["graph"] ?? scoped) as Rec)["nodes"] as unknown[];
+    expect(scopedNodes.length).toBeGreaterThan(0);
+    expect(scopedNodes.length).toBeLessThan((wideNodes as unknown[]).length);
+
+    // getGraph has no live client caller today but is live API surface; a divergent twin that
+    // still answers tenant-wide is exactly how this regresses.
+    setView("");
+    const gWide = ok<Rec>(server.api.getGraph({}));
+    setView(SMALL);
+    const gScoped = ok<Rec>(server.api.getGraph({}));
+    expect((gScoped["nodes"] as unknown[]).length)
+      .toBeLessThan((gWide["nodes"] as unknown[]).length);
+  });
+
+  it("stops offering other projects' names in the query vocabulary", () => {
+    // The query builder enumerates field VALUES off the graph. Unscoped it offers every project
+    // in the tenant, each with a register-wide count — a menu of things the current view cannot
+    // contain. (Not to be confused with the switcher's own list, which is register-wide on
+    // purpose so it cannot remove its own alternatives.)
+    setView(SMALL);
+    const vocab = ok<Rec>(server.api.getQueryVocabulary({ kind: "ANY" }));
+    const json = JSON.stringify(vocab);
+    expect(json).not.toContain("PROJECT-BETA");
+    expect(json).not.toContain("PROJECT-ZETA");
+  });
+
   it("leaves the rule previews reading the whole register", () => {
     // A rule preview answers "what would this change?", and the answer is tenant-wide
     // whatever the sidebar is looking at. Scoping it would understate the blast radius of

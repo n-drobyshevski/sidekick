@@ -53,6 +53,18 @@ export interface PostureSnapshot {
   at: string;
   /** The sync whose ledger the measures were read from, when one is known. */
   syncId?: string;
+  /**
+   * The Wiz project the SYNC was scoped to when these measures were read — `WIZ_PROJECT_ID_V2`,
+   * "" for tenant-wide. Not the sidebar's view scope, which never reaches this module: these
+   * measures are read off the raw ledger on purpose.
+   *
+   * Recorded because it is the one change that moves every measure here at once. Scope the
+   * sync to one business unit and the edge rows, every reach stage and the signal count all
+   * drop together, for a reason that has nothing to do with the collection this tool exists to
+   * verify. `undefined` means a snapshot pinned before this was recorded — absent is not
+   * "tenant-wide", so it is not compared against.
+   */
+  scope?: string;
   measures: Measure[];
 }
 
@@ -97,6 +109,13 @@ export function compareSnapshots(
   const prior = new Map<string, Measure>();
   for (const m of before?.measures ?? []) prior.set(m.key, m);
 
+  // Both sides must actually SAY what they were scoped to. A snapshot pinned before the field
+  // existed carries `undefined`, and reading that as "tenant-wide" would invent the very fact
+  // in question — absent is not zero here either.
+  const scopeChanged = before !== null
+    && before.scope !== undefined && after.scope !== undefined
+    && before.scope !== after.scope;
+
   return after.measures.map((m) => {
     const b = prior.get(m.key);
     const beforeVal = b ? b.value : null;
@@ -134,9 +153,18 @@ export function compareSnapshots(
       rateDeltaPct,
       verdict,
       rising: m.rising,
-      ...(m.confound ? { confound: m.confound } : {}),
+      ...(confoundFor(m, scopeChanged) ? { confound: confoundFor(m, scopeChanged) } : {}),
     };
   });
+}
+
+/**
+ * A measure's own confound, the scope confound, or both — the scope one first, because it is
+ * the larger claim: it says the whole comparison is void, where the others qualify one number.
+ */
+function confoundFor(m: Measure, scopeChanged: boolean): string | undefined {
+  if (!scopeChanged) return m.confound;
+  return m.confound ? `${SCOPE_CONFOUND}; also: ${m.confound}` : SCOPE_CONFOUND;
 }
 
 /**
@@ -165,6 +193,8 @@ export function regressions(deltas: readonly MeasureDelta[]): MeasureDelta[] {
 export interface SnapshotInput {
   at: string;
   syncId?: string;
+  /** The sync's project scope at read time — see `PostureSnapshot.scope`. */
+  scope?: string;
   /** `estateReach(...)`'s output — stages, edge census, per-axis known rates. */
   reach: {
     stages: ReadonlyArray<{ key: string; label: string; covered: number; total: number }>;
@@ -206,6 +236,19 @@ const SIGNAL_CONFOUND =
  */
 const AARS_CONFOUND =
   "also moves when MISSING_GUARDRAIL starts being collected — a query fix, not an edge fix";
+
+/**
+ * The third one, and the only one that lands on EVERY measure at once.
+ *
+ * A change to the sync's project scope swaps the population wholesale: two snapshots pinned
+ * across one compare different tenants, and every count moves for that reason alone. So this is
+ * not attached per measure like the two above — `compareSnapshots` stamps it on the whole delta
+ * when the two snapshots disagree about their scope, which is the honest reading: nothing in
+ * that comparison is evidence about collection.
+ */
+export const SCOPE_CONFOUND =
+  "the sync's project scope changed between these snapshots — a population change, not a "
+  + "collection change; nothing here is evidence either way";
 
 const AXIS_LABELS: Record<string, string> = {
   exploitation: "Axis known · exploitation",
@@ -322,5 +365,12 @@ export function buildSnapshot(input: SnapshotInput): PostureSnapshot {
     });
   }
 
-  return { at: input.at, ...(input.syncId ? { syncId: input.syncId } : {}), measures: m };
+  return {
+    at: input.at,
+    ...(input.syncId ? { syncId: input.syncId } : {}),
+    // Recorded even when it is "" (tenant-wide), because "" and `undefined` are different
+    // claims: one says the scope was read and was empty, the other says nobody looked.
+    ...(input.scope !== undefined ? { scope: input.scope } : {}),
+    measures: m,
+  };
 }

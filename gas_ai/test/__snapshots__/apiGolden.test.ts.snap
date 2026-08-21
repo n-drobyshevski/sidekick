@@ -625,6 +625,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "Levels — CRITICAL at 70 and above, HIGH from 50, MEDIUM from 30, LOW from 10, INFO below that. Scores are clamped to 100.",
       ],
       "version": 0,
+      "versionSpread": [],
     },
     "ok": true,
   },
@@ -1115,7 +1116,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getStorageStats": {
     "data": {
       "archiveBytes": 0,
-      "cellCount": 40300,
+      "cellCount": 40400,
       "rows": {
         "assets": 0,
         "dataFindings": 0,
@@ -2232,6 +2233,12 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
       "Levels — CRITICAL at 70 and above, HIGH from 50, MEDIUM from 30, LOW from 10, INFO below that. Scores are clamped to 100.",
     ],
     "version": 0,
+    "versionSpread": [
+      {
+        "assets": 87,
+        "version": 0,
+      },
+    ],
   },
   "ok": true,
 }
@@ -8411,6 +8418,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -8516,6 +8524,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -8623,6 +8632,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -8716,6 +8726,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
@@ -8809,6 +8820,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
@@ -8909,6 +8921,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -8990,6 +9003,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -9060,6 +9074,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -9130,6 +9145,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -9219,6 +9235,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -9346,6 +9363,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -9429,6 +9447,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 8,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "LOW",
         "cloudAccount": {
           "id": "gcp-account-07",
@@ -9505,6 +9524,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 8,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "LOW",
         "cloudAccount": {
           "id": "gcp-account-07",
@@ -9587,6 +9607,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudAccount": {
@@ -9657,6 +9678,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudAccount": {
@@ -9727,6 +9749,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudAccount": {
@@ -9797,6 +9820,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "cloudAccount": {
           "id": "aws-account-prod-01",
@@ -9867,6 +9891,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "cloudAccount": {
           "id": "aws-account-prod-01",
@@ -9937,6 +9962,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "cloudAccount": {
           "id": "aws-account-prod-01",
@@ -10007,6 +10033,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
@@ -10077,6 +10104,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
@@ -10138,6 +10166,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 0,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "INFO",
         "businessImpact": "MBI",
         "cloudAccount": {
@@ -10197,6 +10226,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 0,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "INFO",
         "businessImpact": "LBI",
         "cloudPlatform": "GCP",
@@ -10250,6 +10280,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 0,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "INFO",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -10302,6 +10333,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "exposure": 0,
           "toxic": 0,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "LOW",
         "businessImpact": "HBI",
         "cloudPlatform": "GCP",
@@ -10340,6 +10372,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -10377,6 +10410,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "exposureEvidence": {
           "ports": [
@@ -10423,6 +10457,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "exposureLevel": "High",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -10462,6 +10497,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -10498,6 +10534,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Vertex AI Agent Service Account",
         "email": "sa-agent-a@iam.gserviceaccount.com",
@@ -10537,6 +10574,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Vertex AI Reasoning Agent Identity",
         "email": "sa-agent-b@iam.gserviceaccount.com",
@@ -10576,6 +10614,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-autogen@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -10614,6 +10653,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-d-test@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -10652,6 +10692,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-d@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -10690,6 +10731,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-e@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -10728,6 +10770,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-f@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -10766,6 +10809,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-f-preprod@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -10804,6 +10848,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-g@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -10842,6 +10887,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Support chatbot runtime identity",
         "email": "sa-agent-h-chatbot@iam.gserviceaccount.com",
@@ -10881,6 +10927,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-i@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -10919,6 +10966,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "AWS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -10953,6 +11001,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -10978,6 +11027,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -11005,6 +11055,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -11032,6 +11083,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -11057,6 +11109,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -11082,6 +11135,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -11107,6 +11161,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -11132,6 +11187,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "bedrock-no-guardrail",
         ],
@@ -11142,6 +11198,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11152,6 +11209,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11162,6 +11220,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11172,6 +11231,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11182,6 +11242,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11192,6 +11253,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11202,6 +11264,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11212,6 +11275,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11222,6 +11286,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11232,6 +11297,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11242,6 +11308,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11252,6 +11319,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11262,6 +11330,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -11272,6 +11341,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
@@ -11282,6 +11352,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
@@ -11292,6 +11363,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
@@ -11302,6 +11374,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
@@ -11312,6 +11385,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
@@ -11322,6 +11396,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
@@ -11332,6 +11407,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "other-ai-risk",
         ],
@@ -11342,6 +11418,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "other-ai-risk",
         ],
@@ -11352,6 +11429,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
+        "aarsRuleVersion": 0,
         "comboGroups": [
           "other-ai-risk",
         ],
@@ -17180,8 +17258,8 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 93178,
-    "cellCount": 40300,
+    "archiveBytes": 95558,
+    "cellCount": 40400,
     "rows": {
       "assets": 87,
       "dataFindings": 6,
@@ -18762,6 +18840,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -18855,6 +18934,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -18985,6 +19065,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
@@ -19088,6 +19169,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
@@ -19178,6 +19260,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -19259,6 +19342,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -19345,6 +19429,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -19445,6 +19530,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -19550,6 +19636,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -19640,6 +19727,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -19710,6 +19798,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -19777,6 +19866,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 8,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "LOW",
         "cloudAccount": {
           "id": "gcp-account-07",
@@ -19853,6 +19943,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 8,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "LOW",
         "cloudAccount": {
           "id": "gcp-account-07",
@@ -19926,6 +20017,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "exposure": 0,
           "toxic": 0,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "INFO",
         "businessImpact": "LBI",
         "cloudAccount": {
@@ -19975,6 +20067,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Vertex AI Agent Service Account",
         "email": "sa-agent-a@iam.gserviceaccount.com",
@@ -20014,6 +20107,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-autogen@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -20052,6 +20146,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Vertex AI Reasoning Agent Identity",
         "email": "sa-agent-b@iam.gserviceaccount.com",
@@ -20091,6 +20186,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-d-test@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -20129,6 +20225,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-d@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -20167,6 +20264,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-e@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -20205,6 +20303,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-f-preprod@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -20243,6 +20342,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-f@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -20281,6 +20381,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-g@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -20319,6 +20420,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Support chatbot runtime identity",
         "email": "sa-agent-h-chatbot@iam.gserviceaccount.com",
@@ -20358,6 +20460,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-i@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -20396,6 +20499,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-j@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -20434,6 +20538,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-k@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -20472,6 +20577,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Support agent (read-only)",
         "email": "sa-agent-l-support@iam.gserviceaccount.com",
@@ -21529,6 +21635,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -21622,6 +21729,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -21752,6 +21860,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
@@ -21855,6 +21964,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
@@ -21945,6 +22055,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -22026,6 +22137,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -22112,6 +22224,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -22212,6 +22325,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -22317,6 +22431,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -22407,6 +22522,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -22477,6 +22593,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -22537,6 +22654,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "summaryCount": 1,
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -22574,6 +22692,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -22611,6 +22730,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -22648,6 +22768,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -22685,6 +22806,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "dataFindingCount": 3,
         "dataFindingSeverities": {
@@ -22725,6 +22847,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "dataFindingCount": 1,
         "dataFindingSeverities": {
@@ -22764,6 +22887,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -22801,6 +22925,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -22838,6 +22963,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -22875,6 +23001,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -22912,6 +23039,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "dataFindingCount": 2,
         "dataFindingSeverities": {
@@ -22952,6 +23080,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Vertex AI Agent Service Account",
         "email": "sa-agent-a@iam.gserviceaccount.com",
@@ -22991,6 +23120,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-autogen@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -23029,6 +23159,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Vertex AI Reasoning Agent Identity",
         "email": "sa-agent-b@iam.gserviceaccount.com",
@@ -23068,6 +23199,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-d-test@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -23106,6 +23238,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-d@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -23144,6 +23277,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-e@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -23182,6 +23316,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-f-preprod@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -23220,6 +23355,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-f@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -23258,6 +23394,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-g@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -23296,6 +23433,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Support chatbot runtime identity",
         "email": "sa-agent-h-chatbot@iam.gserviceaccount.com",
@@ -23335,6 +23473,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
+        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-i@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -23798,6 +23937,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -23891,6 +24031,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -24021,6 +24162,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
@@ -24124,6 +24266,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
@@ -24214,6 +24357,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -24295,6 +24439,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -24381,6 +24526,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 24,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -24481,6 +24627,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -24586,6 +24733,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
@@ -24676,6 +24824,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -24746,6 +24895,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 20,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
@@ -24813,6 +24963,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 8,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "LOW",
         "cloudAccount": {
           "id": "gcp-account-07",
@@ -24889,6 +25040,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 8,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "LOW",
         "cloudAccount": {
           "id": "gcp-account-07",
@@ -24962,6 +25114,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "exposure": 0,
           "toxic": 0,
         },
+        "aarsRuleVersion": 0,
         "aarsSeverity": "INFO",
         "businessImpact": "LBI",
         "cloudAccount": {
@@ -25249,6 +25402,7 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
     "aars": 62,
     "aars_input_json": "{"gaps":[{"code":"LLM06"},{"code":"NO_GUARDRAIL"}],"dataExposure":"SENSITIVE","internetExposure":"NONE","dataFindings":[{"severity":"CRITICAL","count":2},{"severity":"HIGH","count":2},{"severity":"MEDIUM","count":1}]}",
     "aars_pillars_json": "{"toxic":20,"compliance":20,"data":22,"exposure":0}",
+    "aars_rule_version": 0,
     "aars_severity": "HIGH",
     "account_id": "gcp-account-01",
     "account_name": "gcp-account-01",

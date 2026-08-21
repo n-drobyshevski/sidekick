@@ -27,7 +27,7 @@
 //    confusion.
 
 import { call } from "../api.js";
-import { bootstrap, swrCall } from "../store.js";
+import { bootstrap, bootstrapCached, swrCall } from "../store.js";
 import {
   COVERAGE, COVERAGE_ORDER, DESTINATIONS, SCAN_AREAS,
   coverageTally, destinationOf, rankAreas, resolveAreas,
@@ -36,7 +36,7 @@ import { svgEl } from "../icons.js";
 import { openAreaSheet } from "./scanSheet.js";
 import {
   clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtDate, fmtDateTime,
-  meter, motionOk, onPageTeardown, plural, sectionLabel, skeleton, statRow,
+  meter, motionOk, onPageTeardown, plural, registerWideNote, sectionLabel, skeleton, statRow,
 } from "../ui.js";
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
 
@@ -57,8 +57,14 @@ export async function renderScans(main, params, ctx) {
       // the exact class of drift the rest of this page exists to refuse, and it only takes
       // one area being added anywhere for a hand-typed number to start lying.
       "Every figure in this dashboard traces back to one of " + SCAN_AREAS.length +
-      " Wiz scan areas. This is what each one is asked for, what it reported in this " +
-      "tenant, and where the answer lands."),
+      " Wiz scan areas. This is what each one is asked for, what it reported, and where " +
+      "the answer lands."),
+    // "what it reported in this tenant" used to end that sentence, and a project view made it
+    // false — the figures below come from scoped endpoints. The split is the point and it is
+    // not obvious: the STEPS are a description of the sync battery and never move, while the
+    // FIGURES beside them follow the switcher like every other page.
+    registerWideNote(bootstrapCached(),
+      "the steps describe the sync battery; the figures beside them follow the project view"),
   );
 
   if (!boot.latestSync) {
@@ -131,8 +137,8 @@ export async function renderScans(main, params, ctx) {
       register(ranked, diagram),
       el("p", { class: "small muted", style: "margin-top:14px" },
         "Sync cadence: daily at 05:00 UTC plus on-demand “Sync now”. Every figure above " +
-        "is the one the last sync produced; an area with no figure says so rather than " +
-        "carrying a number from somewhere else."),
+        "is the one the last sync produced, read through the project view currently set; " +
+        "an area with no figure says so rather than carrying a number from somewhere else."),
       el("p", { class: "small muted cov-diagram-note" }, REACH_VS_SCAN_AREA_NOTE),
       reachSection(assets.reach),
     );

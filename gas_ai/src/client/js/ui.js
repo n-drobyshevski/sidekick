@@ -30,6 +30,7 @@
 //   diagList.js  the "is this rule quietly failing" read-out, shared by all three cascades
 
 export { clear, downloadText, el, motionOk } from "./ui/dom.js";
+export { registerWideNote } from "./ui/projectScope.js";
 export { DISPLAY_TZ, fmtDate, fmtDateTime, plural, pluralize, sevRank } from "./ui/format.js";
 export {
   aarsChip, aarsPercentileMark, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
