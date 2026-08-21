@@ -59,6 +59,7 @@ import {
   fetchConnectionPage,
   fetchGraphSearchPage,
   fetchSingleObject,
+  isTenantRefusal,
   resolveAiResourceTypes,
   type FetchOptions,
   type PageResult,
@@ -913,6 +914,10 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
   const params = jobParams(job);
 
   let stepIndex = job.step_index;
+  // Which step is in flight, so a failure can NAME it. The catch below cannot reach `steps`
+  // (declared inside the try, because syncSteps() itself may throw), and an id on the screen
+  // is the difference between reading the Scans page and going through Drive archives.
+  let inFlight = "";
   let cursor = job.cursor;
   let page = job.page;
   let nodesSoFar = job.nodes_so_far;
@@ -930,6 +935,7 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
     const steps = syncSteps();
     while (stepIndex < steps.length) {
       const step = steps[stepIndex];
+      inFlight = step.id;
 
       for (;;) {
         if (cancelRequested(job.job_id)) {
@@ -961,11 +967,24 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
             first: step.pageSize,
           });
         } catch (e) {
-          // A 400 on an OPTIONAL step means this tenant's schema rejects that
-          // query (missing enum members / fields). Skip the step, keep what it
+          // The tenant declining to serve a page on an OPTIONAL step. Skip it, keep what it
           // already yielded, and let the sync deliver the rest of the picture.
+          //
+          // THIS USED TO TEST FOR `HTTP 400` ALONE, which covered every failure anyone had
+          // seen while the traversals were being refused outright — a 400 is what a rejected
+          // enum looks like. The first sync that actually collected graph rows found the gap:
+          // two hours in and 84,912 rows deep, one page came back as Wiz's internal error in
+          // an HTTP-200 envelope, which is not a 400, so an ENHANCEMENT step took the entire
+          // run down with it. Everything already fetched was lost to a transient failure on a
+          // step whose whole contract is that it may fail.
+          //
+          // A tenant refusal is now the test, and it is drawn at the WizQueryError boundary:
+          // transport and response-reader failures skip, domain errors stay fatal. A skip is
+          // still LOUD — recorded in skippedSteps with its reason, surfaced by
+          // registerScopeDiagnostic and the Scans page — because a silent skip is how zero
+          // edges became indistinguishable from a healthy landscape in the first place.
           const msg = e instanceof Error ? e.message : String(e);
-          if (step.optional && /HTTP 400/.test(msg)) {
+          if (step.optional && isTenantRefusal(e)) {
             params.apiCalls += 1;
             params.skippedSteps.push(step.id);
             // Kept, not just logged. `msg` carries errorDigest's extraction of Wiz's own
@@ -1145,9 +1164,14 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
     else withScriptLock(persist);
     updateJob(job.job_id, { phase: "DONE" });
   } catch (e) {
+    // The step index and id go in with the message. A failed sync used to record only what
+    // went wrong, never where — so a two-hour run that died on one step reported a Wiz error
+    // and left no way to tell which of nineteen steps raised it.
     updateJob(job.job_id, {
       phase: "FAILED",
-      error: String(e instanceof Error ? e.message : e).slice(0, 800),
+      step_index: stepIndex,
+      error: (inFlight ? `[${inFlight}] ` : "") +
+        String(e instanceof Error ? e.message : e).slice(0, 800),
     });
   }
 }

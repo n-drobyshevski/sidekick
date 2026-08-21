@@ -85,6 +85,52 @@ describe("smallerPageCouldHelp", () => {
     expect(smallerPageCouldHelp(new Error("Address unavailable"))).toBe(true);
     expect(smallerPageCouldHelp(new SyntaxError("Unexpected end of JSON input"))).toBe(true);
   });
+
+  it("retries smaller on the tenant's internal error, which wears a 200's clothes", async () => {
+    // The third form of the errors-only envelope, and the one the rule above did not know
+    // about. Wiz returns its generic internal error as HTTP 200 with no data — same shape as
+    // a rejected enum, opposite meaning. It is a 504 in disguise, so it gets a 504's retry.
+    //
+    // Verbatim from the first sync that ever collected graph rows at scale: two hours in,
+    // 84,912 rows deep, one page too expensive to assemble. The fallback built for exactly
+    // that case declined to fire because the message shape said "document verdict", and the
+    // step it happened on took the whole run down with it.
+    const { smallerPageCouldHelp, WizQueryError } = await import("../src/server/wizClientAi");
+    const internal =
+      "Wiz response carried no data: oops! an internal error has occurred. for reference " +
+      "purposes, this is your request id: 57047012-a695-4a7f-a6c3-3c7d8ebec259";
+    expect(smallerPageCouldHelp(new WizQueryError(internal))).toBe(true);
+
+    // And the distinction is the point: a verdict about the DOCUMENT still buys nothing at 50
+    // rows, even though it arrives in the same envelope.
+    expect(smallerPageCouldHelp(
+      new WizQueryError("Wiz response carried no data: failed to parse object type [AI_TOOL]"),
+    )).toBe(false);
+  });
+});
+
+describe("isTenantRefusal", () => {
+  it("draws the line at the transport boundary, so our own bugs stay fatal", async () => {
+    // What an OPTIONAL step is allowed to survive. A schema rejection and a tenant-side
+    // internal error are both "Wiz will not serve this", and for an enhancement step the
+    // right answer to both is to record it and carry on — the alternative cost two hours of
+    // fetched rows to a transient failure on a step whose contract is that it may fail.
+    //
+    // A TypeError from our own code is NOT that. Skipping our bugs is how a sync reports
+    // success over a dataset it silently mangled, which is the failure this whole area exists
+    // to avoid.
+    const { isTenantRefusal, WizQueryError } = await import("../src/server/wizClientAi");
+    for (const m of [
+      "Wiz query failed (HTTP 400): cannot represent value",
+      "Wiz response carried no data: oops! an internal error has occurred.",
+      "Wiz query failed after retries (HTTP 504).",
+      "Wiz query failed after retries (HTTP 429).",
+    ]) expect(isTenantRefusal(new WizQueryError(m)), m).toBe(true);
+
+    expect(isTenantRefusal(new TypeError("Cannot read properties of null"))).toBe(false);
+    expect(isTenantRefusal(new Error("something in a normalizer"))).toBe(false);
+    expect(isTenantRefusal("not an error at all")).toBe(false);
+  });
 });
 
 describe("fetchPage size fallback", () => {

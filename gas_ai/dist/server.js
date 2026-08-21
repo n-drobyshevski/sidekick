@@ -2442,9 +2442,13 @@ var Server = (() => {
     const m = e.message;
     if (/HTTP 4\d\d/.test(m)) return false;
     if (/HTTP 429/.test(m)) return false;
+    if (/internal error has occurred/i.test(m)) return true;
     if (/carried no data/.test(m)) return false;
     if (/carried no .* connection/.test(m)) return false;
     return true;
+  }
+  function isTenantRefusal(e) {
+    return e instanceof WizQueryError;
   }
   function fetchPage(field, o, extra) {
     var _a5;
@@ -7748,7 +7752,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "c5c84178d587" : "dev";
+  var BUILD_ID = true ? "2bac4f1e321e" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -9684,6 +9688,7 @@ var Server = (() => {
     const refs = partRefs(job);
     const params = jobParams(job);
     let stepIndex = job.step_index;
+    let inFlight = "";
     let cursor = job.cursor;
     let page = job.page;
     let nodesSoFar = job.nodes_so_far;
@@ -9699,6 +9704,7 @@ var Server = (() => {
       const steps = syncSteps();
       while (stepIndex < steps.length) {
         const step = steps[stepIndex];
+        inFlight = step.id;
         for (; ; ) {
           if (cancelRequested(job.job_id)) {
             clearCancelFlag();
@@ -9729,7 +9735,7 @@ var Server = (() => {
             });
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            if (step.optional && /HTTP 400/.test(msg)) {
+            if (step.optional && isTenantRefusal(e)) {
               params.apiCalls += 1;
               params.skippedSteps.push(step.id);
               params.skipReasons[step.id] = msg.slice(0, SKIP_REASON_MAX);
@@ -9850,7 +9856,8 @@ var Server = (() => {
     } catch (e) {
       updateJob(job.job_id, {
         phase: "FAILED",
-        error: String(e instanceof Error ? e.message : e).slice(0, 800)
+        step_index: stepIndex,
+        error: (inFlight ? `[${inFlight}] ` : "") + String(e instanceof Error ? e.message : e).slice(0, 800)
       });
     }
   }

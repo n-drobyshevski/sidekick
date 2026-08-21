@@ -494,9 +494,35 @@ export function smallerPageCouldHelp(e: unknown): boolean {
   const m = e.message;
   if (/HTTP 4\d\d/.test(m)) return false; // schema said no
   if (/HTTP 429/.test(m)) return false; // rate limited, not oversized
+  // The errors-only envelope is NOT always a verdict about the document, and the note above
+  // was written before a third form of it existed. Wiz returns its generic internal error the
+  // same way — HTTP 200, no data, `oops! an internal error has occurred` and a request id —
+  // and that is the "too heavy / took too long" bucket, not a rejected enum. It is a 504
+  // wearing a 200's clothes, so it gets the retry a 504 would get.
+  //
+  // Observed on the first sync that ever collected graph rows at scale: 84,912 rows in, two
+  // hours elapsed, one page too expensive to assemble, and the fallback designed for exactly
+  // that skipped itself because the message shape said "document verdict".
+  if (/internal error has occurred/i.test(m)) return true;
   if (/carried no data/.test(m)) return false; // GraphQL error envelope
   if (/carried no .* connection/.test(m)) return false; // shape mismatch
   return true; // 5xx after retries, and anything else unrecognized
+}
+
+/**
+ * Whether a failure is the TENANT declining to serve a page, rather than this app being wrong.
+ *
+ * The distinction an optional step needs. A schema rejection (400) and a tenant-side internal
+ * error are both "Wiz will not give us this", and for an ENHANCEMENT step the right answer to
+ * both is to record it and let the sync deliver the rest of the picture. A TypeError in a
+ * normalizer is not that, and must stay fatal — skipping our own bugs is how a sync reports
+ * success over a dataset it silently mangled.
+ *
+ * `WizQueryError` is the type boundary that already draws this line: it is raised only by the
+ * transport and the response readers, never by domain code.
+ */
+export function isTenantRefusal(e: unknown): boolean {
+  return e instanceof WizQueryError;
 }
 
 /**
