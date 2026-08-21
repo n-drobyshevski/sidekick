@@ -149,6 +149,7 @@ import {
 import {
   AI_ASSET_KINDS,
   NODE_KINDS,
+  projectCatalogue,
   type FindingRow,
   type FrameworkPolicyRow,
   type GEdge,
@@ -383,6 +384,11 @@ function filterOptions(assets: GNode[]): Rec {
     kinds: [...kinds].sort(),
     clouds: [...clouds].sort(),
     projects: [...projects].sort(),
+    // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
+    // filter on every page matches project names, and there is no reason to migrate them
+    // here; the switcher needs ids because only an id carries ancestry — an asset lists its
+    // whole chain, so one id match selects a folder's entire subtree.
+    projectList: projectCatalogue(assets),
   };
 }
 

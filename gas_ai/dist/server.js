@@ -1123,6 +1123,22 @@ var Server = (() => {
   function edgeId(src, type, dst, negated) {
     return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
   }
+  function projectCatalogue(assets) {
+    var _a5;
+    const byId = /* @__PURE__ */ new Map();
+    for (const a of assets) {
+      for (const p of (_a5 = a.projects) != null ? _a5 : []) {
+        const seen = byId.get(p.id);
+        if (!seen) {
+          byId.set(p.id, { id: p.id, name: p.name, isFolder: p.isFolder, assets: 1 });
+          continue;
+        }
+        seen.assets += 1;
+        if (seen.isFolder === void 0 && p.isFolder !== void 0) seen.isFolder = p.isFolder;
+      }
+    }
+    return [...byId.values()].sort((x, y) => x.isFolder === y.isFolder ? x.name.localeCompare(y.name) : x.isFolder ? -1 : 1);
+  }
 
   // src/domain/graphExpand.ts
   var HOP = {
@@ -2002,7 +2018,12 @@ var Server = (() => {
     "hasHighPrivileges",
     "technology { id name categories { id name } }",
     "cloudAccount { id name externalId cloudProvider }",
-    "projects { id name riskProfile { businessImpact } }",
+    // `isFolder` rides along for the project switcher. A Wiz project is either a folder or a
+    // leaf, and an asset carries its WHOLE ancestor chain — the captured inventory shows one
+    // agent listing CE-DPCP-PORTAL (folder) -> VALUE-CHAIN (folder) -> provisioning-CE-DPCP-PORTAL
+    // (leaf). That is what lets a switcher offer a business unit and have it mean the subtree,
+    // and what lets the picker draw the two apart the way the Wiz console does.
+    "projects { id name isFolder riskProfile { businessImpact } }",
     "tags { key value }"
   ];
   function indented(fields, spaces) {
@@ -2845,7 +2866,8 @@ var Server = (() => {
       if (!id || !name) return null;
       const profile = p["riskProfile"];
       const businessImpact = profile && typeof profile === "object" ? str3(profile["businessImpact"]) : void 0;
-      return { id, name, businessImpact };
+      const isFolder = p["isFolder"] === true ? true : p["isFolder"] === false ? false : void 0;
+      return { id, name, isFolder, businessImpact };
     }).filter((p) => p !== null);
   }
   function normalizeConfigFindingsPage(rows) {
@@ -5318,8 +5340,9 @@ var Server = (() => {
   // src/server/sampleData.ts
   var T0 = "2026-04-02T08:00:00Z";
   var T1 = "2026-06-28T05:00:00Z";
+  var DEMO_UNIT = { id: "proj-demo-business-unit", name: "DEMO-BUSINESS-UNIT" };
   function node(seed) {
-    var _a5, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
     return {
       id: seed.id,
       kind: seed.kind,
@@ -5348,11 +5371,24 @@ var Server = (() => {
       // `GNode.businessImpact`. Omitted entirely (never `businessImpact: undefined`) when the
       // seed itself carries none, matching the "absent key, not an undefined one" discipline
       // `tags` and `exposureEvidence` already keep on this same object.
-      projects: ((_g = seed.projects) != null ? _g : []).map((name) => ({
-        id: `proj-${name.toLowerCase()}`,
-        name,
-        ...seed.businessImpact ? { businessImpact: seed.businessImpact } : {}
-      })),
+      // A FOLDER ancestor in front of the leaves, because that is the shape a real tenant
+      // returns and the shape the project switcher exists for: an asset belongs to its whole
+      // chain, so one folder id selects everything beneath it. The live capture shows exactly
+      // this — CE-DPCP-PORTAL (folder) -> VALUE-CHAIN (folder) -> provisioning-… (leaf).
+      //
+      // Without it the dry-run seed would exercise only the degenerate case where every project
+      // is a leaf and picking one selects one, so the folder path would ship untested and
+      // undemonstrated. Every seeded asset shares it, which is what makes "select the unit" and
+      // "select a project inside it" visibly different in the demo.
+      projects: ((_g = seed.projects) != null ? _g : []).length ? [
+        { id: DEMO_UNIT.id, name: DEMO_UNIT.name, isFolder: true },
+        ...((_h = seed.projects) != null ? _h : []).map((name) => ({
+          id: `proj-${name.toLowerCase()}`,
+          name,
+          isFolder: false,
+          ...seed.businessImpact ? { businessImpact: seed.businessImpact } : {}
+        }))
+      ] : [],
       technologyCategories: seed.techCats,
       identityPurpose: seed.identityPurpose,
       issueAnalytics: seed.issueAnalytics,
@@ -7752,7 +7788,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "2bac4f1e321e" : "dev";
+  var BUILD_ID = true ? "b5cb45cad052" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -14712,7 +14748,12 @@ var Server = (() => {
     return {
       kinds: [...kinds].sort(),
       clouds: [...clouds].sort(),
-      projects: [...projects].sort()
+      projects: [...projects].sort(),
+      // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
+      // filter on every page matches project names, and there is no reason to migrate them
+      // here; the switcher needs ids because only an id carries ancestry — an asset lists its
+      // whole chain, so one id match selects a folder's entire subtree.
+      projectList: projectCatalogue(assets)
     };
   }
   function getGraph(p) {

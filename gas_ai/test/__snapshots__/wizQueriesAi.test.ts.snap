@@ -191,7 +191,7 @@ exports[`query documents > Q_AI_INVENTORY is unchanged 1`] = `
       hasHighPrivileges
       technology { id name categories { id name } }
       cloudAccount { id name externalId cloudProvider }
-      projects { id name riskProfile { businessImpact } }
+      projects { id name isFolder riskProfile { businessImpact } }
       tags { key value }
     }
   }
@@ -383,7 +383,7 @@ exports[`query documents > Q_RULE_ASSETS is unchanged 1`] = `
       hasHighPrivileges
       technology { id name categories { id name } }
       cloudAccount { id name externalId cloudProvider }
-      projects { id name riskProfile { businessImpact } }
+      projects { id name isFolder riskProfile { businessImpact } }
       tags { key value }
     }
   }

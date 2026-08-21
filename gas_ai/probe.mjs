@@ -223,6 +223,42 @@ else {
   console.log("  change, and the committed file is what test/tenantVocabulary.test.js checks.");
 }
 
+// ------------------------------------------- 2b. which project filter each root accepts
+//
+// FIVE SPELLINGS, and choosing the wrong one is a silent zero rather than an error. This app
+// already sends `filterBy.project` (issuesV2), `filterBy.resource.projectId`
+// (configurationFindings), `filterBy.projectId` (cloudResourcesV2), the scalar
+// `graphSearch(projectId:)` argument, and `analyticsSelection.projectId` — wizQueriesAi.ts
+// names all five itself. The sibling gas/ tool sends `projectIdV2: {equals:[id]}`, but on
+// `vulnerabilityFindings`, which is a different filter type; brick's own test records that
+// "the two filter types spell it differently".
+//
+// So the question is asked per root rather than carried across from a connection that is not
+// this one. `expected` is what this app sends TODAY, so a mismatch is either a latent bug or
+// a spelling that only ever worked by accident.
+const FILTER_TYPES = [
+  ["CloudResourceV2Filters", "projectId", "INVENTORY_AI (unscoped), AI_ASSET_PROPERTIES (unscoped), AGENTIC_IDENTITIES"],
+  ["IssueFilters", "project", "ISSUES_TOXIC"],
+  ["ConfigurationFindingFilters", "resource.projectId", "CONFIG_FINDINGS, IDENTITY_HYGIENE"],
+];
+if (!DRY_RUN) {
+  console.log("\n=== which project filter each root accepts ===");
+  for (const [name, expected, users] of FILTER_TYPES) {
+    const shape = await typeShape(name);
+    const label = ("  " + name).padEnd(32);
+    if (!shape || shape.error) {
+      console.log(label + (shape?.error ? "REFUSED  " + shape.error.slice(0, 80) : "no such type"));
+      continue;
+    }
+    const has = (f) => shape.inputFields.includes(f);
+    const found = ["projectId", "projectIdV2", "project", "resource"].filter(has);
+    console.log(label + (found.length ? found.join(", ") : "(no project-shaped field)"));
+    console.log("  " + " ".repeat(30) + "sent today: " + expected + "   — " + users);
+  }
+  console.log("\n  A field listed here exists; it does not follow that it means what you hope.");
+  console.log("  Scope one step, count the rows, and only then scope the rest.");
+}
+
 // -------------------------------------------------------- 3. resolve the AI type list
 
 const chosen = app.chooseAiResourceTypes(

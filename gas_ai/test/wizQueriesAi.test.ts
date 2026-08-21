@@ -151,8 +151,20 @@ describe("Q_AI_INVENTORY + aiInventoryVariables", () => {
   });
 
   it("selects businessImpact nested under riskProfile, not flat on Project", () => {
-    expect(Q_AI_INVENTORY).toContain("projects { id name riskProfile { businessImpact } }");
+    expect(Q_AI_INVENTORY).toContain("projects { id name isFolder riskProfile { businessImpact } }");
+    // The rejection this test exists for: a flat `projects { businessImpact }` is refused
+    // ("Cannot query field businessImpact on type Project"). Still asserted, because adding a
+    // sibling field is exactly the edit that could quietly flatten it back.
     expect(Q_AI_INVENTORY).not.toContain("projects { id name businessImpact }");
+  });
+
+  it("carries isFolder, which is what makes a folder scope mean its subtree", () => {
+    // An asset belongs to its whole ancestor chain, so filtering on a FOLDER's id reaches
+    // everything beneath it. `isFolder` is what lets the project switcher draw folders and
+    // leaves apart the way the Wiz console does. Selected on the shared resource field set,
+    // so Q_RULE_ASSETS gets it too.
+    expect(Q_AI_INVENTORY).toContain("isFolder");
+    expect(Q_RULE_ASSETS).toContain("isFolder");
   });
 
   it("now selects isOpenToAllInternet + technology categories (phase 3 enrichment)", () => {

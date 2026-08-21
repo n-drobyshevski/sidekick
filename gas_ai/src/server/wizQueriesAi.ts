@@ -106,7 +106,12 @@ const CLOUD_RESOURCE_FIELDS = [
   "hasHighPrivileges",
   "technology { id name categories { id name } }",
   "cloudAccount { id name externalId cloudProvider }",
-  "projects { id name riskProfile { businessImpact } }",
+  // `isFolder` rides along for the project switcher. A Wiz project is either a folder or a
+  // leaf, and an asset carries its WHOLE ancestor chain — the captured inventory shows one
+  // agent listing CE-DPCP-PORTAL (folder) -> VALUE-CHAIN (folder) -> provisioning-CE-DPCP-PORTAL
+  // (leaf). That is what lets a switcher offer a business unit and have it mean the subtree,
+  // and what lets the picker draw the two apart the way the Wiz console does.
+  "projects { id name isFolder riskProfile { businessImpact } }",
   "tags { key value }",
 ];
 

@@ -247,6 +247,26 @@ export type EdgeType = (typeof EDGE_TYPES)[number];
 
 export type AccessType = "READ" | "WRITE" | "ADMIN" | "HIGH_PRIVILEGE";
 
+/**
+ * One project an asset belongs to — and an asset belongs to its WHOLE ancestor chain, not
+ * just the leaf it sits in. The captured inventory shows one agent carrying
+ * CE-DPCP-PORTAL (folder) -> VALUE-CHAIN (folder) -> provisioning-CE-DPCP-PORTAL (leaf).
+ *
+ * That is the fact the project switcher rests on: filtering by a FOLDER's id reaches every
+ * asset beneath it, so "show me VALUE-CHAIN" is one id match per row rather than a tree walk.
+ * It is also why the switcher keys on `id` while the older facet filters key on `name` —
+ * names are not unique across a 1,056-project tenant and carry no ancestry.
+ *
+ * `isFolder` is tri-state. `undefined` means the row predates the field, which is every row
+ * already in the ledger; it must not be read as `false`.
+ */
+export interface ProjectRef {
+  id: string;
+  name: string;
+  isFolder?: boolean;
+  businessImpact?: string;
+}
+
 export interface GNode {
   id: string;
   kind: NodeKind;
@@ -308,7 +328,7 @@ export interface GNode {
     sourceIpRanges?: string[];
   };
   cloudAccount?: { id: string; name: string; externalId?: string; cloudProvider?: string };
-  projects?: Array<{ id: string; name: string; businessImpact?: string }>;
+  projects?: ProjectRef[];
   tags?: Array<{ key: string; value: string }>;
   technologyCategories?: string[]; // Wiz technology.categories[].name (e.g. "AI Service")
   /**
@@ -650,7 +670,7 @@ export interface FindingRow {
   subscriptionId?: string;
   subscriptionName?: string;
   cloudProvider?: string;
-  projects?: Array<{ id: string; name: string; businessImpact?: string }>;
+  projects?: ProjectRef[];
   businessImpact?: string;           // worst of projects[].riskProfile.businessImpact
 
   /** An accepted-risk decision covering this finding. Present ids mean the tenant chose
@@ -833,3 +853,42 @@ export interface IdentityFindingRow {
 
 /** What an identity-hygiene rule is about. Stamped by the matcher, never returned by Wiz. */
 export type HygieneKind = "MFA" | "DORMANT";
+
+/** One row of the project switcher's list: a project, and how much of the register it holds. */
+export interface ProjectCatalogueEntry {
+  id: string;
+  name: string;
+  isFolder?: boolean;
+  /** Assets in the CURRENT register carrying this project. Not a Wiz-side total. */
+  assets: number;
+}
+
+/**
+ * The distinct projects the synced assets belong to, folders first, then by name.
+ *
+ * Derived from the register rather than from a live `projects` catalogue query, and that is
+ * the property worth keeping: this list can only offer a project there IS data for, so the
+ * switcher cannot render a never-synced project as an empty one. A project outside the fetch
+ * scope is absent from the picker rather than present and answering zero — which is the same
+ * "absent is not zero" rule the rest of this app is built on, applied to a control.
+ *
+ * `isFolder` merges first-non-undefined-wins. Every row already in the ledger predates the
+ * field, and one such row must not erase what a freshly synced row knows; `undefined` stays
+ * `undefined` only when nothing has ever said otherwise.
+ */
+export function projectCatalogue(assets: readonly GNode[]): ProjectCatalogueEntry[] {
+  const byId = new Map<string, ProjectCatalogueEntry>();
+  for (const a of assets) {
+    for (const p of a.projects ?? []) {
+      const seen = byId.get(p.id);
+      if (!seen) {
+        byId.set(p.id, { id: p.id, name: p.name, isFolder: p.isFolder, assets: 1 });
+        continue;
+      }
+      seen.assets += 1;
+      if (seen.isFolder === undefined && p.isFolder !== undefined) seen.isFolder = p.isFolder;
+    }
+  }
+  return [...byId.values()].sort((x, y) =>
+    x.isFolder === y.isFolder ? x.name.localeCompare(y.name) : (x.isFolder ? -1 : 1));
+}
