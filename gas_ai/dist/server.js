@@ -695,6 +695,15 @@ var Server = (() => {
   function dataRowCount(tab) {
     return Math.max(0, sheet(tab).getLastRow() - 1);
   }
+  var TRIM_BUFFER_ROWS = 1e3;
+  function trimSurplusRows(tab, bufferRows = TRIM_BUFFER_ROWS) {
+    const sh = sheet(tab);
+    const keep = Math.max(sh.getLastRow(), 1) + Math.max(0, bufferRows);
+    const surplus = sh.getMaxRows() - keep;
+    if (surplus <= 0) return 0;
+    sh.deleteRows(keep + 1, surplus);
+    return surplus;
+  }
   function updateWhere(tab, keyColumn, keyValue, patch) {
     const sh = sheet(tab);
     if (sh.getLastRow() < 2) return false;
@@ -716,6 +725,10 @@ var Server = (() => {
       }
     }
     return false;
+  }
+  function gridSize(tab) {
+    const sh = sheet(tab);
+    return { rows: sh.getMaxRows(), cols: sh.getMaxColumns() };
   }
   function cellCount() {
     return ledgerSpreadsheet().getSheets().reduce((acc, sh) => acc + sh.getMaxRows() * sh.getMaxColumns(), 0);
@@ -7805,7 +7818,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "3fab2a12bae3" : "dev";
+  var BUILD_ID = true ? "6ad5f2f99f46" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8137,6 +8150,55 @@ var Server = (() => {
       if (points[i].ruleVersion !== points[i - 1].ruleVersion) marks.push(i);
     }
     return marks;
+  }
+
+  // src/domain/prunePlan.ts
+  function inProject(projects, projectId) {
+    if (!projectId) return false;
+    return (projects != null ? projects : []).some((p) => p.id === projectId);
+  }
+  function attributed(a) {
+    var _a5;
+    return ((_a5 = a.projects) != null ? _a5 : []).length > 0;
+  }
+  function planPrune(assets, edges2, projectId) {
+    if (!projectId || !projectId.trim()) {
+      throw new Error("Pruning needs a project to keep. Naming none would empty the register.");
+    }
+    const id = projectId.trim();
+    const known = /* @__PURE__ */ new Set();
+    const unattributed = /* @__PURE__ */ new Set();
+    const direct = /* @__PURE__ */ new Set();
+    for (const a of assets) {
+      known.add(a.id);
+      if (!attributed(a)) unattributed.add(a.id);
+      if (inProject(a.projects, id)) direct.add(a.id);
+    }
+    const attached = /* @__PURE__ */ new Set();
+    for (const e of edges2) {
+      if (direct.has(e.src) && unattributed.has(e.dst) && known.has(e.dst)) attached.add(e.dst);
+      if (direct.has(e.dst) && unattributed.has(e.src) && known.has(e.src)) attached.add(e.src);
+    }
+    const keep = new Set(direct);
+    for (const attachedId of attached) keep.add(attachedId);
+    let droppedAttributed = 0;
+    let droppedOrphan = 0;
+    for (const a of assets) {
+      if (keep.has(a.id)) continue;
+      if (attributed(a)) droppedAttributed += 1;
+      else droppedOrphan += 1;
+    }
+    return {
+      keep,
+      census: {
+        total: assets.length,
+        direct: direct.size,
+        attached: attached.size,
+        droppedAttributed,
+        droppedOrphan,
+        keep: keep.size
+      }
+    };
   }
 
   // src/server/syncStore.ts
@@ -9133,6 +9195,100 @@ var Server = (() => {
     overwrite(TABS.syncHistory, []);
     trashGraphSnapshot();
     commit();
+  }
+  var PRUNE_CHILDREN = [
+    // NEVER `projects_json`. An issue's own project cell holds NAMES, not ids (IssueRow.projects
+    // in graphTypes.ts), so an id comparison there matches nothing and matches it silently. The
+    // asset link is the authoritative one, and is what the project view filter uses too.
+    [TABS.issues, "asset_id"],
+    [TABS.findings, "resource_id"],
+    [TABS.dataFindings, "resource_id"],
+    [TABS.identityFindings, "resource_id"]
+  ];
+  function projectedCellsFreed(tab, keptRows) {
+    const { rows, cols } = gridSize(tab);
+    return Math.max(0, rows - (keptRows + 1 + TRIM_BUFFER_ROWS)) * cols;
+  }
+  function pruneGraphSnapshot(keptNodeIds) {
+    const snap = readGraphSnapshot();
+    if (!snap) return;
+    const nodes = snap.nodes.filter((n) => keptNodeIds.has(n.id));
+    const edges2 = snap.edges.filter((e) => keptNodeIds.has(e.src) && keptNodeIds.has(e.dst));
+    writeGraphSnapshot({ ...snap, nodes, edges: edges2 });
+  }
+  function pruneToProject(projectId, opts) {
+    var _a5, _b;
+    const assetRows = readAll(TABS.assets);
+    const edgeRows = readAll(TABS.edges);
+    const { keep, census } = planPrune(
+      assetRows.map((r) => {
+        var _a6;
+        return {
+          id: String((_a6 = r["id"]) != null ? _a6 : ""),
+          projects: parseAssetProjects(r["projects_json"])
+        };
+      }),
+      edgeRows.map((r) => {
+        var _a6, _b2;
+        return { src: String((_a6 = r["src"]) != null ? _a6 : ""), dst: String((_b2 = r["dst"]) != null ? _b2 : "") };
+      }),
+      projectId
+    );
+    if (!keep.size) {
+      throw new Error(
+        "No asset in this register belongs to that project, so this would delete everything. Use Reset synced data if clearing the register is what you want."
+      );
+    }
+    const keptAssets = assetRows.filter((r) => {
+      var _a6;
+      return keep.has(String((_a6 = r["id"]) != null ? _a6 : ""));
+    });
+    const keptEdges = edgeRows.filter(
+      (r) => {
+        var _a6, _b2;
+        return keep.has(String((_a6 = r["src"]) != null ? _a6 : "")) && keep.has(String((_b2 = r["dst"]) != null ? _b2 : ""));
+      }
+    );
+    const children = PRUNE_CHILDREN.map(([tab, ownerColumn]) => {
+      const rows = readAll(tab);
+      return { tab, rows, kept: rows.filter((r) => {
+        var _a6;
+        return keep.has(String((_a6 = r[ownerColumn]) != null ? _a6 : ""));
+      }) };
+    });
+    const tabs = [
+      ...children.map((c) => ({ tab: c.tab, before: c.rows.length, after: c.kept.length })),
+      { tab: TABS.edges, before: edgeRows.length, after: keptEdges.length },
+      { tab: TABS.assets, before: assetRows.length, after: keptAssets.length }
+    ];
+    const cellsBefore = cellCount();
+    if (opts.dryRun) {
+      const freed = tabs.reduce((acc, t) => acc + projectedCellsFreed(t.tab, t.after), 0);
+      return {
+        projectId,
+        dryRun: true,
+        census,
+        tabs,
+        cellsBefore,
+        cellsAfter: Math.max(0, cellsBefore - freed)
+      };
+    }
+    bumpDataVersion();
+    bumpWizDataVersion();
+    for (const c of children) {
+      overwrite(c.tab, c.kept);
+      trimSurplusRows(c.tab);
+    }
+    overwrite(TABS.edges, keptEdges);
+    trimSurplusRows(TABS.edges);
+    overwrite(TABS.assets, keptAssets);
+    trimSurplusRows(TABS.assets);
+    const keptNodeIds = new Set(keep);
+    const keptIssues = children.find((c) => c.tab === TABS.issues);
+    for (const r of (_a5 = keptIssues == null ? void 0 : keptIssues.kept) != null ? _a5 : []) keptNodeIds.add(String((_b = r["id"]) != null ? _b : ""));
+    pruneGraphSnapshot(keptNodeIds);
+    commit();
+    return { projectId, dryRun: false, census, tabs, cellsBefore, cellsAfter: cellCount() };
   }
 
   // src/server/syncJobs.ts
@@ -10831,7 +10987,9 @@ var Server = (() => {
     previewAarsRule: () => previewAarsRule,
     previewPostureRule: () => previewPostureRule,
     previewProblemRule: () => previewProblemRule,
+    previewPrune: () => previewPrune,
     probeSyncStep: () => probeSyncStep,
+    pruneToProject: () => pruneToProject2,
     recomputePostures: () => recomputePostures2,
     recomputeProblems: () => recomputeProblems,
     rescoreAars: () => rescoreAars,
@@ -14624,10 +14782,7 @@ var Server = (() => {
     const view = getProjectView2();
     const all = loadAssets();
     if (!view) return all;
-    return all.filter((a) => {
-      var _a5;
-      return ((_a5 = a.projects) != null ? _a5 : []).some((p) => p.id === view);
-    });
+    return all.filter((a) => inProject(a.projects, view));
   }
   function viewAssetIds() {
     if (!getProjectView2()) return null;
@@ -14679,7 +14834,7 @@ var Server = (() => {
     });
   }
   function bootstrapCore() {
-    var _a5, _b;
+    var _a5, _b, _c, _d;
     const assets = viewAssets();
     const issues2 = openIssues();
     const latest = latestSync();
@@ -14769,7 +14924,12 @@ var Server = (() => {
       scope: {
         projectView: getProjectView2(),
         shown: assets.length,
-        register: loadAssets().length
+        register: loadAssets().length,
+        // What the SYNC is scoped to collect (WIZ_PROJECT_ID_V2), as opposed to what the
+        // pages are scoped to show above it. Null when unset, which means the battery runs
+        // tenant-wide. Here so the Data page's prune panel can default to it and say which
+        // option that is, instead of the client holding an id the server owns.
+        syncProjectId: (_d = (_c = projectScope()) == null ? void 0 : _c[0]) != null ? _d : null
       }
     };
   }
@@ -16228,6 +16388,37 @@ var Server = (() => {
     return mutate(() => {
       resetData();
       return { message: "All synced data cleared." };
+    });
+  }
+  function pruneTarget(p) {
+    var _a5;
+    const params = p != null ? p : {};
+    const asked = typeof params["projectId"] === "string" ? String(params["projectId"]).trim() : "";
+    const id = asked || ((_a5 = projectScope()) == null ? void 0 : _a5[0]) || "";
+    if (!id) {
+      throw new Error(
+        "No project to keep. Pick one, or set WIZ_PROJECT_ID_V2 so the sync scope can be the default."
+      );
+    }
+    const entry = projectCatalogue(loadAssets()).find((e) => e.id === id);
+    return { id, name: entry ? entry.name : null };
+  }
+  function previewPrune(p) {
+    return run(() => {
+      const target = pruneTarget(p);
+      return { ...target, ...pruneToProject(target.id, { dryRun: true }) };
+    });
+  }
+  function pruneToProject2(p) {
+    return mutate(() => {
+      const target = pruneTarget(p);
+      const res = pruneToProject(target.id, { dryRun: false });
+      const removed = res.census.total - res.census.keep;
+      return {
+        ...target,
+        ...res,
+        message: `Removed ${removed} of ${res.census.total} assets and everything attached to them. ${res.census.keep} kept.`
+      };
     });
   }
   function getStorageStats(_p) {

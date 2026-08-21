@@ -267,6 +267,13 @@
       }
       return last;
     }
+    // Reclaiming the grid a shrunken tab left allocated (sheetsDb.trimSurplusRows). Real
+    // Sheets prices getMaxRows() whether the rows hold anything or not, so deleting them is
+    // the only thing that moves the cell count.
+    deleteRows(rowPosition, howMany) {
+      this._grid.splice(rowPosition - 1, howMany);
+      return this;
+    }
     setFrozenRows() { return this; }
   }
 

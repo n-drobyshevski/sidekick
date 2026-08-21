@@ -342,6 +342,40 @@ export function dataRowCount(tab: string): number {
 }
 
 /**
+ * How many empty rows a shrunken tab keeps in hand before `trimSurplusRows` reclaims any.
+ *
+ * Not zero, on purpose. `cellCount()` below prices the ALLOCATED grid, so a tab that fell
+ * from 14,000 rows to 2,000 is still charged for 14,000 until the surplus is deleted — but
+ * trimming it flush would leave every subsequent write growing the grid a row at a time from
+ * nothing. A buffer this size leaves the tab in the same shape a freshly created one is in,
+ * which is the shape every write path here was already built against.
+ */
+export const TRIM_BUFFER_ROWS = 1000;
+
+/**
+ * Delete the empty grid rows left behind when a tab is rewritten much smaller, and return
+ * how many went.
+ *
+ * `overwrite` clears content but never shrinks the grid, and `cellCount()` prices
+ * `getMaxRows() * getMaxColumns()` — the allocation, not the contents. So without this a
+ * prune can delete four rows in five and the storage figure on the Data page does not move,
+ * which reads as "nothing happened" rather than as "the ceiling is priced differently than
+ * you think".
+ *
+ * Deliberately NOT the sibling tool's `truncateAfter`: that one clears content, which is
+ * what a resumable append needs and is exactly the half that does not help here.
+ */
+export function trimSurplusRows(tab: string, bufferRows: number = TRIM_BUFFER_ROWS): number {
+  const sh = sheet(tab);
+  // At least one row has to survive, and the header is the row worth surviving.
+  const keep = Math.max(sh.getLastRow(), 1) + Math.max(0, bufferRows);
+  const surplus = sh.getMaxRows() - keep;
+  if (surplus <= 0) return 0;
+  sh.deleteRows(keep + 1, surplus);
+  return surplus;
+}
+
+/**
  * Update the first row where keyColumn === keyValue (returns false when absent).
  *
  * `patch` is partial: a key the patch omits keeps whatever the row already held, which is
@@ -373,6 +407,18 @@ export function updateWhere(tab: string, keyColumn: string, keyValue: unknown, p
     }
   }
   return false;
+}
+
+/**
+ * One tab's ALLOCATED grid — what `cellCount()` below is actually pricing for it.
+ *
+ * Exists so a prune can project what trimming would reclaim before it writes anything: the
+ * preview has to be able to say the storage figure will move, and the only honest way to say
+ * that is to do the same arithmetic the figure itself does.
+ */
+export function gridSize(tab: string): { rows: number; cols: number } {
+  const sh = sheet(tab);
+  return { rows: sh.getMaxRows(), cols: sh.getMaxColumns() };
 }
 
 /** Total cell count across the spreadsheet (storage-stats surface). */

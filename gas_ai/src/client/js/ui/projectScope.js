@@ -30,7 +30,7 @@ function assetCount(n) {
  * every row under "Projects" would assert leaf-ness of the whole register on the strength
  * of a field nobody has filled in yet.
  */
-function scopeOptions(list) {
+export function scopeOptions(list) {
   const anyRecorded = list.some((p) => p.isFolder !== undefined);
   return list.map((p) => ({
     value: p.id,

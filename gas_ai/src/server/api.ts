@@ -164,6 +164,7 @@ import { comboDigest } from "../domain/comboDigest";
 import { estateReach, type EstateReach } from "../domain/reach";
 import { comboGroupById, comboSummary, REGISTER_GROUPS } from "../domain/toxicCombos";
 import { clampInt, nowIso, type Rec } from "../domain/util";
+import { inProject } from "../domain/prunePlan";
 import { archiveBytes } from "./archiveStore";
 import { activeJob } from "./jobsStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
@@ -209,7 +210,10 @@ function viewAssets(): GNode[] {
   const view = settingsStore.getProjectView();
   const all = syncStore.loadAssets();
   if (!view) return all;
-  return all.filter((a) => (a.projects ?? []).some((p) => p.id === view));
+  // Shared with the prune (domain/prunePlan.ts) rather than spelled out again here. Two
+  // copies of "does this asset belong to that project" would be two answers to it, and the
+  // first symptom of the drift would be a prune deleting rows this filter was showing.
+  return all.filter((a) => inProject(a.projects, view));
 }
 
 /**
@@ -381,6 +385,11 @@ function bootstrapCore(): Rec {
       projectView: settingsStore.getProjectView(),
       shown: assets.length,
       register: syncStore.loadAssets().length,
+      // What the SYNC is scoped to collect (WIZ_PROJECT_ID_V2), as opposed to what the
+      // pages are scoped to show above it. Null when unset, which means the battery runs
+      // tenant-wide. Here so the Data page's prune panel can default to it and say which
+      // option that is, instead of the client holding an id the server owns.
+      syncProjectId: projectScope()?.[0] ?? null,
     },
   };
 }
@@ -2486,6 +2495,61 @@ export function resetData(_p?: unknown): ApiResult {
   return mutate(() => {
     syncStore.resetData();
     return { message: "All synced data cleared." };
+  });
+}
+
+/**
+ * Resolve which project a prune is about, and name it from the register's own catalogue.
+ *
+ * The default is the SYNC scope (WIZ_PROJECT_ID_V2), resolved here rather than sent by the
+ * client: the property is the server's to know, and a client-held copy of it would go stale
+ * the moment an operator changed it in Project Settings.
+ *
+ * The name comes from the assets, never from a live Wiz catalogue query. A picker built on
+ * the catalogue could offer a project this register was never asked for, and the census
+ * behind such a pick reads zero — a zero meaning "nothing here" and a zero meaning "never
+ * fetched" look identical and call for opposite reactions.
+ */
+function pruneTarget(p?: unknown): { id: string; name: string | null } {
+  const params = (p ?? {}) as Rec;
+  const asked = typeof params["projectId"] === "string" ? String(params["projectId"]).trim() : "";
+  const id = asked || projectScope()?.[0] || "";
+  if (!id) {
+    throw new Error(
+      "No project to keep. Pick one, or set WIZ_PROJECT_ID_V2 so the sync scope can be " +
+      "the default.");
+  }
+  const entry = projectCatalogue(syncStore.loadAssets()).find((e) => e.id === id);
+  return { id, name: entry ? entry.name : null };
+}
+
+/**
+ * What pruning to a project WOULD do. Reads only, takes no lock.
+ *
+ * Mandatory before the real thing, and the panel enforces it. This is an irreversible
+ * deletion measured in tens of thousands of rows, and the difference between a folder id and
+ * one of its leaves is several orders of magnitude of register — visible in this census and
+ * in nothing else the operator can see beforehand.
+ */
+export function previewPrune(p?: unknown): ApiResult {
+  return run(() => {
+    const target = pruneTarget(p);
+    return { ...target, ...syncStore.pruneToProject(target.id, { dryRun: true }) };
+  });
+}
+
+/** Delete everything outside one project. Irreversible; the panel confirms first. */
+export function pruneToProject(p?: unknown): ApiResult {
+  return mutate(() => {
+    const target = pruneTarget(p);
+    const res = syncStore.pruneToProject(target.id, { dryRun: false });
+    const removed = res.census.total - res.census.keep;
+    return {
+      ...target,
+      ...res,
+      message: `Removed ${removed} of ${res.census.total} assets and everything attached ` +
+        `to them. ${res.census.keep} kept.`,
+    };
   });
 }
 

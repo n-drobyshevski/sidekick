@@ -45,11 +45,14 @@ import { OTHER_GROUP_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
 import { countAarsSeverities } from "../domain/aarsTrend";
 import { midrankPercentiles } from "../domain/rankStats";
+import { planPrune, type PruneCensus } from "../domain/prunePlan";
 import { nowIso, type Rec } from "../domain/util";
 import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot } from "./archiveStore";
 import { bumpDataVersion, bumpWizDataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
-import { appendRows, overwrite, readAll, TABS } from "./sheetsDb";
+import {
+  appendRows, cellCount, gridSize, overwrite, readAll, TABS, trimSurplusRows, TRIM_BUFFER_ROWS,
+} from "./sheetsDb";
 
 // ------------------------------------------------------------- row (de)serializers
 // Cells are plain text ("@"): booleans serialize as "true"/"false" ("null" for the
@@ -98,7 +101,7 @@ export function parseJson<T>(v: unknown, fallback: T): T {
  * project ids already are, and a rescore must keep producing the same ones rather than
  * re-keying every project on an asset a live sync hasn't touched since this shipped.
  */
-function parseAssetProjects(v: unknown): NonNullable<GNode["projects"]> {
+export function parseAssetProjects(v: unknown): NonNullable<GNode["projects"]> {
   const raw = parseJson<unknown[]>(v, []);
   if (typeof raw[0] === "string") {
     return (raw as unknown[]).map((name) => ({
@@ -1550,4 +1553,166 @@ export function resetData(): void {
   overwrite(TABS.syncHistory, []);
   trashGraphSnapshot();
   commit();
+}
+
+// --------------------------------------------------------------------------- prune
+
+/** One rewritten tab's row count, before and after. */
+export interface PruneTabCount {
+  tab: string;
+  before: number;
+  after: number;
+}
+
+export interface PruneResult {
+  projectId: string;
+  dryRun: boolean;
+  census: PruneCensus;
+  tabs: PruneTabCount[];
+  cellsBefore: number;
+  /** Measured after a real prune; PROJECTED from the same arithmetic on a dry run. */
+  cellsAfter: number;
+}
+
+/** The child tabs, and the column that names the asset each row hangs off. */
+const PRUNE_CHILDREN: Array<[tab: string, ownerColumn: string]> = [
+  // NEVER `projects_json`. An issue's own project cell holds NAMES, not ids (IssueRow.projects
+  // in graphTypes.ts), so an id comparison there matches nothing and matches it silently. The
+  // asset link is the authoritative one, and is what the project view filter uses too.
+  [TABS.issues, "asset_id"],
+  [TABS.findings, "resource_id"],
+  [TABS.dataFindings, "resource_id"],
+  [TABS.identityFindings, "resource_id"],
+];
+
+/**
+ * What trimming a tab down to `keptRows` would give back, in cells.
+ *
+ * Mirrors `trimSurplusRows` exactly — the same buffer, the same header row — because a
+ * preview that used a rounder rule would be a second answer to a question the storage figure
+ * already answers one way.
+ */
+function projectedCellsFreed(tab: string, keptRows: number): number {
+  const { rows, cols } = gridSize(tab);
+  return Math.max(0, rows - (keptRows + 1 + TRIM_BUFFER_ROWS)) * cols;
+}
+
+/**
+ * The Drive snapshot, pruned to match the tabs.
+ *
+ * It is the read fast path for getGraph (`loadGraphDocUncached`), so leaving it alone would
+ * have the Security Graph page keep drawing assets the register no longer holds. Trashing it
+ * would also be correct, and is what `resetData` does — but the tabs rebuild is then paid on
+ * every read until the next sync, and this whole feature exists to make reads cheaper.
+ *
+ * `persistSync` writes the WHOLE document here, so the snapshot carries the synthetic ISSUE
+ * nodes and their HAS_ISSUE edges alongside the real assets. Filtering it on asset ids alone
+ * would silently strip every issue from the graph, so the kept issue ids join the keep-set
+ * for this one purpose. The derived risk nodes (sensitive data, exposure, guardrails) are
+ * added at read time by `withRiskNodes` and are not in here to prune.
+ */
+function pruneGraphSnapshot(keptNodeIds: Set<string>): void {
+  const snap = readGraphSnapshot();
+  if (!snap) return;
+  const nodes = snap.nodes.filter((n) => keptNodeIds.has(n.id));
+  const edges = snap.edges.filter((e) => keptNodeIds.has(e.src) && keptNodeIds.has(e.dst));
+  writeGraphSnapshot({ ...snap, nodes, edges });
+}
+
+/**
+ * Keep one project's subtree and delete the rest of the register, in place.
+ *
+ * The subtraction `resetData` cannot express. A register synced before WIZ_PROJECT_ID_V2 was
+ * set holds every project the tenant returned; re-fetching the wanted slice costs hours of
+ * Wiz API calls, while the unwanted rows are already identifiable from what is on the tabs.
+ *
+ * Rows are filtered AS ROWS — read raw, written raw — so a column this file does not model
+ * cannot be dropped on the way through. The one cell that is parsed is `projects_json`, and
+ * it goes through `parseAssetProjects` rather than JSON.parse because cells written by an
+ * older version hold bare name strings; a raw parse reads every one of those rows as
+ * belonging to no project at all, which under rule 2 of the planner decides their fate.
+ *
+ * Untouched: the framework tabs and the rule catalogue (Wiz's vocabulary, not this tenant's
+ * posture), settings, jobs, and `sync_history`. History rows record what a sync actually
+ * fetched; rewriting them to agree with a later deletion would be a different untruth than
+ * leaving them, and the panel says so rather than quietly picking one.
+ *
+ * Caller holds the script lock.
+ */
+export function pruneToProject(projectId: string, opts: { dryRun: boolean }): PruneResult {
+  const assetRows = readAll(TABS.assets);
+  const edgeRows = readAll(TABS.edges);
+
+  const { keep, census } = planPrune(
+    assetRows.map((r) => ({
+      id: String(r["id"] ?? ""),
+      projects: parseAssetProjects(r["projects_json"]),
+    })),
+    edgeRows.map((r) => ({ src: String(r["src"] ?? ""), dst: String(r["dst"] ?? "") })),
+    projectId,
+  );
+
+  // The refusal that matters. An id no asset carries — a typo, a project this register was
+  // never scoped to fetch, a stale pick — keeps nothing, and a control labelled "remove data
+  // outside a project" must not be the way someone empties the register by accident.
+  if (!keep.size) {
+    throw new Error(
+      "No asset in this register belongs to that project, so this would delete everything. " +
+      "Use Reset synced data if clearing the register is what you want.");
+  }
+
+  const keptAssets = assetRows.filter((r) => keep.has(String(r["id"] ?? "")));
+  const keptEdges = edgeRows.filter(
+    (r) => keep.has(String(r["src"] ?? "")) && keep.has(String(r["dst"] ?? "")));
+  const children = PRUNE_CHILDREN.map(([tab, ownerColumn]) => {
+    const rows = readAll(tab);
+    return { tab, rows, kept: rows.filter((r) => keep.has(String(r[ownerColumn] ?? ""))) };
+  });
+
+  // Children first, assets last, in the census as in the write below.
+  const tabs: PruneTabCount[] = [
+    ...children.map((c) => ({ tab: c.tab, before: c.rows.length, after: c.kept.length })),
+    { tab: TABS.edges, before: edgeRows.length, after: keptEdges.length },
+    { tab: TABS.assets, before: assetRows.length, after: keptAssets.length },
+  ];
+
+  const cellsBefore = cellCount();
+  if (opts.dryRun) {
+    const freed = tabs.reduce((acc, t) => acc + projectedCellsFreed(t.tab, t.after), 0);
+    return {
+      projectId, dryRun: true, census, tabs, cellsBefore,
+      cellsAfter: Math.max(0, cellsBefore - freed),
+    };
+  }
+
+  // Invalidate BEFORE the first write, not only after the last. The 6-minute execution
+  // ceiling can end this function between two tabs, and `commit()` at the end would then
+  // never run — leaving caches serving pre-prune rows against post-prune tabs for up to six
+  // hours. Bumping first makes the worst case a cold read of a half-pruned register, which is
+  // recoverable by running it again; the alternative is a mix nothing can detect.
+  bumpDataVersion();
+  bumpWizDataVersion();
+
+  // Children before assets, deliberately. Interrupted here, the register holds assets whose
+  // issues have already gone — under-reporting, and re-running finishes the job. The other
+  // order leaves issue and finding rows pointing at assets that no longer exist, which every
+  // join downstream has to cope with.
+  for (const c of children) {
+    overwrite(c.tab, c.kept);
+    trimSurplusRows(c.tab);
+  }
+  overwrite(TABS.edges, keptEdges);
+  trimSurplusRows(TABS.edges);
+  overwrite(TABS.assets, keptAssets);
+  trimSurplusRows(TABS.assets);
+
+  // The surviving assets PLUS the surviving issues: the snapshot carries the synthetic ISSUE
+  // nodes, so an asset-only keep-set would strip every issue from the graph page.
+  const keptNodeIds = new Set<string>(keep);
+  const keptIssues = children.find((c) => c.tab === TABS.issues);
+  for (const r of keptIssues?.kept ?? []) keptNodeIds.add(String(r["id"] ?? ""));
+  pruneGraphSnapshot(keptNodeIds);
+
+  commit();
+  return { projectId, dryRun: false, census, tabs, cellsBefore, cellsAfter: cellCount() };
 }
