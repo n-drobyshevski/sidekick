@@ -154,9 +154,18 @@ console.log(`  rows per step      ${FIRST}`);
 
 // ------------------------------------------------------------------- 2. the tenant's schema
 
+
+/** `[String!]` / `ProjectFilters` / `String` — the shape a filter field actually wants. */
+function renderType(t) {
+  if (!t) return "?";
+  if (t.kind === "NON_NULL") return renderType(t.ofType) + "!";
+  if (t.kind === "LIST") return "[" + renderType(t.ofType) + "]";
+  return t.name || t.kind || "?";
+}
+
 async function typeShape(name) {
   if (DRY_RUN) return null;   // dry run sends nothing, not even introspection
-  const q = `query SidekickTypeProbe { __type(name: "${name}") { kind enumValues { name } inputFields { name } } }`;
+  const q = `query SidekickTypeProbe { __type(name: "${name}") { kind enumValues { name } inputFields { name type { name kind ofType { name kind ofType { name kind } } } } } }`;
   const r = await post(q, {});
   if (!r.ok) return { error: r.error };
   const t = r.data?.__type;
@@ -165,6 +174,8 @@ async function typeShape(name) {
     kind: t.kind ?? "",
     enumValues: (t.enumValues ?? []).map((e) => e.name),
     inputFields: (t.inputFields ?? []).map((f) => f.name),
+    // name + rendered type, for the callers that need to know the SHAPE a field wants.
+    inputTypes: (t.inputFields ?? []).map((f) => ({ name: f.name, type: renderType(f.type) })),
   };
 }
 
@@ -250,10 +261,22 @@ if (!DRY_RUN) {
       console.log(label + (shape?.error ? "REFUSED  " + shape.error.slice(0, 80) : "no such type"));
       continue;
     }
-    const has = (f) => shape.inputFields.includes(f);
-    const found = ["projectId", "projectIdV2", "project", "resource"].filter(has);
-    console.log(label + (found.length ? found.join(", ") : "(no project-shaped field)"));
+    // Every project-shaped field, with its type. Not a guess-list: the first version of
+    // this check tested four names I had thought of and reported "project" for
+    // CloudResourceV2Filters, which was true and still not the answer — it says nothing
+    // about the SHAPE the field wants, and a right name in a wrong shape is a 400.
+    // `resource` is included because ConfigurationFindingFilters nests the project field
+    // inside it; the rendered type name says where to look next rather than reporting
+    // "no project-shaped field" for a type that plainly has one, one level down.
+    const found = shape.inputTypes.filter((f) => /project/i.test(f.name) || f.name === "resource");
+    console.log(label + (found.length
+      ? found.map((f) => f.name + ": " + f.type).join(", ")
+      : "(no project-shaped field)"));
     console.log("  " + " ".repeat(30) + "sent today: " + expected + "   — " + users);
+    if (found.length && !found.some((f) => f.name === expected.split(".")[0])) {
+      console.log("  " + " ".repeat(30) + "*** MISMATCH: this type has no '" +
+        expected.split(".")[0] + "' field ***");
+    }
   }
   console.log("\n  A field listed here exists; it does not follow that it means what you hope.");
   console.log("  Scope one step, count the rows, and only then scope the rest.");
