@@ -525,12 +525,35 @@ export async function renderAarsRules(main, _params, ctx) {
    * reached. `idx === null` clears. Shared by both cascades because the walk is the same
    * shape in each.
    */
+  /**
+   * Every row of a cascade paired with the rule index it speaks for, THE FALLBACK INCLUDED,
+   * as -1 — `decideMirror`'s own sentinel for "no rule matched", and the same number
+   * `paintCells` stamps on a cell no rule claims.
+   *
+   * It is a function rather than a wider selector because `tr[data-idx]` has to keep meaning
+   * "a rule row": a dozen loops (reorder, shadow marking, coverage, the claim rails) index
+   * straight into `outcomeRules` / `tierRules` with it, and a fallback row arriving there
+   * would read as rule number NaN. The fallback is a row of the cascade for the purpose of
+   * pointing at the picture, and not one for the purpose of indexing an array, so the two
+   * questions get two answers instead of one selector that is wrong for one of them.
+   */
+  function cascadeRows(body) {
+    const rows = [...body.querySelectorAll("tr[data-idx]")].map((tr) => [tr, Number(tr.dataset.idx)]);
+    const fallback = body.querySelector("tr.rule-fallback");
+    if (fallback) rows.push([fallback, -1]);
+    return rows;
+  }
+
   function markTracedRows(body, idx) {
     if (!body) return;
-    body.querySelectorAll("tr[data-idx]").forEach((tr) => {
-      const i = Number(tr.dataset.idx);
-      tr.classList.toggle("rule-tried", idx !== null && idx !== undefined && idx !== -1 && i < idx);
-      tr.classList.toggle("rule-won", idx !== null && idx !== undefined && i === idx);
+    const live = idx !== null && idx !== undefined;
+    cascadeRows(body).forEach(([tr, i]) => {
+      // A walk that ends at the fallback tried EVERY rule and none of them matched — which
+      // is precisely what "no rule matches" means — so -1 marks them all tried rather than,
+      // as it used to, none of them. The fallback itself is never "tried": it is where the
+      // walk arrives, not a rule it stepped past.
+      tr.classList.toggle("rule-tried", live && i !== -1 && (idx === -1 || i < idx));
+      tr.classList.toggle("rule-won", live && i === idx);
     });
   }
 
@@ -2562,18 +2585,27 @@ export async function renderAarsRules(main, _params, ctx) {
         },
       });
       const fbCell = verdictSelect(fbSel);
-      pCascadeBody.append(
-        el(
-          "tr",
-          { class: "rule-fallback" },
-          el("td", { class: "num muted small", "aria-hidden": "true" }, "↳"),
-          el("td", { class: "rule-prices num" }),
-          el("td", { colspan: String(AXIS_DEFS.length) }, "Matches no rule above"),
-          el("td", {}, fbCell),
-          el("td", { class: "rule-rowmeta small muted" }, "the tree's fallback outcome"),
-          el("td", {}),
-        ),
+      const fbTr = el(
+        "tr",
+        { class: "rule-fallback" },
+        el("td", { class: "num muted small", "aria-hidden": "true" }, "↳"),
+        el("td", { class: "rule-prices num" }),
+        el("td", { colspan: String(AXIS_DEFS.length) }, "Matches no rule above"),
+        el("td", {}, fbCell),
+        el("td", { class: "rule-rowmeta small muted" }, "the tree's fallback outcome"),
+        el("td", {}),
       );
+      // The fallback claims leaves like any other row — twelve of the fifty-four, against
+      // this draft — and its claim rail says so two columns to the left, so it gets the same
+      // link to the picture the rules get. -1 is what `paintCells` stamped on exactly those
+      // cells, so `light(-1)` is not a special case here, it is the ordinary one.
+      const fbLight = () => pLattice.light(-1);
+      const fbDim = () => pLattice.light(null);
+      fbTr.addEventListener("mouseenter", fbLight);
+      fbTr.addEventListener("mouseleave", fbDim);
+      fbTr.addEventListener("focusin", fbLight);
+      fbTr.addEventListener("focusout", fbDim);
+      pCascadeBody.append(fbTr);
 
       pAddBtn.disabled = problemDraft.outcomeRules.length >= max;
       pAddBtn.title = pAddBtn.disabled ? `The cascade is limited to ${max} rules.` : "";
@@ -3114,8 +3146,8 @@ export async function renderAarsRules(main, _params, ctx) {
     // ----------------------------------------------------------------------- lattice
     /** Light the cascade row that claims a cell, or clear. Rows are rebuilt structurally, so this re-queries. */
     function lightProblemRow(idx) {
-      pCascadeBody.querySelectorAll("tr").forEach((tr) => {
-        tr.classList.toggle("is-lit", idx !== null && idx !== undefined && Number(tr.dataset.idx) === idx);
+      cascadeRows(pCascadeBody).forEach(([tr, i]) => {
+        tr.classList.toggle("is-lit", idx !== null && idx !== undefined && i === idx);
       });
     }
 
@@ -3630,18 +3662,27 @@ export async function renderAarsRules(main, _params, ctx) {
       });
       const fbCell = verdictSelect(fbSel);
       fbCell.paint(postureDraft.fallbackTier);
-      uCascadeBody.append(
-        el(
-          "tr",
-          { class: "rule-fallback" },
-          el("td", { class: "num muted small", "aria-hidden": "true" }, "↳"),
-          el("td", { class: "rule-prices num" }),
-          el("td", { colspan: String(POSTURE_AXIS_DEFS.length) }, "Matches no rule above"),
-          el("td", {}, fbCell),
-          el("td", { class: "rule-rowmeta small muted" }, "the lattice's fallback tier"),
-          el("td", {}),
-        ),
+      const fbTr = el(
+        "tr",
+        { class: "rule-fallback" },
+        el("td", { class: "num muted small", "aria-hidden": "true" }, "↳"),
+        el("td", { class: "rule-prices num" }),
+        el("td", { colspan: String(POSTURE_AXIS_DEFS.length) }, "Matches no rule above"),
+        el("td", {}, fbCell),
+        el("td", { class: "rule-rowmeta small muted" }, "the lattice's fallback tier"),
+        el("td", {}),
       );
+      // Same link the problem cascade's fallback gets, and it matters here even though this
+      // draft leaves the fallback claiming nothing: a row that claims nothing today is one
+      // edit away from claiming cells, and a link that only appears once it does is a link
+      // nobody discovers.
+      const fbLight = () => uLattice.light(-1);
+      const fbDim = () => uLattice.light(null);
+      fbTr.addEventListener("mouseenter", fbLight);
+      fbTr.addEventListener("mouseleave", fbDim);
+      fbTr.addEventListener("focusin", fbLight);
+      fbTr.addEventListener("focusout", fbDim);
+      uCascadeBody.append(fbTr);
 
       uAddBtn.disabled = postureDraft.tierRules.length >= max;
       uAddBtn.title = uAddBtn.disabled ? `The cascade is limited to ${max} rules.` : "";
@@ -3709,8 +3750,8 @@ export async function renderAarsRules(main, _params, ctx) {
 
     /** Light the cascade row that claims a cell, or clear. Rows are rebuilt structurally, so this re-queries. */
     function lightPostureRow(idx) {
-      uCascadeBody.querySelectorAll("tr").forEach((tr) => {
-        tr.classList.toggle("is-lit", idx !== null && idx !== undefined && Number(tr.dataset.idx) === idx);
+      cascadeRows(uCascadeBody).forEach(([tr, i]) => {
+        tr.classList.toggle("is-lit", idx !== null && idx !== undefined && i === idx);
       });
     }
 

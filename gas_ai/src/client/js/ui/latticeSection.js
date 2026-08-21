@@ -201,6 +201,11 @@ export function latticeSection(opts) {
     if (traceBox.open) runTrace();
     else {
       grid.pulse(null);
+      // The close path cleared the pulse and the row marks but never the lit cells, so a
+      // closed tracer left its last walk's claim lit with nothing on the page still saying
+      // why. Harmless-looking until the fallback started lighting cells too, at which point
+      // it is twelve of them.
+      grid.light(null);
       if (onTrace) onTrace(null);
     }
   });
@@ -214,7 +219,11 @@ export function latticeSection(opts) {
     const key = spec.keyOf(vector);
 
     grid.pulse(key);
-    grid.light(idx === -1 ? null : idx);
+    // -1 is passed through rather than blanked. `light` matches on the painted `ruleIndex`,
+    // and a fallback cell carries exactly -1, so this lights the cells the fallback answers
+    // for — the same thing a matched rule's index does. Blanking it meant a walk that fell
+    // through showed the pulsed cell alone while the readout said the fallback had decided.
+    grid.light(idx);
     if (onTrace) onTrace(idx);
 
     const words = vectorSentence(spec, vector);
