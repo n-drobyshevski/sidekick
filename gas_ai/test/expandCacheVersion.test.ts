@@ -39,7 +39,11 @@ function versions(): { data: string; wiz: string } {
   };
 }
 
-/** The clock is frozen by bootServer, and both versions are timestamps. */
+/**
+ * The clock is frozen by bootServer. Both versions LEAD with a timestamp, and the tests
+ * below advance it so the two stamps are legibly different runs rather than relying on the
+ * tie-breaking counter — the counter is pinned on its own, further down.
+ */
 function tick(): void {
   vi.setSystemTime(new Date(Date.now() + 1000));
 }
@@ -103,5 +107,34 @@ describe("expandAsset cache key", () => {
     // gas-shims throws on UrlFetchApp.fetch, so reaching the network here would fail loudly.
     expect(res.ok).toBe(true);
     expect((res.data as { source: string }).source).toBe("stored");
+  });
+});
+
+describe("the version stamp itself", () => {
+  it("moves on every mutation, including two inside the same millisecond", () => {
+    // It is a cache KEY, so the only property it owes anyone is differing from its
+    // predecessor. `String(Date.now())` does not owe that: two mutations landing in the
+    // same millisecond stamp the same version, every key stays identical, and the second
+    // mutation serves the first one's payload until the 6h TTL expires.
+    //
+    // No tick() here, deliberately — the frozen clock IS the same-millisecond case, and
+    // running it under a moving clock would only re-test what the timestamp already gave.
+    expect((server.api.setSettings({ maxNodes: 250 }) as Result).ok).toBe(true);
+    const first = versions().data;
+    expect((server.api.setSettings({ maxNodes: 260 }) as Result).ok).toBe(true);
+    const second = versions().data;
+    expect((server.api.setSettings({ maxNodes: 270 }) as Result).ok).toBe(true);
+    const third = versions().data;
+
+    expect(second).not.toBe(first);
+    expect(third).not.toBe(second);
+    expect(third).not.toBe(first);
+  });
+
+  it("still leads with the clock, so a stamp stays readable as a time", () => {
+    // The counter is a tie-breaker, not a replacement: an operator reading DATA_VERSION out
+    // of Script Properties should still be able to see WHEN the last mutation was.
+    expect((server.api.setSettings({ maxNodes: 250 }) as Result).ok).toBe(true);
+    expect(versions().data.split(".")[0]).toBe(String(Date.now()));
   });
 });

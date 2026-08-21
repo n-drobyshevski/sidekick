@@ -7446,6 +7446,13 @@ var Server = (() => {
   function clampDepth(v) {
     return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
   }
+  function getProjectView(settings) {
+    const v = settings["project_view"];
+    return typeof v === "string" ? v.trim() : "";
+  }
+  function withProjectView(settings, id) {
+    return { ...settings, project_view: typeof id === "string" ? id.trim() : "" };
+  }
   function getDefaultDepth(settings) {
     var _a5;
     return clampDepth((_a5 = settings["default_depth"]) != null ? _a5 : DEPTH_DEFAULT);
@@ -7798,7 +7805,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "cdc0ce2f4ced" : "dev";
+  var BUILD_ID = true ? "3fab2a12bae3" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -7813,15 +7820,20 @@ var Server = (() => {
     var _a5;
     return (_a5 = getProp(VERSION_PROP)) != null ? _a5 : "0";
   }
+  function nextVersion(prev) {
+    const now = String(Date.now());
+    const [prevMs, prevN] = String(prev != null ? prev : "").split(".");
+    return prevMs === now ? `${now}.${(Number(prevN) || 0) + 1}` : `${now}.0`;
+  }
   function bumpDataVersion() {
-    setProp(VERSION_PROP, String(Date.now()));
+    setProp(VERSION_PROP, nextVersion(getProp(VERSION_PROP)));
   }
   function wizDataVersion() {
     var _a5;
     return (_a5 = getProp(WIZ_VERSION_PROP)) != null ? _a5 : "0";
   }
   function bumpWizDataVersion() {
-    setProp(WIZ_VERSION_PROP, String(Date.now()));
+    setProp(WIZ_VERSION_PROP, nextVersion(getProp(WIZ_VERSION_PROP)));
   }
   function cacheKey(name, params, version) {
     const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
@@ -7917,6 +7929,13 @@ var Server = (() => {
     );
     settingsMemo = settings;
     bumpDataVersion();
+  }
+  var getProjectView2 = () => getProjectView(loadSettings());
+  function setProjectView(id) {
+    const settings = loadSettings();
+    const next = withProjectView(settings, id);
+    if (next["project_view"] === getProjectView(settings)) return;
+    saveSettings(next);
   }
   var getDefaultDepth2 = () => getDefaultDepth(loadSettings());
   var getMaxNodes2 = () => getMaxNodes(loadSettings());
@@ -14601,6 +14620,31 @@ var Server = (() => {
   }
 
   // src/server/api.ts
+  function viewAssets() {
+    const view = getProjectView2();
+    const all = loadAssets();
+    if (!view) return all;
+    return all.filter((a) => {
+      var _a5;
+      return ((_a5 = a.projects) != null ? _a5 : []).some((p) => p.id === view);
+    });
+  }
+  function viewAssetIds() {
+    if (!getProjectView2()) return null;
+    const ids = /* @__PURE__ */ new Set();
+    for (const a of viewAssets()) ids.add(a.id);
+    return ids;
+  }
+  function viewIssues() {
+    const ids = viewAssetIds();
+    const all = loadIssues();
+    return ids ? all.filter((i) => ids.has(i.assetId)) : all;
+  }
+  function viewFindings() {
+    const ids = viewAssetIds();
+    const all = loadFindings();
+    return ids ? all.filter((f) => ids.has(f.resourceId)) : all;
+  }
   function run(fn) {
     try {
       return { ok: true, data: fn() };
@@ -14618,7 +14662,7 @@ var Server = (() => {
     );
   }
   function openIssues() {
-    return loadIssues().filter(isUnresolvedIssue);
+    return viewIssues().filter(isUnresolvedIssue);
   }
   function bootstrap(_p) {
     return run(() => {
@@ -14636,7 +14680,7 @@ var Server = (() => {
   }
   function bootstrapCore() {
     var _a5, _b;
-    const assets = loadAssets();
+    const assets = viewAssets();
     const issues2 = openIssues();
     const latest = latestSync();
     const aarsRule = getAarsRule2();
@@ -14715,7 +14759,18 @@ var Server = (() => {
         // name the population it is a percentile OF without a second round trip.
         aarsScored: assets.filter((a) => typeof a.aars === "number").length
       },
-      filterOptions: filterOptions(assets)
+      filterOptions: filterOptions(assets, loadAssets()),
+      // What the switcher shows as selected, and what that selection costs. `shown` and
+      // `register` ride together because the control has to be able to say "826 of 12,778"
+      // rather than "826" — a count with no denominator cannot distinguish a small unit from
+      // a small register, and those call for opposite reactions. Sits beside the data rather
+      // than in `settings` because every number on this payload was already filtered by it:
+      // the label and the figures it labels have to come from one read.
+      scope: {
+        projectView: getProjectView2(),
+        shown: assets.length,
+        register: loadAssets().length
+      }
     };
   }
   function distinctHumanIdentities(assets) {
@@ -14747,7 +14802,7 @@ var Server = (() => {
     for (const a of assets) if (a.id === id) return a;
     return void 0;
   }
-  function filterOptions(assets) {
+  function filterOptions(assets, register) {
     var _a5;
     const kinds = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
@@ -14768,8 +14823,9 @@ var Server = (() => {
       // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
       // filter on every page matches project names, and there is no reason to migrate them
       // here; the switcher needs ids because only an id carries ancestry — an asset lists its
-      // whole chain, so one id match selects a folder's entire subtree.
-      projectList: projectCatalogue(assets)
+      // whole chain, so one id match selects a folder's entire subtree. Its counts are
+      // register-wide on purpose: they answer "how much would I see if I picked this".
+      projectList: projectCatalogue(register)
     };
   }
   function getGraph(p) {
@@ -15040,17 +15096,17 @@ var Server = (() => {
   function assetsModel() {
     var _a5, _b;
     const trend = aarsTrendFromHistory(syncHistory());
-    const assets = loadAssets();
+    const assets = viewAssets();
     const issues2 = openIssues();
     const reach = estateReach({
       assets,
-      issues: loadIssues(),
-      findings: loadFindings(),
+      issues: viewIssues(),
+      findings: viewFindings(),
       edges: loadEdges()
     });
     const assetIds = {};
     for (const a of assets) assetIds[a.id] = true;
-    const openGaps = loadFindings().filter(isOpenGap);
+    const openGaps = viewFindings().filter(isOpenGap);
     const unlinkedGaps = openGaps.filter((f) => !assetIds[f.resourceId]).length;
     const agents = assets.filter((a) => a.kind === "AI_AGENT");
     const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
@@ -15266,7 +15322,7 @@ var Server = (() => {
   function getAssetOptions(_p) {
     return run(
       () => cached("assetOptions", null, () => ({
-        rows: [...loadAssets()].sort((a, b) => {
+        rows: [...viewAssets()].sort((a, b) => {
           var _a5, _b;
           return Number((_a5 = b.aars) != null ? _a5 : -1) - Number((_b = a.aars) != null ? _b : -1);
         }).map((n) => ({ id: n.id, name: n.name, kind: n.kind }))
@@ -15327,7 +15383,7 @@ var Server = (() => {
   }
   function aiAssetIdSet() {
     const ids = {};
-    for (const a of loadAssets()) ids[a.id] = true;
+    for (const a of viewAssets()) ids[a.id] = true;
     return ids;
   }
   function scopedFrameworkPolicies() {
@@ -15336,7 +15392,7 @@ var Server = (() => {
     const catalogue = loadFrameworks();
     const scope = scopeFiveRs(
       buildAllFrameworkTrees(posture, allPolicies, catalogue),
-      loadFindings(),
+      viewFindings(),
       aiAssetIdSet(),
       getFiveRsPins2()
     );
@@ -15348,7 +15404,7 @@ var Server = (() => {
   }
   function configModel() {
     const assetIds = aiAssetIdSet();
-    const rows = loadFindings().map((f) => toConfigView(f, !!assetIds[f.resourceId]));
+    const rows = viewFindings().map((f) => toConfigView(f, !!assetIds[f.resourceId]));
     const severities = /* @__PURE__ */ new Set();
     const statuses = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
@@ -15428,7 +15484,7 @@ var Server = (() => {
       return cached("getConfigFindingDetail", { id }, () => {
         const finding = loadFindings().filter((f) => f.id === id)[0];
         if (!finding) return null;
-        const asset = loadAssets().filter((a) => a.id === finding.resourceId)[0];
+        const asset = viewAssets().filter((a) => a.id === finding.resourceId)[0];
         return {
           finding,
           gap: isOpenGap(finding),
@@ -15544,7 +15600,7 @@ var Server = (() => {
       const params = p != null ? p : {};
       const group = String((_a5 = params["group"]) != null ? _a5 : "");
       return cached("getIssues", { group }, () => {
-        let rows = loadIssues();
+        let rows = viewIssues();
         if (group) rows = rows.filter((i) => i.comboGroup === group);
         return { rows, total: rows.length };
       });
@@ -15574,7 +15630,7 @@ var Server = (() => {
     return run(
       () => cached("getToxicCombos", null, () => {
         const issues2 = openIssues();
-        const assetRows = loadAssets();
+        const assetRows = viewAssets();
         const assets = new Map(assetRows.map((a) => [a.id, a]));
         const digest = comboDigest(issues2, assetRows, (/* @__PURE__ */ new Date()).toISOString());
         const digestById = new Map(digest.groups.map((g) => [g.id, g]));
@@ -15629,10 +15685,8 @@ var Server = (() => {
     );
   }
   function problemsModel() {
-    const assetsById = new Map(loadAssets().map((a) => [a.id, a]));
-    const rows = rankProblems(
-      buildProblemRows(loadIssues(), loadFindings(), assetsById)
-    );
+    const assetsById = new Map(viewAssets().map((a) => [a.id, a]));
+    const rows = rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById));
     return { rows, outcomeCounts: countProblemRowsByOutcome(rows) };
   }
   function getProblems(p) {
@@ -15809,6 +15863,7 @@ var Server = (() => {
       }
       if (params["maxNodes"] !== void 0) setMaxNodes(params["maxNodes"]);
       if (params["autoExpand"] !== void 0) setAutoExpand(params["autoExpand"]);
+      if (params["projectView"] !== void 0) setProjectView(params["projectView"]);
       if (params["fiveRsPins"] !== void 0) {
         setFiveRsPins(
           cleanFiveRsPins(
@@ -15823,6 +15878,7 @@ var Server = (() => {
         // Echoed so the Settings page's paint({ ...s, ...fresh }) repaints the STORED value
         // rather than the one it asked for.
         autoExpand: getAutoExpand2(),
+        projectView: getProjectView2(),
         fiveRsPins: getFiveRsPins2()
       };
     });

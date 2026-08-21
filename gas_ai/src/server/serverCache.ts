@@ -30,14 +30,30 @@ const KEY_PREFIX = `wsk.${BUILD_ID}`;
 const CHUNK_CHARS = 90_000; // base64 chars per entry, safely under the 100 KB cap
 const DEFAULT_TTL_SEC = 21_600; // the CacheService maximum (6 h)
 
-/** Monotonic-enough stamp of the last mutation; part of every cache key. */
+/** Monotonic stamp of the last mutation; part of every cache key. */
 export function dataVersion(): string {
   return getProp(VERSION_PROP) ?? "0";
 }
 
+/**
+ * `<ms>.<n>` — the clock for legibility, the counter for the actual guarantee.
+ *
+ * A bare `Date.now()` is not monotonic at the resolution that matters here: two mutations
+ * landing in the same millisecond stamp the same version, every cache key stays identical,
+ * and the second mutation serves the first one's payload until the 6h TTL expires. Rare in
+ * production and certain under a frozen test clock, where nothing advances at all and every
+ * mutation after the first reads stale. The counter makes the value differ from its
+ * predecessor unconditionally, which is the only property a cache key needs from it.
+ */
+function nextVersion(prev: string | null): string {
+  const now = String(Date.now());
+  const [prevMs, prevN] = String(prev ?? "").split(".");
+  return prevMs === now ? `${now}.${(Number(prevN) || 0) + 1}` : `${now}.0`;
+}
+
 /** Call after every mutation commit (persist/delete/compact/settings/snapshot). */
 export function bumpDataVersion(): void {
-  setProp(VERSION_PROP, String(Date.now()));
+  setProp(VERSION_PROP, nextVersion(getProp(VERSION_PROP)));
 }
 
 /**
@@ -50,7 +66,7 @@ export function wizDataVersion(): string {
 }
 
 export function bumpWizDataVersion(): void {
-  setProp(WIZ_VERSION_PROP, String(Date.now()));
+  setProp(WIZ_VERSION_PROP, nextVersion(getProp(WIZ_VERSION_PROP)));
 }
 
 /** Deterministic short key: params are hashed so keys stay under the 250-char cap. */

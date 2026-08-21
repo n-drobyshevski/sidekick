@@ -57,6 +57,18 @@ export function saveSettings(settings: Rec): void {
   bumpDataVersion();
 }
 
+export const getProjectView = (): string => logic.getProjectView(loadSettings());
+/**
+ * No-op when unchanged, like the other setters that rewrite the whole tab: re-selecting the
+ * project you are already on should not cost a sheet write and a cache bust.
+ */
+export function setProjectView(id: unknown): void {
+  const settings = loadSettings();
+  const next = logic.withProjectView(settings, id);
+  if (next["project_view"] === logic.getProjectView(settings)) return;
+  saveSettings(next);
+}
+
 export const getDefaultDepth = (): number => logic.getDefaultDepth(loadSettings());
 export const getMaxNodes = (): number => logic.getMaxNodes(loadSettings());
 export const getAutoExpand = (): boolean => logic.getAutoExpand(loadSettings());

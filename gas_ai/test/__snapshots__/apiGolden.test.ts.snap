@@ -160,6 +160,11 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "UNKNOWN",
         ],
       },
+      "scope": {
+        "projectView": "",
+        "register": 0,
+        "shown": 0,
+      },
       "settings": {
         "autoExpand": true,
         "defaultDepth": 2,
@@ -1757,6 +1762,11 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
         "INFO",
         "UNKNOWN",
       ],
+    },
+    "scope": {
+      "projectView": "",
+      "register": 87,
+      "shown": 87,
     },
     "settings": {
       "autoExpand": true,

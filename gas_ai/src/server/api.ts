@@ -190,6 +190,68 @@ export interface ApiResult<T = unknown> {
   errorKind?: string;
 }
 
+/**
+ * The register as the dashboard should CURRENTLY SHOW it — the one place the project view is
+ * applied, so every read surface inherits it without nine separate filters drifting apart.
+ *
+ * Deliberately NOT inside `syncStore.loadAssets()`. The sync path reads that too, and so do
+ * the rule previews below, which diff a proposed scoring rule across the whole register; a
+ * filter down there would make a rescore preview quietly understate its own blast radius.
+ * Read surfaces call this, everything else keeps `loadAssets()`, and the difference is
+ * intentional rather than an oversight.
+ *
+ * An asset carries every project it belongs to, ancestors included, so one id match selects a
+ * folder's entire subtree. A view naming a project the register does not hold filters to
+ * nothing — which is honest for that project, and is why the picker only ever offers projects
+ * the register actually has.
+ */
+function viewAssets(): GNode[] {
+  const view = settingsStore.getProjectView();
+  const all = syncStore.loadAssets();
+  if (!view) return all;
+  return all.filter((a) => (a.projects ?? []).some((p) => p.id === view));
+}
+
+/**
+ * Ids of the assets in view, or null when the whole register is.
+ *
+ * Null rather than "every id" so the callers below can skip the filter entirely in the
+ * common case, and so "no view" never has to be spelled as a set that happens to contain
+ * everything — the two states really are different questions.
+ */
+function viewAssetIds(): Set<string> | null {
+  if (!settingsStore.getProjectView()) return null;
+  const ids = new Set<string>();
+  for (const a of viewAssets()) ids.add(a.id);
+  return ids;
+}
+
+/**
+ * Issues and findings in view: the ones hanging off an asset in view.
+ *
+ * These exist because filtering the ASSETS is not enough. Priorities, Toxic Combinations
+ * and Cloud Configuration are populated by issue and finding rows, and only join assets in
+ * for enrichment — so scoping the join alone leaves every row on screen and merely strips
+ * the ones outside the view of their posture tier. Worse than unscoped: the page would show
+ * a tenant-wide list under a label naming one project, with a scattering of rows silently
+ * missing their scoring.
+ *
+ * A row whose asset is in no project — a configuration finding evaluated against a REGION,
+ * a service account no agent runs as — is out of every project view, because there is
+ * nothing to attribute it to. It comes back the moment the view is cleared.
+ */
+function viewIssues(): IssueRow[] {
+  const ids = viewAssetIds();
+  const all = syncStore.loadIssues();
+  return ids ? all.filter((i) => ids.has(i.assetId)) : all;
+}
+
+function viewFindings(): FindingRow[] {
+  const ids = viewAssetIds();
+  const all = syncStore.loadFindings();
+  return ids ? all.filter((f) => ids.has(f.resourceId)) : all;
+}
+
 function run<T>(fn: () => T): ApiResult<T> {
   try {
     return { ok: true, data: fn() };
@@ -209,7 +271,7 @@ function mutate<T>(fn: () => T): ApiResult<T> {
 }
 
 function openIssues(): IssueRow[] {
-  return syncStore.loadIssues().filter(isUnresolvedIssue);
+  return viewIssues().filter(isUnresolvedIssue);
 }
 
 // ------------------------------------------------------------------------ bootstrap
@@ -227,7 +289,7 @@ export function bootstrap(_p?: unknown): ApiResult {
 }
 
 function bootstrapCore(): Rec {
-  const assets = syncStore.loadAssets();
+  const assets = viewAssets();
   const issues = openIssues();
   const latest = syncStore.latestSync();
   const aarsRule = settingsStore.getAarsRule();
@@ -308,7 +370,18 @@ function bootstrapCore(): Rec {
       // name the population it is a percentile OF without a second round trip.
       aarsScored: assets.filter((a) => typeof a.aars === "number").length,
     },
-    filterOptions: filterOptions(assets),
+    filterOptions: filterOptions(assets, syncStore.loadAssets()),
+    // What the switcher shows as selected, and what that selection costs. `shown` and
+    // `register` ride together because the control has to be able to say "826 of 12,778"
+    // rather than "826" — a count with no denominator cannot distinguish a small unit from
+    // a small register, and those call for opposite reactions. Sits beside the data rather
+    // than in `settings` because every number on this payload was already filtered by it:
+    // the label and the figures it labels have to come from one read.
+    scope: {
+      projectView: settingsStore.getProjectView(),
+      shown: assets.length,
+      register: syncStore.loadAssets().length,
+    },
   };
 }
 
@@ -362,7 +435,17 @@ function byIdIn(assets: GNode[], id: string): GNode | undefined {
   return undefined;
 }
 
-function filterOptions(assets: GNode[]): Rec {
+/**
+ * `assets` is what the view currently shows; `register` is everything synced. The facets
+ * describe the visible rows, so they narrow with the view — offering a cloud or a kind no
+ * visible row has would be a filter that can only ever return nothing.
+ *
+ * `projectList` is the one exception, and it is the switcher's own list. Derived from the
+ * visible rows it would collapse to the selected project the moment you selected one, and
+ * a sibling project would become unreachable without clearing the view first — a control
+ * that removes its own alternatives is a one-way door, not a filter.
+ */
+function filterOptions(assets: GNode[], register: GNode[]): Rec {
   const kinds = new Set<string>();
   const clouds = new Set<string>();
   const projects = new Set<string>();
@@ -387,8 +470,9 @@ function filterOptions(assets: GNode[]): Rec {
     // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
     // filter on every page matches project names, and there is no reason to migrate them
     // here; the switcher needs ids because only an id carries ancestry — an asset lists its
-    // whole chain, so one id match selects a folder's entire subtree.
-    projectList: projectCatalogue(assets),
+    // whole chain, so one id match selects a folder's entire subtree. Its counts are
+    // register-wide on purpose: they answer "how much would I see if I picked this".
+    projectList: projectCatalogue(register),
   };
 }
 
@@ -796,7 +880,7 @@ interface AssetsModel {
  */
 function assetsModel(): AssetsModel {
   const trend = aarsTrendFromHistory(syncStore.syncHistory());
-  const assets = syncStore.loadAssets();
+  const assets = viewAssets();
   const issues = openIssues();
   // reach.ts wants the WHOLE issues/findings population (resolved and passing rows
   // included) because it does its own admission filtering per stage — unlike every KPI
@@ -805,8 +889,8 @@ function assetsModel(): AssetsModel {
   // nothing extra: both are memoized per execution (syncStore's read-memo discipline).
   const reach = estateReach({
     assets,
-    issues: syncStore.loadIssues(),
-    findings: syncStore.loadFindings(),
+    issues: viewIssues(),
+    findings: viewFindings(),
     edges: syncStore.loadEdges(),
   });
   // The two compliance numbers, computed together so they cannot drift.
@@ -825,7 +909,12 @@ function assetsModel(): AssetsModel {
   // rather than letting one number imply every finding reached a score.
   const assetIds: Record<string, true> = {};
   for (const a of assets) assetIds[a.id] = true;
-  const openGaps = syncStore.loadFindings().filter(isOpenGap);
+  // `viewFindings`, so this and `unlinkedGaps` below share ONE scope. The client prints
+  // them as a single sentence — "N gaps · M not on an AI asset" — and a total counted over
+  // the register with a caveat counted over the view would be two populations in one claim.
+  // Under a project view the caveat falls to zero and the client drops it, which is right:
+  // a finding on a resource no asset models belongs to no project.
+  const openGaps = viewFindings().filter(isOpenGap);
   const unlinkedGaps = openGaps.filter((f) => !assetIds[f.resourceId]).length;
   const agents = assets.filter((a) => a.kind === "AI_AGENT");
   const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
@@ -1061,7 +1150,7 @@ function aarsDeltas(
 export function getAssetOptions(_p?: unknown): ApiResult {
   return run(() =>
     cached("assetOptions", null, () => ({
-      rows: [...syncStore.loadAssets()]
+      rows: [...viewAssets()]
         .sort((a, b) => Number(b.aars ?? -1) - Number(a.aars ?? -1))
         .map((n) => ({ id: n.id, name: n.name, kind: n.kind })),
     })),
@@ -1152,7 +1241,7 @@ export function getAssetDetail(p?: unknown): ApiResult {
  */
 function aiAssetIdSet(): Record<string, true> {
   const ids: Record<string, true> = {};
-  for (const a of syncStore.loadAssets()) ids[a.id] = true;
+  for (const a of viewAssets()) ids[a.id] = true;
   return ids;
 }
 
@@ -1181,7 +1270,7 @@ function scopedFrameworkPolicies(): {
 
   const scope = scopeFiveRs(
     buildAllFrameworkTrees(posture, allPolicies, catalogue),
-    syncStore.loadFindings(),
+    viewFindings(),
     aiAssetIdSet(),
     settingsStore.getFiveRsPins(),
   );
@@ -1208,9 +1297,7 @@ function configModel(): {
   facets: Record<string, string[]>;
 } {
   const assetIds = aiAssetIdSet();
-  const rows = syncStore
-    .loadFindings()
-    .map((f) => toConfigView(f, !!assetIds[f.resourceId]));
+  const rows = viewFindings().map((f) => toConfigView(f, !!assetIds[f.resourceId]));
 
   const severities = new Set<string>();
   const statuses = new Set<string>();
@@ -1317,9 +1404,12 @@ export function getConfigFindingDetail(p?: unknown): ApiResult {
   return run(() => {
     const id = String(((p ?? {}) as Rec)["id"] ?? "");
     return cached("getConfigFindingDetail", { id }, () => {
+      // Raw, not viewFindings(): a lookup BY ID is already a specific answer. Someone
+      // following a bookmark or a shared link should see the row, not a "not found" that
+      // reads as deleted. Lists narrow; links do not break.
       const finding = syncStore.loadFindings().filter((f) => f.id === id)[0];
       if (!finding) return null;
-      const asset = syncStore.loadAssets().filter((a) => a.id === finding.resourceId)[0];
+      const asset = viewAssets().filter((a) => a.id === finding.resourceId)[0];
       return {
         finding,
         gap: isOpenGap(finding),
@@ -1507,7 +1597,7 @@ export function getIssues(p?: unknown): ApiResult {
     const params = (p ?? {}) as Rec;
     const group = String(params["group"] ?? "");
     return cached("getIssues", { group }, () => {
-      let rows = syncStore.loadIssues();
+      let rows = viewIssues();
       if (group) rows = rows.filter((i) => i.comboGroup === group);
       return { rows, total: rows.length };
     });
@@ -1517,6 +1607,7 @@ export function getIssues(p?: unknown): ApiResult {
 export function getIssueDetail(p?: unknown): ApiResult {
   return run(() => {
     const id = String(((p ?? {}) as Rec)["id"] ?? "");
+    // Raw for the same reason as getConfigFindingDetail above: lists narrow, links do not.
     const issue = syncStore.loadIssues().find((i) => i.id === id) ?? null;
     if (!issue) return null;
     const group = issue.comboGroup ? comboGroupById(issue.comboGroup) : null;
@@ -1540,7 +1631,7 @@ export function getToxicCombos(_p?: unknown): ApiResult {
   return run(() =>
     cached("getToxicCombos", null, () => {
       const issues = openIssues();
-      const assetRows = syncStore.loadAssets();
+      const assetRows = viewAssets();
       const assets = new Map(assetRows.map((a) => [a.id, a]));
       const digest = comboDigest(issues, assetRows, new Date().toISOString());
       const digestById = new Map(digest.groups.map((g) => [g.id, g]));
@@ -1609,10 +1700,11 @@ interface ProblemsModel {
  * population on every call otherwise.
  */
 function problemsModel(): ProblemsModel {
-  const assetsById = new Map(syncStore.loadAssets().map((a) => [a.id, a]));
-  const rows = rankProblems(
-    buildProblemRows(syncStore.loadIssues(), syncStore.loadFindings(), assetsById),
-  );
+  const assetsById = new Map(viewAssets().map((a) => [a.id, a]));
+  // Populations and join scoped together. Handing `buildProblemRows` the whole register
+  // against a filtered `assetsById` would keep every row and merely un-enrich the ones out
+  // of view — rows missing their posture tier rather than rows correctly absent.
+  const rows = rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById));
   return { rows, outcomeCounts: countProblemRowsByOutcome(rows) };
 }
 
@@ -1877,6 +1969,11 @@ export function setSettings(p?: unknown): ApiResult {
     // `!== undefined`, not truthiness: `false` is a value the caller must be able to send,
     // and `if (params["autoExpand"])` would make the flag impossible to turn off.
     if (params["autoExpand"] !== undefined) settingsStore.setAutoExpand(params["autoExpand"]);
+    // Not validated against the catalogue. A project the register does not hold filters to
+    // nothing, which is the honest answer for that project, and rejecting it here would
+    // strand anyone whose stored view fell out of scope after a re-sync — they could not
+    // clear it, because clearing is a write too.
+    if (params["projectView"] !== undefined) settingsStore.setProjectView(params["projectView"]);
     // Cleaned against the policies actually synced, so a pin on a rule the tenant no longer
     // carries is dropped rather than accumulating forever in a settings row nothing reads.
     if (params["fiveRsPins"] !== undefined) {
@@ -1893,6 +1990,7 @@ export function setSettings(p?: unknown): ApiResult {
       // Echoed so the Settings page's paint({ ...s, ...fresh }) repaints the STORED value
       // rather than the one it asked for.
       autoExpand: settingsStore.getAutoExpand(),
+      projectView: settingsStore.getProjectView(),
       fiveRsPins: settingsStore.getFiveRsPins(),
     };
   });
@@ -1963,6 +2061,9 @@ export function previewAarsRule(p?: unknown): ApiResult {
     const errors = validateAarsRule(proposed);
     if (errors.length) throw new Error(errors.join(" "));
 
+    // Whole register, not viewAssets(): a rule preview answers "what would this change?",
+    // and scoring is tenant-wide whatever the sidebar is looking at. Scoping it here would
+    // report a blast radius smaller than the one the rule actually has.
     const before = syncStore.loadAssets();
     const after = syncStore.scoreAssetsWith(proposed);
     const beforeById = new Map(before.map((n) => [n.id, n]));
@@ -2175,6 +2276,8 @@ export function previewProblemRule(p?: unknown): ApiResult {
     // alone, because `aiVerdict` and `comboGroup` are issue vocabulary and a FindingRow
     // carries neither. Passing the union would typecheck only behind a cast and would say
     // something untrue about where the values come from.
+    // Whole register, like the AARS preview above — a rule preview answers "what would
+    // this change?", and the answer does not depend on what the sidebar is looking at.
     const beforeIssues = syncStore.loadIssues();
     const beforeAll: Array<IssueRow | FindingRow> = [...beforeIssues, ...syncStore.loadFindings()];
     const beforeById = new Map(beforeAll.map((r) => [r.id, r.problemOutcome]));
@@ -2332,6 +2435,9 @@ export function previewPostureRule(p?: unknown): ApiResult {
     const errors = validatePostureRule(proposed);
     if (errors.length) throw new Error(errors.join(" "));
 
+    // Whole register, not viewAssets(): a rule preview answers "what would this change?",
+    // and scoring is tenant-wide whatever the sidebar is looking at. Scoping it here would
+    // report a blast radius smaller than the one the rule actually has.
     const before = syncStore.loadAssets();
     const beforeById = new Map(before.map((n) => [n.id, n.postureTier]));
 
