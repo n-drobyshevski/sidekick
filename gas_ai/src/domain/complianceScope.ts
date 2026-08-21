@@ -340,3 +340,68 @@ export function scopeFiveRs(
 export function unselectedPolicyIds(scope: FiveRsScope): string[] {
   return scope.policies.filter((p) => !p.selected).map((p) => p.policyId);
 }
+
+/**
+ * The same scope decisions, with every count re-read off a DIFFERENT set of trees.
+ *
+ * Exists for one caller: the project-scoped compliance payload (api.ts `getCompliance`),
+ * where Wiz has re-aggregated the posture for the project in view and the trees on screen
+ * therefore carry that project's pass/fail counts — while `scopeFiveRs` above must keep
+ * deciding in/out over the WHOLE register, because the pin it drives is a global one
+ * (`scopedFrameworkPolicies` in api.ts and the projectView test both say why at length).
+ *
+ * Without this the two halves of a scoped page would describe two populations: a rail row
+ * stating an AI-scoped derived percentage computed from register-wide counts, sitting
+ * beside a Wiz figure computed for one project. Splitting the verdict from the arithmetic
+ * is what lets each keep the scope it can defend.
+ *
+ * A policy the scoped trees do not carry is DROPPED, not zeroed. Absence there means Wiz
+ * assessed nothing for it in this project (`buildFrameworkTree` admits only
+ * `isAssessedPolicy` rows), which is not the same claim as "it ran and passed everywhere" —
+ * and zeroing would let it count as a clean control in `controlPassPct` and quietly lift
+ * the figure. The verdict fields (`selected`, `reason`, `mappedBy`, `aiFindingCount`) are
+ * carried through untouched: they are the register-wide decision, and re-deriving them
+ * here is the exact thing this split exists to avoid.
+ *
+ * MAX-across-mappings, never sum — mirrors `scopeFiveRs`'s own accumulation, because the
+ * same policy legitimately recurs under several subcategories with its counts repeated.
+ * The two walks have to agree, so they sit next to each other.
+ */
+export function withCountsFrom(scope: FiveRsScope, trees: FrameworkTree[]): FiveRsScope {
+  if (scope.frameworkId === null) return scope;
+  const tree = trees.find((t) => t.frameworkId === scope.frameworkId);
+  if (!tree) {
+    // The framework scored nothing at all in this scope. Not an error and not a zero — an
+    // empty policy list, which `fiveRsDerivedPosture` already reports as a null posture.
+    return { ...scope, policies: [], selected: 0, total: 0 };
+  }
+
+  const counts = new Map<string, { passCount: number; failCount: number; enabled?: boolean }>();
+  for (const category of tree.categories) {
+    for (const sub of category.subcategories) {
+      for (const p of sub.policies) {
+        const acc = counts.get(p.policyId)
+          ?? { passCount: 0, failCount: 0, enabled: p.enabled };
+        if (p.passCount > acc.passCount) acc.passCount = p.passCount;
+        if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+        // Sticky false, as in scopeFiveRs — a rule disabled on any mapping row is disabled.
+        if (p.enabled === false) acc.enabled = false;
+        counts.set(p.policyId, acc);
+      }
+    }
+  }
+
+  const policies = scope.policies
+    .filter((p) => counts.has(p.policyId))
+    .map((p) => {
+      const c = counts.get(p.policyId)!;
+      return { ...p, passCount: c.passCount, failCount: c.failCount, enabled: c.enabled };
+    });
+
+  return {
+    ...scope,
+    policies,
+    selected: policies.filter((p) => p.selected).length,
+    total: policies.length,
+  };
+}

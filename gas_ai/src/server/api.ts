@@ -120,7 +120,7 @@ import {
   sharedControls,
   weakestAreas,
 } from "../domain/complianceOverview";
-import { scopeFiveRs, unselectedPolicyIds } from "../domain/complianceScope";
+import { scopeFiveRs, unselectedPolicyIds, withCountsFrom } from "../domain/complianceScope";
 import { fiveRsDerivedPosture } from "../domain/fiveRsPosture";
 import { cleanFiveRsPins } from "../domain/settingsLogic";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
@@ -158,7 +158,9 @@ import {
   type GraphDoc,
   type IssueRow,
   type NodeKind,
+  type PostureRow,
 } from "../domain/graphTypes";
+import { normalizeCompliancePosturePage } from "../domain/syncNormalize";
 import { DATASTORE_KINDS } from "../domain/graphEnrich";
 import { midrankPercentiles } from "../domain/rankStats";
 import { comboDigest } from "../domain/comboDigest";
@@ -178,7 +180,7 @@ import {
   flattenSlots,
   toGraphEntityQuery,
 } from "../domain/graphExpand";
-import { Q_AGENT_EXPANSION } from "./wizQueriesAi";
+import { aiCompliancePostureVariables, Q_AGENT_EXPANSION, Q_COMPLIANCE_POSTURE } from "./wizQueriesAi";
 import * as wizClientAi from "./wizClientAi";
 import * as settingsStore from "./settingsStore";
 import { cellCount, dataRowCount, TABS } from "./sheetsDb";
@@ -1372,20 +1374,32 @@ function scopedFrameworkPolicies(): {
     settingsStore.getFiveRsPins(),
   );
 
-  // Dropped from the 5Rs FRAMEWORK's rows only, never globally by policy id. A rule can be
-  // mapped by the 5Rs and by OWASP Agentic at once — that is what the cross-mapping signal
-  // is built on — and an operator who pins such a rule out is saying "not under the
-  // data-security framework", not "not anywhere". Filtering on the id alone would delete it
-  // from the AI framework that legitimately claims it, and the shared-controls band would
-  // lose the very crosswalk it exists to show.
-  const dropped = new Set(unselectedPolicyIds(scope));
-  const policies = dropped.size
-    ? allPolicies.filter(
-      (pol) => pol.frameworkId !== scope.frameworkId || !dropped.has(pol.policyId),
-    )
-    : allPolicies;
+  return { policies: dropUnselected(allPolicies, scope), scope };
+}
 
-  return { policies, scope };
+/**
+ * Apply a 5Rs scope's out-of-scope verdicts to a set of policy rows.
+ *
+ * Dropped from the 5Rs FRAMEWORK's rows only, never globally by policy id. A rule can be
+ * mapped by the 5Rs and by OWASP Agentic at once — that is what the cross-mapping signal
+ * is built on — and an operator who pins such a rule out is saying "not under the
+ * data-security framework", not "not anywhere". Filtering on the id alone would delete it
+ * from the AI framework that legitimately claims it, and the shared-controls band would
+ * lose the very crosswalk it exists to show.
+ *
+ * Its own function because the project-scoped read (`getCompliance`) has to apply the SAME
+ * register-wide verdicts to a DIFFERENT set of rows — the ones Wiz re-aggregated for one
+ * project. Two copies of this filter would be two answers to "is this rule in AI scope".
+ */
+function dropUnselected(
+  rows: FrameworkPolicyRow[],
+  scope: ReturnType<typeof scopeFiveRs>,
+): FrameworkPolicyRow[] {
+  const dropped = new Set(unselectedPolicyIds(scope));
+  if (!dropped.size) return rows;
+  return rows.filter(
+    (pol) => pol.frameworkId !== scope.frameworkId || !dropped.has(pol.policyId),
+  );
 }
 
 function configModel(): {
@@ -1523,6 +1537,143 @@ export function getConfigFindingDetail(p?: unknown): ApiResult {
   });
 }
 
+// ------------------------------------------------------------- project-scoped posture
+
+/**
+ * How many frameworks may be re-scored live for one project view.
+ *
+ * Each one costs its own UrlFetchApp call — `securityFramework(id:)` takes ONE id — so a
+ * tenant collecting posture for thirty frameworks would spend thirty calls on a project
+ * switch, sequentially, inside one `google.script.run`. Past this line the page keeps the
+ * stored figure and SAYS it did (`postureScope.reason`), rather than half-scoping or
+ * hanging. Partial is not on the menu: see `scopedPosture` below.
+ */
+const SCOPED_POSTURE_MAX_FRAMEWORKS = 12;
+
+/**
+ * Why a project view is showing register-wide posture anyway. The client turns these into
+ * words (`complianceShared.js`), the way it does for `POSTURE_STATES` — a code travels, a
+ * sentence is written where it is read.
+ */
+type PostureScopeReason = "noCredentials" | "tooManyFrameworks" | "fetchFailed";
+
+/** What `getCompliance` says about the population its numbers describe. */
+interface PostureScope {
+  /** The project view these numbers were re-scored for, "" when register-wide. */
+  projectId: string;
+  source: "stored" | "live";
+  /** When Wiz was asked. Null on the stored path — that clock is the sync's. */
+  fetchedAt: string | null;
+  /** How many frameworks were re-scored. 0 on the stored path. */
+  frameworkCount: number;
+  reason: PostureScopeReason | null;
+  /** The failure text, for `fetchFailed` only — never swallowed, the expandAsset rule. */
+  detail: string | null;
+}
+
+/**
+ * ONE framework's posture, re-aggregated by Wiz for one project.
+ *
+ * The re-aggregation is WIZ'S, not ours, and that is the whole reason this exists rather
+ * than a local filter. A `PostureRow` is keyed by framework/category/subcategory and
+ * carries no asset id (see `scopedFrameworkPolicies` and sheetsDb's own note on the tab),
+ * so nothing stored here can be re-sliced by project — the counts behind a percentage are
+ * tenant-side sums we never receive the terms of. But `complianceAnalytics` takes a
+ * `selection`, and `aiCompliancePostureVariables` has always filled `projectId` into it:
+ * the sync already sends the FETCH scope that way (syncJobs.ts). Asking again with a
+ * different project id in the same slot is the same question about a smaller population,
+ * answered by the only party that can answer it.
+ *
+ * Cached on `wizDataVersion()`, not `dataVersion()`, for the reason expandAsset is: this
+ * holds a Wiz response, which costs a call to refill and does not go stale because someone
+ * saved a band threshold locally. Flipping between two projects therefore pays Wiz once
+ * per project per sync, not once per switch.
+ *
+ * The response goes through `normalizeCompliancePosturePage` — the SYNC's own normalizer,
+ * not a second reading of the same shape. Nothing is written to the ledger: `posture_pct`
+ * is stored exactly as Wiz sent it at the sync's scope, and a per-project answer is a
+ * different question's answer, not a correction to that one.
+ */
+function fetchScopedPosture(
+  frameworkId: string,
+  projectId: string,
+): { posture: PostureRow[]; frameworkPolicies: FrameworkPolicyRow[]; fetchedAt: string } {
+  return cached("compliancePostureScoped", { frameworkId, projectId }, () => {
+    const page = wizClientAi.fetchSingleObject("securityFramework", {
+      query: Q_COMPLIANCE_POSTURE,
+      extraVariables: {
+        ...(aiCompliancePostureVariables([projectId]) as Rec),
+        id: frameworkId,
+      },
+    });
+    const part = normalizeCompliancePosturePage(page.rows);
+    // Stamped INSIDE the cached closure, so it dates the ANSWER rather than the read. A
+    // stamp taken by the caller would restart on every cache hit and print "asked just now"
+    // over a response up to a TTL old — the one claim this field exists to make, made
+    // wrongly. It is cached alongside the rows it describes, so the two cannot separate.
+    return {
+      posture: part.posture,
+      frameworkPolicies: part.frameworkPolicies,
+      fetchedAt: nowIso(),
+    };
+  }, undefined, wizDataVersion());
+}
+
+/**
+ * Every collected framework's posture re-scored for the project in view, or null with a
+ * reason to keep the stored one.
+ *
+ * ALL OR NOTHING, deliberately. A partial answer — three frameworks re-scored for the
+ * project and the fourth left at the register's — would put the landscape mean over two
+ * populations at once, which is the "one number built from two populations" failure this
+ * codebase names in `scopedFrameworkPolicies` and refuses everywhere else. One framework
+ * failing therefore drops the whole scoped read back to stored, and the note says so.
+ *
+ * The framework list comes from the STORED posture, not from the settings selection: the
+ * scoped view must describe the same set of frameworks the register-wide view does, or
+ * "4 of 42" would quietly mean something different depending on the sidebar.
+ */
+function scopedPosture(
+  projectId: string,
+  storedPosture: PostureRow[],
+): {
+  posture: PostureRow[];
+  frameworkPolicies: FrameworkPolicyRow[];
+  fetchedAt: string;
+  frameworkCount: number;
+} | { reason: PostureScopeReason; detail: string | null } {
+  if (!hasWizCredentials()) return { reason: "noCredentials", detail: null };
+
+  const frameworkIds: string[] = [];
+  for (const row of storedPosture) {
+    if (row.level === "framework" && frameworkIds.indexOf(row.frameworkId) === -1) {
+      frameworkIds.push(row.frameworkId);
+    }
+  }
+  if (frameworkIds.length > SCOPED_POSTURE_MAX_FRAMEWORKS) {
+    return { reason: "tooManyFrameworks", detail: String(frameworkIds.length) };
+  }
+
+  const posture: PostureRow[] = [];
+  const frameworkPolicies: FrameworkPolicyRow[] = [];
+  // The OLDEST of the per-framework stamps, because a picture is only as fresh as its
+  // stalest part: these are cached independently, so a fifth framework fetched an hour after
+  // the other four must not let the whole page claim the newer time.
+  let fetchedAt = "";
+  try {
+    for (const frameworkId of frameworkIds) {
+      const part = fetchScopedPosture(frameworkId, projectId);
+      posture.push(...part.posture);
+      frameworkPolicies.push(...part.frameworkPolicies);
+      if (!fetchedAt || part.fetchedAt < fetchedAt) fetchedAt = part.fetchedAt;
+    }
+  } catch (e) {
+    return { reason: "fetchFailed", detail: String(e instanceof Error ? e.message : e) };
+  }
+
+  return { posture, frameworkPolicies, fetchedAt, frameworkCount: frameworkIds.length };
+}
+
 /**
  * The Compliance page: every synced framework as a tree, plus the catalogue for the
  * Settings picker.
@@ -1537,15 +1688,50 @@ export function getCompliance(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
     const requested = String(params["frameworkId"] ?? "");
-    return cached("getCompliance", { frameworkId: requested }, () => {
-      const posture = syncStore.loadPosture();
+    // `projectView` is in the KEY as well as read inside, for the reason expandAsset's
+    // `projectId` is: it is a live input this closure branches on, so a view change has to
+    // reach the cache. `saveSettings` bumps DATA_VERSION and would evict it anyway today —
+    // this stops that from being load-bearing.
+    const projectView = settingsStore.getProjectView();
+    return cached("getCompliance", { frameworkId: requested, projectView }, () => {
+      const storedPosture = syncStore.loadPosture();
       const catalogue = syncStore.loadFrameworks();
       const selected = settingsStore.getSelectedFrameworks(() => catalogue);
-      const { policies, scope: fiveRsScope } = scopedFrameworkPolicies();
+      const { policies: registerPolicies, scope: registerScope } = scopedFrameworkPolicies();
+
+      // Wiz re-aggregates for the project in view, or says why it could not — see
+      // `scopedPosture`. Everything below is a pure function of (posture, policies), so this
+      // one substitution re-scopes the trees, the KPIs, the rail, the weakest areas, the
+      // shared controls and the coverage bands together, or none of them.
+      const live = projectView ? scopedPosture(projectView, storedPosture) : null;
+      const scoped = live && "posture" in live ? live : null;
+      // The other arm, narrowed once rather than re-tested per field below.
+      const refused = live && !("posture" in live) ? live : null;
+      const posture = scoped ? scoped.posture : storedPosture;
+      const policies = scoped
+        // The 5Rs pin filter is a REGISTER-WIDE decision (scopedFrameworkPolicies says why),
+        // so it is re-applied to the scoped rows rather than re-derived from them.
+        ? dropUnselected(scoped.frameworkPolicies, registerScope)
+        : registerPolicies;
+      const postureScope: PostureScope = {
+        projectId: projectView,
+        source: scoped ? "live" : "stored",
+        fetchedAt: scoped ? scoped.fetchedAt : null,
+        frameworkCount: scoped ? scoped.frameworkCount : 0,
+        reason: refused ? refused.reason : null,
+        detail: refused ? refused.detail : null,
+      };
+
       const trees = buildAllFrameworkTrees(posture, policies, catalogue);
       // The 5Rs framework's derived percentage — see fiveRsPosture.ts for what "derived"
       // means and why it is a different claim from Wiz's own. Null when there is no 5Rs
       // framework collected, or the request maps to no scored 5Rs tree at all.
+      //
+      // Scoped, the VERDICTS stay register-wide and only the counts move (withCountsFrom) —
+      // otherwise this derived figure would be the one number left describing the register
+      // on a page describing a project. `fiveRsScope` itself is shipped unscoped below,
+      // because the Settings card that renders it writes a global pin.
+      const fiveRsScope = scoped ? withCountsFrom(registerScope, trees) : registerScope;
       const fiveRsPosture = fiveRsDerivedPosture(
         fiveRsScope,
         trees.find((t) => t.frameworkId === fiveRsScope.frameworkId)?.posturePct ?? null,
@@ -1575,7 +1761,13 @@ export function getCompliance(p?: unknown): ApiResult {
         // Every rule the 5Rs maps, in or out, with the reason. Shipped whole rather than
         // as a count because the Settings card is the place an operator overturns a
         // derivation, and it cannot argue with a verdict it cannot see.
-        fiveRsScope,
+        //
+        // ALWAYS the register-wide object, even under a project view — `registerScope`, not
+        // the count-rescoped `fiveRsScope` the derived posture above is computed from. The
+        // card renders this and its toggle writes a GLOBAL pin: an operator standing in one
+        // project must not be shown "no AI link" for a rule that is linked in another and
+        // pin it out everywhere on the strength of it.
+        fiveRsScope: registerScope,
         // Computed server-side for the same reason `rail` / `weakestAreas` / `sharedControls`
         // above are: the client bundle cannot import the domain layer, so a browser-side
         // recomputation would be a hand-kept mirror rather than a shared source. This
@@ -1583,6 +1775,11 @@ export function getCompliance(p?: unknown): ApiResult {
         // mirror to reconcile against — computing it here instead buys nothing but risk.
         fiveRsPosture,
         coverage: coverageSummary(trees, merged),
+        // WHICH POPULATION every figure above describes, and — when a project view is set
+        // but the numbers are still the register's — why. The page prints this beside the
+        // hero rather than as a footnote, the discipline `registerWideNote` already keeps:
+        // a footnote is read after the reader has decided.
+        postureScope,
         // Named so the page can open on a framework it was linked to rather than guessing.
         // Null when the requested id has no stored posture, which the page reports as such
         // instead of silently falling back to a different framework's numbers.

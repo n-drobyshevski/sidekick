@@ -7834,7 +7834,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "c20febc68f92" : "dev";
+  var BUILD_ID = true ? "45b06595125b" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -12114,6 +12114,36 @@ var Server = (() => {
   function unselectedPolicyIds(scope) {
     return scope.policies.filter((p) => !p.selected).map((p) => p.policyId);
   }
+  function withCountsFrom(scope, trees) {
+    var _a5;
+    if (scope.frameworkId === null) return scope;
+    const tree = trees.find((t) => t.frameworkId === scope.frameworkId);
+    if (!tree) {
+      return { ...scope, policies: [], selected: 0, total: 0 };
+    }
+    const counts = /* @__PURE__ */ new Map();
+    for (const category of tree.categories) {
+      for (const sub of category.subcategories) {
+        for (const p of sub.policies) {
+          const acc = (_a5 = counts.get(p.policyId)) != null ? _a5 : { passCount: 0, failCount: 0, enabled: p.enabled };
+          if (p.passCount > acc.passCount) acc.passCount = p.passCount;
+          if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+          if (p.enabled === false) acc.enabled = false;
+          counts.set(p.policyId, acc);
+        }
+      }
+    }
+    const policies = scope.policies.filter((p) => counts.has(p.policyId)).map((p) => {
+      const c = counts.get(p.policyId);
+      return { ...p, passCount: c.passCount, failCount: c.failCount, enabled: c.enabled };
+    });
+    return {
+      ...scope,
+      policies,
+      selected: policies.filter((p) => p.selected).length,
+      total: policies.length
+    };
+  }
 
   // src/domain/compliancePosture.ts
   var POSTURE_BANDS = {
@@ -15704,11 +15734,14 @@ var Server = (() => {
       aiAssetIdSet(),
       getFiveRsPins2()
     );
+    return { policies: dropUnselected(allPolicies, scope), scope };
+  }
+  function dropUnselected(rows, scope) {
     const dropped = new Set(unselectedPolicyIds(scope));
-    const policies = dropped.size ? allPolicies.filter(
+    if (!dropped.size) return rows;
+    return rows.filter(
       (pol) => pol.frameworkId !== scope.frameworkId || !dropped.has(pol.policyId)
-    ) : allPolicies;
-    return { policies, scope };
+    );
   }
   function configModel() {
     const assetIds = aiAssetIdSet();
@@ -15804,18 +15837,77 @@ var Server = (() => {
       });
     });
   }
+  var SCOPED_POSTURE_MAX_FRAMEWORKS = 12;
+  function fetchScopedPosture(frameworkId, projectId) {
+    return cached("compliancePostureScoped", { frameworkId, projectId }, () => {
+      const page = fetchSingleObject("securityFramework", {
+        query: Q_COMPLIANCE_POSTURE,
+        extraVariables: {
+          ...aiCompliancePostureVariables([projectId]),
+          id: frameworkId
+        }
+      });
+      const part = normalizeCompliancePosturePage(page.rows);
+      return {
+        posture: part.posture,
+        frameworkPolicies: part.frameworkPolicies,
+        fetchedAt: nowIso()
+      };
+    }, void 0, wizDataVersion());
+  }
+  function scopedPosture(projectId, storedPosture) {
+    if (!hasWizCredentials()) return { reason: "noCredentials", detail: null };
+    const frameworkIds = [];
+    for (const row of storedPosture) {
+      if (row.level === "framework" && frameworkIds.indexOf(row.frameworkId) === -1) {
+        frameworkIds.push(row.frameworkId);
+      }
+    }
+    if (frameworkIds.length > SCOPED_POSTURE_MAX_FRAMEWORKS) {
+      return { reason: "tooManyFrameworks", detail: String(frameworkIds.length) };
+    }
+    const posture = [];
+    const frameworkPolicies = [];
+    let fetchedAt = "";
+    try {
+      for (const frameworkId of frameworkIds) {
+        const part = fetchScopedPosture(frameworkId, projectId);
+        posture.push(...part.posture);
+        frameworkPolicies.push(...part.frameworkPolicies);
+        if (!fetchedAt || part.fetchedAt < fetchedAt) fetchedAt = part.fetchedAt;
+      }
+    } catch (e) {
+      return { reason: "fetchFailed", detail: String(e instanceof Error ? e.message : e) };
+    }
+    return { posture, frameworkPolicies, fetchedAt, frameworkCount: frameworkIds.length };
+  }
   function getCompliance(p) {
     return run(() => {
       var _a5;
       const params = p != null ? p : {};
       const requested = String((_a5 = params["frameworkId"]) != null ? _a5 : "");
-      return cached("getCompliance", { frameworkId: requested }, () => {
+      const projectView = getProjectView2();
+      return cached("getCompliance", { frameworkId: requested, projectView }, () => {
         var _a6, _b;
-        const posture = loadPosture();
+        const storedPosture = loadPosture();
         const catalogue = loadFrameworks();
         const selected = getSelectedFrameworks2(() => catalogue);
-        const { policies, scope: fiveRsScope } = scopedFrameworkPolicies();
+        const { policies: registerPolicies, scope: registerScope } = scopedFrameworkPolicies();
+        const live = projectView ? scopedPosture(projectView, storedPosture) : null;
+        const scoped = live && "posture" in live ? live : null;
+        const refused = live && !("posture" in live) ? live : null;
+        const posture = scoped ? scoped.posture : storedPosture;
+        const policies = scoped ? dropUnselected(scoped.frameworkPolicies, registerScope) : registerPolicies;
+        const postureScope = {
+          projectId: projectView,
+          source: scoped ? "live" : "stored",
+          fetchedAt: scoped ? scoped.fetchedAt : null,
+          frameworkCount: scoped ? scoped.frameworkCount : 0,
+          reason: refused ? refused.reason : null,
+          detail: refused ? refused.detail : null
+        };
         const trees = buildAllFrameworkTrees(posture, policies, catalogue);
+        const fiveRsScope = scoped ? withCountsFrom(registerScope, trees) : registerScope;
         const fiveRsPosture = fiveRsDerivedPosture(
           fiveRsScope,
           (_b = (_a6 = trees.find((t) => t.frameworkId === fiveRsScope.frameworkId)) == null ? void 0 : _a6.posturePct) != null ? _b : null
@@ -15839,7 +15931,13 @@ var Server = (() => {
           // Every rule the 5Rs maps, in or out, with the reason. Shipped whole rather than
           // as a count because the Settings card is the place an operator overturns a
           // derivation, and it cannot argue with a verdict it cannot see.
-          fiveRsScope,
+          //
+          // ALWAYS the register-wide object, even under a project view — `registerScope`, not
+          // the count-rescoped `fiveRsScope` the derived posture above is computed from. The
+          // card renders this and its toggle writes a GLOBAL pin: an operator standing in one
+          // project must not be shown "no AI link" for a rule that is linked in another and
+          // pin it out everywhere on the strength of it.
+          fiveRsScope: registerScope,
           // Computed server-side for the same reason `rail` / `weakestAreas` / `sharedControls`
           // above are: the client bundle cannot import the domain layer, so a browser-side
           // recomputation would be a hand-kept mirror rather than a shared source. This
@@ -15847,6 +15945,11 @@ var Server = (() => {
           // mirror to reconcile against — computing it here instead buys nothing but risk.
           fiveRsPosture,
           coverage: coverageSummary(trees, merged),
+          // WHICH POPULATION every figure above describes, and — when a project view is set
+          // but the numbers are still the register's — why. The page prints this beside the
+          // hero rather than as a footnote, the discipline `registerWideNote` already keeps:
+          // a footnote is read after the reader has decided.
+          postureScope,
           // Named so the page can open on a framework it was linked to rather than guessing.
           // Null when the requested id has no stored posture, which the page reports as such
           // instead of silently falling back to a different framework's numbers.

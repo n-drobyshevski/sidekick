@@ -203,8 +203,12 @@ describe("the project view", () => {
     // pin. Scoped, an operator in one project sees "no AI link" for a rule linked in another,
     // pins it out, and it is pinned out everywhere.
     //
-    // It also could not be scoped coherently: the pass/fail counts inside the selected rules
-    // are Wiz's tenant-side totals, and PostureRow carries no asset id to filter on.
+    // The COUNTS inside those rules are a separate question and they do move under a view:
+    // `withCountsFrom` re-reads them off the trees Wiz re-aggregated for the project (see
+    // api.ts `scopedPosture`). What must not move is the in/out VERDICT, which is what this
+    // asserts — `selected` and `total` on the shipped scope, not the arithmetic under it.
+    // Without credentials the live path never fires here anyway, so this also pins the
+    // fallback: a tenantless checkout answers register-wide and says so.
     setView("");
     const wide = ok<Rec>(server.api.getCompliance({}));
     const wideScope = wide["fiveRsScope"] as Rec | undefined;
