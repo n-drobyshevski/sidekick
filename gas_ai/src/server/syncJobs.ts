@@ -59,6 +59,7 @@ import {
   fetchConnectionPage,
   fetchGraphSearchPage,
   fetchSingleObject,
+  isTenantRefusal,
   resolveAiResourceTypes,
   type FetchOptions,
   type PageResult,
@@ -205,7 +206,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       writes: ["ai_assets"],
       run: "cloudResources",
       query: Q_AI_INVENTORY,
-      extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types)),
+      extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types, projectScope())),
       normalize: normalizeInventoryPage,
       pageSize: PAGE_SIZE_WIDE,
     },
@@ -361,9 +362,13 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       writes: ["ai_assets.guardrail_missing"],
       run: "graphSearch",
       query: Q_AGENTS_NO_GUARDRAIL,
-      // `null`, not projectScope(): these four have always run tenant-wide, and this change is
-      // about the query's SHAPE. See agentPathVariables in wizQueriesAi.ts.
-      extraVariables: noGuardrailVariables(types, null),
+      // Scoped, along with every other step. These four ran tenant-wide while the inventory
+      // did too — that was the argument, and it inverts the moment the register is scoped:
+      // a tenant-wide traversal over a scoped register lands assets the inventory never
+      // collected, and prices them into a coverage ratio whose denominator excludes them.
+      // guardrail-coverage-pct is exactly that ratio, so this one had to move in the same
+      // commit as INVENTORY_AI or the number would have quietly broken.
+      extraVariables: noGuardrailVariables(types, projectScope()),
       normalize: normalizeNoGuardrailPage,
       optional: true,
       pageSize: PAGE_SIZE_TRAVERSAL,
@@ -374,7 +379,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       writes: ["ai_edges (RUNS_AS)", "ai_assets"],
       run: "graphSearch",
       query: Q_AGENT_RUNS_AS,
-      extraVariables: agentRunsAsVariables(types, null),
+      extraVariables: agentRunsAsVariables(types, projectScope()),
       normalize: normalizeRunsAsPage,
       optional: true,
       pageSize: PAGE_SIZE_TRAVERSAL,
@@ -385,7 +390,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
       run: "graphSearch",
       query: Q_SA_EXCESSIVE_ACCESS,
-      extraVariables: saExcessiveAccessVariables(types, null),
+      extraVariables: saExcessiveAccessVariables(types, projectScope()),
       normalize: normalizeRunsAsPage,
       optional: true,
       pageSize: PAGE_SIZE_TRAVERSAL,
@@ -403,7 +408,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       ],
       run: "graphSearch",
       query: Q_AGENT_SENSITIVE_DATA_ACCESS,
-      extraVariables: sensitiveDataAccessVariables(types, null),
+      extraVariables: sensitiveDataAccessVariables(types, projectScope()),
       normalize: normalizeSensitiveDataAccessPage,
       optional: true,
       pageSize: PAGE_SIZE_TRAVERSAL,
@@ -444,9 +449,11 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
     {
       // The lineage step: the first traversal rooted at anything but AI_AGENT or the whole
       // AI type list. AI_PIPELINE + AI_DATASET are 79% of the register and no query has ever
-      // stood at one. `null`, not `projectScope()`: scoping it would cap the population at
-      // one project while the inventory that found the pipelines is tenant-wide, so a low
-      // Enriched number would be built in rather than measured. See domain/lineageQuery.ts.
+      // stood at one. Scoped now: the reason it was not is that the inventory which found
+      // those pipelines ran tenant-wide, so capping this at one project would have built a
+      // low Enriched number in rather than measured it. The inventory is scoped, so the
+      // asymmetry has swapped ends — leaving this tenant-wide is now what would land pipelines
+      // the register does not contain. See domain/lineageQuery.ts.
       id: "LINEAGE",
       area: "dspm",
       writes: [
@@ -455,7 +462,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       ],
       run: "graphSearch",
       query: Q_LINEAGE,
-      extraVariables: lineageVariables(types, null),
+      extraVariables: lineageVariables(types, projectScope()),
       normalize: normalizeLineagePage,
       optional: true,
       pageSize: PAGE_SIZE_TRAVERSAL,
@@ -482,7 +489,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       writes: ["ai_assets.publisher", "ai_assets.discovery_methods"],
       run: "cloudResources",
       query: Q_AI_PROPERTIES,
-      extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types) as Rec),
+      extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types, projectScope()) as Rec),
       // The same normalizer the inventory step uses. Safe because mergeParts merges
       // field-wise and skips undefined — this step's narrower rows fill in the two provenance
       // fields without erasing the projects, tags or analytics INVENTORY_AI established.
@@ -594,13 +601,13 @@ function describeAiTypes(): { types: readonly string[]; resolved: boolean } {
 function defaultStepVariables(stepId: string, withOverride: Rec, aiTypes?: readonly string[]): Rec {
   switch (stepId) {
     case "INVENTORY_AI":
-      return aiInventoryVariables(aiTypes ?? resolveAiResourceTypes().types) as unknown as Rec;
+      return aiInventoryVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope()) as unknown as Rec;
     case "ISSUES_TOXIC":
       return aiIssuesVariables(projectScope()) as unknown as Rec;
     case "CONFIG_FINDINGS":
       return aiConfigFindingsVariables(projectScope()) as unknown as Rec;
     case "AI_ASSET_PROPERTIES":
-      return aiPropertiesVariables(aiTypes ?? resolveAiResourceTypes().types) as unknown as Rec;
+      return aiPropertiesVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope()) as unknown as Rec;
     case "AGENTIC_IDENTITIES":
       return aiPrincipalsVariables(projectScope()) as unknown as Rec;
     // Like INVENTORY_AI, these two build their `$query` from the tenant-resolved AI type
@@ -616,16 +623,16 @@ function defaultStepVariables(stepId: string, withOverride: Rec, aiTypes?: reado
       return identityAccessVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     case "LINEAGE":
       // `null` scope, matching what the step sends — see its declaration in syncSteps().
-      return lineageVariables(aiTypes ?? resolveAiResourceTypes().types, null);
+      return lineageVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     // The widened agent-path traversals. `null` scope, as they have always sent.
     case "GUARDRAIL_GAPS":
-      return noGuardrailVariables(aiTypes ?? resolveAiResourceTypes().types, null);
+      return noGuardrailVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     case "RUNS_AS":
-      return agentRunsAsVariables(aiTypes ?? resolveAiResourceTypes().types, null);
+      return agentRunsAsVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     case "SA_FINDINGS":
-      return saExcessiveAccessVariables(aiTypes ?? resolveAiResourceTypes().types, null);
+      return saExcessiveAccessVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     case "SENSITIVE_DATA_ACCESS":
-      return sensitiveDataAccessVariables(aiTypes ?? resolveAiResourceTypes().types, null);
+      return sensitiveDataAccessVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     case "EFFECTIVE_ACCESS":
       return effectiveAccessVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     case "IDENTITY_HYGIENE":
@@ -913,6 +920,10 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
   const params = jobParams(job);
 
   let stepIndex = job.step_index;
+  // Which step is in flight, so a failure can NAME it. The catch below cannot reach `steps`
+  // (declared inside the try, because syncSteps() itself may throw), and an id on the screen
+  // is the difference between reading the Scans page and going through Drive archives.
+  let inFlight = "";
   let cursor = job.cursor;
   let page = job.page;
   let nodesSoFar = job.nodes_so_far;
@@ -930,6 +941,7 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
     const steps = syncSteps();
     while (stepIndex < steps.length) {
       const step = steps[stepIndex];
+      inFlight = step.id;
 
       for (;;) {
         if (cancelRequested(job.job_id)) {
@@ -961,11 +973,24 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
             first: step.pageSize,
           });
         } catch (e) {
-          // A 400 on an OPTIONAL step means this tenant's schema rejects that
-          // query (missing enum members / fields). Skip the step, keep what it
+          // The tenant declining to serve a page on an OPTIONAL step. Skip it, keep what it
           // already yielded, and let the sync deliver the rest of the picture.
+          //
+          // THIS USED TO TEST FOR `HTTP 400` ALONE, which covered every failure anyone had
+          // seen while the traversals were being refused outright — a 400 is what a rejected
+          // enum looks like. The first sync that actually collected graph rows found the gap:
+          // two hours in and 84,912 rows deep, one page came back as Wiz's internal error in
+          // an HTTP-200 envelope, which is not a 400, so an ENHANCEMENT step took the entire
+          // run down with it. Everything already fetched was lost to a transient failure on a
+          // step whose whole contract is that it may fail.
+          //
+          // A tenant refusal is now the test, and it is drawn at the WizQueryError boundary:
+          // transport and response-reader failures skip, domain errors stay fatal. A skip is
+          // still LOUD — recorded in skippedSteps with its reason, surfaced by
+          // registerScopeDiagnostic and the Scans page — because a silent skip is how zero
+          // edges became indistinguishable from a healthy landscape in the first place.
           const msg = e instanceof Error ? e.message : String(e);
-          if (step.optional && /HTTP 400/.test(msg)) {
+          if (step.optional && isTenantRefusal(e)) {
             params.apiCalls += 1;
             params.skippedSteps.push(step.id);
             // Kept, not just logged. `msg` carries errorDigest's extraction of Wiz's own
@@ -1145,9 +1170,14 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
     else withScriptLock(persist);
     updateJob(job.job_id, { phase: "DONE" });
   } catch (e) {
+    // The step index and id go in with the message. A failed sync used to record only what
+    // went wrong, never where — so a two-hour run that died on one step reported a Wiz error
+    // and left no way to tell which of nineteen steps raised it.
     updateJob(job.job_id, {
       phase: "FAILED",
-      error: String(e instanceof Error ? e.message : e).slice(0, 800),
+      step_index: stepIndex,
+      error: (inFlight ? `[${inFlight}] ` : "") +
+        String(e instanceof Error ? e.message : e).slice(0, 800),
     });
   }
 }

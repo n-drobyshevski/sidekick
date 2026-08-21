@@ -580,8 +580,8 @@ function strListOf(raw: unknown): string[] {
   return raw.map((v) => str(v)).filter((v): v is string => !!v);
 }
 
-/** `projects { id name riskProfile { businessImpact } }` → the flat shape rows store. */
-function projectsOf(raw: unknown): Array<{ id: string; name: string; businessImpact?: string }> {
+/** `projects { id name isFolder riskProfile { businessImpact } }` → the flat shape rows store. */
+function projectsOf(raw: unknown): NonNullable<GNode["projects"]> {
   if (!Array.isArray(raw)) return [];
   return (raw as Rec[])
     .map((p) => {
@@ -594,7 +594,13 @@ function projectsOf(raw: unknown): Array<{ id: string; name: string; businessImp
       const businessImpact = profile && typeof profile === "object"
         ? str(profile["businessImpact"])
         : undefined;
-      return { id, name, businessImpact };
+      // Tri-state on purpose: `undefined` is "this row predates the field", which is every
+      // row already in the ledger. The switcher must draw that as an ordinary project rather
+      // than assert it is a leaf, so absent never collapses into false.
+      const isFolder = p["isFolder"] === true ? true
+        : p["isFolder"] === false ? false
+        : undefined;
+      return { id, name, isFolder, businessImpact };
     })
     .filter((p): p is NonNullable<typeof p> => p !== null);
 }

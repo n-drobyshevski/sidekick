@@ -23,6 +23,32 @@ export function clampDepth(v: unknown): number {
   return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
 }
 
+/**
+ * Which project the dashboard is CURRENTLY LOOKING AT, or "" for the whole register.
+ *
+ * Not the same thing as WIZ_PROJECT_ID_V2, and the difference is the point. That property
+ * decides what the sync COLLECTS; this decides what the pages SHOW of what was collected.
+ * Conflating them is how a switcher ends up offering a project that was never fetched and
+ * rendering its zero rows as though that were a finding.
+ *
+ * Stored as a project ID, never a name: only an id carries ancestry, so selecting a business
+ * unit reaches every asset beneath it (see ProjectRef in domain/graphTypes.ts). Names are also
+ * not unique across a thousand-project tenant.
+ *
+ * It lives in the settings tab rather than a Script Property for two reasons. Every other
+ * view preference here already does, so an operator finds it where the others are. And
+ * `saveSettings` bumps the data version, which the SWR cache in the client is keyed on —
+ * a Script Property would change the answer under a cache that had no idea.
+ */
+export function getProjectView(settings: Rec): string {
+  const v = settings["project_view"];
+  return typeof v === "string" ? v.trim() : "";
+}
+
+export function withProjectView(settings: Rec, id: unknown): Rec {
+  return { ...settings, project_view: typeof id === "string" ? id.trim() : "" };
+}
+
 export function getDefaultDepth(settings: Rec): number {
   return clampDepth(settings["default_depth"] ?? DEPTH_DEFAULT);
 }

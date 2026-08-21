@@ -106,7 +106,12 @@ const CLOUD_RESOURCE_FIELDS = [
   "hasHighPrivileges",
   "technology { id name categories { id name } }",
   "cloudAccount { id name externalId cloudProvider }",
-  "projects { id name riskProfile { businessImpact } }",
+  // `isFolder` rides along for the project switcher. A Wiz project is either a folder or a
+  // leaf, and an asset carries its WHOLE ancestor chain — the captured inventory shows one
+  // agent listing CE-DPCP-PORTAL (folder) -> VALUE-CHAIN (folder) -> provisioning-CE-DPCP-PORTAL
+  // (leaf). That is what lets a switcher offer a business unit and have it mean the subtree,
+  // and what lets the picker draw the two apart the way the Wiz console does.
+  "projects { id name isFolder riskProfile { businessImpact } }",
   "tags { key value }",
 ];
 
@@ -250,8 +255,44 @@ export const Q_AI_INVENTORY =
   "}\n";
 
 /** The $filterBy variable for Q_AI_INVENTORY, exactly as the capture sends it. */
-export function aiInventoryVariables(types: readonly string[]): { filterBy: unknown } {
-  return { filterBy: { type: { equals: [...types] } } };
+/**
+ * The project filter for `cloudResourcesV2` — and the SIXTH spelling this app has needed.
+ *
+ * `filterBy: { project: { idV2: { equals: [id] } } }`. Not `projectIdV2: {equals:[…]}`, which
+ * is what `vulnerabilityFindings` takes and what the sibling gas/ tool sends. Not
+ * `projectId: [id]`, which is what this file sent until now and what a console capture from
+ * 2026-08-13 shows. Introspection on 2026-08-21 says `CloudResourceV2Filters` carries exactly
+ * one project field, `project: CloudResourceProjectFilters`, and a live console query for
+ * cloudResourcesV2 sends the nested `idV2.equals` form above.
+ *
+ * That makes `aiPrincipalsVariables`'s old `filterBy.projectId` a field this type does not
+ * have. AGENTIC_IDENTITIES is optional, so on any tenant with WIZ_PROJECT_ID_V2 set it was
+ * rejected with a 400 and skipped in silence — the exact failure mode optional steps are built
+ * to survive and therefore the exact failure mode nobody notices. `npm run probe -- --vocab-only`
+ * now flags a builder that sends a field its filter type does not declare.
+ *
+ * Opt-in, never hardcoded: an unset scope adds no key at all, so a tenant that has not chosen
+ * one queries exactly as it does today. That is the rule brick's tests already state —
+ * "os_vulns.py hardcodes one tenant's projectIdV2; copying it would silently scope every run".
+ *
+ * ANCESTRY IS WHY ONE ID IS ENOUGH. An asset belongs to its whole project chain, so a FOLDER's
+ * id reaches everything beneath it; VALUE-CHAIN having 329 children and no cloud accounts of
+ * its own is not an obstacle. See ProjectRef in domain/graphTypes.ts.
+ */
+function cloudResourceProjectFilter(scope: string[] | null): Record<string, unknown> | null {
+  return scope && scope.length ? { idV2: { equals: [...scope] } } : null;
+}
+
+export function aiInventoryVariables(
+  types: readonly string[],
+  scope: string[] | null = null,
+): { filterBy: unknown } {
+  const filterBy: Record<string, unknown> = { type: { equals: [...types] } };
+  // The step that DEFINES the register. It ran tenant-wide while nine other steps honoured
+  // WIZ_PROJECT_ID_V2, so the scope was set and doing nothing to the 13,932 rows it landed.
+  const project = cloudResourceProjectFilter(scope);
+  if (project) filterBy["project"] = project;
+  return { filterBy };
 }
 
 /** Assets carrying an OPEN issue for one toxic-combination source rule ($ruleIds). */
@@ -288,14 +329,18 @@ export const Q_AGENT_SENSITIVE_DATA_ACCESS =
 /**
  * The `$query` / `$projectId` variables for the four traversals above.
  *
- * `scope` is a parameter and every caller currently passes `null`, which is what these steps
- * send today — they carry no `projectId` at all, unlike IDENTITY_ACCESS and the two exposure
- * steps. Switching them to `projectScope()` would narrow results on any tenant with
- * WIZ_PROJECT_ID_V2 set, so it is a population change and belongs in its own commit, not
- * smuggled into a fix for the query's shape. Two facts for whoever makes that call: a
- * multi-project scope is truncated to `scope[0]` here exactly as it is for the identity
- * traversal, and SENSITIVE_DATA_ACCESS re-emits assets the CIEM steps already landed, so
- * scoping one and not the others makes them disagree about the same asset.
+ * `scope` is a parameter and every caller now passes `projectScope()`. It used to be `null`,
+ * and the argument for that was explicitly conditional: narrowing these while the inventory
+ * ran tenant-wide would have been a population change smuggled into a shape fix. The inventory
+ * is scoped now, so the condition is gone and the asymmetry has swapped ends — a tenant-wide
+ * traversal over a scoped register lands assets the register does not contain.
+ *
+ * The note that outlasted the decision: SENSITIVE_DATA_ACCESS re-emits assets the CIEM steps
+ * already landed, so scoping one and not the others makes them disagree about the same asset.
+ * That is why all of them moved together rather than one at a time.
+ *
+ * A multi-project scope is still truncated to `scope[0]` here, exactly as it is for the
+ * identity traversal — the graphSearch argument is a scalar `String`, not a list.
  */
 function agentPathVariables(spec: SelectSpec, scope: string[] | null): Rec {
   return {
@@ -899,8 +944,16 @@ export const Q_AI_PROPERTIES =
   "}\n";
 
 /** Same population as the inventory step, so the two answer about the same assets. */
-export function aiPropertiesVariables(types: readonly string[]): { filterBy: unknown } {
-  return { filterBy: { type: { equals: [...types] } } };
+export function aiPropertiesVariables(
+  types: readonly string[],
+  scope: string[] | null = null,
+): { filterBy: unknown } {
+  const filterBy: Record<string, unknown> = { type: { equals: [...types] } };
+  // Re-reads the same assets INVENTORY_AI landed, so it has to ask the same question of the
+  // same population — syncJobs relies on the two agreeing about which assets exist.
+  const project = cloudResourceProjectFilter(scope);
+  if (project) filterBy["project"] = project;
+  return { filterBy };
 }
 
 // ------------------------------------------------- agentic identities (principals)
@@ -962,7 +1015,8 @@ export function aiPrincipalsVariables(
     type: { equals: ["SERVICE_ACCOUNT", "ACCESS_KEY"] },
     identityPurpose: { equals: ["AGENTIC"] },
   };
-  if (scope && scope.length) filterBy["projectId"] = scope;
+  const project = cloudResourceProjectFilter(scope);
+  if (project) filterBy["project"] = project;
   return { filterBy, orderBy: { field: "RELATED_ISSUE_SEVERITY", direction: "DESC" } };
 }
 

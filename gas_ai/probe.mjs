@@ -81,7 +81,8 @@ await build({
         Q_AGENT_SENSITIVE_DATA_ACCESS, Q_AI_EXPOSURE, Q_IDENTITY_ACCESS, Q_LINEAGE,
         noGuardrailVariables, agentRunsAsVariables, saExcessiveAccessVariables,
         sensitiveDataAccessVariables, hostExposureVariables, endpointExposureVariables,
-        identityAccessVariables, lineageVariables } from "./src/server/wizQueriesAi";
+        identityAccessVariables, lineageVariables,
+        Q_AI_INVENTORY, aiInventoryVariables } from "./src/server/wizQueriesAi";
       export { normalizeNoGuardrailPage, normalizeRunsAsPage,
         normalizeSensitiveDataAccessPage, normalizeHostExposurePage,
         normalizeEndpointExposurePage, normalizeIdentityAccessPage,
@@ -154,9 +155,18 @@ console.log(`  rows per step      ${FIRST}`);
 
 // ------------------------------------------------------------------- 2. the tenant's schema
 
+
+/** `[String!]` / `ProjectFilters` / `String` — the shape a filter field actually wants. */
+function renderType(t) {
+  if (!t) return "?";
+  if (t.kind === "NON_NULL") return renderType(t.ofType) + "!";
+  if (t.kind === "LIST") return "[" + renderType(t.ofType) + "]";
+  return t.name || t.kind || "?";
+}
+
 async function typeShape(name) {
   if (DRY_RUN) return null;   // dry run sends nothing, not even introspection
-  const q = `query SidekickTypeProbe { __type(name: "${name}") { kind enumValues { name } inputFields { name } } }`;
+  const q = `query SidekickTypeProbe { __type(name: "${name}") { kind enumValues { name } inputFields { name type { name kind ofType { name kind ofType { name kind } } } } } }`;
   const r = await post(q, {});
   if (!r.ok) return { error: r.error };
   const t = r.data?.__type;
@@ -165,6 +175,8 @@ async function typeShape(name) {
     kind: t.kind ?? "",
     enumValues: (t.enumValues ?? []).map((e) => e.name),
     inputFields: (t.inputFields ?? []).map((f) => f.name),
+    // name + rendered type, for the callers that need to know the SHAPE a field wants.
+    inputTypes: (t.inputFields ?? []).map((f) => ({ name: f.name, type: renderType(f.type) })),
   };
 }
 
@@ -223,6 +235,55 @@ else {
   console.log("  change, and the committed file is what test/tenantVocabulary.test.js checks.");
 }
 
+// ------------------------------------------- 2b. which project filter each root accepts
+//
+// FIVE SPELLINGS, and choosing the wrong one is a silent zero rather than an error. This app
+// already sends `filterBy.project` (issuesV2), `filterBy.resource.projectId`
+// (configurationFindings), `filterBy.projectId` (cloudResourcesV2), the scalar
+// `graphSearch(projectId:)` argument, and `analyticsSelection.projectId` — wizQueriesAi.ts
+// names all five itself. The sibling gas/ tool sends `projectIdV2: {equals:[id]}`, but on
+// `vulnerabilityFindings`, which is a different filter type; brick's own test records that
+// "the two filter types spell it differently".
+//
+// So the question is asked per root rather than carried across from a connection that is not
+// this one. `expected` is what this app sends TODAY, so a mismatch is either a latent bug or
+// a spelling that only ever worked by accident.
+const FILTER_TYPES = [
+  ["CloudResourceV2Filters", "project", "INVENTORY_AI, AI_ASSET_PROPERTIES, AGENTIC_IDENTITIES"],
+  ["IssueFilters", "project", "ISSUES_TOXIC"],
+  ["ConfigurationFindingFilters", "resource.projectId", "CONFIG_FINDINGS, IDENTITY_HYGIENE"],
+];
+if (!DRY_RUN) {
+  console.log("\n=== which project filter each root accepts ===");
+  for (const [name, expected, users] of FILTER_TYPES) {
+    const shape = await typeShape(name);
+    const label = ("  " + name).padEnd(32);
+    if (!shape || shape.error) {
+      console.log(label + (shape?.error ? "REFUSED  " + shape.error.slice(0, 80) : "no such type"));
+      continue;
+    }
+    // Every project-shaped field, with its type. Not a guess-list: the first version of
+    // this check tested four names I had thought of and reported "project" for
+    // CloudResourceV2Filters, which was true and still not the answer — it says nothing
+    // about the SHAPE the field wants, and a right name in a wrong shape is a 400.
+    // `resource` is included because ConfigurationFindingFilters nests the project field
+    // inside it; the rendered type name says where to look next rather than reporting
+    // "no project-shaped field" for a type that plainly has one, one level down.
+    const found = shape.inputTypes.filter((f) => /project/i.test(f.name) || f.name === "resource");
+    console.log(label + (found.length
+      ? found.map((f) => f.name + ": " + f.type).join(", ")
+      : "(no project-shaped field)"));
+    console.log("  " + " ".repeat(30) + "sent today: " + expected + "   — " + users);
+    if (found.length && !found.some((f) => f.name === expected.split(".")[0])) {
+      console.log("  " + " ".repeat(30) + "*** MISMATCH: this type has no '" +
+        expected.split(".")[0] + "' field ***");
+    }
+  }
+  console.log("\n  A field listed here exists; it does not follow that it means what you hope.");
+  console.log("  Scope one step, count the rows, and only then scope the rest.");
+
+}
+
 // -------------------------------------------------------- 3. resolve the AI type list
 
 const chosen = app.chooseAiResourceTypes(
@@ -230,6 +291,38 @@ const chosen = app.chooseAiResourceTypes(
   TYPE_OVERRIDE.length ? TYPE_OVERRIDE : null,
 );
 console.log(`\n  AI resource types (${chosen.source}): ${chosen.types.join(", ") || "(none)"}`);
+
+// ------------------------------------------------- what scoping the register actually buys
+//
+// The whole justification for this change is one number, so it gets measured rather than
+// assumed. INVENTORY_AI is the step that DEFINES the register — it is the only non-optional
+// one — so its totalCount is the register size. Asked twice with one variable changed, at
+// `first: 1`, so the magnitudes arrive without paying for a single row.
+if (PROJECT_ID) {
+  console.log("\n=== what the project scope costs the register ===");
+  const count = async (scope) => {
+    const r = await post(app.Q_AI_INVENTORY, {
+      first: 1, after: null, ...app.aiInventoryVariables(chosen.types, scope),
+    });
+    if (!r.ok) return r.error.startsWith("UNREACHABLE") ? "UNREACHABLE" : "REFUSED: " + r.error.slice(0, 90);
+    return r.data?.cloudResourcesV2?.totalCount ?? "?";
+  };
+  const all = await count(null);
+  const mine = await count([PROJECT_ID]);
+  console.log(`  tenant-wide            ${all} AI assets`);
+  console.log(`  scoped to ${PROJECT_ID}  ${mine}`);
+  if (typeof all === "number" && typeof mine === "number" && all > 0) {
+    console.log(`  ${Math.round((mine / all) * 100)}% of the register, and the same share of every`);
+    console.log("  number computed over it — AARS distributions, reach percentages, coverage.");
+    if (mine === 0) {
+      console.log("\n  ZERO is a finding, not a success. Either this project holds no AI assets or");
+      console.log("  the filter shape is wrong; a refused query would have said REFUSED, so check");
+      console.log("  the project id before concluding the first.");
+    }
+  }
+} else {
+  console.log("\n  Set WIZ_PROJECT_ID_V2 to also measure what scoping the register would cost.");
+}
 
 if (VOCAB_ONLY) { rmSync(dir, { recursive: true, force: true }); process.exit(0); }
 

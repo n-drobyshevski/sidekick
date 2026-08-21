@@ -1123,6 +1123,22 @@ var Server = (() => {
   function edgeId(src, type, dst, negated) {
     return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
   }
+  function projectCatalogue(assets) {
+    var _a5;
+    const byId = /* @__PURE__ */ new Map();
+    for (const a of assets) {
+      for (const p of (_a5 = a.projects) != null ? _a5 : []) {
+        const seen = byId.get(p.id);
+        if (!seen) {
+          byId.set(p.id, { id: p.id, name: p.name, isFolder: p.isFolder, assets: 1 });
+          continue;
+        }
+        seen.assets += 1;
+        if (seen.isFolder === void 0 && p.isFolder !== void 0) seen.isFolder = p.isFolder;
+      }
+    }
+    return [...byId.values()].sort((x, y) => x.isFolder === y.isFolder ? x.name.localeCompare(y.name) : x.isFolder ? -1 : 1);
+  }
 
   // src/domain/graphExpand.ts
   var HOP = {
@@ -2002,7 +2018,12 @@ var Server = (() => {
     "hasHighPrivileges",
     "technology { id name categories { id name } }",
     "cloudAccount { id name externalId cloudProvider }",
-    "projects { id name riskProfile { businessImpact } }",
+    // `isFolder` rides along for the project switcher. A Wiz project is either a folder or a
+    // leaf, and an asset carries its WHOLE ancestor chain — the captured inventory shows one
+    // agent listing CE-DPCP-PORTAL (folder) -> VALUE-CHAIN (folder) -> provisioning-CE-DPCP-PORTAL
+    // (leaf). That is what lets a switcher offer a business unit and have it mean the subtree,
+    // and what lets the picker draw the two apart the way the Wiz console does.
+    "projects { id name isFolder riskProfile { businessImpact } }",
     "tags { key value }"
   ];
   function indented(fields, spaces) {
@@ -2050,8 +2071,14 @@ var Server = (() => {
     return /HTTP 400/.test(message) && /cannot represent value/i.test(message);
   }
   var Q_AI_INVENTORY = "query SidekickAiInventory($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + RESOURCE_FIELDS + "    }\n  }\n}\n";
-  function aiInventoryVariables(types) {
-    return { filterBy: { type: { equals: [...types] } } };
+  function cloudResourceProjectFilter(scope) {
+    return scope && scope.length ? { idV2: { equals: [...scope] } } : null;
+  }
+  function aiInventoryVariables(types, scope = null) {
+    const filterBy = { type: { equals: [...types] } };
+    const project = cloudResourceProjectFilter(scope);
+    if (project) filterBy["project"] = project;
+    return { filterBy };
   }
   var Q_RULE_ASSETS = 'query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: {\n    relatedIssue: { sourceRuleId: { equals: $ruleIds }, status: { equals: ["OPEN"] } }\n  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n' + RESOURCE_FIELDS + "    }\n  }\n}\n";
   var Q_AGENTS_NO_GUARDRAIL = graphSearchVarQuery("SidekickAiAgentsWithoutGuardrail");
@@ -2131,8 +2158,11 @@ var Server = (() => {
     return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
   }
   var Q_AI_PROPERTIES = "query SidekickAiAssetProperties($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + indented(IDENTITY_FIELDS, 6) + "      graphEntity { properties }\n    }\n  }\n}\n";
-  function aiPropertiesVariables(types) {
-    return { filterBy: { type: { equals: [...types] } } };
+  function aiPropertiesVariables(types, scope = null) {
+    const filterBy = { type: { equals: [...types] } };
+    const project = cloudResourceProjectFilter(scope);
+    if (project) filterBy["project"] = project;
+    return { filterBy };
   }
   var Q_PRINCIPALS = "query SidekickAiPrincipals($first: Int, $after: String, $filterBy: CloudResourceV2Filters, $orderBy: CloudResourceOrder) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      type\n      nativeType\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      technology { id name categories { id name } }\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      graphEntity { properties }\n      issueAnalytics {\n        issueCount\n        informationalSeverityCount\n        lowSeverityCount\n        mediumSeverityCount\n        highSeverityCount\n        criticalSeverityCount\n      }\n    }\n  }\n}\n";
   function aiPrincipalsVariables(scope) {
@@ -2140,7 +2170,8 @@ var Server = (() => {
       type: { equals: ["SERVICE_ACCOUNT", "ACCESS_KEY"] },
       identityPurpose: { equals: ["AGENTIC"] }
     };
-    if (scope && scope.length) filterBy["projectId"] = scope;
+    const project = cloudResourceProjectFilter(scope);
+    if (project) filterBy["project"] = project;
     return { filterBy, orderBy: { field: "RELATED_ISSUE_SEVERITY", direction: "DESC" } };
   }
   var Q_CONFIG_RULES = "query SidekickAiConfigRules($first: Int, $after: String) {\n  cloudConfigurationRules(first: $first, after: $after) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      shortId\n      subjectEntityType\n      externalReferences { id name }\n    }\n  }\n}\n";
@@ -2442,9 +2473,13 @@ var Server = (() => {
     const m = e.message;
     if (/HTTP 4\d\d/.test(m)) return false;
     if (/HTTP 429/.test(m)) return false;
+    if (/internal error has occurred/i.test(m)) return true;
     if (/carried no data/.test(m)) return false;
     if (/carried no .* connection/.test(m)) return false;
     return true;
+  }
+  function isTenantRefusal(e) {
+    return e instanceof WizQueryError;
   }
   function fetchPage(field, o, extra) {
     var _a5;
@@ -2841,7 +2876,8 @@ var Server = (() => {
       if (!id || !name) return null;
       const profile = p["riskProfile"];
       const businessImpact = profile && typeof profile === "object" ? str3(profile["businessImpact"]) : void 0;
-      return { id, name, businessImpact };
+      const isFolder = p["isFolder"] === true ? true : p["isFolder"] === false ? false : void 0;
+      return { id, name, isFolder, businessImpact };
     }).filter((p) => p !== null);
   }
   function normalizeConfigFindingsPage(rows) {
@@ -5314,8 +5350,9 @@ var Server = (() => {
   // src/server/sampleData.ts
   var T0 = "2026-04-02T08:00:00Z";
   var T1 = "2026-06-28T05:00:00Z";
+  var DEMO_UNIT = { id: "proj-demo-business-unit", name: "DEMO-BUSINESS-UNIT" };
   function node(seed) {
-    var _a5, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
     return {
       id: seed.id,
       kind: seed.kind,
@@ -5344,11 +5381,24 @@ var Server = (() => {
       // `GNode.businessImpact`. Omitted entirely (never `businessImpact: undefined`) when the
       // seed itself carries none, matching the "absent key, not an undefined one" discipline
       // `tags` and `exposureEvidence` already keep on this same object.
-      projects: ((_g = seed.projects) != null ? _g : []).map((name) => ({
-        id: `proj-${name.toLowerCase()}`,
-        name,
-        ...seed.businessImpact ? { businessImpact: seed.businessImpact } : {}
-      })),
+      // A FOLDER ancestor in front of the leaves, because that is the shape a real tenant
+      // returns and the shape the project switcher exists for: an asset belongs to its whole
+      // chain, so one folder id selects everything beneath it. The live capture shows exactly
+      // this — CE-DPCP-PORTAL (folder) -> VALUE-CHAIN (folder) -> provisioning-… (leaf).
+      //
+      // Without it the dry-run seed would exercise only the degenerate case where every project
+      // is a leaf and picking one selects one, so the folder path would ship untested and
+      // undemonstrated. Every seeded asset shares it, which is what makes "select the unit" and
+      // "select a project inside it" visibly different in the demo.
+      projects: ((_g = seed.projects) != null ? _g : []).length ? [
+        { id: DEMO_UNIT.id, name: DEMO_UNIT.name, isFolder: true },
+        ...((_h = seed.projects) != null ? _h : []).map((name) => ({
+          id: `proj-${name.toLowerCase()}`,
+          name,
+          isFolder: false,
+          ...seed.businessImpact ? { businessImpact: seed.businessImpact } : {}
+        }))
+      ] : [],
       technologyCategories: seed.techCats,
       identityPurpose: seed.identityPurpose,
       issueAnalytics: seed.issueAnalytics,
@@ -7396,6 +7446,13 @@ var Server = (() => {
   function clampDepth(v) {
     return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
   }
+  function getProjectView(settings) {
+    const v = settings["project_view"];
+    return typeof v === "string" ? v.trim() : "";
+  }
+  function withProjectView(settings, id) {
+    return { ...settings, project_view: typeof id === "string" ? id.trim() : "" };
+  }
   function getDefaultDepth(settings) {
     var _a5;
     return clampDepth((_a5 = settings["default_depth"]) != null ? _a5 : DEPTH_DEFAULT);
@@ -7748,7 +7805,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "c5c84178d587" : "dev";
+  var BUILD_ID = true ? "3fab2a12bae3" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -7763,15 +7820,20 @@ var Server = (() => {
     var _a5;
     return (_a5 = getProp(VERSION_PROP)) != null ? _a5 : "0";
   }
+  function nextVersion(prev) {
+    const now = String(Date.now());
+    const [prevMs, prevN] = String(prev != null ? prev : "").split(".");
+    return prevMs === now ? `${now}.${(Number(prevN) || 0) + 1}` : `${now}.0`;
+  }
   function bumpDataVersion() {
-    setProp(VERSION_PROP, String(Date.now()));
+    setProp(VERSION_PROP, nextVersion(getProp(VERSION_PROP)));
   }
   function wizDataVersion() {
     var _a5;
     return (_a5 = getProp(WIZ_VERSION_PROP)) != null ? _a5 : "0";
   }
   function bumpWizDataVersion() {
-    setProp(WIZ_VERSION_PROP, String(Date.now()));
+    setProp(WIZ_VERSION_PROP, nextVersion(getProp(WIZ_VERSION_PROP)));
   }
   function cacheKey(name, params, version) {
     const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
@@ -7867,6 +7929,13 @@ var Server = (() => {
     );
     settingsMemo = settings;
     bumpDataVersion();
+  }
+  var getProjectView2 = () => getProjectView(loadSettings());
+  function setProjectView(id) {
+    const settings = loadSettings();
+    const next = withProjectView(settings, id);
+    if (next["project_view"] === getProjectView(settings)) return;
+    saveSettings(next);
   }
   var getDefaultDepth2 = () => getDefaultDepth(loadSettings());
   var getMaxNodes2 = () => getMaxNodes(loadSettings());
@@ -9090,7 +9159,7 @@ var Server = (() => {
         writes: ["ai_assets"],
         run: "cloudResources",
         query: Q_AI_INVENTORY,
-        extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types)),
+        extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types, projectScope())),
         normalize: normalizeInventoryPage,
         pageSize: PAGE_SIZE_WIDE
       },
@@ -9246,9 +9315,13 @@ var Server = (() => {
         writes: ["ai_assets.guardrail_missing"],
         run: "graphSearch",
         query: Q_AGENTS_NO_GUARDRAIL,
-        // `null`, not projectScope(): these four have always run tenant-wide, and this change is
-        // about the query's SHAPE. See agentPathVariables in wizQueriesAi.ts.
-        extraVariables: noGuardrailVariables(types, null),
+        // Scoped, along with every other step. These four ran tenant-wide while the inventory
+        // did too — that was the argument, and it inverts the moment the register is scoped:
+        // a tenant-wide traversal over a scoped register lands assets the inventory never
+        // collected, and prices them into a coverage ratio whose denominator excludes them.
+        // guardrail-coverage-pct is exactly that ratio, so this one had to move in the same
+        // commit as INVENTORY_AI or the number would have quietly broken.
+        extraVariables: noGuardrailVariables(types, projectScope()),
         normalize: normalizeNoGuardrailPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9259,7 +9332,7 @@ var Server = (() => {
         writes: ["ai_edges (RUNS_AS)", "ai_assets"],
         run: "graphSearch",
         query: Q_AGENT_RUNS_AS,
-        extraVariables: agentRunsAsVariables(types, null),
+        extraVariables: agentRunsAsVariables(types, projectScope()),
         normalize: normalizeRunsAsPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9270,7 +9343,7 @@ var Server = (() => {
         writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
         run: "graphSearch",
         query: Q_SA_EXCESSIVE_ACCESS,
-        extraVariables: saExcessiveAccessVariables(types, null),
+        extraVariables: saExcessiveAccessVariables(types, projectScope()),
         normalize: normalizeRunsAsPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9288,7 +9361,7 @@ var Server = (() => {
         ],
         run: "graphSearch",
         query: Q_AGENT_SENSITIVE_DATA_ACCESS,
-        extraVariables: sensitiveDataAccessVariables(types, null),
+        extraVariables: sensitiveDataAccessVariables(types, projectScope()),
         normalize: normalizeSensitiveDataAccessPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9329,9 +9402,11 @@ var Server = (() => {
       {
         // The lineage step: the first traversal rooted at anything but AI_AGENT or the whole
         // AI type list. AI_PIPELINE + AI_DATASET are 79% of the register and no query has ever
-        // stood at one. `null`, not `projectScope()`: scoping it would cap the population at
-        // one project while the inventory that found the pipelines is tenant-wide, so a low
-        // Enriched number would be built in rather than measured. See domain/lineageQuery.ts.
+        // stood at one. Scoped now: the reason it was not is that the inventory which found
+        // those pipelines ran tenant-wide, so capping this at one project would have built a
+        // low Enriched number in rather than measured it. The inventory is scoped, so the
+        // asymmetry has swapped ends — leaving this tenant-wide is now what would land pipelines
+        // the register does not contain. See domain/lineageQuery.ts.
         id: "LINEAGE",
         area: "dspm",
         writes: [
@@ -9340,7 +9415,7 @@ var Server = (() => {
         ],
         run: "graphSearch",
         query: Q_LINEAGE,
-        extraVariables: lineageVariables(types, null),
+        extraVariables: lineageVariables(types, projectScope()),
         normalize: normalizeLineagePage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9367,7 +9442,7 @@ var Server = (() => {
         writes: ["ai_assets.publisher", "ai_assets.discovery_methods"],
         run: "cloudResources",
         query: Q_AI_PROPERTIES,
-        extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types)),
+        extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types, projectScope())),
         // The same normalizer the inventory step uses. Safe because mergeParts merges
         // field-wise and skips undefined — this step's narrower rows fill in the two provenance
         // fields without erasing the projects, tags or analytics INVENTORY_AI established.
@@ -9464,13 +9539,13 @@ var Server = (() => {
   function defaultStepVariables(stepId, withOverride, aiTypes) {
     switch (stepId) {
       case "INVENTORY_AI":
-        return aiInventoryVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types);
+        return aiInventoryVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "ISSUES_TOXIC":
         return aiIssuesVariables(projectScope());
       case "CONFIG_FINDINGS":
         return aiConfigFindingsVariables(projectScope());
       case "AI_ASSET_PROPERTIES":
-        return aiPropertiesVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types);
+        return aiPropertiesVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "AGENTIC_IDENTITIES":
         return aiPrincipalsVariables(projectScope());
       case "HOST_EXPOSURE":
@@ -9480,15 +9555,15 @@ var Server = (() => {
       case "IDENTITY_ACCESS":
         return identityAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "LINEAGE":
-        return lineageVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+        return lineageVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "GUARDRAIL_GAPS":
-        return noGuardrailVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+        return noGuardrailVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "RUNS_AS":
-        return agentRunsAsVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+        return agentRunsAsVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "SA_FINDINGS":
-        return saExcessiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+        return saExcessiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "SENSITIVE_DATA_ACCESS":
-        return sensitiveDataAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+        return sensitiveDataAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "EFFECTIVE_ACCESS":
         return effectiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "IDENTITY_HYGIENE":
@@ -9684,6 +9759,7 @@ var Server = (() => {
     const refs = partRefs(job);
     const params = jobParams(job);
     let stepIndex = job.step_index;
+    let inFlight = "";
     let cursor = job.cursor;
     let page = job.page;
     let nodesSoFar = job.nodes_so_far;
@@ -9699,6 +9775,7 @@ var Server = (() => {
       const steps = syncSteps();
       while (stepIndex < steps.length) {
         const step = steps[stepIndex];
+        inFlight = step.id;
         for (; ; ) {
           if (cancelRequested(job.job_id)) {
             clearCancelFlag();
@@ -9729,7 +9806,7 @@ var Server = (() => {
             });
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            if (step.optional && /HTTP 400/.test(msg)) {
+            if (step.optional && isTenantRefusal(e)) {
               params.apiCalls += 1;
               params.skippedSteps.push(step.id);
               params.skipReasons[step.id] = msg.slice(0, SKIP_REASON_MAX);
@@ -9850,7 +9927,8 @@ var Server = (() => {
     } catch (e) {
       updateJob(job.job_id, {
         phase: "FAILED",
-        error: String(e instanceof Error ? e.message : e).slice(0, 800)
+        step_index: stepIndex,
+        error: (inFlight ? `[${inFlight}] ` : "") + String(e instanceof Error ? e.message : e).slice(0, 800)
       });
     }
   }
@@ -14542,6 +14620,31 @@ var Server = (() => {
   }
 
   // src/server/api.ts
+  function viewAssets() {
+    const view = getProjectView2();
+    const all = loadAssets();
+    if (!view) return all;
+    return all.filter((a) => {
+      var _a5;
+      return ((_a5 = a.projects) != null ? _a5 : []).some((p) => p.id === view);
+    });
+  }
+  function viewAssetIds() {
+    if (!getProjectView2()) return null;
+    const ids = /* @__PURE__ */ new Set();
+    for (const a of viewAssets()) ids.add(a.id);
+    return ids;
+  }
+  function viewIssues() {
+    const ids = viewAssetIds();
+    const all = loadIssues();
+    return ids ? all.filter((i) => ids.has(i.assetId)) : all;
+  }
+  function viewFindings() {
+    const ids = viewAssetIds();
+    const all = loadFindings();
+    return ids ? all.filter((f) => ids.has(f.resourceId)) : all;
+  }
   function run(fn) {
     try {
       return { ok: true, data: fn() };
@@ -14559,7 +14662,7 @@ var Server = (() => {
     );
   }
   function openIssues() {
-    return loadIssues().filter(isUnresolvedIssue);
+    return viewIssues().filter(isUnresolvedIssue);
   }
   function bootstrap(_p) {
     return run(() => {
@@ -14577,7 +14680,7 @@ var Server = (() => {
   }
   function bootstrapCore() {
     var _a5, _b;
-    const assets = loadAssets();
+    const assets = viewAssets();
     const issues2 = openIssues();
     const latest = latestSync();
     const aarsRule = getAarsRule2();
@@ -14656,7 +14759,18 @@ var Server = (() => {
         // name the population it is a percentile OF without a second round trip.
         aarsScored: assets.filter((a) => typeof a.aars === "number").length
       },
-      filterOptions: filterOptions(assets)
+      filterOptions: filterOptions(assets, loadAssets()),
+      // What the switcher shows as selected, and what that selection costs. `shown` and
+      // `register` ride together because the control has to be able to say "826 of 12,778"
+      // rather than "826" — a count with no denominator cannot distinguish a small unit from
+      // a small register, and those call for opposite reactions. Sits beside the data rather
+      // than in `settings` because every number on this payload was already filtered by it:
+      // the label and the figures it labels have to come from one read.
+      scope: {
+        projectView: getProjectView2(),
+        shown: assets.length,
+        register: loadAssets().length
+      }
     };
   }
   function distinctHumanIdentities(assets) {
@@ -14688,7 +14802,7 @@ var Server = (() => {
     for (const a of assets) if (a.id === id) return a;
     return void 0;
   }
-  function filterOptions(assets) {
+  function filterOptions(assets, register) {
     var _a5;
     const kinds = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
@@ -14705,7 +14819,13 @@ var Server = (() => {
     return {
       kinds: [...kinds].sort(),
       clouds: [...clouds].sort(),
-      projects: [...projects].sort()
+      projects: [...projects].sort(),
+      // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
+      // filter on every page matches project names, and there is no reason to migrate them
+      // here; the switcher needs ids because only an id carries ancestry — an asset lists its
+      // whole chain, so one id match selects a folder's entire subtree. Its counts are
+      // register-wide on purpose: they answer "how much would I see if I picked this".
+      projectList: projectCatalogue(register)
     };
   }
   function getGraph(p) {
@@ -14976,17 +15096,17 @@ var Server = (() => {
   function assetsModel() {
     var _a5, _b;
     const trend = aarsTrendFromHistory(syncHistory());
-    const assets = loadAssets();
+    const assets = viewAssets();
     const issues2 = openIssues();
     const reach = estateReach({
       assets,
-      issues: loadIssues(),
-      findings: loadFindings(),
+      issues: viewIssues(),
+      findings: viewFindings(),
       edges: loadEdges()
     });
     const assetIds = {};
     for (const a of assets) assetIds[a.id] = true;
-    const openGaps = loadFindings().filter(isOpenGap);
+    const openGaps = viewFindings().filter(isOpenGap);
     const unlinkedGaps = openGaps.filter((f) => !assetIds[f.resourceId]).length;
     const agents = assets.filter((a) => a.kind === "AI_AGENT");
     const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
@@ -15202,7 +15322,7 @@ var Server = (() => {
   function getAssetOptions(_p) {
     return run(
       () => cached("assetOptions", null, () => ({
-        rows: [...loadAssets()].sort((a, b) => {
+        rows: [...viewAssets()].sort((a, b) => {
           var _a5, _b;
           return Number((_a5 = b.aars) != null ? _a5 : -1) - Number((_b = a.aars) != null ? _b : -1);
         }).map((n) => ({ id: n.id, name: n.name, kind: n.kind }))
@@ -15263,7 +15383,7 @@ var Server = (() => {
   }
   function aiAssetIdSet() {
     const ids = {};
-    for (const a of loadAssets()) ids[a.id] = true;
+    for (const a of viewAssets()) ids[a.id] = true;
     return ids;
   }
   function scopedFrameworkPolicies() {
@@ -15272,7 +15392,7 @@ var Server = (() => {
     const catalogue = loadFrameworks();
     const scope = scopeFiveRs(
       buildAllFrameworkTrees(posture, allPolicies, catalogue),
-      loadFindings(),
+      viewFindings(),
       aiAssetIdSet(),
       getFiveRsPins2()
     );
@@ -15284,7 +15404,7 @@ var Server = (() => {
   }
   function configModel() {
     const assetIds = aiAssetIdSet();
-    const rows = loadFindings().map((f) => toConfigView(f, !!assetIds[f.resourceId]));
+    const rows = viewFindings().map((f) => toConfigView(f, !!assetIds[f.resourceId]));
     const severities = /* @__PURE__ */ new Set();
     const statuses = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
@@ -15364,7 +15484,7 @@ var Server = (() => {
       return cached("getConfigFindingDetail", { id }, () => {
         const finding = loadFindings().filter((f) => f.id === id)[0];
         if (!finding) return null;
-        const asset = loadAssets().filter((a) => a.id === finding.resourceId)[0];
+        const asset = viewAssets().filter((a) => a.id === finding.resourceId)[0];
         return {
           finding,
           gap: isOpenGap(finding),
@@ -15480,7 +15600,7 @@ var Server = (() => {
       const params = p != null ? p : {};
       const group = String((_a5 = params["group"]) != null ? _a5 : "");
       return cached("getIssues", { group }, () => {
-        let rows = loadIssues();
+        let rows = viewIssues();
         if (group) rows = rows.filter((i) => i.comboGroup === group);
         return { rows, total: rows.length };
       });
@@ -15510,7 +15630,7 @@ var Server = (() => {
     return run(
       () => cached("getToxicCombos", null, () => {
         const issues2 = openIssues();
-        const assetRows = loadAssets();
+        const assetRows = viewAssets();
         const assets = new Map(assetRows.map((a) => [a.id, a]));
         const digest = comboDigest(issues2, assetRows, (/* @__PURE__ */ new Date()).toISOString());
         const digestById = new Map(digest.groups.map((g) => [g.id, g]));
@@ -15565,10 +15685,8 @@ var Server = (() => {
     );
   }
   function problemsModel() {
-    const assetsById = new Map(loadAssets().map((a) => [a.id, a]));
-    const rows = rankProblems(
-      buildProblemRows(loadIssues(), loadFindings(), assetsById)
-    );
+    const assetsById = new Map(viewAssets().map((a) => [a.id, a]));
+    const rows = rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById));
     return { rows, outcomeCounts: countProblemRowsByOutcome(rows) };
   }
   function getProblems(p) {
@@ -15745,6 +15863,7 @@ var Server = (() => {
       }
       if (params["maxNodes"] !== void 0) setMaxNodes(params["maxNodes"]);
       if (params["autoExpand"] !== void 0) setAutoExpand(params["autoExpand"]);
+      if (params["projectView"] !== void 0) setProjectView(params["projectView"]);
       if (params["fiveRsPins"] !== void 0) {
         setFiveRsPins(
           cleanFiveRsPins(
@@ -15759,6 +15878,7 @@ var Server = (() => {
         // Echoed so the Settings page's paint({ ...s, ...fresh }) repaints the STORED value
         // rather than the one it asked for.
         autoExpand: getAutoExpand2(),
+        projectView: getProjectView2(),
         fiveRsPins: getFiveRsPins2()
       };
     });

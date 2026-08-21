@@ -4,6 +4,7 @@ import { call } from "./api.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
 import { clear, el, fmtDateTime, progressBar, runPageTeardown, statusPill } from "./ui.js";
+import { projectScopeControl } from "./ui/projectScope.js";
 import { toast } from "./ui.js";
 import { renderGraphPage } from "./pages/graph.js";
 import { renderInventory } from "./pages/inventory.js";
@@ -225,6 +226,13 @@ function renderSidebar(sidebar, data) {
       el("span", { class: "wordmark-label" }, "Wiz SIDEKICK AI"),
       railToggle),
   );
+  // Above the nav, below the wordmark: the scope applies to every page in the list under
+  // it, so it reads as a heading for the nav rather than as one page's filter. Returns
+  // null when there is no register to slice — including the `renderSidebar(sidebar, null)`
+  // boot-failure path, where offering a picker over data we could not fetch would be a
+  // control with nothing behind it.
+  const scopeSwitch = projectScopeControl(data, pickProjectScope);
+  if (scopeSwitch) sidebar.append(scopeSwitch);
   const { route: active } = parseHash();
   let lastGroup = null;
   for (const [key, page] of Object.entries(PAGES)) {
@@ -291,6 +299,30 @@ function renderSidebar(sidebar, data) {
   // Re-apply the persisted collapsed state — the rail is rebuilt wholesale on every
   // refresh(), so the class + width + per-link titles must be re-stamped each time.
   applyCollapsed(sidebarCollapsed);
+}
+
+/**
+ * Server-side, not a client filter. The scope has to hold for every payload the pages
+ * read — including the ones computed server-side from the whole register — so it is stored
+ * and applied at the read boundary, and the client's job is to invalidate what it cached
+ * under the old scope. `refresh()` is that seam: it clears the bootstrap AND the RPC cache
+ * before re-booting, which is exactly what a population change invalidates. Filtering in
+ * the client instead would leave every server-computed count answering for the old scope.
+ */
+let scopeSwitchInFlight = false;
+async function pickProjectScope(id) {
+  // The rail is rebuilt by refresh(), so a second pick mid-flight would race a control
+  // that is about to be replaced underneath it.
+  if (scopeSwitchInFlight) return;
+  scopeSwitchInFlight = true;
+  try {
+    await call("api_setSettings", { projectView: id });
+    await refresh();
+  } catch (e) {
+    toast(`Couldn't change project scope: ${e.message || e}`);
+  } finally {
+    scopeSwitchInFlight = false;
+  }
 }
 
 async function startSync(btn) {

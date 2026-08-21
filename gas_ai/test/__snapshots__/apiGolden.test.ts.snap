@@ -122,6 +122,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "filterOptions": {
         "clouds": [],
         "kinds": [],
+        "projectList": [],
         "projects": [],
       },
       "hasCredentials": false,
@@ -158,6 +159,11 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "INFO",
           "UNKNOWN",
         ],
+      },
+      "scope": {
+        "projectView": "",
+        "register": 0,
+        "shown": 0,
       },
       "settings": {
         "autoExpand": true,
@@ -1645,7 +1651,58 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
         "USER_ACCOUNT",
         "VIRTUAL_MACHINE",
       ],
+      "projectList": [
+        {
+          "assets": 57,
+          "id": "proj-demo-business-unit",
+          "isFolder": true,
+          "name": "DEMO-BUSINESS-UNIT",
+        },
+        {
+          "assets": 34,
+          "id": "proj-project-alpha",
+          "isFolder": false,
+          "name": "PROJECT-ALPHA",
+        },
+        {
+          "assets": 22,
+          "id": "proj-project-beta",
+          "isFolder": false,
+          "name": "PROJECT-BETA",
+        },
+        {
+          "assets": 6,
+          "id": "proj-project-delta",
+          "isFolder": false,
+          "name": "PROJECT-DELTA",
+        },
+        {
+          "assets": 1,
+          "id": "proj-project-epsilon",
+          "isFolder": false,
+          "name": "PROJECT-EPSILON",
+        },
+        {
+          "assets": 2,
+          "id": "proj-project-eta",
+          "isFolder": false,
+          "name": "PROJECT-ETA",
+        },
+        {
+          "assets": 1,
+          "id": "proj-project-gamma",
+          "isFolder": false,
+          "name": "PROJECT-GAMMA",
+        },
+        {
+          "assets": 3,
+          "id": "proj-project-zeta",
+          "isFolder": false,
+          "name": "PROJECT-ZETA",
+        },
+      ],
       "projects": [
+        "DEMO-BUSINESS-UNIT",
         "PROJECT-ALPHA",
         "PROJECT-BETA",
         "PROJECT-DELTA",
@@ -1705,6 +1762,11 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
         "INFO",
         "UNKNOWN",
       ],
+    },
+    "scope": {
+      "projectView": "",
+      "register": 87,
+      "shown": 87,
     },
     "settings": {
       "autoExpand": true,
@@ -2814,11 +2876,17 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "projectRefs": [
             {
               "businessImpact": undefined,
+              "id": "proj-demo-business-unit",
+              "name": "DEMO-BUSINESS-UNIT",
+            },
+            {
+              "businessImpact": undefined,
               "id": "proj-project-delta",
               "name": "PROJECT-DELTA",
             },
           ],
           "projects": [
+            "DEMO-BUSINESS-UNIT",
             "PROJECT-DELTA",
           ],
           "region": "europe-west1",
@@ -2882,11 +2950,17 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "projectRefs": [
             {
               "businessImpact": undefined,
+              "id": "proj-demo-business-unit",
+              "name": "DEMO-BUSINESS-UNIT",
+            },
+            {
+              "businessImpact": undefined,
               "id": "proj-project-delta",
               "name": "PROJECT-DELTA",
             },
           ],
           "projects": [
+            "DEMO-BUSINESS-UNIT",
             "PROJECT-DELTA",
           ],
           "region": null,
@@ -2946,12 +3020,18 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "postureTier": 1,
           "projectRefs": [
             {
+              "businessImpact": undefined,
+              "id": "proj-demo-business-unit",
+              "name": "DEMO-BUSINESS-UNIT",
+            },
+            {
               "businessImpact": "MBI",
               "id": "proj-project-alpha",
               "name": "PROJECT-ALPHA",
             },
           ],
           "projects": [
+            "DEMO-BUSINESS-UNIT",
             "PROJECT-ALPHA",
           ],
           "region": "europe-west1",
@@ -4014,6 +4094,11 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
       "postureTier": 4,
       "projectRefs": [
         {
+          "businessImpact": undefined,
+          "id": "proj-demo-business-unit",
+          "name": "DEMO-BUSINESS-UNIT",
+        },
+        {
           "businessImpact": "HBI",
           "id": "proj-project-alpha",
           "name": "PROJECT-ALPHA",
@@ -4030,6 +4115,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
       ],
       "projects": [
+        "DEMO-BUSINESS-UNIT",
         "PROJECT-ALPHA",
         "PROJECT-DELTA",
         "PROJECT-EPSILON",
@@ -4652,6 +4738,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "VIRTUAL_MACHINE",
       ],
       "projects": [
+        "DEMO-BUSINESS-UNIT",
         "PROJECT-ALPHA",
         "PROJECT-BETA",
         "PROJECT-DELTA",
@@ -4918,6 +5005,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "AGENT_AUTOGEN_DO_NOT_DELETE",
         "postureTier": 4,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
@@ -4942,6 +5030,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "agent-H-chatbot",
         "postureTier": 4,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
           "PROJECT-DELTA",
           "PROJECT-EPSILON",
@@ -4967,6 +5056,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "dev-agent-D-test",
         "postureTier": 3,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
@@ -4991,6 +5081,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "dev-agent-D",
         "postureTier": 3,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
@@ -5017,6 +5108,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "Agent-E",
         "postureTier": 4,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
           "PROJECT-GAMMA",
         ],
@@ -5041,6 +5133,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "Agent-G",
         "postureTier": 3,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
           "PROJECT-ETA",
         ],
@@ -5065,6 +5158,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "agent-I",
         "postureTier": 4,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
           "PROJECT-ZETA",
         ],
@@ -5089,6 +5183,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "Agent-A",
         "postureTier": 4,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
@@ -5113,6 +5208,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "Agent-B",
         "postureTier": 4,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
@@ -5137,6 +5233,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "agent-F",
         "postureTier": 3,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west4",
@@ -5160,6 +5257,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "agent-F-preprod",
         "postureTier": 3,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west4",
@@ -5183,6 +5281,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "AWSReservedSSO_FinanceAdmin_01",
         "postureTier": 3,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": null,
@@ -5206,6 +5305,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "AWSReservedSSO_FinanceAdmin_02",
         "postureTier": 3,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": null,
@@ -5229,6 +5329,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "AWSReservedSSO_FinanceAdmin_03",
         "postureTier": 3,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": null,
@@ -5252,6 +5353,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "AWSReservedSSO_FinanceAdmin_04",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": null,
@@ -5275,6 +5377,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "AWSReservedSSO_FinanceAdmin_05",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": null,
@@ -5298,6 +5401,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "AWSReservedSSO_FinanceAdmin_06",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": null,
@@ -5321,6 +5425,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "AWSReservedSSO_FinanceAdmin_07",
         "postureTier": 3,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": null,
@@ -5344,6 +5449,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "AWSReservedSSO_FinanceAdmin_08",
         "postureTier": 3,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": null,
@@ -5367,6 +5473,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "agent-J",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
@@ -5391,6 +5498,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "agent-K",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
@@ -5412,6 +5520,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "dataset-support-transcripts",
         "postureTier": 2,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
@@ -5432,6 +5541,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "text-embedding-005",
         "postureTier": 1,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
@@ -5452,6 +5562,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "Agent-L-support",
         "postureTier": 1,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
@@ -5472,6 +5583,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "guardrail-alpha",
         "postureTier": 1,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
@@ -5492,6 +5604,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "guardrail-beta",
         "postureTier": 1,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west4",
@@ -5512,6 +5625,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bedrock-guardrail-default",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": null,
@@ -5532,6 +5646,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "anthropic.claude-3-5-sonnet",
         "postureTier": 1,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": null,
@@ -5552,6 +5667,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "mcp-internal-tools",
         "postureTier": 1,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
@@ -5572,6 +5688,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "pipeline-training-01",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
@@ -5592,6 +5709,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-customer-pii",
         "postureTier": 2,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
@@ -5612,6 +5730,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-finance-reports",
         "postureTier": 1,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "europe-west1",
@@ -5632,6 +5751,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-partner-data",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ETA",
         ],
         "region": "europe-west4",
@@ -5652,6 +5772,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-pricing-models",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west4",
@@ -5672,6 +5793,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-training-data",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
@@ -5692,6 +5814,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "db-customer-core",
         "postureTier": 2,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
@@ -5712,6 +5835,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "db-analytics",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-DELTA",
         ],
         "region": "europe-west1",
@@ -5732,6 +5856,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "vm-agent-i-host",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ZETA",
         ],
         "region": "europe-west4",
@@ -5752,6 +5877,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "cloudrun-agent-h",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-DELTA",
         ],
         "region": "europe-west1",
@@ -5772,6 +5898,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "https://agent-h-chatbot.a.run.app:443",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-DELTA",
         ],
         "region": "europe-west1",
@@ -5792,6 +5919,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "https://agent-i.internal-tools.example:8443",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-ZETA",
         ],
         "region": "europe-west4",
@@ -5812,6 +5940,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "img-agent-h:latest",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-DELTA",
         ],
         "region": null,
@@ -5832,6 +5961,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "repo-agent-h",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-DELTA",
         ],
         "region": null,
@@ -6176,6 +6306,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-01",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6196,6 +6327,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-02",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6216,6 +6348,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-03",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6236,6 +6369,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-04",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6256,6 +6390,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-05",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6276,6 +6411,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-06",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6296,6 +6432,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-07",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6316,6 +6453,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-08",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6336,6 +6474,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-09",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6356,6 +6495,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-10",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6376,6 +6516,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-11",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6396,6 +6537,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-12",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6416,6 +6558,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-13",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -6436,6 +6579,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "name": "bucket-autogen-scratch-14",
         "postureTier": null,
         "projects": [
+          "DEMO-BUSINESS-UNIT",
           "PROJECT-BETA",
         ],
         "region": "us-west1",
@@ -8299,13 +8443,20 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -8397,13 +8548,20 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -8497,13 +8655,20 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -8583,13 +8748,20 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -8669,13 +8841,20 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -8763,13 +8942,20 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-gamma",
+            "isFolder": false,
             "name": "PROJECT-GAMMA",
           },
         ],
@@ -8832,8 +9018,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -8896,8 +9088,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -8960,13 +9158,20 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "MBI",
             "id": "proj-project-eta",
+            "isFolder": false,
             "name": "PROJECT-ETA",
           },
         ],
@@ -9077,18 +9282,26 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-delta",
+            "isFolder": false,
             "name": "PROJECT-DELTA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-epsilon",
+            "isFolder": false,
             "name": "PROJECT-EPSILON",
           },
         ],
@@ -9171,13 +9384,20 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-zeta",
+            "isFolder": false,
             "name": "PROJECT-ZETA",
           },
         ],
@@ -9242,11 +9462,18 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -9311,11 +9538,18 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -9382,8 +9616,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -9446,8 +9686,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -9510,8 +9756,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -9575,7 +9827,13 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -9639,7 +9897,13 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -9703,7 +9967,13 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -9766,8 +10036,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -9830,8 +10106,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -9882,8 +10164,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 1,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -9931,8 +10219,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 1,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -9977,8 +10271,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 1,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -10023,8 +10323,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "postureTier": 2,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -10055,7 +10361,13 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-zeta",
+            "isFolder": false,
             "name": "PROJECT-ZETA",
           },
         ],
@@ -10095,7 +10407,13 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-delta",
+            "isFolder": false,
             "name": "PROJECT-DELTA",
           },
         ],
@@ -10128,7 +10446,13 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-zeta",
+            "isFolder": false,
             "name": "PROJECT-ZETA",
           },
         ],
@@ -10159,7 +10483,13 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-delta",
+            "isFolder": false,
             "name": "PROJECT-DELTA",
           },
         ],
@@ -16689,6 +17019,10 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
           "values": [
             {
               "count": 14,
+              "value": "DEMO-BUSINESS-UNIT",
+            },
+            {
+              "count": 14,
               "value": "PROJECT-ALPHA",
             },
             {
@@ -16844,7 +17178,7 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 87616,
+    "archiveBytes": 93178,
     "cellCount": 40300,
     "rows": {
       "assets": 87,
@@ -18460,13 +18794,20 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -18577,18 +18918,26 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-delta",
+            "isFolder": false,
             "name": "PROJECT-DELTA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-epsilon",
+            "isFolder": false,
             "name": "PROJECT-EPSILON",
           },
         ],
@@ -18668,13 +19017,20 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -18764,13 +19120,20 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -18848,13 +19211,20 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-gamma",
+            "isFolder": false,
             "name": "PROJECT-GAMMA",
           },
         ],
@@ -18917,13 +19287,20 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "MBI",
             "id": "proj-project-eta",
+            "isFolder": false,
             "name": "PROJECT-ETA",
           },
         ],
@@ -19006,13 +19383,20 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-zeta",
+            "isFolder": false,
             "name": "PROJECT-ZETA",
           },
         ],
@@ -19093,13 +19477,20 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -19191,13 +19582,20 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -19270,8 +19668,14 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -19334,8 +19738,14 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -19400,11 +19810,18 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -19469,11 +19886,18 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -19531,8 +19955,14 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "postureTier": 1,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -21131,13 +21561,20 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -21248,18 +21685,26 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-delta",
+            "isFolder": false,
             "name": "PROJECT-DELTA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-epsilon",
+            "isFolder": false,
             "name": "PROJECT-EPSILON",
           },
         ],
@@ -21339,13 +21784,20 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -21435,13 +21887,20 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -21519,13 +21978,20 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-gamma",
+            "isFolder": false,
             "name": "PROJECT-GAMMA",
           },
         ],
@@ -21588,13 +22054,20 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "MBI",
             "id": "proj-project-eta",
+            "isFolder": false,
             "name": "PROJECT-ETA",
           },
         ],
@@ -21677,13 +22150,20 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-zeta",
+            "isFolder": false,
             "name": "PROJECT-ZETA",
           },
         ],
@@ -21764,13 +22244,20 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -21862,13 +22349,20 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -21941,8 +22435,14 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -22005,8 +22505,14 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -22052,7 +22558,13 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
         ],
@@ -22083,7 +22595,13 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
         ],
@@ -22114,7 +22632,13 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
         ],
@@ -22145,7 +22669,13 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
         ],
@@ -22179,7 +22709,13 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 2,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -22212,7 +22748,13 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 1,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
         ],
@@ -22243,7 +22785,13 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-eta",
+            "isFolder": false,
             "name": "PROJECT-ETA",
           },
         ],
@@ -22274,7 +22822,13 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -22305,7 +22859,13 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -22336,7 +22896,13 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-delta",
+            "isFolder": false,
             "name": "PROJECT-DELTA",
           },
         ],
@@ -22370,7 +22936,13 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "postureTier": 2,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -23258,13 +23830,20 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -23375,18 +23954,26 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-delta",
+            "isFolder": false,
             "name": "PROJECT-DELTA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-epsilon",
+            "isFolder": false,
             "name": "PROJECT-EPSILON",
           },
         ],
@@ -23466,13 +24053,20 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -23562,13 +24156,20 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -23646,13 +24247,20 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-gamma",
+            "isFolder": false,
             "name": "PROJECT-GAMMA",
           },
         ],
@@ -23715,13 +24323,20 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "MBI",
             "id": "proj-project-eta",
+            "isFolder": false,
             "name": "PROJECT-ETA",
           },
         ],
@@ -23804,13 +24419,20 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-zeta",
+            "isFolder": false,
             "name": "PROJECT-ZETA",
           },
         ],
@@ -23891,13 +24513,20 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -23989,13 +24618,20 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "postureTier": 4,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "HBI",
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "businessImpact": "HBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -24068,8 +24704,14 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -24132,8 +24774,14 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "postureTier": 3,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "MBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -24198,11 +24846,18 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -24267,11 +24922,18 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         },
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "id": "proj-project-beta",
+            "isFolder": false,
             "name": "PROJECT-BETA",
           },
           {
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -24329,8 +24991,14 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "postureTier": 1,
         "projects": [
           {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
             "businessImpact": "LBI",
             "id": "proj-project-alpha",
+            "isFolder": false,
             "name": "PROJECT-ALPHA",
           },
         ],
@@ -24611,7 +25279,7 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
     "port_validation": null,
     "posture_input_json": "{"capability":"BROAD","containment":"WEAK","consequence":"SEVERE"}",
     "posture_tier": 4,
-    "projects_json": "[{"id":"proj-project-beta","name":"PROJECT-BETA","businessImpact":"HBI"},{"id":"proj-project-alpha","name":"PROJECT-ALPHA","businessImpact":"HBI"}]",
+    "projects_json": "[{"id":"proj-demo-business-unit","name":"DEMO-BUSINESS-UNIT","isFolder":true},{"id":"proj-project-beta","name":"PROJECT-BETA","isFolder":false,"businessImpact":"HBI"},{"id":"proj-project-alpha","name":"PROJECT-ALPHA","isFolder":false,"businessImpact":"HBI"}]",
     "publisher": "Platform Engineering",
     "region": "europe-west1",
     "sensitive_access": "true",

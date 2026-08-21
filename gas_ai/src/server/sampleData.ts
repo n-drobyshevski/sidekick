@@ -25,6 +25,15 @@ import { classifyIssue, OTHER_GROUP_ID } from "../domain/toxicCombos";
 const T0 = "2026-04-02T08:00:00Z"; // firstSeen for long-lived assets
 const T1 = "2026-06-28T05:00:00Z"; // lastSeen (the seed "sync" horizon)
 
+/**
+ * The folder project every seeded asset also belongs to — the demo's business unit.
+ *
+ * Named for what it is rather than borrowed from the tenant: a fixture that carried a real
+ * project's name and id would put one customer's org chart in a dry-run anybody can open, and
+ * the id would be a hardcoded tenant value of exactly the kind brick's tests already refuse.
+ */
+const DEMO_UNIT = { id: "proj-demo-business-unit", name: "DEMO-BUSINESS-UNIT" };
+
 interface NodeSeed {
   id: string;
   kind: NodeKind;
@@ -98,11 +107,26 @@ function node(seed: NodeSeed): GNode {
     // `GNode.businessImpact`. Omitted entirely (never `businessImpact: undefined`) when the
     // seed itself carries none, matching the "absent key, not an undefined one" discipline
     // `tags` and `exposureEvidence` already keep on this same object.
-    projects: (seed.projects ?? []).map((name) => ({
-      id: `proj-${name.toLowerCase()}`,
-      name,
-      ...(seed.businessImpact ? { businessImpact: seed.businessImpact } : {}),
-    })),
+    // A FOLDER ancestor in front of the leaves, because that is the shape a real tenant
+    // returns and the shape the project switcher exists for: an asset belongs to its whole
+    // chain, so one folder id selects everything beneath it. The live capture shows exactly
+    // this — CE-DPCP-PORTAL (folder) -> VALUE-CHAIN (folder) -> provisioning-… (leaf).
+    //
+    // Without it the dry-run seed would exercise only the degenerate case where every project
+    // is a leaf and picking one selects one, so the folder path would ship untested and
+    // undemonstrated. Every seeded asset shares it, which is what makes "select the unit" and
+    // "select a project inside it" visibly different in the demo.
+    projects: (seed.projects ?? []).length
+      ? [
+        { id: DEMO_UNIT.id, name: DEMO_UNIT.name, isFolder: true },
+        ...(seed.projects ?? []).map((name) => ({
+          id: `proj-${name.toLowerCase()}`,
+          name,
+          isFolder: false,
+          ...(seed.businessImpact ? { businessImpact: seed.businessImpact } : {}),
+        })),
+      ]
+      : [],
     technologyCategories: seed.techCats,
     identityPurpose: seed.identityPurpose,
     issueAnalytics: seed.issueAnalytics,
