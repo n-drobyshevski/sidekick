@@ -63,6 +63,75 @@ async function db() {
   return await import("../src/server/sheetsDb");
 }
 
+describe("a header row with a gap in it", () => {
+  // A blank header cell BETWEEN two real ones, which only a hand-edited sheet produces —
+  // clearing a header, or inserting a column and not naming it.
+  //
+  // It used to misfile silently, and silently is the whole problem. `ensureHeaders` compacted
+  // row 1 with `.filter(Boolean)` while `readAll` kept its positions and skipped the blanks,
+  // so the two disagreed about which column a name lived in: every write after the gap landed
+  // one column to the left of where the next read would look for it. No error, no warning —
+  // the value simply read back null, which is indistinguishable from a field the tenant never
+  // reported. On a security ledger that is the worst available failure mode.
+  //
+  // Trailing blanks are a different thing and stay legal: they carry no data and shift
+  // nothing, so a row-1 range that runs wider than the headers is not an error.
+
+  it("refuses the write rather than misfiling every value after the gap", async () => {
+    const { overwrite, TABS } = await db();
+    sheets[TABS.assets] = fakeSheet([
+      ["id", "", "name", "aars"],
+      ["a", "", "Agent-A", 62],
+    ]);
+    expect(() => overwrite(TABS.assets, [{ id: "a", name: "Agent-A", aars: 62 }]))
+      .toThrow(/header/i);
+  });
+
+  it("names the tab and the column, because the fix is a manual edit", async () => {
+    const { overwrite, TABS } = await db();
+    sheets[TABS.assets] = fakeSheet([["id", "kind", "", "aars"], []]);
+    // Two substring assertions rather than one regex with a wildcard between them: the
+    // escaping is the kind that silently degrades to something weaker that still passes.
+    expect(() => overwrite(TABS.assets, [{ id: "a" }])).toThrow(TABS.assets);
+    // 1-based and spreadsheet-shaped, so the column can be found without counting.
+    expect(() => overwrite(TABS.assets, [{ id: "a" }])).toThrow("column 3");
+  });
+
+  it("leaves the data where it was — the write must not half-happen", async () => {
+    const { overwrite, TABS } = await db();
+    sheets[TABS.assets] = fakeSheet([
+      ["id", "", "name"],
+      ["a", "", "Agent-A"],
+    ]);
+    try { overwrite(TABS.assets, [{ id: "b", name: "Agent-B" }]); } catch { /* expected */ }
+    expect(sheets[TABS.assets].grid[1]).toEqual(["a", "", "Agent-A"]);
+  });
+
+  it("still accepts trailing blanks, which carry no data and shift nothing", async () => {
+    const { overwrite, readAll, TABS } = await db();
+    // Row 1 shorter than the widest row: the range comes back padded on the right.
+    sheets[TABS.assets] = fakeSheet([
+      ["id", "kind", "name", "", ""],
+      ["a", "AI_AGENT", "Agent-A", "", ""],
+    ]);
+    expect(() => overwrite(TABS.assets, [{ id: "a", kind: "AI_AGENT", name: "Agent-A" }]))
+      .not.toThrow();
+    expect(readAll(TABS.assets)[0]["name"]).toBe("Agent-A");
+  });
+
+  it("guards every write path, not just overwrite", async () => {
+    // The compaction lived in ensureHeaders, which appendRows and updateWhere reach too.
+    const { appendRows, updateWhere, TABS } = await db();
+    const gapped = () => fakeSheet([["id", "", "name"], ["a", "", "Agent-A"]]);
+
+    sheets[TABS.assets] = gapped();
+    expect(() => appendRows(TABS.assets, [{ id: "b", name: "Agent-B" }])).toThrow(/header/i);
+
+    sheets[TABS.assets] = gapped();
+    expect(() => updateWhere(TABS.assets, "id", "a", { name: "Renamed" })).toThrow(/header/i);
+  });
+});
+
 describe("overwrite against an out-of-date header row", () => {
   it("adds the missing schema column instead of dropping the value", async () => {
     const { overwrite, readAll, TABS } = await db();
