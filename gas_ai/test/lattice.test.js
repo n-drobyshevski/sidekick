@@ -7,13 +7,15 @@
 //
 // The one property worth naming up front, because it is the thing most likely to be
 // "helpfully" broken later: emission order and ENUMERATION order coincide for the Problem
-// lattice and deliberately do NOT for the Posture lattice, which hoists `consequence` out
-// into panels. Nothing keys off position — every join goes through `keyOf(vector)` — so the
+// lattice and deliberately do NOT for the Posture lattice, whose columns nest `consequence`
+// outside `containment` while its enumeration nests it innermost. Nothing keys off position
+// — every join goes through `keyOf(vector)` — so the
 // divergence is harmless, and a test asserts it stays divergent so that nobody "fixes" the
 // Posture emission order into agreement and quietly makes position look load-bearing.
 
 import { describe, it, expect } from "vitest";
 import {
+  LATTICE_GUTTER_PX,
   PROBLEM_LATTICE,
   POSTURE_LATTICE,
   latticeCells,
@@ -61,14 +63,39 @@ describe("grid shape", () => {
     expect(new Set(cells.map((c) => c.col)).size).toBe(9); // exposure(3) x mission(3)
   });
 
-  it("POSTURE is three panels of 3 rows by 3 columns", () => {
+  it("POSTURE is one panel of 3 rows by 9 columns", () => {
     const cells = latticeCells(POSTURE_LATTICE);
-    expect(new Set(cells.map((c) => c.panel))).toEqual(new Set(["SEVERE", "MODERATE", "LIMITED"]));
+    expect(new Set(cells.map((c) => c.panel))).toEqual(new Set([null]));
     expect(new Set(cells.map((c) => c.row)).size).toBe(3); // capability
-    expect(new Set(cells.map((c) => c.col)).size).toBe(3); // containment
-    for (const panel of ["SEVERE", "MODERATE", "LIMITED"]) {
-      expect(cells.filter((c) => c.panel === panel)).toHaveLength(9);
+    expect(new Set(cells.map((c) => c.col)).size).toBe(9); // consequence(3) x containment(3)
+    // Three consequence readings still group the columns; they are a band now rather than a
+    // panel, which is the whole of the change. Each still covers three containment columns.
+    for (const consequence of ["SEVERE", "MODERATE", "LIMITED"]) {
+      expect(cells.filter((c) => c.vector.consequence === consequence)).toHaveLength(9);
     }
+  });
+
+  /**
+   * The two tabs mount ONE component and are meant to look like it. They cannot have the same
+   * cell count, so what has to match is the height the cells occupy: PROBLEM spends it on six
+   * 38px rows plus two gutters, POSTURE on three 82px rows and no gutter, and both come to
+   * 246. Everything above that band is the same two `auto` header rows in both grids, so
+   * equal cell bands mean equal blocks.
+   *
+   * Computed from the specs rather than written down, and deliberately mirroring the
+   * `rowTracks` algebra in ui/lattice.js, so that changing 38 or 82 or LATTICE_GUTTER_PX in
+   * isolation fails HERE — where the reason is stated — instead of in the dev harness weeks
+   * later as "the Posture tab looks small again", which is the bug this whole shape fixes.
+   */
+  it("both lattices' cell bands are the same height, which is what makes the two tabs match", () => {
+    const bandHeight = (spec) => {
+      const nRows = new Set(latticeCells(spec).map((c) => c.row)).size;
+      const { rowBands } = latticeHeaders(spec);
+      const group = rowBands.length > 1 ? rowBands[0].cells[0].span : nRows;
+      return nRows * spec.rowPx + (nRows / group - 1) * LATTICE_GUTTER_PX;
+    };
+    expect(bandHeight(PROBLEM_LATTICE)).toBe(246);
+    expect(bandHeight(POSTURE_LATTICE)).toBe(bandHeight(PROBLEM_LATTICE));
   });
 });
 
@@ -87,15 +114,17 @@ describe("gutter flags land on the outer-axis boundaries", () => {
     expect(new Set(cells.filter((c) => c.colGroupEnd).map((c) => c.col)).size).toBe(3);
   });
 
-  it("POSTURE: a one-axis dimension has no group boundaries at all", () => {
-    // A gutter separates two BANDS of an outer axis. Posture's rows and columns are one
-    // axis each, so there is no outer axis, no band, and nothing to separate — the flag is
-    // false everywhere rather than true everywhere. (The panels do the separating here, and
-    // they are a different mechanism: `cell.panel`, not `cell.colGroupEnd`.)
-    for (const cell of latticeCells(POSTURE_LATTICE)) {
+  it("POSTURE: a col gutter after each consequence band, and none at all on the rows", () => {
+    const cells = latticeCells(POSTURE_LATTICE);
+    // A gutter separates two BANDS of an outer axis. Posture's columns are consequence over
+    // containment, so the boundary falls after containment's last value; its rows are one
+    // axis, so there is no outer axis, no band, and nothing to separate — false everywhere
+    // rather than true everywhere.
+    for (const cell of cells) {
       expect(cell.rowGroupEnd).toBe(false);
-      expect(cell.colGroupEnd).toBe(false);
+      expect(cell.colGroupEnd).toBe(cell.vector.containment === "STRONG");
     }
+    expect(new Set(cells.filter((c) => c.colGroupEnd).map((c) => c.col)).size).toBe(3);
   });
 });
 
@@ -108,8 +137,8 @@ describe("emission order versus enumeration order", () => {
   });
 
   it("POSTURE: row-major emission is NOT enumeration order, and must stay that way", () => {
-    // consequence is hoisted into panels, so emission nests consequence OUTSIDE capability
-    // and containment while the enumeration nests it innermost. Asserted explicitly so a
+    // The grid nests consequence OUTSIDE containment in its columns while the enumeration
+    // nests it innermost, so the two orders permute each other. Asserted explicitly so a
     // later "tidy-up" that makes these agree fails here instead of silently making cell
     // position look like it carries identity. Nothing joins on position; everything joins
     // on keyOf(vector).
@@ -155,12 +184,17 @@ describe("latticeHeaders", () => {
     }
   });
 
-  it("POSTURE has a single band level per dimension", () => {
+  it("POSTURE has one row band level and two column levels", () => {
     const { rowBands, colBands } = latticeHeaders(POSTURE_LATTICE);
+    // one row axis (capability), so one level and no outer band to span anything
     expect(rowBands).toHaveLength(1);
-    expect(colBands).toHaveLength(1);
     expect(rowBands[0].cells).toHaveLength(3);
+
+    // outer col level: 3 consequence bands, each spanning the 3 containment values
+    expect(colBands).toHaveLength(2);
     expect(colBands[0].cells).toHaveLength(3);
+    for (const band of colBands[0].cells) expect(band.span).toBe(3);
+    expect(colBands[1].cells).toHaveLength(9);
   });
 });
 
@@ -412,9 +446,9 @@ describe("outcomeMass", () => {
 
 /**
  * The span rule, pinned. Inlining an axis name is free only where the band spans more than
- * one cell; anywhere else it widens a header and, on the Posture lattice, pushes the third
- * small-multiple panel off its row. Rows never inline whatever their span, because a row
- * band spans vertically and vertical span buys no horizontal room.
+ * one cell; anywhere else it widens every column in the grid to buy room for one word. Rows
+ * never inline whatever their span, because a row band spans vertically and vertical span
+ * buys no horizontal room.
  *
  * The property that matters most is the last one: between the inline names and the corner
  * key, every axis is named exactly once — never zero times (the bug being fixed) and never
@@ -437,11 +471,17 @@ describe("axis naming", () => {
     expect(key.cols).toEqual(["Mission"]);
   });
 
-  it("POSTURE inlines nothing, because one column axis means one-cell bands", () => {
+  it("POSTURE inlines its wide column band and keys the rest, exactly as PROBLEM does", () => {
     const { rowBands, colBands, key } = latticeHeaders(POSTURE_LATTICE);
-    expect(colBands[0].cells[0].span).toBe(1);
-    expect(colBands.every((b) => b.inlineName === false)).toBe(true);
+    // consequence spans 3 containment columns, so its name rides along for free
+    expect(colBands[0].inlineName).toBe(true);
+    expect(colBands[0].cells[0].span).toBe(3);
+    // containment's own cells are one column wide — no room, so it goes in the key
+    expect(colBands[1].inlineName).toBe(false);
+    expect(colBands[1].cells[0].span).toBe(1);
+    // rows never inline, and capability's band spans one row anyway
     expect(rowBands.every((b) => b.inlineName === false)).toBe(true);
+
     expect(key.rows).toEqual(["Capability"]);
     expect(key.cols).toEqual(["Containment"]);
   });

@@ -84,8 +84,15 @@ export function latticeSection(opts) {
 
   /**
    * The two painters share one handle shape, so a view switch is a swap and never a fork.
-   * `views` is only set for lattices that have a second one to offer — Posture's three
-   * consequence panels have no nesting for a tree to show, so it never grows the control.
+   *
+   * `views: false` suppresses the switch entirely, and Posture passes it. The reason is no
+   * longer the one it used to be — "three consequence panels have no nesting a tree could
+   * show" stopped being true when that lattice was flattened, and its three axes now nest
+   * exactly as the Problem tree's four do. `latticeIcicle` would draw it; `icicleLayout`
+   * reads only `spec.axes`. It stays off because nobody has yet argued that a second view of
+   * 27 cells says anything the matrix does not, and a control that offers a view for the sake
+   * of symmetry is a control the reader has to rule out. Turning it on is deleting one line
+   * in pages/aars.js, and should follow that argument rather than stand in for it.
    */
   const painterHooks = {
     onCellEnter: (cell) => {
@@ -232,8 +239,8 @@ export function latticeSection(opts) {
   const legend = el("p", { class: "small muted", style: "margin:12px 0 0" });
   const note = el("div", {});
 
-  // Posture's three panels have no nesting a tree could show, so the switch appears only
-  // where a second view says something the first does not.
+  // The switch appears only where a second view says something the first does not; the
+  // `views` note on painterHooks above carries why Posture still declines it.
   const viewTabs = opts.views === false ? null : segmented({
     options: [
       { value: "matrix", label: "Matrix", title: "Every leaf on one grid" },
