@@ -599,11 +599,13 @@ describe("query documents", () => {
     });
   });
 
-  it("runs the agent-rooted traversals tenant-wide, as they always have", () => {
-    // Not projectScope(). These four carried no projectId before the shape fix and carry none
-    // after it — narrowing them is a population change and does not belong in a change about
-    // how the query is spelled. Three of them now take a resolved type list; the scope argument
-    // is the one this test is about and it stayed where it was.
+  it("sends the scope it is handed, and truncates a multi-project one to the first", () => {
+    // THIS TEST WAS CALLED "runs the agent-rooted traversals tenant-wide, as they always have"
+    // and it kept passing after they stopped doing that — because it calls the BUILDERS with
+    // an explicit `null` and never looks at what the battery hands them. A green test whose
+    // name asserts the opposite of the shipped behaviour is worse than no test, so it now
+    // claims only what it actually pins: the builder honours its argument. The wiring is
+    // asserted in test/syncScope.test.ts, against the battery.
     const AI = ["AI_AGENT", "AI_MODEL"];
     for (const vars of [
       noGuardrailVariables(AI, null), agentRunsAsVariables(AI, null),
@@ -611,6 +613,14 @@ describe("query documents", () => {
     ]) {
       expect(vars["projectId"]).toBeNull();
     }
+    for (const vars of [
+      noGuardrailVariables(AI, ["p-1"]), agentRunsAsVariables(AI, ["p-1"]),
+      saExcessiveAccessVariables(AI, ["p-1"]), sensitiveDataAccessVariables(AI, ["p-1"]),
+    ]) {
+      expect(vars["projectId"]).toBe("p-1");
+    }
+    // The graphSearch argument is a scalar `String`, not a list — so a multi-project scope
+    // loses everything after the first, silently. Pinned so that stays a known cost.
     expect(sensitiveDataAccessVariables(AI, ["p-1", "p-2"])["projectId"]).toBe("p-1");
   });
 

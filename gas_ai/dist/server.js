@@ -7798,7 +7798,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "790fe7015c65" : "dev";
+  var BUILD_ID = true ? "cdc0ce2f4ced" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -9296,9 +9296,13 @@ var Server = (() => {
         writes: ["ai_assets.guardrail_missing"],
         run: "graphSearch",
         query: Q_AGENTS_NO_GUARDRAIL,
-        // `null`, not projectScope(): these four have always run tenant-wide, and this change is
-        // about the query's SHAPE. See agentPathVariables in wizQueriesAi.ts.
-        extraVariables: noGuardrailVariables(types, null),
+        // Scoped, along with every other step. These four ran tenant-wide while the inventory
+        // did too — that was the argument, and it inverts the moment the register is scoped:
+        // a tenant-wide traversal over a scoped register lands assets the inventory never
+        // collected, and prices them into a coverage ratio whose denominator excludes them.
+        // guardrail-coverage-pct is exactly that ratio, so this one had to move in the same
+        // commit as INVENTORY_AI or the number would have quietly broken.
+        extraVariables: noGuardrailVariables(types, projectScope()),
         normalize: normalizeNoGuardrailPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9309,7 +9313,7 @@ var Server = (() => {
         writes: ["ai_edges (RUNS_AS)", "ai_assets"],
         run: "graphSearch",
         query: Q_AGENT_RUNS_AS,
-        extraVariables: agentRunsAsVariables(types, null),
+        extraVariables: agentRunsAsVariables(types, projectScope()),
         normalize: normalizeRunsAsPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9320,7 +9324,7 @@ var Server = (() => {
         writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
         run: "graphSearch",
         query: Q_SA_EXCESSIVE_ACCESS,
-        extraVariables: saExcessiveAccessVariables(types, null),
+        extraVariables: saExcessiveAccessVariables(types, projectScope()),
         normalize: normalizeRunsAsPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9338,7 +9342,7 @@ var Server = (() => {
         ],
         run: "graphSearch",
         query: Q_AGENT_SENSITIVE_DATA_ACCESS,
-        extraVariables: sensitiveDataAccessVariables(types, null),
+        extraVariables: sensitiveDataAccessVariables(types, projectScope()),
         normalize: normalizeSensitiveDataAccessPage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9379,9 +9383,11 @@ var Server = (() => {
       {
         // The lineage step: the first traversal rooted at anything but AI_AGENT or the whole
         // AI type list. AI_PIPELINE + AI_DATASET are 79% of the register and no query has ever
-        // stood at one. `null`, not `projectScope()`: scoping it would cap the population at
-        // one project while the inventory that found the pipelines is tenant-wide, so a low
-        // Enriched number would be built in rather than measured. See domain/lineageQuery.ts.
+        // stood at one. Scoped now: the reason it was not is that the inventory which found
+        // those pipelines ran tenant-wide, so capping this at one project would have built a
+        // low Enriched number in rather than measured it. The inventory is scoped, so the
+        // asymmetry has swapped ends — leaving this tenant-wide is now what would land pipelines
+        // the register does not contain. See domain/lineageQuery.ts.
         id: "LINEAGE",
         area: "dspm",
         writes: [
@@ -9390,7 +9396,7 @@ var Server = (() => {
         ],
         run: "graphSearch",
         query: Q_LINEAGE,
-        extraVariables: lineageVariables(types, null),
+        extraVariables: lineageVariables(types, projectScope()),
         normalize: normalizeLineagePage,
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
@@ -9530,15 +9536,15 @@ var Server = (() => {
       case "IDENTITY_ACCESS":
         return identityAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "LINEAGE":
-        return lineageVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+        return lineageVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "GUARDRAIL_GAPS":
-        return noGuardrailVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+        return noGuardrailVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "RUNS_AS":
-        return agentRunsAsVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+        return agentRunsAsVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "SA_FINDINGS":
-        return saExcessiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+        return saExcessiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "SENSITIVE_DATA_ACCESS":
-        return sensitiveDataAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, null);
+        return sensitiveDataAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "EFFECTIVE_ACCESS":
         return effectiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "IDENTITY_HYGIENE":

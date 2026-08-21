@@ -329,14 +329,18 @@ export const Q_AGENT_SENSITIVE_DATA_ACCESS =
 /**
  * The `$query` / `$projectId` variables for the four traversals above.
  *
- * `scope` is a parameter and every caller currently passes `null`, which is what these steps
- * send today — they carry no `projectId` at all, unlike IDENTITY_ACCESS and the two exposure
- * steps. Switching them to `projectScope()` would narrow results on any tenant with
- * WIZ_PROJECT_ID_V2 set, so it is a population change and belongs in its own commit, not
- * smuggled into a fix for the query's shape. Two facts for whoever makes that call: a
- * multi-project scope is truncated to `scope[0]` here exactly as it is for the identity
- * traversal, and SENSITIVE_DATA_ACCESS re-emits assets the CIEM steps already landed, so
- * scoping one and not the others makes them disagree about the same asset.
+ * `scope` is a parameter and every caller now passes `projectScope()`. It used to be `null`,
+ * and the argument for that was explicitly conditional: narrowing these while the inventory
+ * ran tenant-wide would have been a population change smuggled into a shape fix. The inventory
+ * is scoped now, so the condition is gone and the asymmetry has swapped ends — a tenant-wide
+ * traversal over a scoped register lands assets the register does not contain.
+ *
+ * The note that outlasted the decision: SENSITIVE_DATA_ACCESS re-emits assets the CIEM steps
+ * already landed, so scoping one and not the others makes them disagree about the same asset.
+ * That is why all of them moved together rather than one at a time.
+ *
+ * A multi-project scope is still truncated to `scope[0]` here, exactly as it is for the
+ * identity traversal — the graphSearch argument is a scalar `String`, not a list.
  */
 function agentPathVariables(spec: SelectSpec, scope: string[] | null): Rec {
   return {
