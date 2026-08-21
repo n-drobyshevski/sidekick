@@ -134,6 +134,32 @@ describe("pruneToProject", () => {
     }
   });
 
+  it("carries a column it does not model through untouched", () => {
+    // The prune moves RAW ROWS: `readAll` in, filter, `overwrite` out, and the only cell it
+    // ever parses is `projects_json`. It never builds a GNode, so it cannot drop a column it
+    // was written before — the value is opaque to it and travels by header name.
+    //
+    // Worth pinning rather than reasoning about, because the reasoning is easy to get right
+    // for the wrong reason: it is NOT the row serializers preserving the value, since the
+    // prune does not call them. A column stays because nothing in this path is in a position
+    // to notice it.
+    //
+    // The header has to be in row 1 first. `overwrite` projects onto `ensureHeaders`, which
+    // adds DECLARED columns and otherwise takes what the sheet already has — so a key the
+    // header row has never seen is dropped at that write, long before any prune sees it.
+    // Stamping row 1 directly is what a schema addition does, without pinning this test to
+    // whatever TAB_HEADERS happens to list today.
+    const sheet = db.ledgerSpreadsheet().getSheetByName(db.TABS.assets)!;
+    sheet.getRange(1, sheet.getLastColumn() + 1, 1, 1).setValues([["wildcat"]]);
+    db.overwrite(db.TABS.assets, rows(db.TABS.assets).map((r) => ({ ...r, wildcat: "keep-me" })));
+
+    expect(prune(LEAF).ok).toBe(true);
+
+    const after = rows(db.TABS.assets);
+    expect(after.length).toBeGreaterThan(0);
+    for (const r of after) expect(r["wildcat"]).toBe("keep-me");
+  });
+
   it("leaves nothing hanging off an asset that is gone", () => {
     expect(prune(LEAF).ok).toBe(true);
     const assets = ids(db.TABS.assets, "id");
