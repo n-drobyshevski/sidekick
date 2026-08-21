@@ -671,10 +671,19 @@ var Server = (() => {
     return out;
   }
   function ensureHeaders(sh, tab) {
-    var _a5;
+    var _a5, _b;
     const width = Math.max(sh.getLastColumn(), 1);
-    const existing = sh.getRange(1, 1, 1, width).getValues()[0].map(String).filter(Boolean);
-    const missing = ((_a5 = TAB_HEADERS[tab]) != null ? _a5 : []).filter((h) => !existing.includes(h));
+    const raw = sh.getRange(1, 1, 1, width).getValues()[0].map(String);
+    let lastNamed = -1;
+    for (let i = 0; i < raw.length; i++) if (raw[i]) lastNamed = i;
+    for (let i = 0; i < lastNamed; i++) {
+      if (raw[i]) continue;
+      throw new Error(
+        `Tab "${tab}" has a blank header at column ${i + 1}, between named columns ("${(_a5 = raw.slice(0, i).filter(Boolean).pop()) != null ? _a5 : "?"}" and "${raw[lastNamed]}"). Every read and write maps columns by header name, so a gap silently misfiles every value after it. Name the column or delete it, then retry \u2014 no data was written.`
+      );
+    }
+    const existing = raw.slice(0, lastNamed + 1);
+    const missing = ((_b = TAB_HEADERS[tab]) != null ? _b : []).filter((h) => !existing.includes(h));
     if (missing.length) {
       sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
     }
@@ -7825,7 +7834,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "0b24d714567d" : "dev";
+  var BUILD_ID = true ? "7712d774b05d" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

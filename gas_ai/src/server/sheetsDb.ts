@@ -300,10 +300,44 @@ export function readAll(tab: string): Rec[] {
  * an upgrade that doesn't re-run it would otherwise keep writing into a schema the sheet
  * no longer has. Only DECLARED columns are added, so a stray key on a row still can't
  * grow the sheet, and they go on the end, so existing column order is untouched.
+ *
+ * A BLANK HEADER BETWEEN TWO NAMED ONES IS REFUSED, loudly, rather than worked around.
+ *
+ * This used to compact row 1 with `.filter(Boolean)`, which quietly broke the one thing the
+ * whole name-mapping scheme rests on: that the header at index i names column i+1. `readAll`
+ * does not compact — it keeps positions and skips blanks — so after a gap the two disagreed
+ * about where every subsequent column lived. Writes landed one column to the LEFT of where the
+ * next read looked, and the value read back `null`: indistinguishable from a field the tenant
+ * never reported. Every write path reaches this function, so it was not one endpoint's problem,
+ * and nothing anywhere raised a word about it.
+ *
+ * Only a hand-edited sheet can produce the state — clearing a header, or inserting a column and
+ * not naming it — so refusing costs a healthy ledger nothing. Accommodating it is what turns a
+ * five-second manual fix into a register full of nulls nobody can date.
+ *
+ * Trailing blanks are a different thing and stay legal: row 1's range is read out to the
+ * SHEET's last column, so a tab whose data rows run wider than its headers pads on the right.
+ * Those carry no data and shift nothing.
  */
 function ensureHeaders(sh: GoogleAppsScript.Spreadsheet.Sheet, tab: string): string[] {
   const width = Math.max(sh.getLastColumn(), 1);
-  const existing = sh.getRange(1, 1, 1, width).getValues()[0].map(String).filter(Boolean);
+  const raw = sh.getRange(1, 1, 1, width).getValues()[0].map(String);
+
+  let lastNamed = -1;
+  for (let i = 0; i < raw.length; i++) if (raw[i]) lastNamed = i;
+  for (let i = 0; i < lastNamed; i++) {
+    if (raw[i]) continue;
+    throw new Error(
+      `Tab "${tab}" has a blank header at column ${i + 1}, between named columns `
+      + `("${raw.slice(0, i).filter(Boolean).pop() ?? "?"}" and "${raw[lastNamed]}"). `
+      + "Every read and write maps columns by header name, so a gap silently misfiles every "
+      + "value after it. Name the column or delete it, then retry — no data was written.",
+    );
+  }
+
+  // Equivalent to the old filter for every healthy sheet: with no interior gap, dropping the
+  // trailing blanks is the only thing the filter was doing.
+  const existing = raw.slice(0, lastNamed + 1);
   const missing = (TAB_HEADERS[tab] ?? []).filter((h) => !existing.includes(h));
   if (missing.length) {
     sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
