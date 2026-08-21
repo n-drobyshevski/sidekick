@@ -528,8 +528,25 @@ export function paintCells(cells, opts) {
  * column-wise: each band's own `x`/`w` exactly abuts its column neighbours across `[0,
  * width]`. `test/lattice.test.js` checks both directly rather than trusting the argument.
  */
+/**
+ * The axes in the order the GRID reads them — row axes outermost, then column axes — which
+ * is not always `spec.axes`. `spec.axes` is ENUMERATION order, a domain fact about how
+ * `enumerate*Vectors` iterates; this is display order, the nesting a reader actually sees.
+ *
+ * PROBLEM's two agree by coincidence (rows exploitation, impact + cols exposure, mission IS
+ * its axes order), which is why nothing needed this until POSTURE stopped agreeing: its axes
+ * run capability, containment, consequence while its grid reads capability, then consequence,
+ * then containment. The icicle draws the nesting and sits behind a toggle from the matrix, so
+ * it has to draw the matrix's nesting — two views of one decision space that reorder their
+ * branches when you switch between them are two pictures, not two views.
+ */
+export function nestingAxes(spec) {
+  const axisMap = Object.fromEntries(spec.axes.map((a) => [a.key, a]));
+  return [...spec.rows, ...spec.cols].map((k) => axisMap[k]);
+}
+
 export function icicleLayout(spec, width, height) {
-  const axes = spec.axes;
+  const axes = nestingAxes(spec);
   const levels = axes.length + 1; // + the outcome/tier column
   const colW = width / levels;
 

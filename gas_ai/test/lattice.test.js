@@ -20,6 +20,7 @@ import {
   POSTURE_LATTICE,
   latticeCells,
   latticeHeaders,
+  nestingAxes,
   vectorSentence,
   paintCells,
   icicleLayout,
@@ -360,6 +361,38 @@ describe("paintCells", () => {
   });
 });
 
+// ------------------------------------------------------------------------------ nestingAxes
+
+/**
+ * The tree draws a nesting and sits behind a toggle from the matrix, so it has to draw the
+ * MATRIX's nesting. `spec.axes` is enumeration order and answers a different question; these
+ * pin that the two questions are kept apart, and — the assertion that actually protects the
+ * Problem tree from this change — that for PROBLEM they still give the same answer.
+ */
+describe("nestingAxes", () => {
+  it("PROBLEM's display order is its enumeration order, so its tree is unchanged", () => {
+    expect(nestingAxes(PROBLEM_LATTICE).map((a) => a.key))
+      .toEqual(PROBLEM_LATTICE.axes.map((a) => a.key));
+  });
+
+  it("POSTURE's is NOT, and follows the grid rather than the enumeration", () => {
+    // the grid reads capability down, then consequence over containment across
+    expect(nestingAxes(POSTURE_LATTICE).map((a) => a.key))
+      .toEqual(["capability", "consequence", "containment"]);
+    // which is a permutation of the enumeration, not a different set
+    expect(nestingAxes(POSTURE_LATTICE).map((a) => a.key).sort())
+      .toEqual(POSTURE_LATTICE.axes.map((a) => a.key).sort());
+  });
+
+  it("names every axis of every lattice exactly once", () => {
+    for (const { spec } of SPECS) {
+      const keys = nestingAxes(spec).map((a) => a.key);
+      expect(new Set(keys).size).toBe(keys.length);
+      expect(keys.sort()).toEqual(spec.axes.map((a) => a.key).sort());
+    }
+  });
+});
+
 // ------------------------------------------------------------------------------ icicleLayout
 
 describe("icicleLayout", () => {
@@ -396,6 +429,29 @@ describe("icicleLayout", () => {
     expect(leaves).toHaveLength(54);
     expect(new Set(leaves.map((b) => b.key)).size).toBe(54);
     expect(leaves.map((b) => b.key).sort()).toEqual(enumerateDecisionVectors().map(leafKey).sort());
+  });
+
+  it("does the same for POSTURE, which is the tab that used not to offer a tree", () => {
+    const layout = icicleLayout(POSTURE_LATTICE, 900, 324);
+    const leaves = layout.bands.filter((b) => b.kind === "outcome");
+    expect(leaves).toHaveLength(27);
+    expect(new Set(leaves.map((b) => b.key)).size).toBe(27);
+    expect(leaves.map((b) => b.key).sort()).toEqual(enumeratePostureVectors().map(postureKey).sort());
+    // one band level per axis plus the verdict column, and every level fills the height
+    const byLevel = new Map();
+    for (const band of layout.bands) {
+      if (!byLevel.has(band.level)) byLevel.set(band.level, []);
+      byLevel.get(band.level).push(band);
+    }
+    expect(byLevel.size).toBe(POSTURE_LATTICE.axes.length + 1);
+    for (const [, level] of byLevel) {
+      let cursor = 0;
+      for (const band of [...level].sort((a, b) => a.y - b.y)) {
+        expect(band.y).toBeCloseTo(cursor, 6);
+        cursor += band.h;
+      }
+      expect(cursor).toBeCloseTo(324, 6);
+    }
   });
 
   it("scales with the measured width rather than assuming one", () => {

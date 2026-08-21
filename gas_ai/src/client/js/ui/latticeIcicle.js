@@ -1,8 +1,16 @@
-// The Problem tree drawn as a tree: four nested bands partitioned left to right, ending in
-// 54 leaf slivers. The second painter over `lattice.js`'s geometry, behind the Matrix/Tree
-// switch, and it exposes the SAME handle shape the grid painter does — `node`, `paint`,
-// `light`, `pulse`, `focusCell`, `descriptorFor` — so swapping views is a swap and never a
-// fork in the section that owns them.
+// A lattice drawn as a tree: one nested band per axis, partitioned left to right, ending in
+// one leaf sliver per cell — four bands and 54 leaves for the Problem tree, three and 27 for
+// Posture. The second painter over `lattice.js`'s geometry, behind the Matrix/Tree switch,
+// and it exposes the SAME handle shape the grid painter does — `node`, `paint`, `light`,
+// `pulse`, `focusCell`, `descriptorFor` — so swapping views is a swap and never a fork in the
+// section that owns them.
+//
+// IT DRAWS `nestingAxes(spec)`, NOT `spec.axes`. The tree's whole claim is that the nesting
+// is the picture, so the nesting it draws has to be the one the matrix behind the same toggle
+// reads: rows outermost, then columns. Those coincide for the Problem tree and do not for
+// Posture, whose enumeration nests containment inside consequence while its grid reads them
+// the other way round. See `nestingAxes` for why display order and enumeration order are two
+// different questions.
 //
 // WHY THIS ONE IS SVG WHEN THE GRID IS NOT. ui/lattice.js argues at length that a lattice is
 // a regular grid of interactive targets and therefore wants DOM. An icicle is the opposite
@@ -19,7 +27,9 @@
 // read it. Here the nesting IS the picture — a whole ACTIVE branch resolving to Act and
 // Attend is one contiguous block, and you can see the cascade's first three rows carve it
 // up. That is the best available explanation of why cascade ORDER is meaning, which is why
-// it earns a view even though it costs ~650px of height and cannot serve the Posture tab.
+// it earns a view even though it costs height a grid does not: ~650px for the Problem tree's
+// 54 leaves and ~350px for Posture's 27, a leaf sliver being a fixed 12px and the leaf count
+// the thing that varies.
 //
 // KEYBOARD. One tab stop, ArrowUp/ArrowDown walking the leaf column, Home/End to its ends —
 // the same roving-tabindex contract the grid keeps, minus the second dimension the tree does
@@ -30,7 +40,7 @@
 import { el } from "./dom.js";
 import { svgEl } from "../icons.js";
 import { onPageTeardown } from "./timing.js";
-import { icicleLayout, vectorSentence } from "../lattice.js";
+import { icicleLayout, nestingAxes, vectorSentence } from "../lattice.js";
 
 /** Column widths are equal by construction (`icicleLayout`), so only the height is tuned here. */
 const LEAF_H = 12;
@@ -68,14 +78,17 @@ export function latticeIcicle({ spec, ariaLabel, hooks }) {
       "aria-label": ariaLabel,
     });
 
-    // Column heads — one per axis, plus the verdict column the layout appends.
-    const colW = width / (spec.axes.length + 1);
-    spec.axes.forEach((axis, i) => {
+    // Column heads — one per axis, plus the verdict column the layout appends. `nestingAxes`,
+    // not `spec.axes`: the layout descends in that order, so heads read from it too or a
+    // column is labelled with the axis next to it.
+    const axes = nestingAxes(spec);
+    const colW = width / (axes.length + 1);
+    axes.forEach((axis, i) => {
       const t = svgEl("text", { x: String(i * colW), y: "12", class: "lat-colhead" });
       t.textContent = axis.label;
       svg.append(t);
     });
-    const vt = svgEl("text", { x: String(spec.axes.length * colW), y: "12", class: "lat-colhead" });
+    const vt = svgEl("text", { x: String(axes.length * colW), y: "12", class: "lat-colhead" });
     vt.textContent = "Verdict";
     svg.append(vt);
 
