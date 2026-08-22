@@ -25,6 +25,7 @@ import {
   paintCells,
   icicleLayout,
   outcomeMass,
+  occupancyTally,
 } from "../src/client/js/lattice.js";
 import { enumerateDecisionVectors, enumeratePostureVectors, leafKey, postureKey } from "../src/client/js/decideMirror.js";
 
@@ -495,6 +496,84 @@ describe("outcomeMass", () => {
     const mass = outcomeMass({ ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0 }, ORDER, 0.15);
     for (const seg of mass.segments) expect(seg.share).toBe(0);
     expect(mass.over).toBe(false);
+    expect(mass.total).toBe(0);
+  });
+
+  it("returns the denominator it summed, so a caller need not re-sum to name it", () => {
+    // The strip prints "of N leaves" / "of N records" beside itself. Re-deriving N at the
+    // call site is how the bar and its caption start disagreeing.
+    const mass = outcomeMass({ ACT: 6, ATTEND: 19, TRACK_STAR: 17, TRACK: 12 }, ORDER, 0.15);
+    expect(mass.total).toBe(54);
+  });
+});
+
+// --------------------------------------------------------------------------- occupancyTally
+
+describe("occupancyTally", () => {
+  const ORDER = ["ACT", "ATTEND", "TRACK_STAR", "TRACK"];
+
+  it("folds a sparse occupancy map onto the verdicts the CELLS carry", () => {
+    const active = CELLS.filter((c) => c.vector.exploitation === "ACTIVE");
+    const rest = CELLS.filter((c) => c.vector.exploitation !== "ACTIVE");
+    const occupancy = { [active[0].key]: 5, [active[1].key]: 2, [rest[0].key]: 40 };
+
+    const tally = occupancyTally(CELLS, decideA, "outcome", occupancy);
+    expect(tally.ACT).toBe(7); // both ACTIVE cells, decideA sends every ACTIVE leaf to ACT
+    expect(tally.TRACK).toBe(40);
+  });
+
+  it("counts the LANDSCAPE, not the lattice — the whole point of the mode", () => {
+    // The distinction the strip exists to draw: 54 cells, but the records on them are what
+    // an operator is triaging, and the two distributions are nothing alike.
+    const active = CELLS.filter((c) => c.vector.exploitation === "ACTIVE");
+    const tally = occupancyTally(CELLS, decideA, "outcome", { [active[0].key]: 900 });
+    const cells = { ACT: active.length, ATTEND: 0, TRACK_STAR: 0, TRACK: CELLS.length - active.length };
+    expect(outcomeMass(tally, ORDER, 0.15).total).toBe(900);
+    expect(outcomeMass(cells, ORDER, 0.15).total).toBe(54);
+  });
+
+  it("re-folds through the LIVE rule, because a leaf's occupancy does not depend on one", () => {
+    // Which cell a record lands on is a fact about the record; only the verdict on that cell
+    // is a fact about the rule. That is why the last preview's map stays usable under an
+    // unsaved edit — and why the same map gives two different tallies under two drafts.
+    const active = CELLS.filter((c) => c.vector.exploitation === "ACTIVE");
+    const occupancy = { [active[0].key]: 11 };
+    expect(occupancyTally(CELLS, decideA, "outcome", occupancy).ACT).toBe(11);
+    expect(occupancyTally(CELLS, decideB, "outcome", occupancy).ATTEND).toBe(11);
+  });
+
+  it("agrees, verdict for verdict, with summing the painted cells", () => {
+    // The strip and the numbers printed in the cells above it are the same measurement, so
+    // they must never be able to disagree.
+    const occupancy = {};
+    CELLS.forEach((c, i) => { if (i % 3 === 0) occupancy[c.key] = i; });
+    const tally = occupancyTally(CELLS, decideA, "outcome", occupancy);
+    const painted = paintCells(CELLS, {
+      mode: "landscape", decide: decideA, occupancy, occupancyKnown: true,
+    });
+    const summed = {};
+    for (const cell of painted) {
+      const verdict = decideA(CELLS.find((c) => c.key === cell.key).vector).outcome;
+      summed[verdict] = (summed[verdict] || 0) + cell.count;
+    }
+    expect(tally).toEqual(summed);
+  });
+
+  it("an absent key is zero, and an empty map is a tally of zeros", () => {
+    // Absent-means-zero is safe HERE only because the caller is forbidden to run this before
+    // a preview has landed — see the function's own comment. paintCells is what keeps
+    // "unmeasured" and "zero" apart; this one has no way to.
+    const tally = occupancyTally(CELLS, decideA, "outcome", {});
+    expect(tally.ACT).toBe(0);
+    expect(tally.TRACK).toBe(0);
+    expect(occupancyTally(CELLS, decideA, "outcome", undefined).ACT).toBe(0);
+  });
+
+  it("works on the posture lattice through the same verdict key indirection", () => {
+    const tally = occupancyTally(POSTURE_CELLS, decideTier, "tier",
+      { [POSTURE_CELLS[0].key]: 3 });
+    const expected = decideTier(POSTURE_CELLS[0].vector).tier;
+    expect(tally[expected]).toBe(3);
   });
 });
 

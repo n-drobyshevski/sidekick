@@ -68,7 +68,7 @@ export { debounce, onPageTeardown, runPageTeardown } from "./ui/timing.js";
 export { outcomeBadge, outcomeLabel, outcomeNote } from "./ui/outcome.js";
 export { tierBadge, tierLabel } from "./ui/posture.js";
 export { latticeGrid } from "./ui/lattice.js";
-export { axisBar, axisTally } from "./ui/axisBar.js";
+export { axisBar, axisSegments } from "./ui/axisBar.js";
 export { latticeSection } from "./ui/latticeSection.js";
 export { claimRail, claimOffsets } from "./ui/claimRail.js";
 export { rowDrag, ruleGrip } from "./ui/rowReorder.js";

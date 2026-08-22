@@ -56,6 +56,19 @@
 .rule-impact-toggle { display: inline-flex; align-items: center; gap: 6px; }
 .rule-impact-toggle svg { display: block; }
 .workbench.impact-collapsed .rule-impact-toggle svg { transform: rotate(180deg); }
+/* A FOLDED PANE THAT IS HOLDING THE ONLY EXPLANATION SAYS SO.
+   Three of the four reasons a preview has no measurement print their reason in the impact
+   pane and nowhere else, and this toggle's state persists across sessions — so the pane is
+   most often folded exactly when a reader is staring at a lattice that will not say why it
+   is blank. The dot is not decorative: it is the pointer from the picture to the words.
+   Never colour alone — the toggle's aria-label names the condition too. */
+.rule-impact-toggle[data-alert]::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--rank-3-solid);
+}
 
 /* Toolbar cluster: version + dirty state, then the actions. */
 .rule-bar-state { display: flex; align-items: center; gap: 8px; }
