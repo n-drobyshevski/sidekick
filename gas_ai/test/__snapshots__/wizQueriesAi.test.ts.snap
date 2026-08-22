@@ -360,7 +360,7 @@ exports[`query documents > Q_PRINCIPALS is unchanged 1`] = `
 exports[`query documents > Q_RULE_ASSETS is unchanged 1`] = `
 "query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {
   cloudResourcesV2(first: $first, after: $after, filterBy: {
-    relatedIssue: { sourceRuleId: { equals: $ruleIds }, status: { equals: ["OPEN"] } }
+    relatedIssue: { sourceRule: { containsAny: $ruleIds } }
   }) {
     totalCount
     pageInfo { hasNextPage endCursor }

@@ -2162,7 +2162,7 @@ var Server = (() => {
     if (project) filterBy["project"] = project;
     return { filterBy };
   }
-  var Q_RULE_ASSETS = 'query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: {\n    relatedIssue: { sourceRuleId: { equals: $ruleIds }, status: { equals: ["OPEN"] } }\n  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n' + RESOURCE_FIELDS + "    }\n  }\n}\n";
+  var Q_RULE_ASSETS = "query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: {\n    relatedIssue: { sourceRule: { containsAny: $ruleIds } }\n  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + RESOURCE_FIELDS + "    }\n  }\n}\n";
   var Q_AGENTS_NO_GUARDRAIL = graphSearchVarQuery("SidekickAiAgentsWithoutGuardrail");
   var Q_AGENT_RUNS_AS = graphSearchVarQuery("SidekickAiAgentRunsAs");
   var Q_SA_EXCESSIVE_ACCESS = graphSearchVarQuery("SidekickAiAgentSaExcessiveAccess");
@@ -2789,7 +2789,9 @@ var Server = (() => {
         comboGroup: group.id,
         nativeSeverity: group.nativeSeverity,
         adjustedSeverity: group.adjustedSeverity,
-        status: "OPEN",
+        // Never "OPEN" — see this function's header. The filter cannot constrain status, so
+        // asserting one here would be inventing it.
+        status: "UNKNOWN",
         assetId: node2.id,
         assetName: node2.name,
         region: node2.region,
@@ -8047,7 +8049,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "83d4e42d543c" : "dev";
+  var BUILD_ID = true ? "db5982c5dcf0" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

@@ -316,10 +316,26 @@ export function normalizePrincipalsPage(rows: Rec[]): NormalizedPart {
 }
 
 /**
- * cloudResourcesV2 page filtered by relatedIssue.sourceRuleId → nodes plus one
- * reconstructed OPEN issue per asset. The inventory API doesn't expose per-asset
+ * cloudResourcesV2 page filtered by relatedIssue.sourceRule → nodes plus one
+ * reconstructed issue per asset. The inventory API doesn't expose per-asset
  * issue multiplicity, so multi-instance issues collapse to one row per asset —
  * a documented fidelity limit until the Wiz issues API is wired.
+ *
+ * THE STATUS IS UNKNOWN, AND SAYING SO IS THE WHOLE POINT. This row used to be stamped
+ * `OPEN`, which is a claim the query never established: Q_RULE_ASSETS cannot filter on issue
+ * status, because `CloudResourceRelatedIssueFilters` has no such field — it accepts only
+ * `severity`, `sourceRule` and `frameworkCategory`. The page therefore returns every asset
+ * carrying an issue for the rule, open or long closed, and stamping them all OPEN would mint
+ * open issues for closed ones.
+ *
+ * What makes UNKNOWN the right answer rather than a shrug is what `reconcileIssues` does
+ * next. A synthetic `live-` row is dropped wherever a real issuesV2 row exists for the same
+ * (asset, combo group), and ISSUES_TOXIC asks Wiz for exactly UNRESOLVED_ISSUE_STATUSES. So
+ * every synthetic row that SURVIVES reconciliation is precisely one Wiz did not return as
+ * unresolved, and `isUnresolvedIssue` correctly declines to count it. Nothing is lost that
+ * was wanted: the ASSET still lands on ai_assets with its combo-group membership, which is
+ * what the per-rule asset lists in the combos matrix were always after. Only the false OPEN
+ * is gone.
  */
 export function normalizeRuleAssetsPage(rows: Rec[], group: ComboGroup): NormalizedPart {
   const part = emptyPart();
@@ -334,7 +350,9 @@ export function normalizeRuleAssetsPage(rows: Rec[], group: ComboGroup): Normali
       comboGroup: group.id,
       nativeSeverity: group.nativeSeverity,
       adjustedSeverity: group.adjustedSeverity,
-      status: "OPEN",
+      // Never "OPEN" — see this function's header. The filter cannot constrain status, so
+      // asserting one here would be inventing it.
+      status: "UNKNOWN",
       assetId: node.id,
       assetName: node.name,
       region: node.region,

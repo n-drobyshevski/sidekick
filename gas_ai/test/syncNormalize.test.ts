@@ -20,6 +20,7 @@ import {
   withDataFindingCounts,
   worstBusinessImpact,
 } from "../src/domain/syncNormalize";
+import { isUnresolvedIssue } from "../src/domain/config";
 import { COMBO_GROUPS, OTHER_GROUP_ID } from "../src/domain/toxicCombos";
 import type { IssueRow } from "../src/domain/graphTypes";
 
@@ -179,7 +180,7 @@ describe("page normalizers", () => {
     expect(part.issues).toHaveLength(0);
   });
 
-  it("rule-assets page reconstructs one OPEN issue per asset", () => {
+  it("rule-assets page reconstructs one issue per asset, with status UNKNOWN", () => {
     const group = COMBO_GROUPS.find((g) => g.ruleId === "wc-id-3217")!;
     const part = normalizeRuleAssetsPage([AGENT_RAW], group);
     expect(part.issues).toHaveLength(1);
@@ -188,7 +189,27 @@ describe("page normalizers", () => {
     expect(issue.nativeSeverity).toBe("MEDIUM");
     expect(issue.adjustedSeverity).toBe("HIGH");
     expect(issue.assetId).toBe("wiz-node-agent-1");
-    expect(issue.status).toBe("OPEN");
+    // THIS ASSERTED "OPEN" UNTIL 2026-08-23, and the claim it encoded was never true.
+    // Q_RULE_ASSETS was believed to filter `status: { equals: ["OPEN"] }`, so the stamp
+    // merely echoed the query. Introspection of the live tenant shows
+    // `CloudResourceRelatedIssueFilters` accepts exactly severity, sourceRule and
+    // frameworkCategory — there is no status field, and there never was, which is why the
+    // step was rejected on every sync it ever ran. The page returns assets carrying an
+    // issue for the rule in ANY state, so OPEN was an invention.
+    //
+    // UNKNOWN is not a hedge. reconcileIssues drops a synthetic row wherever a real
+    // issuesV2 row exists for the same (asset, combo group), and ISSUES_TOXIC asks for
+    // UNRESOLVED_ISSUE_STATUSES — so a synthetic row that survives is exactly one Wiz did
+    // not return as unresolved, and isUnresolvedIssue is right to skip it.
+    expect(issue.status).toBe("UNKNOWN");
+  });
+
+  it("does not count a surviving synthetic row as unresolved work", () => {
+    // The pair that makes the widening safe: the row exists, carries its asset and combo
+    // group onto the register, and is not counted as open by anything.
+    const group = COMBO_GROUPS.find((g) => g.ruleId === "wc-id-3217")!;
+    const [issue] = normalizeRuleAssetsPage([AGENT_RAW], group).issues;
+    expect(isUnresolvedIssue(issue)).toBe(false);
   });
 
   it("no-guardrail page flags the guardrail subjects, and nothing else", () => {
