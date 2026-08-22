@@ -234,6 +234,24 @@ source**, not by re-measuring the tenant — no figure in §1–§4 moved.
    spec-driven; add a third spec beside `PROBLEM_LATTICE` and `POSTURE_LATTICE` (`lattice.js:84`,
    `:117`). Acceptance is the lattice's **own rule** validating with its cells pinned — a rule is
    pinnable, a tenant figure is not. The constants above stay recorded here instead.
+   *PREREQUISITE, MEASURED 2026-08-23 — provenance is fetched and thrown away.* The query
+   already selects `technology { id name categories { id name } }`
+   (`wizQueriesAi.ts:107`, `:978`), and `normalizeCloudResource` keeps only
+   `categories[].name` as `technologyCategories` (`syncNormalize.ts:165-173`), discarding
+   `technology.name` — the one field the provenance axis needs. Carrying it costs no I/O and is
+   six edits along a named path: `graphTypes.ts:333`, `syncNormalize.ts:165`,
+   `sheetsDb.ts:38` (the column list), `syncStore.ts:155` and `:258` (the round trip),
+   `api.ts:839`. Deliberately NOT done ahead of the lattice: it adds a persisted column for a
+   consumer that does not exist yet. Two things for whoever does it — `DERIVATION_VERSION`
+   (`config.ts:158`) should NOT move for adding a field, since its own header reserves the bump
+   for a change that alters what an existing column MEANS, but the moment something reads
+   `technology` an old ledger's absence starts meaning something, so express it through
+   `measurability.ts` rather than as an empty string. And `detailSheets.js:322` currently labels
+   `technologyCategories` as "Technology", which is the category list under the name of the
+   field this would add.
+   **Axis design is still yours.** §3 says classification and consequence are constants on this
+   tenant, so the lattice stands on provenance × lifecycle × age — and none of those three has a
+   value set chosen yet.
 
 **Unresolved, noticed 2026-08-23.** `CLAUDE.md` calls a live sync "~71 API calls, ~2 min";
 `gas_ai/README.md:72-73` calls the whole battery "~10–20 API calls" finishing "in one hop".
