@@ -18,6 +18,7 @@
 // src/domain/assetTable.ts that test/assetQueryMirror.test.ts holds to it.
 
 import { bootstrap, buildHash, listJoin, navigate, setParams, swrCall } from "../store.js";
+import { staleNotices } from "../staleness.js";
 import { openAssetSheet } from "../detailSheets.js";
 import { trendLine } from "../charts.js";
 import {
@@ -381,12 +382,11 @@ export async function renderInventory(main, params) {
       return found ? found.label : "";
     };
 
-    if (boot.aarsRule?.stale) {
+    for (const notice of staleNotices(boot)) {
       host.append(
         el("div", { class: "notice warn", role: "status" },
-          el("span", {}, "The AARS rule has changed since these scores were computed. " +
-            "Recompute them on the AARS Rules page."),
-          el("a", { class: "link", href: "#/aars", target: "_self" }, "Open AARS Rules")),
+          el("span", {}, notice.text),
+          el("a", { class: "link", href: notice.href, target: "_self" }, notice.link)),
       );
     }
 

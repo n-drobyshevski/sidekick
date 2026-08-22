@@ -184,6 +184,21 @@ source**, not by re-measuring the tenant — no figure in §1–§4 moved.
    wildcard it, so `actLeafCeiling` (0.15) is untouched — ACT stays 11.1% of leaves. Values as
    a delta against Wiz's `dueAt`, never a competing date (§3 T-Test-3). It will **not** unblock
    ACT/ATTEND — it splits the 189-row `TRACK_STAR` queue, which is the actual need.
+   *NEEDS A DECISION BEFORE IT IS BUILT, 2026-08-23.* Two problems with the entry as written.
+   First, **"§3 T-Test-3" points at nothing** — no such label exists in this file or anywhere in
+   `ai/`. Second, and materially: §3 measures `past dueAt` at **82.6%**, so a dwell axis read as
+   past-versus-not-past would be one value for five issues in six. `problem.ts:61` rules that
+   out in the codebase's own words — "Fewer leaves that are honestly populated beats more leaves
+   that mostly read UNKNOWN" — and a 162-leaf tree whose fifth axis is 83% one value is the
+   thing that comment forbids. Issue **age** discriminates far better (85% > 90d, 45% > 1y, so
+   roughly 15/40/45), and both `createdAt` and `dueAt` are on `IssueRow`
+   (`graphTypes.ts:608-609`) — but age means choosing our own thresholds, which is the
+   competing clock the entry forbids. **Proposal that satisfies both:** bucket by Wiz's own SLA
+   window, `dueAt − createdAt`, so no threshold is ours — `WITHIN_SLA` (not yet due) ·
+   `BREACHED` (overdue by less than one window) · `ENTRENCHED` (overdue by more than the window
+   Wiz itself set). Three values, 54 → 162 exactly as the entry says. **The split is unmeasured**
+   — §3 records only the 82.6%, not the overdue-delta distribution — so measure that first and
+   drop the axis if `ENTRENCHED` swallows it.
    *`enumerateDecisionVectors` and `leafCoverage` each exist twice* — `problem.ts:98` and
    `problemRule.ts:388` in the domain, `decideMirror.js:103` and `:284` in the client, with
    comments asserting the pairs are identical and `aars.js:2361, 3409` reconciling them. Both
@@ -197,9 +212,15 @@ source**, not by re-measuring the tenant — no figure in §1–§4 moved.
 5. **The staleness banner UI.** `bootstrap.derivation {current, lastSync, stale, remedy:"sync"}`
    ships and nothing renders it. The tier population legitimately collapsed; nothing says why,
    or that Recompute cannot fix it.
-   *Pattern to copy:* `inventory.js:384-391` (`notice warn`, styled `aars.css:777-787`) is the
-   only banner of its kind in the client; `measureContent.js:191` already declares "Staleness
-   banner" as this measure's reporting format. Source block is `api.ts:409-416`.
+   *DONE 2026-08-23.* The two notices now come from one pure function,
+   `src/client/js/staleness.js:staleNotices(boot)`, which `inventory.js` renders in order. Its
+   own module rather than an export of the page, because `pages/inventory.js` transitively
+   imports `charts.js`, which reads `window` at module scope — anything exported from the page
+   is only testable inside a DOM environment, and this is pure. Derivation is emitted FIRST:
+   it is the one Recompute cannot fix, so an operator who reads a single line reads that one.
+   The remedy is keyed off the server's own `derivation.remedy` rather than hardcoded, which is
+   what `api.ts:409-416` asks for in as many words, and an unknown remedy falls back to sync
+   rather than dropping the warning. Six tests in `test/staleNotices.test.js`.
 
 6. **A data-plane lattice** (user-chosen). Constraint: on this tenant `hasSensitiveData` is
    `false` for **all 585** datasets and `businessImpact` is MBI for **all 753**, so
