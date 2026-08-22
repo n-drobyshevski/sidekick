@@ -4334,18 +4334,21 @@ var Server = (() => {
   var PROBLEM_CENSUS_MAX = 200;
   var OTHER_COMBO_GROUP = "other-ai-risk";
   function problemCensus(rows) {
-    var _a5, _b, _c, _d;
+    var _a5, _b, _c, _d, _e, _f;
     const verdicts = {};
     const groups = {};
+    const ruleIds = {};
     for (const row of rows != null ? rows : []) {
       if (!row) continue;
       const verdict = String((_a5 = row.aiVerdict) != null ? _a5 : "").trim();
       if (verdict) verdicts[verdict] = ((_b = verdicts[verdict]) != null ? _b : 0) + 1;
       const group = String((_c = row.comboGroup) != null ? _c : "").trim();
       if (group && group !== OTHER_COMBO_GROUP) groups[group] = ((_d = groups[group]) != null ? _d : 0) + 1;
+      const ruleId = String((_e = row.ruleId) != null ? _e : "").trim();
+      if (ruleId) ruleIds[ruleId] = ((_f = ruleIds[ruleId]) != null ? _f : 0) + 1;
     }
     const rank = (counts) => Object.keys(counts).map((value) => ({ value, issues: counts[value] })).sort((a, b) => b.issues - a.issues || a.value.localeCompare(b.value)).slice(0, PROBLEM_CENSUS_MAX);
-    return { verdicts: rank(verdicts), comboGroups: rank(groups) };
+    return { verdicts: rank(verdicts), comboGroups: rank(groups), ruleIds: rank(ruleIds) };
   }
 
   // src/domain/measurability.ts
@@ -8044,7 +8047,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "6b29e2efbcc7" : "dev";
+  var BUILD_ID = true ? "feae6a146704" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

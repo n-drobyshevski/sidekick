@@ -2678,7 +2678,9 @@ export function previewProblemRule(p?: unknown): ApiResult {
     // Issues held separately as well as in the union: the census below is over issues
     // alone, because `aiVerdict` and `comboGroup` are issue vocabulary and a FindingRow
     // carries neither. Passing the union would typecheck only behind a cast and would say
-    // something untrue about where the values come from.
+    // something untrue about where the values come from. `ruleIds` rides the same call and
+    // is issues-only for a DIFFERENT reason — a finding prices through the same rule table
+    // on `ruleShortId` — which `problemCensus`'s own header states in full.
     // Whole register, like the AARS preview above — a rule preview answers "what would
     // this change?", and the answer does not depend on what the sidebar is looking at.
     const beforeIssues = syncStore.loadIssues();

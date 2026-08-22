@@ -2761,22 +2761,42 @@ export async function renderAarsRules(main, _params, ctx) {
       onProblemEdit();
     });
 
+    // The census arrives with the preview, never with the rule, and these rows are rebuilt
+    // on every add and remove — so the options live here rather than on the controls, and a
+    // row built after the preview lands is born with the list already in it.
+    let pExploitOptions = [];
+    const pExploitControls = [];
+
     function renderExploitationRows() {
       clear(pExploitBody);
+      pExploitControls.length = 0;
       // A headers-only table reads as a broken widget, not as "this list is empty" — and
       // empty is the DEFAULT state of this list, so it is the state most readers meet. The
       // table hides and says what its emptiness means; the Add button below stays put.
       pExploitTable.hidden = !problemDraft.exploitationByRuleId.length;
       pExploitEmpty.hidden = !pExploitTable.hidden;
       problemDraft.exploitationByRuleId.forEach((row, i) => {
-        const ruleIdInput = el("input", {
-          type: "text", class: "rule-code", value: row.ruleId,
-          "aria-label": `Wiz combo rule id, row ${i + 1}`,
+        // WAS A BARE TEXT INPUT, against a vocabulary of opaque Wiz ids. A typo here does
+        // not fail — it silently matches nothing and the axis reads UNKNOWN for the rest of
+        // the landscape — so the same picker the gap codes use, carrying the same "seen on
+        // N issues" count, is what makes the field answerable. `allowCustom` keeps a rule
+        // id the census has never seen typeable: the list is not a closed catalogue.
+        const ruleIdBox = filterCombobox({
+          value: row.ruleId,
+          options: pExploitOptions,
+          ariaLabel: `Wiz combo rule id, row ${i + 1}`,
+          searchPlaceholder: "rule id…",
+          editable: true,
+          allowCustom: true,
+          inputClass: "rule-code",
+          popClass: "combobox-pop--rich",
+          transform: (v) => String(v || "").trim(),
+          onChange: (v) => {
+            row.ruleId = v;
+            onProblemEdit();
+          },
         });
-        ruleIdInput.addEventListener("input", () => {
-          row.ruleId = ruleIdInput.value.trim();
-          onProblemEdit();
-        });
+        pExploitControls.push(ruleIdBox);
         const maturitySelect = select({
           options: ["REALIZED", "DEMONSTRATED", "FEASIBLE"],
           value: row.maturity,
@@ -2796,7 +2816,7 @@ export async function renderAarsRules(main, _params, ctx) {
           el(
             "tr",
             {},
-            el("td", {}, ruleIdInput),
+            el("td", {}, ruleIdBox),
             el("td", {}, maturitySelect),
             el("td", { class: "rule-rowbtns" }, del),
           ),
@@ -3268,6 +3288,11 @@ export async function renderAarsRules(main, _params, ctx) {
       const census = problemPreview && problemPreview.census;
       pRemediateTokens.setOptions(censusOptions(census && census.verdicts, "issue"));
       pGroupsTokens.setOptions(censusOptions(census && census.comboGroups, "issue"));
+      // The third axis an operator names values for. Counted over issues only — a finding
+      // prices through the same table on `ruleShortId` — so the hint understates reach and
+      // never overstates it, which is the safe direction for a table that only raises.
+      pExploitOptions = censusOptions(census && census.ruleIds, "issue");
+      pExploitControls.forEach((c) => c.setOptions(pExploitOptions));
 
       // Each axis's own unknown rate, beside its own knobs. The impact pane keeps the full
       // diagnostic and its warning cards; this is the reading, and the pane it duplicates
