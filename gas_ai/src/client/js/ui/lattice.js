@@ -33,6 +33,7 @@
 import { el } from "./dom.js";
 import { LATTICE_GUTTER_PX, latticeCells, latticeHeaders, vectorSentence } from "../lattice.js";
 
+import { tipAnchor } from "./tip.js";
 /**
  * One tab stop per grid, arrows moving in two dimensions — the APG grid pattern, and the
  * same roving-tabindex shape `graphView`'s canvas, the sheet's section rail and
@@ -152,6 +153,9 @@ function buildGrid(spec, cells, ariaLabel, byKey, hooks) {
       // become the most prominent thing in the header.
       if (level.inlineName) head.append(el("span", { class: "lat-ax" }, level.shortLabel));
       head.append(band.label);
+      // "Active", "Total", "Open", "Broad", "Weak", "Severe" — one word each, and the axis
+      // they belong to is spelled out nowhere on the page. It is spelled out here.
+      if (level.label) tipAnchor(head, [level.label + ": " + band.label]);
       head.style.gridRow = String(li + 1);
       head.style.gridColumn = `${colAt(band.start)} / span ${band.span}`;
       row.append(head);
@@ -171,6 +175,7 @@ function buildGrid(spec, cells, ariaLabel, byKey, hooks) {
       const band = level.cells.find((b) => b.start <= r && r < b.start + b.span);
       if (!band || band.start !== r) return;
       const head = el("div", { class: li === 0 && rowLevels > 1 ? "lat-rgroup" : "lat-rsub", role: "rowheader" }, band.label);
+      if (level.label) tipAnchor(head, [level.label + ": " + band.label]);
       head.style.gridColumn = String(li + 1);
       head.style.gridRow = `${rowAt(band.start)} / span ${band.span}`;
       row.append(head);
@@ -281,6 +286,10 @@ export function latticeGrid({ spec, ariaLabel, hooks }) {
         // mode-specific half comes from `paintCells` so it can never describe a different
         // mode than the one that painted it.
         btn.setAttribute("aria-label", `${sentences.get(d.key)} — ${d.aria}`);
+        // The same two halves, on the card. Hovering a heat cell used to light its neighbours
+        // and say nothing; the words were a click away in the cell popover, and in the
+        // accessible name a sighted reader never hears.
+        tipAnchor(btn, [sentences.get(d.key), d.aria]);
         btn.dataset.rule = String(d.ruleIndex);
       }
     },

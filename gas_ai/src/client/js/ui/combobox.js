@@ -6,6 +6,7 @@ import { portalClosed, portalOpened } from "./portals.js";
 import { debounce } from "./timing.js";
 
 
+import { truncTip } from "./tip.js";
 let _comboboxSeq = 0;
 
 /** How many matches the list will render before it stops and says so. Rebuilding runs
@@ -139,7 +140,8 @@ export function filterCombobox({
     }
     const text = labelFor(current);
     triggerText.textContent = text;
-    trigger.title = text;
+    // Only when the label was actually clipped: a project called "prod" needs no card.
+    truncTip(triggerText, text);
   }
   paintTrigger();
 

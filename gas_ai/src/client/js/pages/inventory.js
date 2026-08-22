@@ -37,6 +37,7 @@ import {
   trendScopeNote,
 } from "../ui.js";
 
+import { tipAnchor } from "../ui.js";
 const PAGE_SIZES = [25, 50, 100, 250];
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -487,10 +488,11 @@ export async function renderInventory(main, params) {
       suffix: (e) => {
         const delta = deltas && deltas.counts ? Number(deltas.counts[e.sev] || 0) : 0;
         if (!delta || (e.sev !== "CRITICAL" && e.sev !== "HIGH")) return null;
-        return el("span", {
+        const since = `since the sync of ${fmtDate(deltas.since)}`;
+        return tipAnchor(el("span", {
           class: "chg " + (delta > 0 ? "up" : "down"),
-          title: `since the sync of ${fmtDate(deltas.since)}`,
-        }, (delta > 0 ? "+" : "") + delta);
+        }, (delta > 0 ? "+" : "") + delta,
+          el("span", { class: "sr-only" }, ", " + since)), since);
       },
       onToggle: (sev) => toggleFacet("aarsSeverities", sev),
     });
@@ -522,9 +524,12 @@ export async function renderInventory(main, params) {
       statRow("Guardrail coverage",
         coverage === null || coverage === undefined ? "—" : `${coverage}%`,
         "agents protected by a guardrail",
-        coverage === null || coverage === undefined ? null : coverage),
-      statRow("Sensitive data access", String(kpis.sensitiveAccess ?? 0), "AI assets"),
-      statRow("Open issues", String(kpis.openIssues ?? 0), "toxic-combination instances"),
+        coverage === null || coverage === undefined ? null : coverage,
+        { term: "missing-guardrail" }),
+      statRow("Sensitive data access", String(kpis.sensitiveAccess ?? 0), "AI assets",
+        null, { term: "sensitive-data" }),
+      statRow("Open issues", String(kpis.openIssues ?? 0), "toxic-combination instances",
+        null, { term: "toxic-combination" }),
       // The unlinked count is not a caveat, it is the number's shape. A configuration
       // finding is keyed to the resource it was evaluated against, and most AI-security
       // rules fail on a region, an IAM policy or a service account no agent runs as —
@@ -534,7 +539,8 @@ export async function renderInventory(main, params) {
         "failing config findings" +
         (kpis.complianceGapsUnlinked
           ? ` · ${kpis.complianceGapsUnlinked} not on an AI asset`
-          : "")),
+          : ""),
+        null, { term: "pillar-b" }),
     );
 
     // The strip is a control, so it has to reflect state it did not itself change — a

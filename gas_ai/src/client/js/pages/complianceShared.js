@@ -16,6 +16,8 @@
 
 import { el, fmtDateTime, meter, plural, scopeNote, sevBadge } from "../ui.js";
 
+import { lookupGap } from "../codebook.js";
+import { tipAnchor } from "../ui.js";
 /**
  * The four posture states, mirroring domain/compliancePosture.POSTURE_STATES.
  *
@@ -40,9 +42,12 @@ export const STATE_ORDER = ["scored", "noResources", "noPolicies", "unknown"];
  * model, where it is tested — compliancePosture.titleRepeatsExternalId.
  */
 export function extChip(node) {
-  return node.showExternalId
-    ? el("span", { class: "comp-ext" }, node.externalId)
-    : null;
+  if (!node.showExternalId) return null;
+  const chip = el("span", { class: "comp-ext" }, node.externalId);
+  const entry = lookupGap(node.externalId);
+  if (!entry) return chip;
+  chip.append(el("span", { class: "sr-only" }, ", " + entry.title));
+  return tipAnchor(chip, [entry.title, entry.blurb].filter(Boolean));
 }
 
 /**

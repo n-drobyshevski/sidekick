@@ -49,6 +49,7 @@ import {
   dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, sevRank, statRow,
 } from "../ui.js";
 
+import { tip } from "../ui.js";
 /**
  * Worst-first severity order, lower index = worse — the domain's SEVERITY_ORDER
  * (src/domain/config.ts), re-declared here rather than imported: nothing under
@@ -377,12 +378,18 @@ function railRow(row, meanPct, actions, fiveRsScope, data) {
     "aria-hidden": "true",
   }, scored ? `${railPct}%` : "—"));
 
-  return el("button", {
+  // Every inner part of this row is aria-hidden, so railAriaLabel() is the only place the
+  // framework's reading exists in full — the percentage, how many policies are failing, the
+  // worst severity, the landscape mean, and for 5Rs the whole derived-vs-Wiz caveat. A
+  // pointer user saw a name, a bar and a number. It is the largest body of prose in this app
+  // that hover could not reach.
+  const said = railAriaLabel(row, meanPct, scopeNote, derived);
+  return tip(el("button", {
     type: "button",
     class: "comp-fw-row",
-    "aria-label": railAriaLabel(row, meanPct, scopeNote, derived),
+    "aria-label": said,
     onclick: () => actions.openFramework(row.frameworkId),
-  }, ...kids);
+  }, ...kids), said, { spoken: false });
 }
 
 /** Spacer/ticks/spacer, matching the row's three grid tracks so the scale lines up over

@@ -15,6 +15,8 @@ import {
   Tooltip,
 } from "chart.js";
 
+import { chartTipHandler } from "./ui/tip.js";
+
 Chart.register(
   CategoryScale, Filler, Legend,
   LinearScale, LineController, LineElement, PointElement, Tooltip,
@@ -41,12 +43,14 @@ function baseOptions() {
     animation: reducedMotion ? false : { duration: 300 },
     plugins: {
       legend: { display: false },
+      // Chart.js paints a dark box on the canvas; ui/tip.js paints the app's own card in the
+      // DOM instead, so a value read off a chart looks like every other explanation in the
+      // register rather than like a fourth vocabulary. Chart.js still owns the hit-testing
+      // and the model — only the drawing moves. `enabled: false` turns off the canvas box
+      // without turning off the plugin that builds what the card says.
       tooltip: {
-        backgroundColor: "#0a0a0a",
-        titleFont: FONT,
-        bodyFont: FONT,
-        cornerRadius: 6,
-        padding: 10,
+        enabled: false,
+        external: chartTipHandler,
       },
     },
     scales: {

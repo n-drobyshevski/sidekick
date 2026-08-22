@@ -26,6 +26,7 @@
 
 import { el } from "./dom.js";
 
+import { tipAnchor } from "./tip.js";
 let _railSeq = 0;
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
@@ -92,6 +93,9 @@ export function pointRail({
   // The cap line sits OUTSIDE the clip so it can overhang the track it cuts, and reads as a
   // boundary rather than as a mark painted inside one band.
   const capLine = el("div", { class: "rail-cap" });
+  // What the cap IS, read off the line that draws it. Set in paint() below.
+  let capNote = "";
+  tipAnchor(capLine, () => (capNote ? [capNote] : null));
   const track = el("div", { class: "rail-track" }, clip, capLine);
 
   const lane = el("div", { class: "rail-lane" }, track);
@@ -126,6 +130,9 @@ export function pointRail({
   });
 
   const label = el("label", { class: "rail-name", for: id }, name);
+  // Same idiom as field(): the mark says the value differs, the card says what from.
+  let savedNote = null;
+  tipAnchor(label, () => (savedNote ? [savedNote] : null));
   const readout = el("span", { class: "rail-rd" });
   const row = el("div", { class: "rail" }, label, lane, exact, readout);
 
@@ -162,7 +169,7 @@ export function pointRail({
     // A cap at the top of the axis constrains nothing, and a dashed line pinned to the
     // track's own edge would read as a border rather than as a limit.
     capLine.hidden = cap >= max;
-    setAttr(capLine, "title", capLabel || `cap ${cap}`);
+    capNote = capLabel || `cap ${cap}`;
 
     // The readout is the words. It never depends on the hatching being visible, because
     // "clamped" is exactly the state a reader who cannot see the hatch most needs told.
@@ -195,8 +202,7 @@ export function pointRail({
   /** The unsaved-value mark, same idiom as field(): a dot AND the saved value in words. */
   row.setChanged = (changed, savedValue) => {
     label.classList.toggle("field--changed", !!changed);
-    if (changed) label.title = `Saved value: ${savedValue}`;
-    else label.removeAttribute("title");
+    savedNote = changed ? "Saved value: " + savedValue : null;
   };
   row.focusExact = () => exact.focus();
   row.exactInput = exact;

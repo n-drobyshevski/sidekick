@@ -14,6 +14,7 @@
 import { dataTable, el, pager, sevBadge } from "./ui.js";
 import { categoryOf, kindIconSvg, kindLabel, kindsLabel } from "./icons.js";
 
+import { truncTip } from "./ui.js";
 const PAGE_SIZES = [25, 50, 100, 250];
 export const DEFAULT_PAGE_SIZE = 50;
 
@@ -35,11 +36,13 @@ function triCell(v) {
 function nameCell(cell) {
   const icon = kindIconSvg(cell.kind, 14);
   icon.setAttribute("class", "gq-cell-icon");
+  // The tip hangs off the clipped span, not its wrapper: .gq-name-text is the box the
+  // ellipsis happens in, so it is the box that knows whether anything was lost.
+  const text = truncTip(el("span", { class: "gq-name-text" }, cell.name), cell.name);
   return el("span", {
     class: "gq-name",
     "data-category": categoryOf(cell.kind),
-    title: cell.name,
-  }, icon, el("span", { class: "gq-name-text" }, cell.name));
+  }, icon, text);
 }
 
 function renderValue(key, value, cell) {

@@ -46,6 +46,7 @@ import {
   applyActionFilters, actionFilterOptions, sortActions,
 } from "./actionView.js";
 
+import { outcomeNote } from "../ui.js";
 const SEARCH_DEBOUNCE_MS = 200;
 
 // Placeholder shown until api_getProblems resolves; paint() clears the host. Mirrors the
@@ -223,10 +224,16 @@ export async function renderProblems(main, params) {
     const counts = fresh.outcomeCounts || {};
     const undecided = counts[""] || 0;
     const cards = [
-      kpiCard("Act", String(counts.ACT || 0), "a human interrupts today"),
-      kpiCard("Attend", String(counts.ATTEND || 0), "on this week's plan"),
-      kpiCard("Track*", String(counts.TRACK_STAR || 0), "an unresolved coverage gap"),
-      kpiCard("Track", String(counts.TRACK || 0), "no action implied"),
+      // The four names are CISA's, and the sub-line is a fragment rather than a definition.
+      // ui/outcome.js now carries CISA's own wording, and these four read it.
+      kpiCard("Act", String(counts.ACT || 0), "a human interrupts today", null,
+        { term: "priorities-rank", lines: [outcomeNote("ACT")] }),
+      kpiCard("Attend", String(counts.ATTEND || 0), "on this week's plan", null,
+        { term: "priorities-rank", lines: [outcomeNote("ATTEND")] }),
+      kpiCard("Track*", String(counts.TRACK_STAR || 0), "an unresolved coverage gap", null,
+        { term: "priorities-rank", lines: [outcomeNote("TRACK_STAR")] }),
+      kpiCard("Track", String(counts.TRACK || 0), "no action implied", null,
+        { term: "priorities-rank", lines: [outcomeNote("TRACK")] }),
     ];
     if (undecided) {
       // Nothing in this union is ever dropped for lacking a verdict (src/domain/problems.ts's
@@ -395,15 +402,20 @@ export async function renderProblems(main, params) {
 
   function table(rows, shownCount, totalCount) {
     const COLS = [
-      { key: "priority", label: "Priority", cell: (r) => outcomeBadge(r.problemOutcome) },
+      // A column heading is asked once per table, so this is where a metric can be DEFINED
+      // by a real control without multiplying the tab order by the row count.
+      { key: "priority", label: "Priority", help: { term: "priorities-rank" },
+        cell: (r) => outcomeBadge(r.problemOutcome) },
       {
         key: "kind", label: "Kind",
         cell: (r) => statusPill("neutral", r.kind === "ISSUE" ? "Issue" : "Finding"),
       },
       { key: "title", label: "Rule", cell: (r) => r.title },
       { key: "asset", label: "Asset", cell: (r) => r.assetName },
-      { key: "posture", label: "Posture", cell: (r) => tierBadge(r.postureTier) },
-      { key: "severity", label: "Severity", cell: (r) => sevBadge(r.severity) },
+      { key: "posture", label: "Posture", help: { term: "posture-tier" },
+        cell: (r) => tierBadge(r.postureTier) },
+      { key: "severity", label: "Severity", help: { term: "adjusted-severity" },
+        cell: (r) => sevBadge(r.severity) },
       { key: "due", label: "Due", cell: (r) => dueChip(r.dueAt) || "—" },
     ];
     const descending = view.sort && (PROBLEM_SORT_DESC[view.sort] ? view.dir === 1 : view.dir === -1);
@@ -416,7 +428,7 @@ export async function renderProblems(main, params) {
             : shownCount + " of " + totalCount)),
       dataTable({
         columns: COLS.map((col) => ({
-          key: col.key, label: col.label, sortable: true, cell: col.cell,
+          key: col.key, label: col.label, help: col.help, sortable: true, cell: col.cell,
         })),
         rows,
         sort: view.sort ? { key: view.sort, descending } : null,
@@ -589,7 +601,8 @@ export async function renderProblems(main, params) {
 
   function actionTable(rows) {
     const COLS = [
-      { key: "priority", label: "Priority", cell: (r) => outcomeBadge(r.worstOutcome) },
+      { key: "priority", label: "Priority", help: { term: "priorities-rank" },
+        cell: (r) => outcomeBadge(r.worstOutcome) },
       { key: "title", label: "Action", cell: (r) => r.title },
       {
         key: "kind", label: "Kind",
@@ -628,7 +641,7 @@ export async function renderProblems(main, params) {
       sectionLabel(plural(rows.length, "action") + ", ranked by cover"),
       dataTable({
         columns: COLS.map((col) => ({
-          key: col.key, label: col.label,
+          key: col.key, label: col.label, help: col.help,
           sortable: col.sortable !== false && !!ACTION_COMPARATORS[col.key],
           className: col.className, cell: col.cell,
         })),

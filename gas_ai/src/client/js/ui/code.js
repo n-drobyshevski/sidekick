@@ -7,6 +7,7 @@
 
 import { el } from "./dom.js";
 
+import { tipAnchor } from "./tip.js";
 /**
  * Copy `text`, resolving to whether it actually landed.
  *
@@ -79,11 +80,16 @@ export function codeBlock(text, { label = "", maxHeight = "" } = {}) {
  */
 export function copyButton(getText, { label = "Copy", copiedLabel = "Copied", title = "" } = {}) {
   let timer = null;
+  // A card AND the accessible name. "Copy" alone does not say copy WHAT, and every caller
+  // that bothered to pass a title was answering exactly that — into an attribute a keyboard
+  // user never reached.
+  let note = null;
   const btn = el("button", {
     class: "copy-btn",
     type: "button",
-    title: title || null,
+    "aria-label": title || null,
   }, label);
+  tipAnchor(btn, () => (note || title ? [note || title] : null));
 
   btn.addEventListener("click", async () => {
     const ok = await copyText(getText());
@@ -93,7 +99,7 @@ export function copyButton(getText, { label = "Copy", copiedLabel = "Copied", ti
     // Announced as well as shown: the label change is the only feedback, and a button
     // whose text changes silently tells a screen-reader user nothing.
     btn.setAttribute("aria-live", "polite");
-    if (!ok) btn.title = "Copying was blocked here — select the text and copy it yourself.";
+    if (!ok) note = "Copying was blocked here — select the text and copy it yourself.";
     timer = setTimeout(() => {
       btn.textContent = label;
       btn.classList.remove("is-done");

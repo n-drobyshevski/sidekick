@@ -130,6 +130,11 @@
   --z-scrim: 40;
   --z-sheet: 41;
   --z-popover: 52;
+  /* The hover card outranks --z-popover for the same reason --z-popover outranks --z-sheet: a
+     combobox trigger and a filter pill can both carry a tip, and a definition that opened
+     behind the list it explains would be a definition nobody reads. Below the boot splash (55)
+     and the toasts (60), neither of which a tip should ever cover. */
+  --z-tooltip: 58;
 
   --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-button: 0 1px 2px 0 rgba(0, 0, 0, 0.04);

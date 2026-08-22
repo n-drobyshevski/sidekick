@@ -279,54 +279,121 @@
   color: var(--text-3); margin-bottom: 5px;
 }
 
-/* -------------------------------------------------------------------- help tip */
-/* Hover/focus definition card (ui.js helpTip) — the neutral popover recipe, and the
-   replacement for `title=` anywhere the explanation actually matters. */
-.helptip { position: relative; cursor: help; }
+/* ------------------------------------------------------------------------- tip */
+/* The app's ONE hover card (ui/tip.js) — the replacement for `title=`, for the SVG <title>
+   on every graph edge, for Chart.js's dark canvas box, and for the old .helptip bubble.
+   There is exactly one of these nodes in the document; ui/tip.js moves it. */
+
+/* THE TRIGGER, and why it is a button. A definition has to be reachable by keyboard and by
+   touch, and only a real control is both. The dotted underline is the point: `cursor: help`
+   alone only rewards a reader who was already hovering, so a definition nobody can SEE is not
+   help. It goes solid on hover and focus, the way a link does. */
+.tip-wrap { display: contents; }
+/* A FULL reset, and the doubled class is the point rather than a typo.
+
+   base.css styles bare `button` as the app's everyday control — 36px tall, bordered, tinted,
+   with a rest shadow — and a dozen files then restyle `<context> button` at (0,1,1), loading
+   AFTER this one. A definition trigger is a word, not a control surface, so it has to win
+   against all of them: `.tip-trigger.tip-trigger` is (0,2,0) and does, without this file
+   having to know which contexts exist. The `:hover` selector is not optional either — a term
+   inside a stat label grew a grey pill the moment the pointer arrived without it — and
+   `text-transform` / `letter-spacing` are named because the `font` shorthand does not carry
+   them, so an uppercase label whose one defined word dropped to sentence case read as a
+   different element. */
+.tip-trigger.tip-trigger,
+.tip-trigger.tip-trigger:hover,
+.tip-trigger.tip-trigger:disabled {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  min-height: 0;
+  text-align: inherit;
+  cursor: help;
+}
+/* Term triggers only. The chip base above and the tag base below it are all inline-flex or
+   inline-block — atomic inline boxes, which do not take a parent's text-decoration — so a
+   trigger wrapping a pill, a badge or the "?" mark is left alone by this rule without needing
+   a selector to say so. The underline lands on bare words, which is exactly where it is the
+   only affordance available. */
+.tip-trigger--term {
+  text-decoration: underline dotted rgba(0, 0, 0, 0.32);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.tip-trigger--term:hover { text-decoration-color: currentColor; }
+.tip-trigger:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm);
+}
 /* The bare "?" affordance, for a control whose explanation has no chip to ride on. */
-.helptip-mark {
+.tip-mark {
   display: inline-flex; align-items: center; justify-content: center;
   width: 18px; height: 18px; border-radius: var(--radius-pill);
   font-size: 11px; font-weight: 600; color: var(--text-2);
   background: var(--surface); border: 1px solid var(--hairline);
 }
-.helptip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
-.helptip-bubble {
-  position: absolute; left: 0; top: calc(100% + 8px); z-index: var(--z-popover);
-  width: max-content; max-width: 268px; padding: 10px;
-  display: flex; flex-direction: column; gap: 5px;
+.tip-trigger:hover > .tip-mark { border-color: var(--text-3); color: var(--ink); }
+
+/* A disabled control receives no pointer events at all, so a card explaining WHY it is
+   disabled has to hang off something that does. Inline-flex so the wrapper is the button's
+   own box and nothing in the layout notices it. */
+.tip-disabled-wrap { display: inline-flex; }
+
+/* THE CARD. Portaled to <body> and placed in viewport coordinates by ui/tip.js, which is what
+   lets it escape .table-wrap, .lat-scroll and .workbench-body — and the .sheet transform, which
+   would otherwise make the sheet the containing block for a fixed child. `left`/`top` are set
+   inline; nothing here may set them. */
+.tip {
+  position: fixed; left: 0; top: 0; z-index: var(--z-tooltip);
+  width: max-content; max-width: min(300px, calc(100vw - 32px)); padding: 9px 11px;
   background: var(--page); color: var(--ink);
   border: 1px solid var(--hairline); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
   font-size: 12px; font-weight: 400; line-height: 1.45;
   letter-spacing: 0; text-transform: none; text-align: left; white-space: normal;
   opacity: 0; pointer-events: none; transform: translateY(-2px);
-  transition: opacity 0.14s ease, transform 0.14s ease;
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
-.helptip-line { display: block; }
-/* The link a `term` adds, pointing at the Help key sheet. `.helptip` sets `cursor: help`
-   and it would otherwise inherit, so a real link would not look like one. */
-.helptip-link {
-  align-self: flex-start; margin-top: 2px;
-  color: var(--accent); font-weight: 500; text-decoration: none; cursor: pointer;
-  border-bottom: 1px solid transparent;
+.tip.open { opacity: 1; pointer-events: auto; transform: none; }
+/* A chart tip is passive: the canvas underneath is still hit-testing to decide what the card
+   says, so the card must never intercept the pointer that is driving it. */
+.tip.passive { pointer-events: none; }
+.tip-body { display: flex; flex-direction: column; gap: 5px; }
+.tip-line { display: block; }
+/* A second name for the thing ("TC", "membership, never severity") — information, not a
+   restated heading, which is why it is here and the term itself is not. */
+.tip-aka {
+  display: block; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.02em; color: var(--text-3);
 }
-.helptip-link:hover { border-bottom-color: currentColor; }
-.helptip-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* Invisible bridges over the 8px gap between the trigger and the bubble. Without them the
-   pointer crosses dead space on its way to the link and the bubble closes underneath it.
-   They inherit the bubble's `pointer-events: none` while it is hidden, so they never
-   become stray hover targets; the bubble is placed above OR below, so both sides exist. */
-.helptip-bubble::before, .helptip-bubble::after {
-  content: ""; position: absolute; left: 0; right: 0; height: 10px;
+.tip-more {
+  display: block; margin-top: 1px; padding-top: 5px;
+  border-top: 1px solid var(--hairline);
+  font-size: 11px; color: var(--text-3);
 }
-.helptip-bubble::before { top: -10px; }
-.helptip-bubble::after { bottom: -10px; }
-.helptip:hover > .helptip-bubble,
-.helptip:focus-within > .helptip-bubble { opacity: 1; pointer-events: auto; transform: translateY(0); }
+/* The caret. `left` is set inline from the anchor's centre, clamped off both corners, because
+   a card pushed against the window edge would otherwise point at nothing. Two stacked squares:
+   the lower one paints the border, the upper one covers it with the card's own surface. */
+.tip-arrow {
+  position: absolute; width: 9px; height: 9px; margin-left: -4.5px;
+  background: var(--page); border: 1px solid var(--hairline);
+  transform: rotate(45deg);
+}
+.tip[data-side="below"] .tip-arrow {
+  top: -5px; border-right: 0; border-bottom: 0;
+}
+.tip[data-side="above"] .tip-arrow {
+  bottom: -5px; border-left: 0; border-top: 0;
+}
 @media (prefers-reduced-motion: reduce) {
-  .helptip-bubble { transition: none; transform: none; }
-  .helptip:hover > .helptip-bubble, .helptip:focus-within > .helptip-bubble { transform: none; }
+  .tip { transition: none; transform: none; }
+  .tip.open { transform: none; }
 }
 
 /* ------------------------------------------------------------------- combobox */

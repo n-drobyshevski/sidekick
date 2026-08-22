@@ -22,6 +22,7 @@
 
 import { el } from "./dom.js";
 import { FINDINGS_SCORE_LABEL, ordinal, percentileText } from "./scoreLabel.js";
+import { bookTip } from "./tip.js";
 
 export { FINDINGS_SCORE_LABEL, ordinal, percentileText };
 
@@ -48,7 +49,9 @@ export function scoreChip(score, percentile, band) {
   const label = FINDINGS_SCORE_LABEL + " " + score +
     (hasNumber(percentile) ? ", " + ordinal(percentile) + " percentile" : "") +
     (band ? ", level " + band : "");
-  return el(
+  // The chip reads "p60 72 CRITICAL" and the sentence behind it was already composed for the
+  // accessible name. It is the same sentence a sighted reader needs, so it goes on the card.
+  return bookTip(el(
     "span",
     { class: "score-chip", role: "img", "aria-label": label },
     hasNumber(percentile)
@@ -56,5 +59,5 @@ export function scoreChip(score, percentile, band) {
       : null,
     el("span", { class: "score-chip__score num" }, String(score)),
     band ? el("span", { class: "score-chip__band" }, band) : null,
-  );
+  ), "aars", label);
 }

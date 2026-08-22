@@ -14,6 +14,7 @@
 import { el } from "./dom.js";
 import { filterCombobox } from "./combobox.js";
 
+import { tipAnchor } from "./tip.js";
 const nf = new Intl.NumberFormat();
 
 function assetCount(n) {
@@ -128,8 +129,10 @@ export function projectScopeControl(bootstrapData, onPick) {
     onChange: (id) => onPick(id || ""),
   });
   combo.classList.add("scope-combo");
-  // Read on hover, and the collapsed rail's only pointer affordance for the full name.
-  combo.title = `Project scope: ${v.label}`;
+  // Read on hover, and the collapsed rail's only pointer affordance for the full name — which
+  // is why it cannot be a native title: the collapsed rail is the default, and a tap reached
+  // none of it.
+  tipAnchor(combo, "Project scope: " + v.label);
 
   return el("div", { class: "scope-switch" },
     combo,

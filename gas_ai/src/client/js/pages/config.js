@@ -31,6 +31,7 @@ import {
   readConfigParams, sortConfigRows,
 } from "./configView.js";
 
+import { tipAnchor } from "../ui.js";
 const PAGE_SIZE = 50;
 
 /**
@@ -153,7 +154,10 @@ export async function renderConfigFindings(main, params, ctx) {
       kpiCard("Resources affected", String(totals.resources ?? 0),
         "evaluated against these rules"),
       kpiCard("Not on an AI asset", String(totals.unlinkedGaps ?? 0),
-        "regions, policies and unattached identities"),
+        "regions, policies and unattached identities", null,
+        ["A configuration finding is keyed to the resource it was evaluated against, and most "
+          + "AI-security rules fail on a region, an IAM policy or a service account no agent "
+          + "runs as. None of those are AI assets, so none of them price an AARS score."]),
       kpiCard("Traced to IaC", String(totals.iac ?? 0),
         "fixable at source"),
     );
@@ -332,9 +336,12 @@ export async function renderConfigFindings(main, params, ctx) {
         },
         {
           key: "gaps", label: "Failing", sortable: false, className: "num",
-          cell: (g) => el("span", {
-            title: g.gaps + " of " + plural(g.resources, "resource") + " currently failing",
-          }, String(g.gaps)),
+          cell: (g) => {
+            const said = g.gaps + " of " + plural(g.resources, "resource") + " currently failing";
+            return tipAnchor(
+              el("span", {}, String(g.gaps), el("span", { class: "sr-only" }, ", " + said)),
+              said);
+          },
         },
         {
           key: "resources", label: "Resources", sortable: false, className: "num",
@@ -345,7 +352,10 @@ export async function renderConfigFindings(main, params, ctx) {
           // Not a warning — a fact about where the control applies. It is the reason the
           // gap total and the AARS-priced total differ.
           cell: (g) => (g.unlinked
-            ? el("span", { title: g.unlinked + " not on an AI asset" }, String(g.unlinked))
+            ? tipAnchor(
+              el("span", {}, String(g.unlinked),
+                el("span", { class: "sr-only" }, ", not on an AI asset")),
+              g.unlinked + " not on an AI asset")
             : el("span", { class: "muted" }, "—")),
         },
         {

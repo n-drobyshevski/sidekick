@@ -12,7 +12,7 @@
 // every route a real page, every `term` a real entry. Renaming any of those becomes a
 // build failure here instead of a rotting page nobody reads.
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -64,30 +64,39 @@ function namedKinds() {
 }
 
 /**
- * Every entry id a page points at — `term: "x"` on a helpTip or a figure callout, and
- * `findEntry("x")` where a page reads the book directly (the query palette's detail pane).
+ * Every entry id the client points at — `term: "x"` on a tip, `glossaryTip("x")` /
+ * `bookTip(node, "x")` where a component reads the book directly, and `findEntry("x")` where a
+ * page does (the query palette's detail pane).
  *
- * EVERY page is read, not a hand-kept list of them. The list this replaces named six files and
- * had not grown since; a seventh page could point at a term that did not exist and the coverage
- * assertion would pass by simply never looking. Reading the directory means a new page is
- * covered by existing there.
+ * THE WHOLE CLIENT TREE is read, not a hand-kept list of files and no longer just `pages/`.
+ * The list this replaces named six files and had not grown since; then the hover card arrived
+ * and the badges that read the book moved into `ui/` — `outcomeBadge`, `tierBadge`, `scoreChip`
+ * — where a scan of `pages/` could not see them, and a renamed id in any of them would have
+ * passed by simply never being looked at. Reading the directory means a new caller is covered
+ * by existing.
  */
 function namedTerms() {
-  const dir = join(root, "src/client/js/pages");
   const terms = new Set();
-  for (const name of readdirSync(dir)) {
-    if (!name.endsWith(".js")) continue;
-    const src = readFileSync(join(dir, name), "utf8");
-    for (const m of src.matchAll(/\bterm: "([a-z0-9-]+)"/g)) terms.add(m[1]);
-    for (const m of src.matchAll(/\bfindEntry\("([a-z0-9-]+)"\)/g)) terms.add(m[1]);
-    // `findEntry(MAP[key])` — the id lives in a lookup object beside the call, so the values of
-    // any `*: "kebab-id",` line in the file are checked too. Over-broad by design: a false
-    // positive here is a term someone has to add to the book, which is the right direction to
-    // fail in for an anti-rot spec.
-    if (src.includes("findEntry(")) {
-      for (const m of src.matchAll(/^\s{2}[A-Z0-9_]+: "([a-z0-9-]+)",$/gm)) terms.add(m[1]);
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) { walk(full); continue; }
+      if (!name.endsWith(".js")) continue;
+      const src = readFileSync(full, "utf8");
+      for (const m of src.matchAll(/\bterm: "([a-z0-9-]+)"/g)) terms.add(m[1]);
+      for (const m of src.matchAll(/\bfindEntry\("([a-z0-9-]+)"\)/g)) terms.add(m[1]);
+      for (const m of src.matchAll(/\bglossaryTip\([^,]+,\s*"([a-z0-9-]+)"/g)) terms.add(m[1]);
+      for (const m of src.matchAll(/\bbookTip\([^,]+,\s*"([a-z0-9-]+)"/g)) terms.add(m[1]);
+      // `findEntry(MAP[key])` — the id lives in a lookup object beside the call, so the values
+      // of any `*: "kebab-id",` line in the file are checked too. Over-broad by design: a false
+      // positive here is a term someone has to add to the book, which is the right direction to
+      // fail in for an anti-rot spec.
+      if (src.includes("findEntry(") || src.includes("_TERM = {")) {
+        for (const m of src.matchAll(/^\s{2}[A-Z0-9_]+: "([a-z0-9-]+)",$/gm)) terms.add(m[1]);
+      }
     }
-  }
+  };
+  walk(join(root, "src/client/js"));
   return [...terms];
 }
 

@@ -41,7 +41,7 @@ import { CATEGORY_LABELS, kindIcon, svgEl } from "../icons.js";
 import { ROUTE_ICONS } from "../routeIcons.js";
 import { bootstrap, bootstrapCached, navigate, setParams, swrCall } from "../store.js";
 import {
-  clear, el, fmtDateTime, helpTip, motionOk, onPageTeardown, sectionLabel, statusPill,
+  clear, el, fmtDateTime, motionOk, onPageTeardown, sectionLabel, statusPill, tip,
   uiIcon,
 } from "../ui.js";
 
@@ -134,7 +134,7 @@ export async function renderHelp(main, params, _ctx) {
   if (reads[1].status === "fulfilled") digest = (reads[1].value && reads[1].value.digest) || null;
   paint();
 
-  // A ?term= deep link, from a helpTip's "full definition" link. Runs after the first
+  // A ?term= deep link, from a term trigger anywhere in the app. Runs after the first
   // paint so the entry exists to scroll to; a term the book does not carry is simply
   // ignored rather than reported, because a stale bookmark is not an error state.
   const wanted = findEntry(params.term);
@@ -808,7 +808,7 @@ function countCell(entry) {
   const res = entry.resolved;
   if (!res) {
     const owner = entry.drawnOn && entry.drawnOn.length ? ROUTE_TITLES[entry.drawnOn[0]] : "";
-    cell.append(helpTip(
+    cell.append(tip(
       el("span", { class: "help-count-none" }, "not counted here"),
       [
         "No figure for this term in this deployment — an area that is queried but not " +
@@ -863,7 +863,7 @@ function entryDomId(id) {
 }
 
 /**
- * Scroll a term into view, land on it, and mark it — for a ?term= link off a helpTip, and
+ * Scroll a term into view, land on it, and mark it — for a ?term= link off a term trigger, and
  * for a callout naming the term it teaches.
  *
  * The highlight is a class the stylesheet fades out, not a scripted animation, so the

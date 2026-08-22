@@ -33,6 +33,7 @@ import {
   isAmplified, rankGroups, readComboParams, shiftSegments, shiftSummary, sortIssues,
 } from "./comboView.js";
 
+import { tip, tipAnchor, tipLines } from "../ui.js";
 /**
  * A condition's kind icon, named so the stylesheet can colour it. kindIconSvg carries no
  * class of its own — the caller names it, as the inventory's asset cards do — and the
@@ -99,6 +100,17 @@ function combosSkeleton(count) {
   return el("div", { role: "status", "aria-label": "Loading toxic combinations" },
     kpis, summary, stack);
 }
+
+// The book already defines all five conditions; the matrix heads read them rather than
+// restating them. An id the book stops carrying degrades to the press-to-filter line alone,
+// and test/helpContent.test.js fails the build on the rename.
+const CONDITION_TERM = {
+  MISSING_GUARDRAIL: "missing-guardrail",
+  DATA_FINDING: "data-finding",
+  SENSITIVE_DATA: "sensitive-data",
+  INTERNET_EXPOSURE: "internet-exposure",
+  EXCESSIVE_PRIVILEGE: "excessive-privilege",
+};
 
 export async function renderCombos(main, params) {
   const boot = await bootstrap();
@@ -196,7 +208,7 @@ export async function renderCombos(main, params) {
       kpiCard("Assets affected", String(totals.assetsAffected),
         "distinct across every pattern"),
       kpiCard("Patterns active", totals.patternsActive + " of " + totals.patternsTotal,
-        "combination rules with open issues"),
+        "combination rules with open issues", null, { term: "toxic-combination" }),
       kpiCard("Past due", String(totals.pastDue), dueSub),
     );
   }
@@ -267,25 +279,32 @@ export async function renderCombos(main, params) {
       el("span", { class: "label" }, "Pattern")));
     for (const key of CONDITION_KEYS) {
       const active = view.cond === key;
-      headRow.append(el("div", { class: "combo-matrix-colhead", role: "columnheader" },
-        el("button", {
-          class: "combo-cond-btn",
-          "data-category": categoryOf(key),
-          "aria-pressed": active ? "true" : "false",
-          // Named explicitly because the narrow breakpoint hides the visible label and
-          // leaves only the icon. It leads with that same label, so the accessible name
-          // still contains the visible one wherever the label is showing.
-          "aria-label": kindLabel(key) + ", filter patterns by this condition",
-          title: active ? "Clear this filter" : "Show only patterns with this condition",
-          onclick: () => {
-            view.cond = active ? "" : key;
-            view.page = 0;
-            persist();
-            paint(payload);
-          },
+      const head = el("div", { class: "combo-matrix-colhead", role: "columnheader" });
+      const btn = el("button", {
+        class: "combo-cond-btn",
+        "data-category": categoryOf(key),
+        "aria-pressed": active ? "true" : "false",
+        // Named explicitly because the narrow breakpoint hides the visible label and
+        // leaves only the icon. It leads with that same label, so the accessible name
+        // still contains the visible one wherever the label is showing.
+        "aria-label": kindLabel(key) + ", filter patterns by this condition",
+        onclick: () => {
+          view.cond = active ? "" : key;
+          view.page = 0;
+          persist();
+          paint(payload);
         },
-          condIcon(key, 14),
-          el("span", {}, kindLabel(key)))));
+      },
+        condIcon(key, 14),
+        el("span", {}, kindLabel(key)));
+      // What the condition IS comes from the book; what pressing does is the second line.
+      // The description hangs off the column header, outside the button's own name.
+      const define = tipLines({ term: CONDITION_TERM[key] });
+      tip(btn, (define || []).concat([
+        active ? "Press to clear this filter." : "Press to show only patterns with this condition.",
+      ]), { describeIn: head });
+      head.append(btn);
+      headRow.append(head);
     }
     grid.append(headRow);
 
@@ -321,10 +340,13 @@ export async function renderCombos(main, params) {
 
   function matrixCell(group, tally, key) {
     const name = kindLabel(key);
+    // The .sr-only sentence below was already the whole reading of this cell, and a sighted
+    // reader got a dot and a fraction with the legend forty pixels away. Same sentence, same
+    // cell, now on the card too.
     if (!tally || (!tally.required && !tally.carried && !tally.unknown)) {
-      return el("div", { class: "combo-cell", role: "cell" },
+      return tipAnchor(el("div", { class: "combo-cell", role: "cell" },
         el("span", { class: "combo-cell-mark is-none", "aria-hidden": "true" }, "—"),
-        el("span", { class: "sr-only" }, name + ": not present"));
+        el("span", { class: "sr-only" }, name + ": not present")), name + ": not present");
     }
     const marks = [];
     const spoken = [];
@@ -351,9 +373,10 @@ export async function renderCombos(main, params) {
       marks.push(el("span", { class: "combo-cell-num num muted" }, String(tally.unknown)));
       spoken.push(tally.unknown + " undetermined");
     }
-    return el("div", { class: "combo-cell", role: "cell" },
+    const said = name + ": " + spoken.join(", ");
+    return tipAnchor(el("div", { class: "combo-cell", role: "cell" },
       ...marks,
-      el("span", { class: "sr-only" }, name + ": " + spoken.join(", ")));
+      el("span", { class: "sr-only" }, said)), said);
   }
 
   // ------------------------------------------------------------------ pattern header
@@ -520,25 +543,32 @@ export async function renderCombos(main, params) {
     for (const key of keys) {
       const tally = dg && dg.conditions && dg.conditions[key];
       const required = tally ? tally.required : true;
-      row.append(el("span", {
+      // Whether the rule TESTS this condition or the assets merely carry it is the whole
+      // difference between the two chip styles, and it used to live in a native title only.
+      // It goes into the accessible name AND onto the card: six chips per pattern is no place
+      // for six new tab stops, so the words go where a screen reader already reads.
+      const tested = required
+        ? "Tested by the Wiz rule for this pattern"
+        : "Not tested by the rule — carried by these assets anyway";
+      const chip = el("span", {
         class: "combo-cond" + (required ? "" : " is-extra"),
         "data-category": categoryOf(key),
-        title: required
-          ? "Tested by the Wiz rule for this pattern"
-          : "Not tested by the rule — carried by these assets anyway",
       },
         condIcon(key, 13),
         el("span", {}, kindLabel(key)),
+        el("span", { class: "sr-only" }, ", " + tested),
         // A chip with no figure would read as a flat "present". When the only assets
         // here are the undetermined ones, say so — "?2" is a different claim from "2".
         tally && tally.carried
           ? el("span", { class: "combo-cond-num num" }, String(tally.carried))
           : tally && tally.unknown
-            ? el("span", {
-              class: "combo-cond-num num",
-              title: "Exposure inherited from a host and not determined",
-            }, "?" + tally.unknown)
-            : null));
+            ? el("span", { class: "combo-cond-num num" },
+              "?" + tally.unknown,
+              el("span", { class: "sr-only" },
+                ", exposure inherited from a host and not determined"))
+            : null);
+      tipAnchor(chip, tested);
+      row.append(chip);
     }
     return row;
   }

@@ -21,6 +21,8 @@ import {
   sheetSection, skeleton, statusPill, tierBadge, uiIcon,
 } from "./ui.js";
 
+import { tipAnchor, truncTip } from "./ui.js";
+import { lookupGap } from "./codebook.js";
 /** Fallback only — the caps in force ride on the bootstrap payload. */
 const PILLAR_MAX = { toxic: 50, compliance: 30, data: 22 };
 const PILLAR_LABEL = {
@@ -107,7 +109,10 @@ export function fwTags(frameworks, compact) {
     groups.push(
       el("div", { class: "fw-group" },
         el("span", { class: "fw-group-label" }, g.label),
-        el("div", { class: "fw-tags" }, ...codes.map((c) => el("span", { class: "fw-tag" }, c))),
+        // LLM01, ASI04, ML_* and the 5Rs codes are opaque on their own, and the codebook
+        // already holds a title and a sentence for each. The 2025-to-2026 OWASP renumbering
+        // is exactly why a gloss here is load-bearing rather than decorative.
+        el("div", { class: "fw-tags" }, ...codes.map((c) => codeTag(c))),
       ),
     );
   }
@@ -122,11 +127,16 @@ export function fwTags(frameworks, compact) {
 export function dueChip(dueAt) {
   const sla = slaState(dueAt, Date.now());
   if (!sla) return null;
-  return el(
+  // "Overdue" and "Due soon" are verdicts; the date they were reached from is the evidence.
+  // It rides the accessible name as well as the card - a pill is not a control and does not
+  // earn a tab stop, so hover cannot be the only way to the date.
+  const due = "Due " + fmtDateTime(dueAt);
+  return tipAnchor(el(
     "span",
-    { class: `pill ${sla.kind}`, title: `Due ${fmtDateTime(dueAt)}` },
+    { class: `pill ${sla.kind}` },
     sla.label,
-  );
+    el("span", { class: "sr-only" }, ", " + due.toLowerCase()),
+  ), due);
 }
 
 function kvRow(dt, dd) {
@@ -184,9 +194,18 @@ function anyCloud(rec) {
   return rec.cloud || rec.cloudPlatform || "";
 }
 
+/** One framework code, with whatever the codebook says about it on the card. */
+function codeTag(code) {
+  const entry = lookupGap(code);
+  const tag = el("span", { class: "fw-tag" }, code,
+    entry ? el("span", { class: "sr-only" }, ", " + entry.title) : null);
+  if (!entry) return tag;
+  return tipAnchor(tag, [entry.title, entry.blurb].filter(Boolean));
+}
+
 /** A long, opaque identifier: clipped in the grid, whole in the tooltip. */
 function idValue(text) {
-  return el("span", { class: "kv-trunc", title: text }, text);
+  return truncTip(el("span", { class: "kv-trunc" }, text), text);
 }
 
 /**
@@ -331,10 +350,11 @@ function relRow(n, onOpen) {
       el("span", { class: "small muted" }, kindLabel(n.node.kind)),
       // Prose on the chip, Wiz's own enum on the tooltip: the register is read here and
       // cross-referenced against the tenant there, so neither can be the one that goes.
-      el("span", { class: "domain-chip", title: n.edge.type },
+      tipAnchor(el("span", { class: "domain-chip" },
         edgeLabel(n.edge.type) +
         (n.edge.accessType ? ` [${n.edge.accessType}]` : "") +
-        (n.edge.negated ? " (absent)" : "")),
+        (n.edge.negated ? " (absent)" : ""),
+        el("span", { class: "sr-only" }, ", " + n.edge.type)), n.edge.type),
     ],
     ariaLabel: `${out ? "Outbound" : "Inbound"} ${edgeLabel(n.edge.type)} to ${n.node.name}`,
     onOpen: () => onOpen(n),

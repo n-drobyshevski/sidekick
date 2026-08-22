@@ -8,6 +8,7 @@ import { categoryOf, kindIcon, kindLabel, svgEl } from "./icons.js";
 import { sevEntries, sevSpoken } from "./ui/severity.js";
 import { FINDINGS_SCORE_LABEL, ordinal } from "./ui/scoreLabel.js";
 
+import { tipAnchor } from "./ui.js";
 // Mirrors SEVERITY_ORDER in src/domain/config.ts, for the same reason egoLayout.js,
 // assetQuery.js and comboView.js each keep their own copy: the client bundle cannot import
 // the domain layer, and the order must still agree with it.
@@ -82,6 +83,25 @@ export function nodeAriaLabel(node) {
 }
 
 /** Full-size card: the original graphView.js node drawing, unchanged. */
+/**
+ * The card's own reading, on hover as well as on focus.
+ *
+ * nodeAriaLabel() already composes kind, name, severity, score, percentile, toxic-combination
+ * membership and the missing guardrail into one sentence — and a card whose name is cut to
+ * fifteen characters showed a pointer user none of it. The name goes on its own line because
+ * the truncation is the reason a reader hovers in the first place.
+ */
+function cardTip(g, node) {
+  if (node.kind === "SUMMARY") {
+    tipAnchor(g, [nodeAriaLabel(node)]);
+    return;
+  }
+  tipAnchor(g, () => {
+    const rest = nodeAriaLabel(node);
+    return node.name && rest.indexOf(node.name) !== 0 ? [node.name, rest] : [rest];
+  });
+}
+
 function drawFullCard(node, palette) {
   const isSummary = node.kind === "SUMMARY";
   const g = svgEl("g", {
@@ -92,6 +112,7 @@ function drawFullCard(node, palette) {
     "data-id": node.id,
     "data-category": categoryOf(node.kind),
   });
+  cardTip(g, node);
 
   // Toxic-combo halo (behind the card).
   if ((node.comboGroups || []).length && !isSummary) {
@@ -192,6 +213,7 @@ function drawCompactCard(node, palette) {
     "data-id": node.id,
     "data-category": categoryOf(node.kind),
   });
+  cardTip(g, node);
   if ((node.comboGroups || []).length && !isSummary) g.setAttribute("data-combo", "1");
 
   g.append(svgEl("rect", {

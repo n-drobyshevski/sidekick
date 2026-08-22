@@ -3,7 +3,9 @@
 import { call } from "./api.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
-import { clear, el, fmtDateTime, progressBar, runPageTeardown, statusPill } from "./ui.js";
+import {
+  clear, closeTip, el, fmtDateTime, progressBar, runPageTeardown, statusPill, tipAnchor,
+} from "./ui.js";
 import { projectScopeControl } from "./ui/projectScope.js";
 import { toast } from "./ui.js";
 import { renderGraphPage } from "./pages/graph.js";
@@ -84,12 +86,14 @@ function applyCollapsed(collapsed) {
   if (toggle) {
     toggle.setAttribute("aria-expanded", String(!collapsed));
     toggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
-    toggle.setAttribute("title", collapsed ? "Expand sidebar" : "Collapse sidebar");
+    tipAnchor(toggle, collapsed ? "Expand sidebar" : "Collapse sidebar");
   }
+  // The collapsed rail is the default, and a native title was the only thing naming these
+  // links in it: unreachable by touch, and half a second late for everyone else. Re-registered
+  // rather than removed when the rail expands, because an expanded link says its own name.
   sidebar.querySelectorAll(".nav-link").forEach((a) => {
     const label = a.querySelector(".nav-label");
-    if (collapsed && label) a.setAttribute("title", label.textContent);
-    else a.removeAttribute("title");
+    tipAnchor(a, collapsed && label ? label.textContent : null);
   });
 }
 
@@ -273,11 +277,10 @@ function renderSidebar(sidebar, data) {
       ),
       // Compact stand-in for the pill above, shown only while the rail is collapsed (the
       // captions are hidden then) so the credentials/dry-run state stays glanceable.
-      el("span", {
+      tipAnchor(el("span", {
         class: `rail-status-dot ${data.hasCredentials ? "ok" : "neutral"}`,
         "aria-hidden": "true",
-        title: data.hasCredentials ? "Credentials loaded" : "Dry-run (no credentials)",
-      }),
+      }), data.hasCredentials ? "Credentials loaded" : "Dry-run (no credentials)"),
     );
     if (data.latestSync) {
       const ts = data.latestSync.finished_at;
@@ -440,6 +443,10 @@ async function route() {
   // Before the DOM goes: cancel the outgoing page's pending work, so a debounced
   // callback cannot fire into a page that no longer exists.
   runPageTeardown();
+  // The hover card is portaled to <body>, so it is the one piece of UI a page teardown does
+  // not reach on its own. A definition left hanging over the next page would be explaining
+  // something that is no longer on screen.
+  closeTip();
   clear(mainEl);
   mainEl.classList.toggle("full-bleed", !!page.fullBleed);
   // The first render after a boot is covered by the boot splash → page skeleton, so it skips

@@ -11,7 +11,10 @@
 //                band demoted to muted context, and the model's display label
 //   data.js      quantity display: progress track, pager
 //   controls.js  status pills, KPI tiles, stat rows
-//   feedback.js  loading / empty / error / toast / dialog / help tip
+//   feedback.js  loading / empty / error / toast / dialog
+//   tip.js       the one hover card: the app's only answer to "what does this mean"
+//   tipPlace.js  where that card lands and when it opens — the DOM-free half, so vitest
+//                can hold the geometry without a jsdom this repo does not have
 //   sheet.js     the drill-down overlay and its section+row vocabulary
 //   combobox.js  the searchable portaled listbox
 //   prunePanel.js the Data page's keep-one-project-delete-the-rest control
@@ -44,8 +47,12 @@ export {
   togglePills,
 } from "./ui/controls.js";
 export {
-  confirmDialog, emptyState, errorState, helpTip, skeleton, skeletonStack, toast,
+  confirmDialog, emptyState, errorState, skeleton, skeletonStack, toast,
 } from "./ui/feedback.js";
+export {
+  bookTip, chartTipHandler, closeTip, glossaryTip, tip, tipAnchor, tipLabel, tipLines,
+  tipMark, truncTip,
+} from "./ui/tip.js";
 export {
   closeActiveSheet, openSheet, sectionLabel, sheetRow, sheetSection,
 } from "./ui/sheet.js";
@@ -58,7 +65,7 @@ export { codeBlock, copyButton, copyText } from "./ui/code.js";
 export { uiIcon } from "./ui/uiIcons.js";
 export { pointRail, railScale } from "./ui/rail.js";
 export { debounce, onPageTeardown, runPageTeardown } from "./ui/timing.js";
-export { outcomeBadge, outcomeLabel } from "./ui/outcome.js";
+export { outcomeBadge, outcomeLabel, outcomeNote } from "./ui/outcome.js";
 export { tierBadge, tierLabel } from "./ui/posture.js";
 export { latticeGrid } from "./ui/lattice.js";
 export { axisBar, axisTally } from "./ui/axisBar.js";

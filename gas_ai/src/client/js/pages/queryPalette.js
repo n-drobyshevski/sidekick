@@ -892,8 +892,9 @@ export function openQueryPalette(spec) {
         el("span", { class: "gq-pal-option-label" }, entry.label),
         el("span", { class: "gq-pal-option-sub" }, entry.sub)),
       (togglable ? on : isCurrent)
-        ? el("span", { class: "gq-pal-option-current", title: "Currently selected" },
-          uiIcon("check", 13))
+        ? el("span", { class: "gq-pal-option-current" },
+          uiIcon("check", 13),
+          el("span", { class: "sr-only" }, "Currently selected"))
         : null,
       entry.count ? el("span", { class: "gq-pal-option-count" }, entry.count.toLocaleString()) : null,
     );
