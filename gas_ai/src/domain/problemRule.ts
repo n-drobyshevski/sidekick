@@ -43,6 +43,11 @@ export interface OutcomeRule {
   outcome: Outcome;
 }
 
+/**
+ * Which asset a problem is judged against — see ProblemRule.attributionJoin.
+ */
+export type AttributionJoin = "direct" | "runsAs";
+
 export interface ProblemRule {
   /** Ordered; first match wins — see `problem.decideProblem`. */
   outcomeRules: OutcomeRule[];
@@ -56,6 +61,20 @@ export interface ProblemRule {
   totalImpactGroups: string[];
   /** What a missing business-impact tier reads as. Default `"MEDIUM"`, never `"LOW"`. */
   missingMission: Mission;
+  /**
+   * WHICH ASSET a problem is judged against — not how the judgement is made.
+   *
+   * `direct` looks up the entity Wiz raised the issue on. `runsAs` also accepts the AI asset
+   * that runs as it, one hop (IssueRow.attributedAssetIds). Deliberately SEPARATE from
+   * AarsRule.issueAttribution rather than one shared switch: an AARS-side decision must not be
+   * able to silently re-decide every problem verdict, which is the exact coupling
+   * withProblemVerdicts exists as its own fold to avoid.
+   *
+   * A DERIVATION knob, so it joins vectorSignature: it changes which node impactOf and
+   * exposureOf read, so a persisted problemInput from the other setting must be re-derived
+   * rather than re-decided. Default `direct`.
+   */
+  attributionJoin: AttributionJoin;
   /**
    * The max share of the 54 leaves allowed to reach ACT, checked by `validateProblemRule`.
    * Default `0.15`. This is a VALIDATION-only knob: it never appears in `decideProblem` or
@@ -133,6 +152,7 @@ export const DEFAULT_PROBLEM_RULE: ProblemRule = {
   // but the specific pattern whose own framework tags say RCE.
   totalImpactGroups: ["gcp-hosted-privileged"],
   missingMission: "MEDIUM",
+  attributionJoin: "direct",
   actLeafCeiling: 0.15,
 };
 
@@ -230,6 +250,10 @@ export function cleanProblemRule(raw: unknown): ProblemRule {
     ? (r["missingMission"] as Mission)
     : DEFAULT_PROBLEM_RULE.missingMission;
 
+  // Unreadable reads as "direct", never "runsAs" — same convention as every other derivation
+  // field: a rule blob written before this existed must keep deciding exactly as it did.
+  const attributionJoin: AttributionJoin = r["attributionJoin"] === "runsAs" ? "runsAs" : "direct";
+
   const ceilingRaw = Number(r["actLeafCeiling"]);
   const actLeafCeiling = Number.isFinite(ceilingRaw)
     ? Math.min(1, Math.max(ACT_CEILING_FLOOR, ceilingRaw))
@@ -240,6 +264,7 @@ export function cleanProblemRule(raw: unknown): ProblemRule {
     fallbackOutcome,
     exploitationByRuleId,
     remediateVerdicts,
+    attributionJoin,
     totalImpactGroups,
     missingMission,
     actLeafCeiling,
@@ -548,6 +573,7 @@ export function vectorSignature(rule: ProblemRule): string {
     `remediateVerdicts:${rule.remediateVerdicts.join(",")}`,
     `totalImpactGroups:${rule.totalImpactGroups.join(",")}`,
     `missingMission:${rule.missingMission}`,
+    `attributionJoin:${rule.attributionJoin}`,
   ].join("|");
 }
 
@@ -628,3 +654,5 @@ export function problemCensus(
 
   return { verdicts: rank(verdicts), comboGroups: rank(groups) };
 }
+
+

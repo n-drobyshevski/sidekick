@@ -36,3 +36,7 @@ gas_ai/dev/server.dev.js
 spark-warehouse/
 metastore_db/
 derby.log
+# Local Wiz credentials for the gas_ai dev harness (dev/serve.mjs reads gas_ai/.env.local
+# and gas_ai/dev/.env.local). Unanchored, so a copy in any directory is covered: a
+# credential file one level from where it was expected must not become a commit.
+.env.local

@@ -2,6 +2,7 @@
 // live in domain/settingsLogic.ts; this layer only loads/saves the settings dict.
 
 import { scoringEqual } from "../domain/aarsRule";
+import { DERIVATION_VERSION } from "../domain/config";
 import type { ScopePins } from "../domain/complianceScope";
 import { decisionEqual } from "../domain/problemRule";
 import { tierEqual } from "../domain/postureRule";
@@ -305,6 +306,29 @@ export function setComputedPostureVersion(version: unknown): void {
   const settings = loadSettings();
   const next = logic.withComputedPostureVersion(settings, version);
   if (logic.getComputedPostureVersion(next) === logic.getComputedPostureVersion(settings)) return;
+  saveSettings(next);
+}
+
+export const getSyncDerivationVersion = (): number => logic.getSyncDerivationVersion(loadSettings());
+
+/**
+ * Whether the stored facts were collected by an older normalizer than the running code.
+ * Unlike the three rule-version markers above, this one is NOT repaired by Recompute — see
+ * settingsLogic.derivationIsStale and config.DERIVATION_VERSION.
+ */
+export const derivationIsStale = (): boolean =>
+  logic.derivationIsStale(loadSettings(), DERIVATION_VERSION);
+
+/**
+ * Mark which normalizer generation the persisted facts were collected under. Called from
+ * syncStore.commit ONLY — never from a rescore or a redecide, which is the whole distinction:
+ * those re-price facts that are already in the sheet, and this marker is about how those facts
+ * got there. Same no-op guard as the three setters above.
+ */
+export function setSyncDerivationVersion(version: unknown): void {
+  const settings = loadSettings();
+  const next = logic.withSyncDerivationVersion(settings, version);
+  if (logic.getSyncDerivationVersion(next) === logic.getSyncDerivationVersion(settings)) return;
   saveSettings(next);
 }
 

@@ -157,14 +157,40 @@ export const MEASURE_ENTRIES = [
   {
     id: "guardrail-coverage-pct", measure: "guardrailCoveragePct", type: "implementation",
     measurementMethod: "Objective",
-    goal: "Share of managed AI agents with no missing-guardrail finding raised — an "
-      + "absence of evidence, not a confirmed control (see the record's own caveat).",
-    formula: "protectedAgents / agents × 100, rounded; null when there are no agents.",
+    goal: "Share of SCANNED AI agents with no missing-guardrail finding raised — an absence "
+      + "of evidence, not a confirmed control, and reported beside the count the scan never "
+      + "reached rather than folded in with it.",
+    formula: "protectedAgents (guardrailMissing === false) / (agents - guardrailUnknownAgents) "
+      + "× 100, rounded; null when nothing was scanned.",
     dataSource: "ai_assets.guardrail_missing, ai_assets.kind",
-    reportingFormat: "Wiz Scans coverage area.",
+    reportingFormat: "Wiz Scans coverage area, beside protectedAgents and guardrailUnknownAgents.",
     revisionDue: "2027-08-13",
   },
   {
+    id: "posture-scope-split", measure: "posture tiers, withheld, out of scope", 
+    type: "implementation", measurementMethod: "Objective",
+    goal: "How much of the register the posture lattice actually rates — and for the rest, "
+      + "which of the two reasons applies. Withheld is a coverage gap someone can close; out "
+      + "of scope says this lattice does not describe this kind of asset, and nothing can.",
+    formula: "censusPostureTiers(nodes): tier counts (zeros kept) plus withheld, outOfScope "
+      + "and total, split on whether the node carries a posture vector at all.",
+    dataSource: "sync_history.posture_tier_json, ai_assets.posture_tier, ai_assets.posture_input_json",
+    reportingFormat: "Inventory posture header; the Posture column reason per row; the posture "
+      + "trend series.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "derivation-version-currency", measure: "derivation version, ledger vs code",
+    type: "implementation", measurementMethod: "Objective",
+    goal: "Whether the stored facts were collected by the normalizer now running. The one "
+      + "staleness Recompute cannot repair, because the old value was destroyed at ingest — "
+      + "so the warning names a full sync as its remedy.",
+    formula: "derivationIsStale(settings, DERIVATION_VERSION); an unstamped ledger reads "
+      + "stale, the opposite default to the three rule-version markers.",
+    dataSource: "sync_history.derivation_version, settings.key, settings.value_json",
+    reportingFormat: "Staleness banner; break markers on every sync_history trend series.",
+    revisionDue: "2027-08-13",
+  },  {
     id: "toxic-combo-patterns-active", measure: "patternsActive / patternsTotal",
     type: "impact", measurementMethod: "Objective",
     goal: "How many of the four modelled toxic-combination patterns currently have an "

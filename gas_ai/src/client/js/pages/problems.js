@@ -413,7 +413,7 @@ export async function renderProblems(main, params) {
       { key: "title", label: "Rule", cell: (r) => r.title },
       { key: "asset", label: "Asset", cell: (r) => r.assetName },
       { key: "posture", label: "Posture", help: { term: "posture-tier" },
-        cell: (r) => tierBadge(r.postureTier) },
+        cell: (r) => tierBadge(r.postureTier, r.postureState) },
       { key: "severity", label: "Severity", help: { term: "adjusted-severity" },
         cell: (r) => sevBadge(r.severity) },
       { key: "due", label: "Due", cell: (r) => dueChip(r.dueAt) || "—" },

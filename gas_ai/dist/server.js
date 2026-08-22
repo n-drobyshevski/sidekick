@@ -414,7 +414,13 @@ var Server = (() => {
       // preview surface, never on the row.
       "problem_outcome",
       "problem_input_json",
-      "problem_rule_version"
+      "problem_rule_version",
+      // Which AI assets this issue actually describes, and how they were reached. Appended,
+      // same no-migration contract. NOT a replacement for asset_id, which keeps naming the
+      // entity Wiz raised the issue on so the drill-down still matches the console — see
+      // IssueRow.attributedAssetIds for the measurement that made this necessary.
+      "attributed_asset_ids",
+      "attribution_hop"
     ],
     [TABS.findings]: [
       "id",
@@ -598,7 +604,25 @@ var Server = (() => {
       // in aarsTrend.ts for the shape and for why an absent entry is never read as a zero.
       // Appended, same no-migration contract: rows without it have no scoped series, which the
       // trend reports rather than fabricates.
-      "project_totals_json"
+      "project_totals_json",
+      // The posture distribution this sync produced, and which posture rule produced it — the
+      // analogue of the two AARS columns and the two problem columns above. It was the only one
+      // of the three models with NO series at all, which is the one the Inventory header leads
+      // with and the one compareProblems uses as its second-level tiebreak.
+      //
+      // It carries the SCOPE SPLIT, not just tiers: an asset can lack a tier because nobody
+      // measured it (a coverage gap) or because the lattice does not describe its kind (not a
+      // gap at all), and a bare tier count cannot tell those apart — see posture.censusPostureTiers.
+      // Without that split the tri-state normalizer fix reads as risk improving, because the
+      // tiered population legitimately collapses on the sync that first tells the truth.
+      "posture_tier_json",
+      "posture_rule_version",
+      // Which NORMALIZER produced the readings above, as opposed to which RULE priced them.
+      // A rule version moves when an operator edits a model; this moves when a code change
+      // alters what a stored fact MEANS — and only a full sync can repair the difference,
+      // because the old value was destroyed at ingest rather than merely re-priced. The trend
+      // marks the break here so a step is never read as movement. See DERIVATION_VERSION.
+      "derivation_version"
     ],
     [TABS.settings]: ["key", "value_json"],
     [TABS.jobs]: [
@@ -941,6 +965,7 @@ var Server = (() => {
   var MAX_EDGES_DEFAULT = 250;
   var EDGE_BUDGET_RATIO = 2.5;
   var SEED_WAVE_RATIO = 0.4;
+  var DERIVATION_VERSION = 2;
 
   // src/domain/graphTypes.ts
   function severityRank(s) {
@@ -2628,12 +2653,16 @@ var Server = (() => {
       lastSeen: str3(f("lastSeen")),
       externalId: str3(f("externalId")),
       isAccessibleFromInternet: triBool2(f("isAccessibleFromInternet")),
-      isOpenToAllInternet: triBool2(f("isOpenToAllInternet")),
-      hasSensitiveData: bool(f("hasSensitiveData")),
-      hasAccessToSensitiveData: bool(f("hasAccessToSensitiveData")),
-      hasHighPrivileges: bool(f("hasHighPrivileges")),
-      hasAdminPrivileges: bool(f("hasAdminPrivileges"))
+      isOpenToAllInternet: triBool2(f("isOpenToAllInternet"))
     };
+    const sensitiveData = triBool2(f("hasSensitiveData"));
+    if (sensitiveData !== null) node2.hasSensitiveData = sensitiveData;
+    const sensitiveAccess = triBool2(f("hasAccessToSensitiveData"));
+    if (sensitiveAccess !== null) node2.hasAccessToSensitiveData = sensitiveAccess;
+    const highPriv = triBool2(f("hasHighPrivileges"));
+    if (highPriv !== null) node2.hasHighPrivileges = highPriv;
+    const adminPriv = triBool2(f("hasAdminPrivileges"));
+    if (adminPriv !== null) node2.hasAdminPrivileges = adminPriv;
     const purpose = normalizeIdentityPurpose(f("identityPurpose"));
     if (purpose) node2.identityPurpose = purpose;
     const inactive = f("inactiveInLast90Days");
@@ -3616,6 +3645,7 @@ var Server = (() => {
     pillarACap: 50,
     // "code": the spec's unit — one gap per distinct framework code. See `GapUnit`.
     gapUnit: "code",
+    issueAttribution: "direct",
     gapPoints: [
       { match: "exact", code: "NO_GUARDRAIL", points: 10 },
       { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
@@ -3668,6 +3698,7 @@ var Server = (() => {
     // against the code-unit shape, and switching the unit is a bigger act than this pass —
     // `AARS_V3_RULE` is that act, kept separate so v2 keeps meaning what it always meant.
     gapUnit: "code",
+    issueAttribution: "direct",
     gapPoints: [
       { match: "exact", code: "NO_GUARDRAIL", points: 10 },
       { match: "exact", code: "INACTIVE_AGENT", points: 10 },
@@ -3713,6 +3744,7 @@ var Server = (() => {
   var AARS_V3_RULE = {
     ...AARS_V2_RULE,
     gapUnit: "condition",
+    issueAttribution: "direct",
     gapPoints: [
       { match: "exact", code: "INACTIVE_AGENT", points: 10 },
       { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
@@ -3739,6 +3771,7 @@ var Server = (() => {
     const s = rule.gapSources;
     return [
       `gapUnit:${rule.gapUnit}`,
+      `issueAttribution:${rule.issueAttribution}`,
       `fiveRs:${s.fiveRs ? 1 : 0}`,
       `deprecatedModel:${s.deprecatedModel ? 1 : 0}`,
       `inactiveAgent:${s.inactiveAgent ? 1 : 0}`,
@@ -3833,15 +3866,20 @@ var Server = (() => {
   }
 
   // src/domain/riskConditions.ts
+  function anyTrue(sources) {
+    if (sources.some((v) => v === true)) return true;
+    if (sources.some((v) => v === null || v === void 0)) return null;
+    return false;
+  }
   function conditionState(node2, key) {
     var _a5, _b;
     switch (key) {
       case "MISSING_GUARDRAIL":
-        return node2.guardrailMissing === true;
+        return anyTrue([node2.guardrailMissing]);
       case "EXCESSIVE_PRIVILEGE":
-        return node2.hasAdminPrivileges === true || node2.hasHighPrivileges === true;
+        return anyTrue([node2.hasAdminPrivileges, node2.hasHighPrivileges]);
       case "SENSITIVE_DATA":
-        return node2.hasSensitiveData === true || node2.hasAccessToSensitiveData === true;
+        return anyTrue([node2.hasSensitiveData, node2.hasAccessToSensitiveData]);
       case "INTERNET_EXPOSURE": {
         const evidence = node2.exposureEvidence;
         if (evidence) {
@@ -3849,11 +3887,7 @@ var Server = (() => {
           const endpoints = (_b = evidence.endpointIds) != null ? _b : [];
           if (hosts.length > 0 || endpoints.length > 0) return true;
         }
-        const reachable2 = node2.isAccessibleFromInternet;
-        const openToAll = node2.isOpenToAllInternet;
-        if (reachable2 === true || openToAll === true) return true;
-        const unknown = (v) => v === null || v === void 0;
-        return unknown(reachable2) || unknown(openToAll) ? null : false;
+        return anyTrue([node2.isAccessibleFromInternet, node2.isOpenToAllInternet]);
       }
     }
   }
@@ -4063,6 +4097,7 @@ var Server = (() => {
     // but the specific pattern whose own framework tags say RCE.
     totalImpactGroups: ["gcp-hosted-privileged"],
     missingMission: "MEDIUM",
+    attributionJoin: "direct",
     actLeafCeiling: 0.15
   };
   function cleanWhen(v) {
@@ -4125,6 +4160,7 @@ var Server = (() => {
       MAX_TOTAL_IMPACT_GROUPS
     );
     const missingMission = MISSION_VALUES.includes(r["missingMission"]) ? r["missingMission"] : DEFAULT_PROBLEM_RULE.missingMission;
+    const attributionJoin = r["attributionJoin"] === "runsAs" ? "runsAs" : "direct";
     const ceilingRaw = Number(r["actLeafCeiling"]);
     const actLeafCeiling = Number.isFinite(ceilingRaw) ? Math.min(1, Math.max(ACT_CEILING_FLOOR, ceilingRaw)) : DEFAULT_PROBLEM_RULE.actLeafCeiling;
     return {
@@ -4132,6 +4168,7 @@ var Server = (() => {
       fallbackOutcome,
       exploitationByRuleId,
       remediateVerdicts,
+      attributionJoin,
       totalImpactGroups,
       missingMission,
       actLeafCeiling
@@ -4282,7 +4319,8 @@ var Server = (() => {
       `exploitationByRuleId:${exploitation}`,
       `remediateVerdicts:${rule.remediateVerdicts.join(",")}`,
       `totalImpactGroups:${rule.totalImpactGroups.join(",")}`,
-      `missingMission:${rule.missingMission}`
+      `missingMission:${rule.missingMission}`,
+      `attributionJoin:${rule.attributionJoin}`
     ].join("|");
   }
   function decisionEqual(a, b) {
@@ -4308,6 +4346,40 @@ var Server = (() => {
     }
     const rank = (counts) => Object.keys(counts).map((value) => ({ value, issues: counts[value] })).sort((a, b) => b.issues - a.issues || a.value.localeCompare(b.value)).slice(0, PROBLEM_CENSUS_MAX);
     return { verdicts: rank(verdicts), comboGroups: rank(groups) };
+  }
+
+  // src/domain/measurability.ts
+  var IDENTITY_FLAGS = [
+    "hasAdminPrivileges",
+    "hasHighPrivileges",
+    "hasAccessToSensitiveData"
+  ];
+  var NON_PRINCIPAL_KINDS = [
+    "AI_DATASET",
+    "BUCKET",
+    "DATABASE",
+    "DATABASE_SERVER",
+    "ACCESS_ROLE_PERMISSION",
+    "IAM_BINDING",
+    "ACCESS_ROLE_BINDING"
+  ];
+  var NON_STORE_KINDS = [
+    "AI_AGENT",
+    "SERVICE_ACCOUNT",
+    "USER_ACCOUNT",
+    "ACCESS_ROLE",
+    "ACCESS_KEY",
+    "ACCESS_ROLE_PERMISSION",
+    "IAM_BINDING",
+    "ACCESS_ROLE_BINDING"
+  ];
+  function flagApplies(kind, flag) {
+    if (flag === "guardrailMissing") return GUARDRAIL_SUBJECT_KINDS.includes(kind);
+    if (flag === "hasSensitiveData") return !NON_STORE_KINDS.includes(kind);
+    if (IDENTITY_FLAGS.includes(flag)) {
+      return !NON_PRINCIPAL_KINDS.includes(kind);
+    }
+    return true;
   }
 
   // src/domain/posture.ts
@@ -4357,8 +4429,9 @@ var Server = (() => {
     const broad = admin === true || humanAdmin === true || highPriv === true && sensitiveAccess === true;
     const scoped = highPriv === true || sensitiveAccess === true;
     const capability = broad ? "BROAD" : scoped ? "SCOPED" : "MINIMAL";
-    const unknown = admin === void 0 && highPriv === void 0 && sensitiveAccess === void 0 && !(node2 == null ? void 0 : node2.humanAccess);
-    return { capability, unknown };
+    const unread = admin === void 0 && highPriv === void 0 && sensitiveAccess === void 0 && !(node2 == null ? void 0 : node2.humanAccess);
+    const kindCannotCarry = !!node2 && !node2.humanAccess && !flagApplies(node2.kind, "hasAdminPrivileges");
+    return { capability, unknown: unread && !kindCannotCarry, notApplicable: unread && kindCannotCarry };
   }
   function containmentOf(node2) {
     const missing = node2 == null ? void 0 : node2.guardrailMissing;
@@ -4381,13 +4454,18 @@ var Server = (() => {
   }
   function derivePostureInput(node2, rule) {
     const unknowns = [];
-    const { capability, unknown: capabilityUnknown } = capabilityOf(node2);
-    if (capabilityUnknown) unknowns.push("capability");
+    const notApplicable = [];
+    const cap = capabilityOf(node2);
+    if (cap.unknown) unknowns.push("capability");
+    if (cap.notApplicable) notApplicable.push("capability");
     const { containment, unknown: containmentUnknown } = containmentOf(node2);
     if (containmentUnknown) unknowns.push("containment");
     const { consequence, unknown: consequenceUnknown } = consequenceOf(node2);
     if (consequenceUnknown) unknowns.push("consequence");
-    return { vector: { capability, containment, consequence }, unknowns };
+    return { vector: { capability: cap.capability, containment, consequence }, unknowns, notApplicable };
+  }
+  function tierInScope(notApplicable) {
+    return notApplicable.length === 0;
   }
   function countPostureTiers(nodes) {
     const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
@@ -4396,6 +4474,25 @@ var Server = (() => {
       if (t === 1 || t === 2 || t === 3 || t === 4) counts[t]++;
     }
     return counts;
+  }
+  function postureStateOf(node2) {
+    const t = node2.postureTier;
+    if (t === 1 || t === 2 || t === 3 || t === 4) return "TIERED";
+    return node2.postureInput === void 0 ? "OUT_OF_SCOPE" : "WITHHELD";
+  }
+  function censusPostureTiers(nodes) {
+    const tiers = countPostureTiers(nodes);
+    let withheld = 0;
+    let outOfScope = 0;
+    let total2 = 0;
+    for (const n of nodes) {
+      if (n.kind === "ISSUE" || n.kind === "SUMMARY") continue;
+      total2++;
+      const state = postureStateOf(n);
+      if (state === "WITHHELD") withheld++;
+      else if (state === "OUT_OF_SCOPE") outOfScope++;
+    }
+    return { tiers, withheld, outOfScope, total: total2 };
   }
   function worstOpenProblem(outcomes) {
     let worstIndex = -1;
@@ -4482,7 +4579,7 @@ var Server = (() => {
   function buildAarsHintsFromFindings(findings, doc, issues2, rule = DEFAULT_AARS_RULE) {
     var _a5;
     const open = issues2.filter(isUnresolvedIssue);
-    const issuesByAsset = groupBy(open, (i) => i.assetId);
+    const issuesByAsset = issuesByAssetFor(open, rule.issueAttribution);
     const codesByResource = /* @__PURE__ */ new Map();
     const worstByCode = /* @__PURE__ */ new Map();
     for (const f of findings.filter(isOpenGap)) {
@@ -4523,9 +4620,40 @@ var Server = (() => {
     }
     return hints;
   }
+  function withIssueAttribution(doc, issues2) {
+    const kindById = /* @__PURE__ */ new Map();
+    for (const n of doc.nodes) kindById.set(n.id, n.kind);
+    const runnersOf = /* @__PURE__ */ new Map();
+    for (const e of doc.edges) {
+      if (e.type !== "RUNS_AS") continue;
+      if (!AI_ASSET_KINDS.includes(kindById.get(e.src))) continue;
+      pushInto(runnersOf, e.dst, e.src);
+    }
+    return issues2.map((issue2) => {
+      const own = kindById.get(issue2.assetId);
+      if (own !== void 0 && AI_ASSET_KINDS.includes(own)) {
+        return { ...issue2, attributedAssetIds: [issue2.assetId], attributionHop: "direct" };
+      }
+      const runners = runnersOf.get(issue2.assetId);
+      if (runners && runners.length) {
+        return { ...issue2, attributedAssetIds: [...runners].sort(), attributionHop: "RUNS_AS" };
+      }
+      return { ...issue2, attributedAssetIds: [], attributionHop: "none" };
+    });
+  }
+  function issuesByAssetFor(open, mode) {
+    var _a5;
+    if (mode === "direct") return groupBy(open, (i) => i.assetId);
+    const out = /* @__PURE__ */ new Map();
+    for (const issue2 of open) {
+      const targets = /* @__PURE__ */ new Set([issue2.assetId, ...(_a5 = issue2.attributedAssetIds) != null ? _a5 : []]);
+      for (const id of targets) pushInto(out, id, issue2);
+    }
+    return out;
+  }
   function enrichGraphDoc(doc, issues2, hints, rule = DEFAULT_AARS_RULE) {
     const open = issues2.filter(isUnresolvedIssue);
-    const byAsset = groupBy(open, (i) => i.assetId);
+    const byAsset = issuesByAssetFor(open, rule.issueAttribution);
     const reach = dataFindingReach(doc);
     const nodes = doc.nodes.map((raw) => {
       var _a5, _b, _c;
@@ -4599,9 +4727,17 @@ var Server = (() => {
   function withProblemVerdicts(doc, issues2, findings, rule, ruleVersion) {
     const byId = indexBy(doc.nodes, (n) => n.id);
     const sig = vectorSignature(rule);
+    const judgeFor = (assetId, attributed2) => {
+      const direct = byId.get(assetId);
+      if (rule.attributionJoin === "direct" || direct) return direct;
+      const candidates = (attributed2 != null ? attributed2 : []).map((id) => byId.get(id)).filter((n) => !!n);
+      if (!candidates.length) return void 0;
+      const rank = (n) => (n.hasAdminPrivileges === true ? 4 : 0) + (conditionState(n, "INTERNET_EXPOSURE") === true ? 2 : 0) + (n.hasHighPrivileges === true ? 1 : 0);
+      return candidates.reduce((best, n) => rank(n) > rank(best) ? n : best);
+    };
     const decidedIssues = issues2.map((issue2) => {
       if (!isUnresolvedIssue(issue2)) return stripProblemFields(issue2);
-      const input = deriveProblemInput(issue2, byId.get(issue2.assetId), rule);
+      const input = deriveProblemInput(issue2, judgeFor(issue2.assetId, issue2.attributedAssetIds), rule);
       const { outcome } = decideProblem(input.vector, rule);
       return {
         ...issue2,
@@ -4634,13 +4770,18 @@ var Server = (() => {
     const nodes = doc.nodes.map((node2) => {
       var _a5;
       if (node2.kind === "ISSUE" || node2.kind === "SUMMARY") return node2;
-      const { vector, unknowns } = derivePostureInput(node2, rule);
+      const { vector, unknowns, notApplicable } = derivePostureInput(node2, rule);
       const { tier } = decidePosture(vector, rule);
       const worst = worstOpenProblem((_a5 = outcomesByAsset.get(node2.id)) != null ? _a5 : []);
-      const next = {
-        ...node2,
-        postureInput: unknowns.length ? { ...vector, unknowns } : { ...vector }
-      };
+      const next = { ...node2 };
+      if (!tierInScope(notApplicable)) {
+        delete next.postureInput;
+        delete next.postureTier;
+        if (worst) next.worstOpenProblem = worst;
+        else delete next.worstOpenProblem;
+        return next;
+      }
+      next.postureInput = unknowns.length ? { ...vector, unknowns } : { ...vector };
       if (tierEstablished(unknowns)) next.postureTier = tier;
       else delete next.postureTier;
       if (worst) next.worstOpenProblem = worst;
@@ -7042,6 +7183,7 @@ var Server = (() => {
     const gapAggregation = r["gapAggregation"] === "rss" ? "rss" : "sum";
     const dataFindingScaling = r["dataFindingScaling"] === "log2" ? "log2" : "flat";
     const gapUnit = r["gapUnit"] === "condition" ? "condition" : "code";
+    const issueAttribution = r["issueAttribution"] === "runsAs" ? "runsAs" : "direct";
     return {
       severityPoints,
       multiIssueMultiplier: clampMultiplier(
@@ -7051,6 +7193,7 @@ var Server = (() => {
       multiIssueScaling,
       pillarACap: clampInt(r["pillarACap"], DEFAULT_AARS_RULE.pillarACap, POINTS_MIN, POINTS_MAX),
       gapUnit,
+      issueAttribution,
       gapPoints,
       gapFallbackPoints: clampInt(
         r["gapFallbackPoints"],
@@ -7654,6 +7797,20 @@ var Server = (() => {
       posture_computed_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
     };
   }
+  function getSyncDerivationVersion(settings) {
+    const v = Number(settings["last_sync_derivation_version"]);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function withSyncDerivationVersion(settings, version) {
+    const v = Number(version);
+    return {
+      ...settings,
+      last_sync_derivation_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
+    };
+  }
+  function derivationIsStale(settings, current) {
+    return getSyncDerivationVersion(settings) < current;
+  }
   var CONFIG_RULES_TTL_MS = 30 * 864e5;
   function getConfigRulesSyncedAt(settings) {
     const v = Number(settings["config_rules_synced_at"]);
@@ -7887,7 +8044,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "3ca88169a055" : "dev";
+  var BUILD_ID = true ? "4d29b2647c27" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8155,6 +8312,14 @@ var Server = (() => {
     if (getComputedPostureVersion(next) === getComputedPostureVersion(settings)) return;
     saveSettings(next);
   }
+  var getSyncDerivationVersion2 = () => getSyncDerivationVersion(loadSettings());
+  var derivationIsStale2 = () => derivationIsStale(loadSettings(), DERIVATION_VERSION);
+  function setSyncDerivationVersion(version) {
+    const settings = loadSettings();
+    const next = withSyncDerivationVersion(settings, version);
+    if (getSyncDerivationVersion(next) === getSyncDerivationVersion(settings)) return;
+    saveSettings(next);
+  }
   function configRulesAreFresh2(hasRows, now) {
     return configRulesAreFresh(loadSettings(), hasRows, now);
   }
@@ -8384,11 +8549,19 @@ var Server = (() => {
       last_seen: (_l = n.lastSeen) != null ? _l : null,
       internet: triCell(n.isAccessibleFromInternet),
       open_internet: triCell(n.isOpenToAllInternet),
-      sensitive_data: boolCell(n.hasSensitiveData),
-      sensitive_access: boolCell(n.hasAccessToSensitiveData),
-      high_priv: boolCell(n.hasHighPrivileges),
-      admin_priv: boolCell(n.hasAdminPrivileges),
-      guardrail_missing: boolCell(n.guardrailMissing),
+      // triCell, not boolCell, for the same reason `internet` above uses it: these five are
+      // TRI-STATE. boolCell(undefined) writes "false", which turns "Wiz never evaluated this"
+      // into "evaluated, and negative" the moment a row round-trips the sheet — and that made
+      // posture.capabilityOf/containmentOf and problem.impactOf unable to report `unknown` at
+      // all. guardrail_missing is the sharpest of the five: syncNormalize only ever sets it
+      // TRUE (the traversal is a negated scan), so "false" here has never once meant "we looked
+      // and a guardrail is attached" — yet containmentOf reads it, paired with a non-exposed
+      // flag, as STRONG containment.
+      sensitive_data: triCell(n.hasSensitiveData),
+      sensitive_access: triCell(n.hasAccessToSensitiveData),
+      high_priv: triCell(n.hasHighPrivileges),
+      admin_priv: triCell(n.hasAdminPrivileges),
+      guardrail_missing: triCell(n.guardrailMissing),
       technology_categories: ((_m = n.technologyCategories) != null ? _m : []).join(","),
       severity: (_n = n.severity) != null ? _n : null,
       aars: (_o = n.aars) != null ? _o : null,
@@ -8443,13 +8616,18 @@ var Server = (() => {
       lastSeen: (_i = r["last_seen"]) != null ? _i : void 0,
       isAccessibleFromInternet: parseTri(r["internet"]),
       isOpenToAllInternet: parseTri(r["open_internet"]),
-      hasSensitiveData: parseBool(r["sensitive_data"]),
-      hasAccessToSensitiveData: parseBool(r["sensitive_access"]),
-      hasHighPrivileges: parseBool(r["high_priv"]),
-      hasAdminPrivileges: parseBool(r["admin_priv"]),
-      guardrailMissing: parseBool(r["guardrail_missing"]),
       projects: parseAssetProjects(r["projects_json"])
     };
+    const sensitiveData = parseTri(r["sensitive_data"]);
+    if (sensitiveData !== null) node2.hasSensitiveData = sensitiveData;
+    const sensitiveAccess = parseTri(r["sensitive_access"]);
+    if (sensitiveAccess !== null) node2.hasAccessToSensitiveData = sensitiveAccess;
+    const highPriv = parseTri(r["high_priv"]);
+    if (highPriv !== null) node2.hasHighPrivileges = highPriv;
+    const adminPriv = parseTri(r["admin_priv"]);
+    if (adminPriv !== null) node2.hasAdminPrivileges = adminPriv;
+    const guardrailMissing = parseTri(r["guardrail_missing"]);
+    if (guardrailMissing !== null) node2.guardrailMissing = guardrailMissing;
     const account = (_j = r["account_id"]) != null ? _j : null;
     if (account) {
       node2.cloudAccount = { id: account, name: String((_k = r["account_name"]) != null ? _k : account) };
@@ -8540,7 +8718,7 @@ var Server = (() => {
     return e;
   }
   function issueToRow(i) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B;
     return {
       id: i.id,
       rule_id: i.ruleId,
@@ -8583,11 +8761,16 @@ var Server = (() => {
       // as some fallback outcome would assert a decision nobody made.
       problem_outcome: (_y = i.problemOutcome) != null ? _y : null,
       problem_input_json: i.problemInput ? JSON.stringify(i.problemInput) : null,
-      problem_rule_version: (_z = i.problemRuleVersion) != null ? _z : null
+      problem_rule_version: (_z = i.problemRuleVersion) != null ? _z : null,
+      // Joined, not JSON: a short id list reads in the sheet, and nothing needs to round-trip
+      // a structure here. Empty string when attribution found nothing, which rowToIssue reads
+      // back as an empty ARRAY rather than as absent — "we looked and found none".
+      attributed_asset_ids: ((_A = i.attributedAssetIds) != null ? _A : []).join(","),
+      attribution_hop: (_B = i.attributionHop) != null ? _B : null
     };
   }
   function rowToIssue(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H;
     const issue2 = {
       id: String((_a5 = r["id"]) != null ? _a5 : ""),
       ruleId: String((_b = r["rule_id"]) != null ? _b : ""),
@@ -8629,7 +8812,12 @@ var Server = (() => {
     const ticketUrls = String((_E = r["ticket_urls"]) != null ? _E : "").split(",").filter(Boolean);
     if (ticketUrls.length) issue2.ticketUrls = ticketUrls;
     if (parseBool(r["validated_exploitable"])) issue2.validatedAsExploitable = true;
-    const problemOutcome = (_F = r["problem_outcome"]) != null ? _F : null;
+    const attributionHop = (_F = r["attribution_hop"]) != null ? _F : null;
+    if (attributionHop === "direct" || attributionHop === "RUNS_AS" || attributionHop === "none") {
+      issue2.attributionHop = attributionHop;
+      issue2.attributedAssetIds = String((_G = r["attributed_asset_ids"]) != null ? _G : "").split(",").filter(Boolean);
+    }
+    const problemOutcome = (_H = r["problem_outcome"]) != null ? _H : null;
     if (problemOutcome) issue2.problemOutcome = problemOutcome;
     const problemInput = parseJson(r["problem_input_json"], null);
     if (problemInput) issue2.problemInput = problemInput;
@@ -8947,11 +9135,12 @@ var Server = (() => {
       identityFindings: (_a5 = extras.identityFindings) != null ? _a5 : [],
       effectiveAccess: (_b = extras.effectiveAccess) != null ? _b : []
     });
-    const enriched = enrichGraphDoc(reachable2, issues2, hints, rule);
+    const attributedIssues = withIssueAttribution(reachable2, issues2);
+    const enriched = enrichGraphDoc(reachable2, attributedIssues, hints, rule);
     const { version: problemRuleVersion, rule: problemRule } = getProblemRule2();
     const { issues: decidedIssues, findings: decidedFindings } = withProblemVerdicts(
       enriched,
-      issues2,
+      attributedIssues,
       findings,
       problemRule,
       problemRuleVersion
@@ -9014,11 +9203,28 @@ var Server = (() => {
       // refinement must not be able to fail a commit.
       project_totals_json: encodeProjectTotals(
         countProjectTotals(postured.nodes, [...decidedIssues, ...decidedFindings])
-      )
+      ),
+      // The posture distribution, WITH its scope split — the third model's series, and the one
+      // that did not exist. `censusPostureTiers` reports tiers plus `withheld` (in scope, not yet
+      // measured) plus `outOfScope` (this lattice does not describe the kind) plus the total, so
+      // every share it feeds has its own denominator travelling beside it.
+      //
+      // Counted over `postured.nodes` — the same population the two columns above read — so the
+      // three series can never be describing different landscapes.
+      posture_tier_json: JSON.stringify(censusPostureTiers(postured.nodes)),
+      // Which posture rule produced it; moves independently of the other two, exactly as the
+      // three settings keys do.
+      posture_rule_version: postureRuleVersion,
+      // The normalizer generation these readings were collected under. A change here means the
+      // stored facts changed MEANING, which Recompute cannot repair — see DERIVATION_VERSION.
+      // Recorded per sync so the trend can mark the break rather than let a legitimate collapse
+      // in the tiered population read as risk improving.
+      derivation_version: DERIVATION_VERSION
     }]);
     setScoredRuleVersion(ruleVersion);
     setDecidedRuleVersion(problemRuleVersion);
     setComputedPostureVersion(postureRuleVersion);
+    setSyncDerivationVersion(DERIVATION_VERSION);
     commit();
     return postured;
   }
@@ -10834,7 +11040,7 @@ var Server = (() => {
         for (const r of rows) {
           const kind = String((_f = r["kind"]) != null ? _f : "(blank)");
           const id = String((_g = r["id"]) != null ? _g : "");
-          const held = parseBool(r["sensitive_data"]) || parseBool(r["sensitive_access"]) || parseBool(r["high_priv"]) || parseBool(r["admin_priv"]) || parseBool(r["guardrail_missing"]) || parseTri(r["internet"]) === true || parseTri(r["open_internet"]) === true;
+          const held = parseTri(r["sensitive_data"]) === true || parseTri(r["sensitive_access"]) === true || parseTri(r["high_priv"]) === true || parseTri(r["admin_priv"]) === true || parseTri(r["guardrail_missing"]) === true || parseTri(r["internet"]) === true || parseTri(r["open_internet"]) === true;
           const signal = issueAssetIds.has(id) || findingResourceIds.has(id) || held;
           const slot = (_h = byKind.get(kind)) != null ? _h : { total: 0, signal: 0 };
           slot.total += 1;
@@ -11441,6 +11647,7 @@ var Server = (() => {
       unknowns: (_e = (_d = issue2.problemInput) == null ? void 0 : _d.unknowns) != null ? _e : [],
       dueAt: (_f = issue2.dueAt) != null ? _f : null,
       postureTier: (_g = node2 == null ? void 0 : node2.postureTier) != null ? _g : null,
+      postureState: node2 ? postureStateOf(node2) : null,
       amplification: nodeAmplificationVector(node2),
       severity: (_h = issue2.adjustedSeverity) != null ? _h : null,
       ruleId: issue2.ruleId || void 0,
@@ -11467,6 +11674,7 @@ var Server = (() => {
       // field, only issuesV2 does. Null, never a made-up date.
       dueAt: null,
       postureTier: (_f = node2 == null ? void 0 : node2.postureTier) != null ? _f : null,
+      postureState: node2 ? postureStateOf(node2) : null,
       amplification: nodeAmplificationVector(node2),
       severity: (_g = finding.severity) != null ? _g : null,
       ruleId: finding.ruleId,
@@ -15193,6 +15401,24 @@ var Server = (() => {
         scoredVersion,
         stale: scoredVersion !== aarsRule.version
       },
+      // A SECOND kind of staleness, deliberately not folded into `aarsRule.stale` above.
+      //
+      // That one means "the model moved since these scores were computed", and Recompute fixes
+      // it — no Wiz call, the inputs are all in the sheet. This one means "the STORED FACTS were
+      // collected by an older normalizer", and Recompute cannot fix it at all: the old value was
+      // destroyed at ingest, so a cell reading "false" carries no memory of Wiz never having
+      // answered. Only a full sync repairs it.
+      //
+      // Shipping them as one flag would point an operator at a button that cannot help, which is
+      // worse than not warning at all — so the remedy travels WITH the warning.
+      derivation: {
+        current: DERIVATION_VERSION,
+        lastSync: getSyncDerivationVersion2(),
+        stale: derivationIsStale2(),
+        // Named here rather than in the client so the one sentence that matters cannot drift
+        // from the condition that raises it.
+        remedy: "sync"
+      },
       latestSync: latest,
       counts: {
         aiAssets: assets.filter((a) => AI_ASSET_KINDS.includes(a.kind)).length,
@@ -15477,7 +15703,13 @@ var Server = (() => {
       sensitiveData: (_z = n.hasSensitiveData) != null ? _z : false,
       highPriv: (_A = n.hasHighPrivileges) != null ? _A : false,
       adminPriv: (_B = n.hasAdminPrivileges) != null ? _B : false,
-      guardrailMissing: (_C = n.guardrailMissing) != null ? _C : false,
+      // `?? null`, not `?? false`. The store now keeps this tri-state, and re-collapsing it
+      // here would undo that fix one layer above it: the guardrail scan is a NEGATED traversal
+      // that only ever sets the flag TRUE, so `false` has never meant "we looked and a
+      // guardrail is attached". Every client reader tests `=== true` (assetTable.ts flag()),
+      // so a null reads as "not flagged" exactly as before — what changes is that "never
+      // scanned" stops being reported as a confirmed negative.
+      guardrailMissing: (_C = n.guardrailMissing) != null ? _C : null,
       // Null, not 0, when the sensitive-data traversal never reached this node: the graph
       // card and the insight row both key on truthiness, and a 0 would make "we never asked"
       // render exactly like "we looked and it is clean".
@@ -15516,9 +15748,22 @@ var Server = (() => {
       aarsPercentile: (_f = n.aarsPercentile) != null ? _f : null,
       // Phase 6: BESIDE aars — the two must be visibly independent columns, never merged.
       postureTier: (_g = n.postureTier) != null ? _g : null,
+      // WHY there is no tier, when there is none — one short enum rather than the whole vector,
+      // because this row is the table row and carries only what the table renders (the drill-down
+      // fetches postureInput itself). Without it the register cannot tell a COVERAGE gap ("nobody
+      // measured this, go and do it") from a SCOPE statement ("this lattice does not describe a
+      // dataset"), and both would render as the same blank cell — which on a live tenant is ~93%
+      // of the register and reads as breakage.
+      postureState: postureStateOf(n),
       worstOpenProblem: (_h = n.worstOpenProblem) != null ? _h : null,
       combos: ((_i = n.comboGroups) != null ? _i : []).length,
-      guardrailMissing: (_j = n.guardrailMissing) != null ? _j : false,
+      // `?? null`, not `?? false`. The store now keeps this tri-state, and re-collapsing it
+      // here would undo that fix one layer above it: the guardrail scan is a NEGATED traversal
+      // that only ever sets the flag TRUE, so `false` has never meant "we looked and a
+      // guardrail is attached". Every client reader tests `=== true` (assetTable.ts flag()),
+      // so a null reads as "not flagged" exactly as before — what changes is that "never
+      // scanned" stops being reported as a confirmed negative.
+      guardrailMissing: (_j = n.guardrailMissing) != null ? _j : null,
       agentic: n.identityPurpose === "AGENTIC",
       // How many classified findings this asset can REACH — its own if it is a datastore,
       // whatever its execution identity can read if it is an agent.
@@ -15571,7 +15816,8 @@ var Server = (() => {
     const openGaps = viewFindings().filter(isOpenGap);
     const unlinkedGaps = openGaps.filter((f) => !assetIds[f.resourceId]).length;
     const agents = assets.filter((a) => a.kind === "AI_AGENT");
-    const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
+    const protectedAgents = agents.filter((a) => a.guardrailMissing === false).length;
+    const guardrailUnknownAgents = agents.filter((a) => a.guardrailMissing === void 0).length;
     const issueRollup = issuesBySeverityByAsset(issues2);
     const scoredForPercentile = assets.filter(
       (a) => typeof a.aars === "number"
@@ -15608,6 +15854,10 @@ var Server = (() => {
         // "3 of 71 agents"; without this it had to recover the 3 by counting rows, which
         // only works while the client holds every row.
         protectedAgents,
+        // The third state, published rather than folded away. An agent the coverage scan never
+        // reached is not protected and not unprotected, and before this it was silently counted
+        // as protected — see protectedAgents above.
+        guardrailUnknownAgents,
         // The two asset-level headline counts, and they come from the POSTURE TIER rather
         // than from the AARS band.
         //
@@ -15624,7 +15874,12 @@ var Server = (() => {
         // AARS_SCORING_ASSESSMENT.md §3 sets for any aggregate this app ships. Without it
         // "60th percentile" is a number with no population behind it.
         aarsScored: assets.filter((a) => typeof a.aars === "number").length,
-        guardrailCoveragePct: agents.length ? Math.round(protectedAgents / agents.length * 100) : null,
+        // The denominator is the SCANNED agents, not every agent. Dividing by agents.length
+        // would count "never scanned" as "not covered", which is the mirror of the bug above:
+        // one direction invents a control, the other invents a gap. A percentage over a
+        // population that was never assessed is not a coverage figure at all, so when nothing
+        // has been scanned this is null and `guardrailUnknownAgents` carries the whole story.
+        guardrailCoveragePct: agents.length - guardrailUnknownAgents > 0 ? Math.round(protectedAgents / (agents.length - guardrailUnknownAgents) * 100) : null,
         sensitiveAccess: assets.filter(
           (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData
         ).length,
@@ -15641,6 +15896,27 @@ var Server = (() => {
           return sum + ((_a6 = a.dataFindingCount) != null ? _a6 : 0);
         }, 0),
         openIssues: issues2.length,
+        // The attribution denominator, published beside its total for the same reason
+        // `complianceGapsUnlinked` is: a widened join has to say what it did NOT reach, or the
+        // number it does report reads as the whole register.
+        //
+        // On the reference tenant this is the sharpest figure the app publishes about its own
+        // coverage: 691 of 840 AI-category issues land on a SERVICE_ACCOUNT, and only 22 of 99
+        // in-scope issues resolved to a synced AI asset before the RUNS_AS hop existed. A rising
+        // `issuesAttributed` is evidence the traversal ran, never evidence the estate got safer.
+        issuesAttributed: issues2.filter((i) => {
+          var _a6;
+          return ((_a6 = i.attributedAssetIds) != null ? _a6 : []).length > 0;
+        }).length,
+        // Reached no AI asset at all. Counts only rows attribution actually RAN over — a row
+        // synced before the fold existed carries no hop and is excluded from both halves rather
+        // than silently counted as a failure to attribute.
+        issuesUnattributed: issues2.filter(
+          (i) => {
+            var _a6;
+            return i.attributionHop !== void 0 && ((_a6 = i.attributedAssetIds) != null ? _a6 : []).length === 0;
+          }
+        ).length,
         complianceGaps: openGaps.length,
         complianceGapsUnlinked: unlinkedGaps,
         // Framework POSTURE, which is a different axis from the two counts above: those

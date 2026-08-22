@@ -282,6 +282,42 @@ export function withComputedPostureVersion(settings: Rec, version: unknown): Rec
   };
 }
 
+/**
+ * The DERIVATION generation the persisted facts were collected under — not a rule version.
+ *
+ * Defaults to 0 for a ledger that predates the key, and 0 is deliberately NOT treated as
+ * "current": a store written before this marker existed was written by an older normalizer by
+ * definition, which is exactly the population the staleness banner needs to reach. The three
+ * rule-version keys above default to 0 too, and there it means "unstamped, assume current";
+ * here it means "unstamped, assume stale". The asymmetry is the point, so it is stated rather
+ * than left for a reader to infer from a comparison.
+ */
+export function getSyncDerivationVersion(settings: Rec): number {
+  const v = Number(settings["last_sync_derivation_version"]);
+  return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+}
+
+export function withSyncDerivationVersion(settings: Rec, version: unknown): Rec {
+  const v = Number(version);
+  return {
+    ...settings,
+    last_sync_derivation_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0,
+  };
+}
+
+/**
+ * Whether the stored facts were collected by an older normalizer than the code now running.
+ *
+ * The remedy this gates is the reason it exists separately from every `*Stale` check around
+ * it: those are repaired by Recompute, because the inputs survived and only the pricing moved.
+ * This one is not. The old value was destroyed at ingest — a cell reading "false" carries no
+ * memory of Wiz never having answered — so ONLY a full sync repairs it, and a banner that
+ * offers Recompute here would send an operator to a button that cannot help.
+ */
+export function derivationIsStale(settings: Rec, current: number): boolean {
+  return getSyncDerivationVersion(settings) < current;
+}
+
 /** How long the cloud-configuration rule catalogue is considered fresh. */
 export const CONFIG_RULES_TTL_MS = 30 * 86_400_000;
 

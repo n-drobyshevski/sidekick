@@ -17,7 +17,7 @@ import type { DecisionVector, AmplificationFactor } from "./problem";
 import { OUTCOME_VALUES, nodeAmplificationVector } from "./problem";
 import type { FindingRow, GNode, IssueRow } from "./graphTypes";
 import { isOpenGap, isUnresolvedIssue, type Severity } from "./config";
-import type { Tier } from "./posture";
+import { postureStateOf, type PostureState, type Tier } from "./posture";
 
 export type ProblemKind = "ISSUE" | "FINDING";
 
@@ -60,6 +60,17 @@ export interface ProblemRow {
   dueAt: string | null;
   /** The asset's posture tier, BESIDE the outcome — never blended into it (posture.ts's own rule). */
   postureTier: Tier | null;
+  /**
+   * WHY there is no tier, when there is none. Null only for a row whose asset the graph never
+   * carried at all — a third kind of absence, which the register already shows as an unlinked
+   * finding. `WITHHELD` is a coverage gap someone can close; `OUT_OF_SCOPE` says this lattice
+   * does not describe this kind of asset, and no amount of measuring would change that.
+   *
+   * Shipping only the tier forced both to render as the same blank cell, which on a live
+   * register is the overwhelming majority of rows and reads as breakage rather than as an
+   * honest refusal to rate.
+   */
+  postureState: PostureState | null;
   /** The within-outcome tiebreak vector problem.ts's own header names for exactly this use. */
   amplification: Record<string, AmplificationFactor>;
   /** Wiz's own severity — adjusted for an issue, the finding's own rating for a finding. */
@@ -116,6 +127,7 @@ export function issueToProblemRow(issue: IssueRow, node: GNode | undefined): Pro
     unknowns: issue.problemInput?.unknowns ?? [],
     dueAt: issue.dueAt ?? null,
     postureTier: (node?.postureTier as Tier | undefined) ?? null,
+    postureState: node ? postureStateOf(node) : null,
     amplification: nodeAmplificationVector(node),
     severity: issue.adjustedSeverity ?? null,
     ruleId: issue.ruleId || undefined,
@@ -149,6 +161,7 @@ export function findingToProblemRow(finding: FindingRow, node: GNode | undefined
     // field, only issuesV2 does. Null, never a made-up date.
     dueAt: null,
     postureTier: (node?.postureTier as Tier | undefined) ?? null,
+    postureState: node ? postureStateOf(node) : null,
     amplification: nodeAmplificationVector(node),
     severity: finding.severity ?? null,
     ruleId: finding.ruleId,

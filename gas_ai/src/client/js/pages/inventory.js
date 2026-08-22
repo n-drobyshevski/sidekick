@@ -929,7 +929,7 @@ export async function renderInventory(main, params) {
         ? el("span", { class: "muted small" }, "—")
         : el("span", { class: "aars-cell" },
             scoreChip(row.aars, row.aarsPercentile, row.aarsSeverity), aarsMeter(row.aars))),
-      postureTier: (row) => tierBadge(row.postureTier),
+      postureTier: (row) => tierBadge(row.postureTier, row.postureState),
       severity: (row) => (row.severity
         ? el("span", { class: "issue-cell" }, sevBadge(row.severity), issueBars(row.issuesBySeverity))
         : "—"),

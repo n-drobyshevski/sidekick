@@ -529,19 +529,29 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       "Show what share of managed AI agents have a confirmed PROTECTED_BY guardrail — the "
       + "one control this app can observe as a negated-edge scan rather than infer.",
     scope: "Every asset of kind AI_AGENT in the last sync.",
-    measure: "guardrailCoveragePct: protectedAgents / agents × 100, rounded; null when "
-      + "agents is 0 rather than a divide-by-zero or a false 100%.",
+    measure: "guardrailCoveragePct: protectedAgents / SCANNED agents × 100, rounded, where "
+      + "scanned excludes guardrailUnknownAgents; null when nothing was scanned rather than a "
+      + "divide-by-zero or a false 0%. Published beside protectedAgents and "
+      + "guardrailUnknownAgents, never as a percentage alone.",
     type: "implementation",
     formula: "src/server/api.ts's assetsModel(): protectedAgents = agents.filter(a => "
-      + "!a.guardrailMissing).length; guardrailCoveragePct = Math.round(protectedAgents / agents.length * 100).",
+      + "a.guardrailMissing === false).length; guardrailUnknownAgents = agents.filter(a => "
+      + "a.guardrailMissing === undefined).length; guardrailCoveragePct = "
+      + "Math.round(protectedAgents / (agents.length - guardrailUnknownAgents) * 100).",
     target: "No numeric target set by this app — an operator's own guardrail-coverage "
       + "policy, if any, is external to this deployment.",
     implementationEvidence:
-      "guardrail_missing === false is an ABSENCE OF A FINDING, not a confirmed control — "
-      + "GNode.guardrailMissing's own doc comment and posture.ts's containmentOf both flag "
-      + "this: no positive PROTECTED_BY edge is ever synced, so this percentage measures "
-      + "'no missing-guardrail finding was raised', which is a weaker claim than 'a guardrail "
-      + "is confirmed present'.",
+      "THREE STATES, because the flag is tri-state and this measure used to have two. The "
+      + "coverage scan is a NEGATED traversal (syncNormalize only ever sets guardrailMissing "
+      + "TRUE), so on a live tenant the flag is true-or-absent and NEVER false: measured on the "
+      + "reference tenant, 190 assets true, 776 unknown, 0 false. The numerator therefore tests "
+      + "=== false rather than !flag, which used to count every never-scanned agent as "
+      + "protected — 1 of 69 agents on that tenant, so the published figure was 1% where the "
+      + "confirmed truth is 0%. The denominator excludes unknowns for the mirror reason: "
+      + "dividing by every agent would count 'never scanned' as 'not covered', inventing a gap "
+      + "where the other error invented a control. guardrail_missing === false still means only "
+      + "'the scan reached this asset and raised nothing' — no positive PROTECTED_BY edge is "
+      + "ever synced — which is a weaker claim than 'a guardrail is confirmed present'.",
     timeBasedReference: "Snapshotted at each sync's completion. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "Security analysts; AI platform owners (attaching guardrails).",
     dataSource: "ai_assets.guardrail_missing, ai_assets.kind",
@@ -837,6 +847,79 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "(the upstream evidence-collection controls this rate reports on).",
     dataSource: "ai_issues.problem_input_json, ai_findings.problem_input_json",
     reportingFormat: "Wiz Scans page, Landscape reach section's axis-coverage panel.",
+    measurementMethod: "Objective",
+    revisionDue: REVISION_DUE,
+  },
+  {
+    id: "posture-scope-split",
+    goal:
+      "Say how much of the register the posture lattice actually rates, and — for the rest — "
+      + "which of the two reasons applies, because they demand opposite responses.",
+    scope: "Every node in the last sync except ISSUE and SUMMARY, which are not assets and "
+      + "were never candidates for a tier.",
+    measure:
+      "Four numbers with their denominator: the tier distribution (1-4, zeros kept), withheld "
+      + "(in scope, no tier), outOfScope (the lattice does not describe this kind), and total. "
+      + "Withheld is a COVERAGE gap someone can close; outOfScope is a SCOPE statement nobody "
+      + "can, and adding them together would report a number no action can move.",
+    type: "implementation",
+    formula: "src/domain/posture.ts's censusPostureTiers(nodes), which splits on "
+      + "postureStateOf(node): a node carries a vector (postureInput) when the lattice applies "
+      + "and withheld the tier, and none at all when it does not apply — so the two are read "
+      + "from what was persisted rather than re-derived from the kind a second time.",
+    target:
+      "No target. A high outOfScope share is not a defect to drive down: on the reference "
+      + "tenant 585 of 822 AI assets are datasets, and the capability axis reads identity "
+      + "power, which a dataset does not have. Driving it down would mean rating them wrongly.",
+    implementationEvidence:
+      "Measured on the reference tenant after the tri-state normalizer fix: 68 of 966 rows "
+      + "carry a tier, and quoting that alone invites '93% unassessed'. The split is what makes "
+      + "it readable — most of the remainder are kinds this lattice was never meant to rate. "
+      + "Before the fix the figure was near 100% tiered, because posture.tierEstablished could "
+      + "not withhold: syncNormalize collapsed Wiz's null to false, so every unknown branch it "
+      + "gates on was structurally dead and an unassessed asset rendered as a clean Tier 1.",
+    timeBasedReference: "Snapshotted at each sync's completion. " + NO_PER_ENTITY_HISTORY,
+    responsibleParties: "Security analysts; AI platform owners (whose tagging and scan "
+      + "coverage move the withheld count).",
+    dataSource: "sync_history.posture_tier_json, sync_history.posture_rule_version, "
+      + "ai_assets.posture_tier, ai_assets.posture_input_json",
+    reportingFormat: "Inventory posture header; the Posture column's per-row reason; the "
+      + "posture trend series on sync_history.",
+    measurementMethod: "Objective",
+    revisionDue: REVISION_DUE,
+  },
+  {
+    id: "derivation-version-currency",
+    goal:
+      "Say whether the stored facts were collected by the normalizer now running — the one "
+      + "kind of staleness Recompute cannot repair, and therefore the one that has to name its "
+      + "own remedy.",
+    scope: "The whole ledger, as a single marker recorded per sync.",
+    measure:
+      "DERIVATION_VERSION (the running code) against last_sync_derivation_version (the "
+      + "ledger). Stale when the ledger is behind. An UNSTAMPED ledger reads stale, which is "
+      + "the opposite default to the three rule-version markers, because a store written "
+      + "before this marker existed was written by an older normalizer by definition.",
+    type: "implementation",
+    formula: "src/domain/settingsLogic.ts's derivationIsStale(settings, DERIVATION_VERSION); "
+      + "stamped by syncStore.commit() only, never by a rescore or a redecide.",
+    target:
+      "Current. Unlike a rule-version mismatch this is not a tuning state an operator may "
+      + "legitimately sit in: it means published readings describe facts that were mis-recorded.",
+    implementationEvidence:
+      "The distinction is the remedy. A rule version moves when a model is edited and "
+      + "Recompute repairs it, because the inputs survived and only the arithmetic changed. "
+      + "This moves when a stored fact changed MEANING, and Recompute cannot repair it: at "
+      + "version 1 a null from Wiz was written as the string 'false', and that cell carries no "
+      + "memory of never having been answered, so only a full sync recovers it. A banner "
+      + "offering Recompute here would point at a button that cannot help, which is why the "
+      + "remedy ships with the flag (bootstrap's derivation.remedy).",
+    timeBasedReference:
+      "Recorded at each sync's completion and compared on every read. " + NO_PER_ENTITY_HISTORY,
+    responsibleParties: "Whoever deploys a build; security analysts reading the trend.",
+    dataSource: "sync_history.derivation_version, settings.key, settings.value_json",
+    reportingFormat: "bootstrap's derivation block (current / lastSync / stale / remedy); the "
+      + "break marker on every sync_history trend series.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },

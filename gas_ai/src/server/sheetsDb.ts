@@ -101,6 +101,11 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // was built to replace. If a number is ever genuinely needed, it belongs in a rule's own
     // preview surface, never on the row.
     "problem_outcome", "problem_input_json", "problem_rule_version",
+    // Which AI assets this issue actually describes, and how they were reached. Appended,
+    // same no-migration contract. NOT a replacement for asset_id, which keeps naming the
+    // entity Wiz raised the issue on so the drill-down still matches the console — see
+    // IssueRow.attributedAssetIds for the measurement that made this necessary.
+    "attributed_asset_ids", "attribution_hop",
   ],
   [TABS.findings]: [
     "id", "resource_id", "rule_short_id", "severity", "remediation", "framework_codes",
@@ -211,6 +216,23 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // Appended, same no-migration contract: rows without it have no scoped series, which the
     // trend reports rather than fabricates.
     "project_totals_json",
+    // The posture distribution this sync produced, and which posture rule produced it — the
+    // analogue of the two AARS columns and the two problem columns above. It was the only one
+    // of the three models with NO series at all, which is the one the Inventory header leads
+    // with and the one compareProblems uses as its second-level tiebreak.
+    //
+    // It carries the SCOPE SPLIT, not just tiers: an asset can lack a tier because nobody
+    // measured it (a coverage gap) or because the lattice does not describe its kind (not a
+    // gap at all), and a bare tier count cannot tell those apart — see posture.censusPostureTiers.
+    // Without that split the tri-state normalizer fix reads as risk improving, because the
+    // tiered population legitimately collapses on the sync that first tells the truth.
+    "posture_tier_json", "posture_rule_version",
+    // Which NORMALIZER produced the readings above, as opposed to which RULE priced them.
+    // A rule version moves when an operator edits a model; this moves when a code change
+    // alters what a stored fact MEANS — and only a full sync can repair the difference,
+    // because the old value was destroyed at ingest rather than merely re-priced. The trend
+    // marks the break here so a step is never read as movement. See DERIVATION_VERSION.
+    "derivation_version",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [
