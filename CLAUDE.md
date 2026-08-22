@@ -68,7 +68,9 @@ because they are in this file.
 - **Report the honest number.** An attribution hop that recovered 7 of a possible 77 is a 7.
 - **Destructive commands get read twice.** `rm -rf` over a path that may contain a symlink or
   junction once deleted `node_modules/.bin` through it. Remove the link non-recursively first.
-- **Commit locally; do not push or open a PR** unless asked.
+- **Commit locally; do not push or open a PR** unless asked. Message style is
+  `<area>: <lowercase phrase stating the substance>` — the body explains the defect and the
+  measurement that justifies the fix.
 
 ## gas_ai — scoring conventions
 
@@ -87,6 +89,10 @@ be pinned by tests). The seed-estate figures live in `ai/AARS_ASSESSMENT.md` and
 - **A derivation knob joins its signature.** Anything changing WHICH rows are read (rather than
   how they price) must join `aars.derivationSignature` / `problemRule.vectorSignature`, or a
   persisted input is reused across the flip and the knob appears to do nothing.
+- **The time dimension is a fifth problem-tree axis** — not a tiebreak, and not an AARS pillar.
+- **Non-agent assets get their own lattice**, rather than exclusion from posture.
+- **Findings land in `ai/AARS_LIVE_MEASUREMENTS.md`.** Update it as they land, dated and
+  tenant-stamped; do not open a new assessment document for them.
 
 ## gas_ai — environment traps
 
@@ -102,3 +108,8 @@ be pinned by tests). The seed-estate figures live in `ai/AARS_ASSESSMENT.md` and
 - `Utilities.sleep` in `dev/gas-shims.js` busy-waits on `Date.now()`, which the test harness
   freezes — an *infinite* loop, not a slow one. `window.__GAS_SHIM_INSTANT_SLEEP__` is the
   escape hatch and `test/gasEnv.ts` sets it.
+
+## Compact Instructions
+
+When compacting, preserve: which items in `ai/AARS_LIVE_MEASUREMENTS.md` §5 are committed,
+the item in progress, and any `blocked:` entries written this session.
