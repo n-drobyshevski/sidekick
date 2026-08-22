@@ -275,13 +275,91 @@ function toCell(v: unknown): unknown {
   return v;
 }
 
+/**
+ * Cells one `getValues()` may ask for.
+ *
+ * Sheets caps the RESPONSE, not the sheet. A tab is free to grow to the spreadsheet's 10M
+ * cell ceiling, but one read that tries to carry all of it back is refused outright — "the
+ * data requested exceeds the maximum size allowed", in the script owner's locale, thrown
+ * before a single row arrives.
+ *
+ * That is not a hypothetical. On a real tenant every page that read `ai_findings` — the
+ * inventory, priorities, the configuration register and compliance posture — failed with
+ * exactly that, while every page that did not (toxic combinations, the graph, this page's
+ * own storage stats) rendered normally. `ai_assets` at 13,788 rows × 48 columns came back
+ * without complaint in the same execution, which is what made it legible: the service was
+ * not refusing reads, it was refusing ONE range, because that tab had outgrown a single
+ * response and nothing here had ever asked for less than all of it.
+ *
+ * 200,000 is chosen against that measurement rather than against a documented number, which
+ * Google does not publish: the assets read that WORKS is ~662,000 cells, so a third of the
+ * nearest known-good figure leaves room for rows carrying much longer text than an asset
+ * row does — and the halving below makes the constant a starting point rather than a bet.
+ *
+ * Blocks, not a paged register. The cap is on the transport, so the cure belongs at the
+ * read: the same rows come back, in several responses instead of one, and every caller and
+ * every read model above is untouched. Sizing the LEDGER to fit one response would be a
+ * different product (and the Data page's prune panel is where that decision already lives).
+ */
+export const READ_BLOCK_CELLS = 200_000;
+
+/**
+ * A tab's grid, in as many reads as it takes.
+ *
+ * The halving is the same shape as wizClientAi's page-size fallback, and for the same
+ * reason: a budget that turns out to be too generous must cost one retry, not a dead page.
+ * A block that is refused is re-asked SMALLER rather than skipped — a read that silently
+ * returned fewer rows than the tab holds would put a short register in front of an analyst
+ * with nothing to say it was short, which on a security ledger is the worst outcome
+ * available. Once halved the smaller block is kept for the rest of the tab: the service has
+ * already said what it will not carry, and re-asking the generous size at every block would
+ * pay for that answer again per block.
+ *
+ * It halves BLINDLY, where wizClientAi is careful to retry only failures a smaller ask could
+ * fix. The difference is that its verdicts arrive as HTTP codes and stable English envelopes,
+ * and these arrive as a localized sentence — the tenant this was written for got the size
+ * error in French. Any `/exceeds the maximum/` test would have read that as a failure worth
+ * no retry and left the page dead in exactly the locale that reported the bug. Halving costs
+ * at most a dozen fast rejections before the rethrow, which is the cheaper mistake.
+ *
+ * When even a single row will not come back the failure is rethrown NAMING the tab and the
+ * row it stopped at, because Google's own message says neither, and "which tab" is the
+ * entire diagnosis.
+ */
+function readGrid(
+  sh: GoogleAppsScript.Spreadsheet.Sheet,
+  tab: string,
+  lastRow: number,
+  lastCol: number,
+): unknown[][] {
+  const out: unknown[][] = [];
+  let block = Math.max(1, Math.floor(READ_BLOCK_CELLS / Math.max(1, lastCol)));
+  let row = 1;
+  while (row <= lastRow) {
+    const take = Math.min(block, lastRow - row + 1);
+    try {
+      for (const values of sh.getRange(row, 1, take, lastCol).getValues()) out.push(values);
+      row += take;
+    } catch (e) {
+      if (take <= 1) {
+        throw new Error(
+          `Reading ${tab} stopped at row ${row} of ${lastRow} (${lastCol} columns): ` +
+          `${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+      block = Math.floor(take / 2);
+    }
+  }
+  return out;
+}
+
 /** All data rows of a tab as objects keyed by header name. */
 export function readAll(tab: string): Rec[] {
   const sh = sheet(tab);
   const lastRow = sh.getLastRow();
   const lastCol = sh.getLastColumn();
   if (lastRow < 2 || lastCol < 1) return [];
-  const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+  const values = readGrid(sh, tab, lastRow, lastCol);
   const headers = values[0].map(String);
   const out: Rec[] = [];
   for (let i = 1; i < values.length; i++) {
@@ -440,7 +518,11 @@ export function updateWhere(tab: string, keyColumn: string, keyValue: unknown, p
   const headers = ensureHeaders(sh, tab);
   const lastRow = sh.getLastRow();
   const lastCol = headers.length;
-  const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+  // Through readGrid like readAll, not because `jobs` and `sync_history` are large today
+  // but because this is the same whole-tab range asked the same way: leaving one of the two
+  // call sites on a single unbounded read is how the fix comes undone the first time a tab
+  // this touches grows.
+  const values = readGrid(sh, tab, lastRow, lastCol);
   const keyIdx = headers.indexOf(keyColumn);
   if (keyIdx < 0) return false;
   for (let i = 1; i < values.length; i++) {
