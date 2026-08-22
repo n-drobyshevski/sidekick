@@ -43,7 +43,7 @@ import { countPostureTiers, type Tier as PostureTier } from "../domain/posture";
 import type { PostureRule } from "../domain/postureRule";
 import { OTHER_GROUP_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
-import { countAarsSeverities } from "../domain/aarsTrend";
+import { countAarsSeverities, countProjectTotals, encodeProjectTotals } from "../domain/aarsTrend";
 import { midrankPercentiles } from "../domain/rankStats";
 import { inProject, planPrune, type PruneCensus } from "../domain/prunePlan";
 import { nowIso, type Rec } from "../domain/util";
@@ -935,6 +935,19 @@ export function persistSync(
     // Which problem rule produced it — mirrors aars_rule_version, and moves independently
     // of it, exactly as the two settings keys (aars_rule / problem_rule) do.
     problem_rule_version: problemRuleVersion,
+    // The same two distributions per project, so the inventory trend can follow the sidebar
+    // from here forward — the one figure in the app that had to refuse it. Written from the
+    // SAME populations as the two register-wide columns above (`postured.nodes`, and the two
+    // decided sets), so the scoped series and the whole-register series can never be counting
+    // different things.
+    //
+    // Null when the map would not fit in a cell (encodeProjectTotals), and null is a value
+    // this row is allowed to carry: the register-wide totals beside it are unaffected, and a
+    // scoped series with a missing point says so rather than inventing one. A trend
+    // refinement must not be able to fail a commit.
+    project_totals_json: encodeProjectTotals(
+      countProjectTotals(postured.nodes, [...decidedIssues, ...decidedFindings]),
+    ),
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
   settingsStore.setDecidedRuleVersion(problemRuleVersion);

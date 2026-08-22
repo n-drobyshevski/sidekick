@@ -20,6 +20,112 @@ import { cmpBy } from "./util";
  */
 export const TREND_SEVERITIES: readonly AarsSeverity[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 
+/**
+ * The `sync_history` column holding EVERY project's distributions for one sync.
+ *
+ * One cell per sync, not one column per series per project: a `{projectId: {aars, outcome}}`
+ * map, mirroring `aars_severity_json` / `problem_outcome_json` one level down. Appended
+ * under the same no-migration contract those two were — a row written before it exists
+ * simply has no scoped series, which `parseProjectCounts` reports as absent rather than zero.
+ *
+ * WHY THIS EXISTS AT ALL. sync_history recorded register-wide totals and nothing else, so a
+ * past point had no project dimension to be re-scoped BY, and the inventory trend was the one
+ * figure in the app that had to refuse the project switcher outright. It still refuses for
+ * every sync recorded before this column — history cannot be backfilled from a ledger that
+ * never held it — but from here forward the series follows the sidebar like everything else.
+ */
+export const PROJECT_TOTALS_COLUMN = "project_totals_json";
+
+/**
+ * One project's two distributions at one sync — the value side of `PROJECT_TOTALS_COLUMN`.
+ * The keys match the `projectKey` on each `TrendSeriesSpec`, which is what keeps the writer
+ * below and the reader above from drifting apart.
+ */
+export interface ProjectTotals {
+  aars: Record<string, number>;
+  outcome: Record<string, number>;
+}
+
+/**
+ * A Sheets cell holds 50,000 characters. Past this the encode REFUSES rather than writes a
+ * value the sheet would reject or clip — see `encodeProjectTotals`.
+ */
+export const PROJECT_TOTALS_MAX_CHARS = 45_000;
+
+/**
+ * Every project's distributions for this sync, keyed by project id.
+ *
+ * AN ENTRY PER PROJECT HOLDING AN ASSET, zeroed vocabulary included, and that is the whole
+ * contract the reader depends on: present-with-zeros means "measured, and it was zero";
+ * absent means "this project held nothing in the register at that sync". Without the zeroed
+ * entries the two would be indistinguishable and every project's line would start at the
+ * beginning of time.
+ *
+ * FOLDERS COME OUT FREE. An asset carries every project it belongs to, ancestors included
+ * (api.ts `viewAssets`), so incrementing per id gives a business unit the sum of its whole
+ * subtree with no tree walk — and gives it by exactly the same rule the sidebar filters by,
+ * which is what keeps the trend and the figures beside it describing one population.
+ *
+ * Issues and findings are attributed through their ASSET, mirroring `viewIssues` /
+ * `viewFindings`: an issue is in a project when the thing it is about is. A row whose asset
+ * is not in the register contributes to no project — the same "belongs to no project" answer
+ * the scoped gap count already gives.
+ */
+export function countProjectTotals(
+  nodes: ReadonlyArray<{ id: string; projects?: readonly { id: string }[]; aarsSeverity?: string }>,
+  decided: ReadonlyArray<{ assetId?: string; resourceId?: string; problemOutcome?: string }>,
+): Record<string, ProjectTotals> {
+  const totals: Record<string, ProjectTotals> = {};
+  const projectsByAsset = new Map<string, readonly { id: string }[]>();
+
+  function entry(projectId: string): ProjectTotals {
+    let t = totals[projectId];
+    if (!t) {
+      const aars: Record<string, number> = {};
+      for (const sev of AARS_SEVERITY_ORDER) aars[sev] = 0;
+      const outcome: Record<string, number> = {};
+      for (const o of OUTCOME_VALUES) outcome[o] = 0;
+      t = { aars, outcome };
+      totals[projectId] = t;
+    }
+    return t;
+  }
+
+  for (const n of nodes) {
+    const projects = n.projects ?? [];
+    if (!projects.length) continue;
+    projectsByAsset.set(n.id, projects);
+    const sev = normalizeAarsSeverity(n.aarsSeverity);
+    for (const p of projects) {
+      const t = entry(p.id);
+      if (sev) t.aars[sev] += 1;
+    }
+  }
+
+  for (const r of decided) {
+    const outcome = r.problemOutcome;
+    if (!outcome || !(OUTCOME_VALUES as readonly string[]).includes(outcome)) continue;
+    const assetId = r.assetId ?? r.resourceId ?? "";
+    for (const p of projectsByAsset.get(assetId) ?? []) entry(p.id).outcome[outcome] += 1;
+  }
+
+  return totals;
+}
+
+/**
+ * `countProjectTotals` as a cell value, or null when it would not fit in one.
+ *
+ * Null rather than a truncated map, and rather than throwing. A trend refinement must never
+ * be able to fail a sync commit or — worse — write a prefix of the projects, which would read
+ * as "these projects held nothing" for every project that fell off the end. The sync still
+ * records its register-wide totals; the scoped series simply has no point for that sync and
+ * the chart says how many it is missing.
+ */
+export function encodeProjectTotals(totals: Record<string, ProjectTotals>): string | null {
+  const json = JSON.stringify(totals);
+  return json.length > PROJECT_TOTALS_MAX_CHARS ? null : json;
+}
+
 /** One series' point, generic over the vocabulary it counts — AARS severities, problem outcomes. */
 export interface TrendPoint<K extends string> {
   at: string;                    // ISO timestamp of the sync that produced the counts
@@ -47,14 +153,9 @@ export function countAarsSeverities(
   return counts;
 }
 
-function parseCounts<K extends string>(v: unknown, keys: readonly K[]): Record<K, number> | null {
-  if (typeof v !== "string" || !v) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(v);
-  } catch {
-    return null;
-  }
+function countsFromObject<K extends string>(
+  parsed: unknown, keys: readonly K[],
+): Record<K, number> | null {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const raw = parsed as Record<string, unknown>;
   const counts = {} as Record<K, number>;
@@ -65,6 +166,44 @@ function parseCounts<K extends string>(v: unknown, keys: readonly K[]): Record<K
   return counts;
 }
 
+function parseCounts<K extends string>(v: unknown, keys: readonly K[]): Record<K, number> | null {
+  if (typeof v !== "string" || !v) return null;
+  try {
+    return countsFromObject(JSON.parse(v), keys);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ONE project's counts for one series, out of the per-project blob — or null, which means
+ * "no measurement", never zero.
+ *
+ * Null covers two different absences and both must skip the point rather than plot a zero:
+ * the column is missing (a sync recorded before this shipped), or the column is there and
+ * this project is not in it. The second is the load-bearing one. `countProjectTotals` writes
+ * an entry for EVERY project holding an asset, zeroed vocabulary included — so a project
+ * present with all-zero counts is a real, measured zero and IS plotted, while a project
+ * absent from the map genuinely had nothing in the register at that sync. Collapsing the two
+ * would draw a project's history back to the beginning of time at zero, which is the same
+ * cliff the pre-column skip above exists to avoid.
+ */
+function parseProjectCounts<K extends string>(
+  v: unknown, projectId: string, spec: TrendSeriesSpec<K>,
+): Record<K, number> | null {
+  if (typeof v !== "string" || !v) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(v);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const entry = (parsed as Record<string, unknown>)[projectId];
+  if (!entry || typeof entry !== "object") return null;
+  return countsFromObject((entry as Record<string, unknown>)[spec.projectKey], spec.keys);
+}
+
 /** What one series needs to be read out of `sync_history`: its vocabulary and its two columns. */
 export interface TrendSeriesSpec<K extends string> {
   /** The values the distribution is counted over, in the order the caller wants them. */
@@ -73,6 +212,13 @@ export interface TrendSeriesSpec<K extends string> {
   countsColumn: string;
   /** The column holding the rule version that produced them (e.g. `aars_rule_version`). */
   versionColumn: string;
+  /**
+   * Where this series' counts live INSIDE a `project_totals_json` entry — see that
+   * constant. The two columns above hold one distribution each for the whole register; the
+   * per-project blob holds both, keyed, so one cell carries every project rather than one
+   * cell per series per project.
+   */
+  projectKey: string;
 }
 
 /**
@@ -95,11 +241,14 @@ export function trendFromHistory<K extends string>(
   rows: Rec[],
   spec: TrendSeriesSpec<K>,
   limit = 90,
+  projectId = "",
 ): TrendPoint<K>[] {
   const points: TrendPoint<K>[] = [];
   for (const r of rows) {
     if (String(r["status"] ?? "") !== "SUCCESS") continue;
-    const counts = parseCounts(r[spec.countsColumn], spec.keys);
+    const counts = projectId
+      ? parseProjectCounts(r[PROJECT_TOTALS_COLUMN], projectId, spec)
+      : parseCounts(r[spec.countsColumn], spec.keys);
     if (!counts) continue; // pre-upgrade sync: absent, not zero
     // `||`, not `??`: an empty cell reads as null from the sheet but as "" from anywhere
     // else, and both mean "no finish time recorded — fall back to the start".
@@ -117,11 +266,14 @@ const AARS_SEVERITY_SPEC: TrendSeriesSpec<AarsSeverity> = {
   keys: AARS_SEVERITY_ORDER,
   countsColumn: "aars_severity_json",
   versionColumn: "aars_rule_version",
+  projectKey: "aars",
 };
 
 /** The AARS-severity trend — `trendFromHistory` bound to the AARS columns and vocabulary. */
-export function aarsTrendFromHistory(rows: Rec[], limit = 90): AarsTrendPoint[] {
-  return trendFromHistory(rows, AARS_SEVERITY_SPEC, limit);
+export function aarsTrendFromHistory(
+  rows: Rec[], limit = 90, projectId = "",
+): AarsTrendPoint[] {
+  return trendFromHistory(rows, AARS_SEVERITY_SPEC, limit, projectId);
 }
 
 export type ProblemTrendPoint = TrendPoint<Outcome>;
@@ -130,6 +282,7 @@ const PROBLEM_OUTCOME_SPEC: TrendSeriesSpec<Outcome> = {
   keys: OUTCOME_VALUES,
   countsColumn: "problem_outcome_json",
   versionColumn: "problem_rule_version",
+  projectKey: "outcome",
 };
 
 /**
@@ -137,8 +290,10 @@ const PROBLEM_OUTCOME_SPEC: TrendSeriesSpec<Outcome> = {
  * to let this reuse rather than fork: same shape, same skip rule, same rule-version
  * marking as the AARS series, differing only in which columns and vocabulary it reads.
  */
-export function problemTrendFromHistory(rows: Rec[], limit = 90): ProblemTrendPoint[] {
-  return trendFromHistory(rows, PROBLEM_OUTCOME_SPEC, limit);
+export function problemTrendFromHistory(
+  rows: Rec[], limit = 90, projectId = "",
+): ProblemTrendPoint[] {
+  return trendFromHistory(rows, PROBLEM_OUTCOME_SPEC, limit, projectId);
 }
 
 /**

@@ -903,6 +903,16 @@ interface AssetsModel {
   aarsTrend: AarsTrendPoint[];
   /** Indices in aarsTrend where the scoring model changed — the chart marks them. */
   aarsTrendRuleChanges: number[];
+  /** Which population `aarsTrend` describes, and how much of the ledger it covers. */
+  trendScope: {
+    /** The project view the series was read for, "" when register-wide. */
+    projectId: string;
+    scoped: boolean;
+    /** Points in the series shipped. */
+    points: number;
+    /** Points the register-wide series has — the denominator for "covers N of M syncs". */
+    registerPoints: number;
+  };
   /** The landscape-grain coverage roll-up (reach.ts) — see the Wiz Scans REACH section. */
   reach: EstateReach;
   facets: {
@@ -923,7 +933,17 @@ interface AssetsModel {
  * ever holds 50 rows.
  */
 function assetsModel(): AssetsModel {
-  const trend = aarsTrendFromHistory(syncStore.syncHistory());
+  // THE ONE SERIES THAT USED TO REFUSE THE SWITCHER. sync_history now carries a per-project
+  // blob beside its register-wide totals (aarsTrend.ts PROJECT_TOTALS_COLUMN), so a scoped
+  // read is a different column rather than a filter — there is still nothing on a history row
+  // to filter BY. Syncs recorded before that column simply have no scoped point, which is why
+  // the register-wide count travels beside the series: a chart starting three points in looks
+  // exactly like a landscape that collapsed, and only `registerPoints` can tell the reader
+  // which it is looking at.
+  const history = syncStore.syncHistory();
+  const projectView = settingsStore.getProjectView();
+  const trend = aarsTrendFromHistory(history, 90, projectView);
+  const registerPoints = projectView ? aarsTrendFromHistory(history).length : trend.length;
   const assets = viewAssets();
   const issues = openIssues();
   // reach.ts wants the WHOLE issues/findings population (resolved and passing rows
@@ -1099,6 +1119,12 @@ function assetsModel(): AssetsModel {
     // Recorded per sync, so the window is short at first and cannot be backfilled.
     aarsTrend: trend,
     aarsTrendRuleChanges: ruleChangePoints(trend),
+    trendScope: {
+      projectId: projectView,
+      scoped: Boolean(projectView),
+      points: trend.length,
+      registerPoints,
+    },
     reach,
     facets: {
       kinds: [...kinds].sort(),
@@ -1126,6 +1152,7 @@ export function getAssets(p?: unknown): ApiResult {
       aarsSeverityCounts: model.aarsSeverityCounts,
       aarsTrend: model.aarsTrend,
       aarsTrendRuleChanges: model.aarsTrendRuleChanges,
+      trendScope: model.trendScope,
       aarsDeltas: aarsDeltas(model.aarsTrend, model.aarsSeverityCounts),
       reach: model.reach,
       facets: model.facets,
@@ -1170,13 +1197,16 @@ export function getAssets(p?: unknown): ApiResult {
  * hedged number:
  *  - fewer than two points: nothing to compare against;
  *  - the scoring rule changed between them: the two points aren't on the same scale;
- *  - the latest point disagrees with the live counts, which now has TWO causes, and the
- *    silence is right for both. Either the landscape was rescored (AARS Rules → Recompute)
- *    without a sync, or a project view is active — `sync_history` records register-wide
- *    totals only and can never be re-scoped (see aarsTrend.ts), so a scoped live count will
- *    not match the last point. Either way a delta would explain a figure that is not the one
- *    on screen. Note this makes the chips vanish under a view while the chart above them
- *    stays: that is the honest pairing, and the chart carries its own register-wide marker.
+ *  - the latest point disagrees with the live counts: the landscape was rescored (AARS
+ *    Rules → Recompute) without a sync, so a delta would explain a figure that is not the
+ *    one on screen.
+ *
+ * A PROJECT VIEW USED TO BE A FOURTH CAUSE and no longer is. `sync_history` carried
+ * register-wide totals only, so a scoped live count could never match the last point and the
+ * chips vanished the moment anyone picked a project. Now the series is read per project
+ * (aarsTrend.ts PROJECT_TOTALS_COLUMN) and the two agree again, so the deltas come back —
+ * scoped, against a scoped baseline. They still vanish for syncs recorded before that column
+ * existed, which is the first cause above doing its job rather than a special case.
  */
 function aarsDeltas(
   trend: AarsTrendPoint[],
