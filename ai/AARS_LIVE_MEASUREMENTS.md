@@ -179,24 +179,22 @@ source**, not by re-measuring the tenant — no figure in §1–§4 moved.
    and confirmed on a live sync: `skippedSteps` is empty and the four steps returned 797 rows.
    See §4 row B for the three wrong names and why the status stamp is now UNKNOWN.*
 
-4. **`dwell` as a fifth problem-tree axis** (user-chosen). 54 leaves → 162. Existing rows
-   wildcard it, so `actLeafCeiling` (0.15) is untouched — ACT stays 11.1% of leaves. Values as
-   a delta against Wiz's `dueAt`, never a competing date (§3 T-Test-3). It will **not** unblock
-   ACT/ATTEND — it splits the 189-row `TRACK_STAR` queue, which is the actual need.
-   *MEASURED 2026-08-23 — RECOMMEND DROPPING IT.* Two independent reasons, both live.
+4. **`dwell` as a fifth problem-tree axis — DROPPED 2026-08-23, by decision, on the numbers.**
+   It would have taken 54 leaves to 162 while wildcarding existing rows, leaving `actLeafCeiling`
+   (0.15) untouched. It does not survive measurement, for two independent reasons.
    **(a) 707 of 806 issues carry no `dueAt` at all.** Only the 99 real issuesV2 rows have one;
-   every synthetic `live-` row from the repaired `ISSUES_<ruleId>` steps has none. A fifth axis
-   would read UNMEASURED for 88% of the register, which is exactly what `problem.ts:61` forbids
-   — "fewer leaves that are honestly populated beats more leaves that mostly read UNKNOWN".
-   **(b) Among the 99 that can be scored, the signal is nearly constant.** Bucketed by Wiz's own
-   SLA window (`dueAt − createdAt`, so no threshold is ours): WITHIN_SLA 17 (17%) · BREACHED 75
-   (76%) · ENTRENCHED 7 (7%), and the overdue/window ratio is degenerate at p25 = p50 = p75 =
-   0.87, p90 = 0.93. Three buckets, 76% in one, on 12% of the register. That does not split the
-   189-row `TRACK_STAR` queue, which was the entry's whole justification.
-   Also noted: the entry cites "§3 T-Test-3", which exists nowhere in this file or in `ai/`.
-   Issue **age** discriminates better (85% > 90d, 45% > 1y) but needs thresholds of ours, which
-   the entry forbids as a competing clock. If the axis is wanted anyway, it needs a signal that
-   is present on more than 12% of the register — and none of the ones measured here is.
+   every synthetic `live-` row from the repaired `ISSUES_<ruleId>` steps has none. The axis would
+   read UNMEASURED for 88% of the register — exactly what `problem.ts:61` forbids: "fewer leaves
+   that are honestly populated beats more leaves that mostly read UNKNOWN".
+   **(b) The scorable 12% barely varies.** Bucketed by Wiz's own SLA window (`dueAt − createdAt`,
+   so no threshold is ours): WITHIN_SLA 17 (17%) · BREACHED 75 (76%) · ENTRENCHED 7 (7%), with the
+   overdue/window ratio degenerate at p25 = p50 = p75 = 0.87, p90 = 0.93. Three buckets, three
+   quarters in one, over an eighth of the register — which would not split the 189-row
+   `TRACK_STAR` queue, the entry's whole justification.
+   Two notes for anyone who revives it. The original entry cited "§3 T-Test-3", which exists
+   nowhere in this file or in `ai/`. And issue **age** discriminates better (85% > 90d, 45% > 1y)
+   but needs thresholds of ours, which the entry forbade as a competing clock — so a revival
+   needs a *new* signal carried by more than 12% of the register, not a rebucketing of this one.
 
 5. **The staleness banner UI.** `bootstrap.derivation {current, lastSync, stale, remedy:"sync"}`
    ships and nothing renders it. The tier population legitimately collapsed; nothing says why,
@@ -249,7 +247,9 @@ and reword the loser: two durable numbers that look like a contradiction are wor
 
 **Explicitly not doing:** the AIVSS formula (a mean over a 10-element vector of which 9 are
 unmeasured — `posture.ts`'s header rules this out); any age term inside AARS; parsing `notes`
-into an axis; scoring the 691 service accounts as AI assets; an MTTR.
+into an axis; scoring the 691 service accounts as AI assets; an MTTR; and — added 2026-08-23,
+measured rather than assumed — **a time/`dwell` axis on the problem tree**, which stays at four
+axes (item 4 above carries the numbers).
 
 ---
 

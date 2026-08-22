@@ -89,7 +89,10 @@ be pinned by tests). The seed-estate figures live in `ai/AARS_ASSESSMENT.md` and
 - **A derivation knob joins its signature.** Anything changing WHICH rows are read (rather than
   how they price) must join `aars.derivationSignature` / `problemRule.vectorSignature`, or a
   persisted input is reused across the flip and the knob appears to do nothing.
-- **The time dimension is a fifth problem-tree axis** — not a tiebreak, and not an AARS pillar.
+- **The problem tree stays at four axes.** A fifth, `dwell`, was specified and then dropped on
+  measurement: 707 of 806 issues carry no `dueAt`, and the scorable remainder is 76% one bucket.
+  Time is not a tiebreak and not an AARS pillar either. Reviving it needs a signal present on
+  more than 12% of the register — see `ai/AARS_LIVE_MEASUREMENTS.md` §5.
 - **Non-agent assets get their own lattice**, rather than exclusion from posture.
 - **Findings land in `ai/AARS_LIVE_MEASUREMENTS.md`.** Update it as they land, dated and
   tenant-stamped; do not open a new assessment document for them.
