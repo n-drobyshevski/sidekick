@@ -332,16 +332,26 @@ const scope = PROJECT_ID ? [PROJECT_ID] : null;
 const STEPS = buildSteps(chosen.types, scope);
 
 // id, document, variables, normalizer, and whether the battery scopes it to a project.
-// `null` scope for the agent-rooted four and for LINEAGE mirrors syncJobs exactly; changing
-// it here would make the probe answer a question the battery does not ask.
+//
+// EVERY step is project-scoped, because every step in syncJobs is. This block used to pass
+// `null` for the agent-rooted four and for LINEAGE, under a comment claiming that mirrored
+// syncJobs. That was true when it was written (dfc63b2, 20 Aug) and false six commits later
+// when b3562ae — "scope every step" — scoped all of them; the probe was never updated.
+//
+// The drift made this tool answer a materially different question than the battery asks,
+// which is the one thing its own comment said it must not do. LINEAGE reported 9560 rows
+// tenant-wide against the 590 the scoped sync collects, and that gap was read as the
+// normalizer losing rows. GUARDRAIL_GAPS was worse: called as `noGuardrailVariables(null)`,
+// the `null` landed in the TYPES parameter, so it ran on the fallback candidate list
+// instead of the tenant-resolved one and with no scope argument at all.
 function buildSteps(T, scope) { return [
-  ["GUARDRAIL_GAPS",        app.Q_AGENTS_NO_GUARDRAIL,        app.noGuardrailVariables(null),        app.normalizeNoGuardrailPage,        "tenant-wide"],
-  ["RUNS_AS",               app.Q_AGENT_RUNS_AS,              app.agentRunsAsVariables(T, null),        app.normalizeRunsAsPage,             "tenant-wide"],
-  ["SA_FINDINGS",           app.Q_SA_EXCESSIVE_ACCESS,        app.saExcessiveAccessVariables(T, null),  app.normalizeRunsAsPage,             "tenant-wide"],
-  ["SENSITIVE_DATA_ACCESS", app.Q_AGENT_SENSITIVE_DATA_ACCESS, app.sensitiveDataAccessVariables(T, null), app.normalizeSensitiveDataAccessPage, "tenant-wide"],
+  ["GUARDRAIL_GAPS",        app.Q_AGENTS_NO_GUARDRAIL,        app.noGuardrailVariables(T, scope),       app.normalizeNoGuardrailPage,        "project-scoped"],
+  ["RUNS_AS",               app.Q_AGENT_RUNS_AS,              app.agentRunsAsVariables(T, scope),       app.normalizeRunsAsPage,             "project-scoped"],
+  ["SA_FINDINGS",           app.Q_SA_EXCESSIVE_ACCESS,        app.saExcessiveAccessVariables(T, scope), app.normalizeRunsAsPage,             "project-scoped"],
+  ["SENSITIVE_DATA_ACCESS", app.Q_AGENT_SENSITIVE_DATA_ACCESS, app.sensitiveDataAccessVariables(T, scope), app.normalizeSensitiveDataAccessPage, "project-scoped"],
   ["HOST_EXPOSURE",         app.Q_AI_EXPOSURE,                app.hostExposureVariables(T, scope),              app.normalizeHostExposurePage,       "project-scoped"],
   ["ENDPOINT_EXPOSURE",     app.Q_AI_EXPOSURE,                app.endpointExposureVariables(T, scope),          app.normalizeEndpointExposurePage,   "project-scoped"],
-  ["LINEAGE",               app.Q_LINEAGE,                    app.lineageVariables(T, null),                    app.normalizeLineagePage,            "tenant-wide"],
+  ["LINEAGE",               app.Q_LINEAGE,                    app.lineageVariables(T, scope),                   app.normalizeLineagePage,            "project-scoped"],
   ["IDENTITY_ACCESS",       app.Q_IDENTITY_ACCESS,            app.identityAccessVariables(T, scope),            app.normalizeIdentityAccessPage,     "project-scoped"],
 ]; }
 
