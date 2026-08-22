@@ -144,19 +144,60 @@ Per-step rows, last sync: `CONFIG_RULES` 3905 · `CONFIG_FINDINGS` 3639 · `AI_A
 
 ## 5. What is left, ranked
 
-1. **Lead A — the lineage normalizer.** 590 rows producing 0 edges is the largest single
-   unexplained loss, and edges are what starve attribution, posture and the problem tree alike.
-2. **`problemCensus` gains `ruleId`** (~10 lines). `exploitationByRuleId` ships empty with no
+Re-ranked 2026-08-23. The notes italicised under each item were established by **reading the
+source**, not by re-measuring the tenant — no figure in §1–§4 moved.
+
+1. **`problemCensus` gains `ruleId`** (~10 lines). `exploitationByRuleId` ships empty with no
    census to populate it from. Surfacing `wc-id-2742 — 659 issues` lets **one** operator
    judgement reach 78% of the register — the only lever on a 93.9%-unknown axis.
+   *Now ranked first: the smallest change here, and the only one needing no new I/O.* Widen the
+   param at `problemRule.ts:634`, add a `ruleIds` accumulator beside `:636-637`, mirror
+   `:641-644` in the loop, add `ruleIds: CensusEntry[]` to `ProblemCensus` (`:628-631`) and
+   `ruleIds: rank(ruleIds)` to the return (`:655`). `rank` and `PROBLEM_CENSUS_MAX = 200` are
+   already generic, and the caller (`api.ts:2742`) needs nothing because `IssueRow.ruleId` is a
+   required field (`graphTypes.ts:557`). Rendering the new list client-side is separate work.
+
+2. **Lead A — the lineage normalizer.** 590 rows producing 0 edges is the largest single
+   unexplained loss, and edges are what starve attribution, posture and the problem tree alike.
+   *The arity hypothesis is settled by reading, and needs no live sync.* `slots` comes from
+   `flattenSlots(lineageSpec())` (`syncNormalize.ts:1217`), and `lineageSpec()`
+   (`lineageQuery.ts:129-145`) is one root node plus three top-level legs plus one nested leg:
+   `slots.length === 5`, always. The root unions its types on a **single** node
+   (`LINEAGE_ROOT_CANDIDATES`, `:90`), so root-narrowing provably cannot move the arity —
+   exactly as suspected above, now confirmed. What remains is binary, and `node probe.mjs
+   --first=5` (read-only; LINEAGE wired at `probe.mjs:344`) settles it — **report node count
+   beside edge count.** Nodes 0 means the 590 rows fail the guard at `:1220`; nodes > 0 with
+   edges 0 means they pass it and every edge-bearing slot has a null parent or child
+   (`:1224-1228`). The guard is pinned by `test/lineageQuery.test.ts:198-204`, so changing it
+   changes that test: name the falsified claim first. Latent trap — `normalizeLineagePage` calls
+   `lineageSpec()` with no argument while senders may narrow roots via `lineageRoots(types)`;
+   harmless only while root count does not drive slot count.
+
 3. **Lead B — the four rejected `ISSUES_<ruleId>` steps.** Silent, every sync.
+   *Introspection may show no such field exists at all* — in which case the step is refiltered or
+   dropped, not renamed. `probe.mjs --vocab-only` already writes `probe-vocabulary.json`.
+
 4. **`dwell` as a fifth problem-tree axis** (user-chosen). 54 leaves → 162. Existing rows
    wildcard it, so `actLeafCeiling` (0.15) is untouched — ACT stays 11.1% of leaves. Values as
    a delta against Wiz's `dueAt`, never a competing date (§3 T-Test-3). It will **not** unblock
    ACT/ATTEND — it splits the 189-row `TRACK_STAR` queue, which is the actual need.
+   *`enumerateDecisionVectors` and `leafCoverage` each exist twice* — `problem.ts:98` and
+   `problemRule.ts:388` in the domain, `decideMirror.js:103` and `:284` in the client, with
+   comments asserting the pairs are identical and `aars.js:2361, 3409` reconciling them. Both
+   copies move together or the preview silently desyncs from saved state. `LeafCoverage.total`
+   is commented "Always 54 — `enumerateDecisionVectors().length`, never hardcoded here"
+   (`problemRule.ts:367`); confirm that still holds at 162. `actLeafCeiling` is validation-only
+   (`:328`) and deliberately outside `vectorSignature` (`:583-585`) — but a new axis changes the
+   decision-vector space, so whether it must join `problemRule.vectorSignature` is an open
+   question to settle, not an assumption.
+
 5. **The staleness banner UI.** `bootstrap.derivation {current, lastSync, stale, remedy:"sync"}`
    ships and nothing renders it. The tier population legitimately collapsed; nothing says why,
    or that Recompute cannot fix it.
+   *Pattern to copy:* `inventory.js:384-391` (`notice warn`, styled `aars.css:777-787`) is the
+   only banner of its kind in the client; `measureContent.js:191` already declares "Staleness
+   banner" as this measure's reporting format. Source block is `api.ts:409-416`.
+
 6. **A data-plane lattice** (user-chosen). Constraint: on this tenant `hasSensitiveData` is
    `false` for **all 585** datasets and `businessImpact` is MBI for **all 753**, so
    classification and consequence are constants. Only **provenance** (`technology.name` —
@@ -165,6 +206,15 @@ Per-step rows, last sync: `CONFIG_RULES` 3905 · `CONFIG_FINDINGS` 3639 · `AI_A
    cascade row `AARS_ASSESSMENT.md` §3.3 calls underivable) and **age** discriminate.
    **284 of 585 datasets are "Dataset *Version*"** — the register counts versions as assets,
    inflating every published denominator.
+   *Reuse `latticeSection`* (`src/client/js/ui/latticeSection.js:63`), which is generic and
+   spec-driven; add a third spec beside `PROBLEM_LATTICE` and `POSTURE_LATTICE` (`lattice.js:84`,
+   `:117`). Acceptance is the lattice's **own rule** validating with its cells pinned — a rule is
+   pinnable, a tenant figure is not. The constants above stay recorded here instead.
+
+**Unresolved, noticed 2026-08-23.** `CLAUDE.md` calls a live sync "~71 API calls, ~2 min";
+`gas_ai/README.md:72-73` calls the whole battery "~10–20 API calls" finishing "in one hop".
+These probably describe different things — a full sync versus the probe battery. Confirm which,
+and reword the loser: two durable numbers that look like a contradiction are worse than one.
 
 **Explicitly not doing:** the AIVSS formula (a mean over a 10-element vector of which 9 are
 unmeasured — `posture.ts`'s header rules this out); any age term inside AARS; parsing `notes`
