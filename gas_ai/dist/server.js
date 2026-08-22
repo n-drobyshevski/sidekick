@@ -2593,7 +2593,7 @@ var Server = (() => {
     return fetchPage(field, o);
   }
   function fetchGraphSearchPage(o) {
-    return fetchPage("graphSearch", o, { quick: true });
+    return fetchPage("graphSearch", o, { quick: false });
   }
   function fetchSingleObject(field, o) {
     var _a5;
@@ -8044,7 +8044,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "4d29b2647c27" : "dev";
+  var BUILD_ID = true ? "6b29e2efbcc7" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
