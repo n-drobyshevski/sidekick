@@ -31,7 +31,7 @@ import { outcomeBadge, outcomeLabel } from "./outcome.js";
 import { tierBadge, tierLabel } from "./posture.js";
 import { latticeGrid } from "./lattice.js";
 import { latticeIcicle } from "./latticeIcicle.js";
-import { latticeCells, outcomeMass, paintCells, toneForKey, vectorSentence } from "../lattice.js";
+import { latticeCells, occupancyTally, outcomeMass, paintCells, toneForKey, vectorSentence } from "../lattice.js";
 import { OUTCOME_VALUES } from "../decideMirror.js";
 
 import { tipAnchor } from "./tip.js";
@@ -68,9 +68,15 @@ export function latticeSection(opts) {
     // its ordered row array (what a cap check and a row lookup need). Keeping them apart
     // matters: handing the array to a coverage function silently tallies nothing.
     getCeiling, getOccupancy, getRule, getRules, getRuleCap,
-    whenWords, onAddRule, onRowLight, onTrace,
+    whenWords, onAddRule, onRowLight, onTrace, onRetryPreview,
   } = opts;
   const K = KINDS[kind];
+  // `unit` names a CELL of the lattice ("leaves", "cells"); this names what the landscape
+  // puts ON one. The two tabs genuinely differ: the problem tree places open issues and
+  // failing findings, the posture lattice places assets, and calling both "assets" — which
+  // the cell aria-labels used to — says something false on one of them.
+  const recordOne = opts.recordWord || "record";
+  const recordMany = opts.recordWordPlural || "records";
 
   let mode = "rule";
   let pop = null;
@@ -249,6 +255,9 @@ export function latticeSection(opts) {
 
   const massHost = el("div", { class: "lat-mass" });
   const legend = el("p", { class: "small muted", style: "margin:12px 0 0" });
+  // A failed measurement is the one legend state with something to DO about it, and the
+  // button cannot live inside a node whose whole content is replaced by `textContent`.
+  const legendAction = el("div", { style: "margin:8px 0 0" });
   const note = el("div", {});
 
   // Both lattices offer both views. The titles read from the caller's own vocabulary rather
@@ -278,6 +287,7 @@ export function latticeSection(opts) {
     painterHost,
     massHost,
     legend,
+    legendAction,
     note,
     traceBox,
   );
@@ -303,18 +313,35 @@ export function latticeSection(opts) {
       // Three states, not two: no preview has landed at all, versus a preview that landed
       // and found nothing in this cell.
       occupancyKnown: occ.known,
+      recordWord: recordOne,
+      recordWordPlural: recordMany,
     });
     lastPainted = painted;
     grid.paint(painted);
     // Change mode recedes what the draft does not move, so the unchanged shape stays
     // legible behind the diff instead of competing with it.
     grid.recede(mode === "change" ? painted.filter((d) => !d.changed).map((d) => d.key) : []);
-    paintLegend(painted, occ.known);
+    paintLegend(painted, occ);
     paintMass();
     runTrace(); // the rule may have moved under an open trace
   }
 
-  function paintLegend(painted, occupancyKnown) {
+  /**
+   * WHY THIS SAYS FOUR DIFFERENT THINGS WHERE IT USED TO SAY ONE.
+   *
+   * "Not measured yet — no preview has landed" was true of every state that is not a landed
+   * preview, and useless in three of them. A request still in flight, a draft too broken to
+   * send, and a call that came back an error all produced the same sentence, and the two that
+   * are not "wait a moment" explained themselves ONLY in the impact pane — which folds away,
+   * stays folded across sessions, and is folded exactly when someone is reading the lattice
+   * full-width. So a preview that failed on a real tenant looked like one that was slow, and
+   * the picture had no way to say otherwise.
+   *
+   * The reason travels on `occupancy.status` / `occupancy.reason` from the page that owns the
+   * request. `error` is the one state with something to do about it, so it gets the button.
+   */
+  function paintLegend(painted, occupancy) {
+    clear(legendAction);
     if (mode === "rule") {
       legend.textContent =
         `Every ${unitOne} this draft could ever decide, tinted by the verdict it would get. `
@@ -328,15 +355,39 @@ export function latticeSection(opts) {
         : `This draft moves no ${unitOne}. Nothing here would decide differently after a save.`;
       return;
     }
-    if (!occupancyKnown) {
+    const status = occupancy.status || (occupancy.known ? "ready" : "pending");
+    if (status === "pending") {
       legend.textContent =
-        "Not measured yet — no preview has landed. That is different from nothing reaching a "
-        + `${unitOne}.`;
+        `Measuring. The preview has not come back yet, so nothing here is a count of ${recordMany}.`;
+      return;
+    }
+    if (status === "blocked") {
+      legend.textContent =
+        "Not measured: the draft has an error the preview will not run against"
+        + (occupancy.reason ? ` — ${occupancy.reason}` : ".");
+      return;
+    }
+    if (status === "error") {
+      legend.textContent =
+        `Could not measure${occupancy.reason ? `: ${occupancy.reason}` : "."}`;
+      if (onRetryPreview) {
+        const retry = el("button", {}, "Try again");
+        retry.addEventListener("click", () => onRetryPreview());
+        legendAction.append(retry);
+      }
       return;
     }
     const reached = painted.filter((d) => d.count > 0).length;
+    const placed = painted.reduce((sum, d) => sum + (d.count || 0), 0);
+    if (!placed) {
+      legend.textContent =
+        `A preview landed and found nothing: this tenant has no ${recordOne} to place. `
+        + `That is a reading, not a missing one — every ${unitOne} below is genuinely empty.`;
+      return;
+    }
     legend.textContent =
-      `${reached} of ${painted.length} ${unit} carry at least one record in this tenant. `
+      `${reached} of ${painted.length} ${unit} carry at least one ${recordOne} in this tenant; `
+      + `the strip above splits all ${placed} of them by verdict. `
       + `A hatched ${unitOne} is one the landscape never reaches — which is not the same as a `
       + "rule that cannot fire.";
   }
@@ -351,27 +402,55 @@ export function latticeSection(opts) {
    * moves on the same keystroke as the field.
    */
   function paintMass() {
-    const coverage = coverageOf(getRule());
     const ceiling = getCeiling();
-    const mass = outcomeMass(coverage[K.tallyKey], K.order, ceiling);
+    // The ceiling is a share of the LATTICE and always has been: `actLeafCeiling` /
+    // `topTierCeiling` are validated against `leafCoverage` / `cellCoverage` server-side, and
+    // breaching one is what refuses a save. So the leaf reading is computed in every mode,
+    // even when it is not the one being drawn — the warning below is about the rule, not
+    // about the picture, and must not disappear just because the strip changed denominator.
+    const leafMass = outcomeMass(coverageOf(getRule())[K.tallyKey], K.order, ceiling);
+
+    // IN LANDSCAPE MODE THE STRIP COUNTS THE LANDSCAPE. The grid above is a picture of the
+    // population; a strip below it counting the rule's own 54 leaves answers a different
+    // question in the same breath, and the two totals differ by three orders of magnitude on
+    // a real tenant. Rule and Change keep the leaf reading, because that IS what those modes
+    // are about.
+    const occ = getOccupancy();
+    const ready = occ.status ? occ.status === "ready" : !!occ.known;
+    const onLandscape = mode === "landscape" && ready;
+    const mass = onLandscape
+      ? outcomeMass(occupancyTally(latticeCells(spec), decide, K.verdictKey, occ.map || {}),
+        K.order, ceiling)
+      : leafMass;
+    // Landscape mode without a landed preview must not quietly show the leaf shape instead:
+    // that is a real bar of real numbers about a different thing, and it would read as the
+    // measurement the legend has just said does not exist.
+    const unmeasured = mode === "landscape" && !ready;
+    const noun = onLandscape || unmeasured ? recordMany : unit;
     clear(massHost);
 
     const bar = el("div", {
       class: "lat-mass__bar",
       role: "img",
-      "aria-label": mass.segments.map((s) => `${s.count} ${K.label(s.key)}`).join(", ")
-        + `, of ${coverage.total} ${unit}; ceiling at ${Math.round(ceiling * 100)} percent`,
+      "aria-label": unmeasured
+        ? `Not measured: no preview has placed any ${recordMany} yet`
+        : mass.segments.map((s) => `${s.count} ${K.label(s.key)}`).join(", ")
+          + `, of ${mass.total} ${noun}`
+          + (onLandscape ? "" : `; ceiling at ${Math.round(ceiling * 100)} percent`),
     });
+    if (unmeasured) bar.dataset.unmeasured = "";
     const bands = [];
     for (const seg of mass.segments) {
       const tone = toneForKey(seg.key);
       const band = el("span", { class: "lat-mass__seg", "data-tone": tone ? tone.tone : "neutral" });
-      band.style.width = `${seg.share * 100}%`;
+      // An unmeasured strip draws no fill at all — the hatch on the track is the whole mark,
+      // the same one the cells above are wearing for the same reason.
+      band.style.width = unmeasured ? "0%" : `${seg.share * 100}%`;
       // A tier with nothing in it must not leave a sliver. `min-width` keeps a real but
       // tiny share visible; on a zero it would print two pixels of colour that read as
       // "a little", and with the separator on, two pixels of white that read as a seam.
       // The legend below already prints the 0, which is where a zero belongs.
-      if (!seg.count) band.dataset.zero = "";
+      if (unmeasured || !seg.count) band.dataset.zero = "";
       bands.push(band);
       bar.append(band);
     }
@@ -381,23 +460,57 @@ export function latticeSection(opts) {
     // this: the last element is often a zero-width band, not the last visible fill.
     const lastFill = bands.filter((n) => n.dataset.zero === undefined).pop();
     if (lastFill) lastFill.dataset.lastFill = "";
-    const mark = el("div", {
+    // The marker is a position on an axis of LATTICE share. Drawn over a population it would
+    // be a lie in the most legible way available — a line at 15% of a number the ceiling has
+    // never had an opinion about — so in landscape mode it simply is not there.
+    const mark = onLandscape || unmeasured ? null : el("div", {
       class: "lat-mass__mark",
       "data-label": `${K.ceilingWord} ceiling ${Math.round(ceiling * 100)}%`,
     });
-    mark.style.left = `calc(${mass.ceilingShare * 100}% - 1px)`;
+    if (mark) mark.style.left = `calc(${mass.ceilingShare * 100}% - 1px)`;
 
     const key = el("div", { class: "lat-mass__legend" });
     for (const seg of mass.segments) {
-      key.append(el("span", {}, K.badge(seg.key), el("b", {}, ` ${seg.count}`)));
+      // An em-dash, not a 0. "Nothing measured" and "measured, and nothing landed here" are
+      // the distinction this whole mode exists to keep, and the chips are where the numbers
+      // are read — printing 0 here would settle it the wrong way.
+      key.append(el("span", {}, K.badge(seg.key), el("b", {}, unmeasured ? " —" : ` ${seg.count}`)));
     }
-    massHost.append(el("div", { class: "lat-mass__frame" }, bar, mark), key);
+    if (unmeasured) key.dataset.unmeasured = "";
+    const frame = el("div", { class: "lat-mass__frame" }, bar);
+    if (mark) frame.append(mark);
+    massHost.append(frame, key);
+    massHost.append(el(
+      "p",
+      { class: "small muted lat-mass__caption" },
+      unmeasured
+        ? `The ${unit} below by verdict, once a preview has measured them.`
+        : onLandscape
+          ? `Every ${recordOne} this tenant carries, by the verdict of the ${unitOne} it lands on.`
+          : `All ${mass.total} ${unit}, by the verdict this draft gives them.`,
+    ));
 
     // Over the ceiling is a refusal to save, so it says so here rather than waiting to be
-    // discovered by pressing Save.
-    if (mass.over) {
-      massHost.append(el("div", { class: "diag-warn", role: "status" }, mass.sentence));
+    // discovered by pressing Save — in every mode, from the leaf reading, whichever strip is
+    // drawn above it.
+    if (leafMass.over) {
+      massHost.append(el("div", { class: "diag-warn", role: "status" }, leafMass.sentence));
     }
+  }
+
+  /**
+   * Why this cell has no number, in the popover's voice. Same four states `paintLegend`
+   * distinguishes, and for the same reason — a reader who clicked a cell to find out why it
+   * is blank must not be sent to a panel that may be folded shut to be told.
+   */
+  function unmeasuredReason(occ) {
+    const status = occ.status || (occ.known ? "ready" : "pending");
+    if (status === "blocked") {
+      return "Not measured: the draft has an error the preview will not run against"
+        + (occ.reason ? ` — ${occ.reason}` : ".");
+    }
+    if (status === "error") return `Could not measure${occ.reason ? `: ${occ.reason}` : "."}`;
+    return "Not measured yet — the preview has not come back.";
   }
 
   // ---------------------------------------------------------------------------- popover
@@ -414,7 +527,8 @@ export function latticeSection(opts) {
     const d = grid.descriptorFor(cell.key);
     const claimed = d && d.ruleIndex >= 0;
     const occ = getOccupancy();
-    const count = occ.known ? (occ.map[cell.key] || 0) : null;
+    const ready = occ.status ? occ.status === "ready" : !!occ.known;
+    const count = ready ? (occ.map[cell.key] || 0) : null;
     const cap = getRuleCap();
     const atCap = getRules().length >= cap;
     // The raw verdict comes straight from the mirror; `paintCells` deliberately emits
@@ -439,10 +553,10 @@ export function latticeSection(opts) {
         body.append(el(
           "p", { class: "small muted", style: "margin:0 0 10px" },
           count === null
-            ? "Not measured yet — no preview has landed."
+            ? unmeasuredReason(occ)
             : count === 0
               ? "Nothing in this tenant lands here."
-              : `${count} ${count === 1 ? "record" : "records"} in this tenant land here.`,
+              : `${count} ${count === 1 ? recordOne : recordMany} in this tenant land here.`,
         ));
         const add = el("button", {}, "Add a rule for this cell");
         add.disabled = atCap;

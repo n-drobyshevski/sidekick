@@ -24,7 +24,7 @@ import { call } from "../api.js";
 import {
   aarsChip,
   axisBar,
-  axisTally,
+  axisSegments,
   claimOffsets,
   diagRow,
   claimRail,
@@ -487,6 +487,9 @@ export async function renderAarsRules(main, _params, ctx) {
   // It sits beside the tab switch (which model) rather than out with Save / Revert (what to
   // do about it): both are view controls, and the toolbar's three action clusters are
   // appended at different times, so "last child of the bar" is not a fixed position anyway.
+  // Declared up here rather than beside selectModelTab: applyImpactCollapsed reads it, and
+  // that runs once during this very block to set the toggle's initial state.
+  let activeModelTab = "aars"; // which tab is showing, so an async load can't unhide the wrong one
   let impactCollapsed = loadImpactCollapsed();
   const impactToggle = el(
     "button",
@@ -494,11 +497,35 @@ export async function renderAarsRules(main, _params, ctx) {
     uiIcon("chevron-right", 14),
     el("span", {}, "Impact"),
   );
+  /**
+   * WHAT THE FOLDED PANE IS HOLDING, said on the control that folded it.
+   *
+   * A preview that fails, or a draft too broken to send one, explains itself in the impact
+   * pane and nowhere else — and this toggle's state persists across sessions, so the pane is
+   * most often shut exactly when someone is reading a full-width lattice that cannot say why
+   * it has no measurement. The lattice now names the reason itself; this is the other half,
+   * for the numbers in the pane that have no picture to borrow.
+   *
+   * Keyed by tab because all three panes exist at once and only one is on screen.
+   */
+  const impactAlerts = { aars: "", problem: "", posture: "" };
+  function setImpactAlert(tab, reason) {
+    if (impactAlerts[tab] === (reason || "")) return;
+    impactAlerts[tab] = reason || "";
+    applyImpactCollapsed();
+  }
+
   // No aria-controls: it would have to name one of three panes, two of which may not exist
   // yet — the same reason app.js's rail toggle names only itself.
   function applyImpactCollapsed() {
     root.classList.toggle("impact-collapsed", impactCollapsed);
-    const label = impactCollapsed ? "Show impact panel" : "Hide impact panel";
+    const alert = impactCollapsed ? impactAlerts[activeModelTab] : "";
+    // Never colour alone: the dot has a word for it in the accessible name and the tip.
+    const label = alert
+      ? `Show impact panel — ${alert}`
+      : impactCollapsed ? "Show impact panel" : "Hide impact panel";
+    if (alert) impactToggle.dataset.alert = "";
+    else delete impactToggle.dataset.alert;
     impactToggle.setAttribute("aria-expanded", String(!impactCollapsed));
     impactToggle.setAttribute("aria-label", label);
     tipAnchor(impactToggle, label);
@@ -561,7 +588,6 @@ export async function renderAarsRules(main, _params, ctx) {
 
   let closeProblemLatticePop = () => {};
   let closePostureLatticePop = () => {};
-  let activeModelTab = "aars"; // which tab is showing, so an async load can't unhide the wrong one
 
   function selectModelTab(which) {
     activeModelTab = which;
@@ -577,6 +603,7 @@ export async function renderAarsRules(main, _params, ctx) {
     if (!isProblem) closeProblemLatticePop();
     if (!isPosture) closePostureLatticePop();
     modelTabs.set(which);
+    applyImpactCollapsed(); // the dot belongs to the tab on screen, not to the last one
     if (isProblem) loadProblemPane();
     if (isPosture) loadPosturePane();
   }
@@ -1962,6 +1989,9 @@ export async function renderAarsRules(main, _params, ctx) {
   function paintImpact() {
     const errs = draftErrors(draft);
     clear(impactState);
+    setImpactAlert("aars", errs.list.length
+      ? "the draft has an error"
+      : previewError ? "the preview failed" : "");
 
     if (errs.list.length) {
       clear(impactStrip);
@@ -2905,6 +2935,10 @@ export async function renderAarsRules(main, _params, ctx) {
       kind: "problem",
       unit: "leaves",
       unitOne: "leaf",
+      // What lands ON a leaf here is an open issue or a failing finding — never an asset,
+      // whatever the cell aria-labels used to say. Only the posture lattice places assets.
+      recordWord: "record",
+      recordWordPlural: "records",
       decide: (v) => mirrorDecideProblem(v, problemDraft),
       decideSaved: (v) => mirrorDecideProblem(v, problemSaved),
       coverageOf: (rule) => mirrorLeafCoverage(rule),
@@ -2912,10 +2946,23 @@ export async function renderAarsRules(main, _params, ctx) {
       getRules: () => problemDraft.outcomeRules,
       getCeiling: () => problemDraft.actLeafCeiling,
       getRuleCap: () => (problemState && problemState.limits && problemState.limits.maxOutcomeRules) || 40,
+      // FOUR STATES, NOT TWO. "No preview has landed" is true of a request still in flight,
+      // a draft too broken to send, and a call that came back an error — and the picture used
+      // to say the same eleven words for all three. The two that are not simply "wait a
+      // moment" printed their reason ONLY inside the impact pane, which folds away and stays
+      // folded across sessions, so a failed preview was indistinguishable from a slow one on
+      // the tab that shows it. Everything needed to tell them apart is already in this scope.
       getOccupancy: () => {
         const disc = problemPreview && problemPreview.treeDiscrimination;
-        return { known: !!disc, map: (disc && disc.leafOccupancy) || {} };
+        if (disc) return { status: "ready", known: true, map: disc.leafOccupancy || {} };
+        const errs = problemDraftErrors(problemDraft);
+        if (errs.length) return { status: "blocked", known: false, map: {}, reason: errs[0] };
+        if (problemPreviewError) {
+          return { status: "error", known: false, map: {}, reason: problemPreviewError };
+        }
+        return { status: "pending", known: false, map: {} };
       },
+      onRetryPreview: () => retryProblemPreview(),
       whenWords: (row) => {
         if (!row) return "no condition";
         const parts = AXIS_DEFS
@@ -3045,7 +3092,7 @@ export async function renderAarsRules(main, _params, ctx) {
       if (!disc) return;
       setText(
         pLeavesLine,
-        `${disc.leavesReached} of 54 leaves reached, across ${disc.decided.length} decided ` +
+        `${disc.leavesReached} of 54 leaves reached, across ${disc.decidedCount} decided ` +
           `issues and findings.`,
       );
       paintUnknownRates({
@@ -3058,9 +3105,25 @@ export async function renderAarsRules(main, _params, ctx) {
       });
     }
 
+    /**
+     * Clear the last failure and ask again — offered in two places now, so it is one function.
+     * The lattice needs it because the impact pane's copy can be folded out of reach, which
+     * is exactly the condition under which a reader is most likely to want it.
+     */
+    function retryProblemPreview() {
+      problemPreviewError = "";
+      scheduleProblemPreview();
+      paintProblemImpact();
+      paintProblemLattice();
+    }
+
     function paintProblemImpact() {
       const errs = problemDraftErrors(problemDraft);
       clear(pImpactState);
+      // What this pane is about to say that nothing else will, if it is folded shut.
+      setImpactAlert("problem", errs.length
+        ? "the draft has an error"
+        : problemPreviewError ? "the preview failed" : "");
 
       if (errs.length) {
         clear(pImpactStrip);
@@ -3080,11 +3143,7 @@ export async function renderAarsRules(main, _params, ctx) {
         setText(pImpactHeadline, "");
         setText(pLeavesLine, "");
         const retry = el("button", { style: "margin-top:10px" }, "Try again");
-        retry.addEventListener("click", () => {
-          problemPreviewError = "";
-          scheduleProblemPreview();
-          paintProblemImpact();
-        });
+        retry.addEventListener("click", retryProblemPreview);
         pImpactState.append(emptyState("Couldn't preview this rule.", problemPreviewError), retry);
         return;
       }
@@ -3215,15 +3274,16 @@ export async function renderAarsRules(main, _params, ctx) {
       // can be folded away entirely.
       const axisRates = (problemPreview && problemPreview.treeDiscrimination
         && problemPreview.treeDiscrimination.unknownRate) || null;
-      const decided = (problemPreview && problemPreview.treeDiscrimination
-        && problemPreview.treeDiscrimination.decided) || null;
+      const axisReadings = (problemPreview && problemPreview.treeDiscrimination
+        && problemPreview.treeDiscrimination.axisReadings) || null;
       AXIS_DEFS.forEach((axis) => {
         const block = pAxisBlocks[axis.key];
         const share = axisRates ? axisRates[axis.key] || 0 : null;
         block.paintRate(share, share !== null && share >= UNKNOWN_WARN_THRESHOLD);
-        // One pass over a population the impact pane already receives — no new endpoint,
-        // and the bar and the rate above it cannot disagree, because both read that array.
-        block.paintReading(decided ? axisTally(decided, axis.key, axis.values) : null);
+        // The rate above and the bar below still cannot disagree: both are counted in the
+        // same walk of the same decided population, now server-side rather than here. See
+        // axisBar.axisSegments for why that walk moved.
+        block.paintReading(axisReadings ? axisSegments(axisReadings[axis.key], axis.values) : null);
       });
 
       // Cascade row notes: shadowed, and how many leaves each row claims — both come from
@@ -3323,6 +3383,12 @@ export async function renderAarsRules(main, _params, ctx) {
         problemPreviewError = "";
         pImpact.classList.remove("updating");
         paintProblemImpact();
+        // This branch DISCARDS the standing preview, so it owes the picture a repaint.
+        // onProblemEdit paints BEFORE it calls this — it has to, the rule half of the
+        // lattice must move on the keystroke — so without this the grid kept drawing counts
+        // from a measurement that had just been thrown away. The cell popover reads
+        // occupancy live and said "blocked" while the legend above it still said 38 records.
+        paintProblemLattice();
         return;
       }
       pImpact.classList.add("updating");
@@ -3341,7 +3407,6 @@ export async function renderAarsRules(main, _params, ctx) {
         problemPreview = data;
         problemPreviewError = "";
         pLattice.reconcile(sentDraft, data && data.leafCoverage);
-        paintProblemLattice(); // landscape occupancy only exists once a preview has landed
       } catch (e) {
         if (seq !== problemPreviewSeq) return;
         problemPreview = null;
@@ -3349,6 +3414,12 @@ export async function renderAarsRules(main, _params, ctx) {
       }
       pImpact.classList.remove("updating");
       pLattice.setUpdating(false);
+      // BOTH PATHS REPAINT. This used to sit inside the try, so a preview that failed left
+      // the previous one's counts on the grid — stale numbers with nothing on the page
+      // saying they were stale, which is the one outcome a register must never produce.
+      // Landscape occupancy exists only while a preview stands; when one stops standing the
+      // picture has to say so.
+      paintProblemLattice();
       paintProblemImpact();
       syncProblem(); // row notes and leaf counts come from the preview
     }
@@ -3741,6 +3812,8 @@ export async function renderAarsRules(main, _params, ctx) {
       kind: "posture",
       unit: "cells",
       unitOne: "cell",
+      recordWord: "asset",
+      recordWordPlural: "assets",
       decide: (v) => mirrorDecidePosture(v, postureDraft),
       decideSaved: (v) => mirrorDecidePosture(v, postureSaved),
       coverageOf: (rule) => mirrorCellCoverage(rule),
@@ -3748,10 +3821,18 @@ export async function renderAarsRules(main, _params, ctx) {
       getRules: () => postureDraft.tierRules,
       getCeiling: () => postureDraft.topTierCeiling,
       getRuleCap: () => (postureState && postureState.limits && postureState.limits.maxTierRules) || 40,
+      // The same four states the problem lattice reports — see its own `getOccupancy`.
       getOccupancy: () => {
         const disc = posturePreview && posturePreview.postureDiscrimination;
-        return { known: !!disc, map: (disc && disc.cellOccupancy) || {} };
+        if (disc) return { status: "ready", known: true, map: disc.cellOccupancy || {} };
+        const errs = postureDraftErrors(postureDraft);
+        if (errs.length) return { status: "blocked", known: false, map: {}, reason: errs[0] };
+        if (posturePreviewError) {
+          return { status: "error", known: false, map: {}, reason: posturePreviewError };
+        }
+        return { status: "pending", known: false, map: {} };
       },
+      onRetryPreview: () => retryPosturePreview(),
       whenWords: (row) => {
         if (!row) return "no condition";
         const parts = POSTURE_AXIS_DEFS
@@ -3875,7 +3956,7 @@ export async function renderAarsRules(main, _params, ctx) {
       if (!disc) return;
       setText(
         uCellsLine,
-        `${disc.cellsReached} of 27 cells reached, across ${disc.decided.length} tiered assets.`,
+        `${disc.cellsReached} of 27 cells reached, across ${disc.decidedCount} tiered assets.`,
       );
       paintUnknownRates({
         listHost: uUnknownList,
@@ -3887,9 +3968,20 @@ export async function renderAarsRules(main, _params, ctx) {
       });
     }
 
+    /** The problem tab's `retryProblemPreview`, on the lattice this tab mounts. */
+    function retryPosturePreview() {
+      posturePreviewError = "";
+      schedulePosturePreview();
+      paintPostureImpact();
+      uLattice.repaint();
+    }
+
     function paintPostureImpact() {
       const errs = postureDraftErrors(postureDraft);
       clear(uImpactState);
+      setImpactAlert("posture", errs.length
+        ? "the draft has an error"
+        : posturePreviewError ? "the preview failed" : "");
 
       if (errs.length) {
         clear(uImpactStrip);
@@ -3909,11 +4001,7 @@ export async function renderAarsRules(main, _params, ctx) {
         setText(uImpactHeadline, "");
         setText(uCellsLine, "");
         const retry = el("button", { style: "margin-top:10px" }, "Try again");
-        retry.addEventListener("click", () => {
-          posturePreviewError = "";
-          schedulePosturePreview();
-          paintPostureImpact();
-        });
+        retry.addEventListener("click", retryPosturePreview);
         uImpactState.append(emptyState("Couldn't preview this rule.", posturePreviewError), retry);
         return;
       }
@@ -4119,6 +4207,8 @@ export async function renderAarsRules(main, _params, ctx) {
         posturePreviewError = "";
         uImpact.classList.remove("updating");
         paintPostureImpact();
+        // Discards the standing preview, so it repaints — see scheduleProblemPreview.
+        uLattice.repaint();
         return;
       }
       uImpact.classList.add("updating");
@@ -4137,7 +4227,6 @@ export async function renderAarsRules(main, _params, ctx) {
         posturePreview = data;
         posturePreviewError = "";
         uLattice.reconcile(sentDraft, data && data.cellCoverage);
-        uLattice.repaint(); // landscape occupancy only exists once a preview has landed
       } catch (e) {
         if (seq !== posturePreviewSeq) return;
         posturePreview = null;
@@ -4145,6 +4234,9 @@ export async function renderAarsRules(main, _params, ctx) {
       }
       uImpact.classList.remove("updating");
       uLattice.setUpdating(false);
+      // Both paths, for the reason runProblemPreview's own comment gives: a failed preview
+      // must not leave the previous one's counts standing on the grid.
+      uLattice.repaint();
       paintPostureImpact();
       syncPosture(); // row notes and cell counts come from the preview
     }

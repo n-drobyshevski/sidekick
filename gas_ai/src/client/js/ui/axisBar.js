@@ -23,44 +23,42 @@
 import { el, clear } from "./dom.js";
 
 /**
- * How the decided population fell across one axis, and how much of each value was a
- * fallback rather than a reading.
+ * One axis's reading, reshaped into the segments the bar draws.
  *
- * `decided` is `treeDiscrimination.decided` — already on the wire for the impact pane, so
- * this costs one pass over an array the page has anyway and no new endpoint.
+ * `reading` is `treeDiscrimination.axisReadings[key]` — `{total, counts, unknowns}`, already
+ * zero-filled in the axis's declared order by the domain. THE COUNTING IS NOT DONE HERE ANY
+ * MORE. It used to be: `axisTally(decided, key, values)` walked `treeDiscrimination.decided`,
+ * one object per decided issue and finding, which was free only for as long as that array was
+ * on the wire for other reasons. It was not — these four histograms were the only thing the
+ * page ever did with it — so a real tenant paid a per-row response to draw four bars, and
+ * paid it as a silent size failure rather than a slow page. The pass moved to problemRule.ts;
+ * this half, the shares and the ranks, is display arithmetic and stays.
  *
- * `unknown` is counted PER VALUE rather than as its own segment because for three of the
- * four axes it is not a value at all: an impact reading is TOTAL or PARTIAL whether or not
- * anything established it, and a mission of MEDIUM may be Wiz's answer or the operator's
- * fallback. Splitting it out as a fifth segment would say those rows had no value, which is
- * false; hatching part of the value they DID get says the true thing.
+ * `unknown` is a portion of a value's own segment rather than a fifth segment, because for
+ * three of the four axes it is not a value at all: an impact reading is TOTAL or PARTIAL
+ * whether or not anything established it, and a mission of MEDIUM may be Wiz's answer or the
+ * operator's fallback. A separate segment would say those rows had no value, which is false;
+ * hatching part of the value they DID get says the true thing.
  */
-export function axisTally(decided, key, values) {
-  const counts = {};
-  const unknowns = {};
-  for (const v of values) {
-    counts[v] = 0;
-    unknowns[v] = 0;
-  }
-  let total = 0;
-  for (const row of decided || []) {
-    const value = row && row.vector ? row.vector[key] : null;
-    if (value === null || value === undefined || !(value in counts)) continue;
-    counts[value] += 1;
-    total += 1;
-    if (row.unknowns && row.unknowns.indexOf(key) >= 0) unknowns[value] += 1;
-  }
+export function axisSegments(reading, values) {
+  const total = (reading && reading.total) || 0;
+  const counts = (reading && reading.counts) || {};
+  const unknowns = (reading && reading.unknowns) || {};
   return {
     total,
-    segments: values.map((value, rank) => ({
-      value,
-      rank,
-      count: counts[value],
-      unknown: unknowns[value],
-      share: total ? counts[value] / total : 0,
-      /** Of THIS value's rows, the share nothing established — what the hatch covers. */
-      unknownShare: counts[value] ? unknowns[value] / counts[value] : 0,
-    })),
+    segments: values.map((value, rank) => {
+      const count = counts[value] || 0;
+      const unknown = unknowns[value] || 0;
+      return {
+        value,
+        rank,
+        count,
+        unknown,
+        share: total ? count / total : 0,
+        /** Of THIS value's rows, the share nothing established — what the hatch covers. */
+        unknownShare: count ? unknown / count : 0,
+      };
+    }),
   };
 }
 
