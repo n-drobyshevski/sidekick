@@ -2,6 +2,7 @@
 
 import { clear, el } from "./dom.js";
 import { pluralize } from "./format.js";
+import { tip, tipLabel, tipLines, truncTip } from "./tip.js";
 
 /**
  * A proportional fill in a rounded track — the AARS score meter, the stat-list meters, the
@@ -15,7 +16,7 @@ import { pluralize } from "./format.js";
  * which must not be rebuilt or they lose focus) can set a width without re-querying.
  */
 export function meter(value, opts = {}) {
-  const { max = 100, label = "", decorative = false, className = "" } = opts;
+  const { max = 100, label = "", decorative = false, className = "", help = null } = opts;
   const n = Number(value) || 0;
   const cap = Number(max) || 0;
   const pct = cap > 0 ? Math.max(0, Math.min(100, (n / cap) * 100)) : 0;
@@ -34,6 +35,7 @@ export function meter(value, opts = {}) {
   fill.style.width = `${pct}%`;
   const track = el("span", attrs, fill);
   track.fill = fill;
+  if (help) tipLabel(track, help);
   return track;
 }
 
@@ -107,22 +109,29 @@ export function dataTable(spec) {
 
   const headCells = new Map();
   const headRow = el("tr", {});
+  // A column heading is where a metric gets DEFINED: it is asked once per table rather than
+  // once per row, so this is the one place a definition can be a real control without
+  // multiplying the tab order by the row count. `col.help` takes any of tipLabel's shapes.
   for (const col of columns) {
     if (!col.sortable || !onSort) {
-      headRow.append(el("th", { scope: "col" }, col.label));
+      headRow.append(el("th", { scope: "col" }, tipLabel(col.label, col.help)));
       continue;
     }
-    const th = el("th", { scope: "col" },
-      el("button", {
-        class: "th-sort",
-        "data-sort": col.key,
-        "aria-label": `Sort by ${col.label}`,
-        onclick: () => onSort(col.key),
-      },
-        col.label,
-        el("span", { class: "th-sort-glyph", "aria-hidden": "true" }),
-      ),
+    const sortBtn = el("button", {
+      class: "th-sort",
+      "data-sort": col.key,
+      "aria-label": `Sort by ${col.label}`,
+      onclick: () => onSort(col.key),
+    },
+      col.label,
+      el("span", { class: "th-sort-glyph", "aria-hidden": "true" }),
     );
+    const th = el("th", { scope: "col" }, sortBtn);
+    // Attached to the sort button rather than wrapping it: pressing a heading sorts, and a
+    // second control inside it would offer two meanings for one press. The description hangs
+    // off the <th>, which is outside the button's own name.
+    const helpLines = tipLines(col.help);
+    if (helpLines) tip(sortBtn, helpLines, { describeIn: th });
     headCells.set(col.key, th);
     headRow.append(th);
   }
@@ -142,8 +151,17 @@ export function dataTable(spec) {
   function paintRows(list) {
     clear(tbody);
     for (const row of list) {
-      const cells = columns.map((col) =>
-        el("td", { class: col.className || null }, col.cell(row)));
+      // EVERY cell, because every cell clips: tables.css gives `table.data td` a 320px cap
+      // with an ellipsis, and rule names, resource ids and GraphQL fragments run past it all
+      // day. truncTip arms itself only when the cell actually overflowed, measured at hover
+      // time, so a column that fits stays silent and a resized window is respected without
+      // repainting the table.
+      const cells = columns.map((col) => {
+        const td = el("td", { class: col.className || null }, col.cell(row));
+        const text = td.textContent;
+        if (text && text.length > 12) truncTip(td, text);
+        return td;
+      });
       const extra = rowClass ? rowClass(row) : "";
       if (!onRowOpen) {
         tbody.append(el("tr", { class: extra || null }, ...cells));

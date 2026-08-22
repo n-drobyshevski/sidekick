@@ -56,6 +56,8 @@ import {
 } from "./graphQuery.js";
 import { currentEntryId, openQueryPalette, stepForPick } from "./queryPalette.js";
 
+import { tip } from "../ui.js";
+import { tipAnchor } from "../ui.js";
 /**
  * @param {object} opts
  *   {getQuery, getVocab, getWhere, onChange(nextQuery, nextWhere)}
@@ -538,7 +540,15 @@ export function queryBar(opts) {
     const shown = kinds.slice(0, CHIPS_SHOWN);
     const rest = kinds.length - shown.length;
     const out = shown.map(entityChip);
-    if (rest > 0) out.push(el("span", { class: "gq-chip gq-chip--more" }, "+" + rest + " more"));
+    // Was a plain span: the kinds it stood for were unreachable by pointer, keyboard and
+    // screen reader alike. The card lists them, and the chip says so in its own name.
+    if (rest > 0) {
+      const hidden = kinds.slice(CHIPS_SHOWN).map(kindLabel);
+      out.push(tipAnchor(
+        el("span", { class: "gq-chip gq-chip--more" }, "+" + rest + " more",
+          el("span", { class: "sr-only" }, ": " + hidden.join(", "))),
+        [hidden.join(", ")]));
+    }
     return out;
   }
 
@@ -649,23 +659,26 @@ export function queryBar(opts) {
     const states = row.group || !row.path.length ? [] : statesFor(query, row);
     if (states.length < 2) return el("span", { class: "gq-kw" }, keywordOf(row));
     const hint = cycleHint(query, row, states);
-    return el("button", {
+    // Two lines, which a native title could only run together behind an embedded newline it
+    // renders badly anyway: what this keyword means here, then the loop pressing it walks.
+    const cycle = "Cycle: "
+      + states.map((s) => (s.conj ? s.conj.toUpperCase() + " " : "") + "THAT"
+        + (s.negate ? " NOT" : "")).join(" → ");
+    return tip(el("button", {
       type: "button",
       class: "gq-kw gq-kw--btn",
       // The name states what the row says NOW and what pressing does. The row itself takes focus
       // after the edit and its `aria-label` restates the whole condition, so the new reading is
       // announced without a live region.
       "aria-label": keywordOf(row) + (row.negate ? " NOT" : "") + " — change how this condition joins",
-      title: (hint ? hint + "\n" : "") + "Cycle: "
-        + states.map((s) => (s.conj ? s.conj.toUpperCase() + " " : "") + "THAT"
-          + (s.negate ? " NOT" : "")).join(" → "),
       onclick: () => cycleRow(query, row),
     },
       keywordOf(row),
       // Negation is a word, not a colour, and it belongs INSIDE the control that sets it — a red
       // NOT sitting next to the pill would be state the reader cannot reach from the thing
       // showing it.
-      row.negate ? el("span", { class: "gq-not" }, "NOT") : null);
+      row.negate ? el("span", { class: "gq-not" }, "NOT") : null),
+      [hint, cycle].filter(Boolean), { spoken: false });
   }
 
   /** Advance one place around the loop and write both halves of the new state. */
@@ -693,11 +706,12 @@ export function queryBar(opts) {
     const attrs = {
       class: "gq-iconbtn",
       "aria-label": label,
-      title: label,
       onclick: onClick,
     };
     if (pressed !== undefined) attrs["aria-pressed"] = pressed ? "true" : "false";
-    return el("button", attrs, uiIcon(name, 14));
+    // The label is already the accessible name; the card is what a pointer user gets instead
+    // of a glyph with no words.
+    return tip(el("button", attrs, uiIcon(name, 14)), label, { spoken: false });
   }
 
   function render() {

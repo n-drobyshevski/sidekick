@@ -20,6 +20,7 @@
 // previous amber/orange pair missed by more than half.
 
 import { el } from "./dom.js";
+import { bookTip } from "./tip.js";
 
 const TIER_META = {
   4: { kind: "pill--rank4", label: "Tier 4" },
@@ -42,9 +43,11 @@ export function tierLabel(tier) {
 export function tierBadge(tier) {
   const meta = TIER_META[Number(tier)];
   if (!meta) return el("span", { class: "small muted" }, "—");
-  return el(
+  // "Tier 2" says nothing about which end of the scale it is on, and the ordinal fill can
+  // only say so to a reader who can see it. The lead says it in words.
+  return bookTip(el(
     "span",
     { class: `pill ${meta.kind}`, role: "img", "aria-label": `Posture ${meta.label}` },
     meta.label,
-  );
+  ), "posture-tier", meta.label + " of 4 — tier 1 is the best posture, tier 4 the worst.");
 }

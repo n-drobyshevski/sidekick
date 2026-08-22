@@ -37,13 +37,14 @@ import {
   field,
   emptyState,
   filterCombobox,
-  helpTip,
   onPageTeardown,
   openPopover,
   openSheet,
   outcomeBadge,
   outcomeLabel,
   tierLabel,
+  tip,
+  tipMark,
   paintUnknownRates,
   pointRail,
   railScale,
@@ -84,6 +85,7 @@ import {
   tenantCodeOptions,
 } from "../codebook.js";
 
+import { bookTip, tipAnchor } from "../ui.js";
 const SEVERITY_KEYS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 // Worst first — the order the thresholds descend in.
 const BANDS = [
@@ -499,7 +501,7 @@ export async function renderAarsRules(main, _params, ctx) {
     const label = impactCollapsed ? "Show impact panel" : "Hide impact panel";
     impactToggle.setAttribute("aria-expanded", String(!impactCollapsed));
     impactToggle.setAttribute("aria-label", label);
-    impactToggle.setAttribute("title", label);
+    tipAnchor(impactToggle, label);
   }
   impactToggle.addEventListener("click", () => {
     impactCollapsed = !impactCollapsed;
@@ -718,10 +720,17 @@ export async function renderAarsRules(main, _params, ctx) {
   // the palette here and a pillar is not a severity.
   const stackSegs = {};
   const stackTrack = el("div", { class: "model-stack__track", role: "img" });
+  // A segment is labelled "A · 50" and the pillar it stands for — Toxic combinations,
+  // Compliance gaps, Data exposure — reached nobody but a native tooltip. The card says the
+  // name and the book says what the pillar prices; the caption is set in sync() below.
+  const PILLAR_TERM = { a: "pillar-a", b: "pillar-b", c: "pillar-c" };
+  const stackCaption = {};
   for (const key of ["a", "b", "c"]) {
     const text = el("span", { class: "model-stack__text" });
     const node = el("div", { class: `model-stack__seg model-stack__seg--${key}` }, text);
     stackSegs[key] = { node, text };
+    stackCaption[key] = "";
+    bookTip(node, PILLAR_TERM[key], () => stackCaption[key]);
     stackTrack.append(node);
   }
   const meterHost = el("div", { class: "model-stack" }, stackTrack);
@@ -941,6 +950,11 @@ export async function renderAarsRules(main, _params, ctx) {
   }));
 
   const addBtn = el("button", {}, "Add rule");
+  let addBtnCapNote = null;
+  // A disabled button receives no pointer events, so the reason it is disabled hangs off a
+  // wrapper that does. That reason is the whole point of the control being visible at all.
+  const addBtnWrap = tipAnchor(el("span", { class: "tip-disabled-wrap" }, addBtn),
+    () => (addBtnCapNote ? [addBtnCapNote] : null));
   addBtn.addEventListener("click", () => {
     // New rules go on TOP: this is a first-match cascade, and anything appended below the
     // prefix families would be shadowed the moment it was typed.
@@ -968,12 +982,15 @@ export async function renderAarsRules(main, _params, ctx) {
     "Everything that falls through",
   );
   const fbCount = el("td", { class: "rule-prices num" });
+  // Read at reveal time by the anchor below, so the mark and the reason it is marked arrive
+  // together on hover AND on focus.
+  let fbSaved = null;
+  tipAnchor(fbLabel, () => (fbSaved ? [fbSaved] : null));
   const fbField = {
     input: fbInput,
     setChanged(changed, savedValue) {
       fbLabel.classList.toggle("field--changed", !!changed);
-      if (changed) fbLabel.title = `Saved value: ${savedValue}`;
-      else fbLabel.removeAttribute("title");
+      fbSaved = changed ? "Saved value: " + savedValue : null;
     },
   };
   const capBId = nextId("capb");
@@ -1028,7 +1045,7 @@ export async function renderAarsRules(main, _params, ctx) {
         el("div", { class: "rule-row", style: "margin-bottom:10px" }, refBtn),
         cascadeTable,
         el("div", { class: "rule-row", style: "margin-top:12px" },
-          addBtn, capBField.node, testField),
+          addBtnWrap, capBField.node, testField),
       ],
     ),
   );
@@ -1071,8 +1088,8 @@ export async function renderAarsRules(main, _params, ctx) {
   const ampField = { ...field(ampId, "5Rs amplifier ×", ampInput), input: ampInput };
   rowC.append(
     ampField.node,
-    helpTip(
-      el("span", { class: "helptip-mark", "aria-hidden": "true" }, "?"),
+    tip(
+      tipMark(),
       [
         "The one number on this page that is not a policy choice.",
         "It is a systemic signal: the 5Rs data-security score sits at 53% across the whole " +
@@ -1406,7 +1423,7 @@ export async function renderAarsRules(main, _params, ctx) {
     );
 
     addBtn.disabled = draft.gapPoints.length >= GAP_MAX;
-    addBtn.title = addBtn.disabled ? `The cascade is limited to ${GAP_MAX} rules.` : "";
+    addBtnCapNote = addBtn.disabled ? "The cascade is limited to " + GAP_MAX + " rules." : null;
   }
 
   /**
@@ -1584,15 +1601,20 @@ export async function renderAarsRules(main, _params, ctx) {
         const target = next[Math.min(i, next.length - 1)];
         (target || sandboxCodeBox.focusable()).focus();
       });
+      // The codebook already holds a title and a blurb for every code; the chip shows the code
+      // and used to keep the rest in a native title. tipAnchor puts it on the card, and the
+      // chip is not a control so the words also go into the accessible name.
+      const said = entry ? code + " — " + entry.title : code + " — not in the codebook";
       sandboxChips.append(
-        el(
+        tipAnchor(el(
           "div",
-          { class: "gap-chip", title: entry ? `${code} — ${entry.title}` : `${code} — not in the codebook` },
+          { class: "gap-chip" },
+          entry && entry.blurb ? el("span", { class: "sr-only" }, said + ". " + entry.blurb) : null,
           el("span", { class: "gap-chip__code" }, code),
           entry ? el("span", { class: "gap-chip__title" }, entry.title) : null,
           el("span", { class: "gap-chip__pts num" }, `${pts} pts`),
           drop,
-        ),
+        ), entry && entry.blurb ? [said, entry.blurb] : [said]),
       );
     });
     if (!sample.gapCodes.length) {
@@ -1625,10 +1647,12 @@ export async function renderAarsRules(main, _params, ctx) {
     sandboxQuick.append(el("span", { class: "small muted" }, "Common here:"));
     for (const { code, assets } of common) {
       const entry = lookupGap(code);
-      const btn = el("button", {
-        class: "kind-pill",
-        title: `${entry ? entry.title + " — " : ""}on ${assets} ${assets === 1 ? "asset" : "assets"}`,
-      }, code);
+      const on = "on " + assets + (assets === 1 ? " asset" : " assets");
+      const btn = tip(el("button", { class: "kind-pill" }, code),
+        entry ? [entry.title + " — " + on, entry.blurb] : [on],
+        { spoken: false });
+      btn.setAttribute("aria-label",
+        (entry ? entry.title + ", " : "") + code + ", " + on + ". Add to the sample.");
       btn.addEventListener("click", () => {
         sample.gapCodes.push(code);
         paintSandboxCodes();
@@ -1666,7 +1690,7 @@ export async function renderAarsRules(main, _params, ctx) {
       // track and is clipped — which is what the clamp does, shown rather than described.
       seg.node.style.width = `${c.value}%`;
       setText(seg.text, `${c.label} · ${c.value}`);
-      setAttr(seg.node, "title", `${c.name}: up to ${c.value} points`);
+      stackCaption[c.key] = `${c.name}: up to ${c.value} points`;
     }
     setAttr(
       stackTrack,
@@ -2471,6 +2495,9 @@ export async function renderAarsRules(main, _params, ctx) {
     }));
 
     const pAddBtn = el("button", {}, "Add rule");
+    let pAddBtnCapNote = null;
+    const pAddBtnWrap = tipAnchor(el("span", { class: "tip-disabled-wrap" }, pAddBtn),
+      () => (pAddBtnCapNote ? [pAddBtnCapNote] : null));
     pAddBtn.addEventListener("click", () => {
       // New rules go on TOP — a first-match cascade, same reasoning as the AARS cascade.
       problemDraft.outcomeRules.unshift({ when: {}, outcome: "ATTEND" });
@@ -2608,7 +2635,7 @@ export async function renderAarsRules(main, _params, ctx) {
       pCascadeBody.append(fbTr);
 
       pAddBtn.disabled = problemDraft.outcomeRules.length >= max;
-      pAddBtn.title = pAddBtn.disabled ? `The cascade is limited to ${max} rules.` : "";
+      pAddBtnCapNote = pAddBtn.disabled ? "The cascade is limited to " + max + " rules." : null;
     }
 
     // -------------------------------------------------------- derivation knobs (editor)
@@ -2921,7 +2948,7 @@ export async function renderAarsRules(main, _params, ctx) {
         "Each row is tried in order; the first whose conditions ALL match wins. An axis " +
           "left on “any” is a wildcard, not a value — a row with no conditions at all " +
           "matches every remaining vector.",
-        [pSummary, pCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, pAddBtn)],
+        [pSummary, pCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, pAddBtnWrap)],
       ),
       section(
         "How the four axes are read",
@@ -3533,6 +3560,9 @@ export async function renderAarsRules(main, _params, ctx) {
     }));
 
     const uAddBtn = el("button", {}, "Add rule");
+    let uAddBtnCapNote = null;
+    const uAddBtnWrap = tipAnchor(el("span", { class: "tip-disabled-wrap" }, uAddBtn),
+      () => (uAddBtnCapNote ? [uAddBtnCapNote] : null));
     uAddBtn.addEventListener("click", () => {
       // New rules go on TOP — a first-match cascade, same reasoning as the other two.
       postureDraft.tierRules.unshift({ when: {}, tier: 2 });
@@ -3685,7 +3715,7 @@ export async function renderAarsRules(main, _params, ctx) {
       uCascadeBody.append(fbTr);
 
       uAddBtn.disabled = postureDraft.tierRules.length >= max;
-      uAddBtn.title = uAddBtn.disabled ? `The cascade is limited to ${max} rules.` : "";
+      uAddBtnCapNote = uAddBtn.disabled ? "The cascade is limited to " + max + " rules." : null;
     }
 
     // -------------------------------------------------------- validation-only knob (editor)
@@ -3764,7 +3794,7 @@ export async function renderAarsRules(main, _params, ctx) {
           "left on “any” is a wildcard, not a value — a row with no conditions at all " +
           "matches every remaining vector. A capability envelope, not an aggregate of open " +
           "issues: nothing here reads a problem verdict.",
-        [uSummary, uCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, uAddBtn)],
+        [uSummary, uCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, uAddBtnWrap)],
       ),
       section(
         "Validation only",

@@ -207,6 +207,48 @@ Components are **tactile and confident**: comfortable 36px control heights, surf
 ### Navigation
 - **Style:** A shadcn-style sidebar. Group headers are `11px` uppercase muted labels; nav links are `13px` with a Material icon, `8px` radius, rounded hover tint. The active item gets a neutral accent pill (not blue) and bumps to weight 600. Focus shows the blue ring. The sidebar is a cooler surface (`#f8f8fa`) with a hairline right border.
 
+### The Tip
+
+The app's one hover card, and its only answer to "what does this mean". It replaced three
+vocabularies that had grown side by side in the GAS AI register: about forty native `title=`
+attributes, an SVG `<title>` on every edge of the security graph, and Chart.js's dark canvas
+box. All three are gone; `el()` now throws on a `title` attribute so the first two cannot come
+back, and an anti-rot spec covers the two paths that go around `el()`.
+
+It is a single node on `<body>`, moved rather than rebuilt: a `10px`-radius white card on a
+hairline border with the card whisper, `12px/1.45` copy at `max-width: min(300px, 100vw - 32px)`,
+and a caret pinned to the trigger's centre and clamped off both corners so a card pushed
+against a window edge still points at what it explains. It opens below and flips above only
+when the card does not fit below **and** there is more room above. Portaled, because the
+alternative places `position: fixed` inside a trigger that may sit in a transformed `.sheet` —
+which makes the sheet the containing block and the card land in the wrong place, invisibly so
+under `prefers-reduced-motion`, where the sheet's transform is `none`.
+
+**It meets SC 1.4.13 rather than approximating it.** Escape dismisses while the pointer stays
+where it is, and the trigger stays muted until the pointer leaves, so nothing reopens under a
+cursor that has not moved; the Escape is stopped from propagating, so a sheet underneath
+survives the same keystroke. A close grace lets the pointer cross the gap onto the card.
+Nothing times out. A pointer waits `220ms` cold and nothing at all if another card closed in
+the last `400ms`, so scanning a row of column headings is one gesture; focus opens instantly.
+
+**The card is `aria-hidden`, always.** The text reaches assistive technology on the anchor
+instead, and choosing how is the judgement each call site makes: `spoken: false` where the
+anchor already carries an `aria-label` or an `.sr-only` sibling, and a described sibling span
+otherwise. This matters because the register had already written the prose and was showing it
+only to screen readers — every lattice cell's vector sentence, every graph node's full
+reading, the compliance rail's derived-versus-Wiz arithmetic, the toxic-combination matrix's
+per-cell tally. Most of this component's job is letting the pointer reach it.
+
+**A definition is a control; a value is not.** A `?` mark, a metric label or a column heading
+becomes a real `<button>` with a dotted underline that goes solid on hover: keyboard-reachable,
+tappable, one tab stop, and *visible before anything is hovered*, because a definition nobody
+can see is not help. A term-backed trigger navigates to its entry in the Help key on activation
+— the card never contains focusable content, which is what lets it keep a clean role and stay
+out of a sheet's Tab trap. A badge or a clipped cell repeated once per row does **not** become
+a control: it answers on hover and leaves the tab order alone, and its definition lives on the
+column heading, which is asked once. A clipped value only speaks when it was actually clipped,
+measured at hover time.
+
 ### Hero Stat
 The one-per-page headline metric (`hero_stat()`), used where a single number is the page's reason to exist (Median MTTR on MTTR & SLA). Deliberately **borderless**: an uppercase muted label, the value at the 2rem hero step with its change chip beside it, and a muted plain-text source line. The complementary mini-stats (label over an 18px tabular value, optional change chip) sit below a hairline rule inside the same block. Dominance comes from size, top-left position, and whitespace, never from a card, gradient, or accent stripe.
 

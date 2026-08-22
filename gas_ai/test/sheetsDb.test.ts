@@ -387,3 +387,117 @@ describe("posture round trip — the null that must not become a zero", () => {
     expect(rows.map((r) => r.subcategoryExternalId).sort()).toEqual(["ASI01", "ASI02", "ASI10"]);
   });
 });
+
+describe("a tab too large for one getValues()", () => {
+  // The failure this suite was written for: on a real tenant every page that read
+  // `ai_findings` — Inventory, Priorities, Cloud Configuration, Compliance Posture — came
+  // back with a Sheets size error, while every page that did not (Toxic Combinations,
+  // Security Graph, Data) rendered fine. `ai_assets` at 13,788 rows × 48 columns read
+  // without complaint, so the service was not refusing reads in general; it was refusing
+  // ONE range, because `readAll` asked for the whole tab in a single getRange().getValues()
+  // and that tab had outgrown what one read may return.
+  //
+  // Sheets caps the RESPONSE, not the sheet, so the fix belongs at the read rather than at
+  // the register: the same rows come back, just in blocks. The tab is free to keep growing
+  // until the 10M-cell spreadsheet ceiling, which is a different limit with a different cure
+  // (the prune panel on the Data page).
+
+  /**
+   * A sheet whose reads refuse anything over `ceiling` cells, the way the service does,
+   * and which records every request so a test can assert what was actually asked for.
+   */
+  function cappedSheet(grid: unknown[][], ceiling: number) {
+    const sh = fakeSheet(grid);
+    const asked: number[] = [];
+    const inner = sh.getRange.bind(sh);
+    sh.getRange = (row: number, col: number, numRows = 1, numCols = 1) => {
+      const range = inner(row, col, numRows, numCols);
+      const cells = numRows * numCols;
+      return {
+        ...range,
+        getValues: () => {
+          asked.push(cells);
+          if (cells > ceiling) {
+            // The message the tenant actually returned, in the script owner's locale.
+            throw new Error(
+              "Les données demandées dépassent la taille maximale autorisée. " +
+              "Veuillez affiner votre requête.",
+            );
+          }
+          return range.getValues();
+        },
+      };
+    };
+    return Object.assign(sh, { asked });
+  }
+
+  /** `rows` data rows of `cols` columns, each cell naming its own coordinates. */
+  function grid(rows: number, cols: number): unknown[][] {
+    const out: unknown[][] = [Array.from({ length: cols }, (_, c) => `h${c}`)];
+    for (let r = 0; r < rows; r++) {
+      out.push(Array.from({ length: cols }, (_, c) => `r${r}c${c}`));
+    }
+    return out;
+  }
+
+  it("reads a tab whose whole grid exceeds what one response may carry", async () => {
+    const { readAll, TABS, READ_BLOCK_CELLS } = await db();
+    // Two blocks' worth, against a ceiling that admits one block and refuses the whole tab.
+    const cols = 36;
+    const rows = Math.floor(READ_BLOCK_CELLS / cols) + 500;
+    sheets[TABS.findings] = cappedSheet(grid(rows, cols), READ_BLOCK_CELLS);
+
+    const out = readAll(TABS.findings);
+    expect(out).toHaveLength(rows);
+    // Every row, in order, with its values intact — not a prefix and not a reshuffle.
+    expect(out[0]["h0"]).toBe("r0c0");
+    expect(out[rows - 1]["h35"]).toBe(`r${rows - 1}c35`);
+  });
+
+  it("keeps every request under the block budget", async () => {
+    const { readAll, TABS, READ_BLOCK_CELLS } = await db();
+    const sh = cappedSheet(grid(9_000, 36), READ_BLOCK_CELLS);
+    sheets[TABS.findings] = sh;
+
+    readAll(TABS.findings);
+    expect(sh.asked.length).toBeGreaterThan(1);
+    expect(Math.max(...sh.asked)).toBeLessThanOrEqual(READ_BLOCK_CELLS);
+  });
+
+  it("backs off to a smaller block when the budget is still too generous", async () => {
+    const { readAll, TABS, READ_BLOCK_CELLS } = await db();
+    // A quarter of the budget: the first ask fails, and only a twice-halved block fits.
+    const ceiling = Math.floor(READ_BLOCK_CELLS / 4);
+    const sh = cappedSheet(grid(4_000, 36), ceiling);
+    sheets[TABS.findings] = sh;
+
+    const out = readAll(TABS.findings);
+    expect(out).toHaveLength(4_000);
+    expect(out[3_999]["h0"]).toBe("r3999c0");
+    // It retried the SAME block smaller rather than skipping it — nothing was lost.
+    expect(Math.max(...sh.asked)).toBeGreaterThan(ceiling);
+  });
+
+  it("names the tab and where it stopped when even one row will not come back", async () => {
+    const { readAll, TABS } = await db();
+    sheets[TABS.findings] = cappedSheet(grid(100, 36), 0);
+    // Two substring assertions rather than one regex: the same escaping trap the header
+    // guard's tests call out above.
+    expect(() => readAll(TABS.findings)).toThrow(TABS.findings);
+    expect(() => readAll(TABS.findings)).toThrow(/row 1 of 101/);
+  });
+
+  it("guards updateWhere too, which asks for the same whole-tab range", async () => {
+    const { updateWhere, readAll, TABS, TAB_HEADERS, READ_BLOCK_CELLS } = await db();
+    const headers = TAB_HEADERS[TABS.jobs].slice();
+    const cols = headers.length;
+    const rows = Math.floor(READ_BLOCK_CELLS / cols) + 50;
+    const g: unknown[][] = [headers];
+    for (let r = 0; r < rows; r++) g.push(headers.map((h, c) => (c === 0 ? `job-${r}` : `${h}${r}`)));
+    sheets[TABS.jobs] = cappedSheet(g, READ_BLOCK_CELLS);
+
+    expect(updateWhere(TABS.jobs, headers[0], `job-${rows - 1}`, { [headers[1]]: "patched" }))
+      .toBe(true);
+    expect(readAll(TABS.jobs)[rows - 1][headers[1]]).toBe("patched");
+  });
+});

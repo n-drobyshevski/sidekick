@@ -40,6 +40,7 @@ import {
 } from "../ui.js";
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
 
+import { tipAnchor } from "../ui.js";
 // Only the whole-landscape head of api_getAssets is read (kpis, total) — never `rows`. Past
 // the server's row ceiling the payload downgrades to a single page, but the head still
 // describes the landscape, so a small pageSize keeps this page correct AND cheap at any size.
@@ -241,7 +242,15 @@ export async function renderScans(main, params, ctx) {
               : el("span", { class: "cov-none" }, "—");
           },
         },
-        { key: "state", label: "State", cell: (a) => statePill(a.state) },
+        {
+          key: "state", label: "State", help: { term: "coverage-state" },
+          cell: (a) => {
+            const meta = COVERAGE[a.state];
+            return meta && meta.blurb
+              ? tipAnchor(statePill(a.state), [meta.label, meta.blurb])
+              : statePill(a.state);
+          },
+        },
       ],
       rows: ranked,
       onRowOpen: (a) => openAreaSheet(a, sheetContext()),

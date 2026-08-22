@@ -10,6 +10,7 @@ import { kindLabel, svgEl } from "./icons.js";
 import { el, uiIcon } from "./ui.js";
 import { NODE_H, NODE_W, drawNodeCard, truncate } from "./graphNode.js";
 
+import { tip, tipAnchor } from "./ui.js";
 /**
  * Render the projection into `container`. `data` is the getGraph payload
  * ({nodes, edges, layout, counts}); handlers: onNodeOpen(node), onSummaryExpand
@@ -200,12 +201,17 @@ export function renderGraph(container, data, handlers = {}) {
       d: geo.d,
       "marker-end": "url(#gv-arrow)",
     });
-    const title = svgEl("title");
-    title.textContent =
+    // An SVG <title> was the ONLY way to learn what a relationship is, and it is the worst
+    // tooltip surface there is: about a second late, unstyled, unreachable by keyboard, and
+    // absent on touch. The same sentence now goes on the app's own card. An absent edge says
+    // so in words as well as by being dashed, per DESIGN.md.
+    const reading =
       `${byId.get(edge.src)?.name ?? edge.src} ${edge.type}` +
       `${edge.negated ? " (ABSENT)" : ""}${edge.accessType ? " [" + edge.accessType + "]" : ""} ` +
       `${byId.get(edge.dst)?.name ?? edge.dst}`;
-    path.append(title);
+    tipAnchor(path, edge.negated
+      ? [reading, "A dashed edge is an absence: the relationship is asserted NOT to hold."]
+      : [reading]);
     edgeLayer.append(path);
 
     let labelEl = null;
@@ -565,23 +571,24 @@ export function renderGraph(container, data, handlers = {}) {
   // The percent is the on-screen scale, not the viewBox ratio — preserveAspectRatio letterboxes,
   // so the two disagree whenever the container and the view have different aspects.
   const zoomPct = el("span", { class: "graph-zoom-pct num" }, "100%");
+  // The keyboard shortcut rides the accessible name as well as the card: a keyboard user is
+  // exactly the reader the shortcut is for, and the native title never reached them.
   const zoomGroup = el("div", { class: "graph-zoom-scale", role: "group" },
-    el("button", {
-      "aria-label": "Zoom in", title: "Zoom in (+)", onclick: () => zoom(1 / 1.3),
-    }, uiIcon("plus", 15)),
+    tip(el("button", {
+      "aria-label": "Zoom in (+)", onclick: () => zoom(1 / 1.3),
+    }, uiIcon("plus", 15)), "Zoom in (+)", { spoken: false }),
     zoomPct,
-    el("button", {
-      "aria-label": "Zoom out", title: "Zoom out (−)", onclick: () => zoom(1.3),
-    }, uiIcon("minus", 15)),
+    tip(el("button", {
+      "aria-label": "Zoom out (−)", onclick: () => zoom(1.3),
+    }, uiIcon("minus", 15)), "Zoom out (−)", { spoken: false }),
   );
   const zoomBar = el("div", { class: "graph-zoom" },
     zoomGroup,
-    // An explicit name, not just the title: the glyph is `aria-hidden`, so without this the
-    // button that used to be called "Fit" by its own text would have no accessible name at all.
-    el("button", {
-      class: "graph-zoom-fit", "aria-label": "Fit graph to view",
-      title: "Fit graph to view (0)", onclick: fit,
-    }, uiIcon("fit", 15)),
+    // An explicit name: the glyph is `aria-hidden`, so without this the button that used to
+    // be called "Fit" by its own text would have no accessible name at all.
+    tip(el("button", {
+      class: "graph-zoom-fit", "aria-label": "Fit graph to view (0)", onclick: fit,
+    }, uiIcon("fit", 15)), "Fit graph to view (0)", { spoken: false }),
   );
 
   /**

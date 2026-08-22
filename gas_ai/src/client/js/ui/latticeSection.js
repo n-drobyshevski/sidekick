@@ -34,6 +34,7 @@ import { latticeIcicle } from "./latticeIcicle.js";
 import { latticeCells, outcomeMass, paintCells, toneForKey, vectorSentence } from "../lattice.js";
 import { OUTCOME_VALUES } from "../decideMirror.js";
 
+import { tipAnchor } from "./tip.js";
 /**
  * The two lattices' display vocabularies. Worst-first in both cases, because `outcomeMass`
  * reads `order[0]` as the band the ceiling applies to — ACT is already first in
@@ -445,13 +446,19 @@ export function latticeSection(opts) {
         ));
         const add = el("button", {}, "Add a rule for this cell");
         add.disabled = atCap;
-        if (atCap) add.title = `The cascade is limited to ${cap} rules.`;
+        // Wrapped rather than anchored on the button itself: a disabled control does not
+        // reliably receive pointer events, and the reason it is disabled is the one thing a
+        // reader needs from it.
+        const addNode = atCap
+          ? tipAnchor(el("span", { class: "tip-disabled-wrap" }, add),
+            "The cascade is limited to " + cap + " rules.")
+          : add;
         add.addEventListener("click", () => {
           api.close(true);
           pop = null;
           onAddRule({ ...cell.vector }, verdict);
         });
-        body.append(add);
+        body.append(addNode);
         return body;
       },
       onClose: () => { pop = null; },

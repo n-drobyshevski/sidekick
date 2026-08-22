@@ -45,6 +45,7 @@
 // ("Failing", "In progress", "Issue") really are categorical.
 
 import { el } from "./dom.js";
+import { bookTip } from "./tip.js";
 
 // `spoken` exists only where the written label contains a mark a screen reader cannot make
 // sense of. The badge's accessible name used to be built from the label alone, so TRACK_STAR
@@ -52,11 +53,33 @@ import { el } from "./dom.js";
 // glyph was the one whose meaning was lost when read aloud. Everything else falls back to
 // `label`, so this stays a two-line exception rather than a parallel vocabulary.
 const OUTCOME_META = {
-  ACT: { kind: "pill--rank4", label: "Act" },
-  ATTEND: { kind: "pill--rank3", label: "Attend" },
-  TRACK_STAR: { kind: "pill--rank2", label: "Track*", spoken: "Track, closer monitoring" },
-  TRACK: { kind: "pill--rank1", label: "Track" },
+  // `note` is CISA's own wording, verbatim from the header above. It sat in a source comment
+  // where the analysts reading the column could never get at it; now it is what the card says.
+  ACT: {
+    kind: "pill--rank4", label: "Act",
+    note: "Act — needs attention from supervisory-level AND leadership-level individuals.",
+  },
+  ATTEND: {
+    kind: "pill--rank3", label: "Attend",
+    note: "Attend — needs attention from internal, supervisory-level individuals.",
+  },
+  TRACK_STAR: {
+    kind: "pill--rank2", label: "Track*", spoken: "Track, closer monitoring",
+    note: "Track* — CISA's notation for a case with characteristics that may require closer "
+      + "monitoring. It outranks plain Track rather than being a footnote to it.",
+  },
+  TRACK: {
+    kind: "pill--rank1", label: "Track",
+    note: "Track — no action needed at this time; keep tracking and reassess if new "
+      + "information arrives.",
+  },
 };
+
+/** CISA's own sentence for one outcome, for a heading or a card that defines it. */
+export function outcomeNote(outcome) {
+  const meta = OUTCOME_META[String(outcome || "").toUpperCase()];
+  return meta ? meta.note : "";
+}
 
 /** The outcome's plain-text label, for a `<select>` option or a sentence. */
 export function outcomeLabel(outcome) {
@@ -72,9 +95,9 @@ export function outcomeLabel(outcome) {
 export function outcomeBadge(outcome) {
   const meta = OUTCOME_META[String(outcome || "").toUpperCase()];
   if (!meta) return el("span", { class: "small muted" }, "—");
-  return el(
+  return bookTip(el(
     "span",
     { class: `pill ${meta.kind}`, role: "img", "aria-label": `Priority ${meta.spoken || meta.label}` },
     meta.label,
-  );
+  ), "priorities-rank", meta.note);
 }

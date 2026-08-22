@@ -23,6 +23,7 @@
 import { el } from "./dom.js";
 import { uiIcon } from "./uiIcons.js";
 
+import { tipAnchor } from "./tip.js";
 /**
  * The handle. Decorative by construction — `aria-hidden` and out of the tab order — because
  * the row's reorder buttons are the accessible path, and announcing a second one would only
@@ -32,10 +33,11 @@ export function ruleGrip() {
   const grip = el("span", {
     class: "rule-grip",
     "aria-hidden": "true",
-    title: "Drag to reorder",
   });
   grip.append(uiIcon("grip", 14));
-  return grip;
+  // Visual only, deliberately: the grip stays out of the accessibility tree because the row
+  // arrows are the accessible path, and a card is what tells a pointer user the drag exists.
+  return tipAnchor(grip, "Drag to reorder");
 }
 
 /**

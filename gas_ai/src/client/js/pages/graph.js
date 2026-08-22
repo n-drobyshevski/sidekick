@@ -55,9 +55,9 @@ import {
 import { queryBar } from "./graphQueryBar.js";
 import {
   FINDINGS_SCORE_LABEL,
-  clear, confirmDialog, el, emptyState, filterChipRow, helpTip, motionOk, onPageTeardown,
-  openPopover, portalsOpen, segmented, selectField, sevBadge, toast, togglePills,
-  uiIcon,
+  clear, confirmDialog, el, emptyState, filterChipRow, motionOk, onPageTeardown,
+  openPopover, portalsOpen, segmented, selectField, sevBadge, tip, tipMark, toast,
+  togglePills, uiIcon,
 } from "../ui.js";
 
 const GROUP_LABELS = {
@@ -644,8 +644,8 @@ export async function renderGraphPage(main, params, _ctx) {
     // May be null when the browser blocks localStorage; `append` would stringify that to the
     // literal text "null" in the header.
     savedViewsControl() || el("span", {}),
-    helpTip(
-      el("span", { class: "helptip-mark", "aria-hidden": "true" }, "?"),
+    tip(
+      tipMark(),
       [
         "A query reads FIND <entity> THAT <relationship> <entity>.",
         "Each row adds a step along the graph, and each shown step adds a group of columns to the table — so a row is one PATH, not one asset.",
@@ -1123,7 +1123,7 @@ export async function renderGraphPage(main, params, _ctx) {
       lastStatusText = text;
       clear(metaStatus).append(el("span", { class: "num" }, text));
       if (c.capped) {
-        metaStatus.append(helpTip(
+        metaStatus.append(tip(
           el("span", { class: "pill warn" }, "capped"),
           [
             `This view is capped at ${payload.options?.maxNodes || "its"} nodes to stay light.`,
@@ -1178,12 +1178,12 @@ export async function renderGraphPage(main, params, _ctx) {
     countText.textContent = prefix + total.toLocaleString() + (total === 1 ? " result" : " results");
     clear(countNote);
     if (payload.truncated) {
-      countNote.append(helpTip(el("span", { class: "pill warn" }, "partial"), [
+      countNote.append(tip(el("span", { class: "pill warn" }, "partial"), [
         "This query has more matches than one pass can enumerate.",
         "The count is a floor, not a total. Narrow a step — or mark one optional — to get an exact answer.",
       ], { label: "Why the count is approximate" }));
     } else if (payload.capped) {
-      countNote.append(helpTip(el("span", { class: "pill neutral" }, "showing first " + (payload.rows || []).length), [
+      countNote.append(tip(el("span", { class: "pill neutral" }, "showing first " + (payload.rows || []).length), [
         "Every match is counted, but only the first rows are shown.",
         "They are ordered worst-first, so the top of the list is the interesting end.",
       ], { label: "Why some rows are not listed" }));
@@ -1192,7 +1192,7 @@ export async function renderGraphPage(main, params, _ctx) {
     // drawn are independent facts, and a capped view with evidence has both to report.
     const evidence = Number((payload.counts || {}).evidence) || 0;
     if (evidence && state.view !== "table") {
-      countNote.append(helpTip(el("span", { class: "pill neutral" }, "+" + evidence + " evidence"), [
+      countNote.append(tip(el("span", { class: "pill neutral" }, "+" + evidence + " evidence"), [
         "The canvas also draws the proof for each filter in this query — the identity, "
           + "the classified store, the exposure node — so a result is a path rather than a card.",
         "These nodes are not rows: the table lists what matched, one row per match.",

@@ -656,12 +656,33 @@ var Server = (() => {
     if (v === null || v === void 0) return "";
     return v;
   }
+  var READ_BLOCK_CELLS = 2e5;
+  function readGrid(sh, tab, lastRow, lastCol) {
+    const out = [];
+    let block = Math.max(1, Math.floor(READ_BLOCK_CELLS / Math.max(1, lastCol)));
+    let row = 1;
+    while (row <= lastRow) {
+      const take = Math.min(block, lastRow - row + 1);
+      try {
+        for (const values of sh.getRange(row, 1, take, lastCol).getValues()) out.push(values);
+        row += take;
+      } catch (e) {
+        if (take <= 1) {
+          throw new Error(
+            `Reading ${tab} stopped at row ${row} of ${lastRow} (${lastCol} columns): ${e instanceof Error ? e.message : String(e)}`
+          );
+        }
+        block = Math.floor(take / 2);
+      }
+    }
+    return out;
+  }
   function readAll(tab) {
     const sh = sheet(tab);
     const lastRow = sh.getLastRow();
     const lastCol = sh.getLastColumn();
     if (lastRow < 2 || lastCol < 1) return [];
-    const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+    const values = readGrid(sh, tab, lastRow, lastCol);
     const headers = values[0].map(String);
     const out = [];
     for (let i = 1; i < values.length; i++) {
@@ -733,7 +754,7 @@ var Server = (() => {
     const headers = ensureHeaders(sh, tab);
     const lastRow = sh.getLastRow();
     const lastCol = headers.length;
-    const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+    const values = readGrid(sh, tab, lastRow, lastCol);
     const keyIdx = headers.indexOf(keyColumn);
     if (keyIdx < 0) return false;
     for (let i = 1; i < values.length; i++) {
@@ -7841,7 +7862,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "e54fd66900bb" : "dev";
+  var BUILD_ID = true ? "d3515c1b995b" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

@@ -1,7 +1,8 @@
-// What the app says when it is loading, empty, broken, or asking — plus the help tip that
-// replaces `title=` wherever the explanation matters.
+// What the app says when it is loading, empty, broken, or asking.
+//
+// The help tip that used to live here is now ui/tip.js: it outgrew this file the moment it
+// stopped being a bubble parked inside its trigger.
 
-import { buildHash } from "../store.js";
 import { el } from "./dom.js";
 
 export function toast(message, kind) {
@@ -111,72 +112,4 @@ export function emptyState(message, hint) {
     el("div", {}, message),
     hint ? el("div", { class: "small", style: "margin-top:6px" }, hint) : null,
   );
-}
-
-let _helpTipSeq = 0;
-
-/**
- * Wrap `content` so hovering or focusing it reveals a quiet card explaining `lines`.
- * Reveal is pure CSS (`:hover` / `:focus-within`); the wrapper is focusable so keyboard
- * users get it too, and is `aria-describedby` a bubble that stays in the DOM at opacity 0
- * so screen readers announce the text either way. Escape blurs to dismiss.
- *
- * This replaces `title=` for anything that matters. A native tooltip is unreachable by
- * keyboard, invisible on touch, and truncated by the OS — fine for a hint, wrong for the
- * page's central disclaimer about what it is not showing you.
- *
- * `term` names an entry in the Help key sheet and appends a link to it. Two consequences
- * worth knowing:
- *
- *   - The bubble DROPS `role="tooltip"` when a term is given. A tooltip must not contain
- *     focusable content, so a bubble with a link in it is not one; `aria-describedby`
- *     still names it, which keeps the announcement without the false role.
- *   - The link is keyboard-reachable for free, because the reveal in components.css is
- *     `:focus-within`, not `:focus` — tabbing off the wrapper and onto the link keeps the
- *     bubble open, and `place()` re-runs because `focusin` bubbles up from it.
- */
-export function helpTip(content, lines, { label, className, term } = {}) {
-  const items = Array.isArray(lines) ? lines : [lines];
-  const id = `helptip-${++_helpTipSeq}`;
-  const bubble = el(
-    "span",
-    { class: "helptip-bubble", role: term ? null : "tooltip", id },
-    ...items.map((t) => el("span", { class: "helptip-line" }, t)),
-    term
-      ? el("a", {
-          class: "helptip-link",
-          href: buildHash("help", { term }),
-          // index.html sets <base target="_top">, which would escape the GAS sandbox
-          // iframe; _self keeps hash routing in-frame, as the sidebar links do.
-          target: "_self",
-        }, "Full definition →")
-      : null,
-  );
-  // Pinned to the viewport just before each reveal. Absolutely positioned inside the
-  // trigger it would be clipped by any overflow ancestor — and this one lives inside
-  // .workbench-body, which is overflow:hidden, so an in-flow bubble would be cut off
-  // entirely. Coordinates are recomputed on every reveal, so there is nothing to clean up
-  // on hide (an opacity-0 fixed bubble cannot affect layout). Below by default, flipped
-  // above when it would cross the viewport bottom, clamped to the side edges.
-  const place = (wrapper) => {
-    const r = wrapper.getBoundingClientRect();
-    const b = bubble.getBoundingClientRect();
-    let top = r.bottom + 8;
-    if (top + b.height > window.innerHeight - 8) top = Math.max(8, r.top - b.height - 8);
-    const left = Math.max(8, Math.min(r.left, window.innerWidth - b.width - 8));
-    bubble.style.position = "fixed";
-    bubble.style.left = `${left}px`;
-    bubble.style.top = `${top}px`;
-  };
-  const attrs = {
-    class: `helptip${className ? " " + className : ""}`,
-    tabindex: "0",
-    "aria-describedby": id,
-    onkeydown: (e) => { if (e.key === "Escape") e.currentTarget.blur(); },
-    onmouseenter: (e) => place(e.currentTarget),
-    onfocusin: (e) => place(e.currentTarget),
-  };
-  if (label) attrs["aria-label"] = label;
-  const kids = Array.isArray(content) ? content : [content];
-  return el("span", attrs, ...kids, bubble);
 }

@@ -4,6 +4,7 @@
 
 import { clear, el, openSheet, progressBar } from "./ui.js";
 
+import { tipAnchor } from "./ui.js";
 const STEPS = [
   { key: "FETCHING", label: "Fetch" },
   { key: "RECONCILING", label: "Reconcile" },
@@ -172,11 +173,13 @@ export function renderSyncCard(host, job, { onStop, onDetails, nowMs, stopping }
     : v.stuck ? "!"
     : v.state === "running" ? (determinate ? `${v.pct}%` : "")
     : (MINI_GLYPH[v.state] || "");
-  // The rail is too narrow for the phase words, so they live on the tooltip / accessible
-  // name of the button instead — hover or focus surfaces the same status the card shows.
+  // The rail is too narrow for the phase words, so they live on the card and the accessible
+  // name of the button instead — hover or focus surfaces the same status the card shows. In
+  // the collapsed rail this is the only status readout there is, which is exactly why it can
+  // no longer be a native title: a tap on a phone reached none of it.
   const summary = [phaseText, v.countsText].filter(Boolean).join(" · ");
   miniBtn.setAttribute("aria-label", summary || "Sync progress");
-  miniBtn.title = summary || "";
+  tipAnchor(miniBtn, summary || null);
   miniBtn.onclick = onDetails || null;
   miniBtn.disabled = !onDetails;
 
@@ -199,11 +202,14 @@ export function renderSyncCard(host, job, { onStop, onDetails, nowMs, stopping }
       actionsEl.append(el("button", { class: "linklike danger", onclick: onStop }, "Stop"));
     } else if (running && onStop) {
       // Past FETCHING the run can't be cancelled — explain rather than silently drop Stop.
-      actionsEl.append(el("button", {
-        class: "linklike", disabled: true,
-        title: "Saving can't be interrupted — let it finish.",
-        "aria-label": "Stop unavailable while saving",
-      }, "Stop"));
+      // A disabled control cannot be hovered in every browser, so the card hangs off a
+      // wrapper: the reason Stop went away has to survive the button being unable to take
+      // the pointer at all.
+      actionsEl.append(tipAnchor(el("span", { class: "tip-disabled-wrap" },
+        el("button", {
+          class: "linklike", disabled: true,
+          "aria-label": "Stop unavailable while saving",
+        }, "Stop")), "Saving cannot be interrupted — let it finish."));
     }
   }
 
@@ -253,9 +259,10 @@ export function openSyncDetails(job, opts = {}) {
         "Stop sync"));
     } else if (v.state === "running" && onStop) {
       // Explain the vanished Stop instead of leaving it a mystery once saving starts.
-      actions.append(el("button", { class: "danger", disabled: true,
-        title: "Saving can't be interrupted — let it finish.",
-        "aria-label": "Stop unavailable while saving" }, "Stop sync"));
+      actions.append(tipAnchor(el("span", { class: "tip-disabled-wrap" },
+        el("button", { class: "danger", disabled: true,
+          "aria-label": "Stop unavailable while saving" }, "Stop sync")),
+        "Saving cannot be interrupted — let it finish."));
     }
     actions.append(el("button", { class: "primary", onclick: closeFn }, "Close"));
 

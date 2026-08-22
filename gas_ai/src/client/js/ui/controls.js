@@ -3,9 +3,18 @@
 
 import { clear, el } from "./dom.js";
 import { meter } from "./data.js";
+import { tip, tipAnchor, tipLabel } from "./tip.js";
 
-export function statusPill(kind, text) {
-  return el("span", { class: `pill ${kind}` }, text);
+/**
+ * OK / warn / bad / neutral, with a dot the colour never carries alone.
+ *
+ * `help` is optional and takes any of tipLabel's three shapes. A pill says a state in one or
+ * two words ("Failing", "Auto-remediable", "IaC × 3") and those words are rarely the whole
+ * story, so this is where a reader finds out what the state actually means.
+ */
+export function statusPill(kind, text, help) {
+  const pill = el("span", { class: `pill ${kind}` }, text);
+  return help ? tipLabel(pill, help) : pill;
 }
 
 /**
@@ -16,10 +25,10 @@ export function statusPill(kind, text) {
  * cards, so it takes its emphasis from position and hairlines rather than from surfaces.
  * `meterPct` is a 0-100 number or null/undefined for no meter.
  */
-export function statRow(name, value, sub, meterPct) {
+export function statRow(name, value, sub, meterPct, help) {
   const hasMeter = meterPct !== null && meterPct !== undefined;
   return el("div", { class: "stat-row" },
-    el("div", { class: "stat-name" }, name),
+    el("div", { class: "stat-name" }, tipLabel(name, help)),
     el("div", { class: "stat-figure" },
       el("div", { class: "mini-value num" }, value),
       hasMeter ? meter(meterPct, {
@@ -53,11 +62,14 @@ export function segmented({ options, value, onChange, ariaLabel = "", className 
       type: "button",
       "aria-pressed": opt.value === value ? "true" : "false",
       "aria-label": opt.ariaLabel || null,
-      title: opt.title || null,
       onclick: () => onChange(opt.value),
     }, opt.label);
     btns.set(opt.value, btn);
     group.append(btn);
+    // `describeIn` is the group, not the button: a description parked inside the button would
+    // be swept into its own accessible name, so "Matrix" would announce as "Matrix, every
+    // rule on one grid" and then say it again as the description.
+    if (opt.title) tip(btn, opt.title, { describeIn: group });
   }
   group.set = (v) => {
     for (const [key, btn] of btns) btn.setAttribute("aria-pressed", key === v ? "true" : "false");
@@ -144,6 +156,11 @@ export function field(id, labelText, control, hintText) {
   const hintId = hintText ? `${id}-hint` : null;
   if (hintId) control.setAttribute("aria-describedby", hintId);
   const label = el("label", { class: "field-label", for: id }, labelText);
+  // Set by setChanged() below, read at reveal time. The label wraps the control, so focus
+  // bubbling out of the input opens the card too — a keyboard user gets the saved value the
+  // native title never gave them.
+  let changedNote = null;
+  tipAnchor(label, () => (changedNote ? [changedNote] : null));
   const errId = `${id}-err`;
   const err = el("span", { class: "field-error", id: errId, hidden: true });
   return {
@@ -174,8 +191,9 @@ export function field(id, labelText, control, hintText) {
     /** Mark the field as differing from what is saved, and say so in words. */
     setChanged(changed, savedValue) {
       label.classList.toggle("field--changed", !!changed);
-      if (changed) label.title = `Saved value: ${savedValue}`;
-      else label.removeAttribute("title");
+      // The saved value is the reason the field is marked, so it belongs on hover AND on focus
+      // — a native title gave a keyboard user the mark with no way to read the reason.
+      changedNote = changed ? "Saved value: " + savedValue : null;
     },
   };
 }
@@ -275,11 +293,11 @@ export function filterChipRow({
   return row;
 }
 
-export function kpiCard(label, value, sub, chip) {
+export function kpiCard(label, value, sub, chip, help) {
   return el(
     "div",
     { class: "kpi-card" },
-    el("div", { class: "kpi-label" }, label),
+    el("div", { class: "kpi-label" }, tipLabel(label, help)),
     el("div", { class: "kpi-value num" }, value, chip || null),
     sub ? el("div", { class: "kpi-sub" }, sub) : null,
   );

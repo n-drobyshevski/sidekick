@@ -42,6 +42,7 @@ import { svgEl } from "../icons.js";
 import { onPageTeardown } from "./timing.js";
 import { icicleLayout, nestingAxes, vectorSentence } from "../lattice.js";
 
+import { tipAnchor } from "./tip.js";
 /** Column widths are equal by construction (`icicleLayout`), so only the height is tuned here. */
 const LEAF_H = 12;
 const HEAD_H = 22;
@@ -126,9 +127,9 @@ export function latticeIcicle({ spec, ariaLabel, hooks }) {
         g.setAttribute("tabindex", "-1");
         g.setAttribute("role", "button");
         if (!sentences.has(band.key)) sentences.set(band.key, vectorSentence(spec, band.vector));
-        const title = svgEl("title");
-        title.textContent = sentences.get(band.key);
-        g.append(title);
+        // The vector sentence, off the SVG <title> that took a second to arrive and could not
+        // be styled, keyboarded or tapped, and onto the app's own card.
+        tipAnchor(g, [sentences.get(band.key)]);
         byKey.set(band.key, g);
         ordered.push(g);
 
@@ -144,9 +145,7 @@ export function latticeIcicle({ spec, ariaLabel, hooks }) {
           hooks.onActivate({ key: band.key, vector: band.vector }, g);
         });
       } else {
-        const title = svgEl("title");
-        title.textContent = labelFor(band);
-        g.append(title);
+        tipAnchor(g, [labelFor(band)]);
       }
       svg.append(g);
     }
