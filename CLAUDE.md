@@ -96,6 +96,13 @@ be pinned by tests). The seed-estate figures live in `ai/AARS_ASSESSMENT.md` and
   overdue bucket scores **3.96** and age **3.86**. Normalising overdue by the SLA window is what
   destroys it; absolute buckets keep it. A fifth tree axis was still dropped, on distribution
   rather than on coverage.
+- **Which time signal wins depends on the register, and overdue only wins on the narrow one.**
+  The 3.96-over-3.86 above holds on the AI slice, which is the *only* slice where `dueAt`
+  coverage is 100%. Measured over a wider category set (`AARS_LIVE_MEASUREMENTS.md` §6.3):
+  `dueAt` coverage falls to **38.4%**, and at the whole-project ceiling to **26.4%**, while
+  **age keeps 100% coverage by construction and its effective cardinality rises to 4.26**. So
+  prefer `createdAt` age buckets for anything scored outside `wct-id-1998`, and read the pair
+  above as a fact about that slice rather than about time. `>730d` is always empty here.
 - **Non-agent assets get their own lattice**, rather than exclusion from posture.
 - **Findings land in `ai/AARS_LIVE_MEASUREMENTS.md`.** Update it as they land, dated and
   tenant-stamped; do not open a new assessment document for them.

@@ -1,7 +1,8 @@
 # AARS — live-tenant measurements, and what they changed
 
 **Tenant** `api.eu15.app.wiz.io` · **project scope** `1dfea0cf-834f-5522-b797-bee5aaf09251`
-(VALUE-CHAIN) · **measured** 2026-08-22.
+(VALUE-CHAIN) · **measured** 2026-08-22, extended 2026-08-23 by the Phase 0 widening
+measurement (§6), which reverses §3's time-axis ordering on a wider register.
 
 A third document beside [AARS_ASSESSMENT.md](AARS_ASSESSMENT.md) and
 [AARS_SCORING_ASSESSMENT.md](AARS_SCORING_ASSESSMENT.md), and it exists because those two
@@ -22,9 +23,10 @@ quietly.*
 |---|---|
 | `12f6bae` | Tri-state at the boundary; measurability; posture scope split; `DERIVATION_VERSION`; posture trend series; `RUNS_AS` attribution |
 | `5bbdf25` | `quick: false` on graphSearch — quick mode cannot paginate |
+| _(unversioned)_ | `gas_ai/phase0.mjs` — the read-only widening measurement behind §6 |
 
 `npm run check` green at both: **104 files, 2815 tests**. Branch
-`claude/gas-ai-posture-tree-view`.
+`claude/gas-ai-posture-tree-view`; §6 was measured from `claude/gas-ai-risk-model-rebuild`.
 
 ---
 
@@ -264,13 +266,185 @@ axes (item 4 above carries the numbers).
 
 ---
 
-## 6. How to reproduce
+## 6. Phase 0 — the widening measurement (2026-08-23)
+
+**Measured** 2026-08-23, same tenant and project scope as §2. Tool: `gas_ai/phase0.mjs` —
+read-only, writes only `phase0-report.json`. **~700 API calls**, all counts and introspection;
+nothing written to Wiz, the Sheet or Drive. A sibling to `probe.mjs` rather than a mode inside
+it, because every question here is about queries the battery does **not** have.
+
+The question: the four models read axes that are constants (§3). Is that a fact about the
+estate, or an artifact of the register being filtered twice — one project **and**
+`frameworkCategory: wct-id-1998`?
+
+**It is an artifact.** But widening has a ceiling, and past it the signal gets worse.
+
+### 6.1 The candidate set, and why not simply "all categories"
+
+74 categories carry at least one open issue in scope. The sum across them is **74,209** against
+a ceiling of **14,617**, so each issue sits in roughly **five** categories — marginal rows per
+category are far below its count, and picking by count would be wrong.
+
+| scope | open issues | config findings |
+|---|---|---|
+| `wct-id-1998` (AI) only — today | **99** | **123** |
+| candidate set, 6 categories | **6,073** | **18,523** |
+| every category in project scope | **14,617** | **124,554** |
+
+The candidate set, chosen for balance rather than size (the four largest categories are 6k–9.5k
+rows of general IT hygiene each):
+
+```
+wct-id-1998                            AI Security                 99
+wct-id-3                               Vulnerability Assessment   677
+41a3ed79-9a2c-4466-9109-f845fd057bd4   High Profile Threats       536
+5c3c85b5-bb94-4ee7-8f3e-c186d0229280   Data Security              439
+1f28667a-9d12-48dd-898d-d326bb422f8d   Key & Secret Management  1,390
+861eb856-54f6-4d1b-8ca1-1d6130841d20   Identity Management      3,477
+```
+
+### 6.2 Minimal beats maximal on SIGNAL, not only on cost
+
+Severity, by exact filtered counts rather than a sample:
+
+| | TODAY (AI) | **CANDIDATE (6)** | CEILING (all) |
+|---|---|---|---|
+| distribution | `{LOW 10, MEDIUM 89}` | `{INFO 2916, LOW 1547, MED 1604, HIGH 6}` | `{INFO 8546, LOW 2647, MED 3403, HIGH 21}` |
+| effective cardinality | 1.39 | **2.88** | 2.64 |
+| tie rate | 0.817 | **0.365** | 0.429 |
+
+**Widening past the candidate set makes the model worse**: the full estate is 58%
+`INFORMATIONAL` (8,546 of 14,617), which drowns the signal. Minimal categories is right on the
+numbers, not only on the storage budget.
+
+Also measured, and worth recording: **no `CRITICAL` issue exists in project scope at all**, and
+only **21 `HIGH`** of 14,617.
+
+### 6.3 The time axis must be AGE — and this reverses §3
+
+| | TODAY (AI) | CANDIDATE (6) | CEILING |
+|---|---|---|---|
+| `dueAt` coverage | **100%** | **38.4%** (2,329/6,073) | 26.4% (3,852/14,617) |
+| age — effective cardinality | 3.27 | **4.26** | — |
+| age — tie rate | 0.395 | **0.261** | — |
+
+`dueAt` collapses on widening; age holds 100% coverage by construction and *improves*.
+
+**§3 records "overdue bucket 3.96, age 3.86" and CLAUDE.md repeats it. That ordering holds only
+on the AI slice** — the one slice with full `dueAt` coverage. The rule is not wrong; its
+register is. `createdAt` is on `IssueFilters`, so age is exactly countable rather than sampled.
+Bucket edges need retuning: **nothing in scope is older than 730 days**, so that bucket is
+always empty.
+
+### 6.4 The exploitation axis does not exist today; widening is what creates it
+
+`vulnerabilityFindings`, project scope, `status: OPEN`:
+
+| filter | count |
+|---|---|
+| (none) | **5,173,698** |
+| `hasExploit` | 1,028,591 |
+| `hasCisaKevExploit` | 9,971 |
+| `hasRelatedIssue` | 7,381 |
+| `hasExploit` and `hasRelatedIssue` | 2,195 |
+| KEV and `hasRelatedIssue` | 717 |
+| **related to an AI-category issue** | **0** |
+| **related to a candidate-category issue** | **7,368** (99.8% of 7,381) |
+
+Not "weak" — **empty**. KEV findings sit on `VIRTUAL_MACHINE` (79 of 100 sampled) and
+`CONTAINER_IMAGE` (21), which this register does not hold, so the direct asset join is ~0% and
+attribution must run *through* the issue register.
+
+Exploitation axis over all 5.17M, from exact counts:
+`{ACTIVE 9,971 · LIKELY 1,018,620 · NONE/UNKNOWN 4,145,113}` — effective cardinality **1.66**,
+tie rate 0.681. **The 5.17M is never ingested**: KEV union relatedIssue is ~17k rows and is the
+whole signal.
+
+### 6.5 Two axes are dead by measurement
+
+- **`businessImpact` is degenerate, not merely constant.** Every issue matches *both* `LBI` and
+  `MBI` — 99/99 at the AI scope, 14,617 and 14,608 of 14,617 at the ceiling. `HBI` absent
+  everywhere. The filter is always-true, so the axis carries no information at any scope. This
+  is stronger than §3's "MBI on 839 of 840": that was the worst-of fold; this is the raw filter.
+- **`validatedAsExploitable`**: **2** true out of 14,617.
+
+### 6.6 The framework map is real — 88%
+
+**22 of 25** distinct configuration-finding rules resolve to a framework policy, against a
+framework side holding **2,606** distinct rule ids across 8 enabled frameworks (5Rs, CIS
+Alibaba / AWS / Controls v8, `[Company]` ISSP and data-security frameworks, `[Company]` Linux
+Hardening — the last contributing 0 policy rules).
+
+So `toxicCombos.ts`'s four hardcoded `COMBO_GROUPS` literals can be replaced by Wiz's own
+mapping, which `AARS_SCORING_ASSESSMENT.md` §1 calls for in as many words: *"pillar B measures
+our regex, not the estate."*
+
+### 6.7 Distinct resources behind the widened register
+
+The open storage question — findings reference resources `ai_assets` does not hold:
+
+| | distinct resources |
+|---|---|
+| config findings, candidate categories | **14,459** |
+| assets carrying KEV vulns | 1,976 |
+| assets carrying related-issue vulns | 633 |
+
+`ai_assets` would grow **822 → ~17,000** (overlap unmeasured, so this is an upper bound).
+At 48 columns that is ~816k cells. Whole-workbook estimate at the candidate set — issues 213k
++ findings 593k + vuln findings 272k + assets 816k — is roughly **1.9M of the 10M cell cap**.
+It fits.
+
+### 6.8 Schema facts this cost real calls to learn
+
+- **`Issue` has 51 fields and not one names a category.** `scanVars.ts:118` is exactly right —
+  the category filter *is* the claim. So a widened register must **stamp each row with the
+  category it was fetched under**, or "AI issues" silently becomes "all issues".
+- **`VulnerableAsset` is a union of 16 types.** `vulnerableAsset { id }` is rejected; it needs
+  an inline fragment per member.
+- **Introspection by variable is refused by this gateway** — `__type(name: $n)` answers
+  "missing value for non-null variable" however the variable is sent. Use a literal type name.
+- **`RelatedIssueFrameworkCategoryFilter` takes `equalsAny`**, not `equals`.
+- **Project scope on `vulnerabilityFindings` is `projectIdV2: { equals: [...] }`** — a **sixth**
+  spelling beyond the five tabulated at `probe.mjs:238`.
+- `IssuesGroupedByValueField` has no category value (`SOURCE_RULE, RESOURCE, SUBSCRIPTION,
+  PROJECT, KUBERNETES_*, CONTAINER_SERVICE`), so per-category counts cost one call each — which
+  is how this run reached ~700.
+- `securityCategories` returns 500+ and includes CIS benchmark rows and UUID-keyed custom
+  categories, not only `wct-id-*` ids.
+
+### 6.9 What this changes
+
+1. The register widens to the **candidate 6 categories**, held in settings, one query per
+   category with the category stamped on the row.
+2. The time axis becomes **age**, not overdue.
+3. `vulnerabilityFindings` joins the battery **filtered to KEV union relatedIssue**, never whole.
+4. `businessImpact` / `mission` is **dropped**, on 6.5 rather than on taste.
+5. The framework map replaces the four `COMBO_GROUPS` regexes.
+
+---
+
+## 7. How to reproduce
 
 **Read-only probe** — sends the app's own query constants, writes only
 `probe-vocabulary.json`:
 
 ```bash
 cd gas_ai && set -a && . ./.env.local && set +a && node probe.mjs --first=5
+```
+
+**The Phase 0 widening measurement** (§6) — read-only, writes only `phase0-report.json`.
+It reads `.env.local` itself, so it needs no `set -a` wrapper:
+
+```bash
+cd gas_ai
+node phase0.mjs --stage=a    # schema: what the tenant accepts
+node phase0.mjs --stage=b    # rows per risk category  (~500 calls — see §6.8)
+node phase0.mjs --stage=c    # severity/impact variance by scope, exact counts
+node phase0.mjs --stage=t    # the age axis
+node phase0.mjs --stage=d    # vulnerabilityFindings funnel
+node phase0.mjs --stage=j    # exploitation attribution
+node phase0.mjs --stage=e    # framework join
+node phase0.mjs --stage=r2   # distinct resources
 ```
 
 **A full live sync in Node.** The dev harness normally runs in a browser tab, because
