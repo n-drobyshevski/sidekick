@@ -30,7 +30,7 @@
 import { bootstrap, setParams, swrCall } from "../store.js";
 import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets.js";
 import { coverCurve } from "../charts.js";
-import {
+import { meter,
   clear, dataTable, debounce, el, emptyState, errorState, fmtDate, kpiCard, outcomeBadge,
   outcomeLabel, pager, plural, sectionLabel, segmented, select, selectField, sevBadge,
   sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statusPill,
@@ -417,6 +417,21 @@ export async function renderProblems(main, params) {
       { key: "severity", label: "Severity", help: { term: "adjusted-severity" },
         cell: (r) => sevBadge(r.severity) },
       { key: "due", label: "Due", cell: (r) => dueChip(r.dueAt) || "—" },
+      // The one column the minimal model adds. `decorative` because the score is already
+      // spoken by the row's other cells; an undated row draws at its rule-only score and says
+      // so, rather than drawing a full bar for a reading half of which nobody took.
+      {
+        key: "rank", label: "Order", help: { term: "priorities-rank" },
+        cell: (r) => (typeof r.rankScore === "number"
+          ? meter(r.rankScore, {
+            max: 1,
+            decorative: true,
+            label: r.rankTimed
+              ? `Order ${r.rankScore.toFixed(2)}`
+              : `Order ${r.rankScore.toFixed(2)} — no deadline, rule only`,
+          })
+          : "—"),
+      },
     ];
     const descending = view.sort && (PROBLEM_SORT_DESC[view.sort] ? view.dir === 1 : view.dir === -1);
 

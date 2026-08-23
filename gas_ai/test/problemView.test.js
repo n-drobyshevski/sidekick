@@ -189,8 +189,36 @@ describe("PROBLEM_COMPARATORS / sortProblems", () => {
   });
 
   it("flags the risk columns as naturally-descending", () => {
-    expect(PROBLEM_SORT_DESC).toEqual({ priority: true, posture: true, severity: true });
+    // `rank` joined these on 2026-08-23 for the same reason the other three are here: a
+    // higher score is a worse row, so the first click must show the worst first. The contrast
+    // the case actually guards is `due`, which opens soonest-first and so stays out.
+    expect(PROBLEM_SORT_DESC).toEqual({ priority: true, posture: true, severity: true, rank: true });
     expect(PROBLEM_COMPARATORS.due).toBeTypeOf("function");
     expect(PROBLEM_SORT_DESC.due).toBeUndefined(); // due opens soonest-first, i.e. ascending
+  });
+});
+
+describe("rank ordering (the minimal model's column)", () => {
+  // The score itself is computed server-side and tested in test/rank.test.ts. What belongs
+  // here is only what the client does with it: read it, never recompute it.
+  const row = (id, rankScore) => ({
+    id, kind: "ISSUE", title: "t", assetName: "a", problemOutcome: "TRACK_STAR",
+    severity: "MEDIUM", postureTier: null, dueAt: null, rankScore,
+  });
+
+  it("orders by the server's score, highest first", () => {
+    const out = sortProblems([row("lo", 0.2), row("hi", 0.9), row("mid", 0.5)], "rank", 1);
+    expect(out.map((r) => r.id)).toEqual(["hi", "mid", "lo"]);
+  });
+
+  it("puts a row the server never scored last, not first", () => {
+    // Absent is not zero and it is certainly not "most urgent" — an unscored row must not be
+    // able to jump the queue on a value nobody computed.
+    const out = sortProblems([row("unscored", undefined), row("scored", 0.1)], "rank", 1);
+    expect(out.map((r) => r.id)).toEqual(["scored", "unscored"]);
+  });
+
+  it("is registered as a descending-by-default column", () => {
+    expect(PROBLEM_SORT_DESC.rank).toBe(true);
   });
 });

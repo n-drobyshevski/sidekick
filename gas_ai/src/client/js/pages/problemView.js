@@ -159,10 +159,20 @@ export const PROBLEM_COMPARATORS = {
   posture: (a, b) => postureIndex(b.postureTier) - postureIndex(a.postureTier),
   severity: (a, b) => sevIndex(a.severity) - sevIndex(b.severity),
   due: (a, b) => dueRank(a) - dueRank(b),
+  // The minimal model's order. The number is computed SERVER-SIDE and arrives on the row —
+  // this only reads it, which is the distinction actionView.js's header insists on. An
+  // unscored row sorts last rather than as zero.
+  rank: (a, b) => rankValue(b) - rankValue(a),
 };
 
+/** `-1` for a row the server never scored, so it lands after every scored one either way. */
+function rankValue(row) {
+  const v = row && typeof row.rankScore === "number" ? row.rankScore : -1;
+  return v;
+}
+
 /** Columns whose natural order reads as descending — for aria-sort and the glyph. */
-export const PROBLEM_SORT_DESC = { priority: true, posture: true, severity: true };
+export const PROBLEM_SORT_DESC = { priority: true, posture: true, severity: true, rank: true };
 
 export function sortProblems(rows, key, dir) {
   const cmp = PROBLEM_COMPARATORS[key];

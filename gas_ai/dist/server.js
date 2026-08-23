@@ -8015,7 +8015,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "ef57065d37d1" : "dev";
+  var BUILD_ID = true ? "979938eb2d1e" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -10156,10 +10156,10 @@ var Server = (() => {
   }
   function seedTrendHistory(endIso) {
     if (dataRowCount(TABS.syncHistory) > 0) return;
-    const DAY_MS2 = 864e5;
+    const DAY_MS3 = 864e5;
     const end = new Date(endIso).getTime();
     appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
-      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS2).toISOString();
+      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS3).toISOString();
       return {
         sync_id: `sync-sample-${String(i + 1).padStart(2, "0")}`,
         started_at: at,
@@ -11600,6 +11600,75 @@ var Server = (() => {
     };
   }
 
+  // src/domain/rank.ts
+  var DEFAULT_RANK_RULE = {
+    ruleWeights: [],
+    defaultRuleWeight: 0.5,
+    overdueDayBuckets: [0, 30, 90, 180, 365],
+    timeShare: 0.5
+  };
+  var DAY_MS = 864e5;
+  function rankKeyOf(row) {
+    var _a5, _b;
+    return String((_b = (_a5 = row.ruleId) != null ? _a5 : row.ruleShortId) != null ? _b : "").trim();
+  }
+  function weightFor(key, rule) {
+    var _a5;
+    for (const row of rule.ruleWeights) {
+      if (row && String((_a5 = row.ruleId) != null ? _a5 : "").trim() === key) return clamp01(row.weight);
+    }
+    return clamp01(rule.defaultRuleWeight);
+  }
+  function clamp01(v) {
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n)) return 0;
+    return n < 0 ? 0 : n > 1 ? 1 : n;
+  }
+  function overdueOf(row, rule, nowIso2) {
+    const due = row.dueAt ? Date.parse(row.dueAt) : NaN;
+    const now = Date.parse(nowIso2);
+    if (!Number.isFinite(due) || !Number.isFinite(now)) {
+      return { days: null, bucket: null, component: null };
+    }
+    const days = (now - due) / DAY_MS;
+    const buckets = rule.overdueDayBuckets;
+    const steps = buckets.length + 1;
+    if (days <= 0) return { days, bucket: -1, component: 0 };
+    let idx = 0;
+    for (let i = 0; i < buckets.length; i++) if (days > buckets[i]) idx = i + 1;
+    return { days, bucket: idx - 1, component: idx / (steps - 1) };
+  }
+  function rankOne(row, rule, nowIso2) {
+    const ruleComponent = weightFor(rankKeyOf(row), rule);
+    const time = overdueOf(row, rule, nowIso2);
+    const share = clamp01(rule.timeShare);
+    const score2 = time.component === null ? ruleComponent : (1 - share) * ruleComponent + share * time.component;
+    return {
+      score: score2,
+      ruleComponent,
+      timeComponent: time.component,
+      overdueDays: time.days,
+      bucket: time.bucket
+    };
+  }
+  var MATURITY_WEIGHT = {
+    REALIZED: 1,
+    DEMONSTRATED: 0.8,
+    FEASIBLE: 0.6
+  };
+  function rankRuleFromExploitation(rows, base = DEFAULT_RANK_RULE) {
+    var _a5, _b;
+    const weights = [];
+    for (const row of rows != null ? rows : []) {
+      const ruleId = String((_a5 = row == null ? void 0 : row.ruleId) != null ? _a5 : "").trim();
+      if (!ruleId) continue;
+      const weight = MATURITY_WEIGHT[String((_b = row == null ? void 0 : row.maturity) != null ? _b : "").toUpperCase()];
+      if (weight === void 0) continue;
+      weights.push({ ruleId, weight });
+    }
+    return { ...base, ruleWeights: weights };
+  }
+
   // src/domain/problems.ts
   var PROBLEMS_CLIENT_ALL_MAX = 1e3;
   function issueToProblemRow(issue2, node2) {
@@ -11665,6 +11734,17 @@ var Server = (() => {
       rows.push(findingToProblemRow(finding, assetsById.get(finding.resourceId)));
     }
     return rows;
+  }
+  function withRankScores(rows, rule, nowIso2) {
+    return rows.map((row) => {
+      var _a5;
+      const result = rankOne(
+        { id: row.id, ruleId: row.ruleId, ruleShortId: row.ruleShortId, dueAt: (_a5 = row.dueAt) != null ? _a5 : void 0 },
+        rule,
+        nowIso2
+      );
+      return { ...row, rankScore: result.score, rankTimed: result.timeComponent !== null };
+    });
   }
   function outcomeRank(o) {
     const i = OUTCOME_VALUES.indexOf(o);
@@ -15142,7 +15222,7 @@ var Server = (() => {
 
   // src/domain/comboDigest.ts
   var DUE_SOON_DAYS = 7;
-  var DAY_MS = 864e5;
+  var DAY_MS2 = 864e5;
   var carriesCondition = conditionState;
   function mixOf(issues2, field) {
     return countBySeverity2(issues2.map((i) => ({ severity: i[field] })));
@@ -15150,7 +15230,7 @@ var Server = (() => {
   function daysUntil(dueAt, nowMs) {
     const t = Date.parse(dueAt || "");
     if (Number.isNaN(t)) return null;
-    return Math.round((t - nowMs) / DAY_MS);
+    return Math.round((t - nowMs) / DAY_MS2);
   }
   function slaTally(issues2, nowMs) {
     const out = { pastDue: 0, dueSoon: 0, noDueDate: 0 };
@@ -16472,7 +16552,14 @@ var Server = (() => {
   }
   function problemsModel() {
     const assetsById = new Map(viewAssets().map((a) => [a.id, a]));
-    const rows = rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById));
+    const rankRule = rankRuleFromExploitation(
+      getProblemRule2().rule.exploitationByRuleId
+    );
+    const rows = withRankScores(
+      rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById)),
+      rankRule,
+      nowIso()
+    );
     return { rows, outcomeCounts: countProblemRowsByOutcome(rows) };
   }
   function getProblems(p) {

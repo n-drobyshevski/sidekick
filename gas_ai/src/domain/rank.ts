@@ -202,3 +202,37 @@ export function cleanRankRule(v: Partial<RankRule> | null | undefined): RankRule
     timeShare: clamp01(raw.timeShare ?? DEFAULT_RANK_RULE.timeShare),
   };
 }
+
+/**
+ * The operator's existing judgement table, read as rank weights.
+ *
+ * DELIBERATELY NOT A NEW SETTINGS KEY. `ProblemRule.exploitationByRuleId` is already a
+ * per-rule operator judgement keyed on the same rule id this model ranks by, already
+ * persisted, already versioned, and already edited through a picker backed by the rule-id
+ * census. Inventing a second per-rule table beside it would ask an operator to say the same
+ * thing twice and then drift.
+ *
+ * The maturity ladder maps onto weight in its own order — REALIZED is a rule someone has seen
+ * exploited, FEASIBLE is one they think could be. A rule absent from the table keeps
+ * `defaultRuleWeight`, which is mid-scale rather than zero for the reason that field states.
+ */
+const MATURITY_WEIGHT: Record<string, number> = {
+  REALIZED: 1,
+  DEMONSTRATED: 0.8,
+  FEASIBLE: 0.6,
+};
+
+export function rankRuleFromExploitation(
+  rows: ReadonlyArray<{ ruleId?: string; maturity?: string }> | undefined,
+  base: RankRule = DEFAULT_RANK_RULE,
+): RankRule {
+  const weights: RuleWeight[] = [];
+  for (const row of rows ?? []) {
+    const ruleId = String(row?.ruleId ?? "").trim();
+    if (!ruleId) continue;
+    const weight = MATURITY_WEIGHT[String(row?.maturity ?? "").toUpperCase()];
+    if (weight === undefined) continue;
+    weights.push({ ruleId, weight });
+  }
+  return { ...base, ruleWeights: weights };
+}

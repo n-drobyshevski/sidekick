@@ -16,6 +16,7 @@
 import type { DecisionVector, AmplificationFactor } from "./problem";
 import { OUTCOME_VALUES, nodeAmplificationVector } from "./problem";
 import type { FindingRow, GNode, IssueRow } from "./graphTypes";
+import { rankOne, type RankRule } from "./rank";
 import { isOpenGap, isUnresolvedIssue, type Severity } from "./config";
 import { postureStateOf, type PostureState, type Tier } from "./posture";
 
@@ -90,6 +91,19 @@ export interface ProblemRow {
   ruleId?: string;
   /** A finding's `ruleShortId` (e.g. `SUB-082`) — absent on an ISSUE row, which has none. */
   ruleShortId?: string;
+  /**
+   * The minimal model's ordering key, 0..1 — `domain/rank.ts`. Computed SERVER-SIDE and shipped
+   * on the row on purpose: `actionView.js`'s header argues at length against a client-computed
+   * sort presented as a smart default, because the headline figures above these tables are
+   * computed over the server's order and the two would silently disagree. One ranking authority.
+   */
+  rankScore?: number;
+  /**
+   * False when the row carries no deadline, so the clock half of `rankScore` is UNMEASURED and
+   * the score is the operator judgement alone. Shipped separately rather than folded into the
+   * number, so a surface can hatch it instead of implying a reading nobody took.
+   */
+  rankTimed?: boolean;
   /** Worst of `projects[].riskProfile.businessImpact`, straight off the source row — same
    *  field IssueRow and FindingRow both already carry under this exact name. */
   businessImpact?: string;
@@ -199,6 +213,25 @@ export function buildProblemRows(
     rows.push(findingToProblemRow(finding, assetsById.get(finding.resourceId)));
   }
   return rows;
+}
+
+/**
+ * Stamp every row with the minimal model's score. Pure: the caller supplies the rule and the
+ * clock, exactly as `comboDigest` takes its `nowIso` rather than reading one.
+ */
+export function withRankScores(
+  rows: readonly ProblemRow[],
+  rule: RankRule,
+  nowIso: string,
+): ProblemRow[] {
+  return rows.map((row) => {
+    const result = rankOne(
+      { id: row.id, ruleId: row.ruleId, ruleShortId: row.ruleShortId, dueAt: row.dueAt ?? undefined },
+      rule,
+      nowIso,
+    );
+    return { ...row, rankScore: result.score, rankTimed: result.timeComponent !== null };
+  });
 }
 
 // ------------------------------------------------------------------------------ ranking

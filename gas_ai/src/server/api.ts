@@ -65,10 +65,12 @@ import { countPostureTiers, postureStateOf, TIER_VALUES, type PostureVector, typ
 import {
   buildProblemRows,
   countProblemRowsByOutcome,
+  withRankScores,
   PROBLEMS_CLIENT_ALL_MAX,
   rankProblems,
   type ProblemRow,
 } from "../domain/problems";
+import { rankRuleFromExploitation } from "../domain/rank";
 import {
   concentrationRatio,
   coverCurve,
@@ -2100,7 +2102,16 @@ function problemsModel(): ProblemsModel {
   // Populations and join scoped together. Handing `buildProblemRows` the whole register
   // against a filtered `assetsById` would keep every row and merely un-enrich the ones out
   // of view — rows missing their posture tier rather than rows correctly absent.
-  const rows = rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById));
+  // Scored from the operator's EXISTING per-rule table rather than a second one — see
+  // rank.rankRuleFromExploitation. Server-side so there is one ranking authority.
+  const rankRule = rankRuleFromExploitation(
+    settingsStore.getProblemRule().rule.exploitationByRuleId,
+  );
+  const rows = withRankScores(
+    rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById)),
+    rankRule,
+    nowIso(),
+  );
   return { rows, outcomeCounts: countProblemRowsByOutcome(rows) };
 }
 
