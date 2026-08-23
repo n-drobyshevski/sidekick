@@ -221,29 +221,25 @@ source**, not by re-measuring the tenant — no figure in §1–§4 moved.
    spec-driven; add a third spec beside `PROBLEM_LATTICE` and `POSTURE_LATTICE` (`lattice.js:84`,
    `:117`). Acceptance is the lattice's **own rule** validating with its cells pinned — a rule is
    pinnable, a tenant figure is not. The constants above stay recorded here instead.
-   *PREREQUISITE, MEASURED 2026-08-23 — provenance is fetched and thrown away.* The query
-   already selects `technology { id name categories { id name } }`
-   (`wizQueriesAi.ts:107`, `:978`), and `normalizeCloudResource` keeps only
-   `categories[].name` as `technologyCategories` (`syncNormalize.ts:165-173`), discarding
-   `technology.name` — the one field the provenance axis needs. Carrying it costs no I/O and is
-   six edits along a named path: `graphTypes.ts:333`, `syncNormalize.ts:165`,
-   `sheetsDb.ts:38` (the column list), `syncStore.ts:155` and `:258` (the round trip),
-   `api.ts:839`. Deliberately NOT done ahead of the lattice: it adds a persisted column for a
-   consumer that does not exist yet. Two things for whoever does it — `DERIVATION_VERSION`
-   (`config.ts:158`) should NOT move for adding a field, since its own header reserves the bump
-   for a change that alters what an existing column MEANS, but the moment something reads
-   `technology` an old ledger's absence starts meaning something, so express it through
-   `measurability.ts` rather than as an empty string. And `detailSheets.js:322` currently labels
-   `technologyCategories` as "Technology", which is the category list under the name of the
-   field this would add.
-   **Axis design is still yours.** §3 says classification and consequence are constants on this
-   tenant, so the lattice stands on provenance × lifecycle × age — and none of those three has a
-   value set chosen yet.
-
-**Unresolved, noticed 2026-08-23.** `CLAUDE.md` calls a live sync "~71 API calls, ~2 min";
-`gas_ai/README.md:72-73` calls the whole battery "~10–20 API calls" finishing "in one hop".
-These probably describe different things — a full sync versus the probe battery. Confirm which,
-and reword the loser: two durable numbers that look like a contradiction are worse than one.
+   *PROVENANCE DECLINED 2026-08-23 (user decision): `technology.name` is not carried.* The query
+   already selects `technology { id name categories { id name } }` (`wizQueriesAi.ts:107`, `:978`)
+   and `normalizeCloudResource` keeps only `categories[].name` as `technologyCategories`
+   (`syncNormalize.ts:165-173`), discarding the name. Carrying it would have been six edits along
+   a named path — `graphTypes.ts:333`, `syncNormalize.ts:165`, `sheetsDb.ts:38`,
+   `syncStore.ts:155` and `:258`, `api.ts:839` — at no extra I/O, but it adds a persisted column,
+   and that column is now declined. **Do not re-propose it without a new reason.**
+   **CONSEQUENCE — this may leave too little to build a lattice on, and that is unmeasured.**
+   §3 establishes that on this tenant classification and consequence are constants:
+   `hasSensitiveData` is `false` for **all 585** datasets and `businessImpact` is MBI for **all
+   753**. With provenance now declined, the only candidate axes left are **lifecycle** (`status`
+   plus the `custom/aiml-model-status` tag) and **age**. Two axes is a thin lattice, and there is
+   a live risk that lifecycle is a third constant — the sampled assets all read `status: "Active"`,
+   though that is a handful of rows and not a measurement. Before any cell is drawn, measure the
+   lifecycle and age distributions over the 585 datasets the way `dwell` was measured, and apply
+   the same bar: `problem.ts:61`, fewer cells honestly populated over more that read UNKNOWN.
+   A one-axis lattice is not a lattice.
+   *Also still true:* `detailSheets.js:322` labels `technologyCategories` as "Technology", which is
+   the category list under the name of the field that will now never exist.
 
 **Explicitly not doing:** the AIVSS formula (a mean over a 10-element vector of which 9 are
 unmeasured — `posture.ts`'s header rules this out); any age term inside AARS; parsing `notes`

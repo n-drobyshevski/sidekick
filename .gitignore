@@ -55,3 +55,6 @@ derby.log
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 skills-lock.json
+
+# Generated HTML review surfaces (lavish-axi serves these from a local express server).
+.lavish/
