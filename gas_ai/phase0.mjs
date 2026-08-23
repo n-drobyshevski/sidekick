@@ -311,6 +311,19 @@ if (want("b")) {
   }
 }
 
+// The minimal candidate set: security-meaningful, thematically adjacent to an AI-asset tool,
+// and small enough to stay inside the store. Deliberately NOT the biggest categories — the
+// four largest are 6k-9.5k rows of general IT hygiene each, and stage C measures that widening
+// past this set makes severity discriminate WORSE (2.88 -> 2.64), not better.
+const CANDIDATE_SET = [
+  "wct-id-1998",                          // AI Security                 99
+  "wct-id-3",                             // Vulnerability Assessment   677
+  "41a3ed79-9a2c-4466-9109-f845fd057bd4", // High Profile Threats       536
+  "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", // Data Security              439
+  "1f28667a-9d12-48dd-898d-d326bb422f8d", // Key & Secret Management  1,390
+  "861eb856-54f6-4d1b-8ca1-1d6130841d20", // Identity Management      3,477
+];
+
 // ================================================ STAGE C — does a wider register add variance?
 if (want("c")) {
   head("STAGE C — does widening break the constants? (exact counts, not a sample)");
@@ -710,4 +723,86 @@ if (want("r2")) {
     line(`    config distinct by ${field.padEnd(14)} ${r.ok ? String(r.data.configurationFindingsGroupedByValues.totalCount).padStart(8) : `REFUSED ${r.error.slice(0,100)}`}`);
     if (r.ok) break;
   }
+}
+
+// ==== STAGE SC — scope audit. Two steps carry no projectScope(): CONFIG_RULES and
+// FRAMEWORKS_LIST. Both are catalogues of DEFINITIONS, which are tenant-wide by nature. The
+// live question is not "can they be project-scoped" but "how much of the catalogue does the
+// scoped register actually reference".
+if (want("sc")) {
+  head("STAGE SC — how much of the rule catalogue does VALUE-CHAIN actually touch?");
+
+  const t = await post(typeQ("CloudConfigurationRuleFilters"), {});
+  if (t.ok && t.data.__type?.inputFields) {
+    const names = t.data.__type.inputFields.map((f) => f.name);
+    line(`  CloudConfigurationRuleFilters (${names.length}): ${names.join(", ")}`);
+    report.cloudConfigurationRuleFilters = names;
+  } else line(`  CloudConfigurationRuleFilters: ${t.error ?? "none"}`);
+
+  const fw = await post(typeQ("SecurityFrameworkFilters"), {});
+  if (fw.ok && fw.data.__type?.inputFields)
+    line(`  SecurityFrameworkFilters: ${fw.data.__type.inputFields.map((f) => f.name).join(", ")}`);
+
+  // The whole catalogue, as CONFIG_RULES collects it today.
+  const all = await post(`{ cloudConfigurationRules(first:1){ totalCount } }`, {});
+  const total = all.ok ? all.data.cloudConfigurationRules.totalCount : null;
+  line(`\n  catalogue as CONFIG_RULES collects it today: ${total ?? `FAILED ${all.error}`}`);
+
+  // How many distinct rules do the SCOPED findings actually reference?
+  const b = { status: ["OPEN"] };
+  if (PROJECT_ID) b.resource = { projectId: [PROJECT_ID] };
+  for (const [label, extra] of [
+    ["AI category only", { frameworkCategory: ["wct-id-1998"] }],
+    ["candidate 6 cats", { frameworkCategory: CANDIDATE_SET }],
+    ["every category in project", {}],
+  ]) {
+    const r = await post(
+      `query G($f:ConfigurationFindingFilters,$g:ConfigurationFindingGroupBy!){
+         configurationFindingsGroupedByValues(first:1, filterBy:$f, groupBy:$g){ totalCount } }`,
+      { f: { ...b, ...extra }, g: { fields: ["RULE"] } });
+    const n = r.ok ? r.data.configurationFindingsGroupedByValues.totalCount : `FAILED ${r.error.slice(0, 90)}`;
+    const share = typeof n === "number" && total ? ` — ${((n / total) * 100).toFixed(1)}% of the catalogue` : "";
+    line(`    distinct rules referenced · ${label.padEnd(26)} ${String(n).padStart(6)}${share}`);
+    report[`rulesReferenced_${label}`] = n;
+  }
+
+  // Can the catalogue be narrowed at the query, or only after the fact?
+  for (const [label, f] of [
+    ["hasAssessments", { hasAssessments: true }],
+    ["enabled", { enabled: true }],
+  ]) {
+    const r = await post(
+      `query R($f:CloudConfigurationRuleFilters){ cloudConfigurationRules(first:1, filterBy:$f){ totalCount } }`,
+      { f });
+    line(`    catalogue filtered by ${label.padEnd(20)} ${r.ok ? String(r.data.cloudConfigurationRules.totalCount).padStart(6) : `REFUSED ${r.error.slice(0, 80)}`}`);
+  }
+}
+
+// ==== STAGE SC2 — both "unscoped" catalogues DO expose a project filter. What do they yield?
+if (want("sc2")) {
+  head("STAGE SC2 — scoping the two catalogue steps to VALUE-CHAIN");
+  const rules = async (f) => {
+    const r = await post(`query R($f:CloudConfigurationRuleFilters){ cloudConfigurationRules(first:1, filterBy:$f){ totalCount } }`, { f });
+    return r.ok ? r.data.cloudConfigurationRules.totalCount : `REFUSED ${r.error.slice(0, 90)}`;
+  };
+  const P = PROJECT_ID ? [PROJECT_ID] : null;
+  for (const [label, f] of [
+    ["(today: no filter)", {}],
+    ["project", { project: P }],
+    ["hasFindings", { hasFindings: true }],
+    ["project + hasFindings", { project: P, hasFindings: true }],
+    ["frameworkCategory = candidate", { frameworkCategory: CANDIDATE_SET }],
+    ["project + frameworkCategory", { project: P, frameworkCategory: CANDIDATE_SET }],
+  ]) line(`    cloudConfigurationRules · ${label.padEnd(30)} ${String(await rules(f)).padStart(6)}`);
+
+  const fws = async (f) => {
+    const r = await post(`query F($f:SecurityFrameworkFilters){ securityFrameworks(first:1, filterBy:$f){ totalCount } }`, { f });
+    return r.ok ? r.data.securityFrameworks.totalCount : `REFUSED ${r.error.slice(0, 90)}`;
+  };
+  line("");
+  for (const [label, f] of [
+    ["(today: enabled only)", { enabled: true }],
+    ["enabled + projectId", { enabled: true, projectId: P }],
+    ["projectId only", { projectId: P }],
+  ]) line(`    securityFrameworks · ${label.padEnd(33)} ${String(await fws(f)).padStart(6)}`);
 }

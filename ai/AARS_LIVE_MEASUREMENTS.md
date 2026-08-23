@@ -423,6 +423,58 @@ It fits.
 
 ---
 
+### 6.10 The scope audit — what "scope everything to the project" actually buys
+
+Prompted by a direct instruction to scope everything to VALUE-CHAIN. Measured rather than
+assumed, because the premise turned out to be half right.
+
+**15 of 17 sync steps already carry `projectScope()`.** The two that do not — `CONFIG_RULES`
+(`cloudConfigurationRules`) and `FRAMEWORKS_LIST` (`securityFrameworks`) — collect *catalogues
+of definitions*, which are tenant-wide by nature. The evaluation of those definitions is
+already scoped: every `COMPLIANCE_POSTURE_<id>` step passes `projectScope()` into
+`analyticsSelection`.
+
+**`project` on the rule catalogue is inert.** Both filters accept it and neither narrows:
+
+| `cloudConfigurationRules` filter | rules |
+|---|---|
+| none — what `CONFIG_RULES` sends today | 3,905 |
+| `project` alone | **3,905 — no effect** |
+| `hasFindings: true` | 1,401 |
+| **`project` + `hasFindings`** | **583** |
+| `frameworkCategory` = candidate set | 731 |
+| `project` + `frameworkCategory` | 731 (project again inert) |
+
+| `securityFrameworks` filter | frameworks |
+|---|---|
+| `enabled: true` — what `FRAMEWORKS_LIST` sends today | 42 |
+| `enabled` + `projectId` | 42 (inert) |
+| `projectId` alone | 484 — it *widens*, by dropping `enabled` |
+
+So `FRAMEWORKS_LIST` is already as narrow as it can honestly be, and adding `projectId` to it
+would be cargo cult.
+
+**The real waste is `hasFindings`, not `project`.** Counted from the findings side, distinct
+rules actually referenced in project scope:
+
+| scope | distinct rules | share of catalogue |
+|---|---|---|
+| AI category only | **5** | 0.1% |
+| candidate 6 categories | **112** | 2.9% |
+| every category in project | **583** | 14.9% |
+
+The 583 from the findings side and the 583 from `project + hasFindings` are independently
+derived and agree exactly, which is the check worth having.
+
+**Consequence.** `CONFIG_RULES` collects 3,905 definitions to use 112 under the candidate set —
+**97.1% dead weight**, at 8 pages of `PAGE_SIZE_WIDE`. Adding `hasFindings: true` (and, once the
+category list is settings-driven, `frameworkCategory`) is a real reduction. It is not a scoping
+fix, though: the catalogue is a join target, and a rule that stops having findings must not
+vanish from a register that still references it historically. Narrow the *fetch*, keep the
+*rows* already stored.
+
+---
+
 ## 7. How to reproduce
 
 **Read-only probe** — sends the app's own query constants, writes only
@@ -445,6 +497,9 @@ node phase0.mjs --stage=d    # vulnerabilityFindings funnel
 node phase0.mjs --stage=j    # exploitation attribution
 node phase0.mjs --stage=e    # framework join
 node phase0.mjs --stage=r2   # distinct resources
+node phase0.mjs --stage=cf   # config findings under the candidate categories
+node phase0.mjs --stage=sc   # scope audit: how much catalogue the project touches
+node phase0.mjs --stage=sc2  # what scoping the two catalogue steps yields
 ```
 
 **A full live sync in Node.** The dev harness normally runs in a browser tab, because
