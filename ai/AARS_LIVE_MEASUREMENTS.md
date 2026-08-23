@@ -151,7 +151,13 @@ source**, not by re-measuring the tenant — no figure in §1–§4 moved.
 1. **`problemCensus` gains `ruleId`** (~10 lines). `exploitationByRuleId` ships empty with no
    census to populate it from. Surfacing `wc-id-2742 — 659 issues` lets **one** operator
    judgement reach 78% of the register — the only lever on a 93.9%-unknown axis.
-   *Now ranked first: the smallest change here, and the only one needing no new I/O.* Widen the
+   *Now ranked first: the smallest change here, and the only one needing no new I/O.*
+   **DONE, and one figure restated 2026-08-23.** The reach was reported as "617 of 806 issues"
+   while the register was polluted by the tenant-wide `ISSUES_<ruleId>` leak (§4 row B). Measured
+   against the real in-scope register, the census reads `wc-id-2742` **70 of 99 (71%)**, then
+   `wc-id-3217` 13, `wc-id-3484` 7, `wc-id-3230` 6, `wc-id-3123` 3. Still the dominant lever and
+   still the argument for the picker — but 71% of 99, not 77% of 806. The 78%-of-840 figure in §3
+   is tenant-wide and remains correct for that population. Widen the
    param at `problemRule.ts:634`, add a `ruleIds` accumulator beside `:636-637`, mirror
    `:641-644` in the loop, add `ruleIds: CensusEntry[]` to `ProblemCensus` (`:628-631`) and
    `ruleIds: rank(ruleIds)` to the return (`:655`). `rank` and `PROBLEM_CENSUS_MAX = 200` are
@@ -183,15 +189,23 @@ source**, not by re-measuring the tenant — no figure in §1–§4 moved.
 4. **`dwell` as a fifth problem-tree axis — DROPPED 2026-08-23, by decision, on the numbers.**
    It would have taken 54 leaves to 162 while wildcarding existing rows, leaving `actLeafCeiling`
    (0.15) untouched. It does not survive measurement, for two independent reasons.
-   **(a) 707 of 806 issues carry no `dueAt` at all.** Only the 99 real issuesV2 rows have one;
-   every synthetic `live-` row from the repaired `ISSUES_<ruleId>` steps has none. The axis would
-   read UNMEASURED for 88% of the register — exactly what `problem.ts:61` forbids: "fewer leaves
-   that are honestly populated beats more leaves that mostly read UNKNOWN".
-   **(b) The scorable 12% barely varies.** Bucketed by Wiz's own SLA window (`dueAt − createdAt`,
-   so no threshold is ours): WITHIN_SLA 17 (17%) · BREACHED 75 (76%) · ENTRENCHED 7 (7%), with the
-   overdue/window ratio degenerate at p25 = p50 = p75 = 0.87, p90 = 0.93. Three buckets, three
-   quarters in one, over an eighth of the register — which would not split the 189-row
-   `TRACK_STAR` queue, the entry's whole justification.
+   **(a) WITHDRAWN 2026-08-23 — this reason was an artifact of a defect, not a fact about the
+   tenant.** It read "707 of 806 issues carry no `dueAt`", which was true only while the register
+   held 707 synthetic rows from the `ISSUES_<ruleId>` steps. Those rows are deleted (§4 row B),
+   and re-measured against the real register the coverage is **`noDueAt = 0`: all 99 issues carry
+   a `dueAt`**. Coverage is not the problem and never was.
+   **(b) STANDS, and is now the only reason — measured over 100% of the register.** Bucketed by
+   Wiz's own SLA window (`dueAt − createdAt`, so no threshold is ours): WITHIN_SLA 17 (17%) ·
+   BREACHED 75 (76%) · ENTRENCHED 7 (7%), with the overdue/window ratio degenerate at
+   p25 = p50 = p75 = 0.87, p90 = 0.93. Three quarters in one bucket, and a ratio that barely
+   moves across the quartiles.
+   **But weigh it against the axes the tree already has before treating this as settled.**
+   `businessImpact` is MBI on 839 of 840 (§3), so `mission` is one value for essentially the whole
+   register — it multiplies the leaf count by three and discriminates nothing. On the "honestly
+   populated" test `problem.ts:61` sets, a 17/76/7 axis at full coverage is **better** than the
+   constant axis already in the tree. The open question is therefore not only "should dwell go in"
+   but "does `mission` earn its place", and the second is the cheaper win: dropping a constant
+   axis takes 54 leaves to 18 and loses nothing.
    Two notes for anyone who revives it. The original entry cited "§3 T-Test-3", which exists
    nowhere in this file or in `ai/`. And issue **age** discriminates better (85% > 90d, 45% > 1y)
    but needs thresholds of ours, which the entry forbade as a competing clock — so a revival
