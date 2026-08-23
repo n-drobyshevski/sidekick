@@ -21,26 +21,41 @@ import { renderSettings } from "./pages/settings.js";
 import { renderHelp } from "./pages/help.js";
 import { ROUTE_ICONS } from "./routeIcons.js";
 
+/**
+ * THE POC NAV IS FOUR SURFACES, and the other seven are hidden rather than deleted.
+ *
+ * The minimal model (domain/rank.ts) reads two flat fields and needs no graph, so most of
+ * this app is machinery for axes the reference tenant holds constant. Showing that is the
+ * point of the branch. But `hidden` rather than `delete` is deliberate: the glossary in
+ * helpContent.js points at these routes about sixty times and `test/helpContent.test.js`
+ * asserts every one resolves, so removing them from PAGES means gutting real documentation
+ * to make a demo look smaller. A hidden route still resolves, still renders if someone types
+ * its hash, and costs nothing.
+ *
+ * `problems` is FIRST now, because the first key is the default landing route — the front
+ * door should be the queue the model exists to order. store.js's parseHash fallback moved
+ * with it; the two are coupled and this file used to say so about `graph`.
+ */
 const PAGES = {
   // fullBleed: the page owns the whole content pane (no main padding/max-width).
-  graph: { title: "Security Graph", group: "Security", render: renderGraphPage, fullBleed: true },
-  inventory: { title: "AI Inventory", group: "Security", render: renderInventory },
+  graph: { hidden: true, title: "Security Graph", group: "Security", render: renderGraphPage, fullBleed: true },
+  inventory: { hidden: true, title: "AI Inventory", group: "Security", render: renderInventory },
   // Phase 7: issues UNION findings, ranked together across the whole landscape — neither
   // `combos` (one toxic-combination pattern) nor `config` (findings only) can answer
   // "what do I work on Monday". Sits right after inventory: both name the landscape, this one
   // orders what is wrong with it.
   problems: { title: "Priorities", group: "Security", render: renderProblems },
-  combos: { title: "Toxic Combinations", group: "Security", render: renderCombos },
-  config: { title: "Cloud Configuration", group: "Security", render: renderConfigFindings },
+  combos: { hidden: true, title: "Toxic Combinations", group: "Security", render: renderCombos },
+  config: { hidden: true, title: "Cloud Configuration", group: "Security", render: renderConfigFindings },
   // After config, never first: the FIRST key is the default landing route (parseHash's
   // fallback is coupled to it), so inserting a page at the top silently changes the app's
   // front door. Sits beside Cloud Configuration because the two are the same subject at
   // two grains — what is failing, and what that scores against.
-  compliance: { title: "Compliance Posture", group: "Security", render: renderCompliance },
+  compliance: { hidden: true, title: "Compliance Posture", group: "Security", render: renderCompliance },
   aars: { title: "AARS Rules", group: "Scoring", render: renderAarsRules, fullBleed: true },
   scans: { title: "Wiz Scans", group: "Coverage", render: renderScans },
-  data: { title: "Data", group: "Data", render: renderData },
-  settings: { title: "Settings", group: "Preferences", render: renderSettings },
+  data: { hidden: true, title: "Data", group: "Data", render: renderData },
+  settings: { hidden: true, title: "Settings", group: "Preferences", render: renderSettings },
   // Last on purpose. The FIRST key is the default landing route, and parseHash's
   // `|| "graph"` fallback is coupled to it — a page inserted at the top silently
   // becomes the app's front door.
@@ -240,6 +255,9 @@ function renderSidebar(sidebar, data) {
   const { route: active } = parseHash();
   let lastGroup = null;
   for (const [key, page] of Object.entries(PAGES)) {
+    // Hidden routes still resolve and still render — they are only off the nav. See the
+    // PAGES header for why this branch is a flag rather than seven deletions.
+    if (page.hidden) continue;
     if (page.group !== lastGroup) {
       sidebar.append(el("div", { class: "nav-group" }, page.group));
       lastGroup = page.group;

@@ -79,7 +79,7 @@ export function parseHash() {
       params[decodeURIComponent(k)] = decodeURIComponent(v || "");
     }
   }
-  return { route: ROUTE_ALIASES[pathPart] || pathPart || "graph", params };
+  return { route: ROUTE_ALIASES[pathPart] || pathPart || "problems", params };
 }
 
 export function buildHash(route, params) {
