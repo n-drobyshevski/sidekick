@@ -6077,6 +6077,7 @@ var Server = (() => {
       justification: "No content filtering, data protection, or compliance enforcement on AI model calls.",
       frameworks: { owaspLlm: ["LLM06", "LLM02"], owaspAgentic: ["ASI02", "ASI03"], fiveRs: ["Restrict"] },
       createdAt: "2026-05-14T09:12:00Z",
+      dueAt: "2026-06-13T09:12:00Z",
       // TOXIC_COMBINATION (the default), because that is what the tenant returns for
       // wc-id-2742 — every node in exemples/risk_issues_response.js carries that type,
       // guardrail rule included. Wiz's issue TYPE and this register's pattern grouping are
@@ -6125,7 +6126,7 @@ var Server = (() => {
         justification: g.why,
         frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, owaspMl: g.ml, fiveRs: g.fiveRs },
         createdAt: "2026-05-20T11:40:00Z",
-        dueAt: "2026-08-18T11:40:00Z",
+        dueAt: "2026-07-19T11:40:00Z",
         resolutionRecommendation: "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime."
       }));
     }
@@ -6150,7 +6151,8 @@ var Server = (() => {
         projects: asset.projects,
         justification: g.why,
         frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, fiveRs: g.fiveRs },
-        createdAt: "2026-06-03T07:25:00Z"
+        createdAt: "2026-06-03T07:25:00Z",
+        dueAt: "2026-07-03T07:25:00Z"
       }));
     }
   }
@@ -6169,7 +6171,8 @@ var Server = (() => {
       projects: asset.projects,
       justification: "Latent privileges \u2014 a compromised agent inherits every permission of its execution identity.",
       frameworks: { owaspAgentic: ["ASI03"], fiveRs: ["Reconfigure"] },
-      createdAt: "2026-06-10T15:02:00Z"
+      createdAt: "2026-06-10T15:02:00Z",
+      dueAt: "2026-08-18T15:02:00Z"
     }));
   }
   var _a4;
@@ -8012,7 +8015,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "b9b56c7e83dd" : "dev";
+  var BUILD_ID = true ? "ef57065d37d1" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

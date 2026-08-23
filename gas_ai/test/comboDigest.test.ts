@@ -102,21 +102,29 @@ describe("condition matrix", () => {
 });
 
 describe("SLA buckets", () => {
-  it("splits due-soon from no-deadline against the injected clock", () => {
-    expect(digest.totals.pastDue).toBe(0);
-    expect(digest.totals.dueSoon).toBe(13);
+  it("splits past-due, due-soon and no-deadline against the injected clock", () => {
+    // THE FIXTURE MOVED ON 2026-08-23, THE CLAIM DID NOT. This used to read
+    // pastDue 0 / dueSoon 13 / noDueDate 19, because the seed carried exactly one `dueAt`
+    // and it fell five days AFTER the frozen clock — so nothing in 32 rows was ever late and
+    // the past-due branch was asserted only at a shifted clock, below. The seed now mirrors
+    // the tenant: 84% overdue against a measured 82.6%. All three states are still non-zero,
+    // which is the whole contract here.
+    expect(digest.totals.pastDue).toBe(27);
+    expect(digest.totals.dueSoon).toBe(2);
     // Reported rather than swallowed: without it the KPI row would imply every issue
-    // has a deadline and that nothing is late.
-    expect(digest.totals.noDueDate).toBe(19);
-    expect(byId["gcp-managed-privileged"].dueSoon).toBe(13);
-    expect(byId["bedrock-no-guardrail"].noDueDate).toBe(8);
+    // has a deadline and that nothing is late. Three seed rows stay undated for exactly this.
+    expect(digest.totals.noDueDate).toBe(3);
+    expect(byId["gcp-managed-privileged"].pastDue).toBe(13);
+    expect(byId["bedrock-no-guardrail"].pastDue).toBe(8);
   });
 
-  it("moves the same issues to past-due once the deadline passes", () => {
+  it("moves the remaining due-soon rows to past-due once the deadline passes", () => {
+    // The clock is the only thing that changes, so every dated row ends up past due and the
+    // undated three never move — that invariance is the point of the case.
     const later = comboDigest(SEED_ISSUES, SEED_NODES, "2026-09-01T00:00:00Z");
-    expect(later.totals.pastDue).toBe(13);
+    expect(later.totals.pastDue).toBe(29);
     expect(later.totals.dueSoon).toBe(0);
-    expect(later.totals.noDueDate).toBe(19);
+    expect(later.totals.noDueDate).toBe(3);
   });
 
   it("treats the boundary day as due soon, and the day after as not", () => {
