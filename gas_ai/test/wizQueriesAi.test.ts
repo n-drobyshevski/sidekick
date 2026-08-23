@@ -19,7 +19,6 @@ import {
   Q_CONFIG_FINDINGS,
   Q_ISSUES,
   Q_PRINCIPALS,
-  Q_RULE_ASSETS,
   Q_SECURITY_FRAMEWORKS,
   agentRunsAsVariables,
   aiCompliancePostureVariables,
@@ -163,9 +162,8 @@ describe("Q_AI_INVENTORY + aiInventoryVariables", () => {
     // An asset belongs to its whole ancestor chain, so filtering on a FOLDER's id reaches
     // everything beneath it. `isFolder` is what lets the project switcher draw folders and
     // leaves apart the way the Wiz console does. Selected on the shared resource field set,
-    // so Q_RULE_ASSETS gets it too.
+    // so every document built on it gets it.
     expect(Q_AI_INVENTORY).toContain("isFolder");
-    expect(Q_RULE_ASSETS).toContain("isFolder");
   });
 
   it("now selects isOpenToAllInternet + technology categories (phase 3 enrichment)", () => {
@@ -361,7 +359,6 @@ describe("the cloudResourcesV2 project scope", () => {
 describe("query documents", () => {
   const DOCS: Array<[string, string]> = [
     ["Q_AI_INVENTORY", Q_AI_INVENTORY],
-    ["Q_RULE_ASSETS", Q_RULE_ASSETS],
     ["Q_AGENTS_NO_GUARDRAIL", Q_AGENTS_NO_GUARDRAIL],
     ["Q_ISSUES", Q_ISSUES],
     ["Q_CONFIG_FINDINGS", Q_CONFIG_FINDINGS],

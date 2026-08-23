@@ -2162,7 +2162,6 @@ var Server = (() => {
     if (project) filterBy["project"] = project;
     return { filterBy };
   }
-  var Q_RULE_ASSETS = "query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: {\n    relatedIssue: { sourceRule: { containsAny: $ruleIds } }\n  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + RESOURCE_FIELDS + "    }\n  }\n}\n";
   var Q_AGENTS_NO_GUARDRAIL = graphSearchVarQuery("SidekickAiAgentsWithoutGuardrail");
   var Q_AGENT_RUNS_AS = graphSearchVarQuery("SidekickAiAgentRunsAs");
   var Q_SA_EXCESSIVE_ACCESS = graphSearchVarQuery("SidekickAiAgentSaExcessiveAccess");
@@ -2775,33 +2774,6 @@ var Server = (() => {
     }
     return part;
   }
-  function normalizeRuleAssetsPage(rows, group) {
-    var _a5, _b;
-    const part = emptyPart();
-    for (const raw of rows) {
-      const node2 = normalizeCloudResource(raw);
-      if (!node2) continue;
-      part.nodes.push(node2);
-      part.issues.push({
-        id: `live-${group.ruleId}-${node2.id}`,
-        ruleId: group.ruleId,
-        ruleName: group.title,
-        comboGroup: group.id,
-        nativeSeverity: group.nativeSeverity,
-        adjustedSeverity: group.adjustedSeverity,
-        // Never "OPEN" — see this function's header. The filter cannot constrain status, so
-        // asserting one here would be inventing it.
-        status: "UNKNOWN",
-        assetId: node2.id,
-        assetName: node2.name,
-        region: node2.region,
-        account: (_a5 = node2.cloudAccount) == null ? void 0 : _a5.name,
-        projects: ((_b = node2.projects) != null ? _b : []).map((p) => p.name),
-        frameworks: group.frameworks
-      });
-    }
-    return part;
-  }
   function resolvedByName(raw) {
     var _a5;
     if (!raw || typeof raw !== "object") return void 0;
@@ -2917,15 +2889,6 @@ var Server = (() => {
       }
     }
     return part;
-  }
-  function reconcileIssues(issues2) {
-    const realKeys = /* @__PURE__ */ new Set();
-    for (const i of issues2) {
-      if (!i.id.startsWith("live-")) realKeys.add(`${i.assetId}|${i.comboGroup}`);
-    }
-    return issues2.filter(
-      (i) => !i.id.startsWith("live-") || !realKeys.has(`${i.assetId}|${i.comboGroup}`)
-    );
   }
   function frameworkCodesFromRule(rule, shortId) {
     const codes = [];
@@ -8049,7 +8012,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "db5982c5dcf0" : "dev";
+  var BUILD_ID = true ? "df1f1b298cf4" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -9723,21 +9686,18 @@ var Server = (() => {
         normalize: normalizeInventoryPage,
         pageSize: PAGE_SIZE_WIDE
       },
-      // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
-      // issue for that rule (issue rows are reconstructed one-per-asset).
-      ...COMBO_GROUPS.map((group) => ({
-        id: `ISSUES_${group.ruleId}`,
-        area: "toxic",
-        writes: ["ai_assets", "ai_issues"],
-        run: "cloudResources",
-        query: Q_RULE_ASSETS,
-        extraVariables: { ruleIds: [group.ruleId] },
-        normalize: (rows) => normalizeRuleAssetsPage(rows, group),
-        optional: true,
-        pageSize: PAGE_SIZE_WIDE
-      })),
-      // Real toxic-combination issues (issuesV2). Runs alongside the per-rule steps
-      // above; reconcileIssues drops the synthetic per-rule rows these supersede.
+      // Toxic-combination issues, from issuesV2 and from nowhere else.
+      //
+      // THERE USED TO BE FOUR MORE STEPS HERE, one per combo rule, walking cloudResourcesV2
+      // for the assets carrying an issue for that rule and RECONSTRUCTING an issue row per
+      // asset. They were a stand-in from before issuesV2 was wired, and they are gone because
+      // `ai_issues` is meant to be exactly what Wiz returned — a reconstruction can only ever
+      // add rows issuesV2 did not have, which is the one thing this tab must not do.
+      //
+      // They also never worked. Every one was rejected on every sync (three wrong field names
+      // in one filter), and repairing that in 4da48ae exposed a second defect the failure had
+      // been hiding: they carried no `projectScope()`, so they collected TENANT-WIDE against a
+      // project-scoped register — 797 rows and 617 assets where the scope holds 99 issues.
       {
         id: "ISSUES_TOXIC",
         area: "toxic",
@@ -10437,7 +10397,7 @@ var Server = (() => {
       const startedAt = job.started_at;
       const merged = mergeParts(parts, nowIso());
       const doc = merged.doc;
-      const issues2 = reconcileIssues(merged.issues);
+      const issues2 = merged.issues;
       const aarsRule = getAarsRule2().rule;
       const findings = aarsRule.gapSources.frameworkMapping === true ? withFrameworkCodes(
         merged.findings,

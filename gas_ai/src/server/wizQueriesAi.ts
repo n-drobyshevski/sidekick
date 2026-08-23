@@ -295,33 +295,6 @@ export function aiInventoryVariables(
   return { filterBy };
 }
 
-/**
- * Assets carrying an issue for one toxic-combination source rule ($ruleIds).
- *
- * THREE NAMES WERE WRONG HERE, and the tenant only ever reported the first, which is why this
- * step was rejected on every sync for as long as it existed. Introspected,
- * `CloudResourceRelatedIssueFilters` accepts exactly `severity`, `sourceRule` and
- * `frameworkCategory`: so `sourceRuleId` is `sourceRule`; `CloudResourceStringArrayFilter`
- * has no `equals`, only containsAny / containsAll / doesNotContainAny / doesNotContainAll /
- * isSet; and `status` is not a field on that type at all, nor is there a sibling for it on
- * CloudResourceV2Filters.
- *
- * SO THIS QUERY CANNOT ASK FOR OPEN, and does not pretend to. What that costs, and why it is
- * affordable, is written on normalizeRuleAssetsPage.
- */
-export const Q_RULE_ASSETS =
-  "query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {\n" +
-  "  cloudResourcesV2(first: $first, after: $after, filterBy: {\n" +
-  "    relatedIssue: { sourceRule: { containsAny: $ruleIds } }\n" +
-  "  }) {\n" +
-  "    totalCount\n" +
-  "    pageInfo { hasNextPage endCursor }\n" +
-  "    nodes {\n" +
-  RESOURCE_FIELDS +
-  "    }\n" +
-  "  }\n" +
-  "}\n";
-
 /** Guardrail-coverage gap: agents no guardrail PROTECTS. The negated leg, see noGuardrailSpec. */
 /**
  * The four agent-rooted traversals — documents only. The traversals themselves are
@@ -525,7 +498,7 @@ export const Q_AGENT_EXPANSION =
  *
  * Transcribed from exemples/ai_exposure_host_request.js and
  * exemples/ai_exposure_endpoint_request.js. Two steps send it (HOST_EXPOSURE and
- * ENDPOINT_EXPOSURE) with different `$query` values, the way Q_RULE_ASSETS is one document
+ * ENDPOINT_EXPOSURE) with different `$query` values, the way Q_AI_INVENTORY is one document
  * run once per combo group.
  *
  * WHY THE @include GATES SURVIVE. Every other document here drops them and selects plainly,

@@ -29,18 +29,15 @@ import {
   normalizeFrameworksPage,
   normalizeNoGuardrailPage,
   normalizePrincipalsPage,
-  normalizeRuleAssetsPage,
   normalizeRunsAsPage,
   normalizeSensitiveDataAccessPage,
   partIsEmpty,
-  reconcileIssues,
   withFrameworkCodes,
   type NormalizedPart,
 } from "../domain/syncNormalize";
 import { buildAarsHintsFromFindings } from "../domain/graphEnrich";
 import { resolveHygieneRules } from "../domain/identityHygiene";
 import { changedPaths, effectiveStepVars, isEditableStep } from "../domain/scanVars";
-import { COMBO_GROUPS } from "../domain/toxicCombos";
 import { nowIso, type Rec } from "../domain/util";
 import { readGzJsonFile, syncFolder, writeGzJson, writeSyncPage } from "./archiveStore";
 import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "./jobsStore";
@@ -99,7 +96,6 @@ import {
   Q_COMPLIANCE_POSTURE,
   Q_AI_PROPERTIES,
   Q_PRINCIPALS,
-  Q_RULE_ASSETS,
   Q_SA_EXCESSIVE_ACCESS,
   Q_SECURITY_FRAMEWORKS,
   aiCompliancePostureVariables,
@@ -210,21 +206,18 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       normalize: normalizeInventoryPage,
       pageSize: PAGE_SIZE_WIDE,
     },
-    // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
-    // issue for that rule (issue rows are reconstructed one-per-asset).
-    ...COMBO_GROUPS.map((group): SyncStepDef => ({
-      id: `ISSUES_${group.ruleId}`,
-      area: "toxic",
-      writes: ["ai_assets", "ai_issues"],
-      run: "cloudResources",
-      query: Q_RULE_ASSETS,
-      extraVariables: { ruleIds: [group.ruleId] },
-      normalize: (rows) => normalizeRuleAssetsPage(rows, group),
-      optional: true,
-      pageSize: PAGE_SIZE_WIDE,
-    })),
-    // Real toxic-combination issues (issuesV2). Runs alongside the per-rule steps
-    // above; reconcileIssues drops the synthetic per-rule rows these supersede.
+    // Toxic-combination issues, from issuesV2 and from nowhere else.
+    //
+    // THERE USED TO BE FOUR MORE STEPS HERE, one per combo rule, walking cloudResourcesV2
+    // for the assets carrying an issue for that rule and RECONSTRUCTING an issue row per
+    // asset. They were a stand-in from before issuesV2 was wired, and they are gone because
+    // `ai_issues` is meant to be exactly what Wiz returned — a reconstruction can only ever
+    // add rows issuesV2 did not have, which is the one thing this tab must not do.
+    //
+    // They also never worked. Every one was rejected on every sync (three wrong field names
+    // in one filter), and repairing that in 4da48ae exposed a second defect the failure had
+    // been hiding: they carried no `projectScope()`, so they collected TENANT-WIDE against a
+    // project-scoped register — 797 rows and 617 assets where the scope holds 99 issues.
     {
       id: "ISSUES_TOXIC",
       area: "toxic",
@@ -1109,9 +1102,9 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
     const startedAt = job.started_at;
     const merged = mergeParts(parts, nowIso());
     const doc = merged.doc;
-    // Augment de-dup: real issuesV2 rows supersede the synthetic per-rule rows for the
-    // same (asset, combo-group), so the two batteries never double-count.
-    const issues = reconcileIssues(merged.issues);
+    // No de-dup hop: there is only one issue battery now. It used to reconcile issuesV2
+    // rows against the synthetic per-rule ones; those are gone, so this is what Wiz returned.
+    const issues = merged.issues;
     // Relabel findings with the framework codes Wiz itself asserts, once the WHOLE battery
     // has landed — see withFrameworkCodes for why this cannot happen per page.
     //

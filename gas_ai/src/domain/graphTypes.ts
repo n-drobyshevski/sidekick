@@ -611,9 +611,10 @@ export interface IssueRow {
   remediation?: string;              // config-finding remediation text (Phase 2)
 
   // ---- issuesV2 lifecycle and context (exemples/risk_issues_response.js)
-  // All optional: the per-rule Q_RULE_ASSETS fallback synthesises issues from the
-  // inventory API, which carries none of this, so absent means "not captured" and
-  // never "not true".
+  // All optional: a tenant or a query revision can omit any of them, so absent means
+  // "not captured" and never "not true". Until 2026-08-23 the reason given here was the
+  // per-rule Q_RULE_ASSETS fallback, which synthesised issues from the inventory API;
+  // that path is gone and ai_issues is now exactly what issuesV2 returned.
   issueType?: string;                // TOXIC_COMBINATION | CLOUD_CONFIGURATION
   updatedAt?: string;
   resolvedAt?: string;

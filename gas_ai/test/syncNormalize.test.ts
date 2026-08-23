@@ -12,15 +12,12 @@ import {
   normalizeIssuesPage,
   normalizeNoGuardrailPage,
   normalizePrincipalsPage,
-  normalizeRuleAssetsPage,
   normalizeRunsAsPage,
   normalizeSensitiveDataAccessPage,
   normalizeDataFindingSeverity,
-  reconcileIssues,
   withDataFindingCounts,
   worstBusinessImpact,
 } from "../src/domain/syncNormalize";
-import { isUnresolvedIssue } from "../src/domain/config";
 import { COMBO_GROUPS, OTHER_GROUP_ID } from "../src/domain/toxicCombos";
 import type { IssueRow } from "../src/domain/graphTypes";
 
@@ -178,38 +175,6 @@ describe("page normalizers", () => {
     expect(part.nodes).toHaveLength(2);
     expect(part.edges).toHaveLength(0);
     expect(part.issues).toHaveLength(0);
-  });
-
-  it("rule-assets page reconstructs one issue per asset, with status UNKNOWN", () => {
-    const group = COMBO_GROUPS.find((g) => g.ruleId === "wc-id-3217")!;
-    const part = normalizeRuleAssetsPage([AGENT_RAW], group);
-    expect(part.issues).toHaveLength(1);
-    const issue = part.issues[0];
-    expect(issue.comboGroup).toBe("gcp-managed-privileged");
-    expect(issue.nativeSeverity).toBe("MEDIUM");
-    expect(issue.adjustedSeverity).toBe("HIGH");
-    expect(issue.assetId).toBe("wiz-node-agent-1");
-    // THIS ASSERTED "OPEN" UNTIL 2026-08-23, and the claim it encoded was never true.
-    // Q_RULE_ASSETS was believed to filter `status: { equals: ["OPEN"] }`, so the stamp
-    // merely echoed the query. Introspection of the live tenant shows
-    // `CloudResourceRelatedIssueFilters` accepts exactly severity, sourceRule and
-    // frameworkCategory — there is no status field, and there never was, which is why the
-    // step was rejected on every sync it ever ran. The page returns assets carrying an
-    // issue for the rule in ANY state, so OPEN was an invention.
-    //
-    // UNKNOWN is not a hedge. reconcileIssues drops a synthetic row wherever a real
-    // issuesV2 row exists for the same (asset, combo group), and ISSUES_TOXIC asks for
-    // UNRESOLVED_ISSUE_STATUSES — so a synthetic row that survives is exactly one Wiz did
-    // not return as unresolved, and isUnresolvedIssue is right to skip it.
-    expect(issue.status).toBe("UNKNOWN");
-  });
-
-  it("does not count a surviving synthetic row as unresolved work", () => {
-    // The pair that makes the widening safe: the row exists, carries its asset and combo
-    // group onto the register, and is not counted as open by anything.
-    const group = COMBO_GROUPS.find((g) => g.ruleId === "wc-id-3217")!;
-    const [issue] = normalizeRuleAssetsPage([AGENT_RAW], group).issues;
-    expect(isUnresolvedIssue(issue)).toBe(false);
   });
 
   it("no-guardrail page flags the guardrail subjects, and nothing else", () => {
@@ -421,9 +386,11 @@ describe("mergeParts", () => {
   });
 
   it("dedupes edges and issues by id", () => {
-    const group = COMBO_GROUPS[0];
-    const a = normalizeRuleAssetsPage([AGENT_RAW], group);
-    const b = normalizeRuleAssetsPage([AGENT_RAW], group);
+    // Was driven by the per-rule synthesiser until 2026-08-23, purely as a convenient
+    // producer of issue rows; that path is gone. The claim is unchanged and belongs to
+    // mergeParts, so it now runs on the real issuesV2 normalizer.
+    const a = normalizeIssuesPage([issueRaw("iss-dup")]);
+    const b = normalizeIssuesPage([issueRaw("iss-dup")]);
     const { issues } = mergeParts([a, b], "2026-06-28T06:00:00Z");
     expect(issues).toHaveLength(1);
   });
@@ -607,8 +574,8 @@ describe("normalizeIssuesPage (issuesV2)", () => {
   });
 
   it("treats absent optional fields as not-captured rather than empty", () => {
-    // The per-rule Q_RULE_ASSETS fallback synthesises issues from the inventory API,
-    // which carries none of this; undefined must not become [] or false.
+    // A tenant or a query revision can omit any of these; undefined must not become
+    // [] or false.
     const raw = issueRaw("iss-bare");
     Object.assign(raw, {
       notes: null, serviceTickets: null, resolvedBy: null, assignee: null,
@@ -630,30 +597,6 @@ describe("normalizeIssuesPage (issuesV2)", () => {
     const part = normalizeIssuesPage([noEntity, {}]);
     expect(part.issues).toHaveLength(0);
     expect(part.nodes).toHaveLength(0);
-  });
-});
-
-describe("reconcileIssues (augment de-dup)", () => {
-  const real: IssueRow = {
-    id: "uuid-real", ruleId: "wc-id-3217", ruleName: "r", comboGroup: "gcp-managed-privileged",
-    nativeSeverity: "MEDIUM", adjustedSeverity: "HIGH", status: "OPEN",
-    assetId: "asset-1", assetName: "A",
-  };
-  const syntheticSameKey: IssueRow = {
-    ...real, id: "live-wc-id-3217-asset-1",
-  };
-  const syntheticOtherAsset: IssueRow = {
-    ...real, id: "live-wc-id-3217-asset-2", assetId: "asset-2",
-  };
-
-  it("drops the synthetic per-rule row that a real issue supersedes", () => {
-    const out = reconcileIssues([real, syntheticSameKey]);
-    expect(out.map((i) => i.id)).toEqual(["uuid-real"]);
-  });
-
-  it("keeps a synthetic row for an (asset, group) issuesV2 didn't cover", () => {
-    const out = reconcileIssues([real, syntheticOtherAsset]);
-    expect(out.map((i) => i.id).sort()).toEqual(["live-wc-id-3217-asset-2", "uuid-real"]);
   });
 });
 
