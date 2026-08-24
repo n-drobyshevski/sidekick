@@ -946,8 +946,32 @@ export function persistSync(
     // scoped series with a missing point says so rather than inventing one. A trend
     // refinement must not be able to fail a commit.
     project_totals_json: encodeProjectTotals(
-      countProjectTotals(postured.nodes, [...decidedIssues, ...decidedFindings]),
+      // GATED, both populations, to the same predicates the register-wide columns use.
+      // The findings tab stores RESOLVED and PASS rows for the lifecycle clock, so an
+      // ungated count here would put a bigger number on the scoped line than
+      // `finding_count` puts on the register-wide one — two definitions of "a failing
+      // control" on one chart. The outcome series is unaffected: a row that fails either
+      // gate carries no verdict to count.
+      countProjectTotals(postured.nodes, [
+        ...decidedIssues.filter(isUnresolvedIssue),
+        ...decidedFindings.filter(isOpenGap),
+      ]),
     ),
+    // The count trend's other two series (`issue_count` above is the first). Gated by
+    // `isOpenGap`, the app's one definition of a failing control, so this column and
+    // `kpis.complianceGaps` count the same rows.
+    finding_count: decidedFindings.filter(isOpenGap).length,
+    // Distinct policies with a failing evaluation — deduped by policy id for the same
+    // reason `complianceKpis.failingPolicies` is: one control mapped to six subcategories
+    // is one thing to fix, not six.
+    //
+    // NULL, NOT ZERO, when no posture was collected. The posture steps are optional and
+    // per-framework, so a tenant that declines them (or an operator who has selected no
+    // framework) has no number here — and "no failing policies" is a very different claim
+    // from "we never asked". The trend reader plots null as a gap.
+    posture_fail_count: frameworkPolicies.length
+      ? new Set(frameworkPolicies.filter((p) => p.failCount > 0).map((p) => p.policyId)).size
+      : null,
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
   settingsStore.setDecidedRuleVersion(problemRuleVersion);

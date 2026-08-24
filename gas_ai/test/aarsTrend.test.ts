@@ -4,9 +4,12 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  COUNT_KEYS,
   TREND_SEVERITIES,
   aarsTrendFromHistory,
   countAarsSeverities,
+  countProjectTotals,
+  countTrendFromHistory,
   problemTrendFromHistory,
   ruleChangePoints,
 } from "../src/domain/aarsTrend";
@@ -195,5 +198,87 @@ describe("problemTrendFromHistory", () => {
     ];
     expect(aarsTrendFromHistory(rows)).toHaveLength(1);
     expect(problemTrendFromHistory(rows)).toHaveLength(0);
+  });
+});
+
+// The count trend — the series the inventory draws now that no page charts a band
+// distribution. Its whole contract is that the three series entered the ledger at
+// different times, so "absent" must survive all the way to the chart.
+describe("countTrendFromHistory", () => {
+  const cRow = (over: Rec): Rec => ({
+    status: "SUCCESS", finished_at: "2026-06-20T05:00:00Z", ...over,
+  });
+
+  it("reads the three columns into one point", () => {
+    const points = countTrendFromHistory([
+      cRow({ issue_count: 32, finding_count: 17, posture_fail_count: 9 }),
+    ]);
+    expect(points).toHaveLength(1);
+    expect(points[0].counts).toEqual({ issues: 32, findings: 17, postureFails: 9 });
+  });
+
+  it("plots a pre-column sync as a GAP per series, never as zero", () => {
+    // The case the whole nullable-per-series design exists for: `issue_count` predates the
+    // other two columns, so an old row has issues and nothing else. Reading the absent
+    // ones as 0 would draw a landscape with no failing controls until the day we started
+    // counting them.
+    const points = countTrendFromHistory([
+      cRow({ finished_at: "2026-06-19T05:00:00Z", issue_count: 30 }),
+      cRow({ finished_at: "2026-06-20T05:00:00Z", issue_count: 32, finding_count: 17, posture_fail_count: 9 }),
+    ]);
+    expect(points).toHaveLength(2);
+    expect(points[0].counts).toEqual({ issues: 30, findings: null, postureFails: null });
+    expect(points[1].counts.findings).toBe(17);
+  });
+
+  it("reads a sync that collected no posture as null, not as zero failing policies", () => {
+    const points = countTrendFromHistory([
+      cRow({ issue_count: 4, finding_count: 2, posture_fail_count: null }),
+    ]);
+    expect(points[0].counts.postureFails).toBeNull();
+    expect(points[0].counts.findings).toBe(2);
+  });
+
+  it("skips a row with nothing to plot, and non-SUCCESS rows", () => {
+    expect(countTrendFromHistory([cRow({})])).toHaveLength(0);
+    expect(countTrendFromHistory([cRow({ status: "ERROR", issue_count: 5 })])).toHaveLength(0);
+  });
+
+  it("orders by timestamp and keeps the most recent `limit` points", () => {
+    const points = countTrendFromHistory([
+      cRow({ finished_at: "2026-06-21T05:00:00Z", issue_count: 3 }),
+      cRow({ finished_at: "2026-06-19T05:00:00Z", issue_count: 1 }),
+      cRow({ finished_at: "2026-06-20T05:00:00Z", issue_count: 2 }),
+    ], 2);
+    expect(points.map((p) => p.counts.issues)).toEqual([2, 3]);
+  });
+
+  it("scoped to a project, reads the scoped counts and refuses a posture number", () => {
+    // Posture has no project grain at all (Wiz reports it per framework/subcategory/policy,
+    // never per resource), so a scoped series must go null rather than quietly showing the
+    // whole landscape's failing policies under a project filter.
+    const totals = countProjectTotals(
+      [{ id: "a", projects: [{ id: "p1" }], aarsSeverity: "HIGH" }],
+      [{ assetId: "a", problemOutcome: "ACT" }, { resourceId: "a" }],
+    );
+    const points = countTrendFromHistory([
+      cRow({
+        issue_count: 99, finding_count: 99, posture_fail_count: 99,
+        project_totals_json: JSON.stringify(totals),
+      }),
+    ], 90, "p1");
+    expect(points[0].counts).toEqual({ issues: 1, findings: 1, postureFails: null });
+  });
+
+  it("scoped to a project with no entry at that sync plots nothing", () => {
+    const points = countTrendFromHistory([
+      cRow({ issue_count: 12, project_totals_json: JSON.stringify({}) }),
+    ], 90, "p1");
+    expect(points).toHaveLength(0);
+  });
+
+  it("COUNT_KEYS is the vocabulary every point carries", () => {
+    const points = countTrendFromHistory([cRow({ issue_count: 1 })]);
+    expect(Object.keys(points[0].counts).sort()).toEqual([...COUNT_KEYS].sort());
   });
 });

@@ -598,7 +598,15 @@ var Server = (() => {
       // in aarsTrend.ts for the shape and for why an absent entry is never read as a zero.
       // Appended, same no-migration contract: rows without it have no scoped series, which the
       // trend reports rather than fabricates.
-      "project_totals_json"
+      "project_totals_json",
+      // The count trend's two new series. `issue_count` above is the third and has been
+      // written since the first sync this ledger ever recorded, which is why the issues line
+      // has full history and these two start empty — appended under the same no-migration,
+      // no-backfill contract as everything above them. A row written before these existed
+      // carries NO value, and the reader plots a gap rather than a zero: see
+      // CountTrendPoint in aarsTrend.ts for why that distinction is load-bearing.
+      "finding_count",
+      "posture_fail_count"
     ],
     [TABS.settings]: ["key", "value_json"],
     [TABS.jobs]: [
@@ -7862,7 +7870,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "ed4719528f8c" : "dev";
+  var BUILD_ID = true ? "ddfe2da5dd38" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8151,7 +8159,7 @@ var Server = (() => {
         for (const sev of AARS_SEVERITY_ORDER) aars[sev] = 0;
         const outcome = {};
         for (const o of OUTCOME_VALUES) outcome[o] = 0;
-        t = { aars, outcome };
+        t = { aars, outcome, counts: { issues: 0, findings: 0 } };
         totals[projectId] = t;
       }
       return t;
@@ -8167,10 +8175,16 @@ var Server = (() => {
       }
     }
     for (const r of decided) {
+      const isFinding = r.assetId === void 0 && r.resourceId !== void 0;
+      const assetId = (_c = (_b = r.assetId) != null ? _b : r.resourceId) != null ? _c : "";
+      const projects = (_d = projectsByAsset.get(assetId)) != null ? _d : [];
+      for (const p of projects) {
+        const counts = entry(p.id).counts;
+        if (counts) counts[isFinding ? "findings" : "issues"] += 1;
+      }
       const outcome = r.problemOutcome;
       if (!outcome || !OUTCOME_VALUES.includes(outcome)) continue;
-      const assetId = (_c = (_b = r.assetId) != null ? _b : r.resourceId) != null ? _c : "";
-      for (const p of (_d = projectsByAsset.get(assetId)) != null ? _d : []) entry(p.id).outcome[outcome] += 1;
+      for (const p of projects) entry(p.id).outcome[outcome] += 1;
     }
     return totals;
   }
@@ -8988,8 +9002,30 @@ var Server = (() => {
       // scoped series with a missing point says so rather than inventing one. A trend
       // refinement must not be able to fail a commit.
       project_totals_json: encodeProjectTotals(
-        countProjectTotals(postured.nodes, [...decidedIssues, ...decidedFindings])
-      )
+        // GATED, both populations, to the same predicates the register-wide columns use.
+        // The findings tab stores RESOLVED and PASS rows for the lifecycle clock, so an
+        // ungated count here would put a bigger number on the scoped line than
+        // `finding_count` puts on the register-wide one — two definitions of "a failing
+        // control" on one chart. The outcome series is unaffected: a row that fails either
+        // gate carries no verdict to count.
+        countProjectTotals(postured.nodes, [
+          ...decidedIssues.filter(isUnresolvedIssue),
+          ...decidedFindings.filter(isOpenGap)
+        ])
+      ),
+      // The count trend's other two series (`issue_count` above is the first). Gated by
+      // `isOpenGap`, the app's one definition of a failing control, so this column and
+      // `kpis.complianceGaps` count the same rows.
+      finding_count: decidedFindings.filter(isOpenGap).length,
+      // Distinct policies with a failing evaluation — deduped by policy id for the same
+      // reason `complianceKpis.failingPolicies` is: one control mapped to six subcategories
+      // is one thing to fix, not six.
+      //
+      // NULL, NOT ZERO, when no posture was collected. The posture steps are optional and
+      // per-framework, so a tenant that declines them (or an operator who has selected no
+      // framework) has no number here — and "no failing policies" is a very different claim
+      // from "we never asked". The trend reader plots null as a gap.
+      posture_fail_count: frameworkPolicies.length ? new Set(frameworkPolicies.filter((p) => p.failCount > 0).map((p) => p.policyId)).size : null
     }]);
     setScoredRuleVersion(ruleVersion);
     setDecidedRuleVersion(problemRuleVersion);
