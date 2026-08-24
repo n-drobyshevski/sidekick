@@ -1466,8 +1466,15 @@ function configModel(): {
   totals: ConfigTotals;
   facets: Record<string, string[]>;
 } {
-  const assetIds = aiAssetIdSet();
-  const rows = viewFindings().map((f) => toConfigView(f, !!assetIds[f.resourceId]));
+  // A MAP, not the id set: the domain is joined off the asset, and the linkage flag is
+  // the same lookup. An unlinked finding has no node and so no domain — its resource
+  // carries no tags in the configurationFindings payload at all (see ConfigFindingView).
+  const assetsById: Record<string, GNode> = {};
+  for (const a of syncStore.loadAssets()) assetsById[a.id] = a;
+  const rows = viewFindings().map((f) => {
+    const node = assetsById[f.resourceId];
+    return toConfigView(f, !!node, node?.domain ?? "");
+  });
 
   const severities = new Set<string>();
   const statuses = new Set<string>();
@@ -1475,6 +1482,7 @@ function configModel(): {
   const resourceTypes = new Set<string>();
   const rules = new Set<string>();
   const projects = new Set<string>();
+  const domains = new Set<string>();
   for (const r of rows) {
     if (r.severity) severities.add(r.severity);
     if (r.status) statuses.add(r.status);
@@ -1482,6 +1490,7 @@ function configModel(): {
     if (r.resourceType) resourceTypes.add(r.resourceType);
     if (r.ruleShortId) rules.add(r.ruleShortId);
     for (const p of r.projects) projects.add(p);
+    if (r.domain) domains.add(r.domain);
   }
 
   return {
@@ -1494,6 +1503,7 @@ function configModel(): {
       resourceTypes: [...resourceTypes].sort(),
       rules: [...rules].sort(),
       projects: [...projects].sort(),
+      domains: [...domains].sort(),
     },
   };
 }

@@ -7959,7 +7959,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "bf46fb7074a3" : "dev";
+  var BUILD_ID = true ? "30ea76068745" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -12149,6 +12149,7 @@ var Server = (() => {
     "resourceTypes",
     "rules",
     "projects",
+    "domains",
     "linkage",
     "flags"
   ];
@@ -12158,7 +12159,7 @@ var Server = (() => {
     const i = SEVERITY_ORDER.indexOf(s);
     return i < 0 ? SEVERITY_ORDER.length : i;
   };
-  function toConfigView(f, linked) {
+  function toConfigView(f, linked, domain = "") {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
     return {
       id: f.id,
@@ -12179,6 +12180,7 @@ var Server = (() => {
       analyzedAt: (_o = f.analyzedAt) != null ? _o : "",
       risks: (_p = f.risks) != null ? _p : [],
       linked,
+      domain,
       ignored: ((_q = f.ignoreRuleIds) != null ? _q : []).length > 0,
       iac: ((_r = f.iacFindingIds) != null ? _r : []).length > 0,
       gap: isOpenGap(f)
@@ -12199,6 +12201,7 @@ var Server = (() => {
       resourceTypes: listParam(params["resourceTypes"]),
       rules: listParam(params["rules"]),
       projects: listParam(params["projects"]),
+      domains: listParam(params["domains"]),
       linkage: listParam(params["linkage"]).filter(
         (v) => LINKAGE_VALUES.indexOf(v) >= 0
       ),
@@ -12223,6 +12226,7 @@ var Server = (() => {
     if (!anyOf(q.resourceTypes, row.resourceType)) return false;
     if (!anyOf(q.rules, row.ruleShortId)) return false;
     if (q.projects.length && !row.projects.some((p) => q.projects.indexOf(p) >= 0)) return false;
+    if (q.domains.length && q.domains.indexOf(row.domain) < 0) return false;
     if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
     for (const flag of q.flags) if (!hasConfigFlag(row, flag)) return false;
     if (q.q) {
@@ -12264,6 +12268,7 @@ var Server = (() => {
     if (key === "resourceTypes") return [row.resourceType].filter(Boolean);
     if (key === "rules") return [row.ruleShortId].filter(Boolean);
     if (key === "projects") return row.projects;
+    if (key === "domains") return [row.domain].filter(Boolean);
     if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
     return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f));
   }
@@ -12313,6 +12318,7 @@ var Server = (() => {
       const unlinkedGapResources = /* @__PURE__ */ new Set();
       const clouds = /* @__PURE__ */ new Set();
       const projects = /* @__PURE__ */ new Set();
+      const domains = /* @__PURE__ */ new Set();
       const risks = /* @__PURE__ */ new Set();
       const severityMix = {};
       let worst = "UNKNOWN";
@@ -12326,6 +12332,7 @@ var Server = (() => {
         resources.add(row.resourceId);
         if (row.cloud) clouds.add(row.cloud);
         for (const p of row.projects) projects.add(p);
+        if (row.domain) domains.add(row.domain);
         for (const r of row.risks) risks.add(r);
         severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
         if (sevRank2(row.severity) < sevRank2(worst)) worst = row.severity;
@@ -12358,6 +12365,7 @@ var Server = (() => {
         iac,
         clouds: [...clouds].sort(),
         projects: [...projects].sort(),
+        domains: [...domains].sort(),
         severityMix,
         firstSeenAt
       });
@@ -15985,14 +15993,20 @@ var Server = (() => {
     return { policies: dropUnselected(allPolicies, scope), scope };
   }
   function configModel() {
-    const assetIds = aiAssetIdSet();
-    const rows = viewFindings().map((f) => toConfigView(f, !!assetIds[f.resourceId]));
+    const assetsById = {};
+    for (const a of loadAssets()) assetsById[a.id] = a;
+    const rows = viewFindings().map((f) => {
+      var _a5;
+      const node2 = assetsById[f.resourceId];
+      return toConfigView(f, !!node2, (_a5 = node2 == null ? void 0 : node2.domain) != null ? _a5 : "");
+    });
     const severities = /* @__PURE__ */ new Set();
     const statuses = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
     const resourceTypes = /* @__PURE__ */ new Set();
     const rules = /* @__PURE__ */ new Set();
     const projects = /* @__PURE__ */ new Set();
+    const domains = /* @__PURE__ */ new Set();
     for (const r of rows) {
       if (r.severity) severities.add(r.severity);
       if (r.status) statuses.add(r.status);
@@ -16000,6 +16014,7 @@ var Server = (() => {
       if (r.resourceType) resourceTypes.add(r.resourceType);
       if (r.ruleShortId) rules.add(r.ruleShortId);
       for (const p of r.projects) projects.add(p);
+      if (r.domain) domains.add(r.domain);
     }
     return {
       rows: sortConfigRows(rows, "severity"),
@@ -16010,7 +16025,8 @@ var Server = (() => {
         clouds: [...clouds].sort(),
         resourceTypes: [...resourceTypes].sort(),
         rules: [...rules].sort(),
-        projects: [...projects].sort()
+        projects: [...projects].sort(),
+        domains: [...domains].sort()
       }
     };
   }

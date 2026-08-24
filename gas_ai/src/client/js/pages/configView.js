@@ -57,6 +57,7 @@ export function readConfigParams(params) {
     resourceTypes: listSplit(p.resourceTypes),
     rules: listSplit(p.rules),
     projects: listSplit(p.projects),
+    domains: listSplit(p.domains),
     linkage: listSplit(p.linkage).filter((v) => LINKAGE_VALUES.indexOf(v) >= 0),
     flags: listSplit(p.flags).filter((v) => CONFIG_FLAGS.indexOf(v) >= 0),
   };
@@ -92,6 +93,7 @@ export function matchesConfigRow(row, q) {
     }
     if (!hit) return false;
   }
+  if (q.domains.length && q.domains.indexOf(row.domain || "") < 0) return false;
   if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
   for (let i = 0; i < q.flags.length; i++) {
     if (!hasConfigFlag(row, q.flags[i])) return false;
@@ -155,6 +157,8 @@ function facetValues(key, row) {
   if (key === "resourceTypes") return row.resourceType ? [row.resourceType] : [];
   if (key === "rules") return row.ruleShortId ? [row.ruleShortId] : [];
   if (key === "projects") return row.projects || [];
+  // Blank contributes nothing — an unlinked finding has no domain to offer.
+  if (key === "domains") return [row.domain].filter(Boolean);
   if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
   return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f));
 }
@@ -173,7 +177,7 @@ export function activeConfigFilters(q) {
   const out = [];
   const dims = [
     "severities", "statuses", "clouds", "resourceTypes", "rules", "projects",
-    "linkage", "flags",
+    "domains", "linkage", "flags",
   ];
   for (const key of dims) {
     for (const value of q[key] || []) out.push({ key, value });

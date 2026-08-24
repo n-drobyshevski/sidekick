@@ -56,6 +56,7 @@ const FACET_LABELS = {
   resourceTypes: "Resource type",
   rules: "Control",
   projects: "Project",
+  domains: "Domain",
   linkage: "AI asset",
   flags: "Signals",
 };
@@ -117,6 +118,7 @@ export async function renderConfigFindings(main, params, ctx) {
       resourceTypes: view.query.resourceTypes.join(",") || null,
       rules: view.query.rules.join(",") || null,
       projects: view.query.projects.join(",") || null,
+      domains: view.query.domains.join(",") || null,
       linkage: view.query.linkage.join(",") || null,
       flags: view.query.flags.join(",") || null,
       sort: view.sort === "severity" ? null : view.sort,
@@ -404,6 +406,14 @@ export async function renderConfigFindings(main, params, ctx) {
           cell: (r) => el("div", {},
             el("div", {}, r.resourceName || r.resourceId),
             el("div", { class: "small muted" }, r.resourceType)),
+        },
+        {
+          key: "domain", label: "Domain", sortable: false,
+          // Blank for an unlinked finding, and it reads as the same em dash every other
+          // absent cell uses. The AI asset column beside it says WHY.
+          cell: (r) => (r.domain
+            ? el("span", {}, r.domain)
+            : el("span", { class: "small muted" }, "—")),
         },
         {
           key: "linked", label: "AI asset", sortable: false,
