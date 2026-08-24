@@ -14,7 +14,6 @@
 import { describe, expect, it } from "vitest";
 import * as ts from "../src/domain/configFindings";
 import * as js from "../src/client/js/pages/configView.js";
-import { OUTCOME_VALUES } from "../src/domain/problem";
 
 /** Register rows as toConfigView emits them — the only shape either side ever sees. */
 const ROWS = [
@@ -90,10 +89,10 @@ const QUERIES = [
   { severities: "HIGH", clouds: "GCP", flags: "gap" },
   { severities: "HIGH", linkage: "unlinked" },
   { q: "agent", statuses: "OPEN", flags: "iac" },
-  // Phase 5: the problem tree's outcome as its own filter dimension.
+  // The retired outcome facet: a link carrying it resolves to no filter, and both sides
+  // must drop it the same way or a shared link would answer differently by register size.
   { outcomes: "ACT" },
   { outcomes: "ACT,ATTEND" },
-  { outcomes: "TRACK_STAR" },
   { severities: "HIGH", outcomes: "ATTEND" },
   // Values outside the vocabulary, which both sides must drop rather than match on.
   { linkage: "sideways" },
@@ -105,7 +104,7 @@ const QUERIES = [
 
 const FACET_KEYS = [
   "severities", "statuses", "clouds", "resourceTypes", "rules", "projects",
-  "linkage", "flags", "outcomes",
+  "linkage", "flags",
 ];
 
 describe("configView mirrors src/domain/configFindings", () => {
@@ -167,6 +166,7 @@ describe("configView mirrors src/domain/configFindings", () => {
     expect(js.LINKAGE_VALUES).toEqual([...ts.LINKAGE_VALUES]);
     expect(js.CONFIG_FLAGS).toEqual([...ts.CONFIG_FLAGS]);
     // Phase 5: the problem tree's outcome scale, worst (ACT) first.
-    expect(js.OUTCOME_RANK).toEqual([...OUTCOME_VALUES]);
+    // The outcome vocabulary is gone from both sides, not merely unused on one.
+    expect(js.OUTCOME_RANK).toBeUndefined();
   });
 });

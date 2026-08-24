@@ -56,16 +56,27 @@ describe("resolveGraphParams", () => {
     expect(resolveGraphParams({ seed: "agent-a" }, CTX).seedIds).toEqual(["agent-a"]);
   });
 
-  it("scored seed uses ctx.scoredAssetIds, ignoring the issue/combo default", () => {
-    const ctx = { ...CTX, scoredAssetIds: ["asset-1", "asset-2"] };
-    const opts = resolveGraphParams({ seedKind: "scored" }, ctx);
-    expect(opts.seedIds).toEqual(["asset-1", "asset-2"]);
+  it("the issues seed is every asset carrying an open issue, deduped and in order", () => {
+    // Derived from ctx.issues, which resolveGraphParams already holds for the combo seeds
+    // — the caller no longer assembles a list. It used to be "every asset the scoring
+    // model priced above zero", which made the graph's default start set a property of a
+    // rule rather than of the landscape.
+    const ctx = {
+      ...CTX,
+      issues: [
+        { assetId: "a" }, { assetId: "b" }, { assetId: "a" }, { assetId: "" },
+      ] as unknown as typeof CTX.issues,
+    };
+    expect(resolveGraphParams({ seedKind: "issues" }, ctx).seedIds).toEqual(["a", "b"]);
+    // `scored` is still accepted: it is in shared links and saved views, and it is the
+    // same question asked in the old vocabulary.
+    expect(resolveGraphParams({ seedKind: "scored" }, ctx).seedIds).toEqual(["a", "b"]);
   });
 
-  it("scored seed mode sets filterSeeds so active filters narrow the seed set too", () => {
-    const ctx = { ...CTX, scoredAssetIds: ["asset-1", "asset-2"] };
-    const opts = resolveGraphParams({ seedKind: "scored", kinds: "AI_AGENT" }, ctx);
-    expect(opts.filterSeeds).toBe(true);
+  it("both seed spellings set filterSeeds so active filters narrow the seed set too", () => {
+    for (const seedKind of ["issues", "scored"]) {
+      expect(resolveGraphParams({ seedKind, kinds: "AI_AGENT" }, CTX).filterSeeds).toBe(true);
+    }
   });
 
   it("non-scored seed modes leave filterSeeds absent entirely (no filterSeeds: false key)", () => {
@@ -169,8 +180,11 @@ describe("resolveLayoutParams", () => {
   // so the value maps to whichever arrangement draws what it drew, and an absent `groupBy` takes
   // the "combo" it defaulted to internally.
   it("maps the retired `grouped` value onto the arrangement that draws what it drew", () => {
+    // `sort=aars` names a column the graph no longer offers. It maps to `issues` rather
+    // than falling through to `smart`: the score's ordering was driven almost entirely by
+    // its issue pillar, so that is the ordering the link was actually looking at.
     expect(resolveLayoutParams({ layout: "grouped", groupBy: "project", sort: "aars" }))
-      .toEqual({ mode: "grid", groupBy: ["project"], sort: "aars" });
+      .toEqual({ mode: "grid", groupBy: ["project"], sort: "issues" });
     expect(resolveLayoutParams({ layout: "GROUPED", groupBy: "Severity", sort: "NAME" }))
       .toEqual({ mode: "grid", groupBy: ["severity"], sort: "name" });
     // No groupBy at all still groups: that is what the old mode did with an empty one.

@@ -63,26 +63,32 @@ describe("pickEgoNeighbours", () => {
     expect(shown.map((r) => r.node.id)).toEqual(["risk", "svc", "vm"]);
   });
 
-  it("sorts the remainder by severity, then AARS descending, then name", () => {
+  it("sorts the remainder by severity first, ahead of either count", () => {
+    // Severity leads for the same reason it leads the register's tie-break: a quiet
+    // CRITICAL still outranks a noisy LOW. `few-but-worse` carries one issue against
+    // `many-but-milder`'s four and still comes first.
     const input = [
-      rel({ node: { id: "low-sev", name: "b", kind: "VIRTUAL_MACHINE", severity: "LOW" } }),
-      rel({ node: { id: "high-sev-low-aars", name: "c", kind: "VIRTUAL_MACHINE", severity: "HIGH", aars: 10 } }),
-      rel({ node: { id: "high-sev-high-aars", name: "a", kind: "VIRTUAL_MACHINE", severity: "HIGH", aars: 90 } }),
+      rel({ node: { id: "many-but-milder", name: "a", kind: "VIRTUAL_MACHINE", severity: "LOW", openIssues: 4 } }),
+      rel({ node: { id: "few-but-worse", name: "c", kind: "VIRTUAL_MACHINE", severity: "HIGH", openIssues: 1 } }),
+      rel({ node: { id: "same-sev-quieter", name: "b", kind: "VIRTUAL_MACHINE", severity: "HIGH" } }),
     ];
     const { shown } = pickEgoNeighbours(input, 10);
     expect(shown.map((r) => r.node.id)).toEqual([
-      "high-sev-high-aars", "high-sev-low-aars", "low-sev",
+      "few-but-worse", "same-sev-quieter", "many-but-milder",
     ]);
   });
 
-  it("sorts a null or undefined AARS last among equal severities", () => {
+  it("orders equal severities by open issues, then findings, then name", () => {
+    // An absent count reads as 0 and sorts last, which is the same shape the old AARS leg
+    // had — but 0 is now a real answer ("counted, and there are none") rather than "this
+    // asset is outside the scoring model's coverage".
     const input = [
-      rel({ node: { id: "no-aars", name: "a", kind: "VIRTUAL_MACHINE", severity: "MEDIUM", aars: null } }),
-      rel({ node: { id: "has-aars", name: "z", kind: "VIRTUAL_MACHINE", severity: "MEDIUM", aars: 5 } }),
-      rel({ node: { id: "undef-aars", name: "b", kind: "VIRTUAL_MACHINE", severity: "MEDIUM" } }),
+      rel({ node: { id: "quiet", name: "a", kind: "VIRTUAL_MACHINE", severity: "MEDIUM" } }),
+      rel({ node: { id: "busy", name: "z", kind: "VIRTUAL_MACHINE", severity: "MEDIUM", openIssues: 3 } }),
+      rel({ node: { id: "findings-only", name: "b", kind: "VIRTUAL_MACHINE", severity: "MEDIUM", openFindings: 2 } }),
     ];
     const { shown } = pickEgoNeighbours(input, 10);
-    expect(shown.map((r) => r.node.id)).toEqual(["has-aars", "no-aars", "undef-aars"]);
+    expect(shown.map((r) => r.node.id)).toEqual(["busy", "findings-only", "quiet"]);
   });
 
   it("does not mutate the input array", () => {

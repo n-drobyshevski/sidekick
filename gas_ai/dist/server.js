@@ -598,7 +598,15 @@ var Server = (() => {
       // in aarsTrend.ts for the shape and for why an absent entry is never read as a zero.
       // Appended, same no-migration contract: rows without it have no scoped series, which the
       // trend reports rather than fabricates.
-      "project_totals_json"
+      "project_totals_json",
+      // The count trend's two new series. `issue_count` above is the third and has been
+      // written since the first sync this ledger ever recorded, which is why the issues line
+      // has full history and these two start empty — appended under the same no-migration,
+      // no-backfill contract as everything above them. A row written before these existed
+      // carries NO value, and the reader plots a gap rather than a zero: see
+      // CountTrendPoint in aarsTrend.ts for why that distinction is load-bearing.
+      "finding_count",
+      "posture_fail_count"
     ],
     [TABS.settings]: ["key", "value_json"],
     [TABS.jobs]: [
@@ -3756,11 +3764,11 @@ var Server = (() => {
   function gap(code, points) {
     return points === void 0 ? { code } : { code, points };
   }
-  function aarsSeverity(score2, bands = DEFAULT_AARS_RULE.bands) {
-    if (score2 >= bands.critical) return "CRITICAL";
-    if (score2 >= bands.high) return "HIGH";
-    if (score2 >= bands.medium) return "MEDIUM";
-    if (score2 >= bands.low) return "LOW";
+  function aarsSeverity(score, bands = DEFAULT_AARS_RULE.bands) {
+    if (score >= bands.critical) return "CRITICAL";
+    if (score >= bands.high) return "HIGH";
+    if (score >= bands.medium) return "MEDIUM";
+    if (score >= bands.low) return "LOW";
     return "INFO";
   }
   function worstPoints(severities, points) {
@@ -3814,10 +3822,10 @@ var Server = (() => {
     const dataFound = dataFindingPointsFor((_b = input.dataFindingSeverities) != null ? _b : [], rule);
     const data = Math.min(rule.pillarCCap, Math.round((dataTier + dataFound) * rule.dataAmplifier));
     const exposure = (_d = rule.exposurePoints[(_c = input.internetExposure) != null ? _c : "NONE"]) != null ? _d : 0;
-    const score2 = Math.min(AARS_MAX_SCORE, toxic + compliance + data + exposure);
+    const score = Math.min(AARS_MAX_SCORE, toxic + compliance + data + exposure);
     return {
-      score: score2,
-      severity: aarsSeverity(score2, rule.bands),
+      score,
+      severity: aarsSeverity(score, rule.bands),
       pillars: { toxic, compliance, data, exposure }
     };
   }
@@ -4970,6 +4978,24 @@ var Server = (() => {
       name: "No guardrail",
       edgeType: "PROTECTED_BY",
       negated: true
+    });
+  }
+  function withOpenCounts(nodes, issues2, findings) {
+    var _a5, _b;
+    const issueCount = {};
+    for (const issue2 of issues2) {
+      if (!issue2.assetId || !isUnresolvedIssue(issue2)) continue;
+      issueCount[issue2.assetId] = ((_a5 = issueCount[issue2.assetId]) != null ? _a5 : 0) + 1;
+    }
+    const findingCount = {};
+    for (const finding of findings) {
+      if (!finding.resourceId || !isOpenGap(finding)) continue;
+      findingCount[finding.resourceId] = ((_b = findingCount[finding.resourceId]) != null ? _b : 0) + 1;
+    }
+    return nodes.map((n) => {
+      var _a6, _b2;
+      if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
+      return { ...n, openIssues: (_a6 = issueCount[n.id]) != null ? _a6 : 0, openFindings: (_b2 = findingCount[n.id]) != null ? _b2 : 0 };
     });
   }
 
@@ -6891,21 +6917,6 @@ var Server = (() => {
     }
     return Math.exp(entropy);
   }
-  function midrankPercentiles(values) {
-    var _a5;
-    const n = values.length;
-    if (n === 0) return [];
-    const counts = /* @__PURE__ */ new Map();
-    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
-    const percentileOf = /* @__PURE__ */ new Map();
-    let below = 0;
-    for (const value of [...counts.keys()].sort((a, b) => a - b)) {
-      const size = counts.get(value);
-      percentileOf.set(value, (below + size / 2) / n * 100);
-      below += size;
-    }
-    return values.map((v) => percentileOf.get(v));
-  }
 
   // src/domain/aarsRule.ts
   var POINTS_MIN = 0;
@@ -7862,7 +7873,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "d3515c1b995b" : "dev";
+  var BUILD_ID = true ? "e24c151d7ad2" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8137,6 +8148,388 @@ var Server = (() => {
     saveSettings(withConfigRulesSyncedAt(loadSettings(), at));
   }
 
+  // src/domain/compliancePosture.ts
+  var POSTURE_BANDS = {
+    strong: { min: 90, label: "Strong" },
+    fair: { min: 70, label: "Work to do" },
+    weak: { min: 0, label: "Materially failing" }
+  };
+  function postureBandOf(posturePct2) {
+    if (posturePct2 === null || posturePct2 === void 0) return null;
+    if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
+    if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
+    return "weak";
+  }
+  function postureState(posturePct2, emptyPostureReason) {
+    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
+    if (reason === "NO_RESOURCES") return "noResources";
+    if (reason === "NO_POLICIES") return "noPolicies";
+    if (reason) return "unknown";
+    return posturePct2 === null ? "unknown" : "scored";
+  }
+  function titleRepeatsExternalId(externalId, title) {
+    const id = String(externalId != null ? externalId : "").trim();
+    const t = String(title != null ? title : "").trim();
+    if (!id || !t) return false;
+    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
+    const next = t.charAt(id.length);
+    return next === "" || next === " " || next === "	";
+  }
+  function severityRank2(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function worstOf(a, b) {
+    if (a === null) return b;
+    if (b === null) return a;
+    return severityRank2(b) < severityRank2(a) ? b : a;
+  }
+  function worstFailingSeverityOf(policies) {
+    let worst = null;
+    for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
+    return worst;
+  }
+  function emptyStateCounts() {
+    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
+  }
+  function isAssessedPolicy(p) {
+    return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
+  }
+  function toNode(row, externalId) {
+    return {
+      frameworkId: row.frameworkId,
+      externalId,
+      // Suppressed when the title already opens with it, so an OWASP LLM row reads
+      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
+      showExternalId: !titleRepeatsExternalId(externalId, row.title),
+      title: row.title,
+      description: row.description,
+      posturePct: row.posturePct,
+      state: postureState(row.posturePct, row.emptyPostureReason),
+      // Read off the state, not off the number: a row carrying both a percentage and an
+      // emptyPostureReason is one postureState declines to score, and banding the number it
+      // just disowned would put a colour back on a row that has no posture.
+      postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored" ? postureBandOf(row.posturePct) : null,
+      passCount: row.passCount,
+      failCount: row.failCount,
+      emptyPostureReason: row.emptyPostureReason
+    };
+  }
+  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    const rows = posture.filter((p) => p.frameworkId === frameworkId);
+    if (!rows.length) return null;
+    const frameworkRow = rows.find((p) => p.level === "framework");
+    const catalogue = frameworks.find((f) => f.id === frameworkId);
+    const policiesBySub = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.frameworkId !== frameworkId) continue;
+      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
+      list2.push(p);
+      policiesBySub.set(p.subcategoryExternalId, list2);
+    }
+    const stateCounts = emptyStateCounts();
+    const unassessedIds = /* @__PURE__ */ new Set();
+    const subsByCategory = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      if (row.level !== "subcategory") continue;
+      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
+      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
+      const seen = /* @__PURE__ */ new Set();
+      const deduped = raw.filter((p) => {
+        if (seen.has(p.policyId)) return false;
+        seen.add(p.policyId);
+        return true;
+      });
+      deduped.sort(
+        (a, b) => severityRank2(a.severity) - severityRank2(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+      );
+      const assessed = [];
+      for (const p of deduped) {
+        if (isAssessedPolicy(p)) assessed.push(p);
+        else unassessedIds.add(p.policyId);
+      }
+      const node2 = {
+        ...toNode(row, externalId),
+        assessmentScope: row.assessmentScope,
+        mappingRationale: row.mappingRationale,
+        policies: assessed,
+        failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
+        unassessedPolicyCount: deduped.length - assessed.length,
+        // From the LISTED policies, so the tint on this row and the rules the row expands to
+        // show can never name different severities.
+        worstFailingSeverity: worstFailingSeverityOf(assessed)
+      };
+      stateCounts[node2.state] += 1;
+      if (node2.state !== "scored") continue;
+      const key = (_d = row.categoryExternalId) != null ? _d : "";
+      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
+      list2.push(node2);
+      subsByCategory.set(key, list2);
+    }
+    const categories = rows.filter((r) => r.level === "category").map((row) => {
+      var _a6, _b2;
+      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
+      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
+      return {
+        ...toNode(row, externalId),
+        subcategories,
+        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId,
+        worstFailingSeverity: subcategories.reduce(
+          (worst, sub) => worstOf(worst, sub.worstFailingSeverity),
+          null
+        )
+      };
+    }).filter((cat) => cat.subcategories.length > 0);
+    const distinct = /* @__PURE__ */ new Map();
+    for (const cat of categories) {
+      for (const sub of cat.subcategories) {
+        for (const p of sub.policies) {
+          distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
+        }
+      }
+    }
+    const worstFailingSeverity = categories.reduce(
+      (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
+      null
+    );
+    const frameworkState = postureState(
+      (_g = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _g : null,
+      (_h = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _h : null
+    );
+    return {
+      frameworkId,
+      name: (_j = (_i = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _i : catalogue == null ? void 0 : catalogue.name) != null ? _j : frameworkId,
+      description: (_k = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _k : catalogue == null ? void 0 : catalogue.description,
+      posturePct: (_l = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _l : null,
+      state: frameworkState,
+      // Same guard toNode applies one level down: only a row that actually scored gets a
+      // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
+      postureBand: frameworkState === "scored" ? postureBandOf((_m = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _m : null) : null,
+      emptyPostureReason: (_n = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _n : null,
+      passSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _o : 0,
+      failSubCategoryCount: (_p = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _p : 0,
+      categories,
+      stateCounts,
+      policyCount: distinct.size,
+      failingPolicyCount: [...distinct.values()].filter(Boolean).length,
+      // Only ids that appear NOWHERE in the listed tree. A control mapped under six
+      // subcategories and evaluated under one of them is a listed policy, not a dropped one,
+      // and counting it in both places would describe the same rule twice.
+      unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
+      worstFailingSeverity
+    };
+  }
+  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
+    const ids = [];
+    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
+    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
+    trees.sort((a, b) => {
+      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
+      if (a.posturePct === null) return 1;
+      if (b.posturePct === null) return -1;
+      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
+    });
+    return trees;
+  }
+  function complianceKpis(posture, policies = []) {
+    const frameworkRows = posture.filter((p) => p.level === "framework");
+    const scored = frameworkRows.filter(
+      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
+    );
+    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
+      var _a5;
+      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
+    }, 0) / scored.length) : null;
+    const failingSubcategories = posture.filter(
+      (p) => p.level === "subcategory" && p.failCount > 0
+    ).length;
+    const failing = /* @__PURE__ */ new Set();
+    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
+    return {
+      frameworks: frameworkRows.length,
+      scoredFrameworks: scored.length,
+      averagePosture,
+      averagePostureBand: postureBandOf(averagePosture),
+      failingSubcategories,
+      failingPolicies: failing.size
+    };
+  }
+
+  // src/domain/complianceScope.ts
+  function severityRank3(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function isAiFamily(family) {
+    return family === "OWASP_ASI" || family === "OWASP_LLM" || family === "OWASP_ML";
+  }
+  function scopeFiveRs(trees, findings, aiAssetIds2, pins) {
+    var _a5, _b, _c, _d;
+    const fiveRsTree = trees.find((t) => frameworkFamily(t.name) === "WIZ_5RS");
+    if (!fiveRsTree) {
+      return {
+        frameworkId: null,
+        frameworkName: "",
+        policies: [],
+        selected: 0,
+        total: 0
+      };
+    }
+    const mappedByPolicy = /* @__PURE__ */ new Map();
+    for (const tree of trees) {
+      if (tree === fiveRsTree) continue;
+      if (!isAiFamily(frameworkFamily(tree.name))) continue;
+      for (const category of tree.categories) {
+        for (const sub of category.subcategories) {
+          for (const p of sub.policies) {
+            const names = (_a5 = mappedByPolicy.get(p.policyId)) != null ? _a5 : /* @__PURE__ */ new Set();
+            names.add(tree.name);
+            mappedByPolicy.set(p.policyId, names);
+          }
+        }
+      }
+    }
+    const aiOpenFindings = findings.filter(
+      (f) => isOpenGap(f) && aiAssetIds2[f.resourceId] === true
+    );
+    const findingsByRuleId = /* @__PURE__ */ new Map();
+    const findingsByShortId = /* @__PURE__ */ new Map();
+    for (const f of aiOpenFindings) {
+      if (f.ruleId) pushInto(findingsByRuleId, f.ruleId, f);
+      if (f.ruleShortId) pushInto(findingsByShortId, f.ruleShortId, f);
+    }
+    const pinnedOut = new Set(pins.out);
+    const pinnedIn = new Set(pins.in);
+    const byPolicy = /* @__PURE__ */ new Map();
+    for (const category of fiveRsTree.categories) {
+      for (const sub of category.subcategories) {
+        for (const p of sub.policies) {
+          let acc = byPolicy.get(p.policyId);
+          if (!acc) {
+            acc = {
+              policyId: p.policyId,
+              shortId: p.shortId,
+              name: p.name,
+              policyKind: p.policyKind,
+              severity: p.severity,
+              categoryExternalId: category.externalId,
+              subcategoryExternalId: sub.externalId,
+              subcategoryTitle: sub.title,
+              failCount: 0,
+              passCount: 0,
+              // Sticky-false's INITIAL reading — see the PolicyScope.enabled doc comment.
+              enabled: p.enabled
+            };
+            byPolicy.set(p.policyId, acc);
+          }
+          if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+          if (p.passCount > acc.passCount) acc.passCount = p.passCount;
+          if (p.enabled === false) acc.enabled = false;
+        }
+      }
+    }
+    const policies = [];
+    for (const acc of byPolicy.values()) {
+      const mappedBy = [...(_b = mappedByPolicy.get(acc.policyId)) != null ? _b : []].sort();
+      const crossMapped = mappedBy.length > 0;
+      const matched = /* @__PURE__ */ new Map();
+      for (const f of (_c = findingsByRuleId.get(acc.policyId)) != null ? _c : []) matched.set(f.id, f);
+      if (acc.shortId) {
+        for (const f of (_d = findingsByShortId.get(acc.shortId)) != null ? _d : []) matched.set(f.id, f);
+      }
+      const aiFindingCount = matched.size;
+      let selected;
+      let reason;
+      if (pinnedOut.has(acc.policyId)) {
+        selected = false;
+        reason = "pinnedOut";
+      } else if (pinnedIn.has(acc.policyId)) {
+        selected = true;
+        reason = "pinnedIn";
+      } else if (crossMapped) {
+        selected = true;
+        reason = "crossMapped";
+      } else if (aiFindingCount > 0) {
+        selected = true;
+        reason = "linkedFindings";
+      } else {
+        selected = false;
+        reason = "noAiLink";
+      }
+      policies.push({
+        policyId: acc.policyId,
+        shortId: acc.shortId,
+        name: acc.name,
+        policyKind: acc.policyKind,
+        severity: acc.severity,
+        categoryExternalId: acc.categoryExternalId,
+        subcategoryExternalId: acc.subcategoryExternalId,
+        subcategoryTitle: acc.subcategoryTitle,
+        selected,
+        reason,
+        mappedBy,
+        aiFindingCount,
+        failCount: acc.failCount,
+        passCount: acc.passCount,
+        enabled: acc.enabled
+      });
+    }
+    policies.sort((a, b) => (a.selected === b.selected ? 0 : a.selected ? 1 : -1) || severityRank3(a.severity) - severityRank3(b.severity) || b.failCount - a.failCount || cmp(a.name, b.name));
+    return {
+      frameworkId: fiveRsTree.frameworkId,
+      frameworkName: fiveRsTree.name,
+      policies,
+      selected: policies.filter((p) => p.selected).length,
+      total: policies.length
+    };
+  }
+  function unselectedPolicyIds(scope) {
+    return scope.policies.filter((p) => !p.selected).map((p) => p.policyId);
+  }
+  function withCountsFrom(scope, trees) {
+    var _a5;
+    if (scope.frameworkId === null) return scope;
+    const tree = trees.find((t) => t.frameworkId === scope.frameworkId);
+    if (!tree) {
+      return { ...scope, policies: [], selected: 0, total: 0 };
+    }
+    const counts = /* @__PURE__ */ new Map();
+    for (const category of tree.categories) {
+      for (const sub of category.subcategories) {
+        for (const p of sub.policies) {
+          const acc = (_a5 = counts.get(p.policyId)) != null ? _a5 : { passCount: 0, failCount: 0, enabled: p.enabled };
+          if (p.passCount > acc.passCount) acc.passCount = p.passCount;
+          if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+          if (p.enabled === false) acc.enabled = false;
+          counts.set(p.policyId, acc);
+        }
+      }
+    }
+    const policies = scope.policies.filter((p) => counts.has(p.policyId)).map((p) => {
+      const c = counts.get(p.policyId);
+      return { ...p, passCount: c.passCount, failCount: c.failCount, enabled: c.enabled };
+    });
+    return {
+      ...scope,
+      policies,
+      selected: policies.filter((p) => p.selected).length,
+      total: policies.length
+    };
+  }
+  function dropUnselected(rows, scope) {
+    const dropped = new Set(unselectedPolicyIds(scope));
+    if (!dropped.size) return rows;
+    return rows.filter(
+      (pol) => pol.frameworkId !== scope.frameworkId || !dropped.has(pol.policyId)
+    );
+  }
+  function failingPolicyCount(scopedPolicies) {
+    const failing = /* @__PURE__ */ new Set();
+    for (const p of scopedPolicies) if (p.failCount > 0) failing.add(p.policyId);
+    return failing.size;
+  }
+
   // src/domain/aarsTrend.ts
   var PROJECT_TOTALS_COLUMN = "project_totals_json";
   var PROJECT_TOTALS_MAX_CHARS = 45e3;
@@ -8151,7 +8544,7 @@ var Server = (() => {
         for (const sev of AARS_SEVERITY_ORDER) aars[sev] = 0;
         const outcome = {};
         for (const o of OUTCOME_VALUES) outcome[o] = 0;
-        t = { aars, outcome };
+        t = { aars, outcome, counts: { issues: 0, findings: 0 } };
         totals[projectId] = t;
       }
       return t;
@@ -8167,10 +8560,16 @@ var Server = (() => {
       }
     }
     for (const r of decided) {
+      const isFinding = r.assetId === void 0 && r.resourceId !== void 0;
+      const assetId = (_c = (_b = r.assetId) != null ? _b : r.resourceId) != null ? _c : "";
+      const projects = (_d = projectsByAsset.get(assetId)) != null ? _d : [];
+      for (const p of projects) {
+        const counts = entry(p.id).counts;
+        if (counts) counts[isFinding ? "findings" : "issues"] += 1;
+      }
       const outcome = r.problemOutcome;
       if (!outcome || !OUTCOME_VALUES.includes(outcome)) continue;
-      const assetId = (_c = (_b = r.assetId) != null ? _b : r.resourceId) != null ? _c : "";
-      for (const p of (_d = projectsByAsset.get(assetId)) != null ? _d : []) entry(p.id).outcome[outcome] += 1;
+      for (const p of projects) entry(p.id).outcome[outcome] += 1;
     }
     return totals;
   }
@@ -8187,68 +8586,58 @@ var Server = (() => {
     }
     return counts;
   }
-  function countsFromObject(parsed, keys) {
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const raw = parsed;
-    const counts = {};
-    for (const k of keys) {
-      const n = Number(raw[k]);
-      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
-    }
-    return counts;
+  var COUNT_KEYS = ["issues", "findings", "postureFails"];
+  function cellCount2(v) {
+    if (v === null || v === void 0 || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
   }
-  function parseCounts(v, keys) {
-    if (typeof v !== "string" || !v) return null;
-    try {
-      return countsFromObject(JSON.parse(v), keys);
-    } catch {
-      return null;
-    }
-  }
-  function parseProjectCounts(v, projectId, spec) {
-    if (typeof v !== "string" || !v) return null;
-    let parsed;
-    try {
-      parsed = JSON.parse(v);
-    } catch {
-      return null;
+  function projectCountEntry(cell2, projectId) {
+    let parsed = cell2;
+    if (typeof cell2 === "string") {
+      if (!cell2) return null;
+      try {
+        parsed = JSON.parse(cell2);
+      } catch {
+        return null;
+      }
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const entry = parsed[projectId];
     if (!entry || typeof entry !== "object") return null;
-    return countsFromObject(entry[spec.projectKey], spec.keys);
+    const counts = entry["counts"];
+    if (!counts || typeof counts !== "object") return null;
+    const issues2 = cellCount2(counts["issues"]);
+    const findings = cellCount2(counts["findings"]);
+    return issues2 === null || findings === null ? null : { issues: issues2, findings };
   }
-  function trendFromHistory(rows, spec, limit = 90, projectId = "") {
+  function countTrendFromHistory(rows, limit = 90, projectId = "") {
     var _a5;
     const points = [];
     for (const r of rows) {
       if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const counts = projectId ? parseProjectCounts(r[PROJECT_TOTALS_COLUMN], projectId, spec) : parseCounts(r[spec.countsColumn], spec.keys);
-      if (!counts) continue;
       const at = String(r["finished_at"] || r["started_at"] || "");
       if (!at) continue;
-      const v = Number(r[spec.versionColumn]);
-      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
-      points.push({ at, counts, ruleVersion });
+      let counts;
+      if (projectId) {
+        const scoped = projectCountEntry(r[PROJECT_TOTALS_COLUMN], projectId);
+        counts = {
+          issues: scoped ? scoped.issues : null,
+          findings: scoped ? scoped.findings : null,
+          postureFails: null
+        };
+      } else {
+        counts = {
+          issues: cellCount2(r["issue_count"]),
+          findings: cellCount2(r["finding_count"]),
+          postureFails: cellCount2(r["posture_fail_count"])
+        };
+      }
+      if (COUNT_KEYS.every((k) => counts[k] === null)) continue;
+      points.push({ at, counts });
     }
     points.sort(cmpBy((p) => p.at));
     return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
-  }
-  var AARS_SEVERITY_SPEC = {
-    keys: AARS_SEVERITY_ORDER,
-    countsColumn: "aars_severity_json",
-    versionColumn: "aars_rule_version",
-    projectKey: "aars"
-  };
-  function aarsTrendFromHistory(rows, limit = 90, projectId = "") {
-    return trendFromHistory(rows, AARS_SEVERITY_SPEC, limit, projectId);
-  }
-  function ruleChangePoints(points) {
-    const marks = [];
-    for (let i = 1; i < points.length; i++) {
-      if (points[i].ruleVersion !== points[i - 1].ruleVersion) marks.push(i);
-    }
-    return marks;
   }
 
   // src/domain/prunePlan.ts
@@ -8988,8 +9377,42 @@ var Server = (() => {
       // scoped series with a missing point says so rather than inventing one. A trend
       // refinement must not be able to fail a commit.
       project_totals_json: encodeProjectTotals(
-        countProjectTotals(postured.nodes, [...decidedIssues, ...decidedFindings])
-      )
+        // GATED, both populations, to the same predicates the register-wide columns use.
+        // The findings tab stores RESOLVED and PASS rows for the lifecycle clock, so an
+        // ungated count here would put a bigger number on the scoped line than
+        // `finding_count` puts on the register-wide one — two definitions of "a failing
+        // control" on one chart. The outcome series is unaffected: a row that fails either
+        // gate carries no verdict to count.
+        countProjectTotals(postured.nodes, [
+          ...decidedIssues.filter(isUnresolvedIssue),
+          ...decidedFindings.filter(isOpenGap)
+        ])
+      ),
+      // The count trend's other two series (`issue_count` above is the first). Gated by
+      // `isOpenGap`, the app's one definition of a failing control, so this column and
+      // `kpis.complianceGaps` count the same rows.
+      finding_count: decidedFindings.filter(isOpenGap).length,
+      // Distinct policies with a failing evaluation, over the AI-SCOPED rows — the same
+      // definition, through the same two functions, that `complianceKpis.failingPolicies`
+      // will report on the next read.
+      //
+      // Counting the raw rows instead was wrong in a way worth recording: it read 9 against
+      // the KPI's 5 on the seed landscape, because the 5Rs rules nothing has judged
+      // AI-relevant are dropped before the live count and were not dropped before this one.
+      // Nothing would have failed — the trend would simply have drawn its posture line at a
+      // level the figure above it never showed, and the delta chip would have stayed away
+      // forever because the two never agreed.
+      //
+      // NULL, NOT ZERO, when no posture was collected. The posture steps are optional and
+      // per-framework, so a tenant that declines them (or an operator who has selected no
+      // framework) has no number here — and "no failing policies" is a very different claim
+      // from "we never asked". The trend reader plots null as a gap.
+      posture_fail_count: frameworkPolicies.length ? failingPolicyCount(dropUnselected(frameworkPolicies, scopeFiveRs(
+        buildAllFrameworkTrees(posture, frameworkPolicies, frameworks),
+        decidedFindings,
+        aiAssetIds(assetNodes),
+        getFiveRsPins2()
+      ))) : null
     }]);
     setScoredRuleVersion(ruleVersion);
     setDecidedRuleVersion(problemRuleVersion);
@@ -9165,7 +9588,6 @@ var Server = (() => {
     delete next.aars;
     delete next.aarsSeverity;
     delete next.aarsPillars;
-    delete next.aarsPercentile;
     return next;
   }
   var graphDocMemo;
@@ -9242,25 +9664,17 @@ var Server = (() => {
     });
     return touched ? out : nodes;
   }
-  function withAarsPercentile(nodes) {
-    const scored = [];
-    for (const n of nodes) if (typeof n.aars === "number") scored.push(n.aars);
-    if (!scored.length) return nodes;
-    const percentiles = midrankPercentiles(scored);
-    let i = 0;
-    return nodes.map((n) => {
-      if (typeof n.aars !== "number") return n;
-      return { ...n, aarsPercentile: Math.round(percentiles[i++]) };
-    });
-  }
   function currentBands() {
     return getAarsRule2().rule.bands;
   }
   function withAarsReadDerivations(nodes) {
-    return withAarsPercentile(withCurrentBands(nodes, currentBands()));
+    return withCurrentBands(nodes, currentBands());
+  }
+  function withReadDerivations(nodes) {
+    return withOpenCounts(withAarsReadDerivations(nodes), loadIssues(), loadFindings());
   }
   function withBandsApplied(doc) {
-    const nodes = withAarsReadDerivations(doc.nodes);
+    const nodes = withReadDerivations(doc.nodes);
     return nodes === doc.nodes ? doc : { ...doc, nodes };
   }
   function loadGraphDocUncached() {
@@ -9269,7 +9683,7 @@ var Server = (() => {
     if (snap) return withRiskNodes(withBandsApplied(normalizeLegacyAars(snap)));
     const assetRows = readAll(TABS.assets);
     if (!assetRows.length) return null;
-    const nodes = withAarsReadDerivations(assetRows.map(rowToAsset));
+    const nodes = withReadDerivations(assetRows.map(rowToAsset));
     const edges2 = readAll(TABS.edges).map(rowToEdge);
     const issues2 = loadIssues().filter(isUnresolvedIssue);
     for (const issue2 of issues2) {
@@ -9295,6 +9709,11 @@ var Server = (() => {
       syncedAt: latest ? String((_a5 = latest["finished_at"]) != null ? _a5 : "") : ""
     });
   }
+  function aiAssetIds(nodes) {
+    const ids = {};
+    for (const n of nodes) ids[n.id] = true;
+    return ids;
+  }
   function loadAssetsRaw() {
     if (assetsMemo === void 0) assetsMemo = readAll(TABS.assets).map(rowToAsset);
     return assetsMemo;
@@ -9305,7 +9724,7 @@ var Server = (() => {
     const bandKey = `${bands.critical}|${bands.high}|${bands.medium}|${bands.low}`;
     const memo = derivedAssetsMemo;
     if (memo && memo.raw === raw && memo.bandKey === bandKey) return memo.out;
-    const out = withAarsReadDerivations(raw);
+    const out = withReadDerivations(raw);
     derivedAssetsMemo = { raw, bandKey, out };
     return out;
   }
@@ -11194,8 +11613,8 @@ var Server = (() => {
 
   // src/domain/assetTable.ts
   var ASSET_SORTS = [
-    "aars",
-    "postureTier",
+    "issues",
+    "findings",
     "name",
     "kind",
     "cloud",
@@ -11204,8 +11623,8 @@ var Server = (() => {
     "combos"
   ];
   var DEFAULT_SORT_DIR = {
-    aars: "desc",
-    postureTier: "desc",
+    issues: "desc",
+    findings: "desc",
     severity: "desc",
     combos: "desc",
     name: "asc",
@@ -11217,7 +11636,6 @@ var Server = (() => {
   var MAX_PAGE_SIZE = 500;
   var CLIENT_ALL_MAX = 1500;
   var FACET_KEYS = [
-    "aarsSeverities",
     "severities",
     "kinds",
     "clouds",
@@ -11226,10 +11644,6 @@ var Server = (() => {
     "flags"
   ];
   var ASSET_FLAGS = ["combo", "guardrail", "agentic", "datafindings"];
-  function score(v) {
-    const n = Number(v != null ? v : -1);
-    return Number.isFinite(n) ? n : -1;
-  }
   var SEV_RANK = {};
   SEVERITY_ORDER.forEach((sev, i) => {
     SEV_RANK[sev] = SEVERITY_ORDER.length - i;
@@ -11259,21 +11673,12 @@ var Server = (() => {
   }
   function resolveAssetQuery(params) {
     const sort = toStr(params["sort"]);
-    const resolvedSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
+    const resolvedSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "issues";
     const dir = toStr(params["dir"]).toLowerCase();
     const page = Number(params["page"]);
     const pageSize = Number(params["pageSize"]);
-    const aarsSeverities = listWithLegacy(
-      params["aarsSeverities"],
-      params["aarsSeverity"],
-      params["band"]
-    ).map((v) => {
-      var _a5;
-      return (_a5 = normalizeAarsSeverity(v)) != null ? _a5 : "";
-    }).filter((v, i, all) => v !== "" && all.indexOf(v) === i);
     return {
       q: toStr(params["q"]).trim().toLowerCase(),
-      aarsSeverities,
       severities: keepValid(
         listWithLegacy(params["severities"], params["severity"]),
         SEVERITY_ORDER
@@ -11305,9 +11710,6 @@ var Server = (() => {
     if (q.kinds.length && q.kinds.indexOf(toStr(row["kind"])) < 0) return false;
     if (q.clouds.length && q.clouds.indexOf(toStr(row["cloud"])) < 0) return false;
     if (q.regions.length && q.regions.indexOf(toStr(row["region"])) < 0) return false;
-    if (q.aarsSeverities.length && q.aarsSeverities.indexOf(toStr(row["aarsSeverity"])) < 0) {
-      return false;
-    }
     if (q.severities.length && q.severities.indexOf(toStr(row["severity"])) < 0) return false;
     if (q.projects.length) {
       const mine = rowProjects(row);
@@ -11320,48 +11722,39 @@ var Server = (() => {
     return rows.filter((r) => matchesAssetQuery(r, q));
   }
   var PRIMARY = {
-    aars: (a, b) => score(a["aars"]) - score(b["aars"]),
-    // Same "missing sorts last" convention as `aars`: `score()` reads a missing tier as -1,
-    // and 4 (worst) already sorts above 1 (best) under the ascending primary, matching AARS's
-    // own "higher number is worse" direction — so `desc` (this column's default) reads worst
-    // tier first, exactly like `aars` reads worst score first.
-    postureTier: (a, b) => score(a["postureTier"]) - score(b["postureTier"]),
     name: (a, b) => toStr(a["name"]).localeCompare(toStr(b["name"])),
     kind: (a, b) => toStr(a["kind"]).localeCompare(toStr(b["kind"])),
     cloud: (a, b) => toStr(a["cloud"]).localeCompare(toStr(b["cloud"])),
     region: (a, b) => toStr(a["region"]).localeCompare(toStr(b["region"])),
     severity: (a, b) => sevRank(a["severity"]) - sevRank(b["severity"]),
-    combos: (a, b) => toNum(a["combos"]) - toNum(b["combos"])
+    combos: (a, b) => toNum(a["combos"]) - toNum(b["combos"]),
+    issues: (a, b) => toNum(a["openIssues"]) - toNum(b["openIssues"]),
+    findings: (a, b) => toNum(a["openFindings"]) - toNum(b["openFindings"])
   };
-  var byScoreDesc = (a, b) => score(b["aars"]) - score(a["aars"]);
+  var byRiskDesc = (a, b) => sevRank(b["severity"]) - sevRank(a["severity"]) || toNum(b["openIssues"]) - toNum(a["openIssues"]) || toNum(b["openFindings"]) - toNum(a["openFindings"]) || toStr(a["name"]).localeCompare(toStr(b["name"])) || toStr(a["id"]).localeCompare(toStr(b["id"]));
   function assetComparator(sort, dir) {
     var _a5;
-    const primary = (_a5 = PRIMARY[sort]) != null ? _a5 : PRIMARY.aars;
+    const primary = (_a5 = PRIMARY[sort]) != null ? _a5 : PRIMARY.issues;
     const sign = dir === "desc" ? -1 : 1;
-    return (a, b) => sign * primary(a, b) || byScoreDesc(a, b);
+    return (a, b) => sign * primary(a, b) || byRiskDesc(a, b);
   }
   var ASSET_COMPARATORS = ASSET_SORTS.reduce((acc, s) => {
     acc[s] = assetComparator(s, DEFAULT_SORT_DIR[s]);
     return acc;
   }, {});
   function sortAssetRows(rows, sort, dir) {
-    const resolved = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
+    const resolved = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "issues";
     return [...rows].sort(assetComparator(resolved, dir != null ? dir : DEFAULT_SORT_DIR[resolved]));
   }
   function facetValues(key, row) {
     if (key === "kinds") return [toStr(row["kind"])].filter(Boolean);
     if (key === "clouds") return [toStr(row["cloud"])].filter(Boolean);
     if (key === "regions") return [toStr(row["region"])].filter(Boolean);
-    if (key === "aarsSeverities") return [toStr(row["aarsSeverity"])].filter(Boolean);
     if (key === "severities") return [toStr(row["severity"])].filter(Boolean);
     if (key === "projects") return rowProjects(row);
     return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f));
   }
   function facetSorter(key) {
-    if (key === "aarsSeverities") {
-      const order = AARS_SEVERITY_ORDER;
-      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
-    }
     if (key === "severities") {
       const order = SEVERITY_ORDER;
       return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
@@ -11465,42 +11858,30 @@ var Server = (() => {
     }
     return rows;
   }
-  function outcomeRank(o) {
-    const i = OUTCOME_VALUES.indexOf(o);
-    return i < 0 ? OUTCOME_VALUES.length : i;
-  }
-  function postureRank(t) {
-    return t === null ? 0 : t;
-  }
   function slaRank(dueAt) {
     const t = Date.parse(dueAt || "");
     return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
   }
-  var AMPLIFICATION_KEYS = ["tools", "identity", "persistence", "multiAgent", "context", "language"];
-  function amplificationFactorRank(v) {
-    return v === null || v === void 0 ? -1 : v;
+  function severityRank4(sev) {
+    const i = SEVERITY_ORDER.indexOf(String(sev != null ? sev : ""));
+    return i < 0 ? SEVERITY_ORDER.length : i;
   }
   function compareProblems(a, b) {
-    const outcome = outcomeRank(a.problemOutcome) - outcomeRank(b.problemOutcome);
-    if (outcome !== 0) return outcome;
-    const posture = postureRank(b.postureTier) - postureRank(a.postureTier);
-    if (posture !== 0) return posture;
+    const sev = severityRank4(a.severity) - severityRank4(b.severity);
+    if (sev !== 0) return sev;
     const sla = slaRank(a.dueAt) - slaRank(b.dueAt);
     if (sla !== 0) return sla;
-    for (const key of AMPLIFICATION_KEYS) {
-      const diff = amplificationFactorRank(b.amplification[key]) - amplificationFactorRank(a.amplification[key]);
-      if (diff !== 0) return diff;
+    const aSeen = a.firstSeenAt || "";
+    const bSeen = b.firstSeenAt || "";
+    if (aSeen !== bSeen) {
+      if (!aSeen) return 1;
+      if (!bSeen) return -1;
+      return aSeen < bSeen ? -1 : 1;
     }
     return a.id.localeCompare(b.id);
   }
   function rankProblems(rows) {
     return [...rows].sort(compareProblems);
-  }
-  function countProblemRowsByOutcome(rows) {
-    var _a5;
-    const counts = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0, "": 0 };
-    for (const r of rows) counts[r.problemOutcome] = ((_a5 = counts[r.problemOutcome]) != null ? _a5 : 0) + 1;
-    return counts;
   }
 
   // src/domain/actions.ts
@@ -11508,10 +11889,10 @@ var Server = (() => {
     var _a5, _b;
     return `${row.kind}|${(_a5 = row.ruleId) != null ? _a5 : ""}|${(_b = row.ruleShortId) != null ? _b : ""}`;
   }
-  var NO_OUTCOME = "";
-  function outcomeRank2(o) {
-    const i = OUTCOME_VALUES.indexOf(o);
-    return i < 0 ? OUTCOME_VALUES.length : i;
+  var NO_SEVERITY = "";
+  function severityRank5(sev) {
+    const i = SEVERITY_ORDER.indexOf(sev);
+    return i < 0 ? SEVERITY_ORDER.length : i;
   }
   function candidatesFrom(pool) {
     const groups = /* @__PURE__ */ new Map();
@@ -11524,10 +11905,11 @@ var Server = (() => {
     return groups;
   }
   function scoreCandidate(key, rows) {
-    let worstRank = OUTCOME_VALUES.length;
+    var _a5;
+    let worstRank = SEVERITY_ORDER.length;
     const assetIds = /* @__PURE__ */ new Set();
     for (const row of rows) {
-      const rank = outcomeRank2(row.problemOutcome);
+      const rank = severityRank5(String((_a5 = row.severity) != null ? _a5 : ""));
       if (rank < worstRank) worstRank = rank;
       if (row.assetId) assetIds.add(row.assetId);
     }
@@ -11540,15 +11922,14 @@ var Server = (() => {
     return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
   }
   function buildActionRow(key, rows) {
-    var _a5, _b;
+    var _a5, _b, _c;
     const sorted = [...rows].sort((a, b) => a.id.localeCompare(b.id));
     const first = sorted[0];
     const assetIds = /* @__PURE__ */ new Set();
-    const outcomeMix = {};
     const severityMix = {};
     const businessImpacts = /* @__PURE__ */ new Set();
-    let worstRank = OUTCOME_VALUES.length;
-    let worstOutcome = NO_OUTCOME;
+    let worstRank = SEVERITY_ORDER.length;
+    let worstSeverity2 = NO_SEVERITY;
     let iac = 0;
     let ignored = 0;
     let firstSeenAt = "";
@@ -11556,13 +11937,12 @@ var Server = (() => {
     let remediation;
     for (const row of sorted) {
       if (row.assetId) assetIds.add(row.assetId);
-      outcomeMix[row.problemOutcome] = ((_a5 = outcomeMix[row.problemOutcome]) != null ? _a5 : 0) + 1;
-      if (row.severity) severityMix[row.severity] = ((_b = severityMix[row.severity]) != null ? _b : 0) + 1;
+      if (row.severity) severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
       if (row.businessImpact) businessImpacts.add(row.businessImpact);
-      const rank = outcomeRank2(row.problemOutcome);
+      const rank = severityRank5(String((_b = row.severity) != null ? _b : ""));
       if (rank < worstRank) {
         worstRank = rank;
-        worstOutcome = row.problemOutcome;
+        worstSeverity2 = String((_c = row.severity) != null ? _c : "");
       }
       if (row.iac) iac += 1;
       if (row.ignored) ignored += 1;
@@ -11580,8 +11960,7 @@ var Server = (() => {
       title: title || first.title,
       problems: rows.length,
       assets: assetIds.size,
-      worstOutcome,
-      outcomeMix,
+      worstSeverity: worstSeverity2,
       severityMix,
       businessImpacts: [...businessImpacts].sort(),
       autoRemediable: false,
@@ -11648,17 +12027,15 @@ var Server = (() => {
     "rule",
     "resource",
     "firstSeen",
-    "status",
-    "priority"
+    "status"
   ];
   var DEFAULT_CONFIG_SORT_DIR = {
     severity: "desc",
     firstSeen: "desc",
     rule: "asc",
     resource: "asc",
-    status: "asc",
+    status: "asc"
     // Phase 5: the problem tree's outcome, worst (ACT) first — same convention as severity.
-    priority: "desc"
   };
   var DEFAULT_CONFIG_PAGE_SIZE = 50;
   var MAX_CONFIG_PAGE_SIZE = 500;
@@ -11671,8 +12048,7 @@ var Server = (() => {
     "rules",
     "projects",
     "linkage",
-    "flags",
-    "outcomes"
+    "flags"
   ];
   var LINKAGE_VALUES = ["linked", "unlinked"];
   var CONFIG_FLAGS = ["gap", "ignored", "iac"];
@@ -11680,12 +12056,8 @@ var Server = (() => {
     const i = SEVERITY_ORDER.indexOf(s);
     return i < 0 ? SEVERITY_ORDER.length : i;
   };
-  var priorityRank = (o) => {
-    const i = OUTCOME_VALUES.indexOf(o);
-    return i < 0 ? OUTCOME_VALUES.length : i;
-  };
   function toConfigView(f, linked) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
     return {
       id: f.id,
       name: (_b = (_a5 = f.name) != null ? _a5 : f.ruleName) != null ? _b : "",
@@ -11707,8 +12079,7 @@ var Server = (() => {
       linked,
       ignored: ((_q = f.ignoreRuleIds) != null ? _q : []).length > 0,
       iac: ((_r = f.iacFindingIds) != null ? _r : []).length > 0,
-      gap: isOpenGap(f),
-      problemOutcome: (_s = f.problemOutcome) != null ? _s : ""
+      gap: isOpenGap(f)
     };
   }
   function listParam(v) {
@@ -11731,9 +12102,6 @@ var Server = (() => {
       ),
       flags: listParam(params["flags"]).filter(
         (v) => CONFIG_FLAGS.indexOf(v) >= 0
-      ),
-      outcomes: listParam(params["outcomes"]).filter(
-        (v) => OUTCOME_VALUES.indexOf(v) >= 0
       )
     };
   }
@@ -11754,7 +12122,6 @@ var Server = (() => {
     if (!anyOf(q.rules, row.ruleShortId)) return false;
     if (q.projects.length && !row.projects.some((p) => q.projects.indexOf(p) >= 0)) return false;
     if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
-    if (!anyOf(q.outcomes, row.problemOutcome)) return false;
     for (const flag of q.flags) if (!hasConfigFlag(row, flag)) return false;
     if (q.q) {
       const hay = [
@@ -11782,7 +12149,6 @@ var Server = (() => {
       else if (sort === "resource") cmp2 = a.resourceName.localeCompare(b.resourceName);
       else if (sort === "status") cmp2 = a.status.localeCompare(b.status);
       else if (sort === "firstSeen") cmp2 = a.firstSeenAt.localeCompare(b.firstSeenAt);
-      else if (sort === "priority") cmp2 = priorityRank(b.problemOutcome) - priorityRank(a.problemOutcome);
       return cmp2 !== 0 ? cmp2 * d : tie(a, b);
     };
   }
@@ -11797,12 +12163,10 @@ var Server = (() => {
     if (key === "rules") return [row.ruleShortId].filter(Boolean);
     if (key === "projects") return row.projects;
     if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
-    if (key === "outcomes") return row.problemOutcome ? [row.problemOutcome] : [];
     return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f));
   }
   function facetSorter2(key) {
     if (key === "severities") return (a, b) => sevRank2(a.value) - sevRank2(b.value);
-    if (key === "outcomes") return (a, b) => priorityRank(a.value) - priorityRank(b.value);
     if (key === "flags") {
       const order = CONFIG_FLAGS;
       return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
@@ -11931,7 +12295,7 @@ var Server = (() => {
   }
 
   // src/domain/complianceOverview.ts
-  function severityRank2(s) {
+  function severityRank6(s) {
     const i = SEVERITY_ORDER.indexOf(s);
     return i === -1 ? SEVERITY_ORDER.length : i;
   }
@@ -12007,7 +12371,7 @@ var Server = (() => {
                 name: p.name,
                 policyKind: p.policyKind,
                 severity: p.severity,
-                severityRank: severityRank2(p.severity),
+                severityRank: severityRank6(p.severity),
                 hasAutoRemediation: p.hasAutoRemediation === true,
                 frameworkIds: [],
                 frameworkNames: [],
@@ -12016,7 +12380,7 @@ var Server = (() => {
               };
               byPolicy.set(p.policyId, acc);
             }
-            const rank = severityRank2(p.severity);
+            const rank = severityRank6(p.severity);
             if (rank < acc.severityRank) {
               acc.severityRank = rank;
               acc.severity = p.severity;
@@ -12052,7 +12416,7 @@ var Server = (() => {
         failCount: acc.failCount
       });
     }
-    rows.sort((a, b) => b.frameworkCount - a.frameworkCount || severityRank2(a.severity) - severityRank2(b.severity) || b.failCount - a.failCount || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    rows.sort((a, b) => b.frameworkCount - a.frameworkCount || severityRank6(a.severity) - severityRank6(b.severity) || b.failCount - a.failCount || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     return rows;
   }
   function coverageSummary(trees, catalogue) {
@@ -12079,376 +12443,6 @@ var Server = (() => {
     };
   }
 
-  // src/domain/complianceScope.ts
-  function severityRank3(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  function isAiFamily(family) {
-    return family === "OWASP_ASI" || family === "OWASP_LLM" || family === "OWASP_ML";
-  }
-  function scopeFiveRs(trees, findings, aiAssetIds, pins) {
-    var _a5, _b, _c, _d;
-    const fiveRsTree = trees.find((t) => frameworkFamily(t.name) === "WIZ_5RS");
-    if (!fiveRsTree) {
-      return {
-        frameworkId: null,
-        frameworkName: "",
-        policies: [],
-        selected: 0,
-        total: 0
-      };
-    }
-    const mappedByPolicy = /* @__PURE__ */ new Map();
-    for (const tree of trees) {
-      if (tree === fiveRsTree) continue;
-      if (!isAiFamily(frameworkFamily(tree.name))) continue;
-      for (const category of tree.categories) {
-        for (const sub of category.subcategories) {
-          for (const p of sub.policies) {
-            const names = (_a5 = mappedByPolicy.get(p.policyId)) != null ? _a5 : /* @__PURE__ */ new Set();
-            names.add(tree.name);
-            mappedByPolicy.set(p.policyId, names);
-          }
-        }
-      }
-    }
-    const aiOpenFindings = findings.filter(
-      (f) => isOpenGap(f) && aiAssetIds[f.resourceId] === true
-    );
-    const findingsByRuleId = /* @__PURE__ */ new Map();
-    const findingsByShortId = /* @__PURE__ */ new Map();
-    for (const f of aiOpenFindings) {
-      if (f.ruleId) pushInto(findingsByRuleId, f.ruleId, f);
-      if (f.ruleShortId) pushInto(findingsByShortId, f.ruleShortId, f);
-    }
-    const pinnedOut = new Set(pins.out);
-    const pinnedIn = new Set(pins.in);
-    const byPolicy = /* @__PURE__ */ new Map();
-    for (const category of fiveRsTree.categories) {
-      for (const sub of category.subcategories) {
-        for (const p of sub.policies) {
-          let acc = byPolicy.get(p.policyId);
-          if (!acc) {
-            acc = {
-              policyId: p.policyId,
-              shortId: p.shortId,
-              name: p.name,
-              policyKind: p.policyKind,
-              severity: p.severity,
-              categoryExternalId: category.externalId,
-              subcategoryExternalId: sub.externalId,
-              subcategoryTitle: sub.title,
-              failCount: 0,
-              passCount: 0,
-              // Sticky-false's INITIAL reading — see the PolicyScope.enabled doc comment.
-              enabled: p.enabled
-            };
-            byPolicy.set(p.policyId, acc);
-          }
-          if (p.failCount > acc.failCount) acc.failCount = p.failCount;
-          if (p.passCount > acc.passCount) acc.passCount = p.passCount;
-          if (p.enabled === false) acc.enabled = false;
-        }
-      }
-    }
-    const policies = [];
-    for (const acc of byPolicy.values()) {
-      const mappedBy = [...(_b = mappedByPolicy.get(acc.policyId)) != null ? _b : []].sort();
-      const crossMapped = mappedBy.length > 0;
-      const matched = /* @__PURE__ */ new Map();
-      for (const f of (_c = findingsByRuleId.get(acc.policyId)) != null ? _c : []) matched.set(f.id, f);
-      if (acc.shortId) {
-        for (const f of (_d = findingsByShortId.get(acc.shortId)) != null ? _d : []) matched.set(f.id, f);
-      }
-      const aiFindingCount = matched.size;
-      let selected;
-      let reason;
-      if (pinnedOut.has(acc.policyId)) {
-        selected = false;
-        reason = "pinnedOut";
-      } else if (pinnedIn.has(acc.policyId)) {
-        selected = true;
-        reason = "pinnedIn";
-      } else if (crossMapped) {
-        selected = true;
-        reason = "crossMapped";
-      } else if (aiFindingCount > 0) {
-        selected = true;
-        reason = "linkedFindings";
-      } else {
-        selected = false;
-        reason = "noAiLink";
-      }
-      policies.push({
-        policyId: acc.policyId,
-        shortId: acc.shortId,
-        name: acc.name,
-        policyKind: acc.policyKind,
-        severity: acc.severity,
-        categoryExternalId: acc.categoryExternalId,
-        subcategoryExternalId: acc.subcategoryExternalId,
-        subcategoryTitle: acc.subcategoryTitle,
-        selected,
-        reason,
-        mappedBy,
-        aiFindingCount,
-        failCount: acc.failCount,
-        passCount: acc.passCount,
-        enabled: acc.enabled
-      });
-    }
-    policies.sort((a, b) => (a.selected === b.selected ? 0 : a.selected ? 1 : -1) || severityRank3(a.severity) - severityRank3(b.severity) || b.failCount - a.failCount || cmp(a.name, b.name));
-    return {
-      frameworkId: fiveRsTree.frameworkId,
-      frameworkName: fiveRsTree.name,
-      policies,
-      selected: policies.filter((p) => p.selected).length,
-      total: policies.length
-    };
-  }
-  function unselectedPolicyIds(scope) {
-    return scope.policies.filter((p) => !p.selected).map((p) => p.policyId);
-  }
-  function withCountsFrom(scope, trees) {
-    var _a5;
-    if (scope.frameworkId === null) return scope;
-    const tree = trees.find((t) => t.frameworkId === scope.frameworkId);
-    if (!tree) {
-      return { ...scope, policies: [], selected: 0, total: 0 };
-    }
-    const counts = /* @__PURE__ */ new Map();
-    for (const category of tree.categories) {
-      for (const sub of category.subcategories) {
-        for (const p of sub.policies) {
-          const acc = (_a5 = counts.get(p.policyId)) != null ? _a5 : { passCount: 0, failCount: 0, enabled: p.enabled };
-          if (p.passCount > acc.passCount) acc.passCount = p.passCount;
-          if (p.failCount > acc.failCount) acc.failCount = p.failCount;
-          if (p.enabled === false) acc.enabled = false;
-          counts.set(p.policyId, acc);
-        }
-      }
-    }
-    const policies = scope.policies.filter((p) => counts.has(p.policyId)).map((p) => {
-      const c = counts.get(p.policyId);
-      return { ...p, passCount: c.passCount, failCount: c.failCount, enabled: c.enabled };
-    });
-    return {
-      ...scope,
-      policies,
-      selected: policies.filter((p) => p.selected).length,
-      total: policies.length
-    };
-  }
-
-  // src/domain/compliancePosture.ts
-  var POSTURE_BANDS = {
-    strong: { min: 90, label: "Strong" },
-    fair: { min: 70, label: "Work to do" },
-    weak: { min: 0, label: "Materially failing" }
-  };
-  function postureBandOf(posturePct2) {
-    if (posturePct2 === null || posturePct2 === void 0) return null;
-    if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
-    if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
-    return "weak";
-  }
-  function postureState(posturePct2, emptyPostureReason) {
-    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
-    if (reason === "NO_RESOURCES") return "noResources";
-    if (reason === "NO_POLICIES") return "noPolicies";
-    if (reason) return "unknown";
-    return posturePct2 === null ? "unknown" : "scored";
-  }
-  function titleRepeatsExternalId(externalId, title) {
-    const id = String(externalId != null ? externalId : "").trim();
-    const t = String(title != null ? title : "").trim();
-    if (!id || !t) return false;
-    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
-    const next = t.charAt(id.length);
-    return next === "" || next === " " || next === "	";
-  }
-  function severityRank4(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  function worstOf(a, b) {
-    if (a === null) return b;
-    if (b === null) return a;
-    return severityRank4(b) < severityRank4(a) ? b : a;
-  }
-  function worstFailingSeverityOf(policies) {
-    let worst = null;
-    for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
-    return worst;
-  }
-  function emptyStateCounts() {
-    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
-  }
-  function isAssessedPolicy(p) {
-    return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
-  }
-  function toNode(row, externalId) {
-    return {
-      frameworkId: row.frameworkId,
-      externalId,
-      // Suppressed when the title already opens with it, so an OWASP LLM row reads
-      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
-      showExternalId: !titleRepeatsExternalId(externalId, row.title),
-      title: row.title,
-      description: row.description,
-      posturePct: row.posturePct,
-      state: postureState(row.posturePct, row.emptyPostureReason),
-      // Read off the state, not off the number: a row carrying both a percentage and an
-      // emptyPostureReason is one postureState declines to score, and banding the number it
-      // just disowned would put a colour back on a row that has no posture.
-      postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored" ? postureBandOf(row.posturePct) : null,
-      passCount: row.passCount,
-      failCount: row.failCount,
-      emptyPostureReason: row.emptyPostureReason
-    };
-  }
-  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
-    const rows = posture.filter((p) => p.frameworkId === frameworkId);
-    if (!rows.length) return null;
-    const frameworkRow = rows.find((p) => p.level === "framework");
-    const catalogue = frameworks.find((f) => f.id === frameworkId);
-    const policiesBySub = /* @__PURE__ */ new Map();
-    for (const p of policies) {
-      if (p.frameworkId !== frameworkId) continue;
-      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
-      list2.push(p);
-      policiesBySub.set(p.subcategoryExternalId, list2);
-    }
-    const stateCounts = emptyStateCounts();
-    const unassessedIds = /* @__PURE__ */ new Set();
-    const subsByCategory = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      if (row.level !== "subcategory") continue;
-      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
-      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
-      const seen = /* @__PURE__ */ new Set();
-      const deduped = raw.filter((p) => {
-        if (seen.has(p.policyId)) return false;
-        seen.add(p.policyId);
-        return true;
-      });
-      deduped.sort(
-        (a, b) => severityRank4(a.severity) - severityRank4(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-      );
-      const assessed = [];
-      for (const p of deduped) {
-        if (isAssessedPolicy(p)) assessed.push(p);
-        else unassessedIds.add(p.policyId);
-      }
-      const node2 = {
-        ...toNode(row, externalId),
-        assessmentScope: row.assessmentScope,
-        mappingRationale: row.mappingRationale,
-        policies: assessed,
-        failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
-        unassessedPolicyCount: deduped.length - assessed.length,
-        // From the LISTED policies, so the tint on this row and the rules the row expands to
-        // show can never name different severities.
-        worstFailingSeverity: worstFailingSeverityOf(assessed)
-      };
-      stateCounts[node2.state] += 1;
-      if (node2.state !== "scored") continue;
-      const key = (_d = row.categoryExternalId) != null ? _d : "";
-      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
-      list2.push(node2);
-      subsByCategory.set(key, list2);
-    }
-    const categories = rows.filter((r) => r.level === "category").map((row) => {
-      var _a6, _b2;
-      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
-      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
-      return {
-        ...toNode(row, externalId),
-        subcategories,
-        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId,
-        worstFailingSeverity: subcategories.reduce(
-          (worst, sub) => worstOf(worst, sub.worstFailingSeverity),
-          null
-        )
-      };
-    }).filter((cat) => cat.subcategories.length > 0);
-    const distinct = /* @__PURE__ */ new Map();
-    for (const cat of categories) {
-      for (const sub of cat.subcategories) {
-        for (const p of sub.policies) {
-          distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
-        }
-      }
-    }
-    const worstFailingSeverity = categories.reduce(
-      (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
-      null
-    );
-    const frameworkState = postureState(
-      (_g = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _g : null,
-      (_h = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _h : null
-    );
-    return {
-      frameworkId,
-      name: (_j = (_i = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _i : catalogue == null ? void 0 : catalogue.name) != null ? _j : frameworkId,
-      description: (_k = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _k : catalogue == null ? void 0 : catalogue.description,
-      posturePct: (_l = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _l : null,
-      state: frameworkState,
-      // Same guard toNode applies one level down: only a row that actually scored gets a
-      // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
-      postureBand: frameworkState === "scored" ? postureBandOf((_m = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _m : null) : null,
-      emptyPostureReason: (_n = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _n : null,
-      passSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _o : 0,
-      failSubCategoryCount: (_p = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _p : 0,
-      categories,
-      stateCounts,
-      policyCount: distinct.size,
-      failingPolicyCount: [...distinct.values()].filter(Boolean).length,
-      // Only ids that appear NOWHERE in the listed tree. A control mapped under six
-      // subcategories and evaluated under one of them is a listed policy, not a dropped one,
-      // and counting it in both places would describe the same rule twice.
-      unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
-      worstFailingSeverity
-    };
-  }
-  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
-    const ids = [];
-    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
-    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
-    trees.sort((a, b) => {
-      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
-      if (a.posturePct === null) return 1;
-      if (b.posturePct === null) return -1;
-      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
-    });
-    return trees;
-  }
-  function complianceKpis(posture, policies = []) {
-    const frameworkRows = posture.filter((p) => p.level === "framework");
-    const scored = frameworkRows.filter(
-      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
-    );
-    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
-      var _a5;
-      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
-    }, 0) / scored.length) : null;
-    const failingSubcategories = posture.filter(
-      (p) => p.level === "subcategory" && p.failCount > 0
-    ).length;
-    const failing = /* @__PURE__ */ new Set();
-    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
-    return {
-      frameworks: frameworkRows.length,
-      scoredFrameworks: scored.length,
-      averagePosture,
-      averagePostureBand: postureBandOf(averagePosture),
-      failingSubcategories,
-      failingPolicies: failing.size
-    };
-  }
-
   // src/domain/fiveRsPosture.ts
   function isActiveFiveRsPolicy(p) {
     return p.selected && p.enabled !== false;
@@ -12463,7 +12457,7 @@ var Server = (() => {
     let passCount = 0;
     let failCount = 0;
     let cleanPolicyCount = 0;
-    let failingPolicyCount = 0;
+    let failingPolicyCount2 = 0;
     let activePolicyCount = 0;
     let disabledPolicyCount = 0;
     for (const p of scope.policies) {
@@ -12473,7 +12467,7 @@ var Server = (() => {
       passCount += p.passCount;
       failCount += p.failCount;
       if (p.failCount === 0) cleanPolicyCount += 1;
-      else failingPolicyCount += 1;
+      else failingPolicyCount2 += 1;
     }
     const posturePct2 = activePolicyCount === 0 || passCount + failCount === 0 ? null : clampAwayFromFalseExtreme(
       Math.round(100 * passCount / (passCount + failCount)),
@@ -12482,7 +12476,7 @@ var Server = (() => {
     );
     const controlPassPct = activePolicyCount === 0 ? null : clampAwayFromFalseExtreme(
       Math.round(100 * cleanPolicyCount / activePolicyCount),
-      failingPolicyCount > 0,
+      failingPolicyCount2 > 0,
       cleanPolicyCount > 0
     );
     return {
@@ -12491,7 +12485,7 @@ var Server = (() => {
       postureBand: postureBandOf(posturePct2),
       controlPassPct,
       cleanPolicyCount,
-      failingPolicyCount,
+      failingPolicyCount: failingPolicyCount2,
       activePolicyCount,
       disabledPolicyCount,
       passCount,
@@ -12512,11 +12506,13 @@ var Server = (() => {
   };
   var DEFAULT_KIND_CAP = 12;
   function nodeOrder(a, b) {
-    var _a5, _b;
+    var _a5, _b, _c, _d;
     const sev = severityRank(a.severity) - severityRank(b.severity);
     if (sev !== 0) return sev;
-    const aars = ((_a5 = b.aars) != null ? _a5 : -1) - ((_b = a.aars) != null ? _b : -1);
-    if (aars !== 0) return aars;
+    const issues2 = ((_a5 = b.openIssues) != null ? _a5 : 0) - ((_b = a.openIssues) != null ? _b : 0);
+    if (issues2 !== 0) return issues2;
+    const findings = ((_c = b.openFindings) != null ? _c : 0) - ((_d = a.openFindings) != null ? _d : 0);
+    if (findings !== 0) return findings;
     return cmp(a.name, b.name);
   }
   function passesFilters(node2, f) {
@@ -12674,7 +12670,7 @@ var Server = (() => {
   var LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"];
   var DEFAULT_LAYOUT = "grid";
   var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"];
-  var SORT_KEYS = ["smart", "severity", "aars", "name"];
+  var SORT_KEYS = ["smart", "severity", "issues", "name"];
   var GROUP_NONE = "__none__";
   var LANE_OF = {
     ISSUE: 0,
@@ -12753,10 +12749,10 @@ var Server = (() => {
     if (sort === "severity") {
       return (a, b) => severityRank(a.severity) - severityRank(b.severity) || cmpName(a, b) || cmpId(a, b);
     }
-    if (sort === "aars") {
+    if (sort === "issues") {
       return (a, b) => {
         var _a5, _b;
-        return ((_a5 = b.aars) != null ? _a5 : -1) - ((_b = a.aars) != null ? _b : -1) || cmpName(a, b) || cmpId(a, b);
+        return ((_a5 = b.openIssues) != null ? _a5 : 0) - ((_b = a.openIssues) != null ? _b : 0) || cmpName(a, b) || cmpId(a, b);
       };
     }
     if (sort === "name") {
@@ -13063,12 +13059,12 @@ var Server = (() => {
       for (let sweep = 0; sweep < BARYCENTER_SWEEPS; sweep++) {
         for (const lane of lanes) {
           if (lane.length < 2) continue;
-          const score2 = /* @__PURE__ */ new Map();
+          const score = /* @__PURE__ */ new Map();
           for (const id of lane) {
             const others = ((_e = neighbors.get(id)) != null ? _e : []).filter(
               (n) => laneIndex.get(n) !== laneIndex.get(id) && rowOf.has(n)
             );
-            score2.set(
+            score.set(
               id,
               others.length ? others.reduce((acc, n) => {
                 var _a6;
@@ -13078,7 +13074,7 @@ var Server = (() => {
           }
           lane.sort((a, b) => {
             var _a6, _b2, _c2, _d2;
-            const d = ((_a6 = score2.get(a)) != null ? _a6 : 0) - ((_b2 = score2.get(b)) != null ? _b2 : 0);
+            const d = ((_a6 = score.get(a)) != null ? _a6 : 0) - ((_b2 = score.get(b)) != null ? _b2 : 0);
             if (d !== 0) return d;
             return ((_c2 = rowOf.get(a)) != null ? _c2 : 0) - ((_d2 = rowOf.get(b)) != null ? _d2 : 0);
           });
@@ -13901,16 +13897,32 @@ var Server = (() => {
     return {
       mode: legacyGrouped ? groupBy2[0] === "asset" ? "radial" : "grid" : pick(p["layout"], LAYOUT_MODES, DEFAULT_LAYOUT),
       groupBy: groupBy2,
-      sort: pick(p["sort"], SORT_KEYS, "smart")
+      // `sort=aars` IS AN OLD LINK too, and it maps to `issues` rather than falling through
+      // to `smart`. The two are the closest honest pair: the score's own ordering was driven
+      // almost entirely by its issue pillar (tau-b 0.863 — ai/AARS_SCORING_ASSESSMENT.md §3,
+      // pinned by test/scoreOrdinality.test.ts), so a reader who asked for "worst score
+      // first" gets the ordering they were actually looking at. Falling back to `smart`
+      // would silently answer a different question and give no sign it had.
+      sort: pick(
+        typeof p["sort"] === "string" && p["sort"].toLowerCase() === "aars" ? "issues" : p["sort"],
+        SORT_KEYS,
+        "smart"
+      )
     };
   }
   function resolveGraphParams(p, ctx) {
-    var _a5;
     const seed = typeof p["seed"] === "string" ? p["seed"] : "";
     const seedKind = typeof p["seedKind"] === "string" ? p["seedKind"] : "";
     let seedIds;
-    if (seedKind === "scored") {
-      seedIds = (_a5 = ctx.scoredAssetIds) != null ? _a5 : [];
+    if (seedKind === "scored" || seedKind === "issues") {
+      const withIssues = [];
+      const seen = {};
+      for (const issue2 of ctx.issues) {
+        if (!issue2.assetId || seen[issue2.assetId]) continue;
+        seen[issue2.assetId] = true;
+        withIssues.push(issue2.assetId);
+      }
+      seedIds = withIssues;
     } else if (seed && (seedKind === "combo" || comboGroupById(seed))) {
       seedIds = comboAssetIds(ctx.issues, seed);
     } else if (seed) {
@@ -13937,7 +13949,7 @@ var Server = (() => {
       filters: hasFilters ? filters : void 0,
       maxNodes,
       maxEdges: Math.round(maxNodes * EDGE_BUDGET_RATIO),
-      ...seedKind === "scored" ? { filterSeeds: true } : {}
+      ...seedKind === "scored" || seedKind === "issues" ? { filterSeeds: true } : {}
     };
   }
   function graphCacheParams(p) {
@@ -14099,27 +14111,29 @@ var Server = (() => {
     },
     { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
     { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
-    // Keys are the persisted identifiers and never change; the LABELS are the display name
-    // (aars.AARS_DISPLAY_LABEL) — see its comment for why the two deliberately differ.
-    { key: "aars", label: "Findings score", type: "number", numeric: true, get: (n) => {
-      var _a5;
-      return (_a5 = n.aars) != null ? _a5 : null;
-    } },
+    // The two counts that replaced the score, the percentile and the level here. A query is
+    // a question about the landscape, and these are answerable from what Wiz reported;
+    // "findings score above 70" was answerable only from a model this app was still
+    // calibrating, which is why it now lives on the workbench and nowhere else.
     {
-      key: "aarsPercentile",
-      label: "Findings percentile",
+      key: "openIssues",
+      label: "Open issues",
       type: "number",
       numeric: true,
       get: (n) => {
         var _a5;
-        return (_a5 = n.aarsPercentile) != null ? _a5 : null;
+        return (_a5 = n.openIssues) != null ? _a5 : 0;
       }
     },
     {
-      key: "aarsSeverity",
-      label: "Findings score level",
-      type: "choice",
-      get: (n) => orNull(n.aarsSeverity)
+      key: "openFindings",
+      label: "Cloud findings",
+      type: "number",
+      numeric: true,
+      get: (n) => {
+        var _a5;
+        return (_a5 = n.openFindings) != null ? _a5 : 0;
+      }
     },
     {
       key: "projects",
@@ -14314,11 +14328,19 @@ var Server = (() => {
   }
   var KIND_SET = new Set(NODE_KINDS);
   var EDGE_SET = new Set(EDGE_TYPES);
-  function validateQuery(raw) {
-    const counter = { nodes: 0 };
-    const q = readNode(raw, 1, counter);
-    return q;
+  function validateQueryWithWarnings(raw) {
+    const counter = { nodes: 0, retired: [] };
+    const query = readNode(raw, 1, counter);
+    const retired = counter.retired.filter((k, i, all) => all.indexOf(k) === i);
+    return { query, retired };
   }
+  var RETIRED_FIELDS = /* @__PURE__ */ new Set([
+    "aars",
+    "aarsPercentile",
+    "aarsSeverity",
+    "postureTier",
+    "problemOutcome"
+  ]);
   function readKinds(raw) {
     const list2 = Array.isArray(raw) ? raw : [raw];
     if (!list2.length) fail("node names no kind");
@@ -14347,7 +14369,12 @@ var Server = (() => {
         if (!f || typeof f !== "object") fail("filter must be an object");
         const key = f["key"];
         const values = f["values"];
-        if (typeof key !== "string" || key !== "id" && !FIELD_BY_KEY.has(key)) {
+        if (typeof key !== "string") fail(`unknown filter field: ${String(key)}`);
+        if (RETIRED_FIELDS.has(key)) {
+          counter.retired.push(key);
+          continue;
+        }
+        if (key !== "id" && !FIELD_BY_KEY.has(key)) {
           fail(`unknown filter field: ${String(key)}`);
         }
         if (!Array.isArray(values) || !values.length) fail(`filter ${key} has no values`);
@@ -15174,12 +15201,13 @@ var Server = (() => {
         totalAssets: assets.length,
         openIssues: issues2.length,
         bySeverity,
-        // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is a
-        // legitimate thing to publish and is the same object the trend charts over time. It
-        // is not the per-asset claim; that moved to `aarsPercentile`.
+        // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is
+        // a legitimate thing to publish and is what the workbench's band rail draws. It is
+        // not a per-asset claim, and there is no longer any per-asset claim to be — the
+        // percentile that briefly carried one went with the surfaces that led with it.
         byAarsSeverity,
-        // The percentile's denominator, so a surface reading a percentile off a node can
-        // name the population it is a percentile OF without a second round trip.
+        // How much of the landscape the model actually prices, which is the denominator
+        // under the distribution above: "19 CRITICAL" means nothing without "of 30 scored".
         aarsScored: assets.filter((a) => typeof a.aars === "number").length
       },
       filterOptions: filterOptions(assets, loadAssets()),
@@ -15266,17 +15294,13 @@ var Server = (() => {
         const options = resolveGraphParams(params, {
           defaultDepth: getDefaultDepth2(),
           maxNodes: getMaxNodes2(),
-          issues: openIssues(),
-          scoredAssetIds: doc.nodes.filter((n) => {
-            var _a6;
-            return ((_a6 = n.aars) != null ? _a6 : 0) > 0;
-          }).map((n) => n.id)
+          issues: openIssues()
         });
         const view = resolveLayoutParams(params);
         const projection = projectGraph(doc, options);
         const layout = layoutGraph(projection, view);
         return {
-          nodes: projection.nodes,
+          nodes: projection.nodes.map((n) => publicNode(n)),
           edges: projection.edges,
           summaries: projection.summaries,
           counts: projection.counts,
@@ -15335,7 +15359,7 @@ var Server = (() => {
     return run(() => {
       var _a5;
       const params = p != null ? p : {};
-      const query = validateQuery((_a5 = params["query"]) != null ? _a5 : DEFAULT_QUERY);
+      const { query, retired } = validateQueryWithWarnings((_a5 = params["query"]) != null ? _a5 : DEFAULT_QUERY);
       const columns = readColumnSelection(params["columns"]);
       const view = resolveLayoutParams(params);
       const maxNodes = clampInt(
@@ -15344,7 +15368,7 @@ var Server = (() => {
         MAX_NODES_FLOOR,
         MAX_NODES_CEILING
       );
-      return cached("graphQuery", { query, columns, view, maxNodes }, () => {
+      const answer = cached("graphQuery", { query, columns, view, maxNodes }, () => {
         const doc = viewGraphDoc();
         if (!doc) return { empty: true };
         const result = runQuery(doc, query, { columns });
@@ -15355,7 +15379,7 @@ var Server = (() => {
           total: result.total,
           capped: result.capped,
           truncated: result.truncated,
-          nodes: projection.nodes,
+          nodes: projection.nodes.map((n) => publicNode(n)),
           edges: projection.edges,
           summaries: projection.summaries,
           counts: projection.counts,
@@ -15364,6 +15388,7 @@ var Server = (() => {
           syncedAt: doc.syncedAt
         };
       });
+      return retired.length ? { ...answer, retiredFilters: retired } : answer;
     });
   }
   function readColumnSelection(raw) {
@@ -15407,7 +15432,7 @@ var Server = (() => {
     };
   }
   function assetRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K, _L, _M, _N;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J;
     return {
       id: n.id,
       name: n.name,
@@ -15421,63 +15446,59 @@ var Server = (() => {
       externalId: (_g = n.externalId) != null ? _g : null,
       projects: ((_h = n.projects) != null ? _h : []).map((p) => p.name),
       severity: (_i = n.severity) != null ? _i : null,
-      aars: (_j = n.aars) != null ? _j : null,
-      aarsSeverity: (_k = n.aarsSeverity) != null ? _k : null,
-      // The landscape percentile, which is what the asset surfaces LEAD with now — the band
-      // beside it is context. Read-derived (syncStore.withAarsPercentile), so null here
-      // means "not in the scored population", never "we have not computed it yet".
-      aarsPercentile: (_l = n.aarsPercentile) != null ? _l : null,
-      // Phase 6: the posture tier, BESIDE the AARS score above, never blended into it — see
-      // posture.ts's own header for why a tier is not an aggregate of what has been found.
-      postureTier: (_m = n.postureTier) != null ? _m : null,
-      postureInput: (_n = n.postureInput) != null ? _n : null,
-      worstOpenProblem: (_o = n.worstOpenProblem) != null ? _o : null,
-      comboGroups: (_p = n.comboGroups) != null ? _p : [],
-      internet: (_q = n.isAccessibleFromInternet) != null ? _q : null,
-      openInternet: (_r = n.isOpenToAllInternet) != null ? _r : null,
+      // What every asset surface leads with now: two counts and the severity of the worst
+      // thing in the first of them. No score, no band, no percentile, no posture tier, no
+      // problem outcome — the three models this app derives reach the workbench and nothing
+      // else, so this projection is where that stops being a UI convention and becomes a
+      // property of the payload.
+      openIssues: (_j = n.openIssues) != null ? _j : 0,
+      openFindings: (_k = n.openFindings) != null ? _k : 0,
+      comboGroups: (_l = n.comboGroups) != null ? _l : [],
+      internet: (_m = n.isAccessibleFromInternet) != null ? _m : null,
+      openInternet: (_n = n.isOpenToAllInternet) != null ? _n : null,
       // ENDPOINT rows only; null everywhere else. The pair is the dynamic scanner's verdict,
       // and the detail sheet prints both because either alone is misleading — an open port
       // behind SSO rates Low and is not an exposure.
-      exposureLevel: (_s = n.exposureLevel) != null ? _s : null,
-      portValidation: (_t = n.portValidation) != null ? _t : null,
+      exposureLevel: (_o = n.exposureLevel) != null ? _o : null,
+      portValidation: (_p = n.portValidation) != null ? _p : null,
       // Null, not {}, when the exposure steps never reached this asset — the same "clean" vs
       // "never asked" split dataFindingCount keeps below.
-      exposureEvidence: (_u = n.exposureEvidence) != null ? _u : null,
+      exposureEvidence: (_q = n.exposureEvidence) != null ? _q : null,
       // Identity rows carry the first two; AI assets carry the third. Null, not false/{}, for
       // the "never reported" vs "reported clean" split the rest of this row keeps.
-      inactive: (_v = n.inactive) != null ? _v : null,
-      inactiveTimeframe: (_w = n.inactiveTimeframe) != null ? _w : null,
-      humanAccess: (_x = n.humanAccess) != null ? _x : null,
-      sensitiveAccess: (_y = n.hasAccessToSensitiveData) != null ? _y : false,
-      sensitiveData: (_z = n.hasSensitiveData) != null ? _z : false,
-      highPriv: (_A = n.hasHighPrivileges) != null ? _A : false,
-      adminPriv: (_B = n.hasAdminPrivileges) != null ? _B : false,
-      guardrailMissing: (_C = n.guardrailMissing) != null ? _C : false,
+      inactive: (_r = n.inactive) != null ? _r : null,
+      inactiveTimeframe: (_s = n.inactiveTimeframe) != null ? _s : null,
+      humanAccess: (_t = n.humanAccess) != null ? _t : null,
+      sensitiveAccess: (_u = n.hasAccessToSensitiveData) != null ? _u : false,
+      sensitiveData: (_v = n.hasSensitiveData) != null ? _v : false,
+      highPriv: (_w = n.hasHighPrivileges) != null ? _w : false,
+      adminPriv: (_x = n.hasAdminPrivileges) != null ? _x : false,
+      guardrailMissing: (_y = n.guardrailMissing) != null ? _y : false,
       // Null, not 0, when the sensitive-data traversal never reached this node: the graph
       // card and the insight row both key on truthiness, and a 0 would make "we never asked"
       // render exactly like "we looked and it is clean".
-      dataFindingCount: (_D = n.dataFindingCount) != null ? _D : null,
-      dataFindingSeverities: (_E = n.dataFindingSeverities) != null ? _E : null,
+      dataFindingCount: (_z = n.dataFindingCount) != null ? _z : null,
+      dataFindingSeverities: (_A = n.dataFindingSeverities) != null ? _A : null,
       // On the aggregate node only — the count it collapses.
-      summaryCount: (_F = n.summaryCount) != null ? _F : null,
-      technologyCategories: (_G = n.technologyCategories) != null ? _G : [],
-      cloudAccount: (_I = (_H = n.cloudAccount) == null ? void 0 : _H.name) != null ? _I : null,
+      summaryCount: (_B = n.summaryCount) != null ? _B : null,
+      technologyCategories: (_C = n.technologyCategories) != null ? _C : [],
+      cloudAccount: (_E = (_D = n.cloudAccount) == null ? void 0 : _D.name) != null ? _E : null,
       // Full account object, for the detail sheet — cloudAccount above stays a bare
       // name string since existing client code already reads it as one.
-      cloudAccountRef: (_J = n.cloudAccount) != null ? _J : null,
-      tags: (_K = n.tags) != null ? _K : [],
-      identityPurpose: (_L = n.identityPurpose) != null ? _L : null,
-      issueAnalytics: (_M = n.issueAnalytics) != null ? _M : null,
+      cloudAccountRef: (_F = n.cloudAccount) != null ? _F : null,
+      tags: (_G = n.tags) != null ? _G : [],
+      identityPurpose: (_H = n.identityPurpose) != null ? _H : null,
+      issueAnalytics: (_I = n.issueAnalytics) != null ? _I : null,
       // Full project objects, for the detail sheet — projects above stays name-only.
-      projectRefs: ((_N = n.projects) != null ? _N : []).map((p) => ({
+      projectRefs: ((_J = n.projects) != null ? _J : []).map((p) => ({
         id: p.id,
         name: p.name,
         businessImpact: p.businessImpact
       }))
     };
   }
-  function assetTableRow(n, issuesBySeverity, aarsPercentile) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+  function assetTableRow(n, issuesBySeverity, findingsBySeverity) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     const row = {
       id: n.id,
       name: n.name,
@@ -15485,15 +15506,13 @@ var Server = (() => {
       cloud: (_a5 = n.cloudPlatform) != null ? _a5 : null,
       region: (_b = n.region) != null ? _b : null,
       severity: (_c = n.severity) != null ? _c : null,
-      aars: (_d = n.aars) != null ? _d : null,
-      aarsSeverity: (_e = n.aarsSeverity) != null ? _e : null,
-      // What the table's score cell leads with. See assetRow's note.
-      aarsPercentile: (_f = n.aarsPercentile) != null ? _f : null,
-      // Phase 6: BESIDE aars — the two must be visibly independent columns, never merged.
-      postureTier: (_g = n.postureTier) != null ? _g : null,
-      worstOpenProblem: (_h = n.worstOpenProblem) != null ? _h : null,
-      combos: ((_i = n.comboGroups) != null ? _i : []).length,
-      guardrailMissing: (_j = n.guardrailMissing) != null ? _j : false,
+      // The two counts the register sorts, ranks and leads with. Read-derived on the node
+      // (syncStore.withOpenCounts) rather than recounted here, so the table, the graph and
+      // the asset sheet publish one number per asset instead of three that agree by luck.
+      openIssues: (_d = n.openIssues) != null ? _d : 0,
+      openFindings: (_e = n.openFindings) != null ? _e : 0,
+      combos: ((_f = n.comboGroups) != null ? _f : []).length,
+      guardrailMissing: (_g = n.guardrailMissing) != null ? _g : false,
       agentic: n.identityPurpose === "AGENTIC",
       // How many classified findings this asset can REACH — its own if it is a datastore,
       // whatever its execution identity can read if it is an agent.
@@ -15503,10 +15522,18 @@ var Server = (() => {
       // holding three findings would otherwise report 0 in the register while the graph drew
       // them. Identities fall in the same gap and stay uncovered here — service accounts are
       // unscored for reasons that predate this chain, so nothing persists their reach.
-      dataFindings: ((_l = (_k = n.aarsInput) == null ? void 0 : _k.dataFindings) != null ? _l : []).reduce((sum, f) => sum + f.count, 0) || ((_m = n.dataFindingCount) != null ? _m : 0),
-      projects: ((_n = n.projects) != null ? _n : []).map((p) => p.name)
+      //
+      // READING `aarsInput` IS NOT READING A VERDICT, and this line survives the cut that
+      // took the score off every page for that reason. `aarsInput.dataFindings` is the
+      // persisted reach WALK — how many classified findings this asset can get to — which
+      // the scoring model happens to price and which nothing else re-derives. Deleting it as
+      // "aars stuff" would silently zero a column about data exposure that has no opinion
+      // about any model. Pinned by a test for exactly that reason.
+      dataFindings: ((_i = (_h = n.aarsInput) == null ? void 0 : _h.dataFindings) != null ? _i : []).reduce((sum, f) => sum + f.count, 0) || ((_j = n.dataFindingCount) != null ? _j : 0),
+      projects: ((_k = n.projects) != null ? _k : []).map((p) => p.name)
     };
     if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
+    if (findingsBySeverity) row["findingsBySeverity"] = findingsBySeverity;
     return row;
   }
   function issuesBySeverityByAsset(issues2) {
@@ -15521,12 +15548,24 @@ var Server = (() => {
     }
     return out;
   }
+  function findingsBySeverityByAsset(findings) {
+    var _a5, _b, _c;
+    const out = /* @__PURE__ */ new Map();
+    for (const finding of findings) {
+      if (!finding.resourceId) continue;
+      const bucket = (_a5 = out.get(finding.resourceId)) != null ? _a5 : {};
+      const sev = (_b = finding.severity) != null ? _b : "UNKNOWN";
+      bucket[sev] = ((_c = bucket[sev]) != null ? _c : 0) + 1;
+      out.set(finding.resourceId, bucket);
+    }
+    return out;
+  }
   function assetsModel() {
     var _a5, _b;
     const history = syncHistory();
     const projectView = getProjectView2();
-    const trend = aarsTrendFromHistory(history, 90, projectView);
-    const registerPoints = projectView ? aarsTrendFromHistory(history).length : trend.length;
+    const trend = countTrendFromHistory(history, 90, projectView);
+    const registerPoints = projectView ? countTrendFromHistory(history).length : trend.length;
     const assets = viewAssets();
     const issues2 = openIssues();
     const reach = estateReach({
@@ -15548,30 +15587,22 @@ var Server = (() => {
     const agents = assets.filter((a) => a.kind === "AI_AGENT");
     const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
     const issueRollup = issuesBySeverityByAsset(issues2);
-    const scoredForPercentile = assets.filter(
-      (a) => typeof a.aars === "number"
-    );
-    const percentileValues = midrankPercentiles(scoredForPercentile.map((a) => a.aars));
-    const aarsPercentileById = new Map(
-      scoredForPercentile.map((a, i) => [a.id, Math.round(percentileValues[i])])
-    );
-    const rows = assets.map((a) => {
-      var _a6;
-      return assetTableRow(a, issueRollup.get(a.id), (_a6 = aarsPercentileById.get(a.id)) != null ? _a6 : null);
-    }).sort(ASSET_COMPARATORS.aars);
-    const postureTiers = countPostureTiers(assets);
-    const aarsSeverityCounts = {};
+    const findingRollup = findingsBySeverityByAsset(openGaps);
+    const rows = assets.map((a) => assetTableRow(a, issueRollup.get(a.id), findingRollup.get(a.id))).sort(ASSET_COMPARATORS.issues);
+    const severityCounts = {};
     const kinds = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
     const regions = /* @__PURE__ */ new Set();
     const severities = /* @__PURE__ */ new Set();
     const projects = /* @__PURE__ */ new Set();
     for (const a of assets) {
-      if (a.aarsSeverity) aarsSeverityCounts[a.aarsSeverity] = ((_a5 = aarsSeverityCounts[a.aarsSeverity]) != null ? _a5 : 0) + 1;
       kinds.add(a.kind);
       if (a.cloudPlatform) clouds.add(a.cloudPlatform);
       if (a.region) regions.add(a.region);
-      if (a.severity) severities.add(a.severity);
+      if (a.severity) {
+        severities.add(a.severity);
+        severityCounts[a.severity] = ((_a5 = severityCounts[a.severity]) != null ? _a5 : 0) + 1;
+      }
       for (const p of (_b = a.projects) != null ? _b : []) if (p.name) projects.add(p.name);
     }
     return {
@@ -15587,18 +15618,6 @@ var Server = (() => {
         // than from the AARS band.
         //
         // `criticalAars` / `highAars` used to sit here and were removed, not renamed. They
-        // could not carry a headline: on live data the CRITICAL band holds 19 of 30 scored
-        // assets while HIGH and MEDIUM hold none (ai/AARS_SCORING_ASSESSMENT.md §3, pinned
-        // by test/scoreOrdinality.test.ts), so "criticals" counted the whole working
-        // population and "highs" counted nothing. A KPI that reads as a queue has to be cut
-        // by a model that cuts queues; the tier lattice is that model, and tier 4 is its
-        // worst reading (posture.ts's TIER_VALUES — 4 = worst).
-        tier4Assets: postureTiers[4],
-        tier3Assets: postureTiers[3],
-        // The percentile's DENOMINATOR, published rather than implied — the S-test
-        // AARS_SCORING_ASSESSMENT.md §3 sets for any aggregate this app ships. Without it
-        // "60th percentile" is a number with no population behind it.
-        aarsScored: assets.filter((a) => typeof a.aars === "number").length,
         guardrailCoveragePct: agents.length ? Math.round(protectedAgents / agents.length * 100) : null,
         sensitiveAccess: assets.filter(
           (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData
@@ -15683,10 +15702,10 @@ var Server = (() => {
         ...identityHygieneKpis(assets),
         highPrivilege: assets.filter((a) => conditionHolds(a, "EXCESSIVE_PRIVILEGE")).length
       },
-      aarsSeverityCounts,
-      // Recorded per sync, so the window is short at first and cannot be backfilled.
-      aarsTrend: trend,
-      aarsTrendRuleChanges: ruleChangePoints(trend),
+      severityCounts,
+      // Recorded per sync, so the window is short at first and cannot be backfilled — and
+      // per SERIES, since the three counts entered the ledger on three different days.
+      countTrend: trend,
       trendScope: {
         projectId: projectView,
         scoped: Boolean(projectView),
@@ -15698,7 +15717,6 @@ var Server = (() => {
         kinds: [...kinds].sort(),
         clouds: [...clouds].sort(),
         regions: [...regions].sort(),
-        aarsSeverities: AARS_SEVERITY_ORDER.filter((sev) => aarsSeverityCounts[sev]),
         severities: SEVERITY_ORDER.filter((sev) => severities.has(sev)),
         projects: [...projects].sort()
       }
@@ -15711,11 +15729,10 @@ var Server = (() => {
       const head = {
         total: model.rows.length,
         kpis: model.kpis,
-        aarsSeverityCounts: model.aarsSeverityCounts,
-        aarsTrend: model.aarsTrend,
-        aarsTrendRuleChanges: model.aarsTrendRuleChanges,
+        severityCounts: model.severityCounts,
+        countTrend: model.countTrend,
         trendScope: model.trendScope,
-        aarsDeltas: aarsDeltas(model.aarsTrend, model.aarsSeverityCounts),
+        countDeltas: countDeltas(model.countTrend, model.kpis),
         reach: model.reach,
         facets: model.facets,
         pageSize: query.pageSize,
@@ -15748,27 +15765,38 @@ var Server = (() => {
       };
     });
   }
-  function aarsDeltas(trend, live) {
-    var _a5, _b, _c, _d, _e, _f, _g;
+  function countDeltas(trend, kpis) {
+    var _a5, _b;
     if (trend.length < 2) return null;
     const last = trend[trend.length - 1];
     const prev = trend[trend.length - 2];
-    if (last.ruleVersion !== prev.ruleVersion) return null;
-    for (const sev of AARS_SEVERITY_ORDER) {
-      if (((_b = (_a5 = last.counts) == null ? void 0 : _a5[sev]) != null ? _b : 0) !== ((_c = live[sev]) != null ? _c : 0)) return null;
-    }
+    const liveBy = {
+      issues: Number((_a5 = kpis["openIssues"]) != null ? _a5 : 0),
+      findings: Number((_b = kpis["complianceGaps"]) != null ? _b : 0),
+      postureFails: postureFailCount(kpis)
+    };
     const counts = {};
-    for (const sev of AARS_SEVERITY_ORDER) {
-      counts[sev] = ((_e = (_d = last.counts) == null ? void 0 : _d[sev]) != null ? _e : 0) - ((_g = (_f = prev.counts) == null ? void 0 : _f[sev]) != null ? _g : 0);
+    for (const key of COUNT_KEYS) {
+      const a = last.counts[key];
+      const b = prev.counts[key];
+      if (a === null || b === null) continue;
+      if (liveBy[key] === null || a !== liveBy[key]) continue;
+      counts[key] = a - b;
     }
-    return { counts, since: prev.at };
+    return Object.keys(counts).length ? { counts, since: prev.at } : null;
+  }
+  function postureFailCount(kpis) {
+    var _a5;
+    const posture = kpis["frameworkPosture"];
+    if (!posture || !posture.frameworks) return null;
+    return Number((_a5 = posture.failingPolicies) != null ? _a5 : 0);
   }
   function getAssetOptions(_p) {
     return run(
       () => cached("assetOptions", null, () => ({
         rows: [...viewAssets()].sort((a, b) => {
-          var _a5, _b;
-          return Number((_a5 = b.aars) != null ? _a5 : -1) - Number((_b = a.aars) != null ? _b : -1);
+          var _a5, _b, _c, _d;
+          return Number((_a5 = b.openIssues) != null ? _a5 : 0) - Number((_b = a.openIssues) != null ? _b : 0) || Number((_c = b.openFindings) != null ? _c : 0) - Number((_d = a.openFindings) != null ? _d : 0) || String(a.name).localeCompare(String(b.name));
         }).map((n) => ({ id: n.id, name: n.name, kind: n.kind }))
       }))
     );
@@ -15778,7 +15806,6 @@ var Server = (() => {
       var _a5;
       const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
       return cached("getAssetDetail", { id }, () => {
-        var _a6, _b, _c;
         const doc = loadGraphDoc();
         if (!doc) return null;
         const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
@@ -15798,27 +15825,25 @@ var Server = (() => {
           });
         }
         const findings = loadFindings().filter((f) => f.resourceId === id && isOpenGap(f)).map((f) => {
-          var _a7, _b2, _c2;
+          var _a6, _b, _c;
           return {
             id: f.id,
             resourceId: f.resourceId,
             ruleShortId: f.ruleShortId,
-            ruleName: (_a7 = f.ruleName) != null ? _a7 : null,
-            name: (_b2 = f.name) != null ? _b2 : null,
+            ruleName: (_a6 = f.ruleName) != null ? _a6 : null,
+            name: (_b = f.name) != null ? _b : null,
             severity: f.severity,
-            remediation: (_c2 = f.remediation) != null ? _c2 : null,
+            remediation: (_c = f.remediation) != null ? _c : null,
             frameworkCodes: f.frameworkCodes
           };
         });
-        const percentileRow = cached("assetsModel", null, assetsModel).rows.find((r) => r["id"] === id);
         return {
-          node: {
-            ...assetRow(node2),
-            aarsPillars: (_a6 = node2.aarsPillars) != null ? _a6 : null,
-            aarsInput: (_b = node2.aarsInput) != null ? _b : null,
-            aarsPercentile: percentileRow ? (_c = percentileRow["aarsPercentile"]) != null ? _c : null : null
-          },
-          issues: issues2,
+          // No verdict block. The sheet used to carry `aarsPillars` and `aarsInput` so it
+          // could draw the score's breakdown; the breakdown of a model under calibration
+          // belongs beside the model, and the sheet now reads the same counts, issues and
+          // findings every other asset surface does.
+          node: assetRow(node2),
+          issues: issues2.map((r) => publicRow(r)),
           neighbors,
           findings
         };
@@ -15841,13 +15866,6 @@ var Server = (() => {
       getFiveRsPins2()
     );
     return { policies: dropUnselected(allPolicies, scope), scope };
-  }
-  function dropUnselected(rows, scope) {
-    const dropped = new Set(unselectedPolicyIds(scope));
-    if (!dropped.size) return rows;
-    return rows.filter(
-      (pol) => pol.frameworkId !== scope.frameworkId || !dropped.has(pol.policyId)
-    );
   }
   function configModel() {
     const assetIds = aiAssetIdSet();
@@ -15933,7 +15951,7 @@ var Server = (() => {
         if (!finding) return null;
         const asset = loadAssets().filter((a) => a.id === finding.resourceId)[0];
         return {
-          finding,
+          finding: publicRow(finding),
           gap: isOpenGap(finding),
           // The asset the finding is keyed to, when the inventory holds it. Null is the
           // common case and is not an error: most AI-security rules fail on a region, an
@@ -16119,7 +16137,7 @@ var Server = (() => {
       return cached("getIssues", { group }, () => {
         let rows = viewIssues();
         if (group) rows = rows.filter((i) => i.comboGroup === group);
-        return { rows, total: rows.length };
+        return { rows: rows.map((r) => publicRow(r)), total: rows.length };
       });
     });
   }
@@ -16131,7 +16149,7 @@ var Server = (() => {
       if (!issue2) return null;
       const group = issue2.comboGroup ? comboGroupById(issue2.comboGroup) : null;
       return {
-        issue: issue2,
+        issue: publicRow(issue2),
         group: group ? {
           id: group.id,
           title: group.title,
@@ -16189,10 +16207,10 @@ var Server = (() => {
                 return a ? {
                   id,
                   name: a.name,
-                  aars: (_a6 = a.aars) != null ? _a6 : null,
-                  aarsSeverity: (_b2 = a.aarsSeverity) != null ? _b2 : null,
-                  aarsPercentile: (_c2 = a.aarsPercentile) != null ? _c2 : null
-                } : { id, name: id, aars: null, aarsSeverity: null, aarsPercentile: null };
+                  severity: (_a6 = a.severity) != null ? _a6 : null,
+                  openIssues: (_b2 = a.openIssues) != null ? _b2 : 0,
+                  openFindings: (_c2 = a.openFindings) != null ? _c2 : 0
+                } : { id, name: id, severity: null, openIssues: 0, openFindings: 0 };
               })
             };
           }),
@@ -16202,16 +16220,69 @@ var Server = (() => {
     );
   }
   function problemsModel() {
+    var _a5, _b;
     const assetsById = new Map(viewAssets().map((a) => [a.id, a]));
     const rows = rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById));
-    return { rows, outcomeCounts: countProblemRowsByOutcome(rows) };
+    const severityCounts = {};
+    for (const sev of SEVERITY_ORDER) severityCounts[sev] = 0;
+    for (const r of rows) {
+      const sev = String((_a5 = r.severity) != null ? _a5 : "");
+      if (sev) severityCounts[sev] = ((_b = severityCounts[sev]) != null ? _b : 0) + 1;
+    }
+    return { rows, severityCounts };
+  }
+  function publicNode(n) {
+    const out = {};
+    for (const [k, v] of Object.entries(n)) {
+      if (VERDICT_NODE_KEYS.indexOf(k) >= 0) continue;
+      out[k] = v;
+    }
+    return out;
+  }
+  var VERDICT_NODE_KEYS = [
+    "aars",
+    "aarsSeverity",
+    "aarsPillars",
+    "aarsInput",
+    "aarsRuleVersion",
+    "postureTier",
+    "postureInput",
+    "worstOpenProblem"
+  ];
+  var VERDICT_ROW_KEYS = ["problemOutcome", "problemInput"];
+  function publicRow(r) {
+    const out = {};
+    for (const [k, v] of Object.entries(r)) {
+      if (VERDICT_ROW_KEYS.indexOf(k) >= 0) continue;
+      out[k] = v;
+    }
+    return out;
+  }
+  function publicProblemRow(r) {
+    var _a5;
+    return {
+      id: r.id,
+      kind: r.kind,
+      title: r.title,
+      assetId: r.assetId,
+      assetName: r.assetName,
+      severity: r.severity,
+      dueAt: r.dueAt,
+      firstSeenAt: (_a5 = r.firstSeenAt) != null ? _a5 : null,
+      ruleId: r.ruleId,
+      ruleShortId: r.ruleShortId,
+      ruleRemediation: r.ruleRemediation,
+      businessImpact: r.businessImpact,
+      iac: r.iac,
+      ignored: r.ignored
+    };
   }
   function getProblems(p) {
     return run(() => {
       var _a5;
       const params = p != null ? p : {};
-      const outcome = String((_a5 = params["outcome"]) != null ? _a5 : "").toUpperCase();
-      const validOutcome = OUTCOME_VALUES.includes(outcome) ? outcome : "";
+      const severity = String((_a5 = params["severity"]) != null ? _a5 : "").toUpperCase();
+      const validSeverity = SEVERITY_ORDER.includes(severity) ? severity : "";
       const pageSize = Math.min(
         MAX_PAGE_SIZE,
         Math.max(1, Number(params["pageSize"]) || DEFAULT_PAGE_SIZE)
@@ -16222,25 +16293,28 @@ var Server = (() => {
         // The union invariant's left-hand side — every unresolved issue and every open
         // finding, regardless of the outcome filter or the mode below.
         total: model.rows.length,
-        outcomeCounts: model.outcomeCounts,
+        severityCounts: model.severityCounts,
         pageSize
       };
       if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
         return {
           ...head,
           all: true,
-          rows: model.rows,
+          rows: model.rows.map(publicProblemRow),
           filtered: model.rows.length,
           page: 0,
           pageCount: Math.max(1, Math.ceil(model.rows.length / pageSize))
         };
       }
-      const filtered = validOutcome ? model.rows.filter((r) => r.problemOutcome === validOutcome) : model.rows;
+      const filtered = validSeverity ? model.rows.filter((r) => {
+        var _a6;
+        return String((_a6 = r.severity) != null ? _a6 : "") === validSeverity;
+      }) : model.rows;
       const paged = pageOf(filtered, page, pageSize);
       return {
         ...head,
         all: false,
-        rows: paged.rows,
+        rows: paged.rows.map(publicProblemRow),
         filtered: filtered.length,
         page: paged.page,
         pageCount: paged.pageCount

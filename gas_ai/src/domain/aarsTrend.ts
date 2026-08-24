@@ -44,6 +44,17 @@ export const PROJECT_TOTALS_COLUMN = "project_totals_json";
 export interface ProjectTotals {
   aars: Record<string, number>;
   outcome: Record<string, number>;
+  /**
+   * The two counts that have a project grain, for the trend the inventory actually draws
+   * now. OPTIONAL, because a blob written before this key existed has no counts and must
+   * read as absent rather than as two zeros — the same rule the whole column follows.
+   *
+   * Compliance posture fails are deliberately NOT here. Wiz reports posture per
+   * (framework, category, subcategory, policy) and never per resource, so there is no
+   * project to attribute a failing policy to; that series stays register-wide and the
+   * chart says so rather than quietly showing the whole landscape under a project filter.
+   */
+  counts?: { issues: number; findings: number };
 }
 
 /**
@@ -85,7 +96,7 @@ export function countProjectTotals(
       for (const sev of AARS_SEVERITY_ORDER) aars[sev] = 0;
       const outcome: Record<string, number> = {};
       for (const o of OUTCOME_VALUES) outcome[o] = 0;
-      t = { aars, outcome };
+      t = { aars, outcome, counts: { issues: 0, findings: 0 } };
       totals[projectId] = t;
     }
     return t;
@@ -103,10 +114,19 @@ export function countProjectTotals(
   }
 
   for (const r of decided) {
+    // `assetId` vs `resourceId` is what separates an issue row from a finding row — the
+    // same discriminator the outcome attribution below already leans on, named here
+    // because this loop now counts the two populations separately as well as together.
+    const isFinding = r.assetId === undefined && r.resourceId !== undefined;
+    const assetId = r.assetId ?? r.resourceId ?? "";
+    const projects = projectsByAsset.get(assetId) ?? [];
+    for (const p of projects) {
+      const counts = entry(p.id).counts;
+      if (counts) counts[isFinding ? "findings" : "issues"] += 1;
+    }
     const outcome = r.problemOutcome;
     if (!outcome || !(OUTCOME_VALUES as readonly string[]).includes(outcome)) continue;
-    const assetId = r.assetId ?? r.resourceId ?? "";
-    for (const p of projectsByAsset.get(assetId) ?? []) entry(p.id).outcome[outcome] += 1;
+    for (const p of projects) entry(p.id).outcome[outcome] += 1;
   }
 
   return totals;
@@ -294,6 +314,110 @@ export function problemTrendFromHistory(
   rows: Rec[], limit = 90, projectId = "",
 ): ProblemTrendPoint[] {
   return trendFromHistory(rows, PROBLEM_OUTCOME_SPEC, limit, projectId);
+}
+
+// ------------------------------------------------------------------- the count trend
+
+export type CountKey = "issues" | "findings" | "postureFails";
+
+/** The three counts, in the order the chart stacks them. */
+export const COUNT_KEYS: readonly CountKey[] = ["issues", "findings", "postureFails"];
+
+/**
+ * One point on the trend the inventory draws now that no page charts a band distribution.
+ *
+ * `counts` is nullable PER SERIES, which is the whole reason this does not reuse
+ * `TrendPoint<K>`. The three series entered the ledger at different times: `issue_count`
+ * has been written since the first sync this app ever recorded, while `finding_count` and
+ * `posture_fail_count` start at the sync after the columns were appended. History cannot
+ * be backfilled from a ledger that never held it, so a sync that predates a column carries
+ * null for that series and the chart must break the line there. Plotting 0 would draw a
+ * landscape that had no failing controls until the day we started counting them, which is
+ * the one thing a trend must never say.
+ *
+ * `posture_fail_count` is null for a second reason as well: a sync that collected no
+ * framework posture (an optional, per-framework step a tenant can decline) genuinely has
+ * no number, and that is not zero failing policies either.
+ *
+ * NO `ruleVersion`. The band trend carried one because two distributions from different
+ * scoring models are not on the same scale; a count of open issues is on the same scale as
+ * every other count of open issues, forever. There is nothing to mark.
+ */
+export interface CountTrendPoint {
+  at: string;
+  counts: Record<CountKey, number | null>;
+}
+
+/** A history cell as a count, or null for "this sync recorded no such number". */
+function cellCount(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+}
+
+/** One project's `{issues, findings}` out of a `project_totals_json` cell, or null. */
+function projectCountEntry(cell: unknown, projectId: string): { issues: number; findings: number } | null {
+  let parsed: unknown = cell;
+  if (typeof cell === "string") {
+    if (!cell) return null;
+    try {
+      parsed = JSON.parse(cell);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const entry = (parsed as Record<string, unknown>)[projectId];
+  if (!entry || typeof entry !== "object") return null;
+  const counts = (entry as Record<string, unknown>)["counts"];
+  if (!counts || typeof counts !== "object") return null;
+  const issues = cellCount((counts as Record<string, unknown>)["issues"]);
+  const findings = cellCount((counts as Record<string, unknown>)["findings"]);
+  return issues === null || findings === null ? null : { issues, findings };
+}
+
+/**
+ * `sync_history` rows → the count trend, register-wide or scoped to one project.
+ *
+ * A row contributes when it is a successful sync with a timestamp and at least one series
+ * to plot; a row where all three are null is skipped rather than drawn as an empty column.
+ *
+ * Under a project filter the register-wide scalar columns are the WRONG population, so
+ * they are not read at all: the two scoped counts come from `project_totals_json` and
+ * posture fails go null, because a failing policy has no project to belong to. A caller
+ * that wants to say "N of M syncs carry a scoped point" counts the nulls — the same shape
+ * `trendScope.points` / `registerPoints` already publishes for the band series.
+ */
+export function countTrendFromHistory(
+  rows: Rec[], limit = 90, projectId = "",
+): CountTrendPoint[] {
+  const points: CountTrendPoint[] = [];
+  for (const r of rows) {
+    if (String(r["status"] ?? "") !== "SUCCESS") continue;
+    // `||` not `??`, for the same reason trendFromHistory uses it: an empty sheet cell
+    // reads as null here and as "" everywhere else, and both mean "fall back to the start".
+    const at = String(r["finished_at"] || r["started_at"] || "");
+    if (!at) continue;
+    let counts: Record<CountKey, number | null>;
+    if (projectId) {
+      const scoped = projectCountEntry(r[PROJECT_TOTALS_COLUMN], projectId);
+      counts = {
+        issues: scoped ? scoped.issues : null,
+        findings: scoped ? scoped.findings : null,
+        postureFails: null,
+      };
+    } else {
+      counts = {
+        issues: cellCount(r["issue_count"]),
+        findings: cellCount(r["finding_count"]),
+        postureFails: cellCount(r["posture_fail_count"]),
+      };
+    }
+    if (COUNT_KEYS.every((k) => counts[k] === null)) continue;
+    points.push({ at, counts });
+  }
+  points.sort(cmpBy((p) => p.at));
+  return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
 }
 
 /**

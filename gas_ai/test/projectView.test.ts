@@ -231,14 +231,14 @@ describe("the project view", () => {
     // test already sat green through a change that bypassed it.
     setView("");
     const wide = ok<Rec>(server.api.getAssets({}));
-    const wideTrend = wide["aarsTrend"] as Array<Rec>;
+    const wideTrend = wide["countTrend"] as Array<Rec>;
     const wideScope = wide["trendScope"] as Rec;
     expect(wideScope["scoped"]).toBe(false);
     expect(wideTrend.length).toBeGreaterThan(0);
 
     setView(SMALL);
     const scoped = ok<Rec>(server.api.getAssets({}));
-    const scopedTrend = scoped["aarsTrend"] as Array<Rec>;
+    const scopedTrend = scoped["countTrend"] as Array<Rec>;
     const scopedScope = scoped["trendScope"] as Rec;
     expect(scopedScope["scoped"]).toBe(true);
     expect(scopedScope["projectId"]).toBe(SMALL);
@@ -247,26 +247,31 @@ describe("the project view", () => {
     expect(scopedScope["registerPoints"]).toBe(wideTrend.length);
     expect(scopedScope["points"]).toBe(scopedTrend.length);
 
-    // DELTA has one scored asset against the register's thirty, so a scoped point must not be
-    // a register-wide point wearing a project label.
-    const lastWide = wideTrend[wideTrend.length - 1]!["counts"] as Record<string, number>;
-    const lastScoped = scopedTrend[scopedTrend.length - 1]!["counts"] as Record<string, number>;
-    const sum = (c: Record<string, number>) => Object.values(c).reduce((n, v) => n + v, 0);
-    expect(sum(lastScoped)).toBeLessThan(sum(lastWide));
+    // DELTA holds a handful of assets against the register's whole landscape, so a scoped
+    // point must not be a register-wide point wearing a project label.
+    type Counts = Record<string, number | null>;
+    const lastWide = wideTrend[wideTrend.length - 1]!["counts"] as Counts;
+    const lastScoped = scopedTrend[scopedTrend.length - 1]!["counts"] as Counts;
+    expect(lastScoped["issues"]!).toBeLessThan(lastWide["issues"]!);
 
-    // And the series agrees with the live distribution beside it on the same page — the
-    // pairing that was impossible before, and the reason the AARS delta chips can come back.
-    const liveCounts = scoped["aarsSeverityCounts"] as Record<string, number>;
-    for (const sev of Object.keys(lastScoped)) {
-      expect(lastScoped[sev], `trend and live counts disagree on ${sev}`)
-        .toBe(liveCounts[sev] ?? 0);
-    }
+    // Posture fails have no project grain at all — Wiz reports posture per framework,
+    // category, subcategory and policy, never per resource — so the scoped series says
+    // "no number" rather than carrying the register-wide count under a project label.
+    expect(lastWide["postureFails"]).toBeGreaterThan(0);
+    expect(lastScoped["postureFails"]).toBeNull();
+
+    // And the series agrees with the live counts beside it on the same page — the pairing
+    // that was impossible before the per-project blob, and the reason the delta chips work
+    // under a project view at all.
+    const kpis = scoped["kpis"] as Rec;
+    expect(lastScoped["issues"]).toBe(kpis["openIssues"]);
+    expect(lastScoped["findings"]).toBe(kpis["complianceGaps"]);
   });
 
   it("gives a project outside the register an empty series, not the register's", () => {
     setView("proj-not-in-this-register");
     const data = ok<Rec>(server.api.getAssets({}));
-    expect(data["aarsTrend"]).toEqual([]);
+    expect(data["countTrend"]).toEqual([]);
     const scope = data["trendScope"] as Rec;
     expect(scope["points"]).toBe(0);
     // registerPoints still stands, so the note can say what the reader is missing rather than

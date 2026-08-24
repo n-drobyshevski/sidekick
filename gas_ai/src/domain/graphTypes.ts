@@ -428,22 +428,26 @@ export interface GNode {
    */
   businessImpact?: string;
   severity?: Severity;      // worst attached open-issue severity (ISSUE nodes: own severity)
+  /**
+   * The two counts the register leads with, now that no derived verdict does: open issues
+   * attached to this asset, and failing configuration findings evaluated against it
+   * (`isOpenGap`, the app's single definition of a compliance gap).
+   *
+   * DERIVED ON READ, NEVER PERSISTED — the same contract the risk-topology nodes follow,
+   * but for a different reason than theirs. A count IS a fact about one asset and would
+   * survive being snapshotted; what it would not survive is the tabs moving underneath it.
+   * Both populations live in their own tabs and change without `ai_assets` being rewritten
+   * — a finding that resolves is an edit to `ai_findings` — so a stored copy here would go
+   * stale exactly when someone had fixed something. `syncStore.withOpenCounts` attaches
+   * them on every read path and nothing on the write path sets them.
+   *
+   * Absent on a node the fold never reached (ISSUE / SUMMARY / risk-topology stubs).
+   * Zero means "counted, and there are none" — never "not counted".
+   */
+  openIssues?: number;
+  openFindings?: number;
   aars?: number;            // findings score 0–100 (AI assets only) — see AARS_DISPLAY_LABEL
   aarsSeverity?: AarsSeverity;
-  /**
-   * Where `aars` sits in the whole scored landscape, as a whole-percent midrank percentile.
-   *
-   * DERIVED ON READ, NEVER PERSISTED, and unlike `aarsSeverity` it has no persisted
-   * fallback at all — because it is not a statement about this asset. It is a statement
-   * about this asset's POSITION IN A POPULATION, so it goes stale the instant any other
-   * asset is added, removed or rescored; a stored copy would be wrong far more often than
-   * it was right, and wrong silently. `syncStore.withAarsPercentile` attaches it on every
-   * read path and nothing on the write path sets it, which is what keeps the Drive graph
-   * snapshot free of a number that cannot survive being snapshotted.
-   *
-   * Tied assets share one value on purpose — see `rankStats.midrankPercentiles`.
-   */
-  aarsPercentile?: number;
   aarsPillars?: { toxic: number; compliance: number; data: number; exposure?: number };
   /**
    * What the score was computed FROM, minus the issue severities (those stay in the issues

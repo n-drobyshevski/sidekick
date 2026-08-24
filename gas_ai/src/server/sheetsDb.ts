@@ -211,6 +211,13 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // Appended, same no-migration contract: rows without it have no scoped series, which the
     // trend reports rather than fabricates.
     "project_totals_json",
+    // The count trend's two new series. `issue_count` above is the third and has been
+    // written since the first sync this ledger ever recorded, which is why the issues line
+    // has full history and these two start empty — appended under the same no-migration,
+    // no-backfill contract as everything above them. A row written before these existed
+    // carries NO value, and the reader plots a gap rather than a zero: see
+    // CountTrendPoint in aarsTrend.ts for why that distinction is load-bearing.
+    "finding_count", "posture_fail_count",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [

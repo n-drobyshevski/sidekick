@@ -12,13 +12,11 @@
 
 import { listSplit } from "../store.js";
 
-export const CONFIG_SORTS = ["severity", "rule", "resource", "firstSeen", "status", "priority"];
+export const CONFIG_SORTS = ["severity", "rule", "resource", "firstSeen", "status"];
 
 /** Risk columns open worst-first; identity columns A→Z. Mirrors DEFAULT_CONFIG_SORT_DIR. */
 export const CONFIG_SORT_DESC = {
   severity: true, firstSeen: true, rule: false, resource: false, status: false,
-  // Phase 5: the problem tree's outcome, worst (ACT) first — same convention as severity.
-  priority: true,
 };
 
 export const SEVERITY_RANK = {
@@ -27,28 +25,6 @@ export const SEVERITY_RANK = {
 
 /** Worst-first, matching SEVERITY_ORDER in src/domain/config.ts. */
 export const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
-
-// Mirrors OUTCOME_VALUES (src/domain/problem.ts) — the problem tree's four outcomes,
-// worst (ACT) first. Same mirroring rule this file's own header states for the rest of
-// this module: change one, change the other, or a filtered/sorted view of a big register
-// (over CONFIG_CLIENT_ALL_MAX, where the server never re-sees the filter) disagrees with
-// what the server would have answered.
-export const OUTCOME_RANK = ["ACT", "ATTEND", "TRACK_STAR", "TRACK"];
-
-/**
- * The same four words `ui/outcome.js`'s `outcomeLabel()` prints, DUPLICATED, and for this
- * file's own stated reason rather than by neglect: everything here is DOM-free so that
- * test/configViewMirror.test.js can run it under plain node, and importing ui/outcome.js
- * would put `ui/dom.js` one import away from that. It is the boundary js/lattice.js keeps
- * its own tone tables for.
- *
- * So: CHANGE ONE, CHANGE THE OTHER. Renaming `Track ★` to CISA's `Track*` had to be applied
- * here by hand, which is exactly the cost this duplication carries and the reason it is
- * written down now instead of being rediscovered next time.
- */
-export const OUTCOME_LABELS = {
-  ACT: "Act", ATTEND: "Attend", TRACK_STAR: "Track*", TRACK: "Track",
-};
 
 export const LINKAGE_VALUES = ["linked", "unlinked"];
 export const CONFIG_FLAGS = ["gap", "ignored", "iac"];
@@ -69,11 +45,6 @@ function sevRank(s) {
   return r === undefined ? SEVERITY_RANK.UNKNOWN : r;
 }
 
-/** Position on the problem tree's outcome scale, worst (ACT) first. Mirrors priorityRank. */
-function priorityRank(o) {
-  const i = OUTCOME_RANK.indexOf(o);
-  return i < 0 ? OUTCOME_RANK.length : i;
-}
 
 /** The filter state carried in the hash. Mirrors resolveConfigQuery. */
 export function readConfigParams(params) {
@@ -88,7 +59,6 @@ export function readConfigParams(params) {
     projects: listSplit(p.projects),
     linkage: listSplit(p.linkage).filter((v) => LINKAGE_VALUES.indexOf(v) >= 0),
     flags: listSplit(p.flags).filter((v) => CONFIG_FLAGS.indexOf(v) >= 0),
-    outcomes: listSplit(p.outcomes).filter((v) => OUTCOME_RANK.indexOf(v) >= 0),
   };
 }
 
@@ -123,7 +93,6 @@ export function matchesConfigRow(row, q) {
     if (!hit) return false;
   }
   if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
-  if (!anyOf(q.outcomes, row.problemOutcome)) return false;
   for (let i = 0; i < q.flags.length; i++) {
     if (!hasConfigFlag(row, q.flags[i])) return false;
   }
@@ -151,7 +120,6 @@ export function sortConfigRows(rows, sort, descending) {
     else if (sort === "resource") cmp = String(a.resourceName).localeCompare(String(b.resourceName));
     else if (sort === "status") cmp = String(a.status).localeCompare(String(b.status));
     else if (sort === "firstSeen") cmp = String(a.firstSeenAt).localeCompare(String(b.firstSeenAt));
-    else if (sort === "priority") cmp = priorityRank(b.problemOutcome) - priorityRank(a.problemOutcome);
     return cmp !== 0 ? cmp * dir : String(a.id).localeCompare(String(b.id));
   });
 }
@@ -188,13 +156,11 @@ function facetValues(key, row) {
   if (key === "rules") return row.ruleShortId ? [row.ruleShortId] : [];
   if (key === "projects") return row.projects || [];
   if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
-  if (key === "outcomes") return row.problemOutcome ? [row.problemOutcome] : [];
   return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f));
 }
 
 function facetSorter(key) {
   if (key === "severities") return (a, b) => sevRank(a.value) - sevRank(b.value);
-  if (key === "outcomes") return (a, b) => priorityRank(a.value) - priorityRank(b.value);
   if (key === "flags") return (a, b) => CONFIG_FLAGS.indexOf(a.value) - CONFIG_FLAGS.indexOf(b.value);
   if (key === "linkage") {
     return (a, b) => LINKAGE_VALUES.indexOf(a.value) - LINKAGE_VALUES.indexOf(b.value);
@@ -207,7 +173,7 @@ export function activeConfigFilters(q) {
   const out = [];
   const dims = [
     "severities", "statuses", "clouds", "resourceTypes", "rules", "projects",
-    "linkage", "flags", "outcomes",
+    "linkage", "flags",
   ];
   for (const key of dims) {
     for (const value of q[key] || []) out.push({ key, value });

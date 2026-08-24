@@ -126,6 +126,14 @@ const FULL_CTX = {
     agents: 14, protectedAgents: 3, sensitiveAccess: 9, internetExposed: 4,
     internetUnknown: 2, highPrivilege: 6, agenticIdentities: 11, aarsScored: 30,
     complianceGaps: 18, sensitiveDatastores: 5, dataFindings: 12,
+    // The two counts the register leads with, and the posture rollup behind the third.
+    // `frameworks` is what separates "no failing policies" from "no posture collected" —
+    // the resolver withholds the figure entirely on the second.
+    openIssues: 32,
+    frameworkPosture: {
+      frameworks: 4, scoredFrameworks: 4, averagePosture: 94,
+      failingSubcategories: 9, failingPolicies: 5,
+    },
   },
   digest: { totals: { patternsActive: 4, patternsTotal: 4, assetsAffected: 23, reRated: 29, totalOpen: 29 } },
   tally: { live: 7, partial: 2, unscanned: 1 },
@@ -191,11 +199,13 @@ describe("the prose, against the model it describes", () => {
     expect(aars.blurb).toContain(word + " pillars");
   });
 
-  // The figure's callout copy makes the same claim, from a different file.
-  it("counts the pillars correctly in the figure callouts", () => {
+  // The figure's callout copy CAN make the same claim, from a different file — and no
+  // longer does: the anatomy figure draws a graph node, and a graph node shows two counts
+  // rather than a score. So this asserts correctness without asserting presence; the claim
+  // itself is pinned above, in the glossary entry that is now its only home.
+  it("counts the pillars correctly in any figure callout that mentions them", () => {
     const word = PILLAR_WORDS[modelPillars().length];
     const claims = [...HELP_PAGE_JS.matchAll(/(\w+) pillars/g)].map((m) => m[1]);
-    expect(claims.length).toBeGreaterThan(0);
     for (const claim of claims) expect(claim).toBe(word);
   });
 
@@ -236,6 +246,25 @@ describe("the vocabulary it names", () => {
         expect(pages, e.id + " is drawn on " + route).toContain(route);
       }
       if (e.link) expect(pages, e.id + " links to " + e.link.route).toContain(e.link.route);
+    }
+  });
+
+  // The glossary's own record of where each term APPEARS is the cheapest guard there is on
+  // the isolation being real: if a page ever re-introduces a score, a band, a posture tier
+  // or a problem outcome, whoever does it has to come here and widen a `drawnOn` to say so
+  // — and that is the moment this test stops them.
+  it("draws every derived verdict on the Scoring Models page and nowhere else", () => {
+    const VERDICTS = [
+      "aars", "aars-band",
+      "pillar-a", "pillar-b", "pillar-c", "pillar-d", "gap-sources", "rescore",
+      "problem-tree", "posture-tier", "posture-axes", "priorities-rank", "priority",
+    ];
+    for (const id of VERDICTS) {
+      const entry = ENTRIES.filter((e) => e.id === id)[0];
+      expect(entry, "no glossary entry for " + id).toBeTruthy();
+      expect(entry.drawnOn, id + " is drawn outside the workbench").toEqual(["aars"]);
+      expect(entry.blurb, id + " does not say it is experimental")
+        .toContain("EXPERIMENTAL");
     }
   });
 

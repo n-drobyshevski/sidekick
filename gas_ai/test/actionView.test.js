@@ -4,32 +4,32 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  ACTION_COMPARATORS, ACTION_SORT_DESC, KIND_VALUES, OUTCOME_RANK,
+  ACTION_COMPARATORS, ACTION_SORT_DESC, KIND_VALUES, SEVERITY_RANK,
   applyActionFilters, actionFilterOptions, sortActions,
 } from "../src/client/js/pages/actionView.js";
 
 const ROWS = [
   {
     key: "ISSUE|wc-1|", kind: "ISSUE", title: "Missing guardrail", ruleShortId: undefined,
-    worstOutcome: "ACT", problems: 13, assets: 9, firstSeenAt: "2026-06-01T00:00:00Z",
+    worstSeverity: "CRITICAL", problems: 13, assets: 9, firstSeenAt: "2026-06-01T00:00:00Z",
   },
   {
     key: "FINDING||SUB-082", kind: "FINDING", title: "Encryption at rest", ruleShortId: "SUB-082",
-    worstOutcome: "TRACK_STAR", problems: 4, assets: 4, firstSeenAt: null,
+    worstSeverity: "HIGH", problems: 4, assets: 4, firstSeenAt: null,
   },
   {
     key: "ISSUE|wc-2|", kind: "ISSUE", title: "Excessive privilege", ruleShortId: undefined,
-    worstOutcome: "TRACK", problems: 2, assets: 6, firstSeenAt: "2026-07-15T00:00:00Z",
+    worstSeverity: "LOW", problems: 2, assets: 6, firstSeenAt: "2026-07-15T00:00:00Z",
   },
   {
     key: "FINDING||SUB-003", kind: "FINDING", title: "Public bucket", ruleShortId: "SUB-003",
-    worstOutcome: "", problems: 1, assets: 1, firstSeenAt: "2026-05-01T00:00:00Z",
+    worstSeverity: "", problems: 1, assets: 1, firstSeenAt: "2026-05-01T00:00:00Z",
   },
 ];
 
 describe("applyActionFilters", () => {
-  it("filters by outcome", () => {
-    const filtered = applyActionFilters(ROWS, { outcome: "ACT" });
+  it("filters by severity", () => {
+    const filtered = applyActionFilters(ROWS, { severity: "CRITICAL" });
     expect(filtered.map((r) => r.key)).toEqual(["ISSUE|wc-1|"]);
   });
 
@@ -46,7 +46,7 @@ describe("applyActionFilters", () => {
   });
 
   it("ANDs every active dimension", () => {
-    const filtered = applyActionFilters(ROWS, { kind: "ISSUE", outcome: "TRACK" });
+    const filtered = applyActionFilters(ROWS, { kind: "ISSUE", severity: "LOW" });
     expect(filtered.map((r) => r.key)).toEqual(["ISSUE|wc-2|"]);
   });
 
@@ -62,21 +62,21 @@ describe("applyActionFilters", () => {
 });
 
 describe("actionFilterOptions", () => {
-  it("lists only the outcomes and kinds actually present, outcomes worst-first", () => {
+  it("lists only the severities and kinds actually present, worst-first", () => {
     const options = actionFilterOptions(ROWS);
-    expect(options.outcomes).toEqual(["ACT", "TRACK_STAR", "TRACK"]);
+    expect(options.severities).toEqual(["CRITICAL", "HIGH", "LOW"]);
     expect(options.kinds).toEqual(KIND_VALUES); // both ISSUE and FINDING appear
   });
 
-  it("never lists the undecided ('') outcome as a pill", () => {
+  it("never lists an unrated ('') severity as a pill", () => {
     const options = actionFilterOptions(ROWS);
-    expect(options.outcomes).not.toContain("");
+    expect(options.severities).not.toContain("");
   });
 });
 
 describe("ACTION_COMPARATORS / sortActions", () => {
-  it("priority: worst outcome (ACT) first, undecided last", () => {
-    const sorted = sortActions(ROWS, "priority", 1);
+  it("worstSeverity: worst (CRITICAL) first, unrated last", () => {
+    const sorted = sortActions(ROWS, "worstSeverity", 1);
     expect(sorted.map((r) => r.key)).toEqual([
       "ISSUE|wc-1|", "FINDING||SUB-082", "ISSUE|wc-2|", "FINDING||SUB-003",
     ]);
@@ -121,7 +121,7 @@ describe("ACTION_COMPARATORS / sortActions", () => {
 
   it("does not mutate its input", () => {
     const input = ROWS.slice();
-    sortActions(input, "priority", 1);
+    sortActions(input, "worstSeverity", 1);
     expect(input.map((r) => r.key)).toEqual(ROWS.map((r) => r.key));
   });
 
@@ -132,7 +132,7 @@ describe("ACTION_COMPARATORS / sortActions", () => {
   });
 
   it("flags the leverage columns as naturally-descending", () => {
-    expect(ACTION_SORT_DESC).toEqual({ priority: true, closes: true, assets: true });
+    expect(ACTION_SORT_DESC).toEqual({ worstSeverity: true, closes: true, assets: true });
     expect(ACTION_COMPARATORS.firstSeen).toBeTypeOf("function");
     expect(ACTION_SORT_DESC.firstSeen).toBeUndefined(); // firstSeen opens oldest-first, i.e. ascending
   });

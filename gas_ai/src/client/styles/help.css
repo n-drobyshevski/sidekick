@@ -279,7 +279,7 @@
    darkened text token so it clears 4.5:1 on the pale tint underneath. */
 .help-node-dot { fill: var(--sev-high); }
 .help-node-sev { font-size: 10px; font-weight: 700; fill: var(--sev-high-text); }
-.help-node-aars {
+.help-node-counts {
   font-size: 10px; font-weight: 600; fill: var(--svg-text-2);
   font-variant-numeric: tabular-nums;
 }
