@@ -2625,21 +2625,6 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         "issueType": "TOXIC_COMBINATION",
         "justification": "Chatbot agent on serverless with excessive IAM — user-facing attack surface.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": true,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "OPEN",
-            "impact": "TOTAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "ATTEND",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -2691,21 +2676,6 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         "issueType": "TOXIC_COMBINATION",
         "justification": "Chatbot agent on serverless with excessive IAM — user-facing attack surface.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": true,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "OPEN",
-            "impact": "TOTAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "ATTEND",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -6221,23 +6191,6 @@ exports[`read endpoints > getConfigFindingDetail answers the same shape 1`] = `
       ],
       "name": "IAM policy allows Bedrock model invocation without guardrail condition",
       "opaPolicy": undefined,
-      "problemInput": {
-        "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-        "evidenced": false,
-        "exploitationSource": "none",
-        "unknowns": [
-          "exploitation",
-          "impact",
-          "exposure",
-        ],
-        "vector": {
-          "exploitation": "UNKNOWN",
-          "exposure": "UNVERIFIED",
-          "impact": "PARTIAL",
-          "mission": "LOW",
-        },
-      },
-      "problemOutcome": "TRACK_STAR",
       "problemRuleVersion": 0,
       "projects": [
         {
@@ -7717,42 +7670,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
     },
     "nodes": [
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 2,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-01",
@@ -7780,12 +7697,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 1,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -7826,41 +7737,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-01",
@@ -7888,12 +7766,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -7929,48 +7801,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 76,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "HIGH",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "ASI10",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 98,
-        "aarsPillars": {
-          "compliance": 30,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-01",
@@ -7998,12 +7830,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 4,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -8029,44 +7855,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 67,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM04",
-            },
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 90,
-        "aarsPillars": {
-          "compliance": 25,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
           "id": "gcp-account-02",
@@ -8094,12 +7884,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -8125,44 +7909,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 67,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM04",
-            },
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 90,
-        "aarsPillars": {
-          "compliance": 25,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
           "id": "gcp-account-02",
@@ -8190,12 +7938,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -8231,41 +7973,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 66,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "CONFIRMED",
-        },
-        "aarsPercentile": 82,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-03",
@@ -8294,12 +8003,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 1,
         "openIssues": 4,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -8325,31 +8028,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "comboGroups": [
@@ -8373,12 +8053,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -8398,31 +8072,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "comboGroups": [
@@ -8446,12 +8097,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -8471,31 +8116,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 66,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 82,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "comboGroups": [
@@ -8519,12 +8141,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 2,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -8550,44 +8166,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 71,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "LLM05",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "CONFIRMED",
-        },
-        "aarsPercentile": 95,
-        "aarsPillars": {
-          "compliance": 25,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-05",
@@ -8646,12 +8226,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "hostedAiAgent",
         "openFindings": 1,
         "openIssues": 2,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -8683,41 +8257,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "ATTEND",
       },
       {
-        "aars": 66,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "CONFIRMED",
-        },
-        "aarsPercentile": 82,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-04",
@@ -8751,12 +8292,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "hostedAiAgent",
         "openFindings": 0,
         "openIssues": 4,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -8782,28 +8317,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "ATTEND",
       },
       {
-        "aars": 29,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "ASI03",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 33,
-        "aarsPillars": {
-          "compliance": 10,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 8,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "LOW",
         "cloudAccount": {
           "id": "gcp-account-07",
           "name": "gcp-account-07",
@@ -8830,14 +8345,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "SCOPED",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -8861,28 +8368,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 29,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "ASI03",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 33,
-        "aarsPillars": {
-          "compliance": 10,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 8,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "LOW",
         "cloudAccount": {
           "id": "gcp-account-07",
           "name": "gcp-account-07",
@@ -8909,14 +8396,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "SCOPED",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -8940,34 +8419,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 61,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "LLM01",
-            },
-            {
-              "code": "LLM02",
-            },
-            {
-              "code": "ASI02",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 50,
-        "aarsPillars": {
-          "compliance": 30,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudAccount": {
           "id": "aws-account-prod-01",
@@ -8992,12 +8445,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "role",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9013,34 +8460,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 61,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "LLM01",
-            },
-            {
-              "code": "LLM02",
-            },
-            {
-              "code": "ASI02",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 50,
-        "aarsPillars": {
-          "compliance": 30,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudAccount": {
           "id": "aws-account-prod-01",
@@ -9065,12 +8486,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "role",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9086,34 +8501,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 61,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "LLM01",
-            },
-            {
-              "code": "LLM02",
-            },
-            {
-              "code": "ASI02",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 50,
-        "aarsPillars": {
-          "compliance": 30,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudAccount": {
           "id": "aws-account-prod-01",
@@ -9138,12 +8527,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "role",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9159,34 +8542,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 61,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "LLM01",
-            },
-            {
-              "code": "LLM02",
-            },
-            {
-              "code": "ASI02",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 50,
-        "aarsPillars": {
-          "compliance": 30,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "cloudAccount": {
           "id": "aws-account-prod-01",
           "name": "aws-account-prod-01",
@@ -9210,14 +8567,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "role",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9232,34 +8581,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 61,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "LLM01",
-            },
-            {
-              "code": "LLM02",
-            },
-            {
-              "code": "ASI02",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 50,
-        "aarsPillars": {
-          "compliance": 30,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "cloudAccount": {
           "id": "aws-account-prod-01",
           "name": "aws-account-prod-01",
@@ -9283,14 +8606,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "role",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9305,34 +8620,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 61,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "LLM01",
-            },
-            {
-              "code": "LLM02",
-            },
-            {
-              "code": "ASI02",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 50,
-        "aarsPillars": {
-          "compliance": 30,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "cloudAccount": {
           "id": "aws-account-prod-01",
           "name": "aws-account-prod-01",
@@ -9356,14 +8645,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "role",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9378,34 +8659,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 61,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "LLM01",
-            },
-            {
-              "code": "LLM02",
-            },
-            {
-              "code": "ASI02",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 50,
-        "aarsPillars": {
-          "compliance": 30,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
           "id": "aws-account-prod-01",
@@ -9430,12 +8685,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "role",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9451,34 +8700,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 61,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "LLM01",
-            },
-            {
-              "code": "LLM02",
-            },
-            {
-              "code": "ASI02",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 50,
-        "aarsPillars": {
-          "compliance": 30,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
           "id": "aws-account-prod-01",
@@ -9503,12 +8726,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "role",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9524,25 +8741,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 0,
-        "aarsInput": {
-          "dataExposure": "NONE",
-          "derivedUnder": "gapUnit:code|fiveRs:0|deprecatedModel:0|inactiveAgent:0|frameworkMapping:0",
-          "gaps": [],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 12,
-        "aarsPillars": {
-          "compliance": 0,
-          "data": 0,
-          "exposure": 0,
-          "toxic": 0,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "INFO",
         "businessImpact": "MBI",
         "cloudAccount": {
           "id": "aws-account-prod-01",
@@ -9564,12 +8764,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "bedrock#foundationModel",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "MODERATE",
-          "containment": "STRONG",
-        },
-        "postureTier": 1,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9586,25 +8780,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
-        "aars": 5,
-        "aarsInput": {
-          "dataExposure": "NONE",
-          "gaps": [
-            {
-              "code": "DEPRECATED_MODEL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 25,
-        "aarsPillars": {
-          "compliance": 5,
-          "data": 0,
-          "exposure": 0,
-          "toxic": 0,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "INFO",
         "businessImpact": "LBI",
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -9622,12 +8797,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "nativeType": "aiplatform#model",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-        },
-        "postureTier": 1,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9645,22 +8814,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Deprecated",
       },
       {
-        "aars": 0,
-        "aarsInput": {
-          "dataExposure": "NONE",
-          "derivedUnder": "gapUnit:code|fiveRs:0|deprecatedModel:0|inactiveAgent:0|frameworkMapping:0",
-          "gaps": [],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 12,
-        "aarsPillars": {
-          "compliance": 0,
-          "data": 0,
-          "exposure": 0,
-          "toxic": 0,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "INFO",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -9677,12 +8830,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "mcp-internal-tools",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "MODERATE",
-          "containment": "STRONG",
-        },
-        "postureTier": 1,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9700,22 +8847,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
-        "aars": 22,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "derivedUnder": "gapUnit:code|fiveRs:0|deprecatedModel:0|inactiveAgent:0|frameworkMapping:0",
-          "gaps": [],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 28,
-        "aarsPillars": {
-          "compliance": 0,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 0,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "LOW",
         "businessImpact": "HBI",
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -9732,12 +8863,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "dataset-support-transcripts",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "SEVERE",
-          "containment": "STRONG",
-        },
-        "postureTier": 2,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9755,7 +8880,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -9771,14 +8895,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "vm-agent-i-host",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9795,7 +8911,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "exposureEvidence": {
           "ports": [
@@ -9820,14 +8935,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "cloudrun-agent-h",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "PARTIAL",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9844,7 +8951,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "exposureLevel": "High",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -9862,14 +8968,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "openFindings": 0,
         "openIssues": 0,
         "portValidation": "Open",
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9886,7 +8984,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -9902,14 +8999,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "img-agent-h:latest",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -9925,7 +9014,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Vertex AI Agent Service Account",
         "email": "sa-agent-a@iam.gserviceaccount.com",
@@ -9952,14 +9040,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "sa-agent-a@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -9967,7 +9047,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-autogen@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -9993,14 +9072,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "sa-agent-autogen@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -10008,7 +9079,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-e@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -10034,14 +9104,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "sa-agent-e@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -10049,7 +9111,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-g@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -10075,14 +9136,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "sa-agent-g@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -10090,7 +9143,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Support chatbot runtime identity",
         "email": "sa-agent-h-chatbot@iam.gserviceaccount.com",
@@ -10117,14 +9169,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "sa-agent-h-chatbot@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -10132,7 +9176,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-i@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -10158,14 +9201,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "sa-agent-i@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -10173,7 +9208,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "AWS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -10198,19 +9232,10 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "AKIA-AUTOGEN-AGENT-KEY",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "SCOPED",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -10226,19 +9251,10 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "ops.user01@example.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -10256,19 +9272,10 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "ops.user02@example.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -10286,19 +9293,10 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "ops.user03@example.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -10314,19 +9312,10 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "ops.user04@example.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -10342,19 +9331,10 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "ops.user05@example.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -10370,19 +9350,10 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "ops.user06@example.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -10398,19 +9369,10 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "name": "ops.user07@example.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "bedrock-no-guardrail",
         ],
@@ -10421,7 +9383,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "bedrock-no-guardrail",
         ],
@@ -10432,7 +9393,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "IN_PROGRESS",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "bedrock-no-guardrail",
         ],
@@ -10443,7 +9403,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "bedrock-no-guardrail",
         ],
@@ -10454,7 +9413,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "bedrock-no-guardrail",
         ],
@@ -10465,7 +9423,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "bedrock-no-guardrail",
         ],
@@ -10476,7 +9433,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -10487,7 +9443,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -10498,7 +9453,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -10509,7 +9463,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -10520,7 +9473,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -10531,7 +9483,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -10542,7 +9493,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -10553,7 +9503,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-managed-privileged",
         ],
@@ -10564,7 +9513,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
@@ -10575,7 +9523,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
@@ -10586,7 +9533,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
@@ -10597,7 +9543,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
@@ -10608,7 +9553,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
@@ -10619,7 +9563,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
@@ -10630,7 +9573,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "other-ai-risk",
         ],
@@ -10641,7 +9583,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "other-ai-risk",
         ],
@@ -10652,7 +9593,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "status": "OPEN",
       },
       {
-        "aarsRuleVersion": 0,
         "comboGroups": [
           "other-ai-risk",
         ],
@@ -10955,21 +9895,6 @@ exports[`read endpoints > getIssueDetail answers the same shape 1`] = `
       "issueType": "TOXIC_COMBINATION",
       "justification": "Chatbot agent on serverless with excessive IAM — user-facing attack surface.",
       "nativeSeverity": "MEDIUM",
-      "problemInput": {
-        "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-        "evidenced": true,
-        "exploitationSource": "none",
-        "unknowns": [
-          "exploitation",
-        ],
-        "vector": {
-          "exploitation": "UNKNOWN",
-          "exposure": "OPEN",
-          "impact": "TOTAL",
-          "mission": "HIGH",
-        },
-      },
-      "problemOutcome": "ATTEND",
       "problemRuleVersion": 0,
       "projects": [
         "PROJECT-ALPHA",
@@ -11035,21 +9960,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "MEDIUM",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -11101,19 +10011,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "aiVerdict",
-          "unknowns": [],
-          "vector": {
-            "exploitation": "SUSPECTED",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "MEDIUM",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -11168,21 +10065,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "MEDIUM",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -11234,21 +10116,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "MEDIUM",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -11300,21 +10167,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "MEDIUM",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -11366,21 +10218,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "MEDIUM",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -11432,21 +10269,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "LOW",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -11498,21 +10320,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "LOW",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -11564,21 +10371,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Prompt injection reaches PII and credentials; 5Rs gap confirms data is not restricted.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "TRACK_STAR",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-BETA",
@@ -11631,21 +10423,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Over-privileged IAM on a customer-facing managed agent.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "TRACK_STAR",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-BETA",
@@ -11698,21 +10475,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Auto-generated agent — likely forgotten, still over-privileged.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "TOTAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "TRACK_STAR",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-BETA",
@@ -11765,21 +10527,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Auto-generated agent — likely forgotten, still over-privileged.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "TOTAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "TRACK_STAR",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-BETA",
@@ -11832,21 +10579,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Auto-generated agent — likely forgotten, still over-privileged.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "TOTAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "TRACK_STAR",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-BETA",
@@ -11899,21 +10631,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Auto-generated agent — likely forgotten, still over-privileged.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "TOTAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "TRACK_STAR",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-BETA",
@@ -11966,21 +10683,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Dev/test agent with prod-level IAM — violates least privilege.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "LOW",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-BETA",
@@ -12033,21 +10735,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Dev agent with excessive IAM — training-data exposure risk.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "LOW",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-BETA",
@@ -12100,21 +10787,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Innovation agent with sensitive data access and no guardrail.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "OPEN",
-            "impact": "PARTIAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "TRACK_STAR",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -12167,21 +10839,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Pricing agent with financial data access — high business impact.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "MEDIUM",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -12233,21 +10890,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Pre-prod pricing agent — same risk as prod.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "MEDIUM",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -12299,21 +10941,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Business-partner data agent — PII and partner-data exposure risk.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "MEDIUM",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -12366,21 +10993,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Business-partner data agent — PII and partner-data exposure risk.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "MEDIUM",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -12431,21 +11043,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Inactive agents still holding sensitive data access — lateral-movement risk via compromised compute.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": true,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "OPEN",
-            "impact": "TOTAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "ATTEND",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -12496,21 +11093,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Inactive agents still holding sensitive data access — lateral-movement risk via compromised compute.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": true,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "OPEN",
-            "impact": "TOTAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "ATTEND",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -12561,21 +11143,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Inactive agents still holding sensitive data access — lateral-movement risk via compromised compute.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": true,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "OPEN",
-            "impact": "TOTAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "ATTEND",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -12626,21 +11193,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Inactive agents still holding sensitive data access — lateral-movement risk via compromised compute.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": true,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "OPEN",
-            "impact": "TOTAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "ATTEND",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -12691,21 +11243,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Chatbot agent on serverless with excessive IAM — user-facing attack surface.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": true,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "OPEN",
-            "impact": "TOTAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "ATTEND",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -12757,21 +11294,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Chatbot agent on serverless with excessive IAM — user-facing attack surface.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": true,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "OPEN",
-            "impact": "TOTAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "ATTEND",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -12817,22 +11339,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Latent privileges — a compromised agent inherits every permission of its execution identity.",
         "nativeSeverity": "LOW",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-            "mission",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "MEDIUM",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-BETA",
@@ -12877,22 +11383,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "TOXIC_COMBINATION",
         "justification": "Latent privileges — a compromised agent inherits every permission of its execution identity.",
         "nativeSeverity": "LOW",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-            "mission",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "CONTROLLED",
-            "impact": "PARTIAL",
-            "mission": "MEDIUM",
-          },
-        },
-        "problemOutcome": "TRACK",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-BETA",
@@ -12933,21 +11423,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "CLOUD_CONFIGURATION",
         "justification": "Model invocations are not logged, so misuse leaves no trail to investigate.",
         "nativeSeverity": "LOW",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "OPEN",
-            "impact": "PARTIAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "TRACK_STAR",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -12988,21 +11463,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "CLOUD_CONFIGURATION",
         "justification": "Training data is readable to anyone who reaches the bucket.",
         "nativeSeverity": "MEDIUM",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "OPEN",
-            "impact": "PARTIAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "TRACK_STAR",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -13043,21 +11503,6 @@ Ignored until: Feb 1, 2026",
         "issueType": "CLOUD_CONFIGURATION",
         "justification": "A long-lived static key on an AI workload widens the window for credential theft.",
         "nativeSeverity": "LOW",
-        "problemInput": {
-          "derivedUnder": "exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM",
-          "evidenced": false,
-          "exploitationSource": "none",
-          "unknowns": [
-            "exploitation",
-          ],
-          "vector": {
-            "exploitation": "UNKNOWN",
-            "exposure": "OPEN",
-            "impact": "PARTIAL",
-            "mission": "HIGH",
-          },
-        },
-        "problemOutcome": "TRACK_STAR",
         "problemRuleVersion": 0,
         "projects": [
           "PROJECT-ALPHA",
@@ -17349,38 +15794,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
     },
     "nodes": [
       {
-        "aars": 66,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "CONFIRMED",
-        },
-        "aarsPercentile": 82,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-03",
@@ -17409,12 +15822,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 1,
         "openIssues": 4,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -17440,48 +15847,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 76,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "HIGH",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "ASI10",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 98,
-        "aarsPillars": {
-          "compliance": 30,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-01",
@@ -17509,12 +15876,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 4,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -17540,41 +15901,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 66,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "CONFIRMED",
-        },
-        "aarsPercentile": 82,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-04",
@@ -17608,12 +15936,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "hostedAiAgent",
         "openFindings": 0,
         "openIssues": 4,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -17639,44 +15961,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "ATTEND",
       },
       {
-        "aars": 71,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "LLM05",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "CONFIRMED",
-        },
-        "aarsPercentile": 95,
-        "aarsPillars": {
-          "compliance": 25,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-05",
@@ -17735,12 +16021,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "hostedAiAgent",
         "openFindings": 1,
         "openIssues": 2,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -17772,31 +16052,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "ATTEND",
       },
       {
-        "aars": 66,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 82,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "comboGroups": [
@@ -17820,12 +16077,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 2,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -17851,45 +16102,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 2,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-01",
@@ -17917,12 +16131,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 1,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -17963,41 +16171,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-01",
@@ -18025,12 +16200,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -18066,31 +16235,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "comboGroups": [
@@ -18114,12 +16260,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -18139,31 +16279,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "comboGroups": [
@@ -18187,12 +16304,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -18212,44 +16323,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 67,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM04",
-            },
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 90,
-        "aarsPillars": {
-          "compliance": 25,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
           "id": "gcp-account-02",
@@ -18277,12 +16352,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -18318,44 +16387,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 67,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM04",
-            },
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 90,
-        "aarsPillars": {
-          "compliance": 25,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
           "id": "gcp-account-02",
@@ -18383,12 +16416,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -18414,28 +16441,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 29,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "ASI03",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 33,
-        "aarsPillars": {
-          "compliance": 10,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 8,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "LOW",
         "cloudAccount": {
           "id": "gcp-account-07",
           "name": "gcp-account-07",
@@ -18462,14 +16469,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "SCOPED",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -18493,28 +16492,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 29,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "ASI03",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 33,
-        "aarsPillars": {
-          "compliance": 10,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 8,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "LOW",
         "cloudAccount": {
           "id": "gcp-account-07",
           "name": "gcp-account-07",
@@ -18541,14 +16520,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "SCOPED",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -18572,25 +16543,8 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 0,
-        "aarsInput": {
-          "dataExposure": "NONE",
-          "derivedUnder": "gapUnit:code|fiveRs:0|deprecatedModel:0|inactiveAgent:0|frameworkMapping:0",
-          "gaps": [],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 12,
-        "aarsPillars": {
-          "compliance": 0,
-          "data": 0,
-          "exposure": 0,
-          "toxic": 0,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "INFO",
         "businessImpact": "LBI",
         "cloudAccount": {
           "id": "gcp-account-03",
@@ -18615,12 +16569,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-        },
-        "postureTier": 1,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -18641,7 +16589,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Vertex AI Agent Service Account",
         "email": "sa-agent-a@iam.gserviceaccount.com",
@@ -18668,14 +16615,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-a@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -18683,7 +16622,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-autogen@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -18709,14 +16647,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-autogen@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -18724,7 +16654,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Vertex AI Reasoning Agent Identity",
         "email": "sa-agent-b@iam.gserviceaccount.com",
@@ -18751,14 +16680,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-b@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -18766,7 +16687,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-d-test@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -18792,14 +16712,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-d-test@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -18807,7 +16719,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-d@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -18833,14 +16744,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-d@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -18848,7 +16751,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-e@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -18874,14 +16776,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-e@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -18889,7 +16783,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-f-preprod@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -18915,14 +16808,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-f-preprod@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -18930,7 +16815,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-f@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -18956,14 +16840,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-f@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -18971,7 +16847,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-g@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -18997,14 +16872,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-g@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -19012,7 +16879,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Support chatbot runtime identity",
         "email": "sa-agent-h-chatbot@iam.gserviceaccount.com",
@@ -19039,14 +16905,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-h-chatbot@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -19054,7 +16912,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-i@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -19080,14 +16937,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-i@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -19095,7 +16944,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-j@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -19121,14 +16969,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-j@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "SCOPED",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -19136,7 +16976,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-k@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -19162,14 +17001,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-k@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "SCOPED",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -19177,7 +17008,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Support agent (read-only)",
         "email": "sa-agent-l-support@iam.gserviceaccount.com",
@@ -19204,14 +17034,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "name": "sa-agent-l-support@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -20196,38 +18018,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "summaryCount": 2,
       },
       {
-        "aars": 66,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "CONFIRMED",
-        },
-        "aarsPercentile": 82,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-03",
@@ -20256,12 +18046,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 1,
         "openIssues": 4,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -20287,48 +18071,8 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 76,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "HIGH",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "ASI10",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 98,
-        "aarsPillars": {
-          "compliance": 30,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-01",
@@ -20356,12 +18100,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 4,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -20387,41 +18125,8 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 66,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "CONFIRMED",
-        },
-        "aarsPercentile": 82,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-04",
@@ -20455,12 +18160,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "nativeType": "hostedAiAgent",
         "openFindings": 0,
         "openIssues": 4,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -20486,44 +18185,8 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "ATTEND",
       },
       {
-        "aars": 71,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "LLM05",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "CONFIRMED",
-        },
-        "aarsPercentile": 95,
-        "aarsPillars": {
-          "compliance": 25,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-05",
@@ -20582,12 +18245,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "nativeType": "hostedAiAgent",
         "openFindings": 1,
         "openIssues": 2,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -20619,31 +18276,8 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "ATTEND",
       },
       {
-        "aars": 66,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 82,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "comboGroups": [
@@ -20667,12 +18301,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 2,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -20698,45 +18326,8 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 2,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-01",
@@ -20764,12 +18355,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 1,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -20810,41 +18395,8 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-01",
@@ -20872,12 +18424,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -20913,31 +18459,8 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "comboGroups": [
@@ -20961,12 +18484,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -20986,31 +18503,8 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "comboGroups": [
@@ -21034,12 +18528,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21059,44 +18547,8 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 67,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM04",
-            },
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 90,
-        "aarsPillars": {
-          "compliance": 25,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
           "id": "gcp-account-02",
@@ -21124,12 +18576,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21165,44 +18611,8 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 67,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM04",
-            },
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 90,
-        "aarsPillars": {
-          "compliance": 25,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
           "id": "gcp-account-02",
@@ -21230,12 +18640,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21261,7 +18665,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
         "dataFindingSeverities": {
@@ -21274,7 +18677,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "summaryCount": 1,
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -21290,14 +18692,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "bucket-autogen-scratch-01",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21314,7 +18708,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -21330,14 +18723,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "bucket-autogen-scratch-02",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21354,7 +18739,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -21370,14 +18754,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "bucket-autogen-scratch-03",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21394,7 +18770,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -21410,14 +18785,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "bucket-autogen-scratch-04",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21434,7 +18801,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "dataFindingCount": 3,
         "dataFindingSeverities": {
@@ -21455,12 +18821,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "bucket-customer-pii",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "SEVERE",
-          "containment": "STRONG",
-        },
-        "postureTier": 2,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21477,7 +18837,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "dataFindingCount": 1,
         "dataFindingSeverities": {
@@ -21497,12 +18856,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "bucket-finance-reports",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "MODERATE",
-          "containment": "STRONG",
-        },
-        "postureTier": 1,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21519,7 +18872,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -21535,14 +18887,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "bucket-partner-data",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21559,7 +18903,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -21575,14 +18918,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "bucket-pricing-models",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21599,7 +18934,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -21615,14 +18949,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "bucket-training-data",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21639,7 +18965,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -21655,14 +18980,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "db-analytics",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21679,7 +18996,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "dataFindingCount": 2,
         "dataFindingSeverities": {
@@ -21700,12 +19016,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "db-customer-core",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "SEVERE",
-          "containment": "STRONG",
-        },
-        "postureTier": 2,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -21722,7 +19032,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "status": "Active",
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Vertex AI Agent Service Account",
         "email": "sa-agent-a@iam.gserviceaccount.com",
@@ -21749,14 +19058,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "sa-agent-a@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -21764,7 +19065,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-autogen@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -21790,14 +19090,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "sa-agent-autogen@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -21805,7 +19097,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Vertex AI Reasoning Agent Identity",
         "email": "sa-agent-b@iam.gserviceaccount.com",
@@ -21832,14 +19123,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "sa-agent-b@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -21847,7 +19130,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-d-test@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -21873,14 +19155,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "sa-agent-d-test@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -21888,7 +19162,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-d@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -21914,14 +19187,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "sa-agent-d@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -21929,7 +19194,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-e@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -21955,14 +19219,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "sa-agent-e@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -21970,7 +19226,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-f-preprod@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -21996,14 +19251,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "sa-agent-f-preprod@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -22011,7 +19258,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-f@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -22037,14 +19283,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "sa-agent-f@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -22052,7 +19290,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-g@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -22078,14 +19315,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "sa-agent-g@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -22093,7 +19322,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "displayName": "Support chatbot runtime identity",
         "email": "sa-agent-h-chatbot@iam.gserviceaccount.com",
@@ -22120,14 +19348,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "sa-agent-h-chatbot@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -22135,7 +19355,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
       },
       {
-        "aarsRuleVersion": 0,
         "cloudPlatform": "GCP",
         "email": "sa-agent-i@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
@@ -22161,14 +19380,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "name": "sa-agent-i@iam.gserviceaccount.com",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -22560,38 +19771,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
     },
     "nodes": [
       {
-        "aars": 66,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "CONFIRMED",
-        },
-        "aarsPercentile": 82,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-03",
@@ -22620,12 +19799,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 1,
         "openIssues": 4,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -22651,48 +19824,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 76,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "HIGH",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "ASI10",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 98,
-        "aarsPillars": {
-          "compliance": 30,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-01",
@@ -22720,12 +19853,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 4,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -22751,41 +19878,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 66,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "CONFIRMED",
-        },
-        "aarsPercentile": 82,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-04",
@@ -22819,12 +19913,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "hostedAiAgent",
         "openFindings": 0,
         "openIssues": 4,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -22850,44 +19938,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "ATTEND",
       },
       {
-        "aars": 71,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "LLM05",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "CONFIRMED",
-        },
-        "aarsPercentile": 95,
-        "aarsPillars": {
-          "compliance": 25,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "CRITICAL",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-05",
@@ -22946,12 +19998,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "hostedAiAgent",
         "openFindings": 1,
         "openIssues": 2,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -22983,31 +20029,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "ATTEND",
       },
       {
-        "aars": 66,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 82,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 24,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "comboGroups": [
@@ -23031,12 +20054,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 2,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -23062,45 +20079,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 2,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-01",
@@ -23128,12 +20108,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 1,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -23174,41 +20148,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 2,
-              "severity": "HIGH",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "HBI",
         "cloudAccount": {
           "id": "gcp-account-01",
@@ -23236,12 +20177,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "SEVERE",
-          "containment": "WEAK",
-        },
-        "postureTier": 4,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -23277,31 +20212,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK_STAR",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "comboGroups": [
@@ -23325,12 +20237,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -23350,31 +20256,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 62,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "gaps": [
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 70,
-        "aarsPillars": {
-          "compliance": 20,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "MBI",
         "cloudPlatform": "GCP",
         "comboGroups": [
@@ -23398,12 +20281,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "MODERATE",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -23423,44 +20300,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 67,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM04",
-            },
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 90,
-        "aarsPillars": {
-          "compliance": 25,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
           "id": "gcp-account-02",
@@ -23488,12 +20329,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -23529,44 +20364,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 67,
-        "aarsInput": {
-          "dataExposure": "SENSITIVE",
-          "dataFindings": [
-            {
-              "count": 1,
-              "severity": "CRITICAL",
-            },
-            {
-              "count": 1,
-              "severity": "MEDIUM",
-            },
-          ],
-          "gaps": [
-            {
-              "code": "LLM04",
-            },
-            {
-              "code": "LLM06",
-            },
-            {
-              "code": "NO_GUARDRAIL",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 90,
-        "aarsPillars": {
-          "compliance": 25,
-          "data": 22,
-          "exposure": 0,
-          "toxic": 20,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "HIGH",
         "businessImpact": "LBI",
         "cloudAccount": {
           "id": "gcp-account-02",
@@ -23594,12 +20393,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "BROAD",
-          "consequence": "LIMITED",
-          "containment": "WEAK",
-        },
-        "postureTier": 3,
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -23625,28 +20418,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 29,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "ASI03",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 33,
-        "aarsPillars": {
-          "compliance": 10,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 8,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "LOW",
         "cloudAccount": {
           "id": "gcp-account-07",
           "name": "gcp-account-07",
@@ -23673,14 +20446,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "SCOPED",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -23704,28 +20469,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 29,
-        "aarsInput": {
-          "dataExposure": "DATA_ACCESS",
-          "gaps": [
-            {
-              "code": "ASI03",
-            },
-          ],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 33,
-        "aarsPillars": {
-          "compliance": 10,
-          "data": 11,
-          "exposure": 0,
-          "toxic": 8,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "LOW",
         "cloudAccount": {
           "id": "gcp-account-07",
           "name": "gcp-account-07",
@@ -23752,14 +20497,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 1,
-        "postureInput": {
-          "capability": "SCOPED",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-          "unknowns": [
-            "consequence",
-          ],
-        },
         "projects": [
           {
             "id": "proj-demo-business-unit",
@@ -23783,25 +20520,8 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
-        "worstOpenProblem": "TRACK",
       },
       {
-        "aars": 0,
-        "aarsInput": {
-          "dataExposure": "NONE",
-          "derivedUnder": "gapUnit:code|fiveRs:0|deprecatedModel:0|inactiveAgent:0|frameworkMapping:0",
-          "gaps": [],
-          "internetExposure": "NONE",
-        },
-        "aarsPercentile": 12,
-        "aarsPillars": {
-          "compliance": 0,
-          "data": 0,
-          "exposure": 0,
-          "toxic": 0,
-        },
-        "aarsRuleVersion": 0,
-        "aarsSeverity": "INFO",
         "businessImpact": "LBI",
         "cloudAccount": {
           "id": "gcp-account-03",
@@ -23826,12 +20546,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "nativeType": "aiplatform#ReasoningEngine",
         "openFindings": 0,
         "openIssues": 0,
-        "postureInput": {
-          "capability": "MINIMAL",
-          "consequence": "LIMITED",
-          "containment": "STRONG",
-        },
-        "postureTier": 1,
         "projects": [
           {
             "id": "proj-demo-business-unit",

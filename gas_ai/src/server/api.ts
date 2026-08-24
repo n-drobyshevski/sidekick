@@ -540,7 +540,7 @@ export function getGraph(p?: unknown): ApiResult {
       const projection = projectGraph(doc, options);
       const layout = layoutGraph(projection, view);
       return {
-        nodes: projection.nodes,
+        nodes: projection.nodes.map((n) => publicNode(n as unknown as Rec)),
         edges: projection.edges,
         summaries: projection.summaries,
         counts: projection.counts,
@@ -652,7 +652,7 @@ export function runGraphQuery(p?: unknown): ApiResult {
         total: result.total,
         capped: result.capped,
         truncated: result.truncated,
-        nodes: projection.nodes,
+        nodes: projection.nodes.map((n) => publicNode(n as unknown as Rec)),
         edges: projection.edges,
         summaries: projection.summaries,
         counts: projection.counts,
@@ -1349,7 +1349,7 @@ export function getAssetDetail(p?: unknown): ApiResult {
         // model under calibration belongs beside the model, and the sheet now reads the
         // same counts, issues and findings every other asset surface does.
         node: assetRow(node),
-        issues,
+        issues: issues.map((r) => publicRow(r as unknown as Rec)),
         neighbors,
         findings,
       };
@@ -1558,7 +1558,7 @@ export function getConfigFindingDetail(p?: unknown): ApiResult {
       // resource". Two different facts must not share one rendering.
       const asset = syncStore.loadAssets().filter((a) => a.id === finding.resourceId)[0];
       return {
-        finding,
+        finding: publicRow(finding as unknown as Rec),
         gap: isOpenGap(finding),
         // The asset the finding is keyed to, when the inventory holds it. Null is the
         // common case and is not an error: most AI-security rules fail on a region, an
@@ -1929,7 +1929,7 @@ export function getIssues(p?: unknown): ApiResult {
     return cached("getIssues", { group }, () => {
       let rows = viewIssues();
       if (group) rows = rows.filter((i) => i.comboGroup === group);
-      return { rows, total: rows.length };
+      return { rows: rows.map((r) => publicRow(r as unknown as Rec)), total: rows.length };
     });
   });
 }
@@ -1942,7 +1942,7 @@ export function getIssueDetail(p?: unknown): ApiResult {
     if (!issue) return null;
     const group = issue.comboGroup ? comboGroupById(issue.comboGroup) : null;
     return {
-      issue,
+      issue: publicRow(issue as unknown as Rec),
       group: group
         ? {
             id: group.id,
@@ -2043,6 +2043,50 @@ function problemsModel(): ProblemsModel {
     if (sev) severityCounts[sev] = (severityCounts[sev] ?? 0) + 1;
   }
   return { rows, severityCounts };
+}
+
+/**
+ * A graph node as the canvas receives it: the whole node, minus the derived verdicts.
+ *
+ * The graph ships `GNode`s straight out of the projection rather than through `assetRow`,
+ * which is why stripping `assetRow` did not reach it — the canvas needs geometry-adjacent
+ * fields the table projection drops, so it was never routed through one. Everything else
+ * survives; only the six model fields go.
+ *
+ * `aarsInput` matters most here and is the least obvious: it is the whole priced input
+ * blob, gaps and all, and it rode in every graph payload for every node.
+ */
+function publicNode(n: Rec): Rec {
+  const out: Rec = {};
+  for (const [k, v] of Object.entries(n)) {
+    if (VERDICT_NODE_KEYS.indexOf(k) >= 0) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/** The per-node model fields. Mirrored by test/verdictIsolation.test.ts's own list. */
+const VERDICT_NODE_KEYS = [
+  "aars", "aarsSeverity", "aarsPercentile", "aarsPillars", "aarsInput", "aarsRuleVersion",
+  "postureTier", "postureInput", "worstOpenProblem",
+];
+
+/** The per-problem model fields, on an issue or a finding row. */
+const VERDICT_ROW_KEYS = ["problemOutcome", "problemInput"];
+
+/**
+ * An issue or finding row as a page receives it — same rule as `publicNode`, at the row
+ * grain. The problem tree decides a verdict for every one of these and stores it beside
+ * the row; the registers rank by Wiz's severity, and the verdict reaches the workbench's
+ * preview alone.
+ */
+function publicRow<T extends Rec>(r: T): Rec {
+  const out: Rec = {};
+  for (const [k, v] of Object.entries(r)) {
+    if (VERDICT_ROW_KEYS.indexOf(k) >= 0) continue;
+    out[k] = v;
+  }
+  return out;
 }
 
 /**

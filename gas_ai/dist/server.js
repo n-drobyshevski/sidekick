@@ -7888,7 +7888,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "9a65fbb8bd9e" : "dev";
+  var BUILD_ID = true ? "4c5e27aba69e" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -15326,7 +15326,7 @@ var Server = (() => {
         const projection = projectGraph(doc, options);
         const layout = layoutGraph(projection, view);
         return {
-          nodes: projection.nodes,
+          nodes: projection.nodes.map((n) => publicNode(n)),
           edges: projection.edges,
           summaries: projection.summaries,
           counts: projection.counts,
@@ -15405,7 +15405,7 @@ var Server = (() => {
           total: result.total,
           capped: result.capped,
           truncated: result.truncated,
-          nodes: projection.nodes,
+          nodes: projection.nodes.map((n) => publicNode(n)),
           edges: projection.edges,
           summaries: projection.summaries,
           counts: projection.counts,
@@ -15869,7 +15869,7 @@ var Server = (() => {
           // model under calibration belongs beside the model, and the sheet now reads the
           // same counts, issues and findings every other asset surface does.
           node: assetRow(node2),
-          issues: issues2,
+          issues: issues2.map((r) => publicRow(r)),
           neighbors,
           findings
         };
@@ -15977,7 +15977,7 @@ var Server = (() => {
         if (!finding) return null;
         const asset = loadAssets().filter((a) => a.id === finding.resourceId)[0];
         return {
-          finding,
+          finding: publicRow(finding),
           gap: isOpenGap(finding),
           // The asset the finding is keyed to, when the inventory holds it. Null is the
           // common case and is not an error: most AI-security rules fail on a region, an
@@ -16163,7 +16163,7 @@ var Server = (() => {
       return cached("getIssues", { group }, () => {
         let rows = viewIssues();
         if (group) rows = rows.filter((i) => i.comboGroup === group);
-        return { rows, total: rows.length };
+        return { rows: rows.map((r) => publicRow(r)), total: rows.length };
       });
     });
   }
@@ -16175,7 +16175,7 @@ var Server = (() => {
       if (!issue2) return null;
       const group = issue2.comboGroup ? comboGroupById(issue2.comboGroup) : null;
       return {
-        issue: issue2,
+        issue: publicRow(issue2),
         group: group ? {
           id: group.id,
           title: group.title,
@@ -16256,6 +16256,34 @@ var Server = (() => {
       if (sev) severityCounts[sev] = ((_b = severityCounts[sev]) != null ? _b : 0) + 1;
     }
     return { rows, severityCounts };
+  }
+  function publicNode(n) {
+    const out = {};
+    for (const [k, v] of Object.entries(n)) {
+      if (VERDICT_NODE_KEYS.indexOf(k) >= 0) continue;
+      out[k] = v;
+    }
+    return out;
+  }
+  var VERDICT_NODE_KEYS = [
+    "aars",
+    "aarsSeverity",
+    "aarsPercentile",
+    "aarsPillars",
+    "aarsInput",
+    "aarsRuleVersion",
+    "postureTier",
+    "postureInput",
+    "worstOpenProblem"
+  ];
+  var VERDICT_ROW_KEYS = ["problemOutcome", "problemInput"];
+  function publicRow(r) {
+    const out = {};
+    for (const [k, v] of Object.entries(r)) {
+      if (VERDICT_ROW_KEYS.indexOf(k) >= 0) continue;
+      out[k] = v;
+    }
+    return out;
   }
   function publicProblemRow(r) {
     var _a5;
