@@ -9,6 +9,7 @@
 import { kindLabel, svgEl } from "./icons.js";
 import { el, uiIcon } from "./ui.js";
 import { NODE_H, NODE_W, drawNodeCard, truncate } from "./graphNode.js";
+import { buildField, edgePath } from "./edgeRoute.js";
 
 import { tip, tipAnchor } from "./ui.js";
 /**
@@ -164,27 +165,36 @@ export function renderGraph(container, data, handlers = {}) {
   // instead, so it leaves the card through the nearest face rather than looping around it. Radial
   // in particular has edges running in every direction by construction, so side-anchoring alone
   // would send half of them back around the cards they start from.
+  //
+  // That anchoring says which way a link LEAVES a card; it never said anything about what it
+  // crosses on the way, and a straight run between two face centres went through whatever cards
+  // lay between — 56% of the links in the default arrangement. `edgeRoute.js` owns that now: it
+  // keeps this exact geometry for every link that is already clear and routes the rest around the
+  // cards. See its header for the measurements and the algorithm.
+  let field = buildField([...pos.values()]);
+  // Live drag is the one time routing is skipped. Re-running it per pointermove would mean
+  // rebuilding the obstacle field on every frame, and while a card is under the cursor the
+  // picture is in flux anyway — the routes come back, against the new position, on release.
+  let dragging = false;
   function edgeGeometry(a, b) {
-    if (freeForm && Math.abs(b.y - a.y) > Math.abs(b.x - a.x)) {
-      const topToBottom = a.y <= b.y;
-      const y1 = a.y + (topToBottom ? NODE_H / 2 : -NODE_H / 2);
-      const y2 = b.y + (topToBottom ? -NODE_H / 2 : NODE_H / 2);
-      const midY = (y1 + y2) / 2;
-      return {
-        d: `M ${a.x} ${y1} C ${a.x} ${midY}, ${b.x} ${midY}, ${b.x} ${y2}`,
-        labelX: (a.x + b.x) / 2,
-        labelY: midY - 4,
-      };
-    }
-    const leftToRight = a.x <= b.x;
-    const x1 = a.x + (leftToRight ? NODE_W / 2 : -NODE_W / 2);
-    const x2 = b.x + (leftToRight ? -NODE_W / 2 : NODE_W / 2);
-    const midX = (x1 + x2) / 2;
-    return {
-      d: `M ${x1} ${a.y} C ${midX} ${a.y}, ${midX} ${b.y}, ${x2} ${b.y}`,
-      labelX: midX,
-      labelY: (a.y + b.y) / 2 - 4,
-    };
+    return edgePath(a, b, dragging ? null : field, freeForm);
+  }
+  let settleTimer = null;
+  /** Rebuild the obstacle field after a card has come to rest somewhere new. */
+  function settle() {
+    if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+    dragging = false;
+    field = buildField([...pos.values()]);
+    refreshEdges();
+  }
+  /** The keyboard's version of letting go. A nudge repeats while the key is held, and re-routing
+   *  every link on every repeat would stutter, so each one draws the moved card's own links the
+   *  cheap way and the routes come back once the key has been still for a moment. */
+  function settleSoon(id) {
+    dragging = true;
+    refreshEdges(id);
+    if (settleTimer) clearTimeout(settleTimer);
+    settleTimer = setTimeout(settle, 160);
   }
 
   const edgeLayer = svgEl("g");
@@ -234,9 +244,11 @@ export function renderGraph(container, data, handlers = {}) {
     }
   }
 
-  /** Re-route the edges touching one node after its position changed. */
+  /** Re-route edges after a position changed: those touching `id`, or ALL of them when `id` is
+   *  omitted. Moving one card changes what every other link has to get around, not just its own,
+   *  so a settled drag refreshes the lot. */
   function refreshEdges(id) {
-    for (const rec of edgesByNode.get(id) ?? []) {
+    for (const rec of (id === undefined ? edgeEls : edgesByNode.get(id) ?? [])) {
       const a = pos.get(rec.src);
       const b = pos.get(rec.dst);
       if (!a || !b) continue;
@@ -317,6 +329,7 @@ export function renderGraph(container, data, handlers = {}) {
     if (!drag.moved) {
       if (Math.hypot(dxc, dyc) < 4) return;
       drag.moved = true;
+      dragging = true;
       try { drag.g.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
       drag.g.classList.add("dragging");
       nodeLayer.append(drag.g); // paint the dragged node above its siblings
@@ -333,7 +346,9 @@ export function renderGraph(container, data, handlers = {}) {
     const { id, g, moved } = drag;
     drag = null;
     g.classList.remove("dragging");
+    dragging = false;
     if (!moved) return;
+    settle();
     suppressClick = true; // the click event fires right after this pointerup
     setTimeout(() => { suppressClick = false; }, 0);
     commitMove(id);
@@ -509,7 +524,7 @@ export function renderGraph(container, data, handlers = {}) {
       else if (e.key === "ArrowDown") p.y += step;
       else p.y -= step;
       positionNode(focusedId);
-      refreshEdges(focusedId);
+      settleSoon(focusedId);
       ensureVisible(focusedId);
       commitMove(focusedId);
       return;
