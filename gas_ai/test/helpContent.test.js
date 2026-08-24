@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ENTRIES, FAMILIES, ROUTE_TITLES, findEntry, groupByFamily, lexTally, resolveEntries,
+  visibleEntries,
 } from "../src/client/js/helpContent.js";
 import { ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 import { KIND_LABELS } from "../src/client/js/icons.js";
@@ -57,6 +58,41 @@ function pageKeys() {
     .filter(Boolean)
     .map((m) => m[1]);
 }
+
+/**
+ * The PAGES keys marked `experimental: true`, read from the same source block.
+ *
+ * A page's own entry is where the gate is declared, so this is where a new Labs page has to
+ * come and be counted — the assertion below turns "someone added a page to Labs and did not
+ * decide whether it is opt-in" into a failing test rather than a shipped surprise.
+ */
+function experimentalPageKeys() {
+  const block = APP_JS.match(/const PAGES = \{([\s\S]*?)\n\};/);
+  expect(block, "PAGES object literal not found in app.js").toBeTruthy();
+  const out = [];
+  let current = null;
+  // Comments dropped first: the entries here carry long prose blocks that NAME the flag
+  // they set, and a scan that counted those would credit the page above the comment.
+  for (const line of block[1].split("\n").filter((l) => !/^\s*\/\//.test(l))) {
+    const key = line.match(/^\s{2}(\w+):\s*\{/);
+    if (key) current = key[1];
+    if (current && /\bexperimental:\s*true\b/.test(line)) out.push(current);
+    if (/^\s{2}\},?\s*$/.test(line)) current = null; // end of a multi-line entry
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * The three models' own vocabulary — the entries the Scoring Models page is the only place
+ * to read. Held once because two tests need the same list: the isolation guard, which
+ * requires each to be drawn there and nowhere else, and the visibility gate, which requires
+ * each to disappear when that page does.
+ */
+const VERDICTS = [
+  "aars", "aars-band",
+  "pillar-a", "pillar-b", "pillar-c", "pillar-d", "gap-sources", "rescore",
+  "problem-tree", "posture-tier", "posture-axes", "priorities-rank", "priority",
+];
 
 /** Every `kindMark("X")` / `kindIconSvg("X", …)` argument in the content module. */
 function namedKinds() {
@@ -254,11 +290,6 @@ describe("the vocabulary it names", () => {
   // or a problem outcome, whoever does it has to come here and widen a `drawnOn` to say so
   // — and that is the moment this test stops them.
   it("draws every derived verdict on the Scoring Models page and nowhere else", () => {
-    const VERDICTS = [
-      "aars", "aars-band",
-      "pillar-a", "pillar-b", "pillar-c", "pillar-d", "gap-sources", "rescore",
-      "problem-tree", "posture-tier", "posture-axes", "priorities-rank", "priority",
-    ];
     for (const id of VERDICTS) {
       const entry = ENTRIES.filter((e) => e.id === id)[0];
       expect(entry, "no glossary entry for " + id).toBeTruthy();
@@ -414,8 +445,17 @@ describe("the page", () => {
   // BEFORE the first await, from lengths rather than from figures. If any of them started
   // reading a resolved count the page would move when the RPCs landed, which is the one
   // thing this page's header comment forbids outright.
-  it("builds the lexicon shell from ENTRIES, not from a payload", () => {
-    expect(HELP_PAGE_JS).toMatch(/groupByFamily\(ENTRIES\)/);
+  //
+  // The visibility gate does not weaken that: `shown` is a pure function of ENTRIES and a
+  // localStorage flag, so it is just as known-in-advance as the raw book was. What it does
+  // add is a second requirement — the shell and the rows must group the SAME visible set,
+  // or the headings would count terms the lists never draw. Hence both halves below: the
+  // set is derived from the book once, and the shell groups by that set and not by ENTRIES.
+  it("builds the lexicon shell from the visible entries, not from a payload", () => {
+    expect(HELP_PAGE_JS).toMatch(/visibleEntries\(ENTRIES, hidden\)/);
+    expect(HELP_PAGE_JS).toMatch(/groupByFamily\(shown\)/);
+    expect(HELP_PAGE_JS, "the shell must not group the ungated book")
+      .not.toMatch(/groupByFamily\(ENTRIES\)/);
   });
 });
 
@@ -501,5 +541,78 @@ describe("the measure specifications", () => {
       expect(typeof e.mark, e.id).toBe("function");
       expect(e.count, e.id + " is documentation, not a live figure").toBeUndefined();
     }
+  });
+});
+
+// The key sheet is the one screen whose whole job is to point at other screens, so it is the
+// one that breaks worst when a page is gated behind Settings → Show experimental content.
+// visibleEntries is the single rule that keeps it honest — A DEFINITION DRAWN ONLY WHERE THE
+// READER CANNOT GO HAS NOWHERE TO BE READ — and it is derived from `drawnOn` rather than from
+// a hand-kept id list precisely so a fourteenth verdict term is covered the day it lands.
+describe("the visibility gate", () => {
+  const shown = () => visibleEntries(ENTRIES, ["aars"]);
+
+  it("is the identity when nothing is hidden", () => {
+    expect(visibleEntries(ENTRIES, [])).toBe(ENTRIES);
+    expect(visibleEntries(ENTRIES, undefined)).toBe(ENTRIES);
+  });
+
+  it("drops every term the Scoring Models page is the only home for", () => {
+    const ids = new Set(shown().map((e) => e.id));
+    for (const id of VERDICTS) {
+      expect(ids.has(id), id + " survives with its only page hidden").toBe(false);
+    }
+    // The cascade's own notation, filed under frameworks rather than the score, which is
+    // exactly why an id list would have missed it and `drawnOn` does not.
+    expect(ids.has("gap-shapes")).toBe(false);
+  });
+
+  it("drops the measure records drawn only there, and keeps the rest", () => {
+    const ids = new Set(shown().map((e) => e.id));
+    for (const e of ENTRIES) {
+      if (!e.id.startsWith("measure-")) continue;
+      const only = (e.drawnOn || []).length > 0 && (e.drawnOn || []).every((r) => r === "aars");
+      expect(ids.has(e.id), e.id).toBe(!only);
+    }
+    // A measure that is drawn there AND somewhere else is not an experimental measure.
+    expect(ids.has("measure-issue-sla-tally")).toBe(true);
+  });
+
+  it("keeps a term drawn in both places, minus the page it cannot offer", () => {
+    const vocab = shown().filter((e) => e.id.startsWith("vocab-"));
+    expect(vocab.length).toBeGreaterThan(0);
+    for (const e of vocab) {
+      expect(e.drawnOn, e.id).toEqual(["inventory"]);
+      expect(e.link, e.id + " still links into a hidden page").toBeUndefined();
+    }
+  });
+
+  it("leaves terms with no hidden destination untouched", () => {
+    const byId = new Map(shown().map((e) => [e.id, e]));
+    for (const id of ["open-issues", "cloud-findings", "posture-fails", "severity"]) {
+      const before = ENTRIES.filter((e) => e.id === id)[0];
+      expect(before, id).toBeTruthy();
+      expect(byId.get(id), id + " was dropped").toBe(before);
+    }
+  });
+
+  it("never leaves a surviving entry pointing at a hidden page", () => {
+    for (const e of shown()) {
+      expect(e.drawnOn || [], e.id).not.toContain("aars");
+      if (e.link) expect(e.link.route, e.id).not.toBe("aars");
+    }
+  });
+
+  // groupByFamily drops empty families, so the lexicon's headings and the index rail's
+  // counts follow the gate without either of them knowing about it.
+  it("costs the vocabulary no heading it still has rows for", () => {
+    const families = groupByFamily(shown()).map((g) => g.family.id);
+    expect(families).toContain("score"); // open-issues, cloud-findings, posture-fails remain
+    expect(families).toContain("framework");
+    for (const g of groupByFamily(shown())) expect(g.entries.length, g.family.id).toBeGreaterThan(0);
+  });
+
+  it("gates the page the Help content is written against, and only that page", () => {
+    expect(experimentalPageKeys()).toEqual(["aars"]);
   });
 });

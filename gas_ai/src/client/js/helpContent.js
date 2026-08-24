@@ -1023,8 +1023,50 @@ export function resolveEntry(entry, ctx) {
   return { ...entry, resolved };
 }
 
-export function resolveEntries(ctx) {
-  return ENTRIES.map((entry) => resolveEntry(entry, ctx));
+export function resolveEntries(ctx, entries = ENTRIES) {
+  return entries.map((entry) => resolveEntry(entry, ctx));
+}
+
+/**
+ * The book as it stands for a reader who cannot reach every page.
+ *
+ * One rule, derived rather than hand-kept: A DEFINITION DRAWN ONLY WHERE THE READER CANNOT
+ * GO HAS NOWHERE TO BE READ, so it is dropped. That is the whole gate — no per-entry flag to
+ * remember, and it stays right when a fourteenth verdict term lands on the Scoring Models
+ * page. It covers three groups at once with `["aars"]` hidden: the isolated verdict entries
+ * (drawnOn `["aars"]`), the cascade's gap shapes, and the `measure-*` records whose
+ * MEASURE_ROUTES is that page alone.
+ *
+ * A term drawn in BOTH places survives — the codebook vocabularies are read on AI Inventory
+ * as much as on the cascade — but loses the route it cannot offer, from its "Drawn on" line
+ * and from its link. Half a destination list is honest; a chip naming a page that is not in
+ * the rail is not.
+ *
+ * An entry with no `drawnOn` at all is a term with no home page, not a hidden one, and passes
+ * through untouched.
+ */
+export function visibleEntries(entries, hiddenRoutes) {
+  const hidden = new Set(hiddenRoutes || []);
+  if (!hidden.size) return entries;
+  const out = [];
+  for (const entry of entries) {
+    const drawn = entry.drawnOn || [];
+    const left = drawn.filter((route) => !hidden.has(route));
+    if (drawn.length && !left.length) continue;
+    const linkGone = !!entry.link && hidden.has(entry.link.route);
+    // An entry with nothing to strip is passed through BY IDENTITY, not copied. The page
+    // resolves this list and then reads it again through groupByFamily, and `mark`/`count`
+    // are functions the rest of the book is pinned against — a gate that quietly reboxed
+    // every entry would make "is this the same term?" untestable everywhere downstream.
+    if (drawn.length === left.length && !linkGone) {
+      out.push(entry);
+      continue;
+    }
+    const next = { ...entry, drawnOn: left };
+    if (linkGone) delete next.link;
+    out.push(next);
+  }
+  return out;
 }
 
 /**
