@@ -449,8 +449,17 @@ function markAny(sel) {
 export async function renderAarsRules(main, _params, ctx) {
   // ------------------------------------------------------------------ shell + load
   const bar = el("div", { class: "workbench-bar" });
+  // One line, under the toolbar and above every pane, saying what these three models are
+  // FOR now: they are computed and stored on every sync, and nothing else in the app ranks,
+  // filters or sorts by them. It names the model of the tab you are on, because that is the
+  // one whose numbers you are about to read.
+  //
+  // Its own node outside the three panes on purpose — each pane is `clear()`ed and rebuilt
+  // when its rule loads or a preview lands, so a badge appended inside one would vanish the
+  // first time anything refreshed it.
+  const expNote = el("p", { class: "workbench-exp", role: "note" });
   const body = el("div", { class: "workbench-body" });
-  const root = el("div", { class: "workbench" }, bar, body);
+  const root = el("div", { class: "workbench" }, bar, expNote, body);
   main.append(root);
 
   // Three tabs over one route (help.js's ROUTE_TITLES / ROUTE_ICONS still name "aars"
@@ -510,7 +519,21 @@ export async function renderAarsRules(main, _params, ctx) {
   });
   applyImpactCollapsed();
 
-  bar.append(el("h1", { class: "workbench-title" }, "AARS Rules"), modelTabs, impactToggle);
+  // EXPERIMENTAL, said on the page and not only in the nav. All three models here are
+  // under calibration and none of them is read anywhere else in the app any more: the
+  // register, the graph and the three problem views rank and filter by counts and by Wiz's
+  // own severity. A reader who lands on this page from a link, rather than from the
+  // sidebar, has to be told that before they read a number off it.
+  //
+  // Repeated on each pane below rather than said once here, because a reader lands on a
+  // TAB — a `?tab=posture` link opens the posture lattice with this bar scrolled to the
+  // top of a full-bleed workbench, and one badge up here is easy to never see.
+  bar.append(
+    el("h1", { class: "workbench-title" }, "Scoring Models"),
+    statusPill("warn", "Experimental"),
+    modelTabs,
+    impactToggle,
+  );
 
   // Assigned once the AARS rule loads (below) and once the Problem/Posture tabs have each
   // loaded at least once — `let`, not `const`, so this closure can reach them however far
@@ -563,11 +586,25 @@ export async function renderAarsRules(main, _params, ctx) {
   let closePostureLatticePop = () => {};
   let activeModelTab = "aars"; // which tab is showing, so an async load can't unhide the wrong one
 
+  const EXP_NOTE = {
+    aars: "The findings score — an in-house 0\u2013100 point model. It is computed and "
+      + "stored on every sync; nothing outside this page ranks, filters or sorts by it.",
+    problem: "The problem tree — an in-house decision cascade producing Act / Attend / "
+      + "Track\u002a / Track. It is decided and stored on every sync; the registers rank by "
+      + "Wiz's severity instead.",
+    posture: "The posture lattice — an in-house capability \u00d7 containment \u00d7 "
+      + "consequence tier. It is computed and stored on every sync; no other page reads it.",
+  };
+
   function selectModelTab(which) {
     activeModelTab = which;
     const isAars = which === "aars";
     const isProblem = which === "problem";
     const isPosture = which === "posture";
+    clear(expNote).append(
+      statusPill("warn", "Experimental"),
+      el("span", {}, EXP_NOTE[which] || ""),
+    );
     aarsPane.hidden = !isAars;
     problemPane.hidden = !isProblem;
     posturePane.hidden = !isPosture;
@@ -580,6 +617,11 @@ export async function renderAarsRules(main, _params, ctx) {
     if (isProblem) loadProblemPane();
     if (isPosture) loadPosturePane();
   }
+
+  // The page opens on the AARS tab, and `selectModelTab` only ever ran on a CHANGE — so
+  // the note has to be seeded once here or the first thing a reader sees is the one view
+  // that never says what it is looking at.
+  selectModelTab("aars");
 
   aarsPane.append(
     el(

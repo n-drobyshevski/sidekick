@@ -37,7 +37,19 @@ const PAGES = {
   // front door. Sits beside Cloud Configuration because the two are the same subject at
   // two grains — what is failing, and what that scores against.
   compliance: { title: "Compliance Posture", group: "Security", render: renderCompliance },
-  aars: { title: "AARS Rules", group: "Scoring", render: renderAarsRules, fullBleed: true },
+  // "Scoring Models", not "AARS Rules": this page has hosted three models since the Problem
+  // and Posture tabs landed, and it is now the ONLY consumer of all three — the title is
+  // the boundary as much as the name. Deliberately not "Risk Models": this codebase is
+  // careful that these are not risk scores (the glossary says so in as many words), and
+  // bare "Models" would collide with the MODEL node kind the graph draws.
+  //
+  // The route key stays `aars`. Every hash link, ROUTE_ICONS entry and helpContent
+  // `route`/`drawnOn` value keys on it, and renaming the key would break shared links to
+  // buy nothing a reader can see.
+  //
+  // Group "Labs", not "Scoring": the sidebar itself should say these sit outside the
+  // security workflow rather than beside it.
+  aars: { title: "Scoring Models", group: "Labs", render: renderAarsRules, fullBleed: true },
   scans: { title: "Wiz Scans", group: "Coverage", render: renderScans },
   data: { title: "Data", group: "Data", render: renderData },
   settings: { title: "Settings", group: "Preferences", render: renderSettings },
