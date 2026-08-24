@@ -21,7 +21,7 @@
     "@types/google-apps-script": "^1.0.83",
     "esbuild": "^0.21.5",
     "typescript": "^5.4.5",
-    "vitest": "^1.6.0"
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "chart.js": "4.4.3"
