@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { enrichGraphDoc } from "../src/domain/graphEnrich";
+import { enrichGraphDoc, withOpenCounts } from "../src/domain/graphEnrich";
 import {
   DEFAULT_LAYOUT,
   LAYOUT_MODES,
@@ -17,7 +17,12 @@ import { resolveLayoutParams } from "../src/domain/graphApiParams";
 import { projectGraph } from "../src/domain/graphProject";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
-const DOC = enrichGraphDoc(seedGraphDoc("2026-06-28T05:00:00Z"), SEED_ISSUES, SEED_AARS_HINTS);
+const ENRICHED = enrichGraphDoc(seedGraphDoc("2026-06-28T05:00:00Z"), SEED_ISSUES, SEED_AARS_HINTS);
+// The counts are a READ-time fold (syncStore applies it on every read path), so a doc that
+// stopped at enrichment carries none — and the `issues` ordering below would be vacuous
+// against it. Applied here through the same function the server uses, rather than by
+// hand, so this fixture cannot drift from what the app actually orders.
+const DOC = { ...ENRICHED, nodes: withOpenCounts(ENRICHED.nodes, SEED_ISSUES, []) };
 const PROJECTION = projectGraph(DOC, { seedIds: ["agent-h-chatbot", "agent-autogen"], depth: 3 });
 
 describe("laneOf", () => {
@@ -242,7 +247,7 @@ describe("layoutGraph rows mode (horizontal transpose of lanes)", () => {
 describe("layoutGraph lanes-mode sort variants", () => {
   const byId = new Map(PROJECTION.nodes.map((n) => [n.id, n]));
 
-  function laneOrders(sort: "severity" | "aars" | "name") {
+  function laneOrders(sort: "severity" | "issues" | "name") {
     const layout = layoutGraph(PROJECTION, { sort });
     const lanes = new Map<number, string[]>();
     // layout.nodes is emitted lane-by-lane in row order.
@@ -261,11 +266,11 @@ describe("layoutGraph lanes-mode sort variants", () => {
     }
   });
 
-  it("sort=aars orders every lane by descending score", () => {
-    for (const ids of laneOrders("aars").values()) {
+  it("sort=issues orders every lane by descending open-issue count", () => {
+    for (const ids of laneOrders("issues").values()) {
       for (let i = 1; i < ids.length; i++) {
-        const prev = byId.get(ids[i - 1])!.aars ?? -1;
-        const cur = byId.get(ids[i])!.aars ?? -1;
+        const prev = byId.get(ids[i - 1])!.openIssues ?? 0;
+        const cur = byId.get(ids[i])!.openIssues ?? 0;
         expect(prev).toBeGreaterThanOrEqual(cur);
       }
     }
@@ -351,7 +356,7 @@ describe.each(["radial", "organic"] as const)("layoutGraph %s mode", (mode) => {
     // Both modes order by the comparator — radial for its angular sequence, organic for the seed
     // that sequence becomes. A control that changed nothing would be a lie on the screen.
     expect(JSON.stringify(layoutGraph(PROJECTION, { mode, sort: "name" })))
-      .not.toBe(JSON.stringify(layoutGraph(PROJECTION, { mode, sort: "aars" })));
+      .not.toBe(JSON.stringify(layoutGraph(PROJECTION, { mode, sort: "issues" })));
   });
 });
 

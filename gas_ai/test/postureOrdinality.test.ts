@@ -197,8 +197,10 @@ describe("per-dimension unknown rates on the seed landscape", () => {
     const counts = { capability: 0, containment: 0, consequence: 0 };
     let n = 0;
     for (const r of rows) {
-      const detail = server.api.getAssetDetail({ id: r.id }) as { ok: boolean; data: { node: { postureInput?: { unknowns?: string[] } } } | null };
-      const postureInput = detail.data?.node?.postureInput;
+      // Straight off the node, like the two series above. `getAssetDetail` used to carry
+      // `postureInput`; the sheet publishes no verdict now, and a per-asset round trip was
+      // never the right way to read a model anyway.
+      const postureInput = (r as { postureInput?: { unknowns?: string[] } }).postureInput;
       // Present-but-`unknowns`-omitted means "this asset, every axis observed" — see
       // graphEnrich.withPostureTiers's own comment on why an empty `unknowns` array is
       // dropped rather than stored. That is a real zero, not a skip.

@@ -146,7 +146,7 @@ import {
   type QueryResult,
   queryVocabulary,
   runQuery,
-  validateQuery,
+  validateQueryWithWarnings,
 } from "../domain/graphQuery";
 import {
   AI_ASSET_KINDS,
@@ -536,7 +536,6 @@ export function getGraph(p?: unknown): ApiResult {
         defaultDepth: settingsStore.getDefaultDepth(),
         maxNodes: settingsStore.getMaxNodes(),
         issues: openIssues(),
-        scoredAssetIds: doc.nodes.filter((n) => (n.aars ?? 0) > 0).map((n) => n.id),
       });
       const view = resolveLayoutParams(params);
       const projection = projectGraph(doc, options);
@@ -625,7 +624,11 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
 export function runGraphQuery(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
-    const query = validateQuery(params["query"] ?? DEFAULT_QUERY);
+    // `retired` names the filter fields the vocabulary dropped rather than rejected — the
+    // derived verdicts. A saved view or a shared link written against them still runs; the
+    // page prints one line saying which filter is no longer being applied, because a query
+    // silently answering something broader than it was asked is worse than a stale link.
+    const { query, retired } = validateQueryWithWarnings(params["query"] ?? DEFAULT_QUERY);
     const columns = readColumnSelection(params["columns"]);
     const view = resolveLayoutParams(params);
     const maxNodes = clampInt(
@@ -637,7 +640,9 @@ export function runGraphQuery(p?: unknown): ApiResult {
     // The validated tree is the cache key, not the raw params: two spellings of the same query
     // (an absent `show: true`, a step order the builder rewrote) must not each buy their own
     // cache entry and their own Sheets read.
-    return cached("graphQuery", { query, columns, view, maxNodes }, () => {
+    // `retired` rides outside the cache key on purpose: it is a property of the REQUEST,
+    // and two spellings of one query must still share a cache entry.
+    const answer = cached("graphQuery", { query, columns, view, maxNodes }, () => {
       const doc = viewGraphDoc();
       if (!doc) return { empty: true };
       const result = runQuery(doc, query, { columns });
@@ -656,7 +661,8 @@ export function runGraphQuery(p?: unknown): ApiResult {
         options: { maxNodes, layout: view.mode, groupBy: view.groupBy, sort: view.sort },
         syncedAt: doc.syncedAt,
       };
-    });
+    }) as Rec;
+    return retired.length ? { ...answer, retiredFilters: retired } : answer;
   });
 }
 
@@ -772,17 +778,13 @@ function assetRow(n: GNode): Rec {
     externalId: n.externalId ?? null,
     projects: (n.projects ?? []).map((p) => p.name),
     severity: n.severity ?? null,
-    aars: n.aars ?? null,
-    aarsSeverity: n.aarsSeverity ?? null,
-    // The landscape percentile, which is what the asset surfaces LEAD with now — the band
-    // beside it is context. Read-derived (syncStore.withAarsPercentile), so null here
-    // means "not in the scored population", never "we have not computed it yet".
-    aarsPercentile: n.aarsPercentile ?? null,
-    // Phase 6: the posture tier, BESIDE the AARS score above, never blended into it — see
-    // posture.ts's own header for why a tier is not an aggregate of what has been found.
-    postureTier: n.postureTier ?? null,
-    postureInput: n.postureInput ?? null,
-    worstOpenProblem: n.worstOpenProblem ?? null,
+    // What every asset surface leads with now: two counts and the severity of the worst
+    // thing in the first of them. No score, no band, no percentile, no posture tier, no
+    // problem outcome — the three models this app derives reach the workbench and nothing
+    // else, so this projection is where that stops being a UI convention and becomes a
+    // property of the payload.
+    openIssues: n.openIssues ?? 0,
+    openFindings: n.openFindings ?? 0,
     comboGroups: n.comboGroups ?? [],
     internet: n.isAccessibleFromInternet ?? null,
     openInternet: n.isOpenToAllInternet ?? null,
@@ -1343,12 +1345,11 @@ export function getAssetDetail(p?: unknown): ApiResult {
           frameworkCodes: f.frameworkCodes,
         }));
       return {
-        node: {
-          ...assetRow(node),
-          aarsPillars: node.aarsPillars ?? null,
-          aarsInput: node.aarsInput ?? null,
-          aarsPercentile: node.aarsPercentile ?? null,
-        },
+        // No verdict block. The sheet used to carry `aarsPillars` / `aarsInput` /
+        // `aarsPercentile` so it could draw the score's breakdown; the breakdown of a
+        // model under calibration belongs beside the model, and the sheet now reads the
+        // same counts, issues and findings every other asset surface does.
+        node: assetRow(node),
         issues,
         neighbors,
         findings,
@@ -2001,11 +2002,11 @@ export function getToxicCombos(_p?: unknown): ApiResult {
               ? {
                   id,
                   name: a.name,
-                  aars: a.aars ?? null,
-                  aarsSeverity: a.aarsSeverity ?? null,
-                  aarsPercentile: a.aarsPercentile ?? null,
+                  severity: a.severity ?? null,
+                  openIssues: a.openIssues ?? 0,
+                  openFindings: a.openFindings ?? 0,
                 }
-              : { id, name: id, aars: null, aarsSeverity: null, aarsPercentile: null };
+              : { id, name: id, severity: null, openIssues: 0, openFindings: 0 };
           }),
         })),
         totalOpen: issues.length,

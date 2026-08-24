@@ -5,10 +5,6 @@
 // Node process can run them. detailSheets.js paints what this module decides; it does no
 // deciding of its own.
 
-// The label only — ./ui/scoreLabel.js builds no elements, so this module keeps its
-// "nothing imported here touches a DOM" promise above.
-import { FINDINGS_SCORE_LABEL } from "./ui/scoreLabel.js";
-
 function section(id, label, group, count, empty) {
   return { id: id, label: label, group: group, count: count, empty: empty };
 }
@@ -49,7 +45,6 @@ export function assetSections(detail) {
     section("issues", "Issues", "Risk", issuesCount, issuesCount === 0),
     section("compliance", "Compliance", "Risk", findingsCount, findingsCount === 0),
     section("combos", "Toxic combinations", "Risk", comboCount, comboCount === 0),
-    section("aars", FINDINGS_SCORE_LABEL + " breakdown", "Posture", null, !node.aarsPillars),
     section("exposure", "Exposure", "Posture", null, !exposed),
     section(
       "guardrails", "Guardrails", "Posture", null,

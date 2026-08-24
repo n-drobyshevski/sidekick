@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { SEVERITY_ORDER } from "../src/domain/config";
 import {
   enrichGraphDoc,
+  withOpenCounts,
   withDataFindingNodes,
   withExcessivePrivilegeNodes,
   withInternetExposureNodes,
@@ -23,7 +24,9 @@ import { NODE_KINDS } from "../src/domain/graphTypes";
 import { COMBO_GROUPS } from "../src/domain/toxicCombos";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
-const DOC = enrichGraphDoc(seedGraphDoc("2026-06-28T05:00:00Z"), SEED_ISSUES, SEED_AARS_HINTS);
+const ENRICHED = enrichGraphDoc(seedGraphDoc("2026-06-28T05:00:00Z"), SEED_ISSUES, SEED_AARS_HINTS);
+// The counts are a read-time fold; see graphLayout.test.ts's own note.
+const DOC = { ...ENRICHED, nodes: withOpenCounts(ENRICHED.nodes, SEED_ISSUES, []) };
 const PROJECTION = projectGraph(DOC, { seedIds: ["agent-h-chatbot", "agent-autogen"], depth: 3 });
 
 /**
@@ -413,10 +416,10 @@ describe("layoutGrouped: sort within groups", () => {
     }
   });
 
-  it("sort=aars orders members by descending score", () => {
-    const nodes = firstGroupMembers("aars");
+  it("sort=issues orders members by descending open-issue count", () => {
+    const nodes = firstGroupMembers("issues");
     for (let i = 1; i < nodes.length; i++) {
-      expect((nodes[i - 1].aars ?? -1) >= (nodes[i].aars ?? -1)).toBe(true);
+      expect((nodes[i - 1].openIssues ?? 0) >= (nodes[i].openIssues ?? 0)).toBe(true);
     }
   });
 

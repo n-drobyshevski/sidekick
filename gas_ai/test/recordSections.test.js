@@ -6,8 +6,11 @@ import {
   assetSections, configFindingSections, issueSections, recordCursor, clampSheetWidth,
 } from "../src/client/js/recordSections.js";
 
+// No "aars" section. The score's pillar breakdown was the one pane on this rail that
+// explained a model rather than reporting what the sync found; it lives on the Scoring
+// Models page now, beside the model it explains.
 const ASSET_IDS = [
-  "overview", "issues", "compliance", "combos", "aars", "exposure",
+  "overview", "issues", "compliance", "combos", "exposure",
   "guardrails", "relationships", "identity", "tags",
 ];
 
@@ -35,7 +38,6 @@ describe("assetSections", () => {
       highPriv: false,
       adminPriv: false,
       guardrailMissing: true,
-      aarsPillars: { toxic: 10, compliance: 4, data: 6 },
       tags: [{ key: "env", value: "prod" }, { key: "team", value: "ml" }],
     },
     issues: [{ id: "i1" }, { id: "i2" }],
@@ -57,12 +59,7 @@ describe("assetSections", () => {
     expect(map.issues).toMatchObject({ label: "Issues", group: "Risk", count: 2, empty: false });
     expect(map.compliance).toMatchObject({ label: "Compliance", group: "Risk", count: 1, empty: false });
     expect(map.combos).toMatchObject({ label: "Toxic combinations", group: "Risk", count: 1, empty: false });
-    // The section ID stays "aars" (it keys panes.aars in detailSheets.js and the persisted
-    // vocabulary above); only the TITLE takes the display label. That split is the whole
-    // point of AARS_DISPLAY_LABEL — see its comment in src/domain/aars.ts.
-    expect(map.aars).toMatchObject({
-      label: "Findings score breakdown", group: "Posture", count: null, empty: false,
-    });
+    expect(map.aars).toBeUndefined();
     expect(map.exposure).toMatchObject({ label: "Exposure", group: "Posture", count: null, empty: false });
     expect(map.guardrails).toMatchObject({ label: "Guardrails", group: "Posture", count: null, empty: false });
     expect(map.relationships).toMatchObject({ label: "Relationships", group: "Context", count: 2, empty: false });
@@ -82,7 +79,6 @@ describe("assetSections", () => {
         highPriv: null,
         adminPriv: false,
         guardrailMissing: false,
-        aarsPillars: null,
         tags: [],
       },
       issues: [],
@@ -97,7 +93,6 @@ describe("assetSections", () => {
     expect(map.issues.empty).toBe(true);
     expect(map.compliance.empty).toBe(true);
     expect(map.combos.empty).toBe(true);
-    expect(map.aars.empty).toBe(true);
     expect(map.exposure.empty).toBe(true);
     expect(map.guardrails.empty).toBe(true);
     expect(map.relationships.empty).toBe(true);

@@ -54,7 +54,6 @@ import {
 } from "./graphQuery.js";
 import { queryBar } from "./graphQueryBar.js";
 import {
-  FINDINGS_SCORE_LABEL,
   clear, confirmDialog, el, emptyState, filterChipRow, motionOk, onPageTeardown,
   openPopover, portalsOpen, segmented, selectField, sevBadge, tip, tipMark, toast,
   togglePills, uiIcon,
@@ -578,7 +577,7 @@ export async function renderGraphPage(main, params, _ctx) {
   const orderSel = el("select", { "aria-label": "Order nodes" },
     el("option", { value: "" }, "Smart order"),
     el("option", { value: "severity" }, "Severity first"),
-    el("option", { value: "aars" }, "Highest " + FINDINGS_SCORE_LABEL.toLowerCase()),
+    el("option", { value: "issues" }, "Most open issues"),
     el("option", { value: "name" }, "Name (A–Z)"),
   );
   orderSel.addEventListener("change", () => update({ sort: orderSel.value, pos: "" }));
@@ -1118,10 +1117,28 @@ export async function renderGraphPage(main, params, _ctx) {
     if (payload.summaries && payload.summaries.length) {
       parts.push(`${payload.summaries.length} collapsed group${payload.summaries.length > 1 ? "s" : ""}`);
     }
-    const text = parts.join(" · ");
+    // A saved view or a shared link can name a filter field this vocabulary retired — the
+    // derived verdicts, which reach the model workbench and nothing else. The server drops
+    // those filters rather than refusing the query (see RETIRED_FIELDS in graphQuery.ts:
+    // rejecting would blank this page for a link that used to work), so the answer on
+    // screen is BROADER than the question that was asked. Saying which filter went is the
+    // whole point — a silently widened result is the one outcome worse than a stale link.
+    const retired = payload.retiredFilters || [];
+    const text = parts.join(" · ") + (retired.length ? ` · ${retired.length} filter dropped` : "");
     if (text !== lastStatusText) {
       lastStatusText = text;
-      clear(metaStatus).append(el("span", { class: "num" }, text));
+      clear(metaStatus).append(el("span", { class: "num" }, parts.join(" · ")));
+      if (retired.length) {
+        metaStatus.append(tip(
+          el("span", { class: "pill warn" }, "filter dropped"),
+          [
+            `This query filters on ${retired.join(", ")}, which the graph no longer offers.`,
+            "Those are the scoring model's own fields. They are experimental and live on the Scoring Models page now, so nothing else filters or ranks by them.",
+            "The rest of the query ran — these results are wider than the saved view was.",
+          ],
+          { label: "Why a filter was dropped" },
+        ));
+      }
       if (c.capped) {
         metaStatus.append(tip(
           el("span", { class: "pill warn" }, "capped"),

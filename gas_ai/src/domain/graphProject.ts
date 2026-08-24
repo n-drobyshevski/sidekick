@@ -78,12 +78,23 @@ export const DEFAULT_PER_KIND_CAP: Partial<Record<string, number>> = {
 export const DEFAULT_KIND_CAP = 12;
 
 
-/** Deterministic neighbor priority: worse severity, then higher AARS, then name. */
+/**
+ * Deterministic neighbour priority: worse severity, then more open issues, then more
+ * failing findings, then name.
+ *
+ * THE SAME "worst first" the inventory's tie-break uses (`byRiskDesc` in assetTable.ts),
+ * deliberately so. This decides which neighbours survive a per-kind cap and which get
+ * folded into a "+N more" stub, so it is a claim about what matters — and an app that
+ * answered that question one way in a table and another way in a graph would be telling a
+ * reader two things about one landscape.
+ */
 export function nodeOrder(a: GNode, b: GNode): number {
   const sev = severityRank(a.severity) - severityRank(b.severity);
   if (sev !== 0) return sev;
-  const aars = (b.aars ?? -1) - (a.aars ?? -1);
-  if (aars !== 0) return aars;
+  const issues = (b.openIssues ?? 0) - (a.openIssues ?? 0);
+  if (issues !== 0) return issues;
+  const findings = (b.openFindings ?? 0) - (a.openFindings ?? 0);
+  if (findings !== 0) return findings;
   return cmp(a.name, b.name);
 }
 

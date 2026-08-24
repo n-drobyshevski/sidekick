@@ -4980,6 +4980,24 @@ var Server = (() => {
       negated: true
     });
   }
+  function withOpenCounts(nodes, issues2, findings) {
+    var _a5, _b;
+    const issueCount = {};
+    for (const issue2 of issues2) {
+      if (!issue2.assetId || !isUnresolvedIssue(issue2)) continue;
+      issueCount[issue2.assetId] = ((_a5 = issueCount[issue2.assetId]) != null ? _a5 : 0) + 1;
+    }
+    const findingCount = {};
+    for (const finding of findings) {
+      if (!finding.resourceId || !isOpenGap(finding)) continue;
+      findingCount[finding.resourceId] = ((_b = findingCount[finding.resourceId]) != null ? _b : 0) + 1;
+    }
+    return nodes.map((n) => {
+      var _a6, _b2;
+      if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
+      return { ...n, openIssues: (_a6 = issueCount[n.id]) != null ? _a6 : 0, openFindings: (_b2 = findingCount[n.id]) != null ? _b2 : 0 };
+    });
+  }
 
   // src/domain/identityHygiene.ts
   var HYGIENE_SUBJECT = "USER_ACCOUNT";
@@ -7870,7 +7888,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "05cc5e51e1f0" : "dev";
+  var BUILD_ID = true ? "629771c896ef" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -9673,24 +9691,6 @@ var Server = (() => {
       return { ...n, aarsPercentile: Math.round(percentiles[i++]) };
     });
   }
-  function withOpenCounts(nodes) {
-    var _a5, _b;
-    const issueCount = {};
-    for (const issue2 of loadIssues()) {
-      if (!isUnresolvedIssue(issue2)) continue;
-      issueCount[issue2.assetId] = ((_a5 = issueCount[issue2.assetId]) != null ? _a5 : 0) + 1;
-    }
-    const findingCount = {};
-    for (const finding of loadFindings()) {
-      if (!isOpenGap(finding)) continue;
-      findingCount[finding.resourceId] = ((_b = findingCount[finding.resourceId]) != null ? _b : 0) + 1;
-    }
-    return nodes.map((n) => {
-      var _a6, _b2;
-      if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
-      return { ...n, openIssues: (_a6 = issueCount[n.id]) != null ? _a6 : 0, openFindings: (_b2 = findingCount[n.id]) != null ? _b2 : 0 };
-    });
-  }
   function currentBands() {
     return getAarsRule2().rule.bands;
   }
@@ -9698,7 +9698,7 @@ var Server = (() => {
     return withAarsPercentile(withCurrentBands(nodes, currentBands()));
   }
   function withReadDerivations(nodes) {
-    return withOpenCounts(withAarsReadDerivations(nodes));
+    return withOpenCounts(withAarsReadDerivations(nodes), loadIssues(), loadFindings());
   }
   function withBandsApplied(doc) {
     const nodes = withReadDerivations(doc.nodes);
@@ -12562,11 +12562,13 @@ var Server = (() => {
   };
   var DEFAULT_KIND_CAP = 12;
   function nodeOrder(a, b) {
-    var _a5, _b;
+    var _a5, _b, _c, _d;
     const sev = severityRank(a.severity) - severityRank(b.severity);
     if (sev !== 0) return sev;
-    const aars = ((_a5 = b.aars) != null ? _a5 : -1) - ((_b = a.aars) != null ? _b : -1);
-    if (aars !== 0) return aars;
+    const issues2 = ((_a5 = b.openIssues) != null ? _a5 : 0) - ((_b = a.openIssues) != null ? _b : 0);
+    if (issues2 !== 0) return issues2;
+    const findings = ((_c = b.openFindings) != null ? _c : 0) - ((_d = a.openFindings) != null ? _d : 0);
+    if (findings !== 0) return findings;
     return cmp(a.name, b.name);
   }
   function passesFilters(node2, f) {
@@ -12724,7 +12726,7 @@ var Server = (() => {
   var LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"];
   var DEFAULT_LAYOUT = "grid";
   var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"];
-  var SORT_KEYS = ["smart", "severity", "aars", "name"];
+  var SORT_KEYS = ["smart", "severity", "issues", "name"];
   var GROUP_NONE = "__none__";
   var LANE_OF = {
     ISSUE: 0,
@@ -12803,10 +12805,10 @@ var Server = (() => {
     if (sort === "severity") {
       return (a, b) => severityRank(a.severity) - severityRank(b.severity) || cmpName(a, b) || cmpId(a, b);
     }
-    if (sort === "aars") {
+    if (sort === "issues") {
       return (a, b) => {
         var _a5, _b;
-        return ((_a5 = b.aars) != null ? _a5 : -1) - ((_b = a.aars) != null ? _b : -1) || cmpName(a, b) || cmpId(a, b);
+        return ((_a5 = b.openIssues) != null ? _a5 : 0) - ((_b = a.openIssues) != null ? _b : 0) || cmpName(a, b) || cmpId(a, b);
       };
     }
     if (sort === "name") {
@@ -13951,16 +13953,32 @@ var Server = (() => {
     return {
       mode: legacyGrouped ? groupBy2[0] === "asset" ? "radial" : "grid" : pick(p["layout"], LAYOUT_MODES, DEFAULT_LAYOUT),
       groupBy: groupBy2,
-      sort: pick(p["sort"], SORT_KEYS, "smart")
+      // `sort=aars` IS AN OLD LINK too, and it maps to `issues` rather than falling through
+      // to `smart`. The two are the closest honest pair: the score's own ordering was driven
+      // almost entirely by its issue pillar (tau-b 0.863 — ai/AARS_SCORING_ASSESSMENT.md §3,
+      // pinned by test/scoreOrdinality.test.ts), so a reader who asked for "worst score
+      // first" gets the ordering they were actually looking at. Falling back to `smart`
+      // would silently answer a different question and give no sign it had.
+      sort: pick(
+        typeof p["sort"] === "string" && p["sort"].toLowerCase() === "aars" ? "issues" : p["sort"],
+        SORT_KEYS,
+        "smart"
+      )
     };
   }
   function resolveGraphParams(p, ctx) {
-    var _a5;
     const seed = typeof p["seed"] === "string" ? p["seed"] : "";
     const seedKind = typeof p["seedKind"] === "string" ? p["seedKind"] : "";
     let seedIds;
-    if (seedKind === "scored") {
-      seedIds = (_a5 = ctx.scoredAssetIds) != null ? _a5 : [];
+    if (seedKind === "scored" || seedKind === "issues") {
+      const withIssues = [];
+      const seen = {};
+      for (const issue2 of ctx.issues) {
+        if (!issue2.assetId || seen[issue2.assetId]) continue;
+        seen[issue2.assetId] = true;
+        withIssues.push(issue2.assetId);
+      }
+      seedIds = withIssues;
     } else if (seed && (seedKind === "combo" || comboGroupById(seed))) {
       seedIds = comboAssetIds(ctx.issues, seed);
     } else if (seed) {
@@ -13987,7 +14005,7 @@ var Server = (() => {
       filters: hasFilters ? filters : void 0,
       maxNodes,
       maxEdges: Math.round(maxNodes * EDGE_BUDGET_RATIO),
-      ...seedKind === "scored" ? { filterSeeds: true } : {}
+      ...seedKind === "scored" || seedKind === "issues" ? { filterSeeds: true } : {}
     };
   }
   function graphCacheParams(p) {
@@ -14149,27 +14167,29 @@ var Server = (() => {
     },
     { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
     { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
-    // Keys are the persisted identifiers and never change; the LABELS are the display name
-    // (aars.AARS_DISPLAY_LABEL) — see its comment for why the two deliberately differ.
-    { key: "aars", label: "Findings score", type: "number", numeric: true, get: (n) => {
-      var _a5;
-      return (_a5 = n.aars) != null ? _a5 : null;
-    } },
+    // The two counts that replaced the score, the percentile and the level here. A query is
+    // a question about the landscape, and these are answerable from what Wiz reported;
+    // "findings score above 70" was answerable only from a model this app was still
+    // calibrating, which is why it now lives on the workbench and nowhere else.
     {
-      key: "aarsPercentile",
-      label: "Findings percentile",
+      key: "openIssues",
+      label: "Open issues",
       type: "number",
       numeric: true,
       get: (n) => {
         var _a5;
-        return (_a5 = n.aarsPercentile) != null ? _a5 : null;
+        return (_a5 = n.openIssues) != null ? _a5 : 0;
       }
     },
     {
-      key: "aarsSeverity",
-      label: "Findings score level",
-      type: "choice",
-      get: (n) => orNull(n.aarsSeverity)
+      key: "openFindings",
+      label: "Cloud findings",
+      type: "number",
+      numeric: true,
+      get: (n) => {
+        var _a5;
+        return (_a5 = n.openFindings) != null ? _a5 : 0;
+      }
     },
     {
       key: "projects",
@@ -14364,11 +14384,19 @@ var Server = (() => {
   }
   var KIND_SET = new Set(NODE_KINDS);
   var EDGE_SET = new Set(EDGE_TYPES);
-  function validateQuery(raw) {
-    const counter = { nodes: 0 };
-    const q = readNode(raw, 1, counter);
-    return q;
+  function validateQueryWithWarnings(raw) {
+    const counter = { nodes: 0, retired: [] };
+    const query = readNode(raw, 1, counter);
+    const retired = counter.retired.filter((k, i, all) => all.indexOf(k) === i);
+    return { query, retired };
   }
+  var RETIRED_FIELDS = /* @__PURE__ */ new Set([
+    "aars",
+    "aarsPercentile",
+    "aarsSeverity",
+    "postureTier",
+    "problemOutcome"
+  ]);
   function readKinds(raw) {
     const list2 = Array.isArray(raw) ? raw : [raw];
     if (!list2.length) fail("node names no kind");
@@ -14397,7 +14425,12 @@ var Server = (() => {
         if (!f || typeof f !== "object") fail("filter must be an object");
         const key = f["key"];
         const values = f["values"];
-        if (typeof key !== "string" || key !== "id" && !FIELD_BY_KEY.has(key)) {
+        if (typeof key !== "string") fail(`unknown filter field: ${String(key)}`);
+        if (RETIRED_FIELDS.has(key)) {
+          counter.retired.push(key);
+          continue;
+        }
+        if (key !== "id" && !FIELD_BY_KEY.has(key)) {
           fail(`unknown filter field: ${String(key)}`);
         }
         if (!Array.isArray(values) || !values.length) fail(`filter ${key} has no values`);
@@ -15316,11 +15349,7 @@ var Server = (() => {
         const options = resolveGraphParams(params, {
           defaultDepth: getDefaultDepth2(),
           maxNodes: getMaxNodes2(),
-          issues: openIssues(),
-          scoredAssetIds: doc.nodes.filter((n) => {
-            var _a6;
-            return ((_a6 = n.aars) != null ? _a6 : 0) > 0;
-          }).map((n) => n.id)
+          issues: openIssues()
         });
         const view = resolveLayoutParams(params);
         const projection = projectGraph(doc, options);
@@ -15385,7 +15414,7 @@ var Server = (() => {
     return run(() => {
       var _a5;
       const params = p != null ? p : {};
-      const query = validateQuery((_a5 = params["query"]) != null ? _a5 : DEFAULT_QUERY);
+      const { query, retired } = validateQueryWithWarnings((_a5 = params["query"]) != null ? _a5 : DEFAULT_QUERY);
       const columns = readColumnSelection(params["columns"]);
       const view = resolveLayoutParams(params);
       const maxNodes = clampInt(
@@ -15394,7 +15423,7 @@ var Server = (() => {
         MAX_NODES_FLOOR,
         MAX_NODES_CEILING
       );
-      return cached("graphQuery", { query, columns, view, maxNodes }, () => {
+      const answer = cached("graphQuery", { query, columns, view, maxNodes }, () => {
         const doc = viewGraphDoc();
         if (!doc) return { empty: true };
         const result = runQuery(doc, query, { columns });
@@ -15414,6 +15443,7 @@ var Server = (() => {
           syncedAt: doc.syncedAt
         };
       });
+      return retired.length ? { ...answer, retiredFilters: retired } : answer;
     });
   }
   function readColumnSelection(raw) {
@@ -15457,7 +15487,7 @@ var Server = (() => {
     };
   }
   function assetRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K, _L, _M, _N;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J;
     return {
       id: n.id,
       name: n.name,
@@ -15471,55 +15501,51 @@ var Server = (() => {
       externalId: (_g = n.externalId) != null ? _g : null,
       projects: ((_h = n.projects) != null ? _h : []).map((p) => p.name),
       severity: (_i = n.severity) != null ? _i : null,
-      aars: (_j = n.aars) != null ? _j : null,
-      aarsSeverity: (_k = n.aarsSeverity) != null ? _k : null,
-      // The landscape percentile, which is what the asset surfaces LEAD with now — the band
-      // beside it is context. Read-derived (syncStore.withAarsPercentile), so null here
-      // means "not in the scored population", never "we have not computed it yet".
-      aarsPercentile: (_l = n.aarsPercentile) != null ? _l : null,
-      // Phase 6: the posture tier, BESIDE the AARS score above, never blended into it — see
-      // posture.ts's own header for why a tier is not an aggregate of what has been found.
-      postureTier: (_m = n.postureTier) != null ? _m : null,
-      postureInput: (_n = n.postureInput) != null ? _n : null,
-      worstOpenProblem: (_o = n.worstOpenProblem) != null ? _o : null,
-      comboGroups: (_p = n.comboGroups) != null ? _p : [],
-      internet: (_q = n.isAccessibleFromInternet) != null ? _q : null,
-      openInternet: (_r = n.isOpenToAllInternet) != null ? _r : null,
+      // What every asset surface leads with now: two counts and the severity of the worst
+      // thing in the first of them. No score, no band, no percentile, no posture tier, no
+      // problem outcome — the three models this app derives reach the workbench and nothing
+      // else, so this projection is where that stops being a UI convention and becomes a
+      // property of the payload.
+      openIssues: (_j = n.openIssues) != null ? _j : 0,
+      openFindings: (_k = n.openFindings) != null ? _k : 0,
+      comboGroups: (_l = n.comboGroups) != null ? _l : [],
+      internet: (_m = n.isAccessibleFromInternet) != null ? _m : null,
+      openInternet: (_n = n.isOpenToAllInternet) != null ? _n : null,
       // ENDPOINT rows only; null everywhere else. The pair is the dynamic scanner's verdict,
       // and the detail sheet prints both because either alone is misleading — an open port
       // behind SSO rates Low and is not an exposure.
-      exposureLevel: (_s = n.exposureLevel) != null ? _s : null,
-      portValidation: (_t = n.portValidation) != null ? _t : null,
+      exposureLevel: (_o = n.exposureLevel) != null ? _o : null,
+      portValidation: (_p = n.portValidation) != null ? _p : null,
       // Null, not {}, when the exposure steps never reached this asset — the same "clean" vs
       // "never asked" split dataFindingCount keeps below.
-      exposureEvidence: (_u = n.exposureEvidence) != null ? _u : null,
+      exposureEvidence: (_q = n.exposureEvidence) != null ? _q : null,
       // Identity rows carry the first two; AI assets carry the third. Null, not false/{}, for
       // the "never reported" vs "reported clean" split the rest of this row keeps.
-      inactive: (_v = n.inactive) != null ? _v : null,
-      inactiveTimeframe: (_w = n.inactiveTimeframe) != null ? _w : null,
-      humanAccess: (_x = n.humanAccess) != null ? _x : null,
-      sensitiveAccess: (_y = n.hasAccessToSensitiveData) != null ? _y : false,
-      sensitiveData: (_z = n.hasSensitiveData) != null ? _z : false,
-      highPriv: (_A = n.hasHighPrivileges) != null ? _A : false,
-      adminPriv: (_B = n.hasAdminPrivileges) != null ? _B : false,
-      guardrailMissing: (_C = n.guardrailMissing) != null ? _C : false,
+      inactive: (_r = n.inactive) != null ? _r : null,
+      inactiveTimeframe: (_s = n.inactiveTimeframe) != null ? _s : null,
+      humanAccess: (_t = n.humanAccess) != null ? _t : null,
+      sensitiveAccess: (_u = n.hasAccessToSensitiveData) != null ? _u : false,
+      sensitiveData: (_v = n.hasSensitiveData) != null ? _v : false,
+      highPriv: (_w = n.hasHighPrivileges) != null ? _w : false,
+      adminPriv: (_x = n.hasAdminPrivileges) != null ? _x : false,
+      guardrailMissing: (_y = n.guardrailMissing) != null ? _y : false,
       // Null, not 0, when the sensitive-data traversal never reached this node: the graph
       // card and the insight row both key on truthiness, and a 0 would make "we never asked"
       // render exactly like "we looked and it is clean".
-      dataFindingCount: (_D = n.dataFindingCount) != null ? _D : null,
-      dataFindingSeverities: (_E = n.dataFindingSeverities) != null ? _E : null,
+      dataFindingCount: (_z = n.dataFindingCount) != null ? _z : null,
+      dataFindingSeverities: (_A = n.dataFindingSeverities) != null ? _A : null,
       // On the aggregate node only — the count it collapses.
-      summaryCount: (_F = n.summaryCount) != null ? _F : null,
-      technologyCategories: (_G = n.technologyCategories) != null ? _G : [],
-      cloudAccount: (_I = (_H = n.cloudAccount) == null ? void 0 : _H.name) != null ? _I : null,
+      summaryCount: (_B = n.summaryCount) != null ? _B : null,
+      technologyCategories: (_C = n.technologyCategories) != null ? _C : [],
+      cloudAccount: (_E = (_D = n.cloudAccount) == null ? void 0 : _D.name) != null ? _E : null,
       // Full account object, for the detail sheet — cloudAccount above stays a bare
       // name string since existing client code already reads it as one.
-      cloudAccountRef: (_J = n.cloudAccount) != null ? _J : null,
-      tags: (_K = n.tags) != null ? _K : [],
-      identityPurpose: (_L = n.identityPurpose) != null ? _L : null,
-      issueAnalytics: (_M = n.issueAnalytics) != null ? _M : null,
+      cloudAccountRef: (_F = n.cloudAccount) != null ? _F : null,
+      tags: (_G = n.tags) != null ? _G : [],
+      identityPurpose: (_H = n.identityPurpose) != null ? _H : null,
+      issueAnalytics: (_I = n.issueAnalytics) != null ? _I : null,
       // Full project objects, for the detail sheet — projects above stays name-only.
-      projectRefs: ((_N = n.projects) != null ? _N : []).map((p) => ({
+      projectRefs: ((_J = n.projects) != null ? _J : []).map((p) => ({
         id: p.id,
         name: p.name,
         businessImpact: p.businessImpact
@@ -15835,7 +15861,6 @@ var Server = (() => {
       var _a5;
       const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
       return cached("getAssetDetail", { id }, () => {
-        var _a6, _b, _c;
         const doc = loadGraphDoc();
         if (!doc) return null;
         const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
@@ -15855,25 +15880,24 @@ var Server = (() => {
           });
         }
         const findings = loadFindings().filter((f) => f.resourceId === id && isOpenGap(f)).map((f) => {
-          var _a7, _b2, _c2;
+          var _a6, _b, _c;
           return {
             id: f.id,
             resourceId: f.resourceId,
             ruleShortId: f.ruleShortId,
-            ruleName: (_a7 = f.ruleName) != null ? _a7 : null,
-            name: (_b2 = f.name) != null ? _b2 : null,
+            ruleName: (_a6 = f.ruleName) != null ? _a6 : null,
+            name: (_b = f.name) != null ? _b : null,
             severity: f.severity,
-            remediation: (_c2 = f.remediation) != null ? _c2 : null,
+            remediation: (_c = f.remediation) != null ? _c : null,
             frameworkCodes: f.frameworkCodes
           };
         });
         return {
-          node: {
-            ...assetRow(node2),
-            aarsPillars: (_a6 = node2.aarsPillars) != null ? _a6 : null,
-            aarsInput: (_b = node2.aarsInput) != null ? _b : null,
-            aarsPercentile: (_c = node2.aarsPercentile) != null ? _c : null
-          },
+          // No verdict block. The sheet used to carry `aarsPillars` / `aarsInput` /
+          // `aarsPercentile` so it could draw the score's breakdown; the breakdown of a
+          // model under calibration belongs beside the model, and the sheet now reads the
+          // same counts, issues and findings every other asset surface does.
+          node: assetRow(node2),
           issues: issues2,
           neighbors,
           findings
@@ -16238,10 +16262,10 @@ var Server = (() => {
                 return a ? {
                   id,
                   name: a.name,
-                  aars: (_a6 = a.aars) != null ? _a6 : null,
-                  aarsSeverity: (_b2 = a.aarsSeverity) != null ? _b2 : null,
-                  aarsPercentile: (_c2 = a.aarsPercentile) != null ? _c2 : null
-                } : { id, name: id, aars: null, aarsSeverity: null, aarsPercentile: null };
+                  severity: (_a6 = a.severity) != null ? _a6 : null,
+                  openIssues: (_b2 = a.openIssues) != null ? _b2 : 0,
+                  openFindings: (_c2 = a.openFindings) != null ? _c2 : 0
+                } : { id, name: id, severity: null, openIssues: 0, openFindings: 0 };
               })
             };
           }),

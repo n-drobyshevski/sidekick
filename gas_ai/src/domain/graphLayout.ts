@@ -111,7 +111,7 @@ export const DEFAULT_LAYOUT: LayoutMode = "grid";
 export const GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"] as const;
 export type GroupKey = (typeof GROUP_KEYS)[number];
 
-export const SORT_KEYS = ["smart", "severity", "aars", "name"] as const;
+export const SORT_KEYS = ["smart", "severity", "issues", "name"] as const;
 export type SortKey = (typeof SORT_KEYS)[number];
 
 /** Sentinel bucket for nodes without a value for the grouping key. Always last. */
@@ -302,13 +302,13 @@ function cmpId(a: GNode, b: GNode): number {
 }
 
 /** Explicit ordering comparator; "smart" falls back to the projection's
- *  (severity, AARS, name) priority. Final tie-break is always id. */
+ *  (severity, issues, findings, name) priority. Final tie-break is always id. */
 function comparator(sort: SortKey): (a: GNode, b: GNode) => number {
   if (sort === "severity") {
     return (a, b) => severityRank(a.severity) - severityRank(b.severity) || cmpName(a, b) || cmpId(a, b);
   }
-  if (sort === "aars") {
-    return (a, b) => (b.aars ?? -1) - (a.aars ?? -1) || cmpName(a, b) || cmpId(a, b);
+  if (sort === "issues") {
+    return (a, b) => (b.openIssues ?? 0) - (a.openIssues ?? 0) || cmpName(a, b) || cmpId(a, b);
   }
   if (sort === "name") {
     return (a, b) => cmpName(a, b) || cmpId(a, b);
