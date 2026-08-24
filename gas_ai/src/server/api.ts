@@ -268,6 +268,16 @@ function viewAssetIds(): Set<string> | null {
  * its identity is exact and costs nothing.
  */
 let graphDocMemo: { view: string; raw: GraphDoc | null; doc: GraphDoc | null } | null = null;
+
+// NO `__resetMemosForTest` here, unlike the other memo-holding modules in this directory,
+// and deliberately: every `export function` in this file must have a matching GAS delegator
+// in dist/entry.js (esbuild.config.mjs enforces it), and a test hook is not an endpoint.
+//
+// It does not need one. `graphDocMemo` is keyed on the IDENTITY of `syncStore.loadGraphDoc()`,
+// so once syncStore drops its own memos the next `loadGraphDoc()` builds a fresh object, the
+// `raw ===` check misses, and this memo re-derives on its own. A memo added here that is NOT
+// identity-keyed would break that, and would need the guard question answered again.
+
 function viewGraphDoc(): GraphDoc | null {
   const view = settingsStore.getProjectView();
   const raw = syncStore.loadGraphDoc();

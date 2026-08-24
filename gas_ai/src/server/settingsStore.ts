@@ -15,6 +15,19 @@ import { readAll, overwrite, TABS } from "./sheetsDb";
 // state dies with the GAS execution, so this can never serve cross-request data.
 let settingsMemo: Rec | undefined;
 
+/**
+ * Drop this module's per-execution memos.
+ *
+ * Test-only. In GAS these memos die with the execution, so nothing in production ever needs
+ * to clear them; under vitest the module registry outlives a test, and `test/gasEnv.ts`
+ * calls this so a shared server can be reset without re-importing the whole graph. See the
+ * comment on `resetToSynced` there.
+ */
+export function __resetMemosForTest(): void {
+  settingsMemo = undefined;
+}
+
+
 export function loadSettings(): Rec {
   if (settingsMemo !== undefined) return settingsMemo;
   const out: Rec = {};

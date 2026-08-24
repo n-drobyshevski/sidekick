@@ -41,8 +41,10 @@ const STATEFUL = statefulFiles();
  */
 const EXACT = process.env["GAS_TEST_FULL_ISOLATION"] === "1";
 
+/** Root-relative, so `include`/`exclude` below can name files the same way. */
+const ALL_TESTS = `${TEST_DIR}/**/*.test.?([cm])[jt]s?(x)`;
+
 const common = {
-  dir: TEST_DIR,
 
   /**
    * `threads` over v4's `forks` default, for two reasons. It is the faster pool on a suite
@@ -78,6 +80,11 @@ export default defineConfig({
      */
     experimental: { fsModuleCache: true },
 
+    // `dir` scopes the file search; the projects below use root-relative globs instead,
+    // because setting both makes the patterns resolve against `test/test/`, which silently
+    // matches nothing and hands every file to whichever project has no `include`.
+    dir: TEST_DIR,
+
     ...(EXACT
       ? { isolate: true }
       : {
@@ -88,7 +95,13 @@ export default defineConfig({
               // top-level Map/Set is a lookup table built once. So these files can share a
               // worker, and the domain graph gets executed once per worker instead of once
               // per file.
-              test: { ...common, name: "pure", exclude: STATEFUL, isolate: false },
+              test: {
+                ...common,
+                name: "pure",
+                include: [ALL_TESTS],
+                exclude: ["**/node_modules/**", "**/.git/**", ...STATEFUL],
+                isolate: false,
+              },
             },
             {
               test: { ...common, name: "stateful", include: STATEFUL, isolate: true },

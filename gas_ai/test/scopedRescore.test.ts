@@ -5,11 +5,11 @@
 // every claim the app makes about a score has to survive a mixed register, and the mixed
 // state has to be visible rather than averaged away.
 
-import { beforeEach, describe, expect, it } from "vitest";
-import { bootServer } from "./gasEnv";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { bootSyncedServer, resetToSynced, teardownServer } from "./gasEnv";
 import type { Rec } from "../src/domain/util";
 
-type Server = Awaited<ReturnType<typeof bootServer>>;
+type Server = Awaited<ReturnType<typeof bootSyncedServer>>;
 type SyncStore = typeof import("../src/server/syncStore");
 let server: Server;
 let syncStore: SyncStore;
@@ -62,11 +62,18 @@ function bumpRule(): void {
   ok(server.api.setAarsRule({ rule: next }));
 }
 
+beforeAll(async () => {
+  server = await bootSyncedServer();
+});
+
+// Every test bumps the AARS rule and rescores, which writes versions across the register.
 beforeEach(async () => {
-  server = await bootServer();
+  server = await resetToSynced();
   syncStore = await import("../src/server/syncStore");
-  server.setup();
-  ok(server.api.runSync({}));
+});
+
+afterAll(() => {
+  teardownServer();
 });
 
 describe("rescore under a project view", () => {

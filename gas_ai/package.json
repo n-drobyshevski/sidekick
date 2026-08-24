@@ -10,15 +10,18 @@
     "dev": "node dev/serve.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:exact": "GAS_TEST_FULL_ISOLATION=1 vitest run",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm run test && npm run build",
-    "push": "npm run check && clasp push",
+    "check:exact": "npm run typecheck && npm run test:exact && npm run build",
+    "push": "npm run check:exact && clasp push",
     "deploy": "npm run push && clasp deploy",
     "probe": "node probe.mjs"
   },
   "devDependencies": {
     "@google/clasp": "^3.3.0",
     "@types/google-apps-script": "^1.0.83",
+    "@types/node": "^20.19.43",
     "esbuild": "^0.21.5",
     "typescript": "^5.4.5",
     "vitest": "^4.1.11"
