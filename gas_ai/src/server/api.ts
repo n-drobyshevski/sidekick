@@ -842,6 +842,7 @@ function assetTableRow(
   n: GNode,
   issuesBySeverity?: Record<string, number>,
   aarsPercentile?: number | null,
+  findingsBySeverity?: Record<string, number>,
 ): Rec {
   const row: Rec = {
     id: n.id,
@@ -850,6 +851,11 @@ function assetTableRow(
     cloud: n.cloudPlatform ?? null,
     region: n.region ?? null,
     severity: n.severity ?? null,
+    // The two counts the register sorts, ranks and leads with. Read-derived on the node
+    // (syncStore.withOpenCounts) rather than recounted here, so the table, the graph and
+    // the asset sheet publish one number per asset instead of three that agree by luck.
+    openIssues: n.openIssues ?? 0,
+    openFindings: n.openFindings ?? 0,
     aars: n.aars ?? null,
     aarsSeverity: n.aarsSeverity ?? null,
     // What the table's score cell leads with. See assetRow's note.
@@ -875,6 +881,8 @@ function assetTableRow(
   // Only the rows that have open issues carry the breakdown. Most of a healthy landscape has
   // none, and an empty object per row is pure weight in the all-inventory payload.
   if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
+  // Same "only when there are any" rule as the issue breakdown above, for the same reason.
+  if (findingsBySeverity) row["findingsBySeverity"] = findingsBySeverity;
   return row;
 }
 
@@ -896,10 +904,37 @@ function issuesBySeverityByAsset(issues: IssueRow[]): Map<string, Record<string,
   return out;
 }
 
+/**
+ * Failing configuration findings rolled up per asset and severity — the breakdown behind
+ * the table's `openFindings` count, and the exact analogue of the issue rollup above.
+ *
+ * Keyed by `resourceId`, because a finding is an evaluation of one rule against one
+ * resource and that resource is what ties it to an asset. Most findings tie to nothing the
+ * AI graph models — a region, a raw access policy, a service account no agent runs as — so
+ * this map is deliberately much smaller than the finding population, and the difference is
+ * published as `complianceGapsUnlinked` rather than left to look like a miscount.
+ *
+ * Callers pass an already-gated population (`isOpenGap`); this does not re-filter, so the
+ * one definition of "failing control" stays in one place.
+ */
+function findingsBySeverityByAsset(findings: FindingRow[]): Map<string, Record<string, number>> {
+  const out = new Map<string, Record<string, number>>();
+  for (const finding of findings) {
+    if (!finding.resourceId) continue;
+    const bucket = out.get(finding.resourceId) ?? {};
+    const sev = finding.severity ?? "UNKNOWN";
+    bucket[sev] = (bucket[sev] ?? 0) + 1;
+    out.set(finding.resourceId, bucket);
+  }
+  return out;
+}
+
 interface AssetsModel {
   rows: Rec[];
   kpis: Rec;
   aarsSeverityCounts: Record<string, number>;
+  /** Assets by worst open-issue severity — the inventory strip's distribution. */
+  severityCounts: Record<string, number>;
   aarsTrend: AarsTrendPoint[];
   /** Indices in aarsTrend where the scoring model changed — the chart marks them. */
   aarsTrendRuleChanges: number[];
@@ -989,6 +1024,9 @@ function assetsModel(): AssetsModel {
   const agents = assets.filter((a) => a.kind === "AI_AGENT");
   const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
   const issueRollup = issuesBySeverityByAsset(issues);
+  // Over `openGaps`, the already-gated population above — so the per-asset breakdown and
+  // `kpis.complianceGaps` count the same rows under the same definition.
+  const findingRollup = findingsBySeverityByAsset(openGaps);
   // Read-time, over the population as it scores RIGHT NOW — never persisted (see
   // assetTableRow's own doc comment). Computed once here, over every scored asset together,
   // and looked up per row below rather than recomputed per row: midrankPercentiles needs the
@@ -1002,11 +1040,17 @@ function assetsModel(): AssetsModel {
     scoredForPercentile.map((a, i) => [a.id, Math.round(percentileValues[i]!)]),
   );
   const rows = assets
-    .map((a) => assetTableRow(a, issueRollup.get(a.id), aarsPercentileById.get(a.id) ?? null))
+    .map((a) => assetTableRow(
+      a, issueRollup.get(a.id), aarsPercentileById.get(a.id) ?? null, findingRollup.get(a.id),
+    ))
     .sort(ASSET_COMPARATORS.aars);
 
   const postureTiers = countPostureTiers(assets);
   const aarsSeverityCounts: Record<string, number> = {};
+  // Assets by WORST open-issue severity — the distribution the inventory strip draws and
+  // cross-filters on. Assets, not issues: the `severities` facet filters rows by this same
+  // field, so a strip counting issues would offer segments a click could not reproduce.
+  const severityCounts: Record<string, number> = {};
   const kinds = new Set<string>();
   const clouds = new Set<string>();
   const regions = new Set<string>();
@@ -1017,7 +1061,10 @@ function assetsModel(): AssetsModel {
     kinds.add(a.kind);
     if (a.cloudPlatform) clouds.add(a.cloudPlatform);
     if (a.region) regions.add(a.region);
-    if (a.severity) severities.add(a.severity);
+    if (a.severity) {
+      severities.add(a.severity);
+      severityCounts[a.severity] = (severityCounts[a.severity] ?? 0) + 1;
+    }
     for (const p of a.projects ?? []) if (p.name) projects.add(p.name);
   }
 
@@ -1116,6 +1163,7 @@ function assetsModel(): AssetsModel {
       highPrivilege: assets.filter((a) => conditionHolds(a, "EXCESSIVE_PRIVILEGE")).length,
     },
     aarsSeverityCounts,
+    severityCounts,
     // Recorded per sync, so the window is short at first and cannot be backfilled.
     aarsTrend: trend,
     aarsTrendRuleChanges: ruleChangePoints(trend),
@@ -1150,6 +1198,7 @@ export function getAssets(p?: unknown): ApiResult {
       total: model.rows.length,
       kpis: model.kpis,
       aarsSeverityCounts: model.aarsSeverityCounts,
+      severityCounts: model.severityCounts,
       aarsTrend: model.aarsTrend,
       aarsTrendRuleChanges: model.aarsTrendRuleChanges,
       trendScope: model.trendScope,

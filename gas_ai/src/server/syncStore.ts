@@ -1493,6 +1493,39 @@ export function withAarsPercentile(nodes: GNode[]): GNode[] {
   });
 }
 
+/**
+ * Attach `openIssues` / `openFindings` to every real asset node — the two counts that
+ * replaced the derived verdicts on every surface outside the model workbench.
+ *
+ * READ PATH ONLY (see the fields' own comment in graphTypes.ts): both populations live in
+ * their own tabs and move without `ai_assets` being rewritten, so a persisted copy would
+ * be stale exactly when someone had fixed something.
+ *
+ * Gated by the same two predicates every other count in this app routes through —
+ * `isUnresolvedIssue` and `isOpenGap` (src/domain/config.ts) — so the per-asset numbers and
+ * the register totals cannot disagree. Findings join on `resourceId`, which is why most of
+ * them land on no asset at all: see `api.ts`'s `complianceGapsUnlinked` for that split.
+ *
+ * Synthetic nodes are skipped rather than counted as zero. An ISSUE node has no issues of
+ * its own, and saying "0" about it would invite a reader to average it in.
+ */
+export function withOpenCounts(nodes: GNode[]): GNode[] {
+  const issueCount: Record<string, number> = {};
+  for (const issue of loadIssues()) {
+    if (!isUnresolvedIssue(issue)) continue;
+    issueCount[issue.assetId] = (issueCount[issue.assetId] ?? 0) + 1;
+  }
+  const findingCount: Record<string, number> = {};
+  for (const finding of loadFindings()) {
+    if (!isOpenGap(finding)) continue;
+    findingCount[finding.resourceId] = (findingCount[finding.resourceId] ?? 0) + 1;
+  }
+  return nodes.map((n) => {
+    if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
+    return { ...n, openIssues: issueCount[n.id] ?? 0, openFindings: findingCount[n.id] ?? 0 };
+  });
+}
+
 function currentBands(): AarsBands {
   return settingsStore.getAarsRule().rule.bands;
 }
@@ -1507,8 +1540,17 @@ function withAarsReadDerivations(nodes: GNode[]): GNode[] {
   return withAarsPercentile(withCurrentBands(nodes, currentBands()));
 }
 
+/**
+ * Every read-time node derivation, applied together — the counts the pages publish and the
+ * AARS figures the workbench still needs. One helper so a read path cannot pick up half of
+ * them, which is the bug `withAarsReadDerivations` was itself introduced to prevent.
+ */
+function withReadDerivations(nodes: GNode[]): GNode[] {
+  return withOpenCounts(withAarsReadDerivations(nodes));
+}
+
 function withBandsApplied(doc: GraphDoc): GraphDoc {
-  const nodes = withAarsReadDerivations(doc.nodes);
+  const nodes = withReadDerivations(doc.nodes);
   return nodes === doc.nodes ? doc : { ...doc, nodes };
 }
 
@@ -1518,7 +1560,7 @@ function loadGraphDocUncached(): GraphDoc | null {
 
   const assetRows = readAll(TABS.assets);
   if (!assetRows.length) return null;
-  const nodes = withAarsReadDerivations(assetRows.map(rowToAsset));
+  const nodes = withReadDerivations(assetRows.map(rowToAsset));
   const edges = readAll(TABS.edges).map(rowToEdge);
   const issues = loadIssues().filter(isUnresolvedIssue);
   for (const issue of issues) {
@@ -1562,7 +1604,7 @@ export function loadAssets(): GNode[] {
   const bandKey = `${bands.critical}|${bands.high}|${bands.medium}|${bands.low}`;
   const memo = derivedAssetsMemo;
   if (memo && memo.raw === raw && memo.bandKey === bandKey) return memo.out;
-  const out = withAarsReadDerivations(raw);
+  const out = withReadDerivations(raw);
   derivedAssetsMemo = { raw, bandKey, out };
   return out;
 }

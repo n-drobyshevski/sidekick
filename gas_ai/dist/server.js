@@ -7862,7 +7862,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "d3515c1b995b" : "dev";
+  var BUILD_ID = true ? "ed4719528f8c" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -9253,14 +9253,35 @@ var Server = (() => {
       return { ...n, aarsPercentile: Math.round(percentiles[i++]) };
     });
   }
+  function withOpenCounts(nodes) {
+    var _a5, _b;
+    const issueCount = {};
+    for (const issue2 of loadIssues()) {
+      if (!isUnresolvedIssue(issue2)) continue;
+      issueCount[issue2.assetId] = ((_a5 = issueCount[issue2.assetId]) != null ? _a5 : 0) + 1;
+    }
+    const findingCount = {};
+    for (const finding of loadFindings()) {
+      if (!isOpenGap(finding)) continue;
+      findingCount[finding.resourceId] = ((_b = findingCount[finding.resourceId]) != null ? _b : 0) + 1;
+    }
+    return nodes.map((n) => {
+      var _a6, _b2;
+      if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
+      return { ...n, openIssues: (_a6 = issueCount[n.id]) != null ? _a6 : 0, openFindings: (_b2 = findingCount[n.id]) != null ? _b2 : 0 };
+    });
+  }
   function currentBands() {
     return getAarsRule2().rule.bands;
   }
   function withAarsReadDerivations(nodes) {
     return withAarsPercentile(withCurrentBands(nodes, currentBands()));
   }
+  function withReadDerivations(nodes) {
+    return withOpenCounts(withAarsReadDerivations(nodes));
+  }
   function withBandsApplied(doc) {
-    const nodes = withAarsReadDerivations(doc.nodes);
+    const nodes = withReadDerivations(doc.nodes);
     return nodes === doc.nodes ? doc : { ...doc, nodes };
   }
   function loadGraphDocUncached() {
@@ -9269,7 +9290,7 @@ var Server = (() => {
     if (snap) return withRiskNodes(withBandsApplied(normalizeLegacyAars(snap)));
     const assetRows = readAll(TABS.assets);
     if (!assetRows.length) return null;
-    const nodes = withAarsReadDerivations(assetRows.map(rowToAsset));
+    const nodes = withReadDerivations(assetRows.map(rowToAsset));
     const edges2 = readAll(TABS.edges).map(rowToEdge);
     const issues2 = loadIssues().filter(isUnresolvedIssue);
     for (const issue2 of issues2) {
@@ -9305,7 +9326,7 @@ var Server = (() => {
     const bandKey = `${bands.critical}|${bands.high}|${bands.medium}|${bands.low}`;
     const memo = derivedAssetsMemo;
     if (memo && memo.raw === raw && memo.bandKey === bandKey) return memo.out;
-    const out = withAarsReadDerivations(raw);
+    const out = withReadDerivations(raw);
     derivedAssetsMemo = { raw, bandKey, out };
     return out;
   }
@@ -11196,6 +11217,8 @@ var Server = (() => {
   var ASSET_SORTS = [
     "aars",
     "postureTier",
+    "issues",
+    "findings",
     "name",
     "kind",
     "cloud",
@@ -11208,6 +11231,8 @@ var Server = (() => {
     postureTier: "desc",
     severity: "desc",
     combos: "desc",
+    issues: "desc",
+    findings: "desc",
     name: "asc",
     kind: "asc",
     cloud: "asc",
@@ -11331,7 +11356,9 @@ var Server = (() => {
     cloud: (a, b) => toStr(a["cloud"]).localeCompare(toStr(b["cloud"])),
     region: (a, b) => toStr(a["region"]).localeCompare(toStr(b["region"])),
     severity: (a, b) => sevRank(a["severity"]) - sevRank(b["severity"]),
-    combos: (a, b) => toNum(a["combos"]) - toNum(b["combos"])
+    combos: (a, b) => toNum(a["combos"]) - toNum(b["combos"]),
+    issues: (a, b) => toNum(a["openIssues"]) - toNum(b["openIssues"]),
+    findings: (a, b) => toNum(a["openFindings"]) - toNum(b["openFindings"])
   };
   var byScoreDesc = (a, b) => score(b["aars"]) - score(a["aars"]);
   function assetComparator(sort, dir) {
@@ -15476,8 +15503,8 @@ var Server = (() => {
       }))
     };
   }
-  function assetTableRow(n, issuesBySeverity, aarsPercentile) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+  function assetTableRow(n, issuesBySeverity, aarsPercentile, findingsBySeverity) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
     const row = {
       id: n.id,
       name: n.name,
@@ -15485,15 +15512,20 @@ var Server = (() => {
       cloud: (_a5 = n.cloudPlatform) != null ? _a5 : null,
       region: (_b = n.region) != null ? _b : null,
       severity: (_c = n.severity) != null ? _c : null,
-      aars: (_d = n.aars) != null ? _d : null,
-      aarsSeverity: (_e = n.aarsSeverity) != null ? _e : null,
+      // The two counts the register sorts, ranks and leads with. Read-derived on the node
+      // (syncStore.withOpenCounts) rather than recounted here, so the table, the graph and
+      // the asset sheet publish one number per asset instead of three that agree by luck.
+      openIssues: (_d = n.openIssues) != null ? _d : 0,
+      openFindings: (_e = n.openFindings) != null ? _e : 0,
+      aars: (_f = n.aars) != null ? _f : null,
+      aarsSeverity: (_g = n.aarsSeverity) != null ? _g : null,
       // What the table's score cell leads with. See assetRow's note.
-      aarsPercentile: (_f = n.aarsPercentile) != null ? _f : null,
+      aarsPercentile: (_h = n.aarsPercentile) != null ? _h : null,
       // Phase 6: BESIDE aars — the two must be visibly independent columns, never merged.
-      postureTier: (_g = n.postureTier) != null ? _g : null,
-      worstOpenProblem: (_h = n.worstOpenProblem) != null ? _h : null,
-      combos: ((_i = n.comboGroups) != null ? _i : []).length,
-      guardrailMissing: (_j = n.guardrailMissing) != null ? _j : false,
+      postureTier: (_i = n.postureTier) != null ? _i : null,
+      worstOpenProblem: (_j = n.worstOpenProblem) != null ? _j : null,
+      combos: ((_k = n.comboGroups) != null ? _k : []).length,
+      guardrailMissing: (_l = n.guardrailMissing) != null ? _l : false,
       agentic: n.identityPurpose === "AGENTIC",
       // How many classified findings this asset can REACH — its own if it is a datastore,
       // whatever its execution identity can read if it is an agent.
@@ -15503,10 +15535,11 @@ var Server = (() => {
       // holding three findings would otherwise report 0 in the register while the graph drew
       // them. Identities fall in the same gap and stay uncovered here — service accounts are
       // unscored for reasons that predate this chain, so nothing persists their reach.
-      dataFindings: ((_l = (_k = n.aarsInput) == null ? void 0 : _k.dataFindings) != null ? _l : []).reduce((sum, f) => sum + f.count, 0) || ((_m = n.dataFindingCount) != null ? _m : 0),
-      projects: ((_n = n.projects) != null ? _n : []).map((p) => p.name)
+      dataFindings: ((_n = (_m = n.aarsInput) == null ? void 0 : _m.dataFindings) != null ? _n : []).reduce((sum, f) => sum + f.count, 0) || ((_o = n.dataFindingCount) != null ? _o : 0),
+      projects: ((_p = n.projects) != null ? _p : []).map((p) => p.name)
     };
     if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
+    if (findingsBySeverity) row["findingsBySeverity"] = findingsBySeverity;
     return row;
   }
   function issuesBySeverityByAsset(issues2) {
@@ -15521,8 +15554,20 @@ var Server = (() => {
     }
     return out;
   }
+  function findingsBySeverityByAsset(findings) {
+    var _a5, _b, _c;
+    const out = /* @__PURE__ */ new Map();
+    for (const finding of findings) {
+      if (!finding.resourceId) continue;
+      const bucket = (_a5 = out.get(finding.resourceId)) != null ? _a5 : {};
+      const sev = (_b = finding.severity) != null ? _b : "UNKNOWN";
+      bucket[sev] = ((_c = bucket[sev]) != null ? _c : 0) + 1;
+      out.set(finding.resourceId, bucket);
+    }
+    return out;
+  }
   function assetsModel() {
-    var _a5, _b;
+    var _a5, _b, _c;
     const history = syncHistory();
     const projectView = getProjectView2();
     const trend = aarsTrendFromHistory(history, 90, projectView);
@@ -15548,6 +15593,7 @@ var Server = (() => {
     const agents = assets.filter((a) => a.kind === "AI_AGENT");
     const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
     const issueRollup = issuesBySeverityByAsset(issues2);
+    const findingRollup = findingsBySeverityByAsset(openGaps);
     const scoredForPercentile = assets.filter(
       (a) => typeof a.aars === "number"
     );
@@ -15557,10 +15603,16 @@ var Server = (() => {
     );
     const rows = assets.map((a) => {
       var _a6;
-      return assetTableRow(a, issueRollup.get(a.id), (_a6 = aarsPercentileById.get(a.id)) != null ? _a6 : null);
+      return assetTableRow(
+        a,
+        issueRollup.get(a.id),
+        (_a6 = aarsPercentileById.get(a.id)) != null ? _a6 : null,
+        findingRollup.get(a.id)
+      );
     }).sort(ASSET_COMPARATORS.aars);
     const postureTiers = countPostureTiers(assets);
     const aarsSeverityCounts = {};
+    const severityCounts = {};
     const kinds = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
     const regions = /* @__PURE__ */ new Set();
@@ -15571,8 +15623,11 @@ var Server = (() => {
       kinds.add(a.kind);
       if (a.cloudPlatform) clouds.add(a.cloudPlatform);
       if (a.region) regions.add(a.region);
-      if (a.severity) severities.add(a.severity);
-      for (const p of (_b = a.projects) != null ? _b : []) if (p.name) projects.add(p.name);
+      if (a.severity) {
+        severities.add(a.severity);
+        severityCounts[a.severity] = ((_b = severityCounts[a.severity]) != null ? _b : 0) + 1;
+      }
+      for (const p of (_c = a.projects) != null ? _c : []) if (p.name) projects.add(p.name);
     }
     return {
       rows,
@@ -15684,6 +15739,7 @@ var Server = (() => {
         highPrivilege: assets.filter((a) => conditionHolds(a, "EXCESSIVE_PRIVILEGE")).length
       },
       aarsSeverityCounts,
+      severityCounts,
       // Recorded per sync, so the window is short at first and cannot be backfilled.
       aarsTrend: trend,
       aarsTrendRuleChanges: ruleChangePoints(trend),
@@ -15712,6 +15768,7 @@ var Server = (() => {
         total: model.rows.length,
         kpis: model.kpis,
         aarsSeverityCounts: model.aarsSeverityCounts,
+        severityCounts: model.severityCounts,
         aarsTrend: model.aarsTrend,
         aarsTrendRuleChanges: model.aarsTrendRuleChanges,
         trendScope: model.trendScope,

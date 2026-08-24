@@ -10,10 +10,12 @@ import { toNum as num, toStr as str } from "./util";
 import type { Rec } from "./util";
 
 export type AssetSort =
-  | "aars" | "postureTier" | "name" | "kind" | "cloud" | "region" | "severity" | "combos";
+  | "aars" | "postureTier" | "issues" | "findings"
+  | "name" | "kind" | "cloud" | "region" | "severity" | "combos";
 
 export const ASSET_SORTS: AssetSort[] = [
-  "aars", "postureTier", "name", "kind", "cloud", "region", "severity", "combos",
+  "aars", "postureTier", "issues", "findings",
+  "name", "kind", "cloud", "region", "severity", "combos",
 ];
 
 export type SortDir = "asc" | "desc";
@@ -25,6 +27,7 @@ export type SortDir = "asc" | "desc";
  */
 export const DEFAULT_SORT_DIR: Record<AssetSort, SortDir> = {
   aars: "desc", postureTier: "desc", severity: "desc", combos: "desc",
+  issues: "desc", findings: "desc",
   name: "asc", kind: "asc", cloud: "asc", region: "asc",
 };
 
@@ -220,9 +223,33 @@ const PRIMARY: Record<AssetSort, Cmp> = {
   region: (a, b) => str(a["region"]).localeCompare(str(b["region"])),
   severity: (a, b) => sevRank(a["severity"]) - sevRank(b["severity"]),
   combos: (a, b) => num(a["combos"]) - num(b["combos"]),
+  issues: (a, b) => num(a["openIssues"]) - num(b["openIssues"]),
+  findings: (a, b) => num(a["openFindings"]) - num(b["openFindings"]),
 };
 
 const byScoreDesc: Cmp = (a, b) => score(b["aars"]) - score(a["aars"]);
+
+/**
+ * The tie-break that replaced `byScoreDesc`: worst severity, then the two counts, then a
+ * total order on name and id.
+ *
+ * SEVERITY FIRST, not count first. Within an alphabetical page five LOW issues must not
+ * outrank one CRITICAL — the count says how much work an asset holds, the severity says
+ * how bad the worst of it is, and only the second answers "which of these two rows should
+ * a reader look at first". The counts then separate assets whose worst issue rates the
+ * same, which on this landscape is most of them.
+ *
+ * The `name`/`id` legs are new. `byScoreDesc` stopped at the score and left residual ties
+ * to `Array.prototype.sort`'s stability, which made the order depend on the model's row
+ * order rather than on anything a reader could predict. Ending on `id` makes it total, the
+ * same way graphLayout's `cmpId` and the config register's id leg already do.
+ */
+const byRiskDesc: Cmp = (a, b) =>
+  sevRank(b["severity"]) - sevRank(a["severity"])
+  || num(b["openIssues"]) - num(a["openIssues"])
+  || num(b["openFindings"]) - num(a["openFindings"])
+  || str(a["name"]).localeCompare(str(b["name"]))
+  || str(a["id"]).localeCompare(str(b["id"]));
 
 /**
  * The comparator for one column in one direction. The tie-break is always AARS descending

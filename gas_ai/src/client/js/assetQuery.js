@@ -15,11 +15,13 @@
 // Keep in step with src/domain/assetTable.ts.
 
 export const ASSET_SORTS = [
-  "aars", "postureTier", "name", "kind", "cloud", "region", "severity", "combos",
+  "aars", "postureTier", "issues", "findings",
+  "name", "kind", "cloud", "region", "severity", "combos",
 ];
 
 export const DEFAULT_SORT_DIR = {
   aars: "desc", postureTier: "desc", severity: "desc", combos: "desc",
+  issues: "desc", findings: "desc",
   name: "asc", kind: "asc", cloud: "asc", region: "asc",
 };
 
@@ -157,9 +159,19 @@ const PRIMARY = {
   region: (a, b) => str(a.region).localeCompare(str(b.region)),
   severity: (a, b) => sevRank(a.severity) - sevRank(b.severity),
   combos: (a, b) => num(a.combos) - num(b.combos),
+  issues: (a, b) => num(a.openIssues) - num(b.openIssues),
+  findings: (a, b) => num(a.openFindings) - num(b.openFindings),
 };
 
 const byScoreDesc = (a, b) => score(b.aars) - score(a.aars);
+
+/** Mirrors `byRiskDesc` in src/domain/assetTable.ts — see there for why severity leads. */
+const byRiskDesc = (a, b) =>
+  sevRank(b.severity) - sevRank(a.severity)
+  || num(b.openIssues) - num(a.openIssues)
+  || num(b.openFindings) - num(a.openFindings)
+  || str(a.name).localeCompare(str(b.name))
+  || str(a.id).localeCompare(str(b.id));
 
 export function assetComparator(sort, dir) {
   const primary = PRIMARY[sort] || PRIMARY.aars;

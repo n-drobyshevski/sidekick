@@ -428,6 +428,24 @@ export interface GNode {
    */
   businessImpact?: string;
   severity?: Severity;      // worst attached open-issue severity (ISSUE nodes: own severity)
+  /**
+   * The two counts the register leads with, now that no derived verdict does: open issues
+   * attached to this asset, and failing configuration findings evaluated against it
+   * (`isOpenGap`, the app's single definition of a compliance gap).
+   *
+   * DERIVED ON READ, NEVER PERSISTED — the same contract the risk-topology nodes follow.
+   * Not because they are population-dependent the way `aarsPercentile` is (a count is a
+   * fact about ONE asset and would survive being snapshotted), but because both
+   * populations live in their own tabs and move without `ai_assets` being rewritten: a
+   * finding that resolves is an edit to `ai_findings`, and a stored copy here would go
+   * stale exactly when someone fixed something. `syncStore.withOpenCounts` attaches them
+   * on every read path and nothing on the write path sets them.
+   *
+   * Absent on a node the fold never reached (ISSUE / SUMMARY / risk-topology stubs).
+   * Zero means "counted, and there are none" — never "not counted".
+   */
+  openIssues?: number;
+  openFindings?: number;
   aars?: number;            // findings score 0–100 (AI assets only) — see AARS_DISPLAY_LABEL
   aarsSeverity?: AarsSeverity;
   /**
