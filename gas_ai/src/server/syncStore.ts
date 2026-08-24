@@ -47,7 +47,6 @@ import type { PostureRule } from "../domain/postureRule";
 import { OTHER_GROUP_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
 import { countAarsSeverities, countProjectTotals, encodeProjectTotals } from "../domain/aarsTrend";
-import { midrankPercentiles } from "../domain/rankStats";
 import { inProject, planPrune, type PruneCensus } from "../domain/prunePlan";
 import { nowIso, type Rec } from "../domain/util";
 import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot } from "./archiveStore";
@@ -1350,9 +1349,6 @@ function stripAarsScore(n: GNode): GNode {
   delete next.aars;
   delete next.aarsSeverity;
   delete next.aarsPillars;
-  // Nothing writes `aarsPercentile` (it is read-derived), but an unscored node must not
-  // carry one either way — a percentile with no score behind it is a rank into nothing.
-  delete next.aarsPercentile;
   return next;
 }
 
@@ -1376,12 +1372,16 @@ let identityFindingsMemo: IdentityFindingRow[] | undefined;
 /**
  * `loadAssets`'s output, keyed by what produced it.
  *
- * `assetsMemo` above holds the RAW rows, and until the percentile landed that was enough:
+ * `assetsMemo` above holds the RAW rows, and for a while that was enough on its own:
  * `withCurrentBands` returns its input array unchanged whenever every stored band already
  * agrees with the rule, which for a freshly-scored ledger is every time — so `loadAssets`
- * cost nothing to call repeatedly and four call sites per request did. Stamping a
- * percentile always allocates (every scored node gets a field the raw row does not have),
- * so without this the same landscape would be copied once per caller.
+ * cost nothing to call repeatedly and four call sites per request did.
+ *
+ * STILL NEEDED, and no longer for the reason it was added. The percentile fold that always
+ * allocated is gone; `withOpenCounts` took its place and allocates unconditionally — it
+ * stamps two counts on every real node whether or not either is zero. Without this memo
+ * the same landscape would be copied once per caller, exactly as before. Deleting it on
+ * the grounds that the percentile went would reintroduce the cost under a new name.
  *
  * Keyed on the raw array's IDENTITY and on the bands in force, not merely stored, so
  * settingsStore.saveSettings's invariant survives verbatim: it bumps the data version
@@ -1500,50 +1500,21 @@ export function withCurrentBands(nodes: GNode[], bands: AarsBands): GNode[] {
   return touched ? out : nodes;
 }
 
-/**
- * Attach each scored asset's landscape percentile — the statistic that carries the ranking
- * claim now that the BAND does not (ai/AARS_SCORING_ASSESSMENT.md §3: 19 of 30 assets land
- * CRITICAL, HIGH and MEDIUM empty, so the band names no queue).
- *
- * READ PATH ONLY, and the asymmetry with `withCurrentBands` above is deliberate. A band is
- * re-derivable from ONE asset's stored score, so a persisted `aars_severity` is a usable
- * fallback for a node the current rule cannot band. A percentile is not: it is computed
- * against the whole scored population, so it is invalidated by any change to any OTHER
- * asset. There is therefore no column, no fallback and no write — attaching it here, after
- * the population is assembled, is the only place it can be correct.
- *
- * The population is exactly "nodes carrying a numeric `aars`", which excludes ISSUE nodes
- * and every unscored asset. Callers publish that count (`api.ts`'s `aarsScored`) rather
- * than leaving the denominator implied — the S-test AARS_SCORING_ASSESSMENT.md §3 sets for
- * any published aggregate.
- */
-export function withAarsPercentile(nodes: GNode[]): GNode[] {
-  const scored: number[] = [];
-  for (const n of nodes) if (typeof n.aars === "number") scored.push(n.aars);
-  if (!scored.length) return nodes;
-  const percentiles = midrankPercentiles(scored);
-  // Whole percent: 1/30 of a landscape is ~3.3 points, so a decimal would advertise a
-  // precision the population does not have. Rounded here rather than in rankStats.ts,
-  // which stays a pure-statistics module with no opinion about display.
-  let i = 0;
-  return nodes.map((n) => {
-    if (typeof n.aars !== "number") return n;
-    return { ...n, aarsPercentile: Math.round(percentiles[i++]!) };
-  });
-}
-
 function currentBands(): AarsBands {
   return settingsStore.getAarsRule().rule.bands;
 }
 
 /**
- * The two read-time AARS derivations, applied together. Both are population- or
- * rule-dependent and neither is persisted in a usable form, so a read path that ran only
- * one of them would ship a banded asset with no percentile (or the reverse) and the
- * surfaces would disagree about the same asset. One helper, three call sites.
+ * The read-time AARS derivation: re-band every stored score under the rule in force.
+ *
+ * It used to attach a landscape percentile beside the band. That figure existed to carry
+ * the per-asset ranking claim the band could not (ai/AARS_SCORING_ASSESSMENT.md §3), and
+ * it went when the surfaces that led with it did — the register, the asset sheet and the
+ * graph node badge all read counts now, so nothing was left to rank. `midrankPercentiles`
+ * stays in rankStats.ts, where the ordinality tests still measure the model with it.
  */
 function withAarsReadDerivations(nodes: GNode[]): GNode[] {
-  return withAarsPercentile(withCurrentBands(nodes, currentBands()));
+  return withCurrentBands(nodes, currentBands());
 }
 
 /**

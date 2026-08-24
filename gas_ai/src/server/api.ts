@@ -400,12 +400,13 @@ function bootstrapCore(): Rec {
       totalAssets: assets.length,
       openIssues: issues.length,
       bySeverity,
-      // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is a
-      // legitimate thing to publish and is the same object the trend charts over time. It
-      // is not the per-asset claim; that moved to `aarsPercentile`.
+      // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is
+      // a legitimate thing to publish and is what the workbench's band rail draws. It is
+      // not a per-asset claim, and there is no longer any per-asset claim to be — the
+      // percentile that briefly carried one went with the surfaces that led with it.
       byAarsSeverity,
-      // The percentile's denominator, so a surface reading a percentile off a node can
-      // name the population it is a percentile OF without a second round trip.
+      // How much of the landscape the model actually prices, which is the denominator
+      // under the distribution above: "19 CRITICAL" means nothing without "of 30 scored".
       aarsScored: assets.filter((a) => typeof a.aars === "number").length,
     },
     filterOptions: filterOptions(assets, syncStore.loadAssets()),
@@ -1286,12 +1287,10 @@ export function getAssetOptions(_p?: unknown): ApiResult {
  * with an empty issue list, which reads as "nothing wrong with this asset" rather than "not in
  * the project you are looking at". A security tool must not have that failure mode.
  *
- * `aarsPercentile` used to be read off `assetsModel`, to keep the sheet and the row it was
- * opened from agreeing about one asset's rank. That argument retired with the column: the
- * inventory neither shows nor ranks by a percentile any more, so there is no second answer
- * to disagree with. It is read off the node instead — `syncStore.withAarsPercentile` ranks
- * the whole register on every read — which also drops the old asymmetry where an
- * out-of-view asset had no rank to report.
+ * The sheet used to make ONE exception to that rule, for `aarsPercentile`: a rank is a
+ * fact about a population, so it was read off the register's own model to stop the sheet
+ * and the row it was opened from giving one asset two ranks. Both the exception and the
+ * figure are gone — nothing here reads a percentile, and nothing computes one.
  */
 export function getAssetDetail(p?: unknown): ApiResult {
   return run(() => {
@@ -1344,10 +1343,10 @@ export function getAssetDetail(p?: unknown): ApiResult {
           frameworkCodes: f.frameworkCodes,
         }));
       return {
-        // No verdict block. The sheet used to carry `aarsPillars` / `aarsInput` /
-        // `aarsPercentile` so it could draw the score's breakdown; the breakdown of a
-        // model under calibration belongs beside the model, and the sheet now reads the
-        // same counts, issues and findings every other asset surface does.
+        // No verdict block. The sheet used to carry `aarsPillars` and `aarsInput` so it
+        // could draw the score's breakdown; the breakdown of a model under calibration
+        // belongs beside the model, and the sheet now reads the same counts, issues and
+        // findings every other asset surface does.
         node: assetRow(node),
         issues: issues.map((r) => publicRow(r as unknown as Rec)),
         neighbors,
@@ -2065,9 +2064,18 @@ function publicNode(n: Rec): Rec {
   return out;
 }
 
-/** The per-node model fields. Mirrored by test/verdictIsolation.test.ts's own list. */
+/**
+ * The per-node model fields — the ones that EXIST, which is why this list is shorter than
+ * test/verdictIsolation.test.ts's. That one is a prohibition and may name a field nothing
+ * computes (`aarsPercentile`); this one is a strip, and listing a field no node carries
+ * would only obscure which ones it really has to remove.
+ *
+ * The difference is load-bearing rather than pedantic: if a percentile were reintroduced,
+ * omitting it here lets it reach a payload, where the guard fails loudly and names it.
+ * Listing it here would strip it silently and leave the reintroduction unremarked.
+ */
 const VERDICT_NODE_KEYS = [
-  "aars", "aarsSeverity", "aarsPercentile", "aarsPillars", "aarsInput", "aarsRuleVersion",
+  "aars", "aarsSeverity", "aarsPillars", "aarsInput", "aarsRuleVersion",
   "postureTier", "postureInput", "worstOpenProblem",
 ];
 

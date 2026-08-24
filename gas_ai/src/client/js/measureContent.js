@@ -27,7 +27,7 @@ export const MEASURE_ENTRIES = [
     dataSource: "ai_assets.aars, ai_assets.aars_input_json",
     reportingFormat: "Scoring Models page only \u2014 the model editor, its rule preview and its "
       + "sandbox. It left the AI Inventory register and the asset detail sheet with the "
-      + "rest of the derived verdicts.",
+      + "rest of the derived verdicts; both read counts now.",
     revisionDue: "2027-08-13",
   },
   {
@@ -41,24 +41,6 @@ export const MEASURE_ENTRIES = [
     reportingFormat: "Scoring Models page only, as a rule diagnostic \u2014 band occupancy and the "
       + "preview's movers. The inventory\u0027s level strip and level trend are gone; that "
       + "page charts open issues, cloud findings and posture fails over time instead.",
-    revisionDue: "2027-08-13",
-  },
-  {
-    id: "aars-percentile", measure: "Findings score percentile", type: "impact",
-    measurementMethod: "Objective",
-    goal: "Where one asset's score sits in the landscape that was actually scored — the "
-      + "placement an analyst can read, given that the score's levels barely separate "
-      + "assets on this landscape.",
-    formula: "midrankPercentiles(scores) = (count below + count equal / 2) / N, whole "
-      + "percent. Tied scores share one percentile by construction.",
-    dataSource: "ai_assets.aars",
-    reportingFormat: "NOT CURRENTLY RENDERED. It led the register\u0027s score cell, the "
-      + "asset sheet\u0027s verdict line and the graph node badge; all three read counts now, "
-      + "and no surface replaced it. Still derived on every read "
-      + "(syncStore.withAarsPercentile) and recorded here on purpose: it is the form "
-      + "ai/AARS_SCORING_ASSESSMENT.md \u00a76 argues the 0\u2013100 number honestly survives as, "
-      + "and a measure this app computes belongs in this record whether or not a page "
-      + "happens to draw it today.",
     revisionDue: "2027-08-13",
   },
   {

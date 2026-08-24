@@ -255,7 +255,7 @@ describe("the vocabulary it names", () => {
   // — and that is the moment this test stops them.
   it("draws every derived verdict on the Scoring Models page and nowhere else", () => {
     const VERDICTS = [
-      "aars", "aars-percentile", "aars-band",
+      "aars", "aars-band",
       "pillar-a", "pillar-b", "pillar-c", "pillar-d", "gap-sources", "rescore",
       "problem-tree", "posture-tier", "posture-axes", "priorities-rank", "priority",
     ];

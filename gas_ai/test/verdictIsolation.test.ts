@@ -39,7 +39,12 @@ let server: Server;
  * CLAIM; none of them is a rule, a setting or a count.
  */
 const VERDICT_KEYS = [
-  // AARS — the score, its band, its rank, its parts, and the inputs it was priced from.
+  // AARS — the score, its band, its parts, and the inputs it was priced from.
+  //
+  // `aarsPercentile` is listed although nothing computes it any more. This is a
+  // PROHIBITION, not an inventory: the percentile existed to carry the per-asset ranking
+  // claim the band could not, it went when the surfaces that led with it did, and naming
+  // it here is what makes bringing it back a test failure rather than a quiet regression.
   "aars", "aarsSeverity", "aarsPercentile", "aarsPillars", "aarsInput", "aarsRuleVersion",
   // The posture lattice.
   "postureTier", "postureInput",

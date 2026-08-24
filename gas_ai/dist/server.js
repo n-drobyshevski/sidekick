@@ -6917,21 +6917,6 @@ var Server = (() => {
     }
     return Math.exp(entropy);
   }
-  function midrankPercentiles(values) {
-    var _a5;
-    const n = values.length;
-    if (n === 0) return [];
-    const counts = /* @__PURE__ */ new Map();
-    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
-    const percentileOf = /* @__PURE__ */ new Map();
-    let below = 0;
-    for (const value of [...counts.keys()].sort((a, b) => a - b)) {
-      const size = counts.get(value);
-      percentileOf.set(value, (below + size / 2) / n * 100);
-      below += size;
-    }
-    return values.map((v) => percentileOf.get(v));
-  }
 
   // src/domain/aarsRule.ts
   var POINTS_MIN = 0;
@@ -7888,7 +7873,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "4c5e27aba69e" : "dev";
+  var BUILD_ID = true ? "e24c151d7ad2" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -9603,7 +9588,6 @@ var Server = (() => {
     delete next.aars;
     delete next.aarsSeverity;
     delete next.aarsPillars;
-    delete next.aarsPercentile;
     return next;
   }
   var graphDocMemo;
@@ -9680,22 +9664,11 @@ var Server = (() => {
     });
     return touched ? out : nodes;
   }
-  function withAarsPercentile(nodes) {
-    const scored = [];
-    for (const n of nodes) if (typeof n.aars === "number") scored.push(n.aars);
-    if (!scored.length) return nodes;
-    const percentiles = midrankPercentiles(scored);
-    let i = 0;
-    return nodes.map((n) => {
-      if (typeof n.aars !== "number") return n;
-      return { ...n, aarsPercentile: Math.round(percentiles[i++]) };
-    });
-  }
   function currentBands() {
     return getAarsRule2().rule.bands;
   }
   function withAarsReadDerivations(nodes) {
-    return withAarsPercentile(withCurrentBands(nodes, currentBands()));
+    return withCurrentBands(nodes, currentBands());
   }
   function withReadDerivations(nodes) {
     return withOpenCounts(withAarsReadDerivations(nodes), loadIssues(), loadFindings());
@@ -15228,12 +15201,13 @@ var Server = (() => {
         totalAssets: assets.length,
         openIssues: issues2.length,
         bySeverity,
-        // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is a
-        // legitimate thing to publish and is the same object the trend charts over time. It
-        // is not the per-asset claim; that moved to `aarsPercentile`.
+        // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is
+        // a legitimate thing to publish and is what the workbench's band rail draws. It is
+        // not a per-asset claim, and there is no longer any per-asset claim to be — the
+        // percentile that briefly carried one went with the surfaces that led with it.
         byAarsSeverity,
-        // The percentile's denominator, so a surface reading a percentile off a node can
-        // name the population it is a percentile OF without a second round trip.
+        // How much of the landscape the model actually prices, which is the denominator
+        // under the distribution above: "19 CRITICAL" means nothing without "of 30 scored".
         aarsScored: assets.filter((a) => typeof a.aars === "number").length
       },
       filterOptions: filterOptions(assets, loadAssets()),
@@ -15864,10 +15838,10 @@ var Server = (() => {
           };
         });
         return {
-          // No verdict block. The sheet used to carry `aarsPillars` / `aarsInput` /
-          // `aarsPercentile` so it could draw the score's breakdown; the breakdown of a
-          // model under calibration belongs beside the model, and the sheet now reads the
-          // same counts, issues and findings every other asset surface does.
+          // No verdict block. The sheet used to carry `aarsPillars` and `aarsInput` so it
+          // could draw the score's breakdown; the breakdown of a model under calibration
+          // belongs beside the model, and the sheet now reads the same counts, issues and
+          // findings every other asset surface does.
           node: assetRow(node2),
           issues: issues2.map((r) => publicRow(r)),
           neighbors,
@@ -16268,7 +16242,6 @@ var Server = (() => {
   var VERDICT_NODE_KEYS = [
     "aars",
     "aarsSeverity",
-    "aarsPercentile",
     "aarsPillars",
     "aarsInput",
     "aarsRuleVersion",

@@ -450,22 +450,6 @@ export const ENTRIES = [
     },
   },
   {
-    id: "aars-percentile",
-    term: "AARS percentile",
-    aka: "rank within this landscape",
-    family: "score",
-    blurb:
-      "Where this asset's score falls among every OTHER scored asset in the landscape, 0 to " +
-      "100, using midrank so a tied score is shared rather than arbitrarily broken. It is " +
-      "the lead read for one asset on the Inventory table and the asset sheet — a rank " +
-      "survives the population shift that an absolute band does not, and it MOVES whenever " +
-      "the landscape does, even when this asset's own score has not changed at all." +
-      " EXPERIMENTAL, and confined to the Scoring Models page: it is computed and " +
-      "stored on every sync, but nothing else in this app ranks, filters or sorts by it.",
-    drawnOn: ["aars"],
-    mark: () => el("span", { class: "num" }, "92nd"),
-  },
-  {
     id: "aars-band",
     term: "Findings score level",
     aka: "context beside a score, not a verdict",
@@ -967,17 +951,19 @@ for (const family of CODEBOOK) {
 // `reportingFormat` in the TS module is prose, not a route list, and this is the one place
 // that has to resolve to a real page for the "routes only to pages that exist" test.
 const MEASURE_ROUTES = {
-  "aars-score": ["inventory", "aars"],
-  "aars-band": ["inventory", "aars"],
-  "aars-percentile": ["inventory", "graph"],
+  // Every AARS row is ["aars"] now, and that is the point rather than an oversight: these
+  // measures are drawn where the model is edited and nowhere else. `aars-percentile` is
+  // absent because the measure itself is.
+  "aars-score": ["aars"],
+  "aars-band": ["aars"],
   "aars-distinct-scores": ["aars"],
   "aars-tie-rate": ["aars"],
   "aars-effective-cardinality": ["aars"],
   "aars-pillar-saturation": ["aars"],
-  "problem-outcome-distribution": ["problems", "combos", "config"],
+  "problem-outcome-distribution": ["aars"],
   "action-concentration-ratio": ["problems"],
   "problem-axis-unknown-rate": ["aars"],
-  "posture-tier-distribution": ["inventory", "problems"],
+  "posture-tier-distribution": ["aars"],
   "issue-sla-tally": ["combos", "problems"],
   "compliance-gaps": ["inventory", "config"],
   "compliance-gaps-unlinked": ["inventory"],
