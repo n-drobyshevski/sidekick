@@ -171,7 +171,8 @@ import { archiveBytes } from "./archiveStore";
 import { activeJob } from "./jobsStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { buildInfo } from "./buildInfo";
-import { hasWizCredentials, projectScope } from "./props";
+import { domainTagKey, hasWizCredentials, projectScope } from "./props";
+import { domainCoverage } from "../domain/domainTag";
 import { cached, dataVersion, wizDataVersion } from "./serverCache";
 import {
   AGENT_EXPANSION,
@@ -493,10 +494,12 @@ function filterOptions(assets: GNode[], register: GNode[]): Rec {
   const kinds = new Set<string>();
   const clouds = new Set<string>();
   const projects = new Set<string>();
+  const domains = new Set<string>();
   for (const a of assets) {
     kinds.add(a.kind);
     if (a.cloudPlatform) clouds.add(a.cloudPlatform);
     for (const p of a.projects ?? []) projects.add(p.name);
+    if (a.domain) domains.add(a.domain);
     // The risk nodes are derived on read and never land in TABS.assets, so the flags they
     // come from are the only trace of them here. Offer each kind as a pill exactly when
     // some asset would produce one, so the evidence stays curatable. `conditionHolds` is
@@ -511,6 +514,7 @@ function filterOptions(assets: GNode[], register: GNode[]): Rec {
     kinds: [...kinds].sort(),
     clouds: [...clouds].sort(),
     projects: [...projects].sort(),
+    domains: [...domains].sort(),
     // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
     // filter on every page matches project names, and there is no reason to migrate them
     // here; the switcher needs ids because only an id carries ancestry — an asset lists its
@@ -962,7 +966,19 @@ interface AssetsModel {
     regions: string[];
     severities: string[];
     projects: string[];
+    domains: string[];
   };
+  /**
+   * How much of the landscape carries the domain tag at all.
+   *
+   * The Domain facet lists only values that exist, so an empty one is ambiguous between
+   * "nobody tagged anything" and "we never successfully asked" — AI_ASSET_PROPERTIES is
+   * optional and swallows an HTTP 400, and it is the only route by which an AI asset's
+   * properties bag arrives. A count beside the facet is what keeps the page from
+   * publishing the second case as the first. An aggregate over the whole set, so it is a
+   * count of what Wiz said and never a claim about any one asset.
+   */
+  domainCoverage: { key: string; tagged: number; total: number };
 }
 
 /**
@@ -1046,6 +1062,7 @@ function assetsModel(): AssetsModel {
   const regions = new Set<string>();
   const severities = new Set<string>();
   const projects = new Set<string>();
+  const domains = new Set<string>();
   for (const a of assets) {
     kinds.add(a.kind);
     if (a.cloudPlatform) clouds.add(a.cloudPlatform);
@@ -1055,6 +1072,7 @@ function assetsModel(): AssetsModel {
       severityCounts[a.severity] = (severityCounts[a.severity] ?? 0) + 1;
     }
     for (const p of a.projects ?? []) if (p.name) projects.add(p.name);
+    if (a.domain) domains.add(a.domain);
   }
 
   return {
@@ -1156,7 +1174,9 @@ function assetsModel(): AssetsModel {
       regions: [...regions].sort(),
       severities: SEVERITY_ORDER.filter((sev) => severities.has(sev)),
       projects: [...projects].sort(),
+      domains: [...domains].sort(),
     },
+    domainCoverage: domainCoverage(assets, domainTagKey()),
   };
 }
 
@@ -1178,6 +1198,7 @@ export function getAssets(p?: unknown): ApiResult {
       countDeltas: countDeltas(model.countTrend, model.kpis),
       reach: model.reach,
       facets: model.facets,
+      domainCoverage: model.domainCoverage,
       pageSize: query.pageSize,
       sort: query.sort,
       dir: query.dir,

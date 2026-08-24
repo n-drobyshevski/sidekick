@@ -121,6 +121,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "dataVersion": "<dataVersion>",
       "filterOptions": {
         "clouds": [],
+        "domains": [],
         "kinds": [],
         "projectList": [],
         "projects": [],
@@ -659,8 +660,14 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "countDeltas": null,
       "countTrend": [],
       "dir": "desc",
+      "domainCoverage": {
+        "key": "Wiz/Domain",
+        "tagged": 0,
+        "total": 0,
+      },
       "facets": {
         "clouds": [],
+        "domains": [],
         "kinds": [],
         "projects": [],
         "regions": [],
@@ -1629,6 +1636,12 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       "clouds": [
         "AWS",
         "GCP",
+      ],
+      "domains": [
+        "CROSS",
+        "EXAMPLE DOMAIN",
+        "SAP",
+        "VALUE-CHAIN",
       ],
       "kinds": [
         "ACCESS_KEY",
@@ -4348,10 +4361,21 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
     ],
     "dir": "desc",
+    "domainCoverage": {
+      "key": "Wiz/Domain",
+      "tagged": 15,
+      "total": 87,
+    },
     "facets": {
       "clouds": [
         "AWS",
         "GCP",
+      ],
+      "domains": [
+        "CROSS",
+        "EXAMPLE DOMAIN",
+        "SAP",
+        "VALUE-CHAIN",
       ],
       "kinds": [
         "ACCESS_KEY",

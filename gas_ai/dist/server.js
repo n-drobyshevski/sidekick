@@ -60,6 +60,11 @@ var Server = (() => {
     const k = (configured != null ? configured : "").trim();
     return k || DEFAULT_DOMAIN_TAG_KEY;
   }
+  function domainCoverage(nodes, key) {
+    let tagged = 0;
+    for (const n of nodes) if (n.domain) tagged += 1;
+    return { key, tagged, total: nodes.length };
+  }
 
   // src/server/props.ts
   var PROP_KEYS = {
@@ -7954,7 +7959,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "b88d36b99a53" : "dev";
+  var BUILD_ID = true ? "bf46fb7074a3" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -11710,7 +11715,8 @@ var Server = (() => {
     "cloud",
     "region",
     "severity",
-    "combos"
+    "combos",
+    "domain"
   ];
   var DEFAULT_SORT_DIR = {
     issues: "desc",
@@ -11720,7 +11726,8 @@ var Server = (() => {
     name: "asc",
     kind: "asc",
     cloud: "asc",
-    region: "asc"
+    region: "asc",
+    domain: "asc"
   };
   var DEFAULT_PAGE_SIZE = 50;
   var MAX_PAGE_SIZE = 500;
@@ -11731,6 +11738,7 @@ var Server = (() => {
     "clouds",
     "regions",
     "projects",
+    "domains",
     "flags"
   ];
   var ASSET_FLAGS = ["combo", "guardrail", "agentic", "datafindings"];
@@ -11777,6 +11785,7 @@ var Server = (() => {
       clouds: listWithLegacy(params["clouds"], params["cloud"]),
       regions: listWithLegacy(params["regions"], params["region"]),
       projects: listWithLegacy(params["projects"], params["project"]),
+      domains: listWithLegacy(params["domains"], params["domain"]),
       flags: list(params["flags"]).map((v) => v.toLowerCase()).filter((v) => ASSET_FLAGS.indexOf(v) >= 0),
       sort: resolvedSort,
       dir: dir === "asc" || dir === "desc" ? dir : DEFAULT_SORT_DIR[resolvedSort],
@@ -11801,6 +11810,7 @@ var Server = (() => {
     if (q.clouds.length && q.clouds.indexOf(toStr(row["cloud"])) < 0) return false;
     if (q.regions.length && q.regions.indexOf(toStr(row["region"])) < 0) return false;
     if (q.severities.length && q.severities.indexOf(toStr(row["severity"])) < 0) return false;
+    if (q.domains.length && q.domains.indexOf(toStr(row["domain"])) < 0) return false;
     if (q.projects.length) {
       const mine = rowProjects(row);
       if (!q.projects.some((p) => mine.indexOf(p) >= 0)) return false;
@@ -11819,7 +11829,8 @@ var Server = (() => {
     severity: (a, b) => sevRank(a["severity"]) - sevRank(b["severity"]),
     combos: (a, b) => toNum(a["combos"]) - toNum(b["combos"]),
     issues: (a, b) => toNum(a["openIssues"]) - toNum(b["openIssues"]),
-    findings: (a, b) => toNum(a["openFindings"]) - toNum(b["openFindings"])
+    findings: (a, b) => toNum(a["openFindings"]) - toNum(b["openFindings"]),
+    domain: (a, b) => toStr(a["domain"]).localeCompare(toStr(b["domain"]))
   };
   var byRiskDesc = (a, b) => sevRank(b["severity"]) - sevRank(a["severity"]) || toNum(b["openIssues"]) - toNum(a["openIssues"]) || toNum(b["openFindings"]) - toNum(a["openFindings"]) || toStr(a["name"]).localeCompare(toStr(b["name"])) || toStr(a["id"]).localeCompare(toStr(b["id"]));
   function assetComparator(sort, dir) {
@@ -11842,6 +11853,7 @@ var Server = (() => {
     if (key === "regions") return [toStr(row["region"])].filter(Boolean);
     if (key === "severities") return [toStr(row["severity"])].filter(Boolean);
     if (key === "projects") return rowProjects(row);
+    if (key === "domains") return [toStr(row["domain"])].filter(Boolean);
     return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f));
   }
   function facetSorter(key) {
@@ -15353,10 +15365,12 @@ var Server = (() => {
     const kinds = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
     const projects = /* @__PURE__ */ new Set();
+    const domains = /* @__PURE__ */ new Set();
     for (const a of assets) {
       kinds.add(a.kind);
       if (a.cloudPlatform) clouds.add(a.cloudPlatform);
       for (const p of (_a5 = a.projects) != null ? _a5 : []) projects.add(p.name);
+      if (a.domain) domains.add(a.domain);
       if (conditionHolds(a, "SENSITIVE_DATA")) kinds.add("SENSITIVE_DATA");
       if (conditionHolds(a, "INTERNET_EXPOSURE")) kinds.add("INTERNET_EXPOSURE");
       if (conditionHolds(a, "EXCESSIVE_PRIVILEGE")) kinds.add("EXCESSIVE_PRIVILEGE");
@@ -15366,6 +15380,7 @@ var Server = (() => {
       kinds: [...kinds].sort(),
       clouds: [...clouds].sort(),
       projects: [...projects].sort(),
+      domains: [...domains].sort(),
       // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
       // filter on every page matches project names, and there is no reason to migrate them
       // here; the switcher needs ids because only an id carries ancestry — an asset lists its
@@ -15692,6 +15707,7 @@ var Server = (() => {
     const regions = /* @__PURE__ */ new Set();
     const severities = /* @__PURE__ */ new Set();
     const projects = /* @__PURE__ */ new Set();
+    const domains = /* @__PURE__ */ new Set();
     for (const a of assets) {
       kinds.add(a.kind);
       if (a.cloudPlatform) clouds.add(a.cloudPlatform);
@@ -15701,6 +15717,7 @@ var Server = (() => {
         severityCounts[a.severity] = ((_a5 = severityCounts[a.severity]) != null ? _a5 : 0) + 1;
       }
       for (const p of (_b = a.projects) != null ? _b : []) if (p.name) projects.add(p.name);
+      if (a.domain) domains.add(a.domain);
     }
     return {
       rows,
@@ -15815,8 +15832,10 @@ var Server = (() => {
         clouds: [...clouds].sort(),
         regions: [...regions].sort(),
         severities: SEVERITY_ORDER.filter((sev) => severities.has(sev)),
-        projects: [...projects].sort()
-      }
+        projects: [...projects].sort(),
+        domains: [...domains].sort()
+      },
+      domainCoverage: domainCoverage(assets, domainTagKey())
     };
   }
   function getAssets(p) {
@@ -15832,6 +15851,7 @@ var Server = (() => {
         countDeltas: countDeltas(model.countTrend, model.kpis),
         reach: model.reach,
         facets: model.facets,
+        domainCoverage: model.domainCoverage,
         pageSize: query.pageSize,
         sort: query.sort,
         dir: query.dir

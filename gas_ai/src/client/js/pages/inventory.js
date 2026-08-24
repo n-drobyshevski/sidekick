@@ -59,6 +59,7 @@ const FACET_LABELS = {
   clouds: "Cloud",
   regions: "Region",
   projects: "Project",
+  domains: "Domain",
   flags: "Risk signals",
 };
 
@@ -79,6 +80,9 @@ const COLUMNS = [
   { key: "findings", label: "Cloud findings", sort: "findings" },
   { key: "combos", label: "Toxic combo", sort: "combos" },
   { key: "guardrail", label: "Guardrail", sort: null },
+  // The owning business domain, off the resource's own Wiz/Domain tag. Sortable because
+  // it is an identity column like Cloud and Region, and read the same way: A-Z first.
+  { key: "domain", label: "Domain", sort: "domain" },
   { key: "projects", label: "Projects", sort: null },
   { key: "actions", label: "", sort: null },
 ];
@@ -86,7 +90,7 @@ const COLUMNS = [
 const VIEWS_KEY = "sidekickai.inventoryViews";
 /** Params a saved view carries. Never `page` (a view opens at the top) and never `panel`. */
 const VIEW_PARAMS = [
-  "q", "severities", "kinds", "clouds", "regions", "projects", "flags",
+  "q", "severities", "kinds", "clouds", "regions", "projects", "domains", "flags",
   "sort", "dir", "view", "size",
 ];
 
@@ -210,13 +214,14 @@ export async function renderInventory(main, params) {
       clouds: listJoin(query.clouds),
       regions: listJoin(query.regions),
       projects: listJoin(query.projects),
+      domains: listJoin(query.domains),
       flags: listJoin(query.flags),
       // The single-select spellings were folded into the plural dimensions above; blank
       // them so a link carries one spelling of each filter rather than two. The three
       // AARS-level spellings are blanked for a different reason: they name a facet this
       // register no longer has, `resolveAssetQuery` drops them, and leaving them in the
       // address bar would advertise a filter that is not applied.
-      kind: "", cloud: "", region: "", project: "", severity: "",
+      kind: "", cloud: "", region: "", project: "", severity: "", domain: "",
       aarsSeverities: "", aarsSeverity: "", band: "",
       sort: query.sort === "issues" ? "" : query.sort,
       dir: query.dir === DEFAULT_SORT_DIR[query.sort] ? "" : query.dir,
@@ -238,7 +243,7 @@ export async function renderInventory(main, params) {
       q: query.q,
       severities: query.severities,
       kinds: query.kinds, clouds: query.clouds, regions: query.regions,
-      projects: query.projects, flags: query.flags,
+      projects: query.projects, domains: query.domains, flags: query.flags,
       sort: query.sort, dir: query.dir, page: query.page, pageSize: query.pageSize,
     };
   }
@@ -928,6 +933,7 @@ export async function renderInventory(main, params) {
         : el("span", { class: "muted small" }, "0")),
       combos: (row) => (row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : "—"),
       guardrail: (row) => (row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : "—"),
+      domain: (row) => row.domain || "—",
       projects: (row) => (row.projects || []).join(", ") || "—",
       actions: (row) => graphButton(row),
     };
