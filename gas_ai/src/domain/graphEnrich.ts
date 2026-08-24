@@ -1184,11 +1184,30 @@ export function withOpenCounts(
  *
  * Sets `domain` only when there is one. Absent stays absent rather than becoming `""`, so
  * facets and group keys can treat "untagged" as the missing value it is.
+ *
+ * AND CLEARS ONE THAT NO LONGER RESOLVES, which is not the same statement. This used to
+ * set-if-present and nothing else, on the reasoning that its only input was `rowToAsset`
+ * output and that never carries a `domain`. The Drive snapshot broke that assumption — a
+ * scoped rescore merged already-folded rows into the document it persisted — and because
+ * this fold could not clear, the stale value was permanent: the register read the tab and
+ * reported no domains while the graph read the snapshot and kept grouping by the old ones.
+ * One landscape, two answers, nothing red.
+ *
+ * That bake is fixed at its source in `syncStore.rescoreInventory`. This half is the repair:
+ * a snapshot already written by an older build heals on the next read instead of needing a
+ * full re-sync. It also makes the fold total, which is what its siblings already are —
+ * `withOpenCounts` stamps unconditionally and `withPostureTiers` deletes.
  */
 export function withDomains(nodes: GNode[], tagKey: string): GNode[] {
   return nodes.map((n) => {
     if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
     const domain = domainOfTags(n.tags, tagKey);
-    return domain ? { ...n, domain } : n;
+    if (domain) return { ...n, domain };
+    // Untouched when there was nothing to clear, so "absent stays absent" still holds and a
+    // clean read allocates no copies.
+    if (n.domain === undefined) return n;
+    const out = { ...n };
+    delete out.domain;
+    return out;
   });
 }
