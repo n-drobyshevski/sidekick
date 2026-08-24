@@ -1,7 +1,7 @@
 // Phase 6's decisive test: does the posture tier carry information the AARS score does
 // not, or is it a rename of the score wearing a 1-4 costume?
 //
-// Runs a REAL dry-run sync end to end (setup → runSync → getAssets/getAssetDetail) rather
+// Runs a REAL dry-run sync end to end (setup → runSync → the persisted register) rather
 // than calling enrichGraphDoc/withPostureTiers in isolation — the same reproduction choice
 // apiGolden.test.ts makes, and the more honest one here specifically: `derivePostureInput`'s
 // `consequence` axis needs `dataFindingCount`, which only appears on a node after
@@ -16,6 +16,12 @@
 // five-band/four-tier scales) measures chance-corrected category agreement. The spec's own
 // instruction: do not tune DEFAULT_POSTURE_RULE's cascade to move either number. Every
 // figure pinned below is what the code produces, not what would look best.
+//
+// READS THE MODEL, NOT A PAGE. Both series come from `syncStore.loadAssets()` — where the
+// two models actually live — rather than from `getAssets`, which no longer publishes
+// either of them: the register ranks by counts and the verdicts reach only the workbench.
+// That is the right source for a measurement about the models regardless, and the reason
+// this file needed one line changed while nothing about either model moved.
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { bootServer, teardownServer } from "./gasEnv";
@@ -36,8 +42,8 @@ beforeAll(async () => {
   server.setup();
   const res = server.api.runSync({}) as { ok: boolean; error?: string };
   if (!res.ok) throw new Error(`seed sync failed: ${res.error}`);
-  const assets = server.api.getAssets({}) as { ok: boolean; data: { rows: AssetRow[] } };
-  rows = assets.data.rows;
+  const syncStore = await import("../src/server/syncStore");
+  rows = syncStore.loadAssets() as unknown as AssetRow[];
 });
 
 afterEach(() => {

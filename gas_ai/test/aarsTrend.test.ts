@@ -282,3 +282,32 @@ describe("countTrendFromHistory", () => {
     expect(Object.keys(points[0].counts).sort()).toEqual([...COUNT_KEYS].sort());
   });
 });
+
+// The stored count and the live count are ONE claim, and this is the test that says so.
+// Written because they were not: `posture_fail_count` first counted the raw policy rows
+// and read 9 against the KPI's 5, because the 5Rs rules nothing has judged AI-relevant are
+// dropped before the live count. Nothing failed — the trend would simply have drawn its
+// posture line at a level the number above it never showed.
+describe("the count trend agrees with the KPIs beside it", () => {
+  it("stores exactly what the live KPIs report, for all three series", async () => {
+    const { bootServer, teardownServer } = await import("./gasEnv");
+    const server = await bootServer();
+    try {
+      server.setup();
+      const sync = server.api.runSync({}) as { ok: boolean; error?: string };
+      expect(sync.ok, sync.error).toBe(true);
+
+      const assets = server.api.getAssets({}) as { ok: boolean; data: Rec };
+      const kpis = assets.data["kpis"] as Rec;
+      const trend = assets.data["countTrend"] as Array<{ counts: Record<string, number | null> }>;
+      const last = trend[trend.length - 1]!.counts;
+
+      expect(last["issues"]).toBe(kpis["openIssues"]);
+      expect(last["findings"]).toBe(kpis["complianceGaps"]);
+      const posture = kpis["frameworkPosture"] as { failingPolicies: number };
+      expect(last["postureFails"]).toBe(posture.failingPolicies);
+    } finally {
+      teardownServer();
+    }
+  });
+});

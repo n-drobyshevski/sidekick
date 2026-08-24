@@ -30,6 +30,8 @@ import type { EffectiveAccessRow } from "../domain/effectiveAccess";
 import { edgeId } from "../domain/graphTypes";
 import { aarsSeverity, derivationSignature, type AarsBands, type AarsRule } from "../domain/aars";
 import { isOpenGap, isUnresolvedIssue, normalizeAarsSeverity } from "../domain/config";
+import { buildAllFrameworkTrees } from "../domain/compliancePosture";
+import { dropUnselected, failingPolicyCount, scopeFiveRs } from "../domain/complianceScope";
 import {
   countProblemOutcomes,
   decideProblem,
@@ -961,16 +963,28 @@ export function persistSync(
     // `isOpenGap`, the app's one definition of a failing control, so this column and
     // `kpis.complianceGaps` count the same rows.
     finding_count: decidedFindings.filter(isOpenGap).length,
-    // Distinct policies with a failing evaluation — deduped by policy id for the same
-    // reason `complianceKpis.failingPolicies` is: one control mapped to six subcategories
-    // is one thing to fix, not six.
+    // Distinct policies with a failing evaluation, over the AI-SCOPED rows — the same
+    // definition, through the same two functions, that `complianceKpis.failingPolicies`
+    // will report on the next read.
+    //
+    // Counting the raw rows instead was wrong in a way worth recording: it read 9 against
+    // the KPI's 5 on the seed landscape, because the 5Rs rules nothing has judged
+    // AI-relevant are dropped before the live count and were not dropped before this one.
+    // Nothing would have failed — the trend would simply have drawn its posture line at a
+    // level the figure above it never showed, and the delta chip would have stayed away
+    // forever because the two never agreed.
     //
     // NULL, NOT ZERO, when no posture was collected. The posture steps are optional and
     // per-framework, so a tenant that declines them (or an operator who has selected no
     // framework) has no number here — and "no failing policies" is a very different claim
     // from "we never asked". The trend reader plots null as a gap.
     posture_fail_count: frameworkPolicies.length
-      ? new Set(frameworkPolicies.filter((p) => p.failCount > 0).map((p) => p.policyId)).size
+      ? failingPolicyCount(dropUnselected(frameworkPolicies, scopeFiveRs(
+          buildAllFrameworkTrees(posture, frameworkPolicies, frameworks),
+          decidedFindings,
+          aiAssetIds(assetNodes),
+          settingsStore.getFiveRsPins(),
+        )))
       : null,
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
@@ -1609,6 +1623,20 @@ function loadGraphDocUncached(): GraphDoc | null {
     edges,
     syncedAt: latest ? String(latest["finished_at"] ?? "") : "",
   });
+}
+
+/**
+ * The asset ids this sync is about to persist, as the set `scopeFiveRs` wants.
+ *
+ * Over the nodes IN HAND rather than `loadAssets()`, which is the whole reason this exists
+ * separately from api.ts's `aiAssetIdSet`: at this point in a sync the tabs still hold the
+ * PREVIOUS landscape, so reading them back would scope this sync's posture count against
+ * last sync's assets.
+ */
+function aiAssetIds(nodes: GNode[]): Record<string, true> {
+  const ids: Record<string, true> = {};
+  for (const n of nodes) ids[n.id] = true;
+  return ids;
 }
 
 /** Assets exactly as persisted — the recompute's input, and nobody else's. */

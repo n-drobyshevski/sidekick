@@ -10,7 +10,9 @@ import { bootServer } from "./gasEnv";
 import type { Rec } from "../src/domain/util";
 
 type Server = Awaited<ReturnType<typeof bootServer>>;
+type SyncStore = typeof import("../src/server/syncStore");
 let server: Server;
+let syncStore: SyncStore;
 
 const SMALL = "proj-project-delta";
 
@@ -22,13 +24,18 @@ function ok<T = Rec>(res: unknown): T {
 
 const setView = (id: string) => ok(server.api.setSettings({ projectView: id }));
 
-/** Every asset with its score and the rule that produced it, register-wide. */
+/**
+ * Every asset with its score and the rule that produced it, register-wide.
+ *
+ * Read from the store rather than from `getAssets`: the register's payload carries no
+ * score any more (the models reach only the workbench), and a rescore is a claim about
+ * what is PERSISTED, which is what this file is about either way.
+ */
 function scores(): Map<string, { aars: number | null; version: number | null }> {
   setView("");
-  const rows = ok<Rec>(server.api.getAssets({ page: 1, pageSize: 500 }))["rows"] as Rec[];
-  return new Map(rows.map((r) => [
-    String(r["id"]),
-    { aars: (r["aars"] ?? null) as number | null, version: null },
+  return new Map(syncStore.loadAssets().map((a) => [
+    a.id,
+    { aars: a.aars ?? null, version: a.aarsRuleVersion ?? null },
   ]));
 }
 
@@ -57,6 +64,7 @@ function bumpRule(): void {
 
 beforeEach(async () => {
   server = await bootServer();
+  syncStore = await import("../src/server/syncStore");
   server.setup();
   ok(server.api.runSync({}));
 });

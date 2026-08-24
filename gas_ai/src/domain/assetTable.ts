@@ -5,29 +5,26 @@
 // small-inventory path (see src/client/js/pages/inventory.js — the client bundle can't
 // import the TS module).
 
-import { AARS_SEVERITY_ORDER, SEVERITY_ORDER, normalizeAarsSeverity } from "./config";
+import { SEVERITY_ORDER } from "./config";
 import { toNum as num, toStr as str } from "./util";
 import type { Rec } from "./util";
 
 export type AssetSort =
-  | "aars" | "postureTier" | "issues" | "findings"
-  | "name" | "kind" | "cloud" | "region" | "severity" | "combos";
+  | "issues" | "findings" | "name" | "kind" | "cloud" | "region" | "severity" | "combos";
 
 export const ASSET_SORTS: AssetSort[] = [
-  "aars", "postureTier", "issues", "findings",
-  "name", "kind", "cloud", "region", "severity", "combos",
+  "issues", "findings", "name", "kind", "cloud", "region", "severity", "combos",
 ];
 
 export type SortDir = "asc" | "desc";
 
 /**
  * Which way a column reads first when you sort by it. Risk columns open worst-first —
- * nobody sorts by AARS to see the safest asset — while identity columns open A→Z. This
- * also preserves the pre-direction meaning of a `?sort=` deep link, which had no `dir`.
+ * nobody sorts by open issues to see the quietest asset — while identity columns open A→Z.
+ * This also preserves the pre-direction meaning of a `?sort=` deep link, which had no `dir`.
  */
 export const DEFAULT_SORT_DIR: Record<AssetSort, SortDir> = {
-  aars: "desc", postureTier: "desc", severity: "desc", combos: "desc",
-  issues: "desc", findings: "desc",
+  issues: "desc", findings: "desc", severity: "desc", combos: "desc",
   name: "asc", kind: "asc", cloud: "asc", region: "asc",
 };
 
@@ -53,7 +50,7 @@ export const CLIENT_ALL_MAX = 1500;
  * `flags` is the one deliberate exception: see ASSET_FLAGS.
  */
 export const FACET_KEYS = [
-  "aarsSeverities", "severities", "kinds", "clouds", "regions", "projects", "flags",
+  "severities", "kinds", "clouds", "regions", "projects", "flags",
 ] as const;
 export type FacetKey = (typeof FACET_KEYS)[number];
 
@@ -69,7 +66,6 @@ export type AssetFlag = (typeof ASSET_FLAGS)[number];
 
 export interface AssetTableQuery {
   q: string;
-  aarsSeverities: string[];
   severities: string[];
   kinds: string[];
   clouds: string[];
@@ -80,12 +76,6 @@ export interface AssetTableQuery {
   dir: SortDir;
   page: number;
   pageSize: number;
-}
-
-/** Missing/garbage scores sort last, matching `Number(x ?? -1)` on the client. */
-function score(v: unknown): number {
-  const n = Number(v ?? -1);
-  return Number.isFinite(n) ? n : -1;
 }
 
 /** Worst-first rank for the issue-severity column; an unset severity ranks below UNKNOWN. */
@@ -128,22 +118,25 @@ function keepValid(values: string[], allowed: readonly string[]): string[] {
 /** Client params → a query with every field clamped into range; nothing here can throw. */
 export function resolveAssetQuery(params: Rec): AssetTableQuery {
   const sort = str(params["sort"]) as AssetSort;
-  const resolvedSort: AssetSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
+  const resolvedSort: AssetSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "issues";
   const dir = str(params["dir"]).toLowerCase();
   const page = Number(params["page"]);
   const pageSize = Number(params["pageSize"]);
 
-  // `aarsSeverity` is the single-select spelling and `band` the one before the rename;
-  // both still resolve so links shared against either vintage keep working.
-  const aarsSeverities = listWithLegacy(
-    params["aarsSeverities"], params["aarsSeverity"], params["band"],
-  )
-    .map((v) => normalizeAarsSeverity(v) ?? "")
-    .filter((v, i, all) => v !== "" && all.indexOf(v) === i);
+  // `aarsSeverities` / `aarsSeverity` / `band` are IGNORED, not remapped onto `severities`.
+  //
+  // The temptation is obvious — both name severities, and a shared link would keep
+  // "working" — but they are different scales measured over different things. The retired
+  // facet held an asset's AARS LEVEL, a band of a 0–100 score; `severities` holds the
+  // adjusted severity of its worst open issue. On the seed landscape the same word picks
+  // different assets under each: 19 rows are level CRITICAL and none of them has a
+  // CRITICAL issue. Silently answering a stale `?band=CRITICAL` with a different 19 rows
+  // is worse than answering it with the whole register, because nothing on screen would
+  // say the question had changed. `resolveAssetQuery` drops them, `persistParams` rewrites
+  // the hash canonically on first paint, and a saved view keeps opening.
 
   return {
     q: str(params["q"]).trim().toLowerCase(),
-    aarsSeverities,
     severities: keepValid(
       listWithLegacy(params["severities"], params["severity"]),
       SEVERITY_ORDER,
@@ -190,9 +183,6 @@ export function matchesAssetQuery(row: Rec, q: AssetTableQuery): boolean {
   if (q.kinds.length && q.kinds.indexOf(str(row["kind"])) < 0) return false;
   if (q.clouds.length && q.clouds.indexOf(str(row["cloud"])) < 0) return false;
   if (q.regions.length && q.regions.indexOf(str(row["region"])) < 0) return false;
-  if (q.aarsSeverities.length && q.aarsSeverities.indexOf(str(row["aarsSeverity"])) < 0) {
-    return false;
-  }
   if (q.severities.length && q.severities.indexOf(str(row["severity"])) < 0) return false;
   if (q.projects.length) {
     const mine = rowProjects(row);
@@ -211,12 +201,6 @@ type Cmp = (a: Rec, b: Rec) => number;
 
 /** Every primary key is written ascending; `dir` flips it. */
 const PRIMARY: Record<AssetSort, Cmp> = {
-  aars: (a, b) => score(a["aars"]) - score(b["aars"]),
-  // Same "missing sorts last" convention as `aars`: `score()` reads a missing tier as -1,
-  // and 4 (worst) already sorts above 1 (best) under the ascending primary, matching AARS's
-  // own "higher number is worse" direction — so `desc` (this column's default) reads worst
-  // tier first, exactly like `aars` reads worst score first.
-  postureTier: (a, b) => score(a["postureTier"]) - score(b["postureTier"]),
   name: (a, b) => str(a["name"]).localeCompare(str(b["name"])),
   kind: (a, b) => str(a["kind"]).localeCompare(str(b["kind"])),
   cloud: (a, b) => str(a["cloud"]).localeCompare(str(b["cloud"])),
@@ -227,10 +211,8 @@ const PRIMARY: Record<AssetSort, Cmp> = {
   findings: (a, b) => num(a["openFindings"]) - num(b["openFindings"]),
 };
 
-const byScoreDesc: Cmp = (a, b) => score(b["aars"]) - score(a["aars"]);
-
 /**
- * The tie-break that replaced `byScoreDesc`: worst severity, then the two counts, then a
+ * The tie-break, applied under every column: worst severity, then the two counts, then a
  * total order on name and id.
  *
  * SEVERITY FIRST, not count first. Within an alphabetical page five LOW issues must not
@@ -239,10 +221,11 @@ const byScoreDesc: Cmp = (a, b) => score(b["aars"]) - score(a["aars"]);
  * a reader look at first". The counts then separate assets whose worst issue rates the
  * same, which on this landscape is most of them.
  *
- * The `name`/`id` legs are new. `byScoreDesc` stopped at the score and left residual ties
- * to `Array.prototype.sort`'s stability, which made the order depend on the model's row
- * order rather than on anything a reader could predict. Ending on `id` makes it total, the
- * same way graphLayout's `cmpId` and the config register's id leg already do.
+ * It ends on `name` then `id` so the order is TOTAL. The AARS tie-break it replaced
+ * stopped at the score and left residual ties to `Array.prototype.sort`'s stability, which
+ * made the order depend on the cached model's row order rather than on anything a reader
+ * could predict — and on a landscape where fourteen assets shared one score, that was most
+ * of the page. Same reason graphLayout's `cmpId` and the config register's id leg exist.
  */
 const byRiskDesc: Cmp = (a, b) =>
   sevRank(b["severity"]) - sevRank(a["severity"])
@@ -252,17 +235,17 @@ const byRiskDesc: Cmp = (a, b) =>
   || str(a["id"]).localeCompare(str(b["id"]));
 
 /**
- * The comparator for one column in one direction. The tie-break is always AARS descending
- * and is deliberately NOT flipped by `dir`: sorting a column A→Z or Z→A is a question
- * about that column, and either way the riskiest row should lead its group.
+ * The comparator for one column in one direction. The tie-break is always `byRiskDesc` and
+ * is deliberately NOT flipped by `dir`: sorting a column A→Z or Z→A is a question about
+ * that column, and either way the row most worth looking at should lead its group.
  */
 export function assetComparator(sort: AssetSort, dir: SortDir): Cmp {
-  const primary = PRIMARY[sort] ?? PRIMARY.aars;
+  const primary = PRIMARY[sort] ?? PRIMARY.issues;
   const sign = dir === "desc" ? -1 : 1;
-  return (a, b) => sign * primary(a, b) || byScoreDesc(a, b);
+  return (a, b) => sign * primary(a, b) || byRiskDesc(a, b);
 }
 
-/** Each column in its default direction — `ASSET_COMPARATORS.aars` is worst-first. */
+/** Each column in its default direction — `ASSET_COMPARATORS.issues` is worst-first. */
 export const ASSET_COMPARATORS: Record<AssetSort, Cmp> = ASSET_SORTS.reduce((acc, s) => {
   acc[s] = assetComparator(s, DEFAULT_SORT_DIR[s]);
   return acc;
@@ -270,7 +253,7 @@ export const ASSET_COMPARATORS: Record<AssetSort, Cmp> = ASSET_SORTS.reduce((acc
 
 /** Sorted copy — the cached model's row array must never be reordered in place. */
 export function sortAssetRows(rows: Rec[], sort: AssetSort, dir?: SortDir): Rec[] {
-  const resolved: AssetSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
+  const resolved: AssetSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "issues";
   return [...rows].sort(assetComparator(resolved, dir ?? DEFAULT_SORT_DIR[resolved]));
 }
 
@@ -288,17 +271,12 @@ function facetValues(key: FacetKey, row: Rec): string[] {
   if (key === "kinds") return [str(row["kind"])].filter(Boolean);
   if (key === "clouds") return [str(row["cloud"])].filter(Boolean);
   if (key === "regions") return [str(row["region"])].filter(Boolean);
-  if (key === "aarsSeverities") return [str(row["aarsSeverity"])].filter(Boolean);
   if (key === "severities") return [str(row["severity"])].filter(Boolean);
   if (key === "projects") return rowProjects(row);
   return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f)) as unknown as string[];
 }
 
 function facetSorter(key: FacetKey): (a: FacetCount, b: FacetCount) => number {
-  if (key === "aarsSeverities") {
-    const order = AARS_SEVERITY_ORDER as readonly string[];
-    return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
-  }
   if (key === "severities") {
     const order = SEVERITY_ORDER as readonly string[];
     return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
