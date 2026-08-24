@@ -64,7 +64,7 @@ function comboMatches(o, q) {
  */
 export function filterCombobox({
   value, options, pinnedRows, defaultLabel, ariaLabel, searchPlaceholder = "Search…",
-  fallbackLabel = "", searchThreshold = 7, onChange, id,
+  fallbackLabel = "", searchThreshold = 7, onChange, id, leading = null,
   editable = false, allowCustom = false, inputClass = "", popClass = "", transform,
 }) {
   const seq = ++_comboboxSeq;
@@ -123,6 +123,11 @@ export function filterCombobox({
         "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": ariaLabel,
         onclick: (e) => { e.stopPropagation(); open ? close() : openPop(); },
       },
+      // A caller-supplied glyph inside the trigger, before the label. Decoration only: the
+      // trigger's accessible name is `ariaLabel`, so a node here adds no second reading.
+      // Pick-only mode alone — the editable trigger is a real text input, and an icon
+      // inside its box would sit on top of what is being typed.
+      leading || null,
       triggerText,
       el("span", { class: "combobox-caret", "aria-hidden": "true" }, "▾"),
     );

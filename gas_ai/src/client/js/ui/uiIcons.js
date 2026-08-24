@@ -114,6 +114,15 @@ const PATHS = {
   // A boolean block: one path arriving, two leaving. A fork is the shape of a choice, which is
   // what both OR and AND insert — the keyword beside it says which.
   branch: ["M8 13.5 V8", "M8 8 L3.8 3.5", "M8 8 L12.2 3.5"],
+  // The app header's project-scope trigger. A folder because that is what the register's
+  // projects nest as — `scopeOptions` groups them under "Business units" and "Projects", and a
+  // business unit reaches its whole subtree.
+  folder: ["M2 12.5 V4 a1 1 0 0 1 1 -1 h3.2 l1.4 1.8 H13 a1 1 0 0 1 1 1 V12.5 a1 1 0 0 1 -1 1 H3 a1 1 0 0 1 -1 -1 z"],
+  // The graph's title-row actions. `doc` heads "New search" — a fresh sheet of paper, the
+  // thing the button hands you; `bookmark` heads the saved-queries menu, because what that
+  // control keeps is a place to come back to rather than a file.
+  doc: ["M4 2.5 h5 L12.5 6 v7.5 h-8.5 z", "M8.8 2.6 V6.2 H12.4"],
+  bookmark: ["M4 2.5 h8 v11 L8 10.6 L4 13.5 z"],
 };
 
 // Same fallback posture as kindIcon(): an unknown name reads as "more" rather than throwing.

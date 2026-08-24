@@ -612,9 +612,9 @@ export async function renderGraphPage(main, params, _ctx) {
   // to be the answer; the nearest surviving control on that row is Columns.
   chipsRow.fallbackFocus = columnsBtn;
 
-  // Reveals the builder. It lives here rather than in the header actions because the header is
-  // right-aligned and its saved-views control is swapped by positional index below — an
-  // inserted sibling there would silently replace the wrong node.
+  // Reveals the builder. It lives on the VIEW row rather than in the header actions: this row
+  // is the one that never leaves, and putting the question's own toggle on it keeps changing
+  // the question next to reading the answer.
   const editBtn = el("button", {
     class: "gq-edit-btn",
     "aria-expanded": "false",
@@ -634,16 +634,19 @@ export async function renderGraphPage(main, params, _ctx) {
   controls.append(countBox, selectField("Order", orderSel), columnsBtn);
 
   // ------------------------------------------------------------- header actions
+  // The saved-queries control re-renders itself after a save, so it gets a host of its own.
+  // It used to be swapped by positional index (`headActions.children[1]`), which made every
+  // other control on this row unmovable — insert a sibling and the save would replace the
+  // wrong node, silently.
+  const savedHost = el("div", { class: "gq-saved" });
   headActions.append(
     el("button", {
       onclick: () => {
         update({ find: serializeQuery(defaultQuery()), where: "", columns: "", page: "", sortCol: "" });
         toast("New search");
       },
-    }, "New search"),
-    // May be null when the browser blocks localStorage; `append` would stringify that to the
-    // literal text "null" in the header.
-    savedViewsControl() || el("span", {}),
+    }, uiIcon("doc", 14), el("span", { style: "margin-left:6px" }, "New search")),
+    savedHost,
     tip(
       tipMark(),
       [
@@ -654,6 +657,7 @@ export async function renderGraphPage(main, params, _ctx) {
       { label: "How the query builder works", term: "graph-query" },
     ),
   );
+  renderSavedViews();
 
   // ------------------------------------------------------------- query builder
   const builder = queryBar({
@@ -1230,58 +1234,123 @@ export async function renderGraphPage(main, params, _ctx) {
     }
   }
 
-  function savedViewsControl() {
-    const views = readViews();
-    if (views === null) return null;
-
-    const sel = el("select", { "aria-label": "Saved queries" },
-      el("option", { value: "" }, views.length ? "Saved queries…" : "No saved queries"),
-      ...views.map((v, i) => el("option", { value: String(i) }, v.name)),
-    );
-    sel.addEventListener("change", () => {
-      const v = views[Number(sel.value)];
-      sel.value = "";
-      if (!v) return;
-      // A wholesale state change deserves a history entry, so Back returns to the query the
-      // reader was on. Same call inventory.js makes for the same reason.
-      navigate("graph", v.params);
+  /** Name the query in the hash and store it — the menu's first row, factored out of it. */
+  async function saveCurrentQuery() {
+    const input = el("input", {
+      type: "text", placeholder: "e.g. Agents running as a dormant identity",
+      "aria-label": "Query name", style: "width:100%; margin-bottom:4px",
     });
+    const ok = await confirmDialog({
+      title: "Save this query",
+      body: el("div", {},
+        el("p", { class: "muted small" },
+          "Saves the query, its columns and its filters in this browser. "
+          + "To share it, copy the page link instead — the URL already carries all of it."),
+        input),
+      confirmLabel: "Save",
+    });
+    const name = input.value.trim();
+    if (!ok || !name) return;
+    const { params: hash } = parseHash();
+    const params = {};
+    for (const k of VIEW_PARAMS) if (hash[k]) params[k] = hash[k];
+    const next = (readViews() || []).filter((v) => v.name !== name);
+    next.unshift({ name, params });
+    try {
+      window.localStorage.setItem(VIEWS_KEY, JSON.stringify(next.slice(0, 12)));
+    } catch {
+      toast("Couldn't save — this browser is blocking local storage.", "error");
+      return;
+    }
+    // The stored list is one longer, and the menu is built from it at render time rather than
+    // at open time — so the control has to be rebuilt for the new row to be in it.
+    renderSavedViews();
+    toast("Saved “" + name + "”");
+  }
 
-    const save = el("button", {
-      onclick: async () => {
-        const input = el("input", {
-          type: "text", placeholder: "e.g. Agents running as a dormant identity",
-          "aria-label": "Query name", style: "width:100%; margin-bottom:4px",
-        });
-        const ok = await confirmDialog({
-          title: "Save this query",
-          body: el("div", {},
-            el("p", { class: "muted small" },
-              "Saves the query, its columns and its filters in this browser. "
-              + "To share it, copy the page link instead — the URL already carries all of it."),
-            input),
-          confirmLabel: "Save",
-        });
-        const name = input.value.trim();
-        if (!ok || !name) return;
-        const { params: hash } = parseHash();
-        const params = {};
-        for (const k of VIEW_PARAMS) if (hash[k]) params[k] = hash[k];
-        const next = (readViews() || []).filter((v) => v.name !== name);
-        next.unshift({ name, params });
-        try {
-          window.localStorage.setItem(VIEWS_KEY, JSON.stringify(next.slice(0, 12)));
-        } catch {
-          toast("Couldn't save — this browser is blocking local storage.", "error");
-          return;
+  /**
+   * Saving a query and reopening one, as ONE dropdown — the shape the reference screen gives
+   * this corner of the title row, where a select sitting beside a button used to be.
+   *
+   * IT IS NOT LABELLED "Save as…", which is the reference's word. That control only ever
+   * writes; this one is also the only way to reopen a saved query, and a button named for the
+   * write would hide the read behind it. The menu names both verbs; the trigger names the
+   * noun they share.
+   */
+  function renderSavedViews() {
+    clear(savedHost);
+    const views = readViews();
+    // Storage refused outright — a private window, or the GAS sandbox iframe. No control at
+    // all rather than one whose every row would fail: nothing here degrades usefully.
+    if (views === null) return;
+
+    let pop = null;
+    const trigger = el("button", {
+      class: "gq-saved-btn", "aria-haspopup": "menu", "aria-expanded": "false",
+      onclick: () => { pop && pop.isOpen() ? pop.close(true) : openMenu(); },
+    },
+      uiIcon("bookmark", 14),
+      el("span", {}, "Saved queries"),
+      el("span", { class: "gq-saved-caret", "aria-hidden": "true" }, "▾"),
+    );
+    savedHost.append(trigger);
+
+    function openMenu() {
+      const items = [];
+      const menu = el("div", { class: "gq-saved-menu", role: "menu", "aria-label": "Saved queries" });
+
+      const saveItem = el("button", {
+        class: "gq-saved-item", role: "menuitem",
+        onclick: () => { if (pop) pop.close(true); saveCurrentQuery(); },
+      }, uiIcon("plus", 13), el("span", {}, "Save this query…"));
+      items.push(saveItem);
+      menu.append(saveItem, el("div", { class: "gq-saved-rule", "aria-hidden": "true" }));
+
+      if (!views.length) {
+        // A sentence, not a disabled row: a greyed "No saved queries" reads as a thing that
+        // failed, when the truth is simply that nobody has saved one yet.
+        menu.append(el("p", { class: "gq-saved-none muted small" }, "Nothing saved yet."));
+      } else {
+        for (const v of views) {
+          const row = el("button", {
+            class: "gq-saved-item", role: "menuitem",
+            // A wholesale state change deserves a history entry, so Back returns to the query
+            // the reader was on. Same call inventory.js makes for the same reason.
+            onclick: () => { if (pop) pop.close(true); navigate("graph", v.params); },
+          }, el("span", { class: "gq-saved-item-name" }, v.name));
+          items.push(row);
+          menu.append(row);
         }
-        const rebuilt = savedViewsControl();
-        if (rebuilt) headActions.replaceChild(rebuilt, headActions.children[1]);
-        toast("Saved “" + name + "”");
-      },
-    }, "Save query");
+      }
 
-    return el("div", { class: "saved-views" }, sel, save);
+      // Up/Down walk the menu; Escape and outside clicks are openPopover's own, and Tab is
+      // left to the browser — the popover is portaled to the end of <body>, so tabbing runs
+      // through these rows in order before it leaves.
+      menu.addEventListener("keydown", (e) => {
+        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+        e.preventDefault();
+        // Read the cursor off focus rather than off a counter: Tab moves focus too, and a
+        // counter would send the next arrow key back to wherever the arrows had last been.
+        const at = Math.max(0, items.indexOf(document.activeElement));
+        const next = e.key === "ArrowDown"
+          ? Math.min(at + 1, items.length - 1)
+          : Math.max(at - 1, 0);
+        items[next].focus();
+      });
+
+      pop = openPopover({
+        anchor: trigger,
+        className: "gq-saved-pop",
+        ariaLabel: "Saved queries",
+        position: { width: 260, minWidth: 220, maxHeight: 360 },
+        build: () => menu,
+        onClose: () => { pop = null; trigger.setAttribute("aria-expanded", "false"); },
+      });
+      trigger.setAttribute("aria-expanded", "true");
+      // Focus goes INTO the menu: it is portaled to the end of <body>, so Tab from the trigger
+      // would walk the page behind it rather than its rows.
+      if (pop.isOpen()) items[0].focus();
+    }
   }
 
   // ----------------------------------------------------------- column chooser
