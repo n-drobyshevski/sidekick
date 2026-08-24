@@ -284,6 +284,10 @@ export async function renderConfigFindings(main, params, ctx) {
       const resources = new Set();
       const gapResources = new Set();
       const unlinkedGapResources = new Set();
+      // Mirrors ControlRollup.domains in src/domain/configFindings.ts — under
+      // CONFIG_CLIENT_ALL_MAX this loop is the ONLY rollup that runs, so a field added
+      // there and not here is a column that reads empty on every small tenant.
+      const domains = new Set();
       let worst = "UNKNOWN";
       let iac = 0;
       let firstSeenAt = "";
@@ -296,6 +300,7 @@ export async function renderConfigFindings(main, params, ctx) {
           gapResources.add(r.resourceId);
           if (!r.linked) unlinkedGapResources.add(r.resourceId);
         }
+        if (r.domain) domains.add(r.domain);
         if (r.iac) iac += 1;
         if (r.firstSeenAt && (!firstSeenAt || r.firstSeenAt < firstSeenAt)) {
           firstSeenAt = r.firstSeenAt;
@@ -309,6 +314,7 @@ export async function renderConfigFindings(main, params, ctx) {
         gaps: gapResources.size,
         resources: resources.size,
         unlinked: unlinkedGapResources.size,
+        domains: Array.from(domains).sort(),
         iac,
         firstSeenAt,
         mix,
@@ -355,6 +361,15 @@ export async function renderConfigFindings(main, params, ctx) {
               el("span", {}, String(g.unlinked),
                 el("span", { class: "sr-only" }, ", not on an AI asset")),
               g.unlinked + " not on an AI asset")
+            : el("span", { class: "muted" }, "—")),
+        },
+        {
+          // Which domains one fix would touch. The by-control view's argument is that N
+          // near-identical rows are one piece of work; this says how many owners that work
+          // needs. Empty for an all-unlinked control, which is most of them here.
+          key: "domains", label: "Domain", sortable: false,
+          cell: (g) => ((g.domains || []).length
+            ? el("span", {}, g.domains.join(", "))
             : el("span", { class: "muted" }, "—")),
         },
         {
