@@ -13480,6 +13480,11 @@ exports[`read endpoints > getQueryVocabulary (values for AI Agent) answers the s
           "type": "pairs",
         },
         {
+          "key": "domain",
+          "label": "Domain",
+          "type": "choice",
+        },
+        {
           "key": "status",
           "label": "Status",
           "type": "choice",
@@ -14329,6 +14334,31 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
             {
               "count": 2,
               "value": "europe-west3",
+            },
+          ],
+        },
+        {
+          "key": "domain",
+          "values": [
+            {
+              "count": 4,
+              "value": "unknown",
+            },
+            {
+              "count": 3,
+              "value": "CROSS",
+            },
+            {
+              "count": 3,
+              "value": "SAP",
+            },
+            {
+              "count": 3,
+              "value": "VALUE-CHAIN",
+            },
+            {
+              "count": 1,
+              "value": "EXAMPLE DOMAIN",
             },
           ],
         },
@@ -15433,6 +15463,10 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
             "label": "Tags",
           },
           {
+            "key": "domain",
+            "label": "Domain",
+          },
+          {
             "key": "status",
             "label": "Status",
           },
@@ -15543,6 +15577,10 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           {
             "key": "tags",
             "label": "Tags",
+          },
+          {
+            "key": "domain",
+            "label": "Domain",
           },
           {
             "key": "status",
@@ -18024,6 +18062,10 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
             "label": "Tags",
           },
           {
+            "key": "domain",
+            "label": "Domain",
+          },
+          {
             "key": "status",
             "label": "Status",
           },
@@ -20031,6 +20073,10 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           {
             "key": "tags",
             "label": "Tags",
+          },
+          {
+            "key": "domain",
+            "label": "Domain",
           },
           {
             "key": "status",

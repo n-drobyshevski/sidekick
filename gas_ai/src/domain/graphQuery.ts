@@ -308,6 +308,13 @@ export const QUERY_FIELDS: readonly FieldSpec[] = [
       .map((t) => (t.value ? `${t.key}: ${t.value}` : t.key))
       .join(", ")),
   },
+  // The business domain, off the resource's own Wiz/Domain tag — and `choice` where `tags`
+  // above is `pairs`, for exactly the reason stated there. A tenant has tens of domains, not
+  // thousands of key/value strings, so this one stays inside VALUE_CARDINALITY_MAX and
+  // `fieldValuesFor` can offer a real picker rather than two free-text boxes. Asking through
+  // `tags` still works and still means the same thing — this is the shorthand for the one
+  // tag key the app names, not a second source of truth.
+  { key: "domain", label: "Domain", type: "choice", get: (n) => orNull(n.domain) },
   { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
   { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
   // The two counts that replaced the score, the percentile and the level here. A query is

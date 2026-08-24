@@ -28,7 +28,7 @@
 // renders it into the slot list, and a test pins the slot count against the real capture.
 
 import { type Rec } from "./util";
-import { entityField, kindFromWizType } from "./graphTypes";
+import { entityField, entityTags, kindFromWizType } from "./graphTypes";
 
 /**
  * One node in the traversal. `select` defaults to TRUE — the common case in the capture,
@@ -636,6 +636,14 @@ function toExpandedNode(raw: Rec): ExpandedNode | null {
     sensitiveAccess: isTrue("hasAccessToSensitiveData"),
     highPriv: isTrue("hasHighPrivileges"),
     adminPriv: isTrue("hasAdminPrivileges"),
+    // This path used to project no tags at all, so a node reached by clicking Connections
+    // arrived without the one attribution fact the rest of the app now reads. entityTags
+    // rather than entityField for the reason its own header gives: the flat field can be an
+    // explicit null while the bag holds the pair.
+    //
+    // Tags, not a resolved domain: this module is pure and the tag key is a Script
+    // Property. `expandAsset` folds the domain on, where every other property read happens.
+    tags: entityTags(raw) ?? [],
   };
 }
 

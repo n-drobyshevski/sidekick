@@ -1685,7 +1685,7 @@ var Server = (() => {
     return v === true ? true : v === false ? false : null;
   }
   function toExpandedNode(raw) {
-    var _a5;
+    var _a5, _b;
     const id = str2(raw["id"]);
     if (!id) return null;
     const rawType = str2(raw["type"]);
@@ -1720,7 +1720,15 @@ var Server = (() => {
       sensitiveData: isTrue("hasSensitiveData"),
       sensitiveAccess: isTrue("hasAccessToSensitiveData"),
       highPriv: isTrue("hasHighPrivileges"),
-      adminPriv: isTrue("hasAdminPrivileges")
+      adminPriv: isTrue("hasAdminPrivileges"),
+      // This path used to project no tags at all, so a node reached by clicking Connections
+      // arrived without the one attribution fact the rest of the app now reads. entityTags
+      // rather than entityField for the reason its own header gives: the flat field can be an
+      // explicit null while the bag holds the pair.
+      //
+      // Tags, not a resolved domain: this module is pure and the tag key is a Script
+      // Property. `expandAsset` folds the domain on, where every other property read happens.
+      tags: (_b = entityTags(raw)) != null ? _b : []
     };
   }
   function decodeExpansion(slots, rows) {
@@ -7959,7 +7967,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "d88febef3a54" : "dev";
+  var BUILD_ID = true ? "939aecf370e7" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -12631,7 +12639,7 @@ var Server = (() => {
     return cmp(a.name, b.name);
   }
   function passesFilters(node2, f) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     if (!f) return true;
     if (isRiskKind(node2.kind) && !((_a5 = f.kinds) == null ? void 0 : _a5.some(isRiskKind))) return true;
     if (((_b = f.severities) == null ? void 0 : _b.length) && !f.severities.includes((_c = node2.severity) != null ? _c : "")) return false;
@@ -12641,6 +12649,7 @@ var Server = (() => {
       const names = ((_h = node2.projects) != null ? _h : []).map((p) => p.name);
       if (!names.some((n) => f.projects.includes(n))) return false;
     }
+    if (((_i = f.domains) == null ? void 0 : _i.length) && !f.domains.includes((_j = node2.domain) != null ? _j : "")) return false;
     return true;
   }
   function projectGraph(doc, opts) {
@@ -12784,7 +12793,7 @@ var Server = (() => {
   // src/domain/graphLayout.ts
   var LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"];
   var DEFAULT_LAYOUT = "grid";
-  var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"];
+  var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity", "domain"];
   var SORT_KEYS = ["smart", "severity", "issues", "name"];
   var GROUP_NONE = "__none__";
   var LANE_OF = {
@@ -13276,7 +13285,7 @@ var Server = (() => {
     return ownGroupKey(node2, groupBy2);
   }
   function ownGroupKey(node2, groupBy2) {
-    var _a5, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
     switch (groupBy2) {
       case "combo": {
         const groups = [...(_a5 = node2.comboGroups) != null ? _a5 : []].sort();
@@ -13292,6 +13301,8 @@ var Server = (() => {
         return node2.kind === "SUMMARY" ? (_f = node2.summaryOf) != null ? _f : "SUMMARY" : node2.kind;
       case "severity":
         return (_g = node2.severity) != null ? _g : GROUP_NONE;
+      case "domain":
+        return (_h = node2.domain) != null ? _h : GROUP_NONE;
       case "asset":
         return GROUP_NONE;
     }
@@ -14026,6 +14037,7 @@ var Server = (() => {
     };
   }
   function resolveGraphParams(p, ctx) {
+    var _a5;
     const seed = typeof p["seed"] === "string" ? p["seed"] : "";
     const seedKind = typeof p["seedKind"] === "string" ? p["seedKind"] : "";
     let seedIds;
@@ -14040,6 +14052,8 @@ var Server = (() => {
       seedIds = withIssues;
     } else if (seed && (seedKind === "combo" || comboGroupById(seed))) {
       seedIds = comboAssetIds(ctx.issues, seed);
+    } else if (seed && seedKind === "domain") {
+      seedIds = ((_a5 = ctx.nodes) != null ? _a5 : []).filter((n) => n.domain === seed).map((n) => n.id);
     } else if (seed) {
       seedIds = [seed];
     } else {
@@ -14049,9 +14063,10 @@ var Server = (() => {
       severities: toList(p["severities"]),
       kinds: toList(p["kinds"]),
       projects: toList(p["projects"]),
-      clouds: toList(p["clouds"])
+      clouds: toList(p["clouds"]),
+      domains: toList(p["domains"])
     };
-    const hasFilters = filters.severities.length || filters.kinds.length || filters.projects.length || filters.clouds.length;
+    const hasFilters = filters.severities.length || filters.kinds.length || filters.projects.length || filters.clouds.length || filters.domains.length;
     const rawDepth = p["depth"];
     const rawMaxNodes = p["maxNodes"];
     const maxNodes = clampMaxNodes(
@@ -14079,6 +14094,7 @@ var Server = (() => {
       kinds: sorted(p["kinds"]),
       projects: sorted(p["projects"]),
       clouds: sorted(p["clouds"]),
+      domains: sorted(p["domains"]),
       view: resolveLayoutParams(p)
     };
   }
@@ -14224,6 +14240,13 @@ var Server = (() => {
         return orNull(((_a5 = n.tags) != null ? _a5 : []).map((t) => t.value ? `${t.key}: ${t.value}` : t.key).join(", "));
       }
     },
+    // The business domain, off the resource's own Wiz/Domain tag — and `choice` where `tags`
+    // above is `pairs`, for exactly the reason stated there. A tenant has tens of domains, not
+    // thousands of key/value strings, so this one stays inside VALUE_CARDINALITY_MAX and
+    // `fieldValuesFor` can offer a real picker rather than two free-text boxes. Asking through
+    // `tags` still works and still means the same thing — this is the shorthand for the one
+    // tag key the app names, not a second source of truth.
+    { key: "domain", label: "Domain", type: "choice", get: (n) => orNull(n.domain) },
     { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
     { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
     // The two counts that replaced the score, the percentile and the level here. A query is
@@ -15412,7 +15435,11 @@ var Server = (() => {
         const options = resolveGraphParams(params, {
           defaultDepth: getDefaultDepth2(),
           maxNodes: getMaxNodes2(),
-          issues: openIssues()
+          issues: openIssues(),
+          // The graph doc's own nodes, so `seedKind=domain` starts from every resource one
+          // domain owns. Read from `doc` rather than viewAssets(): the graph is what is
+          // being seeded, and it holds the risk-topology nodes the inventory never does.
+          nodes: doc.nodes
         });
         const view = resolveLayoutParams(params);
         const projection = projectGraph(doc, options);
@@ -16249,7 +16276,14 @@ var Server = (() => {
           }
         });
         const decoded = decodeExpansion(slots, page.rows);
-        const nodes = decoded.nodes.slice(0, EXPAND_MAX_NODES);
+        const expandDomainKey = domainTagKey();
+        const nodes = decoded.nodes.slice(0, EXPAND_MAX_NODES).map((n) => ({
+          ...n,
+          domain: domainOfTags(
+            n["tags"],
+            expandDomainKey
+          )
+        }));
         const keep = new Set(nodes.map((n) => n.id));
         const edges2 = decoded.edges.filter((e) => keep.has(e.src) && keep.has(e.dst)).slice(0, EXPAND_MAX_EDGES);
         return {

@@ -172,7 +172,7 @@ import { activeJob } from "./jobsStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { buildInfo } from "./buildInfo";
 import { domainTagKey, hasWizCredentials, projectScope } from "./props";
-import { domainCoverage } from "../domain/domainTag";
+import { domainCoverage, domainOfTags } from "../domain/domainTag";
 import { cached, dataVersion, wizDataVersion } from "./serverCache";
 import {
   AGENT_EXPANSION,
@@ -540,6 +540,10 @@ export function getGraph(p?: unknown): ApiResult {
         defaultDepth: settingsStore.getDefaultDepth(),
         maxNodes: settingsStore.getMaxNodes(),
         issues: openIssues(),
+        // The graph doc's own nodes, so `seedKind=domain` starts from every resource one
+        // domain owns. Read from `doc` rather than viewAssets(): the graph is what is
+        // being seeded, and it holds the risk-topology nodes the inventory never does.
+        nodes: doc.nodes,
       });
       const view = resolveLayoutParams(params);
       const projection = projectGraph(doc, options);
@@ -1933,7 +1937,19 @@ export function expandAsset(p?: unknown): ApiResult {
         },
       });
       const decoded = decodeExpansion(slots, page.rows);
-      const nodes = decoded.nodes.slice(0, EXPAND_MAX_NODES);
+      // The domain fold, here rather than in graphExpand: that module is pure and the tag
+      // key is a Script Property. Same resolution every stored node gets through
+      // graphEnrich.withDomains, so a live-expanded node and a synced one agree.
+      const expandDomainKey = domainTagKey();
+      const nodes = decoded.nodes
+        .slice(0, EXPAND_MAX_NODES)
+        .map((n) => ({
+          ...n,
+          domain: domainOfTags(
+            n["tags"] as Array<{ key: string; value: string }> | undefined,
+            expandDomainKey,
+          ),
+        }));
       const keep = new Set(nodes.map((n) => n.id));
       const edges = decoded.edges
         .filter((e) => keep.has(e.src) && keep.has(e.dst))

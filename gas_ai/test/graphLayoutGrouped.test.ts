@@ -9,6 +9,7 @@ import {
   withDataFindingNodes,
   withExcessivePrivilegeNodes,
   withInternetExposureNodes,
+  withDomains,
   withMissingGuardrailNodes,
   withSensitiveDataNodes,
 } from "../src/domain/graphEnrich";
@@ -21,6 +22,7 @@ import {
 } from "../src/domain/graphLayout";
 import { nodeOrder, projectGraph, type Projection } from "../src/domain/graphProject";
 import { NODE_KINDS } from "../src/domain/graphTypes";
+import { DEFAULT_DOMAIN_TAG_KEY } from "../src/domain/domainTag";
 import { COMBO_GROUPS } from "../src/domain/toxicCombos";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
@@ -444,7 +446,18 @@ describe("layoutGrouped: sort within groups", () => {
 const RISK_DOC = withMissingGuardrailNodes(
   withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(DOC))),
 );
+// The domain is a READ-TIME fold, so a doc assembled straight from the seed carries none
+// until withDomains runs. Applying it here is what makes `domain` a real grouping key in
+// this fixture rather than one that silently files everything under Ungrouped.
+const RISK_DOC_WITH_DOMAINS = {
+  ...RISK_DOC,
+  nodes: withDomains(RISK_DOC.nodes, DEFAULT_DOMAIN_TAG_KEY),
+};
 const RISK_PROJECTION = projectGraph(RISK_DOC, { seedIds: ["agent-h-chatbot"], depth: 2 });
+const RISK_PROJECTION_DOMAINS = projectGraph(
+  RISK_DOC_WITH_DOMAINS,
+  { seedIds: ["agent-h-chatbot"], depth: 2 },
+);
 
 describe("layoutGrouped: risk evidence", () => {
   /**
@@ -484,6 +497,26 @@ describe("layoutGrouped: risk evidence", () => {
         expect(blockOf(layout, id)?.key, `${id} under ${key}`).toBe(host!.key);
       }
     }
+  });
+
+  // The same inheritance rule as combo/project/cloud above, for the dimension added last.
+  // Risk evidence carries no domain of its own — an ISSUE node is a statement about an
+  // asset — so it has to inherit its asset's block rather than be exiled to Ungrouped,
+  // which is what tore the attack path apart the last time a grouping key was added.
+  it("keeps the derived nodes in their asset's domain block", () => {
+    const layout = grouped("domain", "smart", RISK_PROJECTION_DOMAINS);
+    const host = blockOf(layout, "agent-h-chatbot");
+    expect(host).toBeDefined();
+    expect(host!.key).toBe("VALUE-CHAIN");
+    for (const id of evidence) {
+      expect(blockOf(layout, id)?.key, id).toBe("VALUE-CHAIN");
+    }
+  });
+
+  it("files an untagged node under Ungrouped rather than inventing a domain", () => {
+    const layout = grouped("domain", "smart", RISK_PROJECTION_DOMAINS);
+    const untagged = RISK_PROJECTION_DOMAINS.nodes.find((n) => !n.domain && n.kind !== "ISSUE");
+    if (untagged) expect(blockOf(layout, untagged.id)?.key).toBe(GROUP_NONE);
   });
 
   it("still groups the derived nodes by their own kind under 'kind'", () => {

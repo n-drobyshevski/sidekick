@@ -66,6 +66,7 @@ const GROUP_LABELS = {
   cloud: "cloud",
   kind: "node type",
   severity: "severity",
+  domain: "domain",
 };
 
 /**
