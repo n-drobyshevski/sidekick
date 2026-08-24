@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { enrichGraphDoc, withOpenCounts } from "../src/domain/graphEnrich";
 import {
   DEFAULT_LAYOUT,
+  GROUP_KEYS,
   LAYOUT_MODES,
   type GroupKey,
   laneOf,
@@ -899,6 +900,13 @@ describe("layoutGrid shape", () => {
     // canvas is scaled to fit, so what matters is min(vw/width, vh/height) — and the category
     // arrangements spend the canvas on structure, since five bands are as long as the busiest one
     // and the other four carry whitespace to match.
+    //
+    // THE MARGIN HERE IS THINNER THAN IT LOOKS, and deliberately so. Packing a rectangle per
+    // component (`packClusters`) buys grid every cluster outline and costs it canvas: on this
+    // fixture the ratios are rows 2.32x, lanes 1.52x, organic 1.45x, radial 4.07x, where before
+    // the packing organic sat at 1.67x. 1.4 still holds, with organic the one that binds — so a
+    // change that makes grid sparser or organic denser fails HERE first, which is the point of
+    // pinning it. If that happens, re-measure and decide, rather than nudging the constant.
     const VW = 1180;
     const VH = 660;
     const fit = (mode: (typeof LAYOUT_MODES)[number]) => {
@@ -927,12 +935,84 @@ describe("layoutGrid shape", () => {
 
   it("leaves a group box's interior on the 4-column cap", () => {
     // A box is one item in a shelf-packed row, so a wide one pushes every box after it down. The
-    // override is layoutGrid's alone.
-    const grouped = layoutGraph(MANY, { mode: "grid", groupBy: ["kind"] });
-    for (const g of grouped.groups ?? []) {
-      const inside = grouped.nodes.filter((n) => n.x >= g.x && n.x <= g.x + g.width
-        && n.y >= g.y && n.y <= g.y + g.height);
-      expect(new Set(inside.map((n) => n.x)).size, `${g.id} columns`).toBeLessThanOrEqual(4);
+    // wider override is layoutGrid's alone.
+    //
+    // THE CAP IS ON THE BOX'S WIDTH, not on how many distinct x its cards use. Those were the
+    // same number while an interior was one row-major lattice, and came apart when interiors
+    // started packing a rectangle per component: two rectangles side by side are offset by a
+    // gutter rather than by a whole cell. Grouping by combo puts 31 nodes and several components
+    // in one box and spreads them across 7 distinct x — inside the same 1008px. Width is what the
+    // shelf pack actually cares about, so width is what this pins, and across every grouping
+    // rather than the one that happened to stay on the lattice.
+    const CAP = 24 * 2 + 4 * 240; // GROUP_PAD * 2 + 4 * CELL_W
+    for (const by of GROUP_KEYS) {
+      const grouped = layoutGraph(MANY, { mode: "grid", groupBy: [by] });
+      expect(grouped.groups?.length, `${by} produced no boxes`).toBeGreaterThan(0);
+      for (const g of grouped.groups ?? []) {
+        expect(g.width, `${by}/${g.id} width`).toBeLessThanOrEqual(CAP);
+      }
     }
+  });
+});
+
+describe("layoutGrid keeps a component whole", () => {
+  // THE COMPLAINT THIS ANSWERS: two of a cluster's cards at the end of one row and the third at
+  // the start of the next, most of a canvas apart, reading as two unrelated fragments. A
+  // row-major fill knows only an index, so nothing in it could tell where one component ended.
+  const multi = () => {
+    const sizes = new Map<string, number>();
+    for (const root of componentsOf(MANY).values()) sizes.set(root, (sizes.get(root) ?? 0) + 1);
+    return [...sizes.entries()].filter(([, n]) => n > 1).map(([root]) => root);
+  };
+
+  it("the fixture really does hold several components to keep whole", () => {
+    // Guards the two below: against one component they would both pass saying nothing.
+    expect(multi().length).toBeGreaterThan(3);
+  });
+
+  it("gives each component a rectangle no other component's card sits in", () => {
+    const layout = layoutGraph(MANY, { mode: "grid" });
+    const comp = componentsOf(MANY);
+    const placed = new Map(layout.nodes.map((n) => [n.id, n]));
+    for (const root of multi()) {
+      const mine = layout.nodes.filter((n) => comp.get(n.id) === root);
+      const box = {
+        x0: Math.min(...mine.map((n) => n.x)), x1: Math.max(...mine.map((n) => n.x)),
+        y0: Math.min(...mine.map((n) => n.y)), y1: Math.max(...mine.map((n) => n.y)),
+      };
+      // A torn component's bounding box reaches from the right edge of one row to the left edge
+      // of the next and swallows everything between — which is also exactly why `clusterHulls`
+      // had to refuse its outline. Nothing foreign inside the box is the same statement, made
+      // before any hull is computed.
+      const foreign = layout.nodes.filter((n) => comp.get(n.id) !== root
+        && n.x >= box.x0 && n.x <= box.x1 && n.y >= box.y0 && n.y <= box.y1);
+      expect(foreign.map((n) => n.id), `${root} holds foreign cards`).toEqual([]);
+      expect(mine.every((n) => placed.has(n.id))).toBe(true);
+    }
+  });
+
+  it("outlines every one of them, where the row-major fill drew 8 of 12", () => {
+    // The payoff, pinned as a number. Packing per component is what lets the membership guard in
+    // `clusterHulls` accept all of them: a tight rectangle encloses nobody else.
+    const layout = layoutGraph(MANY, { mode: "grid" });
+    expect((layout.clusters ?? []).length).toBe(multi().length);
+  });
+
+  it("an explicit order keeps one flat lattice instead, in the order that was asked for", () => {
+    // "An explicit sort is a request for one global sequence, which gutters cut through"
+    // (`memberOrder`). Clustering an alphabet into clumps would be exactly the quiet lie a
+    // cluster outline exists to prevent, so Name (A–Z) still draws the row-major lattice — one
+    // rectangle, every row full but the last — and simply earns fewer outlines.
+    const flat = layoutGraph(MANY, { mode: "grid", sort: "name" });
+    const xs = [...new Set(flat.nodes.map((n) => n.x))].sort((a, b) => a - b);
+    const ys = [...new Set(flat.nodes.map((n) => n.y))].sort((a, b) => a - b);
+    expect(flat.nodes).toHaveLength(MANY.nodes.length);
+    // A single lattice: every row but the last is full, so the cells account for every node.
+    expect(xs.length * ys.length - MANY.nodes.length).toBeLessThan(xs.length);
+    for (let i = 1; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBe(240); // CELL_W, no gutters
+    for (let i = 1; i < ys.length; i++) expect(ys[i] - ys[i - 1]).toBe(84);  // CELL_H, no gutters
+    const names = flat.nodes.map((n) => MANY.nodes.find((m) => m.id === n.id)!.name);
+    expect(names).toEqual([...names].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+    expect((flat.clusters ?? []).length).toBeLessThan((layoutGraph(MANY, { mode: "grid" }).clusters ?? []).length);
   });
 });
