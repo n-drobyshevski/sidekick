@@ -43,6 +43,24 @@ var Server = (() => {
     return HtmlService.createHtmlOutputFromFile(filename).getContent();
   }
 
+  // src/domain/domainTag.ts
+  var DEFAULT_DOMAIN_TAG_KEY = "Wiz/Domain";
+  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
+    var _a5;
+    const want = key.trim().toLowerCase();
+    if (!want || !tags) return null;
+    for (const t of tags) {
+      if (!t || String(t.key).trim().toLowerCase() !== want) continue;
+      const value = String((_a5 = t.value) != null ? _a5 : "").trim();
+      if (value) return value;
+    }
+    return null;
+  }
+  function resolveDomainTagKey(configured) {
+    const k = (configured != null ? configured : "").trim();
+    return k || DEFAULT_DOMAIN_TAG_KEY;
+  }
+
   // src/server/props.ts
   var PROP_KEYS = {
     wizApiToken: "WIZ_API_TOKEN",
@@ -60,7 +78,12 @@ var Server = (() => {
     // Deliberately a different key from the override above: one is an instruction and the
     // other is a memo, and conflating them would let a cached answer masquerade as a
     // configured one (and survive the operator clearing the override).
-    wizAiResourceTypesResolved: "WIZ_AI_RESOURCE_TYPES_RESOLVED"
+    wizAiResourceTypesResolved: "WIZ_AI_RESOURCE_TYPES_RESOLVED",
+    // Optional override of the resource tag key naming the owning business domain.
+    // Defaults to `Wiz/Domain` (domain/domainTag.ts) and is matched case-insensitively, so
+    // this only needs setting by a tenant that spells the key differently rather than
+    // merely differently-cased. Mirrors WIZ_SUPPORT_GROUP_TAG_KEY in the OS-vulns tool.
+    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY"
   };
   var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
   function getProp(key) {
@@ -82,6 +105,9 @@ var Server = (() => {
   function projectScope() {
     const id = getProp(PROP_KEYS.wizProjectIdV2);
     return id && id.trim() ? [id.trim()] : null;
+  }
+  function domainTagKey() {
+    return resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey));
   }
   function resolveWizAuthMode(token, clientId, clientSecret) {
     if (token && token.trim()) return "token";
@@ -5027,6 +5053,13 @@ var Server = (() => {
       return { ...n, openIssues: (_a6 = issueCount[n.id]) != null ? _a6 : 0, openFindings: (_b2 = findingCount[n.id]) != null ? _b2 : 0 };
     });
   }
+  function withDomains(nodes, tagKey) {
+    return nodes.map((n) => {
+      if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
+      const domain = domainOfTags(n.tags, tagKey);
+      return domain ? { ...n, domain } : n;
+    });
+  }
 
   // src/domain/identityHygiene.ts
   var HYGIENE_SUBJECT = "USER_ACCOUNT";
@@ -5474,6 +5507,15 @@ var Server = (() => {
       // The cloud tags. Only some seeds carry them, and the ones that do carry DIFFERENT sets —
       // a dry run has to be able to tell "contains any" from "contains all", and it cannot if
       // every node is tagged the same way or none is tagged at all.
+      //
+      // `Wiz/Domain` follows the same discipline for the same reason, plus two of its own.
+      // FOUR values across the seeds, because one would make every grouped picture a single
+      // box and every facet a single option. And SOME SEEDS DELIBERATELY UNTAGGED, because
+      // that is what makes "Ungrouped", the em-dash cell and the coverage figure reachable at
+      // all — with every seed tagged, "N of M carry the tag" always reads M of M and nothing
+      // proves it works. bucket-customer-pii is owned by SAP while agent-a, which reads it, is
+      // CROSS: grouping by domain has to visibly cut across an attack path or the dimension
+      // is just a second spelling of the project.
       tags: seed.tags,
       region: seed.region,
       status: (_a5 = seed.status) != null ? _a5 : "Active",
@@ -5553,7 +5595,7 @@ var Server = (() => {
       id: "agent-a",
       name: "Agent-A",
       region: "europe-west1",
-      tags: [{ key: "env", value: "prod" }, { key: "team", value: "ml" }, { key: "owner", value: "platform" }],
+      tags: [{ key: "env", value: "prod" }, { key: "team", value: "ml" }, { key: "owner", value: "platform" }, { key: "Wiz/Domain", value: "CROSS" }],
       account: { id: "gcp-account-01", name: "gcp-account-01" },
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
@@ -5570,7 +5612,7 @@ var Server = (() => {
       id: "agent-b",
       name: "Agent-B",
       region: "us-west1",
-      tags: [{ key: "env", value: "prod" }, { key: "team", value: "search" }],
+      tags: [{ key: "env", value: "prod" }, { key: "team", value: "search" }, { key: "Wiz/Domain", value: "SAP" }],
       account: { id: "gcp-account-01", name: "gcp-account-01" },
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
@@ -5608,7 +5650,10 @@ var Server = (() => {
       id: "agent-d",
       name: "dev-agent-D",
       region: "europe-west3",
-      tags: [{ key: "env", value: "staging" }, { key: "team", value: "ml" }],
+      // Lowercase key on purpose: the captures say `Wiz/Domain`, everyone writing about it
+      // says `Wiz/domain`, and the fold is case-insensitive. One seed spelling it the other
+      // way makes that a demonstrated behaviour in the dry run rather than a claimed one.
+      tags: [{ key: "env", value: "staging" }, { key: "team", value: "ml" }, { key: "wiz/domain", value: "VALUE-CHAIN" }],
       account: { id: "gcp-account-02", name: "gcp-account-02" },
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
@@ -5621,6 +5666,7 @@ var Server = (() => {
       id: "agent-e",
       name: "Agent-E",
       region: "us-west1",
+      tags: [{ key: "Wiz/Domain", value: "CROSS" }],
       account: { id: "gcp-account-03", name: "gcp-account-03" },
       projects: ["PROJECT-ALPHA", "PROJECT-GAMMA"],
       internet: true,
@@ -5636,6 +5682,7 @@ var Server = (() => {
       id: "agent-f",
       name: "agent-F",
       region: "europe-west4",
+      tags: [{ key: "Wiz/Domain", value: "SAP" }],
       projects: ["PROJECT-ALPHA"],
       sensitiveAccess: true,
       highPriv: true,
@@ -5658,6 +5705,7 @@ var Server = (() => {
       id: "agent-g",
       name: "Agent-G",
       region: "europe-west4",
+      tags: [{ key: "Wiz/Domain", value: "SAP" }],
       projects: ["PROJECT-ALPHA", "PROJECT-ETA"],
       sensitiveAccess: true,
       highPriv: true,
@@ -5669,6 +5717,7 @@ var Server = (() => {
       id: "agent-h-chatbot",
       name: "agent-H-chatbot",
       region: "europe-west1",
+      tags: [{ key: "Wiz/Domain", value: "VALUE-CHAIN" }],
       nativeType: GCP_HOSTED,
       account: { id: "gcp-account-05", name: "gcp-account-05" },
       projects: ["PROJECT-ALPHA", "PROJECT-DELTA", "PROJECT-EPSILON"],
@@ -5685,6 +5734,7 @@ var Server = (() => {
       id: "agent-i",
       name: "agent-I",
       region: "europe-west4",
+      tags: [{ key: "Wiz/Domain", value: "EXAMPLE DOMAIN" }],
       nativeType: GCP_HOSTED,
       status: "Inactive",
       account: { id: "gcp-account-04", name: "gcp-account-04" },
@@ -5702,6 +5752,7 @@ var Server = (() => {
       id: "agent-j",
       name: "agent-J",
       region: "europe-west1",
+      tags: [{ key: "Wiz/Domain", value: "CROSS" }],
       account: { id: "gcp-account-07", name: "gcp-account-07" },
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: false,
@@ -5726,6 +5777,7 @@ var Server = (() => {
       id: "agent-l-support",
       name: "Agent-L-support",
       region: "europe-west1",
+      tags: [{ key: "Wiz/Domain", value: "VALUE-CHAIN" }],
       account: { id: "gcp-account-03", name: "gcp-account-03" },
       projects: ["PROJECT-ALPHA"],
       businessImpact: "LBI"
@@ -5779,16 +5831,16 @@ var Server = (() => {
     { id: "pipeline-training-01", kind: "AI_PIPELINE", name: "pipeline-training-01", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
     { id: "dataset-support-transcripts", kind: "AI_DATASET", name: "dataset-support-transcripts", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], businessImpact: "HBI" },
     // Data resources
-    { id: "bucket-customer-pii", kind: "BUCKET", name: "bucket-customer-pii", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
-    { id: "bucket-finance-reports", kind: "BUCKET", name: "bucket-finance-reports", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-BETA"] },
+    { id: "bucket-customer-pii", kind: "BUCKET", name: "bucket-customer-pii", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], tags: [{ key: "Wiz/Domain", value: "SAP" }] },
+    { id: "bucket-finance-reports", kind: "BUCKET", name: "bucket-finance-reports", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-BETA"], tags: [{ key: "Wiz/Domain", value: "VALUE-CHAIN" }] },
     { id: "bucket-partner-data", kind: "BUCKET", name: "bucket-partner-data", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ETA"] },
     { id: "bucket-pricing-models", kind: "BUCKET", name: "bucket-pricing-models", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
     { id: "bucket-training-data", kind: "BUCKET", name: "bucket-training-data", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
-    { id: "db-customer-core", kind: "DATABASE", name: "db-customer-core", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
+    { id: "db-customer-core", kind: "DATABASE", name: "db-customer-core", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], tags: [{ key: "Wiz/Domain", value: "SAP" }] },
     { id: "db-analytics", kind: "DATABASE", name: "db-analytics", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-DELTA"] },
     // Compute / supply chain for the hosted agents
-    { id: "vm-agent-i-host", kind: "VIRTUAL_MACHINE", name: "vm-agent-i-host", cloud: "GCP", region: "europe-west4", internet: false, projects: ["PROJECT-ZETA"] },
-    { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, openInternet: true, projects: ["PROJECT-DELTA"], exposureEvidence: { ports: ["443", "80"], sourceIpRanges: ["0.0.0.0/0"] } },
+    { id: "vm-agent-i-host", kind: "VIRTUAL_MACHINE", name: "vm-agent-i-host", cloud: "GCP", region: "europe-west4", internet: false, projects: ["PROJECT-ZETA"], tags: [{ key: "Wiz/Domain", value: "EXAMPLE DOMAIN" }] },
+    { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, openInternet: true, projects: ["PROJECT-DELTA"], exposureEvidence: { ports: ["443", "80"], sourceIpRanges: ["0.0.0.0/0"] }, tags: [{ key: "Wiz/Domain", value: "VALUE-CHAIN" }] },
     // Network exposure, seeded to put BOTH grades of evidence on one screen and to make them
     // visibly disagree — which is the whole reason the two queries are two steps.
     //
@@ -7902,7 +7954,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "6974698bd2df" : "dev";
+  var BUILD_ID = true ? "b88d36b99a53" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -7935,6 +7987,9 @@ var Server = (() => {
   function cacheKey(name, params, version) {
     const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
     return `${KEY_PREFIX}:${version}:${name}:${paramsHash}`;
+  }
+  function configStamp() {
+    return sha1Hex(domainTagKey()).slice(0, 8);
   }
   function splitChunks(s, size = CHUNK_CHARS) {
     const out = [];
@@ -7976,7 +8031,7 @@ var Server = (() => {
   function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
     let key = null;
     try {
-      key = cacheKey(name, params, version != null ? version : dataVersion());
+      key = cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`);
       const hit = cacheGetJson(key);
       if (hit !== void 0) return hit;
     } catch (e) {
@@ -9700,7 +9755,10 @@ var Server = (() => {
     return withCurrentBands(nodes, currentBands());
   }
   function withReadDerivations(nodes) {
-    return withOpenCounts(withAarsReadDerivations(nodes), loadIssues(), loadFindings());
+    return withDomains(
+      withOpenCounts(withAarsReadDerivations(nodes), loadIssues(), loadFindings()),
+      domainTagKey()
+    );
   }
   function withBandsApplied(doc) {
     const nodes = withReadDerivations(doc.nodes);
@@ -9751,10 +9809,13 @@ var Server = (() => {
     const raw = loadAssetsRaw();
     const bands = currentBands();
     const bandKey = `${bands.critical}|${bands.high}|${bands.medium}|${bands.low}`;
+    const domainKey = domainTagKey();
     const memo = derivedAssetsMemo;
-    if (memo && memo.raw === raw && memo.bandKey === bandKey) return memo.out;
+    if (memo && memo.raw === raw && memo.bandKey === bandKey && memo.domainKey === domainKey) {
+      return memo.out;
+    }
     const out = withReadDerivations(raw);
-    derivedAssetsMemo = { raw, bandKey, out };
+    derivedAssetsMemo = { raw, bandKey, domainKey, out };
     return out;
   }
   function loadEdges() {
@@ -15461,7 +15522,7 @@ var Server = (() => {
     };
   }
   function assetRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K;
     return {
       id: n.id,
       name: n.name,
@@ -15516,10 +15577,14 @@ var Server = (() => {
       // name string since existing client code already reads it as one.
       cloudAccountRef: (_F = n.cloudAccount) != null ? _F : null,
       tags: (_G = n.tags) != null ? _G : [],
-      identityPurpose: (_H = n.identityPurpose) != null ? _H : null,
-      issueAnalytics: (_I = n.issueAnalytics) != null ? _I : null,
+      // The resolved Wiz/Domain, beside the raw tag list it came from. A fact Wiz
+      // reported, not a verdict this app derived — which is why it may ride a payload
+      // the AARS score, the posture tier and the problem outcome may not.
+      domain: (_H = n.domain) != null ? _H : null,
+      identityPurpose: (_I = n.identityPurpose) != null ? _I : null,
+      issueAnalytics: (_J = n.issueAnalytics) != null ? _J : null,
       // Full project objects, for the detail sheet — projects above stays name-only.
-      projectRefs: ((_J = n.projects) != null ? _J : []).map((p) => ({
+      projectRefs: ((_K = n.projects) != null ? _K : []).map((p) => ({
         id: p.id,
         name: p.name,
         businessImpact: p.businessImpact
@@ -15527,7 +15592,7 @@ var Server = (() => {
     };
   }
   function assetTableRow(n, issuesBySeverity, findingsBySeverity) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
     const row = {
       id: n.id,
       name: n.name,
@@ -15559,7 +15624,10 @@ var Server = (() => {
       // "aars stuff" would silently zero a column about data exposure that has no opinion
       // about any model. Pinned by a test for exactly that reason.
       dataFindings: ((_i = (_h = n.aarsInput) == null ? void 0 : _h.dataFindings) != null ? _i : []).reduce((sum, f) => sum + f.count, 0) || ((_j = n.dataFindingCount) != null ? _j : 0),
-      projects: ((_k = n.projects) != null ? _k : []).map((p) => p.name)
+      projects: ((_k = n.projects) != null ? _k : []).map((p) => p.name),
+      // Read-derived from the asset's own tags (graphEnrich.withDomains), never a
+      // column — so a changed WIZ_DOMAIN_TAG_KEY repaints without a re-sync.
+      domain: (_l = n.domain) != null ? _l : null
     };
     if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
     if (findingsBySeverity) row["findingsBySeverity"] = findingsBySeverity;

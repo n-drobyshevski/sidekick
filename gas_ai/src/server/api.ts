@@ -819,6 +819,10 @@ function assetRow(n: GNode): Rec {
     // name string since existing client code already reads it as one.
     cloudAccountRef: n.cloudAccount ?? null,
     tags: n.tags ?? [],
+    // The resolved Wiz/Domain, beside the raw tag list it came from. A fact Wiz
+    // reported, not a verdict this app derived — which is why it may ride a payload
+    // the AARS score, the posture tier and the problem outcome may not.
+    domain: n.domain ?? null,
     identityPurpose: n.identityPurpose ?? null,
     issueAnalytics: n.issueAnalytics ?? null,
     // Full project objects, for the detail sheet — projects above stays name-only.
@@ -878,6 +882,9 @@ function assetTableRow(
     dataFindings: (n.aarsInput?.dataFindings ?? []).reduce((sum, f) => sum + f.count, 0)
       || (n.dataFindingCount ?? 0),
     projects: (n.projects ?? []).map((p) => p.name),
+    // Read-derived from the asset's own tags (graphEnrich.withDomains), never a
+    // column — so a changed WIZ_DOMAIN_TAG_KEY repaints without a re-sync.
+    domain: n.domain ?? null,
   };
   // Only the rows that have open issues carry the breakdown. Most of a healthy landscape has
   // none, and an empty object per row is pure weight in the all-inventory payload.

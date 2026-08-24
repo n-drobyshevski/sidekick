@@ -2712,6 +2712,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -2770,6 +2771,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": "VALUE-CHAIN",
           "exposureEvidence": {
             "ports": [
               "443",
@@ -2821,7 +2823,12 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "severity": null,
           "status": "Active",
           "summaryCount": null,
-          "tags": [],
+          "tags": [
+            {
+              "key": "Wiz/Domain",
+              "value": "VALUE-CHAIN",
+            },
+          ],
           "technologyCategories": [],
         },
       },
@@ -2841,6 +2848,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -2904,6 +2912,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -2968,6 +2977,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3018,6 +3028,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3068,6 +3079,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3118,6 +3130,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3168,6 +3181,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3218,6 +3232,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3268,6 +3283,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3318,6 +3334,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3368,6 +3385,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3418,6 +3436,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3468,6 +3487,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3518,6 +3538,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3567,6 +3588,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3616,6 +3638,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3665,6 +3688,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3715,6 +3739,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "comboGroups": [],
           "dataFindingCount": null,
           "dataFindingSeverities": null,
+          "domain": null,
           "exposureEvidence": null,
           "exposureLevel": null,
           "externalId": null,
@@ -3762,6 +3787,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
       ],
       "dataFindingCount": null,
       "dataFindingSeverities": null,
+      "domain": "VALUE-CHAIN",
       "exposureEvidence": {
         "hostIds": [
           "run-agent-h",
@@ -3846,7 +3872,12 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
       "severity": "HIGH",
       "status": "Active",
       "summaryCount": null,
-      "tags": [],
+      "tags": [
+        {
+          "key": "Wiz/Domain",
+          "value": "VALUE-CHAIN",
+        },
+      ],
       "technologyCategories": [
         "AI Service",
       ],
@@ -4596,6 +4627,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 2,
         "dataFindings": 3,
+        "domain": "CROSS",
         "findingsBySeverity": {
           "MEDIUM": 1,
         },
@@ -4623,6 +4655,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 1,
         "dataFindings": 3,
+        "domain": null,
         "guardrailMissing": true,
         "id": "agent-autogen",
         "issuesBySeverity": {
@@ -4645,6 +4678,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 1,
         "dataFindings": 3,
+        "domain": "EXAMPLE DOMAIN",
         "guardrailMissing": true,
         "id": "agent-i",
         "issuesBySeverity": {
@@ -4667,6 +4701,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 1,
         "dataFindings": 2,
+        "domain": "VALUE-CHAIN",
         "findingsBySeverity": {
           "HIGH": 1,
         },
@@ -4693,6 +4728,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 1,
         "dataFindings": 0,
+        "domain": "SAP",
         "guardrailMissing": true,
         "id": "agent-g",
         "issuesBySeverity": {
@@ -4715,6 +4751,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 1,
         "dataFindings": 5,
+        "domain": "CROSS",
         "findingsBySeverity": {
           "MEDIUM": 1,
         },
@@ -4740,6 +4777,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 1,
         "dataFindings": 3,
+        "domain": "SAP",
         "guardrailMissing": true,
         "id": "agent-b",
         "issuesBySeverity": {
@@ -4762,6 +4800,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 1,
         "dataFindings": 0,
+        "domain": "SAP",
         "guardrailMissing": true,
         "id": "agent-f",
         "issuesBySeverity": {
@@ -4783,6 +4822,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 1,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": true,
         "id": "agent-f-preprod",
         "issuesBySeverity": {
@@ -4804,6 +4844,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "AWS",
         "combos": 1,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": true,
         "id": "role-finance-admin-01",
         "issuesBySeverity": {
@@ -4825,6 +4866,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "AWS",
         "combos": 1,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": true,
         "id": "role-finance-admin-02",
         "issuesBySeverity": {
@@ -4846,6 +4888,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "AWS",
         "combos": 1,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": true,
         "id": "role-finance-admin-03",
         "issuesBySeverity": {
@@ -4867,6 +4910,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "AWS",
         "combos": 1,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": true,
         "id": "role-finance-admin-04",
         "issuesBySeverity": {
@@ -4888,6 +4932,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "AWS",
         "combos": 1,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": true,
         "id": "role-finance-admin-05",
         "issuesBySeverity": {
@@ -4909,6 +4954,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "AWS",
         "combos": 1,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": true,
         "id": "role-finance-admin-06",
         "issuesBySeverity": {
@@ -4930,6 +4976,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "AWS",
         "combos": 1,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": true,
         "id": "role-finance-admin-07",
         "issuesBySeverity": {
@@ -4951,6 +4998,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "AWS",
         "combos": 1,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": true,
         "id": "role-finance-admin-08",
         "issuesBySeverity": {
@@ -4972,6 +5020,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 1,
         "dataFindings": 2,
+        "domain": "VALUE-CHAIN",
         "guardrailMissing": true,
         "id": "agent-d",
         "issuesBySeverity": {
@@ -4994,6 +5043,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 1,
         "dataFindings": 2,
+        "domain": null,
         "guardrailMissing": true,
         "id": "agent-d-test",
         "issuesBySeverity": {
@@ -5016,6 +5066,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 1,
         "dataFindings": 0,
+        "domain": "CROSS",
         "guardrailMissing": false,
         "id": "agent-j",
         "issuesBySeverity": {
@@ -5038,6 +5089,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 1,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "agent-k",
         "issuesBySeverity": {
@@ -5060,6 +5112,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": "VALUE-CHAIN",
         "guardrailMissing": false,
         "id": "agent-l-support",
         "kind": "AI_AGENT",
@@ -5078,6 +5131,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "AWS",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "key-agent-autogen",
         "kind": "ACCESS_KEY",
@@ -5093,6 +5147,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "AWS",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "model-bedrock-claude",
         "kind": "AI_MODEL",
@@ -5111,6 +5166,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "AWS",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "guardrail-bedrock",
         "kind": "AI_GUARDRAIL",
@@ -5129,6 +5185,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-01",
         "kind": "BUCKET",
@@ -5147,6 +5204,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-02",
         "kind": "BUCKET",
@@ -5165,6 +5223,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-03",
         "kind": "BUCKET",
@@ -5183,6 +5242,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-04",
         "kind": "BUCKET",
@@ -5201,6 +5261,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-05",
         "kind": "BUCKET",
@@ -5219,6 +5280,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-06",
         "kind": "BUCKET",
@@ -5237,6 +5299,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-07",
         "kind": "BUCKET",
@@ -5255,6 +5318,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-08",
         "kind": "BUCKET",
@@ -5273,6 +5337,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-09",
         "kind": "BUCKET",
@@ -5291,6 +5356,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-10",
         "kind": "BUCKET",
@@ -5309,6 +5375,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-11",
         "kind": "BUCKET",
@@ -5327,6 +5394,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-12",
         "kind": "BUCKET",
@@ -5345,6 +5413,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-13",
         "kind": "BUCKET",
@@ -5363,6 +5432,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-autogen-scratch-14",
         "kind": "BUCKET",
@@ -5381,6 +5451,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 3,
+        "domain": "SAP",
         "guardrailMissing": false,
         "id": "bucket-customer-pii",
         "kind": "BUCKET",
@@ -5399,6 +5470,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 1,
+        "domain": "VALUE-CHAIN",
         "guardrailMissing": false,
         "id": "bucket-finance-reports",
         "kind": "BUCKET",
@@ -5417,6 +5489,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-partner-data",
         "kind": "BUCKET",
@@ -5435,6 +5508,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-pricing-models",
         "kind": "BUCKET",
@@ -5453,6 +5527,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "bucket-training-data",
         "kind": "BUCKET",
@@ -5471,6 +5546,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": "VALUE-CHAIN",
         "guardrailMissing": false,
         "id": "run-agent-h",
         "kind": "SERVERLESS",
@@ -5489,6 +5565,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "dataset-support-transcripts",
         "kind": "AI_DATASET",
@@ -5507,6 +5584,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "db-analytics",
         "kind": "DATABASE",
@@ -5525,6 +5603,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 2,
+        "domain": "SAP",
         "guardrailMissing": false,
         "id": "db-customer-core",
         "kind": "DATABASE",
@@ -5543,6 +5622,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "finding-ea-autogen",
         "kind": "EXCESSIVE_ACCESS_FINDING",
@@ -5558,6 +5638,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "finding-ea-agent-h",
         "kind": "EXCESSIVE_ACCESS_FINDING",
@@ -5573,6 +5654,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "guardrail-alpha",
         "kind": "AI_GUARDRAIL",
@@ -5591,6 +5673,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "guardrail-beta",
         "kind": "AI_GUARDRAIL",
@@ -5609,6 +5692,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "endpoint-agent-h",
         "kind": "ENDPOINT",
@@ -5627,6 +5711,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "endpoint-agent-i",
         "kind": "ENDPOINT",
@@ -5645,6 +5730,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "img-agent-h",
         "kind": "CONTAINER_IMAGE",
@@ -5663,6 +5749,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "finding-lm-agent-i",
         "kind": "LATERAL_MOVEMENT_FINDING",
@@ -5678,6 +5765,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "mcp-internal-tools",
         "kind": "MCP_SERVER",
@@ -5696,6 +5784,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "user-ops-01",
         "kind": "USER_ACCOUNT",
@@ -5711,6 +5800,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "user-ops-02",
         "kind": "USER_ACCOUNT",
@@ -5726,6 +5816,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "user-ops-03",
         "kind": "USER_ACCOUNT",
@@ -5741,6 +5832,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "user-ops-04",
         "kind": "USER_ACCOUNT",
@@ -5756,6 +5848,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "user-ops-05",
         "kind": "USER_ACCOUNT",
@@ -5771,6 +5864,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "user-ops-06",
         "kind": "USER_ACCOUNT",
@@ -5786,6 +5880,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "user-ops-07",
         "kind": "USER_ACCOUNT",
@@ -5801,6 +5896,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "user-ops-08",
         "kind": "USER_ACCOUNT",
@@ -5816,6 +5912,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "user-ops-09",
         "kind": "USER_ACCOUNT",
@@ -5831,6 +5928,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "user-ops-10",
         "kind": "USER_ACCOUNT",
@@ -5846,6 +5944,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "user-ops-11",
         "kind": "USER_ACCOUNT",
@@ -5861,6 +5960,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "user-ops-12",
         "kind": "USER_ACCOUNT",
@@ -5876,6 +5976,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "pipeline-training-01",
         "kind": "AI_PIPELINE",
@@ -5894,6 +5995,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": null,
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "repo-agent-h",
         "kind": "REPOSITORY",
@@ -5912,6 +6014,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-a",
         "kind": "SERVICE_ACCOUNT",
@@ -5927,6 +6030,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-autogen",
         "kind": "SERVICE_ACCOUNT",
@@ -5942,6 +6046,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-b",
         "kind": "SERVICE_ACCOUNT",
@@ -5957,6 +6062,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-d-test",
         "kind": "SERVICE_ACCOUNT",
@@ -5972,6 +6078,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-d",
         "kind": "SERVICE_ACCOUNT",
@@ -5987,6 +6094,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-e",
         "kind": "SERVICE_ACCOUNT",
@@ -6002,6 +6110,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-f-preprod",
         "kind": "SERVICE_ACCOUNT",
@@ -6017,6 +6126,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-f",
         "kind": "SERVICE_ACCOUNT",
@@ -6032,6 +6142,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-g",
         "kind": "SERVICE_ACCOUNT",
@@ -6047,6 +6158,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-h-chatbot",
         "kind": "SERVICE_ACCOUNT",
@@ -6062,6 +6174,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-i",
         "kind": "SERVICE_ACCOUNT",
@@ -6077,6 +6190,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-j",
         "kind": "SERVICE_ACCOUNT",
@@ -6092,6 +6206,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-k",
         "kind": "SERVICE_ACCOUNT",
@@ -6107,6 +6222,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "sa-agent-l-support",
         "kind": "SERVICE_ACCOUNT",
@@ -6122,6 +6238,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": null,
         "guardrailMissing": false,
         "id": "model-text-embedding-005",
         "kind": "AI_MODEL",
@@ -6140,6 +6257,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "cloud": "GCP",
         "combos": 0,
         "dataFindings": 0,
+        "domain": "EXAMPLE DOMAIN",
         "guardrailMissing": false,
         "id": "vm-agent-i-host",
         "kind": "VIRTUAL_MACHINE",
@@ -7682,6 +7800,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "CROSS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -7733,6 +7852,10 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             "key": "owner",
             "value": "platform",
           },
+          {
+            "key": "Wiz/Domain",
+            "value": "CROSS",
+          },
         ],
         "technologyCategories": [
           "AI Service",
@@ -7751,6 +7874,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -7796,6 +7920,10 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           {
             "key": "team",
             "value": "search",
+          },
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
           },
         ],
         "technologyCategories": [
@@ -7923,6 +8051,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "VALUE-CHAIN",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -7969,6 +8098,10 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             "key": "team",
             "value": "ml",
           },
+          {
+            "key": "wiz/domain",
+            "value": "VALUE-CHAIN",
+          },
         ],
         "technologyCategories": [
           "AI Service",
@@ -7988,6 +8121,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "CROSS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -8025,6 +8159,12 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "region": "us-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "CROSS",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -8038,6 +8178,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -8069,6 +8210,12 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "region": "europe-west4",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -8126,6 +8273,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -8163,6 +8311,12 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "region": "europe-west4",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -8180,6 +8334,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "discoveryMethods": [
           "MethodWorkloadScanning",
         ],
+        "domain": "VALUE-CHAIN",
         "exposureEvidence": {
           "hostIds": [
             "run-agent-h",
@@ -8254,6 +8409,12 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "region": "europe-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "VALUE-CHAIN",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -8271,6 +8432,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "discoveryMethods": [
           "MethodWorkloadScanning",
         ],
+        "domain": "EXAMPLE DOMAIN",
         "exposureEvidence": {
           "endpointIds": [
             "endpoint-agent-i",
@@ -8314,6 +8476,12 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "region": "europe-west4",
         "severity": "HIGH",
         "status": "Inactive",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "EXAMPLE DOMAIN",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -8330,6 +8498,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "CROSS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": false,
@@ -8365,6 +8534,12 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "region": "europe-west1",
         "severity": "MEDIUM",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "CROSS",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -8881,6 +9056,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       },
       {
         "cloudPlatform": "GCP",
+        "domain": "EXAMPLE DOMAIN",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": false,
@@ -8909,9 +9085,16 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "region": "europe-west4",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "EXAMPLE DOMAIN",
+          },
+        ],
       },
       {
         "cloudPlatform": "GCP",
+        "domain": "VALUE-CHAIN",
         "exposureEvidence": {
           "ports": [
             "443",
@@ -8949,6 +9132,12 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "region": "europe-west1",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "VALUE-CHAIN",
+          },
+        ],
       },
       {
         "cloudPlatform": "GCP",
@@ -14230,7 +14419,7 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 95558,
+    "archiveBytes": 96259,
     "cellCount": 40400,
     "rows": {
       "assets": 87,
@@ -15807,6 +15996,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "CROSS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -15844,6 +16034,12 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "region": "us-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "CROSS",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -15915,6 +16111,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "discoveryMethods": [
           "MethodWorkloadScanning",
         ],
+        "domain": "EXAMPLE DOMAIN",
         "exposureEvidence": {
           "endpointIds": [
             "endpoint-agent-i",
@@ -15958,6 +16155,12 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "region": "europe-west4",
         "severity": "HIGH",
         "status": "Inactive",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "EXAMPLE DOMAIN",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -15975,6 +16178,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "discoveryMethods": [
           "MethodWorkloadScanning",
         ],
+        "domain": "VALUE-CHAIN",
         "exposureEvidence": {
           "hostIds": [
             "run-agent-h",
@@ -16049,6 +16253,12 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "region": "europe-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "VALUE-CHAIN",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -16062,6 +16272,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -16099,6 +16310,12 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "region": "europe-west4",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -16116,6 +16333,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "CROSS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -16167,6 +16385,10 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
             "key": "owner",
             "value": "platform",
           },
+          {
+            "key": "Wiz/Domain",
+            "value": "CROSS",
+          },
         ],
         "technologyCategories": [
           "AI Service",
@@ -16185,6 +16407,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -16231,6 +16454,10 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
             "key": "team",
             "value": "search",
           },
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
         ],
         "technologyCategories": [
           "AI Service",
@@ -16245,6 +16472,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -16276,6 +16504,12 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "region": "europe-west4",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -16337,6 +16571,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "VALUE-CHAIN",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -16382,6 +16617,10 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           {
             "key": "team",
             "value": "ml",
+          },
+          {
+            "key": "wiz/domain",
+            "value": "VALUE-CHAIN",
           },
         ],
         "technologyCategories": [
@@ -16454,6 +16693,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "CROSS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": false,
@@ -16489,6 +16729,12 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "region": "europe-west1",
         "severity": "MEDIUM",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "CROSS",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -16554,6 +16800,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "VALUE-CHAIN",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": false,
@@ -16584,6 +16831,12 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         ],
         "region": "europe-west1",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "VALUE-CHAIN",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -18031,6 +18284,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "CROSS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -18068,6 +18322,12 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "region": "us-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "CROSS",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -18139,6 +18399,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "discoveryMethods": [
           "MethodWorkloadScanning",
         ],
+        "domain": "EXAMPLE DOMAIN",
         "exposureEvidence": {
           "endpointIds": [
             "endpoint-agent-i",
@@ -18182,6 +18443,12 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "region": "europe-west4",
         "severity": "HIGH",
         "status": "Inactive",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "EXAMPLE DOMAIN",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -18199,6 +18466,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "discoveryMethods": [
           "MethodWorkloadScanning",
         ],
+        "domain": "VALUE-CHAIN",
         "exposureEvidence": {
           "hostIds": [
             "run-agent-h",
@@ -18273,6 +18541,12 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "region": "europe-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "VALUE-CHAIN",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -18286,6 +18560,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -18323,6 +18598,12 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "region": "europe-west4",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -18340,6 +18621,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "CROSS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -18391,6 +18673,10 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
             "key": "owner",
             "value": "platform",
           },
+          {
+            "key": "Wiz/Domain",
+            "value": "CROSS",
+          },
         ],
         "technologyCategories": [
           "AI Service",
@@ -18409,6 +18695,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -18455,6 +18742,10 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
             "key": "team",
             "value": "search",
           },
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
         ],
         "technologyCategories": [
           "AI Service",
@@ -18469,6 +18760,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -18500,6 +18792,12 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "region": "europe-west4",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -18561,6 +18859,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "VALUE-CHAIN",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -18606,6 +18905,10 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           {
             "key": "team",
             "value": "ml",
+          },
+          {
+            "key": "wiz/domain",
+            "value": "VALUE-CHAIN",
           },
         ],
         "technologyCategories": [
@@ -18807,6 +19110,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "CRITICAL": 1,
           "HIGH": 2,
         },
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": false,
@@ -18835,6 +19139,12 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
         "region": "europe-west1",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
+        ],
       },
       {
         "cloudPlatform": "GCP",
@@ -18842,6 +19152,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         "dataFindingSeverities": {
           "HIGH": 1,
         },
+        "domain": "VALUE-CHAIN",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": false,
@@ -18870,6 +19181,12 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
         "region": "europe-west1",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "VALUE-CHAIN",
+          },
+        ],
       },
       {
         "cloudPlatform": "GCP",
@@ -19002,6 +19319,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           "CRITICAL": 1,
           "MEDIUM": 1,
         },
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": false,
@@ -19030,6 +19348,12 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
         ],
         "region": "europe-west1",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
+        ],
       },
       {
         "cloudPlatform": "GCP",
@@ -19784,6 +20108,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "CROSS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -19821,6 +20146,12 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "region": "us-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "CROSS",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -19892,6 +20223,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "discoveryMethods": [
           "MethodWorkloadScanning",
         ],
+        "domain": "EXAMPLE DOMAIN",
         "exposureEvidence": {
           "endpointIds": [
             "endpoint-agent-i",
@@ -19935,6 +20267,12 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "region": "europe-west4",
         "severity": "HIGH",
         "status": "Inactive",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "EXAMPLE DOMAIN",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -19952,6 +20290,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "discoveryMethods": [
           "MethodWorkloadScanning",
         ],
+        "domain": "VALUE-CHAIN",
         "exposureEvidence": {
           "hostIds": [
             "run-agent-h",
@@ -20026,6 +20365,12 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "region": "europe-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "VALUE-CHAIN",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -20039,6 +20384,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -20076,6 +20422,12 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "region": "europe-west4",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -20093,6 +20445,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "CROSS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -20144,6 +20497,10 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
             "key": "owner",
             "value": "platform",
           },
+          {
+            "key": "Wiz/Domain",
+            "value": "CROSS",
+          },
         ],
         "technologyCategories": [
           "AI Service",
@@ -20162,6 +20519,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -20208,6 +20566,10 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
             "key": "team",
             "value": "search",
           },
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
         ],
         "technologyCategories": [
           "AI Service",
@@ -20222,6 +20584,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "SAP",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -20253,6 +20616,12 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "region": "europe-west4",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "SAP",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -20314,6 +20683,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "VALUE-CHAIN",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -20359,6 +20729,10 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           {
             "key": "team",
             "value": "ml",
+          },
+          {
+            "key": "wiz/domain",
+            "value": "VALUE-CHAIN",
           },
         ],
         "technologyCategories": [
@@ -20431,6 +20805,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "CROSS",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": false,
@@ -20466,6 +20841,12 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "region": "europe-west1",
         "severity": "MEDIUM",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "CROSS",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -20531,6 +20912,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "discoveryMethods": [
           "MethodCloudScanning",
         ],
+        "domain": "VALUE-CHAIN",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": false,
@@ -20561,6 +20943,12 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         ],
         "region": "europe-west1",
         "status": "Active",
+        "tags": [
+          {
+            "key": "Wiz/Domain",
+            "value": "VALUE-CHAIN",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -20844,7 +21232,7 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
     "sensitive_data": "false",
     "severity": "HIGH",
     "status": "Active",
-    "tags_json": "[{"key":"env","value":"prod"},{"key":"team","value":"ml"},{"key":"owner","value":"platform"}]",
+    "tags_json": "[{"key":"env","value":"prod"},{"key":"team","value":"ml"},{"key":"owner","value":"platform"},{"key":"Wiz/Domain","value":"CROSS"}]",
     "technology_categories": "AI Service",
     "worst_open_problem": "TRACK_STAR",
   },

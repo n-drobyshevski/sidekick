@@ -390,6 +390,15 @@ export interface GNode {
   cloudAccount?: { id: string; name: string; externalId?: string; cloudProvider?: string };
   projects?: ProjectRef[];
   tags?: Array<{ key: string; value: string }>;
+  /**
+   * The business domain owning this resource — the value of its `Wiz/Domain` tag.
+   *
+   * READ-TIME ONLY. Never a column, never written by `assetToRow`, never read back from the
+   * sheet. `graphEnrich.withDomains` folds it on every read from `tags` above, because the
+   * tag key is configurable and a baked value would mean re-syncing a landscape to change a
+   * string. See domain/domainTag.ts for the whole argument.
+   */
+  domain?: string | null;
   technologyCategories?: string[]; // Wiz technology.categories[].name (e.g. "AI Service")
   /**
    * Who published the AI asset, and how Wiz found it — both out of the properties bag, both
