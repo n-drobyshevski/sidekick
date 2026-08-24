@@ -1117,6 +1117,42 @@ var Server = (() => {
     const nested = entity["properties"];
     return nested && typeof nested === "object" ? nested : null;
   }
+  function tagPairs(value) {
+    var _a5, _b;
+    if (!value || typeof value !== "object") return void 0;
+    const out = [];
+    if (Array.isArray(value)) {
+      for (const t of value) {
+        if (!t || typeof t !== "object") continue;
+        const key = String((_a5 = t["key"]) != null ? _a5 : "").trim();
+        if (key) out.push({ key, value: String((_b = t["value"]) != null ? _b : "") });
+      }
+    } else {
+      for (const [k, v] of Object.entries(value)) {
+        const key = k.trim();
+        if (key && (v === null || typeof v !== "object")) {
+          out.push({ key, value: v === null || v === void 0 ? "" : String(v) });
+        }
+      }
+    }
+    return out.length ? out : void 0;
+  }
+  function entityTags(raw) {
+    var _a5;
+    if (!raw || typeof raw !== "object") return void 0;
+    const flat = tagPairs(raw["tags"]);
+    const bag = tagPairs((_a5 = propertyBag(raw)) == null ? void 0 : _a5["tags"]);
+    if (!flat) return bag;
+    if (!bag) return flat;
+    const merged = [...flat];
+    const at = new Map(merged.map((t, i) => [t.key, i]));
+    for (const t of bag) {
+      const i = at.get(t.key);
+      if (i === void 0) merged.push(t);
+      else merged[i] = t;
+    }
+    return merged;
+  }
   var EDGE_TYPES = [
     "HAS_ISSUE",
     // asset → ISSUE
@@ -2694,15 +2730,8 @@ var Server = (() => {
     }
     const projects = raw["projects"];
     if (Array.isArray(projects)) node2.projects = projectsOf(projects);
-    const tags = raw["tags"];
-    if (Array.isArray(tags)) {
-      node2.tags = tags.map((t) => {
-        var _a6;
-        const rec4 = t;
-        const key = str3(rec4["key"]);
-        return key ? { key, value: (_a6 = str3(rec4["value"])) != null ? _a6 : "" } : null;
-      }).filter((t) => t !== null);
-    }
+    const tags = entityTags(raw);
+    if (tags) node2.tags = tags;
     return node2;
   }
   function emptyPart() {
@@ -7873,7 +7902,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "aad6e75677f6" : "dev";
+  var BUILD_ID = true ? "6974698bd2df" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
