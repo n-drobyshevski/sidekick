@@ -6,6 +6,7 @@ import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from ".
 import {
   clear, closeTip, el, fmtDateTime, progressBar, runPageTeardown, statusPill, tipAnchor,
 } from "./ui.js";
+import { brandMark } from "./ui/brandMark.js";
 import { projectScopeControl } from "./ui/projectScope.js";
 import { toast } from "./ui.js";
 import { renderGraphPage } from "./pages/graph.js";
@@ -162,7 +163,7 @@ function bootSplash() {
     { class: "boot-splash", role: "status", "aria-live": "polite" },
     el("div", { class: "boot-splash-inner" },
       el("div", { class: "boot-brand" },
-        el("span", { class: "wordmark-dot", "aria-hidden": "true" }),
+        brandMark(112),
         el("span", { class: "boot-brand-label" }, "Wiz SIDEKICK AI")),
       bar,
       el("p", { class: "boot-splash-note" }, "Opening the graph…")),
@@ -238,8 +239,14 @@ function renderSidebar(sidebar, data) {
   railToggle.innerHTML = CHEVRON_ICON;
   sidebar.append(
     el("div", { class: "wordmark" },
-      el("span", { class: "wordmark-dot", "aria-hidden": "true" }),
+      // Two marks, one shown at a time: the expanded rail pairs the compact mark with the
+      // name, and the collapsed rail hides the name — so THAT copy carries the accessible
+      // label and this one stays decorative, rather than the picture and the word saying
+      // the same thing twice to a screen reader. CSS picks which is visible; both are in
+      // the DOM because the rail toggles without a re-render.
+      brandMark(20, { compact: true }),
       el("span", { class: "wordmark-label" }, "Wiz SIDEKICK AI"),
+      brandMark(28, { compact: true, label: "Wiz SIDEKICK AI" }),
       railToggle),
   );
   // Above the nav, below the wordmark: the scope applies to every page in the list under
