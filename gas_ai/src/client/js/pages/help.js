@@ -57,7 +57,7 @@ const PAGE_MAP = [
   ["graph", "Which paths reach a sensitive asset?"],
   ["inventory", "What do we have, and what scores worst?"],
   ["combos", "Which risks only matter when they combine?"],
-  ["aars", "How is the score calculated? What does LLM06 mean?"],
+  ["aars", "How is the findings score calculated? What does LLM06 mean?"],
   ["scans", "Where did this figure come from?"],
 ];
 
@@ -512,10 +512,10 @@ const CALLOUTS = [
   },
   {
     parts: ["aars"],
-    title: "The findings score",
-    text: "0 to 100 across four pillars. The card shows p<N>, its percentile among the scored " +
-      "assets — the number is on the detail sheet. Levels are set on the AARS Rules page.",
-    term: "aars",
+    title: "The count badge",
+    text: "Open issues on the asset, and after a middot the failing configuration findings " +
+      "evaluated against it. A node with neither carries no badge at all.",
+    term: "toxic-combination",
   },
   {
     parts: ["absent"],
@@ -534,7 +534,8 @@ const CALLOUTS = [
 const FIG_LABEL =
   "A worked example of a security graph node. An AI agent named checkout-bot sits inside a " +
   "dashed crimson halo carrying a TC badge, which marks toxic-combination membership. The " +
-  "node shows a High severity dot and label and p92, the findings-score percentile. A dashed edge labelled " +
+  "node shows a High severity dot and label, and a count badge reading 4 open issues and " +
+  "2 cloud findings. A dashed edge labelled " +
   "PROTECTED_BY, absent, joins it to a No Guardrail risk node.";
 
 function anatomy() {
@@ -662,7 +663,7 @@ function anatomySvg() {
   add(sev, "text", { class: "help-node-sev", x: 89, y: 94 }, "High");
 
   const aars = group("aars");
-  add(aars, "text", { class: "help-node-aars", x: 230, y: 94, "text-anchor": "end" }, "p92");
+  add(aars, "text", { class: "help-node-counts", x: 230, y: 94, "text-anchor": "end" }, "4\u00b72");
 
   // The negated edge, and the node it raises.
   const absent = group("absent");

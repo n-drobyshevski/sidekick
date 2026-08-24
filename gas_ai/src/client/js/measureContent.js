@@ -25,8 +25,9 @@ export const MEASURE_ENTRIES = [
       + "from what a sync actually collected — never asserted.",
     formula: "computeAars(aarsInput, aarsRule): four pillars, summed and clamped to 0–100.",
     dataSource: "ai_assets.aars, ai_assets.aars_input_json",
-    reportingFormat: "AI Inventory register, beside its percentile; asset detail sheet's "
-      + "verdict number and pillar bars.",
+    reportingFormat: "Scoring Models page only \u2014 the model editor, its rule preview and its "
+      + "sandbox. It left the AI Inventory register and the asset detail sheet with the "
+      + "rest of the derived verdicts.",
     revisionDue: "2027-08-13",
   },
   {
@@ -37,9 +38,9 @@ export const MEASURE_ENTRIES = [
       + "because on this landscape its top level holds most of the scored assets.",
     formula: "bandRanges(rule.bands) applied to the stored aars — no re-sync required.",
     dataSource: "ai_assets.aars, ai_assets.aars_severity",
-    reportingFormat: "AI Inventory register and asset sheet (as a plain word); the level "
-      + "strip and trend chart (as a distribution); AARS Rules page (as a rule diagnostic, "
-      + "the one surface that still tints it).",
+    reportingFormat: "Scoring Models page only, as a rule diagnostic \u2014 band occupancy and the "
+      + "preview's movers. The inventory\u0027s level strip and level trend are gone; that "
+      + "page charts open issues, cloud findings and posture fails over time instead.",
     revisionDue: "2027-08-13",
   },
   {
@@ -51,8 +52,13 @@ export const MEASURE_ENTRIES = [
     formula: "midrankPercentiles(scores) = (count below + count equal / 2) / N, whole "
       + "percent. Tied scores share one percentile by construction.",
     dataSource: "ai_assets.aars",
-    reportingFormat: "AI Inventory register (leads the score cell); asset detail sheet's "
-      + "verdict line, with the population size; security graph node badge.",
+    reportingFormat: "NOT CURRENTLY RENDERED. It led the register\u0027s score cell, the "
+      + "asset sheet\u0027s verdict line and the graph node badge; all three read counts now, "
+      + "and no surface replaced it. Still derived on every read "
+      + "(syncStore.withAarsPercentile) and recorded here on purpose: it is the form "
+      + "ai/AARS_SCORING_ASSESSMENT.md \u00a76 argues the 0\u2013100 number honestly survives as, "
+      + "and a measure this app computes belongs in this record whether or not a page "
+      + "happens to draw it today.",
     revisionDue: "2027-08-13",
   },
   {
@@ -62,7 +68,7 @@ export const MEASURE_ENTRIES = [
       + "a confident number for every asset while carrying zero ranking information.",
     formula: "new Set(scores).size, over every scored asset in the preview.",
     dataSource: "ai_assets.aars",
-    reportingFormat: "AARS Rules page, rule-preview Discrimination panel.",
+    reportingFormat: "Scoring Models page, rule-preview Discrimination panel.",
     revisionDue: "2027-08-13",
   },
   {
@@ -71,7 +77,7 @@ export const MEASURE_ENTRIES = [
       + "assets shares a value, so any ordering within the landscape is arbitrary.",
     formula: "Σ C(n_k,2) / C(N,2) over the distinct-value groups (rankStats.tieRate).",
     dataSource: "ai_assets.aars",
-    reportingFormat: "AARS Rules page, rule-preview Discrimination panel.",
+    reportingFormat: "Scoring Models page, rule-preview Discrimination panel.",
     revisionDue: "2027-08-13",
   },
   {
@@ -81,7 +87,7 @@ export const MEASURE_ENTRIES = [
       + "claim the same discrimination credit an even split would.",
     formula: "exp(Shannon entropy) over the score distribution (rankStats.effectiveCardinality).",
     dataSource: "ai_assets.aars",
-    reportingFormat: "AARS Rules page, rule-preview Discrimination panel.",
+    reportingFormat: "Scoring Models page, rule-preview Discrimination panel.",
     revisionDue: "2027-08-13",
   },
   {
@@ -91,7 +97,7 @@ export const MEASURE_ENTRIES = [
       + "at its cap for most of the landscape still renders a plausible total score.",
     formula: "Assets at or above each pillar's cap (aarsRule.ts's ruleDiscrimination).",
     dataSource: "ai_assets.aars_pillars_json",
-    reportingFormat: "AARS Rules page, rule-preview Discrimination panel.",
+    reportingFormat: "Scoring Models page, rule-preview Discrimination panel.",
     revisionDue: "2027-08-13",
   },
   {
@@ -101,7 +107,9 @@ export const MEASURE_ENTRIES = [
     formula: "countProblemOutcomes(rows) over OUTCOME_VALUES, zero-filled. One input axis "
       + "(exploitation) can be set via an LLM rater's verdict — see measurementMethod.",
     dataSource: "ai_issues.problem_outcome, ai_findings.problem_outcome",
-    reportingFormat: "Priorities page KPI row; Priority column throughout.",
+    reportingFormat: "Scoring Models page, Problem tree tab\u0027s preview. It was the "
+      + "Priorities KPI row and a Priority column on three registers; those now read "
+      + "Wiz\u0027s severity.",
     revisionDue: "2027-08-13",
   },
   {
@@ -112,7 +120,7 @@ export const MEASURE_ENTRIES = [
       + "needs was never collected. Reading it as reassurance is the misuse this exists to prevent.",
     formula: "Fraction of the decided population unresolved on each axis (treeDiscrimination.unknownRate).",
     dataSource: "ai_issues.problem_input_json, ai_findings.problem_input_json",
-    reportingFormat: "AARS Rules page, Problem tree tab's preview.",
+    reportingFormat: "Scoring Models page, Problem tree tab\u0027s preview.",
     revisionDue: "2027-08-13",
   },
   {
@@ -122,7 +130,9 @@ export const MEASURE_ENTRIES = [
       + "independent of what has been found on the asset.",
     formula: "countPostureTiers(nodes) over TIER_VALUES, zero-filled.",
     dataSource: "ai_assets.posture_tier",
-    reportingFormat: "AI Inventory Posture column; Priorities page's ranking.",
+    reportingFormat: "Scoring Models page, Posture tab\u0027s preview. It was an inventory "
+      + "column, an inventory headline and a level of the Priorities ranking; none of the "
+      + "three reads it now.",
     revisionDue: "2027-08-13",
   },
   {
@@ -131,7 +141,8 @@ export const MEASURE_ENTRIES = [
       + "no deadline at all, kept apart.",
     formula: "slaState(dueAt, now) bucketed per issue (comboDigest.ts).",
     dataSource: "ai_issues.due_at",
-    reportingFormat: "Toxic Combinations KPI row; Priorities page's SLA tiebreak.",
+    reportingFormat: "Toxic Combinations KPI row; Priorities page\u0027s ranking, where the "
+      + "SLA clock is now the second level rather than the third.",
     revisionDue: "2027-08-13",
   },
   {
