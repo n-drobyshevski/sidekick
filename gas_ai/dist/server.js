@@ -7873,7 +7873,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "aad6e75677f6" : "dev";
+  var BUILD_ID = true ? "554c90c76086" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -12739,6 +12739,9 @@ var Server = (() => {
   var BLOCK_GAP_X = 48;
   var BLOCK_GAP_Y = 64;
   var MAX_SHELF_W = 1600;
+  var MAX_CLUSTER_ROWS = 16;
+  var CLUSTER_GAP_X = 32;
+  var CLUSTER_GAP_Y = 40;
   function cmpName(a, b) {
     return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
   }
@@ -13219,7 +13222,7 @@ var Server = (() => {
   function round2(v) {
     return Math.round(v * 100) / 100;
   }
-  function packBlocks(specs, wrapW, origin) {
+  function packBlocks(specs, wrapW, origin, gap2 = { x: BLOCK_GAP_X, y: BLOCK_GAP_Y }) {
     const at = [];
     let shelfX = origin;
     let shelfY = origin;
@@ -13227,12 +13230,12 @@ var Server = (() => {
     let maxX = 0;
     for (const spec of specs) {
       if (shelfX > origin && shelfX + spec.width > origin + wrapW) {
-        shelfY += shelfH + BLOCK_GAP_Y;
+        shelfY += shelfH + gap2.y;
         shelfX = origin;
         shelfH = 0;
       }
       at.push({ spec, x: shelfX, y: shelfY });
-      shelfX += spec.width + BLOCK_GAP_X;
+      shelfX += spec.width + gap2.x;
       shelfH = Math.max(shelfH, spec.height);
       maxX = Math.max(maxX, at[at.length - 1].x + spec.width);
     }
@@ -13303,7 +13306,23 @@ var Server = (() => {
     };
   }
   function blockFor(mode, key, label, list2, p, opts, hub) {
-    if (!list2.length || mode === "grid") return gridBlock(key, label, list2);
+    var _a5;
+    if (!list2.length) return gridBlock(key, label, list2);
+    if (mode === "grid") {
+      if (((_a5 = opts.sort) != null ? _a5 : "smart") !== "smart") return gridBlock(key, label, list2);
+      const packed = packClusters(list2, componentRoots(p), { columns: 4, width: 4 * CELL_W });
+      return {
+        key,
+        label,
+        width: GROUP_PAD * 2 + packed.width,
+        height: HEADER_H + GROUP_PAD * 2 + packed.height,
+        cells: packed.cells.map((c) => ({
+          id: c.id,
+          x: round2(GROUP_PAD + c.x),
+          y: round2(HEADER_H + GROUP_PAD + c.y)
+        }))
+      };
+    }
     if (mode === "radial") {
       const centre = hub != null ? hub : list2[0];
       return radialBlock(key, label, centre, list2.filter((n) => n.id !== centre.id));
@@ -13312,20 +13331,84 @@ var Server = (() => {
     const inner = { ...opts, margin: 0, groupBy: [], compactBands: true };
     return blockOf(key, label, layoutWhole(sub, inner, mode));
   }
-  function gridBlock(key, label, list2, columns) {
-    const cols = columns != null ? columns : Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list2.length))));
+  function gridColumns(n) {
+    return Math.max(1, Math.min(n, Math.round(Math.sqrt(VIEWPORT_ASPECT * CELL_H * n / CELL_W))));
+  }
+  function gridBlock(key, label, list2, opts = {}) {
+    var _a5;
+    const cols = (_a5 = opts.columns) != null ? _a5 : Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list2.length))));
     const rows = Math.ceil(list2.length / cols);
+    const pad = opts.chrome === false ? 0 : GROUP_PAD;
+    const header = opts.chrome === false ? 0 : HEADER_H;
     return {
       key,
       label,
-      width: GROUP_PAD * 2 + cols * CELL_W,
-      height: HEADER_H + GROUP_PAD * 2 + rows * CELL_H,
+      width: pad * 2 + cols * CELL_W,
+      height: header + pad * 2 + rows * CELL_H,
       cells: list2.map((node2, i) => ({
         id: node2.id,
-        x: GROUP_PAD + i % cols * CELL_W + CELL_W / 2,
-        y: HEADER_H + GROUP_PAD + Math.floor(i / cols) * CELL_H + CELL_H / 2
+        x: pad + i % cols * CELL_W + CELL_W / 2,
+        y: header + pad + Math.floor(i / cols) * CELL_H + CELL_H / 2
       }))
     };
+  }
+  function packClusters(sorted, roots, limit = {}) {
+    var _a5, _b;
+    if (!sorted.length) return { cells: [], width: 0, height: 0 };
+    const runs = /* @__PURE__ */ new Map();
+    for (const node2 of sorted) {
+      const root = (_a5 = roots.get(node2.id)) != null ? _a5 : node2.id;
+      if (!runs.has(root)) runs.set(root, []);
+      runs.get(root).push(node2);
+    }
+    const members = [];
+    const lone = [];
+    for (const [root, list2] of runs) {
+      if (list2.length < 2) lone.push(...list2);
+      else members.push([root, list2]);
+    }
+    if (lone.length) members.push(["", lone]);
+    const shaped = (rows) => members.map(([root, list2]) => {
+      var _a6;
+      return gridBlock(
+        root,
+        "",
+        list2,
+        {
+          columns: Math.max(1, Math.min((_a6 = limit.columns) != null ? _a6 : Infinity, Math.ceil(list2.length / rows))),
+          chrome: false
+        }
+      );
+    });
+    let best = null;
+    let bestFit = 0;
+    const deepest = Math.max(...members.map(([, list2]) => list2.length));
+    for (let rows = 1; rows <= Math.min(deepest, MAX_CLUSTER_ROWS); rows++) {
+      const specs = shaped(rows);
+      const widths = [];
+      let run2 = 0;
+      for (const spec of specs) {
+        run2 += spec.width + CLUSTER_GAP_X;
+        const width = run2 - CLUSTER_GAP_X;
+        if (!limit.width || width <= limit.width) widths.push(width);
+      }
+      if (!widths.length) widths.push((_b = limit.width) != null ? _b : specs[0].width);
+      for (const width of widths) {
+        const packed = packBlocks(specs, width, 0, { x: CLUSTER_GAP_X, y: CLUSTER_GAP_Y });
+        const fit = Math.min(VIEWPORT_ASPECT / packed.width, 1 / packed.height);
+        if (fit > bestFit * (1 + 1e-9)) {
+          bestFit = fit;
+          best = packed;
+        }
+      }
+    }
+    const cells = [];
+    for (const place of best.at) {
+      for (const c of place.spec.cells) {
+        cells.push({ id: c.id, x: round2(place.x + c.x), y: round2(place.y + c.y) });
+      }
+    }
+    return { cells, width: best.width, height: best.height };
   }
   function radialBlock(key, label, hub, satellites) {
     const rings = [];
@@ -13495,21 +13578,20 @@ var Server = (() => {
   function layoutGrid(p, opts) {
     var _a5, _b;
     const margin = (_a5 = opts.margin) != null ? _a5 : 120;
-    const cmp2 = memberOrder(p, (_b = opts.sort) != null ? _b : "smart");
-    const cols = Math.max(1, Math.round(Math.sqrt(VIEWPORT_ASPECT * CELL_H * p.nodes.length / CELL_W)));
-    const spec = gridBlock("", "", [...p.nodes].sort(cmp2), cols);
-    const rows = [...new Set(spec.cells.map((c) => c.y))].sort((a, b) => a - b);
+    const sort = (_b = opts.sort) != null ? _b : "smart";
+    const cmp2 = memberOrder(p, sort);
+    const sorted = [...p.nodes].sort(cmp2);
+    const packed = sort === "smart" ? packClusters(sorted, componentRoots(p)) : gridBlock("", "", sorted, { columns: gridColumns(sorted.length), chrome: false });
+    const rows = [...new Set(packed.cells.map((c) => c.y))].sort((a, b) => a - b);
     return {
-      nodes: spec.cells.map((c) => ({
+      nodes: packed.cells.map((c) => ({
         id: c.id,
-        // No header to clear and no box to sit inside: the block's own header offset is subtracted
-        // back off so the grid starts at the margin like every other ungrouped layout.
-        x: round2(margin + c.x - GROUP_PAD),
-        y: round2(margin + c.y - GROUP_PAD - HEADER_H),
+        x: round2(margin + c.x),
+        y: round2(margin + c.y),
         lane: rows.indexOf(c.y)
       })),
-      width: round2(margin * 2 + spec.width - GROUP_PAD * 2),
-      height: round2(margin * 2 + spec.height - GROUP_PAD * 2 - HEADER_H),
+      width: round2(margin * 2 + packed.width),
+      height: round2(margin * 2 + packed.height),
       laneGap: CELL_W,
       rowGap: CELL_H,
       mode: "grid"

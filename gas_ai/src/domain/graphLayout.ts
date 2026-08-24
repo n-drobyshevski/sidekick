@@ -22,29 +22,37 @@
 //   left-to-right, with nodes stacked top-to-bottom within each. "rows" is
 //   its horizontal transpose — both share the same lane assignment and
 //   barycenter/sort ordering; only the final x/y positioning differs.
-// - "grid" (default): every node in one compact row-major grid, categories
-//   ignored. The densest of the five, and the interior every grouped picture
-//   used to have.
+// - "grid" (default): the densest of the five, categories ignored. Under the
+//   smart order each connected component gets its own compact rectangle and the
+//   rectangles are shelf-packed, so nothing is torn across a wrap; under an
+//   explicit order it is one row-major lattice in the sequence that was asked
+//   for. Either way it is the interior every grouped picture used to have.
 //
 // GRID IS THE DEFAULT BECAUSE OF WHAT "FIT TO VIEW" LANDS ON. Density is the
 // whole difference between a first paint you can read and one you have to zoom
 // into, and the gap is not marginal — measured on three sample projections
-// against a 1180x660 canvas:
+// against a 1180x660 canvas, with the cluster outlines each one earns in
+// brackets and `comps` the connected components the projection actually holds:
 //
-//     nodes    rows    lanes    grid    organic   radial
-//        42     34%      36%     66%        56%      19%
-//        69     23%      35%     61%        36%      13%
-//        96     21%      24%     53%        36%      15%
+//     nodes  comps    rows       lanes      grid       organic    radial
+//        42      1    34%  [0]   36%  [0]   66%  [0]   55%  [0]   19%  [0]
+//        69     12    23% [12]   35%  [8]   53% [12]   37%  [6]   13% [12]
+//        87      3    21%  [1]   31%  [2]   50%  [3]   44%  [0]   17%  [1]
 //
 // The category arrangements spend the canvas on structure: a band is as long as
 // its busiest kind, so five bands are as long as the worst one and four of them
-// carry whitespace to match. Grid roughly doubles the zoom on every fixture,
-// which is the difference between cards showing their names and cards showing a
-// smear. What that costs is real and worth stating: grid says nothing about
-// category, and its row-major wrap breaks up connected components, so it draws
-// FEWER cluster outlines than rows does (8 of 12 components at 69 nodes against
-// rows' 12). Both are one keypress away — the trade is only about which picture
-// answers first, and "all of it, legible" beats "some of it, arranged".
+// carry whitespace to match. Grid still lands at roughly twice their zoom, which
+// is the difference between cards showing their names and cards showing a smear.
+//
+// What that costs is real and worth stating: grid says nothing about category.
+// It used to cost outlines as well — a row-major fill wraps mid-component, and a
+// hull stretched across the break encloses every unrelated card lying between the
+// two fragments, so 4 of the 12 components at 69 nodes went undrawn. `packClusters`
+// ended that by giving each component a rectangle of its own, and the bill moved
+// to density: 61% to 53% at 69 nodes. It is charged only where there is more than
+// one component to keep whole, which is why the single-component 42-node fixture
+// is untouched at 66%. Both are one keypress away — the trade is only about which
+// picture answers first, and "all of it, legible" beats "some of it, arranged".
 // - "radial": the whole landscape as one ring system. The worst-risk AI agent is
 //   the center and every other node sits on the ring of its BFS distance from
 //   it, so a ring IS "n hops from the thing most likely to hurt you". Ring
@@ -291,6 +299,23 @@ const HEADER_H = 30;
 const BLOCK_GAP_X = 48;
 const BLOCK_GAP_Y = 64;
 const MAX_SHELF_W = 1600;
+// How deep a cluster rectangle may be built before `packClusters` stops looking. Past a dozen or
+// so rows a rectangle is a column, not a clump, and the search has always preferred something
+// flatter long before here — this only bounds the sweep on a graph with one huge component.
+const MAX_CLUSTER_ROWS = 16;
+/**
+ * The gutter between two CLUSTER rectangles — narrower than the one between labelled boxes,
+ * because a bare rectangle needs less white to read as separate than a box with a header does.
+ *
+ * The rule it has to clear is the header's: "the next cluster starts a wider gutter away than the
+ * step between cards inside one." Cards are 196×56 on a 240×84 lattice, so inside a rectangle
+ * there are 44px of white horizontally and 28px vertically. A rectangle's outermost card sits
+ * 22px (11px) inside its own edge, so these gutters put 76px between two clusters side by side
+ * and 68px between two shelves — 1.7x and 2.4x the spacing inside, which is the separation the
+ * rule asks for at two thirds of BLOCK_GAP's cost in canvas.
+ */
+const CLUSTER_GAP_X = 32;
+const CLUSTER_GAP_Y = 40;
 
 
 function cmpName(a: GNode, b: GNode): number {
@@ -991,7 +1016,12 @@ interface Placement { spec: BlockSpec; x: number; y: number }
  * member. `origin` is where the first shelf starts, which is the canvas margin at the
  * top level and the header + padding inset inside a parent.
  */
-function packBlocks(specs: BlockSpec[], wrapW: number, origin: number): {
+function packBlocks(
+  specs: BlockSpec[],
+  wrapW: number,
+  origin: number,
+  gap: { x: number; y: number } = { x: BLOCK_GAP_X, y: BLOCK_GAP_Y },
+): {
   at: Placement[]; width: number; height: number;
 } {
   const at: Placement[] = [];
@@ -1001,12 +1031,12 @@ function packBlocks(specs: BlockSpec[], wrapW: number, origin: number): {
   let maxX = 0;
   for (const spec of specs) {
     if (shelfX > origin && shelfX + spec.width > origin + wrapW) {
-      shelfY += shelfH + BLOCK_GAP_Y;
+      shelfY += shelfH + gap.y;
       shelfX = origin;
       shelfH = 0;
     }
     at.push({ spec, x: shelfX, y: shelfY });
-    shelfX += spec.width + BLOCK_GAP_X;
+    shelfX += spec.width + gap.x;
     shelfH = Math.max(shelfH, spec.height);
     maxX = Math.max(maxX, at[at.length - 1].x + spec.width);
   }
@@ -1121,7 +1151,27 @@ function blockFor(
   opts: LayoutOptions,
   hub?: GNode,
 ): BlockSpec {
-  if (!list.length || mode === "grid") return gridBlock(key, label, list);
+  if (!list.length) return gridBlock(key, label, list);
+  // A box's interior tears a component across its own 4-column wrap exactly the way the canvas
+  // did, so it is packed by cluster too — with the column budget kept, since a box is one item in
+  // a shelf-packed row and a wide one pushes every box after it down. Roots come from the WHOLE
+  // projection rather than `subProjection`: `clusterHulls` buckets by (component, box), so those
+  // are the members an outline in here will be drawn around.
+  if (mode === "grid") {
+    if ((opts.sort ?? "smart") !== "smart") return gridBlock(key, label, list);
+    const packed = packClusters(list, componentRoots(p), { columns: 4, width: 4 * CELL_W });
+    return {
+      key,
+      label,
+      width: GROUP_PAD * 2 + packed.width,
+      height: HEADER_H + GROUP_PAD * 2 + packed.height,
+      cells: packed.cells.map((c) => ({
+        id: c.id,
+        x: round2(GROUP_PAD + c.x),
+        y: round2(HEADER_H + GROUP_PAD + c.y),
+      })),
+    };
+  }
   if (mode === "radial") {
     // The CENTRE is named by the caller where the grouping already knows it — under "asset" the
     // box IS an agent's neighbourhood, and letting the sort pick would put a CRITICAL issue at
@@ -1136,26 +1186,159 @@ function blockFor(
 }
 
 /**
+ * Columns for a row-major lattice of `n` cards, shaped for the viewport rather than square.
+ *
+ * Solving cols²·CELL_W / (n·CELL_H) = VIEWPORT_ASPECT gives a lattice roughly the shape of the
+ * window. `layoutGrid` wants that for a whole canvas and `packClusters` wants it for one
+ * cluster's rectangle — the same formula at two scales, the way `packBlocks` is one packer at two.
+ */
+function gridColumns(n: number): number {
+  return Math.max(1, Math.min(n, Math.round(Math.sqrt((VIEWPORT_ASPECT * CELL_H * n) / CELL_W))));
+}
+
+/**
  * Compact row-major grid — the default block interior.
  *
  * `columns` overrides the count for a caller that knows better. The default caps at 4, which suits
  * a group's interior: a box is one item in a shelf-packed row, and a wide one pushes every box
  * after it down. `layoutGrid` fills a whole canvas instead and passes its own.
+ *
+ * `chrome` is the padding and the header strip a LABELLED box needs. A cluster rectangle is
+ * neither labelled nor a box — it is one item being packed — and reserving a header above each
+ * one would open 30px of nothing between every cluster and the one above it. So `packClusters`
+ * asks for a bare lattice and frames the result once; every other caller keeps the box.
  */
-function gridBlock(key: string, label: string, list: GNode[], columns?: number): BlockSpec {
-  const cols = columns ?? Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list.length))));
+function gridBlock(
+  key: string,
+  label: string,
+  list: GNode[],
+  opts: { columns?: number; chrome?: boolean } = {},
+): BlockSpec {
+  const cols = opts.columns ?? Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list.length))));
   const rows = Math.ceil(list.length / cols);
+  const pad = opts.chrome === false ? 0 : GROUP_PAD;
+  const header = opts.chrome === false ? 0 : HEADER_H;
   return {
     key,
     label,
-    width: GROUP_PAD * 2 + cols * CELL_W,
-    height: HEADER_H + GROUP_PAD * 2 + rows * CELL_H,
+    width: pad * 2 + cols * CELL_W,
+    height: header + pad * 2 + rows * CELL_H,
     cells: list.map((node, i) => ({
       id: node.id,
-      x: GROUP_PAD + (i % cols) * CELL_W + CELL_W / 2,
-      y: HEADER_H + GROUP_PAD + Math.floor(i / cols) * CELL_H + CELL_H / 2,
+      x: pad + (i % cols) * CELL_W + CELL_W / 2,
+      y: header + pad + Math.floor(i / cols) * CELL_H + CELL_H / 2,
     })),
   };
+}
+
+/**
+ * Cluster rectangles, shelf-packed — the lattice that never tears a component across a wrap.
+ *
+ * A row-major fill knows only an index, so a component whose run crosses the wrap comes out as
+ * two cards at the end of one row and a third at the start of the next, most of a canvas apart.
+ * That is the visible complaint, and it costs more than the look: `clusterHulls` then refuses the
+ * outline, because a hull stretched across that gap encloses every unrelated card lying between
+ * the two fragments. Giving each component its own rectangle answers both at once — nothing
+ * crosses a wrap, and every hull is a tight box around its own members.
+ *
+ * THE UNIT IS THE CONNECTED COMPONENT, and the caller passes the same `componentRoots` map
+ * `clusterHulls` buckets by, so what is packed whole is exactly what gets outlined. Not
+ * `clusterRanks`, which splits a component by hub for the band layouts. Inside a group box the
+ * roots are still the WHOLE projection's, not the box's sub-graph: hulls bucket by (component,
+ * box), so packing by anything else would hand the guard a shape it has to refuse.
+ *
+ * Lone nodes pool into ONE trailing rectangle rather than each claiming a gutter, for the reason
+ * `clusterRanks` gives about the same choice: a screen of evenly spread singletons is the layout
+ * we already had, and spacing them further apart says "these are all separate groups" about nodes
+ * that are simply unconnected.
+ *
+ * `limit` is what a group box needs and a canvas does not: its interior keeps the 4-column budget
+ * that stops one wide box pushing every later box down its shelf.
+ */
+function packClusters(
+  sorted: GNode[],
+  roots: Map<string, string>,
+  limit: { columns?: number; width?: number } = {},
+): { cells: BlockSpec["cells"]; width: number; height: number } {
+  if (!sorted.length) return { cells: [], width: 0, height: 0 };
+
+  // Insertion order follows the incoming sort, so components lead in the order of their best
+  // member — the worst risk still opens the picture, exactly as `byComponent` intends.
+  const runs = new Map<string, GNode[]>();
+  for (const node of sorted) {
+    const root = roots.get(node.id) ?? node.id;
+    if (!runs.has(root)) runs.set(root, []);
+    runs.get(root)!.push(node);
+  }
+
+  const members: Array<[string, GNode[]]> = [];
+  const lone: GNode[] = [];
+  for (const [root, list] of runs) {
+    if (list.length < 2) lone.push(...list);
+    else members.push([root, list]);
+  }
+  if (lone.length) members.push(["", lone]);
+
+  /**
+   * ONE ROW COUNT FOR EVERY RECTANGLE, and it is what makes this affordable.
+   *
+   * Shaping each cluster to the viewport on its own (`gridColumns`) is the obvious thing and it
+   * is expensive: a shelf is as tall as its tallest member, so an 18-node rectangle six rows deep
+   * standing beside four-row neighbours wastes two empty rows across the whole shelf. Sizing every
+   * rectangle to the same row count instead makes the shelves uniform and the vertical waste all
+   * but vanish — which is the model the band layouts' `wrapRun` already uses, a fixed-height run
+   * wrapped onto shelves, applied to rectangles instead of stripes.
+   *
+   * Reordering by height would flatten the shelves too, and is refused: components lead in the
+   * order of their best member, and the worst risk has to keep opening the picture.
+   */
+  const shaped = (rows: number): BlockSpec[] => members.map(([root, list]) => gridBlock(
+    root,
+    "",
+    list,
+    {
+      columns: Math.max(1, Math.min(limit.columns ?? Infinity, Math.ceil(list.length / rows))),
+      chrome: false,
+    },
+  ));
+
+  // WHERE TO WRAP IS SCORED BY THE ZOOM IT BUYS, the same argument the band layouts' wrap search
+  // makes: "fit to view" scales by whichever axis binds, so a canvas that is too WIDE and one
+  // that is too DEEP by the same ratio do not cost the same, and an area heuristic cannot tell
+  // them apart. A rectangle is never split, so the only widths worth trying are the ones a shelf
+  // could actually end at — the cumulative widths of the first m rectangles. Both dimensions of
+  // the search are scored by the same number, so the shape and the wrap are chosen together
+  // rather than one being guessed and the other fitted to it.
+  let best: ReturnType<typeof packBlocks> | null = null;
+  let bestFit = 0;
+  const deepest = Math.max(...members.map(([, list]) => list.length));
+  for (let rows = 1; rows <= Math.min(deepest, MAX_CLUSTER_ROWS); rows++) {
+    const specs = shaped(rows);
+    const widths: number[] = [];
+    let run = 0;
+    for (const spec of specs) {
+      run += spec.width + CLUSTER_GAP_X;
+      const width = run - CLUSTER_GAP_X;
+      if (!limit.width || width <= limit.width) widths.push(width);
+    }
+    if (!widths.length) widths.push(limit.width ?? specs[0].width);
+    for (const width of widths) {
+      const packed = packBlocks(specs, width, 0, { x: CLUSTER_GAP_X, y: CLUSTER_GAP_Y });
+      const fit = Math.min(VIEWPORT_ASPECT / packed.width, 1 / packed.height);
+      if (fit > bestFit * (1 + 1e-9)) { // strict: ties keep the flatter shape and narrower wrap
+        bestFit = fit;
+        best = packed;
+      }
+    }
+  }
+
+  const cells: BlockSpec["cells"] = [];
+  for (const place of best!.at) {
+    for (const c of place.spec.cells) {
+      cells.push({ id: c.id, x: round2(place.x + c.x), y: round2(place.y + c.y) });
+    }
+  }
+  return { cells, width: best!.width, height: best!.height };
 }
 
 /** Hub at the block center, satellites on concentric elliptical rings starting
@@ -1374,42 +1557,48 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
 }
 
 /**
- * Every node in one compact grid, categories ignored — the densest of the five.
+ * Every node in one compact lattice, categories ignored — the densest of the five.
  *
- * This is `gridBlock` over the whole projection, which is exactly the interior every grouped
- * picture had before grouping and arrangement came apart. So `grid` + a grouping reproduces the
- * old "grouped" layout byte for byte, and `grid` alone is the one new picture the split adds.
+ * Under the smart order the lattice is per-CLUSTER: each connected component gets its own
+ * rectangle and the rectangles are shelf-packed, so no component is ever torn across the wrap.
+ * See `packClusters` for why that is worth the whitespace it costs.
+ *
+ * Under an explicit order it is one flat rectangle over the whole projection, which is what this
+ * layout always was — and still exactly the interior every grouped picture had before grouping
+ * and arrangement came apart.
  */
 function layoutGrid(p: Projection, opts: LayoutOptions): Layout {
   const margin = opts.margin ?? 120;
+  const sort = opts.sort ?? "smart";
   // Component-first, for the reason `layoutRadial` gives: a dense grid interleaving two components
   // cell by cell has no outline that could be drawn without claiming the other's nodes.
-  const cmp = memberOrder(p, opts.sort ?? "smart");
-  // ITS OWN COLUMN COUNT, not gridBlock's. That helper caps at 4 columns, which is right for the
-  // small interior of a group box and wrong for a whole canvas: 120 nodes came out as a 4×30
-  // ribbon, the shape this file's header complains about for unwrapped lanes — "a ribbon thousands
-  // of pixels long and a few hundred deep, which fit to view can only show by shrinking every card
-  // past reading". Solving cols²·CELL_W / (n·CELL_H) = VIEWPORT_ASPECT gives a canvas roughly the
-  // shape of the window, and it also lays a component's run across fewer, wider rows — which is
-  // what lets its outline survive the membership guard.
-  const cols = Math.max(1, Math.round(Math.sqrt((VIEWPORT_ASPECT * CELL_H * p.nodes.length) / CELL_W)));
-  const spec = gridBlock("", "", [...p.nodes].sort(cmp), cols);
+  const cmp = memberOrder(p, sort);
+  const sorted = [...p.nodes].sort(cmp);
+  // CLUSTERING THE SMART ORDER, AND ONLY THE SMART ORDER — the rule `memberOrder` states and
+  // `layoutLanes` follows: "an explicit sort is a request for one global sequence, which gutters
+  // cut through." A reader who asked for Name (A–Z) gets one flat lattice in that order and
+  // simply gets fewer outlines, rather than an alphabet quietly reordered into clumps.
+  //
+  // The flat path passes ITS OWN COLUMN COUNT, not gridBlock's. That helper caps at 4 columns,
+  // which is right for the small interior of a group box and wrong for a whole canvas: 120 nodes
+  // came out as a 4×30 ribbon, the shape this file's header complains about for unwrapped lanes.
+  const packed = sort === "smart"
+    ? packClusters(sorted, componentRoots(p))
+    : gridBlock("", "", sorted, { columns: gridColumns(sorted.length), chrome: false });
   // The grid's rows ARE its lane axis — read off the distinct y values rather than recomputing
-  // the column count, so this cannot disagree with where gridBlock actually put the cells. Two
-  // of the four arrow keys walk `lane`, and a layout answering 0 for every node would leave them
+  // the column count, so this cannot disagree with where the cells actually landed. Two of the
+  // four arrow keys walk `lane`, and a layout answering 0 for every node would leave them
   // stepping through the whole grid one cell at a time.
-  const rows = [...new Set(spec.cells.map((c) => c.y))].sort((a, b) => a - b);
+  const rows = [...new Set(packed.cells.map((c) => c.y))].sort((a, b) => a - b);
   return {
-    nodes: spec.cells.map((c) => ({
+    nodes: packed.cells.map((c) => ({
       id: c.id,
-      // No header to clear and no box to sit inside: the block's own header offset is subtracted
-      // back off so the grid starts at the margin like every other ungrouped layout.
-      x: round2(margin + c.x - GROUP_PAD),
-      y: round2(margin + c.y - GROUP_PAD - HEADER_H),
+      x: round2(margin + c.x),
+      y: round2(margin + c.y),
       lane: rows.indexOf(c.y),
     })),
-    width: round2(margin * 2 + spec.width - GROUP_PAD * 2),
-    height: round2(margin * 2 + spec.height - GROUP_PAD * 2 - HEADER_H),
+    width: round2(margin * 2 + packed.width),
+    height: round2(margin * 2 + packed.height),
     laneGap: CELL_W,
     rowGap: CELL_H,
     mode: "grid",
