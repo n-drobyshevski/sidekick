@@ -7888,7 +7888,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "629771c896ef" : "dev";
+  var BUILD_ID = true ? "877b28fd88eb" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -11885,42 +11885,30 @@ var Server = (() => {
     }
     return rows;
   }
-  function outcomeRank(o) {
-    const i = OUTCOME_VALUES.indexOf(o);
-    return i < 0 ? OUTCOME_VALUES.length : i;
-  }
-  function postureRank(t) {
-    return t === null ? 0 : t;
-  }
   function slaRank(dueAt) {
     const t = Date.parse(dueAt || "");
     return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
   }
-  var AMPLIFICATION_KEYS = ["tools", "identity", "persistence", "multiAgent", "context", "language"];
-  function amplificationFactorRank(v) {
-    return v === null || v === void 0 ? -1 : v;
+  function severityRank4(sev) {
+    const i = SEVERITY_ORDER.indexOf(String(sev != null ? sev : ""));
+    return i < 0 ? SEVERITY_ORDER.length : i;
   }
   function compareProblems(a, b) {
-    const outcome = outcomeRank(a.problemOutcome) - outcomeRank(b.problemOutcome);
-    if (outcome !== 0) return outcome;
-    const posture = postureRank(b.postureTier) - postureRank(a.postureTier);
-    if (posture !== 0) return posture;
+    const sev = severityRank4(a.severity) - severityRank4(b.severity);
+    if (sev !== 0) return sev;
     const sla = slaRank(a.dueAt) - slaRank(b.dueAt);
     if (sla !== 0) return sla;
-    for (const key of AMPLIFICATION_KEYS) {
-      const diff = amplificationFactorRank(b.amplification[key]) - amplificationFactorRank(a.amplification[key]);
-      if (diff !== 0) return diff;
+    const aSeen = a.firstSeenAt || "";
+    const bSeen = b.firstSeenAt || "";
+    if (aSeen !== bSeen) {
+      if (!aSeen) return 1;
+      if (!bSeen) return -1;
+      return aSeen < bSeen ? -1 : 1;
     }
     return a.id.localeCompare(b.id);
   }
   function rankProblems(rows) {
     return [...rows].sort(compareProblems);
-  }
-  function countProblemRowsByOutcome(rows) {
-    var _a5;
-    const counts = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0, "": 0 };
-    for (const r of rows) counts[r.problemOutcome] = ((_a5 = counts[r.problemOutcome]) != null ? _a5 : 0) + 1;
-    return counts;
   }
 
   // src/domain/actions.ts
@@ -11928,10 +11916,10 @@ var Server = (() => {
     var _a5, _b;
     return `${row.kind}|${(_a5 = row.ruleId) != null ? _a5 : ""}|${(_b = row.ruleShortId) != null ? _b : ""}`;
   }
-  var NO_OUTCOME = "";
-  function outcomeRank2(o) {
-    const i = OUTCOME_VALUES.indexOf(o);
-    return i < 0 ? OUTCOME_VALUES.length : i;
+  var NO_SEVERITY = "";
+  function severityRank5(sev) {
+    const i = SEVERITY_ORDER.indexOf(sev);
+    return i < 0 ? SEVERITY_ORDER.length : i;
   }
   function candidatesFrom(pool) {
     const groups = /* @__PURE__ */ new Map();
@@ -11944,10 +11932,11 @@ var Server = (() => {
     return groups;
   }
   function scoreCandidate(key, rows) {
-    let worstRank = OUTCOME_VALUES.length;
+    var _a5;
+    let worstRank = SEVERITY_ORDER.length;
     const assetIds = /* @__PURE__ */ new Set();
     for (const row of rows) {
-      const rank = outcomeRank2(row.problemOutcome);
+      const rank = severityRank5(String((_a5 = row.severity) != null ? _a5 : ""));
       if (rank < worstRank) worstRank = rank;
       if (row.assetId) assetIds.add(row.assetId);
     }
@@ -11960,15 +11949,14 @@ var Server = (() => {
     return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
   }
   function buildActionRow(key, rows) {
-    var _a5, _b;
+    var _a5, _b, _c;
     const sorted = [...rows].sort((a, b) => a.id.localeCompare(b.id));
     const first = sorted[0];
     const assetIds = /* @__PURE__ */ new Set();
-    const outcomeMix = {};
     const severityMix = {};
     const businessImpacts = /* @__PURE__ */ new Set();
-    let worstRank = OUTCOME_VALUES.length;
-    let worstOutcome = NO_OUTCOME;
+    let worstRank = SEVERITY_ORDER.length;
+    let worstSeverity2 = NO_SEVERITY;
     let iac = 0;
     let ignored = 0;
     let firstSeenAt = "";
@@ -11976,13 +11964,12 @@ var Server = (() => {
     let remediation;
     for (const row of sorted) {
       if (row.assetId) assetIds.add(row.assetId);
-      outcomeMix[row.problemOutcome] = ((_a5 = outcomeMix[row.problemOutcome]) != null ? _a5 : 0) + 1;
-      if (row.severity) severityMix[row.severity] = ((_b = severityMix[row.severity]) != null ? _b : 0) + 1;
+      if (row.severity) severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
       if (row.businessImpact) businessImpacts.add(row.businessImpact);
-      const rank = outcomeRank2(row.problemOutcome);
+      const rank = severityRank5(String((_b = row.severity) != null ? _b : ""));
       if (rank < worstRank) {
         worstRank = rank;
-        worstOutcome = row.problemOutcome;
+        worstSeverity2 = String((_c = row.severity) != null ? _c : "");
       }
       if (row.iac) iac += 1;
       if (row.ignored) ignored += 1;
@@ -12000,8 +11987,7 @@ var Server = (() => {
       title: title || first.title,
       problems: rows.length,
       assets: assetIds.size,
-      worstOutcome,
-      outcomeMix,
+      worstSeverity: worstSeverity2,
       severityMix,
       businessImpacts: [...businessImpacts].sort(),
       autoRemediable: false,
@@ -12068,17 +12054,15 @@ var Server = (() => {
     "rule",
     "resource",
     "firstSeen",
-    "status",
-    "priority"
+    "status"
   ];
   var DEFAULT_CONFIG_SORT_DIR = {
     severity: "desc",
     firstSeen: "desc",
     rule: "asc",
     resource: "asc",
-    status: "asc",
+    status: "asc"
     // Phase 5: the problem tree's outcome, worst (ACT) first — same convention as severity.
-    priority: "desc"
   };
   var DEFAULT_CONFIG_PAGE_SIZE = 50;
   var MAX_CONFIG_PAGE_SIZE = 500;
@@ -12091,8 +12075,7 @@ var Server = (() => {
     "rules",
     "projects",
     "linkage",
-    "flags",
-    "outcomes"
+    "flags"
   ];
   var LINKAGE_VALUES = ["linked", "unlinked"];
   var CONFIG_FLAGS = ["gap", "ignored", "iac"];
@@ -12100,12 +12083,8 @@ var Server = (() => {
     const i = SEVERITY_ORDER.indexOf(s);
     return i < 0 ? SEVERITY_ORDER.length : i;
   };
-  var priorityRank = (o) => {
-    const i = OUTCOME_VALUES.indexOf(o);
-    return i < 0 ? OUTCOME_VALUES.length : i;
-  };
   function toConfigView(f, linked) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
     return {
       id: f.id,
       name: (_b = (_a5 = f.name) != null ? _a5 : f.ruleName) != null ? _b : "",
@@ -12127,8 +12106,7 @@ var Server = (() => {
       linked,
       ignored: ((_q = f.ignoreRuleIds) != null ? _q : []).length > 0,
       iac: ((_r = f.iacFindingIds) != null ? _r : []).length > 0,
-      gap: isOpenGap(f),
-      problemOutcome: (_s = f.problemOutcome) != null ? _s : ""
+      gap: isOpenGap(f)
     };
   }
   function listParam(v) {
@@ -12151,9 +12129,6 @@ var Server = (() => {
       ),
       flags: listParam(params["flags"]).filter(
         (v) => CONFIG_FLAGS.indexOf(v) >= 0
-      ),
-      outcomes: listParam(params["outcomes"]).filter(
-        (v) => OUTCOME_VALUES.indexOf(v) >= 0
       )
     };
   }
@@ -12174,7 +12149,6 @@ var Server = (() => {
     if (!anyOf(q.rules, row.ruleShortId)) return false;
     if (q.projects.length && !row.projects.some((p) => q.projects.indexOf(p) >= 0)) return false;
     if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
-    if (!anyOf(q.outcomes, row.problemOutcome)) return false;
     for (const flag of q.flags) if (!hasConfigFlag(row, flag)) return false;
     if (q.q) {
       const hay = [
@@ -12202,7 +12176,6 @@ var Server = (() => {
       else if (sort === "resource") cmp2 = a.resourceName.localeCompare(b.resourceName);
       else if (sort === "status") cmp2 = a.status.localeCompare(b.status);
       else if (sort === "firstSeen") cmp2 = a.firstSeenAt.localeCompare(b.firstSeenAt);
-      else if (sort === "priority") cmp2 = priorityRank(b.problemOutcome) - priorityRank(a.problemOutcome);
       return cmp2 !== 0 ? cmp2 * d : tie(a, b);
     };
   }
@@ -12217,12 +12190,10 @@ var Server = (() => {
     if (key === "rules") return [row.ruleShortId].filter(Boolean);
     if (key === "projects") return row.projects;
     if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
-    if (key === "outcomes") return row.problemOutcome ? [row.problemOutcome] : [];
     return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f));
   }
   function facetSorter2(key) {
     if (key === "severities") return (a, b) => sevRank2(a.value) - sevRank2(b.value);
-    if (key === "outcomes") return (a, b) => priorityRank(a.value) - priorityRank(b.value);
     if (key === "flags") {
       const order = CONFIG_FLAGS;
       return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
@@ -12351,7 +12322,7 @@ var Server = (() => {
   }
 
   // src/domain/complianceOverview.ts
-  function severityRank4(s) {
+  function severityRank6(s) {
     const i = SEVERITY_ORDER.indexOf(s);
     return i === -1 ? SEVERITY_ORDER.length : i;
   }
@@ -12427,7 +12398,7 @@ var Server = (() => {
                 name: p.name,
                 policyKind: p.policyKind,
                 severity: p.severity,
-                severityRank: severityRank4(p.severity),
+                severityRank: severityRank6(p.severity),
                 hasAutoRemediation: p.hasAutoRemediation === true,
                 frameworkIds: [],
                 frameworkNames: [],
@@ -12436,7 +12407,7 @@ var Server = (() => {
               };
               byPolicy.set(p.policyId, acc);
             }
-            const rank = severityRank4(p.severity);
+            const rank = severityRank6(p.severity);
             if (rank < acc.severityRank) {
               acc.severityRank = rank;
               acc.severity = p.severity;
@@ -12472,7 +12443,7 @@ var Server = (() => {
         failCount: acc.failCount
       });
     }
-    rows.sort((a, b) => b.frameworkCount - a.frameworkCount || severityRank4(a.severity) - severityRank4(b.severity) || b.failCount - a.failCount || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    rows.sort((a, b) => b.frameworkCount - a.frameworkCount || severityRank6(a.severity) - severityRank6(b.severity) || b.failCount - a.failCount || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     return rows;
   }
   function coverageSummary(trees, catalogue) {
@@ -16275,16 +16246,42 @@ var Server = (() => {
     );
   }
   function problemsModel() {
+    var _a5, _b;
     const assetsById = new Map(viewAssets().map((a) => [a.id, a]));
     const rows = rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById));
-    return { rows, outcomeCounts: countProblemRowsByOutcome(rows) };
+    const severityCounts = {};
+    for (const sev of SEVERITY_ORDER) severityCounts[sev] = 0;
+    for (const r of rows) {
+      const sev = String((_a5 = r.severity) != null ? _a5 : "");
+      if (sev) severityCounts[sev] = ((_b = severityCounts[sev]) != null ? _b : 0) + 1;
+    }
+    return { rows, severityCounts };
+  }
+  function publicProblemRow(r) {
+    var _a5;
+    return {
+      id: r.id,
+      kind: r.kind,
+      title: r.title,
+      assetId: r.assetId,
+      assetName: r.assetName,
+      severity: r.severity,
+      dueAt: r.dueAt,
+      firstSeenAt: (_a5 = r.firstSeenAt) != null ? _a5 : null,
+      ruleId: r.ruleId,
+      ruleShortId: r.ruleShortId,
+      ruleRemediation: r.ruleRemediation,
+      businessImpact: r.businessImpact,
+      iac: r.iac,
+      ignored: r.ignored
+    };
   }
   function getProblems(p) {
     return run(() => {
       var _a5;
       const params = p != null ? p : {};
-      const outcome = String((_a5 = params["outcome"]) != null ? _a5 : "").toUpperCase();
-      const validOutcome = OUTCOME_VALUES.includes(outcome) ? outcome : "";
+      const severity = String((_a5 = params["severity"]) != null ? _a5 : "").toUpperCase();
+      const validSeverity = SEVERITY_ORDER.includes(severity) ? severity : "";
       const pageSize = Math.min(
         MAX_PAGE_SIZE,
         Math.max(1, Number(params["pageSize"]) || DEFAULT_PAGE_SIZE)
@@ -16295,25 +16292,28 @@ var Server = (() => {
         // The union invariant's left-hand side — every unresolved issue and every open
         // finding, regardless of the outcome filter or the mode below.
         total: model.rows.length,
-        outcomeCounts: model.outcomeCounts,
+        severityCounts: model.severityCounts,
         pageSize
       };
       if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
         return {
           ...head,
           all: true,
-          rows: model.rows,
+          rows: model.rows.map(publicProblemRow),
           filtered: model.rows.length,
           page: 0,
           pageCount: Math.max(1, Math.ceil(model.rows.length / pageSize))
         };
       }
-      const filtered = validOutcome ? model.rows.filter((r) => r.problemOutcome === validOutcome) : model.rows;
+      const filtered = validSeverity ? model.rows.filter((r) => {
+        var _a6;
+        return String((_a6 = r.severity) != null ? _a6 : "") === validSeverity;
+      }) : model.rows;
       const paged = pageOf(filtered, page, pageSize);
       return {
         ...head,
         all: false,
-        rows: paged.rows,
+        rows: paged.rows.map(publicProblemRow),
         filtered: filtered.length,
         page: paged.page,
         pageCount: paged.pageCount

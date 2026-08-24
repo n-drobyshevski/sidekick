@@ -19,11 +19,6 @@ export const CONDITION_KEYS = [
 
 export const SEVERITY_RANK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 
-// Mirrors OUTCOME_VALUES (src/domain/problem.ts) — the problem tree's four outcomes,
-// worst (ACT) first. Same mirroring rule this file's header states for DUE_SOON_DAYS and
-// CONDITION_KEYS: change one, change the other, or the priority column and severity column
-// start ordering issues differently for the same underlying scale.
-export const OUTCOME_RANK = ["ACT", "ATTEND", "TRACK_STAR", "TRACK"];
 
 export const DUE_SOON_DAYS = 7;
 
@@ -54,13 +49,11 @@ export function readComboParams(params) {
   const p = params || {};
   const sev = String(p.sev || "").toUpperCase();
   const cond = String(p.cond || "").toUpperCase();
-  const outcome = String(p.outcome || "").toUpperCase();
   const page = Number(p.page);
   return {
     open: p.open || "",
     cond: CONDITION_KEYS.indexOf(cond) >= 0 ? cond : "",
     sev: SEVERITY_RANK.indexOf(sev) >= 0 ? sev : "",
-    outcome: OUTCOME_RANK.indexOf(outcome) >= 0 ? outcome : "",
     q: p.q || "",
     acct: p.acct || "",
     proj: p.proj || "",
@@ -81,7 +74,6 @@ export function comboParamPatch(state) {
     open: s.open || "",
     cond: s.cond || "",
     sev: s.sev || "",
-    outcome: s.outcome || "",
     q: s.q || "",
     acct: s.acct || "",
     proj: s.proj || "",
@@ -146,7 +138,6 @@ export function applyIssueFilters(rows, state) {
   const q = String(s.q || "").trim().toLowerCase();
   return (rows || []).filter((r) => {
     if (s.sev && String(r.adjustedSeverity || "").toUpperCase() !== s.sev) return false;
-    if (s.outcome && String(r.problemOutcome || "").toUpperCase() !== s.outcome) return false;
     if (s.acct && String(r.account || "") !== s.acct) return false;
     if (s.proj && (r.projects || []).indexOf(s.proj) === -1) return false;
     if (q) {
@@ -162,11 +153,9 @@ export function applyIssueFilters(rows, state) {
 export function issueFilterOptions(rows) {
   const accounts = new Set();
   const projects = new Set();
-  const outcomes = new Set();
   for (const r of rows || []) {
     if (r.account) accounts.add(String(r.account));
     for (const p of r.projects || []) if (p) projects.add(String(p));
-    if (r.problemOutcome) outcomes.add(String(r.problemOutcome).toUpperCase());
   }
   const sorted = (set) => Array.from(set).sort((a, b) => a.localeCompare(b));
   return {
@@ -174,7 +163,6 @@ export function issueFilterOptions(rows) {
     projects: sorted(projects),
     // Worst first, like the column itself — not alphabetical like accounts/projects,
     // which carry no inherent order.
-    outcomes: OUTCOME_RANK.filter((o) => outcomes.has(o)),
   };
 }
 
@@ -191,8 +179,6 @@ function dueRank(row) {
  * soonest deadline first, names A-first. `dir` flips it. Mirrors the shape graphTable
  * uses in graphView.js so the two sortable tables behave identically.
  */
-/** Position on the problem tree's outcome scale, worst (ACT) first. Mirrors OUTCOME_RANK. */
-const outcomeRank = (o) => rankSeverity(o, OUTCOME_RANK);
 
 export const ISSUE_COMPARATORS = {
   asset: (a, b) => String(a.assetName || "").localeCompare(String(b.assetName || "")),
@@ -200,7 +186,6 @@ export const ISSUE_COMPARATORS = {
   native: (a, b) => sevRank(a.nativeSeverity) - sevRank(b.nativeSeverity),
   // Phase 5: the problem tree's outcome (ACT/ATTEND/TRACK*/TRACK), not a Wiz severity —
   // a separate scale that can disagree with the two above by design.
-  priority: (a, b) => outcomeRank(a.problemOutcome) - outcomeRank(b.problemOutcome),
   region: (a, b) => String(a.region || "").localeCompare(String(b.region || "")),
   account: (a, b) => String(a.account || "").localeCompare(String(b.account || "")),
   due: (a, b) => dueRank(a) - dueRank(b),

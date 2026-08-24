@@ -8,8 +8,8 @@
 // into elements and does nothing else clever.
 //
 // One thing this file deliberately does NOT do: re-derive the page's default ranking.
-// `src/domain/problems.ts`'s `compareProblems` — outcome, then posture tier, then SLA
-// urgency, then the amplification vector, then id — is the one true order, computed
+// `src/domain/problems.ts`'s `compareProblems` — severity, then SLA urgency, then age,
+// then id — is the one true order, computed
 // server-side in `getProblems` and shipped already sorted. The client bundle cannot
 // import that TS module (the same wall `comboView.js`'s own header names for
 // `DUE_SOON_DAYS` and `CONDITION_KEYS`), so rather than hand-copy a five-level cascade
@@ -18,7 +18,6 @@
 // has to the toxic-combination ranking `rankGroups` already applied. "No sort selected"
 // means "trust the order the server sent."
 
-export const OUTCOME_RANK = ["ACT", "ATTEND", "TRACK_STAR", "TRACK"];
 export const KIND_VALUES = ["ISSUE", "FINDING"];
 export const SEVERITY_RANK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 
@@ -35,7 +34,7 @@ export const MODE_VALUES = ["actions", "problems"];
 
 /** Rows fetched, filtered and sorted entirely client-side under this ceiling — mirrors the
  *  server's own `PROBLEMS_CLIENT_ALL_MAX` (src/domain/problems.ts). Past it `getProblems`
- *  pages server-side and this page forwards the outcome filter and the page number to it. */
+ *  pages server-side and this page forwards the severity filter and the page number to it. */
 export const PAGE_SIZE = 25;
 
 // ------------------------------------------------------------------------ URL state
@@ -43,13 +42,13 @@ export const PAGE_SIZE = 25;
 /** Read the hash params into view state, dropping anything this page doesn't offer. */
 export function readProblemParams(params) {
   const p = params || {};
-  const outcome = String(p.outcome || "").toUpperCase();
+  const severity = String(p.severity || "").toUpperCase();
   const kind = String(p.kind || "").toUpperCase();
   const mode = String(p.mode || "").toLowerCase();
   const page = Number(p.page);
   return {
     mode: MODE_VALUES.indexOf(mode) >= 0 ? mode : "actions",
-    outcome: OUTCOME_RANK.indexOf(outcome) >= 0 ? outcome : "",
+    severity: SEVERITY_RANK.indexOf(severity) >= 0 ? severity : "",
     kind: KIND_VALUES.indexOf(kind) >= 0 ? kind : "",
     q: p.q || "",
     sort: PROBLEM_COMPARATORS[p.sort] ? p.sort : "",
@@ -70,7 +69,7 @@ export function problemParamPatch(state) {
     // whole reason problems mode carries a URL param at all is so an "actions" reader's
     // link never grows one.
     mode: s.mode && s.mode !== "actions" ? s.mode : "",
-    outcome: s.outcome || "",
+    severity: s.severity || "",
     kind: s.kind || "",
     q: s.q || "",
     sort: s.sort || "",
@@ -84,7 +83,7 @@ export function problemParamPatch(state) {
 /**
  * Row-level filters, applied to whatever rows the page currently holds. When the server
  * answered `all: true` this runs over the whole ranked union; past `PROBLEMS_CLIENT_ALL_MAX`
- * the outcome half is already applied server-side (so this is a no-op re-check on that
+ * the severity half is already applied server-side (so this is a no-op re-check on that
  * axis) and `kind`/`q` narrow only the current page — the same degrade
  * `getConfigFindings`'s paged path accepts for its own client-only affordances.
  */
@@ -92,7 +91,7 @@ export function applyProblemFilters(rows, state) {
   const s = state || {};
   const q = String(s.q || "").trim().toLowerCase();
   return (rows || []).filter((r) => {
-    if (s.outcome && String(r.problemOutcome || "").toUpperCase() !== s.outcome) return false;
+    if (s.severity && String(r.severity || "").toUpperCase() !== s.severity) return false;
     if (s.kind && r.kind !== s.kind) return false;
     if (q) {
       const hay = [r.title, r.assetName].join(" ").toLowerCase();
@@ -102,33 +101,21 @@ export function applyProblemFilters(rows, state) {
   });
 }
 
-/** The outcome and kind values actually present, for the filter pills — worst-outcome-first. */
+/** The severity and kind values actually present, for the filter pills — worst-first. */
 export function problemFilterOptions(rows) {
-  const outcomes = new Set();
+  const severities = new Set();
   const kinds = new Set();
   for (const r of rows || []) {
-    if (r.problemOutcome) outcomes.add(String(r.problemOutcome).toUpperCase());
+    if (r.severity) severities.add(String(r.severity).toUpperCase());
     if (r.kind) kinds.add(r.kind);
   }
   return {
-    outcomes: OUTCOME_RANK.filter((o) => outcomes.has(o)),
+    severities: SEVERITY_RANK.filter((sv) => severities.has(sv)),
     kinds: KIND_VALUES.filter((k) => kinds.has(k)),
   };
 }
 
 // -------------------------------------------------------------------------- sorting
-
-/** Position on the outcome scale, worst first; undecided (`""`) sorts last — mirrors
- *  `configView.js`'s `priorityRank` and `src/domain/problems.ts`'s `outcomeRank`. */
-function outcomeIndex(o) {
-  const i = OUTCOME_RANK.indexOf(String(o || "").toUpperCase());
-  return i < 0 ? OUTCOME_RANK.length : i;
-}
-
-/** Worse tier (4) first, unscored (`null`) last — mirrors the domain layer's `postureRank`. */
-function postureIndex(t) {
-  return t === null || t === undefined ? 0 : Number(t);
-}
 
 function sevIndex(sev) {
   const i = SEVERITY_RANK.indexOf(String(sev || "").toUpperCase());
@@ -155,14 +142,22 @@ export const PROBLEM_COMPARATORS = {
   asset: (a, b) => String(a.assetName || "").localeCompare(String(b.assetName || "")),
   title: (a, b) => String(a.title || "").localeCompare(String(b.title || "")),
   kind: (a, b) => String(a.kind || "").localeCompare(String(b.kind || "")),
-  priority: (a, b) => outcomeIndex(a.problemOutcome) - outcomeIndex(b.problemOutcome),
-  posture: (a, b) => postureIndex(b.postureTier) - postureIndex(a.postureTier),
   severity: (a, b) => sevIndex(a.severity) - sevIndex(b.severity),
   due: (a, b) => dueRank(a) - dueRank(b),
+  // The ranking's third level, offered as a column so a reader can see the order they were
+  // given. Oldest first, undated last — the same rule compareProblems applies.
+  firstSeen: (a, b) => {
+    const x = String((a && a.firstSeenAt) || "");
+    const y = String((b && b.firstSeenAt) || "");
+    if (x === y) return 0;
+    if (!x) return 1;
+    if (!y) return -1;
+    return x < y ? -1 : 1;
+  },
 };
 
 /** Columns whose natural order reads as descending — for aria-sort and the glyph. */
-export const PROBLEM_SORT_DESC = { priority: true, posture: true, severity: true };
+export const PROBLEM_SORT_DESC = { severity: true };
 
 export function sortProblems(rows, key, dir) {
   const cmp = PROBLEM_COMPARATORS[key];

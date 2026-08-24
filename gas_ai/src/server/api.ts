@@ -65,7 +65,6 @@ import {
 import { countPostureTiers, TIER_VALUES, type PostureVector, type Tier } from "../domain/posture";
 import {
   buildProblemRows,
-  countProblemRowsByOutcome,
   PROBLEMS_CLIENT_ALL_MAX,
   rankProblems,
   type ProblemRow,
@@ -2020,7 +2019,8 @@ export function getToxicCombos(_p?: unknown): ApiResult {
 interface ProblemsModel {
   /** Ranked once, by `compareProblems` — never re-sorted per request. */
   rows: ProblemRow[];
-  outcomeCounts: Record<string, number>;
+  /** Problems by Wiz severity, the register's own filter dimension. */
+  severityCounts: Record<string, number>;
 }
 
 /**
@@ -2036,7 +2036,42 @@ function problemsModel(): ProblemsModel {
   // against a filtered `assetsById` would keep every row and merely un-enrich the ones out
   // of view — rows missing their posture tier rather than rows correctly absent.
   const rows = rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById));
-  return { rows, outcomeCounts: countProblemRowsByOutcome(rows) };
+  const severityCounts: Record<string, number> = {};
+  for (const sev of SEVERITY_ORDER) severityCounts[sev] = 0;
+  for (const r of rows) {
+    const sev = String(r.severity ?? "");
+    if (sev) severityCounts[sev] = (severityCounts[sev] ?? 0) + 1;
+  }
+  return { rows, severityCounts };
+}
+
+/**
+ * A problem row as the page receives it: everything the register renders, and none of the
+ * problem model's own fields.
+ *
+ * `ProblemRow` keeps `problemOutcome`, `vector`, `unknowns`, `postureTier` and
+ * `amplification` because the workbench's rule preview reads them — it is measuring the
+ * model, which is exactly the surface the model belongs on. Shipping them here would put
+ * a verdict about one problem in front of a reader who cannot see the rule that produced
+ * it, which is the thing this whole change exists to stop.
+ */
+function publicProblemRow(r: ProblemRow): Rec {
+  return {
+    id: r.id,
+    kind: r.kind,
+    title: r.title,
+    assetId: r.assetId,
+    assetName: r.assetName,
+    severity: r.severity,
+    dueAt: r.dueAt,
+    firstSeenAt: r.firstSeenAt ?? null,
+    ruleId: r.ruleId,
+    ruleShortId: r.ruleShortId,
+    ruleRemediation: r.ruleRemediation,
+    businessImpact: r.businessImpact,
+    iac: r.iac,
+    ignored: r.ignored,
+  };
 }
 
 /**
@@ -2054,8 +2089,13 @@ function problemsModel(): ProblemsModel {
 export function getProblems(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
-    const outcome = String(params["outcome"] ?? "").toUpperCase();
-    const validOutcome = (OUTCOME_VALUES as readonly string[]).includes(outcome) ? outcome : "";
+    // `severity`, where this used to take `outcome`. The register filters on Wiz's own
+    // rating now; the decision cascade that produced the outcomes is experimental and
+    // lives on the Scoring Models page. An `?outcome=` link resolves to no filter rather
+    // than to a severity of the same name — the two vocabularies do not overlap, and
+    // guessing which queue a reader meant would answer a question they did not ask.
+    const severity = String(params["severity"] ?? "").toUpperCase();
+    const validSeverity = (SEVERITY_ORDER as readonly string[]).includes(severity) ? severity : "";
     const pageSize = Math.min(
       MAX_PAGE_SIZE,
       Math.max(1, Number(params["pageSize"]) || DEFAULT_PAGE_SIZE),
@@ -2067,7 +2107,7 @@ export function getProblems(p?: unknown): ApiResult {
       // The union invariant's left-hand side — every unresolved issue and every open
       // finding, regardless of the outcome filter or the mode below.
       total: model.rows.length,
-      outcomeCounts: model.outcomeCounts,
+      severityCounts: model.severityCounts,
       pageSize,
     };
 
@@ -2075,21 +2115,21 @@ export function getProblems(p?: unknown): ApiResult {
       return {
         ...head,
         all: true,
-        rows: model.rows,
+        rows: model.rows.map(publicProblemRow),
         filtered: model.rows.length,
         page: 0,
         pageCount: Math.max(1, Math.ceil(model.rows.length / pageSize)),
       };
     }
 
-    const filtered = validOutcome
-      ? model.rows.filter((r) => r.problemOutcome === validOutcome)
+    const filtered = validSeverity
+      ? model.rows.filter((r) => String(r.severity ?? "") === validSeverity)
       : model.rows;
     const paged = pageOf(filtered as unknown as Rec[], page, pageSize);
     return {
       ...head,
       all: false,
-      rows: paged.rows,
+      rows: (paged.rows as unknown as ProblemRow[]).map(publicProblemRow),
       filtered: filtered.length,
       page: paged.page,
       pageCount: paged.pageCount,
