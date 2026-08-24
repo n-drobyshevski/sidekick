@@ -517,9 +517,16 @@ describe("layoutGraph organic mode forces", () => {
 // the URL kept the new mode, the domain understood it, and the page quietly rewrote it to rows on
 // the way to the request. No error, no failing type — just a layout that never appeared.
 //
-// graph.js cannot be imported here (it is DOM-shaped and there is no jsdom), so its table is read
-// as source, the way test/icons.test.js reads help.js for its glyph names.
-describe("the page's layout list and the domain agree", () => {
+// IT HAPPENED AGAIN, one control over, which is why this suite now covers the GROUPING list too.
+// `domain` was appended to GROUP_KEYS and wired through the engine, the resolver, GROUP_LABELS and
+// the tests — and left out of the page's `DIMS`, the single array feeding both Group-by selects.
+// Same signature exactly: `#groupBy=domain` worked if typed, the picture drew correctly, and the
+// only thing wrong was that no reader could ask for it. A guard written for one list and not the
+// other is a guard that catches the bug it was written for and nothing else.
+//
+// graph.js cannot be imported here (it is DOM-shaped and there is no jsdom), so its tables are
+// read as source, the way test/icons.test.js reads help.js for its glyph names.
+describe("the page's lists and the domain agree", () => {
   const PAGE = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), "../src/client/js/pages/graph.js"), "utf8");
 
@@ -582,6 +589,31 @@ describe("the page's layout list and the domain agree", () => {
       expect(LAYOUT_MODES, `${to} must be a real arrangement`).toContain(to);
       expect(LAYOUT_MODES, `${from} must be retired, not live`).not.toContain(from);
       expect(resolveLayoutParams({ layout: from }).mode, `resolver maps ${from}`).toBe(to);
+    }
+  });
+
+  /** The strings in graph.js's DIMS array — what the two Group-by selects offer. */
+  function pageDims(): string[] {
+    const decl = PAGE.slice(PAGE.indexOf("const DIMS = ["));
+    return [...decl.slice(0, decl.indexOf("];")).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  }
+
+  it("offers every grouping dimension the engine accepts, and no dimension it does not", () => {
+    // The SET, deliberately, and not the order. GROUP_KEYS' order is arbitrary — nothing
+    // iterates it, `pickList` walks the user's input instead — while DIMS' order is the order a
+    // reader sees. Pinning them equal would assert a relationship that does not exist and would
+    // make a harmless reordering of the picker fail.
+    expect(new Set(pageDims())).toEqual(new Set(GROUP_KEYS));
+  });
+
+  it("has a human label for every dimension it offers", () => {
+    // `GROUP_LABELS[k] || k` falls back to the raw key, so a missing label is not an error — it
+    // is the enum printed at a reader in the picker, the badge and the legend at once.
+    const table = PAGE.slice(PAGE.indexOf("const GROUP_LABELS = {"));
+    const labelled = [...table.slice(0, table.indexOf("\n};")).matchAll(/(\w+):\s*"/g)]
+      .map((m) => m[1]);
+    for (const key of GROUP_KEYS) {
+      expect(labelled, `GROUP_LABELS must name ${key}`).toContain(key);
     }
   });
 });

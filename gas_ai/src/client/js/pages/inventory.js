@@ -902,6 +902,32 @@ export async function renderInventory(main, params) {
     }, "Graph");
   }
 
+  /**
+   * The Domain cell, as the way into the graph for that domain.
+   *
+   * This is where a reader already sees the domain and asks to be shown it, and the text is
+   * drawn either way — so it costs no new element. A LINK and not a button for the same reason
+   * the Graph column is one button and not one per fact: ~4 distinct domains spread over 87 rows
+   * would otherwise become 87 buttons, and a register that shouts is a register nobody scans.
+   *
+   * It navigates with the `seedKind` vocabulary rather than assembling query DSL here. The graph
+   * page translates that on arrival and rewrites the hash canonically, so what a reader ends up
+   * holding IS the builder-native `find`/`where` — an editable Where chip, shareable — while this
+   * page keeps knowing nothing about the DSL. Same shape as the toxic-combination page's own
+   * "Open in graph", and it means the link form `graphApiParams.ts` documents is the one the app
+   * itself writes rather than a second spelling nothing produces.
+   */
+  function domainLink(row) {
+    return el("button", {
+      class: "link",
+      "aria-label": `Open ${row.domain} in the Security Graph`,
+      onclick: (e) => {
+        e.stopPropagation();
+        navigate("graph", { seed: row.domain, seedKind: "domain" });
+      },
+    }, row.domain);
+  }
+
   function assetTable(rows) {
     /** Cell renderers, keyed to COLUMNS above so header and body cannot drift apart. */
     const CELLS = {
@@ -933,7 +959,7 @@ export async function renderInventory(main, params) {
         : el("span", { class: "muted small" }, "0")),
       combos: (row) => (row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : "—"),
       guardrail: (row) => (row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : "—"),
-      domain: (row) => row.domain || "—",
+      domain: (row) => (row.domain ? domainLink(row) : "—"),
       projects: (row) => (row.projects || []).join(", ") || "—",
       actions: (row) => graphButton(row),
     };

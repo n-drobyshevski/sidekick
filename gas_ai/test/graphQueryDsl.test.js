@@ -372,6 +372,26 @@ describe("migrateLegacyParams", () => {
     expect(out.where).toBe("0.id.agent-a");
   });
 
+  it("reads a domain seed as a domain, not as an id", () => {
+    // The two seed vocabularies look identical in a URL and mean different things. `?seed=CROSS`
+    // names the node whose id is CROSS; `?seed=CROSS&seedKind=domain` names every resource the
+    // CROSS domain owns — the start set `graphApiParams.ts` resolves on the getGraph path, and
+    // the shape the inventory's Domain cell writes. Read as an id it became `0.id.CROSS`, a
+    // filter no node satisfies, so the link opened an empty canvas and reported nothing wrong.
+    const out = migrateLegacyParams({ seed: "CROSS", seedKind: "domain" });
+    expect(out.where).toBe("0.domain.CROSS");
+    // And it still walks: a domain seed means "show me around these" for several assets at once.
+    expect(out.find).toBe("ANY(*ANY2.ANY)");
+  });
+
+  it("percent-encodes a domain whose name has a space", () => {
+    // `EXAMPLE DOMAIN` is in the seed landscape precisely so this path is exercised: the value
+    // is a label a tenant wrote, not an identifier, and `.` is the DSL's own separator.
+    const out = migrateLegacyParams({ seed: "EXAMPLE DOMAIN", seedKind: "domain" });
+    expect(out.where).toBe("0.domain.EXAMPLE%20DOMAIN");
+    expect(parseWhere(out.where).get(0).get("domain")).toEqual({ values: ["EXAMPLE DOMAIN"], op: "eq" });
+  });
+
   it("carries depth, and the old node-type lens", () => {
     const out = migrateLegacyParams({ seed: "agent-a", seedKind: "asset", depth: "3", kinds: "AI_AGENT" });
     expect(out.find).toBe("AI_AGENT(*ANY3.ANY)");

@@ -1028,12 +1028,27 @@ export function migrateLegacyParams(params) {
   // One kind is a root; several cannot be, so the root goes wild and the kinds become a filter
   // on it — which is what the old node-type facet meant anyway.
   const query = { kind: kinds.length === 1 ? kinds[0] : "ANY" };
-  if (has("seed") && params.seedKind !== "combo") put(0, "id", [params.seed]);
+  // WHAT THE SEED NAMES depends on seedKind, and getting that wrong is silent.
+  //
+  // A bare `?seed=` — and `seedKind=asset`, which every caller in this app writes — names ONE
+  // node by id. `seedKind=domain` does not: it names a business domain, and every resource that
+  // domain owns is a start. Read as an id it resolved to `where 0.id.CROSS`, a filter matching
+  // nothing at all, so a link written against the shape `graphApiParams.ts` documents opened an
+  // empty canvas rather than an error. It is a `where` on the domain field instead, which is
+  // what the builder would have written by hand and arrives as an editable chip.
+  //
+  // `combo` is in this table as a statement that it is NOT handled here, not as a no-op: it
+  // reaches the page as `find=ANY` with nothing narrowing it. See the note below.
+  const SEED_FIELD = { domain: "domain" };
+  const seedKind = typeof params.seedKind === "string" ? params.seedKind : "";
+  const seedField = SEED_FIELD[seedKind] ?? (seedKind === "combo" ? null : "id");
+  if (has("seed") && seedField) put(0, seedField, [params.seed]);
   if (kinds.length > 1) put(0, "kind", kinds);
 
   // A seed meant "show me around this asset", which is a hop step now. Without a seed the old
-  // page listed a whole population, and depth had nothing to walk from.
-  if (has("seed") && params.seedKind !== "combo") {
+  // page listed a whole population, and depth had nothing to walk from. A domain seed means the
+  // same thing of several assets at once, so it walks too.
+  if (has("seed") && seedField) {
     const depth = Math.min(3, Math.max(1, Number(params.depth) || 2));
     query.steps = [{ edge: "ANY", hops: depth, optional: true, node: { kind: "ANY" } }];
   }
