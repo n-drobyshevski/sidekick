@@ -4,6 +4,9 @@
 // The DSL lives only here — the parsed tree is what goes over the wire — so this file is the
 // only thing standing between a shared link and the query it was supposed to carry.
 
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   addStep,
@@ -382,6 +385,29 @@ describe("migrateLegacyParams", () => {
     expect(out.where).toBe("0.domain.CROSS");
     // And it still walks: a domain seed means "show me around these" for several assets at once.
     expect(out.find).toBe("ANY(*ANY2.ANY)");
+  });
+
+  it("reads a combo seed as a combination pattern, not as an id", () => {
+    // The combo register's "Open in graph" button (combos.js) sends `group.id` with
+    // `seedKind: "combo"`. This case was not mistranslated, it was EXCLUDED — two guards dropped
+    // both the filter and the hop step — so the button returned `find=ANY` with nothing
+    // narrowing it and opened the whole landscape. Worse than the empty canvas the domain seed
+    // used to give, because a full graph looks like a working page.
+    //
+    // Same id `test/graphApiParams.test.ts` pins the server's own resolution against, so the
+    // two halves of this link are visibly about one thing.
+    const out = migrateLegacyParams({ seed: "gcp-hosted-privileged", seedKind: "combo" });
+    expect(out.where).toBe("0.comboGroup.gcp-hosted-privileged");
+    expect(out.find).toBe("ANY(*ANY2.ANY)");
+  });
+
+  it("reads the Other AI risk bucket like any other pattern", () => {
+    // The register draws five cards, not four: comboSummary iterates REGISTER_GROUPS, which
+    // appends OTHER_AI_RISK. Its id is a real value in `node.comboGroups` — syncNormalize stamps
+    // it on every issue whose rule matches no pattern — so its card's button must seed like the
+    // rest rather than into nothing.
+    const out = migrateLegacyParams({ seed: "other-ai-risk", seedKind: "combo" });
+    expect(out.where).toBe("0.comboGroup.other-ai-risk");
   });
 
   it("percent-encodes a domain whose name has a space", () => {
@@ -811,5 +837,45 @@ describe("parseWhere is unbreakable by a mangled link", () => {
     expect([...parsed.keys()].sort()).toEqual([0, 1]);
     expect(parsed.get(0).get("cloud")).toEqual({ values: ["GCP"], op: "eq" });
     expect(parsed.get(0).get("name")).toBeUndefined();
+  });
+});
+
+// ANTI-ROT. A seed kind lives in two places that never meet: the page that WRITES the link, and
+// `migrateLegacyParams`, which is the only thing that reads it before `renderGraphPage` deletes
+// the param. Nothing relates the two, and the failure is silent in the worst possible direction —
+// a kind the migration does not know contributes no filter at all, so the link opens the WHOLE
+// LANDSCAPE. That is what `seedKind=combo` did from the root commit until it was fixed: the combo
+// register's button worked, drew a graph, and answered a different question than it was asked.
+//
+// An empty `where` is the exact signature, so that is what this asserts. It cannot check that the
+// filter is the RIGHT one — the cases above do that, by name — but it makes a new caller
+// inventing a seed kind fail here rather than on someone's screen.
+describe("every seed kind a page writes means something to the migration", () => {
+  const CLIENT = join(dirname(fileURLToPath(import.meta.url)), "../src/client/js/pages");
+
+  /** The `seedKind: "…"` literals any page navigates with. Read as source: these files are
+   *  DOM-shaped and there is no jsdom, the same reason test/graphLayout.test.ts reads graph.js. */
+  function writtenSeedKinds() {
+    const found = new Set();
+    for (const file of readdirSync(CLIENT).filter((f) => f.endsWith(".js"))) {
+      const src = readFileSync(join(CLIENT, file), "utf8");
+      // Only where it rides a navigate() call — graphQuery.js's own prose mentions the param.
+      for (const [, kind] of src.matchAll(/navigate\([^)]*seedKind:\s*"([^"]+)"/g)) found.add(kind);
+    }
+    return [...found].sort();
+  }
+
+  it("finds the callers at all, so this cannot pass by reading nothing", () => {
+    // Without this the whole suite degrades to a no-op the day the navigate call is reshaped.
+    expect(writtenSeedKinds().length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("translates each one into a filter, never into the whole landscape", () => {
+    for (const kind of writtenSeedKinds()) {
+      const out = migrateLegacyParams({ seed: "some-seed-value", seedKind: kind });
+      expect(out, `seedKind=${kind} produced no migration`).toBeTruthy();
+      expect(out.where, `seedKind=${kind} narrows nothing — the link opens everything`)
+        .not.toBe("");
+    }
   });
 });
