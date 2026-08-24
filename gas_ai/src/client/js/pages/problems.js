@@ -418,6 +418,9 @@ export async function renderProblems(main, params) {
       },
       { key: "title", label: "Rule", cell: (r) => r.title },
       { key: "asset", label: "Asset", cell: (r) => r.assetName },
+      // Null for an unlinked finding, for the same reason its asset id is — there is no
+      // node to read a tag from. Same em dash every other absent cell uses.
+      { key: "domain", label: "Domain", cell: (r) => r.domain || "—" },
       { key: "severity", label: "Severity", help: { term: "adjusted-severity" },
         cell: (r) => sevBadge(r.severity) },
       { key: "due", label: "Due", cell: (r) => dueChip(r.dueAt) || "—" },
@@ -625,6 +628,14 @@ export async function renderProblems(main, params) {
             ? sevSegmentBar(entries, { size: "xs", label: sevSpoken(entries) })
             : el("span", { class: "muted small" }, "—");
         },
+      },
+      {
+        // Whose problems this one action collapses. An action spanning three domains is
+        // a coordination cost the "N collapse to M" headline hides.
+        key: "domains", label: "Domain", sortable: false,
+        cell: (r) => ((r.domains || []).length
+          ? el("span", {}, r.domains.join(", "))
+          : el("span", { class: "muted small" }, "—")),
       },
       {
         key: "impact", label: "Business impact", sortable: false,

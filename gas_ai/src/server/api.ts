@@ -2152,6 +2152,8 @@ function publicProblemRow(r: ProblemRow): Rec {
     title: r.title,
     assetId: r.assetId,
     assetName: r.assetName,
+    // An explicit allow-list, so a field not named here never reaches the page.
+    domain: r.domain,
     severity: r.severity,
     dueAt: r.dueAt,
     firstSeenAt: r.firstSeenAt ?? null,
@@ -2212,9 +2214,14 @@ export function getProblems(p?: unknown): ApiResult {
       };
     }
 
-    const filtered = validSeverity
+    // Server-side only, mirroring the severity filter above: under PROBLEMS_CLIENT_ALL_MAX
+    // the browser holds every row and filters locally, so this branch is the large-tenant
+    // path and the two must agree on what a filter means.
+    const domain = String(params["domain"] ?? "");
+    let filtered = validSeverity
       ? model.rows.filter((r) => String(r.severity ?? "") === validSeverity)
       : model.rows;
+    if (domain) filtered = filtered.filter((r) => (r.domain ?? "") === domain);
     const paged = pageOf(filtered as unknown as Rec[], page, pageSize);
     return {
       ...head,

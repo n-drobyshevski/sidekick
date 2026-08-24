@@ -28,6 +28,7 @@ function row(over: Partial<ProblemRow> = {}): ProblemRow {
     title: "Rule",
     assetId: "asset-1",
     assetName: "Asset",
+    domain: null,
     problemOutcome: "TRACK",
     vector: null,
     unknowns: [],
@@ -257,13 +258,13 @@ describe("withAutoRemediation — the dual-key join", () => {
   it("matches by ruleId first, then ruleShortId, mirroring complianceScope.ts's own join", () => {
     const actions: ActionRow[] = [
       { key: "k1", kind: "ISSUE", ruleId: "policy-1", title: "t", problems: 1, assets: 1,
-        worstSeverity: "CRITICAL", severityMix: {}, businessImpacts: [],
+        worstSeverity: "CRITICAL", severityMix: {}, businessImpacts: [], domains: [],
         autoRemediable: false, iac: 0, ignored: 0 },
       { key: "k2", kind: "FINDING", ruleShortId: "SUB-999", title: "t", problems: 1, assets: 1,
-        worstSeverity: "CRITICAL", severityMix: {}, businessImpacts: [],
+        worstSeverity: "CRITICAL", severityMix: {}, businessImpacts: [], domains: [],
         autoRemediable: false, iac: 0, ignored: 0 },
       { key: "k3", kind: "FINDING", ruleShortId: "SUB-000", title: "t", problems: 1, assets: 1,
-        worstSeverity: "CRITICAL", severityMix: {}, businessImpacts: [],
+        worstSeverity: "CRITICAL", severityMix: {}, businessImpacts: [], domains: [],
         autoRemediable: false, iac: 0, ignored: 0 },
     ];
     const policies = [

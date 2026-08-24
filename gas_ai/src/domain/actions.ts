@@ -82,6 +82,16 @@ export interface ActionRow {
   severityMix: Record<string, number>;
   /** Distinct, so an analyst sees at a glance whether HBI is anywhere in this action's blast. */
   businessImpacts: string[];
+  /**
+   * The business domains this one action would touch, distinct and sorted.
+   *
+   * The page's headline is that N problems collapse to M actions; this says whose problems
+   * they are. One action spanning three domains is a coordination cost the count alone
+   * hides, and one confined to a single domain is a fix that needs exactly one owner —
+   * the same question `businessImpacts` answers for blast radius, asked about ownership.
+   * Rows with no domain contribute nothing, so an all-unlinked action lists none.
+   */
+  domains: string[];
   /** `hasAutoRemediation` where known — false until `withAutoRemediation` below joins it in. */
   autoRemediable: boolean;
   /** Problems with an IaC origin — a shift-left fix exists for this many of them. */
@@ -178,6 +188,7 @@ function buildActionRow(key: ActionKey, rows: ProblemRow[]): ActionRow {
   const assetIds = new Set<string>();
   const severityMix: Record<string, number> = {};
   const businessImpacts = new Set<string>();
+  const domains = new Set<string>();
   let worstRank: number = SEVERITY_ORDER.length;
   let worstSeverity = NO_SEVERITY;
   let iac = 0;
@@ -190,6 +201,7 @@ function buildActionRow(key: ActionKey, rows: ProblemRow[]): ActionRow {
     if (row.assetId) assetIds.add(row.assetId);
     if (row.severity) severityMix[row.severity] = (severityMix[row.severity] ?? 0) + 1;
     if (row.businessImpact) businessImpacts.add(row.businessImpact);
+    if (row.domain) domains.add(row.domain);
     const rank = severityRank(String(row.severity ?? ""));
     // Strict `<`, not `<=`: the FIRST row (by id) to reach a given worst rank keeps it,
     // matching the same "first non-empty wins, deterministically" rule `title` and
@@ -221,6 +233,7 @@ function buildActionRow(key: ActionKey, rows: ProblemRow[]): ActionRow {
     worstSeverity,
     severityMix,
     businessImpacts: [...businessImpacts].sort(),
+    domains: [...domains].sort(),
     autoRemediable: false,
     iac,
     ignored,

@@ -7959,7 +7959,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "30ea76068745" : "dev";
+  var BUILD_ID = true ? "d88febef3a54" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -11899,20 +11899,21 @@ var Server = (() => {
   // src/domain/problems.ts
   var PROBLEMS_CLIENT_ALL_MAX = 1e3;
   function issueToProblemRow(issue2, node2) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
     return {
       id: issue2.id,
       kind: "ISSUE",
       title: issue2.ruleName,
       assetId: issue2.assetId || null,
       assetName: issue2.assetName,
-      problemOutcome: (_a5 = issue2.problemOutcome) != null ? _a5 : "",
-      vector: (_c = (_b = issue2.problemInput) == null ? void 0 : _b.vector) != null ? _c : null,
-      unknowns: (_e = (_d = issue2.problemInput) == null ? void 0 : _d.unknowns) != null ? _e : [],
-      dueAt: (_f = issue2.dueAt) != null ? _f : null,
-      postureTier: (_g = node2 == null ? void 0 : node2.postureTier) != null ? _g : null,
+      domain: (_a5 = node2 == null ? void 0 : node2.domain) != null ? _a5 : null,
+      problemOutcome: (_b = issue2.problemOutcome) != null ? _b : "",
+      vector: (_d = (_c = issue2.problemInput) == null ? void 0 : _c.vector) != null ? _d : null,
+      unknowns: (_f = (_e = issue2.problemInput) == null ? void 0 : _e.unknowns) != null ? _f : [],
+      dueAt: (_g = issue2.dueAt) != null ? _g : null,
+      postureTier: (_h = node2 == null ? void 0 : node2.postureTier) != null ? _h : null,
       amplification: nodeAmplificationVector(node2),
-      severity: (_h = issue2.adjustedSeverity) != null ? _h : null,
+      severity: (_i = issue2.adjustedSeverity) != null ? _i : null,
       ruleId: issue2.ruleId || void 0,
       businessImpact: issue2.businessImpact,
       // No IaC link and no ignore-rule list on an issue — see this field's own doc comment.
@@ -11923,27 +11924,28 @@ var Server = (() => {
     };
   }
   function findingToProblemRow(finding, node2) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     return {
       id: finding.id,
       kind: "FINDING",
       title: finding.ruleName || finding.ruleShortId || "",
       assetId: node2 ? node2.id : null,
       assetName: node2 ? node2.name : finding.resourceName || finding.resourceId,
-      problemOutcome: (_a5 = finding.problemOutcome) != null ? _a5 : "",
-      vector: (_c = (_b = finding.problemInput) == null ? void 0 : _b.vector) != null ? _c : null,
-      unknowns: (_e = (_d = finding.problemInput) == null ? void 0 : _d.unknowns) != null ? _e : [],
+      domain: (_a5 = node2 == null ? void 0 : node2.domain) != null ? _a5 : null,
+      problemOutcome: (_b = finding.problemOutcome) != null ? _b : "",
+      vector: (_d = (_c = finding.problemInput) == null ? void 0 : _c.vector) != null ? _d : null,
+      unknowns: (_f = (_e = finding.problemInput) == null ? void 0 : _e.unknowns) != null ? _f : [],
       // FindingRow carries no SLA deadline — Wiz's config-finding evaluations have no dueAt
       // field, only issuesV2 does. Null, never a made-up date.
       dueAt: null,
-      postureTier: (_f = node2 == null ? void 0 : node2.postureTier) != null ? _f : null,
+      postureTier: (_g = node2 == null ? void 0 : node2.postureTier) != null ? _g : null,
       amplification: nodeAmplificationVector(node2),
-      severity: (_g = finding.severity) != null ? _g : null,
+      severity: (_h = finding.severity) != null ? _h : null,
       ruleId: finding.ruleId,
       ruleShortId: finding.ruleShortId || void 0,
       businessImpact: finding.businessImpact,
-      iac: ((_h = finding.iacFindingIds) != null ? _h : []).length > 0,
-      ignored: ((_i = finding.ignoreRuleIds) != null ? _i : []).length > 0,
+      iac: ((_i = finding.iacFindingIds) != null ? _i : []).length > 0,
+      ignored: ((_j = finding.ignoreRuleIds) != null ? _j : []).length > 0,
       firstSeenAt: finding.firstSeenAt,
       ruleRemediation: finding.remediationInstructions
     };
@@ -12030,6 +12032,7 @@ var Server = (() => {
     const assetIds = /* @__PURE__ */ new Set();
     const severityMix = {};
     const businessImpacts = /* @__PURE__ */ new Set();
+    const domains = /* @__PURE__ */ new Set();
     let worstRank = SEVERITY_ORDER.length;
     let worstSeverity2 = NO_SEVERITY;
     let iac = 0;
@@ -12041,6 +12044,7 @@ var Server = (() => {
       if (row.assetId) assetIds.add(row.assetId);
       if (row.severity) severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
       if (row.businessImpact) businessImpacts.add(row.businessImpact);
+      if (row.domain) domains.add(row.domain);
       const rank = severityRank5(String((_b = row.severity) != null ? _b : ""));
       if (rank < worstRank) {
         worstRank = rank;
@@ -12065,6 +12069,7 @@ var Server = (() => {
       worstSeverity: worstSeverity2,
       severityMix,
       businessImpacts: [...businessImpacts].sort(),
+      domains: [...domains].sort(),
       autoRemediable: false,
       iac,
       ignored,
@@ -16399,6 +16404,8 @@ var Server = (() => {
       title: r.title,
       assetId: r.assetId,
       assetName: r.assetName,
+      // An explicit allow-list, so a field not named here never reaches the page.
+      domain: r.domain,
       severity: r.severity,
       dueAt: r.dueAt,
       firstSeenAt: (_a5 = r.firstSeenAt) != null ? _a5 : null,
@@ -16412,7 +16419,7 @@ var Server = (() => {
   }
   function getProblems(p) {
     return run(() => {
-      var _a5;
+      var _a5, _b;
       const params = p != null ? p : {};
       const severity = String((_a5 = params["severity"]) != null ? _a5 : "").toUpperCase();
       const validSeverity = SEVERITY_ORDER.includes(severity) ? severity : "";
@@ -16439,10 +16446,15 @@ var Server = (() => {
           pageCount: Math.max(1, Math.ceil(model.rows.length / pageSize))
         };
       }
-      const filtered = validSeverity ? model.rows.filter((r) => {
+      const domain = String((_b = params["domain"]) != null ? _b : "");
+      let filtered = validSeverity ? model.rows.filter((r) => {
         var _a6;
         return String((_a6 = r.severity) != null ? _a6 : "") === validSeverity;
       }) : model.rows;
+      if (domain) filtered = filtered.filter((r) => {
+        var _a6;
+        return ((_a6 = r.domain) != null ? _a6 : "") === domain;
+      });
       const paged = pageOf(filtered, page, pageSize);
       return {
         ...head,
