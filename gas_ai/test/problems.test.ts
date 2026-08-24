@@ -22,6 +22,7 @@ function row(over: Partial<ProblemRow> = {}): ProblemRow {
     title: "Rule",
     assetId: "asset-1",
     assetName: "Asset",
+    domain: null,
     problemOutcome: "TRACK",
     vector: null,
     unknowns: [],

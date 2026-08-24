@@ -43,6 +43,29 @@ var Server = (() => {
     return HtmlService.createHtmlOutputFromFile(filename).getContent();
   }
 
+  // src/domain/domainTag.ts
+  var DEFAULT_DOMAIN_TAG_KEY = "Wiz/Domain";
+  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
+    var _a5;
+    const want = key.trim().toLowerCase();
+    if (!want || !tags) return null;
+    for (const t of tags) {
+      if (!t || String(t.key).trim().toLowerCase() !== want) continue;
+      const value = String((_a5 = t.value) != null ? _a5 : "").trim();
+      if (value) return value;
+    }
+    return null;
+  }
+  function resolveDomainTagKey(configured) {
+    const k = (configured != null ? configured : "").trim();
+    return k || DEFAULT_DOMAIN_TAG_KEY;
+  }
+  function domainCoverage(nodes, key) {
+    let tagged = 0;
+    for (const n of nodes) if (n.domain) tagged += 1;
+    return { key, tagged, total: nodes.length };
+  }
+
   // src/server/props.ts
   var PROP_KEYS = {
     wizApiToken: "WIZ_API_TOKEN",
@@ -60,7 +83,12 @@ var Server = (() => {
     // Deliberately a different key from the override above: one is an instruction and the
     // other is a memo, and conflating them would let a cached answer masquerade as a
     // configured one (and survive the operator clearing the override).
-    wizAiResourceTypesResolved: "WIZ_AI_RESOURCE_TYPES_RESOLVED"
+    wizAiResourceTypesResolved: "WIZ_AI_RESOURCE_TYPES_RESOLVED",
+    // Optional override of the resource tag key naming the owning business domain.
+    // Defaults to `Wiz/Domain` (domain/domainTag.ts) and is matched case-insensitively, so
+    // this only needs setting by a tenant that spells the key differently rather than
+    // merely differently-cased. Mirrors WIZ_SUPPORT_GROUP_TAG_KEY in the OS-vulns tool.
+    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY"
   };
   var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
   function getProp(key) {
@@ -82,6 +110,9 @@ var Server = (() => {
   function projectScope() {
     const id = getProp(PROP_KEYS.wizProjectIdV2);
     return id && id.trim() ? [id.trim()] : null;
+  }
+  function domainTagKey() {
+    return resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey));
   }
   function resolveWizAuthMode(token, clientId, clientSecret) {
     if (token && token.trim()) return "token";
@@ -1117,6 +1148,42 @@ var Server = (() => {
     const nested = entity["properties"];
     return nested && typeof nested === "object" ? nested : null;
   }
+  function tagPairs(value) {
+    var _a5, _b;
+    if (!value || typeof value !== "object") return void 0;
+    const out = [];
+    if (Array.isArray(value)) {
+      for (const t of value) {
+        if (!t || typeof t !== "object") continue;
+        const key = String((_a5 = t["key"]) != null ? _a5 : "").trim();
+        if (key) out.push({ key, value: String((_b = t["value"]) != null ? _b : "") });
+      }
+    } else {
+      for (const [k, v] of Object.entries(value)) {
+        const key = k.trim();
+        if (key && (v === null || typeof v !== "object")) {
+          out.push({ key, value: v === null || v === void 0 ? "" : String(v) });
+        }
+      }
+    }
+    return out.length ? out : void 0;
+  }
+  function entityTags(raw) {
+    var _a5;
+    if (!raw || typeof raw !== "object") return void 0;
+    const flat = tagPairs(raw["tags"]);
+    const bag = tagPairs((_a5 = propertyBag(raw)) == null ? void 0 : _a5["tags"]);
+    if (!flat) return bag;
+    if (!bag) return flat;
+    const merged = [...flat];
+    const at = new Map(merged.map((t, i) => [t.key, i]));
+    for (const t of bag) {
+      const i = at.get(t.key);
+      if (i === void 0) merged.push(t);
+      else merged[i] = t;
+    }
+    return merged;
+  }
   var EDGE_TYPES = [
     "HAS_ISSUE",
     // asset → ISSUE
@@ -1618,7 +1685,7 @@ var Server = (() => {
     return v === true ? true : v === false ? false : null;
   }
   function toExpandedNode(raw) {
-    var _a5;
+    var _a5, _b;
     const id = str2(raw["id"]);
     if (!id) return null;
     const rawType = str2(raw["type"]);
@@ -1653,7 +1720,15 @@ var Server = (() => {
       sensitiveData: isTrue("hasSensitiveData"),
       sensitiveAccess: isTrue("hasAccessToSensitiveData"),
       highPriv: isTrue("hasHighPrivileges"),
-      adminPriv: isTrue("hasAdminPrivileges")
+      adminPriv: isTrue("hasAdminPrivileges"),
+      // This path used to project no tags at all, so a node reached by clicking Connections
+      // arrived without the one attribution fact the rest of the app now reads. entityTags
+      // rather than entityField for the reason its own header gives: the flat field can be an
+      // explicit null while the bag holds the pair.
+      //
+      // Tags, not a resolved domain: this module is pure and the tag key is a Script
+      // Property. `expandAsset` folds the domain on, where every other property read happens.
+      tags: (_b = entityTags(raw)) != null ? _b : []
     };
   }
   function decodeExpansion(slots, rows) {
@@ -2694,15 +2769,8 @@ var Server = (() => {
     }
     const projects = raw["projects"];
     if (Array.isArray(projects)) node2.projects = projectsOf(projects);
-    const tags = raw["tags"];
-    if (Array.isArray(tags)) {
-      node2.tags = tags.map((t) => {
-        var _a6;
-        const rec4 = t;
-        const key = str3(rec4["key"]);
-        return key ? { key, value: (_a6 = str3(rec4["value"])) != null ? _a6 : "" } : null;
-      }).filter((t) => t !== null);
-    }
+    const tags = entityTags(raw);
+    if (tags) node2.tags = tags;
     return node2;
   }
   function emptyPart() {
@@ -4998,6 +5066,13 @@ var Server = (() => {
       return { ...n, openIssues: (_a6 = issueCount[n.id]) != null ? _a6 : 0, openFindings: (_b2 = findingCount[n.id]) != null ? _b2 : 0 };
     });
   }
+  function withDomains(nodes, tagKey) {
+    return nodes.map((n) => {
+      if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
+      const domain = domainOfTags(n.tags, tagKey);
+      return domain ? { ...n, domain } : n;
+    });
+  }
 
   // src/domain/identityHygiene.ts
   var HYGIENE_SUBJECT = "USER_ACCOUNT";
@@ -5445,6 +5520,15 @@ var Server = (() => {
       // The cloud tags. Only some seeds carry them, and the ones that do carry DIFFERENT sets —
       // a dry run has to be able to tell "contains any" from "contains all", and it cannot if
       // every node is tagged the same way or none is tagged at all.
+      //
+      // `Wiz/Domain` follows the same discipline for the same reason, plus two of its own.
+      // FOUR values across the seeds, because one would make every grouped picture a single
+      // box and every facet a single option. And SOME SEEDS DELIBERATELY UNTAGGED, because
+      // that is what makes "Ungrouped", the em-dash cell and the coverage figure reachable at
+      // all — with every seed tagged, "N of M carry the tag" always reads M of M and nothing
+      // proves it works. bucket-customer-pii is owned by SAP while agent-a, which reads it, is
+      // CROSS: grouping by domain has to visibly cut across an attack path or the dimension
+      // is just a second spelling of the project.
       tags: seed.tags,
       region: seed.region,
       status: (_a5 = seed.status) != null ? _a5 : "Active",
@@ -5524,7 +5608,7 @@ var Server = (() => {
       id: "agent-a",
       name: "Agent-A",
       region: "europe-west1",
-      tags: [{ key: "env", value: "prod" }, { key: "team", value: "ml" }, { key: "owner", value: "platform" }],
+      tags: [{ key: "env", value: "prod" }, { key: "team", value: "ml" }, { key: "owner", value: "platform" }, { key: "Wiz/Domain", value: "CROSS" }],
       account: { id: "gcp-account-01", name: "gcp-account-01" },
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
@@ -5541,7 +5625,7 @@ var Server = (() => {
       id: "agent-b",
       name: "Agent-B",
       region: "us-west1",
-      tags: [{ key: "env", value: "prod" }, { key: "team", value: "search" }],
+      tags: [{ key: "env", value: "prod" }, { key: "team", value: "search" }, { key: "Wiz/Domain", value: "SAP" }],
       account: { id: "gcp-account-01", name: "gcp-account-01" },
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
@@ -5579,7 +5663,10 @@ var Server = (() => {
       id: "agent-d",
       name: "dev-agent-D",
       region: "europe-west3",
-      tags: [{ key: "env", value: "staging" }, { key: "team", value: "ml" }],
+      // Lowercase key on purpose: the captures say `Wiz/Domain`, everyone writing about it
+      // says `Wiz/domain`, and the fold is case-insensitive. One seed spelling it the other
+      // way makes that a demonstrated behaviour in the dry run rather than a claimed one.
+      tags: [{ key: "env", value: "staging" }, { key: "team", value: "ml" }, { key: "wiz/domain", value: "VALUE-CHAIN" }],
       account: { id: "gcp-account-02", name: "gcp-account-02" },
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
@@ -5592,6 +5679,7 @@ var Server = (() => {
       id: "agent-e",
       name: "Agent-E",
       region: "us-west1",
+      tags: [{ key: "Wiz/Domain", value: "CROSS" }],
       account: { id: "gcp-account-03", name: "gcp-account-03" },
       projects: ["PROJECT-ALPHA", "PROJECT-GAMMA"],
       internet: true,
@@ -5607,6 +5695,7 @@ var Server = (() => {
       id: "agent-f",
       name: "agent-F",
       region: "europe-west4",
+      tags: [{ key: "Wiz/Domain", value: "SAP" }],
       projects: ["PROJECT-ALPHA"],
       sensitiveAccess: true,
       highPriv: true,
@@ -5629,6 +5718,7 @@ var Server = (() => {
       id: "agent-g",
       name: "Agent-G",
       region: "europe-west4",
+      tags: [{ key: "Wiz/Domain", value: "SAP" }],
       projects: ["PROJECT-ALPHA", "PROJECT-ETA"],
       sensitiveAccess: true,
       highPriv: true,
@@ -5640,6 +5730,7 @@ var Server = (() => {
       id: "agent-h-chatbot",
       name: "agent-H-chatbot",
       region: "europe-west1",
+      tags: [{ key: "Wiz/Domain", value: "VALUE-CHAIN" }],
       nativeType: GCP_HOSTED,
       account: { id: "gcp-account-05", name: "gcp-account-05" },
       projects: ["PROJECT-ALPHA", "PROJECT-DELTA", "PROJECT-EPSILON"],
@@ -5656,6 +5747,7 @@ var Server = (() => {
       id: "agent-i",
       name: "agent-I",
       region: "europe-west4",
+      tags: [{ key: "Wiz/Domain", value: "EXAMPLE DOMAIN" }],
       nativeType: GCP_HOSTED,
       status: "Inactive",
       account: { id: "gcp-account-04", name: "gcp-account-04" },
@@ -5673,6 +5765,7 @@ var Server = (() => {
       id: "agent-j",
       name: "agent-J",
       region: "europe-west1",
+      tags: [{ key: "Wiz/Domain", value: "CROSS" }],
       account: { id: "gcp-account-07", name: "gcp-account-07" },
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: false,
@@ -5697,6 +5790,7 @@ var Server = (() => {
       id: "agent-l-support",
       name: "Agent-L-support",
       region: "europe-west1",
+      tags: [{ key: "Wiz/Domain", value: "VALUE-CHAIN" }],
       account: { id: "gcp-account-03", name: "gcp-account-03" },
       projects: ["PROJECT-ALPHA"],
       businessImpact: "LBI"
@@ -5750,16 +5844,16 @@ var Server = (() => {
     { id: "pipeline-training-01", kind: "AI_PIPELINE", name: "pipeline-training-01", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
     { id: "dataset-support-transcripts", kind: "AI_DATASET", name: "dataset-support-transcripts", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], businessImpact: "HBI" },
     // Data resources
-    { id: "bucket-customer-pii", kind: "BUCKET", name: "bucket-customer-pii", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
-    { id: "bucket-finance-reports", kind: "BUCKET", name: "bucket-finance-reports", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-BETA"] },
+    { id: "bucket-customer-pii", kind: "BUCKET", name: "bucket-customer-pii", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], tags: [{ key: "Wiz/Domain", value: "SAP" }] },
+    { id: "bucket-finance-reports", kind: "BUCKET", name: "bucket-finance-reports", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-BETA"], tags: [{ key: "Wiz/Domain", value: "VALUE-CHAIN" }] },
     { id: "bucket-partner-data", kind: "BUCKET", name: "bucket-partner-data", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ETA"] },
     { id: "bucket-pricing-models", kind: "BUCKET", name: "bucket-pricing-models", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
     { id: "bucket-training-data", kind: "BUCKET", name: "bucket-training-data", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
-    { id: "db-customer-core", kind: "DATABASE", name: "db-customer-core", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
+    { id: "db-customer-core", kind: "DATABASE", name: "db-customer-core", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], tags: [{ key: "Wiz/Domain", value: "SAP" }] },
     { id: "db-analytics", kind: "DATABASE", name: "db-analytics", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-DELTA"] },
     // Compute / supply chain for the hosted agents
-    { id: "vm-agent-i-host", kind: "VIRTUAL_MACHINE", name: "vm-agent-i-host", cloud: "GCP", region: "europe-west4", internet: false, projects: ["PROJECT-ZETA"] },
-    { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, openInternet: true, projects: ["PROJECT-DELTA"], exposureEvidence: { ports: ["443", "80"], sourceIpRanges: ["0.0.0.0/0"] } },
+    { id: "vm-agent-i-host", kind: "VIRTUAL_MACHINE", name: "vm-agent-i-host", cloud: "GCP", region: "europe-west4", internet: false, projects: ["PROJECT-ZETA"], tags: [{ key: "Wiz/Domain", value: "EXAMPLE DOMAIN" }] },
+    { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, openInternet: true, projects: ["PROJECT-DELTA"], exposureEvidence: { ports: ["443", "80"], sourceIpRanges: ["0.0.0.0/0"] }, tags: [{ key: "Wiz/Domain", value: "VALUE-CHAIN" }] },
     // Network exposure, seeded to put BOTH grades of evidence on one screen and to make them
     // visibly disagree — which is the whole reason the two queries are two steps.
     //
@@ -7873,7 +7967,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "554c90c76086" : "dev";
+  var BUILD_ID = true ? "f8e081aa8328" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -7906,6 +8000,9 @@ var Server = (() => {
   function cacheKey(name, params, version) {
     const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
     return `${KEY_PREFIX}:${version}:${name}:${paramsHash}`;
+  }
+  function configStamp() {
+    return sha1Hex(domainTagKey()).slice(0, 8);
   }
   function splitChunks(s, size = CHUNK_CHARS) {
     const out = [];
@@ -7947,7 +8044,7 @@ var Server = (() => {
   function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
     let key = null;
     try {
-      key = cacheKey(name, params, version != null ? version : dataVersion());
+      key = cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`);
       const hit = cacheGetJson(key);
       if (hit !== void 0) return hit;
     } catch (e) {
@@ -9671,7 +9768,10 @@ var Server = (() => {
     return withCurrentBands(nodes, currentBands());
   }
   function withReadDerivations(nodes) {
-    return withOpenCounts(withAarsReadDerivations(nodes), loadIssues(), loadFindings());
+    return withDomains(
+      withOpenCounts(withAarsReadDerivations(nodes), loadIssues(), loadFindings()),
+      domainTagKey()
+    );
   }
   function withBandsApplied(doc) {
     const nodes = withReadDerivations(doc.nodes);
@@ -9722,10 +9822,13 @@ var Server = (() => {
     const raw = loadAssetsRaw();
     const bands = currentBands();
     const bandKey = `${bands.critical}|${bands.high}|${bands.medium}|${bands.low}`;
+    const domainKey = domainTagKey();
     const memo = derivedAssetsMemo;
-    if (memo && memo.raw === raw && memo.bandKey === bandKey) return memo.out;
+    if (memo && memo.raw === raw && memo.bandKey === bandKey && memo.domainKey === domainKey) {
+      return memo.out;
+    }
     const out = withReadDerivations(raw);
-    derivedAssetsMemo = { raw, bandKey, out };
+    derivedAssetsMemo = { raw, bandKey, domainKey, out };
     return out;
   }
   function loadEdges() {
@@ -10177,12 +10280,19 @@ var Server = (() => {
         optional: true,
         pageSize: PAGE_SIZE_TRAVERSAL
       },
-      // AI-asset provenance: publisher + how Wiz discovered it. Optional and separate from
-      // INVENTORY_AI on purpose — see the note on Q_AI_PROPERTIES. Losing it costs two columns.
+      // AI-asset provenance: publisher, how Wiz discovered it, and the properties bag's TAGS.
+      // Optional and separate from INVENTORY_AI on purpose — see the note on Q_AI_PROPERTIES.
+      //
+      // Losing it no longer costs only two columns. `Wiz/Domain` appears in no capture's flat
+      // `tags { key value }` array — only in the properties bag — so for an AI ASSET this step
+      // is the sole route by which a domain arrives. A tenant that rejects `graphEntity` on
+      // this root gets domains on its substrate (the traversals read their own bags) and none
+      // on its agents, which is why getAssets publishes `domainCoverage` rather than letting an
+      // empty Domain facet read as "nobody tagged anything".
       {
         id: "AI_ASSET_PROPERTIES",
         area: "aispm",
-        writes: ["ai_assets.publisher", "ai_assets.discovery_methods"],
+        writes: ["ai_assets.publisher", "ai_assets.discovery_methods", "ai_assets.tags_json"],
         run: "cloudResources",
         query: Q_AI_PROPERTIES,
         extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types, projectScope())),
@@ -11620,7 +11730,8 @@ var Server = (() => {
     "cloud",
     "region",
     "severity",
-    "combos"
+    "combos",
+    "domain"
   ];
   var DEFAULT_SORT_DIR = {
     issues: "desc",
@@ -11630,7 +11741,8 @@ var Server = (() => {
     name: "asc",
     kind: "asc",
     cloud: "asc",
-    region: "asc"
+    region: "asc",
+    domain: "asc"
   };
   var DEFAULT_PAGE_SIZE = 50;
   var MAX_PAGE_SIZE = 500;
@@ -11641,6 +11753,7 @@ var Server = (() => {
     "clouds",
     "regions",
     "projects",
+    "domains",
     "flags"
   ];
   var ASSET_FLAGS = ["combo", "guardrail", "agentic", "datafindings"];
@@ -11687,6 +11800,7 @@ var Server = (() => {
       clouds: listWithLegacy(params["clouds"], params["cloud"]),
       regions: listWithLegacy(params["regions"], params["region"]),
       projects: listWithLegacy(params["projects"], params["project"]),
+      domains: listWithLegacy(params["domains"], params["domain"]),
       flags: list(params["flags"]).map((v) => v.toLowerCase()).filter((v) => ASSET_FLAGS.indexOf(v) >= 0),
       sort: resolvedSort,
       dir: dir === "asc" || dir === "desc" ? dir : DEFAULT_SORT_DIR[resolvedSort],
@@ -11711,6 +11825,7 @@ var Server = (() => {
     if (q.clouds.length && q.clouds.indexOf(toStr(row["cloud"])) < 0) return false;
     if (q.regions.length && q.regions.indexOf(toStr(row["region"])) < 0) return false;
     if (q.severities.length && q.severities.indexOf(toStr(row["severity"])) < 0) return false;
+    if (q.domains.length && q.domains.indexOf(toStr(row["domain"])) < 0) return false;
     if (q.projects.length) {
       const mine = rowProjects(row);
       if (!q.projects.some((p) => mine.indexOf(p) >= 0)) return false;
@@ -11729,7 +11844,8 @@ var Server = (() => {
     severity: (a, b) => sevRank(a["severity"]) - sevRank(b["severity"]),
     combos: (a, b) => toNum(a["combos"]) - toNum(b["combos"]),
     issues: (a, b) => toNum(a["openIssues"]) - toNum(b["openIssues"]),
-    findings: (a, b) => toNum(a["openFindings"]) - toNum(b["openFindings"])
+    findings: (a, b) => toNum(a["openFindings"]) - toNum(b["openFindings"]),
+    domain: (a, b) => toStr(a["domain"]).localeCompare(toStr(b["domain"]))
   };
   var byRiskDesc = (a, b) => sevRank(b["severity"]) - sevRank(a["severity"]) || toNum(b["openIssues"]) - toNum(a["openIssues"]) || toNum(b["openFindings"]) - toNum(a["openFindings"]) || toStr(a["name"]).localeCompare(toStr(b["name"])) || toStr(a["id"]).localeCompare(toStr(b["id"]));
   function assetComparator(sort, dir) {
@@ -11752,6 +11868,7 @@ var Server = (() => {
     if (key === "regions") return [toStr(row["region"])].filter(Boolean);
     if (key === "severities") return [toStr(row["severity"])].filter(Boolean);
     if (key === "projects") return rowProjects(row);
+    if (key === "domains") return [toStr(row["domain"])].filter(Boolean);
     return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f));
   }
   function facetSorter(key) {
@@ -11797,20 +11914,21 @@ var Server = (() => {
   // src/domain/problems.ts
   var PROBLEMS_CLIENT_ALL_MAX = 1e3;
   function issueToProblemRow(issue2, node2) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
     return {
       id: issue2.id,
       kind: "ISSUE",
       title: issue2.ruleName,
       assetId: issue2.assetId || null,
       assetName: issue2.assetName,
-      problemOutcome: (_a5 = issue2.problemOutcome) != null ? _a5 : "",
-      vector: (_c = (_b = issue2.problemInput) == null ? void 0 : _b.vector) != null ? _c : null,
-      unknowns: (_e = (_d = issue2.problemInput) == null ? void 0 : _d.unknowns) != null ? _e : [],
-      dueAt: (_f = issue2.dueAt) != null ? _f : null,
-      postureTier: (_g = node2 == null ? void 0 : node2.postureTier) != null ? _g : null,
+      domain: (_a5 = node2 == null ? void 0 : node2.domain) != null ? _a5 : null,
+      problemOutcome: (_b = issue2.problemOutcome) != null ? _b : "",
+      vector: (_d = (_c = issue2.problemInput) == null ? void 0 : _c.vector) != null ? _d : null,
+      unknowns: (_f = (_e = issue2.problemInput) == null ? void 0 : _e.unknowns) != null ? _f : [],
+      dueAt: (_g = issue2.dueAt) != null ? _g : null,
+      postureTier: (_h = node2 == null ? void 0 : node2.postureTier) != null ? _h : null,
       amplification: nodeAmplificationVector(node2),
-      severity: (_h = issue2.adjustedSeverity) != null ? _h : null,
+      severity: (_i = issue2.adjustedSeverity) != null ? _i : null,
       ruleId: issue2.ruleId || void 0,
       businessImpact: issue2.businessImpact,
       // No IaC link and no ignore-rule list on an issue — see this field's own doc comment.
@@ -11821,27 +11939,28 @@ var Server = (() => {
     };
   }
   function findingToProblemRow(finding, node2) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     return {
       id: finding.id,
       kind: "FINDING",
       title: finding.ruleName || finding.ruleShortId || "",
       assetId: node2 ? node2.id : null,
       assetName: node2 ? node2.name : finding.resourceName || finding.resourceId,
-      problemOutcome: (_a5 = finding.problemOutcome) != null ? _a5 : "",
-      vector: (_c = (_b = finding.problemInput) == null ? void 0 : _b.vector) != null ? _c : null,
-      unknowns: (_e = (_d = finding.problemInput) == null ? void 0 : _d.unknowns) != null ? _e : [],
+      domain: (_a5 = node2 == null ? void 0 : node2.domain) != null ? _a5 : null,
+      problemOutcome: (_b = finding.problemOutcome) != null ? _b : "",
+      vector: (_d = (_c = finding.problemInput) == null ? void 0 : _c.vector) != null ? _d : null,
+      unknowns: (_f = (_e = finding.problemInput) == null ? void 0 : _e.unknowns) != null ? _f : [],
       // FindingRow carries no SLA deadline — Wiz's config-finding evaluations have no dueAt
       // field, only issuesV2 does. Null, never a made-up date.
       dueAt: null,
-      postureTier: (_f = node2 == null ? void 0 : node2.postureTier) != null ? _f : null,
+      postureTier: (_g = node2 == null ? void 0 : node2.postureTier) != null ? _g : null,
       amplification: nodeAmplificationVector(node2),
-      severity: (_g = finding.severity) != null ? _g : null,
+      severity: (_h = finding.severity) != null ? _h : null,
       ruleId: finding.ruleId,
       ruleShortId: finding.ruleShortId || void 0,
       businessImpact: finding.businessImpact,
-      iac: ((_h = finding.iacFindingIds) != null ? _h : []).length > 0,
-      ignored: ((_i = finding.ignoreRuleIds) != null ? _i : []).length > 0,
+      iac: ((_i = finding.iacFindingIds) != null ? _i : []).length > 0,
+      ignored: ((_j = finding.ignoreRuleIds) != null ? _j : []).length > 0,
       firstSeenAt: finding.firstSeenAt,
       ruleRemediation: finding.remediationInstructions
     };
@@ -11928,6 +12047,7 @@ var Server = (() => {
     const assetIds = /* @__PURE__ */ new Set();
     const severityMix = {};
     const businessImpacts = /* @__PURE__ */ new Set();
+    const domains = /* @__PURE__ */ new Set();
     let worstRank = SEVERITY_ORDER.length;
     let worstSeverity2 = NO_SEVERITY;
     let iac = 0;
@@ -11939,6 +12059,7 @@ var Server = (() => {
       if (row.assetId) assetIds.add(row.assetId);
       if (row.severity) severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
       if (row.businessImpact) businessImpacts.add(row.businessImpact);
+      if (row.domain) domains.add(row.domain);
       const rank = severityRank5(String((_b = row.severity) != null ? _b : ""));
       if (rank < worstRank) {
         worstRank = rank;
@@ -11963,6 +12084,7 @@ var Server = (() => {
       worstSeverity: worstSeverity2,
       severityMix,
       businessImpacts: [...businessImpacts].sort(),
+      domains: [...domains].sort(),
       autoRemediable: false,
       iac,
       ignored,
@@ -12047,6 +12169,7 @@ var Server = (() => {
     "resourceTypes",
     "rules",
     "projects",
+    "domains",
     "linkage",
     "flags"
   ];
@@ -12056,7 +12179,7 @@ var Server = (() => {
     const i = SEVERITY_ORDER.indexOf(s);
     return i < 0 ? SEVERITY_ORDER.length : i;
   };
-  function toConfigView(f, linked) {
+  function toConfigView(f, linked, domain = "") {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
     return {
       id: f.id,
@@ -12077,6 +12200,7 @@ var Server = (() => {
       analyzedAt: (_o = f.analyzedAt) != null ? _o : "",
       risks: (_p = f.risks) != null ? _p : [],
       linked,
+      domain,
       ignored: ((_q = f.ignoreRuleIds) != null ? _q : []).length > 0,
       iac: ((_r = f.iacFindingIds) != null ? _r : []).length > 0,
       gap: isOpenGap(f)
@@ -12097,6 +12221,7 @@ var Server = (() => {
       resourceTypes: listParam(params["resourceTypes"]),
       rules: listParam(params["rules"]),
       projects: listParam(params["projects"]),
+      domains: listParam(params["domains"]),
       linkage: listParam(params["linkage"]).filter(
         (v) => LINKAGE_VALUES.indexOf(v) >= 0
       ),
@@ -12121,6 +12246,7 @@ var Server = (() => {
     if (!anyOf(q.resourceTypes, row.resourceType)) return false;
     if (!anyOf(q.rules, row.ruleShortId)) return false;
     if (q.projects.length && !row.projects.some((p) => q.projects.indexOf(p) >= 0)) return false;
+    if (q.domains.length && q.domains.indexOf(row.domain) < 0) return false;
     if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
     for (const flag of q.flags) if (!hasConfigFlag(row, flag)) return false;
     if (q.q) {
@@ -12162,6 +12288,7 @@ var Server = (() => {
     if (key === "resourceTypes") return [row.resourceType].filter(Boolean);
     if (key === "rules") return [row.ruleShortId].filter(Boolean);
     if (key === "projects") return row.projects;
+    if (key === "domains") return [row.domain].filter(Boolean);
     if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
     return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f));
   }
@@ -12211,6 +12338,7 @@ var Server = (() => {
       const unlinkedGapResources = /* @__PURE__ */ new Set();
       const clouds = /* @__PURE__ */ new Set();
       const projects = /* @__PURE__ */ new Set();
+      const domains = /* @__PURE__ */ new Set();
       const risks = /* @__PURE__ */ new Set();
       const severityMix = {};
       let worst = "UNKNOWN";
@@ -12224,6 +12352,7 @@ var Server = (() => {
         resources.add(row.resourceId);
         if (row.cloud) clouds.add(row.cloud);
         for (const p of row.projects) projects.add(p);
+        if (row.domain) domains.add(row.domain);
         for (const r of row.risks) risks.add(r);
         severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
         if (sevRank2(row.severity) < sevRank2(worst)) worst = row.severity;
@@ -12256,6 +12385,7 @@ var Server = (() => {
         iac,
         clouds: [...clouds].sort(),
         projects: [...projects].sort(),
+        domains: [...domains].sort(),
         severityMix,
         firstSeenAt
       });
@@ -12516,7 +12646,7 @@ var Server = (() => {
     return cmp(a.name, b.name);
   }
   function passesFilters(node2, f) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     if (!f) return true;
     if (isRiskKind(node2.kind) && !((_a5 = f.kinds) == null ? void 0 : _a5.some(isRiskKind))) return true;
     if (((_b = f.severities) == null ? void 0 : _b.length) && !f.severities.includes((_c = node2.severity) != null ? _c : "")) return false;
@@ -12526,6 +12656,7 @@ var Server = (() => {
       const names = ((_h = node2.projects) != null ? _h : []).map((p) => p.name);
       if (!names.some((n) => f.projects.includes(n))) return false;
     }
+    if (((_i = f.domains) == null ? void 0 : _i.length) && !f.domains.includes((_j = node2.domain) != null ? _j : "")) return false;
     return true;
   }
   function projectGraph(doc, opts) {
@@ -12669,7 +12800,7 @@ var Server = (() => {
   // src/domain/graphLayout.ts
   var LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"];
   var DEFAULT_LAYOUT = "grid";
-  var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"];
+  var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity", "domain"];
   var SORT_KEYS = ["smart", "severity", "issues", "name"];
   var GROUP_NONE = "__none__";
   var LANE_OF = {
@@ -13164,7 +13295,7 @@ var Server = (() => {
     return ownGroupKey(node2, groupBy2);
   }
   function ownGroupKey(node2, groupBy2) {
-    var _a5, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
     switch (groupBy2) {
       case "combo": {
         const groups = [...(_a5 = node2.comboGroups) != null ? _a5 : []].sort();
@@ -13180,6 +13311,8 @@ var Server = (() => {
         return node2.kind === "SUMMARY" ? (_f = node2.summaryOf) != null ? _f : "SUMMARY" : node2.kind;
       case "severity":
         return (_g = node2.severity) != null ? _g : GROUP_NONE;
+      case "domain":
+        return (_h = node2.domain) != null ? _h : GROUP_NONE;
       case "asset":
         return GROUP_NONE;
     }
@@ -13993,6 +14126,7 @@ var Server = (() => {
     };
   }
   function resolveGraphParams(p, ctx) {
+    var _a5;
     const seed = typeof p["seed"] === "string" ? p["seed"] : "";
     const seedKind = typeof p["seedKind"] === "string" ? p["seedKind"] : "";
     let seedIds;
@@ -14007,6 +14141,8 @@ var Server = (() => {
       seedIds = withIssues;
     } else if (seed && (seedKind === "combo" || comboGroupById(seed))) {
       seedIds = comboAssetIds(ctx.issues, seed);
+    } else if (seed && seedKind === "domain") {
+      seedIds = ((_a5 = ctx.nodes) != null ? _a5 : []).filter((n) => n.domain === seed).map((n) => n.id);
     } else if (seed) {
       seedIds = [seed];
     } else {
@@ -14016,9 +14152,10 @@ var Server = (() => {
       severities: toList(p["severities"]),
       kinds: toList(p["kinds"]),
       projects: toList(p["projects"]),
-      clouds: toList(p["clouds"])
+      clouds: toList(p["clouds"]),
+      domains: toList(p["domains"])
     };
-    const hasFilters = filters.severities.length || filters.kinds.length || filters.projects.length || filters.clouds.length;
+    const hasFilters = filters.severities.length || filters.kinds.length || filters.projects.length || filters.clouds.length || filters.domains.length;
     const rawDepth = p["depth"];
     const rawMaxNodes = p["maxNodes"];
     const maxNodes = clampMaxNodes(
@@ -14046,6 +14183,7 @@ var Server = (() => {
       kinds: sorted(p["kinds"]),
       projects: sorted(p["projects"]),
       clouds: sorted(p["clouds"]),
+      domains: sorted(p["domains"]),
       view: resolveLayoutParams(p)
     };
   }
@@ -14191,6 +14329,13 @@ var Server = (() => {
         return orNull(((_a5 = n.tags) != null ? _a5 : []).map((t) => t.value ? `${t.key}: ${t.value}` : t.key).join(", "));
       }
     },
+    // The business domain, off the resource's own Wiz/Domain tag — and `choice` where `tags`
+    // above is `pairs`, for exactly the reason stated there. A tenant has tens of domains, not
+    // thousands of key/value strings, so this one stays inside VALUE_CARDINALITY_MAX and
+    // `fieldValuesFor` can offer a real picker rather than two free-text boxes. Asking through
+    // `tags` still works and still means the same thing — this is the shorthand for the one
+    // tag key the app names, not a second source of truth.
+    { key: "domain", label: "Domain", type: "choice", get: (n) => orNull(n.domain) },
     { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
     { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
     // The two counts that replaced the score, the percentile and the level here. A query is
@@ -15345,10 +15490,12 @@ var Server = (() => {
     const kinds = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
     const projects = /* @__PURE__ */ new Set();
+    const domains = /* @__PURE__ */ new Set();
     for (const a of assets) {
       kinds.add(a.kind);
       if (a.cloudPlatform) clouds.add(a.cloudPlatform);
       for (const p of (_a5 = a.projects) != null ? _a5 : []) projects.add(p.name);
+      if (a.domain) domains.add(a.domain);
       if (conditionHolds(a, "SENSITIVE_DATA")) kinds.add("SENSITIVE_DATA");
       if (conditionHolds(a, "INTERNET_EXPOSURE")) kinds.add("INTERNET_EXPOSURE");
       if (conditionHolds(a, "EXCESSIVE_PRIVILEGE")) kinds.add("EXCESSIVE_PRIVILEGE");
@@ -15358,6 +15505,7 @@ var Server = (() => {
       kinds: [...kinds].sort(),
       clouds: [...clouds].sort(),
       projects: [...projects].sort(),
+      domains: [...domains].sort(),
       // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
       // filter on every page matches project names, and there is no reason to migrate them
       // here; the switcher needs ids because only an id carries ancestry — an asset lists its
@@ -15376,7 +15524,11 @@ var Server = (() => {
         const options = resolveGraphParams(params, {
           defaultDepth: getDefaultDepth2(),
           maxNodes: getMaxNodes2(),
-          issues: openIssues()
+          issues: openIssues(),
+          // The graph doc's own nodes, so `seedKind=domain` starts from every resource one
+          // domain owns. Read from `doc` rather than viewAssets(): the graph is what is
+          // being seeded, and it holds the risk-topology nodes the inventory never does.
+          nodes: doc.nodes
         });
         const view = resolveLayoutParams(params);
         const projection = projectGraph(doc, options);
@@ -15514,7 +15666,7 @@ var Server = (() => {
     };
   }
   function assetRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K;
     return {
       id: n.id,
       name: n.name,
@@ -15569,10 +15721,14 @@ var Server = (() => {
       // name string since existing client code already reads it as one.
       cloudAccountRef: (_F = n.cloudAccount) != null ? _F : null,
       tags: (_G = n.tags) != null ? _G : [],
-      identityPurpose: (_H = n.identityPurpose) != null ? _H : null,
-      issueAnalytics: (_I = n.issueAnalytics) != null ? _I : null,
+      // The resolved Wiz/Domain, beside the raw tag list it came from. A fact Wiz
+      // reported, not a verdict this app derived — which is why it may ride a payload
+      // the AARS score, the posture tier and the problem outcome may not.
+      domain: (_H = n.domain) != null ? _H : null,
+      identityPurpose: (_I = n.identityPurpose) != null ? _I : null,
+      issueAnalytics: (_J = n.issueAnalytics) != null ? _J : null,
       // Full project objects, for the detail sheet — projects above stays name-only.
-      projectRefs: ((_J = n.projects) != null ? _J : []).map((p) => ({
+      projectRefs: ((_K = n.projects) != null ? _K : []).map((p) => ({
         id: p.id,
         name: p.name,
         businessImpact: p.businessImpact
@@ -15580,7 +15736,7 @@ var Server = (() => {
     };
   }
   function assetTableRow(n, issuesBySeverity, findingsBySeverity) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
     const row = {
       id: n.id,
       name: n.name,
@@ -15612,7 +15768,10 @@ var Server = (() => {
       // "aars stuff" would silently zero a column about data exposure that has no opinion
       // about any model. Pinned by a test for exactly that reason.
       dataFindings: ((_i = (_h = n.aarsInput) == null ? void 0 : _h.dataFindings) != null ? _i : []).reduce((sum, f) => sum + f.count, 0) || ((_j = n.dataFindingCount) != null ? _j : 0),
-      projects: ((_k = n.projects) != null ? _k : []).map((p) => p.name)
+      projects: ((_k = n.projects) != null ? _k : []).map((p) => p.name),
+      // Read-derived from the asset's own tags (graphEnrich.withDomains), never a
+      // column — so a changed WIZ_DOMAIN_TAG_KEY repaints without a re-sync.
+      domain: (_l = n.domain) != null ? _l : null
     };
     if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
     if (findingsBySeverity) row["findingsBySeverity"] = findingsBySeverity;
@@ -15677,6 +15836,7 @@ var Server = (() => {
     const regions = /* @__PURE__ */ new Set();
     const severities = /* @__PURE__ */ new Set();
     const projects = /* @__PURE__ */ new Set();
+    const domains = /* @__PURE__ */ new Set();
     for (const a of assets) {
       kinds.add(a.kind);
       if (a.cloudPlatform) clouds.add(a.cloudPlatform);
@@ -15686,6 +15846,7 @@ var Server = (() => {
         severityCounts[a.severity] = ((_a5 = severityCounts[a.severity]) != null ? _a5 : 0) + 1;
       }
       for (const p of (_b = a.projects) != null ? _b : []) if (p.name) projects.add(p.name);
+      if (a.domain) domains.add(a.domain);
     }
     return {
       rows,
@@ -15800,8 +15961,10 @@ var Server = (() => {
         clouds: [...clouds].sort(),
         regions: [...regions].sort(),
         severities: SEVERITY_ORDER.filter((sev) => severities.has(sev)),
-        projects: [...projects].sort()
-      }
+        projects: [...projects].sort(),
+        domains: [...domains].sort()
+      },
+      domainCoverage: domainCoverage(assets, domainTagKey())
     };
   }
   function getAssets(p) {
@@ -15817,6 +15980,7 @@ var Server = (() => {
         countDeltas: countDeltas(model.countTrend, model.kpis),
         reach: model.reach,
         facets: model.facets,
+        domainCoverage: model.domainCoverage,
         pageSize: query.pageSize,
         sort: query.sort,
         dir: query.dir
@@ -15950,14 +16114,20 @@ var Server = (() => {
     return { policies: dropUnselected(allPolicies, scope), scope };
   }
   function configModel() {
-    const assetIds = aiAssetIdSet();
-    const rows = viewFindings().map((f) => toConfigView(f, !!assetIds[f.resourceId]));
+    const assetsById = {};
+    for (const a of loadAssets()) assetsById[a.id] = a;
+    const rows = viewFindings().map((f) => {
+      var _a5;
+      const node2 = assetsById[f.resourceId];
+      return toConfigView(f, !!node2, (_a5 = node2 == null ? void 0 : node2.domain) != null ? _a5 : "");
+    });
     const severities = /* @__PURE__ */ new Set();
     const statuses = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
     const resourceTypes = /* @__PURE__ */ new Set();
     const rules = /* @__PURE__ */ new Set();
     const projects = /* @__PURE__ */ new Set();
+    const domains = /* @__PURE__ */ new Set();
     for (const r of rows) {
       if (r.severity) severities.add(r.severity);
       if (r.status) statuses.add(r.status);
@@ -15965,6 +16135,7 @@ var Server = (() => {
       if (r.resourceType) resourceTypes.add(r.resourceType);
       if (r.ruleShortId) rules.add(r.ruleShortId);
       for (const p of r.projects) projects.add(p);
+      if (r.domain) domains.add(r.domain);
     }
     return {
       rows: sortConfigRows(rows, "severity"),
@@ -15975,7 +16146,8 @@ var Server = (() => {
         clouds: [...clouds].sort(),
         resourceTypes: [...resourceTypes].sort(),
         rules: [...rules].sort(),
-        projects: [...projects].sort()
+        projects: [...projects].sort(),
+        domains: [...domains].sort()
       }
     };
   }
@@ -16193,7 +16365,14 @@ var Server = (() => {
           }
         });
         const decoded = decodeExpansion(slots, page.rows);
-        const nodes = decoded.nodes.slice(0, EXPAND_MAX_NODES);
+        const expandDomainKey = domainTagKey();
+        const nodes = decoded.nodes.slice(0, EXPAND_MAX_NODES).map((n) => ({
+          ...n,
+          domain: domainOfTags(
+            n["tags"],
+            expandDomainKey
+          )
+        }));
         const keep = new Set(nodes.map((n) => n.id));
         const edges2 = decoded.edges.filter((e) => keep.has(e.src) && keep.has(e.dst)).slice(0, EXPAND_MAX_EDGES);
         return {
@@ -16348,6 +16527,8 @@ var Server = (() => {
       title: r.title,
       assetId: r.assetId,
       assetName: r.assetName,
+      // An explicit allow-list, so a field not named here never reaches the page.
+      domain: r.domain,
       severity: r.severity,
       dueAt: r.dueAt,
       firstSeenAt: (_a5 = r.firstSeenAt) != null ? _a5 : null,
@@ -16361,7 +16542,7 @@ var Server = (() => {
   }
   function getProblems(p) {
     return run(() => {
-      var _a5;
+      var _a5, _b;
       const params = p != null ? p : {};
       const severity = String((_a5 = params["severity"]) != null ? _a5 : "").toUpperCase();
       const validSeverity = SEVERITY_ORDER.includes(severity) ? severity : "";
@@ -16388,10 +16569,15 @@ var Server = (() => {
           pageCount: Math.max(1, Math.ceil(model.rows.length / pageSize))
         };
       }
-      const filtered = validSeverity ? model.rows.filter((r) => {
+      const domain = String((_b = params["domain"]) != null ? _b : "");
+      let filtered = validSeverity ? model.rows.filter((r) => {
         var _a6;
         return String((_a6 = r.severity) != null ? _a6 : "") === validSeverity;
       }) : model.rows;
+      if (domain) filtered = filtered.filter((r) => {
+        var _a6;
+        return ((_a6 = r.domain) != null ? _a6 : "") === domain;
+      });
       const paged = pageOf(filtered, page, pageSize);
       return {
         ...head,

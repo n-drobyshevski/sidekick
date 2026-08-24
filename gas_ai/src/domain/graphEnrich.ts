@@ -16,6 +16,7 @@ import {
   type IssueSeverityKey,
 } from "./aars";
 import { isOpenGap, isUnresolvedIssue, SEVERITY_ORDER } from "./config";
+import { domainOfTags } from "./domainTag";
 import type { Severity } from "./config";
 import type { EffectiveAccessRow } from "./effectiveAccess";
 import { isRatedExposure, worseExposureLevel } from "./exposureQuery";
@@ -1165,5 +1166,29 @@ export function withOpenCounts(
   return nodes.map((n) => {
     if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
     return { ...n, openIssues: issueCount[n.id] ?? 0, openFindings: findingCount[n.id] ?? 0 };
+  });
+}
+
+/**
+ * Attach each node's business domain, read off its `Wiz/Domain` tag.
+ *
+ * A read-time fold for the same reason `withOpenCounts` above is one: the answer moves
+ * without `ai_assets` being rewritten. Here it moves because the tag key is an operator
+ * setting — baking it would mean a landscape kept the old key's answers until the next
+ * daily sync. Already-synced graphs gain domains without a re-sync.
+ *
+ * Synthetic nodes are skipped, exactly as above: an ISSUE node is evidence about an asset
+ * and owns no tags. The grouping layer inherits an asset's domain onto its evidence, which
+ * is the right place for that rule — it is a question about how to draw, not about what is
+ * true of the node.
+ *
+ * Sets `domain` only when there is one. Absent stays absent rather than becoming `""`, so
+ * facets and group keys can treat "untagged" as the missing value it is.
+ */
+export function withDomains(nodes: GNode[], tagKey: string): GNode[] {
+  return nodes.map((n) => {
+    if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
+    const domain = domainOfTags(n.tags, tagKey);
+    return domain ? { ...n, domain } : n;
   });
 }

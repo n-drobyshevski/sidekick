@@ -56,6 +56,7 @@ const FACET_LABELS = {
   resourceTypes: "Resource type",
   rules: "Control",
   projects: "Project",
+  domains: "Domain",
   linkage: "AI asset",
   flags: "Signals",
 };
@@ -117,6 +118,7 @@ export async function renderConfigFindings(main, params, ctx) {
       resourceTypes: view.query.resourceTypes.join(",") || null,
       rules: view.query.rules.join(",") || null,
       projects: view.query.projects.join(",") || null,
+      domains: view.query.domains.join(",") || null,
       linkage: view.query.linkage.join(",") || null,
       flags: view.query.flags.join(",") || null,
       sort: view.sort === "severity" ? null : view.sort,
@@ -282,6 +284,10 @@ export async function renderConfigFindings(main, params, ctx) {
       const resources = new Set();
       const gapResources = new Set();
       const unlinkedGapResources = new Set();
+      // Mirrors ControlRollup.domains in src/domain/configFindings.ts — under
+      // CONFIG_CLIENT_ALL_MAX this loop is the ONLY rollup that runs, so a field added
+      // there and not here is a column that reads empty on every small tenant.
+      const domains = new Set();
       let worst = "UNKNOWN";
       let iac = 0;
       let firstSeenAt = "";
@@ -294,6 +300,7 @@ export async function renderConfigFindings(main, params, ctx) {
           gapResources.add(r.resourceId);
           if (!r.linked) unlinkedGapResources.add(r.resourceId);
         }
+        if (r.domain) domains.add(r.domain);
         if (r.iac) iac += 1;
         if (r.firstSeenAt && (!firstSeenAt || r.firstSeenAt < firstSeenAt)) {
           firstSeenAt = r.firstSeenAt;
@@ -307,6 +314,7 @@ export async function renderConfigFindings(main, params, ctx) {
         gaps: gapResources.size,
         resources: resources.size,
         unlinked: unlinkedGapResources.size,
+        domains: Array.from(domains).sort(),
         iac,
         firstSeenAt,
         mix,
@@ -353,6 +361,15 @@ export async function renderConfigFindings(main, params, ctx) {
               el("span", {}, String(g.unlinked),
                 el("span", { class: "sr-only" }, ", not on an AI asset")),
               g.unlinked + " not on an AI asset")
+            : el("span", { class: "muted" }, "—")),
+        },
+        {
+          // Which domains one fix would touch. The by-control view's argument is that N
+          // near-identical rows are one piece of work; this says how many owners that work
+          // needs. Empty for an all-unlinked control, which is most of them here.
+          key: "domains", label: "Domain", sortable: false,
+          cell: (g) => ((g.domains || []).length
+            ? el("span", {}, g.domains.join(", "))
             : el("span", { class: "muted" }, "—")),
         },
         {
@@ -404,6 +421,14 @@ export async function renderConfigFindings(main, params, ctx) {
           cell: (r) => el("div", {},
             el("div", {}, r.resourceName || r.resourceId),
             el("div", { class: "small muted" }, r.resourceType)),
+        },
+        {
+          key: "domain", label: "Domain", sortable: false,
+          // Blank for an unlinked finding, and it reads as the same em dash every other
+          // absent cell uses. The AI asset column beside it says WHY.
+          cell: (r) => (r.domain
+            ? el("span", {}, r.domain)
+            : el("span", { class: "small muted" }, "—")),
         },
         {
           key: "linked", label: "AI asset", sortable: false,

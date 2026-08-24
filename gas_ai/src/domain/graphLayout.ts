@@ -116,7 +116,8 @@ export type LayoutMode = (typeof LAYOUT_MODES)[number];
  */
 export const DEFAULT_LAYOUT: LayoutMode = "grid";
 
-export const GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"] as const;
+// `domain` is APPENDED, so every saved view's groupBy position is unchanged.
+export const GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity", "domain"] as const;
 export type GroupKey = (typeof GROUP_KEYS)[number];
 
 export const SORT_KEYS = ["smart", "severity", "issues", "name"] as const;
@@ -929,6 +930,12 @@ function ownGroupKey(node: GNode, groupBy: GroupKey): string {
       return node.kind === "SUMMARY" ? (node.summaryOf ?? "SUMMARY") : node.kind;
     case "severity":
       return node.severity ?? GROUP_NONE;
+    case "domain":
+      // GROUP_NONE for an untagged node, which already renders as "Ungrouped" — the
+      // untagged case needs no sentinel of its own. Risk evidence has no domain of its
+      // own and inherits its asset's through groupKeyOf above, which is the right place
+      // for that rule: it is a question about how to draw, not about what is true.
+      return node.domain ?? GROUP_NONE;
     case "asset":
       return GROUP_NONE; // unreachable — asset grouping is BFS-assigned
   }

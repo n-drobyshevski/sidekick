@@ -47,7 +47,7 @@ describe("resolveAssetQuery", () => {
     expect(resolveAssetQuery({})).toEqual({
       q: "",
       severities: [], kinds: [], clouds: [], regions: [],
-      projects: [], flags: [],
+      projects: [], domains: [], flags: [],
       sort: "issues", dir: "desc", page: 0, pageSize: DEFAULT_PAGE_SIZE,
     });
   });

@@ -46,6 +46,11 @@ export interface ProblemRow {
   assetId: string | null;
   assetName: string;
   /**
+   * The asset's owning business domain. Null for the same rows `assetId` is null for, and
+   * for the same reason: an unlinked finding has no node to read a tag from.
+   */
+  domain: string | null;
+  /**
    * `Outcome`, stored as a bare string — `""` when this row was never decided (a row
    * synced before Phase 4, or one `decideProblemsWith` skipped). `""` is not a fifth
    * outcome; it sorts worse than TRACK in `compareProblems`, mirroring the identical
@@ -111,6 +116,7 @@ export function issueToProblemRow(issue: IssueRow, node: GNode | undefined): Pro
     title: issue.ruleName,
     assetId: issue.assetId || null,
     assetName: issue.assetName,
+    domain: node?.domain ?? null,
     problemOutcome: issue.problemOutcome ?? "",
     vector: issue.problemInput?.vector ?? null,
     unknowns: issue.problemInput?.unknowns ?? [],
@@ -142,6 +148,7 @@ export function findingToProblemRow(finding: FindingRow, node: GNode | undefined
     title: finding.ruleName || finding.ruleShortId || "",
     assetId: node ? node.id : null,
     assetName: node ? node.name : (finding.resourceName || finding.resourceId),
+    domain: node?.domain ?? null,
     problemOutcome: finding.problemOutcome ?? "",
     vector: finding.problemInput?.vector ?? null,
     unknowns: finding.problemInput?.unknowns ?? [],

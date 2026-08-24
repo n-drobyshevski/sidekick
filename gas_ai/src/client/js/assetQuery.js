@@ -15,16 +15,16 @@
 // Keep in step with src/domain/assetTable.ts.
 
 export const ASSET_SORTS = [
-  "issues", "findings", "name", "kind", "cloud", "region", "severity", "combos",
+  "issues", "findings", "name", "kind", "cloud", "region", "severity", "combos", "domain",
 ];
 
 export const DEFAULT_SORT_DIR = {
   issues: "desc", findings: "desc", severity: "desc", combos: "desc",
-  name: "asc", kind: "asc", cloud: "asc", region: "asc",
+  name: "asc", kind: "asc", cloud: "asc", region: "asc", domain: "asc",
 };
 
 export const FACET_KEYS = [
-  "severities", "kinds", "clouds", "regions", "projects", "flags",
+  "severities", "kinds", "clouds", "regions", "projects", "domains", "flags",
 ];
 
 export const ASSET_FLAGS = ["combo", "guardrail", "agentic", "datafindings"];
@@ -93,6 +93,7 @@ export function resolveAssetQuery(params) {
     clouds: listWithLegacy(p.clouds, p.cloud),
     regions: listWithLegacy(p.regions, p.region),
     projects: listWithLegacy(p.projects, p.project),
+    domains: listWithLegacy(p.domains, p.domain),
     flags: list(p.flags).map((v) => v.toLowerCase()).filter((v) => ASSET_FLAGS.indexOf(v) >= 0),
     sort: resolvedSort,
     dir: dir === "asc" || dir === "desc" ? dir : DEFAULT_SORT_DIR[resolvedSort],
@@ -121,6 +122,7 @@ export function matchesAssetQuery(row, q) {
   if (q.clouds.length && q.clouds.indexOf(str(row.cloud)) < 0) return false;
   if (q.regions.length && q.regions.indexOf(str(row.region)) < 0) return false;
   if (q.severities.length && q.severities.indexOf(str(row.severity)) < 0) return false;
+  if (q.domains.length && q.domains.indexOf(str(row.domain)) < 0) return false;
   if (q.projects.length) {
     const mine = rowProjects(row);
     if (!q.projects.some((p) => mine.indexOf(p) >= 0)) return false;
@@ -143,6 +145,7 @@ const PRIMARY = {
   combos: (a, b) => num(a.combos) - num(b.combos),
   issues: (a, b) => num(a.openIssues) - num(b.openIssues),
   findings: (a, b) => num(a.openFindings) - num(b.openFindings),
+  domain: (a, b) => str(a.domain).localeCompare(str(b.domain)),
 };
 
 /** Mirrors `byRiskDesc` in src/domain/assetTable.ts — see there for why severity leads. */
@@ -175,6 +178,8 @@ function facetValues(key, row) {
   if (key === "regions") return [str(row.region)].filter(Boolean);
   if (key === "severities") return [str(row.severity)].filter(Boolean);
   if (key === "projects") return rowProjects(row);
+  // Blank contributes nothing — see facetValues in src/domain/assetTable.ts.
+  if (key === "domains") return [str(row.domain)].filter(Boolean);
   return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f));
 }
 

@@ -171,7 +171,8 @@ import { archiveBytes } from "./archiveStore";
 import { activeJob } from "./jobsStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { buildInfo } from "./buildInfo";
-import { hasWizCredentials, projectScope } from "./props";
+import { domainTagKey, hasWizCredentials, projectScope } from "./props";
+import { domainCoverage, domainOfTags } from "../domain/domainTag";
 import { cached, dataVersion, wizDataVersion } from "./serverCache";
 import {
   AGENT_EXPANSION,
@@ -493,10 +494,12 @@ function filterOptions(assets: GNode[], register: GNode[]): Rec {
   const kinds = new Set<string>();
   const clouds = new Set<string>();
   const projects = new Set<string>();
+  const domains = new Set<string>();
   for (const a of assets) {
     kinds.add(a.kind);
     if (a.cloudPlatform) clouds.add(a.cloudPlatform);
     for (const p of a.projects ?? []) projects.add(p.name);
+    if (a.domain) domains.add(a.domain);
     // The risk nodes are derived on read and never land in TABS.assets, so the flags they
     // come from are the only trace of them here. Offer each kind as a pill exactly when
     // some asset would produce one, so the evidence stays curatable. `conditionHolds` is
@@ -511,6 +514,7 @@ function filterOptions(assets: GNode[], register: GNode[]): Rec {
     kinds: [...kinds].sort(),
     clouds: [...clouds].sort(),
     projects: [...projects].sort(),
+    domains: [...domains].sort(),
     // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
     // filter on every page matches project names, and there is no reason to migrate them
     // here; the switcher needs ids because only an id carries ancestry — an asset lists its
@@ -536,6 +540,10 @@ export function getGraph(p?: unknown): ApiResult {
         defaultDepth: settingsStore.getDefaultDepth(),
         maxNodes: settingsStore.getMaxNodes(),
         issues: openIssues(),
+        // The graph doc's own nodes, so `seedKind=domain` starts from every resource one
+        // domain owns. Read from `doc` rather than viewAssets(): the graph is what is
+        // being seeded, and it holds the risk-topology nodes the inventory never does.
+        nodes: doc.nodes,
       });
       const view = resolveLayoutParams(params);
       const projection = projectGraph(doc, options);
@@ -819,6 +827,10 @@ function assetRow(n: GNode): Rec {
     // name string since existing client code already reads it as one.
     cloudAccountRef: n.cloudAccount ?? null,
     tags: n.tags ?? [],
+    // The resolved Wiz/Domain, beside the raw tag list it came from. A fact Wiz
+    // reported, not a verdict this app derived — which is why it may ride a payload
+    // the AARS score, the posture tier and the problem outcome may not.
+    domain: n.domain ?? null,
     identityPurpose: n.identityPurpose ?? null,
     issueAnalytics: n.issueAnalytics ?? null,
     // Full project objects, for the detail sheet — projects above stays name-only.
@@ -878,6 +890,9 @@ function assetTableRow(
     dataFindings: (n.aarsInput?.dataFindings ?? []).reduce((sum, f) => sum + f.count, 0)
       || (n.dataFindingCount ?? 0),
     projects: (n.projects ?? []).map((p) => p.name),
+    // Read-derived from the asset's own tags (graphEnrich.withDomains), never a
+    // column — so a changed WIZ_DOMAIN_TAG_KEY repaints without a re-sync.
+    domain: n.domain ?? null,
   };
   // Only the rows that have open issues carry the breakdown. Most of a healthy landscape has
   // none, and an empty object per row is pure weight in the all-inventory payload.
@@ -955,7 +970,19 @@ interface AssetsModel {
     regions: string[];
     severities: string[];
     projects: string[];
+    domains: string[];
   };
+  /**
+   * How much of the landscape carries the domain tag at all.
+   *
+   * The Domain facet lists only values that exist, so an empty one is ambiguous between
+   * "nobody tagged anything" and "we never successfully asked" — AI_ASSET_PROPERTIES is
+   * optional and swallows an HTTP 400, and it is the only route by which an AI asset's
+   * properties bag arrives. A count beside the facet is what keeps the page from
+   * publishing the second case as the first. An aggregate over the whole set, so it is a
+   * count of what Wiz said and never a claim about any one asset.
+   */
+  domainCoverage: { key: string; tagged: number; total: number };
 }
 
 /**
@@ -1039,6 +1066,7 @@ function assetsModel(): AssetsModel {
   const regions = new Set<string>();
   const severities = new Set<string>();
   const projects = new Set<string>();
+  const domains = new Set<string>();
   for (const a of assets) {
     kinds.add(a.kind);
     if (a.cloudPlatform) clouds.add(a.cloudPlatform);
@@ -1048,6 +1076,7 @@ function assetsModel(): AssetsModel {
       severityCounts[a.severity] = (severityCounts[a.severity] ?? 0) + 1;
     }
     for (const p of a.projects ?? []) if (p.name) projects.add(p.name);
+    if (a.domain) domains.add(a.domain);
   }
 
   return {
@@ -1149,7 +1178,9 @@ function assetsModel(): AssetsModel {
       regions: [...regions].sort(),
       severities: SEVERITY_ORDER.filter((sev) => severities.has(sev)),
       projects: [...projects].sort(),
+      domains: [...domains].sort(),
     },
+    domainCoverage: domainCoverage(assets, domainTagKey()),
   };
 }
 
@@ -1171,6 +1202,7 @@ export function getAssets(p?: unknown): ApiResult {
       countDeltas: countDeltas(model.countTrend, model.kpis),
       reach: model.reach,
       facets: model.facets,
+      domainCoverage: model.domainCoverage,
       pageSize: query.pageSize,
       sort: query.sort,
       dir: query.dir,
@@ -1438,8 +1470,15 @@ function configModel(): {
   totals: ConfigTotals;
   facets: Record<string, string[]>;
 } {
-  const assetIds = aiAssetIdSet();
-  const rows = viewFindings().map((f) => toConfigView(f, !!assetIds[f.resourceId]));
+  // A MAP, not the id set: the domain is joined off the asset, and the linkage flag is
+  // the same lookup. An unlinked finding has no node and so no domain — its resource
+  // carries no tags in the configurationFindings payload at all (see ConfigFindingView).
+  const assetsById: Record<string, GNode> = {};
+  for (const a of syncStore.loadAssets()) assetsById[a.id] = a;
+  const rows = viewFindings().map((f) => {
+    const node = assetsById[f.resourceId];
+    return toConfigView(f, !!node, node?.domain ?? "");
+  });
 
   const severities = new Set<string>();
   const statuses = new Set<string>();
@@ -1447,6 +1486,7 @@ function configModel(): {
   const resourceTypes = new Set<string>();
   const rules = new Set<string>();
   const projects = new Set<string>();
+  const domains = new Set<string>();
   for (const r of rows) {
     if (r.severity) severities.add(r.severity);
     if (r.status) statuses.add(r.status);
@@ -1454,6 +1494,7 @@ function configModel(): {
     if (r.resourceType) resourceTypes.add(r.resourceType);
     if (r.ruleShortId) rules.add(r.ruleShortId);
     for (const p of r.projects) projects.add(p);
+    if (r.domain) domains.add(r.domain);
   }
 
   return {
@@ -1466,6 +1507,7 @@ function configModel(): {
       resourceTypes: [...resourceTypes].sort(),
       rules: [...rules].sort(),
       projects: [...projects].sort(),
+      domains: [...domains].sort(),
     },
   };
 }
@@ -1895,7 +1937,19 @@ export function expandAsset(p?: unknown): ApiResult {
         },
       });
       const decoded = decodeExpansion(slots, page.rows);
-      const nodes = decoded.nodes.slice(0, EXPAND_MAX_NODES);
+      // The domain fold, here rather than in graphExpand: that module is pure and the tag
+      // key is a Script Property. Same resolution every stored node gets through
+      // graphEnrich.withDomains, so a live-expanded node and a synced one agree.
+      const expandDomainKey = domainTagKey();
+      const nodes = decoded.nodes
+        .slice(0, EXPAND_MAX_NODES)
+        .map((n) => ({
+          ...n,
+          domain: domainOfTags(
+            n["tags"] as Array<{ key: string; value: string }> | undefined,
+            expandDomainKey,
+          ),
+        }));
       const keep = new Set(nodes.map((n) => n.id));
       const edges = decoded.edges
         .filter((e) => keep.has(e.src) && keep.has(e.dst))
@@ -2114,6 +2168,8 @@ function publicProblemRow(r: ProblemRow): Rec {
     title: r.title,
     assetId: r.assetId,
     assetName: r.assetName,
+    // An explicit allow-list, so a field not named here never reaches the page.
+    domain: r.domain,
     severity: r.severity,
     dueAt: r.dueAt,
     firstSeenAt: r.firstSeenAt ?? null,
@@ -2174,9 +2230,14 @@ export function getProblems(p?: unknown): ApiResult {
       };
     }
 
-    const filtered = validSeverity
+    // Server-side only, mirroring the severity filter above: under PROBLEMS_CLIENT_ALL_MAX
+    // the browser holds every row and filters locally, so this branch is the large-tenant
+    // path and the two must agree on what a filter means.
+    const domain = String(params["domain"] ?? "");
+    let filtered = validSeverity
       ? model.rows.filter((r) => String(r.severity ?? "") === validSeverity)
       : model.rows;
+    if (domain) filtered = filtered.filter((r) => (r.domain ?? "") === domain);
     const paged = pageOf(filtered as unknown as Rec[], page, pageSize);
     return {
       ...head,

@@ -13,7 +13,7 @@
 
 import { sha1Hex } from "../domain/sha1";
 import { BUILD_ID } from "./buildInfo";
-import { getProp, setProp } from "./props";
+import { domainTagKey, getProp, setProp } from "./props";
 
 const VERSION_PROP = "DATA_VERSION";
 // A SECOND version, for entries whose freshness is a fact about WIZ rather than about this
@@ -73,6 +73,24 @@ export function bumpWizDataVersion(): void {
 export function cacheKey(name: string, params: unknown, version: string): string {
   const paramsHash = sha1Hex(JSON.stringify(params ?? null)).slice(0, 12);
   return `${KEY_PREFIX}:${version}:${name}:${paramsHash}`;
+}
+
+/**
+ * Configuration that changes what a payload SAYS without changing the data underneath it.
+ *
+ * Same argument as KEY_PREFIX's build stamp, one step removed. Both version props are
+ * bumped by MUTATIONS — a sync, a settings save — and the domain tag key is neither: it is
+ * a Script Property an operator edits in the GAS console, so nothing bumps for it and every
+ * derived entry would keep answering under the old key until the 6h TTL expired. That is
+ * the "I fixed the setting and still see the old answer" trap, and it is worse than the
+ * deploy version because the operator has no sync to run to clear it.
+ *
+ * It lives here rather than in each caller's `params` for the reason the build stamp does:
+ * a dozen call sites is a dozen chances to forget one, and the one forgotten is the one
+ * that goes stale. Hashed so an arbitrarily long key cannot push the cache key past 250.
+ */
+function configStamp(): string {
+  return sha1Hex(domainTagKey()).slice(0, 8);
 }
 
 /** Pure chunk split (exported for tests). */
@@ -143,7 +161,7 @@ export function cached<T>(
     // Resolved INSIDE the try, not as a default parameter: reading the version is a
     // PropertiesService call, and the contract here is that no cache-layer failure can stop
     // compute() from running.
-    key = cacheKey(name, params, version ?? dataVersion());
+    key = cacheKey(name, params, `${version ?? dataVersion()}.${configStamp()}`);
     const hit = cacheGetJson(key);
     if (hit !== undefined) return hit as T;
   } catch (e) {

@@ -23,6 +23,12 @@ export interface GraphParamContext {
   defaultDepth: number;
   maxNodes: number;
   issues: IssueRow[]; // OPEN issues (seed resolution source)
+  /**
+   * Just enough of every node to resolve a `seedKind=domain` start set. Narrow on purpose
+   * — this module stays free of the whole GNode surface, and a start set needs nothing
+   * more than "which ids carry this domain".
+   */
+  nodes?: Array<{ id: string; domain?: string | null }>;
 }
 
 /**
@@ -166,6 +172,11 @@ export function resolveGraphParams(p: Rec, ctx: GraphParamContext): ProjectOptio
     seedIds = withIssues;
   } else if (seed && (seedKind === "combo" || comboGroupById(seed))) {
     seedIds = comboAssetIds(ctx.issues, seed);
+  } else if (seed && seedKind === "domain") {
+    // Explicit seedKind, and it has to be: a bare `?seed=CROSS` still means "the asset
+    // whose id is CROSS", which is what every existing link means. Ordered after the
+    // combo branch and before the bare-seed fallthrough for that reason.
+    seedIds = (ctx.nodes ?? []).filter((n) => n.domain === seed).map((n) => n.id);
   } else if (seed) {
     seedIds = [seed];
   } else {
@@ -177,10 +188,11 @@ export function resolveGraphParams(p: Rec, ctx: GraphParamContext): ProjectOptio
     kinds: toList(p["kinds"]),
     projects: toList(p["projects"]),
     clouds: toList(p["clouds"]),
+    domains: toList(p["domains"]),
   };
   const hasFilters =
     filters.severities.length || filters.kinds.length ||
-    filters.projects.length || filters.clouds.length;
+    filters.projects.length || filters.clouds.length || filters.domains.length;
 
   // "" depth means "use the configured default" (the client sends the raw hash
   // value); clampDepth alone would coerce "" to the minimum. `maxNodes` reads the same
@@ -223,6 +235,7 @@ export function graphCacheParams(p: Rec): Rec {
     kinds: sorted(p["kinds"]),
     projects: sorted(p["projects"]),
     clouds: sorted(p["clouds"]),
+    domains: sorted(p["domains"]),
     view: resolveLayoutParams(p),
   };
 }

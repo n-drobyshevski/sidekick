@@ -10,6 +10,7 @@ import {
   buildAarsHintsFromFindings,
   enrichGraphDoc,
   withDataFindingNodes,
+  withDomains,
   withExcessivePrivilegeNodes,
   withExposureEvidence,
   withHumanAccess,
@@ -23,6 +24,7 @@ import {
   type AarsHints,
 } from "../domain/graphEnrich";
 import { withDataFindingCounts } from "../domain/syncNormalize";
+import { domainTagKey } from "./props";
 import type {
   ConfigRuleRow, DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow, GEdge, GNode,
   GraphDoc, IdentityFindingRow, IssueRow, NodeKind, PostureRow,
@@ -1389,7 +1391,7 @@ let identityFindingsMemo: IdentityFindingRow[] | undefined;
  * because the bands are read per call. A band edit changes `bandKey`, misses this memo and
  * re-derives — which is that same promise, kept by the key rather than by luck.
  */
-let derivedAssetsMemo: { raw: GNode[]; bandKey: string; out: GNode[] } | undefined;
+let derivedAssetsMemo: { raw: GNode[]; bandKey: string; domainKey: string; out: GNode[] } | undefined;
 
 function invalidateReadMemos(): void {
   graphDocMemo = undefined;
@@ -1523,7 +1525,10 @@ function withAarsReadDerivations(nodes: GNode[]): GNode[] {
  * them, which is the bug `withAarsReadDerivations` was itself introduced to prevent.
  */
 function withReadDerivations(nodes: GNode[]): GNode[] {
-  return withOpenCounts(withAarsReadDerivations(nodes), loadIssues(), loadFindings());
+  return withDomains(
+    withOpenCounts(withAarsReadDerivations(nodes), loadIssues(), loadFindings()),
+    domainTagKey(),
+  );
 }
 
 function withBandsApplied(doc: GraphDoc): GraphDoc {
@@ -1593,10 +1598,17 @@ export function loadAssets(): GNode[] {
   const raw = loadAssetsRaw();
   const bands = currentBands();
   const bandKey = `${bands.critical}|${bands.high}|${bands.medium}|${bands.low}`;
+  // `domainKey` for the same reason `bandKey` is here, one setting removed: the domain tag
+  // key is a SCRIPT PROPERTY, so it never passes through settingsStore.saveSettings and
+  // never bumps DATA_VERSION. Without it in the key, changing the property would leave this
+  // memo answering under the old key for the rest of the execution.
+  const domainKey = domainTagKey();
   const memo = derivedAssetsMemo;
-  if (memo && memo.raw === raw && memo.bandKey === bandKey) return memo.out;
+  if (memo && memo.raw === raw && memo.bandKey === bandKey && memo.domainKey === domainKey) {
+    return memo.out;
+  }
   const out = withReadDerivations(raw);
-  derivedAssetsMemo = { raw, bandKey, out };
+  derivedAssetsMemo = { raw, bandKey, domainKey, out };
   return out;
 }
 

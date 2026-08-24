@@ -199,6 +199,66 @@ function propertyBag(raw: Rec): Rec | null {
   return nested && typeof nested === "object" ? (nested as Rec) : null;
 }
 
+/**
+ * Tags, from either shape Wiz sends them in.
+ *
+ * The flat roots select `tags { key value }` and get an ARRAY of `{key, value}`. The
+ * properties bag holds the same fact as an OBJECT MAP — `{"Wiz/Domain": "CROSS"}` — because
+ * a bag has no sub-selection and Wiz flattens it. Both appear on the same node in
+ * exemples/get_ai_agents_reponse.js (the array at :4517, the map at :4462).
+ *
+ * Returns `undefined` rather than `[]` when there is nothing. That is not tidiness:
+ * `mergeParts` copies any value that is not undefined/null/false, and an empty array is
+ * truthy — so a later step returning `[]` would ERASE the tags an earlier one established.
+ */
+export function tagPairs(value: unknown): Array<{ key: string; value: string }> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const out: Array<{ key: string; value: string }> = [];
+  if (Array.isArray(value)) {
+    for (const t of value) {
+      if (!t || typeof t !== "object") continue;
+      const key = String((t as Rec)["key"] ?? "").trim();
+      if (key) out.push({ key, value: String((t as Rec)["value"] ?? "") });
+    }
+  } else {
+    for (const [k, v] of Object.entries(value as Rec)) {
+      const key = k.trim();
+      // A nested object under a tag key is not a tag; the bag holds scalars here.
+      if (key && (v === null || typeof v !== "object")) {
+        out.push({ key, value: v === null || v === undefined ? "" : String(v) });
+      }
+    }
+  }
+  return out.length ? out : undefined;
+}
+
+/**
+ * Every tag on an entity, whichever root it arrived from — the union of the flat field and
+ * the properties bag, the bag winning a key collision because it is the richer source.
+ *
+ * This does NOT go through `entityField`, and that is the whole reason it exists.
+ * `entityField` returns the flat value the moment it is not `undefined`, and the real
+ * inventory capture sends flat `"tags": null` on 39 of its 40 nodes — so a reader built on
+ * it would stop at the null and never see the bag, which is the only place `Wiz/Domain`
+ * ever appears (exemples/ai_agent_expand_response.js:316,
+ * exemples/ai_exposure_host_response.js:94).
+ */
+export function entityTags(raw: Rec): Array<{ key: string; value: string }> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const flat = tagPairs(raw["tags"]);
+  const bag = tagPairs(propertyBag(raw)?.["tags"]);
+  if (!flat) return bag;
+  if (!bag) return flat;
+  const merged = [...flat];
+  const at = new Map(merged.map((t, i) => [t.key, i]));
+  for (const t of bag) {
+    const i = at.get(t.key);
+    if (i === undefined) merged.push(t);
+    else merged[i] = t;
+  }
+  return merged;
+}
+
 export const EDGE_TYPES = [
   "HAS_ISSUE",            // asset → ISSUE
   "PROTECTED_BY",         // AI_AGENT → AI_GUARDRAIL (negated = guardrail MISSING)
@@ -330,6 +390,15 @@ export interface GNode {
   cloudAccount?: { id: string; name: string; externalId?: string; cloudProvider?: string };
   projects?: ProjectRef[];
   tags?: Array<{ key: string; value: string }>;
+  /**
+   * The business domain owning this resource — the value of its `Wiz/Domain` tag.
+   *
+   * READ-TIME ONLY. Never a column, never written by `assetToRow`, never read back from the
+   * sheet. `graphEnrich.withDomains` folds it on every read from `tags` above, because the
+   * tag key is configurable and a baked value would mean re-syncing a landscape to change a
+   * string. See domain/domainTag.ts for the whole argument.
+   */
+  domain?: string | null;
   technologyCategories?: string[]; // Wiz technology.categories[].name (e.g. "AI Service")
   /**
    * Who published the AI asset, and how Wiz found it — both out of the properties bag, both

@@ -88,6 +88,15 @@ function node(seed: NodeSeed): GNode {
     // The cloud tags. Only some seeds carry them, and the ones that do carry DIFFERENT sets —
     // a dry run has to be able to tell "contains any" from "contains all", and it cannot if
     // every node is tagged the same way or none is tagged at all.
+    //
+    // `Wiz/Domain` follows the same discipline for the same reason, plus two of its own.
+    // FOUR values across the seeds, because one would make every grouped picture a single
+    // box and every facet a single option. And SOME SEEDS DELIBERATELY UNTAGGED, because
+    // that is what makes "Ungrouped", the em-dash cell and the coverage figure reachable at
+    // all — with every seed tagged, "N of M carry the tag" always reads M of M and nothing
+    // proves it works. bucket-customer-pii is owned by SAP while agent-a, which reads it, is
+    // CROSS: grouping by domain has to visibly cut across an attack path or the dimension
+    // is just a second spelling of the project.
     tags: seed.tags,
     region: seed.region,
     status: seed.status ?? "Active",
@@ -195,7 +204,7 @@ function gcpAgent(seed: AgentSeed): NodeSeed {
 const AGENTS: NodeSeed[] = [
   gcpAgent({
     id: "agent-a", name: "Agent-A", region: "europe-west1",
-    tags: [{ key: "env", value: "prod" }, { key: "team", value: "ml" }, { key: "owner", value: "platform" }],
+    tags: [{ key: "env", value: "prod" }, { key: "team", value: "ml" }, { key: "owner", value: "platform" }, { key: "Wiz/Domain", value: "CROSS" }],
     account: { id: "gcp-account-01", name: "gcp-account-01" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
@@ -207,7 +216,7 @@ const AGENTS: NodeSeed[] = [
   }),
   gcpAgent({
     id: "agent-b", name: "Agent-B", region: "us-west1",
-    tags: [{ key: "env", value: "prod" }, { key: "team", value: "search" }],
+    tags: [{ key: "env", value: "prod" }, { key: "team", value: "search" }, { key: "Wiz/Domain", value: "SAP" }],
     account: { id: "gcp-account-01", name: "gcp-account-01" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
@@ -229,7 +238,10 @@ const AGENTS: NodeSeed[] = [
   }),
   gcpAgent({
     id: "agent-d", name: "dev-agent-D", region: "europe-west3",
-    tags: [{ key: "env", value: "staging" }, { key: "team", value: "ml" }],
+    // Lowercase key on purpose: the captures say `Wiz/Domain`, everyone writing about it
+    // says `Wiz/domain`, and the fold is case-insensitive. One seed spelling it the other
+    // way makes that a demonstrated behaviour in the dry run rather than a claimed one.
+    tags: [{ key: "env", value: "staging" }, { key: "team", value: "ml" }, { key: "wiz/domain", value: "VALUE-CHAIN" }],
     account: { id: "gcp-account-02", name: "gcp-account-02" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
@@ -237,6 +249,7 @@ const AGENTS: NodeSeed[] = [
   }),
   gcpAgent({
     id: "agent-e", name: "Agent-E", region: "us-west1",
+    tags: [{ key: "Wiz/Domain", value: "CROSS" }],
     account: { id: "gcp-account-03", name: "gcp-account-03" },
     projects: ["PROJECT-ALPHA", "PROJECT-GAMMA"],
     internet: true, openInternet: true, // demonstrates the internet-exposure topology node
@@ -245,6 +258,7 @@ const AGENTS: NodeSeed[] = [
   }),
   gcpAgent({
     id: "agent-f", name: "agent-F", region: "europe-west4",
+    tags: [{ key: "Wiz/Domain", value: "SAP" }],
     projects: ["PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
     businessImpact: "MBI", // pricing agent — financial data, not customer PII
@@ -257,12 +271,14 @@ const AGENTS: NodeSeed[] = [
   }),
   gcpAgent({
     id: "agent-g", name: "Agent-G", region: "europe-west4",
+    tags: [{ key: "Wiz/Domain", value: "SAP" }],
     projects: ["PROJECT-ALPHA", "PROJECT-ETA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
     businessImpact: "MBI", // business-partner data, not customer PII
   }),
   gcpAgent({
     id: "agent-h-chatbot", name: "agent-H-chatbot", region: "europe-west1",
+    tags: [{ key: "Wiz/Domain", value: "VALUE-CHAIN" }],
     nativeType: GCP_HOSTED,
     account: { id: "gcp-account-05", name: "gcp-account-05" },
     projects: ["PROJECT-ALPHA", "PROJECT-DELTA", "PROJECT-EPSILON"],
@@ -272,6 +288,7 @@ const AGENTS: NodeSeed[] = [
   }),
   gcpAgent({
     id: "agent-i", name: "agent-I", region: "europe-west4",
+    tags: [{ key: "Wiz/Domain", value: "EXAMPLE DOMAIN" }],
     nativeType: GCP_HOSTED, status: "Inactive",
     account: { id: "gcp-account-04", name: "gcp-account-04" },
     projects: ["PROJECT-ALPHA", "PROJECT-ZETA"],
@@ -281,6 +298,7 @@ const AGENTS: NodeSeed[] = [
   }),
   gcpAgent({
     id: "agent-j", name: "agent-J", region: "europe-west1",
+    tags: [{ key: "Wiz/Domain", value: "CROSS" }],
     account: { id: "gcp-account-07", name: "gcp-account-07" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: false, highPriv: true, guardrailMissing: false,
@@ -297,6 +315,7 @@ const AGENTS: NodeSeed[] = [
   // A guardrail-protected agent with no issues — the healthy contrast case.
   gcpAgent({
     id: "agent-l-support", name: "Agent-L-support", region: "europe-west1",
+    tags: [{ key: "Wiz/Domain", value: "VALUE-CHAIN" }],
     account: { id: "gcp-account-03", name: "gcp-account-03" },
     projects: ["PROJECT-ALPHA"],
     businessImpact: "LBI", // healthy AND classified — low impact is a real reading, not a gap
@@ -353,16 +372,16 @@ const SUPPORT: NodeSeed[] = [
   { id: "pipeline-training-01", kind: "AI_PIPELINE", name: "pipeline-training-01", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
   { id: "dataset-support-transcripts", kind: "AI_DATASET", name: "dataset-support-transcripts", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], businessImpact: "HBI" },
   // Data resources
-  { id: "bucket-customer-pii", kind: "BUCKET", name: "bucket-customer-pii", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
-  { id: "bucket-finance-reports", kind: "BUCKET", name: "bucket-finance-reports", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-BETA"] },
+  { id: "bucket-customer-pii", kind: "BUCKET", name: "bucket-customer-pii", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], tags: [{ key: "Wiz/Domain", value: "SAP" }] },
+  { id: "bucket-finance-reports", kind: "BUCKET", name: "bucket-finance-reports", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-BETA"], tags: [{ key: "Wiz/Domain", value: "VALUE-CHAIN" }] },
   { id: "bucket-partner-data", kind: "BUCKET", name: "bucket-partner-data", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ETA"] },
   { id: "bucket-pricing-models", kind: "BUCKET", name: "bucket-pricing-models", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
   { id: "bucket-training-data", kind: "BUCKET", name: "bucket-training-data", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
-  { id: "db-customer-core", kind: "DATABASE", name: "db-customer-core", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
+  { id: "db-customer-core", kind: "DATABASE", name: "db-customer-core", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"], tags: [{ key: "Wiz/Domain", value: "SAP" }] },
   { id: "db-analytics", kind: "DATABASE", name: "db-analytics", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-DELTA"] },
   // Compute / supply chain for the hosted agents
-  { id: "vm-agent-i-host", kind: "VIRTUAL_MACHINE", name: "vm-agent-i-host", cloud: "GCP", region: "europe-west4", internet: false, projects: ["PROJECT-ZETA"] },
-  { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, openInternet: true, projects: ["PROJECT-DELTA"], exposureEvidence: { ports: ["443", "80"], sourceIpRanges: ["0.0.0.0/0"] } },
+  { id: "vm-agent-i-host", kind: "VIRTUAL_MACHINE", name: "vm-agent-i-host", cloud: "GCP", region: "europe-west4", internet: false, projects: ["PROJECT-ZETA"], tags: [{ key: "Wiz/Domain", value: "EXAMPLE DOMAIN" }] },
+  { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, openInternet: true, projects: ["PROJECT-DELTA"], exposureEvidence: { ports: ["443", "80"], sourceIpRanges: ["0.0.0.0/0"] }, tags: [{ key: "Wiz/Domain", value: "VALUE-CHAIN" }] },
   // Network exposure, seeded to put BOTH grades of evidence on one screen and to make them
   // visibly disagree — which is the whole reason the two queries are two steps.
   //

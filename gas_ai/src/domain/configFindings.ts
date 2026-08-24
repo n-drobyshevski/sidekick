@@ -44,7 +44,7 @@ export const CONFIG_CLIENT_ALL_MAX = 1000;
 
 export const CONFIG_FACET_KEYS = [
   "severities", "statuses", "clouds", "resourceTypes", "rules", "projects",
-  "linkage", "flags",
+  "domains", "linkage", "flags",
 ] as const;
 export type ConfigFacetKey = (typeof CONFIG_FACET_KEYS)[number];
 
@@ -93,6 +93,20 @@ export interface ConfigFindingView {
   risks: string[];
   /** Derived, never stored: whether this resource is in the AI inventory. */
   linked: boolean;
+  /**
+   * The resource's owning business domain — joined from the AI inventory, not read off the
+   * finding.
+   *
+   * `""` FOR AN UNLINKED FINDING, AND THAT IS NOT AN OVERSIGHT. `configurationFindings`
+   * selects `resource { id name type status projects }` and no tags at all, so a finding
+   * on a region, an IAM policy or a service account the AI graph does not model has no tag
+   * source anywhere in the payload. Widening that selection is possible but not free:
+   * CONFIG_FINDINGS is an optional step that swallows an HTTP 400, so a field the tenant
+   * rejects would empty `ai_findings` and look exactly like a landscape with nothing to
+   * report. The blank is the same fact the `linkage` dimension already publishes, said in
+   * a second column rather than guessed at.
+   */
+  domain: string;
   ignored: boolean;
   iac: boolean;
   gap: boolean;
@@ -123,6 +137,14 @@ export interface ControlRollup {
   iac: number;
   clouds: string[];
   projects: string[];
+  /**
+   * The business domains this control's findings span — the by-control view's own
+   * argument, at its own grain. "One trust-policy fix closes sixteen roles" is the
+   * claim the grouping exists to make; saying which domains those sixteen belong to is
+   * the same claim, and it is what tells one team's cleanup from a landscape-wide one.
+   * Blank domains contribute nothing, so an all-unlinked control lists none.
+   */
+  domains: string[];
   severityMix: Record<string, number>;
   /** Earliest firstSeenAt across the control's findings — how long this has been true. */
   firstSeenAt: string;
@@ -136,6 +158,7 @@ export interface ConfigQuery {
   resourceTypes: string[];
   rules: string[];
   projects: string[];
+  domains: string[];
   linkage: string[];
   flags: string[];
 }
@@ -146,7 +169,7 @@ const sevRank = (s: string): number => {
 };
 
 /** FindingRow + "is its resource in the inventory" → the row the register renders. */
-export function toConfigView(f: FindingRow, linked: boolean): ConfigFindingView {
+export function toConfigView(f: FindingRow, linked: boolean, domain = ""): ConfigFindingView {
   return {
     id: f.id,
     name: f.name ?? f.ruleName ?? "",
@@ -166,6 +189,7 @@ export function toConfigView(f: FindingRow, linked: boolean): ConfigFindingView 
     analyzedAt: f.analyzedAt ?? "",
     risks: f.risks ?? [],
     linked,
+    domain,
     ignored: (f.ignoreRuleIds ?? []).length > 0,
     iac: (f.iacFindingIds ?? []).length > 0,
     gap: isOpenGap(f),
@@ -188,6 +212,7 @@ export function resolveConfigQuery(params: Rec): ConfigQuery {
     resourceTypes: listParam(params["resourceTypes"]),
     rules: listParam(params["rules"]),
     projects: listParam(params["projects"]),
+    domains: listParam(params["domains"]),
     linkage: listParam(params["linkage"]).filter(
       (v) => (LINKAGE_VALUES as readonly string[]).indexOf(v) >= 0,
     ),
@@ -215,6 +240,7 @@ export function matchesConfigQuery(row: ConfigFindingView, q: ConfigQuery): bool
   if (!anyOf(q.resourceTypes, row.resourceType)) return false;
   if (!anyOf(q.rules, row.ruleShortId)) return false;
   if (q.projects.length && !row.projects.some((p) => q.projects.indexOf(p) >= 0)) return false;
+  if (q.domains.length && q.domains.indexOf(row.domain) < 0) return false;
   if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
   // ANDs inside itself, unlike every dimension above.
   for (const flag of q.flags) if (!hasConfigFlag(row, flag)) return false;
@@ -277,6 +303,7 @@ function facetValues(key: ConfigFacetKey, row: ConfigFindingView): string[] {
   if (key === "resourceTypes") return [row.resourceType].filter(Boolean);
   if (key === "rules") return [row.ruleShortId].filter(Boolean);
   if (key === "projects") return row.projects;
+  if (key === "domains") return [row.domain].filter(Boolean);
   if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
   return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f)) as unknown as string[];
 }
@@ -346,6 +373,7 @@ export function rollupByControl(rows: ConfigFindingView[]): ControlRollup[] {
     const unlinkedGapResources = new Set<string>();
     const clouds = new Set<string>();
     const projects = new Set<string>();
+    const domains = new Set<string>();
     const risks = new Set<string>();
     const severityMix: Record<string, number> = {};
     let worst = "UNKNOWN";
@@ -360,6 +388,7 @@ export function rollupByControl(rows: ConfigFindingView[]): ControlRollup[] {
       resources.add(row.resourceId);
       if (row.cloud) clouds.add(row.cloud);
       for (const p of row.projects) projects.add(p);
+      if (row.domain) domains.add(row.domain);
       for (const r of row.risks) risks.add(r);
       severityMix[row.severity] = (severityMix[row.severity] ?? 0) + 1;
       if (sevRank(row.severity) < sevRank(worst)) worst = row.severity;
@@ -394,6 +423,7 @@ export function rollupByControl(rows: ConfigFindingView[]): ControlRollup[] {
       iac,
       clouds: [...clouds].sort(),
       projects: [...projects].sort(),
+      domains: [...domains].sort(),
       severityMix,
       firstSeenAt,
     });

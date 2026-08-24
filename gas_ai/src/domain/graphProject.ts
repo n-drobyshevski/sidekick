@@ -19,6 +19,7 @@ export interface ProjectFilters {
   kinds?: string[];
   projects?: string[];
   clouds?: string[];
+  domains?: string[];
 }
 
 export interface ProjectOptions {
@@ -114,6 +115,9 @@ function passesFilters(node: GNode, f: ProjectFilters | undefined): boolean {
     const names = (node.projects ?? []).map((p) => p.name);
     if (!names.some((n) => f.projects!.includes(n))) return false;
   }
+  // After the risk-kind pass-through above, like every other inventory filter: evidence
+  // stays with the asset it describes rather than being cut for having no domain of its own.
+  if (f.domains?.length && !f.domains.includes(node.domain ?? "")) return false;
   return true;
 }
 

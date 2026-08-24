@@ -14,6 +14,45 @@ import { SEED_ISSUES } from "../src/server/sampleData";
 
 const CTX = { defaultDepth: 2, maxNodes: 120, issues: SEED_ISSUES };
 
+describe("the domain start set", () => {
+  const NODES = [
+    { id: "a", domain: "CROSS" },
+    { id: "b", domain: "SAP" },
+    { id: "c", domain: "CROSS" },
+    { id: "d" },
+  ];
+  const ctx = { ...CTX, nodes: NODES };
+
+  it("seeds every resource one domain owns", () => {
+    expect(resolveGraphParams({ seed: "CROSS", seedKind: "domain" }, ctx).seedIds)
+      .toEqual(["a", "c"]);
+  });
+
+  it("answers an empty start set for a domain nothing carries", () => {
+    expect(resolveGraphParams({ seed: "NOPE", seedKind: "domain" }, ctx).seedIds).toEqual([]);
+  });
+
+  // The reason seedKind has to be explicit: every existing link means "the asset whose id
+  // is this", and a bare seed must keep meaning that even when it happens to spell a domain.
+  it("leaves a bare ?seed= meaning one asset id, even when it names a domain", () => {
+    expect(resolveGraphParams({ seed: "CROSS" }, ctx).seedIds).toEqual(["CROSS"]);
+  });
+
+  it("does not fall over when the caller passes no nodes", () => {
+    expect(resolveGraphParams({ seed: "CROSS", seedKind: "domain" }, CTX).seedIds).toEqual([]);
+  });
+});
+
+describe("the domains filter", () => {
+  it("rides in filters and keys the cache", () => {
+    expect(resolveGraphParams({ domains: "CROSS,SAP" }, CTX).filters?.domains)
+      .toEqual(["CROSS", "SAP"]);
+    // Absent filters stay undefined — a domains-only query must still count as filtered.
+    expect(resolveGraphParams({ domains: "CROSS" }, CTX).filters).toBeDefined();
+    expect(graphCacheParams({ domains: "SAP,CROSS" }).domains).toEqual(["CROSS", "SAP"]);
+  });
+});
+
 describe("toList", () => {
   it("accepts arrays, comma strings, and garbage", () => {
     expect(toList(["a", "b"])).toEqual(["a", "b"]);

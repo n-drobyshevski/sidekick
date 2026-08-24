@@ -10,10 +10,11 @@ import { toNum as num, toStr as str } from "./util";
 import type { Rec } from "./util";
 
 export type AssetSort =
-  | "issues" | "findings" | "name" | "kind" | "cloud" | "region" | "severity" | "combos";
+  | "issues" | "findings" | "name" | "kind" | "cloud" | "region" | "severity" | "combos"
+  | "domain";
 
 export const ASSET_SORTS: AssetSort[] = [
-  "issues", "findings", "name", "kind", "cloud", "region", "severity", "combos",
+  "issues", "findings", "name", "kind", "cloud", "region", "severity", "combos", "domain",
 ];
 
 export type SortDir = "asc" | "desc";
@@ -25,7 +26,7 @@ export type SortDir = "asc" | "desc";
  */
 export const DEFAULT_SORT_DIR: Record<AssetSort, SortDir> = {
   issues: "desc", findings: "desc", severity: "desc", combos: "desc",
-  name: "asc", kind: "asc", cloud: "asc", region: "asc",
+  name: "asc", kind: "asc", cloud: "asc", region: "asc", domain: "asc",
 };
 
 /** Offered as "N / page"; the first entry is the default. Keep in sync with the client. */
@@ -50,7 +51,7 @@ export const CLIENT_ALL_MAX = 1500;
  * `flags` is the one deliberate exception: see ASSET_FLAGS.
  */
 export const FACET_KEYS = [
-  "severities", "kinds", "clouds", "regions", "projects", "flags",
+  "severities", "kinds", "clouds", "regions", "projects", "domains", "flags",
 ] as const;
 export type FacetKey = (typeof FACET_KEYS)[number];
 
@@ -71,6 +72,7 @@ export interface AssetTableQuery {
   clouds: string[];
   regions: string[];
   projects: string[];
+  domains: string[];
   flags: string[];
   sort: AssetSort;
   dir: SortDir;
@@ -145,6 +147,7 @@ export function resolveAssetQuery(params: Rec): AssetTableQuery {
     clouds: listWithLegacy(params["clouds"], params["cloud"]),
     regions: listWithLegacy(params["regions"], params["region"]),
     projects: listWithLegacy(params["projects"], params["project"]),
+    domains: listWithLegacy(params["domains"], params["domain"]),
     flags: list(params["flags"])
       .map((v) => v.toLowerCase())
       .filter((v) => (ASSET_FLAGS as readonly string[]).indexOf(v) >= 0),
@@ -184,6 +187,7 @@ export function matchesAssetQuery(row: Rec, q: AssetTableQuery): boolean {
   if (q.clouds.length && q.clouds.indexOf(str(row["cloud"])) < 0) return false;
   if (q.regions.length && q.regions.indexOf(str(row["region"])) < 0) return false;
   if (q.severities.length && q.severities.indexOf(str(row["severity"])) < 0) return false;
+  if (q.domains.length && q.domains.indexOf(str(row["domain"])) < 0) return false;
   if (q.projects.length) {
     const mine = rowProjects(row);
     if (!q.projects.some((p) => mine.indexOf(p) >= 0)) return false;
@@ -209,6 +213,7 @@ const PRIMARY: Record<AssetSort, Cmp> = {
   combos: (a, b) => num(a["combos"]) - num(b["combos"]),
   issues: (a, b) => num(a["openIssues"]) - num(b["openIssues"]),
   findings: (a, b) => num(a["openFindings"]) - num(b["openFindings"]),
+  domain: (a, b) => str(a["domain"]).localeCompare(str(b["domain"])),
 };
 
 /**
@@ -273,6 +278,10 @@ function facetValues(key: FacetKey, row: Rec): string[] {
   if (key === "regions") return [str(row["region"])].filter(Boolean);
   if (key === "severities") return [str(row["severity"])].filter(Boolean);
   if (key === "projects") return rowProjects(row);
+  // Blank contributes nothing, exactly as a blank cloud or region does — an untagged
+  // asset is not an option anybody would tick. How many assets carry the tag at all is a
+  // question about coverage, and `domainCoverage` answers it as a count instead.
+  if (key === "domains") return [str(row["domain"])].filter(Boolean);
   return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f)) as unknown as string[];
 }
 
