@@ -19,6 +19,7 @@
 //   tokenList.js a rule field holding a LIST of opaque strings: chips + that listbox
 //   code.js      a monospace block, and copying out of a sandboxed iframe
 //   uiIcons.js   chrome glyphs (close, chevrons, grip) — icons.js does node kinds
+//   brandMark.js the product mark, traced off the source raster: the shell's only imagery
 //   rail.js      one value drawn on the shared 0–100 axis, and edited on it
 //   popover.js   where a portaled popover sits, and the one contract for closing it
 //   portals.js   the open-portal count the sheet's focus trap defers to
@@ -58,6 +59,7 @@ export { openPopover, popoverDismiss, positionPopover } from "./ui/popover.js";
 export { portalsOpen } from "./ui/portals.js";
 export { codeBlock, copyButton, copyText } from "./ui/code.js";
 export { uiIcon } from "./ui/uiIcons.js";
+export { brandMark } from "./ui/brandMark.js";
 export { pointRail, railScale } from "./ui/rail.js";
 export { debounce, onPageTeardown, runPageTeardown } from "./ui/timing.js";
 export { outcomeBadge, outcomeLabel, outcomeNote } from "./ui/outcome.js";
