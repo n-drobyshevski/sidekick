@@ -1393,6 +1393,19 @@ let identityFindingsMemo: IdentityFindingRow[] | undefined;
  */
 let derivedAssetsMemo: { raw: GNode[]; bandKey: string; domainKey: string; out: GNode[] } | undefined;
 
+
+/**
+ * Drop this module's per-execution memos.
+ *
+ * Test-only. In GAS these memos die with the execution, so nothing in production ever needs
+ * to clear them; under vitest the module registry outlives a test, and `test/gasEnv.ts`
+ * calls this so a shared server can be reset without re-importing the whole graph. See the
+ * comment on `resetToSynced` there.
+ */
+export function __resetMemosForTest(): void {
+  invalidateReadMemos();
+}
+
 function invalidateReadMemos(): void {
   graphDocMemo = undefined;
   assetsMemo = undefined;

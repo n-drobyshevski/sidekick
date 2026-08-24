@@ -11,11 +11,11 @@
 // what makes the stored-path assertions real: a handler that reached the network on a
 // tenantless checkout would fail loudly here, not quietly serve the register.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bootServer, teardownServer } from "./gasEnv";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { bootSyncedServer, resetToSynced, teardownServer } from "./gasEnv";
 import type { Rec } from "../src/domain/util";
 
-type Server = Awaited<ReturnType<typeof bootServer>>;
+type Server = Awaited<ReturnType<typeof bootSyncedServer>>;
 let server: Server;
 
 const LEAF = "proj-project-alpha";
@@ -186,15 +186,17 @@ const SEED_NAMES: Record<string, string> = {
   "wf-id-201": "OWASP LLM Security Top 10",
 };
 
-beforeEach(async () => {
-  teardownServer();
-  server = await bootServer();
-  server.setup();
-  const res = server.api.runSync({}) as { ok: boolean; error?: string };
-  if (!res.ok) throw new Error(`seed sync failed: ${res.error}`);
+beforeAll(async () => {
+  server = await bootSyncedServer();
 });
 
-afterEach(() => {
+// These tests set a project view and rescore under it, so each one needs the register back
+// on its baseline — restored from the synced snapshot rather than re-synced.
+beforeEach(async () => {
+  server = await resetToSynced();
+});
+
+afterAll(() => {
   teardownServer();
 });
 

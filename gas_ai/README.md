@@ -208,10 +208,30 @@ Then in the Apps Script editor:
 ```bash
 npm run dev        # local harness at http://localhost:8787 (dry-run, in-memory GAS fakes)
 npm test           # vitest (AARS applied-table parity, verdict isolation, combos, projection, layout, normalizers)
-npm run check      # the full gate; run before every push
+npm run check      # typecheck + test + build; the everyday gate
+npm run check:exact # the same, with the suite fully isolated; run before every push
 ```
 
 Useful harness flags: `?noseed` (empty state), `?slow=400` (loading states).
+
+### Two ways to run the suite
+
+`npm test` is the fast path and is what you want while working. It splits the suite in two:
+the files that touch the server (anything using `test/gasEnv.ts` or calling
+`vi.resetModules()`) stay fully isolated, and everything else shares a worker, because
+`src/domain` holds no module-level mutable state for a neighbour to corrupt. The server files
+also share ONE booted server and ONE dry-run sync per file, restoring a snapshot of the GAS
+fakes between tests instead of rebuilding the register each time.
+
+`npm run test:exact` puts the old workload back: one isolated run, and a full boot + `setup()`
++ `runSync()` before every single test. It is slower on purpose. Its job is to answer the one
+question the fast path cannot answer about itself — *did sharing a server quietly let state
+leak between tests?* — so run it before pushing, and reach for it first if a failure looks
+impossible.
+
+The list of server modules whose memos get cleared between tests lives in `resetServerMemos`
+in `test/gasEnv.ts`. If you add module-level state to something under `src/server/`, add it
+there too; `npm run test:exact` is what catches you if you forget.
 
 ### Which build is deployed?
 

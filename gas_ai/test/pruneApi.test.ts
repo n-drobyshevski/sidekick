@@ -7,10 +7,10 @@
 // counts: the census must agree with an independent read, and running it twice must be
 // indistinguishable from running it once.
 
-import { beforeEach, describe, expect, it } from "vitest";
-import { bootServer, teardownServer } from "./gasEnv";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { bootSyncedServer, resetToSynced, teardownServer } from "./gasEnv";
 
-type Server = Awaited<ReturnType<typeof bootServer>>;
+type Server = Awaited<ReturnType<typeof bootSyncedServer>>;
 type Result<T = Record<string, unknown>> = { ok: boolean; data?: T; error?: string };
 type Rec = Record<string, unknown>;
 
@@ -35,14 +35,22 @@ interface PruneData {
 let server: Server;
 let db: typeof import("../src/server/sheetsDb");
 
+// This file PRUNES — it deletes rows — so every test needs the register back. It used to get
+// that by rebuilding it: a boot and a full dry-run sync, nineteen times over, which made this
+// the slowest file in the suite. The state is restored from a photograph now instead.
+beforeAll(async () => {
+  server = await bootSyncedServer();
+});
+
 beforeEach(async () => {
-  teardownServer();
-  server = await bootServer();
-  server.setup();
-  // Same module instance the server is using: bootServer resets the registry and imports the
-  // server, and nothing resets it again between there and here.
+  server = await resetToSynced();
+  // Re-imported per test because `test:exact` resets the module registry underneath us; in
+  // the fast path this resolves to the instance the server is already holding.
   db = await import("../src/server/sheetsDb");
-  expect((server.api.runSync({}) as Result).ok).toBe(true);
+});
+
+afterAll(() => {
+  teardownServer();
 });
 
 function preview(projectId?: string): Result<PruneData> {
