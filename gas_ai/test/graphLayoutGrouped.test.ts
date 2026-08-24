@@ -14,6 +14,7 @@ import {
   withSensitiveDataNodes,
 } from "../src/domain/graphEnrich";
 import {
+  GROUP_KEYS,
   GROUP_NONE,
   layoutGraph,
   type GroupKey,
@@ -27,8 +28,15 @@ import { COMBO_GROUPS } from "../src/domain/toxicCombos";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
 const ENRICHED = enrichGraphDoc(seedGraphDoc("2026-06-28T05:00:00Z"), SEED_ISSUES, SEED_AARS_HINTS);
-// The counts are a read-time fold; see graphLayout.test.ts's own note.
-const DOC = { ...ENRICHED, nodes: withOpenCounts(ENRICHED.nodes, SEED_ISSUES, []) };
+// The counts are a read-time fold; see graphLayout.test.ts's own note. So is the domain, and it
+// is folded here for a reason the structural cases below depend on: `node.domain` is set by
+// `withDomains` and by nothing else, so without this every node arrives untagged, `groupBy=domain`
+// collapses to one Ungrouped box, and the whole ALL_KEYS sweep passes over that key while
+// asserting nothing about it. A green tick over a single box is worse than no case at all.
+const DOC = {
+  ...ENRICHED,
+  nodes: withDomains(withOpenCounts(ENRICHED.nodes, SEED_ISSUES, []), DEFAULT_DOMAIN_TAG_KEY),
+};
 const PROJECTION = projectGraph(DOC, { seedIds: ["agent-h-chatbot", "agent-autogen"], depth: 3 });
 
 /**
@@ -60,7 +68,12 @@ function nested(outer: GroupKey, inner: GroupKey, p: Projection = PROJECTION): L
   return layoutGraph(p, { mode: "grid", groupBy: [outer, inner], sort: "smart" });
 }
 
-const ALL_KEYS: GroupKey[] = ["asset", "combo", "project", "cloud", "kind", "severity"];
+// Every key the engine accepts, and it has to STAY every key: the structural invariants below
+// — placed exactly once, boxes that do not overlap, every node inside its own box, the same
+// picture twice, Ungrouped last — are the ones a new dimension is most likely to break, and
+// a key missing from this array is a key none of them ever run against. `domain` was such a
+// key: it arrived with three risk-evidence cases of its own further down and none of this.
+const ALL_KEYS: GroupKey[] = [...GROUP_KEYS];
 
 /** The outer boxes. With one level that is all of them. */
 const tops = (l: Layout) => l.groups!.filter((g) => g.depth === 0);

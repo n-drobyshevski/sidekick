@@ -1041,7 +1041,17 @@ export function rescoreInventory(): {
   } else {
     // Merge: out-of-view rows keep the score AND the version they already had. Reading the
     // prior rows before the write is what makes this a merge rather than a partial wipe.
-    const priorById = new Map(loadAssets().map((a) => [a.id, a]));
+    //
+    // RAW, and that is load-bearing. `loadAssets()` is the READ model — it folds on bands,
+    // open counts and the domain — and these rows do not merely go to the tab, where
+    // `assetToRow` would drop all three. They go into `doc` below and on to the Drive
+    // snapshot, which is the graph's fast read path. `domain` is the one fold that does not
+    // survive that: it is resolved from a Script Property the operator can change, and
+    // `withDomains` sets-if-present, so a value baked here could never be corrected by any
+    // later read. The register would report no domains while the graph still grouped by the
+    // old ones. Raw rows carry exactly what the sheet holds, which is what "the score AND the
+    // version they already had" meant in the first place.
+    const priorById = new Map(loadAssetsRaw().map((a) => [a.id, a]));
     const keptIds = new Set(kept.map((n) => n.id));
     assetNodes = rescored.map((n) => (keptIds.has(n.id) ? n : priorById.get(n.id) ?? n));
     // The snapshot has to agree with the tab. `registerScopeDiagnostic` treats a snapshot

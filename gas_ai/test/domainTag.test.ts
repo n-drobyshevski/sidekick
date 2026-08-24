@@ -94,6 +94,28 @@ describe("withDomains", () => {
     const out = withDomains([node({ kind: "ISSUE", tags: [t("Wiz/Domain", "CROSS")] })], DEFAULT_DOMAIN_TAG_KEY);
     expect(out[0].domain).toBeUndefined();
   });
+
+  // THE REPAIR HALF, and the reason the fold is total rather than set-if-present.
+  //
+  // A read-time value should never arrive on the input at all — but one did: a scoped rescore
+  // merged already-folded rows into the document it wrote to the Drive snapshot, and a fold
+  // that only ever SET could not undo it. The stale value then outlived every read, so the
+  // register (which reads the tab) reported no domain while the graph (which reads the
+  // snapshot) still grouped by the old one.
+  it("clears a domain the current key no longer resolves", () => {
+    const stale = node({ id: "a", domain: "SAP", tags: [t("Wiz/Domain", "SAP")] });
+    const [out] = withDomains([stale], "some-other-key");
+    expect("domain" in out, "a stale domain must not survive a key change").toBe(false);
+    // And it is not a blanket wipe: the value still resolves under its own key.
+    expect(withDomains([stale], DEFAULT_DOMAIN_TAG_KEY)[0].domain).toBe("SAP");
+  });
+
+  it("does not copy a node it has nothing to say about", () => {
+    // "Absent stays absent" is the older half of the contract and the clearing must not cost
+    // it — an untagged node comes back by identity, not as a fresh object with no domain.
+    const untagged = node({ id: "b" });
+    expect(withDomains([untagged], DEFAULT_DOMAIN_TAG_KEY)[0]).toBe(untagged);
+  });
 });
 
 describe("domainCoverage", () => {
@@ -142,5 +164,46 @@ describe("the domain is read, not stored", () => {
     // And back, without a sync in between.
     PropertiesService.getScriptProperties().setProperty("WIZ_DOMAIN_TAG_KEY", "wiz/domain");
     expect(domainsOf().sort()).toEqual(before.sort());
+  });
+
+  // THE SAME PROMISE, ON THE OTHER READ PATH — which is where it was actually broken.
+  //
+  // The case above proves the TAB never stores a domain. The graph does not read the tab: it
+  // reads a gzipped GraphDoc from Drive, and a scoped rescore used to merge already-folded
+  // rows into the document it wrote there. `assetToRow` has no domain column, so the tab
+  // stayed clean and the asymmetry was invisible — the register said one thing and the
+  // Security Graph said another, under one landscape, with nothing red.
+  //
+  // Asserted on the snapshot itself rather than through a page, because every page would
+  // still look right the moment the fold happens to agree with what was baked. The bake is
+  // only observable when the key changes, and the artefact is where it lives.
+  it("never bakes a domain into the Drive snapshot, not even on a scoped rescore", async () => {
+    const server = await bootServer();
+    const syncStore = await import("../src/server/syncStore");
+    const archiveStore = await import("../src/server/archiveStore");
+    server.setup();
+    const sync = server.api.runSync({}) as { ok: boolean; error?: string };
+    expect(sync.ok, sync.error).toBe(true);
+
+    const bakedIds = () => (archiveStore.readGraphSnapshot()?.nodes ?? [])
+      .filter((n) => (n as { domain?: string | null }).domain)
+      .map((n) => n.id);
+
+    expect(bakedIds(), "a fresh sync must write no domain").toEqual([]);
+
+    // A rescore under a project view is the path that merged folded rows in. It has to stay
+    // a scoped one: the unscoped branch writes `rescored` straight through and never reads
+    // the prior register at all.
+    server.api.setSettings({ projectView: "proj-project-delta" });
+    const rescore = server.api.rescoreAars({}) as { ok: boolean; error?: string };
+    expect(rescore.ok, rescore.error).toBe(true);
+    expect(bakedIds(), "a scoped rescore must not persist the read-time domain").toEqual([]);
+
+    // And the two read models agree about a key that resolves nothing. Before the fix the tab
+    // answered 0 while the graph kept answering with the domains baked a moment ago.
+    server.api.setSettings({ projectView: "" });
+    PropertiesService.getScriptProperties().setProperty("WIZ_DOMAIN_TAG_KEY", "no-such-tag");
+    expect(syncStore.loadAssets().filter((a) => a.domain)).toEqual([]);
+    expect((syncStore.loadGraphDoc()?.nodes ?? []).filter((n) => n.domain)).toEqual([]);
   });
 });
