@@ -24,7 +24,7 @@
 
 .lat-scroll {
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding-bottom: var(--space-1);
 }
 /* Small multiples: a panelled spec draws one grid per value of its panel axis, each its own
    grid and its own tab stop; see ui/lattice.js for why they are not threaded together.
@@ -82,12 +82,12 @@
 .lat-hgroup {
   justify-content: center;
   padding-bottom: 5px;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
   border-bottom: 1px solid var(--hairline);
 }
 /* Narrow panels put two header words shoulder to shoulder ("PARTIALSTRONG"), so the inner
    band keeps a gutter of its own rather than relying on the cell width below it. */
-.lat-hsub { justify-content: center; padding: 0 4px 6px; }
+.lat-hsub { justify-content: center; padding: 0 var(--space-1) 6px; }
 .lat-rgroup { padding-right: 10px; }
 .lat-rsub { padding-right: 10px; font-weight: 600; color: var(--text-2); }
 
@@ -99,7 +99,7 @@
   justify-content: center;
   gap: 1px;
   margin: 1px;
-  padding: 2px;
+  padding: var(--space-half);
   min-height: 34px;
   overflow: hidden;
   font-size: 10px;
@@ -113,7 +113,7 @@
   transition: box-shadow var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
 }
 .lat-cell__mark { font-size: 9px; letter-spacing: 0.01em; }
-.lat-cell__count { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.lat-cell__count { font-size: var(--fs-micro); font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* Rule / Change tones — the four .pill kinds, so the lattice cannot mint a fifth palette. */
 /* `neutral` is the FALLBACK, not an outcome: latticeSection's paintMass and paintCells
@@ -179,7 +179,7 @@
    .rule-impact.updating. */
 .lat.is-updating[data-mode="landscape"] .lat-cell {
   opacity: 0.45;
-  transition: opacity 120ms var(--ease-out);
+  transition: opacity var(--dur-quick) var(--ease-out);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -193,7 +193,7 @@
    reference marker. Until this existed the ceiling only spoke as a thrown string at save
    time; the mirror makes it answer while you drag. The marker lives in the frame, NOT in
    the bar — overflow:hidden on the bar would eat both its overhang and its label. */
-.lat-mass { margin-top: 24px; }
+.lat-mass { margin-top: var(--space-5); }
 .lat-mass__frame { position: relative; padding-top: 15px; }
 .lat-mass__bar {
   display: flex;
@@ -246,8 +246,8 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
-  margin-top: 16px;
-  font-size: 11px;
+  margin-top: var(--space-4);
+  font-size: var(--fs-micro);
   color: var(--text-2);
 }
 .lat-mass__legend b { color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -255,7 +255,7 @@
    mode — the lattice's own cells in Rule and Change, the tenant's records in Landscape —
    and two readings that differ by three orders of magnitude cannot share one unlabelled
    bar. */
-.lat-mass__caption { margin: 8px 0 0; }
+.lat-mass__caption { margin: var(--space-2) 0 0; }
 
 /* LANDSCAPE MODE WITH NOTHING MEASURED. The strip does NOT fall back to the leaf shape: that
    is a real bar of real numbers about a different question, and drawn under a grid of hatched
@@ -303,7 +303,7 @@
   display: inline-block;
   min-width: 15px;
   text-align: right;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
@@ -344,15 +344,15 @@ table.data tr.is-lit > td { background: var(--wash-hover); }
 
 /* ------------------------------------------------------------------- the cell popover */
 /* What decided this leaf, and the one edit that usually follows from reading it. */
-.popover--lattice { padding: 12px 13px; max-width: 320px; }
+.popover--lattice { padding: var(--space-3) 13px; max-width: 320px; }
 .lat-pop__vector {
-  margin: 0 0 8px;
-  font-size: 12px;
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-label);
   font-weight: 600;
   line-height: 1.35;
   color: var(--ink);
 }
-.lat-pop__row { margin: 0 0 8px; }
+.lat-pop__row { margin: 0 0 var(--space-2); }
 .lat-pop button { width: 100%; }
 
 /* ---------------------------------------------------------------------------- tracer */
@@ -362,7 +362,7 @@ table.data tr.is-lit > td { background: var(--wash-hover); }
 .lat-trace__axes {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 16px;
+  gap: 10px var(--space-4);
   margin-top: 10px;
 }
 .lat-trace__axis { display: flex; flex-direction: column; gap: 3px; }
@@ -463,7 +463,7 @@ table.data tr.is-lit > td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
   flex-direction: column;
   justify-content: flex-end;
   gap: 3px;
-  padding: 0 12px 6px 0;
+  padding: 0 var(--space-3) 6px 0;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;

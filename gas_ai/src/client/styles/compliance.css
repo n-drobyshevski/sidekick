@@ -16,20 +16,20 @@
   gap: 20px 36px;
   align-items: start;
   margin: 0 0 18px;
-  padding-bottom: 4px;
+  padding-bottom: var(--space-1);
   border-bottom: 1px solid var(--hairline);
 }
 .comp-header .stat-list { grid-column: 1 / -1; }
 .comp-hero-value { font-size: 2rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.comp-hero-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+.comp-hero-sub { font-size: var(--fs-label); color: var(--text-3); margin-top: 3px; }
 /* The hero's severity mark rides in this existing prose slot rather than a new one — see
    the tint comment on `.comp-fw-bar` below for the full rule this and the rail bar both
    follow. A small left margin only, since the badge follows running text inline. */
 .comp-hero-sub .sev-badge { margin-left: 6px; vertical-align: -1px; }
 .comp-hero-meter { margin-top: 10px; max-width: 260px; }
 
-.comp-strip { display: flex; flex-direction: column; gap: 8px; }
-.comp-strip-note { font-size: 12px; color: var(--text-3); margin: 0; max-width: var(--measure); }
+.comp-strip { display: flex; flex-direction: column; gap: var(--space-2); }
+.comp-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
 
 .comp-bar {
   display: flex;
@@ -58,7 +58,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   padding: 3px 10px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-pill);
@@ -79,7 +79,7 @@
 .comp-row-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   background: none;
   border: 0;
   padding: 0;
@@ -92,7 +92,7 @@
   display: inline-block;
   width: 10px;
   color: var(--text-3);
-  transition: transform 120ms ease-out;
+  transition: transform var(--dur-quick) ease-out;
 }
 .comp-row-toggle[aria-expanded="true"] .comp-row-chevron { transform: rotate(90deg); }
 .comp-sub-row > td { background: var(--surface); }
@@ -103,8 +103,8 @@
 .comp-ext {
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
-  font-size: 12px;
-  margin-right: 8px;
+  font-size: var(--fs-label);
+  margin-right: var(--space-2);
 }
 
 /* The posture cell: meter + number, or a state pill when there is no number. Fixed width
@@ -126,7 +126,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-label);
   color: var(--text-3);
 }
 .comp-posture-empty .comp-key-glyph { font-size: 9px; }
@@ -135,8 +135,8 @@
 /* Policy list inside the subcategory sheet. */
 .comp-policy-counts {
   display: flex;
-  gap: 12px;
-  font-size: 12px;
+  gap: var(--space-3);
+  font-size: var(--fs-label);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -166,7 +166,7 @@
    uncollected frameworks: one row against seeded data, thirty-seven against a real landscape,
    at which point it was a catalogue transcribed rather than a finding. Its one surviving
    part, the 5Rs scope, is now a footnote under the rail. */
-.comp-ov-section { padding: 22px 0 4px; border-top: 1px solid var(--hairline); }
+.comp-ov-section { padding: 22px 0 var(--space-1); border-top: 1px solid var(--hairline); }
 .comp-ov-section:first-child { border-top: none; padding-top: 0; }
 
 /* --------------------------------------------------------- band B: the framework rail */
@@ -184,7 +184,7 @@
    if anything, the page puts in the header's outer two cells. */
 .comp-rail-axis {
   display: grid; grid-template-columns: var(--rail-cols); gap: 18px;
-  margin-bottom: 2px;
+  margin-bottom: var(--space-half);
 }
 .comp-axis-ticks {
   grid-column: 2;
@@ -236,14 +236,14 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .comp-fw-meta {
-  margin-top: 2px; font-size: 11px; color: var(--text-3);
+  margin-top: var(--space-half); font-size: var(--fs-micro); color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* The meta line and its severity badge share a row, so the "N of M failing" text and the
    worst-severity mark read as one clause rather than stacking into two. Only present when
    a badge is actually drawn (worstFailingSeverity is null on a clean framework), so an
    empty gap never opens up on a row with nothing to flag. */
-.comp-fw-meta-row { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 2px; }
+.comp-fw-meta-row { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: var(--space-half); }
 .comp-fw-meta-row .comp-fw-meta { flex: 1 1 auto; min-width: 0; margin-top: 0; }
 .comp-fw-meta-row .sev-badge { flex: none; }
 
@@ -323,7 +323,7 @@
   display: flex; align-items: center; gap: 6px; padding: 0 10px;
   background: repeating-linear-gradient(
     45deg, rgba(0, 0, 0, 0.055) 0 4px, transparent 4px 8px);
-  font-size: 11px; color: var(--text-3);
+  font-size: var(--fs-micro); color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Reuses `.comp-key-glyph` (components.css glyph, already sized for this row height)
@@ -367,7 +367,7 @@
 .comp-fw-pct { font-size: 15px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
 .comp-fw-pct--dash { color: var(--text-3); font-weight: 400; }
 
-.comp-rail-key { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 11px; color: var(--text-3); }
+.comp-rail-key { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: var(--fs-micro); color: var(--text-3); }
 .comp-rail-key-swatch { display: inline-block; width: 14px; height: 2px; background: var(--accent); }
 
 /* The 5Rs scope footnote. Back to block flow, because the base key is a flex row built for
@@ -417,7 +417,7 @@
 .comp-dot { width: 9px; height: 9px; border-radius: 50%; box-sizing: border-box; }
 .comp-dot--on { background: var(--accent); }
 .comp-dot--off { background: none; border: 1.5px solid rgba(0, 0, 0, 0.22); }
-.comp-dots-n { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.comp-dots-n { font-size: var(--fs-label); color: var(--text-2); white-space: nowrap; }
 
 /* Auto-remediation chip: a small code-like mark (mono, like `.step-id` / `.prov-mono`)
    rather than a status pill, because "this control fixes itself" is closer to a
@@ -458,7 +458,7 @@
    rail keeps, everything else is the first to go. */
 .scope-rail-note {
   display: flex; align-items: center; gap: 5px;
-  margin-top: 2px; font-size: 10.5px; color: var(--text-3);
+  margin-top: var(--space-half); font-size: 10.5px; color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .scope-rail-glyph { font-size: 9px; color: var(--warn); }
@@ -477,16 +477,16 @@
 .scope-group { padding: 14px 0; border-top: 1px solid var(--hairline); }
 .scope-group:first-child { padding-top: 0; border-top: none; }
 .scope-group-head {
-  display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 14px;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) 14px;
   margin-bottom: 6px;
 }
 .scope-group-title { flex: 1 1 200px; font-weight: 600; font-size: 13px; color: var(--ink); }
-.scope-group-count { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.scope-group-count { font-size: var(--fs-label); color: var(--text-3); white-space: nowrap; }
 /* A command, not a state pill: its label already says what pressing it does ("Select all" /
    "Deselect all"), so it does not need `aria-pressed` on top of that to be understood —
    unlike `.scope-toggle` below, which IS a persistent per-rule state and carries one. */
 .scope-bulk {
-  flex: none; font-size: 12px; padding: 3px 10px;
+  flex: none; font-size: var(--fs-label); padding: 3px 10px;
   border: 1px solid var(--hairline); border-radius: var(--radius-pill);
   background: var(--page); color: var(--text-2);
 }
@@ -494,9 +494,9 @@
 
 .scope-rows { display: flex; flex-direction: column; }
 .scope-row {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
-  padding: 8px 0; border-bottom: 1px solid var(--hairline);
-  transition: opacity 120ms ease-out;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) 14px;
+  padding: var(--space-2) 0; border-bottom: 1px solid var(--hairline);
+  transition: opacity var(--dur-quick) ease-out;
 }
 .scope-row:last-child { border-bottom: none; }
 /* Dimmed, not removed: a rule scoped out stays in its group (pulling it from the list
@@ -507,8 +507,8 @@
 .scope-row[data-selected="false"] { opacity: 0.58; }
 .scope-row-main { flex: 1 1 220px; min-width: 0; }
 .scope-row-name { font-size: 13px; color: var(--ink); }
-.scope-row-meta { margin-top: 2px; }
-.scope-reason { flex: 0 1 auto; font-size: 12px; color: var(--text-3); text-align: right; }
+.scope-row-meta { margin-top: var(--space-half); }
+.scope-reason { flex: 0 1 auto; font-size: var(--fs-label); color: var(--text-3); text-align: right; }
 /* Pinned means a person decided this, not that the landscape did — a different kind of fact
    from crossMapped/linkedFindings/noAiLink, and it earns its own tint so a reader scanning
    the column can tell "derived" from "somebody's call" without reading every word. */
@@ -521,7 +521,7 @@
    control planted in the middle of a page that has none. */
 .scope-toggle {
   display: inline-flex; align-items: center; gap: 7px; flex: none;
-  padding: 4px 10px 4px 6px; font-size: 12.5px; font-weight: 500;
+  padding: var(--space-1) 10px var(--space-1) 6px; font-size: 12.5px; font-weight: 500;
   border: 1px solid var(--hairline); border-radius: var(--radius-pill);
   background: var(--page); color: var(--text-2);
 }
@@ -546,8 +546,8 @@
    comment above fiveRsCard() in pages/settings.js) and the two bars should keep reading
    as the same control if either is ever touched again. */
 .scope-bar {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hairline);
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  margin-top: var(--space-4); padding-top: 14px; border-top: 1px solid var(--hairline);
 }
 .scope-state { margin-right: auto; }
 
@@ -564,12 +564,12 @@
 .comp-table .detail-row > td { background: var(--surface); padding: 14px 20px 18px; }
 
 .comp-detail { display: flex; flex-direction: column; gap: 14px; }
-.comp-detail-block { display: flex; flex-direction: column; gap: 4px; }
+.comp-detail-block { display: flex; flex-direction: column; gap: var(--space-1); }
 /* A small local heading, not sectionLabel()/sheetSection() — both are vocabulary for their
    own overlay chrome, and this panel isn't one. Same look as `.label` (base.css) so it
    still reads as this app's one "small caps heading" idiom. */
 .comp-detail-heading {
-  font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3); margin: 0;
 }
 .comp-detail-block p { margin: 0; max-width: var(--measure); }
@@ -581,7 +581,7 @@
 .comp-policy-wrap { overflow-x: auto; }
 .comp-policy-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 .comp-policy-table th {
-  text-align: left; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-align: left; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
   padding: 6px 10px; border-bottom: 1px solid var(--hairline);
 }

@@ -5,19 +5,19 @@ table.data {
   font-size: 13px;
 }
 table.data th {
-  text-align: left; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-align: left; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
   background: var(--surface);
-  padding: 8px 10px; border-bottom: 1px solid var(--hairline);
+  padding: var(--space-2) 10px; border-bottom: 1px solid var(--hairline);
   position: sticky; top: 0;
   white-space: nowrap;
 }
 /* Sortable column headers (graph table view): the whole label is the button. */
 .th-sort {
-  display: inline-flex; align-items: center; gap: 4px;
+  display: inline-flex; align-items: center; gap: var(--space-1);
   background: none; border: none; box-shadow: none; padding: 0; min-height: 0;
-  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
-  color: var(--text-3); cursor: pointer; border-radius: 3px;
+  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3); cursor: pointer; border-radius: var(--radius-xs);
 }
 .th-sort:hover { color: var(--ink); background: none; }
 .th-sort-glyph { font-size: 9px; }
@@ -34,17 +34,17 @@ a { color: var(--accent); }
 .pager { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; color: var(--text-2); }
 
 /* Page-size select + pager under a paged table. */
-.table-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+.table-footer { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-top: 10px; }
 .table-footer .pager { margin-top: 0; }
 .table-footer select { font-size: 13px; }
 /* A page fetched from the server: the old rows stay legible but read as superseded. */
-.table-host[aria-busy="true"] { opacity: 0.5; transition: opacity 120ms ease; }
+.table-host[aria-busy="true"] { opacity: 0.5; transition: opacity var(--dur-quick) ease; }
 @media (prefers-reduced-motion: reduce) {
   .table-host[aria-busy="true"] { transition: none; }
 }
 
 /* ------------------------------------------------------------------ chart cards */
-.chart-card { padding: 16px; }
+.chart-card { padding: var(--space-4); }
 .chart-card h3 { margin-bottom: 10px; }
 .chart-box { position: relative; height: 240px; }
 /* Two charts side by side, stacking below the width where a plot stops being readable. */
@@ -55,12 +55,12 @@ a { color: var(--accent); }
   margin-bottom: 20px;
 }
 /* The line under a chart title: what the chart leaves out, or what it's still waiting for. */
-.chart-note { margin: -4px 0 10px; font-size: 12px; color: var(--text-3); }
+.chart-note { margin: -4px 0 10px; font-size: var(--fs-label); color: var(--text-3); }
 /* Stands in for the plot when there aren't enough points to draw one — matched to the
    chart-box height so the card doesn't resize when the first real line arrives. */
 .chart-empty {
   display: flex; align-items: center; justify-content: center; text-align: center;
-  height: 200px; padding: 0 24px;
+  height: 200px; padding: 0 var(--space-5);
   font-size: 13px; color: var(--text-3);
   border: 1px dashed var(--hairline); border-radius: var(--radius-lg);
 }

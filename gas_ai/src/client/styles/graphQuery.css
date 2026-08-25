@@ -14,14 +14,14 @@
    The 16px side padding stays — it is what keeps the OR-run bracket's -7px inside the card. */
 .gq {
   display: flex; flex-direction: column; min-width: 0;
-  padding: 10px 16px;
+  padding: 10px var(--space-4);
 }
-.gq-rows { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.gq-rows { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .gq-row {
   position: relative;
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   border-radius: var(--radius-md);
-  padding: 2px 4px 2px 0;
+  padding: var(--space-half) var(--space-1) var(--space-half) 0;
   /* Set per row by the bar. The indent is a variable rather than a flat padding so the run
      bracket below can be drawn AT the row's own indent instead of at the container's edge. */
   padding-inline-start: var(--gq-indent, 0);
@@ -39,9 +39,9 @@
 .gq-kw {
   flex: 0 0 auto;
   min-width: 42px; text-align: center;
-  padding: 2px 7px; border-radius: var(--radius-sm);
+  padding: var(--space-half) 7px; border-radius: var(--radius-sm);
   background: var(--track-bg);
-  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -62,7 +62,7 @@
 
 /* Negation is a word, not a colour: "NOT" spelled out, inside the control that sets it. */
 .gq-not {
-  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.06em;
   color: var(--sev-high-text);
 }
 
@@ -92,7 +92,7 @@
    cosmetic. It resets off the 36px bordered global button recipe the way .gq-iconbtn does. */
 .gq-term {
   display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px;
-  min-height: 30px; min-width: 0; padding: 1px 4px 1px 10px;
+  min-height: 30px; min-width: 0; padding: 1px var(--space-1) 1px 10px;
   border: 1px solid var(--hairline); background: var(--page); box-shadow: none;
   border-radius: var(--radius-pill);
   font: inherit; text-align: left;
@@ -124,7 +124,7 @@
    carries no interactive state of its own — only the category tint and the kind glyph. */
 .gq-chip {
   display: inline-flex; align-items: center; gap: 6px;
-  min-height: 26px; padding: 2px 8px 2px 7px;
+  min-height: 26px; padding: var(--space-half) var(--space-2) var(--space-half) 7px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--hairline);
   background: var(--page);
@@ -179,12 +179,12 @@
 .gq-chip--more {
   padding-inline: 8px;
   border-color: transparent; background: var(--track-bg);
-  font-size: 12px; font-weight: 500; color: var(--text-3);
+  font-size: var(--fs-label); font-weight: 500; color: var(--text-3);
 }
 
 /* Row actions: flat 26px squares. They reset the 36px bordered global button recipe the same
    way .filter-chip-body does — left alone, three shadowed surfaces would sit in a 28px line. */
-.gq-row-actions { display: inline-flex; align-items: center; gap: 2px; margin-left: 2px; }
+.gq-row-actions { display: inline-flex; align-items: center; gap: var(--space-half); margin-left: var(--space-half); }
 .gq-iconbtn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 26px; min-height: 0; padding: 0;
@@ -199,40 +199,40 @@
    as the number changes under a live filter. It has no `margin-left: auto` of its own: the
    cluster it sits in already carries one, and a second would push it off the pair beside it. */
 .gq-count {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 12px; color: var(--text-2);
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--fs-label); color: var(--text-2);
   font-variant-numeric: tabular-nums;
   /* "14 results" broke across two lines once the row got tight enough to wrap. */
   white-space: nowrap;
 }
 
 /* ------------------------------------------------------------------- header actions */
-.gq-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.gq-head-actions button { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+.gq-head-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
+.gq-head-actions button { min-height: 30px; padding: var(--space-1) 10px; font-size: 13px; }
 
 /* ------------------------------------------------------------------------ view row */
 .gq-viewbar {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-  padding: 8px 16px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--hairline);
 }
-.gq-viewbar-end { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.gq-viewbar-end { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
 .gq-viewbar .segmented > button { min-height: 30px; }
 .gq-view-icon { display: inline-flex; margin-right: 6px; vertical-align: -2px; }
 /* The query editor's toggle, and the rule that separates changing the question from reading
    the answer — the two halves this row now holds. */
-.gq-edit-btn { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+.gq-edit-btn { min-height: 30px; padding: var(--space-1) 10px; font-size: 13px; }
 /* Pressed-looking while the card is up, so the row says which state it is in without the
    reader having to look away from it and find the card. */
 .gq-edit-btn[aria-expanded="true"] { background: #f1f1f4; border-color: #d9d9de; }
 .gq-viewbar-sep { width: 1px; align-self: stretch; min-height: 20px; background: var(--hairline); }
 
 /* --------------------------------------------------------------------- path table */
-.gq-results { padding-bottom: 8px; }
+.gq-results { padding-bottom: var(--space-2); }
 /* The group header row: quieter than the column row beneath it, and ruled off so the reader
    sees which columns belong to which node in the query. */
 .gq-table table.data thead .th-groups th {
-  font-size: 11px; letter-spacing: 0.06em;
+  font-size: var(--fs-micro); letter-spacing: 0.06em;
   color: var(--text-2);
   background: var(--surface);
   border-bottom: 1px solid var(--hairline);
@@ -255,7 +255,7 @@
 .gq-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The kind icon in a tinted tile, the same category cue the canvas medallion carries. */
 .gq-cell-icon {
-  flex: 0 0 auto; width: 18px; height: 18px; padding: 2px;
+  flex: 0 0 auto; width: 18px; height: 18px; padding: var(--space-half);
   border-radius: var(--radius-sm);
   background: var(--track-bg);
   color: var(--text-2);
@@ -272,7 +272,7 @@
 .gq-columns-group > .label { margin: 0; }
 
 @media (max-width: 800px) {
-  .gq { padding: 8px 10px; }
+  .gq { padding: var(--space-2) 10px; }
   /* The term is what has to fit; the chip inside it shrinks with it. Both are capped, so a
      long relationship gloss cannot push the row's buttons off the edge. */
   .gq-term { max-width: 100%; }
@@ -281,14 +281,14 @@
      page scrolls. A card floating over a box that scrolls away is worse than a card, so the
      editor rejoins the flow above the canvas and the zoom capsule keeps its own corner. */
   .gq-panel {
-    position: static; margin: 8px; max-height: none; overflow: visible;
+    position: static; margin: var(--space-2); max-height: none; overflow: visible;
   }
 }
 
 /* A boolean block's row: the keyword pill IS the control, so the row carries only the branch
    count beside it. Ruled on the left so the branches beneath read as belonging to it. */
 .gq-row.is-group { border-left: 2px solid var(--hairline); }
-.gq-group-note { margin-left: 2px; }
+.gq-group-note { margin-left: var(--space-half); }
 
 /* ------------------------------------------------------------------------- the + palette */
 /* Three panes: the category rail, the listbox, and the detail pane that explains whatever the
@@ -301,7 +301,7 @@
 
 .gq-pal { display: flex; flex-direction: column; min-height: 0; }
 .gq-pal-head {
-  padding: 8px;
+  padding: var(--space-2);
   border-bottom: 1px solid var(--hairline);
   background: var(--surface);
 }
@@ -310,7 +310,7 @@
    read as a full-width alert box; on a field it reads as "ready to type", which is what it is. */
 .gq-pal-field {
   display: flex; align-items: center; gap: 7px;
-  padding: 4px 9px;
+  padding: var(--space-1) 9px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   background: var(--track-bg);
@@ -341,7 +341,7 @@
   flex: 1 1 auto; min-width: 0;
   border: none; background: none; box-shadow: none;
   min-height: 24px; padding: 0;
-  font-size: 14px; color: var(--ink);
+  font-size: var(--fs-body); color: var(--ink);
 }
 /* MUST carry the pseudo-class to win. A plain `.gq-pal-search { outline: none }` scores 0,1,0
    and loses to base.css's `input:focus-visible` at 0,1,1 — so the input drew the global ring
@@ -355,13 +355,13 @@
 /* -- rail */
 .gq-pal-rail {
   flex: 0 0 180px; width: 180px;
-  padding: 8px 6px; overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--space-2) 6px; overflow-y: auto; overscroll-behavior: contain;
   border-right: 1px solid var(--hairline);
   background: var(--surface);
 }
 .gq-pal-rail-item {
-  display: flex; align-items: center; gap: 8px; width: 100%;
-  min-height: 30px; padding: 5px 8px; margin: 1px 0;
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  min-height: 30px; padding: 5px var(--space-2); margin: 1px 0;
   font-size: 13px; text-align: left;
   background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
   color: var(--text-2);
@@ -369,7 +369,7 @@
 .gq-pal-rail-item:hover { background: var(--wash-hover); border-color: transparent; color: var(--ink); }
 .gq-pal-rail-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .gq-pal-rail-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gq-pal-rail-count { flex: 0 0 auto; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-3); }
+.gq-pal-rail-count { flex: 0 0 auto; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; color: var(--text-3); }
 .gq-pal-rail-item.is-active {
   position: relative; color: var(--ink); font-weight: 600;
   background: color-mix(in srgb, var(--accent) 8%, transparent);
@@ -387,13 +387,13 @@
   overflow-y: auto; overscroll-behavior: contain;
 }
 .gq-pal-section {
-  padding: 8px 8px 4px;
-  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3);
 }
 .gq-pal-option {
   display: flex; align-items: center; gap: 9px;
-  padding: 6px 8px 6px 11px; border-radius: var(--radius-md);
+  padding: 6px var(--space-2) 6px 11px; border-radius: var(--radius-md);
   cursor: pointer;
 }
 /* The row the keyboard is standing on — what Enter will act on.
@@ -448,13 +448,13 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .gq-pal-option-sub {
-  font-size: 12px; color: var(--text-2);
+  font-size: var(--fs-label); color: var(--text-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* The edge count: how many such relationships this tenant actually holds, so a reader can tell
    a well-travelled relationship from one with a single instance before picking it. */
 .gq-pal-option-count {
-  flex: 0 0 auto; font-size: 12px; color: var(--text-3);
+  flex: 0 0 auto; font-size: var(--fs-label); color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
 .gq-pal-empty { padding: 14px 10px; font-size: 13px; color: var(--text-3); }
@@ -466,26 +466,26 @@
    line. */
 .gq-pal-detail {
   flex: 0 0 252px; width: 252px;
-  padding: 12px 14px; overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--space-3) 14px; overflow-y: auto; overscroll-behavior: contain;
   border-left: 1px solid var(--hairline);
   background: var(--surface);
 }
-.gq-pal-detail-title { margin: 0 0 2px; font-size: 14px; font-weight: 650; color: var(--ink); }
+.gq-pal-detail-title { margin: 0 0 var(--space-half); font-size: var(--fs-body); font-weight: 650; color: var(--ink); }
 .gq-pal-detail-type {
-  margin: 0 0 8px;
-  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3);
 }
-.gq-pal-detail-blurb { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-2); }
-.gq-pal-detail-blurb + .gq-pal-detail-blurb { margin-top: 8px; }
+.gq-pal-detail-blurb { margin: 0; font-size: var(--fs-label); line-height: 1.5; color: var(--text-2); }
+.gq-pal-detail-blurb + .gq-pal-detail-blurb { margin-top: var(--space-2); }
 
 /* A node's property filters, on its builder row. The `.filter-chip` recipe, tightened to sit
    in a 28px line beside the entity chips rather than in the chip row under the header. */
 /* The WHERE segment: the keyword, then one chip per filter. A filter narrows which nodes bind at
    this step, so it belongs in the sentence beside FIND and THAT rather than trailing the row as
    though it were something done to the answer afterwards. */
-.gq-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.gq-filter-chip { min-height: 26px; font-size: 12px; }
+.gq-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+.gq-filter-chip { min-height: 26px; font-size: var(--fs-label); }
 .gq-filter-key { color: var(--text-3); }
 /* The operator is the word that makes the chip unambiguous, so it is weighted, not muted. */
 .gq-filter-op { color: var(--text-2); font-weight: 600; }
@@ -505,14 +505,14 @@
 .gq-fe-pop { padding: 10px; }
 .gq-fe-host { min-width: 0; }
 .gq-fe-op { width: 100%; }
-.gq-fe-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.gq-fe-body { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
 .gq-fe-text { width: 100%; }
 .gq-fe-hint { margin: 0; }
 
 /* Key/value rows, for a field whose values are pairs. A two-column grid rather than a flex line
    so the labels stack with their inputs at any width, and the remove button keeps its own column
    instead of wrapping under the value it removes. */
-.gq-fe-pairs { display: flex; flex-direction: column; gap: 8px; }
+.gq-fe-pairs { display: flex; flex-direction: column; gap: var(--space-2); }
 .gq-fe-pair {
   display: grid; grid-template-columns: auto 1fr 26px; align-items: center; gap: 5px 7px;
   padding: 7px; border: 1px solid var(--hairline); border-radius: var(--radius-md);
@@ -534,19 +534,19 @@
 .gq-fe-add {
   align-self: flex-start;
   display: inline-flex; align-items: center; gap: 6px;
-  min-height: 28px; padding: 3px 9px; font-size: 12px;
+  min-height: 28px; padding: 3px 9px; font-size: var(--fs-label);
 }
 /* The literal expansion. Prose says what a pick means; this says what it DOES — the same
    fragment that ends up in the shareable link, built by the real serializer. */
 .gq-pal-detail-lit {
   margin-top: 10px; padding-top: 10px;
   border-top: 1px solid var(--hairline);
-  display: flex; flex-direction: column; gap: 4px;
+  display: flex; flex-direction: column; gap: var(--space-1);
 }
 .gq-pal-detail-lit code {
-  font-size: 11px; word-break: break-all;
+  font-size: var(--fs-micro); word-break: break-all;
   color: var(--ink); background: var(--track-bg);
-  padding: 4px 6px; border-radius: var(--radius-sm);
+  padding: var(--space-1) 6px; border-radius: var(--radius-sm);
 }
 
 /* Below the breakpoint the palette is hosted in a modal sheet, where it is one column: the
@@ -555,7 +555,7 @@
   .gq-pal-panes { flex-direction: column; height: auto !important; }
   .gq-pal-rail {
     flex: 0 0 auto; width: auto;
-    display: flex; flex-wrap: wrap; gap: 4px;
+    display: flex; flex-wrap: wrap; gap: var(--space-1);
     border-right: none; border-bottom: 1px solid var(--hairline);
   }
   .gq-pal-rail-item { width: auto; }
@@ -581,20 +581,20 @@
 
 /* -- the properties drill-in: one field's values, in place of the list */
 .gq-pal-drill-head {
-  display: flex; align-items: center; gap: 8px;
-  padding: 4px 6px 8px; border-bottom: 1px solid var(--hairline); margin-bottom: 6px;
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) 6px var(--space-2); border-bottom: 1px solid var(--hairline); margin-bottom: 6px;
 }
 .gq-pal-back {
-  display: inline-flex; align-items: center; gap: 4px;
-  min-height: 26px; padding: 2px 8px 2px 5px;
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  min-height: 26px; padding: var(--space-half) var(--space-2) var(--space-half) 5px;
   border: none; background: none; box-shadow: none; border-radius: var(--radius-sm);
-  font-size: 12px; color: var(--text-2);
+  font-size: var(--fs-label); color: var(--text-2);
 }
 .gq-pal-back:hover { background: var(--wash-hover); border-color: transparent; color: var(--ink); }
 .gq-pal-drill-title { font-size: 13px; font-weight: 600; color: var(--ink); }
-.gq-pal-drill-body { display: block; padding: 0 4px 4px; }
+.gq-pal-drill-body { display: block; padding: 0 var(--space-1) var(--space-1); }
 .gq-pal-text { width: 100%; margin: 0; }
-.gq-pal-hint { margin: 6px 2px 0; }
+.gq-pal-hint { margin: 6px var(--space-half) 0; }
 
 /* ------------------------------------------------------------------ column panel */
 /* A compact popover on the Columns button, not a sheet: choosing columns is an adjustment to
@@ -602,8 +602,8 @@
    adjusted. One row per node of the query, expanding inline. */
 .gq-cols { display: flex; flex-direction: column; min-height: 0; }
 .gq-cols-master {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 12px; border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 10px var(--space-3); border-bottom: 1px solid var(--hairline);
   background: var(--surface);
   font-size: 13px; font-weight: 600; color: var(--ink);
 }
@@ -613,10 +613,10 @@
    they just cannot be edited. The controls inside carry `disabled`, which is the real signal. */
 .gq-cols-list.is-off { opacity: 0.72; }
 .gq-cols-group { border-radius: var(--radius-md); }
-.gq-cols-group + .gq-cols-group { margin-top: 2px; }
+.gq-cols-group + .gq-cols-group { margin-top: var(--space-half); }
 .gq-cols-head {
   display: flex; align-items: center; gap: 9px;
-  padding: 7px 8px; border-radius: var(--radius-md);
+  padding: 7px var(--space-2); border-radius: var(--radius-md);
   cursor: pointer; list-style: none;
 }
 .gq-cols-head::-webkit-details-marker { display: none; }
@@ -637,12 +637,12 @@
 /* The current columns as prose — the reference's summary line, and the reason a row does not
    have to be expanded to be understood. */
 .gq-cols-summary {
-  font-size: 12px; color: var(--text-2);
+  font-size: var(--fs-label); color: var(--text-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* The disclosure caret, drawn by the same rotate the sheet's `.disclosure` uses. */
 .gq-cols-head::after {
-  content: ""; flex: 0 0 auto; width: 7px; height: 7px; margin-right: 2px;
+  content: ""; flex: 0 0 auto; width: 7px; height: 7px; margin-right: var(--space-half);
   border-right: 1.5px solid var(--text-3); border-bottom: 1.5px solid var(--text-3);
   transform: rotate(45deg) translate(-2px, -2px);
   transition: transform 150ms ease-out;
@@ -651,9 +651,9 @@
 @media (prefers-reduced-motion: reduce) {
   .gq-cols-head::after { transition: none; }
 }
-.gq-cols-group > .pill-row { padding: 2px 8px 10px 41px; }
+.gq-cols-group > .pill-row { padding: var(--space-half) var(--space-2) 10px 41px; }
 .gq-cols-foot {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 9px 12px; border-top: 1px solid var(--hairline);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  padding: 9px var(--space-3); border-top: 1px solid var(--hairline);
   background: var(--surface);
 }

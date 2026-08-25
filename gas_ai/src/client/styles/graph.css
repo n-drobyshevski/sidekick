@@ -3,14 +3,14 @@
 .workbench { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .workbench-bar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
-  padding: 10px 16px;
+  padding: 10px var(--space-4);
   border-bottom: 1px solid var(--hairline);
   background: var(--surface);
 }
 .workbench-title { font-size: 1rem; margin: 0; }
 .workbench-meta {
   display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
-  font-size: 12px; color: var(--text-2);
+  font-size: var(--fs-label); color: var(--text-2);
 }
 /* Counts + "Load more", along the bottom edge over the canvas. Needs the panel treatment the
    legend has, since it sits on top of edges and cards rather than on a bar. Hidden when
@@ -24,7 +24,7 @@
 .workbench-meta.overlay {
   position: absolute; bottom: 10px; z-index: var(--z-canvas-chrome);
   left: calc(10px + var(--rail-w) + 8px);
-  gap: 8px; padding: 7px 10px; font-size: 11px;
+  gap: var(--space-2); padding: 7px 10px; font-size: var(--fs-micro);
   max-width: min(560px, calc(100% - 120px - var(--rail-w) - 8px));
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
@@ -33,16 +33,16 @@
    is never `:empty` — the hide is a class the page sets instead. */
 .workbench-meta.overlay.is-empty { display: none; }
 .workbench-meta-status,
-.workbench-meta-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.workbench-meta-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .workbench-meta-actions:empty { display: none; }
 /* Three hairline-ruled zones — what to draw, how to narrow it, how to read it — instead
    of five identical controls in one uniform gap. The rules are dropped below the wrap
    breakpoint, where the groups stack and a vertical hairline would orphan at a row end. */
 .workbench-controls {
   margin-left: auto;
-  display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
+  display: flex; flex-wrap: wrap; gap: var(--space-2) 14px; align-items: center;
 }
-.workbench-controls__group { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.workbench-controls__group { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .workbench-controls__group + .workbench-controls__group {
   padding-left: 14px; border-left: 1px solid var(--hairline);
 }
@@ -56,10 +56,10 @@
   background: var(--page); overflow: hidden;
 }
 .select-field-label {
-  padding: 0 2px 0 10px; font-size: 12px; color: var(--text-3); white-space: nowrap;
+  padding: 0 var(--space-half) 0 10px; font-size: var(--fs-label); color: var(--text-3); white-space: nowrap;
 }
 .select-field select {
-  border: none; border-radius: 0; background: none; padding-left: 4px;
+  border: none; border-radius: 0; background: none; padding-left: var(--space-1);
 }
 .select-field:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 .select-field select:focus-visible { outline: none; }
@@ -67,7 +67,7 @@
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; padding: 0 5px; margin-left: 7px;
   border-radius: var(--radius-pill); background: var(--track-bg);
-  font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+  font-size: var(--fs-micro); font-weight: 600; font-variant-numeric: tabular-nums;
   color: var(--text-2); line-height: 17px;
 }
 .filter-count:empty { display: none; }
@@ -82,15 +82,15 @@
 .filter-chips {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
   min-height: 37px;
-  padding: 8px 16px; border-bottom: 1px solid var(--hairline);
+  padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--hairline);
 }
-.filter-chips-empty { font-size: 12px; color: var(--text-3); }
+.filter-chips-empty { font-size: var(--fs-label); color: var(--text-3); }
 /* Two targets in one pill: the label opens the panel at that filter's section, the ✕
    clears it. The chip used to be a single delete button, so clicking the thing you wanted
    to change destroyed it. Both children reset the base button recipe — left alone they
    would nest two 36px bordered, shadowed surfaces inside a 22px pill. */
 .filter-chip {
-  padding: 0 4px 0 0; border-radius: var(--radius-pill);
+  padding: 0 var(--space-1) 0 0; border-radius: var(--radius-pill);
   border: 1px solid var(--hairline);
 }
 /* Neutral chip surface, scoped so it stops overriding the severity tint below. Both are
@@ -103,7 +103,7 @@
   min-height: 0; border: none; background: none; box-shadow: none;
   color: inherit; font: inherit; border-radius: var(--radius-pill);
 }
-.filter-chip-body { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 9px; }
+.filter-chip-body { display: inline-flex; align-items: center; gap: 6px; padding: 3px var(--space-1) 3px 9px; }
 .filter-chip-body:hover, .filter-chip-x:hover { background: var(--wash-hover); }
 .filter-chip-key { font-weight: 500; opacity: 0.8; }
 .filter-chip-value { font-weight: 600; }
@@ -113,7 +113,7 @@
    visibly quieter, and excluded from the count badge. */
 .filter-chip.is-default { border-style: dashed; }
 .filter-chip.is-default .filter-chip-value { font-weight: 500; }
-.filter-clear-all { font-size: 12px; }
+.filter-clear-all { font-size: var(--fs-label); }
 
 /* The canvas, and the query editor floating over it. `position: relative` so the editor is
    positioned against the whole pane; .workbench-body stays the containing block for everything
@@ -129,7 +129,7 @@
 /* The query editor. Out of flow on purpose: it must not resize the canvas, or every toggle
    would fire the renderer's ResizeObserver and re-fit the graph under the reader's hands. */
 .gq-panel {
-  position: absolute; inset: 8px 8px auto 8px; z-index: var(--z-canvas-panel);
+  position: absolute; inset: var(--space-2) var(--space-2) auto var(--space-2); z-index: var(--z-canvas-panel);
   max-height: calc(100% - 16px); overflow-y: auto;
   background: var(--page); border: 1px solid var(--hairline);
   border-radius: var(--radius-lg); box-shadow: var(--shadow-sheet);
@@ -155,7 +155,7 @@
 .workbench-body > svg { display: block; width: 100%; height: 100%; cursor: grab; user-select: none; -webkit-user-select: none; }
 .workbench-body > svg.panning { cursor: grabbing; }
 .workbench-body.updating > svg,
-.workbench-body.updating > .workbench-table { opacity: 0.55; transition: opacity 120ms ease-out; }
+.workbench-body.updating > .workbench-table { opacity: 0.55; transition: opacity var(--dur-quick) ease-out; }
 @media (prefers-reduced-motion: reduce) {
   /* The one dim/undim in the file with no reduced-motion rule of its own, relying entirely on
      the global `transition-duration: 0.01ms !important` blanket in overrides.css. That still
@@ -189,9 +189,9 @@
 .gs-updating-bar .progress-track { height: 2px; }
 .workbench-table {
   /* Bottom padding clears the counts overlay, which floats above this in table view. */
-  position: absolute; inset: 0; overflow-y: auto; padding: 12px 16px 60px;
+  position: absolute; inset: 0; overflow-y: auto; padding: var(--space-3) var(--space-4) 60px;
 }
-.workbench-empty { padding: 32px; max-width: 640px; margin: 0 auto; width: 100%; }
+.workbench-empty { padding: var(--space-6); max-width: 640px; margin: 0 auto; width: 100%; }
 /* emptyState() is message + hint only, so the way out of a dead end lives beside it. */
 .workbench-empty-action { display: flex; justify-content: center; margin-top: 14px; }
 
@@ -210,7 +210,7 @@
    rather than a flex sibling stacked under the canvas: a flex column would shrink `.gs-canvas`
    by the status row's own height, and the measurement taken before either element exists
    would then be for a box bigger than the one the svg actually got. */
-.graph-skeleton { position: absolute; inset: 12px; overflow: hidden; --gs-stagger: 45ms; }
+.graph-skeleton { position: absolute; inset: var(--space-3); overflow: hidden; --gs-stagger: 45ms; }
 .gs-canvas { display: block; width: 100%; height: 100%; }
 
 /* Group boxes: identical recipe to `.ggroup-box`, so a grouped ghost previews the exact hull
@@ -294,9 +294,9 @@
 }
 .gs-status .progress-track { flex: 0 0 88px; }
 .gs-phase {
-  font-size: 12px; font-weight: 600; color: var(--text-2);
+  font-size: var(--fs-label); font-weight: 600; color: var(--text-2);
   background: var(--page); border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill); padding: 5px 12px; box-shadow: var(--shadow-card);
+  border-radius: var(--radius-pill); padding: 5px var(--space-3); box-shadow: var(--shadow-card);
 }
 
 @media (max-width: 800px) {
@@ -328,7 +328,7 @@
 .graph-zoom {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
 }
-.graph-zoom-scale { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.graph-zoom-scale { display: flex; flex-direction: column; align-items: center; gap: var(--space-half); }
 /* Circles, against a base recipe that gives none of it: `button` sets min-height 36, a 14px
    side padding and the medium radius, so all three have to be named here. */
 .graph-rail button {
@@ -355,7 +355,7 @@
 .graph-tool-badge:empty { display: none; }
 
 /* Shared shell for the rail's two popovers: the layouts list, and grouping's dimensions. */
-.graph-layout { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.graph-layout { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); }
 .graph-layout .segmented { width: 100%; }
 .graph-layout .segmented > button { flex: 1; }
 
@@ -363,26 +363,26 @@
 /* Heading and shortcut on one line, the way the reference prints it — the key is discoverable
    from the control it opens rather than being folklore. */
 .graph-layouts-head {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
 }
 .graph-layouts-title { font-size: 13px; font-weight: 600; color: var(--ink); }
-.graph-layouts-key { font-size: 11px; color: var(--text-3); }
+.graph-layouts-key { font-size: var(--fs-micro); color: var(--text-3); }
 .graph-layouts-key kbd {
-  margin-left: 3px; padding: 1px 4px;
-  border: 1px solid var(--hairline); border-radius: 3px;
+  margin-left: 3px; padding: 1px var(--space-1);
+  border: 1px solid var(--hairline); border-radius: var(--radius-xs);
   background: var(--track-bg);
   font: inherit; font-weight: 600; color: var(--text-2);
 }
 /* The listbox itself carries focus (aria-activedescendant moves the cursor), so the ring goes
    here and not on a row. Never removed — this is the only thing telling a keyboard user which
    control they are in. */
-.graph-layouts { display: flex; flex-direction: column; gap: 2px; margin: 0 -4px; }
+.graph-layouts { display: flex; flex-direction: column; gap: var(--space-half); margin: 0 -4px; }
 .graph-layouts:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-md); }
 .graph-layouts-row {
   /* Top, not centre: the blurb wraps, and a centred glyph beside two lines of text floats
      between them instead of marking the row it belongs to. */
   display: flex; align-items: flex-start; gap: 10px;
-  padding: 7px 8px; border-radius: var(--radius-md);
+  padding: 7px var(--space-2); border-radius: var(--radius-md);
   cursor: pointer;
 }
 .graph-layouts-glyph {
@@ -396,7 +396,7 @@
    from another — five near-identical nouns is exactly the list where a reader is guessing — so
    cutting it at the panel's width would truncate the part that answers the question. Five rows
    is a short enough list to afford the height. */
-.graph-layouts-blurb { font-size: 11px; line-height: 1.35; color: var(--text-3); }
+.graph-layouts-blurb { font-size: var(--fs-micro); line-height: 1.35; color: var(--text-3); }
 /* The keyboard cursor — which row Enter will take. A wash, matching the palette's own
    `.gq-pal-option.is-active`, so the two lists on this page mean the same thing by it. */
 .graph-layouts-row.is-active { background: var(--wash-hover); }
@@ -408,12 +408,12 @@
 .graph-layouts-check {
   flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--accent);
 }
-.graph-layout-row { display: flex; align-items: center; gap: 8px; }
+.graph-layout-row { display: flex; align-items: center; gap: var(--space-2); }
 .graph-layout-label {
-  flex: 0 0 82px; font-size: 11px; color: var(--text-2);
+  flex: 0 0 82px; font-size: var(--fs-micro); color: var(--text-2);
 }
 .graph-layout-row select { flex: 1; min-width: 0; }
-.graph-layout-note { margin: 0; font-size: 11px; color: var(--text-3); }
+.graph-layout-note { margin: 0; font-size: var(--fs-micro); color: var(--text-3); }
 
 /* Tabular, or the readout jitters as it crosses 38% → 100% under a live zoom. It carries its
    own ground for the same reason the buttons do — the rail floats over nodes and edges, and
@@ -421,8 +421,8 @@
    shadow: it is a label, and the lift belongs to the things you can press. */
 .graph-zoom-pct {
   min-width: var(--rail-w); text-align: center;
-  padding: 1px 4px; border-radius: var(--radius-pill); background: var(--page);
-  font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums;
+  padding: 1px var(--space-1); border-radius: var(--radius-pill); background: var(--page);
+  font-size: var(--fs-micro); color: var(--text-2); font-variant-numeric: tabular-nums;
 }
 
 .gedge { stroke: rgba(0, 0, 0, 0.22); stroke-width: 1.25; fill: none; }
@@ -439,7 +439,7 @@
 .ggroup-box, .ggroup-box.is-sub, .gcluster-hull { vector-effect: non-scaling-stroke; }
 .ggroup-box { fill: rgba(0, 0, 0, 0.015); stroke: var(--hairline); stroke-width: 1; }
 .ggroup-label {
-  font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; fill: var(--svg-text-2);
 }
 /* The second grouping level, drawn inside the first. NO fill: the parent's wash is
@@ -480,7 +480,7 @@
 .gnode:hover .gnode-box { stroke: rgba(0, 0, 0, 0.3); }
 .gnode:focus { outline: none; }
 .gnode:focus-visible .gnode-box { stroke: var(--accent); stroke-width: 2; }
-.gnode-name { font-size: 12px; font-weight: 600; fill: var(--ink); }
+.gnode-name { font-size: var(--fs-label); font-weight: 600; fill: var(--ink); }
 .gnode-kind { font-size: 10px; fill: var(--svg-text-2); letter-spacing: 0.04em; }
 .gnode-icon { fill: none; stroke: rgba(0, 0, 0, 0.6); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 /* The AARS figure on a node card: a number in a column of node cards, so tabular. */
@@ -539,13 +539,13 @@
 
 /* Legend: a collapsible <details> disclosure, hidden by default. */
 .graph-legend {
-  font-size: 12px; color: var(--text-2);
+  font-size: var(--fs-label); color: var(--text-2);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg); background: var(--surface); margin-top: 10px;
 }
 .graph-legend.overlay {
   position: absolute; right: 10px; bottom: 10px; z-index: var(--z-canvas-chrome);
-  margin: 0; font-size: 11px;
+  margin: 0; font-size: var(--fs-micro);
   max-width: min(640px, calc(100% - 140px));
   box-shadow: var(--shadow-card);
 }
@@ -569,7 +569,7 @@
    glyph. It used to be sized to match the zoom capsule across the canvas; the zoom is a rail
    of circles now, and this keeps its own height because a legend is opened by its NAME. */
 .graph-legend.overlay > .legend-toggle {
-  gap: 8px; padding: 6px 12px; min-height: 34px; margin-left: auto;
+  gap: var(--space-2); padding: 6px var(--space-3); min-height: 34px; margin-left: auto;
 }
 .graph-legend.overlay:not([open]) { border-radius: var(--radius-pill); }
 .graph-legend[open] > .legend-toggle { border-bottom: 1px solid var(--hairline); }
@@ -596,11 +596,11 @@
   width: 22px; height: 0; border-top: 2px dashed var(--sev-high); display: inline-block;
 }
 .legend-swatch-cat {
-  width: 12px; height: 12px; border-radius: 3px; display: inline-block;
+  width: 12px; height: 12px; border-radius: var(--radius-xs); display: inline-block;
   background: var(--swatch, var(--hairline));
 }
 
 /* AARS pillar bars (asset sheet) */
-.pillar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 12px; }
+.pillar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: var(--fs-label); }
 .pillar-row .pillar-name { width: 120px; color: var(--text-2); }
 .pillar-row .pillar-val { width: 44px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }

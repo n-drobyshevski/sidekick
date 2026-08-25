@@ -12,12 +12,12 @@
   display: grid;
   grid-template-columns: minmax(150px, 0.45fr) minmax(320px, 2fr);
   gap: 20px 36px; align-items: start;
-  margin: 0 0 18px; padding-bottom: 4px; border-bottom: 1px solid var(--hairline);
+  margin: 0 0 18px; padding-bottom: var(--space-1); border-bottom: 1px solid var(--hairline);
 }
 .cov-header .stat-list { grid-column: 1 / -1; }
-.cov-hero-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
-.cov-strip { display: flex; flex-direction: column; gap: 8px; }
-.cov-strip-note { font-size: 12px; color: var(--text-3); margin: 0; max-width: var(--measure); }
+.cov-hero-sub { font-size: var(--fs-label); color: var(--text-3); margin-top: 3px; }
+.cov-strip { display: flex; flex-direction: column; gap: var(--space-2); }
+.cov-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
 
 /* The coverage bar and its keys. Same visual recipe as .sevbar / .sevkey-row, but a
    separate family on purpose: coverage is not severity, and minting `sev-fill-live` would
@@ -39,7 +39,7 @@
 .cov-keys { display: flex; flex-wrap: wrap; gap: 6px; }
 .cov-key {
   display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12px; padding: 3px 10px;
+  font-size: var(--fs-label); padding: 3px 10px;
   border: 1px solid var(--hairline); border-radius: var(--radius-pill);
   background: var(--page); color: var(--text-2);
 }
@@ -57,7 +57,7 @@
 .cov-diagram-scroll {
   overflow-x: auto;
   border: 1px solid var(--hairline); border-radius: var(--radius-xl);
-  background: var(--page); padding: 6px 12px 8px;
+  background: var(--page); padding: 6px var(--space-3) var(--space-2);
 }
 .cov-diagram-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* No width rules here on purpose. The layout is measured, not scaled: scans.js draws the
@@ -66,14 +66,14 @@
    height that depends only on how many scan areas there are. Anything like `width: 100%`
    with a fixed viewBox would put the scaling back and take the height with it. */
 .cov-diagram { display: block; height: auto; }
-.cov-diagram-note { margin: 8px 0 0; max-width: var(--measure); }
+.cov-diagram-note { margin: var(--space-2) 0 0; max-width: var(--measure); }
 
 .cov-node-box { fill: var(--surface); stroke: var(--hairline); stroke-width: 1; }
 .cov-node[data-state="unscanned"] .cov-node-box {
   fill: var(--page); stroke: rgba(0, 0, 0, 0.28); stroke-dasharray: 5 4;
 }
 .cov-node-name { font-size: 11.5px; font-weight: 600; fill: var(--ink); }
-.cov-node-fig { font-size: 11px; fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
+.cov-node-fig { font-size: var(--fs-micro); fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
 .cov-node[data-state="unscanned"] .cov-node-name { fill: var(--svg-text-2); }
 
 /* Filled / half / hollow. The dot is never the only cue — the node prints its figure or
@@ -85,7 +85,7 @@
 .cov-dot[data-state="partial"] .cov-dot-fill { fill: var(--warn); }
 
 .cov-spine { fill: var(--surface); stroke: var(--hairline); }
-.cov-spine-title { font-size: 12px; font-weight: 600; fill: var(--ink); }
+.cov-spine-title { font-size: var(--fs-label); font-weight: 600; fill: var(--ink); }
 .cov-spine-step { font-size: 10.5px; fill: var(--svg-text-2); }
 
 /* The edge ink mirrors .gedge (graph.css) so the two pictures read as one system. An
@@ -98,11 +98,11 @@
 .cov-edge[data-state="unscanned"] { stroke-dasharray: 5 4; stroke-opacity: 0.55; }
 
 .cov-dest-box { fill: var(--page); stroke: var(--accent); stroke-opacity: 0.35; }
-.cov-dest-name { font-size: 12px; font-weight: 600; fill: var(--accent); }
+.cov-dest-name { font-size: var(--fs-label); font-weight: 600; fill: var(--accent); }
 .cov-dest-sub { font-size: 10.5px; fill: var(--svg-text-2); }
 
 /* Lighting one area from its register row. Opacity only, so nothing moves. */
-.cov-node, .cov-edge, .cov-dest { transition: opacity 140ms ease-out; }
+.cov-node, .cov-edge, .cov-dest { transition: opacity var(--dur-fast) ease-out; }
 .cov-diagram.is-dimmed .cov-node,
 .cov-diagram.is-dimmed .cov-edge { opacity: 0.34; }
 .cov-diagram.is-dimmed .cov-node.is-lit,
@@ -151,7 +151,7 @@
 .prov-step { display: grid; grid-template-columns: 16px 1fr; gap: 10px; padding: 5px 0;
   position: relative; }
 .prov-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(0, 0, 0, 0.45);
-  margin: 6px 0 0 4px; }
+  margin: 6px 0 0 var(--space-1); }
 .prov-step:not(:last-child)::before {
   content: ""; position: absolute; left: 7.5px; top: 16px; bottom: -5px;
   width: 1px; background: var(--hairline);
@@ -164,24 +164,24 @@
 .prov-sub { font-size: 11.5px; color: var(--text-3); }
 
 /* ------------------------------------------------------------------ panel: one query */
-.step-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.step-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: 10px; }
 .step-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px; font-weight: 600; }
+  font-size: var(--fs-label); font-weight: 600; }
 .q-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  margin: 12px 0 5px; }
+  margin: var(--space-3) 0 5px; }
 .q-label { font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
   color: var(--text-3); }
-.q-cap { font-size: 11px; color: var(--text-3); margin-top: 6px; }
+.q-cap { font-size: var(--fs-micro); color: var(--text-3); margin-top: 6px; }
 
 /* --------------------------------------------------------- panel: variables editor */
-.vars { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hairline); }
+.vars { margin-top: var(--space-4); padding-top: 14px; border-top: 1px solid var(--hairline); }
 .vars-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-  margin-bottom: 8px; }
+  margin-bottom: var(--space-2); }
 .vars-fields { display: flex; flex-direction: column; gap: 14px; }
-.vars-field { display: flex; flex-direction: column; gap: 4px; }
+.vars-field { display: flex; flex-direction: column; gap: var(--space-1); }
 .vars-label { font-size: 12.5px; font-weight: 600; }
 .vars-help { font-size: 11.5px; color: var(--text-3); margin: 0; max-width: var(--measure); }
-.vars-select { font: inherit; font-size: 12.5px; padding: 4px 8px; border-radius: var(--radius-sm);
+.vars-select { font: inherit; font-size: 12.5px; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm);
   border: 1px solid var(--hairline); background: var(--page); align-self: flex-start; }
 
 /* A set of values as removable chips. The empty state says what empty MEANS — an empty
@@ -191,36 +191,36 @@
 .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: var(--surface); border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill); padding: 2px 4px 2px 9px; }
+  border-radius: var(--radius-pill); padding: var(--space-half) var(--space-1) var(--space-half) 9px; }
 .chip-x { border: none; background: none; cursor: pointer; color: var(--text-3);
-  font-size: 13px; line-height: 1; padding: 0 4px; border-radius: 50%; }
+  font-size: 13px; line-height: 1; padding: 0 var(--space-1); border-radius: 50%; }
 .chip-x:hover { background: var(--wash-hover); color: var(--ink); }
-.chip-add { display: flex; gap: 6px; margin-top: 2px; }
-.chip-input { font: inherit; font-size: 12px; padding: 4px 8px; min-width: 0; flex: 1;
+.chip-add { display: flex; gap: 6px; margin-top: var(--space-half); }
+.chip-input { font: inherit; font-size: var(--fs-label); padding: var(--space-1) var(--space-2); min-width: 0; flex: 1;
   border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--page); }
 
-.vars-json { margin-top: 12px; }
+.vars-json { margin-top: var(--space-3); }
 .vars-json summary { font-size: 11.5px; color: var(--text-2); cursor: pointer; }
 .vars-json .code-block { margin-top: 6px; }
 
-.vars-error { font-size: 12px; color: var(--bad); margin: 8px 0 0; min-height: 0; }
+.vars-error { font-size: var(--fs-label); color: var(--bad); margin: var(--space-2) 0 0; min-height: 0; }
 .vars-error:not(.is-on) { display: none; }
 
-.vars-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.vars-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: 14px; }
 .vars-state { margin-right: auto; }
 
-.vars-test { margin-top: 12px; }
-.vars-test-out { display: flex; flex-direction: column; gap: 4px; }
+.vars-test { margin-top: var(--space-3); }
+.vars-test-out { display: flex; flex-direction: column; gap: var(--space-1); }
 .vars-test-line { font-size: 12.5px; color: var(--text-2); margin: 0; }
 .vars-test-line.is-bad { color: var(--bad); }
 
 /* ------------------------------------------------------- sheet body, page-local prose */
 .cov-para { margin: 0; font-size: 13px; color: var(--text-2); }
-.cov-sheet-figure { color: var(--ink); font-size: 14px; }
+.cov-sheet-figure { color: var(--ink); font-size: var(--fs-body); }
 .cov-sheet-figure strong { font-size: 1.125rem; font-weight: 600; }
 .cov-note {
   font-size: 12.5px; color: var(--text-2); background: rgba(0, 0, 0, 0.03);
-  border-radius: var(--radius-md); padding: 8px 10px; margin: 8px 0 0;
+  border-radius: var(--radius-md); padding: var(--space-2) 10px; margin: var(--space-2) 0 0;
 }
 
 /* The tenant's own rejection message, verbatim. Monospace and wrapped rather than truncated:
@@ -232,7 +232,7 @@
   font-size: 11.5px; line-height: 1.55; color: var(--ink);
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
-  margin: 8px 0 0; padding: 10px 12px;
+  margin: var(--space-2) 0 0; padding: 10px var(--space-3);
   max-height: 160px; overflow: auto;
   /* `pre-wrap`, unlike .code-block's `pre`: a GraphQL document's indentation is how it is
      read, but an error message is a sentence and wrapping it costs nothing. */
@@ -250,7 +250,7 @@
 .reach-ladder { display: flex; flex-direction: column; gap: 9px; margin: 10px 0 18px; }
 .reach-stage {
   display: grid; grid-template-columns: minmax(120px, 190px) 1fr 48px;
-  align-items: center; gap: 12px;
+  align-items: center; gap: var(--space-3);
 }
 .reach-stage-label { font-size: 12.5px; font-weight: 600; color: var(--ink); }
 .reach-stage-figure { display: flex; align-items: center; gap: 10px; }
@@ -265,17 +265,17 @@
   );
 }
 .reach-stage-pct {
-  font-size: 12px; color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums;
+  font-size: var(--fs-label); color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums;
 }
 
 .reach-kind-ai { font-weight: 600; color: var(--ink); }
 .reach-kinds td .num { font-variant-numeric: tabular-nums; }
 
-.reach-edges { margin-top: 4px; }
+.reach-edges { margin-top: var(--space-1); }
 .reach-chip-dead { color: var(--text-3); opacity: 0.75; }
 
 @media (max-width: 620px) {
-  .reach-stage { grid-template-columns: 1fr; gap: 4px; }
+  .reach-stage { grid-template-columns: 1fr; gap: var(--space-1); }
   .reach-stage-pct { text-align: left; }
 }
 
@@ -285,5 +285,5 @@
 }
 @media (max-width: 760px) {
   .cov-header { grid-template-columns: 1fr; gap: 18px; }
-  .cov-diagram-scroll { padding: 4px 6px 8px; }
+  .cov-diagram-scroll { padding: var(--space-1) 6px var(--space-2); }
 }

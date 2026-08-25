@@ -18,22 +18,22 @@
    the shared .sevbar--lg / .sevkey-row--legend components (components.css). */
 .combo-shift { display: flex; flex-direction: column; gap: 10px; }
 .combo-shift-row { display: flex; flex-direction: column; gap: 6px; }
-.combo-shift-head { display: flex; align-items: baseline; gap: 8px; }
+.combo-shift-head { display: flex; align-items: baseline; gap: var(--space-2); }
 /* The reason the second bar differs from the first. Not decoration: without it the two
    bars are a before/after with no stated cause. */
 .combo-shift-rule {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 11px; color: var(--text-3);
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--fs-micro); color: var(--text-3);
 }
 .combo-shift-rule-glyph { color: var(--text-2); font-weight: 600; }
 
 /* The condition matrix. A grid, not a table element, because the row heads are buttons
    and the column heads are filter toggles; role=table/row/cell carries the semantics. */
-.combo-matrix { display: flex; flex-direction: column; margin-top: 4px; }
+.combo-matrix { display: flex; flex-direction: column; margin-top: var(--space-1); }
 .combo-matrix-row {
   display: grid;
   grid-template-columns: minmax(130px, 1.5fr) repeat(4, minmax(58px, 1fr));
-  align-items: stretch; gap: 4px;
+  align-items: stretch; gap: var(--space-1);
   border-bottom: 1px solid var(--hairline);
 }
 .combo-matrix-row:last-child { border-bottom: none; }
@@ -44,7 +44,7 @@
    cells below stay neutral, which is what keeps this a ledger and not a heat map. */
 .combo-cond-btn {
   display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
-  gap: 3px; width: 100%; min-height: 0; padding: 5px 4px 6px;
+  gap: 3px; width: 100%; min-height: 0; padding: 5px var(--space-1) 6px;
   font-size: 10px; font-weight: 600; line-height: 1.2; text-align: center;
   border: 1px solid transparent; border-radius: var(--radius-sm);
   background: none; box-shadow: none; color: var(--text-2);
@@ -65,7 +65,7 @@
 .combo-matrix-jump {
   display: flex; align-items: center; gap: 6px; width: 100%;
   min-height: 0; padding: 7px 6px; text-align: left;
-  font-size: 12px; font-weight: 600; line-height: 1.25;
+  font-size: var(--fs-label); font-weight: 600; line-height: 1.25;
   background: none; border: none; box-shadow: none; color: var(--ink);
   border-radius: var(--radius-sm);
 }
@@ -75,26 +75,26 @@
 
 .combo-cell {
   display: flex; align-items: center; justify-content: center; gap: 3px;
-  padding: 7px 2px; font-size: 12px;
+  padding: 7px var(--space-half); font-size: var(--fs-label);
 }
 /* Filled = the rule tests it; hollow = the assets carry it anyway; "?" = undetermined;
    em dash = absent. The glyph is the signal and the count is the quantity — the cell
    spends no colour at all, so four columns of marks never become a wall of red. */
-.combo-cell-mark { line-height: 1; font-size: 11px; }
+.combo-cell-mark { line-height: 1; font-size: var(--fs-micro); }
 .combo-cell-mark.is-required { color: var(--ink); }
 .combo-cell-mark.is-required-only { color: var(--text-3); }
 .combo-cell-mark.is-extra { color: var(--text-2); }
 .combo-cell-mark.is-unknown { color: var(--text-3); font-weight: 700; }
 .combo-cell-mark.is-none { color: var(--text-3); }
-.combo-cell-num { font-size: 11px; font-weight: 600; color: var(--text-2); }
+.combo-cell-num { font-size: var(--fs-micro); font-weight: 600; color: var(--text-2); }
 
 /* combo group cards */
 .combo-toolbar {
-  display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-bottom: 10px;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-3); margin-bottom: 10px;
 }
-.combo-toolbar > .section-label { margin: 24px 0 0; }
+.combo-toolbar > .section-label { margin: var(--space-5) 0 0; }
 .combo-toolbar-controls {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-left: auto;
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-left: auto;
 }
 .combo-card { margin-bottom: 14px; }
 /* The pattern's NAME leads. It used to sit third in this row, after the badge and a
@@ -105,21 +105,21 @@
 }
 .combo-card .combo-title { flex: 0 1 auto; margin: 0; }
 .combo-card .combo-count {
-  margin-left: auto; font-weight: 600; font-size: 12px; color: var(--text-2);
+  margin-left: auto; font-weight: 600; font-size: var(--fs-label); color: var(--text-2);
 }
 /* Native and adjusted as one reading. The arrow IS the amplifier, so the re-rating is a
    single object with one accessible name rather than a badge and a loose caption. */
 .combo-shift-badge { display: inline-flex; align-items: center; gap: 5px; }
 .combo-shift-arrow { color: var(--text-3); font-weight: 600; }
 .combo-note {
-  margin: 8px 0; padding: 8px 10px; font-size: 12px; color: var(--text-2);
+  margin: var(--space-2) 0; padding: var(--space-2) 10px; font-size: var(--fs-label); color: var(--text-2);
   background: rgba(0, 0, 0, 0.03); border-radius: var(--radius-md);
   max-width: var(--measure);
 }
 .combo-conds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
 .combo-cond {
-  gap: 5px; border-radius: var(--radius-sm); padding: 2px 8px;
-  font-size: 11px;
+  gap: 5px; border-radius: var(--radius-sm); padding: var(--space-half) var(--space-2);
+  font-size: var(--fs-micro);
   background: rgba(0, 0, 0, 0.05); color: var(--text-2);
 }
 /* Carried but not tested: the same chip, outlined instead of filled, so "extra risk on
@@ -134,14 +134,14 @@
 .combo-cond-num { color: var(--text-3); font-variant-numeric: tabular-nums; }
 
 .combo-assets {
-  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px;
+  display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: 10px;
 }
 /* Its own chip, not the graph's severity FILTER pill this page used to borrow: an
    affected asset is a link to a record, not a toggle, and the two should not look alike. */
 .asset-chip, .asset-more {
   display: inline-flex; align-items: center; gap: 6px;
   border-radius: var(--radius-pill); padding: 3px 10px; min-height: 0;
-  font-size: 12px; background: var(--page); border: 1px solid var(--hairline);
+  font-size: var(--fs-label); background: var(--page); border: 1px solid var(--hairline);
   box-shadow: none; color: var(--ink);
 }
 .asset-chip:hover, .asset-more:hover { background: var(--surface); border-color: #d9d9de; }
@@ -149,14 +149,14 @@
    findings score's band was demoted — see pages/combos.js at this call site. Neutral now,
    so the only tinted marks on a combo card are the ones that really are severities. */
 .asset-chip-score {
-  font-size: 11px; font-weight: 600; border-radius: var(--radius-pill); padding: 0 6px;
+  font-size: var(--fs-micro); font-weight: 600; border-radius: var(--radius-pill); padding: 0 6px;
   color: var(--text-2); background: rgba(0, 0, 0, 0.05);
   font-variant-numeric: tabular-nums;
 }
 .asset-more { color: var(--text-2); font-weight: 600; border-style: dashed; }
 
-.combo-actions { display: flex; gap: 8px; margin-top: 14px; }
-.combo-issues:not(:empty) { margin-top: 12px; }
+.combo-actions { display: flex; gap: var(--space-2); margin-top: 14px; }
+.combo-issues:not(:empty) { margin-top: var(--space-3); }
 .combo-issues .filter-bar { margin-bottom: 10px; }
 /* Wide enough for the placeholder that names all four searchable fields — clipped, it
    advertises two of them and hides the rest. */
@@ -170,12 +170,12 @@
   .combo-matrix-row { grid-template-columns: minmax(96px, 1.4fr) repeat(4, minmax(40px, 1fr)); }
   .combo-cond-btn span:not(.sr-only) { display: none; }
 }
-.fw-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-.fw-tag { font-size: 11px; font-weight: 600; }
+.fw-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.fw-tag { font-size: var(--fs-micro); font-weight: 600; }
 /* Four taxonomies in one strip read as one vocabulary. Name each family instead. */
 .fw-groups { display: flex; flex-direction: column; gap: 6px; }
 .fw-group { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
 .fw-group-label {
-  font-size: 11px; font-weight: 600; color: var(--text-3);
+  font-size: var(--fs-micro); font-weight: 600; color: var(--text-3);
   min-width: 92px;
 }
