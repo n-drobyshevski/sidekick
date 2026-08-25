@@ -156,7 +156,10 @@ export function distinct(records: Rec[], column: string): string[] {
   return [...seen].sort();
 }
 
-// The columns the findings table ships to the client (order = display order).
+// The finding columns the CSV exports write (order = column order). This used to be the
+// findings TABLE's projection as well, but that endpoint had no caller and is gone; the
+// exports are the only reader left, which is why `_`-prefixed derived columns are filtered
+// out at both call sites rather than here.
 export const TABLE_COLUMNS = [
   "_vuln_key", "_sev", "_domain", "_supportGroup", "name", "severity", "status",
   "detailedName", "fixedVersion", "firstDetectedAt", "resolvedAt", "lastDetectedAt",
@@ -165,8 +168,3 @@ export const TABLE_COLUMNS = [
   "vulnerableAsset.subscriptionName", "vulnerableAsset.operatingSystem",
 ] as const;
 
-export function tableRow(r: Rec): Rec {
-  const out: Rec = {};
-  for (const c of TABLE_COLUMNS) out[c] = r[c] ?? null;
-  return out;
-}

@@ -4,9 +4,7 @@
 
 import {
   SEVERITY_COLORS,
-  SEVERITY_GLYPHS,
   SEVERITY_ORDER,
-  SLA_TARGETS,
   SELECTABLE_SEVERITIES,
   RESOLVED_STATUSES,
 } from "../domain/config";
@@ -37,7 +35,10 @@ import { nowIso, parseTs, present, type Rec } from "../domain/util";
 import { kmMedianAsOf, kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
 import * as insights from "../domain/insights";
 import * as program from "../domain/program";
-import { execGroupSlice, execMttrSlice } from "../domain/executivePayload";
+import {
+  execGroupSlice, execMttrSlice, historyTrendSlice, mttrPageTrendSlice,
+  programTrendSlice, scanRowsSlice,
+} from "../domain/pagePayload";
 import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
 import * as findings from "./findings";
@@ -121,9 +122,15 @@ export function bootstrap(_p?: unknown): ApiResult {
     // which tag every row is read from, which now moves the domain split on every cached
     // payload in the app, not just this one — and carrying it here as well would only hash a
     // value the key already carries.
-    ...(cached("bootstrapCore5", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
+    // "bootstrapCore5" → "bootstrapCore6": the payload SHED its unread fields — `prevCounts`
+    // (which cost a Drive fetch, ungzip and parse of the previous scan's entire observation
+    // set for six integers nothing rendered), the `statuses`/`assetTypes`/`clouds` filter
+    // vocabularies (three O(N) passes over the frame, no reader), `scopeCounts.noBizDomain`
+    // (whose own comment admitted as much), `palette.glyphs`/`slaTargets`, and
+    // `latestScan.shape`/`severities`. Bump so no stale fat entry survives the persistent
+    // dataVersion; a reader that wanted any of them would have been broken already.
+    ...(cached("bootstrapCore6", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
     // Live per-request fields: never cached (activeJob changes every poll tick).
-    dataVersion: dataVersion(),
     hasCredentials: hasWizCredentials(),
     activeJob: activeJobSummary(),
   }));
@@ -209,8 +216,6 @@ function bootstrapCore(): Rec {
     palette: {
       order: SEVERITY_ORDER,
       colors: SEVERITY_COLORS,
-      glyphs: SEVERITY_GLYPHS,
-      slaTargets: SLA_TARGETS,
       selectable: SELECTABLE_SEVERITIES,
     },
     settings: {
@@ -228,14 +233,11 @@ function bootstrapCore(): Rec {
           scanId: latest.scan_id,
           ts: latest.ts,
           mode: latest.mode,
-          shape: latest.shape,
           total: latest.total,
-          severities: latest.severities,
         }
       : null,
     counts,
     unassignedCount,
-    prevCounts: ledgerStore.previousSeverityCounts(),
     // THE RESOLVED UNIVERSE, not the rule list. A tag value is a domain a finding can actually
     // land in, so a switcher built from `domainNames(items)` alone would offer only the manual
     // groups and leave every tag-attributed bucket unreachable — the exact failure the tag-first
@@ -253,11 +255,6 @@ function bootstrapCore(): Rec {
       supportGroups: supportGroupCounts,
       unassigned: unassignedCount,
       noSupportGroup,
-      // How many findings carry no `Wiz/Domain` tag. Nothing renders it today — the tag stopped
-      // being a scope of its own when it became the principal input to `_domain` — but it is
-      // the denominator of the tag-coverage story Attribution tells, and it is one line here
-      // versus a second traversal there.
-      noBizDomain,
       // Both over base rows, and paired on purpose: "412 not attributable" is unreadable
       // without the population it is 412 of, and that population is not `register`.
       baseRows: baseRows.length,
@@ -270,9 +267,6 @@ function bootstrapCore(): Rec {
     domainTagKey: bizDomains.configuredDomainTagKey(),
     filterOptions: scan
       ? {
-          statuses: findings.distinct(records, "status"),
-          assetTypes: findings.distinct(records, "vulnerableAsset.type"),
-          clouds: findings.distinct(records, "vulnerableAsset.cloudPlatform"),
           subscriptions: findings.distinct(records, "vulnerableAsset.subscriptionName"),
           supportGroups: findings.distinct(records, "_supportGroup"),
         }
@@ -302,106 +296,6 @@ function activeJobSummary(): Rec | null {
   return jobSummary(activeJob());
 }
 
-// ------------------------------------------------------------------------- findings
-
-export function getFindings(p?: unknown): ApiResult {
-  return run(() => {
-    const params = (p ?? {}) as Rec;
-    const scan = findings.currentScan();
-    if (!scan) return { rows: [], total: 0, counts: {}, page: 0, pageCount: 0, groups: null };
-
-    const filters: findings.FindingsFilters = {
-      severities:
-        (params["severities"] as string[]) ?? settingsStore.getDisplaySeverities(),
-      statuses: (params["statuses"] as string[]) ?? [],
-      assetTypes: (params["assetTypes"] as string[]) ?? [],
-      clouds: (params["clouds"] as string[]) ?? [],
-      domains: (params["domains"] as string[]) ?? [],
-      supportGroups: (params["supportGroups"] as string[]) ?? [],
-      q: (params["q"] as string) ?? "",
-    };
-    const filtered = visibleFrame(findings.applyFilters(scan.records, filters));
-
-    const counts: Record<string, number> = {};
-    for (const r of filtered) {
-      const sev = String(r["_sev"]);
-      counts[sev] = (counts[sev] ?? 0) + 1;
-    }
-
-    const groupBy = (params["groupBy"] as string) ?? "";
-    if (groupBy) {
-      const keyFor = groupKeyFn(groupBy);
-      const groups = new Map<string, Rec[]>();
-      for (const r of filtered) {
-        const k = keyFor(r);
-        if (!groups.has(k)) groups.set(k, []);
-        groups.get(k)!.push(r);
-      }
-      const ordered = [...groups.entries()]
-        .sort((a, b) => b[1].length - a[1].length)
-        .slice(0, 30); // group cap, matching the Streamlit page
-      return {
-        rows: [],
-        total: filtered.length,
-        counts,
-        page: 0,
-        pageCount: 0,
-        groups: ordered.map(([key, rows]) => ({
-          key,
-          count: rows.length,
-          sevCounts: sevCountsOf(rows),
-          rows: rows.slice(0, 250).map(findings.tableRow), // per-group row cap
-        })),
-      };
-    }
-
-    // Full-projection mode for the client-side filter path: small scans ship every
-    // row once so the browser can filter/search/group/paginate with zero further
-    // RPCs. Larger result sets answer with the normal first page (all: absent) and
-    // the client falls back to server-side filtering.
-    if (params["all"] === true && filtered.length <= CLIENT_ALL_MAX) {
-      return {
-        rows: filtered.map(findings.tableRow),
-        total: filtered.length,
-        counts,
-        page: 0,
-        pageCount: 1,
-        groups: null,
-        all: true,
-      };
-    }
-
-    const pageSize = Math.min(Number(params["pageSize"] ?? 100), 500);
-    const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-    const page = Math.min(Math.max(Number(params["page"] ?? 0), 0), pageCount - 1);
-    return {
-      rows: filtered.slice(page * pageSize, (page + 1) * pageSize).map(findings.tableRow),
-      total: filtered.length,
-      counts,
-      page,
-      pageCount,
-      groups: null,
-    };
-  });
-}
-
-// Row ceiling for getFindings all-mode (~1–2 MB of table-projected JSON).
-const CLIENT_ALL_MAX = 3000;
-
-function groupKeyFn(groupBy: string): (r: Rec) => string {
-  const col: Record<string, string> = {
-    severity: "_sev",
-    status: "status",
-    atype: "vulnerableAsset.type",
-    cloud: "vulnerableAsset.cloudPlatform",
-    asset: "vulnerableAsset.name",
-    subscription: "vulnerableAsset.subscriptionName",
-    domain: "_domain",
-    supportGroup: "_supportGroup",
-  };
-  const c = col[groupBy] ?? "_sev";
-  return (r) => (present(r[c]) ? String(r[c]) : "(none)");
-}
 
 /** A params array field (e.g. the Overview support-group multi-select) as string[]. */
 function readStringArray(p: unknown, key: string): string[] {
@@ -426,39 +320,6 @@ function sevCountsOf(rows: Rec[]): Record<string, number> {
     out[sev] = (out[sev] ?? 0) + 1;
   }
   return out;
-}
-
-export function getFindingDetail(p?: unknown): ApiResult {
-  return run(() => {
-    const key = String((p as Rec)?.["vulnKey"] ?? "");
-    const scan = findings.currentScan();
-    if (!scan || !key) return { record: null, raw: null };
-    const record =
-      visibleFrame(scan.records).find(
-        (r) => r["_vuln_key"] === key,
-      ) ?? null;
-    // The raw node (full fields) lives in the scan's page archive. The frame tags each
-    // record with its page, so normally exactly one page file is read; scans persisted
-    // before the frame existed fall back to walking the whole archive.
-    let raw: Rec | null = null;
-    const pageNo = record && typeof record["_page"] === "number" ? record["_page"] : null;
-    if (pageNo !== null) {
-      const page = archive.readScanPage(scan.scanId, pageNo);
-      if (page) raw = (extractNodes(page).find((n) => vulnKey(n) === key) as Rec) ?? null;
-    }
-    if (!raw) {
-      const row = ledgerStore.loadScanRows().find((s) => s.scan_id === scan.scanId);
-      const payload = row ? archive.readScanPayload(row.raw_ref) : null;
-      if (payload && Array.isArray(payload)) {
-        for (const page of payload) {
-          const nodes = extractNodes(page);
-          raw = (nodes.find((n) => vulnKey(n) === key) as Rec) ?? null;
-          if (raw) break;
-        }
-      }
-    }
-    return { record, raw };
-  });
 }
 
 // --------------------------------------------------------------------------- insights
@@ -959,7 +820,15 @@ function mttrData(p?: unknown): Rec {
   }
   // Full Kaplan–Meier estimate (curve + KM median/RMST mean + naive comparison stats), open
   // findings right-censored so the headline isn't biased low by fresh fast patches.
-  const km = kaplanMeier(remRows);
+  const kmFull = kaplanMeier(remRows);
+  // THE CURVE IS THE PAYLOAD, so it ships two of its four fields. `KMPoint` carries
+  // `{t, s, atRisk, events}` — the risk set and event count at each step, which the estimator
+  // needs to BUILD the curve and which `test/remediation.test.ts` pins on it — but the only
+  // reader downstream is the survival chart, and `charts.js` plots `t` against `s`. One point
+  // per distinct resolution time means the register decides the array's length, so halving a
+  // point's width is a saving that grows with the ledger. Narrowed here rather than in
+  // `KMPoint`: this is a transfer concern, and the domain type is right as it stands.
+  const km = { ...kmFull, curve: kmFull.curve.map((p) => ({ t: p.t, s: p.s })) };
   const remediation = {
     pctiles: mttrPercentiles(remRows),
     buckets: resolutionBuckets(remRows),
@@ -967,14 +836,20 @@ function mttrData(p?: unknown): Rec {
     // Overall censoring-aware KM p90 off that same curve (smallest t with S(t) ≤ 0.10) — the
     // slow-tail sibling of the KM median that replaces the naive `pctiles.overall.p90` in the
     // KPI band. Null (renders "—") when too much is still open to observe it.
-    kmP90: kmQuantileFromCurve(km.curve, 0.9),
+    kmP90: kmQuantileFromCurve(kmFull.curve, 0.9),
     kmMedianPerSev,
     kmP90PerSev,
     openPastSla: openPastSla(remRows),
-    // Actionable-clock companions (clock starts at vendor-fix availability): the same
-    // functions over the actionableView projection. Awaiting-vendor-fix rows carry null
-    // actionable fields, so they drop out of these while staying in `awaiting`.
-    kmActionable: kaplanMeier(actionableView(remRows)),
+    // Actionable-clock companion (clock starts at vendor-fix availability): the same function
+    // over the actionableView projection. Awaiting-vendor-fix rows carry null actionable
+    // fields, so they drop out of it while staying in `awaiting`.
+    //
+    // ITS KM ESTIMATE USED TO SIT BESIDE IT and had no reader anywhere — a second complete
+    // `KMResult`, curve included, built by a second `kaplanMeier` over a second
+    // `actionableView` pass, serialized on every MTTR and Executive load. The actionable
+    // CLOCK is read (`mttr.js` draws `openPastSlaActionable` in the KPI band and the
+    // per-severity table); only its survival estimate never was. Removing it is compute as
+    // well as transfer.
     openPastSlaActionable: openPastSla(actionableView(remRows)),
     awaiting: awaitingVendorFix(remRows),
   };
@@ -1239,10 +1114,14 @@ const cachedMttrData = (p?: unknown) =>
     // rows dropped when off); key gains showNoFix so on/off states don't share an entry.
     // "mttr5" → "mttr6": remediation gained `kmMedianPerSev` (per-severity KM median for the
     // per-severity table); bump so no stale entry lacks it.
+    // "mttr7" → "mttr8": remediation DROPPED `kmActionable` (a full second KMResult with no
+    // reader in the client) and `km.curve` points lost `atRisk`/`events` (the survival chart
+    // plots only `t` and `s`). A stale entry is not merely fatter — it is a different shape —
+    // so bump rather than let one survive the persistent dataVersion.
     // "mttr6" → "mttr7": remediation gained the censoring-aware KM p90 — `kmP90` (overall, for
     // the KPI band) and `kmP90PerSev` (per-severity table) — replacing the naive `pctiles` p90
     // at those call sites; bump so no stale entry lacks them.
-    "mttr7",
+    "mttr8",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1387,8 +1266,11 @@ export function getMttr(p?: unknown): ApiResult {
   return run(() => cachedMttrData(p));
 }
 
+/** The Scan History page's trend series, and its only caller — the MTTR page reads its own
+ *  copy through `getMttrPage`. Projected to the five fields these two charts draw, and without
+ *  `history`: that array is the whole `mttr_history` tab, and this page never touches it. */
 export function getMttrTrend(p?: unknown): ApiResult {
-  return run(() => cachedMttrTrendData(p));
+  return run(() => historyTrendSlice(cachedMttrTrendData(p)));
 }
 
 /** MTTR page in one round trip (summary + trends share one state load). The breakdown section
@@ -1399,7 +1281,7 @@ export function getMttrPage(p?: unknown): ApiResult {
   const domain = String((p as Rec)?.["domain"] ?? "");
   return run(() => ({
     mttr: cachedMttrData(p),
-    trends: cachedMttrTrendData(p),
+    trends: mttrPageTrendSlice(cachedMttrTrendData(p)),
     byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
   }));
 }
@@ -1418,7 +1300,10 @@ export function getRiskBackfillStatus(_p?: unknown): ApiResult {
 export function getProgramPage(p?: unknown): ApiResult {
   return run(() => ({
     program: cachedProgramData(p),
-    trends: cachedProgramTrendData(p),
+    // Four fields of twelve: the coverage/efficiency pair the two lines are drawn from. The
+    // rest is the shared `TrendPoint` base plus the high-risk decorator, none of it read here,
+    // multiplied by a backbone that carries one point per day of pre-scan history.
+    trends: programTrendSlice(cachedProgramTrendData(p)),
   }));
 }
 
@@ -1532,7 +1417,7 @@ function riskCohortRows(p: unknown, quadrant: string): Rec[] {
  *  the header scope at all: a scoped hero over unscoped tiles is not a smaller truth, it is
  *  two populations on one screen with nothing distinguishing them.
  *
- *  EVERY SLICE IS PROJECTED BEFORE IT LEAVES (src/domain/executivePayload.ts). Sharing MTTR's
+ *  EVERY SLICE IS PROJECTED BEFORE IT LEAVES (src/domain/pagePayload.ts). Sharing MTTR's
  *  cache entries is what this endpoint is for, but it used to ship them whole: measured on the
  *  seeded estate, 8,716 of 13,068 bytes were serialized and sent on the default landing page
  *  without anything reading them — most of it two Kaplan-Meier curves and a per-group trend
@@ -1672,16 +1557,14 @@ const cachedScanHistoryData = () =>
   cached("scanHistory2", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
 
 export function getScanHistory(_p?: unknown): ApiResult {
-  return run(() => cachedScanHistoryData());
+  return run(() => {
+    const d = cachedScanHistoryData() as Rec;
+    // The scans tab, narrowed to the ten columns the table draws. Projected here rather than
+    // in the cached compute so `scanHistory2` keeps its shape and no namespace moves.
+    return { ...d, scans: scanRowsSlice(d["scans"]) };
+  });
 }
 
-/** History page in one round trip: scans + KPIs + trends. */
-export function getHistoryPage(p?: unknown): ApiResult {
-  return run(() => ({
-    history: cachedScanHistoryData(),
-    trends: cachedMttrTrendData(p),
-  }));
-}
 
 // ------------------------------------------------------------------ jobs & mutations
 
