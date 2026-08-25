@@ -4754,6 +4754,36 @@ var Server = (() => {
     };
   }
 
+  // src/domain/executivePayload.ts
+  function execMttrSlice(mttr) {
+    var _a, _b;
+    if (!mttr || typeof mttr !== "object") return null;
+    const m = mttr;
+    const overall = (_a = m["overall"]) != null ? _a : {};
+    const km = ((_b = m["remediation"]) != null ? _b : {})["km"];
+    return {
+      rowCount: m["rowCount"],
+      overall: { resolved: overall["resolved"], open: overall["open"] },
+      remediation: km ? { km: { median: km["median"], medianLowerBound: km["medianLowerBound"] } } : {}
+    };
+  }
+  function execGroupSlice(byGroup) {
+    if (!byGroup || typeof byGroup !== "object") return null;
+    const b = byGroup;
+    const rows = Array.isArray(b["rows"]) ? b["rows"] : [];
+    return {
+      dimension: b["dimension"],
+      rows: rows.map((r) => {
+        var _a;
+        return {
+          group: (_a = r["group"]) != null ? _a : r["domain"],
+          kmMedian: r["kmMedian"],
+          open: r["open"]
+        };
+      })
+    };
+  }
+
   // src/server/errorLog.ts
   var KEY = "RECENT_ERRORS";
   var MAX_ENTRIES = 25;
@@ -5115,7 +5145,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "967a0b02b96d" : "dev";
+  var BUILD_ID = true ? "1944f96ab170" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -8711,10 +8741,13 @@ var Server = (() => {
     var _a;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     return run(() => ({
-      mttr: cachedMttrData(p),
+      mttr: execMttrSlice(cachedMttrData(p)),
       // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
       // domain yields a single row, so a domain scope splits by support group within it instead.
-      byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
+      byDomain: execGroupSlice(
+        domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
+      ),
+      // Already minimal — four scalars and a per-severity tally — so these two ship whole.
       weekTrend: cachedExecutiveWeekTrend(p),
       severityCounts: cachedExecutiveSeverityCounts(p)
     }));

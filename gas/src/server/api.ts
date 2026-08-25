@@ -37,6 +37,7 @@ import { nowIso, parseTs, present, type Rec } from "../domain/util";
 import { kmMedianAsOf, kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
 import * as insights from "../domain/insights";
 import * as program from "../domain/program";
+import { execGroupSlice, execMttrSlice } from "../domain/executivePayload";
 import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
 import * as findings from "./findings";
@@ -1529,7 +1530,15 @@ function riskCohortRows(p: unknown, quadrant: string): Rec[] {
  *  `severityCounts` is the one slice with no MTTR-page counterpart. The exec tiles used to
  *  read bootstrap's register-wide tally, which is exactly what kept this page from honoring
  *  the header scope at all: a scoped hero over unscoped tiles is not a smaller truth, it is
- *  two populations on one screen with nothing distinguishing them. */
+ *  two populations on one screen with nothing distinguishing them.
+ *
+ *  EVERY SLICE IS PROJECTED BEFORE IT LEAVES (src/domain/executivePayload.ts). Sharing MTTR's
+ *  cache entries is what this endpoint is for, but it used to ship them whole: measured on the
+ *  seeded estate, 8,716 of 13,068 bytes were serialized and sent on the default landing page
+ *  without anything reading them — most of it two Kaplan-Meier curves and a per-group trend
+ *  series with no chart under it. The projections run on the CACHED value, so every entry and
+ *  every warm hand-off to the MTTR page survives untouched; what goes is the transfer, which
+ *  is paid on every load rather than once per scope. */
 // Days the executive MTTR badge looks back — "last week".
 const WEEK_MS = 7 * 86_400_000;
 
@@ -1624,10 +1633,13 @@ const cachedExecutiveSeverityCounts = (p?: unknown) =>
 export function getExecutivePage(p?: unknown): ApiResult {
   const domain = String((p as Rec)?.["domain"] ?? "");
   return run(() => ({
-    mttr: cachedMttrData(p),
+    mttr: execMttrSlice(cachedMttrData(p)),
     // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
     // domain yields a single row, so a domain scope splits by support group within it instead.
-    byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
+    byDomain: execGroupSlice(
+      domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
+    ),
+    // Already minimal — four scalars and a per-severity tally — so these two ship whole.
     weekTrend: cachedExecutiveWeekTrend(p),
     severityCounts: cachedExecutiveSeverityCounts(p),
   }));
