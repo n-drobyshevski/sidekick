@@ -1,13 +1,33 @@
 // Executive View — the default landing page. A calm, centered summary of the numbers
-// leadership acts on: one big Kaplan–Meier MTTR score, open vulnerabilities by severity,
+// leadership acts on: one big Kaplan-Meier MTTR score, open vulnerabilities by severity,
 // the last scan (with a Run scan button), and KM MTTR by domain. Composes existing
 // read-models (api_bootstrap + api_getExecutivePage) — the latter a lean sibling of the
-// MTTR page's endpoint that ships only the hero + per-domain slices this page paints,
-// sharing their cache entries but skipping the unused trend reconstruction.
+// MTTR page's endpoint that ships only the slices this page paints, sharing their cache
+// entries but skipping the unused trend reconstruction.
+//
+// IT ANSWERS FOR THE HEADER SCOPE, like every other page. It did not always: it sent
+// `domain: "", supportGroup: ""` outright and the switcher's own popover said so. What kept it
+// exempt was not a stance about leadership wanting the whole register — it was the severity
+// tiles, which read bootstrap's `counts`, and that tally is register-wide by construction. A
+// scoped hero over unscoped tiles is not a smaller truth; it is two populations on one screen
+// with nothing distinguishing them. Once the server could ship a scoped tally
+// (`severityCounts`), the exemption had nothing left holding it up. The switcher sits in the
+// header precisely because it scopes the whole app, and this is the default route — so a pick
+// made anywhere used to appear to do nothing the moment a reader navigated home.
+//
+// THE WEEK-OVER-WEEK BADGE NEEDS NO SCOPE GATE, and that is worth stating because the
+// equivalent chips on the MTTR page do (mttr.js: "EVERY SCOPE THE SHELL CAN HOLD HAS TO BE
+// LISTED HERE"). Those diff a scoped current value against the register-wide `mttr_history`
+// snapshots, so a scope makes them compare two different populations. `executiveWeekTrend`
+// computes both of its endpoints from the same `scopedBaseRows`, so it is scope-correct by
+// construction. Do not add a predicate here.
+//
+// The two view functions below are pure and exported so the claims they encode are testable in
+// node — the split scanProgress.js and capacity.js already use, and for the same reason.
 
 import { bootstrap, swrCall } from "../store.js";
 import {
-  clear, el, emptyState, fmtDateTime, fmtDays, helpTip, sectionLabel,
+  clear, el, emptyState, fmtDateTime, fmtDays, helpTip, scopeBar, sectionLabel,
   skeleton, statusPill,
 } from "../ui.js";
 
@@ -65,6 +85,82 @@ function weekTrendBadge(wt) {
     note);
 }
 
+// Shown in a tile whose count is still in flight. Only reachable under a scope: unscoped, the
+// numbers come off bootstrap and are already in hand when the page first paints.
+const PENDING = "\u2026";
+
+/**
+ * What the "Open vulnerabilities" tiles say. Pure so the scoped/unscoped split is testable.
+ *
+ * UNSCOPED, THE SOURCE STAYS `boot.counts` — deliberately, not by omission. This is the default
+ * landing page and it must paint real numbers on the first synchronous pass rather than flash a
+ * placeholder while an RPC lands. The two tallies provably agree: bootstrap counts
+ * `visibleFrame(scan.records)` and `scopedFrameRecords("", "", [])` returns exactly that, so the
+ * repaint when the payload arrives is a no-op. The server still computes and warms the unscoped
+ * entry, so the scoped path is not the only one ever exercised.
+ *
+ * A ZERO IS A TILE, BUT AN ALL-ZERO SCOPE IS ALSO A SENTENCE. A scope can hold resolved history
+ * and no open findings at all — a domain whose live work has closed, or `Not attributable`,
+ * which no open finding can ever land in. The hero above will still show a real KM median off
+ * that scope's lifecycles, so five bare zeros beneath it read as a render that failed. Naming it
+ * costs one line and is the same move the switcher's own caption makes for its zero rows.
+ *
+ * @param {{order: string[], scope: string[], bootCounts: object,
+ *          payload: object|null|undefined, scoped: boolean}} args
+ * @returns {{tiles: {sev: string, value: string}[], note: string|null}}
+ */
+export function executiveSeverityView({ order, scope, bootCounts, payload, scoped }) {
+  const sevs = order.filter((s) => scope.includes(s));
+  const tiles = (read) => sevs.map((sev) => ({ sev, value: read(sev) }));
+  if (!scoped) {
+    const c = bootCounts || {};
+    return { tiles: tiles((sev) => (c[sev] ?? 0).toLocaleString()), note: null };
+  }
+  if (!payload) return { tiles: tiles(() => PENDING), note: null };
+  const counts = payload.counts || {};
+  // `flatScan: false` means there is no scan to count at all — the scan section already says so,
+  // and an honest 0 there needs no second sentence about the scope.
+  const note = payload.flatScan && !payload.total ? "No open findings in this scope." : null;
+  return { tiles: tiles((sev) => (counts[sev] ?? 0).toLocaleString()), note };
+}
+
+/**
+ * What the per-group remediation split says, and whether it is worth drawing at all.
+ *
+ * THE DIMENSION FOLLOWS THE SCOPE, server-tagged: per-domain at the whole-register view,
+ * per-support-group when a domain is picked — because splitting BY domain while scoped TO one
+ * domain is a single row restating the hero. Only `mttrByDomainData` aliases `group` into
+ * `domain`, so the name has to be read through `group ?? domain` or the support-group split
+ * renders a column of blanks.
+ *
+ * THE ONE-ROW GUARD APPLIES TO BOTH DIMENSIONS HERE, which is a deliberate divergence from
+ * mttr.js (it guards only the support-group branch). Two reasons. Under a support-group scope
+ * the dimension is still "domain" while `domainNames` stays register-wide, so that gate alone
+ * would happily draw a one-row table for a group living in a single domain. And this section is
+ * five rows and three columns — a summary calling itself a split — where MTTR's is a drawer of
+ * charts and an eight-column table in which one row still carries p90, SLA% and awaiting.
+ *
+ * @param {object|null|undefined} byDomain  the server's `byDomain` slice
+ * @param {{domainNames: string[], cap?: number}} args
+ * @returns {{show: boolean, title?: string, columnHeader?: string,
+ *            rows?: {name: string, kmMedian: number|null, open: number}[]}}
+ */
+export function executiveByDomainView(byDomain, { domainNames, cap = 5 }) {
+  if (!byDomain || !byDomain.rows || !byDomain.rows.length) return { show: false };
+  const isSg = byDomain.dimension === "supportGroup";
+  if (!isSg && (domainNames || []).length < 2) return { show: false };
+  if (byDomain.rows.length < 2) return { show: false };
+  return {
+    show: true,
+    title: isSg ? "MTTR by support group" : "MTTR by domain",
+    columnHeader: isSg ? "Support group" : "Domain",
+    rows: [...byDomain.rows]
+      .sort((a, b) => (b.open ?? 0) - (a.open ?? 0))
+      .slice(0, cap)
+      .map((r) => ({ name: r.group ?? r.domain, kmMedian: r.kmMedian, open: r.open ?? 0 })),
+  };
+}
+
 export async function renderExecutive(main, _params, ctx) {
   const boot = await bootstrap();
 
@@ -79,22 +175,34 @@ export async function renderExecutive(main, _params, ctx) {
   // UNKNOWN. Same rule as pages/mttr.js scopeParam so exec and MTTR share cache entries.
   const severities = sevScope.length === boot.palette.selectable.length ? null : sevScope;
 
-  // Kick the executive-data RPC off as soon as the severity scope is known — the hero +
-  // per-domain slices are the slow part, so the fetch overlaps the synchronous shell build
-  // below. Whole-chain (no domain/support scope), scoped to the display severities so a
-  // narrowed setting (e.g. Critical-only) also computes over fewer rows. `paint` is assigned
-  // once the section hosts exist; the SWR background revalidation resolves far later than
-  // that, so the guarded reference is safe. api_getExecutivePage ships only the hero +
-  // by-domain slices this page reads, skipping the unused trend reconstruction.
+  // The scope in force, from the header switcher — a domain or a support group, at most one of
+  // them; "" = no filter on that dimension. Same read as every other page (mttr.js, overview.js).
+  const domain = ctx.domain || "";
+  const supportGroup = ctx.supportGroup || "";
+  const scoped = Boolean(domain || supportGroup);
+
+  // Kick the executive-data RPC off as soon as the scope is known — the hero + per-group slices
+  // are the slow part, so the fetch overlaps the synchronous shell build below. Scoped to the
+  // header pick and to the display severities, so a narrowed setting (e.g. Critical-only) also
+  // computes over fewer rows. `paint` is assigned once the section hosts exist; the SWR
+  // background revalidation resolves far later than that, so the guarded reference is safe.
+  //
+  // A SCOPE CHANGE NEEDS NO INVALIDATION: swrCall keys on name + JSON.stringify(params), so each
+  // scope is its own entry and the previous one stays valid — switching back repaints instantly
+  // from cache rather than re-fetching.
   let paint;
   const execData = swrCall(
     "api_getExecutivePage",
-    { domain: "", supportGroup: "", severities },
+    { domain, supportGroup, severities },
     (fresh) => paint && paint(fresh),
   );
 
   const page = el("div", { class: "exec" });
   page.append(el("h1", {}, "Security posture"));
+  // Echoed inside `.exec` rather than in `main`, so the chip stays in the centered 720px column
+  // with the figures it qualifies. Null when nothing is scoped.
+  const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
+  if (scopeChips) page.append(scopeChips);
   // The vendor-fix / EOL "findings hidden" notes are deliberately omitted here: the executive view
   // is the calm leadership summary, and those filter-honesty banners live on the analyst pages
   // (Overview, MTTR, OS vulnerabilities, …) that this page links into.
@@ -123,13 +231,14 @@ export async function renderExecutive(main, _params, ctx) {
   }
 
   guard("scan", scanHost, renderScan);
-  guard("severity", sevHost, renderSeverity);
+  // Painted twice on the scoped path (pending, then counted) and twice to the same numbers on
+  // the unscoped one, where bootstrap already holds them — see executiveSeverityView.
+  guard("severity", sevHost, () => renderSeverity(null));
   renderHeroSkeleton();
 
-  // We use only `.mttr` (hero) and `.byDomain` (per-domain split) — api_getExecutivePage
-  // ships exactly those two slices and skips the trend reconstruction the MTTR page needs.
   paint = (data) => {
     guard("MTTR", heroHost, () => renderHero(data && data.mttr, data && data.weekTrend));
+    guard("severity", sevHost, () => renderSeverity(data));
     guard("by domain", byDomainHost, () => renderByDomain(data && data.byDomain));
   };
   try {
@@ -141,6 +250,10 @@ export async function renderExecutive(main, _params, ctx) {
       "Couldn't load remediation data.",
       "Try running a scan or reloading the page.",
     ));
+    // Unscoped, the tiles already hold bootstrap's numbers and those are still true — leave them.
+    // Scoped, they hold the pending placeholder, and falling back to the register-wide tally
+    // would be exactly the lie this page was rewired to stop telling.
+    if (scoped) clear(sevHost).append(emptyState("Couldn't load counts for this scope."));
   }
 
   function renderHeroSkeleton() {
@@ -169,9 +282,13 @@ export async function renderExecutive(main, _params, ctx) {
     const km = mttr.remediation?.km; // KMResult — the primary MTTR methodology
     const resolved = mttr.overall?.resolved ?? 0;
     const open = mttr.overall?.open ?? 0;
+    // The label names the scope, so the one big number on the page can never be read as the
+    // register's when it isn't. The chip above says the same thing for the page as a whole; this
+    // says it for the figure, which is the part that gets screenshotted out of context.
+    const scopeSuffix = domain ? ` — ${domain}` : supportGroup ? ` — ${supportGroup}` : "";
     const metric = helpTip(
       [
-        el("div", { class: "label" }, "Median MTTR (Kaplan–Meier)"),
+        el("div", { class: "label" }, `Median MTTR (Kaplan–Meier)${scopeSuffix}`),
         el("div", { class: "exec-hero-value num" }, fmtKmMedian(km)),
       ],
       [
@@ -225,55 +342,59 @@ export async function renderExecutive(main, _params, ctx) {
     }
   }
 
-  // Open vulnerabilities by severity, from the current scan's counts (the live open set, same
-  // source Overview's headline uses). One tile per selectable severity: a colored dot + the
-  // count + a plain label — color carries meaning only alongside the dot and text (DESIGN
-  // two-token + non-color-signal rules). A tile with zero is shown honestly, not hidden.
-  function renderSeverity() {
+  // Open vulnerabilities by severity, from the current scan (the live open set, same source
+  // Overview's headline uses) narrowed to the header scope. One tile per selectable severity: a
+  // colored dot + the count + a plain label — color carries meaning only alongside the dot and
+  // text (DESIGN two-token + non-color-signal rules). A tile with zero is shown honestly, not
+  // hidden; an all-zero scope also gets a sentence. The scoped/unscoped source split and the
+  // note rule live in executiveSeverityView; this only draws them.
+  //
+  // Severity scope is the "Display severity" setting, the same one the hero and the split use,
+  // so the whole page reflects one severity scope — a Critical-only setting shows just the
+  // Critical tile, not the full selectable breakdown.
+  function renderSeverity(data) {
     clear(sevHost);
-    const counts = boot.counts || {};
-    // Scoped to the same "Display severity" setting the hero and by-domain table use, so the
-    // whole page reflects one severity scope — a Critical-only setting shows just the Critical
-    // tile, not the full selectable breakdown.
-    const sevs = boot.palette.order.filter((s) => sevScope.includes(s));
-    if (!sevs.length) return;
+    const view = executiveSeverityView({
+      order: boot.palette.order,
+      scope: sevScope,
+      bootCounts: boot.counts,
+      payload: data && data.severityCounts,
+      scoped,
+    });
+    if (!view.tiles.length) return;
 
     sevHost.append(sectionLabel("Open vulnerabilities"));
     const row = el("div", { class: "exec-sev-row" });
-    for (const sev of sevs) {
-      const n = counts[sev] ?? 0;
+    for (const t of view.tiles) {
       row.append(
         el("div", { class: "exec-sev-tile" },
-          el("div", { class: "exec-sev-count num" }, n.toLocaleString()),
+          el("div", { class: "exec-sev-count num" }, t.value),
           el("div", { class: "exec-sev-name" },
             el("span", {
               class: "sev-dot", "aria-hidden": "true",
-              style: `background:${boot.palette.colors[sev]}`,
+              style: `background:${boot.palette.colors[t.sev]}`,
             }),
-            nice(sev)),
+            nice(t.sev)),
         ),
       );
     }
     sevHost.append(row);
+    if (view.note) sevHost.append(el("p", { class: "small muted" }, view.note));
   }
 
-  // KM MTTR by domain — the per-domain remediation split. The server ships `byDomain` only at
-  // the whole-chain view (which this always is) and the MTTR page gates the section on ≥2
-  // configured domains, so mirror that: hidden entirely when there's nothing meaningful to
-  // split. A compact table (domain · KM median · open) sorted by open backlog, capped so the
-  // exec view stays a summary — the full breakdown lives on the MTTR page.
+  // The per-group remediation split — by domain at the whole-register view, by support group
+  // within a picked domain. A compact table (group · KM median · open) sorted by open backlog
+  // and capped, so the exec view stays a summary; the full breakdown lives on the MTTR page.
+  // Which dimension, and whether there is a split worth drawing at all, is executiveByDomainView.
   function renderByDomain(byDomain) {
     clear(byDomainHost);
-    if (!byDomain || !byDomain.rows || !byDomain.rows.length || boot.domainNames.length < 2) return;
+    const view = executiveByDomainView(byDomain, { domainNames: boot.domainNames });
+    if (!view.show) return;
 
-    const rows = [...byDomain.rows]
-      .sort((a, b) => (b.open ?? 0) - (a.open ?? 0))
-      .slice(0, 5);
-
-    byDomainHost.append(sectionLabel("MTTR by domain"));
+    byDomainHost.append(sectionLabel(view.title));
     const table = el("table", { class: "data" },
       el("thead", {}, el("tr", {},
-        el("th", { scope: "col" }, "Domain"),
+        el("th", { scope: "col" }, view.columnHeader),
         el("th", { scope: "col" },
           helpTip("Median MTTR (KM)",
             ["Kaplan–Meier median time-to-remediation for this group — still-open findings " +
@@ -282,11 +403,11 @@ export async function renderExecutive(main, _params, ctx) {
         el("th", { scope: "col" }, "Open"))),
     );
     const tbody = el("tbody", {});
-    for (const r of rows) {
+    for (const r of view.rows) {
       tbody.append(el("tr", {},
-        el("td", {}, r.domain),
+        el("td", {}, r.name),
         el("td", { class: "num num--key" }, fmtDays(r.kmMedian)),
-        el("td", { class: "num" }, (r.open ?? 0).toLocaleString()),
+        el("td", { class: "num" }, r.open.toLocaleString()),
       ));
     }
     table.append(tbody);

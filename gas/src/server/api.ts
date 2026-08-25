@@ -1349,8 +1349,11 @@ const cachedMttrByDomainData = (p?: unknown) =>
     //
     // The key still omits `bizDomain`, and that is now correct rather than a defect: it used to
     // be one, because `mttrByDomainData` filtered on a param the key never carried, so a scoped
-    // payload could be served from another scope's entry. The dimension is gone — the split is
-    // whole-register by construction and reads no scope param at all.
+    // payload could be served from another scope's entry. That dimension is gone. `domain` is
+    // omitted for a different reason and it is NOT a repeat of that bug: both callers route a
+    // domain scope to `cachedMttrBySupportGroupData` instead (getMttrPage, getExecutivePage), so
+    // this entry is only ever reached with `domain === ""` and cannot be read at another. The
+    // `supportGroup` it DOES read is in the key.
     "mttrByDomain14",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1519,9 +1522,14 @@ function riskCohortRows(p: unknown, quadrant: string): Rec[] {
  *  never reads the trend series, so this endpoint deliberately omits `cachedMttrTrendData`
  *  — the heaviest read-model (full history backbone + per-point KM curves + SLA-burn +
  *  cohort attainment). Skipping it keeps the default landing page's cold path off that
- *  reconstruction entirely. Both slices come from the *same* `cached()` entries the MTTR
- *  page uses (whole-chain, all-severities), so exec→MTTR navigation still lands warm and
- *  the only difference is which slices this round trip computes. */
+ *  reconstruction entirely. The remediation slices come from the *same* `cached()` entries
+ *  the MTTR page uses, AT WHATEVER SCOPE IS IN FORCE — so exec→MTTR navigation at one scope
+ *  still lands warm, and the only difference is which slices this round trip computes.
+ *
+ *  `severityCounts` is the one slice with no MTTR-page counterpart. The exec tiles used to
+ *  read bootstrap's register-wide tally, which is exactly what kept this page from honoring
+ *  the header scope at all: a scoped hero over unscoped tiles is not a smaller truth, it is
+ *  two populations on one screen with nothing distinguishing them. */
 // Days the executive MTTR badge looks back — "last week".
 const WEEK_MS = 7 * 86_400_000;
 
@@ -1574,11 +1582,54 @@ const cachedExecutiveWeekTrend = (p?: unknown) =>
     3600,
   );
 
+// Open findings by severity for the executive tiles, over the CURRENT SCAN and narrowed to the
+// active scope. This slice exists because the tiles used to read bootstrap's `counts`, which is
+// register-wide by construction — so a scoped Executive would have shown a domain's KM median
+// directly above the whole register's open counts, with nothing on screen saying the two measure
+// different populations. `scopedFrameRecords` already applies `visibleFrame` (the show-no-fix and
+// EOL toggles), so the tiles cannot drift from the hero beside them.
+//
+// `supportGroupSet` is [] on purpose: the header switcher sets one scope at a time and never a
+// multi-group list, so the single `supportGroup` param is the whole story here.
+function executiveSeverityCounts(p?: unknown): Rec {
+  const scan = findings.currentScan();
+  if (!scan) return { flatScan: false, counts: {}, total: 0 };
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const recs = filterSeverities(
+    scopedFrameRecords(domain, supportGroup, []),
+    readSeverities(p),
+  );
+  return { flatScan: true, counts: sevCountsOf(recs), total: recs.length };
+}
+
+// A new namespace rather than a bump of an existing one — nothing served this shape before, so
+// no stale entry can survive. `includeEol` is absent from the key for the same reason it is
+// absent from "mttr7" and "mttrByDomain14": setIncludeEol goes through mutate(), which bumps
+// DATA_VERSION, and the version is already part of every key. Leave the asymmetry with
+// `showNoFix` alone — that one is carried for symmetry with its siblings, not because it must be.
+const cachedExecutiveSeverityCounts = (p?: unknown) =>
+  cached(
+    "execSevCounts1",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+    },
+    () => executiveSeverityCounts(p),
+    3600,
+  );
+
 export function getExecutivePage(p?: unknown): ApiResult {
+  const domain = String((p as Rec)?.["domain"] ?? "");
   return run(() => ({
     mttr: cachedMttrData(p),
-    byDomain: cachedMttrByDomainData(p),
+    // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
+    // domain yields a single row, so a domain scope splits by support group within it instead.
+    byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
     weekTrend: cachedExecutiveWeekTrend(p),
+    severityCounts: cachedExecutiveSeverityCounts(p),
   }));
 }
 
@@ -2224,6 +2275,12 @@ function defaultGroupingKeys(): string[] {
  * for the current show-no-fix state, at both the severity scopes the pages request — the
  * all-severities entry (severities: null, the shared default) plus the configured Display
  * severity subset when it's narrower (pages send exactly that array via scopeParam).
+ *
+ * That stays true now that Executive honors the header scope: a scoped landing page pays the
+ * same cold path every scoped analyst page already pays. Enumerating scopes here would multiply
+ * the post-scan tail by domains × support groups × severity scopes, inside the 6-minute
+ * execution cap, to warm slices a reader may never open. The unscoped landing page is the one
+ * that must be instant, and it is the one warmed.
  */
 export function warmReadModels(): void {
   const warm = (label: string, fn: () => unknown) => {
@@ -2253,6 +2310,11 @@ export function warmReadModels(): void {
     const p = { domain: "", supportGroup: "", severities };
     warm("mttr", () => cachedMttrData(p));
     warm("mttrByDomain", () => cachedMttrByDomainData(p));
+    // Both Executive-only entries, and the week trend was never warmed at all — so the DEFAULT
+    // landing page's hero badge paid two full `kmMedianAsOf` passes over the base on the first
+    // load after every scan, which is the one load most likely to be someone opening the app.
+    warm("execWeekTrend", () => cachedExecutiveWeekTrend(p));
+    warm("execSevCounts", () => cachedExecutiveSeverityCounts(p));
     warm("mttrTrend", () => cachedMttrTrendData(p));
     warm("insights", () => cachedInsightsData(p));
     warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));

@@ -109,6 +109,19 @@ at the bottom of the rail and their intersection was expressible; picking from e
 clears the other. Scoping stays client-side — the values ride the page context and each page
 passes them into its own RPC — so a pick costs no round trip.
 
+**Executive answers for the scope too, and used to be the one page that did not.** "Every figure
+on every page" above was an over-claim while the landing page — the default route — sent an empty
+scope outright and the switcher's own popover said so. What held the exemption up was not a view
+about what leadership wants to see: it was the severity tiles, which read bootstrap's `counts`,
+and that tally is register-wide by construction. Scoping the hero alone would have put a domain's
+KM median directly above the whole register's open counts with nothing on screen separating them —
+worse than answering for everything, not narrower. A scoped current-scan tally
+(`api.ts:executiveSeverityCounts`) removes the obstacle, and with it the exemption. The
+remediation split follows the same dimension swap the MTTR page makes: by domain at the whole
+register, by support group **within** a picked domain, since splitting by domain while scoped to
+one is a single row restating the hero. A scope holding only resolved history says so
+(`No open findings in this scope.`) rather than showing a row of bare zeros under a live hero.
+
 The caption beside the trigger always carries the **denominator** (`31 of 161 findings`), since
 a bare count cannot tell a small support group from a small register, and a **second figure**
 for the rows nobody claimed (`· 104 carry no support group`, `· 27 unassigned`), since without
