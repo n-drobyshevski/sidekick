@@ -198,6 +198,39 @@
   display: flex; width: 100%; overflow: hidden;
   border-radius: var(--radius-pill); background: var(--track-bg);
 }
+/* THE SEVERITY MIX IS INFORMATION, NOT DECORATION, so it keeps its palette where every other
+   background is discarded. A segment bar is pure fill with no text of its own, so in
+   forced-colors mode every segment resolved to the forced background and the Severity column
+   rendered as an EMPTY CELL — measured: segment background rgb(255,255,255), cell text "".
+   The aria-label ("71 MEDIUM") still reached a screen reader, but a sighted reader in High
+   Contrast, which is a low-vision mode, saw nothing at all.
+
+   forced-color-adjust: none is the right tool exactly here and the palette already uses it
+   for the same reason (graphQuery.css:414). The track keeps its forced background so the
+   bar still reads as a bar against the page. */
+@media (forced-colors: active) {
+  .sevbar-seg { forced-color-adjust: none; }
+}
+
+/* THE SAME DEFECT, EVERYWHERE IT OCCURS, STATED ONCE.
+   Forced-colors mode discards backgrounds. Every graphic in this app that carries its meaning
+   as a FILL and has no text of its own therefore resolved to the forced background and
+   disappeared, leaving an empty box where a figure had been. Measured, each returning
+   background rgb(255,255,255) with zero text:
+
+     .sevbar-seg      the severity mix in a table cell
+     .meter-fill      every meter in the app - guardrail coverage, stat rows, AARS scores
+     .cov-bar-seg     the Wiz Scans coverage bar
+     .help-lexbar-seg the Help lexicon bar
+
+   These are information, not decoration, which is exactly the case forced-color-adjust: none
+   exists for; this codebase already reaches for it on the same grounds in graphQuery.css:414.
+   The TRACKS keep their forced background, so each still reads as a bar against the page.
+   Stated here rather than beside each rule because it is one defect with four instances, and
+   the fifth one somebody adds should find this comment. */
+@media (forced-colors: active) {
+  .meter-fill, .cov-bar-seg, .help-lexbar-seg { forced-color-adjust: none; }
+}
 /* THE SEPARATOR, and the reason it is a border rather than a gap. Fills that meet edge to
    edge assimilate at the shared edge, so adjacent hues read as one band — the defect that
    made the tier mass strip illegible. `border-right` costs NO layout: with the global
