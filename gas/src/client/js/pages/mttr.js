@@ -17,25 +17,25 @@ import {
 const RESOLUTION_LABELS = ["≤1d", "2–7d", "8–30d", "31–90d", "90+d"];
 
 // The breakdown section (renderByDomain) serves two dimensions from one renderer, chosen by
-// the server payload's `dimension`: per-domain at the whole-chain view, per-support-group when
-// a Value Chain is selected (the by-domain split would be a single row then). These carry the
+// the server payload's `dimension`: per-manual-group at the unscoped view, per-support-group
+// when a manual group is selected (that split would be a single row then). These carry the
 // visible copy; the group-name reads go through a `.group ?? .domain` accessor so the same code
 // paints both. Keep the phrasing parallel so the two views read the same.
 const DOMAIN_DIM = {
-  noun: "domain",
-  Noun: "Domain",
-  title: "By domain",
-  subtitle: "Per-domain remediation — each domain's contribution to the overall MTTR, its median "
-    + "vs the register, the KM median trend, and a full breakdown table.",
-  sheetSubtitle: "Remediation for each domain in the value chain.",
+  noun: "manual group",
+  Noun: "Manual group",
+  title: "By manual group",
+  subtitle: "Per-group remediation — each manual group's contribution to the overall MTTR, its "
+    + "median vs the register, the KM median trend, and a full breakdown table.",
+  sheetSubtitle: "Remediation for each manual group in the register.",
 };
 const SUPPORT_GROUP_DIM = {
   noun: "support group",
   Noun: "Support group",
   title: "By support group",
-  subtitle: "Per-support-group remediation within this value chain — each group's contribution to "
+  subtitle: "Per-support-group remediation within this scope — each group's contribution to "
     + "the overall MTTR, its median vs the register, the KM median trend, and a full breakdown table.",
-  sheetSubtitle: "Remediation for each support group in this value chain.",
+  sheetSubtitle: "Remediation for each support group in this scope.",
 };
 
 // Timeframe presets for the Trends charts. null = no window (full history).
@@ -232,7 +232,8 @@ export async function renderMttr(main, _params, ctx) {
   );
 
   const scopeChips = scopeBar({
-    domain: ctx.domain, supportGroup: ctx.supportGroup, onClear: ctx.clearScope,
+    domain: ctx.domain, supportGroup: ctx.supportGroup, bizDomain: ctx.bizDomain,
+    onClear: ctx.clearScope,
   });
   if (scopeChips) main.append(scopeChips);
 
@@ -243,10 +244,11 @@ export async function renderMttr(main, _params, ctx) {
   const byDomainHost = el("div", {});
   main.append(heroHost, chartsHost, survivalHost, slaHost, byDomainHost);
 
-  // Scope comes from the global Value Chain + Support group filters in the sidebar;
-  // "" = no filter on that dimension.
+  // Scope comes from the header switcher — a manual group, a VC domain or a support group,
+  // at most one of them; "" = no filter on that dimension.
   const domain = ctx.domain || "";
   const supportGroup = ctx.supportGroup || "";
+  const bizDomain = ctx.bizDomain || "";
 
   // Trends timeframe (days back from now; null = full history). Recalled from
   // localStorage across visits; falls back to All where storage is unavailable.
@@ -281,7 +283,7 @@ export async function renderMttr(main, _params, ctx) {
     // real layout so the swap to live content doesn't reflow; by-domain stays cleared.
     renderMttrSkeleton({ heroHost, chartsHost, survivalHost, slaHost });
     clear(byDomainHost);
-    const params = { domain, supportGroup, severities: scopeParam() };
+    const params = { domain, supportGroup, bizDomain, severities: scopeParam() };
 
     // Progressive paint over two parallel RPCs that share the same server cache entries
     // getMttrPage's slices use (so a warm revisit is still a single-shot repaint):
@@ -318,8 +320,8 @@ export async function renderMttr(main, _params, ctx) {
   }
 
   /** Remediation breakdown that adapts to the sidebar scope (the server tags the payload with
-   *  `dimension`): at the whole-chain view it splits by domain — a value chain is composed of
-   *  domains, so this is how each component is doing — and when a single value chain is selected
+   *  `dimension`): at the unscoped view it splits by manual group — so this is how each
+   *  component is doing — and when a single manual group is selected
    *  the by-domain split would be one row, so it splits that domain by SUPPORT GROUP instead.
    *  One renderer serves both; `dim` carries the labels and `groupOf` reads the group name.
    *
@@ -336,7 +338,7 @@ export async function renderMttr(main, _params, ctx) {
     clear(byDomainHost);
     if (!byDomain || !byDomain.rows.length) return;
     // The dimension follows the sidebar scope (server-tagged): per-domain at the whole-chain
-    // view, per-support-group when a Value Chain is selected. `dim` carries the copy and
+    // view, per-support-group when a manual group is selected. `dim` carries the copy and
     // `groupOf` reads the group name regardless of which payload shape arrived.
     const isSg = byDomain.dimension === "supportGroup";
     if (isSg) {
@@ -670,8 +672,8 @@ export async function renderMttr(main, _params, ctx) {
     const excludedNote = excludedResolved > 0
       ? el("p", { class: "small muted", style: "margin:8px 0 0" },
         `${excludedResolved.toLocaleString()} resolved finding${excludedResolved === 1 ? "" : "s"} `
-        + "from sealed history are excluded from this breakdown — they carry no domain inputs and "
-        + "can't be attributed to a value chain.")
+        + "from sealed history are excluded from this breakdown — they carry no rule inputs and "
+        + "can't be attributed to a manual group.")
       : null;
 
     // Progressive disclosure: the whole breakdown opens in a right-drawer instead of

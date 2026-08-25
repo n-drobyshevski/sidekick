@@ -102,8 +102,8 @@ export function hasPanel(item, blocks) {
  *     Those deep-link, but nothing in this app saves one yet — there is no saved-view store to
  *     read, and a block drawn over nothing would say "you have none" where the truth is "we
  *     never offered".
- *   - The Data lane's would be the value chains, whose names arrive with the bootstrap payload
- *     the shell already holds — but a value chain is a SCOPE, and the scope switcher in the
+ *   - The Data lane's would be the manual groups, whose names arrive with the bootstrap payload
+ *     the shell already holds — but a manual group is a SCOPE, and the scope switcher in the
  *     header is where scopes live. Listing them here as destinations would be the rail
  *     re-asserting the thing the header was built to take off it.
  *

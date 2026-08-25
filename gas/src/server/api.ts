@@ -50,6 +50,7 @@ import * as scanJobs from "./scanJobs";
 import { BUILD_ID, cached, dataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
 import { cellUsage, SCHEMA_VERSION, TAB_HEADERS, TABS } from "./sheetsDb";
+import * as bizDomains from "./bizDomains";
 import * as supportGroups from "./supportGroups";
 
 export interface ApiResult<T = unknown> {
@@ -101,7 +102,16 @@ export function bootstrap(_p?: unknown): ApiResult {
     // "bootstrapCore2" → "bootstrapCore3": the payload gained `scopeCounts`, which the header's
     // scope switcher reads for its denominator. A cached old-shape entry has none, and the
     // caption would render "undefined of undefined" until the next data version.
-    ...(cached("bootstrapCore3", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
+    // "bootstrapCore3" → "bootstrapCore4": it gained the business-domain catalogue and its
+    // counts, for the switcher's third group. WIZ_DOMAIN_TAG_KEY joins the params rather than
+    // the name, because changing the key changes WHICH tag every row is read from — a persisted
+    // entry keyed only on showNoFix would serve the old key's domains after the fix that
+    // corrected it, and the knob would appear to do nothing.
+    ...(cached(
+      "bootstrapCore4",
+      { showNoFix: settingsStore.getShowNoFix(), domainTagKey: bizDomains.configuredDomainTagKey() },
+      bootstrapCore,
+    ) as Rec),
     // Live per-request fields: never cached (activeJob changes every poll tick).
     dataVersion: dataVersion(),
     hasCredentials: hasWizCredentials(),
@@ -127,9 +137,16 @@ function bootstrapCore(): Rec {
   // of 8,000 findings looks like a small group either way; what tells a reader whether the
   // other 7,880 belong to some other group or to nobody at all is how many carry no group at
   // all — and the support-group tag is optional, so "nobody said" is the common case.
+  //
+  // `noBizDomain` carries the same duty for the business domain and carries it harder, because
+  // the tag is the tenant's to write and most tenants have not finished writing it. "5 of 87"
+  // under a domain attributes the other 82 to some other domain when the truth for most of them
+  // is that nobody said — so the caption prints how many carry no domain at all.
   const domainCounts: Record<string, number> = {};
   const supportGroupCounts: Record<string, number> = {};
+  const bizDomainCounts: Record<string, number> = {};
   let noSupportGroup = 0;
+  let noBizDomain = 0;
   for (const r of records) {
     const sev = String(r["_sev"]);
     counts[sev] = (counts[sev] ?? 0) + 1;
@@ -144,6 +161,9 @@ function bootstrapCore(): Rec {
     const sg = String(r["_supportGroup"] ?? "");
     if (sg) supportGroupCounts[sg] = (supportGroupCounts[sg] ?? 0) + 1;
     else noSupportGroup += 1;
+    const bd = String(r["_bizDomain"] ?? "");
+    if (bd) bizDomainCounts[bd] = (bizDomainCounts[bd] ?? 0) + 1;
+    else noBizDomain += 1;
   }
   return {
     // The deployed code stamp (esbuild-injected source hash; "dev" locally). Surfaced so an
@@ -184,15 +204,22 @@ function bootstrapCore(): Rec {
     // The scope switcher's arithmetic, kept apart from `filterOptions.supportGroups` and
     // `domainNames` so the readers that already take those as bare name lists (the domains
     // editor, the switcher's own option builders) keep their shape. `register` is the
-    // denominator every caption carries: "1,204" alone cannot tell a small value chain from a
+    // denominator every caption carries: "1,204" alone cannot tell a small manual group from a
     // small register, and those call for opposite reactions.
     scopeCounts: {
       register: records.length,
       domains: domainCounts,
       supportGroups: supportGroupCounts,
+      bizDomains: bizDomainCounts,
       unassigned: unassignedCount,
       noSupportGroup,
+      noBizDomain,
     },
+    // Which tag the business domain was read off. Surfaced because the figure beside it is
+    // meaningless without it: "82 carry no domain" is a fact about `Wiz/Domain` specifically,
+    // and an operator who mistyped WIZ_DOMAIN_TAG_KEY would otherwise read a tenant-wide
+    // tagging failure off their own typo.
+    domainTagKey: bizDomains.configuredDomainTagKey(),
     filterOptions: scan
       ? {
           statuses: findings.distinct(records, "status"),
@@ -200,8 +227,15 @@ function bootstrapCore(): Rec {
           clouds: findings.distinct(records, "vulnerableAsset.cloudPlatform"),
           subscriptions: findings.distinct(records, "vulnerableAsset.subscriptionName"),
           supportGroups: findings.distinct(records, "_supportGroup"),
+          // Derived from the register the scan actually collected, never from a list of
+          // domains the tenant might have — a picker built from the second would offer slices
+          // whose pages render zero, which looks exactly like "nothing here".
+          bizDomains: findings.distinct(records, "_bizDomain"),
         }
-      : { statuses: [], assetTypes: [], clouds: [], subscriptions: [], supportGroups: [] },
+      : {
+          statuses: [], assetTypes: [], clouds: [], subscriptions: [],
+          supportGroups: [], bizDomains: [],
+        },
   };
 }
 
@@ -240,6 +274,7 @@ export function getFindings(p?: unknown): ApiResult {
       clouds: (params["clouds"] as string[]) ?? [],
       domains: (params["domains"] as string[]) ?? [],
       supportGroups: (params["supportGroups"] as string[]) ?? [],
+      bizDomains: (params["bizDomains"] as string[]) ?? [],
       q: (params["q"] as string) ?? "",
     };
     const filtered = visibleFrame(findings.applyFilters(scan.records, filters));
@@ -395,28 +430,36 @@ export function getFindingDetail(p?: unknown): ApiResult {
 function insightsData(p?: unknown): Rec {
   const scan = findings.currentScan();
   if (!scan) return { flatScan: false };
-  // Global "Value Chain" filter: "" means the whole chain (no filter). The frame
+  // Global manual-group filter: "" means all of them (no filter). The frame
   // records already carry _domain (findings.currentScan); base rows get it assigned
   // here, mirroring mttrData/baseRowsData. Filter up front and feed the existing
   // aggregations unchanged — no insights.ts signature changes.
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
   const supportGroupSet = readStringArray(p, "supportGroups");
   const sgActive = Boolean(supportGroup) || supportGroupSet.length > 0;
   const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
   let recs = scan.records;
   let base = ledgerStore.loadBaseRows();
-  // Base rows carry no _supportGroup / _domain natively (only asset_name), so attach
-  // both up front — unconditionally, because the oldest-open grouped views rank by them
-  // even at the whole-chain view. attachSupportGroups resolves _supportGroup from the
-  // current map; _domain is assigned per row like the frame's (findings.currentScan).
+  // Base rows carry no _supportGroup / _bizDomain / _domain natively (only asset_name,
+  // the subscription columns and tags_json), so attach all three up front —
+  // unconditionally, because the oldest-open grouped views rank by them even at the
+  // whole-register view. attachSupportGroups resolves _supportGroup from the current map,
+  // attachBizDomains reads the domain tag out of tags_json, and _domain is assigned per
+  // row like the frame's (findings.currentScan).
   supportGroups.attachSupportGroups(base as unknown as Rec[]);
+  bizDomains.attachBizDomains(base as unknown as Rec[]);
   const compiled = compileDomains(settingsStore.getDomains().items);
   for (const r of base as unknown as Rec[]) r["_domain"] = assignDomain(r, compiled);
-  if (domain || sgActive) {
+  if (domain || sgActive || bizDomain) {
     if (sgActive) {
       recs = recs.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
       base = base.filter((r) => sgMatch(String((r as unknown as Rec)["_supportGroup"] ?? "")));
+    }
+    if (bizDomain) {
+      recs = recs.filter((r) => String(r["_bizDomain"] ?? "") === bizDomain);
+      base = base.filter((r) => String((r as unknown as Rec)["_bizDomain"] ?? "") === bizDomain);
     }
     if (domain) {
       recs = recs.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
@@ -496,6 +539,7 @@ const cachedInsightsData = (p?: unknown) =>
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      bizDomain: String((p as Rec)?.["bizDomain"] ?? ""),
       supportGroups: readStringArray(p, "supportGroups"),
       severities: readSeverities(p),
       showNoFix: settingsStore.getShowNoFix(),
@@ -510,8 +554,18 @@ export function getInsights(p?: unknown): ApiResult {
 
 // ------------------------------------------------------------------------- grouping
 
-/** Frame records for the current scan, scoped to a Value Chain and/or Support Group(s). */
-function scopedFrameRecords(domain: string, supportGroup: string, supportGroupSet: string[]): Rec[] {
+/**
+ * Frame records for the current scan, scoped to a manual group, Support Group(s) and/or a
+ * VC Domain.
+ *
+ * `_bizDomain` is already on every frame record (findings.currentScan attaches it beside
+ * `_supportGroup`), so this is a filter and never a join. An UNSET field means the resource
+ * carries no such tag, and it is compared as "" rather than folded into a bucket — there is no
+ * Untagged scope to select, by design (see domain/domainTag.ts).
+ */
+function scopedFrameRecords(
+  domain: string, supportGroup: string, supportGroupSet: string[], bizDomain: string,
+): Rec[] {
   const scan = findings.currentScan();
   if (!scan) return [];
   let recs = scan.records;
@@ -520,6 +574,7 @@ function scopedFrameRecords(domain: string, supportGroup: string, supportGroupSe
     recs = recs.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
   }
   if (domain) recs = recs.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
+  if (bizDomain) recs = recs.filter((r) => String(r["_bizDomain"] ?? "") === bizDomain);
   return visibleFrame(recs);
 }
 
@@ -529,6 +584,7 @@ function groupingData(p?: unknown): Rec {
   if (!scan) return { flatScan: false, keys: [], groups: [] };
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
   const supportGroupSet = readStringArray(p, "supportGroups");
   const raw = (p as Rec)?.["keys"];
   const keys = (Array.isArray(raw) ? (raw as unknown[]).map(String) : [])
@@ -538,7 +594,7 @@ function groupingData(p?: unknown): Rec {
     keys,
     groups: insights.groupTree(
       filterSeverities(
-        scopedFrameRecords(domain, supportGroup, supportGroupSet), readSeverities(p)),
+        scopedFrameRecords(domain, supportGroup, supportGroupSet, bizDomain), readSeverities(p)),
       keys),
   };
 }
@@ -547,6 +603,7 @@ function groupingData(p?: unknown): Rec {
 const cachedGroupingData = (p?: unknown) => {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
   const supportGroupSet = readStringArray(p, "supportGroups");
   const raw = (p as Rec)?.["keys"];
   const keys = Array.isArray(raw) ? (raw as unknown[]).map(String) : [];
@@ -554,7 +611,7 @@ const cachedGroupingData = (p?: unknown) => {
   // now honors the show-no-fix toggle; key gains showNoFix so on/off states cache apart.
   return cached("grouping2",
     {
-      domain, supportGroup, supportGroups: supportGroupSet, keys,
+      domain, supportGroup, bizDomain, supportGroups: supportGroupSet, keys,
       severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix(),
     },
     () => groupingData(p), 3600);
@@ -569,8 +626,8 @@ export function getGrouping(p?: unknown): ApiResult {
 /**
  * Open findings over scan history for the top-level breakdown groups — the durable-ledger
  * counterpart of the current-scan `groupingData` tree, powering the Breakdown
- * group-evolution line chart. Scopes the base rows to the same Value Chain / Support
- * Group filters (mirroring `insightsData`), then replays the ledger per flat scan.
+ * group-evolution line chart. Scopes the base rows to the same header scope
+ * (mirroring `insightsData`), then replays the ledger per flat scan.
  *
  * `key` is the top-level grouping dimension; `groups` are the canonical top-N group names
  * the client already derived from the grouping payload, so pie and line bucket/color the
@@ -589,14 +646,17 @@ function groupTrendData(p?: unknown): Rec {
   // natively, so attach both up front, then apply the domain / support-group filters.
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
   const supportGroupSet = readStringArray(p, "supportGroups");
   const sgActive = Boolean(supportGroup) || supportGroupSet.length > 0;
   const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
   let base = ledgerStore.loadBaseRows() as unknown as Rec[];
   supportGroups.attachSupportGroups(base);
+  bizDomains.attachBizDomains(base);
   const compiled = compileDomains(settingsStore.getDomains().items);
   for (const r of base) r["_domain"] = assignDomain(r, compiled);
   if (sgActive) base = base.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
+  if (bizDomain) base = base.filter((r) => String(r["_bizDomain"] ?? "") === bizDomain);
   if (domain) base = base.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
 
   // Base stays unfiltered here — the as-of {hideNoFix} exclusion re-admits a fixed-later
@@ -614,13 +674,14 @@ function groupTrendData(p?: unknown): Rec {
 export function getGroupTrend(p?: unknown): ApiResult {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
   const supportGroupSet = readStringArray(p, "supportGroups");
   return run(() =>
     // "groupTrend" → "groupTrend2": the open-by-group series now excludes no-fix findings
     // as-of-date when the toggle is off; key gains showNoFix so on/off states cache apart.
     cached("groupTrend2",
       {
-        domain, supportGroup, supportGroups: supportGroupSet,
+        domain, supportGroup, bizDomain, supportGroups: supportGroupSet,
         key: String((p as Rec)?.["key"] ?? ""),
         groups: readStringArray(p, "groups"),
         severities: readSeverities(p),
@@ -798,16 +859,24 @@ function visibleBase(rows: Rec[]): Rec[] {
   );
 }
 
-// The durable base rows narrowed to the active Value Chain + Support group scope — the shared
-// preamble both the MTTR summary and the MTTR trend key their populations off, so the hero and
-// the charts beneath it always measure the same findings. attachSupportGroups runs only when a
-// scope is active (otherwise the whole base passes through untouched), matching the old inline
-// scoping. Severity / no-fix filtering stays with each caller, which apply their own.
-function scopedBaseRows(domain: string, supportGroup: string): Rec[] {
+// The durable base rows narrowed to the active manual group / support group / VC Domain
+// scope — the shared preamble both the MTTR summary and the MTTR trend key their populations
+// off, so the hero and the charts beneath it always measure the same findings. The joins run
+// only when a scope is active (otherwise the whole base passes through untouched), matching the
+// old inline scoping. Severity / no-fix filtering stays with each caller, which apply their own.
+//
+// A base row carries no `_supportGroup` or `_bizDomain` natively — only `tags_json` and its
+// subscription columns — so both are attached here rather than assumed, which is the one way
+// this differs from scopedFrameRecords above.
+function scopedBaseRows(domain: string, supportGroup: string, bizDomain: string): Rec[] {
   let rows = ledgerStore.loadBaseRows() as unknown as Rec[];
-  if (domain || supportGroup) {
+  if (domain || supportGroup || bizDomain) {
     supportGroups.attachSupportGroups(rows);
     if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
+    if (bizDomain) {
+      const key = bizDomains.configuredDomainTagKey();
+      rows = rows.filter((r) => bizDomains.bizDomainOf(r, key) === bizDomain);
+    }
     if (domain) {
       const compiled = compileDomains(settingsStore.getDomains().items);
       rows = rows.filter((r) => assignDomain(r, compiled) === domain);
@@ -819,7 +888,8 @@ function scopedBaseRows(domain: string, supportGroup: string): Rec[] {
 function mttrData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
-  let rows = scopedBaseRows(domain, supportGroup);
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
+  let rows = scopedBaseRows(domain, supportGroup, bizDomain);
   rows = filterSeverities(rows, readSeverities(p));
   // Global show-no-fix toggle: drop awaiting-vendor-fix rows so the whole remediation block
   // (percentiles, buckets, KM, open-past-SLA, awaiting) measures only the fixable population.
@@ -888,8 +958,9 @@ function mttrData(p?: unknown): Rec {
 function programData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
   const rule = settingsStore.getRiskRule().rule;
-  let rows = scopedBaseRows(domain, supportGroup);
+  let rows = scopedBaseRows(domain, supportGroup, bizDomain);
   rows = filterSeverities(rows, readSeverities(p));
   rows = visibleBase(rows);
   const riskRows = rows as unknown as program.RiskRow[];
@@ -928,9 +999,10 @@ function programData(p?: unknown): Rec {
 function programTrendData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
   const rule = settingsStore.getRiskRule().rule;
   const rows = visibleBase(
-    filterSeverities(scopedBaseRows(domain, supportGroup), readSeverities(p)),
+    filterSeverities(scopedBaseRows(domain, supportGroup, bizDomain), readSeverities(p)),
   ) as unknown as BaseRow[];
   return { trend: ledgerStore.loadProgramTrend(rule, readSeverities(p), rows) };
 }
@@ -938,6 +1010,7 @@ function programTrendData(p?: unknown): Rec {
 function mttrTrendData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
   const severities = readSeverities(p);
   const scoped = Boolean(domain || supportGroup);
   // Scope the reconstructed trend to the active Value Chain + Support group by handing the
@@ -950,7 +1023,7 @@ function mttrTrendData(p?: unknown): Rec {
   // excluded the snapshots no longer describe the shown population — drop them like a scope does.
   const includeEol = settingsStore.getIncludeEol();
   const rows = filterEolBase(
-    scopedBaseRows(domain, supportGroup) as unknown as Rec[],
+    scopedBaseRows(domain, supportGroup, bizDomain) as unknown as Rec[],
     includeEol,
   ) as unknown as BaseRow[];
   return {
@@ -1031,12 +1104,12 @@ function remediationGroups(
   return { rows: out, trend: { groups, points, kmPoints } };
 }
 
-// Per-domain remediation summary for the "By domain" section shown at the whole-chain
-// (aggregate) view — a value chain is composed of domains, so this splits the same
-// ledger base rows the MTTR hero uses by their assigned domain. Priority order (with
-// Unassigned last), empty domains omitted.
+// Per-group remediation summary for the "By manual group" section shown at the unscoped
+// (aggregate) view — this splits the same ledger base rows the MTTR hero uses by their
+// assigned manual group. Priority order (with Unassigned last), empty groups omitted.
 function mttrByDomainData(p?: unknown): Rec {
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
   let rows = filterSeverities(
     ledgerStore.loadBaseRows() as unknown as Rec[],
     readSeverities(p),
@@ -1045,6 +1118,12 @@ function mttrByDomainData(p?: unknown): Rec {
   rows = visibleBase(rows);
   supportGroups.attachSupportGroups(rows);
   if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
+  // A VC Domain scope narrows the population the same way the hero above it is narrowed, so
+  // the by-manual-group split answers for the same findings the headline figure does.
+  if (bizDomain) {
+    const key = bizDomains.configuredDomainTagKey();
+    rows = rows.filter((r) => bizDomains.bizDomainOf(r, key) === bizDomain);
+  }
   // Drop rows that carry no domain-rule inputs at all — compacted resolved episodes and the
   // pre-v5 / imported resolved history that surface with null tags+subscription+name. They can
   // only ever fall through to Unassigned because their inputs are missing, not because they
@@ -1087,19 +1166,26 @@ function mttrByDomainData(p?: unknown): Rec {
 function mttrBySupportGroupData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
   let rows = filterSeverities(
     ledgerStore.loadBaseRows() as unknown as Rec[],
     readSeverities(p),
   );
   rows = visibleBase(rows);
   supportGroups.attachSupportGroups(rows);
-  // Scope to the selected value chain (assign domains, keep the matching rows) so the split
-  // shows the support groups WITHIN this domain — mirroring how the hero is scoped.
+  // Scope to the selected manual group (assign groups, keep the matching rows) so the split
+  // shows the support groups WITHIN it — mirroring how the hero is scoped.
   const compiled = compileDomains(settingsStore.getDomains().items);
   if (domain) rows = rows.filter((r) => assignDomain(r, compiled) === domain);
-  // A sidebar Support-group filter narrows to that one group (the split then collapses to a
+  // A header support-group scope narrows to that one group (the split then collapses to a
   // single row and the client hides it) — applied so the population matches the hero.
   if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
+  // Likewise a VC Domain scope: the split then shows the support groups WITHIN that domain,
+  // which is the same relationship the manual-group scope above has to it.
+  if (bizDomain) {
+    const key = bizDomains.configuredDomainTagKey();
+    rows = rows.filter((r) => bizDomains.bizDomainOf(r, key) === bizDomain);
+  }
   for (const r of rows) r["_supportGroup"] = String(r["_supportGroup"] ?? "") || NONE_SUPPORT_GROUP;
   // Order the table by bucket size (largest support group first), "(none)" always last.
   const sizes = new Map<string, number>();
@@ -1147,6 +1233,7 @@ const cachedMttrData = (p?: unknown) =>
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      bizDomain: String((p as Rec)?.["bizDomain"] ?? ""),
       severities: readSeverities(p),
       showNoFix: settingsStore.getShowNoFix(),
     },
@@ -1172,6 +1259,7 @@ const cachedMttrTrendData = (p?: unknown) =>
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      bizDomain: String((p as Rec)?.["bizDomain"] ?? ""),
       severities: readSeverities(p),
       showNoFix: settingsStore.getShowNoFix(),
     },
@@ -1190,6 +1278,7 @@ const cachedProgramData = (p?: unknown) =>
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      bizDomain: String((p as Rec)?.["bizDomain"] ?? ""),
       severities: readSeverities(p),
       showNoFix: settingsStore.getShowNoFix(),
       includeEol: settingsStore.getIncludeEol(),
@@ -1204,6 +1293,7 @@ const cachedProgramTrendData = (p?: unknown) =>
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      bizDomain: String((p as Rec)?.["bizDomain"] ?? ""),
       severities: readSeverities(p),
       showNoFix: settingsStore.getShowNoFix(),
       includeEol: settingsStore.getIncludeEol(),
@@ -1262,6 +1352,7 @@ const cachedMttrBySupportGroupData = (p?: unknown) =>
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      bizDomain: String((p as Rec)?.["bizDomain"] ?? ""),
       severities: readSeverities(p),
       showNoFix: settingsStore.getShowNoFix(),
     },
@@ -1367,9 +1458,10 @@ export function getExportCoverageCsv(p?: unknown): ApiResult {
 function riskCohortRows(p: unknown, quadrant: string): Rec[] {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
   const rule = settingsStore.getRiskRule().rule;
   const rows = visibleBase(
-    filterSeverities(scopedBaseRows(domain, supportGroup), readSeverities(p)),
+    filterSeverities(scopedBaseRows(domain, supportGroup, bizDomain), readSeverities(p)),
   );
   const out: Rec[] = [];
   for (const r of rows) {
@@ -1425,11 +1517,12 @@ const WEEK_MS = 7 * 86_400_000;
 function executiveWeekTrend(p?: unknown): Rec | null {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
   const severities = readSeverities(p);
   const hideNoFix = !settingsStore.getShowNoFix();
   // EOL exclusion applies to both endpoints of the delta (drop those lifecycles up front); no-fix
   // stays as-of inside kmMedianAsOf via hideNoFix.
-  const base = filterEolBase(scopedBaseRows(domain, supportGroup), settingsStore.getIncludeEol());
+  const base = filterEolBase(scopedBaseRows(domain, supportGroup, bizDomain), settingsStore.getIncludeEol());
   if (!base.length) return null;
   // Need at least a week of history to have something to compare against.
   let earliest = Infinity;
@@ -1457,6 +1550,7 @@ const cachedExecutiveWeekTrend = (p?: unknown) =>
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      bizDomain: String((p as Rec)?.["bizDomain"] ?? ""),
       severities: readSeverities(p),
       showNoFix: settingsStore.getShowNoFix(),
     },
@@ -1637,24 +1731,33 @@ export function getReport(p?: unknown): ApiResult {
     const format = String(params["format"] ?? "markdown");
     const scan = findings.currentScan();
     if (!scan) return { content: "", filename: "", matrix: [] };
-    // Honor the global "Value Chain" and "Support group" filters (empty = no filter).
+    // Honor the global scope — value chain, support group or business domain (empty = no
+    // filter). All three arrive as arrays because the report has always taken them that way;
+    // the header switcher sends at most one value in one of them.
     const domains = (params["domains"] as string[]) ?? [];
     const sgFilter = (params["supportGroups"] as string[]) ?? [];
+    const bdFilter = (params["bizDomains"] as string[]) ?? [];
     // Report counts + MTTR honor the global vendor-fix and EOL filters, like the dashboard views.
     const displayed = visibleFrame(
       findings.applyFilters(scan.records, {
         severities: settingsStore.getDisplaySeverities(),
         domains,
         supportGroups: sgFilter,
+        bizDomains: bdFilter,
       }),
     );
     const counts = sevCountsOf(displayed);
     let baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
-    if (domains.length || sgFilter.length) {
+    if (domains.length || sgFilter.length || bdFilter.length) {
       supportGroups.attachSupportGroups(baseRows);
       if (sgFilter.length) {
         const keep = new Set(sgFilter);
         baseRows = baseRows.filter((r) => keep.has(String(r["_supportGroup"] ?? "")));
+      }
+      if (bdFilter.length) {
+        const keep = new Set(bdFilter);
+        const key = bizDomains.configuredDomainTagKey();
+        baseRows = baseRows.filter((r) => keep.has(bizDomains.bizDomainOf(r, key) ?? ""));
       }
       if (domains.length) {
         const compiled = compileDomains(settingsStore.getDomains().items);
@@ -1729,6 +1832,7 @@ export function getExportCsv(p?: unknown): ApiResult {
         clouds: (params["clouds"] as string[]) ?? [],
         domains: (params["domains"] as string[]) ?? [],
         supportGroups: (params["supportGroups"] as string[]) ?? [],
+      bizDomains: (params["bizDomains"] as string[]) ?? [],
         q: (params["q"] as string) ?? "",
       }),
     );

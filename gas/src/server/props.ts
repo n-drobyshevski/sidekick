@@ -9,6 +9,7 @@ export const PROP_KEYS = {
   wizApiUrl: "WIZ_API_URL",
   wizProjectIdV2: "WIZ_PROJECT_ID_V2",
   wizSupportGroupTagKey: "WIZ_SUPPORT_GROUP_TAG_KEY",
+  wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
   ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
   archiveFolderId: "ARCHIVE_FOLDER_ID",
 } as const;

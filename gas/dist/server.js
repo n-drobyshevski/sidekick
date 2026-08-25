@@ -48,6 +48,7 @@ var Server = (() => {
     wizApiUrl: "WIZ_API_URL",
     wizProjectIdV2: "WIZ_PROJECT_ID_V2",
     wizSupportGroupTagKey: "WIZ_SUPPORT_GROUP_TAG_KEY",
+    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
     ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
     archiveFolderId: "ARCHIVE_FOLDER_ID"
   };
@@ -4721,7 +4722,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "293d780ffccf" : "dev";
+  var BUILD_ID = true ? "8df26fdfe5b3" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -5687,6 +5688,39 @@ var Server = (() => {
     }
   }
 
+  // src/domain/domainTag.ts
+  var DEFAULT_DOMAIN_TAG_KEY = "Wiz/Domain";
+  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
+    const want = key.trim().toLowerCase();
+    if (!want || !tags) return null;
+    for (const [k, v] of Object.entries(tags)) {
+      if (String(k).trim().toLowerCase() !== want) continue;
+      if (!present(v)) continue;
+      const value = String(v).trim();
+      if (value) return value;
+    }
+    return null;
+  }
+  function resolveDomainTagKey(configured) {
+    const k = (configured != null ? configured : "").trim();
+    return k || DEFAULT_DOMAIN_TAG_KEY;
+  }
+
+  // src/server/bizDomains.ts
+  function configuredDomainTagKey() {
+    return resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey));
+  }
+  function bizDomainOf(record, key) {
+    return domainOfTags(recordTags(record), key);
+  }
+  function attachBizDomains(records) {
+    const key = configuredDomainTagKey();
+    for (const r of records) {
+      const domain = bizDomainOf(r, key);
+      if (domain) r["_bizDomain"] = domain;
+    }
+  }
+
   // src/server/wizSubscriptionsQuery.ts
   var PAGE_SIZE2 = 100;
   var PAGE_SIZE_FALLBACK2 = 50;
@@ -5884,6 +5918,7 @@ var Server = (() => {
       });
     }
     attachSupportGroups(records);
+    attachBizDomains(records);
     if (compiled.length) {
       for (const flat of records) flat["_domain"] = assignDomain(flat, compiled);
     } else {
@@ -5901,7 +5936,7 @@ var Server = (() => {
     return memo;
   }
   function applyFilters(records, f) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g;
     let out = records;
     if ((_a = f.severities) == null ? void 0 : _a.length) {
       const keep = new Set(f.severities.map(normalizeSeverity));
@@ -5940,6 +5975,13 @@ var Server = (() => {
       out = out.filter((r) => {
         var _a2;
         return keep.has(String((_a2 = r["_supportGroup"]) != null ? _a2 : ""));
+      });
+    }
+    if ((_g = f.bizDomains) == null ? void 0 : _g.length) {
+      const keep = new Set(f.bizDomains);
+      out = out.filter((r) => {
+        var _a2;
+        return keep.has(String((_a2 = r["_bizDomain"]) != null ? _a2 : ""));
       });
     }
     if (f.q && f.q.trim()) {
@@ -6752,7 +6794,16 @@ var Server = (() => {
       // "bootstrapCore2" → "bootstrapCore3": the payload gained `scopeCounts`, which the header's
       // scope switcher reads for its denominator. A cached old-shape entry has none, and the
       // caption would render "undefined of undefined" until the next data version.
-      ...cached("bootstrapCore3", { showNoFix: getShowNoFix2() }, bootstrapCore),
+      // "bootstrapCore3" → "bootstrapCore4": it gained the business-domain catalogue and its
+      // counts, for the switcher's third group. WIZ_DOMAIN_TAG_KEY joins the params rather than
+      // the name, because changing the key changes WHICH tag every row is read from — a persisted
+      // entry keyed only on showNoFix would serve the old key's domains after the fix that
+      // corrected it, and the knob would appear to do nothing.
+      ...cached(
+        "bootstrapCore4",
+        { showNoFix: getShowNoFix2(), domainTagKey: configuredDomainTagKey() },
+        bootstrapCore
+      ),
       // Live per-request fields: never cached (activeJob changes every poll tick).
       dataVersion: dataVersion(),
       hasCredentials: hasWizCredentials(),
@@ -6760,7 +6811,7 @@ var Server = (() => {
     }));
   }
   function bootstrapCore() {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g;
     const scan = currentScan();
     const latest = latestScanRow();
     const showNoFix = getShowNoFix2();
@@ -6769,7 +6820,9 @@ var Server = (() => {
     let unassignedCount = 0;
     const domainCounts = {};
     const supportGroupCounts = {};
+    const bizDomainCounts = {};
     let noSupportGroup = 0;
+    let noBizDomain = 0;
     for (const r of records) {
       const sev2 = String(r["_sev"]);
       counts[sev2] = ((_a = counts[sev2]) != null ? _a : 0) + 1;
@@ -6779,6 +6832,9 @@ var Server = (() => {
       const sg = String((_d = r["_supportGroup"]) != null ? _d : "");
       if (sg) supportGroupCounts[sg] = ((_e = supportGroupCounts[sg]) != null ? _e : 0) + 1;
       else noSupportGroup += 1;
+      const bd = String((_f = r["_bizDomain"]) != null ? _f : "");
+      if (bd) bizDomainCounts[bd] = ((_g = bizDomainCounts[bd]) != null ? _g : 0) + 1;
+      else noBizDomain += 1;
     }
     return {
       // The deployed code stamp (esbuild-injected source hash; "dev" locally). Surfaced so an
@@ -6817,22 +6873,40 @@ var Server = (() => {
       // The scope switcher's arithmetic, kept apart from `filterOptions.supportGroups` and
       // `domainNames` so the readers that already take those as bare name lists (the domains
       // editor, the switcher's own option builders) keep their shape. `register` is the
-      // denominator every caption carries: "1,204" alone cannot tell a small value chain from a
+      // denominator every caption carries: "1,204" alone cannot tell a small manual group from a
       // small register, and those call for opposite reactions.
       scopeCounts: {
         register: records.length,
         domains: domainCounts,
         supportGroups: supportGroupCounts,
+        bizDomains: bizDomainCounts,
         unassigned: unassignedCount,
-        noSupportGroup
+        noSupportGroup,
+        noBizDomain
       },
+      // Which tag the business domain was read off. Surfaced because the figure beside it is
+      // meaningless without it: "82 carry no domain" is a fact about `Wiz/Domain` specifically,
+      // and an operator who mistyped WIZ_DOMAIN_TAG_KEY would otherwise read a tenant-wide
+      // tagging failure off their own typo.
+      domainTagKey: configuredDomainTagKey(),
       filterOptions: scan ? {
         statuses: distinct(records, "status"),
         assetTypes: distinct(records, "vulnerableAsset.type"),
         clouds: distinct(records, "vulnerableAsset.cloudPlatform"),
         subscriptions: distinct(records, "vulnerableAsset.subscriptionName"),
-        supportGroups: distinct(records, "_supportGroup")
-      } : { statuses: [], assetTypes: [], clouds: [], subscriptions: [], supportGroups: [] }
+        supportGroups: distinct(records, "_supportGroup"),
+        // Derived from the register the scan actually collected, never from a list of
+        // domains the tenant might have — a picker built from the second would offer slices
+        // whose pages render zero, which looks exactly like "nothing here".
+        bizDomains: distinct(records, "_bizDomain")
+      } : {
+        statuses: [],
+        assetTypes: [],
+        clouds: [],
+        subscriptions: [],
+        supportGroups: [],
+        bizDomains: []
+      }
     };
   }
   function jobSummary(job) {
@@ -6847,7 +6921,7 @@ var Server = (() => {
   }
   function getFindings(p) {
     return run(() => {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
       const params = p != null ? p : {};
       const scan = currentScan();
       if (!scan) return { rows: [], total: 0, counts: {}, page: 0, pageCount: 0, groups: null };
@@ -6858,15 +6932,16 @@ var Server = (() => {
         clouds: (_d = params["clouds"]) != null ? _d : [],
         domains: (_e = params["domains"]) != null ? _e : [],
         supportGroups: (_f = params["supportGroups"]) != null ? _f : [],
-        q: (_g = params["q"]) != null ? _g : ""
+        bizDomains: (_g = params["bizDomains"]) != null ? _g : [],
+        q: (_h = params["q"]) != null ? _h : ""
       };
       const filtered = visibleFrame(applyFilters(scan.records, filters));
       const counts = {};
       for (const r of filtered) {
         const sev2 = String(r["_sev"]);
-        counts[sev2] = ((_h = counts[sev2]) != null ? _h : 0) + 1;
+        counts[sev2] = ((_i = counts[sev2]) != null ? _i : 0) + 1;
       }
-      const groupBy = (_i = params["groupBy"]) != null ? _i : "";
+      const groupBy = (_j = params["groupBy"]) != null ? _j : "";
       if (groupBy) {
         const keyFor = groupKeyFn(groupBy);
         const groups = /* @__PURE__ */ new Map();
@@ -6902,9 +6977,9 @@ var Server = (() => {
           all: true
         };
       }
-      const pageSize = Math.min(Number((_j = params["pageSize"]) != null ? _j : 100), 500);
+      const pageSize = Math.min(Number((_k = params["pageSize"]) != null ? _k : 100), 500);
       const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-      const page = Math.min(Math.max(Number((_k = params["page"]) != null ? _k : 0), 0), pageCount - 1);
+      const page = Math.min(Math.max(Number((_l = params["page"]) != null ? _l : 0), 0), pageCount - 1);
       return {
         rows: filtered.slice(page * pageSize, (page + 1) * pageSize).map(tableRow),
         total: filtered.length,
@@ -6978,20 +7053,22 @@ var Server = (() => {
     });
   }
   function insightsData(p) {
-    var _a, _b;
+    var _a, _b, _c;
     const scan = currentScan();
     if (!scan) return { flatScan: false };
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const bizDomain = String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : "");
     const supportGroupSet = readStringArray(p, "supportGroups");
     const sgActive = Boolean(supportGroup) || supportGroupSet.length > 0;
     const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
     let recs = scan.records;
     let base = loadBaseRows();
     attachSupportGroups(base);
+    attachBizDomains(base);
     const compiled = compileDomains(getDomains2().items);
     for (const r of base) r["_domain"] = assignDomain(r, compiled);
-    if (domain || sgActive) {
+    if (domain || sgActive || bizDomain) {
       if (sgActive) {
         recs = recs.filter((r) => {
           var _a2;
@@ -7000,6 +7077,16 @@ var Server = (() => {
         base = base.filter((r) => {
           var _a2;
           return sgMatch(String((_a2 = r["_supportGroup"]) != null ? _a2 : ""));
+        });
+      }
+      if (bizDomain) {
+        recs = recs.filter((r) => {
+          var _a2;
+          return String((_a2 = r["_bizDomain"]) != null ? _a2 : "") === bizDomain;
+        });
+        base = base.filter((r) => {
+          var _a2;
+          return String((_a2 = r["_bizDomain"]) != null ? _a2 : "") === bizDomain;
         });
       }
       if (domain) {
@@ -7064,7 +7151,7 @@ var Server = (() => {
     };
   }
   var cachedInsightsData = (p) => {
-    var _a, _b;
+    var _a, _b, _c;
     return cached(
       // "insights" → "insights2": the payload now honors the show-no-fix toggle (counts,
       // total, sevStats, exploit, aging, oldest, awaiting, movement, and the as-of openTrend
@@ -7075,6 +7162,7 @@ var Server = (() => {
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        bizDomain: String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : ""),
         supportGroups: readStringArray(p, "supportGroups"),
         severities: readSeverities(p),
         showNoFix: getShowNoFix2()
@@ -7086,7 +7174,7 @@ var Server = (() => {
   function getInsights(p) {
     return run(() => cachedInsightsData(p));
   }
-  function scopedFrameRecords(domain, supportGroup, supportGroupSet) {
+  function scopedFrameRecords(domain, supportGroup, supportGroupSet, bizDomain) {
     const scan = currentScan();
     if (!scan) return [];
     let recs = scan.records;
@@ -7101,14 +7189,19 @@ var Server = (() => {
       var _a;
       return String((_a = r["_domain"]) != null ? _a : UNASSIGNED) === domain;
     });
+    if (bizDomain) recs = recs.filter((r) => {
+      var _a;
+      return String((_a = r["_bizDomain"]) != null ? _a : "") === bizDomain;
+    });
     return visibleFrame(recs);
   }
   function groupingData(p) {
-    var _a, _b;
+    var _a, _b, _c;
     const scan = currentScan();
     if (!scan) return { flatScan: false, keys: [], groups: [] };
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const bizDomain = String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : "");
     const supportGroupSet = readStringArray(p, "supportGroups");
     const raw = p == null ? void 0 : p["keys"];
     const keys = (Array.isArray(raw) ? raw.map(String) : []).filter((k) => k in GROUP_COLUMNS);
@@ -7117,7 +7210,7 @@ var Server = (() => {
       keys,
       groups: groupTree(
         filterSeverities(
-          scopedFrameRecords(domain, supportGroup, supportGroupSet),
+          scopedFrameRecords(domain, supportGroup, supportGroupSet, bizDomain),
           readSeverities(p)
         ),
         keys
@@ -7125,9 +7218,10 @@ var Server = (() => {
     };
   }
   var cachedGroupingData = (p) => {
-    var _a, _b;
+    var _a, _b, _c;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const bizDomain = String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : "");
     const supportGroupSet = readStringArray(p, "supportGroups");
     const raw = p == null ? void 0 : p["keys"];
     const keys = Array.isArray(raw) ? raw.map(String) : [];
@@ -7136,6 +7230,7 @@ var Server = (() => {
       {
         domain,
         supportGroup,
+        bizDomain,
         supportGroups: supportGroupSet,
         keys,
         severities: readSeverities(p),
@@ -7149,7 +7244,7 @@ var Server = (() => {
     return run(() => cachedGroupingData(p));
   }
   function groupTrendData(p) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const key = String((_a = p == null ? void 0 : p["key"]) != null ? _a : "");
     const groups = readStringArray(p, "groups");
     const field2 = GROUP_BASE_FIELDS[key];
@@ -7157,16 +7252,22 @@ var Server = (() => {
     if (!field2 || !scan) return { supported: false, key, groups: [], points: [] };
     const domain = String((_b = p == null ? void 0 : p["domain"]) != null ? _b : "");
     const supportGroup = String((_c = p == null ? void 0 : p["supportGroup"]) != null ? _c : "");
+    const bizDomain = String((_d = p == null ? void 0 : p["bizDomain"]) != null ? _d : "");
     const supportGroupSet = readStringArray(p, "supportGroups");
     const sgActive = Boolean(supportGroup) || supportGroupSet.length > 0;
     const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
     let base = loadBaseRows();
     attachSupportGroups(base);
+    attachBizDomains(base);
     const compiled = compileDomains(getDomains2().items);
     for (const r of base) r["_domain"] = assignDomain(r, compiled);
     if (sgActive) base = base.filter((r) => {
       var _a2;
       return sgMatch(String((_a2 = r["_supportGroup"]) != null ? _a2 : ""));
+    });
+    if (bizDomain) base = base.filter((r) => {
+      var _a2;
+      return String((_a2 = r["_bizDomain"]) != null ? _a2 : "") === bizDomain;
     });
     if (domain) base = base.filter((r) => {
       var _a2;
@@ -7185,9 +7286,10 @@ var Server = (() => {
     return { supported: true, key, groups, points };
   }
   function getGroupTrend(p) {
-    var _a, _b;
+    var _a, _b, _c;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const bizDomain = String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : "");
     const supportGroupSet = readStringArray(p, "supportGroups");
     return run(
       () => {
@@ -7200,6 +7302,7 @@ var Server = (() => {
             {
               domain,
               supportGroup,
+              bizDomain,
               supportGroups: supportGroupSet,
               key: String((_a2 = p == null ? void 0 : p["key"]) != null ? _a2 : ""),
               groups: readStringArray(p, "groups"),
@@ -7334,14 +7437,18 @@ var Server = (() => {
       getIncludeEol2()
     );
   }
-  function scopedBaseRows(domain, supportGroup) {
+  function scopedBaseRows(domain, supportGroup, bizDomain) {
     let rows = loadBaseRows();
-    if (domain || supportGroup) {
+    if (domain || supportGroup || bizDomain) {
       attachSupportGroups(rows);
       if (supportGroup) rows = rows.filter((r) => {
         var _a;
         return String((_a = r["_supportGroup"]) != null ? _a : "") === supportGroup;
       });
+      if (bizDomain) {
+        const key = configuredDomainTagKey();
+        rows = rows.filter((r) => bizDomainOf(r, key) === bizDomain);
+      }
       if (domain) {
         const compiled = compileDomains(getDomains2().items);
         rows = rows.filter((r) => assignDomain(r, compiled) === domain);
@@ -7350,10 +7457,11 @@ var Server = (() => {
     return rows;
   }
   function mttrData(p) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
-    let rows = scopedBaseRows(domain, supportGroup);
+    const bizDomain = String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : "");
+    let rows = scopedBaseRows(domain, supportGroup, bizDomain);
     rows = filterSeverities(rows, readSeverities(p));
     rows = visibleBase(rows);
     const { perSev, overall } = mttrFromLedger(rows);
@@ -7365,7 +7473,7 @@ var Server = (() => {
       const bySev = {};
       for (const r of remRows) {
         const s = normalizeSeverity(r["severity"]);
-        ((_c = bySev[s]) != null ? _c : bySev[s] = []).push(r);
+        ((_d = bySev[s]) != null ? _d : bySev[s] = []).push(r);
       }
       for (const [s, rs] of Object.entries(bySev)) {
         const k = kaplanMeier(rs);
@@ -7395,11 +7503,12 @@ var Server = (() => {
     return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation };
   }
   function programData(p) {
-    var _a, _b;
+    var _a, _b, _c;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const bizDomain = String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : "");
     const rule = getRiskRule2().rule;
-    let rows = scopedBaseRows(domain, supportGroup);
+    let rows = scopedBaseRows(domain, supportGroup, bizDomain);
     rows = filterSeverities(rows, readSeverities(p));
     rows = visibleBase(rows);
     const riskRows = rows;
@@ -7432,24 +7541,26 @@ var Server = (() => {
     };
   }
   function programTrendData(p) {
-    var _a, _b;
+    var _a, _b, _c;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const bizDomain = String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : "");
     const rule = getRiskRule2().rule;
     const rows = visibleBase(
-      filterSeverities(scopedBaseRows(domain, supportGroup), readSeverities(p))
+      filterSeverities(scopedBaseRows(domain, supportGroup, bizDomain), readSeverities(p))
     );
     return { trend: loadProgramTrend(rule, readSeverities(p), rows) };
   }
   function mttrTrendData(p) {
-    var _a, _b;
+    var _a, _b, _c;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const bizDomain = String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : "");
     const severities = readSeverities(p);
     const scoped = Boolean(domain || supportGroup);
     const includeEol = getIncludeEol2();
     const rows = filterEolBase(
-      scopedBaseRows(domain, supportGroup),
+      scopedBaseRows(domain, supportGroup, bizDomain),
       includeEol
     );
     return {
@@ -7509,8 +7620,9 @@ var Server = (() => {
     return { rows: out, trend: { groups, points, kmPoints } };
   }
   function mttrByDomainData(p) {
-    var _a;
+    var _a, _b;
     const supportGroup = String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : "");
+    const bizDomain = String((_b = p == null ? void 0 : p["bizDomain"]) != null ? _b : "");
     let rows = filterSeverities(
       loadBaseRows(),
       readSeverities(p)
@@ -7521,6 +7633,10 @@ var Server = (() => {
       var _a2;
       return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
     });
+    if (bizDomain) {
+      const key = configuredDomainTagKey();
+      rows = rows.filter((r) => bizDomainOf(r, key) === bizDomain);
+    }
     const excluded = rows.filter((r) => !hasDomainInputs(r));
     rows = rows.filter((r) => hasDomainInputs(r));
     const excludedResolved = excluded.filter(
@@ -7548,9 +7664,10 @@ var Server = (() => {
     };
   }
   function mttrBySupportGroupData(p) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const bizDomain = String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : "");
     let rows = filterSeverities(
       loadBaseRows(),
       readSeverities(p)
@@ -7563,11 +7680,15 @@ var Server = (() => {
       var _a2;
       return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
     });
-    for (const r of rows) r["_supportGroup"] = String((_c = r["_supportGroup"]) != null ? _c : "") || NONE_SUPPORT_GROUP;
+    if (bizDomain) {
+      const key = configuredDomainTagKey();
+      rows = rows.filter((r) => bizDomainOf(r, key) === bizDomain);
+    }
+    for (const r of rows) r["_supportGroup"] = String((_d = r["_supportGroup"]) != null ? _d : "") || NONE_SUPPORT_GROUP;
     const sizes = /* @__PURE__ */ new Map();
     for (const r of rows) {
       const g = String(r["_supportGroup"]);
-      sizes.set(g, ((_d = sizes.get(g)) != null ? _d : 0) + 1);
+      sizes.set(g, ((_e = sizes.get(g)) != null ? _e : 0) + 1);
     }
     const orderedNames = [...sizes.keys()].sort((a, b) => {
       var _a2, _b2;
@@ -7586,7 +7707,7 @@ var Server = (() => {
     };
   }
   var cachedMttrData = (p) => {
-    var _a, _b;
+    var _a, _b, _c;
     return cached(
       // "mttr" → "mttr2": payload gained the `remediation` block; dataVersion persists across
       // deploys, so bumping the namespace prevents serving a stale old-shape entry (up to 1h).
@@ -7606,6 +7727,7 @@ var Server = (() => {
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        bizDomain: String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : ""),
         severities: readSeverities(p),
         showNoFix: getShowNoFix2()
       },
@@ -7614,7 +7736,7 @@ var Server = (() => {
     );
   };
   var cachedMttrTrendData = (p) => {
-    var _a, _b;
+    var _a, _b, _c;
     return (
       // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
       // stale old-shape entry surviving the deploy under the persistent dataVersion.
@@ -7634,6 +7756,7 @@ var Server = (() => {
         {
           domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
           supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+          bizDomain: String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : ""),
           severities: readSeverities(p),
           showNoFix: getShowNoFix2()
         },
@@ -7642,12 +7765,13 @@ var Server = (() => {
     );
   };
   var cachedProgramData = (p) => {
-    var _a, _b;
+    var _a, _b, _c;
     return cached(
       "program1",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        bizDomain: String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : ""),
         severities: readSeverities(p),
         showNoFix: getShowNoFix2(),
         includeEol: getIncludeEol2(),
@@ -7658,12 +7782,13 @@ var Server = (() => {
     );
   };
   var cachedProgramTrendData = (p) => {
-    var _a, _b;
+    var _a, _b, _c;
     return cached(
       "programTrend1",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        bizDomain: String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : ""),
         severities: readSeverities(p),
         showNoFix: getShowNoFix2(),
         includeEol: getIncludeEol2(),
@@ -7717,12 +7842,13 @@ var Server = (() => {
     );
   };
   var cachedMttrBySupportGroupData = (p) => {
-    var _a, _b;
+    var _a, _b, _c;
     return cached(
       "mttrBySupportGroup1",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        bizDomain: String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : ""),
         severities: readSeverities(p),
         showNoFix: getShowNoFix2()
       },
@@ -7806,18 +7932,19 @@ var Server = (() => {
     });
   }
   function riskCohortRows(p, quadrant) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const bizDomain = String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : "");
     const rule = getRiskRule2().rule;
     const rows = visibleBase(
-      filterSeverities(scopedBaseRows(domain, supportGroup), readSeverities(p))
+      filterSeverities(scopedBaseRows(domain, supportGroup, bizDomain), readSeverities(p))
     );
     const out = [];
     for (const r of rows) {
       const riskRow = r;
       const cls = classifyRisk(riskRow, rule);
-      const open = !RESOLVED_STATUSES.has(String((_c = r["status"]) != null ? _c : "").toUpperCase());
+      const open = !RESOLVED_STATUSES.has(String((_d = r["status"]) != null ? _d : "").toUpperCase());
       const cell = cls === "unknown" ? open ? "unknownOpen" : "unknownRemediated" : cls === "high" ? open ? "fn" : "tp" : open ? "tn" : "fp";
       if (quadrant && cell !== quadrant) continue;
       out.push({
@@ -7842,12 +7969,13 @@ var Server = (() => {
   }
   var WEEK_MS = 7 * 864e5;
   function executiveWeekTrend(p) {
-    var _a, _b;
+    var _a, _b, _c;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const bizDomain = String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : "");
     const severities = readSeverities(p);
     const hideNoFix = !getShowNoFix2();
-    const base = filterEolBase(scopedBaseRows(domain, supportGroup), getIncludeEol2());
+    const base = filterEolBase(scopedBaseRows(domain, supportGroup, bizDomain), getIncludeEol2());
     if (!base.length) return null;
     let earliest = Infinity;
     for (const r of base) {
@@ -7868,12 +7996,13 @@ var Server = (() => {
     };
   }
   var cachedExecutiveWeekTrend = (p) => {
-    var _a, _b;
+    var _a, _b, _c;
     return cached(
       "execWeekTrend",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        bizDomain: String((_c = p == null ? void 0 : p["bizDomain"]) != null ? _c : ""),
         severities: readSeverities(p),
         showNoFix: getShowNoFix2()
       },
@@ -8027,29 +8156,39 @@ var Server = (() => {
   var REPORT_SOURCE = "OS vulnerabilities";
   function getReport(p) {
     return run(() => {
-      var _a, _b, _c, _d, _e, _f;
+      var _a, _b, _c, _d, _e, _f, _g;
       const params = p != null ? p : {};
       const format = String((_a = params["format"]) != null ? _a : "markdown");
       const scan = currentScan();
       if (!scan) return { content: "", filename: "", matrix: [] };
       const domains = (_b = params["domains"]) != null ? _b : [];
       const sgFilter = (_c = params["supportGroups"]) != null ? _c : [];
+      const bdFilter = (_d = params["bizDomains"]) != null ? _d : [];
       const displayed = visibleFrame(
         applyFilters(scan.records, {
           severities: getDisplaySeverities2(),
           domains,
-          supportGroups: sgFilter
+          supportGroups: sgFilter,
+          bizDomains: bdFilter
         })
       );
       const counts = sevCountsOf(displayed);
       let baseRows2 = loadBaseRows();
-      if (domains.length || sgFilter.length) {
+      if (domains.length || sgFilter.length || bdFilter.length) {
         attachSupportGroups(baseRows2);
         if (sgFilter.length) {
           const keep = new Set(sgFilter);
           baseRows2 = baseRows2.filter((r) => {
             var _a2;
             return keep.has(String((_a2 = r["_supportGroup"]) != null ? _a2 : ""));
+          });
+        }
+        if (bdFilter.length) {
+          const keep = new Set(bdFilter);
+          const key = configuredDomainTagKey();
+          baseRows2 = baseRows2.filter((r) => {
+            var _a2;
+            return keep.has((_a2 = bizDomainOf(r, key)) != null ? _a2 : "");
           });
         }
         if (domains.length) {
@@ -8068,8 +8207,8 @@ var Server = (() => {
             return [s, (_a2 = counts[s]) != null ? _a2 : 0];
           })),
           total: displayed.length,
-          medianMttr: (_d = overall.mttr_median) != null ? _d : null,
-          open: (_e = overall.open) != null ? _e : 0
+          medianMttr: (_e = overall.mttr_median) != null ? _e : null,
+          open: (_f = overall.open) != null ? _f : 0
         }
       ];
       if (format === "json") {
@@ -8102,7 +8241,7 @@ var Server = (() => {
         `| **Total** | **${displayed.length}** |`,
         "",
         `Median MTTR: ${overall.mttr_median != null ? overall.mttr_median.toFixed(1) + " days" : "\u2014"}`,
-        `Open findings: ${(_f = overall.open) != null ? _f : 0}`
+        `Open findings: ${(_g = overall.open) != null ? _g : 0}`
       ].join("\n");
       return { content: md, filename: `wiz-report-${generated.slice(0, 10)}.md`, matrix };
     });
@@ -8114,7 +8253,7 @@ var Server = (() => {
   }
   function getExportCsv(p) {
     return run(() => {
-      var _a, _b, _c, _d, _e, _f, _g;
+      var _a, _b, _c, _d, _e, _f, _g, _h;
       const params = p != null ? p : {};
       const scan = currentScan();
       if (!scan) return { content: "", filename: "" };
@@ -8126,7 +8265,8 @@ var Server = (() => {
           clouds: (_d = params["clouds"]) != null ? _d : [],
           domains: (_e = params["domains"]) != null ? _e : [],
           supportGroups: (_f = params["supportGroups"]) != null ? _f : [],
-          q: (_g = params["q"]) != null ? _g : ""
+          bizDomains: (_g = params["bizDomains"]) != null ? _g : [],
+          q: (_h = params["q"]) != null ? _h : ""
         })
       );
       const cols = TABLE_COLUMNS.filter((c) => !c.startsWith("_"));
