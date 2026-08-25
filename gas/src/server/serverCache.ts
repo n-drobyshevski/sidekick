@@ -45,16 +45,56 @@ export function dataVersion(): string {
  * under the old key stayed reachable. One endpoint used to carry it in its own params, which
  * covered that endpoint and no other.
  *
- * Read through `getProp`'s cache and folded in as a short hash so the key stays under the
- * 250-char cap — the key is opaque, and only its stability matters.
+ * Folded in as a short hash so the key stays under the 250-char cap — the key is opaque, and
+ * only its stability matters.
  */
 function domainTagStamp(): string {
   return sha1Hex(resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey))).slice(0, 8);
 }
 
-/** Call after every mutation commit (persist/delete/compact/settings/snapshot). */
+/**
+ * The version prefix every key carries, memoized for the life of one execution.
+ *
+ * `cached()` used to rebuild this inline on every call, and it is not free: two
+ * `PropertiesService` reads plus a pure-JS SHA-1, for an answer that cannot change mid-request
+ * unless this same module changes it. A single Executive load makes four `cached()` calls, so
+ * it paid eight property reads and four hashes to learn the same two values four times.
+ *
+ * THE COMMENT ABOVE USED TO CLAIM getProp WAS CACHED. It never was — `props.ts` reads
+ * PropertiesService directly — so the claim was aspirational and the cost real. Memoizing here
+ * rather than in `props.ts` is deliberate: this is the one call site where the answer is
+ * provably constant within an execution, and the invalidation point is five lines below it. A
+ * blanket memo in `props.ts` would also swallow `CANCEL_<jobId>`, which `scanJobs` re-reads
+ * inside its page loop precisely because another execution writes it — memoizing that would
+ * mean the Stop button stopped working mid-scan.
+ */
+let versionStamp: string | undefined;
+function stamp(): string {
+  if (versionStamp === undefined) {
+    versionStamp = `${BUILD_ID}.${dataVersion()}.${domainTagStamp()}`;
+  }
+  return versionStamp;
+}
+
+/**
+ * Call after every mutation commit (persist/delete/compact/settings/snapshot).
+ *
+ * STRICTLY INCREASING, not merely `Date.now()`. The version is the only thing making a stale
+ * entry unreachable, so two commits landing in the SAME MILLISECOND would write the same
+ * version, leave every key identical, and serve state the second commit had just invalidated.
+ * In GAS that is close to unreachable — mutations serialize through LockService and each does
+ * Sheets I/O — but "close to unreachable" is not a guarantee, and this is the line the whole
+ * cache-invalidation story rests on. Found by a test for the memo below that failed twice in
+ * six runs for exactly this reason.
+ */
 export function bumpDataVersion(): void {
-  setProp(VERSION_PROP, String(Date.now()));
+  const now = Date.now();
+  const prev = Number(dataVersion());
+  setProp(VERSION_PROP, String(Number.isFinite(prev) && prev >= now ? prev + 1 : now));
+  // The memo must fall with the version it caches: a `mutate()` endpoint that bumps and then
+  // serves a cached payload in the SAME execution would otherwise key that read to the
+  // pre-bump version and hand back exactly the state it just invalidated.
+  versionStamp = undefined;
 }
 
 /** Deterministic short key: params are hashed so keys stay under the 250-char cap. */
@@ -122,7 +162,7 @@ export function cached<T>(
 ): T {
   let key: string | null = null;
   try {
-    key = cacheKey(name, params, `${BUILD_ID}.${dataVersion()}.${domainTagStamp()}`);
+    key = cacheKey(name, params, stamp());
     const hit = cacheGetJson(key);
     if (hit !== undefined) return hit as T;
   } catch (e) {

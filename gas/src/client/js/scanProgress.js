@@ -127,13 +127,13 @@ export function scanProgressView(job, nowMs) {
   };
 }
 
+// The server resolves this now (`jobSummarySlice`), so the raw params blob no longer rides the
+// 3s poll. `incremental` is tri-state: null means absent or unparseable params, which keeps the
+// generic label this used to reach through a JSON.parse catch.
 function scanMode(job) {
-  try {
-    const p = JSON.parse(job.params_json || "{}");
-    return p.incremental ? "Quick refresh" : "Full scan";
-  } catch {
-    return "Scan";
-  }
+  if (job.incremental === true) return "Quick refresh";
+  if (job.incremental === false) return "Full scan";
+  return "Scan";
 }
 
 /**

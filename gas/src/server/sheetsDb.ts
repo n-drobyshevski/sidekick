@@ -163,6 +163,24 @@ function toCell(v: unknown): unknown {
   return v;
 }
 
+/** Map a value grid onto header names. Shared by readAll and readTail so the two cannot drift
+ *  in how they coerce a cell or decide a row is empty. */
+function mapRows(headers: string[], values: unknown[][]): Rec[] {
+  const out: Rec[] = [];
+  for (const value of values) {
+    const row: Rec = {};
+    let empty = true;
+    for (let j = 0; j < headers.length; j++) {
+      if (!headers[j]) continue;
+      const v = fromCell(value[j]);
+      row[headers[j]] = v;
+      if (v !== null) empty = false;
+    }
+    if (!empty) out.push(row);
+  }
+  return out;
+}
+
 /** All data rows of a tab as objects keyed by header name. */
 export function readAll(tab: string): Rec[] {
   const sh = sheet(tab);
@@ -170,20 +188,29 @@ export function readAll(tab: string): Rec[] {
   const lastCol = sh.getLastColumn();
   if (lastRow < 2 || lastCol < 1) return [];
   const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
-  const headers = values[0].map(String);
-  const out: Rec[] = [];
-  for (let i = 1; i < values.length; i++) {
-    const row: Rec = {};
-    let empty = true;
-    for (let j = 0; j < headers.length; j++) {
-      if (!headers[j]) continue;
-      const v = fromCell(values[i][j]);
-      row[headers[j]] = v;
-      if (v !== null) empty = false;
-    }
-    if (!empty) out.push(row);
-  }
-  return out;
+  return mapRows(values[0].map(String), values.slice(1));
+}
+
+/**
+ * The LAST `n` data rows of a tab, for append-only tabs where a reader wants the recent tail.
+ *
+ * Two small `getValues` calls — the header row, then the tail — instead of one over the whole
+ * grid. That matters where a tab grows without bound and is read on a timer: `jobs` is appended
+ * to by every scan, backfill and purge and is only ever truncated by a full ledger reset, so a
+ * full-range read there gets slower forever while the client polls it every three seconds.
+ *
+ * Headers are re-read each call rather than memoized: `ensureTab` can append columns on the
+ * write path, and one narrow read is cheap next to being wrong about the shape.
+ */
+export function readTail(tab: string, n: number): Rec[] {
+  const sh = sheet(tab);
+  const lastRow = sh.getLastRow();
+  const lastCol = sh.getLastColumn();
+  if (lastRow < 2 || lastCol < 1) return [];
+  const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+  const first = Math.max(2, lastRow - n + 1);
+  const values = sh.getRange(first, 1, lastRow - first + 1, lastCol).getValues();
+  return mapRows(headers, values);
 }
 
 /** Replace ALL data rows of a tab in one batched write. */
