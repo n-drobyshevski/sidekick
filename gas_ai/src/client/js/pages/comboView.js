@@ -11,7 +11,7 @@
 // They must be changed in both places or the KPI row and the row pills start telling
 // different stories about the same deadline.
 
-import { sevRank as rankSeverity } from "../ui/format.js";
+import { dueRank, sevRank as rankSeverity } from "../ui/format.js";
 
 export const CONDITION_KEYS = [
   "MISSING_GUARDRAIL", "EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "INTERNET_EXPOSURE",
@@ -167,12 +167,6 @@ export function issueFilterOptions(rows) {
 }
 
 // -------------------------------------------------------------- …and sort the rows
-
-/** Deadline as a sortable number; a row with no readable date sorts last either way. */
-function dueRank(row) {
-  const t = Date.parse((row && row.dueAt) || "");
-  return Number.isNaN(t) ? Infinity : t;
-}
 
 /**
  * Each comparator is the column's natural FIRST-click order — worst severity first,

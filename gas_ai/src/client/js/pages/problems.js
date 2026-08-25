@@ -31,7 +31,7 @@ import { bootstrap, setParams, swrCall } from "../store.js";
 import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets.js";
 import { coverCurve } from "../charts.js";
 import {
-  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, glossaryTip, heroStat,
+  absent, clear, dataTable, debounce, el, emptyState, errorState, fmtDate, glossaryTip, heroStat,
   pageHeader, pager, plural, segmented, select, selectField, sevBadge,
   sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statRow,
   statusPill, tipMark, togglePills,
@@ -430,13 +430,13 @@ export async function renderProblems(main, params) {
       { key: "asset", label: "Asset", cell: (r) => r.assetName },
       // Null for an unlinked finding, for the same reason its asset id is — there is no
       // node to read a tag from. Same em dash every other absent cell uses.
-      { key: "domain", label: "Domain", cell: (r) => r.domain || "—" },
+      { key: "domain", label: "Domain", cell: (r) => r.domain || absent() },
       { key: "severity", label: "Severity", help: { term: "adjusted-severity" },
         cell: (r) => sevBadge(r.severity) },
-      { key: "due", label: "Due", cell: (r) => dueChip(r.dueAt) || "—" },
+      { key: "due", label: "Due", cell: (r) => dueChip(r.dueAt) || absent() },
       // The ranking's third level, shown because a reader should be able to see the order
       // they are being given rather than take it on trust.
-      { key: "firstSeen", label: "First seen", cell: (r) => fmtDate(r.firstSeenAt) || "—" },
+      { key: "firstSeen", label: "First seen", cell: (r) => fmtDate(r.firstSeenAt) || absent() },
     ];
     const descending = view.sort && (PROBLEM_SORT_DESC[view.sort] ? view.dir === 1 : view.dir === -1);
 
@@ -447,6 +447,7 @@ export async function renderProblems(main, params) {
             ? totalCount + " problem" + (totalCount === 1 ? "" : "s")
             : shownCount + " of " + totalCount)),
       dataTable({
+        stickyHeader: true,
         columns: COLS.map((col) => ({
           key: col.key, label: col.label, help: col.help, sortable: true, cell: col.cell,
         })),
@@ -611,7 +612,7 @@ export async function renderProblems(main, params) {
   function actionTable(rows) {
     const COLS = [
       { key: "worstSeverity", label: "Worst", help: { term: "severity" },
-        cell: (r) => (r.worstSeverity ? sevBadge(r.worstSeverity) : "—") },
+        cell: (r) => (r.worstSeverity ? sevBadge(r.worstSeverity) : absent()) },
       { key: "title", label: "Action", cell: (r) => r.title },
       {
         key: "kind", label: "Kind",
@@ -659,6 +660,7 @@ export async function renderProblems(main, params) {
       // "12 actions" (or "6 of 12 actions" when filtered, which the label could not say), and
       // a heading repeating the same count 30px below it was the page saying one thing twice.
       dataTable({
+        stickyHeader: true,
         columns: COLS.map((col) => ({
           key: col.key, label: col.label, help: col.help,
           sortable: col.sortable !== false && !!ACTION_COMPARATORS[col.key],

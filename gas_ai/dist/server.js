@@ -5651,8 +5651,10 @@ var Server = (() => {
   var T0 = "2026-04-02T08:00:00Z";
   var T1 = "2026-06-28T05:00:00Z";
   var DEMO_UNIT = { id: "proj-demo-business-unit", name: "DEMO-BUSINESS-UNIT" };
+  var DEMO_SUPPORT = { id: "proj-cs-demo-platform", name: "CS-DEMO-PLATFORM" };
+  var SUPPORT_GROUP_OVER = ["PROJECT-DELTA", "PROJECT-ETA"];
   function node(seed) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
     return {
       id: seed.id,
       kind: seed.kind,
@@ -5699,9 +5701,15 @@ var Server = (() => {
       // is a leaf and picking one selects one, so the folder path would ship untested and
       // undemonstrated. Every seeded asset shares it, which is what makes "select the unit" and
       // "select a project inside it" visibly different in the demo.
+      //
+      // A SECOND folder — DEMO_SUPPORT — sits between the unit and the leaves for part of the
+      // register only, so "select the unit", "select the support group" and "select a project"
+      // are three visibly different selections rather than two. See its own comment for why it
+      // is a folder and still not a business unit.
       projects: ((_g = seed.projects) != null ? _g : []).length ? [
         { id: DEMO_UNIT.id, name: DEMO_UNIT.name, isFolder: true },
-        ...((_h = seed.projects) != null ? _h : []).map((name) => ({
+        ...((_h = seed.projects) != null ? _h : []).some((name) => SUPPORT_GROUP_OVER.indexOf(name) >= 0) ? [{ id: DEMO_SUPPORT.id, name: DEMO_SUPPORT.name, isFolder: true }] : [],
+        ...((_i = seed.projects) != null ? _i : []).map((name) => ({
           id: `proj-${name.toLowerCase()}`,
           name,
           isFolder: false,
@@ -8143,7 +8151,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "c4ffbcf7c6e4" : "dev";
+  var BUILD_ID = true ? "7a85cf206673" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

@@ -483,6 +483,13 @@ main {
   height: 100%;
   overflow-y: auto;
   padding: var(--space-6) var(--space-6) var(--space-7);
+  /* THIS PANE IS A SCROLLPORT WITH TOP PADDING, and a sticky table heading has to know by how
+     much. Overflow clips at the padding box, so scrolled rows are visible in the padding strip
+     above the content box — where a heading pinned at `top: 0` would leave them showing above
+     it. Declared here, beside the padding it cancels, so the two cannot drift apart; the rule
+     that reads it is `.table-wrap--sticky table.data th` in tables.css, and a scrollport that
+     never sets this simply gets 0. */
+  --sticky-inset: var(--space-6);
 }
 
 /* Full-bleed routes (the graph workbench): the page owns the whole content pane. */

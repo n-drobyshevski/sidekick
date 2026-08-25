@@ -21,7 +21,7 @@ import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
-  FINDINGS_SCORE_LABEL, ordinal,
+  absent, FINDINGS_SCORE_LABEL, ordinal,
   clear, dataTable, debounce, el, emptyState, errorState, heroStat, outcomeBadge, pageHeader,
   outcomeLabel, pager, plural, sectionLabel, select, statRow,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,
@@ -755,9 +755,9 @@ export async function renderCombos(main, params) {
           ? statusPill("warn", "In progress")
           : statusPill("neutral", "Open")),
       },
-      { key: "due", label: "Due", cell: (i) => dueChip(i.dueAt) || "—" },
-      { key: "account", label: "Account", cell: (i) => i.account || "—" },
-      { key: null, label: "Projects", cell: (i) => (i.projects || []).join(", ") || "—" },
+      { key: "due", label: "Due", cell: (i) => dueChip(i.dueAt) || absent() },
+      { key: "account", label: "Account", cell: (i) => i.account || absent() },
+      { key: null, label: "Projects", cell: (i) => (i.projects || []).join(", ") || absent() },
     ];
 
     // `dir` is 1/-1 against each column's natural first-click order (ISSUE_SORT_DESC),

@@ -30,17 +30,15 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
+  absent, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
   emptyState, errorState,
-  fmtDate, kpiCard, pager, plural,
-  sectionLabel, sevBadge, sevEntries, sevKeyRow,
-  sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, toast,
+  DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtDate, kpiCard, plural,
+  nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
+  sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
   trendScopeNote,
 } from "../ui.js";
 
 import { tipAnchor } from "../ui.js";
-const PAGE_SIZES = [25, 50, 100, 250];
-const DEFAULT_PAGE_SIZE = 50;
 
 /** Every issue severity the strip can show. An asset with no open issue carries no
  *  severity at all and belongs to no segment — it is counted in the strip's note instead,
@@ -854,18 +852,17 @@ export async function renderInventory(main, params) {
     visibleRows = pageRows;
     resultsHost.append(view === "cards" ? cardGrid(pageRows) : assetTable(pageRows));
 
-    const sizeSel = el("select", { "aria-label": "Rows per page" },
-      ...PAGE_SIZES.map((n) => el("option", { value: String(n) }, `${n} / page`)));
-    sizeSel.value = String(query.pageSize);
-    sizeSel.addEventListener("change", () => {
-      const firstRow = query.page * query.pageSize; // keep the top of the page in view
-      query.pageSize = Number(sizeSel.value);
-      goToPage(Math.floor(firstRow / query.pageSize));
-    });
-
-    resultsHost.append(
-      el("div", { class: "table-footer" }, sizeSel, pager(query.page, pageCount, shown, goToPage)),
-    );
+    // The "keep the top of the page in view" recompute this used to do inline now lives in
+    // `tableFooter`, which is where the graph's copy of this strip was missing it.
+    resultsHost.append(tableFooter({
+      page: query.page,
+      pageCount,
+      total: shown,
+      pageSize: query.pageSize,
+      sizes: PAGE_SIZES,
+      onPage: goToPage,
+      onPageSize: (size, page) => { query.pageSize = size; goToPage(page); },
+    }));
   }
 
   function openAsset(row) {
@@ -928,15 +925,26 @@ export async function renderInventory(main, params) {
   function assetTable(rows) {
     /** Cell renderers, keyed to COLUMNS above so header and body cannot drift apart. */
     const CELLS = {
-      name: (row) => [row.name,
-        row.agentic ? el("span", { class: "pill", style: "margin-left:6px" }, "Agentic") : null],
+      // The kind medallion the Security Graph's results table carries, so a row and a node
+      // read as the same thing in two views. It does not restate the Kind column beside it —
+      // that column is the word, this is the shape, and the shape is what a reader scanning
+      // 250 rows for "which of these are buckets" actually uses. The graph pairs the two the
+      // same way whenever a query selects its `kind` field.
+      //
+      // It costs the name about 26px out of a cell tables.css clips at 320px, which is why
+      // the column asks for a wider cap by name (`.inv-name-col`) rather than spending the
+      // room. `badge` is what keeps the Agentic pill, and retires the one inline `style`
+      // attribute left in a table cell.
+      name: (row) => nameCell(row.name, row.kind, {
+        badge: row.agentic ? el("span", { class: "pill" }, "Agentic") : null,
+      }),
       kind: (row) => kindLabel(row.kind),
-      cloud: (row) => row.cloud || "—",
-      region: (row) => row.region || "—",
+      cloud: (row) => row.cloud || absent(),
+      region: (row) => row.region || absent(),
       // The worst open issue's severity — Wiz's own rating, carried through, not a grade
       // this app computed. A dash means no open issue, which is a real state and not an
       // unscored one.
-      severity: (row) => (row.severity ? sevBadge(row.severity) : "—"),
+      severity: (row) => (row.severity ? sevBadge(row.severity) : absent()),
       // The count, with the same severity split drawn as a bar: the badge beside it says
       // which is worst, this says how many of each, and the two come from one set of issue
       // rows so they cannot disagree.
@@ -954,18 +962,20 @@ export async function renderInventory(main, params) {
             el("span", { class: "num" }, String(row.openFindings)),
             issueBars(row.findingsBySeverity, "cloud finding"))
         : el("span", { class: "muted small" }, "0")),
-      combos: (row) => (row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : "—"),
-      guardrail: (row) => (row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : "—"),
-      domain: (row) => (row.domain ? domainLink(row) : "—"),
-      projects: (row) => (row.projects || []).join(", ") || "—",
+      combos: (row) => (row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : absent()),
+      guardrail: (row) => (row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : absent()),
+      domain: (row) => (row.domain ? domainLink(row) : absent()),
+      projects: (row) => (row.projects || []).join(", ") || absent(),
       actions: (row) => graphButton(row),
     };
 
     return dataTable({
+      stickyHeader: true,
       columns: COLUMNS.map((col) => ({
         key: col.sort || col.key,
         label: col.label,
         sortable: !!col.sort,
+        className: col.key === "name" ? "inv-name-col" : null,
         cell: CELLS[col.key],
       })),
       rows,

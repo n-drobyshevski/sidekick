@@ -14,7 +14,7 @@
 // and glyphs belong in the view, the classification itself always comes from the server
 // (`node.state`), so the two cannot disagree about which state a row is IN.
 
-import { el, fmtDateTime, meter, plural, scopeNote, sevBadge } from "../ui.js";
+import { dataTable, el, fmtDateTime, meter, plural, scopeNote, sevBadge } from "../ui.js";
 
 import { lookupGap } from "../codebook.js";
 import { tip, tipAnchor, tipMark } from "../ui.js";
@@ -246,40 +246,48 @@ function detailBlock(label, ...children) {
 }
 
 /**
- * Every policy behind a subcategory, as a plain table nested inside the detail row.
+ * Every policy behind a subcategory, as a table nested inside the detail row.
  *
- * Hand-built rather than `dataTable()`: that component brings sticky `th`, a sort model and
- * `.table-wrap`'s own border into a table cell, none of which a small panel nested inside
- * another table's row wants. A plain `<table>` with one header row is the honest shape here.
+ * It used to be hand-built, to keep `dataTable()` out — that component brought sticky `th`, a
+ * sort model and `.table-wrap`'s own border into a table cell, none of which a small panel
+ * nested inside another table's row wants. Two of those three are gone from the component
+ * itself (the sticky heading never worked anywhere and has been removed from the base sheet;
+ * the sort model has always been opt-in per column), and `panel: true` leaves the border and
+ * the header ground behind. What is left is the shape this always wanted, with `scope="col"`
+ * and the overflow tips it was doing without.
  */
 function policyTable(policies) {
-  return el("div", { class: "comp-policy-wrap" },
-    el("table", { class: "comp-policy-table" },
-      el("thead", {},
-        el("tr", {},
-          el("th", { scope: "col" }, "Severity"),
-          el("th", { scope: "col" }, "Control"),
-          el("th", { scope: "col", class: "num" }, "Checks"))),
-      el("tbody", {},
-        ...policies.map((p) => el("tr", {},
-          el("td", {}, sevBadge(p.severity)),
-          el("td", {},
-            el("div", {}, p.name),
-            el("div", { class: "small muted" },
-              [p.shortId, policyKindLabel(p.policyKind), p.cloudProvider]
-                .filter(Boolean).join(" · "))),
-          // Grouped, like the summary line above it and the register's Checks column.
-          // Ungrouped here they read as a different quantity from the same numbers three
-          // lines up — "1718" beside "194,309" looks like two ways of counting, not two
-          // scopes of one count.
-          // Always the numbers now. The "nothing to evaluate" sentence this cell used to
-          // carry belonged to rows isAssessedPolicy (compliancePosture.ts) no longer lets
-          // through — and the one row that could still reach here carrying Wiz's
-          // `noResourceToAssess` flag is the contradictory one, where a real count exists
-          // and the flag is the field to disbelieve.
-          el("td", { class: "num" },
-            `${p.passCount.toLocaleString()} passed · ${p.failCount.toLocaleString()} failed` +
-            ` · ${p.assessedCount.toLocaleString()} assessed`))))));
+  return dataTable({
+    panel: true,
+    className: "comp-policy",
+    columns: [
+      { key: "severity", label: "Severity", cell: (p) => sevBadge(p.severity) },
+      {
+        key: "control", label: "Control",
+        cell: (p) => el("div", {},
+          el("div", {}, p.name),
+          el("div", { class: "small muted" },
+            [p.shortId, policyKindLabel(p.policyKind), p.cloudProvider]
+              .filter(Boolean).join(" · "))),
+      },
+      {
+        key: "checks", label: "Checks", className: "num",
+        // Grouped, like the summary line above it and the register's Checks column.
+        // Ungrouped here they read as a different quantity from the same numbers three
+        // lines up — "1718" beside "194,309" looks like two ways of counting, not two
+        // scopes of one count.
+        // Always the numbers now. The "nothing to evaluate" sentence this cell used to
+        // carry belonged to rows isAssessedPolicy (compliancePosture.ts) no longer lets
+        // through — and the one row that could still reach here carrying Wiz's
+        // `noResourceToAssess` flag is the contradictory one, where a real count exists
+        // and the flag is the field to disbelieve.
+        cell: (p) => `${p.passCount.toLocaleString()} passed · ` +
+          `${p.failCount.toLocaleString()} failed · ` +
+          `${p.assessedCount.toLocaleString()} assessed`,
+      },
+    ],
+    rows: policies,
+  });
 }
 
 /**

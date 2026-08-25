@@ -191,6 +191,8 @@
 .workbench-table {
   /* Bottom padding clears the counts overlay, which floats above this in table view. */
   position: absolute; inset: 0; overflow-y: auto; padding: var(--space-3) var(--space-4) 60px;
+  /* Its own scrollport, so its own inset — see base.css's `main` for what this cancels. */
+  --sticky-inset: var(--space-3);
 }
 .workbench-empty { padding: var(--space-6); max-width: 640px; margin: 0 auto; width: 100%; }
 /* emptyState() is message + hint only, so the way out of a dead end lives beside it. */

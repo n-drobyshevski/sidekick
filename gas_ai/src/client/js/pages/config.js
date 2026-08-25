@@ -21,7 +21,7 @@
 import { bootstrapCached, setParams, swrCall } from "../store.js";
 import { openConfigFindingSheet } from "../detailSheets.js";
 import {
-  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, heroStat, outcomeBadge,
+  absent, clear, dataTable, debounce, el, emptyState, errorState, fmtDate, heroStat, outcomeBadge,
   pageHeader, statRow,
   pager, plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
   skeletonStack, statusPill, togglePills,
@@ -384,7 +384,7 @@ export async function renderConfigFindings(main, params, ctx) {
               el("span", {}, String(g.unlinked),
                 el("span", { class: "sr-only" }, ", not on an AI asset")),
               g.unlinked + " not on an AI asset")
-            : el("span", { class: "muted" }, "—")),
+            : absent()),
         },
         {
           // Which domains one fix would touch. The by-control view's argument is that N
@@ -393,7 +393,7 @@ export async function renderConfigFindings(main, params, ctx) {
           key: "domains", label: "Domain", sortable: false,
           cell: (g) => ((g.domains || []).length
             ? el("span", {}, g.domains.join(", "))
-            : el("span", { class: "muted" }, "—")),
+            : absent()),
         },
         {
           key: "since", label: "Oldest", sortable: false,
@@ -403,7 +403,7 @@ export async function renderConfigFindings(main, params, ctx) {
         },
         {
           key: "iac", label: "IaC", sortable: false,
-          cell: (g) => (g.iac ? statusPill("neutral", String(g.iac)) : el("span", { class: "muted" }, "—")),
+          cell: (g) => (g.iac ? statusPill("neutral", String(g.iac)) : absent()),
         },
       ],
       rows: groups,
@@ -431,6 +431,7 @@ export async function renderConfigFindings(main, params, ctx) {
 
     bodyHost.append(sectionLabel(plural(sorted.length, "finding")));
     const table = dataTable({
+      stickyHeader: true,
       columns: [
         { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
         {

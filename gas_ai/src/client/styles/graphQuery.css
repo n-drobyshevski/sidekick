@@ -142,7 +142,7 @@
    (`.gnode[data-category] .gnode-icon`) and combos.css both already do it this way.
    `color: inherit` matters as well as `stroke`: a solid glyph path fills with currentColor. */
 .gq-chip-icon .gnode-icon,
-.gq-cell-icon .gnode-icon,
+.cell-icon .gnode-icon,
 .gq-cols-icon .gnode-icon,
 .gq-pal-glyph .gnode-icon { stroke: currentColor; color: inherit; }
 /* Category tinting, matching the canvas medallions exactly: pale ground, saturated ink on the
@@ -274,30 +274,23 @@
 .gq-table table.data thead .th-groups th + th,
 .gq-table table.data th.gq-group-start,
 .gq-table table.data td.gq-group-start { border-left: 1px solid var(--hairline); }
-/* Two header rows, so the second one sticks below the first rather than on top of it. */
-.gq-table table.data thead .th-groups th { top: 0; }
-/* ONLY when there are two. `queryTable` renders the group row for more than one column group, so
-   a single-node query — `FIND AI Agent` with no steps, which is the default lens — has one header
-   row and no group row above it. Offsetting that row by 27px anyway stuck it 27px BELOW the top
-   of the scroll box, where it painted over the first result: the table said "2 rows", showed one,
-   and left a header-coloured band where the other should have been. The base recipe's `top: 0`
-   (tables.css) is right for that case, so it is simply left alone. */
-.gq-table table.data thead:has(.th-groups) tr:last-child th { top: 27px; }
+/* Two header rows, so the second one sticks below the first rather than on top of it.
+   Inside the sticky media query, because until now the offsets below were resolving against a
+   box that never scrolled — which is the whole reason the 27px went wrong once already. */
+@media (min-width: 1100px) {
+  .gq-table.table-wrap--sticky table.data thead .th-groups th { top: 0; }
+  /* ONLY when there are two. `queryTable` renders the group row for more than one column group,
+     so a single-node query — `FIND AI Agent` with no steps, which is the default lens — has one
+     header row and no group row above it. Offsetting that row by 27px anyway stuck it 27px BELOW
+     the top of the scroll box, where it painted over the first result: the table said "2 rows",
+     showed one, and left a header-coloured band where the other should have been. The base
+     recipe's `top: 0` is right for that case, so it is simply left alone.
 
-.gq-name { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%; }
-.gq-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The kind icon in a tinted tile, the same category cue the canvas medallion carries. */
-.gq-cell-icon {
-  flex: 0 0 auto; width: 18px; height: 18px; padding: var(--space-half);
-  border-radius: var(--radius-sm);
-  background: var(--track-bg);
-  color: var(--text-2);
+     27px IS THE GROUP ROW'S HEIGHT, and it becomes load-bearing here for the first time — it has
+     only ever been measured against a header that could not move. If the group row's padding or
+     type step changes, this number is wrong and the second row will overlap or float. */
+  .gq-table.table-wrap--sticky table.data thead:has(.th-groups) tr:last-child th { top: 27px; }
 }
-.gq-name[data-category="asset"] .gq-cell-icon { background: var(--cat-asset-tint); color: var(--cat-asset-ink); }
-.gq-name[data-category="data"] .gq-cell-icon { background: var(--cat-data-tint); color: var(--cat-data-ink); }
-.gq-name[data-category="iam"] .gq-cell-icon { background: var(--cat-iam-tint); color: var(--cat-iam-ink); }
-.gq-name[data-category="vuln"] .gq-cell-icon { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); }
-.gq-name[data-category="exposure"] .gq-cell-icon { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
 
 /* ----------------------------------------------------------------- column chooser */
 

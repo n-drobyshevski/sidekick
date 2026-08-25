@@ -46,7 +46,7 @@ import {
   subcategoryDetail,
 } from "./complianceShared.js";
 import {
-  dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, sevRank, statRow,
+  absent, dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, sevRank, statRow,
 } from "../ui.js";
 
 import { tip } from "../ui.js";
@@ -593,7 +593,7 @@ function renderSharedControls(host, data) {
         key: "remediation", label: "Remediation",
         cell: (r) => (r.hasAutoRemediation
           ? el("span", { class: "comp-auto" }, "Auto-remediation")
-          : el("span", { class: "muted" }, "—")),
+          : absent()),
       },
     ],
     rows,
