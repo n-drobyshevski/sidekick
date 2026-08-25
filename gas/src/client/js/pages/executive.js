@@ -89,7 +89,7 @@ export async function renderExecutive(main, _params, ctx) {
   let paint;
   const execData = swrCall(
     "api_getExecutivePage",
-    { domain: "", supportGroup: "", severities },
+    { domain: "", supportGroup: "", bizDomain: "", severities },
     (fresh) => paint && paint(fresh),
   );
 

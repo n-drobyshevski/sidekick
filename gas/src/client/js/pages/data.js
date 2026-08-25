@@ -25,29 +25,31 @@ import {
 
 // A one-line description of the global scope a report/export is generated under, so a
 // downloaded audit artifact says what population it covers instead of leaving it to guess.
-function scopeLine(domain, supportGroup) {
+function scopeLine(domain, supportGroup, bizDomain) {
   const parts = [];
   if (domain) parts.push(`Value chain: ${domain}`);
+  if (bizDomain) parts.push(`Business domain: ${bizDomain}`);
   if (supportGroup) parts.push(`Support group: ${supportGroup}`);
-  return parts.length ? `Scoped to ${parts.join(" · ")}.` : "All value chains and support groups.";
+  return parts.length ? `Scoped to ${parts.join(" · ")}.` : "The whole register.";
 }
 
 export async function renderData(main, params, ctx) {
   const boot = await bootstrap();
   const domain = ctx.domain || "";
   const supportGroup = ctx.supportGroup || "";
+  const bizDomain = ctx.bizDomain || "";
   main.append(
     el("h1", {}, "Data"),
     el("p", { class: "page-sub" }, "Reports out, raw data out, legacy history in."),
   );
-  const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
+  const scopeChips = scopeBar({ domain, supportGroup, bizDomain, onClear: ctx.clearScope });
   if (scopeChips) main.append(scopeChips);
 
   main.append(sectionLabel("Report"));
   if (boot.latestScan) {
     // Synchronous mount + lazy preview: the report preview must never block (or, on error,
     // blank) the Export and Import sections below, which don't even need a scan.
-    renderReportSection(main, boot, domain, supportGroup);
+    renderReportSection(main, boot, domain, supportGroup, bizDomain);
   } else {
     main.append(el("p", { class: "muted small" },
       "No scan saved yet — run a scan to generate a report."));
@@ -55,7 +57,7 @@ export async function renderData(main, params, ctx) {
 
   main.append(sectionLabel("Export"));
   if (boot.latestScan) {
-    renderExportSection(main, boot, domain, supportGroup);
+    renderExportSection(main, boot, domain, supportGroup, bizDomain);
   } else {
     main.append(el("p", { class: "muted small" },
       "No scan saved yet — run a scan to export findings."));
@@ -98,10 +100,13 @@ function renderStorageSection(main) {
 
 // ------------------------------------------------------------------------- report
 
-function renderReportSection(main, boot, domain, supportGroup) {
+function renderReportSection(main, boot, domain, supportGroup, bizDomain) {
   // Scope the report to the global Value Chain + Support group filters ("" = no filter).
   const domains = domain ? [domain] : [];
   const supportGroups = supportGroup ? [supportGroup] : [];
+  // The report and export endpoints have always taken arrays; the header switcher sets at
+  // most one of the three, so each is a list of nothing or a list of one.
+  const bizDomains = bizDomain ? [bizDomain] : [];
   let format = "markdown";
   // A segmented toggle group (aria-pressed), not a radiogroup — the buttons are toggle
   // buttons, so radiogroup semantics (role=radio + arrow keys) would misannounce them.
@@ -122,7 +127,8 @@ function renderReportSection(main, boot, domain, supportGroup) {
   controls.append(generateBtn);
 
   main.append(
-    el("p", { class: "muted small", style: "margin:-2px 0 8px" }, scopeLine(domain, supportGroup)),
+    el("p", { class: "muted small", style: "margin:-2px 0 8px" },
+      scopeLine(domain, supportGroup, bizDomain)),
     controls,
   );
   const previewHost = el("div", {});
@@ -134,7 +140,7 @@ function renderReportSection(main, boot, domain, supportGroup) {
   async function loadPreview() {
     clear(previewHost).append(el("p", { class: "muted small" }, "Loading report preview…"));
     try {
-      const preview = await call("api_getReport", { format: "json", domains, supportGroups });
+      const preview = await call("api_getReport", { format: "json", domains, supportGroups, bizDomains });
       renderMatrix(preview.matrix);
     } catch (e) {
       clear(previewHost).append(el("p", { class: "small" },
@@ -177,7 +183,7 @@ function renderReportSection(main, boot, domain, supportGroup) {
   async function generate() {
     generateBtn.disabled = true;
     try {
-      const res = await call("api_getReport", { format, domains, supportGroups });
+      const res = await call("api_getReport", { format, domains, supportGroups, bizDomains });
       const mime = format === "json" ? "application/json"
         : format === "csv" ? "text/csv;charset=utf-8" : "text/markdown;charset=utf-8";
       downloadText(res.filename, res.content, mime);
@@ -191,18 +197,22 @@ function renderReportSection(main, boot, domain, supportGroup) {
 
 // ------------------------------------------------------------------------- export
 
-function renderExportSection(main, boot, domain, supportGroup) {
+function renderExportSection(main, boot, domain, supportGroup, bizDomain) {
   // Honor the same global filters as the Report block so the two never export different
   // populations of the same ledger, and say which scope was applied.
   const domains = domain ? [domain] : [];
   const supportGroups = supportGroup ? [supportGroup] : [];
+  // The report and export endpoints have always taken arrays; the header switcher sets at
+  // most one of the three, so each is a list of nothing or a list of one.
+  const bizDomains = bizDomain ? [bizDomain] : [];
   const card = el("div", { class: "card" });
   card.append(
     el("h3", {}, "OS vulnerabilities"),
     el("p", { class: "muted small" },
       `Scan ${fmtDateTime(boot.latestScan.ts)} — ` +
       `${boot.latestScan.total.toLocaleString()} finding(s), ${boot.latestScan.mode}.`),
-    el("p", { class: "muted small", style: "margin-top:-4px" }, scopeLine(domain, supportGroup)),
+    el("p", { class: "muted small", style: "margin-top:-4px" },
+      scopeLine(domain, supportGroup, bizDomain)),
   );
   const row = el("div", { style: "display:flex; gap:8px; flex-wrap:wrap" });
   const csvBtn = el("button", { onclick: csv }, "Download CSV");
@@ -223,7 +233,7 @@ function renderExportSection(main, boot, domain, supportGroup) {
   async function csv() {
     csvBtn.disabled = true;
     try {
-      const res = await call("api_getExportCsv", { source: "findings", domains, supportGroups });
+      const res = await call("api_getExportCsv", { source: "findings", domains, supportGroups, bizDomains });
       downloadText(res.filename, res.content, "text/csv;charset=utf-8");
     } catch (e) {
       toast(`Export failed: ${e.message}`, "error");

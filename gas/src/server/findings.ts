@@ -10,6 +10,7 @@ import { present, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
 import * as ledgerStore from "./ledgerStore";
 import * as settingsStore from "./settingsStore";
+import { attachBizDomains } from "./bizDomains";
 import { attachSupportGroups } from "./supportGroups";
 
 export interface CurrentScan {
@@ -44,10 +45,10 @@ export function currentScan(): CurrentScan | null {
   const compiled = compileDomains(domains.items);
 
   // Fast path: the scan job precomputed the flattened + sha1-keyed frame. Only the
-  // cheap request-dependent fields are attached here — _sev, _supportGroup, and
-  // _domain, none baked into the frame so domain-settings/support-group edits never
-  // stale it. Support group is attached BEFORE domain assignment so a support_group
-  // domain condition can see it.
+  // cheap request-dependent fields are attached here — _sev, _supportGroup, _bizDomain
+  // and _domain, none baked into the frame so domain-settings / support-group /
+  // domain-tag-key edits never stale it. Support group and business domain are both
+  // attached BEFORE domain assignment so a value chain's conditions can see them.
   const frame = archive.readFrame(row.scan_id) as Rec[] | null;
   let records: Rec[];
   if (frame) {
@@ -70,6 +71,9 @@ export function currentScan(): CurrentScan | null {
     });
   }
   attachSupportGroups(records);
+  // Before domain assignment, like the support group above and for the same reason: both are
+  // resolved live rather than baked, and a value chain's rules may read either.
+  attachBizDomains(records);
   if (compiled.length) {
     for (const flat of records) flat["_domain"] = assignDomain(flat, compiled);
   } else {
@@ -94,6 +98,10 @@ export interface FindingsFilters {
   clouds?: string[];
   domains?: string[];
   supportGroups?: string[];
+  // Business domains, read off the resource's Wiz/Domain tag and attached as `_bizDomain` by
+  // currentScan(). A separate dimension from `domains` above, which are the rule-derived value
+  // chains — the two can disagree, and when they do the disagreement is information.
+  bizDomains?: string[];
   q?: string;
 }
 
@@ -122,6 +130,10 @@ export function applyFilters(records: Rec[], f: FindingsFilters): Rec[] {
   if (f.supportGroups?.length) {
     const keep = new Set(f.supportGroups);
     out = out.filter((r) => keep.has(String(r["_supportGroup"] ?? "")));
+  }
+  if (f.bizDomains?.length) {
+    const keep = new Set(f.bizDomains);
+    out = out.filter((r) => keep.has(String(r["_bizDomain"] ?? "")));
   }
   if (f.q && f.q.trim()) {
     const q = f.q.trim().toLowerCase();

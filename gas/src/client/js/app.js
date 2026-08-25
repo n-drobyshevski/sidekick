@@ -76,36 +76,48 @@ let bootData = null; // the last bootstrap payload, so renderAppbar can re-deriv
 // nav links carry no state.
 let activeDomain = "";
 // The global "Support group" scope, shared by every page the same way. "" = all groups.
-//
-// EXACTLY ONE OF THESE TWO IS EVER SET. They used to be independent filters that could
-// intersect, each with its own combobox at the bottom of the rail; they are now two groups in
-// one header control, and one scope is what a header can honestly name. pickScope() is where
-// that rule lives — clearScope() and the page chips only ever clear.
 let activeSupportGroup = "";
+// The global "Business domain" scope — the owner named by a resource's `Wiz/Domain` tag.
+// Orthogonal to the two above rather than nested under either: a domain can cut across value
+// chains and support groups alike, which is why the switcher lists three flat groups.
+//
+// EXACTLY ONE OF THESE THREE IS EVER SET. The first two used to be independent filters that
+// could intersect, each with its own combobox at the bottom of the rail; all three are groups
+// in one header control now, and one scope is what a header can honestly name. pickScope() is
+// where that rule lives — clearScope() and the page chips only ever clear.
+let activeBizDomain = "";
+
+/** The three scopes as the pages take them. One object, so no caller can pass two of three. */
+function activeScope() {
+  return { domain: activeDomain, supportGroup: activeSupportGroup, bizDomain: activeBizDomain };
+}
 
 // Toggle the scan-zone's "filtering" accent to match the active scope.
 function syncScanZoneFiltering() {
   const zone = document.querySelector(".scan-zone");
-  if (zone) zone.classList.toggle("filtering", !!(activeDomain || activeSupportGroup));
+  const scoped = !!(activeDomain || activeSupportGroup || activeBizDomain);
+  if (zone) zone.classList.toggle("filtering", scoped);
 }
 
 /**
- * The header switcher's pick: set one scope, clear the other, and re-read the page.
+ * The header switcher's pick: set one scope, clear the others, and re-read the page.
  *
- * No server round trip and no re-boot. This app scopes CLIENT-SIDE — the two values ride the
+ * No server round trip and no re-boot. This app scopes CLIENT-SIDE — the three values ride the
  * page context and each page passes them into its own RPC — so the payload the switcher itself
  * reads (`bootData`) is unchanged by a pick, and only the header's own label, caption and
  * accent need re-deriving. `renderAppbar` does that by rebuilding from the same payload rather
  * than patching, which is what keeps the caption and the trigger from ever disagreeing.
  */
 function pickScope(pick) {
-  if (pick.kind === "supportGroup") {
-    activeSupportGroup = pick.value || "";
-    activeDomain = "";
-  } else {
-    activeDomain = pick.value || "";
-    activeSupportGroup = "";
-  }
+  // Set one, clear the other two. Written as a clear-then-set rather than three branches so
+  // the "one at a time" rule is structural: there is no path through this function that leaves
+  // two of them non-empty.
+  activeDomain = "";
+  activeSupportGroup = "";
+  activeBizDomain = "";
+  if (pick.kind === "supportGroup") activeSupportGroup = pick.value || "";
+  else if (pick.kind === "bizDomain") activeBizDomain = pick.value || "";
+  else activeDomain = pick.value || "";
   renderAppbar(appbarEl, bootData);
   syncScanZoneFiltering();
   route();
@@ -116,6 +128,7 @@ function pickScope(pick) {
 function clearScope(kind) {
   if (kind === "domain") activeDomain = "";
   else if (kind === "supportGroup") activeSupportGroup = "";
+  else if (kind === "bizDomain") activeBizDomain = "";
   renderAppbar(appbarEl, bootData);
   syncScanZoneFiltering();
   route();
@@ -291,9 +304,7 @@ function renderAppbar(appbar, data) {
   // Null when there is no register to slice — including the boot-failure path, where offering
   // a picker over data we could not fetch would be a control with nothing behind it. The rule
   // goes with it: a separator with one side missing separates nothing.
-  const scopeSwitch = scopeSwitchControl(
-    data, { domain: activeDomain, supportGroup: activeSupportGroup }, pickScope,
-  );
+  const scopeSwitch = scopeSwitchControl(data, activeScope(), pickScope);
   if (scopeSwitch) {
     appbar.append(el("span", { class: "appbar-sep", "aria-hidden": "true" }), scopeSwitch);
   }
@@ -626,7 +637,7 @@ async function route() {
   if (useOverlay) beginRouteLoading();
   try {
     await page.render(mainEl, params, {
-      refresh, clearScope, startScan, domain: activeDomain, supportGroup: activeSupportGroup,
+      refresh, clearScope, startScan, ...activeScope(),
     });
   } catch (e) {
     clear(mainEl).append(

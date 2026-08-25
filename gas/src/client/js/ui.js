@@ -1001,8 +1001,8 @@ export function helpTip(content, lines, { label, className } = {}) {
  * rendered where the numbers are so a scoped dashboard never silently reads as the whole
  * register. Returns null when no global filter is active. `onClear(kind)` clears one.
  */
-export function scopeBar({ domain, supportGroup, onClear }) {
-  if (!domain && !supportGroup) return null;
+export function scopeBar({ domain, supportGroup, bizDomain, onClear }) {
+  if (!domain && !supportGroup && !bizDomain) return null;
   const bar = el("div", { class: "scope-bar", role: "status", "aria-label": "Active filters" });
   const chip = (kind, name, value) =>
     el("span", { class: "scope-chip" },
@@ -1015,7 +1015,11 @@ export function scopeBar({ domain, supportGroup, onClear }) {
             onclick: () => onClear(kind),
           }, "✕")
         : null);
+  // At most one of these is ever set — the header switcher enforces it (app.js pickScope) —
+  // but all three branches stay, because the bar's job is to echo whatever the shell holds
+  // rather than to assume how many things it may hold.
   if (domain) bar.append(chip("domain", "Value chain", domain));
+  if (bizDomain) bar.append(chip("bizDomain", "Business domain", bizDomain));
   if (supportGroup) bar.append(chip("supportGroup", "Support group", supportGroup));
   return bar;
 }

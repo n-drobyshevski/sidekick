@@ -98,7 +98,8 @@ export async function renderOverview(main, params, ctx) {
   );
 
   const scopeChips = scopeBar({
-    domain: ctx.domain, supportGroup: ctx.supportGroup, onClear: ctx.clearScope,
+    domain: ctx.domain, supportGroup: ctx.supportGroup, bizDomain: ctx.bizDomain,
+    onClear: ctx.clearScope,
   });
   if (scopeChips) main.append(scopeChips);
 
@@ -156,6 +157,7 @@ export async function renderOverview(main, params, ctx) {
   async function loadInsights() {
     paint(await swrCall("api_getInsights",
       { domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
+        bizDomain: ctx.bizDomain || "",
         severities: scopeParam() },
       paint));
   }
@@ -612,6 +614,7 @@ export async function renderOverview(main, params, ctx) {
       if (tailOpen > 0) series.push({ name: "Other", color: colors.get("Other") });
       const params = {
         domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
+        bizDomain: ctx.bizDomain || "",
         key: key0, groups: names, severities: scopeParam(),
       };
       const paintTrend = (td) => {
@@ -683,6 +686,7 @@ export async function renderOverview(main, params, ctx) {
       };
       paint(await swrCall("api_getGrouping",
         { domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
+          bizDomain: ctx.bizDomain || "",
           keys, severities: scopeParam() }, paint));
     }
   }

@@ -232,7 +232,8 @@ export async function renderMttr(main, _params, ctx) {
   );
 
   const scopeChips = scopeBar({
-    domain: ctx.domain, supportGroup: ctx.supportGroup, onClear: ctx.clearScope,
+    domain: ctx.domain, supportGroup: ctx.supportGroup, bizDomain: ctx.bizDomain,
+    onClear: ctx.clearScope,
   });
   if (scopeChips) main.append(scopeChips);
 
@@ -243,10 +244,11 @@ export async function renderMttr(main, _params, ctx) {
   const byDomainHost = el("div", {});
   main.append(heroHost, chartsHost, survivalHost, slaHost, byDomainHost);
 
-  // Scope comes from the global Value Chain + Support group filters in the sidebar;
-  // "" = no filter on that dimension.
+  // Scope comes from the header switcher — a value chain, a business domain or a support
+  // group, at most one of them; "" = no filter on that dimension.
   const domain = ctx.domain || "";
   const supportGroup = ctx.supportGroup || "";
+  const bizDomain = ctx.bizDomain || "";
 
   // Trends timeframe (days back from now; null = full history). Recalled from
   // localStorage across visits; falls back to All where storage is unavailable.
@@ -281,7 +283,7 @@ export async function renderMttr(main, _params, ctx) {
     // real layout so the swap to live content doesn't reflow; by-domain stays cleared.
     renderMttrSkeleton({ heroHost, chartsHost, survivalHost, slaHost });
     clear(byDomainHost);
-    const params = { domain, supportGroup, severities: scopeParam() };
+    const params = { domain, supportGroup, bizDomain, severities: scopeParam() };
 
     // Progressive paint over two parallel RPCs that share the same server cache entries
     // getMttrPage's slices use (so a warm revisit is still a single-shot repaint):

@@ -47,6 +47,15 @@ const PATHS = {
     "M14.1 13.6 v-1.1 a3 3 0 0 0 -2.25 -2.9",
     "M10.6 3.6 a2.6 2.6 0 0 1 0 4.8",
   ],
+  // A label with a punched hole, for a business domain. NOT a folder and not a funnel, because
+  // it is neither: `Wiz/Domain` is a tag a person wrote on a resource, not a container Wiz
+  // nests things in and not a rule this app evaluates. The hole is what separates it from a
+  // plain rotated square at 14px.
+  tag: [
+    "M8.3 2.2 H12.9 a0.9 0.9 0 0 1 0.9 0.9 V7.7 L7.7 13.8 a0.9 0.9 0 0 1 -1.3 0 L2.2 9.6 "
+      + "a0.9 0.9 0 0 1 0 -1.3 z",
+    "M10.9 5.1 h0.01",
+  ],
   // One folder with another behind it: the switcher's reset row, which is the whole register
   // rather than any one slice of it. Read as one-versus-many beside the two marks above; the
   // row's words carry the meaning either way, which is why a 14px difference may be this quiet.
