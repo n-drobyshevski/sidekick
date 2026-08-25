@@ -36,8 +36,8 @@ import { kmMedianAsOf, kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroup
 import * as insights from "../domain/insights";
 import * as program from "../domain/program";
 import {
-  execGroupSlice, execMttrSlice, historyTrendSlice, mttrPageTrendSlice,
-  programTrendSlice, scanRowsSlice,
+  execGroupSlice, execMttrSlice, historyTrendSlice, mttrGroupTableSlice, mttrGroupTrendSlice,
+  mttrPageTrendSlice, oldestOpenSlice, overviewInsightsSlice, programTrendSlice, scanRowsSlice,
 } from "../domain/pagePayload";
 import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
@@ -447,7 +447,18 @@ const cachedInsightsData = (p?: unknown) =>
   );
 
 export function getInsights(p?: unknown): ApiResult {
-  return run(() => cachedInsightsData(p));
+  return run(() => overviewInsightsSlice(cachedInsightsData(p)));
+}
+
+/** One oldest-open view, for the aging drawer. Reads the SAME cached entry `getInsights` does,
+ *  so opening the drawer is a slice of a warm payload rather than a second `baseVisible`
+ *  rebuild — and `insights.oldestOpen(baseVisible, 100)` stays exactly as it is, still computed
+ *  and still cached, just no longer shipped to every reader who never opens the drawer.
+ *
+ *  `view` is applied AFTER the cache read and is deliberately not part of any key: all four
+ *  views live in one entry, so the second and third toggles cost a slice, not a compute. */
+export function getOldestOpen(p?: unknown): ApiResult {
+  return run(() => oldestOpenSlice(cachedInsightsData(p), String((p as Rec)?.["view"] ?? "")));
 }
 
 // ------------------------------------------------------------------------- grouping
@@ -1287,8 +1298,21 @@ export function getMttrPage(p?: unknown): ApiResult {
     // worse than duplicate transfer — the two RPCs are separate GAS executions, so both
     // computed it. The page composes the two payloads instead; see `mttrPaintPlan`.
     trends: mttrPageTrendSlice(cachedMttrTrendData(p)),
-    byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
+    byDomain: mttrGroupTableSlice(
+      domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
+    ),
   }));
+}
+
+/** The by-group drawer's trend series, fetched when it opens. Repeats getMttrPage's dimension
+ *  switch verbatim — it has to, both because the switch reads `domain` and because the params
+ *  must match key-for-key to hit the entry that page already warmed. Deliberately NOT folded
+ *  into `getGroupTrend`, which serves Overview's breakdown and is a different series. */
+export function getMttrByDomainTrend(p?: unknown): ApiResult {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  return run(() => mttrGroupTrendSlice(
+    domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
+  ));
 }
 
 /** Kick off the risk-signal backfill (recovers exploit intelligence from scan archives). */

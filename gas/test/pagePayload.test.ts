@@ -16,8 +16,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  execGroupSlice, execMttrSlice, historyTrendSlice, mttrPageTrendSlice,
-  programTrendSlice, scanRowsSlice,
+  execGroupSlice, execMttrSlice, historyTrendSlice, mttrGroupTableSlice, mttrGroupTrendSlice,
+  mttrPageTrendSlice, oldestOpenSlice, overviewInsightsSlice, programTrendSlice, scanRowsSlice,
 } from "../src/domain/pagePayload";
 
 // A realistic mttrData return: everything the MTTR page reads, of which exec reads four numbers.
@@ -272,5 +272,90 @@ describe("scanRowsSlice — the ten columns the table draws", () => {
 
   it("returns [] for a missing scans array", () => {
     expect(scanRowsSlice(undefined)).toEqual([]);
+  });
+});
+
+// ------------------------------------------------------------- drawer payloads
+
+describe("overviewInsightsSlice — everything except the drawer's rows", () => {
+  const INSIGHTS = {
+    flatScan: true, counts: { HIGH: 4 }, total: 4, sevStats: {}, openTrend: [], exploit: {},
+    aging: { totalOpen: 3 }, movement: {}, awaiting: {}, scan: { scanId: "s1" },
+    oldest: { findings: [{ cve: "CVE-1" }], byAsset: [], bySupportGroup: [], byDomain: [] },
+  };
+
+  // 16,434 of 18,064 bytes on the seeded estate — 91% of the payload — for four ranked views
+  // of up to 100 rows, of which the panel renders ten rows of one, inside a drawer many
+  // readers never open.
+  it("drops oldest and keeps every other key", () => {
+    const out = overviewInsightsSlice(INSIGHTS)!;
+    expect(out).not.toHaveProperty("oldest");
+    expect(Object.keys(out).sort()).toEqual([
+      "aging", "awaiting", "counts", "exploit", "flatScan", "movement",
+      "openTrend", "scan", "sevStats", "total",
+    ]);
+  });
+
+  // Written as an omit rather than an enumeration precisely so a new insights key travels
+  // without anyone editing this file — unlike the executive slices, every other key is read.
+  it("passes through a key it has never heard of", () => {
+    expect(overviewInsightsSlice({ ...INSIGHTS, somethingNew: 1 })).toHaveProperty("somethingNew");
+  });
+
+  it("returns null for a missing payload", () => {
+    expect(overviewInsightsSlice(null)).toBeNull();
+  });
+});
+
+describe("oldestOpenSlice — one view, and the view it answers for", () => {
+  const INSIGHTS = {
+    oldest: { findings: [{ cve: "CVE-1" }], byAsset: [{ key: "vm" }], bySupportGroup: [], byDomain: [] },
+  };
+
+  it("returns the requested view", () => {
+    expect(oldestOpenSlice(INSIGHTS, "byAsset")).toEqual({ view: "byAsset", rows: [{ key: "vm" }] });
+  });
+
+  // The echo is load-bearing: the toggle can be clicked again mid-flight, and the panel drops
+  // any response whose view is no longer active rather than painting it under the wrong heading.
+  it("echoes the view back so a raced response can be discarded", () => {
+    expect(oldestOpenSlice(INSIGHTS, "byDomain").view).toBe("byDomain");
+  });
+
+  it("falls back to findings for an unknown or empty view", () => {
+    expect(oldestOpenSlice(INSIGHTS, "nonsense").view).toBe("findings");
+    expect(oldestOpenSlice(INSIGHTS, "").rows).toEqual([{ cve: "CVE-1" }]);
+  });
+
+  it("returns an empty row set rather than throwing on a payload with no oldest block", () => {
+    expect(oldestOpenSlice({ flatScan: false }, "findings")).toEqual({ view: "findings", rows: [] });
+    expect(oldestOpenSlice(null, "byAsset")).toEqual({ view: "byAsset", rows: [] });
+  });
+});
+
+describe("the MTTR by-group split, cut in two", () => {
+  const GROUP = {
+    dimension: "domain",
+    rows: [{ group: "CROSS", open: 18, awaiting: 2 }, { group: "SAP", open: 13, awaiting: 0 }],
+    trend: { groups: ["CROSS"], points: [{ d: 1 }], kmPoints: [{ d: 1 }] },
+  };
+
+  // rows stay eager: bounded by group count, and the awaiting footnote sums them before the
+  // drawer exists.
+  it("mttrGroupTableSlice keeps the table and drops the series", () => {
+    const out = mttrGroupTableSlice(GROUP)!;
+    expect(Object.keys(out).sort()).toEqual(["dimension", "rows"]);
+    expect(out.rows).toEqual(GROUP.rows);
+    expect(JSON.stringify(out)).not.toContain("kmPoints");
+  });
+
+  it("mttrGroupTrendSlice returns exactly the series the drawer draws", () => {
+    expect(mttrGroupTrendSlice(GROUP)).toEqual(GROUP.trend);
+  });
+
+  it("both survive a payload with no trend at all", () => {
+    expect(mttrGroupTableSlice({ dimension: "domain" })!.rows).toEqual([]);
+    expect(mttrGroupTrendSlice({ dimension: "domain" })).toBeNull();
+    expect(mttrGroupTrendSlice(null)).toBeNull();
   });
 });

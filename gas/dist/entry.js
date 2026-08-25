@@ -38,12 +38,14 @@ function timedApi_(name, p) {
 }
 function api_bootstrap(p) { return timedApi_("bootstrap", p); }
 function api_getInsights(p) { return timedApi_("getInsights", p); }
+function api_getOldestOpen(p) { return timedApi_("getOldestOpen", p); }
 function api_getGrouping(p) { return timedApi_("getGrouping", p); }
 function api_getGroupTrend(p) { return timedApi_("getGroupTrend", p); }
 function api_getAttribution(p) { return timedApi_("getAttribution", p); }
 function api_getMttr(p) { return timedApi_("getMttr", p); }
 function api_getMttrTrend(p) { return timedApi_("getMttrTrend", p); }
 function api_getMttrPage(p) { return timedApi_("getMttrPage", p); }
+function api_getMttrByDomainTrend(p) { return timedApi_("getMttrByDomainTrend", p); }
 function api_getExecutivePage(p) { return timedApi_("getExecutivePage", p); }
 function api_getProgramPage(p) { return timedApi_("getProgramPage", p); }
 function api_getRiskCohort(p) { return timedApi_("getRiskCohort", p); }

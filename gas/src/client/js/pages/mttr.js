@@ -438,233 +438,246 @@ export async function renderMttr(main, _params, ctx) {
       msg.style.display = "";
     }
 
-    const trend = byDomain.trend;
-    const groups = (trend && trend.groups) || [];
-    const colors = groupPalette(groups);
-    const inGroups = new Set(groups);
-    // Rows outside the canonical groups pool into an "Other" line series iff any exist — the same
-    // pooled remainder the server replays as its "Other" trend point. (The two snapshot lenses show
-    // named groups only; this pooled check is just for the trend line's series list.)
-    const resolvedOther = byDomain.rows
-      .filter((r) => !inGroups.has(groupOf(r)))
-      .reduce((a, r) => a + (r.resolved ?? 0), 0);
-    const series = groups.map((name) => ({ name, color: colors.get(name) }));
-    if (resolvedOther > 0) series.push({ name: "Other", color: colors.get("Other") });
+    // EVERYTHING BELOW DERIVES FROM `trend`, WHICH NO LONGER ARRIVES WITH THE PAGE. The two
+    // per-scan x per-group series behind these charts were built and shipped on every MTTR
+    // load for a card that only exists inside a drawer. They are fetched when it opens now, so
+    // the section's eager cost is the table and the footnote — both bounded by group count.
+    //
+    // The split is by data dependency, not by convenience: the table reads `byDomain.rows`,
+    // which stays eager because the drawer should open with content, and the awaiting footnote
+    // sums those rows before the drawer exists at all.
+    function buildCharts(trend) {
+      const groups = (trend && trend.groups) || [];
+      const colors = groupPalette(groups);
+      const inGroups = new Set(groups);
+      // Rows outside the canonical groups pool into an "Other" line series iff any exist — the same
+      // pooled remainder the server replays as its "Other" trend point. (The two snapshot lenses show
+      // named groups only; this pooled check is just for the trend line's series list.)
+      const resolvedOther = byDomain.rows
+        .filter((r) => !inGroups.has(groupOf(r)))
+        .reduce((a, r) => a + (r.resolved ?? 0), 0);
+      const series = groups.map((name) => ({ name, color: colors.get(name) }));
+      if (resolvedOther > 0) series.push({ name: "Other", color: colors.get("Other") });
 
-    // Both lenses read the same per-group row (canonical groups only, capped at 5 + a pooled tail
-    // the table below carries) with the same median accessor: KM median, falling back to the naive
-    // closed-only median when KM is censored to null. Groups with no resolved work or no observable
-    // median (too much still open) can't be placed on either chart and are dropped; the count is
-    // surfaced in each lens's caption.
-    const byName = new Map(byDomain.rows.map((r) => [groupOf(r), r]));
-    const medianOf = (r) => r && (r.kmMedian ?? r.median);
-    const omittedCount = groups.filter((name) => {
-      const r = byName.get(name);
-      return r && (r.resolved ?? 0) > 0 && medianOf(r) == null;
-    }).length;
-
-    // "Median MTTR by …" lens (secondary): each group's KM median in days, ranked slowest-first and
-    // read against the overall-median reference line. NO pooled "Other" bar — medians don't pool, so
-    // a fabricated pooled-remainder median would be meaningless.
-    const medianRows = groups
-      .map((name) => {
+      // Both lenses read the same per-group row (canonical groups only, capped at 5 + a pooled tail
+      // the table below carries) with the same median accessor: KM median, falling back to the naive
+      // closed-only median when KM is censored to null. Groups with no resolved work or no observable
+      // median (too much still open) can't be placed on either chart and are dropped; the count is
+      // surfaced in each lens's caption.
+      const byName = new Map(byDomain.rows.map((r) => [groupOf(r), r]));
+      const medianOf = (r) => r && (r.kmMedian ?? r.median);
+      const omittedCount = groups.filter((name) => {
         const r = byName.get(name);
-        return { label: name, value: medianOf(r), resolved: (r && r.resolved) ?? 0, color: colors.get(name) };
-      })
-      .filter((g) => g.value != null && g.resolved > 0)
-      .sort((a, b) => b.value - a.value);
+        return r && (r.resolved ?? 0) > 0 && medianOf(r) == null;
+      }).length;
 
-    // "Contribution to MTTR" lens (default): each group's signed excess finding·days vs the overall
-    // median — resolved × (group median − overall median). Positive = the group's resolved findings
-    // ran slower than the register median and, weighted by volume, dragged MTTR up; negative = faster,
-    // held it down. Unlike a pooled median, this per-row product IS additive, but it still needs the
-    // overall baseline, so the whole lens is unavailable when the overall median is itself censored.
-    // Sorted desc so the biggest up-drivers sit at the top and the biggest down-drivers at the bottom.
-    const impactRows = overallKm == null ? [] : groups
-      .map((name) => {
-        const r = byName.get(name);
-        const med = medianOf(r);
-        const n = (r && r.resolved) ?? 0;
-        if (med == null || n <= 0) return null;
-        return { label: name, value: Math.round(n * (med - overallKm)), median: med, resolved: n, color: colors.get(name) };
-      })
-      .filter(Boolean)
-      .sort((a, b) => b.value - a.value);
+      // "Median MTTR by …" lens (secondary): each group's KM median in days, ranked slowest-first and
+      // read against the overall-median reference line. NO pooled "Other" bar — medians don't pool, so
+      // a fabricated pooled-remainder median would be meaningless.
+      const medianRows = groups
+        .map((name) => {
+          const r = byName.get(name);
+          return { label: name, value: medianOf(r), resolved: (r && r.resolved) ?? 0, color: colors.get(name) };
+        })
+        .filter((g) => g.value != null && g.resolved > 0)
+        .sort((a, b) => b.value - a.value);
 
-    const naivePts = (trend && trend.points) || [];
-    const kmPts = (trend && trend.kmPoints) || [];
-    // ≥2 scan points = a drawable trend. kmPoints and points share one point-per-flat-scan
-    // backbone, so when one is drawable both are — the toggle appears together with the chart.
-    const canToggleClock = kmPts.length >= 2 && naivePts.length >= 2;
+      // "Contribution to MTTR" lens (default): each group's signed excess finding·days vs the overall
+      // median — resolved × (group median − overall median). Positive = the group's resolved findings
+      // ran slower than the register median and, weighted by volume, dragged MTTR up; negative = faster,
+      // held it down. Unlike a pooled median, this per-row product IS additive, but it still needs the
+      // overall baseline, so the whole lens is unavailable when the overall median is itself censored.
+      // Sorted desc so the biggest up-drivers sit at the top and the biggest down-drivers at the bottom.
+      const impactRows = overallKm == null ? [] : groups
+        .map((name) => {
+          const r = byName.get(name);
+          const med = medianOf(r);
+          const n = (r && r.resolved) ?? 0;
+          if (med == null || n <= 0) return null;
+          return { label: name, value: Math.round(n * (med - overallKm)), median: med, resolved: n, color: colors.get(name) };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.value - a.value);
 
-    // Line: per-domain median MTTR (days) replayed over scan history — KM by default (open
-    // findings censored), with the naive closed-only median available via the card toggle.
-    function paintLine() {
-      const usingKm = byDomainClock === "km";
-      const pts = usingKm ? kmPts : naivePts;
-      lineCaption.textContent = usingKm
-        ? `Kaplan–Meier median time-to-remediation (days) by ${dim.noun}, per scan — still-open findings censored.`
-        : `Naive median MTTR (days) by ${dim.noun}, per scan — closed findings only.`;
-      if (pts.length < 2) {
-        showMsg(lineCanvas, lineMsg, "Trend appears after the second saved scan.");
-        return;
+      const naivePts = (trend && trend.points) || [];
+      const kmPts = (trend && trend.kmPoints) || [];
+      // ≥2 scan points = a drawable trend. kmPoints and points share one point-per-flat-scan
+      // backbone, so when one is drawable both are — the toggle appears together with the chart.
+      const canToggleClock = kmPts.length >= 2 && naivePts.length >= 2;
+
+      // Line: per-domain median MTTR (days) replayed over scan history — KM by default (open
+      // findings censored), with the naive closed-only median available via the card toggle.
+      function paintLine() {
+        const usingKm = byDomainClock === "km";
+        const pts = usingKm ? kmPts : naivePts;
+        lineCaption.textContent = usingKm
+          ? `Kaplan–Meier median time-to-remediation (days) by ${dim.noun}, per scan — still-open findings censored.`
+          : `Naive median MTTR (days) by ${dim.noun}, per scan — closed findings only.`;
+        if (pts.length < 2) {
+          showMsg(lineCanvas, lineMsg, "Trend appears after the second saved scan.");
+          return;
+        }
+        showChart(lineCanvas, lineMsg);
+        groupTrendLines(lineCanvas, pts, series, {
+          unit: "days",
+          nullAsGap: true,
+          describe: usingKm
+            ? `Kaplan–Meier median time-to-remediation in days per ${dim.noun} over scan history.`
+            : `Naive median MTTR in days per ${dim.noun} over scan history.`,
+        });
       }
-      showChart(lineCanvas, lineMsg);
-      groupTrendLines(lineCanvas, pts, series, {
-        unit: "days",
-        nullAsGap: true,
-        describe: usingKm
-          ? `Kaplan–Meier median time-to-remediation in days per ${dim.noun} over scan history.`
-          : `Naive median MTTR in days per ${dim.noun} over scan history.`,
-      });
-    }
 
-    // KM ⇄ Naive clock toggle for the by-domain line — same .seg-row/.seg-btn--sm pattern as
-    // the "MTTR over time" card. Buttons hold their own refs so a pick can flip aria-pressed and
-    // repaint the one canvas without rebuilding the sheet.
-    const kmClockBtn = el("button", {
-      type: "button", class: "seg-btn seg-btn--sm",
-      "aria-pressed": String(byDomainClock === "km"), onclick: () => pickClock("km"),
-    }, "KM");
-    const naiveClockBtn = el("button", {
-      type: "button", class: "seg-btn seg-btn--sm",
-      "aria-pressed": String(byDomainClock === "naive"), onclick: () => pickClock("naive"),
-    }, "Naive");
-    function pickClock(v) {
-      byDomainClock = v;
-      savePref("mttrByDomainClock", v);
-      kmClockBtn.setAttribute("aria-pressed", String(v === "km"));
-      naiveClockBtn.setAttribute("aria-pressed", String(v === "naive"));
-      paintLine();
-    }
-    const lineToggle = canToggleClock
-      ? el("div", { class: "seg-row", role: "group", "aria-label": `MTTR by ${dim.noun} clock` },
-        kmClockBtn, naiveClockBtn)
-      : null;
-    const lineHelp = [
-      `KM: Kaplan–Meier median days from first detection to remediation per ${dim.noun}, replayed `
-        + "as of each scan; still-open findings censored, so a wave of fresh open findings can't "
-        + "bias it down. The principal figure.",
-      `Naive: median of closed findings only per ${dim.noun}, per scan — the biased comparison KM `
-        + "corrects for, kept only to compare.",
-    ];
-    const lineTitle = el("h3", {}, helpTip(`MTTR by ${dim.noun}`, lineHelp, { className: "help-label" }));
-    const lineHead = lineToggle ? el("div", { class: "chart-head" }, lineTitle, lineToggle) : lineTitle;
-
-    // Unified by-domain panel: "Contribution to MTTR" (signed impact) and "Median MTTR by …" (rate)
-    // are two lenses on the same groups — who drags the headline figure up/down, weighted by volume,
-    // vs how slow each group is on its own — so they share one card switched by a segmented toggle
-    // instead of two separate cards. It sits in a row with the "MTTR by domain" line; the lens persists.
-    const impactHelp = [
-      `Each ${dim.noun}'s resolved findings × (its KM median − the overall KM median), in finding·days. `
-        + `Right of the zero line the ${dim.noun} closed slower than the register median and — scaled by `
-        + `how much it closed — dragged the headline MTTR up; left of it the ${dim.noun} closed faster and `
-        + "held MTTR down. The zero line is the overall median: no drag.",
-      `Leverage, not just rate: a slightly-slow ${dim.noun} that closes a lot outweighs a very-slow one `
-        + `that closes little, and a fast high-volume ${dim.noun} reads as the down-driver it is. A proxy, `
-        + "not an exact split — the overall KM median is a censored-survival statistic, not a weighted "
-        + `average of per-${dim.noun} medians — so read the magnitudes as relative, not an exact day count.`,
-    ];
-    const medianHelp = [
-      `Each ${dim.noun}'s Kaplan–Meier median time-to-remediation, ranked slowest first against the `
-        + `dashed line at the overall KM median. Bars past the line take longer than the register `
-        + `median — these ${dim.noun}s pull the headline MTTR up; bars short of it pull it down.`,
-      `The pure rate, ignoring volume: a very-slow ${dim.noun} tops this even if it closed only a `
-        + `handful. The contribution lens weights the same medians by resolved count for real leverage; `
-        + "hover a bar here for that count.",
-    ];
-    const lensTitleHost = el("h3", {}); // retitled per lens by applyLens
-    // A single circular-arrows button swaps the two lenses (contribution ⇄ median). The card title
-    // names the active lens, so one icon toggle reads cleaner than two buttons; its aria-label /
-    // title announce what the next click switches to (updated in applyLens).
-    const swapBtn = el("button", { type: "button", class: "chart-swap" });
-    swapBtn.innerHTML = SWAP_ICON;
-    swapBtn.addEventListener("click", () =>
-      pickLens(byDomainLens === "impact" ? "median" : "impact"));
-    // Both canvases live in one box (same height as the line card so the row aligns); the inactive
-    // one starts hidden so there's no flash before the first paint in the rAF below.
-    impactCanvas.style.display = byDomainLens === "impact" ? "" : "none";
-    medianCanvas.style.display = byDomainLens === "median" ? "" : "none";
-    const lensCard = el("div", { class: "chart-card" },
-      el("div", { class: "chart-head" }, lensTitleHost, swapBtn),
-      el("div", { class: "chart-box" }, impactCanvas, impactMsg, medianCanvas, medianMsg),
-      lensCaption);
-
-    // Switch the lens: flip aria-pressed, retitle with the matching help, tear down the hidden
-    // chart, and paint the active one (each paint fn shows its own canvas / empty message).
-    function applyLens(view) {
-      byDomainLens = view;
-      // The label names what the *next* click switches to (the title already names the current lens).
-      const nextLabel = view === "impact"
-        ? `Show median MTTR by ${dim.noun}` : `Show ${dim.noun} contribution to MTTR`;
-      swapBtn.setAttribute("aria-label", nextLabel);
-      swapBtn.title = nextLabel;
-      clear(lensTitleHost).append(
-        view === "impact"
-          ? helpTip(`${dim.Noun} contribution to MTTR`, impactHelp, { className: "help-label" })
-          : helpTip(`Median MTTR by ${dim.noun}`, medianHelp, { className: "help-label" }));
-      const [hideCanvas, hideMsg] = view === "impact" ? [medianCanvas, medianMsg] : [impactCanvas, impactMsg];
-      destroyChart(hideCanvas);
-      hideCanvas.style.display = "none";
-      hideMsg.style.display = "none";
-      if (view === "impact") paintImpact(); else paintMedian();
-    }
-    function pickLens(view) {
-      savePref("mttrByDomainLens", view);
-      applyLens(view);
-    }
-
-    const chartPair = el("div", { class: "chart-grid", style: "align-items:start" },
-      lensCard,
-      el("div", { class: "chart-card" },
-        lineHead,
-        el("div", { class: "chart-box" }, lineCanvas, lineMsg),
-        lineCaption),
-    );
-
-    // Shared omission note for both lenses — named groups with resolved work but no observable
-    // median (too much still open) are dropped from either chart.
-    const omittedNote = omittedCount > 0
-      ? ` ${omittedCount} ${dim.noun}${omittedCount === 1 ? "" : "s"} omitted — too much still open `
-        + "to estimate a median."
-      : "";
-
-    // Contribution lens (default): signed excess finding·days vs the overall median — right of the
-    // zero line drags MTTR up, left holds it down. Needs the overall baseline, so when the overall
-    // median is itself censored (overallKm null) the whole lens shows a muted note instead.
-    function paintImpact() {
-      lensCaption.textContent = `Each ${dim.noun}'s resolved findings × (its median − the overall `
-        + `median), in finding·days — right of the line drags MTTR up, left holds it down.${omittedNote}`;
-      if (overallKm == null) {
-        showMsg(impactCanvas, impactMsg,
-          "The overall KM median isn't observable yet — too much is still open to baseline contribution.");
-        return;
+      // KM ⇄ Naive clock toggle for the by-domain line — same .seg-row/.seg-btn--sm pattern as
+      // the "MTTR over time" card. Buttons hold their own refs so a pick can flip aria-pressed and
+      // repaint the one canvas without rebuilding the sheet.
+      const kmClockBtn = el("button", {
+        type: "button", class: "seg-btn seg-btn--sm",
+        "aria-pressed": String(byDomainClock === "km"), onclick: () => pickClock("km"),
+      }, "KM");
+      const naiveClockBtn = el("button", {
+        type: "button", class: "seg-btn seg-btn--sm",
+        "aria-pressed": String(byDomainClock === "naive"), onclick: () => pickClock("naive"),
+      }, "Naive");
+      function pickClock(v) {
+        byDomainClock = v;
+        savePref("mttrByDomainClock", v);
+        kmClockBtn.setAttribute("aria-pressed", String(v === "km"));
+        naiveClockBtn.setAttribute("aria-pressed", String(v === "naive"));
+        paintLine();
       }
-      if (!impactRows.length) {
-        showMsg(impactCanvas, impactMsg, "No resolved findings with an observable median to attribute.");
-        return;
-      }
-      showChart(impactCanvas, impactMsg);
-      mttrImpactBars(impactCanvas, impactRows, { subject: `${dim.Noun} contribution to MTTR` });
-    }
+      const lineToggle = canToggleClock
+        ? el("div", { class: "seg-row", role: "group", "aria-label": `MTTR by ${dim.noun} clock` },
+          kmClockBtn, naiveClockBtn)
+        : null;
+      const lineHelp = [
+        `KM: Kaplan–Meier median days from first detection to remediation per ${dim.noun}, replayed `
+          + "as of each scan; still-open findings censored, so a wave of fresh open findings can't "
+          + "bias it down. The principal figure.",
+        `Naive: median of closed findings only per ${dim.noun}, per scan — the biased comparison KM `
+          + "corrects for, kept only to compare.",
+      ];
+      const lineTitle = el("h3", {}, helpTip(`MTTR by ${dim.noun}`, lineHelp, { className: "help-label" }));
+      const lineHead = lineToggle ? el("div", { class: "chart-head" }, lineTitle, lineToggle) : lineTitle;
 
-    // Median lens (secondary): each group's KM median MTTR against the overall-median reference line —
-    // a bar past the line is a group slower than the register median. Slowest-first (medianRows is
-    // pre-sorted desc), so the up-drivers read top-down.
-    function paintMedian() {
-      const refClause = overallKm != null
-        ? " vs the overall median (dashed) — bars past the line pull the headline MTTR up."
-        : " — ranked slowest first.";
-      lensCaption.textContent = `Each ${dim.noun}'s KM median MTTR${refClause}${omittedNote}`;
-      if (!medianRows.length) {
-        showMsg(medianCanvas, medianMsg, "No resolved findings with an observable median to rank.");
-        return;
+      // Unified by-domain panel: "Contribution to MTTR" (signed impact) and "Median MTTR by …" (rate)
+      // are two lenses on the same groups — who drags the headline figure up/down, weighted by volume,
+      // vs how slow each group is on its own — so they share one card switched by a segmented toggle
+      // instead of two separate cards. It sits in a row with the "MTTR by domain" line; the lens persists.
+      const impactHelp = [
+        `Each ${dim.noun}'s resolved findings × (its KM median − the overall KM median), in finding·days. `
+          + `Right of the zero line the ${dim.noun} closed slower than the register median and — scaled by `
+          + `how much it closed — dragged the headline MTTR up; left of it the ${dim.noun} closed faster and `
+          + "held MTTR down. The zero line is the overall median: no drag.",
+        `Leverage, not just rate: a slightly-slow ${dim.noun} that closes a lot outweighs a very-slow one `
+          + `that closes little, and a fast high-volume ${dim.noun} reads as the down-driver it is. A proxy, `
+          + "not an exact split — the overall KM median is a censored-survival statistic, not a weighted "
+          + `average of per-${dim.noun} medians — so read the magnitudes as relative, not an exact day count.`,
+      ];
+      const medianHelp = [
+        `Each ${dim.noun}'s Kaplan–Meier median time-to-remediation, ranked slowest first against the `
+          + `dashed line at the overall KM median. Bars past the line take longer than the register `
+          + `median — these ${dim.noun}s pull the headline MTTR up; bars short of it pull it down.`,
+        `The pure rate, ignoring volume: a very-slow ${dim.noun} tops this even if it closed only a `
+          + `handful. The contribution lens weights the same medians by resolved count for real leverage; `
+          + "hover a bar here for that count.",
+      ];
+      const lensTitleHost = el("h3", {}); // retitled per lens by applyLens
+      // A single circular-arrows button swaps the two lenses (contribution ⇄ median). The card title
+      // names the active lens, so one icon toggle reads cleaner than two buttons; its aria-label /
+      // title announce what the next click switches to (updated in applyLens).
+      const swapBtn = el("button", { type: "button", class: "chart-swap" });
+      swapBtn.innerHTML = SWAP_ICON;
+      swapBtn.addEventListener("click", () =>
+        pickLens(byDomainLens === "impact" ? "median" : "impact"));
+      // Both canvases live in one box (same height as the line card so the row aligns); the inactive
+      // one starts hidden so there's no flash before the first paint in the rAF below.
+      impactCanvas.style.display = byDomainLens === "impact" ? "" : "none";
+      medianCanvas.style.display = byDomainLens === "median" ? "" : "none";
+      const lensCard = el("div", { class: "chart-card" },
+        el("div", { class: "chart-head" }, lensTitleHost, swapBtn),
+        el("div", { class: "chart-box" }, impactCanvas, impactMsg, medianCanvas, medianMsg),
+        lensCaption);
+
+      // Switch the lens: flip aria-pressed, retitle with the matching help, tear down the hidden
+      // chart, and paint the active one (each paint fn shows its own canvas / empty message).
+      function applyLens(view) {
+        byDomainLens = view;
+        // The label names what the *next* click switches to (the title already names the current lens).
+        const nextLabel = view === "impact"
+          ? `Show median MTTR by ${dim.noun}` : `Show ${dim.noun} contribution to MTTR`;
+        swapBtn.setAttribute("aria-label", nextLabel);
+        swapBtn.title = nextLabel;
+        clear(lensTitleHost).append(
+          view === "impact"
+            ? helpTip(`${dim.Noun} contribution to MTTR`, impactHelp, { className: "help-label" })
+            : helpTip(`Median MTTR by ${dim.noun}`, medianHelp, { className: "help-label" }));
+        const [hideCanvas, hideMsg] = view === "impact" ? [medianCanvas, medianMsg] : [impactCanvas, impactMsg];
+        destroyChart(hideCanvas);
+        hideCanvas.style.display = "none";
+        hideMsg.style.display = "none";
+        if (view === "impact") paintImpact(); else paintMedian();
       }
-      showChart(medianCanvas, medianMsg);
-      mttrContributionBars(medianCanvas, medianRows, {
-        overall: overallKm,
-        subject: `${dim.Noun} median MTTR vs overall`,
-      });
+      function pickLens(view) {
+        savePref("mttrByDomainLens", view);
+        applyLens(view);
+      }
+
+      const chartPair = el("div", { class: "chart-grid", style: "align-items:start" },
+        lensCard,
+        el("div", { class: "chart-card" },
+          lineHead,
+          el("div", { class: "chart-box" }, lineCanvas, lineMsg),
+          lineCaption),
+      );
+
+      // Shared omission note for both lenses — named groups with resolved work but no observable
+      // median (too much still open) are dropped from either chart.
+      const omittedNote = omittedCount > 0
+        ? ` ${omittedCount} ${dim.noun}${omittedCount === 1 ? "" : "s"} omitted — too much still open `
+          + "to estimate a median."
+        : "";
+
+      // Contribution lens (default): signed excess finding·days vs the overall median — right of the
+      // zero line drags MTTR up, left holds it down. Needs the overall baseline, so when the overall
+      // median is itself censored (overallKm null) the whole lens shows a muted note instead.
+      function paintImpact() {
+        lensCaption.textContent = `Each ${dim.noun}'s resolved findings × (its median − the overall `
+          + `median), in finding·days — right of the line drags MTTR up, left holds it down.${omittedNote}`;
+        if (overallKm == null) {
+          showMsg(impactCanvas, impactMsg,
+            "The overall KM median isn't observable yet — too much is still open to baseline contribution.");
+          return;
+        }
+        if (!impactRows.length) {
+          showMsg(impactCanvas, impactMsg, "No resolved findings with an observable median to attribute.");
+          return;
+        }
+        showChart(impactCanvas, impactMsg);
+        mttrImpactBars(impactCanvas, impactRows, { subject: `${dim.Noun} contribution to MTTR` });
+      }
+
+      // Median lens (secondary): each group's KM median MTTR against the overall-median reference line —
+      // a bar past the line is a group slower than the register median. Slowest-first (medianRows is
+      // pre-sorted desc), so the up-drivers read top-down.
+      function paintMedian() {
+        const refClause = overallKm != null
+          ? " vs the overall median (dashed) — bars past the line pull the headline MTTR up."
+          : " — ranked slowest first.";
+        lensCaption.textContent = `Each ${dim.noun}'s KM median MTTR${refClause}${omittedNote}`;
+        if (!medianRows.length) {
+          showMsg(medianCanvas, medianMsg, "No resolved findings with an observable median to rank.");
+          return;
+        }
+        showChart(medianCanvas, medianMsg);
+        mttrContributionBars(medianCanvas, medianRows, {
+          overall: overallKm,
+          subject: `${dim.Noun} median MTTR vs overall`,
+        });
+      }
+      return {
+        chartPair,
+        paint: () => { applyLens(byDomainLens); paintLine(); },
+      };
     }
     // Column headers carry the two new metrics' definitions via helpTip, matching the
     // per-severity table's convention in renderSla above.
@@ -730,16 +743,44 @@ export async function renderMttr(main, _params, ctx) {
     // bucket of its own, "Not attributable", sorted last, so the population is a row you can
     // read rather than a number in a note under a table it is missing from.
 
-    // Progressive disclosure: the whole breakdown opens in a right-drawer instead of
-    // stacking on the page. openSheet calls renderBody synchronously, so the paint rAF
-    // scheduled here fires after the canvases are attached to the (animating) sheet.
+    // Progressive disclosure: the whole breakdown opens in a right-drawer instead of stacking
+    // on the page. The TABLE goes in immediately — it is already in hand, so the drawer opens
+    // with content rather than a spinner, which is a better drawer than the one this replaces.
+    // The charts follow when their series arrives.
+    //
+    // openSheet calls renderBody synchronously and ignores its return, and `body` is a live
+    // node already in the DOM, so appending later works — but it offers no loading or error
+    // state, so both are ours. The `isConnected` guard is the precedent scanProgress.js sets:
+    // the reader can close the drawer while the request is in flight.
     function renderBody(body) {
-      body.append(chartPair, tableWrap);
+      const chartHost = el("div", { role: "status", "aria-label": "Loading trend charts" },
+        el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" },
+          ...[0, 1].map(() => el("div", { class: "chart-card" },
+            el("div", { style: "margin-bottom:12px" }, skeleton("line", { width: "140px" })),
+            el("div", { class: "chart-box" }, skeleton("chart"))))));
+      body.append(chartHost, tableWrap);
       if (footnote) body.append(footnote);
-      requestAnimationFrame(() => {
-        applyLens(byDomainLens); // paints the active lens (contribution or median)
-        paintLine();
-      });
+
+      swrCall("api_getMttrByDomainTrend",
+        { domain, supportGroup, severities: scopeParam() },
+        (fresh) => absorbTrend(chartHost, fresh))
+        .then((t) => absorbTrend(chartHost, t))
+        .catch((e) => {
+          // eslint-disable-next-line no-console
+          console.error("[mttr] getMttrByDomainTrend failed:", e);
+          if (!chartHost.isConnected) return;
+          clear(chartHost).append(emptyState("Couldn't load the trend charts."));
+        });
+    }
+
+    /** Swap the skeleton for the real chart pair. Re-entrant: swrCall fires again on
+     *  revalidation, and a second arrival must replace the first rather than stack beneath it. */
+    function absorbTrend(chartHost, trend) {
+      if (!chartHost.isConnected) return;
+      const built = buildCharts(trend || {});
+      clear(chartHost).removeAttribute("aria-label");
+      chartHost.append(built.chartPair);
+      requestAnimationFrame(built.paint);
     }
 
     byDomainHost.append(sectionLabel(dim.title));
