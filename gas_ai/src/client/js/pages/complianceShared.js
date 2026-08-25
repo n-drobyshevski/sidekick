@@ -92,8 +92,9 @@ export function fiveRsDerived(data, frameworkId) {
  * PRODUCT.md forbids carrying by colour alone.
  *
  * THE BAR IS TINTED BY ITS OWN NUMBER. `postureBand` (compliancePosture.ts) puts the
- * percentage in one of three bands and the fill takes that band's wash, so 100% reads green
- * because there is nothing left to close, and 62% reads red because there is.
+ * percentage on one of four steps of the posture tier ramp — the same `--rank-1..4` scale
+ * the Scoring Models page's lattice and mass strip read — so 100% reads tier-1 green
+ * because there is nothing left to close, and 42% reads tier-4 red because there is.
  *
  * IT USED TO BE TINTED BY SEVERITY — the worst failing policy underneath — and that was
  * wrong in the way a chart is wrong rather than the way a bug is: it painted a full bar red

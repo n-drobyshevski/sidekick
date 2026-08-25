@@ -67,7 +67,7 @@ export const POSTURE_STATES = {
 export type PostureState = keyof typeof POSTURE_STATES;
 
 /**
- * How a posture PERCENTAGE reads, as three bands — the classification that tints every
+ * How a posture PERCENTAGE reads, as four bands — the classification that tints every
  * posture bar on the page.
  *
  * Hue tracks the number, not the severity of what is failing under it, and the two are
@@ -82,14 +82,26 @@ export type PostureState = keyof typeof POSTURE_STATES;
  * non-colour cue, exact and already in the cell, so the ramp adds emphasis without ever
  * being the only carrier of meaning.
  *
- * THE BREAKS ARE A PRODUCT CHOICE, not a derivation — 90 and 70, the common compliance
- * reading of "clean", "work to do" and "materially failing". They live here rather than in
- * CSS so they are stated once, tested, and shipped with the row; the view owns only the
- * colour it paints for each.
+ * THE BREAKS ARE A PRODUCT CHOICE, not a derivation — 90 and 70 are the common compliance
+ * reading of "clean", "work to do" and "not clean", and 50 splits that last one. They live
+ * here rather than in CSS so they are stated once, tested, and shipped with the row; the
+ * view owns only the colour it paints for each.
+ *
+ * THE FOURTH BREAK, AT 50, IS WHY THERE ARE FOUR OF THEM. This scale used to have three
+ * steps and its own palette — the semantic status triad, --ok/--warn/--bad washed toward
+ * white — while the Scoring Models page drew a posture tier on the four-step ordinal ramp
+ * (--rank-1..4 in tokens.css). Two ordinal readings of the same word, in two palettes, so
+ * a reader had to learn "posture colour" twice. Cutting the failing band in two lets this
+ * one ride the ramp that already exists rather than minting a second.
+ *
+ * Which is also why 90 and 70 did NOT move to make room: they are the product reading, and
+ * the number of colours available is not a reason to restate it. Only the bottom band
+ * splits, and "Materially failing" stays attached to the bottom where it was.
  */
 export const POSTURE_BANDS = {
   strong: { min: 90, label: "Strong" },
   fair: { min: 70, label: "Work to do" },
+  poor: { min: 50, label: "Falling short" },
   weak: { min: 0, label: "Materially failing" },
 } as const;
 
@@ -106,6 +118,7 @@ export function postureBandOf(posturePct: number | null): PostureBand | null {
   if (posturePct === null || posturePct === undefined) return null;
   if (posturePct >= POSTURE_BANDS.strong.min) return "strong";
   if (posturePct >= POSTURE_BANDS.fair.min) return "fair";
+  if (posturePct >= POSTURE_BANDS.poor.min) return "poor";
   return "weak";
 }
 

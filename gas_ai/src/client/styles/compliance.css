@@ -264,8 +264,8 @@
   background: var(--track-bg); border-radius: 4px; overflow: hidden;
 }
 /* THE BAR'S TWO DIMENSIONS NOW CARRY ONE FACT BETWEEN THEM. Length is Wiz's posture
-   percentage; hue is the band that same percentage falls in (`postureBand`, three breaks at
-   90 and 70, defined in compliancePosture.ts). Width is still set inline per row.
+   percentage; hue is the band that same percentage falls in (`postureBand`, four bands
+   breaking at 90, 70 and 50, defined in compliancePosture.ts). Width is set inline per row.
 
    HUE USED TO CARRY THE WORST FAILING SEVERITY instead, and the polarity note that stood
    here described the trouble that caused without naming it: a framework at 100% got a full
@@ -275,11 +275,15 @@
    by construction — a full bar is a green bar — and the severity keeps a mark of its own:
    the sevBadge beside the row, whose area is fixed regardless of any number.
 
-   THE WASH STAYS, and its reason survives the change intact. The saturated `.sev-fill-*`
-   tokens on a full-width bar make the healthiest row the loudest thing on the page.
-   Mixing toward the page ground keeps hue legible and length readable against the track
-   without letting a long bar turn into an alarm — which matters MORE for a ramp than it did
-   for a severity tint, because now every scored row takes a colour.
+   THE WASH IS GONE, and the concern it answered went with the thing that caused it. Its
+   argument was that the saturated `.sev-fill-*` tokens on a full-width bar make the
+   healthiest row the loudest on the page — true while hue meant SEVERITY, because the
+   loudest mark was then an alarm hue on a row with nothing wrong. Once hue means the
+   number, the longest bar is necessarily the greenest, and a row that is loudly fine is
+   not the failure the wash was preventing. What the wash cost was the boundary: at 38%
+   toward white all three fills sat under 1.7:1 against the track, so a short bar and a
+   long one differed mostly by where you guessed the edge was. The solids are read
+   directly, and the inset edge below covers the one step where that is still not enough.
 
    WHY THIS IS NOT THE WALL OF COLOUR PRODUCT.md REFUSES, which the note here previously
    claimed it would be. The rule that matters is meaning never carried by colour alone: the
@@ -295,11 +299,18 @@
 /* THE ONE RAMP, for all four bars: the rail lane above, both hero meters, and every posture
    cell in both tables. One recipe, one meaning — a reader learns this page's colour once.
 
-   The tokens are the semantic state triad (`--ok` / `--warn` / `--bad`), NOT the severity
-   scale. A posture band is a state, not a severity, and borrowing `--sev-critical` here
-   would say "this row is CRITICAL" in a page that also draws real CRITICAL badges two
-   columns away. `--warn` and `--bad` are within a hair of the severity hues by design;
-   what differs is what a reader is entitled to conclude from them.
+   AND IT IS NOW THE SAME RAMP THE SCORING MODELS PAGE ALREADY DREW. The tokens are the
+   POSTURE TIER SCALE (`--rank-1..4-solid`, tokens.css) — the four-step ordinal instrument
+   the decision lattice's cells and its mass strip read, at the same solid weight
+   `.lat-mass__seg` takes. This used to be its own three-step palette built on the semantic
+   status triad, which meant two ordinal readings of the word "posture" in two palettes and
+   a reader learning the colour twice. `postureBand` gained a fourth break at 50 so this
+   page's bar could join the ramp rather than mint a second one.
+
+   DESIGN.md's Ordinal-Fork Rule is satisfied, not bent: a percentage band is ordinal, so
+   the ordinal scale is the right instrument for it. What the rule forbids is a categorical
+   fact wearing the ramp — which is why `.comp-bar-seg[data-state]` and `.comp-key` a few
+   rules up keep the status triad. Those four states are kinds, not steps.
 
    RED/GREEN IS THE OBVIOUS COLOURBLIND TRAP, and the reason it is survivable here is the
    number: `.comp-posture-num` sits beside every one of these bars, and the hero prints its
@@ -310,13 +321,34 @@
    than restyling every meter in the app. */
 .comp-fw-bar[data-band="strong"],
 .comp-hero-meter .meter-fill[data-band="strong"],
-.comp-posture .meter-fill[data-band="strong"] { background: color-mix(in srgb, var(--ok) 38%, white); }
+.comp-posture .meter-fill[data-band="strong"] { background: var(--rank-1-solid); }
 .comp-fw-bar[data-band="fair"],
 .comp-hero-meter .meter-fill[data-band="fair"],
-.comp-posture .meter-fill[data-band="fair"] { background: color-mix(in srgb, var(--warn) 38%, white); }
+.comp-posture .meter-fill[data-band="fair"] { background: var(--rank-2-solid); }
+.comp-fw-bar[data-band="poor"],
+.comp-hero-meter .meter-fill[data-band="poor"],
+.comp-posture .meter-fill[data-band="poor"] { background: var(--rank-3-solid); }
 .comp-fw-bar[data-band="weak"],
 .comp-hero-meter .meter-fill[data-band="weak"],
-.comp-posture .meter-fill[data-band="weak"] { background: color-mix(in srgb, var(--bad) 38%, white); }
+.comp-posture .meter-fill[data-band="weak"] { background: var(--rank-4-solid); }
+
+/* THE EDGE, so LENGTH survives tier 2. The ramp's steps were measured against each OTHER
+   (OKLab 29.2/16.1/19.3) and they separate; what none of them was measured against is this
+   page's `--track-bg`, and a progress bar is read by where its fill STOPS. Against the
+   track (rgba(0,0,0,0.07) on white, ~#ededed) the four solids measure 2.82 / 1.30 / 2.07 /
+   4.13 — tier 2's yellow sits between white and mid-grey and all but vanishes, which the
+   three washed fills this replaced did not do quite as badly (1.57 / 1.54 / 1.70).
+
+   Darkening the track is the fix that does not work: it moves the ground TOWARD yellow's
+   luminance and makes it worse, 1.30 -> 1.15 at #e0e0e0. So the boundary gets drawn instead.
+   Composited over each solid, rgba(0,0,0,0.40) measures 6.40 / 3.49 / 5.12 / 8.48 against
+   the track — every step clears the 3:1 floor for a graphical mark, worst case tier 2.
+
+   Hue-neutral on purpose: a per-step edge token would be a fifth thing to keep in sync with
+   the ramp, and this one says nothing except "the fill ends here". */
+.comp-fw-bar[data-band],
+.comp-hero-meter .meter-fill[data-band],
+.comp-posture .meter-fill[data-band] { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.40); }
 
 /* The honest-state lane: an unscored framework gets NO bar, not a bar at zero — a
    sliver still reads as "very little" where the fact is "not measured", and those are
