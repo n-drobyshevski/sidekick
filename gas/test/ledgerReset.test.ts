@@ -25,6 +25,9 @@ vi.mock("../src/server/sheetsDb", () => {
   return {
     TABS,
     readAll: (tab: string) => tables[tab] ?? [],
+    // `getJob` reads the tail rather than the whole tab; the fake mirrors that so the
+    // module under test can be loaded at all.
+    readTail: (tab: string, n: number) => (tables[tab] ?? []).slice(-n),
     overwrite: (tab: string, rows: Row[]) => {
       tables[tab] = [...rows];
     },

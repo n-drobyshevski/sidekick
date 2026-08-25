@@ -9,11 +9,12 @@ import {
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
   clear, el, emptyState, fmtDate, helpTip, kpiCard, nvdUrl, openSheet, pager,
-  scopeBar, sectionLabel, severityScopeFilter,
+  scopeBar, sectionLabel, severityScopeFilter, skeleton,
 } from "../ui.js";
 
 // Rows per page in the "Oldest open findings" panel's prev/next pagination. The server ships
-// up to 100 rows per view (see api.getInsights → oldest), so this yields up to ten pages.
+// up to 100 rows for the view being shown (api.getOldestOpen), so this yields up to ten pages,
+// and paging stays client-side — in GAS the round trip is the expensive unit, not the few KB.
 const OLDEST_PAGE_SIZE = 10;
 
 // Keep in sync with AGE_BUCKET_LABELS in src/domain/insights.ts (the client bundle
@@ -153,11 +154,18 @@ export async function renderOverview(main, params, ctx) {
     renderHeadline(data);
     renderInsights(data);
   };
+  // The insights params, in one place. THE DRAWER MUST SEND THESE BYTE-FOR-BYTE: both endpoints
+  // derive their cache key from them, so a drifting param would miss the entry this page just
+  // warmed and pay a full `baseVisible` rebuild instead of a slice. `view` is added on top and
+  // is deliberately not part of any key — all four views live in the one entry.
+  function insightsParams() {
+    return {
+      domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
+      severities: scopeParam(),
+    };
+  }
   async function loadInsights() {
-    paint(await swrCall("api_getInsights",
-      { domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
-        severities: scopeParam() },
-      paint));
+    paint(await swrCall("api_getInsights", insightsParams(), paint));
   }
   await loadInsights();
 
@@ -352,30 +360,39 @@ export async function renderOverview(main, params, ctx) {
     ));
     // The histogram above answers "how aged is the backlog?"; the ranked detail — the
     // longest-open findings and the assets / support groups / domains carrying the 90+ tail —
-    // moves into a drawer to answer "which ones?". `oldest` is missing when a newer client
-    // meets an older/cached payload, so the button only shows when it's present.
-    if (insights.oldest) {
-      insightsHost.append(el("button", {
-        type: "button", style: "margin-top:10px",
-        onclick: () => openSheet(
-          (body) => body.append(renderOldestPanel(insights.oldest)),
-          { title: "Oldest open findings",
-            subtitle: "The longest-open findings, and the assets, support groups and manual groups carrying "
-          + "the aged backlog." }),
-      }, "Oldest open findings →"));
-    }
+    // moves into a drawer to answer "which ones?".
+    //
+    // THE ROWS ARE NO LONGER IN THIS PAYLOAD. They were four ranked views of up to 100 rows
+    // each — 16,434 of the page's 18,064 bytes, 91% of it — shipped on every Overview load so
+    // that a drawer many readers never open could render ten rows of one view. The panel
+    // fetches the view it is showing instead; the button is unconditional now, because there
+    // is no longer a field whose presence could gate it.
+    insightsHost.append(el("button", {
+      type: "button", style: "margin-top:10px",
+      onclick: () => openSheet(
+        (body) => body.append(renderOldestPanel()),
+        { title: "Oldest open findings",
+          subtitle: "The longest-open findings, and the assets, support groups and manual groups carrying "
+        + "the aged backlog." }),
+    }, "Oldest open findings →"));
     requestAnimationFrame(() => {
       stackedAgeBar(canvas, AGE_LABELS, insights.aging.perSev, boot.palette);
     });
   }
 
-  /** Right-column panel for the aging section: a segmented toggle over the oldest-open
-   *  views with a ranked table beneath. Repaints from the already-loaded payload, no RPC. */
-  function renderOldestPanel(oldest) {
+  /** Right-column panel for the aging section: a segmented toggle over the oldest-open views
+   *  with a ranked table beneath.
+   *
+   *  Each view is fetched the first time it is shown and remembered for the life of the panel,
+   *  so the default costs one round trip, a re-toggle costs none, and the three views most
+   *  readers never open cost nothing at all. Paging within a view stays client-side: the
+   *  server ships all 100 rows of the view it answers for, and an RPC behind every Next click
+   *  would trade the one thing this panel does well for bytes that do not matter. */
+  function renderOldestPanel() {
     let view = "findings";
-    // Current page within the active view, reset to 0 whenever the view switches. The server
-    // ships the full (capped) row set for every view, so paging is pure client-side slicing —
-    // no RPC per page.
+    // Fetched views, by name. Lives as long as the open drawer.
+    const loaded = new Map();
+    // Current page within the active view, reset to 0 whenever the view switches.
     let page = 0;
     const toggle = el("div", { class: "filter-bar", role: "group", "aria-label": "Oldest open findings view" });
     const tableHost = el("div", {});
@@ -391,10 +408,35 @@ export async function renderOverview(main, params, ctx) {
           page = 0;
           toggle.querySelectorAll("button.seg-btn").forEach((b) =>
             b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
-          paint();
+          ensure();
         },
       }, label);
       toggle.append(btn);
+    }
+
+    /** Fetch the active view unless it is already in hand, then repaint. */
+    function ensure() {
+      if (loaded.has(view)) { paint(); return; }
+      paint(); // pending state first, so the toggle responds immediately
+      const want = view;
+      swrCall("api_getOldestOpen", { ...insightsParams(), view: want }, (fresh) => absorb(fresh))
+        .then(absorb)
+        .catch((e) => {
+          // eslint-disable-next-line no-console
+          console.error("[overview] getOldestOpen failed:", e);
+          if (!tableHost.isConnected || view !== want) return;
+          clear(tableHost).append(emptyState("Couldn't load the ranked rows."));
+          clear(pagerHost);
+        });
+    }
+
+    /** Take a response only if the drawer is still open and still showing what it answers for
+     *  — the toggle can be clicked again while a request is in flight, and painting a ranked
+     *  table under the wrong heading is worse than a slow one. */
+    function absorb(res) {
+      if (!res || !tableHost.isConnected) return;
+      loaded.set(res.view, res.rows || []);
+      if (res.view === view) paint();
     }
 
     function paint() {
@@ -402,7 +444,14 @@ export async function renderOverview(main, params, ctx) {
       caption.textContent = individual
         ? "Longest-open findings, oldest first."
         : "Ranked by open findings older than 90 days.";
-      const allRows = (individual ? oldest.findings : oldest[view]) || [];
+      if (!loaded.has(view)) {
+        clear(tableHost).append(el("div", { role: "status", "aria-label": "Loading ranked rows" },
+          ...[0, 1, 2, 3, 4].map(() =>
+            el("div", { style: "margin-bottom:10px" }, skeleton("line")))));
+        clear(pagerHost);
+        return;
+      }
+      const allRows = loaded.get(view) || [];
       const pageCount = Math.max(1, Math.ceil(allRows.length / OLDEST_PAGE_SIZE));
       // Clamp when a view switch (or a smaller payload on revalidation) leaves `page` past the end.
       if (page >= pageCount) page = pageCount - 1;
@@ -423,7 +472,7 @@ export async function renderOverview(main, params, ctx) {
       }
     }
 
-    paint();
+    ensure();
     return el("div", { class: "chart-card" },
       el("h3", {}, "Oldest open findings"),
       toggle, tableHost, pagerHost, caption);

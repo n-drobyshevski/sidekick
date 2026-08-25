@@ -36,7 +36,8 @@ import { kmMedianAsOf, kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroup
 import * as insights from "../domain/insights";
 import * as program from "../domain/program";
 import {
-  execGroupSlice, execMttrSlice, historyTrendSlice, mttrPageTrendSlice,
+  execGroupSlice, execMttrSlice, historyTrendSlice, mttrGroupTableSlice, mttrGroupTrendSlice,
+  jobSummarySlice, mttrPageTrendSlice, oldestOpenSlice, overviewInsightsSlice,
   programTrendSlice, scanRowsSlice,
 } from "../domain/pagePayload";
 import * as archive from "./archiveStore";
@@ -286,10 +287,7 @@ function bootstrapCore(): Rec {
  */
 function jobSummary(job: JobRow | null): Rec | null {
   if (!job) return null;
-  return {
-    ...(job as unknown as Rec),
-    stale: !isTerminalPhase(job.phase) && isStaleJob(job),
-  };
+  return jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job));
 }
 
 function activeJobSummary(): Rec | null {
@@ -447,7 +445,18 @@ const cachedInsightsData = (p?: unknown) =>
   );
 
 export function getInsights(p?: unknown): ApiResult {
-  return run(() => cachedInsightsData(p));
+  return run(() => overviewInsightsSlice(cachedInsightsData(p)));
+}
+
+/** One oldest-open view, for the aging drawer. Reads the SAME cached entry `getInsights` does,
+ *  so opening the drawer is a slice of a warm payload rather than a second `baseVisible`
+ *  rebuild — and `insights.oldestOpen(baseVisible, 100)` stays exactly as it is, still computed
+ *  and still cached, just no longer shipped to every reader who never opens the drawer.
+ *
+ *  `view` is applied AFTER the cache read and is deliberately not part of any key: all four
+ *  views live in one entry, so the second and third toggles cost a slice, not a compute. */
+export function getOldestOpen(p?: unknown): ApiResult {
+  return run(() => oldestOpenSlice(cachedInsightsData(p), String((p as Rec)?.["view"] ?? "")));
 }
 
 // ------------------------------------------------------------------------- grouping
@@ -1280,10 +1289,28 @@ export function getMttrTrend(p?: unknown): ApiResult {
 export function getMttrPage(p?: unknown): ApiResult {
   const domain = String((p as Rec)?.["domain"] ?? "");
   return run(() => ({
-    mttr: cachedMttrData(p),
+    // THE SUMMARY IS NOT MISSING — it is the other RPC's job. `mttr.js` already fires
+    // `api_getMttr` with identical params, and both endpoints resolve the SAME
+    // `cachedMttrData` entry, so returning it here too shipped it twice per page load: 9,372
+    // bytes on the seeded estate, two Kaplan-Meier curves included. On a cold cache it was
+    // worse than duplicate transfer — the two RPCs are separate GAS executions, so both
+    // computed it. The page composes the two payloads instead; see `mttrPaintPlan`.
     trends: mttrPageTrendSlice(cachedMttrTrendData(p)),
-    byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
+    byDomain: mttrGroupTableSlice(
+      domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
+    ),
   }));
+}
+
+/** The by-group drawer's trend series, fetched when it opens. Repeats getMttrPage's dimension
+ *  switch verbatim — it has to, both because the switch reads `domain` and because the params
+ *  must match key-for-key to hit the entry that page already warmed. Deliberately NOT folded
+ *  into `getGroupTrend`, which serves Overview's breakdown and is a different series. */
+export function getMttrByDomainTrend(p?: unknown): ApiResult {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  return run(() => mttrGroupTrendSlice(
+    domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
+  ));
 }
 
 /** Kick off the risk-signal backfill (recovers exploit intelligence from scan archives). */
@@ -1323,7 +1350,7 @@ export function getRiskCohort(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
     const quadrant = String(params["quadrant"] ?? "");
-    const rows = riskCohortRows(p, quadrant);
+    const rows = cachedRiskCohortRows(p, quadrant);
     const page = Math.max(0, Number(params["page"] ?? 0));
     const pageSize = Math.min(500, Math.max(1, Number(params["pageSize"] ?? 100)));
     const start = page * pageSize;
@@ -1343,6 +1370,10 @@ export function getRiskCohort(p?: unknown): ApiResult {
 export function getExportCoverageCsv(p?: unknown): ApiResult {
   return run(() => {
     const quadrant = String((p as Rec)?.["quadrant"] ?? "");
+    // Uncached on purpose, unlike the drill-down's read above. An export is a deliberate
+    // one-shot over the whole cohort; letting it populate and evict cache entries would have it
+    // compete for a shared budget with the interactive read-models, to save a pass nobody
+    // repeats.
     const rows = riskCohortRows(p, quadrant);
     const cols = [
       "vuln_key", "cve", "severity", "status", "first_seen", "resolved_at", "resolution_src",
@@ -1363,6 +1394,36 @@ export function getExportCoverageCsv(p?: unknown): ApiResult {
 
 /** Shared population for the cohort drill-down and the CSV: scoped base rows, each tagged
  *  with its risk class, the clauses that fired, and its matrix cell. */
+/**
+ * The classified cohort, cached, with pagination applied OUTSIDE it.
+ *
+ * This was the only page endpoint in the file with no cache at all, and it is the one where
+ * that hurts most: `riskCohortRows` runs `scopedBaseRows` + `filterSeverities` + `visibleBase`
+ * + a per-row `classifyRisk` and `firedSignals` over the ENTIRE scoped base, and then the
+ * endpoint throws all but one 100-row page away. Every Next click in the matrix drill-down
+ * re-did the whole pass.
+ *
+ * The shape is `getAttribution`'s (see its `unassignedAll` slice): cache the full set, slice
+ * per request. `page`/`pageSize` are deliberately NOT in the key — paging must not multiply the
+ * entries — while `quadrant` is, because it selects which rows exist. `riskRuleVersion` joins
+ * for the reason `program1` carries it: the rule decides every row's class, so a changed rule
+ * is a different cohort. 1h TTL, matching its siblings.
+ */
+const cachedRiskCohortRows = (p: unknown, quadrant: string): Rec[] =>
+  cached(
+    "riskCohort1",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+      quadrant,
+      showNoFix: settingsStore.getShowNoFix(),
+      riskRuleVersion: settingsStore.getRiskRule().version,
+    },
+    () => riskCohortRows(p, quadrant),
+    3600,
+  );
+
 function riskCohortRows(p: unknown, quadrant: string): Rec[] {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
@@ -2212,6 +2273,14 @@ export function warmReadModels(): void {
     warm("execSevCounts", () => cachedExecutiveSeverityCounts(p));
     warm("mttrTrend", () => cachedMttrTrendData(p));
     warm("insights", () => cachedInsightsData(p));
+    // Program performance is a top-level nav item one click from the landing page, and neither
+    // of its read-models was warmed — so the first visit after every scan paid a full
+    // `scopedBaseRows` + classifyRisk pass over the whole base, plus the backfilled trend
+    // backbone. `mttrBySupportGroup` is the split BOTH the MTTR and Executive pages switch to
+    // the moment a domain scope is picked, and it was cold for the same reason.
+    warm("program", () => cachedProgramData(p));
+    warm("programTrend", () => cachedProgramTrendData(p));
+    warm("mttrBySupportGroup", () => cachedMttrBySupportGroupData(p));
     warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
     warm("attribution", () => cachedAttributionData({ severities }));
   }
