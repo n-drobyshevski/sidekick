@@ -45,6 +45,7 @@ import * as errorLog from "./errorLog";
 import * as findings from "./findings";
 import * as history from "./historyStore";
 import { activeJob, getJob, isStaleJob, isTerminalPhase, type JobRow } from "./jobsStore";
+import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
 import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { hasWizCredentials } from "./props";
@@ -130,7 +131,7 @@ export function bootstrap(_p?: unknown): ApiResult {
     // (whose own comment admitted as much), `palette.glyphs`/`slaTargets`, and
     // `latestScan.shape`/`severities`. Bump so no stale fat entry survives the persistent
     // dataVersion; a reader that wanted any of them would have been broken already.
-    ...(cached("bootstrapCore6", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
+    ...(durablyCached("bootstrapCore6", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
     // Live per-request fields: never cached (activeJob changes every poll tick).
     hasCredentials: hasWizCredentials(),
     activeJob: activeJobSummary(),
@@ -659,7 +660,7 @@ const cachedAttributionData = (p?: unknown) =>
   // "attribution4" → "attribution5": `coverage` gained `bySource` and the domain is now
   // resolved tag-first, so both the per-domain rows and the KPIs mean something different. An
   // old-shape entry would render the by-source strip as four blanks and split by rules only.
-  cached(
+  durablyCached(
     "attribution5",
     { severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix() },
     () => attributionData(p),
@@ -1154,7 +1155,7 @@ const cachedMttrTrendData = (p?: unknown) =>
   // "mttrTrend5" → "mttrTrend6": the reconstructed trend now scopes to the active domain /
   // Support group (was always whole-register); key gains domain + supportGroup so scopes cache
   // apart.
-  cached(
+  durablyCached(
     "mttrTrend6",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
@@ -1186,7 +1187,7 @@ const cachedProgramData = (p?: unknown) =>
     3600,
   );
 const cachedProgramTrendData = (p?: unknown) =>
-  cached(
+  durablyCached(
     "programTrend1",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
@@ -1615,7 +1616,7 @@ function scanHistoryData(): Rec {
 const cachedScanHistoryData = () =>
   // "scanHistory" → "scanHistory2": the KPI band now drops no-fix findings when the toggle is
   // off; params null → {showNoFix} so on/off states cache apart and no stale entry survives.
-  cached("scanHistory2", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
+  durablyCached("scanHistory2", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
 
 export function getScanHistory(_p?: unknown): ApiResult {
   return run(() => {
@@ -2180,7 +2181,7 @@ const cachedStorageStatsData = () =>
   // (cellsByTab, ledgerRowCells); dataVersion persists across deploys, so bumping the
   // namespace prevents serving a stale old-shape entry (up to the TTL). The prior bump was
   // for the severity data-quality diagnostic (distinctSeverities, unknownSeverityCount).
-  cached("storageStats3", null, () => {
+  durablyCached("storageStats3", null, () => {
     const scans = ledgerStore.loadScanRows();
     const scan = findings.currentScan();
     const baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
@@ -2238,10 +2239,28 @@ function defaultGroupingKeys(): string[] {
  * execution cap, to warm slices a reader may never open. The unscoped landing page is the one
  * that must be instant, and it is the one warmed.
  */
-export function warmReadModels(): void {
+// Wall-clock budget for one warm pass, matching the scan walk's own hop budget: GAS kills an
+// execution at six minutes, and a partial warm that reports itself beats a killed one.
+const WARM_BUDGET_MS = 270_000;
+
+export function warmReadModels(budgetMs = WARM_BUDGET_MS): void {
+  duringWarm(() => warmReadModelsInner(budgetMs));
+}
+
+function warmReadModelsInner(budgetMs: number): void {
+  const t0 = Date.now();
+  let warmed = 0;
+  let skipped = 0;
+  // BUDGET, because this is no longer only a scan's tail. As a standalone trigger it becomes
+  // the thing that hits the 6-minute execution cap first if the register grows, and a killed
+  // execution warms NOTHING — every entry it had already computed is still cached, but the
+  // ones it never reached stay cold and nothing reports why. Stopping at the budget and
+  // logging "warmed N of M" degrades instead of failing.
   const warm = (label: string, fn: () => unknown) => {
+    if (Date.now() - t0 >= budgetMs) { skipped += 1; return; }
     try {
       fn();
+      warmed += 1;
     } catch (e) {
       console.warn(`Cache warm (${label}) failed: ${e}`);
     }
@@ -2284,4 +2303,44 @@ export function warmReadModels(): void {
     warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
     warm("attribution", () => cachedAttributionData({ severities }));
   }
+  if (skipped) {
+    console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
+  }
+  // Names the durable set SHOULD hold after this pass. Anything else in the folder is a leftover
+  // from a namespace bump, a changed display-severity subset, or a model dropped from the warm —
+  // none of which any future write would ever overwrite, because nothing asks for those names.
+  //
+  // Skipped after a budget cut-out: the expected list would be short by whatever never ran, and
+  // sweeping against it would trash live entries to re-fetch them next pass.
+  if (!skipped) sweepReadModels();
+}
+
+
+/**
+ * The scheduled entry point — `trigger_warmReadModels` in dist/entry.js.
+ *
+ * WHY A TRIGGER AT ALL. CacheService's maximum TTL is six hours; it is a platform ceiling, not
+ * a choice. Tenants scan daily, so DATA_VERSION does not move for ~24h while every entry lapses
+ * three or four times inside that window — and each lapse is a multi-second cold load paid by
+ * whoever opens the app next. Re-warming on a schedule costs a few minutes of trigger quota a
+ * day and means nobody pays that.
+ *
+ * SKIPPED WHILE A JOB IS IN FLIGHT, and the reason is correctness rather than politeness.
+ * `activeJob()` is single-flight across kinds, so one test covers scan, backfill, purge, import
+ * and compact. A commit landing mid-warm bumps DATA_VERSION and makes everything just computed
+ * unreachable — pure waste — but worse, a PERSISTING job is part-way through an `overwrite`, so
+ * a warm reading the ledger then would cache a torn read under the PRE-bump version and serve
+ * it for the rest of that window.
+ *
+ * It deliberately does NOT take the script lock. A 60-120s hold would make an operator's "Run
+ * scan" fail with LedgerBusyError on its 30s timeout; two fires of a 4-hourly trigger cannot
+ * overlap, and the only real race is warm-vs-afterPersist, which the activeJob check covers.
+ */
+export function warmReadModelsScheduled(): void {
+  const job = activeJob();
+  if (job) {
+    console.log(`Cache warm: skipped, ${job.kind} job ${job.job_id} is ${job.phase}`);
+    return;
+  }
+  warmReadModels();
 }

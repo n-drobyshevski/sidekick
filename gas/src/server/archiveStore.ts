@@ -17,6 +17,9 @@ import { PROP_KEYS, requireProp } from "./props";
 
 const SUBFOLDERS = [
   "scans", "obs", "checkpoints", "snapshots", "backups", "imports", "exports",
+  // Durable read-model cache (readModelStore.ts). Created on demand by subfolder(), so a
+  // deployment that never re-runs setup() still self-heals on the first write.
+  "readmodels",
 ] as const;
 export type Subfolder = (typeof SUBFOLDERS)[number];
 
@@ -384,6 +387,33 @@ export function writeMigrationExport(name: string, bundle: unknown): {
 } {
   const file = writeGzJson(subfolder("exports"), name, bundle);
   return { name, url: file.getDownloadUrl(), bytes: file.getSize() };
+}
+
+/** One gz-JSON file by name from a subfolder, or null when absent or unreadable. Keeps the
+ *  gzip-magic sniff in `parseGzBlob` private rather than re-implemented by every caller. */
+export function readGzJsonNamed(folder: Subfolder, name: string): unknown | null {
+  const files = subfolder(folder).getFilesByName(name);
+  return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+}
+
+/** Every file currently in a subfolder, by name. */
+export function listNames(folder: Subfolder): string[] {
+  const out: string[] = [];
+  const files = subfolder(folder).getFiles();
+  while (files.hasNext()) out.push(files.next().getName());
+  return out;
+}
+
+/** Trash one named file in a subfolder. No-op when absent. */
+export function trashNamed(folder: Subfolder, name: string): void {
+  const files = subfolder(folder).getFilesByName(name);
+  while (files.hasNext()) files.next().setTrashed(true);
+}
+
+/** Drop every durable read-model file. A reset bumps DATA_VERSION so they are already
+ *  unreachable, but reset should mean reset rather than "unreachable and still on disk". */
+export function trashReadModels(): void {
+  for (const name of listNames("readmodels")) trashNamed("readmodels", name);
 }
 
 export function trashLedgerSnapshot(): void {

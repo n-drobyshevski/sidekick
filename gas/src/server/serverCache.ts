@@ -97,10 +97,27 @@ export function bumpDataVersion(): void {
   versionStamp = undefined;
 }
 
+/**
+ * The params half of a cache key.
+ *
+ * EXPORTED SO THE DURABLE L2 CAN DERIVE THE SAME VALUE. `readModelStore` names its Drive files
+ * from `(name, paramsHash)`, and if that hash ever drifted from the one the L1 key uses the L2
+ * would simply never hit — no error, no wrong answer, just a feature quietly doing nothing.
+ * One definition is the only way to make that impossible; `test/readModelStore.test.ts` pins
+ * the parity.
+ */
+export function paramsHash(params: unknown): string {
+  return sha1Hex(JSON.stringify(params ?? null)).slice(0, 12);
+}
+
 /** Deterministic short key: params are hashed so keys stay under the 250-char cap. */
 export function cacheKey(name: string, params: unknown, version: string): string {
-  const paramsHash = sha1Hex(JSON.stringify(params ?? null)).slice(0, 12);
-  return `${KEY_PREFIX}:${version}:${name}:${paramsHash}`;
+  return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
+}
+
+/** The version prefix in force for this execution — what an L2 entry must match to be fresh. */
+export function currentStamp(): string {
+  return stamp();
 }
 
 /** Pure chunk split (exported for tests). */

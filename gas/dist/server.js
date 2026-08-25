@@ -92,7 +92,10 @@ var Server = (() => {
     "snapshots",
     "backups",
     "imports",
-    "exports"
+    "exports",
+    // Durable read-model cache (readModelStore.ts). Created on demand by subfolder(), so a
+    // deployment that never re-runs setup() still self-heals on the first write.
+    "readmodels"
   ];
   function rootFolder() {
     return DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
@@ -343,6 +346,20 @@ var Server = (() => {
   function writeMigrationExport(name, bundle) {
     const file = writeGzJson(subfolder("exports"), name, bundle);
     return { name, url: file.getDownloadUrl(), bytes: file.getSize() };
+  }
+  function readGzJsonNamed(folder, name) {
+    const files = subfolder(folder).getFilesByName(name);
+    return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+  }
+  function listNames(folder) {
+    const out = [];
+    const files = subfolder(folder).getFiles();
+    while (files.hasNext()) out.push(files.next().getName());
+    return out;
+  }
+  function trashNamed(folder, name) {
+    const files = subfolder(folder).getFilesByName(name);
+    while (files.hasNext()) files.next().setTrashed(true);
   }
   function trashLedgerSnapshot() {
     const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
@@ -671,6 +688,8 @@ var Server = (() => {
   var FOLDER_NAME = "wiz-sidekick";
   var DAILY_TRIGGER_HANDLER = "trigger_dailyScan";
   var DAILY_TRIGGER_HOUR = 5;
+  var WARM_TRIGGER_HANDLER = "trigger_warmReadModels";
+  var WARM_TRIGGER_HOURS = 4;
   function setup() {
     const notes = [];
     let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
@@ -703,6 +722,15 @@ var Server = (() => {
       notes.push(`daily trigger: installed (hour ${DAILY_TRIGGER_HOUR} UTC)`);
     } else {
       notes.push("daily trigger: already installed");
+    }
+    const warmExisting = ScriptApp.getProjectTriggers().filter(
+      (t) => t.getHandlerFunction() === WARM_TRIGGER_HANDLER
+    );
+    if (!warmExisting.length) {
+      ScriptApp.newTrigger(WARM_TRIGGER_HANDLER).timeBased().everyHours(WARM_TRIGGER_HOURS).create();
+      notes.push(`warm trigger: installed (every ${WARM_TRIGGER_HOURS}h)`);
+    } else {
+      notes.push("warm trigger: already installed");
     }
     const missing = [
       PROP_KEYS.wizClientId,
@@ -1841,7 +1869,8 @@ var Server = (() => {
     startRiskBackfill: () => startRiskBackfill,
     startSeverityPurge: () => startSeverityPurge2,
     trimHistory: () => trimHistory2,
-    warmReadModels: () => warmReadModels
+    warmReadModels: () => warmReadModels,
+    warmReadModelsScheduled: () => warmReadModelsScheduled
   });
 
   // src/domain/domainRules.ts
@@ -5238,7 +5267,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "5ab73fc7bacb" : "dev";
+  var BUILD_ID = true ? "5755f483090d" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -5261,9 +5290,14 @@ var Server = (() => {
     setProp(VERSION_PROP, String(Number.isFinite(prev) && prev >= now ? prev + 1 : now));
     versionStamp = void 0;
   }
+  function paramsHash(params) {
+    return sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
+  }
   function cacheKey(name, params, version) {
-    const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
-    return `${KEY_PREFIX}:${version}:${name}:${paramsHash}`;
+    return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
+  }
+  function currentStamp() {
+    return stamp();
   }
   function splitChunks(s, size = CHUNK_CHARS) {
     const out = [];
@@ -6618,6 +6652,86 @@ var Server = (() => {
     "vulnerableAsset.operatingSystem"
   ];
 
+  // src/server/readModelStore.ts
+  var ENVELOPE_V = 1;
+  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+  var warming = false;
+  var touched = null;
+  function duringWarm(fn) {
+    warming = true;
+    touched = /* @__PURE__ */ new Set();
+    try {
+      return fn();
+    } finally {
+      warming = false;
+      touched = null;
+    }
+  }
+  var disabled = false;
+  var folderMemo;
+  function readModelFolder() {
+    if (folderMemo === void 0) folderMemo = subfolder("readmodels");
+    return folderMemo;
+  }
+  function readModelFileName(name, params) {
+    return `rm-${name}-${paramsHash(params)}.json.gz`;
+  }
+  function l2Read(name, params) {
+    if (disabled) return { hit: false, why: "disabled" };
+    try {
+      const parsed = readGzJsonNamed("readmodels", readModelFileName(name, params));
+      if (parsed === null || typeof parsed !== "object") return { hit: false, why: "absent" };
+      const env = parsed;
+      if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
+      if (env.stamp !== currentStamp()) return { hit: false, why: "stale" };
+      if (!(typeof env.writtenAtMs === "number") || Date.now() - env.writtenAtMs > MAX_AGE_MS) return { hit: false, why: "stale" };
+      return { hit: true, value: env.value };
+    } catch (e) {
+      disabled = true;
+      console.warn(`Durable read-model read (${name}) failed, L2 disabled for this run: ${e}`);
+      return { hit: false, why: "unreadable" };
+    }
+  }
+  function l2Write(name, params, value) {
+    if (disabled) return;
+    try {
+      const env = {
+        v: ENVELOPE_V,
+        stamp: currentStamp(),
+        name,
+        paramsHash: paramsHash(params),
+        writtenAtMs: Date.now(),
+        value
+      };
+      writeGzJson(readModelFolder(), readModelFileName(name, params), env);
+    } catch (e) {
+      disabled = true;
+      console.warn(`Durable read-model write (${name}) failed, L2 disabled for this run: ${e}`);
+    }
+  }
+  function durablyCached(name, params, compute, ttlSec) {
+    if (warming && touched) touched.add(readModelFileName(name, params));
+    return cached(name, params, () => {
+      const hit = l2Read(name, params);
+      if (hit.hit) return hit.value;
+      const value = compute();
+      if (warming && (hit.why === "absent" || hit.why === "stale")) l2Write(name, params, value);
+      return value;
+    }, ttlSec);
+  }
+  function sweepReadModels() {
+    if (disabled) return;
+    if (!touched) return;
+    const keep = touched;
+    try {
+      for (const name of listNames("readmodels")) {
+        if (!keep.has(name)) trashNamed("readmodels", name);
+      }
+    } catch (e) {
+      console.warn(`Durable read-model sweep failed: ${e}`);
+    }
+  }
+
   // src/server/locks.ts
   var LedgerBusyError = class extends Error {
   };
@@ -6877,7 +6991,7 @@ var Server = (() => {
   }
   function purgeScanArchives(row, severities) {
     let removed = 0;
-    let touched = false;
+    let touched2 = false;
     let readable = false;
     for (const pageNo of listScanPageNumbers(row.raw_ref)) {
       const page = readScanPage(row.scan_id, pageNo);
@@ -6887,7 +7001,7 @@ var Server = (() => {
       if (!out.recognized || !out.removed) continue;
       writeScanPage(row.scan_id, pageNo, out.payload);
       removed += out.removed;
-      touched = true;
+      touched2 = true;
     }
     const slim = readSlimRecords(row.scan_id);
     if (slim) {
@@ -6895,7 +7009,7 @@ var Server = (() => {
       const out = purgeRecordsBySeverity(slim, severities);
       if (out.removed) {
         writeSlimRecords(row.scan_id, out.records);
-        touched = true;
+        touched2 = true;
       }
     }
     const frame = readFrame(row.scan_id);
@@ -6903,7 +7017,7 @@ var Server = (() => {
       const out = purgeRecordsBySeverity(frame, severities);
       if (out.removed) {
         writeFrame(row.scan_id, out.records);
-        touched = true;
+        touched2 = true;
       }
     }
     if (row.obs_ref) {
@@ -6913,12 +7027,12 @@ var Server = (() => {
         if (out.removed) {
           const ref = writeObservations(row.scan_id, out.records);
           setScanObsRef(row.scan_id, ref);
-          touched = true;
+          touched2 = true;
         }
       }
     }
-    if (touched) trashPageRuns(row.scan_id);
-    return { removed, touched, readable };
+    if (touched2) trashPageRuns(row.scan_id);
+    return { removed, touched: touched2, readable };
   }
   function startSeverityPurge(severities, alsoNarrowScope) {
     return withScriptLock(() => {
@@ -7623,7 +7737,7 @@ var Server = (() => {
       // (whose own comment admitted as much), `palette.glyphs`/`slaTargets`, and
       // `latestScan.shape`/`severities`. Bump so no stale fat entry survives the persistent
       // dataVersion; a reader that wanted any of them would have been broken already.
-      ...cached("bootstrapCore6", { showNoFix: getShowNoFix2() }, bootstrapCore),
+      ...durablyCached("bootstrapCore6", { showNoFix: getShowNoFix2() }, bootstrapCore),
       // Live per-request fields: never cached (activeJob changes every poll tick).
       hasCredentials: hasWizCredentials(),
       activeJob: activeJobSummary()
@@ -8051,7 +8165,7 @@ var Server = (() => {
     // "attribution4" → "attribution5": `coverage` gained `bySource` and the domain is now
     // resolved tag-first, so both the per-domain rows and the KPIs mean something different. An
     // old-shape entry would render the by-source strip as four blanks and split by rules only.
-    cached(
+    durablyCached(
       "attribution5",
       { severities: readSeverities(p), showNoFix: getShowNoFix2() },
       () => attributionData(p)
@@ -8430,7 +8544,7 @@ var Server = (() => {
       // "mttrTrend5" → "mttrTrend6": the reconstructed trend now scopes to the active domain /
       // Support group (was always whole-register); key gains domain + supportGroup so scopes cache
       // apart.
-      cached(
+      durablyCached(
         "mttrTrend6",
         {
           domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
@@ -8460,7 +8574,7 @@ var Server = (() => {
   };
   var cachedProgramTrendData = (p) => {
     var _a, _b;
-    return cached(
+    return durablyCached(
       "programTrend1",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
@@ -8791,7 +8905,7 @@ var Server = (() => {
   var cachedScanHistoryData = () => (
     // "scanHistory" → "scanHistory2": the KPI band now drops no-fix findings when the toggle is
     // off; params null → {showNoFix} so on/off states cache apart and no stale entry survives.
-    cached("scanHistory2", { showNoFix: getShowNoFix2() }, scanHistoryData)
+    durablyCached("scanHistory2", { showNoFix: getShowNoFix2() }, scanHistoryData)
   );
   function getScanHistory(_p) {
     return run(() => {
@@ -9253,7 +9367,7 @@ var Server = (() => {
     // (cellsByTab, ledgerRowCells); dataVersion persists across deploys, so bumping the
     // namespace prevents serving a stale old-shape entry (up to the TTL). The prior bump was
     // for the severity data-quality diagnostic (distinctSeverities, unknownSeverityCount).
-    cached("storageStats3", null, () => {
+    durablyCached("storageStats3", null, () => {
       var _a;
       const scans = loadScanRows();
       const scan = currentScan();
@@ -9284,10 +9398,22 @@ var Server = (() => {
   function defaultGroupingKeys() {
     return domainNames(getDomains2().items).length > 1 ? ["domain"] : ["atype"];
   }
-  function warmReadModels() {
+  var WARM_BUDGET_MS = 27e4;
+  function warmReadModels(budgetMs = WARM_BUDGET_MS) {
+    duringWarm(() => warmReadModelsInner(budgetMs));
+  }
+  function warmReadModelsInner(budgetMs) {
+    const t0 = Date.now();
+    let warmed = 0;
+    let skipped = 0;
     const warm = (label, fn) => {
+      if (Date.now() - t0 >= budgetMs) {
+        skipped += 1;
+        return;
+      }
       try {
         fn();
+        warmed += 1;
       } catch (e) {
         console.warn(`Cache warm (${label}) failed: ${e}`);
       }
@@ -9315,6 +9441,18 @@ var Server = (() => {
       warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
       warm("attribution", () => cachedAttributionData({ severities }));
     }
+    if (skipped) {
+      console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
+    }
+    if (!skipped) sweepReadModels();
+  }
+  function warmReadModelsScheduled() {
+    const job = activeJob();
+    if (job) {
+      console.log(`Cache warm: skipped, ${job.kind} job ${job.job_id} is ${job.phase}`);
+      return;
+    }
+    warmReadModels();
   }
   return __toCommonJS(index_exports);
 })();
