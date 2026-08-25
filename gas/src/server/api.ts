@@ -98,7 +98,10 @@ export function bootstrap(_p?: unknown): ApiResult {
     // "bootstrapCore" → "bootstrapCore2": counts / unassigned / filterOptions now honor the
     // show-no-fix toggle and settings gained `showNoFix`; params null → {showNoFix} so the
     // on/off states cache separately and no stale old-shape entry survives the deploy.
-    ...(cached("bootstrapCore2", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
+    // "bootstrapCore2" → "bootstrapCore3": the payload gained `scopeCounts`, which the header's
+    // scope switcher reads for its denominator. A cached old-shape entry has none, and the
+    // caption would render "undefined of undefined" until the next data version.
+    ...(cached("bootstrapCore3", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
     // Live per-request fields: never cached (activeJob changes every poll tick).
     dataVersion: dataVersion(),
     hasCredentials: hasWizCredentials(),
@@ -116,10 +119,31 @@ function bootstrapCore(): Rec {
   const records = scan ? visibleFrame(scan.records) : [];
   const counts: Record<string, number> = {};
   let unassignedCount = 0;
+  // What the header's scope switcher counts over. Tallied in the SAME pass as the severity
+  // counts above, and over the same `records`, so the caption's denominator is the population
+  // the rest of the payload describes rather than a second reading that could disagree with it.
+  //
+  // `noSupportGroup` is the figure the caption cannot leave off. A support group covering 120
+  // of 8,000 findings looks like a small group either way; what tells a reader whether the
+  // other 7,880 belong to some other group or to nobody at all is how many carry no group at
+  // all — and the support-group tag is optional, so "nobody said" is the common case.
+  const domainCounts: Record<string, number> = {};
+  const supportGroupCounts: Record<string, number> = {};
+  let noSupportGroup = 0;
   for (const r of records) {
     const sev = String(r["_sev"]);
     counts[sev] = (counts[sev] ?? 0) + 1;
-    if (r["_domain"] === UNASSIGNED) unassignedCount += 1;
+    // UNASSIGNED IS A REAL BUCKET AND IS COUNTED LIKE ANY OTHER. `domainNames()` appends it to
+    // the configured list, so the switcher offers it as a scope; excluding it here would draw
+    // that row as "0 findings" over a bucket that is often the largest one in the register.
+    // `unassignedCount` is the same rows counted a second time, for the callers that ask
+    // "how much did no rule claim" without scoping to it.
+    const dom = String(r["_domain"] ?? "");
+    if (dom) domainCounts[dom] = (domainCounts[dom] ?? 0) + 1;
+    if (dom === UNASSIGNED) unassignedCount += 1;
+    const sg = String(r["_supportGroup"] ?? "");
+    if (sg) supportGroupCounts[sg] = (supportGroupCounts[sg] ?? 0) + 1;
+    else noSupportGroup += 1;
   }
   return {
     // The deployed code stamp (esbuild-injected source hash; "dev" locally). Surfaced so an
@@ -157,6 +181,18 @@ function bootstrapCore(): Rec {
     unassignedCount,
     prevCounts: ledgerStore.previousSeverityCounts(),
     domainNames: domainNames(settingsStore.getDomains().items),
+    // The scope switcher's arithmetic, kept apart from `filterOptions.supportGroups` and
+    // `domainNames` so the readers that already take those as bare name lists (the domains
+    // editor, the switcher's own option builders) keep their shape. `register` is the
+    // denominator every caption carries: "1,204" alone cannot tell a small value chain from a
+    // small register, and those call for opposite reactions.
+    scopeCounts: {
+      register: records.length,
+      domains: domainCounts,
+      supportGroups: supportGroupCounts,
+      unassigned: unassignedCount,
+      noSupportGroup,
+    },
     filterOptions: scan
       ? {
           statuses: findings.distinct(records, "status"),

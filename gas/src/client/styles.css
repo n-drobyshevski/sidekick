@@ -4,8 +4,30 @@
    --sev-*-text for any colored label. */
 
 :root {
-  --rail-w: 232px;
+  /* The icon rail's own track. It never moves: the second tier is a panel BESIDE the rail,
+     not a wider version of it. Sized by its longest label rather than by its icons — "Security"
+     and "Executive" have to sit on one line at 11px, because a rail that ellipsised its own
+     item names would be an icon rail with decoration under it. */
+  --rail-icon-w: 76px;
+  /* The nav panel — wide enough for the longest thing it lists ("Program performance"). */
+  --nav-flyout-w: 280px;
+  /* HOW MUCH CHROME IS ON THE LEFT, which is what this has always meant and why the route
+     overlay can clear it with `left: var(--rail-w)` and nothing else. The rail alone while the
+     panel floats; rail + panel once the panel is pinned into the flow, which navFlyout.js
+     writes onto the root. */
+  --rail-w: var(--rail-icon-w);
+  /* The app header's height. A token rather than a literal because the shell's rows and the
+     sticky offset below 800px have to agree on one number. */
+  --appbar-h: 48px;
   --accent: #2563eb;
+  /* The accent at two tints, for the one control that reports a STATE rather than an identity:
+     the scope switcher's trigger while the register is narrowed. Rationed deliberately — the
+     accent is otherwise focus and identity only. */
+  --accent-wash: rgba(37, 99, 235, 0.08);
+  --accent-wash-hover: rgba(37, 99, 235, 0.13);
+  /* The neutral hover ground for nav links and icon buttons, previously written out at four
+     call sites and now named once. */
+  --wash-hover: rgba(0, 0, 0, 0.045);
   --ink: #171717;
   --graphite: #0a0a0a;
   --graphite-hover: #27272a;
@@ -47,7 +69,16 @@
      veil reliably absorbs clicks even over an open menu; sheets and toasts sit above it. */
   --z-popover: 30;
   --z-overlay: 40;
+  /* The nav panel: above the route overlay, because a panel open while a page refetches has to
+     stay readable and clickable; below the scrim, so a finding sheet still covers it.
+     Deliberately NOT --z-popover — that rank is for surfaces the overlay is meant to absorb
+     clicks over, and this one is chrome the reader is standing in. */
+  --z-nav-flyout: 44;
   --z-topbar: 45; /* mobile top-bar: above the route overlay, below sheets/toasts */
+  /* The app header. Above the route overlay for the same reason the top bar is: on the
+     <=800px layout the veil goes full-width and fixed, and the header is sticky above it. On
+     the wide layout the overlay lives inside .app-body and never reaches the header at all. */
+  --z-appbar: 45;
   --z-splash: 55; /* boot splash: above the route overlay (40) and topbar (45), below toast (60) */
   --z-scrim: 50;
   --z-sheet: 51;
@@ -56,6 +87,16 @@
   --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-button: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
   --shadow-sheet: -8px 0 24px -8px rgba(0, 0, 0, 0.18), -2px 0 8px -4px rgba(0, 0, 0, 0.1);
+  /* The sheet's shadow, mirrored: the nav panel floats out to the RIGHT of the rail. */
+  --shadow-flyout: 8px 0 24px -8px rgba(0, 0, 0, 0.18), 2px 0 8px -4px rgba(0, 0, 0, 0.1);
+
+  /* The brand mark's three colours. The artwork's own, and deliberately NOT severity or
+     categorical tokens — they name a picture, not a level. brandMark.js keeps the same literals
+     on the presentation attributes underneath, so the mark draws correctly with no stylesheet
+     at all; these exist so the three stay retintable from one place. */
+  --mark-map-blue: #5cb2e3;
+  --mark-map-red: #f32b2b;
+  --mark-ink: var(--graphite);
 
   --font: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, "Helvetica Neue",
     sans-serif;
@@ -75,35 +116,104 @@ html, body {
 }
 
 /* ------------------------------------------------------------------ shell / nav */
-/* Fixed viewport-height shell: the rail always fills the viewport (pinning the scan
-   zone to the bottom) and the content pane scrolls on its own. */
-#app { display: flex; height: 100vh; overflow: hidden; position: relative; }
+/* Fixed viewport-height shell: a header row across the top, then a body row holding the rail
+   (which fills what is left, pinning the scan zone to its bottom) beside a content pane that
+   scrolls on its own.
+   .app-body, not #app, is the positioning context for the route overlay — the overlay veils
+   the content while a page refetches, and the header above it stays live. */
+#app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.app-body { flex: 1; min-height: 0; display: flex; position: relative; }
+
+/* The app header: whose product this is, and which slice of the register you are reading.
+   Deliberately just those two things — the reference screens' search box, notification icons
+   and avatar have nothing behind them here, and the scan controls stay in the rail where they
+   have always been. */
+.appbar {
+  flex: 0 0 var(--appbar-h);
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+  z-index: var(--z-appbar);
+}
+.appbar-name {
+  font-weight: 600; font-size: 1rem; letter-spacing: -0.02em; color: var(--ink);
+  white-space: nowrap;
+}
+/* The rule between the product and the scope it is showing — two different kinds of fact, and
+   without it the scope name reads as part of the wordmark. */
+.appbar-sep { width: 1px; height: 20px; flex: 0 0 auto; background: var(--hairline); }
 
 .sidebar {
-  width: var(--rail-w);
-  flex: 0 0 var(--rail-w);
-  height: 100vh;
+  width: var(--rail-icon-w);
+  flex: 0 0 var(--rail-icon-w);
+  height: 100%;
   overflow-y: auto;
   background: var(--surface);
   border-right: 1px solid var(--hairline);
-  padding: 16px 12px;
+  padding: 8px 6px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
-.sidebar .wordmark {
-  font-weight: 600;
-  font-size: 1rem;
-  letter-spacing: -0.02em;
-  padding: 4px 10px 14px;
+
+/* The product mark. Its paint is on the presentation attributes too (brandMark.js), so it
+   draws correctly with no stylesheet at all — which is the case index.html's first paint is
+   closest to. These rules exist so the three colours stay retintable from one place, not
+   because the mark needs them. */
+.brand-mark { display: block; flex: none; }
+.brand-mark .mark-map { stroke: var(--mark-map-blue); }
+.brand-mark .mark-map--warm { stroke: var(--mark-map-red); }
+.brand-mark .mark-ink { stroke: var(--mark-ink); }
+.brand-mark .mark-ink-fill { fill: var(--mark-ink); }
+.brand-mark .mark-knockout { stroke: var(--page); }
+
+/* ------------------------------------------------------- the header scope switcher */
+/* In the app header, beside the wordmark, because it scopes every page rather than any one of
+   them. A row, not a column: the caption reads as a subtitle to the trigger when it is under
+   it, and as the trigger's denominator when it is beside it, and the second is what it is. */
+.scope-switch {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
 }
-.wordmark-dot {
-  width: 10px; height: 10px; border-radius: 3px; background: var(--accent);
-  display: inline-block;
+.scope-combo { width: clamp(180px, 22vw, 280px); flex: 0 1 auto; }
+/* 13px/500 — one step down from the wordmark it sits beside. It names the slice every page is
+   showing, so it must not read as an afterthought; equally it is not the product's name, so it
+   stops short of that weight. */
+.scope-switch .combobox-trigger { min-height: 32px; font-size: 13px; font-weight: 500; }
+.scope-combo-icon { display: inline-flex; flex: 0 0 auto; color: var(--text-3); }
+/* SCOPED: a value chain or a support group is narrowing the register, and every figure on
+   every page is counted over it. The trigger is the only thing on screen that is true on all
+   of them, so it is where the state belongs. Unscoped it is the plain field above — "showing
+   everything" is the resting state, and a control that were always lit would report nothing.
+   Never colour alone: the trigger names the scope and the caption carries the count. */
+.scope-combo.scoped .combobox-trigger {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
 }
+.scope-combo.scoped .combobox-trigger:hover { background: var(--accent-wash-hover); }
+.scope-combo.scoped .scope-combo-icon,
+.scope-combo.scoped .combobox-caret { color: var(--accent); }
+.scope-caption {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+/* A stored scope naming something the register no longer holds. Amber, and the caption already
+   says so in words — the colour is the second signal, never the only one. */
+.scope-caption.stale { color: var(--warn); }
+/* On a phone the caption is down to "1,2…", which is worse than absent: a denominator you can
+   only half-read tells you nothing, and the trigger beside it still names the scope. */
+@media (max-width: 560px) { .scope-caption { display: none; } }
+
+/* A lane heading. An <h2> since the rail's grouping is real structure — margin: 0 because
+   nothing else in this stylesheet resets a bare h2 and the UA's 0.83em would land here. */
 .nav-group {
   font-size: 11px;
   font-weight: 600;
@@ -111,6 +221,17 @@ html, body {
   text-transform: uppercase;
   color: var(--text-3);
   padding: 12px 10px 4px;
+  margin: 0;
+}
+/* The chrome tail's separator, drawn by both shapes of the nav: above Settings on the icon
+   rail, and above the same link in the stacked list below 800px. Decorative in the strict
+   sense — what it marks is a change of kind the reader can see (a page that names itself), so
+   nothing here is the only carrier of anything. */
+.nav-rule {
+  height: 1px;
+  flex: 0 0 auto;
+  background: var(--hairline);
+  margin: 8px 8px 4px;
 }
 .nav-link {
   display: flex;
@@ -128,7 +249,7 @@ html, body {
   cursor: pointer;
   font-family: inherit;
 }
-.nav-link:hover { background: rgba(0, 0, 0, 0.045); }
+.nav-link:hover { background: var(--wash-hover); }
 /* Active nav reads by position + weight, not a ~2.5% tint alone: a 2px accent rail anchors
    "you are here". Inset shadow keeps color rationing intact (accent = focus/data). */
 .nav-link.active {
@@ -137,6 +258,111 @@ html, body {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 .nav-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- the two-tier rail */
+
+/* A rail item is a box holding the link that navigates and, where the item has a panel, the
+   trigger that discloses it — they are one control. The box is what the pointer hovers, so the
+   link keeps its whole width as a target. */
+.rail-item { position: relative; display: block; }
+/* The rail's own link: the mark OVER its name, because at 76px there is no room beside it and
+   a name is what stops an icon rail being a rebus. */
+.rail-link {
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 2px;
+  text-align: center;
+}
+.rail-link .nav-label {
+  font-size: 11px;
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+  color: var(--text-2);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* `.current` is the lane holding the page you are on; `.active` is the link that IS that page.
+   They look the same on the rail on purpose — the rail answers "whereabouts", and the panel
+   beside it answers "which one" — and they are two classes rather than one because only the
+   second may ever carry aria-current. */
+.rail-item.current > .rail-link,
+.rail-link.active {
+  background: rgba(0, 0, 0, 0.07);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.rail-item.current > .rail-link .nav-label,
+.rail-link.active .nav-label { color: var(--ink); font-weight: 600; }
+.rail-item.current > .rail-link .nav-icon,
+.rail-link.active .nav-icon { color: var(--ink); }
+/* An item whose panel is showing. This is the only mark the rail draws for "there is more
+   here" — and it is drawn at the moment the panel is on screen beside it, which is the moment
+   it means anything. */
+.rail-item.open > .rail-link { background: var(--wash-hover); }
+
+/* --------------------------------------------------------------------- the nav panel */
+
+/* The second tier: a full-height column, so it has no placement problem to solve. Unpinned it
+   floats over the content pane with the one real shadow this system allows an overlay; pinned
+   it joins the flex row and `main` shrinks beside it, at which point it is a surface like the
+   rail and drops the shadow for a hairline. */
+.nav-flyout {
+  position: absolute;
+  left: var(--rail-icon-w); top: 0; bottom: 0;
+  width: var(--nav-flyout-w);
+  z-index: var(--z-nav-flyout);
+  display: flex;
+  flex-direction: column;
+  background: var(--page);
+  border-right: 1px solid var(--hairline);
+  box-shadow: var(--shadow-flyout);
+  opacity: 0;
+  transform: translateX(-6px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+/* display:flex above would otherwise beat the UA's [hidden] rule and leave a closed panel on
+   screen at opacity 0, eating every click along the left edge of the page. */
+.nav-flyout[hidden] { display: none; }
+.nav-flyout.open { opacity: 1; transform: none; }
+.nav-flyout.pinned {
+  position: relative;
+  left: auto; top: auto; bottom: auto;
+  flex: 0 0 var(--nav-flyout-w);
+  opacity: 1;
+  transform: none;
+  box-shadow: none;
+}
+.nav-flyout-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 8px 8px 12px;
+  flex: 0 0 auto;
+}
+.nav-flyout-title {
+  font-size: 1rem; font-weight: 600; letter-spacing: -0.01em;
+  color: var(--ink); margin: 0;
+}
+.nav-flyout-pin {
+  margin-left: auto; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; min-height: 0; padding: 0;
+  border: 1px solid transparent; border-radius: var(--radius-md);
+  background: none; color: var(--text-2); cursor: pointer; box-shadow: none;
+}
+.nav-flyout-pin:hover { background: var(--wash-hover); border-color: var(--hairline); }
+.nav-flyout-pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nav-flyout-pin[aria-pressed="true"] { color: var(--ink); border-color: var(--hairline); }
+.nav-flyout-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 0 8px 12px;
+}
+/* The panel's own group headings reuse the rail's, because they are the same kind of label in
+   the same nav — DESIGN.md's one sanctioned uppercase slot, spent once. */
+.nav-flyout-body .nav-group { padding: 12px 8px 4px; }
+/* A row with no mark of its own keeps the slot, so its name starts where every other name
+   does. */
+.nav-icon-blank { visibility: hidden; }
 
 .sidebar .scan-zone {
   margin-top: auto;
@@ -150,9 +376,10 @@ html, body {
 .scan-controls { display: flex; flex-direction: column; gap: 8px; }
 .scan-buttons { display: flex; gap: 8px; }
 
-/* Global Value Chain / Support group filters — searchable comboboxes (ui.js
-   filterCombobox()) sitting at the top of the bottom cluster. The trigger spans the
-   rail, matching the app's field look (white, hairline border, 36px min-height). */
+/* ------------------------------------------------------------------- combobox */
+/* Searchable dropdown (ui.js filterCombobox). The trigger matches the app's field look
+   (white, hairline border, 36px min-height); the list is portaled to <body> because the
+   region a trigger sits in may scroll and would clip it. */
 .combobox { position: relative; }
 .combobox-trigger {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -166,10 +393,11 @@ html, body {
 .combobox-trigger-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .combobox-caret { font-size: 0.7rem; color: var(--text-3); flex: 0 0 auto; }
 
-/* Popover: portaled to <body> (see ui.js filterCombobox — the sidebar's overflow-y:auto
-   would clip an in-rail popover) and positioned `fixed`, growing upward from the
-   trigger. Card-surface recipe matching .sev-filter-menu / .helptip-bubble, but with
-   --shadow-sheet since it floats fully detached from any panel. */
+/* Popover: portaled to <body> and positioned `fixed`. It opens DOWNWARD and flips above only
+   when there is no room below (ui.js position()) — it grew upward unconditionally while its
+   only two callers were filters at the bottom of the rail. Card-surface recipe matching
+   .sev-filter-menu / .helptip-bubble, but with --shadow-sheet since it floats fully detached
+   from any panel. */
 .combobox-pop {
   position: fixed; z-index: var(--z-popover);
   display: flex; flex-direction: column; gap: 6px;
@@ -179,10 +407,11 @@ html, body {
   font-family: var(--font);
 }
 .combobox-search { width: 100%; margin: 0; }
-/* The list itself scrolls (max-height set inline by ui.js position()) so the search
-   input above it stays pinned. */
+/* The list itself scrolls (max-height set inline by ui.js position()) so the head above it —
+   heading, note, search — stays pinned. */
 .combobox-list { list-style: none; margin: 0; padding: 2px; overflow-y: auto; }
 .combobox-option {
+  display: flex; align-items: baseline; gap: 8px;
   padding: 6px 8px; border-radius: var(--radius-sm);
   font-size: 0.8125rem; line-height: 1.3; color: var(--ink); cursor: pointer;
 }
@@ -190,30 +419,58 @@ html, body {
 /* Selected option: meaning is text weight + accent color together, not color alone —
    aria-selected already carries it for assistive tech. */
 .combobox-option[aria-selected="true"] { font-weight: 600; color: var(--accent); }
+.combobox-option-body { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.combobox-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* What a row has to say that its name cannot: which kind it is, and how much of the register
+   it covers. Muted and to the right, so a scan down the list reads names first. */
+.combobox-option-hint {
+  margin-left: auto; font-size: 11px; color: var(--text-3); flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+/* A row's own mark, and the check on the row in force. Both are decoration by contract — the
+   row says in words whatever they suggest — so they are muted, and only the check takes the
+   accent, because it reports a state rather than naming a kind. `align-self: center` because
+   the row is baseline-aligned for its text and a glyph has no baseline to sit on. */
+.combobox-option-icon { display: inline-flex; flex: 0 0 auto; align-self: center; color: var(--text-3); }
+.combobox-option-check {
+  display: inline-flex; flex: 0 0 auto; align-self: center; margin-left: 4px; color: var(--accent);
+}
+.combobox-option[aria-selected="true"] .combobox-option-icon { color: var(--accent); }
 .combobox-option--reset { border-bottom: 1px solid var(--hairline); margin-bottom: 2px; padding-bottom: 8px; }
+/* A group heading inside the list. role="presentation", so the keyboard walk steps over it —
+   DESIGN.md's one sanctioned uppercase slot again, and the same type as .nav-group. */
+.combobox-group {
+  padding: 8px 8px 2px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3);
+}
 .combobox-empty { padding: 6px 8px; font-size: 0.8125rem; color: var(--text-3); cursor: default; }
 
-/* Collapsible rail — icon-only mode (desktop only; the <=800px top-bar layout further
-   down ignores .collapsed). Width rides --rail-w so the flex main pane and the reload
-   overlay's left edge follow automatically; only the width transitions. */
-.sidebar { transition: flex-basis 0.18s ease, width 0.18s ease; }
+/* The panel's heading: what this list is, and what picking from it does. Opt-in (`header`),
+   because most lists here choose a value and have nothing to add — this exists for the one
+   that changes what every figure in the app is counted over. */
+.combobox-head {
+  padding: 8px 8px 4px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 2px;
+}
+.combobox-head-title {
+  font-size: 0.8125rem; font-weight: 600; color: var(--ink); letter-spacing: -0.01em;
+}
+.combobox-head-note { margin: 2px 0 0; font-size: 11px; line-height: 1.45; color: var(--text-2); }
+/* The scope switcher's panel. Wider than the trigger it hangs from: position() sizes a popover
+   from its anchor (floored at 240px), and the note above needs two lines rather than five. A
+   min-width beats the inline width without teaching the widget a width option that exactly one
+   caller would ever pass. */
+.combobox-pop--scope { min-width: 360px; }
+
+/* The mark on a nav row, at the one size every one of them draws: rail item, panel row and
+   stacked-list link alike. */
 .nav-icon {
   display: inline-flex; align-items: center; justify-content: center;
   width: 18px; height: 18px; flex: 0 0 18px; color: var(--text-2);
 }
 .nav-icon svg { width: 18px; height: 18px; display: block; }
 .nav-link.active .nav-icon { color: var(--ink); }
-.wordmark-label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
-.rail-toggle {
-  margin-left: auto; flex: 0 0 auto;
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; padding: 0;
-  border: 1px solid var(--hairline); border-radius: var(--radius-md);
-  background: var(--page); color: var(--text-2); cursor: pointer;
-}
-.rail-toggle:hover { background: rgba(0, 0, 0, 0.045); }
-.rail-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.rail-toggle svg { width: 16px; height: 16px; display: block; transition: transform 0.18s ease; }
 .sidebar .scan-buttons button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .sidebar .scan-buttons .primary .nav-icon { color: inherit; width: 16px; height: 16px; flex-basis: 16px; }
 .sidebar .scan-buttons .primary .nav-icon svg { width: 16px; height: 16px; }
@@ -221,86 +478,41 @@ html, body {
 .rail-status-dot.ok { background: var(--ok); }
 .rail-status-dot.neutral { background: var(--text-3); }
 
+/* The rail proper — everything here used to be the .collapsed variant of a rail that could
+   also be 232px wide. It cannot any more: the second tier is a panel BESIDE the rail, not a
+   wider rail, so this IS the rail above 800px. Below that the nav is a stacked list where
+   every one of these would be wrong, which is what the media query is holding back.
+
+   The two data-URI glyph masks that used to live here went with the filters they dressed —
+   the Value Chain funnel and the Support group figures are rows in the header switcher's list
+   now, drawn from uiIcons.js like every other mark in the app. */
 @media (min-width: 801px) {
-  .sidebar.collapsed { padding-left: 8px; padding-right: 8px; }
-  .sidebar.collapsed .wordmark-label,
-  .sidebar.collapsed .wordmark-dot,
-  .sidebar.collapsed .nav-label,
-  .sidebar.collapsed .nav-group,
-  .sidebar.collapsed .sidebar-filter,
-  .sidebar.collapsed .scan-caption,
-  .sidebar.collapsed .btn-label,
-  .sidebar.collapsed .scan-buttons button:not(.primary) { display: none; }
-  .sidebar.collapsed .wordmark { justify-content: center; padding: 4px 0 14px; }
-  .sidebar.collapsed .rail-toggle { margin-left: 0; }
-  .sidebar.collapsed .rail-toggle svg { transform: rotate(180deg); }
-  .sidebar.collapsed .nav-link { justify-content: center; padding: 8px 0; }
-  .sidebar.collapsed .scan-buttons { justify-content: center; }
-  .sidebar.collapsed .scan-buttons .primary { padding: 8px; }
-  .sidebar.collapsed .rail-status-dot { display: block; }
-  /* Value Chain and Support group both stay reachable in the icon rail as compact trigger
-     boxes — a funnel glyph for Value Chain, a users glyph for Support group, so the two stay
-     distinguishable at a glance. The combobox-trigger <button> itself becomes the 40x34 box
-     (its text label + caret hidden); the glyph is painted via ::before, same masks as before.
-     The extra .sidebar-filter--domain/--support class here out-specifies the blanket
-     .sidebar-filter display:none above. */
-  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) {
-    display: block;
-  }
-  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) .combobox-trigger {
-    position: relative;
-    width: 40px; height: 34px; margin: 2px auto 4px; padding: 0;
-    border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--page);
-  }
-  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) .combobox-trigger-text,
-  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) .combobox-caret {
-    display: none;
-  }
-  .sidebar.collapsed .sidebar-filter--domain .combobox-trigger::before {
-    content: ""; position: absolute; inset: 0; pointer-events: none;
-    background-color: var(--text-2);
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
-            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
-  }
-  .sidebar.collapsed .sidebar-filter--support .combobox-trigger::before {
-    content: ""; position: absolute; inset: 0; pointer-events: none;
-    background-color: var(--text-2);
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='9' cy='7' r='4'/%3E%3Cpath d='M22 21v-2a4 4 0 0 0-3-3.87'/%3E%3Cpath d='M16 3.13a4 4 0 0 1 0 7.75'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
-            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='9' cy='7' r='4'/%3E%3Cpath d='M22 21v-2a4 4 0 0 0-3-3.87'/%3E%3Cpath d='M16 3.13a4 4 0 0 1 0 7.75'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
-  }
-  /* Active scope: glyph + frame go accent so a filtered rail is legible at a glance. */
-  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) .combobox-trigger.active { border-color: var(--accent); }
-  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) .combobox-trigger.active::before { background-color: var(--accent); }
-  /* Matches the app's 2px accent focus ring; button:focus-visible already applies it, this
-     just keeps the accent border in step while focused. */
-  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) .combobox-trigger:focus-visible {
-    border-color: var(--accent);
-  }
-  /* The support-group filter shows a visible "Support group" text label when the rail is
-     expanded; collapsed it would break out of the 40x34 icon box, so hide it only here. */
-  .sidebar.collapsed .sidebar-filter--support .field-label { display: none; }
+  .sidebar .scan-caption,
+  .sidebar .btn-label,
+  .sidebar .scan-buttons button:not(.primary) { display: none; }
+  .sidebar .scan-buttons { justify-content: center; }
+  .sidebar .scan-buttons .primary { padding: 8px; }
+  .sidebar .rail-status-dot { display: block; }
   /* Loading panel in the icon rail: drop the full card chrome and its text/bar/buttons,
-     leaving the compact ring indicator centered — the card's phase, counts and controls
-     are too wide for 56px, so they collapse to the ring (status) + its Details button. */
-  .sidebar.collapsed .scan-progress {
+     leaving the compact ring indicator centered — the card's phase, counts and controls are
+     too wide for 76px, so they collapse to the ring (status) + its Details button. */
+  .sidebar .scan-progress {
     padding: 6px 0; gap: 0; align-items: center;
     background: transparent; border: none; box-shadow: none;
   }
-  .sidebar.collapsed .scan-progress-bar-slot,
-  .sidebar.collapsed .scan-progress-counts,
-  .sidebar.collapsed .scan-progress-actions { display: none; }
-  /* The phase line is the card's aria-live announcement target — visually hide it rather
-     than display:none it, so screen readers still hear phase transitions in the icon rail. */
-  .sidebar.collapsed .scan-progress-head {
+  .sidebar .scan-progress-bar-slot,
+  .sidebar .scan-progress-counts,
+  .sidebar .scan-progress-actions { display: none; }
+  /* The phase line is the card's aria-live announcement target — visually hide it rather than
+     display:none it, so screen readers still hear phase transitions in the icon rail. */
+  .sidebar .scan-progress-head {
     position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
     overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
   }
-  .sidebar.collapsed .scan-progress-mini { display: inline-flex; }
+  .sidebar .scan-progress-mini { display: inline-flex; }
 }
-/* The rail becomes a horizontal wrapping top-bar here, so icon-collapse doesn't apply. */
-@media (max-width: 800px) { .rail-toggle { display: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .sidebar, .rail-toggle svg { transition: none; }
+  .nav-flyout { transition: none; transform: none; }
 }
 
 /* Scan progress card (persistent, non-modal; lives in the scan zone while a job runs) */
@@ -326,8 +538,8 @@ html, body {
 .scan-progress.stuck .scan-progress-counts { color: var(--warn); }
 .scan-progress-actions { display: flex; gap: 12px; }
 
-/* Compact collapsed-rail indicator: a ring (spinner / arc / filled) with a centered
-   glyph or percent. Hidden by default; the .sidebar.collapsed rule above reveals it. The
+/* Compact icon-rail indicator: a ring (spinner / arc / filled) with a centered glyph or
+   percent. Hidden by default; the min-width:801px rule above reveals it in the rail. The
    ring is a masked conic-gradient donut so a single element carries both the track and
    the coloured arc; --ring is re-tinted per run state, matching the progress-bar colours. */
 .scan-progress-mini {
@@ -440,16 +652,21 @@ html, body {
 main {
   flex: 1;
   min-width: 0;
-  height: 100vh;
+  /* 100% of the body ROW, not of the viewport: the header takes --appbar-h off the top and
+     main scrolls inside what is left. 100vh here would push the pane's own scrollbar an
+     app-header's worth below the fold. */
+  height: 100%;
   overflow-y: auto;
   padding: 28px 32px 48px;
-  /* No max-width: main fills whatever the rail leaves, so collapsing the rail actually
-     widens the content (charts add columns via their auto-fit grids) instead of just
-     growing the right margin. */
+  /* No max-width: main fills whatever the rail and the pinned panel leave, so pinning the
+     panel narrows the content (charts drop columns from their auto-fit grids) instead of
+     just eating the left margin. */
 }
 
-/* Route-reload overlay: a translucent veil + indeterminate top bar over the content
-   pane (the sidebar stays clear and interactive) while the active page refetches. */
+/* Route-reload overlay: a translucent veil + indeterminate top bar over the content pane
+   while the active page refetches. Positioned against .app-body, so the app header above it
+   is outside its box entirely and stays live; the rail stays clear via left:var(--rail-w),
+   which widens with the panel when the panel is pinned. */
 .route-overlay {
   position: absolute;
   top: 0;
@@ -527,11 +744,12 @@ main {
   display: flex; flex-direction: column; align-items: center; gap: 18px;
   padding: 24px; width: min(280px, 80vw);
 }
+/* The splash takes the FULL mark, not the header's compact crop: it has a whole screen, and
+   the 307-dot globe the crop leaves out is legible at 112px in a way it never is at 22. */
 .boot-brand {
-  display: flex; align-items: center; gap: 9px; font-weight: 600;
+  display: flex; flex-direction: column; align-items: center; gap: 10px; font-weight: 600;
   font-size: 1.0625rem; letter-spacing: -0.02em; color: var(--ink);
 }
-.boot-brand .wordmark-dot { width: 11px; height: 11px; }
 .boot-splash-bar { width: 100%; }
 .boot-splash-note { margin: 0; font-size: 12px; color: var(--text-2); }
 @media (prefers-reduced-motion: reduce) { .boot-splash { transition: none; } }
@@ -558,7 +776,12 @@ main {
 @media (max-width: 800px) {
   /* Top-bar layout: the rail stacks above the content and the page scrolls
      normally, so opt back out of the fixed viewport-height shell. */
-  #app { flex-direction: column; height: auto; min-height: 100vh; overflow: visible; }
+  #app { height: auto; min-height: 100vh; overflow: visible; }
+  .app-body { flex-direction: column; min-height: 0; overflow: visible; }
+  /* The header follows the page down rather than scrolling off it: the scope switcher is the
+     one control that answers "what am I even looking at", and at this width the page below it
+     is long. Sticky rather than fixed so it still takes part in the flow. */
+  .appbar { position: sticky; top: 0; }
   .sidebar {
     width: auto;
     flex: none;
@@ -569,14 +792,24 @@ main {
     align-items: center;
     border-right: none;
     border-bottom: 1px solid var(--hairline);
+    padding: 12px;
   }
+  /* No panel down here at all. The nav is a stacked list at this width — there is nothing to
+     fly out from and nowhere to put it, and a pinned panel left over from a wider window would
+     land as a 280px block across the top of the page. */
+  .nav-flyout, .nav-flyout.pinned { display: none; }
   .sidebar .scan-zone { margin-top: 0; border-top: none; padding-top: 0; }
+  /* The rail turns into a ROW here, but `.nav-link` is width:100%, so the links go on stacking
+     one per line and the lane headings read as words. The tail's rule is the one thing that
+     does not survive the switch: an empty div in a row container shrink-to-fits to nothing, so
+     it needs a line of its own, and takes it with zero side margins. */
+  .sidebar .nav-rule { flex: 0 0 100%; margin: 8px 0; }
   /* The top bar must stay above the full-width route overlay so nav + scan controls remain
      visible and clickable during a reload (desktop clears the rail via left:var(--rail-w)). */
   .sidebar { position: relative; z-index: var(--z-topbar); }
   main { height: auto; overflow: visible; padding: 20px 16px 40px; }
   /* Sidebar is a top bar here, so the veil spans the full width. Pin it to the
-     viewport since #app is no longer a fixed-height positioning frame. */
+     viewport since .app-body is no longer a fixed-height positioning frame. */
   .route-overlay { position: fixed; left: 0; }
 }
 
