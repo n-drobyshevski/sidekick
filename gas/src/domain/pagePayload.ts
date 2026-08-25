@@ -164,3 +164,82 @@ const SCAN_ROW_KEYS = [
 export function scanRowsSlice(scans: unknown): Rec[] {
   return pickRows(scans, SCAN_ROW_KEYS);
 }
+
+// -------------------------------------------------------------- drawer payloads
+//
+// Two blocks below were paid for on every page load and read only after a user opened a
+// drawer. They are not projected away — they are moved behind the click that needs them, and
+// the endpoints that serve them read the SAME `cached()` entry the eager one does.
+//
+// That last part is the whole design. A `getOldestOpen` that recomputed its own rows would
+// rebuild `baseVisible` — loadBaseRows, attachSupportGroups, attachBizDomains, a per-row
+// resolveDomainName and three filter passes — which is essentially all of `insightsData`'s
+// cost, paid again, inside a drawer the reader is staring at. Reading the cached entry is a
+// hit on the payload the page warmed seconds earlier: one inflate and parse, then one slice.
+//
+// So no new cache namespace, and NO BUMP. `insights3`, `mttrByDomain14` and
+// `mttrBySupportGroup2` keep exactly the shape they compute today; only what the endpoint
+// RETURNS changes. Bumping would discard warm entries for a change that alters nothing
+// computed, which is the opposite of the point.
+
+/** The oldest-open views, in the order the panel's toggle offers them. */
+const OLDEST_VIEWS = ["findings", "byAsset", "bySupportGroup", "byDomain"] as const;
+
+/**
+ * `getInsights` minus `oldest` — the Overview page's eager payload.
+ *
+ * Written as an explicit OMIT rather than an enumeration of survivors, unlike the executive
+ * slices, and the difference is not laziness. On Executive two thirds of the payload had no
+ * reader, so naming what survives is the shorter and more honest statement. Here every other
+ * key IS read; enumerating them would be a maintenance tax that buys nothing, and the one
+ * invariant worth pinning is that `oldest` does not travel eagerly — which is one assertion.
+ *
+ * Measured on the seeded estate: `oldest` was 16,434 of 18,064 bytes, 91% of the payload, for
+ * four ranked views of up to 100 rows each — of which the panel renders ten rows of one.
+ */
+export function overviewInsightsSlice(insights: unknown): Rec | null {
+  if (!insights || typeof insights !== "object") return null;
+  const out: Rec = {};
+  for (const [k, v] of Object.entries(insights as Rec)) if (k !== "oldest") out[k] = v;
+  return out;
+}
+
+/**
+ * One ranked view for the drawer, echoed with the `view` it answers for.
+ *
+ * The echo is not decoration: the toggle can be clicked again before a response lands, and the
+ * panel drops any payload whose `view` is no longer the active one rather than painting a
+ * ranked table under the wrong heading.
+ *
+ * Rows stay uncapped within the existing 100 the server already computes, and the pager stays
+ * client-side. In GAS the round trip is the expensive unit, not the few KB — putting an RPC
+ * behind every Next click would trade the one thing this panel does well for a saving that
+ * does not matter.
+ */
+export function oldestOpenSlice(insights: unknown, view: string): Rec {
+  const known = (OLDEST_VIEWS as readonly string[]).includes(view) ? view : "findings";
+  const oldest = (insights && typeof insights === "object")
+    ? ((insights as Rec)["oldest"] as Rec | undefined)
+    : undefined;
+  const rows = oldest ? oldest[known] : undefined;
+  return { view: known, rows: Array.isArray(rows) ? rows : [] };
+}
+
+/**
+ * `getMttrPage`'s per-group split without its trend series — the table only.
+ *
+ * `rows` stays EAGER. It is bounded by the number of groups rather than by the estate, the
+ * table is what makes the drawer feel instant when it opens, and the `awaiting` footnote sums
+ * it before the drawer exists. Only the two per-scan x per-group series move.
+ */
+export function mttrGroupTableSlice(byGroup: unknown): Rec | null {
+  if (!byGroup || typeof byGroup !== "object") return null;
+  const b = byGroup as Rec;
+  return { dimension: b["dimension"], rows: Array.isArray(b["rows"]) ? b["rows"] : [] };
+}
+
+/** The series the by-group drawer's two charts draw, fetched when it opens. */
+export function mttrGroupTrendSlice(byGroup: unknown): Rec | null {
+  if (!byGroup || typeof byGroup !== "object") return null;
+  return ((byGroup as Rec)["trend"] as Rec | undefined) ?? null;
+}

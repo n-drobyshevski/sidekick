@@ -1793,8 +1793,10 @@ var Server = (() => {
     getInsights: () => getInsights,
     getJobStatus: () => getJobStatus,
     getMttr: () => getMttr,
+    getMttrByDomainTrend: () => getMttrByDomainTrend,
     getMttrPage: () => getMttrPage,
     getMttrTrend: () => getMttrTrend,
+    getOldestOpen: () => getOldestOpen,
     getProgramPage: () => getProgramPage,
     getPurgeStatus: () => getPurgeStatus,
     getRecentErrors: () => getRecentErrors,
@@ -4812,6 +4814,29 @@ var Server = (() => {
   function scanRowsSlice(scans) {
     return pickRows(scans, SCAN_ROW_KEYS);
   }
+  var OLDEST_VIEWS = ["findings", "byAsset", "bySupportGroup", "byDomain"];
+  function overviewInsightsSlice(insights) {
+    if (!insights || typeof insights !== "object") return null;
+    const out = {};
+    for (const [k, v] of Object.entries(insights)) if (k !== "oldest") out[k] = v;
+    return out;
+  }
+  function oldestOpenSlice(insights, view) {
+    const known = OLDEST_VIEWS.includes(view) ? view : "findings";
+    const oldest = insights && typeof insights === "object" ? insights["oldest"] : void 0;
+    const rows = oldest ? oldest[known] : void 0;
+    return { view: known, rows: Array.isArray(rows) ? rows : [] };
+  }
+  function mttrGroupTableSlice(byGroup) {
+    if (!byGroup || typeof byGroup !== "object") return null;
+    const b = byGroup;
+    return { dimension: b["dimension"], rows: Array.isArray(b["rows"]) ? b["rows"] : [] };
+  }
+  function mttrGroupTrendSlice(byGroup) {
+    var _a;
+    if (!byGroup || typeof byGroup !== "object") return null;
+    return (_a = byGroup["trend"]) != null ? _a : null;
+  }
 
   // src/server/errorLog.ts
   var KEY = "RECENT_ERRORS";
@@ -5174,7 +5199,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "c1eb3cf449ac" : "dev";
+  var BUILD_ID = true ? "773e9bbfaca4" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -7793,7 +7818,13 @@ var Server = (() => {
     );
   };
   function getInsights(p) {
-    return run(() => cachedInsightsData(p));
+    return run(() => overviewInsightsSlice(cachedInsightsData(p)));
+  }
+  function getOldestOpen(p) {
+    return run(() => {
+      var _a;
+      return oldestOpenSlice(cachedInsightsData(p), String((_a = p == null ? void 0 : p["view"]) != null ? _a : ""));
+    });
   }
   function scopedFrameRecords(domain, supportGroup, supportGroupSet) {
     const scan = currentScan();
@@ -8483,8 +8514,17 @@ var Server = (() => {
       // worse than duplicate transfer — the two RPCs are separate GAS executions, so both
       // computed it. The page composes the two payloads instead; see `mttrPaintPlan`.
       trends: mttrPageTrendSlice(cachedMttrTrendData(p)),
-      byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
+      byDomain: mttrGroupTableSlice(
+        domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
+      )
     }));
+  }
+  function getMttrByDomainTrend(p) {
+    var _a;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    return run(() => mttrGroupTrendSlice(
+      domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
+    ));
   }
   function startRiskBackfill(_p) {
     return mutate(() => startBackfill());
