@@ -916,6 +916,9 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
    left rail. Leadership landing page, so hierarchy is dominated by one big number. */
 .exec { max-width: 720px; margin: 0 auto; text-align: center; }
 .exec .page-sub { margin: 0 0 24px; }
+/* .scope-bar is a flex row, so it ignores .exec's text-align and would sit hard-left in an
+   otherwise centered column. The chip qualifies these figures — it centers with them. */
+.exec .scope-bar { justify-content: center; }
 /* The single hero value (DESIGN.md: at most one per page). A deliberate exec-only step above
    the 2rem .hero-value cap — this page *is* that number, so the larger size earns its place;
    it is still the only hero value on the page. Tabular figures so it never jitters. */

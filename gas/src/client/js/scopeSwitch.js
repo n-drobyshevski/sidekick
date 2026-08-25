@@ -296,8 +296,7 @@ export function scopeSwitchControl(data, active, onPick) {
       // question: a domain owns the resource, a support group is the team a subscription's tag
       // names. Naming only one would leave a reader to guess which heading they had picked
       // from — and the two cut across each other, so guessing wrong is easy.
-      note: "Every page answers for the domain or support group you pick. "
-        + "Executive always answers for the whole register.",
+      note: "Every page answers for the domain or support group you pick.",
     },
     // The scope outlives the page you picked it on, so which row is in force is a standing
     // fact about the app rather than a highlight in an open menu — worth a mark of its own

@@ -5115,7 +5115,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "15ecadcce71c" : "dev";
+  var BUILD_ID = true ? "967a0b02b96d" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -8498,8 +8498,11 @@ var Server = (() => {
       //
       // The key still omits `bizDomain`, and that is now correct rather than a defect: it used to
       // be one, because `mttrByDomainData` filtered on a param the key never carried, so a scoped
-      // payload could be served from another scope's entry. The dimension is gone — the split is
-      // whole-register by construction and reads no scope param at all.
+      // payload could be served from another scope's entry. That dimension is gone. `domain` is
+      // omitted for a different reason and it is NOT a repeat of that bug: both callers route a
+      // domain scope to `cachedMttrBySupportGroupData` instead (getMttrPage, getExecutivePage), so
+      // this entry is only ever reached with `domain === ""` and cannot be read at another. The
+      // `supportGroup` it DOES read is in the key.
       "mttrByDomain14",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
@@ -8678,11 +8681,42 @@ var Server = (() => {
       3600
     );
   };
+  function executiveSeverityCounts(p) {
+    var _a, _b;
+    const scan = currentScan();
+    if (!scan) return { flatScan: false, counts: {}, total: 0 };
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const recs = filterSeverities(
+      scopedFrameRecords(domain, supportGroup, []),
+      readSeverities(p)
+    );
+    return { flatScan: true, counts: sevCountsOf(recs), total: recs.length };
+  }
+  var cachedExecutiveSeverityCounts = (p) => {
+    var _a, _b;
+    return cached(
+      "execSevCounts1",
+      {
+        domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+        supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2()
+      },
+      () => executiveSeverityCounts(p),
+      3600
+    );
+  };
   function getExecutivePage(p) {
+    var _a;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     return run(() => ({
       mttr: cachedMttrData(p),
-      byDomain: cachedMttrByDomainData(p),
-      weekTrend: cachedExecutiveWeekTrend(p)
+      // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
+      // domain yields a single row, so a domain scope splits by support group within it instead.
+      byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
+      weekTrend: cachedExecutiveWeekTrend(p),
+      severityCounts: cachedExecutiveSeverityCounts(p)
     }));
   }
   function scanHistoryData() {
@@ -9221,6 +9255,8 @@ var Server = (() => {
       const p = { domain: "", supportGroup: "", severities };
       warm("mttr", () => cachedMttrData(p));
       warm("mttrByDomain", () => cachedMttrByDomainData(p));
+      warm("execWeekTrend", () => cachedExecutiveWeekTrend(p));
+      warm("execSevCounts", () => cachedExecutiveSeverityCounts(p));
       warm("mttrTrend", () => cachedMttrTrendData(p));
       warm("insights", () => cachedInsightsData(p));
       warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
