@@ -247,6 +247,15 @@
     }
     getMaxRows() { return this._grid.length; }
     getMaxColumns() { return this._maxCols; }
+    // sheetsDb.shrinkTab needs this to reclaim allocated grid after a purge. The fake grid
+    // grows on demand rather than starting at Sheets' 1000-row default, so the numbers here
+    // are smaller than production — what it demonstrates is the direction of the change.
+    deleteRows(rowPosition, howMany) {
+      const start = Math.max(1, rowPosition) - 1;
+      const n = Math.max(0, Math.min(howMany ?? 1, this._grid.length - start));
+      if (n > 0) this._grid.splice(start, n);
+      return this;
+    }
     getLastRow() {
       for (let i = this._grid.length - 1; i >= 0; i--) {
         if (this._grid[i].some((v) => v !== "" && v !== null && v !== undefined)) {

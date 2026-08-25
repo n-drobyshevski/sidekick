@@ -37,6 +37,19 @@ import {
   type DeleteResult,
 } from "../domain/maintenance";
 import type { RiskRule } from "../domain/program";
+import {
+  previewEpisodePrune,
+  previewHistoryTrim,
+  previewSeverityPurge,
+  pruneEpisodesCore,
+  purgeCheckpointByKeys,
+  purgeCheckpointBySeverity,
+  purgeStateBySeverity,
+  trimHistoryRows,
+  type EpisodePruneCriteria,
+  type EpisodePrunePreview,
+  type SeverityPurgePreview,
+} from "../domain/purge";
 import { coerceRiskSignals, type Deltas, type LedgerRow } from "../domain/reconcile";
 import {
   applyShardCore,
@@ -64,7 +77,9 @@ import {
   ensureTab,
   overwrite,
   readAll,
+  shrinkTab,
   truncateAfter,
+  updateWhere,
   TABS,
 } from "./sheetsDb";
 
@@ -854,6 +869,156 @@ export function resetLedger(): ResetCounts {
   archive.trashLedgerSnapshot();
   invalidateLedgerMemos();
   return counts;
+}
+
+// ------------------------------------------------------------------------ maintenance
+//
+// Manual cleanup by criteria (Data → Maintenance). The pure predicates live in
+// domain/purge.ts; what is here is the Sheets/Drive edge — journal, checkpoint rewrite,
+// wholesale state write, and the GRID SHRINK, which is the step that actually reclaims the
+// 10M-cell budget (see sheetsDb.shrinkTab: overwrite only clearContent()s).
+
+/**
+ * Rewrite every compaction checkpoint through `transform`, keeping `compactions.checkpoint_ref`
+ * in step — a rewritten blob gets a new Drive id.
+ *
+ * Every checkpoint, not just the newest: `latestCheckpoint()` reads one, but leaving purged
+ * lifecycles in the older blobs keeps them on disk and one compaction-row edit away from
+ * becoming the rebuild baseline again.
+ */
+function rewriteCheckpoints(
+  transform: (cp: Checkpoint) => { checkpoint: Checkpoint; removed: number },
+): number {
+  let removed = 0;
+  for (const row of readAll(TABS.compactions)) {
+    const ref = row["checkpoint_ref"] as string | null;
+    if (!ref) continue;
+    const cp = archive.readCheckpoint(ref);
+    if (!cp) continue;
+    const out = transform(cp);
+    if (!out.removed) continue;
+    const compactionId = String(row["compaction_id"]);
+    const newRef = archive.rewriteCheckpoint(compactionId, ref, out.checkpoint);
+    if (newRef !== ref) {
+      updateWhere(TABS.compactions, "compaction_id", compactionId, { checkpoint_ref: newRef });
+    }
+    removed += out.removed;
+  }
+  return removed;
+}
+
+export interface MaintenancePreview {
+  purge: SeverityPurgePreview;
+  episodes: EpisodePrunePreview;
+  history: { rows: number; remaining: number; oldest: string | null };
+}
+
+/** All three dry-run previews from one state read (the tab walk is the expensive part). */
+export function previewMaintenance(
+  severities: readonly string[],
+  episodes: EpisodePruneCriteria,
+  historyBeforeDate: string,
+): MaintenancePreview {
+  const state = loadState();
+  return {
+    purge: previewSeverityPurge(state, severities),
+    episodes: previewEpisodePrune(state, episodes),
+    history: previewHistoryTrim(readAll(TABS.mttrHistory), historyBeforeDate),
+  };
+}
+
+export interface PurgeTabsResult {
+  ledgerRemoved: number;
+  episodeRemoved: number;
+  checkpointRemoved: number;
+  scopesNarrowed: number;
+}
+
+/**
+ * Repoint a scan row at a rewritten observations file.
+ *
+ * `writeGzJson` trashes the same-named file and creates a fresh one (archiveStore.ts:58-61),
+ * so rewriting `obs-<scan_id>.json.gz` yields a NEW id and the old `scans.obs_ref` points at
+ * a trashed file. `previousSeverityCounts` (the change badges) and compaction's observation
+ * accounting both read through that ref and would silently see zero.
+ */
+export function setScanObsRef(scanId: string, obsRef: string): void {
+  updateWhere(TABS.scans, "scan_id", scanId, { obs_ref: obsRef });
+  invalidateLedgerMemos();
+}
+
+/**
+ * Phase 0 of a severity purge: the two tabs plus every checkpoint, in one journaled write.
+ * The archive walk that makes it survive a scan deletion is phase 1, in server/purgeJobs.ts.
+ */
+export function purgeSeverityTabs(severities: readonly string[], jobId: string): PurgeTabsResult {
+  const state = loadState();
+  const { state: purged, ledgerRemoved, episodeRemoved, scopesNarrowed } = purgeStateBySeverity(
+    state,
+    severities,
+  );
+  const checkpointRemoved = rewriteCheckpoints((cp) => purgeCheckpointBySeverity(cp, severities));
+  if (!ledgerRemoved && !episodeRemoved && !scopesNarrowed) {
+    return { ledgerRemoved: 0, episodeRemoved: 0, checkpointRemoved, scopesNarrowed: 0 };
+  }
+  // Journal + PERSISTING before the write, so a mid-write death is rolled back by
+  // recoverIfNeeded (locks.ts:36-38) — scan_id stays null, which is what keeps it out of the
+  // commit-record branch and in the journal-restore one. Same shape as compactLedger.
+  const journalRef = archive.writeJournal(jobId, state);
+  updateJob(jobId, { phase: "PERSISTING", journal_ref: journalRef });
+  writeStateTables(purged);
+  shrinkTab(TABS.vulnLedger);
+  shrinkTab(TABS.episodes);
+  updateJob(jobId, { phase: "PURGING", journal_ref: null });
+  archive.trashFile(journalRef);
+  return { ledgerRemoved, episodeRemoved, checkpointRemoved, scopesNarrowed };
+}
+
+export interface EpisodePruneResult {
+  removed: number;
+  checkpointRemoved: number;
+  remaining: number;
+}
+
+/**
+ * Drop sealed lifecycles matching an age (+ optional severity) criterion.
+ *
+ * The checkpoint purge is not optional bookkeeping: `deleteScansCore` seeds the rebuilt ledger
+ * from the checkpoint MINUS the keys present in `resolved_episodes` (maintenance.ts:216-220),
+ * so an episode removed from the tab alone comes back as a live RESOLVED `vuln_ledger` row the
+ * next time a scan is deleted. Both edits ride the same journal.
+ */
+export function pruneEpisodes(c: EpisodePruneCriteria): EpisodePruneResult {
+  const state = loadState();
+  const { state: pruned, removed, prunedKeys } = pruneEpisodesCore(state, c);
+  if (!removed) return { removed: 0, checkpointRemoved: 0, remaining: state.episodes.length };
+  const jobId = newJobId("purge");
+  const journalRef = archive.writeJournal(jobId, state);
+  const keys = new Set(prunedKeys);
+  const checkpointRemoved = rewriteCheckpoints((cp) => purgeCheckpointByKeys(cp, keys));
+  writeStateTables(pruned);
+  shrinkTab(TABS.episodes);
+  archive.trashFile(journalRef);
+  return { removed, checkpointRemoved, remaining: pruned.episodes.length };
+}
+
+/**
+ * Drop `mttr_history` rows dated before `beforeDate`.
+ *
+ * The one cleanup with no replay exposure: the tab is written only by
+ * historyStore.recordSnapshot and importHistory, never rebuilt from archives — so no journal
+ * and no checkpoint work, just the rewrite and the shrink.
+ */
+export function trimHistory(beforeDate: string): { removed: number; remaining: number; oldestKept: string | null } {
+  const rows = readAll(TABS.mttrHistory);
+  const out = trimHistoryRows(rows, beforeDate);
+  if (!out.removed) {
+    return { removed: 0, remaining: rows.length, oldestKept: out.oldestKept };
+  }
+  overwrite(TABS.mttrHistory, out.rows);
+  shrinkTab(TABS.mttrHistory);
+  bumpDataVersion();
+  return { removed: out.removed, remaining: out.rows.length, oldestKept: out.oldestKept };
 }
 
 // -------------------------------------------------------------------------- compact

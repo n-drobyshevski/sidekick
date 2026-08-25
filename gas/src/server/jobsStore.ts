@@ -5,7 +5,7 @@
 import { nowIso, parseTs, type Rec } from "../domain/util";
 import { appendRows, ensureTab, readAll, updateWhere, TABS } from "./sheetsDb";
 
-export type JobKind = "scan" | "delete" | "compact" | "import" | "backfill";
+export type JobKind = "scan" | "delete" | "compact" | "import" | "backfill" | "purge";
 export type JobPhase =
   | "FETCHING"
   | "RECONCILING"
@@ -22,6 +22,11 @@ export type JobPhase =
   // so a crashed hop leaves valid (merely incomplete) state and re-running converges. Rolling
   // it back would discard correct work for no reason.
   | "BACKFILLING"
+  // Severity purge. Excluded from locks.recoverIfNeeded's rollback set for the same reason
+  // as BACKFILLING: removing a severity twice equals removing it once, so a hop killed
+  // mid-walk leaves valid (merely incomplete) state and re-running converges. Rolling it
+  // back from the journal would restore rows the operator deliberately deleted.
+  | "PURGING"
   | "DONE"
   | "FAILED"
   | "CANCELLED";
@@ -140,6 +145,7 @@ export function clearTriggers(handlerName: string): void {
 export const CONTINUE_HANDLERS: Partial<Record<JobKind, string>> = {
   scan: "trigger_continueScan",
   backfill: "trigger_continueBackfill",
+  purge: "trigger_continuePurge",
 };
 
 /**

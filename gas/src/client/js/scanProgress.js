@@ -14,6 +14,11 @@ const PHASE_LABEL = {
   RECONCILING: "Reconciling",
   PERSISTING: "Saving",
   REPLAYING: "Saving",
+  // Maintenance job phases. Jobs are single-flight across kinds, so the sidebar card paints
+  // whichever job is active — without these two it falls back to printing the raw phase
+  // constant ("BACKFILLING") at the operator.
+  BACKFILLING: "Recovering exploit signals",
+  PURGING: "Purging findings",
   DONE: "Complete",
   FAILED: "Failed",
   CANCELLED: "Cancelled",
