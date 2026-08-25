@@ -21,6 +21,7 @@ var Server = (() => {
   // src/server/index.ts
   var index_exports = {};
   __export(index_exports, {
+    access: () => access_exports,
     api: () => api_exports,
     backfill: () => backfillJobs_exports,
     doGet: () => doGet,
@@ -40,6 +41,19 @@ var Server = (() => {
     return HtmlService.createHtmlOutputFromFile(filename).getContent();
   }
 
+  // src/server/access.ts
+  var access_exports = {};
+  __export(access_exports, {
+    assertAllowed: () => assertAllowed,
+    check: () => check,
+    decide: () => decide,
+    deniedHtml: () => deniedHtml,
+    deniedPage: () => deniedPage,
+    denyResult: () => denyResult,
+    ownerEmail: () => ownerEmail,
+    parseAllowlist: () => parseAllowlist
+  });
+
   // src/server/props.ts
   var PROP_KEYS = {
     wizApiToken: "WIZ_API_TOKEN",
@@ -50,6 +64,10 @@ var Server = (() => {
     wizProjectIdV2: "WIZ_PROJECT_ID_V2",
     wizSupportGroupTagKey: "WIZ_SUPPORT_GROUP_TAG_KEY",
     wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
+    // Who may use the web app, on top of the deployment's domain fence. Comma-, semicolon- or
+    // whitespace-separated addresses; see access.ts. UNSET MEANS OWNER-ONLY, not "everyone" —
+    // the guard fails closed, and the owner is allowed by identity rather than by this list.
+    allowedUsers: "ALLOWED_USERS",
     ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
     archiveFolderId: "ARCHIVE_FOLDER_ID",
     // The warm schedule setup() last installed. A ClockTrigger exposes no hour, minute or
@@ -86,6 +104,104 @@ var Server = (() => {
       getProp(PROP_KEYS.wizClientId),
       getProp(PROP_KEYS.wizClientSecret)
     ) !== null;
+  }
+
+  // src/server/access.ts
+  var DENIAL_MESSAGE = {
+    anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
+    "not-listed": "You don't have access to this app."
+  };
+  function parseAllowlist(raw) {
+    if (!raw) return [];
+    const seen2 = {};
+    const out = [];
+    for (const part of raw.split(/[,;\s]+/)) {
+      const email = part.trim().toLowerCase();
+      if (!email || seen2[email]) continue;
+      seen2[email] = true;
+      out.push(email);
+    }
+    return out;
+  }
+  function decide(active, owner, raw) {
+    const email = (active || "").trim();
+    const key = email.toLowerCase();
+    if (!key) return { allowed: false, email: "", reason: "anonymous" };
+    const ownerKey = (owner || "").trim().toLowerCase();
+    if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
+    return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
+  }
+  var memo;
+  function check() {
+    if (memo === void 0) {
+      memo = decide(
+        Session.getActiveUser().getEmail(),
+        Session.getEffectiveUser().getEmail(),
+        getProp(PROP_KEYS.allowedUsers)
+      );
+    }
+    return memo;
+  }
+  function logDenial(op, d) {
+    console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
+  }
+  function denyResult(op) {
+    const d = check();
+    if (d.allowed) return null;
+    logDenial(op, d);
+    return { ok: false, error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"], errorKind: "forbidden" };
+  }
+  function assertAllowed(op) {
+    const d = check();
+    if (d.allowed) return;
+    logDenial(op, d);
+    throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
+  }
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function deniedHtml(d, switchUrl) {
+    const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
+    const link = switchUrl ? '<p class="alt"><a href="' + escapeHtml(switchUrl) + '">Switch Google account</a></p>' : "";
+    return [
+      '<!DOCTYPE html><html><head><meta charset="utf-8">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+      "<title>Wiz Sidekick OS</title><style>",
+      "*{box-sizing:border-box}",
+      "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
+      "background:#f8fafc;color:#0a0a0a;",
+      "font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}",
+      ".card{max-width:32rem;margin:24px;padding:32px;background:#fff;border:1px solid #e2e8f0;",
+      "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
+      ".product{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#64748b;margin:0 0 12px}",
+      "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
+      "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:#334155}",
+      ".alt{margin-top:20px}",
+      "a{color:#2563eb}",
+      "a:focus-visible{outline:2px solid #2563eb;outline-offset:2px;border-radius:4px}",
+      '</style></head><body><main class="card">',
+      '<p class="product">Wiz Sidekick OS</p>',
+      "<h1>You don't have access to this app.</h1>",
+      "<p>" + detail + "</p>",
+      "<p>If you think you should have access, ask whoever runs this dashboard to add you.</p>",
+      link,
+      "</main></body></html>"
+    ].join("");
+  }
+  function deniedPage() {
+    const d = check();
+    if (d.allowed) return null;
+    logDenial("doGet", d);
+    let switchUrl = null;
+    try {
+      switchUrl = "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(ScriptApp.getService().getUrl());
+    } catch (_e) {
+      switchUrl = null;
+    }
+    return HtmlService.createHtmlOutput(deniedHtml(d, switchUrl)).setTitle("Wiz Sidekick OS").addMetaTag("viewport", "width=device-width, initial-scale=1");
+  }
+  function ownerEmail() {
+    return Session.getEffectiveUser().getEmail() || "";
   }
 
   // src/server/archiveStore.ts
@@ -724,6 +840,17 @@ var Server = (() => {
     }
     ensureFolders(folderId);
     if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
+    if (!getProp(PROP_KEYS.allowedUsers)) {
+      const owner = ownerEmail();
+      if (owner) {
+        setProp(PROP_KEYS.allowedUsers, owner);
+        notes.push(`allowlist: seeded with owner ${owner}`);
+      } else {
+        notes.push("allowlist: not seeded (owner email unavailable)");
+      }
+    } else {
+      notes.push("allowlist: already set, left as-is");
+    }
     const existing = ScriptApp.getProjectTriggers().filter(
       (t) => t.getHandlerFunction() === DAILY_TRIGGER_HANDLER
     );
@@ -5303,7 +5430,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "e62a9623edfb" : "dev";
+  var BUILD_ID = true ? "bbb2e86b17d4" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -6552,16 +6679,16 @@ var Server = (() => {
   }
 
   // src/server/findings.ts
-  var memo;
+  var memo2;
   function invalidateFrameMemo() {
-    memo = void 0;
+    memo2 = void 0;
   }
   function currentScan() {
-    if (memo !== void 0) return memo;
+    if (memo2 !== void 0) return memo2;
     const row = latestFlatScanRow();
     if (!row) {
-      memo = null;
-      return memo;
+      memo2 = null;
+      return memo2;
     }
     const domains = getDomains2();
     const compiled = compileDomains(domains.items);
@@ -6592,7 +6719,7 @@ var Server = (() => {
       flat["_domain"] = resolved.name;
       flat["_domainSource"] = resolved.source;
     }
-    memo = {
+    memo2 = {
       scanId: row.scan_id,
       ts: row.ts,
       mode: row.mode,
@@ -6601,7 +6728,7 @@ var Server = (() => {
       severities: row.severities,
       records
     };
-    return memo;
+    return memo2;
   }
   function applyFilters(records, f) {
     var _a, _b, _c, _d, _e, _f;

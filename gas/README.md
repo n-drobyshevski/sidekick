@@ -503,9 +503,23 @@ and the result reports the true zero rather than claiming a reclaim.
      (`serverCache.ts`) so every cached payload is recomputed under the new key rather than
      the knob appearing to do nothing for six hours. A register where nothing carries the
      tag falls back entirely to the manual groups.
+   - `ALLOWED_USERS` *(optional but read fail-closed)* — comma/semicolon/whitespace-separated
+     Google account addresses admitted to the deployed web app, on top of the domain fence
+     below. **Unset means owner-only, not "everyone"** — an empty or unparseable property
+     yields an empty list, and an empty list admits nobody but the deploying owner, who is
+     always allowed regardless of the list (matched by identity, not membership) so a typo or
+     a deleted property can never lock them out. Takes effect on the **next request** — no
+     redeploy, no `setup()` re-run.
    Without credentials the app runs in dry-run mode over sample data.
-6. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain),
-   or `npm run deploy`.
+6. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain), or
+   `npm run deploy`. `ALLOWED_USERS` narrows that domain fence further, in code — see
+   **Access control** below; it does not replace it. **The first deploy after adding it
+   requires re-authorizing the script**: `Session.getActiveUser()` (used to identify the
+   caller) pulls in the `https://www.googleapis.com/auth/userinfo.email` scope, which is new
+   to the authorization set, so Apps Script will prompt for consent again on that deploy.
+   Accept it, then check that the daily scan trigger still fires afterwards — a scope change
+   is the one thing that can quietly suspend an installable trigger with nothing surfacing in
+   the UI to say so.
 
 ## Troubleshooting Wiz connectivity
 
@@ -517,6 +531,50 @@ rejected the client id/secret; `Step 2 FAIL … 401/Unauthorized` = the token is
 `… 404` = `WIZ_API_URL` host/path is wrong. Note: a Wiz GraphQL service account issues a
 **client id + secret** (exchanged for a short-lived token), not a durable bearer token —
 so `WIZ_CLIENT_ID`/`WIZ_CLIENT_SECRET` is the robust configuration.
+
+## Access control
+
+The deployment's own fence — Deploy → access: **Anyone within `<domain>`** — admits every
+account in the Workspace. `ALLOWED_USERS` (`src/server/access.ts`) narrows that to a named
+set, entirely in code, because **Apps Script has no first-party per-account access list**:
+the deploy dropdown only offers Only-myself / Anyone-with-a-Google-Account / Anyone /
+Anyone-within-domain, none of which is "these specific people."
+
+What's gated and what isn't:
+- **`doGet`** calls `access.deniedPage()` first and serves a denial page — naming the address
+  it saw, never the allowlist or who owns the deployment — instead of the app shell, so a
+  denied caller never receives the SPA bundle at all.
+- **Every `google.script.run` endpoint** (`api_*` in `dist/entry.js`) calls
+  `access.denyResult(op)` before doing any work and returns `{ok:false, error, errorKind:
+  "forbidden"}` on denial. The client's `api.js` wrapper surfaces that as `err.kind ===
+  "forbidden"`, which `app.js`'s boot-error branch treats differently from a network failure
+  (no Retry button — see the comment there for why).
+- **Trigger handlers (`trigger_*`) are deliberately ungated, and not because the gate would
+  be harmless there.** An installable trigger fires with no accessing user, so
+  `Session.getActiveUser().getEmail()` returns `""` — which `decide()` reads as `anonymous`
+  and would **deny**. Gating them would silently kill the daily scan and every continuation
+  hop the first time one fired, in the trigger execution log where nobody is watching. They
+  are reachable from a browser only via `google.script.run` from a page `doGet` has already
+  gated, and calling one gives an allowed user nothing the UI's own **Run scan** doesn't.
+
+**Hard limitation: accounts outside the Workspace domain cannot be allowlisted at all**, under
+"execute as me". `Session.getActiveUser().getEmail()` returns `""` for a caller outside the
+same domain (or one not in the same Google Workspace domain as the app), so `decide()` reads
+them as `anonymous` and denies them before the list is even consulted — there is no address
+for the list to contain. The only way to admit such a caller would be redeploying "execute as
+the user accessing", which hands every viewer their own Sheets access to the ledger
+spreadsheet directly instead of going through this app's server logic at all — a strictly
+worse trade for a case this app doesn't need to support.
+
+**Aliases and secondary addresses are distinct strings.** A Workspace account with a
+secondary alias, or a personal Gmail forwarded through group settings, matches `decide()` by
+exact address after trim + lowercase — list the alias too if the person signs in with it.
+The denied page names the address it actually saw, which is what makes a "wrong alias"
+lockout diagnosable rather than mysterious.
+
+**To add or remove someone:** edit the `ALLOWED_USERS` Script Property (Project Settings →
+Script Properties) and save. No redeploy, no `setup()` re-run — `access.check()` re-reads the
+property fresh on the next request (it's memoized only within one execution).
 
 ## Scan progress
 
@@ -597,6 +655,15 @@ requires a deployed web app — see the manual verification checklist below.
 Things node tests cannot cover — verify after the first deployment:
 
 - [ ] `setup()` provisions tabs/folders/trigger idempotently (run it twice).
+- [ ] Access control: sign in at `/exec` as a domain account **not** in `ALLOWED_USERS` and
+      confirm the denied page names that account's own address — and only the denied page,
+      never the app shell (check Network in devtools: no SPA bundle should have loaded).
+      Then, from an **allowed** session's browser console, run
+      `google.script.run.withSuccessHandler(console.log).api_getStorageStats({})` and confirm
+      it resolves with real data; remove that account from `ALLOWED_USERS`, re-run the same
+      call in the same still-open tab, and confirm it now resolves
+      `{ok:false, errorKind:"forbidden"}` instead — proving the RPC guard, not just `doGet`,
+      re-checks on every call rather than only at page load.
 - [ ] OAuth token fetch against the real tenant; a scan lands rows in `scans`,
       `vuln_ledger`, and files under `scans/<id>/` + `obs/`.
 - [ ] Trigger continuation: temporarily set `FIRST_STEP_BUDGET_MS` low, confirm a

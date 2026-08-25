@@ -2,24 +2,45 @@
 // GAS requires doGet / trigger handlers / google.script.run targets to be top-level
 // global functions; everything else lives on the bundled `Server` global (server.js).
 
-function doGet(e) { return Server.doGet(e); }
-function include(f) { return Server.include(f); }
+// Gated by the domain-plus-allowlist check in access.ts: deniedPage() returns the standard
+// denial page for anyone the allowlist rejects, and short-circuits before Server.doGet ever
+// touches the ledger.
+function doGet(e) { return Server.access.deniedPage() || Server.doGet(e); }
+// Gated NOT for the <?!= include('x') ?> scriptlets — those evaluate server-side inside a
+// doGet that has already passed the check — but because this is a top-level global, and
+// google.script.run can call any of those directly. Ungated it is an open
+// createHtmlOutputFromFile(<caller's string>) primitive. The check costs nothing on the
+// scriptlet path: access.check() is memoized for the life of the execution.
+function include(f) { return Server.access.denyResult("include") ? "" : Server.include(f); }
 
 // One-time setup: creates the ledger spreadsheet tabs, Drive folders, and the daily
 // scan trigger, and records their IDs in Script Properties. Run from the GAS editor.
-function setup() { return Server.setup(); }
+// Gated too: an editor run still goes through Session.getActiveUser(), and setup() seeds the
+// allowlist itself, so letting a non-owner run it would hand them a way to add themselves.
+function setup() { Server.access.assertAllowed("setup"); return Server.setup(); }
 
 // Wiz connectivity check — run from the GAS editor to validate credentials; it prints
 // which auth/query step fails (secret-safe) to the execution log. Never used by a scan.
-function wizDiagnostic() { return Server.wizDiagnostic(); }
+// Gated: it's secret-adjacent (validates the Wiz credential) even though it never prints it.
+function wizDiagnostic() { Server.access.assertAllowed("wizDiagnostic"); return Server.wizDiagnostic(); }
 
 // Last-resort recovery for a job the web app can't reach: rolls a killed mid-write back from
 // its journal, deletes every continuation trigger, and forces whatever survives to FAILED so
 // scanning is unblocked (jobs are single-flight across kinds). Reports what it cleared to the
 // execution log. Safe to run when nothing is wrong.
-function resetStuckJob() { return Server.jobs.resetStuckJob(); }
+// Gated: it mutates job state outside the normal single-flight path, same reason api_cancelScan
+// and friends are gated through timedApi_.
+function resetStuckJob() { Server.access.assertAllowed("resetStuckJob"); return Server.jobs.resetStuckJob(); }
 
 // Trigger handlers (names referenced by ScriptApp.newTrigger calls).
+//
+// DELIBERATELY UNGATED. An installable trigger fires with no accessing user at all, so
+// Session.getActiveUser().getEmail() returns "" here — running these through access.ts would
+// read that as "anonymous" and deny every one of them, silently killing the daily scan and
+// every continuation hop, in the trigger execution log where nobody is watching for it. They
+// are reachable from the browser only via google.script.run from a page doGet has already
+// gated, and an allowed user gets nothing from calling one directly that the UI's own Run scan
+// button doesn't already give them.
 function trigger_dailyScan() { Server.jobs.dailyScan(); }
 function trigger_continueScan(e) { Server.jobs.continueJob(e); }
 // Its own handler name, NOT trigger_continueScan: each job clears only its own
@@ -36,6 +57,11 @@ function trigger_warmReadModels() { Server.api.warmReadModelsScheduled(); }
 // Each is timed to the execution log ({"api":name,"ms":n} lines) so server cost can be
 // separated from google.script.run round-trip overhead when profiling.
 function timedApi_(name, p) {
+  // Single chokepoint for every api_* delegator below: google.script.run reaches top-level
+  // globals directly, so gating here (rather than in each api_X, or inside api.ts's run())
+  // covers all 54 without touching the parity-checked delegator lines themselves.
+  var denied = Server.access.denyResult(name);
+  if (denied) return denied;
   var t0 = Date.now();
   var res = Server.api[name](p);
   console.log(JSON.stringify({ api: name, ms: Date.now() - t0 }));

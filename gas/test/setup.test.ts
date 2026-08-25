@@ -61,6 +61,16 @@ vi.stubGlobal("ScriptApp", {
   },
 });
 
+// setup() seeds the access allowlist, which reads the effective user. Nothing else in gas/
+// touches Session, so this is the only place the stub has to exist for these specs — and
+// without it every spec in this file dies with "Session is not defined" rather than with an
+// assertion, which is how a missing GAS global always presents here.
+let ownerAddress = "owner@example.com";
+vi.stubGlobal("Session", {
+  getActiveUser: () => ({ getEmail: () => ownerAddress }),
+  getEffectiveUser: () => ({ getEmail: () => ownerAddress }),
+});
+
 const WARM = "trigger_warmReadModels";
 const warmBuilds = () => built.filter((b) => b.handler === WARM);
 
@@ -75,7 +85,38 @@ beforeEach(() => {
   built.length = 0;
   deleted.length = 0;
   installed = [];
+  ownerAddress = "owner@example.com";
   vi.resetModules();
+});
+
+// The allowlist guard fails closed: an unset ALLOWED_USERS admits only the owner. That is the
+// right default and an INVISIBLE one, so setup() seeds it — the property being there, with a
+// value, is what tells whoever inherits this deployment that a list exists to be widened.
+describe("setup seeds the access allowlist without ever narrowing one", () => {
+  it("seeds ALLOWED_USERS with the owner when the property is unset", async () => {
+    const { setup } = await load();
+    setup();
+    expect(props.ALLOWED_USERS).toBe("owner@example.com");
+  });
+
+  it("leaves an existing list alone", async () => {
+    // The bug this catches: a re-run of setup() (which the README asks for after several
+    // schema changes) silently reverting everyone an admin has since added.
+    props.ALLOWED_USERS = "a@example.com, b@example.com";
+    const { setup } = await load();
+    setup();
+    expect(props.ALLOWED_USERS).toBe("a@example.com, b@example.com");
+  });
+
+  it("writes nothing when the owner address is unavailable", async () => {
+    // An empty ALLOWED_USERS would read as a configured-but-empty list. It admits the owner
+    // either way, but writing one turns "never configured" into "configured to admit nobody",
+    // which is a worse thing to hand the next reader.
+    ownerAddress = "";
+    const { setup } = await load();
+    setup();
+    expect(props.ALLOWED_USERS).toBeUndefined();
+  });
 });
 
 describe("the warm schedule fires an hour before the hours it serves", () => {

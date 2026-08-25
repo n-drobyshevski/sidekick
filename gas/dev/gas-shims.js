@@ -71,6 +71,18 @@
     }),
   };
 
+  // --------------------------------------------------------------------- Session
+  // dev/boot.js runs setup() at page load (same throw-takes-down-everything trap the
+  // ScriptApp comment below documents for trigger builders), and setup() now seeds the
+  // allowlist via access.ownerEmail() -> Session.getEffectiveUser(). No shim here means
+  // "Session is not defined" before a single page renders. Active and effective user are
+  // the same address on purpose: dev has no domain/impersonation split, just the one
+  // person running their own script.
+  window.Session = {
+    getActiveUser: () => ({ getEmail: () => "dev@example.com" }),
+    getEffectiveUser: () => ({ getEmail: () => "dev@example.com" }),
+  };
+
   // ----------------------------------------------------------------- LockService
   window.LockService = {
     getScriptLock: () => ({
