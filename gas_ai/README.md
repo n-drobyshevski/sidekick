@@ -89,6 +89,15 @@ every payload (including the counts computed over the whole register) answers fo
 population; the caption beside it always carries the denominator, since "34" alone cannot
 tell a small unit from a small register.
 
+The list separates **business units**, **support groups** and **projects**, and the middle one
+is the tenant's own vocabulary rather than anything Wiz reports: a project whose first name
+segment is `CS`, `CE` or `LU` is a support group, and a business unit is anything that is not
+one. It is matched on the first segment rather than as a bare prefix, because `CENTRAL-OPS`
+must not match and the captured `owner-CE-INDUS-SUPPLY-cloud` must not either — and it beats
+`isFolder`, because `CS-LOG-ZEN-ECOM` is a folder in the captures and a support group all the
+same. The prefixes live in one exported list (`SUPPORT_GROUP_PREFIXES`) since a convention is
+a thing that changes.
+
 **A scope is a project OR a business domain**, and the two are orthogonal rather than
 nested — the seeded landscape puts four domains inside `PROJECT-ALPHA` on purpose, so that
 grouping by domain "has to visibly cut across an attack path or the dimension is just a

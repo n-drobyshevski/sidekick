@@ -65,7 +65,9 @@ describe("projectScopeView", () => {
     const v = projectScopeView(boot({ projectView: "", shown: 826, register: 826 }, LIST));
     expect(v.options[0].hint).toBe("Business unit · 826 assets");
     expect(v.options[0].group).toBe("Business units");
-    expect(v.options[1].hint).toBe("12 assets");
+    // CS-VALUECHAIN-SECURITY is a support group by the tenant's naming convention, and says
+    // so in the same slot for the same reason.
+    expect(v.options[1].hint).toBe("Support group · 12 assets");
     // Singular, because "1 assets" is the tell of a count nobody looked at.
     expect(v.options[2].hint).toBe("1 asset");
   });
@@ -76,7 +78,8 @@ describe("projectScopeView", () => {
   it("draws a mark beside the words, never instead of them", () => {
     const v = projectScopeView(boot({ projectView: "", shown: 826, register: 826 }, LIST));
     expect(v.options[0].icon).toBe("folders");   // a business unit: reaches a subtree
-    expect(v.options[1].icon).toBe("folder");    // a leaf project
+    expect(v.options[1].icon).toBe("folders");   // a support group: reaches its own subtree
+    expect(v.options[2].icon).toBe("folder");    // a leaf project
     // …and every one of them still says which it is, in words, with no icon involved.
     for (const o of v.options) expect(o.hint).toBeTruthy();
     expect(v.pinned[0].icon).toBe("folders");
@@ -124,6 +127,70 @@ describe("projectScopeView", () => {
 
 const trendScope = (over) => ({
   projectId: "p-a", scoped: true, points: 3, registerPoints: 40, ...over,
+});
+
+// The tenant's own vocabulary, which Wiz does not report: a project whose name begins CS, CE
+// or LU is a SUPPORT GROUP, and a business unit is anything that is not one. Read off a name,
+// which this codebase otherwise refuses to do — so these cases pin the three ways a name rule
+// goes wrong, all three of them drawn from names the captures actually contain.
+describe("support groups", () => {
+  const named = (name, isFolder) => [{ id: `p-${name}`, name, isFolder, assets: 4 }];
+  const groupOf = (name, isFolder) => projectScopeView(
+    boot({ projectView: "", shown: 4, register: 4 }, named(name, isFolder)),
+  ).options[0].group;
+
+  it("files the three prefixes as support groups", () => {
+    for (const name of ["CS-VALUECHAIN-SECURITY", "CE-DPCP-PORTAL", "LU-SOMETHING"]) {
+      expect(groupOf(name, false), name).toBe("Support groups");
+    }
+  });
+
+  // The rule beats isFolder, because the two answer different questions and only one of them
+  // is about naming. CS-LOG-ZEN-ECOM is a folder in the captures AND a support group; calling
+  // it a business unit would be the app overruling the tenant on the tenant's own vocabulary.
+  it("beats isFolder — a support group that nests things is still a support group", () => {
+    expect(groupOf("CS-LOG-ZEN-ECOM", true)).toBe("Support groups");
+    expect(groupOf("VALUE-CHAIN", true)).toBe("Business units");
+  });
+
+  // The two ways a two-letter prefix misfires, both taken from real names.
+  it("matches the first segment, not a bare prefix and not a substring", () => {
+    // CENTRAL-OPS starts with the letters CE and is not a support group.
+    expect(groupOf("CENTRAL-OPS", true)).toBe("Business units");
+    // owner-CE-INDUS-SUPPLY-cloud is a captured name with CE in the middle.
+    expect(groupOf("owner-CE-INDUS-SUPPLY-cloud", false)).toBe("Projects");
+  });
+
+  it("names support groups even on a register that records no folders at all", () => {
+    // The folder half of the grouping is gated on isFolder having been recorded for someone;
+    // this half is not, because it needs nothing from Wiz to be true.
+    const legacy = [
+      { id: "p-a", name: "CS-LOG-ZEN-ECOM", assets: 3 },
+      { id: "p-b", name: "ALPHA", assets: 4 },
+    ];
+    const v = projectScopeView(boot({ projectView: "", shown: 7, register: 7 }, legacy));
+    const groups = v.options.map((o) => o.group);
+    expect(groups).toContain("Support groups");
+    // …and still claims nothing about which of the rest are folders.
+    expect(groups).toContain("");
+    expect(groups).not.toContain("Business units");
+  });
+
+  // Headings are emitted when the group changes while walking the list in order, so a list
+  // that did not sort by kind would print "Support groups" twice.
+  it("keeps each kind contiguous, widest first", () => {
+    const mixed = [
+      { id: "p-1", name: "CS-ONE", isFolder: false, assets: 1 },
+      { id: "p-2", name: "VALUE-CHAIN", isFolder: true, assets: 2 },
+      { id: "p-3", name: "GITHUB-DKTUNITED", isFolder: false, assets: 3 },
+      { id: "p-4", name: "CE-TWO", isFolder: true, assets: 4 },
+    ];
+    const groups = projectScopeView(boot({ projectView: "", shown: 10, register: 10 }, mixed))
+      .options.map((o) => o.group);
+    expect(groups).toEqual([
+      "Business units", "Support groups", "Support groups", "Projects",
+    ]);
+  });
 });
 
 describe("projectScopeView, scoped by domain", () => {

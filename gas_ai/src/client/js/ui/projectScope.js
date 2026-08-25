@@ -37,22 +37,93 @@ function assetCount(n) {
  * every row under "Projects" would assert leaf-ness of the whole register on the strength
  * of a field nobody has filled in yet.
  */
+/**
+ * The tenant's naming convention: a project whose name begins `CS`, `CE` or `LU` is a
+ * SUPPORT GROUP, and a business unit is anything that is not one.
+ *
+ * A rule read off a NAME, which this codebase is otherwise careful not to do — `aarsRule`
+ * refuses to guess a control's meaning from its title for exactly this reason. What makes it
+ * legitimate here is that it is not an inference about what something IS: it is the tenant's
+ * own convention for what they CALL things, the same class of fact as `WIZ_DOMAIN_TAG_KEY`,
+ * and the app has no other way to learn it. Wiz reports `isFolder`; it does not report that
+ * `CS-LOG-ZEN-ECOM` — a folder in the captures — is a support group rather than a unit.
+ *
+ * THE FIRST SEGMENT, NOT A BARE PREFIX. `CE-DPCP-PORTAL` matches, `CENTRAL-OPS` must not, and
+ * `owner-CE-INDUS-SUPPLY-cloud` — a real captured name with CE in the middle — must not
+ * either. Splitting on the separator answers all three, where `startsWith("CE")` gets the
+ * second wrong and `includes("CE")` gets the third wrong.
+ *
+ * One list, exported, because a convention is a thing that changes: a fourth prefix is one
+ * edit here rather than a hunt through three files.
+ */
+export const SUPPORT_GROUP_PREFIXES = ["CS", "CE", "LU"];
+
+export function isSupportGroup(name) {
+  const first = String(name || "").trim().toUpperCase().split(/[-_\s]/)[0];
+  return SUPPORT_GROUP_PREFIXES.indexOf(first) >= 0;
+}
+
+/**
+ * What to call one row: a support group, a business unit, a project, or nothing yet.
+ *
+ * The name rule wins over `isFolder`, because the two answer different questions and only one
+ * of them is about naming. `CS-LOG-ZEN-ECOM` is a folder AND a support group; calling it a
+ * business unit because Wiz says it nests things would be the app overruling the tenant on
+ * the tenant's own vocabulary.
+ */
+function projectKind(p) {
+  if (isSupportGroup(p.name)) return "support";
+  if (p.isFolder === true) return "unit";
+  if (p.isFolder === false) return "project";
+  return "unknown";
+}
+
+const KIND_GROUP = {
+  support: "Support groups",
+  unit: "Business units",
+  project: "Projects",
+  unknown: "Not yet recorded",
+};
+// Support groups sort AFTER units, so the list reads widest-first: a unit reaches a whole
+// subtree, a support group reaches its own, a project is a leaf. The combobox emits a heading
+// only when the group value changes while walking in order, so a list that did not sort by
+// kind would fragment its own headings.
+const KIND_RANK = { unit: 0, support: 1, project: 2, unknown: 3 };
+
 export function scopeOptions(list) {
+  // `isFolder` is tri-state and the third state is load-bearing: `undefined` means the row
+  // predates the field. So the FOLDER half of the grouping only claims anything once the
+  // register has recorded it for someone. The SUPPORT-GROUP half is not gated on it, because
+  // it is read off the name and needs nothing from Wiz — knowing which four rows are support
+  // groups is worth saying even on a register that cannot yet say which are folders.
   const anyRecorded = list.some((p) => p.isFolder !== undefined);
-  return list.map((p) => ({
-    value: p.id,
-    label: p.name,
-    // Folders are declared in words rather than by icon or colour: picking one reaches its
-    // whole subtree, and that is a meaning, so it does not travel by colour alone.
-    hint: p.isFolder === true ? `Business unit · ${assetCount(p.assets)}` : assetCount(p.assets),
-    group: !anyRecorded ? "" : (p.isFolder === true ? "Business units"
-      : p.isFolder === false ? "Projects" : "Not yet recorded"),
-    // The glyph is the THIRD carrier, after the hint above and the group heading — a reader
-    // who cannot tell one folder from two at 14px has already been told twice in words. That
-    // ordering is the whole licence for it: an icon that had to be understood would be
-    // exactly the shorthand the hint exists to avoid.
-    icon: p.isFolder === true ? "folders" : "folder",
-  }));
+  const rows = list.map((p) => {
+    const kind = projectKind(p);
+    return {
+      value: p.id,
+      label: p.name,
+      kind,
+      // Declared in words rather than by icon or colour: picking a unit or a support group
+      // reaches its whole subtree, and that is a meaning, so it does not travel by colour
+      // alone.
+      hint: kind === "support" ? `Support group · ${assetCount(p.assets)}`
+        : kind === "unit" ? `Business unit · ${assetCount(p.assets)}`
+          : assetCount(p.assets),
+      group: kind === "support" ? KIND_GROUP.support
+        : !anyRecorded ? "" : KIND_GROUP[kind],
+      // The glyph is the THIRD carrier, after the hint above and the group heading — a reader
+      // who cannot tell one folder from two at 14px has already been told twice in words. That
+      // ordering is the whole licence for it: an icon that had to be understood would be
+      // exactly the shorthand the hint exists to avoid.
+      icon: kind === "unit" || kind === "support" ? "folders" : "folder",
+    };
+  });
+  // Sorted by kind so each heading is emitted once. Stable within a kind, which keeps the
+  // server's folders-first-then-name ordering wherever it still applies.
+  return rows
+    .map((row, at) => ({ row, at }))
+    .sort((x, y) => (KIND_RANK[x.row.kind] - KIND_RANK[y.row.kind]) || (x.at - y.at))
+    .map(({ row }) => row);
 }
 
 /**
