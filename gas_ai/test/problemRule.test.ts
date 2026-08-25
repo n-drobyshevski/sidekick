@@ -361,6 +361,90 @@ describe("treeDiscrimination — the real seed landscape", () => {
   });
 });
 
+// ---------------------------------------------------------- treeDiscrimination.axisReadings
+//
+// The counting half of what used to be ui/axisBar.js's `axisTally`, moved to where the
+// population already is so the preview stops shipping one object per decided row to derive
+// four small histograms from. These are that function's own tests, ported onto the shape
+// the domain now returns.
+
+describe("treeDiscrimination — axisReadings", () => {
+  const row = (vector: Partial<DecisionVector>, unknowns: string[] = []) => ({
+    outcome: "TRACK" as const,
+    vector: { exploitation: "UNKNOWN", impact: "PARTIAL", exposure: "UNVERIFIED", mission: "LOW",
+      ...vector } as DecisionVector,
+    unknowns,
+  });
+
+  it("counts each value and its total, one reading per axis", () => {
+    const d = treeDiscrimination([
+      row({ exploitation: "ACTIVE" }),
+      row({ exploitation: "UNKNOWN" }),
+      row({ exploitation: "UNKNOWN" }),
+      row({ exploitation: "UNKNOWN" }),
+    ]);
+    expect(d.axisReadings.exploitation.total).toBe(4);
+    expect(d.axisReadings.exploitation.counts).toEqual({ ACTIVE: 1, SUSPECTED: 0, UNKNOWN: 3 });
+    // Every axis is read on every row, so all four totals are the population size.
+    for (const axis of ["exploitation", "impact", "exposure", "mission"] as const) {
+      expect(d.axisReadings[axis].total).toBe(4);
+    }
+  });
+
+  it("keeps a value nothing reached, because a zero here is a finding about the tenant", () => {
+    const d = treeDiscrimination([row({ exploitation: "UNKNOWN" })]);
+    expect(Object.keys(d.axisReadings.exploitation.counts))
+      .toEqual(["ACTIVE", "SUSPECTED", "UNKNOWN"]);
+    expect(d.axisReadings.exploitation.counts["ACTIVE"]).toBe(0);
+  });
+
+  it("counts unknown WITHIN the value it landed on, not as a value of its own", () => {
+    // A MEDIUM mission may be Wiz's answer or the operator's fallback; both are MEDIUM.
+    const d = treeDiscrimination([
+      row({ mission: "MEDIUM" }),
+      row({ mission: "MEDIUM" }, ["mission"]),
+      row({ mission: "HIGH" }),
+    ]);
+    expect(d.axisReadings.mission.counts["MEDIUM"]).toBe(2);
+    expect(d.axisReadings.mission.unknowns["MEDIUM"]).toBe(1);
+    expect(d.axisReadings.mission.unknowns["HIGH"]).toBe(0);
+  });
+
+  it("ignores an unknown flag raised for a DIFFERENT axis", () => {
+    const d = treeDiscrimination([row({ mission: "HIGH" }, ["exposure"])]);
+    expect(d.axisReadings.mission.unknowns["HIGH"]).toBe(0);
+    expect(d.axisReadings.exposure.unknowns["UNVERIFIED"]).toBe(1);
+  });
+
+  it("skips a value off the declared list rather than inventing a bucket for it", () => {
+    const d = treeDiscrimination([
+      row({ exploitation: "ACTIVE" }),
+      row({ exploitation: "NONSENSE" as never }),
+    ]);
+    expect(d.axisReadings.exploitation.total).toBe(1);
+    expect(Object.keys(d.axisReadings.exploitation.counts))
+      .toEqual(["ACTIVE", "SUSPECTED", "UNKNOWN"]);
+  });
+
+  it("reports zeros rather than an empty map on an empty landscape", () => {
+    const d = treeDiscrimination([]);
+    expect(d.axisReadings.impact.total).toBe(0);
+    expect(d.axisReadings.impact.counts).toEqual({ TOTAL: 0, PARTIAL: 0 });
+  });
+
+  it("agrees with unknownRate, because both are counted in the same walk", () => {
+    const decided = [
+      row({ mission: "HIGH" }, ["mission"]),
+      row({ mission: "LOW" }),
+      row({ mission: "LOW" }, ["mission"]),
+      row({ mission: "MEDIUM" }),
+    ];
+    const d = treeDiscrimination(decided);
+    const flagged = Object.values(d.axisReadings.mission.unknowns).reduce((a, b) => a + b, 0);
+    expect(flagged / decided.length).toBeCloseTo(d.unknownRate.mission, 12);
+  });
+});
+
 describe("problemCensus", () => {
   it("counts issues per verdict and per combo group", () => {
     const c = problemCensus([

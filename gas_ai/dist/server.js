@@ -4281,6 +4281,12 @@ var Server = (() => {
     }
     return { total: leaves.length, byRow, byFallback, byOutcome };
   }
+  var AXIS_VALUES = {
+    exploitation: EXPLOITATION_VALUES,
+    impact: IMPACT_VALUES,
+    exposure: EXPOSURE_VALUES,
+    mission: MISSION_VALUES
+  };
   function treeDiscrimination(decided) {
     var _a5;
     const outcomeOccupancy = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0 };
@@ -4291,10 +4297,28 @@ var Server = (() => {
       exposure: 0,
       mission: 0
     };
+    const axisReadings = {};
+    for (const axis of AXIS_KEYS) {
+      const counts = {};
+      const unknowns = {};
+      for (const value of AXIS_VALUES[axis]) {
+        counts[value] = 0;
+        unknowns[value] = 0;
+      }
+      axisReadings[axis] = { total: 0, counts, unknowns };
+    }
     for (const d of decided) {
       outcomeOccupancy[d.outcome]++;
       const key = leafKey(d.vector);
       leafOccupancy[key] = ((_a5 = leafOccupancy[key]) != null ? _a5 : 0) + 1;
+      for (const axis of AXIS_KEYS) {
+        const reading = axisReadings[axis];
+        const value = d.vector[axis];
+        if (value === void 0 || !(value in reading.counts)) continue;
+        reading.counts[value] += 1;
+        reading.total += 1;
+        if (d.unknowns.indexOf(axis) >= 0) reading.unknowns[value] += 1;
+      }
       for (const u of d.unknowns) {
         if (u === "exploitation" || u === "impact" || u === "exposure" || u === "mission") {
           unknownCounts[u]++;
@@ -4313,7 +4337,8 @@ var Server = (() => {
         impact: rate(unknownCounts.impact),
         exposure: rate(unknownCounts.exposure),
         mission: rate(unknownCounts.mission)
-      }
+      },
+      axisReadings
     };
   }
   function problemRuleSummary(rule) {
@@ -7971,7 +7996,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "02240e13ac94" : "dev";
+  var BUILD_ID = true ? "1522733e5557" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -16955,6 +16980,7 @@ var Server = (() => {
         const i = o ? OUTCOME_VALUES.indexOf(o) : -1;
         return i < 0 ? OUTCOME_VALUES.length : i;
       };
+      const { decided, ...discrimination } = treeDiscrimination(decidedForDiscrimination(afterAll));
       const movers = [];
       for (const row of afterAll) {
         const fromOutcome = (_a5 = beforeById.get(row.id)) != null ? _a5 : null;
@@ -16983,7 +17009,7 @@ var Server = (() => {
         leafCoverage: leafCoverage(proposed),
         shadowedOutcomeRules: shadowedOutcomeRules(proposed),
         validation: validateProblemRule(proposed),
-        treeDiscrimination: treeDiscrimination(decidedForDiscrimination(afterAll)),
+        treeDiscrimination: { ...discrimination, decidedCount: decided.length },
         // What the landscape actually carries on the two axes an operator names values for.
         // Costs nothing extra: `beforeAll` is already loaded above, the same argument
         // `gapCensus` makes for itself on the AARS preview. It rides THIS endpoint and never
@@ -17057,6 +17083,7 @@ var Server = (() => {
       const before = loadAssets();
       const beforeById = new Map(before.map((n) => [n.id, n.postureTier]));
       const after = posturesWith(proposed);
+      const { decided, ...discrimination } = postureDiscrimination(decidedForPostureDiscrimination(after));
       const movers = [];
       for (const node2 of after) {
         const fromTier = (_a5 = beforeById.get(node2.id)) != null ? _a5 : null;
@@ -17084,7 +17111,7 @@ var Server = (() => {
         shadowed: shadowedTierRules(proposed),
         unreachable: unreachableTierRules(proposed),
         validation: validatePostureRule(proposed),
-        postureDiscrimination: postureDiscrimination(decidedForPostureDiscrimination(after)),
+        postureDiscrimination: { ...discrimination, decidedCount: decided.length },
         movers: movers.slice(0, PREVIEW_MOVERS_MAX),
         moverCount: movers.length,
         truncated: movers.length > PREVIEW_MOVERS_MAX

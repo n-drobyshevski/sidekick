@@ -407,10 +407,10 @@ function compareDecide(current, saved) {
   return { changed: true, direction: rankOf(current) < rankOf(saved) ? "worse" : "better" };
 }
 
-function ariaFor(mode, meta, cell) {
+function ariaFor(mode, meta, cell, one, many) {
   const parts = [meta.word];
   if (mode === "landscape" || mode === "impact") {
-    parts.push(cell.unmeasured ? "not yet measured" : `${cell.count} ${cell.count === 1 ? "asset" : "assets"}`);
+    parts.push(cell.unmeasured ? "not yet measured" : `${cell.count} ${cell.count === 1 ? one : many}`);
   }
   if (mode === "change" || mode === "impact") {
     parts.push(cell.changed ? `changed, ${cell.direction}` : "unchanged");
@@ -464,6 +464,12 @@ function ariaFor(mode, meta, cell) {
  */
 export function paintCells(cells, opts) {
   const { mode, decide, savedDecide, occupancy, occupancyKnown } = opts;
+  // What the population is called on THIS lattice. The problem tree counts open issues and
+  // failing findings; only the posture lattice counts assets. This used to be the word
+  // "asset" hardcoded below, which meant a screen reader on the problem tree heard "assets"
+  // while the popover two lines away said "records" about the same number.
+  const one = opts.recordWord || "record";
+  const many = opts.recordWordPlural || "records";
   return cells.map((cell) => {
     const result = decide(cell.vector);
     const meta = toneOf(result);
@@ -494,7 +500,7 @@ export function paintCells(cells, opts) {
       painted.direction = cmp.direction;
     }
 
-    painted.aria = ariaFor(mode, meta, painted);
+    painted.aria = ariaFor(mode, meta, painted, one, many);
     return painted;
   });
 }
@@ -618,6 +624,10 @@ export function icicleLayout(spec, width, height) {
  * "the top band"; the same worst-first list callers already build for display doubles as
  * the answer.
  *
+ * The `total` is returned as well as used: a caller drawing the strip has to name the
+ * denominator in words beside it, and re-summing the segments to get a number this function
+ * already has invites the two readings to drift.
+ *
  * `total` is the sum of `coverage` over `order` rather than a separately-passed field,
  * because `order` is already guaranteed (by both `leafCoverage` and `cellCoverage`) to name
  * every value the tally can hold — summing it IS `coverage.total` by construction, and
@@ -639,5 +649,31 @@ export function outcomeMass(coverage, order, ceiling) {
     `${worstKey} claims ${worstCount} of ${total} (${pct(worstShare)}), ` +
     `against a ceiling of ${pct(ceiling)}.`;
 
-  return { segments, ceilingShare: ceiling, over, sentence };
+  return { total, segments, ceilingShare: ceiling, over, sentence };
+}
+
+// ----------------------------------------------------------------------- occupancyTally
+
+/**
+ * The same distribution `outcomeMass` draws, but over the LANDSCAPE instead of the lattice:
+ * every record the last preview placed, folded onto the verdict the CURRENT draft gives the
+ * cell it landed on.
+ *
+ * This is the per-verdict twin of `decideMirror.occupancyByRow`, and it is mirror-live for
+ * the reason that one is: `occupancy` is keyed by vector, and which cell a record lands on
+ * has nothing to do with the rule — only the verdict on that cell does. So the map from the
+ * last preview stays valid under an unsaved edit, and re-folding it through the live
+ * `decide` moves the strip on the same keystroke as the grid above it.
+ *
+ * Absent key means zero, exactly as it does in the cells. The caller is responsible for not
+ * calling this at all until a preview has actually landed — a tally of an empty map is a
+ * bar of zeros, which is a claim about the tenant and must never stand in for "unmeasured".
+ */
+export function occupancyTally(cells, decide, verdictKey, occupancy) {
+  const tally = {};
+  for (const cell of cells) {
+    const key = decide(cell.vector)[verdictKey];
+    tally[key] = (tally[key] || 0) + ((occupancy && occupancy[cell.key]) || 0);
+  }
+  return tally;
 }

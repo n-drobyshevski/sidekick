@@ -401,21 +401,78 @@ export interface TreeDiscrimination {
   leafOccupancy: Record<string, number>;
   /** Share of decided items whose reading on that axis was unknown, one entry per axis. */
   unknownRate: Record<"exploitation" | "impact" | "exposure" | "mission", number>;
+  /**
+   * What each axis ACTUALLY read across the decided population — the distribution the
+   * per-axis bars draw, counted here rather than in the browser.
+   *
+   * This used to be `axisTally` in ui/axisBar.js, walking `decided` client-side. That was
+   * defensible while `decided` was already on the wire; it is not the reason `decided` is on
+   * the wire any more, because it no longer is. Shipping one object per decided issue and
+   * finding so the page could derive four small histograms from it put a per-row array
+   * between a real tenant and its own picture — the same transport ceiling `readGrid` had
+   * to start blocking around, arriving the same way: swallowed by `run()` into a response
+   * that looks normal. The counting belongs where the population already is.
+   *
+   * `unknown` is counted PER VALUE rather than as a value of its own, because for three of
+   * the four axes it is not one: an impact reading is TOTAL or PARTIAL whether or not
+   * anything established it, and a MEDIUM mission may be Wiz's answer or the operator's
+   * fallback. A fifth "unknown" segment would claim those rows had no value, which is false.
+   */
+  axisReadings: Record<AxisKey, AxisReading>;
 }
+
+export type AxisKey = "exploitation" | "impact" | "exposure" | "mission";
+
+/** One axis's distribution over the decided population. `counts`/`unknowns` are zero-filled. */
+export interface AxisReading {
+  total: number;
+  counts: Record<string, number>;
+  unknowns: Record<string, number>;
+}
+
+/** The declared value order of each axis, so a reading is always zero-filled in that order. */
+export const AXIS_VALUES: Record<AxisKey, readonly string[]> = {
+  exploitation: EXPLOITATION_VALUES,
+  impact: IMPACT_VALUES,
+  exposure: EXPOSURE_VALUES,
+  mission: MISSION_VALUES,
+};
 
 export function treeDiscrimination(
   decided: Array<{ outcome: Outcome; vector: DecisionVector; unknowns: string[] }>,
 ): TreeDiscrimination {
   const outcomeOccupancy: Record<Outcome, number> = { ACT: 0, ATTEND: 0, TRACK_STAR: 0, TRACK: 0 };
   const leafOccupancy: Record<string, number> = {};
-  const unknownCounts: Record<"exploitation" | "impact" | "exposure" | "mission", number> = {
+  const unknownCounts: Record<AxisKey, number> = {
     exploitation: 0, impact: 0, exposure: 0, mission: 0,
   };
+  // Zero-filled up front, in each axis's own declared order: a value nothing reached is a
+  // finding about the tenant, not an absence, and it has to survive into the bar to be one.
+  const axisReadings = {} as Record<AxisKey, AxisReading>;
+  for (const axis of AXIS_KEYS) {
+    const counts: Record<string, number> = {};
+    const unknowns: Record<string, number> = {};
+    for (const value of AXIS_VALUES[axis]) {
+      counts[value] = 0;
+      unknowns[value] = 0;
+    }
+    axisReadings[axis] = { total: 0, counts, unknowns };
+  }
 
   for (const d of decided) {
     outcomeOccupancy[d.outcome]++;
     const key = leafKey(d.vector);
     leafOccupancy[key] = (leafOccupancy[key] ?? 0) + 1;
+    for (const axis of AXIS_KEYS) {
+      const reading = axisReadings[axis];
+      const value = d.vector[axis] as string | undefined;
+      // A value off the declared list is skipped rather than invented as a new bucket —
+      // the same "never widen a vocabulary from data" rule clean* keeps on the way in.
+      if (value === undefined || !(value in reading.counts)) continue;
+      reading.counts[value]! += 1;
+      reading.total += 1;
+      if (d.unknowns.indexOf(axis) >= 0) reading.unknowns[value]! += 1;
+    }
     for (const u of d.unknowns) {
       if (u === "exploitation" || u === "impact" || u === "exposure" || u === "mission") {
         unknownCounts[u]++;
@@ -437,6 +494,7 @@ export function treeDiscrimination(
       exposure: rate(unknownCounts.exposure),
       mission: rate(unknownCounts.mission),
     },
+    axisReadings,
   };
 }
 

@@ -2791,6 +2791,15 @@ export function previewProblemRule(p?: unknown): ApiResult {
       return i < 0 ? OUTCOME_VALUES.length : i;
     };
 
+    // `decided` never reaches the browser. It is one object per decided issue and finding,
+    // and the page wanted exactly two things from it: how many there were, and four small
+    // per-axis histograms. Both are computed here now (`decidedCount`, `axisReadings`), so
+    // this response no longer grows with the register. That growth is not hypothetical —
+    // it is the shape of the size ceiling `readGrid` had to start blocking around, and it
+    // fails the same silent way: `run()` catches it, the execution logs COMPLETED, and the
+    // page can only say "not measured yet".
+    const { decided, ...discrimination } = treeDiscrimination(decidedForDiscrimination(afterAll));
+
     const movers: Rec[] = [];
     for (const row of afterAll) {
       const fromOutcome = beforeById.get(row.id) ?? null;
@@ -2822,7 +2831,7 @@ export function previewProblemRule(p?: unknown): ApiResult {
       leafCoverage: leafCoverage(proposed),
       shadowedOutcomeRules: shadowedOutcomeRules(proposed),
       validation: validateProblemRule(proposed),
-      treeDiscrimination: treeDiscrimination(decidedForDiscrimination(afterAll)),
+      treeDiscrimination: { ...discrimination, decidedCount: decided.length },
       // What the landscape actually carries on the two axes an operator names values for.
       // Costs nothing extra: `beforeAll` is already loaded above, the same argument
       // `gapCensus` makes for itself on the AARS preview. It rides THIS endpoint and never
@@ -2944,6 +2953,10 @@ export function previewPostureRule(p?: unknown): ApiResult {
 
     const after = syncStore.posturesWith(proposed);
 
+    // Same trim as the problem preview above, and for the same reason — this side never
+    // read `decided` for anything but its length.
+    const { decided, ...discrimination } = postureDiscrimination(decidedForPostureDiscrimination(after));
+
     const movers: Rec[] = [];
     for (const node of after) {
       const fromTier = beforeById.get(node.id) ?? null;
@@ -2969,7 +2982,7 @@ export function previewPostureRule(p?: unknown): ApiResult {
       shadowed: shadowedTierRules(proposed),
       unreachable: unreachableTierRules(proposed),
       validation: validatePostureRule(proposed),
-      postureDiscrimination: postureDiscrimination(decidedForPostureDiscrimination(after)),
+      postureDiscrimination: { ...discrimination, decidedCount: decided.length },
       movers: movers.slice(0, PREVIEW_MOVERS_MAX),
       moverCount: movers.length,
       truncated: movers.length > PREVIEW_MOVERS_MAX,
