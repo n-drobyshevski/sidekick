@@ -46,6 +46,7 @@ import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { hasWizCredentials } from "./props";
 import * as backfillJobs from "./backfillJobs";
+import * as purgeJobs from "./purgeJobs";
 import * as scanJobs from "./scanJobs";
 import { BUILD_ID, cached, dataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
@@ -1629,9 +1630,31 @@ export function cancelScan(p?: unknown): ApiResult {
   return run(() => scanJobs.cancelScan(String((p as Rec)?.["jobId"] ?? "")));
 }
 
+/**
+ * Refuse the two operations that REPLAY scan archives while a severity purge is mid-walk.
+ *
+ * Both take the script lock but neither consults `activeJob()`, and the purge's archive walk
+ * releases the lock between hops — so without this an operator could, in that window:
+ *   - delete a scan, rebuilding the ledger from archives only half of which are rewritten, or
+ *   - compact, whose `buildCheckpoint` replays un-rewritten pages straight back into the new
+ *     checkpoint (maintenance.ts:249-279), re-contaminating the rebuild baseline for good.
+ * Either silently applies a partial, arbitrary purge to live state.
+ */
+function assertNoActivePurge(what: string): void {
+  if (purgeJobs.activePurgeJob()) {
+    throw new LedgerBusyError(
+      `A severity purge is still rewriting scan archives — ${what} would replay the ones it ` +
+        `hasn't reached yet. Wait for it to finish, then retry.`,
+    );
+  }
+}
+
 export function deleteScans(p?: unknown): ApiResult {
   const scanIds = (((p as Rec)?.["scanIds"] as string[]) ?? []).map(String);
-  return mutate(() => ledgerStore.deleteScans(scanIds));
+  return mutate(() => {
+    assertNoActivePurge("deleting a scan");
+    return ledgerStore.deleteScans(scanIds);
+  });
 }
 
 export function compact(p?: unknown): ApiResult {
@@ -1642,7 +1665,77 @@ export function compact(p?: unknown): ApiResult {
       ? Number(params["retentionDays"])
       : settingsStore.getRetentionDays();
   if (dryRun) return run(() => ledgerStore.compactLedger(days, true));
-  return mutate(() => ledgerStore.compactLedger(days, false));
+  return mutate(() => {
+    assertNoActivePurge("compacting");
+    return ledgerStore.compactLedger(days, false);
+  });
+}
+
+// ------------------------------------------------------------------------ maintenance
+
+/** Days → the ISO date rows must be on or after to survive a trim. */
+function cutoffDate(days: number, now?: number): string {
+  return new Date((now ?? Date.now()) - days * 86_400_000).toISOString().slice(0, 10);
+}
+
+function severityList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
+}
+
+/** Dry-run counts for all three Maintenance operations, from one state read. */
+export function previewMaintenance(p?: unknown): ApiResult {
+  const params = (p ?? {}) as Rec;
+  const episodeDays = Math.max(1, Number(params["episodeDays"] ?? 365));
+  const historyDays = Math.max(1, Number(params["historyDays"] ?? 365));
+  const now = Date.now();
+  return run(() =>
+    ledgerStore.previewMaintenance(
+      severityList(params["severities"]),
+      {
+        resolvedBeforeMs: now - episodeDays * 86_400_000,
+        severities: severityList(params["episodeSeverities"]).length
+          ? severityList(params["episodeSeverities"])
+          : null,
+      },
+      cutoffDate(historyDays, now),
+    ),
+  );
+}
+
+export function startSeverityPurge(p?: unknown): ApiResult {
+  const params = (p ?? {}) as Rec;
+  // Not `mutate`: startSeverityPurge takes the script lock itself with a longer timeout (the
+  // phase-0 rewrite can be a 100k-row write), the same way startRiskBackfill does.
+  return run(
+    () =>
+      purgeJobs.startSeverityPurge(
+        severityList(params["severities"]),
+        params["alsoNarrowScope"] !== false,
+      ),
+    "startSeverityPurge",
+  );
+}
+
+export function getPurgeStatus(_p?: unknown): ApiResult {
+  return run(() => ({ purge: purgeJobs.purgeStatus() }));
+}
+
+export function pruneEpisodes(p?: unknown): ApiResult {
+  const params = (p ?? {}) as Rec;
+  const days = Math.max(1, Number(params["days"] ?? 365));
+  const sevs = severityList(params["severities"]);
+  return mutate(() => {
+    assertNoActivePurge("pruning episodes");
+    return ledgerStore.pruneEpisodes({
+      resolvedBeforeMs: Date.now() - days * 86_400_000,
+      severities: sevs.length ? sevs : null,
+    });
+  });
+}
+
+export function trimHistory(p?: unknown): ApiResult {
+  const days = Math.max(1, Number(((p ?? {}) as Rec)["days"] ?? 365));
+  return mutate(() => ledgerStore.trimHistory(cutoffDate(days)));
 }
 
 // --------------------------------------------------------------------------- import

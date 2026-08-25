@@ -26,6 +26,7 @@ var Server = (() => {
     doGet: () => doGet,
     include: () => include,
     jobs: () => scanJobs_exports,
+    purge: () => purgeJobs_exports,
     setup: () => setup,
     wizDiagnostic: () => wizDiagnostic
   });
@@ -269,6 +270,52 @@ var Server = (() => {
       };
     }
     return parsed;
+  }
+  var CHECKPOINT_PART_ROWS = 2e4;
+  function rewriteCheckpoint(compactionId, prevRef, checkpoint) {
+    var _a;
+    const prev = prevRef ? readGzJsonFile(prevRef) : null;
+    const prevParts = prev && typeof prev === "object" && !Array.isArray(prev) ? prev["parts"] : null;
+    if (!Array.isArray(prevParts)) return writeCheckpoint(compactionId, checkpoint);
+    const rows = (_a = checkpoint.ledger) != null ? _a : [];
+    const partIds = [];
+    for (let i = 0, idx = 0; i < rows.length; i += CHECKPOINT_PART_ROWS, idx += 1) {
+      partIds.push(writeCheckpointPart(compactionId, idx, rows.slice(i, i + CHECKPOINT_PART_ROWS)));
+    }
+    const ref = writeCheckpointManifest(compactionId, {
+      version: checkpoint.version,
+      floor_scan_id: checkpoint.floor_scan_id,
+      floor_ts: checkpoint.floor_ts,
+      parts: partIds
+    });
+    for (const id of prevParts) {
+      if (typeof id === "string" && !partIds.includes(id)) trashFile(id);
+    }
+    return ref;
+  }
+  function listScanPageNumbers(scanRef) {
+    if (!scanRef) return [];
+    let folder;
+    try {
+      folder = DriveApp.getFolderById(scanRef);
+    } catch {
+      return [];
+    }
+    const nums = [];
+    const files = folder.getFiles();
+    while (files.hasNext()) {
+      const m = /^page-(\d+)\.json(\.gz)?$/.exec(files.next().getName());
+      if (m) nums.push(Number(m[1]));
+    }
+    return nums.sort((a, b) => a - b);
+  }
+  function trashPageRuns(scanId) {
+    try {
+      const files = scanFolder(scanId).getFilesByName(PAGE_RUNS_NAME);
+      while (files.hasNext()) files.next().setTrashed(true);
+    } catch (e) {
+      console.warn(`Couldn't trash page runs for ${scanId}: ${e}`);
+    }
   }
   var SNAPSHOT_NAME = "ledger-snapshot.json.gz";
   function writeLedgerSnapshot(state) {
@@ -565,6 +612,13 @@ var Server = (() => {
       const lastCol = Math.max(sh.getLastColumn(), 1);
       sh.getRange(firstToClear, 1, lastRow - firstToClear + 1, lastCol).clearContent();
     }
+  }
+  var SHRINK_SPARE_ROWS = 200;
+  function shrinkTab(tab, keepSpare = SHRINK_SPARE_ROWS) {
+    const sh = sheet(tab);
+    const needed = Math.max(sh.getLastRow(), 1) + Math.max(keepSpare, 0);
+    const max = sh.getMaxRows();
+    if (max > needed) sh.deleteRows(needed + 1, max - needed);
   }
   function updateWhere(tab, keyColumn, keyValue, patch) {
     const sh = sheet(tab);
@@ -1749,6 +1803,7 @@ var Server = (() => {
     getMttrPage: () => getMttrPage,
     getMttrTrend: () => getMttrTrend,
     getProgramPage: () => getProgramPage,
+    getPurgeStatus: () => getPurgeStatus,
     getRecentErrors: () => getRecentErrors,
     getReport: () => getReport,
     getRiskBackfillStatus: () => getRiskBackfillStatus,
@@ -1763,6 +1818,8 @@ var Server = (() => {
     importShard: () => importShard,
     importStatus: () => importStatus,
     previewDomains: () => previewDomains,
+    previewMaintenance: () => previewMaintenance2,
+    pruneEpisodes: () => pruneEpisodes2,
     refreshSupportGroups: () => refreshSupportGroups2,
     resetLedger: () => resetLedger2,
     runScan: () => runScan,
@@ -1775,6 +1832,8 @@ var Server = (() => {
     setSeverities: () => setSeverities,
     setShowNoFix: () => setShowNoFix2,
     startRiskBackfill: () => startRiskBackfill,
+    startSeverityPurge: () => startSeverityPurge2,
+    trimHistory: () => trimHistory2,
     warmReadModels: () => warmReadModels
   });
 
@@ -4630,6 +4689,230 @@ var Server = (() => {
     deleteProp(KEY);
   }
 
+  // src/domain/purge.ts
+  function severityOf(rec) {
+    return effectiveSeverity(rec).severity;
+  }
+  function matchesPurge(rec, set) {
+    return set.has(severityOf(rec));
+  }
+  function purgeSet(severities) {
+    return new Set(severities.map((s) => effectiveSeverity({ severity: s }).severity));
+  }
+  function bump(counts, sev2) {
+    var _a;
+    counts[sev2] = ((_a = counts[sev2]) != null ? _a : 0) + 1;
+  }
+  function previewSeverityPurge(state, severities) {
+    const set = purgeSet(severities);
+    const bySeverity = {};
+    let ledgerRows = 0;
+    let episodeRows = 0;
+    for (const row of Object.values(state.ledger)) {
+      if (!matchesPurge(row, set)) continue;
+      ledgerRows += 1;
+      bump(bySeverity, severityOf(row));
+    }
+    for (const e of state.episodes) {
+      if (!matchesPurge(e, set)) continue;
+      episodeRows += 1;
+      bump(bySeverity, severityOf(e));
+    }
+    const flat = state.scans.filter((s) => s.shape === "flat");
+    return {
+      severities: [...set],
+      ledgerRows,
+      episodeRows,
+      bySeverity,
+      scansToRewrite: flat.filter((s) => !s.sealed).length,
+      sealedScans: flat.filter((s) => s.sealed).length
+    };
+  }
+  function narrowScanScope(severitiesText, set) {
+    var _a;
+    const current = (_a = parseSeverities(severitiesText)) != null ? _a : [...SELECTABLE_SEVERITIES];
+    const remaining = current.filter((s) => !set.has(s));
+    if (!remaining.length || remaining.length === current.length) return severitiesText;
+    return serializeSeverities(remaining);
+  }
+  function purgeStateBySeverity(state, severities) {
+    const set = purgeSet(severities);
+    const ledger = {};
+    let ledgerRemoved = 0;
+    for (const [key, row] of Object.entries(state.ledger)) {
+      if (matchesPurge(row, set)) {
+        ledgerRemoved += 1;
+        continue;
+      }
+      ledger[key] = { ...row };
+    }
+    const episodes = [];
+    let episodeRemoved = 0;
+    for (const e of state.episodes) {
+      if (matchesPurge(e, set)) {
+        episodeRemoved += 1;
+        continue;
+      }
+      episodes.push({ ...e });
+    }
+    let scopesNarrowed = 0;
+    const scans = state.scans.map((s) => {
+      const narrowed = narrowScanScope(s.severities, set);
+      if (narrowed !== s.severities) scopesNarrowed += 1;
+      return { ...s, severities: narrowed };
+    });
+    return {
+      state: { scans, ledger, episodes },
+      ledgerRemoved,
+      episodeRemoved,
+      scopesNarrowed
+    };
+  }
+  function purgeCheckpointBySeverity(checkpoint, severities) {
+    var _a, _b;
+    const set = purgeSet(severities);
+    const kept = ((_a = checkpoint.ledger) != null ? _a : []).filter((r) => !matchesPurge(r, set));
+    return {
+      checkpoint: { ...checkpoint, ledger: kept },
+      removed: ((_b = checkpoint.ledger) != null ? _b : []).length - kept.length
+    };
+  }
+  function purgeCheckpointByKeys(checkpoint, keys) {
+    var _a, _b;
+    if (!keys.size) return { checkpoint, removed: 0 };
+    const kept = ((_a = checkpoint.ledger) != null ? _a : []).filter((r) => !keys.has(r.vuln_key));
+    return {
+      checkpoint: { ...checkpoint, ledger: kept },
+      removed: ((_b = checkpoint.ledger) != null ? _b : []).length - kept.length
+    };
+  }
+  function purgeRecordsBySeverity(records, severities) {
+    const set = purgeSet(severities);
+    const kept = records.filter((r) => !matchesPurge(r, set));
+    return { records: kept, removed: records.length - kept.length };
+  }
+  function purgePayloadBySeverity(payload, severities) {
+    var _a;
+    const set = purgeSet(severities);
+    if (Array.isArray(payload)) {
+      const looksEnveloped = payload.some(
+        (p) => p && typeof p === "object" && !Array.isArray(p) && "data" in p
+      );
+      if (looksEnveloped) {
+        let removed = 0;
+        let kept = 0;
+        let recognized = false;
+        const pages = payload.map((page) => {
+          const out2 = purgePayloadBySeverity(page, severities);
+          removed += out2.removed;
+          kept += out2.kept;
+          recognized = recognized || out2.recognized;
+          return out2.payload;
+        });
+        return { payload: pages, removed, kept, recognized };
+      }
+      const recs = payload.filter((r) => !!r && typeof r === "object");
+      if (recs.length !== payload.length) {
+        return { payload, removed: 0, kept: payload.length, recognized: false };
+      }
+      const out = purgeRecordsBySeverity(recs, severities);
+      return { payload: out.records, removed: out.removed, kept: out.records.length, recognized: true };
+    }
+    if (payload && typeof payload === "object") {
+      const obj = payload;
+      const data = obj["data"];
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        const vf = data["vulnerabilityFindings"];
+        if (vf && typeof vf === "object" && !Array.isArray(vf) && "nodes" in vf) {
+          const nodes = (_a = vf["nodes"]) != null ? _a : [];
+          const keptNodes = nodes.filter((n) => !matchesPurge(n, set));
+          return {
+            payload: {
+              ...obj,
+              data: { ...data, vulnerabilityFindings: { ...vf, nodes: keptNodes } }
+            },
+            removed: nodes.length - keptNodes.length,
+            kept: keptNodes.length,
+            recognized: true
+          };
+        }
+      }
+    }
+    return { payload, removed: 0, kept: 0, recognized: false };
+  }
+  function episodeMatches(e, c, set) {
+    if (set && !matchesPurge(e, set)) return false;
+    const resolved = parseTs(e.resolved_at);
+    if (resolved === null) return false;
+    return resolved < c.resolvedBeforeMs;
+  }
+  function previewEpisodePrune(state, c) {
+    const set = c.severities ? purgeSet(c.severities) : null;
+    const bySeverity = {};
+    let rows = 0;
+    let oldest = null;
+    let newest = null;
+    for (const e of state.episodes) {
+      if (!episodeMatches(e, c, set)) continue;
+      rows += 1;
+      bump(bySeverity, severityOf(e));
+      const at = e.resolved_at;
+      if (at !== null) {
+        if (oldest === null || at < oldest) oldest = at;
+        if (newest === null || at > newest) newest = at;
+      }
+    }
+    return { rows, bySeverity, oldest, newest, remaining: state.episodes.length - rows };
+  }
+  function pruneEpisodesCore(state, c) {
+    const set = c.severities ? purgeSet(c.severities) : null;
+    const episodes = [];
+    const prunedKeys = [];
+    for (const e of state.episodes) {
+      if (episodeMatches(e, c, set)) {
+        prunedKeys.push(e.vuln_key);
+        continue;
+      }
+      episodes.push({ ...e });
+    }
+    return {
+      state: {
+        scans: state.scans.map((s) => ({ ...s })),
+        ledger: Object.fromEntries(Object.entries(state.ledger).map(([k, v]) => [k, { ...v }])),
+        episodes
+      },
+      removed: prunedKeys.length,
+      prunedKeys
+    };
+  }
+  function trimHistoryRows(rows, beforeDate) {
+    const kept = rows.filter((r) => {
+      const d = r["date"];
+      return typeof d !== "string" || d >= beforeDate;
+    });
+    let oldestKept = null;
+    for (const r of kept) {
+      const d = r["date"];
+      if (typeof d === "string" && (oldestKept === null || d < oldestKept)) oldestKept = d;
+    }
+    return { rows: kept, removed: rows.length - kept.length, oldestKept };
+  }
+  function previewHistoryTrim(rows, beforeDate) {
+    const out = trimHistoryRows(rows, beforeDate);
+    let oldest = null;
+    for (const r of rows) {
+      const d = r["date"];
+      if (typeof d === "string" && (oldest === null || d < oldest)) oldest = d;
+    }
+    return { rows: out.removed, remaining: out.rows.length, oldest };
+  }
+  function archiveWalkOrder(scans) {
+    return [...scans].filter((s) => s.shape === "flat").sort((a, b) => {
+      var _a, _b;
+      return ((_a = parseTs(a.ts)) != null ? _a : 0) < ((_b = parseTs(b.ts)) != null ? _b : 0) ? 1 : -1;
+    });
+  }
+
   // src/domain/importShard.ts
   var MANIFEST_KIND = "wiz-sidekick-migration-manifest";
   function beginImportSession(rawManifest) {
@@ -4722,7 +5005,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "8df26fdfe5b3" : "dev";
+  var BUILD_ID = true ? "5b5e798aca28" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -4917,7 +5200,8 @@ var Server = (() => {
   }
   var CONTINUE_HANDLERS = {
     scan: "trigger_continueScan",
-    backfill: "trigger_continueBackfill"
+    backfill: "trigger_continueBackfill",
+    purge: "trigger_continuePurge"
   };
   function reclaimIfStale(job, now) {
     if (!isStaleJob(job, now)) return false;
@@ -5509,6 +5793,79 @@ var Server = (() => {
     trashLedgerSnapshot();
     invalidateLedgerMemos();
     return counts;
+  }
+  function rewriteCheckpoints(transform) {
+    let removed = 0;
+    for (const row of readAll(TABS.compactions)) {
+      const ref = row["checkpoint_ref"];
+      if (!ref) continue;
+      const cp = readCheckpoint(ref);
+      if (!cp) continue;
+      const out = transform(cp);
+      if (!out.removed) continue;
+      const compactionId = String(row["compaction_id"]);
+      const newRef = rewriteCheckpoint(compactionId, ref, out.checkpoint);
+      if (newRef !== ref) {
+        updateWhere(TABS.compactions, "compaction_id", compactionId, { checkpoint_ref: newRef });
+      }
+      removed += out.removed;
+    }
+    return removed;
+  }
+  function previewMaintenance(severities, episodes, historyBeforeDate) {
+    const state = loadState();
+    return {
+      purge: previewSeverityPurge(state, severities),
+      episodes: previewEpisodePrune(state, episodes),
+      history: previewHistoryTrim(readAll(TABS.mttrHistory), historyBeforeDate)
+    };
+  }
+  function setScanObsRef(scanId, obsRef) {
+    updateWhere(TABS.scans, "scan_id", scanId, { obs_ref: obsRef });
+    invalidateLedgerMemos();
+  }
+  function purgeSeverityTabs(severities, jobId) {
+    const state = loadState();
+    const { state: purged, ledgerRemoved, episodeRemoved, scopesNarrowed } = purgeStateBySeverity(
+      state,
+      severities
+    );
+    const checkpointRemoved = rewriteCheckpoints((cp) => purgeCheckpointBySeverity(cp, severities));
+    if (!ledgerRemoved && !episodeRemoved && !scopesNarrowed) {
+      return { ledgerRemoved: 0, episodeRemoved: 0, checkpointRemoved, scopesNarrowed: 0 };
+    }
+    const journalRef = writeJournal(jobId, state);
+    updateJob(jobId, { phase: "PERSISTING", journal_ref: journalRef });
+    writeStateTables(purged);
+    shrinkTab(TABS.vulnLedger);
+    shrinkTab(TABS.episodes);
+    updateJob(jobId, { phase: "PURGING", journal_ref: null });
+    trashFile(journalRef);
+    return { ledgerRemoved, episodeRemoved, checkpointRemoved, scopesNarrowed };
+  }
+  function pruneEpisodes(c) {
+    const state = loadState();
+    const { state: pruned, removed, prunedKeys } = pruneEpisodesCore(state, c);
+    if (!removed) return { removed: 0, checkpointRemoved: 0, remaining: state.episodes.length };
+    const jobId = newJobId("purge");
+    const journalRef = writeJournal(jobId, state);
+    const keys = new Set(prunedKeys);
+    const checkpointRemoved = rewriteCheckpoints((cp) => purgeCheckpointByKeys(cp, keys));
+    writeStateTables(pruned);
+    shrinkTab(TABS.episodes);
+    trashFile(journalRef);
+    return { removed, checkpointRemoved, remaining: pruned.episodes.length };
+  }
+  function trimHistory(beforeDate) {
+    const rows = readAll(TABS.mttrHistory);
+    const out = trimHistoryRows(rows, beforeDate);
+    if (!out.removed) {
+      return { removed: 0, remaining: rows.length, oldestKept: out.oldestKept };
+    }
+    overwrite(TABS.mttrHistory, out.rows);
+    shrinkTab(TABS.mttrHistory);
+    bumpDataVersion();
+    return { removed: out.removed, remaining: out.rows.length, oldestKept: out.oldestKept };
   }
   function compactLedger(retentionDays, dryRun = false, now) {
     const state = loadState();
@@ -6239,11 +6596,236 @@ var Server = (() => {
     return last ? statusOf(last) : null;
   }
 
+  // src/server/purgeJobs.ts
+  var purgeJobs_exports = {};
+  __export(purgeJobs_exports, {
+    activePurgeJob: () => activePurgeJob,
+    continuePurge: () => continuePurge,
+    emptyPurgeResult: () => emptyPurgeResult,
+    purgeStatus: () => purgeStatus,
+    startSeverityPurge: () => startSeverityPurge
+  });
+  var BUDGET_MS2 = 27e4;
+  var FIRST_STEP_BUDGET_MS2 = 45e3;
+  var CONTINUE_DELAY_MS2 = 1e3;
+  var CONTINUE_HANDLER2 = "trigger_continuePurge";
+  function scheduleContinuation2() {
+    ScriptApp.newTrigger(CONTINUE_HANDLER2).timeBased().after(CONTINUE_DELAY_MS2).create();
+  }
+  function clearContinuationTriggers2() {
+    clearTriggers(CONTINUE_HANDLER2);
+  }
+  function emptyPurgeResult() {
+    return {
+      severities: [],
+      scopeNarrowed: false,
+      ledgerRemoved: 0,
+      episodeRemoved: 0,
+      checkpointRemoved: 0,
+      scopesNarrowed: 0,
+      scansRewritten: 0,
+      recordsRemoved: 0,
+      scansSealed: 0,
+      scansUnreadable: 0,
+      cellsBefore: 0,
+      cellsAfter: 0
+    };
+  }
+  function readResult2(job) {
+    var _a;
+    try {
+      return { ...emptyPurgeResult(), ...JSON.parse((_a = job.params_json) != null ? _a : "{}") };
+    } catch {
+      return emptyPurgeResult();
+    }
+  }
+  function cellsNow() {
+    try {
+      return cellUsage().total;
+    } catch (e) {
+      console.warn(`Purge cell measurement skipped: ${e}`);
+      return 0;
+    }
+  }
+  function purgeScanArchives(row, severities) {
+    let removed = 0;
+    let touched = false;
+    let readable = false;
+    for (const pageNo of listScanPageNumbers(row.raw_ref)) {
+      const page = readScanPage(row.scan_id, pageNo);
+      if (page === null) continue;
+      readable = true;
+      const out = purgePayloadBySeverity(page, severities);
+      if (!out.recognized || !out.removed) continue;
+      writeScanPage(row.scan_id, pageNo, out.payload);
+      removed += out.removed;
+      touched = true;
+    }
+    const slim = readSlimRecords(row.scan_id);
+    if (slim) {
+      readable = true;
+      const out = purgeRecordsBySeverity(slim, severities);
+      if (out.removed) {
+        writeSlimRecords(row.scan_id, out.records);
+        touched = true;
+      }
+    }
+    const frame = readFrame(row.scan_id);
+    if (frame) {
+      const out = purgeRecordsBySeverity(frame, severities);
+      if (out.removed) {
+        writeFrame(row.scan_id, out.records);
+        touched = true;
+      }
+    }
+    if (row.obs_ref) {
+      const obs = readObservations(row.obs_ref);
+      if (obs.length) {
+        const out = purgeRecordsBySeverity(obs, severities);
+        if (out.removed) {
+          const ref = writeObservations(row.scan_id, out.records);
+          setScanObsRef(row.scan_id, ref);
+          touched = true;
+        }
+      }
+    }
+    if (touched) trashPageRuns(row.scan_id);
+    return { removed, touched, readable };
+  }
+  function startSeverityPurge(severities, alsoNarrowScope) {
+    return withScriptLock(() => {
+      var _a, _b;
+      if (!severities.length) throw new Error("Pick at least one severity to purge.");
+      const existing = activeJob();
+      if (existing && !reclaimIfStale(existing)) {
+        throw new Error(
+          `Another job (${existing.kind}) is running. Wait for it to finish, then retry.`
+        );
+      }
+      clearContinuationTriggers2();
+      const result = emptyPurgeResult();
+      result.severities = [...severities];
+      result.cellsBefore = cellsNow();
+      const jobId = newJobId("purge");
+      const scans = archiveWalkOrder(loadScanRows());
+      const job = createJob({
+        job_id: jobId,
+        kind: "purge",
+        phase: "PURGING",
+        scan_id: null,
+        cursor: null,
+        page: 0,
+        findings_so_far: 0,
+        page_size: 0,
+        total_count: scans.length,
+        params_json: JSON.stringify(result),
+        journal_ref: null,
+        error: null
+      });
+      try {
+        const tabs = purgeSeverityTabs(severities, jobId);
+        result.ledgerRemoved = tabs.ledgerRemoved;
+        result.episodeRemoved = tabs.episodeRemoved;
+        result.checkpointRemoved = tabs.checkpointRemoved;
+        result.scopesNarrowed = tabs.scopesNarrowed;
+        if (alsoNarrowScope) {
+          const purged = new Set(severities);
+          const remaining = getFetchSeverities2().filter((s) => !purged.has(s));
+          if (remaining.length) {
+            setFetchSeverities(remaining);
+            result.scopeNarrowed = true;
+          }
+        }
+      } catch (e) {
+        updateJob(jobId, { phase: "FAILED", error: String((_a = e.message) != null ? _a : e) });
+        throw e;
+      }
+      updateJob(jobId, { params_json: JSON.stringify(result) });
+      step2({ ...job, params_json: JSON.stringify(result) }, FIRST_STEP_BUDGET_MS2);
+      return statusOf2((_b = getJob(jobId)) != null ? _b : job);
+    }, 12e4);
+  }
+  function step2(job, budgetMs = BUDGET_MS2) {
+    const t0 = Date.now();
+    const result = readResult2(job);
+    const severities = result.severities;
+    const scans = archiveWalkOrder(loadScanRows());
+    let done = job.page;
+    while (done < scans.length && Date.now() - t0 < budgetMs) {
+      const row = scans[done];
+      done += 1;
+      if (row.sealed) {
+        result.scansSealed += 1;
+        continue;
+      }
+      try {
+        const out = purgeScanArchives(row, severities);
+        if (!out.readable) {
+          result.scansUnreadable += 1;
+          continue;
+        }
+        result.recordsRemoved += out.removed;
+        result.scansRewritten += 1;
+      } catch (e) {
+        console.warn(`Purge could not rewrite scan ${row.scan_id}: ${e}`);
+        result.scansUnreadable += 1;
+      }
+    }
+    const finished = done >= scans.length;
+    if (finished) result.cellsAfter = cellsNow();
+    updateJob(job.job_id, {
+      page: done,
+      findings_so_far: result.ledgerRemoved + result.episodeRemoved + result.recordsRemoved,
+      params_json: JSON.stringify(result),
+      phase: finished ? "DONE" : "PURGING"
+    });
+    if (finished) clearContinuationTriggers2();
+    else scheduleContinuation2();
+  }
+  function continuePurge(_e) {
+    withScriptLock(() => {
+      var _a;
+      clearContinuationTriggers2();
+      const job = activeJob();
+      if (!job || job.kind !== "purge" || job.phase !== "PURGING") return;
+      try {
+        step2(job);
+      } catch (e) {
+        console.warn(`Purge hop failed: ${e}`);
+        recordError("purgeHop", e);
+        updateJob(job.job_id, { phase: "FAILED", error: String((_a = e.message) != null ? _a : e) });
+      }
+    }, 12e4);
+  }
+  function statusOf2(job) {
+    return {
+      jobId: job.job_id,
+      phase: job.phase,
+      // 0 means "not recorded", not "no scans" — the UI must not print it as a denominator.
+      scansTotal: job.total_count,
+      scansDone: job.page,
+      result: readResult2(job),
+      error: job.error,
+      updatedAt: job.updated_at,
+      stale: job.phase === "PURGING" && isStaleJob(job)
+    };
+  }
+  function activePurgeJob() {
+    const job = activeJob();
+    return job && job.kind === "purge" && !isTerminalPhase(job.phase) ? job : null;
+  }
+  function purgeStatus() {
+    const active = activeJob();
+    if (active && active.kind === "purge") return statusOf2(active);
+    const last = lastJobOfKind("purge");
+    return last ? statusOf2(last) : null;
+  }
+
   // src/server/scanJobs.ts
   var scanJobs_exports = {};
   __export(scanJobs_exports, {
     cancelScan: () => cancelScan,
-    clearContinuationTriggers: () => clearContinuationTriggers2,
+    clearContinuationTriggers: () => clearContinuationTriggers3,
     continueJob: () => continueJob,
     dailyScan: () => dailyScan,
     jobStatus: () => jobStatus,
@@ -6276,11 +6858,11 @@ var Server = (() => {
   var SAMPLE_GROUPED = { "data": { "vulnerabilityFindingsGroupedByValues": { "nodes": [{ "id": "CLCh_PAJEgEBIigKJhokYjA2Njk1ZDUtYjI3MS01OGYzLTllMjctYzViOTc2NTgxNDJl", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "b06695d5-b271-58f3-9e27-c5b97658142e", "type": "VIRTUAL_MACHINE", "name": "gke-inix-gke-eu-pr-n4-shared-19b3-fc6dab19-05ru", "cloudPlatform": "GCP", "externalId": "4787123027339367533", "subscriptionId": "2b2211fb-742f-5566-af67-ab8992b58cfb", "subscriptionName": "inix-tt4k", "subscriptionExternalId": "inix-tt4k", "tags": { "cluster_name": "inix-gke-eu-pr", "gke-inix-eu-pr-nodes-europe-west4": "gke-inix-eu-pr-nodes-europe-west4", "gke-inix-gke-eu-pr": "gke-inix-gke-eu-pr", "gke-inix-gke-eu-pr-b3192bb3-node": "gke-inix-gke-eu-pr-b3192bb3-node", "gke-inix-gke-eu-pr-n4-shared": "gke-inix-gke-eu-pr-n4-shared", "goog-gke-cluster-id-base32": "wmmsxm4ye5fsxldvevyserwhpfnupmogu4ausbma6yys6hfhup2q", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "inix-gke-eu-pr", "goog-k8s-node-pool-name": "n4-shared-19b3", "goog-terraform-provisioned": "true", "project": "inix-tt4k", "tag-inix-gke-eu-pr-ingress": "tag-inix-gke-eu-pr-ingress" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 63, "criticalSeverityFindingCount": 63, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokNjY0NTc5MjYtMzUxMy01M2ViLWEwOWYtMGU5MGI2ZjRmZWZm", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "66457926-3513-53eb-a09f-0e90b6f4feff", "type": "VIRTUAL_MACHINE", "name": "ENMFV0APP02", "cloudPlatform": "Alibaba", "externalId": "i-uf623aepimaj7zev1n25", "subscriptionId": "1fafc3d1-bbe3-5d13-8698-3df1f4514e37", "subscriptionName": "ENMS-PP", "subscriptionExternalId": "1985932850711133", "tags": { "Account": "1985932850711133", "Base_nsg_type": "VMPPD", "Domain": "VMM", "Env": "preprod", "Environment": "PREPROD", "Project": "ENM", "Terraform": "yes", "Vendor": "aliyun" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 57, "criticalSeverityFindingCount": 57, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokM2FhYmI4MTAtNWM1ZC01NjAzLTkyMmUtZTIxZmU2MGQ4ZDcz", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "3aabb810-5c5d-5603-922e-e21fe60d8d73", "type": "VIRTUAL_MACHINE", "name": "ENMFV0APP01", "cloudPlatform": "Alibaba", "externalId": "i-uf6eef938p2fzi1of1en", "subscriptionId": "1fafc3d1-bbe3-5d13-8698-3df1f4514e37", "subscriptionName": "ENMS-PP", "subscriptionExternalId": "1985932850711133", "tags": { "Account": "1985932850711133", "Base_nsg_type": "VMPPD", "Domain": "VMM", "Env": "preprod", "Environment": "PREPROD", "Project": "ENM", "Terraform": "yes", "Vendor": "aliyun" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 57, "criticalSeverityFindingCount": 57, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokYzQzM2M5YTktZTYzMS01ZDU2LThiZDgtM2MxY2RkZDkzMTAz", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "c433c9a9-e631-5d56-8bd8-3c1cddd93103", "type": "VIRTUAL_MACHINE", "name": "gke-vctech-gke-eu-pp-n4-shared-0d05f181-ep29", "cloudPlatform": "GCP", "externalId": "7603203856350539437", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "subscriptionName": "INIX-VCTECH", "subscriptionExternalId": "inix-vctech-0alr", "tags": { "cost_center": "50001z0536-001", "gke-vctech-gke-eu-pp": "gke-vctech-gke-eu-pp", "gke-vctech-gke-eu-pp-6830a116-node": "gke-vctech-gke-eu-pp-6830a116-node", "gke-vctech-gke-eu-pp-shared": "gke-vctech-gke-eu-pp-shared", "goog-fleet-project": "464185428346", "goog-gke-cluster-id-base32": "naykcfw275ezfoxzjnzpvvbquab2ieq336dell4s2ntdywfh43gq", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "vctech-gke-eu-pp", "goog-k8s-node-pool-name": "n4-shared", "net-gkenodes-inix-azae-prod-europe-west4": "net-gkenodes-inix-azae-prod-europe-west4", "net-main-gkenodes": "net-main-gkenodes", "owner": "jkrawc50", "project": "vctech-gke-eu-pp", "tag-vctech-gke-eu-pp-client": "tag-vctech-gke-eu-pp-client", "terraform": "true" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 56, "criticalSeverityFindingCount": 56, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokY2UwMGQ3ODQtMmE5OC01NjRlLThkM2UtYjZhYzNmNjQ5Mjdk", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "ce00d784-2a98-564e-8d3e-b6ac3f64927d", "type": "VIRTUAL_MACHINE", "name": "gke-inix-gke-eu-pp-pdk-72ab-941a6f69-fqrw", "cloudPlatform": "GCP", "externalId": "1511864616192343110", "subscriptionId": "f391b2ee-ffdf-58e1-a3af-a59bfeaba3dc", "subscriptionName": "inix-horsprod-n0wq", "subscriptionExternalId": "inix-horsprod-n0wq", "tags": { "cluster_name": "inix-gke-eu-pp", "gke-inix-eu-pp-nodes-europe-west4": "gke-inix-eu-pp-nodes-europe-west4", "gke-inix-gke-eu-pp": "gke-inix-gke-eu-pp", "gke-inix-gke-eu-pp-988606d9-node": "gke-inix-gke-eu-pp-988606d9-node", "gke-inix-gke-eu-pp-pdk": "gke-inix-gke-eu-pp-pdk", "goog-fleet-project": "inix-horsprod-n0wq", "goog-gke-cluster-id-base32": "tcdanwnkgndvzlohnlhmoapayhybvkjeqbfuokve2ufprzvps45q", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "spot", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "inix-gke-eu-pp", "goog-k8s-node-pool-name": "pdk-72ab", "goog-terraform-provisioned": "true", "project": "inix-horsprod-n0wq", "tag-inix-gke-eu-pp-ingress": "tag-inix-gke-eu-pp-ingress" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 49, "criticalSeverityFindingCount": 49, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokMTRlODJlYTAtOTgwNC01ZDJlLWE2OWUtNjhkNjg4NTU3OGY4", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "14e82ea0-9804-5d2e-a69e-68d6885578f8", "type": "VIRTUAL_MACHINE", "name": "gke-vctech-gke-eu-pr-n4-shared-c8e798db-duig", "cloudPlatform": "GCP", "externalId": "3799583756770569928", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "subscriptionName": "INIX-VCTECH", "subscriptionExternalId": "inix-vctech-0alr", "tags": { "cost_center": "50001z0536-001", "gke-vctech-gke-eu-pr": "gke-vctech-gke-eu-pr", "gke-vctech-gke-eu-pr-860fef39-node": "gke-vctech-gke-eu-pr-860fef39-node", "gke-vctech-gke-eu-pr-shared": "gke-vctech-gke-eu-pr-shared", "goog-gke-cluster-id-base32": "qyh66omu7jhr3bmgaftrfvltkjzc5ifdvowuvqm4dikservhcbua", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "vctech-gke-eu-pr", "goog-k8s-node-pool-name": "n4-shared", "net-gkenodes-inix-azae-prod-europe-west4": "net-gkenodes-inix-azae-prod-europe-west4", "net-main-gkenodes": "net-main-gkenodes", "owner": "jkrawc50", "project": "vctech-gke-eu-pr", "tag-vctech-gke-eu-pr-client": "tag-vctech-gke-eu-pr-client", "terraform": "true" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 49, "criticalSeverityFindingCount": 49, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokYjQ2ZWYyZDMtNTEyMS01YTg4LWFkMTEtNzNhNDYwZjI0OWFm", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "b46ef2d3-5121-5a88-ad11-73a460f249af", "type": "VIRTUAL_MACHINE", "name": "ENMFN0APP01", "cloudPlatform": "Alibaba", "externalId": "i-uf67w5ntp88b10tn592w", "subscriptionId": "d7297fe3-6ae8-59e5-b456-5050a1ca195b", "subscriptionName": "ENMS-pr", "subscriptionExternalId": "1950243589136840", "tags": { "Account": "1950243589136840", "Base_nsg_type": "VMPRD", "Domain": "VMM", "Env": "production", "Environment": "PROD", "Project": "ENM", "Terraform": "yes", "Vendor": "aliyun" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 43, "criticalSeverityFindingCount": 43, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokYjM0YTQ1YmEtZTg2MC01NTc5LWE3MzYtNzYzMmQ0NTdlYjIw", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "b34a45ba-e860-5579-a736-7632d457eb20", "type": "VIRTUAL_MACHINE", "name": "ENMFN0APP02", "cloudPlatform": "Alibaba", "externalId": "i-uf60a6i74bym0d8wjtx0", "subscriptionId": "d7297fe3-6ae8-59e5-b456-5050a1ca195b", "subscriptionName": "ENMS-pr", "subscriptionExternalId": "1950243589136840", "tags": { "Account": "1950243589136840", "Base_nsg_type": "VMPRD", "Domain": "VMM", "Env": "production", "Environment": "PROD", "Project": "ENM", "Terraform": "yes", "Vendor": "aliyun" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 43, "criticalSeverityFindingCount": 43, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokYzk4Mjg1MjktODNiZS01YTU4LTlhOGEtYTA5NGY3MGE3MjZh", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "c9828529-83be-5a58-9a8a-a094f70a726a", "type": "VIRTUAL_MACHINE", "name": "gke-vctech-gke-eu-pr-n4-shared-ada1118f-g9m6", "cloudPlatform": "GCP", "externalId": "8251205178823763465", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "subscriptionName": "INIX-VCTECH", "subscriptionExternalId": "inix-vctech-0alr", "tags": { "cost_center": "50001z0536-001", "gke-vctech-gke-eu-pr": "gke-vctech-gke-eu-pr", "gke-vctech-gke-eu-pr-860fef39-node": "gke-vctech-gke-eu-pr-860fef39-node", "gke-vctech-gke-eu-pr-shared": "gke-vctech-gke-eu-pr-shared", "goog-gke-cluster-id-base32": "qyh66omu7jhr3bmgaftrfvltkjzc5ifdvowuvqm4dikservhcbua", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "vctech-gke-eu-pr", "goog-k8s-node-pool-name": "n4-shared", "net-gkenodes-inix-azae-prod-europe-west4": "net-gkenodes-inix-azae-prod-europe-west4", "net-main-gkenodes": "net-main-gkenodes", "owner": "jkrawc50", "project": "vctech-gke-eu-pr", "tag-vctech-gke-eu-pr-client": "tag-vctech-gke-eu-pr-client", "terraform": "true" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 42, "criticalSeverityFindingCount": 42, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokOWQzNDg5N2UtNDRjZi01YTU1LThmZjctYjE5NmZhNWU4ZmQ4", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "9d34897e-44cf-5a55-8ff7-b196fa5e8fd8", "type": "VIRTUAL_MACHINE", "name": "gke-vctech-gke-eu-pp-n4-shared-c95b019b-qhwp", "cloudPlatform": "GCP", "externalId": "5646838182778991520", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "subscriptionName": "INIX-VCTECH", "subscriptionExternalId": "inix-vctech-0alr", "tags": { "cost_center": "50001z0536-001", "gke-vctech-gke-eu-pp": "gke-vctech-gke-eu-pp", "gke-vctech-gke-eu-pp-6830a116-node": "gke-vctech-gke-eu-pp-6830a116-node", "gke-vctech-gke-eu-pp-shared": "gke-vctech-gke-eu-pp-shared", "goog-fleet-project": "464185428346", "goog-gke-cluster-id-base32": "naykcfw275ezfoxzjnzpvvbquab2ieq336dell4s2ntdywfh43gq", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "vctech-gke-eu-pp", "goog-k8s-node-pool-name": "n4-shared", "net-gkenodes-inix-azae-prod-europe-west4": "net-gkenodes-inix-azae-prod-europe-west4", "net-main-gkenodes": "net-main-gkenodes", "owner": "jkrawc50", "project": "vctech-gke-eu-pp", "tag-vctech-gke-eu-pp-client": "tag-vctech-gke-eu-pp-client", "terraform": "true" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 35, "criticalSeverityFindingCount": 35, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }], "pageInfo": { "hasNextPage": true, "endCursor": "eyJmaWVsZHMiOlt7IkZpZWxkIjoiY3JpdGljYWxTZXZlcml0eUZpbmRpbmdDb3VudCIsIlZhbHVlIjozNX0seyJGaWVsZCI6ImhpZ2hTZXZlcml0eUZpbmRpbmdDb3VudCIsIlZhbHVlIjowfSx7IkZpZWxkIjoibWVkaXVtU2V2ZXJpdHlGaW5kaW5nQ291bnQiLCJWYWx1ZSI6MH0seyJGaWVsZCI6Imxvd1NldmVyaXR5RmluZGluZ0NvdW50IiwiVmFsdWUiOjB9LHsiRmllbGQiOiJpbmZvcm1hdGlvbmFsU2V2ZXJpdHlGaW5kaW5nQ291bnQiLCJWYWx1ZSI6MH0seyJGaWVsZCI6Imdyb3VwQnlLZXkiLCJWYWx1ZSI6IjlkMzQ4OTdlLTQ0Y2YtNWE1NS04ZmY3LWIxOTZmYTVlOGZkOCJ9XX0=" } } } };
 
   // src/server/scanJobs.ts
-  var BUDGET_MS2 = 27e4;
-  var FIRST_STEP_BUDGET_MS2 = 45e3;
-  var CONTINUE_DELAY_MS2 = 3e4;
+  var BUDGET_MS3 = 27e4;
+  var FIRST_STEP_BUDGET_MS3 = 45e3;
+  var CONTINUE_DELAY_MS3 = 3e4;
   var CONTINUE_RETRY_MS = 9e4;
-  var CONTINUE_HANDLER2 = "trigger_continueScan";
+  var CONTINUE_HANDLER3 = "trigger_continueScan";
   var DELTA_OVERLAP_MINUTES = 15;
   var FORCE_STOP_LOCK_MS = 1e4;
   var ScanCancelled = class extends Error {
@@ -6311,12 +6893,12 @@ var Server = (() => {
       const job = getJob(jobId);
       if (!job || job.kind !== "scan") return null;
       if (isTerminalPhase(job.phase)) {
-        clearContinuationTriggers2();
+        clearContinuationTriggers3();
         clearCancel(jobId);
         return "Scan stopped.";
       }
       if (job.phase === "FETCHING" || job.phase === "RECONCILING") {
-        clearContinuationTriggers2();
+        clearContinuationTriggers3();
         finalizeCancel(job);
         return "Scan stopped.";
       }
@@ -6456,7 +7038,7 @@ var Server = (() => {
         journal_ref: null,
         error: null
       });
-      step2(job, FIRST_STEP_BUDGET_MS2);
+      step3(job, FIRST_STEP_BUDGET_MS3);
       return { jobId: job.job_id, message: "Scan started." };
     });
   }
@@ -6497,7 +7079,7 @@ var Server = (() => {
       journal_ref: null,
       error: null
     });
-    step2(job);
+    step3(job);
     return { jobId: job.job_id, message: "Quick refresh started." };
   }
   function dryRunScan(options) {
@@ -6532,7 +7114,7 @@ var Server = (() => {
     afterPersist(slim);
     return { jobId: null, message: "Dry-run scan saved." };
   }
-  function step2(job, budgetMs = BUDGET_MS2) {
+  function step3(job, budgetMs = BUDGET_MS3) {
     var _a, _b, _c;
     const started = Date.now();
     const params = JSON.parse((_a = job.params_json) != null ? _a : "{}");
@@ -6565,7 +7147,7 @@ var Server = (() => {
         if (Date.now() - started > budgetMs) {
           writeSlimRecords(scanId, slim);
           writePageRuns(scanId, pageRuns);
-          scheduleContinuation2();
+          scheduleContinuation3();
           return;
         }
       }
@@ -6623,7 +7205,7 @@ var Server = (() => {
       writeFrameSafely(scanId, records, pageOfFromRuns(readPageRuns(scanId), records.length));
     }
     updateJob(jobId, { phase: "PERSISTING", scan_id: scanId });
-    scheduleContinuation2();
+    scheduleContinuation3();
     persistFlatScan2(records, {
       mode: params.mode,
       scanId,
@@ -6633,7 +7215,7 @@ var Server = (() => {
     });
     afterPersist(records);
     updateJob(jobId, { phase: "DONE" });
-    clearContinuationTriggers2();
+    clearContinuationTriggers3();
     clearCancel(jobId);
   }
   function loadBaselineSlim(baselineScanId) {
@@ -6696,19 +7278,19 @@ var Server = (() => {
       recordError("supportGroupRefresh", e);
     }
   }
-  function scheduleContinuation2(delayMs = CONTINUE_DELAY_MS2) {
-    ScriptApp.newTrigger(CONTINUE_HANDLER2).timeBased().after(delayMs).create();
+  function scheduleContinuation3(delayMs = CONTINUE_DELAY_MS3) {
+    ScriptApp.newTrigger(CONTINUE_HANDLER3).timeBased().after(delayMs).create();
   }
-  function clearContinuationTriggers2() {
+  function clearContinuationTriggers3() {
     for (const t of ScriptApp.getProjectTriggers()) {
-      if (t.getHandlerFunction() === CONTINUE_HANDLER2) ScriptApp.deleteTrigger(t);
+      if (t.getHandlerFunction() === CONTINUE_HANDLER3) ScriptApp.deleteTrigger(t);
     }
   }
   function continueJob(_e) {
     try {
       withScriptLock(() => {
         var _a, _b;
-        clearContinuationTriggers2();
+        clearContinuationTriggers3();
         const job = activeJob();
         if (!job || job.kind !== "scan") return;
         if (job.phase === "FETCHING") {
@@ -6716,7 +7298,7 @@ var Server = (() => {
             finalizeCancel(job);
             return;
           }
-          step2(job);
+          step3(job);
         } else if (job.phase === "RECONCILING") {
           const params = JSON.parse((_a = job.params_json) != null ? _a : "{}");
           const slim = (_b = readSlimRecords(job.scan_id)) != null ? _b : [];
@@ -6727,7 +7309,7 @@ var Server = (() => {
         }
       }, 12e4);
     } catch (e) {
-      if (e instanceof LedgerBusyError) scheduleContinuation2(CONTINUE_RETRY_MS);
+      if (e instanceof LedgerBusyError) scheduleContinuation3(CONTINUE_RETRY_MS);
       throw e;
     }
   }
@@ -8074,17 +8656,84 @@ var Server = (() => {
       return cancelScan(String((_a = p == null ? void 0 : p["jobId"]) != null ? _a : ""));
     });
   }
+  function assertNoActivePurge(what) {
+    if (activePurgeJob()) {
+      throw new LedgerBusyError(
+        `A severity purge is still rewriting scan archives \u2014 ${what} would replay the ones it hasn't reached yet. Wait for it to finish, then retry.`
+      );
+    }
+  }
   function deleteScans2(p) {
     var _a;
     const scanIds = ((_a = p == null ? void 0 : p["scanIds"]) != null ? _a : []).map(String);
-    return mutate(() => deleteScans(scanIds));
+    return mutate(() => {
+      assertNoActivePurge("deleting a scan");
+      return deleteScans(scanIds);
+    });
   }
   function compact(p) {
     const params = p != null ? p : {};
     const dryRun = Boolean(params["dryRun"]);
     const days = params["retentionDays"] !== void 0 ? Number(params["retentionDays"]) : getRetentionDays2();
     if (dryRun) return run(() => compactLedger(days, true));
-    return mutate(() => compactLedger(days, false));
+    return mutate(() => {
+      assertNoActivePurge("compacting");
+      return compactLedger(days, false);
+    });
+  }
+  function cutoffDate(days, now) {
+    return new Date((now != null ? now : Date.now()) - days * 864e5).toISOString().slice(0, 10);
+  }
+  function severityList(v) {
+    return Array.isArray(v) ? v.filter((s) => typeof s === "string") : [];
+  }
+  function previewMaintenance2(p) {
+    var _a, _b;
+    const params = p != null ? p : {};
+    const episodeDays = Math.max(1, Number((_a = params["episodeDays"]) != null ? _a : 365));
+    const historyDays = Math.max(1, Number((_b = params["historyDays"]) != null ? _b : 365));
+    const now = Date.now();
+    return run(
+      () => previewMaintenance(
+        severityList(params["severities"]),
+        {
+          resolvedBeforeMs: now - episodeDays * 864e5,
+          severities: severityList(params["episodeSeverities"]).length ? severityList(params["episodeSeverities"]) : null
+        },
+        cutoffDate(historyDays, now)
+      )
+    );
+  }
+  function startSeverityPurge2(p) {
+    const params = p != null ? p : {};
+    return run(
+      () => startSeverityPurge(
+        severityList(params["severities"]),
+        params["alsoNarrowScope"] !== false
+      ),
+      "startSeverityPurge"
+    );
+  }
+  function getPurgeStatus(_p) {
+    return run(() => ({ purge: purgeStatus() }));
+  }
+  function pruneEpisodes2(p) {
+    var _a;
+    const params = p != null ? p : {};
+    const days = Math.max(1, Number((_a = params["days"]) != null ? _a : 365));
+    const sevs = severityList(params["severities"]);
+    return mutate(() => {
+      assertNoActivePurge("pruning episodes");
+      return pruneEpisodes({
+        resolvedBeforeMs: Date.now() - days * 864e5,
+        severities: sevs.length ? sevs : null
+      });
+    });
+  }
+  function trimHistory2(p) {
+    var _a;
+    const days = Math.max(1, Number((_a = (p != null ? p : {})["days"]) != null ? _a : 365));
+    return mutate(() => trimHistory(cutoffDate(days)));
   }
   function payloadOf(params, fallbackKey) {
     if (typeof params["gzipB64"] === "string") {
@@ -8146,7 +8795,7 @@ var Server = (() => {
   function resetLedger2() {
     return mutate(() => {
       try {
-        clearContinuationTriggers2();
+        clearContinuationTriggers3();
       } catch (e) {
         console.warn(`resetLedger: continuation-trigger cleanup skipped: ${e}`);
       }

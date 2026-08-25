@@ -260,6 +260,76 @@ export function readCheckpoint(ref: string | null): Checkpoint | null {
   return parsed as Checkpoint;
 }
 
+// Rows per part when a purge re-shards a multi-part checkpoint. Only sharded migration
+// imports produce those; a purge only ever shrinks one, so this is a ceiling, not a target.
+const CHECKPOINT_PART_ROWS = 20_000;
+
+/**
+ * Replace a checkpoint blob with a rewritten one, preserving its single-file vs multi-part
+ * shape, and return the (possibly new) file id.
+ *
+ * `writeGzJson` trashes the same-named file and creates a fresh one, so the id changes — the
+ * caller MUST write the returned ref back to `compactions.checkpoint_ref` or the row points
+ * at a trashed file and the rebuild baseline silently reads as absent.
+ */
+export function rewriteCheckpoint(
+  compactionId: string,
+  prevRef: string | null,
+  checkpoint: Checkpoint,
+): string {
+  const prev = prevRef ? readGzJsonFile(prevRef) : null;
+  const prevParts =
+    prev && typeof prev === "object" && !Array.isArray(prev)
+      ? (prev as Record<string, unknown>)["parts"]
+      : null;
+  if (!Array.isArray(prevParts)) return writeCheckpoint(compactionId, checkpoint);
+
+  const rows = checkpoint.ledger ?? [];
+  const partIds: string[] = [];
+  for (let i = 0, idx = 0; i < rows.length; i += CHECKPOINT_PART_ROWS, idx += 1) {
+    partIds.push(writeCheckpointPart(compactionId, idx, rows.slice(i, i + CHECKPOINT_PART_ROWS)));
+  }
+  const ref = writeCheckpointManifest(compactionId, {
+    version: checkpoint.version,
+    floor_scan_id: checkpoint.floor_scan_id,
+    floor_ts: checkpoint.floor_ts,
+    parts: partIds,
+  });
+  // A shrunken checkpoint needs fewer parts; the tail ones are now unreferenced.
+  for (const id of prevParts as string[]) {
+    if (typeof id === "string" && !partIds.includes(id)) trashFile(id);
+  }
+  return ref;
+}
+
+/** Page file numbers present in a scan's archive folder, ascending. */
+export function listScanPageNumbers(scanRef: string | null): number[] {
+  if (!scanRef) return [];
+  let folder: GoogleAppsScript.Drive.Folder;
+  try {
+    folder = DriveApp.getFolderById(scanRef);
+  } catch {
+    return [];
+  }
+  const nums: number[] = [];
+  const files = folder.getFiles();
+  while (files.hasNext()) {
+    const m = /^page-(\d+)\.json(\.gz)?$/.exec(files.next().getName());
+    if (m) nums.push(Number(m[1]));
+  }
+  return nums.sort((a, b) => a - b);
+}
+
+/** Trash a scan's page-run spill (stale once a purge shrinks its pages). */
+export function trashPageRuns(scanId: string): void {
+  try {
+    const files = scanFolder(scanId).getFilesByName(PAGE_RUNS_NAME);
+    while (files.hasNext()) files.next().setTrashed(true);
+  } catch (e) {
+    console.warn(`Couldn't trash page runs for ${scanId}: ${e}`);
+  }
+}
+
 // ----------------------------------------------------------------- ledger snapshot
 const SNAPSHOT_NAME = "ledger-snapshot.json.gz";
 

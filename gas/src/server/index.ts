@@ -6,3 +6,4 @@ export { wizDiagnostic } from "./diagnostics";
 export * as api from "./api";
 export * as jobs from "./scanJobs";
 export * as backfill from "./backfillJobs";
+export * as purge from "./purgeJobs";
