@@ -40,6 +40,11 @@ function probeSyncStep(stepId) {
 // Trigger handlers (names referenced by ScriptApp.newTrigger calls).
 function trigger_dailySync() { Server.jobs.dailySync(); }
 function trigger_continueSync(e) { Server.jobs.continueJob(e); }
+// Re-warms the derived read-models between syncs. CacheService's ceiling is six hours and
+// tenants sync daily, so without this every entry lapses three or four times a day and the
+// next visitor pays the cold load. Deliberately NOT an api_* delegator: it is not callable
+// from the client, and api.ts exporting it would fail the build's entry.js guard.
+function trigger_warmReadModels() { Server.warm.warmReadModelsScheduled(); }
 
 // google.script.run API surface — thin delegators so the client can call api_* by name.
 // Each is timed to the execution log ({"api":name,"ms":n} lines) so server cost can be

@@ -53,6 +53,9 @@ import {
 import * as settingsStore from "./settingsStore";
 import { appendRows, dataRowCount, TABS } from "./sheetsDb";
 import { loadConfigRules, loadFrameworks, parseJson, persistSync } from "./syncStore";
+// Namespace import to keep the module graph acyclic: warm.ts imports api.ts, which imports
+// the store layer this file also uses.
+import * as warm from "./warm";
 import {
   fetchCloudResourcesPage,
   fetchConnectionPage,
@@ -718,6 +721,33 @@ export function testStepVariables(stepId: string, vars: Rec | null): Rec {
 }
 
 /** Entry point for the Sync button and the daily trigger (caller holds the lock). */
+/**
+ * Warm the derived read-models at the tail of a sync.
+ *
+ * A sync invalidates every cached entry by bumping the version, so the very next reader pays
+ * a full cold load unless something refills them — and that reader is usually the operator
+ * who just pressed Sync now.
+ *
+ * CALLED FROM BOTH SYNC PATHS, and it has to be. `dryRunSync` persists the seed and returns
+ * without ever entering `runBattery`, so a warm placed only at the end of the live walk fires
+ * for live tenants and never in dry-run — which is also the only mode the dev harness and the
+ * test suite exercise, so it would look like it worked and do nothing. Measured before this
+ * was split out: a dry-run sync logged no warm at all, and the bootstrap after it still read
+ * 5,846 cells off the ledger.
+ *
+ * Best-effort and never fatal: a sync that succeeded must not report failure because an
+ * optimization threw. `warmReadModels` directly rather than `warmReadModelsScheduled`,
+ * because that one refuses while `activeJob()` returns a job — and on the live path this
+ * execution IS the job, so the guarded entry point would skip itself.
+ */
+function warmAfterSync(): void {
+  try {
+    warm.warmReadModels();
+  } catch (e) {
+    console.warn(`Cache warm after sync failed: ${e}`);
+  }
+}
+
 export function startSync(): StartResult {
   const existing = activeJob();
   if (existing) {
@@ -784,6 +814,7 @@ function dryRunSync(): StartResult {
   // sync that never called Wiz at all.
   settingsStore.setSkippedSteps([]);
   settingsStore.setTruncatedSteps([]);
+  warmAfterSync();
   return {
     jobId: null,
     message: `Dry-run sync complete: ${doc.nodes.length} nodes, ` +
@@ -1173,6 +1204,8 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
     if (opts.lockHeld) persist();
     else withScriptLock(persist);
     updateJob(job.job_id, { phase: "DONE" });
+    // After the phase update, so the version is final and `activeJob()` is already clear.
+    warmAfterSync();
   } catch (e) {
     // The step index and id go in with the message. A failed sync used to record only what
     // went wrong, never where — so a two-hour run that died on one step reported a Wiz error

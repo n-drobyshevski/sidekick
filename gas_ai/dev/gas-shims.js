@@ -25,6 +25,10 @@
   // DID, not what the world currently holds, so restoring a grid must not rewind them.
   // Reset explicitly instead.
   const counters = { propGet: 0, propSet: 0, rangeReads: 0, cellsRead: 0 };
+  // Per-key tallies too, because "how many Properties reads" is rarely the question — the
+  // question is which key was read how often, and a memo is only interesting for the ones it
+  // covers. Reset alongside the totals.
+  let propGetKeys = Object.create(null);
 
   // ------------------------------------------------------------------------ Blob
   class FakeBlob {
@@ -98,7 +102,11 @@
   const props = new Map();
   window.PropertiesService = {
     getScriptProperties: () => ({
-      getProperty: (k) => { counters.propGet++; return props.has(k) ? props.get(k) : null; },
+      getProperty: (k) => {
+        counters.propGet++;
+        propGetKeys[k] = (propGetKeys[k] || 0) + 1;
+        return props.has(k) ? props.get(k) : null;
+      },
       setProperty: (k, v) => { counters.propSet++; props.set(k, String(v)); },
       deleteProperty: (k) => { props.delete(k); },
       getProperties: () => Object.fromEntries(props),
@@ -463,9 +471,10 @@
 
   window.__gasFakes = {
     /** Service calls made since the last resetCounters(). See `counters` above. */
-    counters() { return { ...counters }; },
+    counters() { return { ...counters, propGetKeys: { ...propGetKeys } }; },
     resetCounters() {
       for (const k of Object.keys(counters)) counters[k] = 0;
+      propGetKeys = Object.create(null);
     },
 
     snapshot() {

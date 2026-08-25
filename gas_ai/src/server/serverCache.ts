@@ -13,7 +13,7 @@
 
 import { sha1Hex } from "../domain/sha1";
 import { BUILD_ID } from "./buildInfo";
-import { domainTagKey, getProp, setProp } from "./props";
+import { domainTagKey, getProp, PROP_KEYS, setProp } from "./props";
 
 const VERSION_PROP = "DATA_VERSION";
 // A SECOND version, for entries whose freshness is a fact about WIZ rather than about this
@@ -30,9 +30,45 @@ const KEY_PREFIX = `wsk.${BUILD_ID}`;
 const CHUNK_CHARS = 90_000; // base64 chars per entry, safely under the 100 KB cap
 const DEFAULT_TTL_SEC = 21_600; // the CacheService maximum (6 h)
 
+// PER-EXECUTION MEMOS FOR THE THREE VALUES EVERY CACHE KEY IS BUILT FROM.
+//
+// Each is a PropertiesService read (~10-50 ms in GAS) and `configStamp` adds a pure-JS
+// SHA-1. None of them can change mid-execution unless this module changes it, and both
+// places that do are five lines below.
+//
+// THIS IS WORTH NOTHING TO A PAGE LOAD AND EVERYTHING TO THE WARM, which is why it arrives
+// with the warm rather than earlier. Measured before writing it: every read endpoint costs
+// exactly 2 propGet on a warm call, because each resolves exactly ONE cached entry — and in
+// GAS every RPC is a fresh execution, so a memo cannot deduplicate a value read once. The
+// sibling project memoized this on the strength of a page that composes four read-models in
+// one call; no endpoint here does. `warmReadModels` is the first caller that does, resolving
+// a dozen entries in a single execution, and it turns 2N reads into 2.
+//
+// MEMOIZED HERE AND NOT IN props.ts. A blanket memo there would also swallow
+// `CANCEL_SYNC_JOB_ID`, which syncJobs re-reads at the top of its page loop precisely
+// because ANOTHER execution writes it — the Stop button would stop working mid-sync — and
+// `ACTIVE_JOB_ID`, which is the same shape of hazard.
+let dataVersionMemo: string | undefined;
+let wizDataVersionMemo: string | undefined;
+let configStampMemo: string | undefined;
+
+/**
+ * Drop all three. Called from both bump functions below, and by the test harness.
+ *
+ * The memos must fall with the version they cache: a `mutate()` endpoint that bumps and then
+ * serves a cached payload in the SAME execution would otherwise key that read to the
+ * pre-bump version and answer with state it had just invalidated.
+ */
+export function __resetMemosForTest(): void {
+  dataVersionMemo = undefined;
+  wizDataVersionMemo = undefined;
+  configStampMemo = undefined;
+}
+
 /** Monotonic stamp of the last mutation; part of every cache key. */
 export function dataVersion(): string {
-  return getProp(VERSION_PROP) ?? "0";
+  if (dataVersionMemo === undefined) dataVersionMemo = getProp(VERSION_PROP) ?? "0";
+  return dataVersionMemo;
 }
 
 /**
@@ -54,6 +90,7 @@ function nextVersion(prev: string | null): string {
 /** Call after every mutation commit (persist/delete/compact/settings/snapshot). */
 export function bumpDataVersion(): void {
   setProp(VERSION_PROP, nextVersion(getProp(VERSION_PROP)));
+  __resetMemosForTest();
 }
 
 /**
@@ -62,17 +99,30 @@ export function bumpDataVersion(): void {
  * bumps: settings write through bumpDataVersion alone.
  */
 export function wizDataVersion(): string {
-  return getProp(WIZ_VERSION_PROP) ?? "0";
+  if (wizDataVersionMemo === undefined) wizDataVersionMemo = getProp(WIZ_VERSION_PROP) ?? "0";
+  return wizDataVersionMemo;
 }
 
 export function bumpWizDataVersion(): void {
   setProp(WIZ_VERSION_PROP, nextVersion(getProp(WIZ_VERSION_PROP)));
+  __resetMemosForTest();
+}
+
+/**
+ * Params as a short stable hash.
+ *
+ * Exported ONLY so the durable L2 can derive a filename from the same hash this key uses. If
+ * the two ever drift the L2 stops hitting — with no error, no wrong answer, and nothing on
+ * screen to say so, just a feature quietly doing nothing. `test/readModelStore.test.ts` pins
+ * the parity rather than trusting that two call sites stay in step.
+ */
+export function paramsHash(params: unknown): string {
+  return sha1Hex(JSON.stringify(params ?? null)).slice(0, 12);
 }
 
 /** Deterministic short key: params are hashed so keys stay under the 250-char cap. */
 export function cacheKey(name: string, params: unknown, version: string): string {
-  const paramsHash = sha1Hex(JSON.stringify(params ?? null)).slice(0, 12);
-  return `${KEY_PREFIX}:${version}:${name}:${paramsHash}`;
+  return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
 }
 
 /**
@@ -90,7 +140,36 @@ export function cacheKey(name: string, params: unknown, version: string): string
  * that goes stale. Hashed so an arbitrarily long key cannot push the cache key past 250.
  */
 function configStamp(): string {
-  return sha1Hex(domainTagKey()).slice(0, 8);
+  if (configStampMemo === undefined) {
+    // TWO PROPERTIES NOW, and the second was a real gap rather than a completeness tidy.
+    // `WIZ_PROJECT_ID_V2` is read INSIDE the cached bootstrap core (api.ts, `scope
+    // .syncProjectId`) and appeared in no cache key at all — so an operator who set or
+    // corrected the sync's project scope in the GAS console would have gone on seeing the
+    // old one for up to six hours, with no sync to run that would clear it. Exactly the trap
+    // this function was written for, one key short.
+    //
+    // Found by the warm: caching bootstrap at the tail of every sync is what made an
+    // existing test able to observe it, because before that the entry was usually cold when
+    // the property changed.
+    configStampMemo = sha1Hex(`${domainTagKey()}\u0000${getProp(PROP_KEYS.wizProjectIdV2) ?? ""}`)
+      .slice(0, 8);
+  }
+  return configStampMemo;
+}
+
+/**
+ * The version prefix a cache key carries, for whichever version namespace an entry opted
+ * into. Exported for the durable L2, which has to stamp a stored payload with EXACTLY what
+ * `cached()` would key it under.
+ *
+ * `BUILD_ID` is folded back in here, and that is easy to miss: this project puts it in
+ * `KEY_PREFIX` rather than in the version prefix, so a `currentStamp` that returned only
+ * `version.configStamp` would leave the L2 with no deploy invalidation at all — it would go
+ * on serving payloads computed by the old code after every push, which is the exact trap
+ * KEY_PREFIX exists to close for L1.
+ */
+export function currentStamp(version?: string): string {
+  return `${KEY_PREFIX}:${version ?? dataVersion()}.${configStamp()}`;
 }
 
 /** Pure chunk split (exported for tests). */

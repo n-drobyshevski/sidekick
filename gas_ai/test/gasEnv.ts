@@ -88,6 +88,8 @@ export interface GasCounters {
   propSet: number;
   rangeReads: number;
   cellsRead: number;
+  /** Per-key read tallies — which property, how many times. */
+  propGetKeys: Record<string, number>;
 }
 
 interface GasFakes {
@@ -122,6 +124,11 @@ async function resetServerMemos(): Promise<void> {
     // api.ts is absent on purpose — its one memo is identity-keyed on syncStore's, so
     // clearing syncStore below already invalidates it. See the note where it is declared.
     import("../src/server/archiveStore"),
+    // The three per-execution memos behind every cache key. In GAS an execution ends with
+    // the request; here the module registry outlives the test, so without this a stamp read
+    // in one test would answer in the next — which is exactly the staleness the memos are
+    // careful to drop on a version bump.
+    import("../src/server/serverCache"),
     import("../src/server/settingsStore"),
     import("../src/server/sheetsDb"),
     import("../src/server/syncStore"),
