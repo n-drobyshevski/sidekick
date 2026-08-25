@@ -48,8 +48,10 @@
 .help-page { display: grid; grid-template-columns: minmax(0, 1fr); }
 .help-doc { min-width: 0; }
 .help-index { display: none; }
+/* Said when a search matches nothing, so the lexicon never just goes blank. */
+.help-lex-none { color: var(--text-2); margin: var(--space-5) 0; }
 
-@media (min-width: 1200px) {
+@media (min-width: 1100px) {
   .help-page {
     grid-template-columns: minmax(0, 1fr) 196px;
     column-gap: 36px;

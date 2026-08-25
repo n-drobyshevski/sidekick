@@ -41,9 +41,14 @@ import { CATEGORY_LABELS, kindIcon, svgEl } from "../icons.js";
 import { ROUTE_ICONS } from "../routeIcons.js";
 import { bootstrap, bootstrapCached, navigate, setParams, swrCall } from "../store.js";
 import {
-  clear, el, fmtDateTime, motionOk, onPageTeardown, sectionLabel, statusPill, tip,
-  uiIcon,
+  clear, debounce, el, fmtDateTime, motionOk, onPageTeardown, plural, sectionLabel,
+  statusPill, tip, uiIcon,
 } from "../ui.js";
+
+// A deep link (?term=, or a tip's "Enter for the full definition") has to reach an entry the
+// lexicon's search may currently be hiding. revealEntry is module-level and the filter is
+// not, so the live page hands it a way to clear itself and takes it back on teardown.
+let clearLexFilter = null;
 
 // Byte-identical to the constants pages/scans.js, pages/inventory.js and pages/combos.js
 // call with, so swrCall's key is shared: arriving here from any of them costs no round
@@ -101,6 +106,8 @@ export async function renderHelp(main, params, _ctx) {
   const headHost = el("div", { class: "help-head" });
   const limitsHost = el("div", { class: "help-limits" });
   const lex = lexiconShell();
+  clearLexFilter = () => lex.reveal();
+  onPageTeardown(() => { clearLexFilter = null; });
 
   doc.append(
     headHost,
@@ -702,8 +709,26 @@ function anatomySvg() {
  * group set the resolved entries will.
  */
 function lexiconShell() {
-  const host = el("div", {});
+  const host = el("div", { id: "help-lexicon" });
   const lists = new Map();
+  const blocks = new Map();
+  // entry + node together, so the filter can read an entry's text without re-deriving it
+  // from the DOM it just built.
+  const rows = [];
+
+  // THE LEXICON HAD NO WAY IN. 64 entries, ~4,100 words, every one expanded, and the only
+  // navigation aid was the index rail — which is display:none below 1200px, so on a laptop
+  // the page was 13,000px of prose and a scrollbar. Search works at every width and answers
+  // the question people actually arrive with, which is "what does this one word mean".
+  const search = el("input", {
+    type: "search",
+    placeholder: "Search " + ENTRIES.length + " terms",
+    "aria-label": "Search the vocabulary",
+    "aria-controls": "help-lexicon",
+  });
+  const count = el("span", { class: "count", role: "status" });
+  host.append(el("div", { class: "toolbar" },
+    el("div", { class: "field" }, search), count));
 
   for (const g of groupByFamily(ENTRIES)) {
     const head = el("h3", { class: "help-family", id: "help-family-" + g.family.id },
@@ -717,12 +742,17 @@ function lexiconShell() {
     // and stack — the newest opaque one happens to cover the rest, so it LOOKS right, but
     // the last family's heading would then stay pinned over the footer that follows it.
     // One block per family means each heading is released exactly when its own rows end.
-    host.append(el("div", { class: "help-family-block" }, head, list));
+    const block = el("div", { class: "help-family-block" }, head, list);
+    blocks.set(g.family.id, block);
+    host.append(block);
   }
+
+  const empty = el("p", { class: "help-lex-none", hidden: true });
+  host.append(empty);
 
   host.append(el("p", { class: "help-lex-foot" },
     el("span", {},
-      "Framework codes — LLM06, ASI03, ML_DATA_POISONING and the rest — are defined in " +
+      "Framework codes (LLM06, ASI03, ML_DATA_POISONING and the rest) are defined in " +
       "full on the AARS Rules code reference, which also says what this draft prices each " +
       "one at and how many live assets carry it. "),
     el("button", {
@@ -732,15 +762,54 @@ function lexiconShell() {
     }, "Open the code reference →"),
   ));
 
+  /** Hide rows that do not match, then hide any family left with nothing visible. */
+  function applyFilter(raw) {
+    const q = String(raw || "").trim().toLowerCase();
+    let shown = 0;
+    for (const r of rows) {
+      const hit = !q || r.hay.includes(q);
+      r.node.hidden = !hit;
+      if (hit) shown++;
+    }
+    for (const [id, block] of blocks) {
+      const list = lists.get(id);
+      const any = list && [...list.children].some((n) => !n.hidden);
+      block.hidden = !any;
+    }
+    empty.hidden = shown !== 0;
+    if (!shown) empty.textContent = "No term matches “" + raw.trim() + "”.";
+    count.textContent = !q
+      ? plural(rows.length, "term")
+      : shown + " of " + plural(rows.length, "term");
+    return shown;
+  }
+
+  search.addEventListener("input", debounce(() => applyFilter(search.value), 120));
+
   return {
     node: host,
+    /** Clear the filter so a deep link can reach an entry the search is hiding. */
+    reveal() {
+      if (!search.value) return;
+      search.value = "";
+      applyFilter("");
+    },
     fill(resolved) {
+      rows.length = 0;
       for (const g of groupByFamily(resolved)) {
         const list = lists.get(g.family.id);
         if (!list) continue;
         clear(list);
-        for (const entry of g.entries) list.append(entryRow(entry));
+        for (const entry of g.entries) {
+          const node = entryRow(entry);
+          // Searched once, at build time: term, its alias and the definition body.
+          const hay = [entry.term, entry.aka || "", entry.blurb || "", entry.more || ""]
+            .join(" ").toLowerCase();
+          rows.push({ entry, node, hay });
+          list.append(node);
+        }
       }
+      applyFilter(search.value);
     },
   };
 }
@@ -878,6 +947,9 @@ function entryDomId(id) {
  * has never been discoverable.
  */
 function revealEntry(id) {
+  // Clear any active search FIRST: a filtered-out row is `hidden`, and scrolling to a
+  // display:none element moves nothing while silently reporting success.
+  if (clearLexFilter) clearLexFilter();
   const node = document.getElementById(entryDomId(id));
   if (!node) return;
   node.scrollIntoView({ behavior: motionOk() ? "smooth" : "auto", block: "center" });
