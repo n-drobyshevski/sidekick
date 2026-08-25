@@ -19,8 +19,8 @@ var Server = (() => {
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
   // src/server/index.ts
-  var server_exports = {};
-  __export(server_exports, {
+  var index_exports = {};
+  __export(index_exports, {
     aarsDiagnostic: () => aarsDiagnostic,
     api: () => api_exports,
     doGet: () => doGet,
@@ -2545,7 +2545,7 @@ var Server = (() => {
     return { accepted, verified };
   }
   function resolveAiResourceTypes(log) {
-    const say = log != null ? log : () => void 0;
+    const say = log != null ? log : (() => void 0);
     const overrideRaw = getProp(PROP_KEYS.wizAiResourceTypes);
     const override = overrideRaw ? overrideRaw.split(",").map((s) => s.trim()).filter(Boolean) : null;
     if (override && override.length) {
@@ -4501,6 +4501,7 @@ var Server = (() => {
     return { consequence, unknown };
   }
   function derivePostureInput(node2, rule) {
+    void rule;
     const unknowns = [];
     const notApplicable = [];
     const cap = capabilityOf(node2);
@@ -10638,6 +10639,11 @@ var Server = (() => {
         return aiPropertiesVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "AGENTIC_IDENTITIES":
         return aiPrincipalsVariables(projectScope());
+      // Like INVENTORY_AI, these two build their `$query` from the tenant-resolved AI type
+      // list, so their default is only fully known once types resolve. They are not editable,
+      // so this is describing the request rather than offering a reset target — but it has to
+      // go through the same builder either way, or the panel would print a default the sync
+      // does not send.
       case "HOST_EXPOSURE":
         return hostExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "ENDPOINT_EXPOSURE":
@@ -10646,6 +10652,7 @@ var Server = (() => {
         return identityAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "LINEAGE":
         return lineageVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      // The widened agent-path traversals. `null` scope, as they have always sent.
       case "GUARDRAIL_GAPS":
         return noGuardrailVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "RUNS_AS":
@@ -17483,5 +17490,5 @@ var Server = (() => {
       }), 3600)
     );
   }
-  return __toCommonJS(server_exports);
+  return __toCommonJS(index_exports);
 })();
