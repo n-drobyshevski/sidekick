@@ -5,7 +5,7 @@ import { call } from "../api.js";
 import { bootstrap } from "../store.js";
 import { clientBuild, describeBuild } from "../buildInfo.js";
 import {
-  clear, el, emptyState, segmented, sevBadge, skeleton, statusPill, toast,
+  clear, debounce, el, emptyState, segmented, sevBadge, skeleton, statusPill, toast,
 } from "../ui.js";
 
 export async function renderSettings(main, _params, ctx) {
@@ -303,6 +303,17 @@ export async function renderSettings(main, _params, ctx) {
       }
     }
 
+    // 120 rules across six subcategories, and no way to find one by name before this.
+    const scopeSearch = el("input", {
+      type: "search",
+      placeholder: "Search " + scope.total + " rules",
+      "aria-label": "Search the 5Rs rules",
+    });
+    const scopeSearchCount = el("span", { class: "count", role: "status" });
+    const scopeQuery = () => scopeSearch.value.trim().toLowerCase();
+    const rowHay = (r) =>
+      [r.name, r.shortId, r.policyKind].filter(Boolean).join(" ").toLowerCase();
+
     const stateEl = el("span", { class: "scope-state" });
     const saveBtn = el("button", { class: "primary" }, "Save");
     const revertBtn = el("button", {}, "Revert");
@@ -356,18 +367,61 @@ export async function renderSettings(main, _params, ctx) {
         syncAll();
       });
 
+      const rowsEl = el("div", { class: "scope-rows" }, ...rowCtrls.map((c) => c.node));
+
+      // COLLAPSED BY DEFAULT, because this one card was 7,909px of an 8,912px page: 120 rule
+      // rows in six groups, every one of them expanded, with no way to skip a subcategory you
+      // did not come for. The head already carries everything a summary needs — the
+      // subcategory, "N of M in scope", and the bulk action — so the rows are what folds.
+      //
+      // `userOpen` is null until a human touches the toggle. Until then the group opens
+      // itself whenever it holds a pin or a search hit, so an unsaved change can never be
+      // hidden behind a fold; after that the reader's choice wins.
+      let userOpen = null;
+      const toggle = el("button", {
+        type: "button", class: "scope-disclose", "aria-expanded": "false",
+        "aria-controls": rowsEl.id || undefined,
+      });
+      function applyOpen(open) {
+        rowsEl.hidden = !open;
+        toggle.setAttribute("aria-expanded", String(open));
+        toggle.textContent = open ? "Hide" : "Show";
+        toggle.setAttribute("aria-label",
+          (open ? "Hide " : "Show ") + group.rows.length + " rules in "
+          + group.subcategoryTitle);
+      }
+      toggle.addEventListener("click", () => {
+        userOpen = rowsEl.hidden;
+        applyOpen(userOpen);
+      });
+      applyOpen(false);
+
       const node = el("div", { class: "scope-group" },
         el("div", { class: "scope-group-head" },
           el("div", { class: "scope-group-title" },
             el("span", { class: "comp-ext" }, group.subcategoryExternalId),
             group.subcategoryTitle),
           countEl,
-          bulkBtn),
-        el("div", { class: "scope-rows" }, ...rowCtrls.map((c) => c.node)));
+          bulkBtn,
+          toggle),
+        rowsEl);
 
       function sync() {
         const n = group.rows.filter((r) => draftSelected(r)).length;
         countEl.textContent = `${n} of ${group.rows.length} in scope`;
+        // A row the reader is searching for, or has pinned, must not sit behind a fold.
+        const q = scopeQuery();
+        let hits = 0;
+        group.rows.forEach((r, i) => {
+          const hit = !q || rowHay(r).includes(q);
+          rowCtrls[i].node.hidden = !hit;
+          if (hit) hits++;
+        });
+        const pinned = group.rows.some(
+          (r) => box.draft.in.indexOf(r.policyId) >= 0 || box.draft.out.indexOf(r.policyId) >= 0,
+        );
+        node.hidden = q ? hits === 0 : false;
+        applyOpen(userOpen !== null ? userOpen : (pinned || (!!q && hits > 0)));
         const allIn = n === group.rows.length;
         bulkBtn.textContent = allIn ? "Deselect all" : "Select all";
         bulkBtn.setAttribute("aria-label",
@@ -375,13 +429,19 @@ export async function renderSettings(main, _params, ctx) {
         for (const c of rowCtrls) c.sync();
       }
 
-      return { node, sync };
+      return { node, sync, group };
     }
 
     const groupCtrls = groups.map(buildGroup);
 
     function syncAll() {
       for (const g of groupCtrls) g.sync();
+      const q = scopeQuery();
+      const shown = groupCtrls.reduce(
+        (n, g) => n + g.group.rows.filter((r) => !q || rowHay(r).includes(q)).length, 0);
+      scopeSearchCount.textContent = q
+        ? shown + " of " + scope.total + " rules"
+        : scope.total + " rules";
       clear(stateEl);
       if (busy) stateEl.append(el("span", { class: "pill neutral" }, "Working…"));
       else if (dirty()) stateEl.append(el("span", { class: "pill warn" }, "Unsaved"));
@@ -419,6 +479,8 @@ export async function renderSettings(main, _params, ctx) {
       syncAll();
     });
 
+    scopeSearch.addEventListener("input", debounce(() => syncAll(), 120));
+
     syncAll();
 
     return el("div", { class: "card", style: "margin-top:14px" },
@@ -427,6 +489,8 @@ export async function renderSettings(main, _params, ctx) {
         `${scope.frameworkName} · ${scope.selected} of ${scope.total} rules in scope now. ` +
         "Toggling a rule pins it; toggling it back to what is shown below clears the pin " +
         "and lets the landscape keep deciding it."),
+      el("div", { class: "toolbar" },
+        el("div", { class: "field" }, scopeSearch), scopeSearchCount),
       el("div", { class: "scope-groups" }, ...groupCtrls.map((g) => g.node)),
       bar);
   }

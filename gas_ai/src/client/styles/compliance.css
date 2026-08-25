@@ -584,3 +584,17 @@
 .comp-policy-table th.num, .comp-policy-table td.num {
   text-align: right; font-variant-numeric: tabular-nums;
 }
+
+/* The 5Rs scope card's per-group disclosure. That one card was 7,909px of an 8,912px page —
+   120 rule rows in six groups, all expanded — so the rows fold and the head stays, because
+   the head already says the subcategory, "N of M in scope" and the bulk action. Sized and
+   coloured as a quiet secondary control: it reveals, it does not commit anything. */
+.scope-disclose {
+  flex: 0 0 auto;
+  font: inherit; font-size: var(--fs-label); font-weight: 600;
+  color: var(--text-2); background: var(--page);
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  padding: var(--space-half) var(--space-2); cursor: pointer;
+}
+.scope-disclose:hover { background: var(--wash-hover); color: var(--ink); }
+.scope-disclose:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
