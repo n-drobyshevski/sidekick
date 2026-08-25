@@ -44,8 +44,8 @@ palette is deliberately identical across both tools.
 ### The shell
 
 A header across the top, a two-tier nav under it, and the page beside that. The
-header carries exactly two things — the product mark and name, and the **project scope
-switcher** — because both describe the whole app rather than any one page: the switcher
+header carries exactly two things — the product mark and name, and the **scope switcher** —
+because both describe the whole app rather than any one page: the switcher
 scopes every figure on every page, so it reads as chrome rather than as one page's filter.
 The reference screen's search box, notification icons and avatar are deliberately absent;
 none of them has anything behind it here. Everything else stays in the rail: the nav, the
@@ -88,6 +88,27 @@ exactly like "nothing here". Picking one stores the scope server-side and re-boo
 every payload (including the counts computed over the whole register) answers for the same
 population; the caption beside it always carries the denominator, since "34" alone cannot
 tell a small unit from a small register.
+
+**A scope is a project OR a business domain**, and the two are orthogonal rather than
+nested — the seeded landscape puts four domains inside `PROJECT-ALPHA` on purpose, so that
+grouping by domain "has to visibly cut across an attack path or the dimension is just a
+second spelling of the project". They are two flat groups in one list, and picking from
+either clears the other, enforced in the settings pair rather than in the ten readers.
+Server-side it costs one branch: `viewAssets()` is the whole predicate, and the issues,
+findings, priorities and combos all scope by hanging off an asset in view.
+
+A domain is a **tag**, which is what makes the honesty work harder than for a project. Only
+15 of the 87 seeded assets carry one, so the caption prints a second figure — `5 of 87
+assets · 72 carry no domain` — because a bare `5 of 87` attributes the other 72 to somewhere
+else when the truth is that nobody said. The Domains group is **absent, not empty**, when the
+register carries no tagged asset at all: `AI_ASSET_PROPERTIES` is optional and swallows an
+HTTP 400, so "no domains" must read as *we never learned*. Three surfaces cannot answer for a
+domain and each says which population its figures describe: **Compliance Posture** cannot
+ever, because it re-scores by asking Wiz and Wiz scopes posture by project, not by tag; the
+**inventory trend** cannot yet, because `sync_history` carries a per-project blob and no
+per-domain one, and the ledger never held the dimension to backfill; and **Cloud
+Configuration** loses the findings that name no AI asset — evaluated against a region, an IAM
+policy, a service account — which it now counts out loud rather than leaving to be noticed.
 
 ## How data flows
 

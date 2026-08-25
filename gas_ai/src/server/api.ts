@@ -138,7 +138,7 @@ import {
 } from "../domain/scanVars";
 import { layoutGraph } from "../domain/graphLayout";
 import { nodeOrder, projectGraph, type Projection } from "../domain/graphProject";
-import { scopeGraphDoc } from "../domain/graphScope";
+import { scopeGraphDoc, scopeGraphDocToDomain } from "../domain/graphScope";
 import {
   DEFAULT_QUERY,
   fieldValuesFor,
@@ -152,6 +152,7 @@ import {
 import {
   AI_ASSET_KINDS,
   NODE_KINDS,
+  domainCatalogue,
   projectCatalogue,
   type FindingRow,
   type FrameworkPolicyRow,
@@ -212,13 +213,39 @@ export interface ApiResult<T = unknown> {
  * the register actually has.
  */
 function viewAssets(): GNode[] {
-  const view = settingsStore.getProjectView();
   const all = syncStore.loadAssets();
+  // THE SCOPE HAS TWO KINDS AND THIS IS THE ONLY PLACE THAT KNOWS IT. Everything scoped
+  // downstream — issues, findings, the combos, the priorities queue — is scoped by hanging
+  // off an asset in view, so the second kind costs one branch here and nothing after it.
+  // The two are mutually exclusive at the setter (domain/settingsLogic.ts), which is why
+  // this reads as an either/or rather than as two filters composed.
+  const domain = settingsStore.getDomainView();
+  if (domain) {
+    // Exact, and case-sensitively so: `domainOfTags` already folded the KEY when it resolved
+    // this, and returns the VALUE as the tenant wrote it, "because it is a label a person
+    // chose and folding its case would print something the Wiz console does not". A scope
+    // that folded it here would select rows the picker cannot name.
+    return all.filter((a) => a.domain === domain);
+  }
+  const view = settingsStore.getProjectView();
   if (!view) return all;
   // Shared with the prune (domain/prunePlan.ts) rather than spelled out again here. Two
   // copies of "does this asset belong to that project" would be two answers to it, and the
   // first symptom of the drift would be a prune deleting rows this filter was showing.
   return all.filter((a) => inProject(a.projects, view));
+}
+
+/**
+ * The scope as one string, for the memo keys and cache keys that only need to know it CHANGED.
+ *
+ * Prefixed by kind, so a project named `SAP` and the domain `SAP` can never collide into one
+ * cache entry — they select different populations and would otherwise share an answer.
+ */
+function viewKey(): string {
+  const domain = settingsStore.getDomainView();
+  if (domain) return `d:${domain}`;
+  const project = settingsStore.getProjectView();
+  return project ? `p:${project}` : "";
 }
 
 /**
@@ -229,7 +256,10 @@ function viewAssets(): GNode[] {
  * everything — the two states really are different questions.
  */
 function viewAssetIds(): Set<string> | null {
-  if (!settingsStore.getProjectView()) return null;
+  // `viewKey()` rather than the project alone: this gate is what makes "no view" skip the
+  // filter entirely, and asking only about the project would answer "whole register" while a
+  // DOMAIN was in force — every issue and finding in the tenant, under a label naming one.
+  if (!viewKey()) return null;
   const ids = new Set<string>();
   for (const a of viewAssets()) ids.add(a.id);
   return ids;
@@ -281,12 +311,17 @@ let graphDocMemo: { view: string; raw: GraphDoc | null; doc: GraphDoc | null } |
 // identity-keyed would break that, and would need the guard question answered again.
 
 function viewGraphDoc(): GraphDoc | null {
-  const view = settingsStore.getProjectView();
+  // The memo keys on viewKey(), not on the project alone: the two kinds of scope produce
+  // different graphs and a key that could not tell them apart would serve one for the other.
+  const view = viewKey();
   const raw = syncStore.loadGraphDoc();
   if (graphDocMemo && graphDocMemo.view === view && graphDocMemo.raw === raw) {
     return graphDocMemo.doc;
   }
-  const doc = raw ? scopeGraphDoc(raw, view) : null;
+  const domain = settingsStore.getDomainView();
+  const doc = !raw ? null
+    : domain ? scopeGraphDocToDomain(raw, domain)
+      : scopeGraphDoc(raw, settingsStore.getProjectView());
   graphDocMemo = { view, raw, doc };
   return doc;
 }
@@ -449,8 +484,16 @@ function bootstrapCore(): Rec {
     // the label and the figures it labels have to come from one read.
     scope: {
       projectView: settingsStore.getProjectView(),
+      domainView: settingsStore.getDomainView(),
       shown: assets.length,
       register: syncStore.loadAssets().length,
+      // How much of the register carries the domain tag at all, so the caption can tell
+      // "in another domain" from "carries no domain" — 21 of the 36 seeded assets carry
+      // none, and a bare "36 of 87" would silently attribute every one of them elsewhere.
+      // `domainTag.ts` built this figure for exactly this class of question: a count can
+      // distinguish "nobody tagged any" from "we never successfully asked", and a per-row
+      // sentinel could distinguish neither.
+      domainCoverage: domainCoverage(syncStore.loadAssets(), domainTagKey()),
       // What the SYNC is scoped to collect (WIZ_PROJECT_ID_V2), as opposed to what the
       // pages are scoped to show above it. Null when unset, which means the battery runs
       // tenant-wide. Here so the Data page's prune panel can default to it and say which
@@ -545,6 +588,11 @@ function filterOptions(assets: GNode[], register: GNode[]): Rec {
     clouds: [...clouds].sort(),
     projects: [...projects].sort(),
     domains: [...domains].sort(),
+    // Beside the flat `domains` above and NOT replacing it, for the reason `projectList` is
+    // beside `projects`: that one is a facet over the assets IN VIEW, this one is the
+    // switcher's catalogue over the whole register, answering "how much would I see if I
+    // picked this" rather than "what can I still narrow to".
+    domainList: domainCatalogue(register),
     // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
     // filter on every page matches project names, and there is no reason to migrate them
     // here; the switcher needs ids because only an id carries ancestry — an asset lists its
@@ -998,6 +1046,15 @@ interface AssetsModel {
   trendScope: {
     /** The project view the series was read for, "" when register-wide. */
     projectId: string;
+    /**
+     * The domain view in force, "" when there is none — and when it is set, `scoped` is
+     * FALSE and the series below is the register's. `sync_history` carries a per-project
+     * blob beside its register-wide totals, which is what makes a scoped series possible at
+     * all; it has no per-domain column, and one cannot be backfilled because the ledger
+     * never held the dimension. The note this feeds says that rather than drawing a short
+     * series that would look like a landscape which collapsed.
+     */
+    domainId: string;
     scoped: boolean;
     /** Points in the series shipped. */
     points: number;
@@ -1234,6 +1291,7 @@ function assetsModel(): AssetsModel {
     countTrend: trend,
     trendScope: {
       projectId: projectView,
+      domainId: settingsStore.getDomainView(),
       scoped: Boolean(projectView),
       points: trend.length,
       registerPoints,
@@ -1536,6 +1594,7 @@ function configModel(): {
   rows: ConfigFindingView[];
   totals: ConfigTotals;
   facets: Record<string, string[]>;
+  scopeLoss: { outOfView: number; register: number; unattributed: number } | null;
 } {
   // A MAP, not the id set: the domain is joined off the asset, and the linkage flag is
   // the same lookup. An unlinked finding has no node and so no domain — its resource
@@ -1546,6 +1605,25 @@ function configModel(): {
     const node = assetsById[f.resourceId];
     return toConfigView(f, !!node, node?.domain ?? "");
   });
+
+  // WHAT A SCOPE COSTS THIS REGISTER, counted rather than left to be noticed. A finding is in
+  // view when the asset it hangs off is, so scoping drops two different populations at once:
+  // findings on assets in another project or domain, and findings attached to no AI asset at
+  // all — one evaluated against a REGION, an IAM policy, a service account no agent runs as.
+  // The second group can never be in any view, and the page already treats "most of these are
+  // not on an AI asset" as a KPI and a column rather than a footnote; this is the same fact
+  // under a scope, where it is the difference between a short register and a clean one.
+  //
+  // Null when unscoped: there is nothing lost to report, and a permanent note saying so on a
+  // register-wide page is the noise registerWideNote's own rule refuses.
+  const allFindings = syncStore.loadFindings();
+  const scopeLoss = viewKey()
+    ? {
+      outOfView: allFindings.length - rows.length,
+      register: allFindings.length,
+      unattributed: allFindings.filter((f) => !assetsById[f.resourceId]).length,
+    }
+    : null;
 
   const severities = new Set<string>();
   const statuses = new Set<string>();
@@ -1576,6 +1654,7 @@ function configModel(): {
       projects: [...projects].sort(),
       domains: [...domains].sort(),
     },
+    scopeLoss,
   };
 }
 
@@ -1608,6 +1687,7 @@ export function getConfigFindings(p?: unknown): ApiResult {
       total: model.rows.length,
       totals: model.totals,
       facets: model.facets,
+      scopeLoss: model.scopeLoss,
       pageSize,
       sort,
       dir,
@@ -1695,12 +1775,25 @@ const SCOPED_POSTURE_MAX_FRAMEWORKS = 12;
  * words (`complianceShared.js`), the way it does for `POSTURE_STATES` — a code travels, a
  * sentence is written where it is read.
  */
-type PostureScopeReason = "noCredentials" | "tooManyFrameworks" | "fetchFailed";
+// `domainScope` is a REFUSAL BY CONSTRUCTION, unlike the three beside it. The others are
+// conditions that could clear — credentials arrive, a tenant collects fewer frameworks, a
+// fetch succeeds next time. This one cannot: `scopedPosture` re-scores by ASKING Wiz, with
+// the project id in the query's own variables, and a `Wiz/Domain` tag is not something
+// `complianceAnalytics` can be scoped by. There is no request to send, so the page keeps the
+// register-wide numbers and says which population they describe.
+type PostureScopeReason =
+  | "noCredentials" | "tooManyFrameworks" | "fetchFailed" | "domainScope";
 
 /** What `getCompliance` says about the population its numbers describe. */
 interface PostureScope {
   /** The project view these numbers were re-scored for, "" when register-wide. */
   projectId: string;
+  /**
+   * The domain view in force, "" when there is none. Beside `projectId` rather than folded
+   * into it because the note has to say something different: a project view that fell back
+   * is a re-score that did not happen, a domain view is a re-score that cannot.
+   */
+  domainId: string;
   source: "stored" | "live";
   /** When Wiz was asked. Null on the stored path — that clock is the sync's. */
   fetchedAt: string | null;
@@ -1833,7 +1926,8 @@ export function getCompliance(p?: unknown): ApiResult {
     // reach the cache. `saveSettings` bumps DATA_VERSION and would evict it anyway today —
     // this stops that from being load-bearing.
     const projectView = settingsStore.getProjectView();
-    return cached("getCompliance", { frameworkId: requested, projectView }, () => {
+    const domainView = settingsStore.getDomainView();
+    return cached("getCompliance", { frameworkId: requested, projectView, domainView }, () => {
       const storedPosture = syncStore.loadPosture();
       const catalogue = syncStore.loadFrameworks();
       const selected = settingsStore.getSelectedFrameworks(() => catalogue);
@@ -1843,7 +1937,13 @@ export function getCompliance(p?: unknown): ApiResult {
       // `scopedPosture`. Everything below is a pure function of (posture, policies), so this
       // one substitution re-scopes the trees, the KPIs, the rail, the weakest areas, the
       // shared controls and the coverage bands together, or none of them.
-      const live = projectView ? scopedPosture(projectView, storedPosture) : null;
+      const live = domainView
+        // Not a failure to report and retry: Wiz owns these percentages and scopes them by
+        // project, so under a domain the honest answer is the register's own numbers with
+        // the population named. Everything else on the page still narrows, because it is
+        // built from findings that hang off assets in view.
+        ? { reason: "domainScope" as PostureScopeReason, detail: domainView }
+        : projectView ? scopedPosture(projectView, storedPosture) : null;
       const scoped = live && "posture" in live ? live : null;
       // The other arm, narrowed once rather than re-tested per field below.
       const refused = live && !("posture" in live) ? live : null;
@@ -1855,6 +1955,7 @@ export function getCompliance(p?: unknown): ApiResult {
         : registerPolicies;
       const postureScope: PostureScope = {
         projectId: projectView,
+        domainId: domainView,
         source: scoped ? "live" : "stored",
         fetchedAt: scoped ? scoped.fetchedAt : null,
         frameworkCount: scoped ? scoped.frameworkCount : 0,
@@ -2525,6 +2626,10 @@ export function setSettings(p?: unknown): ApiResult {
     // strand anyone whose stored view fell out of scope after a re-sync — they could not
     // clear it, because clearing is a write too.
     if (params["projectView"] !== undefined) settingsStore.setProjectView(params["projectView"]);
+    // The same latitude, for the same reason: a stored domain whose tag nothing carries any
+    // more — a re-scoped sync, or an operator fixing WIZ_DOMAIN_TAG_KEY — has to stay
+    // clearable, and clearing is a write too.
+    if (params["domainView"] !== undefined) settingsStore.setDomainView(params["domainView"]);
     // Cleaned against the policies actually synced, so a pin on a rule the tenant no longer
     // carries is dropped rather than accumulating forever in a settings row nothing reads.
     if (params["fiveRsPins"] !== undefined) {
@@ -2542,6 +2647,7 @@ export function setSettings(p?: unknown): ApiResult {
       // rather than the one it asked for.
       autoExpand: settingsStore.getAutoExpand(),
       projectView: settingsStore.getProjectView(),
+      domainView: settingsStore.getDomainView(),
       fiveRsPins: settingsStore.getFiveRsPins(),
     };
   });

@@ -39,11 +39,50 @@ function unattributed(n: GNode): boolean {
  */
 export function scopeGraphDoc(doc: GraphDoc, projectId: string): GraphDoc {
   if (!projectId) return doc;
+  return scopeBy(doc, (n) => inProject(n.projects, projectId), unattributed);
+}
 
+/**
+ * `doc` narrowed to one business domain — the `Wiz/Domain` tag — on the same rule.
+ *
+ * The two halves map across exactly. A node is in view if it CARRIES that domain, or it
+ * carries none and is reachable from something that does; a node tagged with a DIFFERENT
+ * domain is never admitted however reachable, which is the same guard that stops one business
+ * unit dragging in another's assets through a shared bucket.
+ *
+ * That second rule is the whole reason a domain is worth scoping by, and the seeded landscape
+ * is built to show it: `bucket-customer-pii` is owned by SAP while `agent-a`, which reads it,
+ * is CROSS. Scoped to either, the path between them is visibly cut — which is what makes the
+ * dimension something other than a second spelling of the project.
+ *
+ * Untagged nodes ride along, and there are many more of them here than there are unattributed
+ * nodes under a project scope — a domain is a tag a tenant may write on some resources and not
+ * others, where `projects` is filled in by Wiz. That is correct rather than lax: an SAP agent's
+ * attack path runs through whatever it reaches, and dropping the untagged hops would draw
+ * severed stubs. The coverage figure beside the picker is what keeps that honest.
+ */
+export function scopeGraphDocToDomain(doc: GraphDoc, domain: string): GraphDoc {
+  if (!domain) return doc;
+  return scopeBy(doc, (n) => n.domain === domain, (n) => !n.domain);
+}
+
+/**
+ * The walk both scopes share: anchor on the nodes the scope names, then cross only nodes the
+ * scope cannot attribute to anyone.
+ *
+ * One engine rather than two, because the interesting part is not the predicate — it is the
+ * traversal and the induced-subgraph step, and two copies of those would be two chances to
+ * get "an absent path reads as an absent risk" wrong.
+ */
+function scopeBy(
+  doc: GraphDoc,
+  anchored: (n: GNode) => boolean,
+  ridesAlong: (n: GNode) => boolean,
+): GraphDoc {
   const keep = new Set<string>();
   const open: string[] = [];
   for (const n of doc.nodes) {
-    if (inProject(n.projects, projectId)) {
+    if (anchored(n)) {
       keep.add(n.id);
       open.push(n.id);
     }
@@ -68,8 +107,8 @@ export function scopeGraphDoc(doc: GraphDoc, projectId: string): GraphDoc {
       if (keep.has(nextId)) continue;
       const next = byId.get(nextId);
       // `!next` drops a dangling endpoint, which the induced-subgraph step below would drop
-      // anyway. `!unattributed` is the guard against leaking another project's assets.
-      if (!next || !unattributed(next)) continue;
+      // anyway. `!ridesAlong` is the guard against leaking another scope's assets.
+      if (!next || !ridesAlong(next)) continue;
       keep.add(nextId);
       open.push(nextId);
     }

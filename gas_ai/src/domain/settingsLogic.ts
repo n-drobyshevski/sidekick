@@ -45,8 +45,39 @@ export function getProjectView(settings: Rec): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
+/**
+ * ONE SCOPE AT A TIME, ENFORCED HERE.
+ *
+ * Project and domain are orthogonal — the seeded landscape puts four domains inside
+ * PROJECT-ALPHA on purpose, so that grouping by domain "has to visibly cut across an attack
+ * path or the dimension is just a second spelling of the project". Two scopes at once would
+ * therefore be a real question, and it is not the one this control asks: the caption under
+ * it carries ONE denominator, and every "this figure cannot be scoped" note in the app is
+ * written for one dimension.
+ *
+ * So setting either clears the other, in the pair of writers rather than in the ten readers.
+ * A reader that had to remember the rule is a reader that can forget it.
+ */
 export function withProjectView(settings: Rec, id: unknown): Rec {
-  return { ...settings, project_view: typeof id === "string" ? id.trim() : "" };
+  return {
+    ...settings,
+    project_view: typeof id === "string" ? id.trim() : "",
+    domain_view: "",
+  };
+}
+
+export function getDomainView(settings: Rec): string {
+  const v = settings["domain_view"];
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/** The domain tag's own value, verbatim. See withProjectView for why this clears its pair. */
+export function withDomainView(settings: Rec, domain: unknown): Rec {
+  return {
+    ...settings,
+    domain_view: typeof domain === "string" ? domain.trim() : "",
+    project_view: "",
+  };
 }
 
 export function getDefaultDepth(settings: Rec): number {

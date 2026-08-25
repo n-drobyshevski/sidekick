@@ -18,18 +18,19 @@
 // mirrored into the hash — the same discipline combos.js documents, so a background SWR
 // revalidation cannot collapse the table you have open.
 
-import { setParams, swrCall } from "../store.js";
+import { bootstrapCached, setParams, swrCall } from "../store.js";
 import { openConfigFindingSheet } from "../detailSheets.js";
 import {
   clear, dataTable, debounce, el, emptyState, errorState, fmtDate, heroStat, outcomeBadge,
   pageHeader, statRow,
   pager, plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
   skeletonStack, statusPill, togglePills,
+  scopeNote,
 } from "../ui.js";
 import {
   CONFIG_SORTS, CONFIG_SORT_DESC, FLAG_LABELS, LINKAGE_LABELS,
   SEVERITY_ORDER, SEVERITY_RANK, activeConfigFilters, applyConfigFilters, configFacetCounts,
-  readConfigParams, sortConfigRows,
+  configScopeLossView, readConfigParams, sortConfigRows,
 } from "./configView.js";
 
 import { tipAnchor } from "../ui.js";
@@ -188,6 +189,13 @@ export async function renderConfigFindings(main, params, ctx) {
       aside: strip,
       stats: headerStats,
     }));
+
+    // What the scope costs this register. Printed with the figures rather than as a footnote,
+    // which is the discipline registerWideNote already states: a footnote is read after the
+    // reader has decided, and the decision here is whether a short list means a clean
+    // landscape. Null and absent when nothing is scoped away.
+    const loss = configScopeLossView(data.scopeLoss, (bootstrapCached() || {}).scope);
+    if (loss) headHost.append(scopeNote(loss));
 
     headHost.append(el("div", {
       class: "toolbar",

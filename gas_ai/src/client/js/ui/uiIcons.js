@@ -122,6 +122,16 @@ const PATHS = {
   // the switcher's "all" row. It is the same folder shifted, deliberately, so the pair reads
   // as one-versus-many rather than as two unrelated marks; the row's words carry the meaning
   // either way, which is why a 14px difference is allowed to be this quiet.
+  // A domain, on the switcher and on its rows. A LABEL rather than a folder, because that is
+  // what it is: `Wiz/Domain` is a tag a person wrote on a resource, not a container Wiz nests
+  // things in — and the seeded landscape puts four domains inside one project to make sure
+  // nobody reads it as the latter. The punched hole is what separates it from a plain
+  // rotated square at 14px.
+  tag: [
+    "M8.3 2.2 H12.9 a0.9 0.9 0 0 1 0.9 0.9 V7.7 L7.7 13.8 a0.9 0.9 0 0 1 -1.3 0 L2.2 9.6 " +
+      "a0.9 0.9 0 0 1 0 -1.3 z",
+    "M10.9 5.1 h0.01",
+  ],
   folders: [
     "M4.5 3.5 V2.8 a0.8 0.8 0 0 1 0.8 -0.8 h2.4 l1.1 1.4 H13.5",
     "M1.5 13 V5.4 a0.9 0.9 0 0 1 0.9 -0.9 h3 l1.3 1.6 h5.4 a0.9 0.9 0 0 1 0.9 0.9 V13 a0.9 0.9 0 0 1 -0.9 0.9 H2.4 A0.9 0.9 0 0 1 1.5 13 z",

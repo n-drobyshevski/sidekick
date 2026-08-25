@@ -1289,6 +1289,17 @@ var Server = (() => {
     }
     return [...byId.values()].sort((x, y) => x.isFolder === y.isFolder ? x.name.localeCompare(y.name) : x.isFolder ? -1 : 1);
   }
+  function domainCatalogue(assets) {
+    const byName = /* @__PURE__ */ new Map();
+    for (const a of assets) {
+      const name = a.domain;
+      if (!name) continue;
+      const seen = byName.get(name);
+      if (seen) seen.assets += 1;
+      else byName.set(name, { name, assets: 1 });
+    }
+    return [...byName.values()].sort((x, y) => x.name.localeCompare(y.name));
+  }
 
   // src/domain/graphExpand.ts
   var HOP = {
@@ -7749,7 +7760,22 @@ var Server = (() => {
     return typeof v === "string" ? v.trim() : "";
   }
   function withProjectView(settings, id) {
-    return { ...settings, project_view: typeof id === "string" ? id.trim() : "" };
+    return {
+      ...settings,
+      project_view: typeof id === "string" ? id.trim() : "",
+      domain_view: ""
+    };
+  }
+  function getDomainView(settings) {
+    const v = settings["domain_view"];
+    return typeof v === "string" ? v.trim() : "";
+  }
+  function withDomainView(settings, domain) {
+    return {
+      ...settings,
+      domain_view: typeof domain === "string" ? domain.trim() : "",
+      project_view: ""
+    };
   }
   function getDefaultDepth(settings) {
     var _a5;
@@ -8117,7 +8143,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "a8afb4df6343" : "dev";
+  var BUILD_ID = true ? "73835c495e21" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8249,7 +8275,14 @@ var Server = (() => {
   function setProjectView(id) {
     const settings = loadSettings();
     const next = withProjectView(settings, id);
-    if (next["project_view"] === getProjectView(settings)) return;
+    if (next["project_view"] === getProjectView(settings) && next["domain_view"] === getDomainView(settings)) return;
+    saveSettings(next);
+  }
+  var getDomainView2 = () => getDomainView(loadSettings());
+  function setDomainView(domain) {
+    const settings = loadSettings();
+    const next = withDomainView(settings, domain);
+    if (next["domain_view"] === getDomainView(settings) && next["project_view"] === getProjectView(settings)) return;
     saveSettings(next);
   }
   var getDefaultDepth2 = () => getDefaultDepth(loadSettings());
@@ -14390,12 +14423,19 @@ var Server = (() => {
     return ((_a5 = n.projects) != null ? _a5 : []).length === 0;
   }
   function scopeGraphDoc(doc, projectId) {
-    var _a5;
     if (!projectId) return doc;
+    return scopeBy(doc, (n) => inProject(n.projects, projectId), unattributed);
+  }
+  function scopeGraphDocToDomain(doc, domain) {
+    if (!domain) return doc;
+    return scopeBy(doc, (n) => n.domain === domain, (n) => !n.domain);
+  }
+  function scopeBy(doc, anchored, ridesAlong) {
+    var _a5;
     const keep = /* @__PURE__ */ new Set();
     const open = [];
     for (const n of doc.nodes) {
-      if (inProject(n.projects, projectId)) {
+      if (anchored(n)) {
         keep.add(n.id);
         open.push(n.id);
       }
@@ -14415,7 +14455,7 @@ var Server = (() => {
       for (const nextId of (_a5 = adjacency2.get(open.pop())) != null ? _a5 : []) {
         if (keep.has(nextId)) continue;
         const next = byId.get(nextId);
-        if (!next || !unattributed(next)) continue;
+        if (!next || !ridesAlong(next)) continue;
         keep.add(nextId);
         open.push(nextId);
       }
@@ -15486,25 +15526,36 @@ var Server = (() => {
 
   // src/server/api.ts
   function viewAssets() {
-    const view = getProjectView2();
     const all = loadAssets();
+    const domain = getDomainView2();
+    if (domain) {
+      return all.filter((a) => a.domain === domain);
+    }
+    const view = getProjectView2();
     if (!view) return all;
     return all.filter((a) => inProject(a.projects, view));
   }
+  function viewKey() {
+    const domain = getDomainView2();
+    if (domain) return `d:${domain}`;
+    const project = getProjectView2();
+    return project ? `p:${project}` : "";
+  }
   function viewAssetIds() {
-    if (!getProjectView2()) return null;
+    if (!viewKey()) return null;
     const ids = /* @__PURE__ */ new Set();
     for (const a of viewAssets()) ids.add(a.id);
     return ids;
   }
   var graphDocMemo2 = null;
   function viewGraphDoc() {
-    const view = getProjectView2();
+    const view = viewKey();
     const raw = loadGraphDoc();
     if (graphDocMemo2 && graphDocMemo2.view === view && graphDocMemo2.raw === raw) {
       return graphDocMemo2.doc;
     }
-    const doc = raw ? scopeGraphDoc(raw, view) : null;
+    const domain = getDomainView2();
+    const doc = !raw ? null : domain ? scopeGraphDocToDomain(raw, domain) : scopeGraphDoc(raw, getProjectView2());
     graphDocMemo2 = { view, raw, doc };
     return doc;
   }
@@ -15660,8 +15711,16 @@ var Server = (() => {
       // the label and the figures it labels have to come from one read.
       scope: {
         projectView: getProjectView2(),
+        domainView: getDomainView2(),
         shown: assets.length,
         register: loadAssets().length,
+        // How much of the register carries the domain tag at all, so the caption can tell
+        // "in another domain" from "carries no domain" — 21 of the 36 seeded assets carry
+        // none, and a bare "36 of 87" would silently attribute every one of them elsewhere.
+        // `domainTag.ts` built this figure for exactly this class of question: a count can
+        // distinguish "nobody tagged any" from "we never successfully asked", and a per-row
+        // sentinel could distinguish neither.
+        domainCoverage: domainCoverage(loadAssets(), domainTagKey()),
         // What the SYNC is scoped to collect (WIZ_PROJECT_ID_V2), as opposed to what the
         // pages are scoped to show above it. Null when unset, which means the battery runs
         // tenant-wide. Here so the Data page's prune panel can default to it and say which
@@ -15720,6 +15779,11 @@ var Server = (() => {
       clouds: [...clouds].sort(),
       projects: [...projects].sort(),
       domains: [...domains].sort(),
+      // Beside the flat `domains` above and NOT replacing it, for the reason `projectList` is
+      // beside `projects`: that one is a facet over the assets IN VIEW, this one is the
+      // switcher's catalogue over the whole register, answering "how much would I see if I
+      // picked this" rather than "what can I still narrow to".
+      domainList: domainCatalogue(register),
       // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
       // filter on every page matches project names, and there is no reason to migrate them
       // here; the switcher needs ids because only an id carries ancestry — an asset lists its
@@ -16203,6 +16267,7 @@ var Server = (() => {
       countTrend: trend,
       trendScope: {
         projectId: projectView,
+        domainId: getDomainView2(),
         scoped: Boolean(projectView),
         points: trend.length,
         registerPoints
@@ -16373,6 +16438,12 @@ var Server = (() => {
       const node2 = assetsById[f.resourceId];
       return toConfigView(f, !!node2, (_a5 = node2 == null ? void 0 : node2.domain) != null ? _a5 : "");
     });
+    const allFindings = loadFindings();
+    const scopeLoss = viewKey() ? {
+      outOfView: allFindings.length - rows.length,
+      register: allFindings.length,
+      unattributed: allFindings.filter((f) => !assetsById[f.resourceId]).length
+    } : null;
     const severities = /* @__PURE__ */ new Set();
     const statuses = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
@@ -16400,7 +16471,8 @@ var Server = (() => {
         rules: [...rules].sort(),
         projects: [...projects].sort(),
         domains: [...domains].sort()
-      }
+      },
+      scopeLoss
     };
   }
   function getConfigFindings(p) {
@@ -16420,6 +16492,7 @@ var Server = (() => {
         total: model.rows.length,
         totals: model.totals,
         facets: model.facets,
+        scopeLoss: model.scopeLoss,
         pageSize,
         sort,
         dir
@@ -16517,19 +16590,21 @@ var Server = (() => {
       const params = p != null ? p : {};
       const requested = String((_a5 = params["frameworkId"]) != null ? _a5 : "");
       const projectView = getProjectView2();
-      return cached("getCompliance", { frameworkId: requested, projectView }, () => {
+      const domainView = getDomainView2();
+      return cached("getCompliance", { frameworkId: requested, projectView, domainView }, () => {
         var _a6, _b;
         const storedPosture = loadPosture();
         const catalogue = loadFrameworks();
         const selected = getSelectedFrameworks2(() => catalogue);
         const { policies: registerPolicies, scope: registerScope } = scopedFrameworkPolicies();
-        const live = projectView ? scopedPosture(projectView, storedPosture) : null;
+        const live = domainView ? { reason: "domainScope", detail: domainView } : projectView ? scopedPosture(projectView, storedPosture) : null;
         const scoped = live && "posture" in live ? live : null;
         const refused = live && !("posture" in live) ? live : null;
         const posture = scoped ? scoped.posture : storedPosture;
         const policies = scoped ? dropUnselected(scoped.frameworkPolicies, registerScope) : registerPolicies;
         const postureScope = {
           projectId: projectView,
+          domainId: domainView,
           source: scoped ? "live" : "stored",
           fetchedAt: scoped ? scoped.fetchedAt : null,
           frameworkCount: scoped ? scoped.frameworkCount : 0,
@@ -16975,6 +17050,7 @@ var Server = (() => {
       if (params["maxNodes"] !== void 0) setMaxNodes(params["maxNodes"]);
       if (params["autoExpand"] !== void 0) setAutoExpand(params["autoExpand"]);
       if (params["projectView"] !== void 0) setProjectView(params["projectView"]);
+      if (params["domainView"] !== void 0) setDomainView(params["domainView"]);
       if (params["fiveRsPins"] !== void 0) {
         setFiveRsPins(
           cleanFiveRsPins(
@@ -16990,6 +17066,7 @@ var Server = (() => {
         // rather than the one it asked for.
         autoExpand: getAutoExpand2(),
         projectView: getProjectView2(),
+        domainView: getDomainView2(),
         fiveRsPins: getFiveRsPins2()
       };
     });

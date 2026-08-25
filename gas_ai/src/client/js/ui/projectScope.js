@@ -56,6 +56,28 @@ export function scopeOptions(list) {
 }
 
 /**
+ * The domains on offer, as switcher rows.
+ *
+ * A flat group, never nested under a project and never a tier above one. The seeded landscape
+ * puts four domains inside PROJECT-ALPHA on purpose — "grouping by domain has to visibly cut
+ * across an attack path or the dimension is just a second spelling of the project" — so a tree
+ * here would assert a hierarchy the data does not have.
+ *
+ * No "untagged" row. An untagged resource contributes nothing to a facet, exactly as a blank
+ * cloud or region already does, and a synthetic one here would offer "the assets we know least
+ * about" as though it were an owner. The coverage figure in the caption answers that instead.
+ */
+export function domainScopeOptions(list) {
+  return (list || []).map((d) => ({
+    value: `d:${d.name}`,
+    label: d.name,
+    hint: assetCount(d.assets),
+    group: "Domains",
+    icon: "tag",
+  }));
+}
+
+/**
  * Everything the control asserts, from the bootstrap payload alone.
  *
  * @param {object|null} bootstrapData
@@ -63,45 +85,79 @@ export function scopeOptions(list) {
  *            stale: boolean, options: object[], pinned: object[]}}
  */
 export function projectScopeView(bootstrapData) {
-  const list = (bootstrapData && bootstrapData.filterOptions
-    && bootstrapData.filterOptions.projectList) || [];
+  const opts = (bootstrapData && bootstrapData.filterOptions) || {};
+  const list = opts.projectList || [];
+  const domains = opts.domainList || [];
   const scope = (bootstrapData && bootstrapData.scope) || null;
 
   // Nothing synced, or boot failed: no control at all. An empty picker is a promise the
   // register cannot keep, and the rail's sync zone already says why it is empty.
   if (!scope || !list.length) {
-    return { show: false, current: "", label: "", caption: "", stale: false, options: [], pinned: [] };
+    return {
+      show: false, current: "", label: "", caption: "", stale: false, options: [], pinned: [],
+    };
   }
 
-  const current = scope.projectView || "";
-  const chosen = list.find((p) => p.id === current) || null;
-  // A stored view whose project fell out of the register after a re-sync scoped elsewhere.
-  const stale = Boolean(current) && !chosen;
+  const cover = scope.domainCoverage || null;
+  const tagged = cover ? cover.tagged : 0;
+  const untagged = cover ? Math.max(0, cover.total - cover.tagged) : 0;
+  // THE GROUP IS ABSENT, NOT EMPTY, WHEN NOTHING IS TAGGED. `AI_ASSET_PROPERTIES` is an
+  // optional sync step that swallows an HTTP 400, so a tenant that rejects it has no domain
+  // data at all — and a "Domains" heading over nothing would say that nobody owns anything,
+  // which is a claim about the tenant rather than about what we managed to ask.
+  const domainRows = tagged > 0 ? domainScopeOptions(domains) : [];
+
+  const domainView = scope.domainView || "";
+  const projectView = scope.projectView || "";
+  const chosenDomain = domainView
+    ? domains.filter((d) => d.name === domainView)[0] || null : null;
+  const chosen = projectView ? list.find((p) => p.id === projectView) || null : null;
+  // A stored view whose project or domain fell out of the register after a re-sync scoped
+  // elsewhere — or, for a domain, after the tag key changed under it.
+  const stale = Boolean(domainView ? !chosenDomain : projectView && !chosen);
+
+  const label = domainView
+    ? (chosenDomain ? chosenDomain.name : "a domain this register does not hold")
+    : !projectView ? "everything synced"
+      : chosen ? chosen.name : "a project this register does not hold";
 
   return {
     show: true,
-    current,
-    label: !current ? "all synced projects"
-      : chosen ? chosen.name : "a project this register does not hold",
+    // Prefixed for domains so a project whose id is `SAP` and the domain `SAP` can never be
+    // one row. The control strips it again on pick; the server keys its caches the same way.
+    current: domainView ? `d:${domainView}` : projectView,
+    kind: domainView ? "domain" : projectView ? "project" : "",
+    label,
     // The denominator travels with the number: "826" alone cannot tell a small unit from a
     // small register, and those call for opposite reactions.
-    caption: !current ? `${assetCount(scope.register)} synced`
-      : stale ? `Not in this register — showing 0 of ${nf.format(scope.register)}`
-        : `${nf.format(scope.shown)} of ${nf.format(scope.register)} assets`,
+    //
+    // A DOMAIN CARRIES A SECOND FIGURE, and leaving it off would be the more comfortable lie.
+    // Only some resources are tagged — 15 of 36 in the seeded landscape — so "36 of 87" under
+    // a domain silently attributes the other 51 to some other domain, when the truth is that
+    // nobody said. The count says which.
+    caption: stale ? `Not in this register — showing 0 of ${nf.format(scope.register)}`
+      : domainView
+        ? `${nf.format(scope.shown)} of ${nf.format(scope.register)} assets · `
+          + `${nf.format(untagged)} carry no domain`
+        : !projectView ? `${assetCount(scope.register)} synced`
+          : `${nf.format(scope.shown)} of ${nf.format(scope.register)} assets`,
     stale,
-    options: scopeOptions(list),
-    // "All synced projects", not "All projects". The register holds what the last sync was
-    // scoped to fetch, which on a scoped tenant is one unit's subtree — calling that "all
-    // projects" would name a population this register does not contain.
+    options: [...scopeOptions(list), ...domainRows],
+    // "Everything synced", not "All projects" and no longer "All synced projects": the row
+    // means "no scope", and once the scope can be a domain, naming the reset after one of the
+    // two kinds describes half of what it clears. The care in the original wording is kept
+    // where it was load-bearing — the register holds what the last sync was scoped to fetch,
+    // so "synced" stays and "all" never stands alone.
     pinned: [{
-      value: "", label: "All synced projects", hint: assetCount(scope.register), icon: "folders",
+      value: "", label: "Everything synced", hint: assetCount(scope.register), icon: "folders",
     }],
   };
 }
 
 /**
  * @param {object|null} bootstrapData  the bootstrap payload, or null when boot failed
- * @param {(id: string) => void} onPick  called with the chosen project id, "" for all
+ * @param {(pick: {kind: string, value: string}) => void} onPick  the chosen scope; a project
+ *   id or a domain name, either of them "" for the whole register
  * @returns {HTMLElement|null}  null when there is nothing truthful to offer
  */
 export function projectScopeControl(bootstrapData, onPick) {
@@ -119,17 +175,21 @@ export function projectScopeControl(bootstrapData, onPick) {
     // Carries the CURRENT selection, not just the control's name. The header is rebuilt
     // wholesale on every refresh() and picking triggers one, so this is re-stamped with
     // each change.
-    ariaLabel: `Project scope: ${v.label}`,
-    searchPlaceholder: "Search projects…",
+    ariaLabel: `Scope: ${v.label}`,
+    searchPlaceholder: "Search projects and domains…",
     // WHAT THE PANEL HAS TO SAY THAT ITS ROWS CANNOT. Every row is a project name; none of
     // them can tell you that choosing one re-scopes every figure in the app, or that a few
     // figures refuse to be scoped and say so where they are drawn (registerWideNote, below,
     // is that promise kept). A consequence this large should not have to be discovered by
     // trying it.
     header: {
-      title: "Project scope",
-      note: "Every page answers for the project you pick. Figures that cannot be scoped say "
-        + "so where they are drawn.",
+      title: "Scope",
+      // Names both kinds, because both are in the list below it and they are not the same
+      // question: a project is a thing Wiz nests resources in, a domain is a tag someone
+      // wrote on them, and the seeded landscape puts four domains inside one project to make
+      // sure neither reads as the other.
+      note: "Every page answers for the project or domain you pick. Figures that cannot be "
+        + "scoped say so where they are drawn.",
     },
     // The scope persists server-side and outlives the session, so which row is in force is a
     // standing fact about the app rather than a highlight in an open menu — worth a mark of
@@ -140,8 +200,12 @@ export function projectScopeControl(bootstrapData, onPick) {
     // Decoration inside the trigger, the way the reference screen marks its project picker.
     // The trigger's accessible name is the ariaLabel above, so this adds no second reading.
     leading: el("span", { class: "scope-combo-icon", "aria-hidden": "true" },
-      uiIcon(v.current ? "folder" : "folders", 14)),
-    onChange: (id) => onPick(id || ""),
+      uiIcon(v.kind === "domain" ? "tag" : v.current ? "folder" : "folders", 14)),
+    // The prefix is the control's, not the caller's: onPick takes the two kinds apart so the
+    // shell can send each to its own setter, which is where "one at a time" is enforced.
+    onChange: (v) => (String(v || "").startsWith("d:")
+      ? onPick({ kind: "domain", value: String(v).slice(2) })
+      : onPick({ kind: "project", value: v || "" })),
   });
   combo.classList.add("scope-combo");
   // A NARROWED REGISTER IS A STATE, and this is the one state in the app that silently
@@ -154,7 +218,7 @@ export function projectScopeControl(bootstrapData, onPick) {
   // Read on hover: the header is narrow enough to ellipsise a long project name, and the
   // caption beside it answers a different question. Not a native title — a tap reaches none
   // of those, which is the whole reason el() bans the attribute.
-  tipAnchor(combo, "Project scope: " + v.label);
+  tipAnchor(combo, "Scope: " + v.label);
 
   return el("div", { class: "scope-switch" },
     combo,
@@ -232,6 +296,21 @@ export function scopeNote({ tag, text, live }) {
  * @param {{projectId: string, scoped: boolean, points: number, registerPoints: number}|null} scope
  */
 export function trendScopeView(scope) {
+  // A DOMAIN VIEW IS NOT A SHORT SERIES, IT IS NO SERIES, and the difference has to be said.
+  // `sync_history` records per-project totals beside its register-wide ones; there is no
+  // per-domain column and there cannot be a backfilled one, because the ledger never held the
+  // dimension. Left to the branch below this would read as `scoped: false` and print nothing,
+  // and the chart would sit under a header naming a domain while charting the register.
+  if (scope && !scope.scoped && scope.domainId) {
+    return {
+      show: true,
+      live: false,
+      tag: "Whole register",
+      text: "This series is recorded per project, so a domain has no point on it — these are "
+        + "the register's totals. Nothing here can be broken down after the fact: the ledger "
+        + "never held the dimension.",
+    };
+  }
   if (!scope || !scope.scoped) return { show: false, live: false, tag: "", text: "" };
   const points = Number(scope.points) || 0;
   const register = Number(scope.registerPoints) || 0;
