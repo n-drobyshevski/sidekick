@@ -57,22 +57,23 @@ what is open and what to do first), *Assurance* (Compliance Posture, Wiz Scans �
 score, and where the figures came from), then the gated *Labs*, then Data, Settings and Help
 under a rule with no heading over them, because those three name themselves.
 
-Above 800px those lanes are the nav's **first tier**: an 84px icon rail, one item per lane
-plus the three chrome pages, each a link that navigates. A lane with something behind it also
-carries a caret, and pointing at it opens the **second tier** — a full-height 280px panel
-listing that lane's pages and, under a heading, its own instances: the reader's saved graph
-queries and inventory views under *Saved*, the toxic-combination patterns under *Combination
-patterns*. **A rail item earns a panel by having something to put in it**, the same rule that
-makes a labelled lane earn its heading by holding two pages, so Labs and the chrome pages are
-plain links and draw no caret. The panel lists only destinations that already deep-link, and
+Above 800px those lanes are the nav's **first tier**: a 76px icon rail, one item per lane
+plus the three chrome pages, each a link that navigates. Pointing at one opens the **second
+tier** — a full-height 280px panel listing that lane's pages and, under a heading, its own
+instances: the reader's saved graph queries and inventory views under *Saved*, the
+toxic-combination patterns under *Combination patterns*. **A rail item earns a panel by
+having something to put in it**, the same rule that makes a labelled lane earn its heading by
+holding two pages, so Labs and the chrome pages are plain links. The rail draws nothing to
+advertise which is which: the panel is what shows up, and `aria-haspopup` is what says so to
+a reader who cannot see it. The panel lists only destinations that already deep-link, and
 never fetches: pointing at a rail item costs a `localStorage` read, not a round trip — which
 is also why there is no *Frameworks* block, since those names arrive only with the compliance
 payload and a block that appeared on your second visit would be a nav that changes shape
 depending on where you had been.
 
 The panel opens on the delays the hover card already settled (220ms cold, nothing inside the
-warm window, a grace period long enough to cross the gap), on `ArrowRight` or the caret from
-the keyboard, and on the first tap where there is no hover at all. Its `→|` control **pins**
+warm window, a grace period long enough to cross the gap), on `ArrowRight` from the keyboard,
+and on the first tap where there is no hover at all. Its `→|` control **pins**
 it open as a second column, which is what the old collapsed/expanded rail preference becomes —
 same `localStorage` key, so a reader who had widened the rail keeps a wide left edge. Below
 800px the rail is a stacked list instead: every page, lane headings as words, one rule above

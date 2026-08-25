@@ -161,9 +161,7 @@
 .rail-link {
   flex-direction: column;
   gap: 3px;
-  /* Asymmetric on purpose: the right padding is the caret's lane, so a label ellipsises
-     against it rather than running under it. */
-  padding: 8px 12px 7px 4px;
+  padding: 8px 4px 7px;
   text-align: center;
 }
 .rail-link .nav-label {
@@ -189,20 +187,10 @@
 .rail-link.active .nav-label { color: var(--ink); font-weight: 600; }
 .rail-item.current > .rail-link .nav-icon,
 .rail-link.active .nav-icon { color: var(--ink); }
+/* An item whose panel is showing. This is the only mark the rail draws for "there is more
+   here" now that the caret is gone — and it is drawn at the moment the panel is on screen
+   beside it, which is the moment it means anything. */
 .rail-item.open > .rail-link { background: var(--wash-hover); }
-/* The submenu mark. Visible at rest, not on hover: which items open something is exactly what
-   a reader needs to know BEFORE pointing at one. */
-.rail-caret {
-  position: absolute;
-  right: 0; top: 50%;
-  transform: translateY(-50%);
-  display: flex; align-items: center; justify-content: center;
-  width: 14px; height: 22px; padding: 0;
-  border: none; background: none; color: var(--text-3);
-  cursor: pointer;
-}
-.rail-item:hover .rail-caret, .rail-item.open .rail-caret { color: var(--ink); }
-.rail-caret:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px; }
 
 /* --------------------------------------------------------------------- the nav panel */
 

@@ -250,8 +250,13 @@ function syncRailState() {
   document.querySelectorAll(".rail-item").forEach((node) => {
     const isOpen = !!open && node.getAttribute("data-nav-item") === open.id;
     node.classList.toggle("open", isOpen);
-    const caret = node.querySelector(".rail-caret");
-    if (caret) caret.setAttribute("aria-expanded", String(isOpen));
+    // On the link, because the link is the trigger — there is no caret beside it to carry
+    // this, and an item with no panel carries no aria-expanded at all rather than a
+    // permanent "false" promising a panel that does not exist.
+    const link = node.querySelector(".rail-link");
+    if (link && link.hasAttribute("aria-haspopup")) {
+      link.setAttribute("aria-expanded", String(isOpen));
+    }
   });
 }
 

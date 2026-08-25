@@ -67,8 +67,8 @@ export function itemForRoute(items, route) {
  * The same rule as "a labelled lane earns its heading by holding two pages": a panel whose
  * only row repeats the rail item you opened it from is furniture. So Landscape, Risk and
  * Assurance have panels; Labs (one gated page) and the three chrome pages have none, and are
- * plain links — which is why the rail draws a caret on the ones that open something and
- * nothing on the ones that do not.
+ * plain links. Nothing on the rail advertises the difference — the panel is what shows up,
+ * and `aria-haspopup` is what says so to a reader who cannot see it.
  */
 export function hasPanel(item, blocks) {
   if (!item) return false;

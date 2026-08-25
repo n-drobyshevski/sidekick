@@ -14,7 +14,6 @@ import {
 import { onExperimentalChange, showExperimental } from "./experimental.js";
 import {
   clear, closeTip, el, fmtDateTime, progressBar, runPageTeardown, statusPill, tipAnchor,
-  uiIcon,
 } from "./ui.js";
 import { brandMark } from "./ui/brandMark.js";
 import { projectScopeControl } from "./ui/projectScope.js";
@@ -33,8 +32,8 @@ import { renderHelp } from "./pages/help.js";
 import { LANE_ICONS, ROUTE_ICONS } from "./routeIcons.js";
 import { itemForRoute, railItems } from "./navModel.js";
 import {
-  closeNow as closeFlyout, focusFirstRow, itemHasPanel, mountNavFlyout, openFlyoutFor,
-  setActiveItem, setNavContext, tapOpensPanel, wireRail,
+  focusFirstRow, itemHasPanel, mountNavFlyout, openFlyoutFor, setActiveItem, setNavContext,
+  tapOpensPanel, wireRail,
 } from "./navFlyout.js";
 import { SAVED_VIEW_KEYS, readSavedViews } from "./savedViews.js";
 
@@ -324,14 +323,17 @@ function navRule() {
 }
 
 /**
- * One rail item: a link that navigates, and — where the item has a panel — a caret that
- * discloses it.
+ * One rail item: a link that navigates, and — where the item has a panel — the trigger that
+ * opens it.
  *
- * TWO CONTROLS, because they do two things. An anchor that navigated on Enter *and* claimed
- * to expand something would be lying in its aria-expanded, and a rail item that only opened a
- * panel would put a second click between a reader and the page they come to every morning.
- * So the link is a link, the caret is a disclosure, and the pointer gets both for free by
- * hovering anywhere on the box.
+ * ONE CONTROL, and no caret beside it. The rail carried a disclosure button for a while and
+ * it earned its place at 12px on a 76px item: a second target crowding a label, drawing a
+ * mark on the chrome that the panel it opens draws again as a heading. What it was for
+ * survives without it — `aria-haspopup` and `aria-expanded` say a panel is there and whether
+ * it is open, ArrowRight opens it and lands focus inside, Escape closes it and hands focus
+ * back — so the announcement and the keyboard path are unchanged and only the pixels are
+ * gone. Enter still navigates, because this is still a link: the panel is a way in, never the
+ * only one.
  */
 function railItem(item) {
   const icon = item.kind === "lane" ? LANE_ICONS[item.id] : ROUTE_ICONS[item.route];
@@ -344,6 +346,10 @@ function railItem(item) {
       // index.html sets <base target="_top"> so external links escape the GAS
       // sandbox iframe; _self keeps hash routing in-frame.
       target: "_self",
+      // Only where there is one. A rail item that announced a popup it does not have would
+      // send a screen-reader user hunting for a panel that never opens.
+      "aria-haspopup": itemHasPanel(item) ? "true" : null,
+      "aria-expanded": itemHasPanel(item) ? "false" : null,
       onclick: (e) => {
         // Where there is no hover there is no flyout, so the first tap has to do the
         // revealing — the same bargain tip.js strikes with its cards.
@@ -360,20 +366,6 @@ function railItem(item) {
     el("span", { class: "nav-label" }, item.label),
   );
   node.append(link);
-  if (itemHasPanel(item)) {
-    const caret = el("button", {
-      class: "rail-caret",
-      type: "button",
-      "aria-expanded": "false",
-      "aria-label": `Show ${item.label} pages`,
-      onclick: () => {
-        if (node.classList.contains("open")) closeFlyout({ restoreFocus: true });
-        else { openFlyoutFor(item, node, { viaFocus: true }); focusFirstRow(); }
-      },
-    });
-    caret.append(uiIcon("chevron-right", 12));
-    node.append(caret);
-  }
   return node;
 }
 

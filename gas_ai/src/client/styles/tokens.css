@@ -3,8 +3,9 @@
   /* The icon rail's own track. It never moves: the second tier is a panel beside it, not a
      wider version of it. Sized by its longest label rather than by its icons — "Landscape"
      and "Assurance" have to sit on one line at 10px, because a rail that ellipsised its own
-     item names would be an icon rail with decoration under it. */
-  --rail-icon-w: 84px;
+     item names would be an icon rail with decoration under it. 84px while a disclosure caret
+     needed a lane of its own on the right; 76 now that nothing does. */
+  --rail-icon-w: 76px;
   /* The nav panel — wide enough for a framework's full name, which is the longest thing it
      ever lists ("OWASP Top 10 For Agentic Applications 2026"). */
   --nav-flyout-w: 280px;
