@@ -87,6 +87,32 @@ import {
 } from "../codebook.js";
 
 import { bookTip, tipAnchor } from "../ui.js";
+/**
+ * THE IMPACT RAIL'S SHARED COPY, SAID ONCE.
+ *
+ * This workbench renders one editor and one consequence rail per model - AARS, the problem
+ * tree, the posture lattice - and the rail's wording was written out three times, once per
+ * tab. An edit to the AARS copy left the other two saying the older thing, which is how
+ * three tabs of one control end up disagreeing about what a failed preview means.
+ *
+ * WHAT IS DELIBERATELY NOT UNIFIED, because looking at it closely is what showed the
+ * difference is real:
+ *   - the empty-state TITLES ("No inventory to compare against", "No open issue or failing
+ *     finding to compare against", "No persisted asset to compare against"), each naming
+ *     the population its own model scores;
+ *   - the ordering clause on the truncation note ("level changes first, then the largest
+ *     moves" / "worst proposed priority first" / "worst proposed tier first"), each naming
+ *     its own sort.
+ * Only the halves that genuinely say the same thing are shared.
+ */
+const IMPACT_SCOPE_NOTE = "a rule preview has to answer for every asset it would rescore";
+const IMPACT_INVALID_TITLE = "Fix the highlighted fields to preview.";
+const IMPACT_ERROR_TITLE = "Couldn't preview this rule.";
+const IMPACT_NO_SYNC_NOTE = "Run a sync first; the rule still saves and applies to the next one.";
+const cascadeCapNote = (max) => "The cascade is limited to " + max + " rules.";
+const moversTruncatedNote = (shown, total, order) =>
+  `Showing the ${shown} most consequential of ${total} — ${order}`;
+
 const SEVERITY_KEYS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 // Worst first — the order the thresholds descend in.
 const BANDS = [
@@ -1276,7 +1302,7 @@ export async function renderAarsRules(main, _params, ctx) {
     impact,
     el("h2", { class: "section-label" }, "Impact on the current inventory"),
       registerWideNote(bootstrapCached(),
-        "a rule preview has to answer for every asset it would rescore"),
+        IMPACT_SCOPE_NOTE),
     impactState,
     impactStrip,
     impactHeadline,
@@ -1452,7 +1478,7 @@ export async function renderAarsRules(main, _params, ctx) {
     );
 
     addBtn.disabled = draft.gapPoints.length >= GAP_MAX;
-    addBtnCapNote = addBtn.disabled ? "The cascade is limited to " + GAP_MAX + " rules." : null;
+    addBtnCapNote = addBtn.disabled ? cascadeCapNote(GAP_MAX) : null;
   }
 
   /**
@@ -2002,7 +2028,7 @@ export async function renderAarsRules(main, _params, ctx) {
       moverSection.hidden = true;
       paintDiscrimination(null);
       setText(impactHeadline, "");
-      impactState.append(emptyState("Fix the highlighted fields to preview.", errs.list[0]));
+      impactState.append(emptyState(IMPACT_INVALID_TITLE, errs.list[0]));
       return;
     }
     if (previewError) {
@@ -2016,7 +2042,7 @@ export async function renderAarsRules(main, _params, ctx) {
         schedulePreview();
         paintImpact();
       });
-      impactState.append(emptyState("Couldn't preview this rule.", previewError), retry);
+      impactState.append(emptyState(IMPACT_ERROR_TITLE, previewError), retry);
       return;
     }
     if (!preview) {
@@ -2037,7 +2063,7 @@ export async function renderAarsRules(main, _params, ctx) {
       impactState.append(
         emptyState(
           "No inventory to compare against.",
-          "Run a sync first; the rule still saves and applies to the next one.",
+          IMPACT_NO_SYNC_NOTE,
         ),
       );
       return;
@@ -2101,8 +2127,8 @@ export async function renderAarsRules(main, _params, ctx) {
             if (preview.truncated) {
               sheetBody.append(
                 el("p", { class: "small muted", style: "margin-top:10px" },
-                  `Showing the ${preview.movers.length} most consequential of ` +
-                    `${preview.moverCount} — level changes first, then the largest moves.`),
+                  moversTruncatedNote(preview.movers.length, preview.moverCount,
+                    "level changes first, then the largest moves.")),
               );
             }
           },
@@ -2667,7 +2693,7 @@ export async function renderAarsRules(main, _params, ctx) {
       pCascadeBody.append(fbTr);
 
       pAddBtn.disabled = problemDraft.outcomeRules.length >= max;
-      pAddBtnCapNote = pAddBtn.disabled ? "The cascade is limited to " + max + " rules." : null;
+      pAddBtnCapNote = pAddBtn.disabled ? cascadeCapNote(max) : null;
     }
 
     // -------------------------------------------------------- derivation knobs (editor)
@@ -3077,7 +3103,7 @@ export async function renderAarsRules(main, _params, ctx) {
       pLiveNote,
       el("h2", { class: "section-label" }, "Impact on open issues and findings"),
       registerWideNote(bootstrapCached(),
-        "a rule preview has to answer for every asset it would rescore"),
+        IMPACT_SCOPE_NOTE),
       pImpactState,
       pImpactStrip,
       pImpactHeadline,
@@ -3155,7 +3181,7 @@ export async function renderAarsRules(main, _params, ctx) {
         paintProblemUnknownRates(null);
         setText(pImpactHeadline, "");
         setText(pLeavesLine, "");
-        pImpactState.append(emptyState("Fix the highlighted fields to preview.", errs[0]));
+        pImpactState.append(emptyState(IMPACT_INVALID_TITLE, errs[0]));
         return;
       }
       if (problemPreviewError) {
@@ -3166,7 +3192,7 @@ export async function renderAarsRules(main, _params, ctx) {
         setText(pLeavesLine, "");
         const retry = el("button", { style: "margin-top:10px" }, "Try again");
         retry.addEventListener("click", retryProblemPreview);
-        pImpactState.append(emptyState("Couldn't preview this rule.", problemPreviewError), retry);
+        pImpactState.append(emptyState(IMPACT_ERROR_TITLE, problemPreviewError), retry);
         return;
       }
       if (!problemPreview) {
@@ -3187,7 +3213,7 @@ export async function renderAarsRules(main, _params, ctx) {
         pImpactState.append(
           emptyState(
             "No open issue or failing finding to compare against.",
-            "Run a sync first; the rule still saves and applies to the next one."));
+            IMPACT_NO_SYNC_NOTE));
         return;
       }
 
@@ -3239,8 +3265,8 @@ export async function renderAarsRules(main, _params, ctx) {
                 sheetBody.append(
                   el(
                     "p", { class: "small muted", style: "margin-top:10px" },
-                    `Showing the ${problemPreview.movers.length} most consequential of ` +
-                      `${problemPreview.moverCount} — worst proposed priority first.`),
+                    moversTruncatedNote(problemPreview.movers.length, problemPreview.moverCount,
+                    "worst proposed priority first.")),
                 );
               }
             },
@@ -3813,7 +3839,7 @@ export async function renderAarsRules(main, _params, ctx) {
       uCascadeBody.append(fbTr);
 
       uAddBtn.disabled = postureDraft.tierRules.length >= max;
-      uAddBtnCapNote = uAddBtn.disabled ? "The cascade is limited to " + max + " rules." : null;
+      uAddBtnCapNote = uAddBtn.disabled ? cascadeCapNote(max) : null;
     }
 
     // -------------------------------------------------------- validation-only knob (editor)
@@ -3947,7 +3973,7 @@ export async function renderAarsRules(main, _params, ctx) {
       uLiveNote,
       el("h2", { class: "section-label" }, "Impact on the persisted landscape"),
       registerWideNote(bootstrapCached(),
-        "a rule preview has to answer for every asset it would rescore"),
+        IMPACT_SCOPE_NOTE),
       uImpactState,
       uImpactStrip,
       uImpactHeadline,
@@ -4018,7 +4044,7 @@ export async function renderAarsRules(main, _params, ctx) {
         paintPostureUnknownRates(null);
         setText(uImpactHeadline, "");
         setText(uCellsLine, "");
-        uImpactState.append(emptyState("Fix the highlighted fields to preview.", errs[0]));
+        uImpactState.append(emptyState(IMPACT_INVALID_TITLE, errs[0]));
         return;
       }
       if (posturePreviewError) {
@@ -4029,7 +4055,7 @@ export async function renderAarsRules(main, _params, ctx) {
         setText(uCellsLine, "");
         const retry = el("button", { style: "margin-top:10px" }, "Try again");
         retry.addEventListener("click", retryPosturePreview);
-        uImpactState.append(emptyState("Couldn't preview this rule.", posturePreviewError), retry);
+        uImpactState.append(emptyState(IMPACT_ERROR_TITLE, posturePreviewError), retry);
         return;
       }
       if (!posturePreview) {
@@ -4050,7 +4076,7 @@ export async function renderAarsRules(main, _params, ctx) {
         uImpactState.append(
           emptyState(
             "No persisted asset to compare against.",
-            "Run a sync first; the rule still saves and applies to the next one."));
+            IMPACT_NO_SYNC_NOTE));
         return;
       }
 
@@ -4102,8 +4128,8 @@ export async function renderAarsRules(main, _params, ctx) {
                 sheetBody.append(
                   el(
                     "p", { class: "small muted", style: "margin-top:10px" },
-                    `Showing the ${posturePreview.movers.length} most consequential of ` +
-                      `${posturePreview.moverCount} — worst proposed tier first.`),
+                    moversTruncatedNote(posturePreview.movers.length, posturePreview.moverCount,
+                    "worst proposed tier first.")),
                 );
               }
             },
