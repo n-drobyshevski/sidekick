@@ -107,13 +107,21 @@ describe("previewPrune", () => {
     expect(res.error).toMatch(/WIZ_PROJECT_ID_V2/);
   });
 
-  it("falls back to the sync scope when the property is set", () => {
+  it("falls back to the sync scope when the property is set", async () => {
     const props = (globalThis as unknown as {
       PropertiesService: GoogleAppsScript.Properties.PropertiesService;
     }).PropertiesService.getScriptProperties();
     props.setProperty("WIZ_PROJECT_ID_V2", LEAF);
     try {
       expect(preview().data!.projectId).toBe(LEAF);
+      // WIZ_PROJECT_ID_V2 now joins the cache-key config stamp, because `scope.syncProjectId`
+      // is computed inside the CACHED bootstrap core — without it an operator who corrected
+      // the sync scope would keep seeing the old one for up to six hours. The stamp is
+      // memoized per EXECUTION, and in GAS the property write above and the read below are
+      // two executions; this harness keeps one module registry for the whole test, so the
+      // boundary has to be modelled. Same reasoning as test/domainTag.test.ts, which flips
+      // the domain tag key the same way.
+      (await import("../src/server/serverCache")).__resetMemosForTest();
       // And the bootstrap payload says which option that is, so the panel can mark it.
       const boot = server.api.bootstrap({}) as Result<{ scope: { syncProjectId: string | null } }>;
       expect(boot.data!.scope.syncProjectId).toBe(LEAF);
