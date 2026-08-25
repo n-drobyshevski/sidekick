@@ -68,6 +68,21 @@ export function swrCall(name, params, onFresh) {
 
 const ROUTE_ALIASES = {};
 
+/**
+ * The app's front door, in ONE place.
+ *
+ * This used to be a bare "problems" literal here and a separate `|| PAGES.graph` in app.js's
+ * route(), left over from when the graph was the landing route. The two disagreed, and the
+ * disagreement was reachable: parseHash falls back only for an EMPTY path, so an unknown path
+ * passed straight through and route() then resolved it against its own stale default. A stale
+ * or mistyped deep link like #/overview rendered the HIDDEN Security Graph, titled the
+ * document "Security Graph", and left no nav item marked current.
+ *
+ * app.js imports this rather than repeating it, so a future change to the first PAGES key
+ * cannot leave a second answer behind.
+ */
+export const DEFAULT_ROUTE = "problems";
+
 export function parseHash() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [pathPart, queryPart] = hash.split("?");
@@ -79,7 +94,7 @@ export function parseHash() {
       params[decodeURIComponent(k)] = decodeURIComponent(v || "");
     }
   }
-  return { route: ROUTE_ALIASES[pathPart] || pathPart || "problems", params };
+  return { route: ROUTE_ALIASES[pathPart] || pathPart || DEFAULT_ROUTE, params };
 }
 
 export function buildHash(route, params) {

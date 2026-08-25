@@ -2,7 +2,7 @@
 
 import { call } from "./api.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
-import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
+import { DEFAULT_ROUTE, bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
 import {
   clear, closeTip, el, fmtDateTime, progressBar, runPageTeardown, statusPill, tipAnchor,
 } from "./ui.js";
@@ -56,9 +56,10 @@ const PAGES = {
   scans: { title: "Wiz Scans", group: "Coverage", render: renderScans },
   data: { hidden: true, title: "Data", group: "Data", render: renderData },
   settings: { hidden: true, title: "Settings", group: "Preferences", render: renderSettings },
-  // Last on purpose. The FIRST key is the default landing route, and parseHash's
-  // `|| "graph"` fallback is coupled to it — a page inserted at the top silently
-  // becomes the app's front door.
+  // Last on purpose. The FIRST key is the default landing route, and DEFAULT_ROUTE in
+  // store.js has to name it — a page inserted at the top silently becomes the app's front
+  // door. (This comment used to say the coupling was to parseHash's `|| "graph"`, which had
+  // already stopped being true: the fallback said "problems" while route() still said graph.)
   help: { title: "Help", group: "Help", render: renderHelp },
 };
 
@@ -449,8 +450,14 @@ export async function refresh() {
 
 async function route() {
   const seq = ++routeSeq;
-  const { route: key, params } = parseHash();
-  const page = PAGES[key] || PAGES.graph;
+  const { route: raw, params } = parseHash();
+  // RESOLVE ONCE, then use the resolved key for everything. An unknown path (a stale link, a
+  // typo) lands on the front door rather than on whatever page this line happened to name
+  // when it was written — see DEFAULT_ROUTE in store.js. Resolving in one place is the part
+  // that matters: the nav highlight used to key off the RAW path, so an unresolved hash
+  // rendered a page while marking no nav item current, and the rail disagreed with the pane.
+  const key = PAGES[raw] ? raw : DEFAULT_ROUTE;
+  const page = PAGES[key];
   document.title = `${page.title} — Wiz SIDEKICK AI`;
   document.querySelectorAll(".nav-link").forEach((a) => {
     const isActive = a.getAttribute("href") === `#/${key}`;
