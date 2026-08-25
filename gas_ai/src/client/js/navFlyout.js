@@ -20,7 +20,7 @@
 // would be dropped mid-hover.
 
 import { hasPanel, panelBlocks } from "./navModel.js";
-import { buildHash } from "./store.js";
+import { DEFAULT_ROUTE, buildHash } from "./store.js";
 import { coarse, el } from "./ui/dom.js";
 import { popoverDismiss } from "./ui/popover.js";
 import { portalClosed, portalOpened } from "./ui/portals.js";
@@ -182,7 +182,7 @@ function paintPanel(item) {
  * for a panel painted BETWEEN navigations, which is most of them.
  */
 function markActive(scope) {
-  const here = location.hash.replace(/\?.*$/, "").replace(/^#\/?/, "") || "graph";
+  const here = location.hash.replace(/\?.*$/, "").replace(/^#\/?/, "") || DEFAULT_ROUTE;
   scope.querySelectorAll(".nav-link").forEach((a) => {
     const isActive = a.getAttribute("href") === `#/${here}`;
     a.classList.toggle("active", isActive);

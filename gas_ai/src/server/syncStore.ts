@@ -18,6 +18,7 @@ import {
   withOpenCounts,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
+  withIssueAttribution,
   withPostureTiers,
   withProblemVerdicts,
   withSensitiveDataNodes,
@@ -32,7 +33,9 @@ import type {
 import type { EffectiveAccessRow } from "../domain/effectiveAccess";
 import { edgeId } from "../domain/graphTypes";
 import { aarsSeverity, derivationSignature, type AarsBands, type AarsRule } from "../domain/aars";
-import { isOpenGap, isUnresolvedIssue, normalizeAarsSeverity } from "../domain/config";
+import {
+  DERIVATION_VERSION, isOpenGap, isUnresolvedIssue, normalizeAarsSeverity,
+} from "../domain/config";
 import { buildAllFrameworkTrees } from "../domain/compliancePosture";
 import { dropUnselected, failingPolicyCount, scopeFiveRs } from "../domain/complianceScope";
 import {
@@ -44,7 +47,7 @@ import {
   type ProblemVerdictInput,
 } from "../domain/problem";
 import { vectorSignature, type ProblemRule } from "../domain/problemRule";
-import { countPostureTiers, type Tier as PostureTier } from "../domain/posture";
+import { censusPostureTiers, countPostureTiers, type Tier as PostureTier } from "../domain/posture";
 import type { PostureRule } from "../domain/postureRule";
 import { OTHER_GROUP_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
@@ -142,11 +145,19 @@ export function assetToRow(n: GNode): Rec {
     last_seen: n.lastSeen ?? null,
     internet: triCell(n.isAccessibleFromInternet),
     open_internet: triCell(n.isOpenToAllInternet),
-    sensitive_data: boolCell(n.hasSensitiveData),
-    sensitive_access: boolCell(n.hasAccessToSensitiveData),
-    high_priv: boolCell(n.hasHighPrivileges),
-    admin_priv: boolCell(n.hasAdminPrivileges),
-    guardrail_missing: boolCell(n.guardrailMissing),
+    // triCell, not boolCell, for the same reason `internet` above uses it: these five are
+    // TRI-STATE. boolCell(undefined) writes "false", which turns "Wiz never evaluated this"
+    // into "evaluated, and negative" the moment a row round-trips the sheet — and that made
+    // posture.capabilityOf/containmentOf and problem.impactOf unable to report `unknown` at
+    // all. guardrail_missing is the sharpest of the five: syncNormalize only ever sets it
+    // TRUE (the traversal is a negated scan), so "false" here has never once meant "we looked
+    // and a guardrail is attached" — yet containmentOf reads it, paired with a non-exposed
+    // flag, as STRONG containment.
+    sensitive_data: triCell(n.hasSensitiveData),
+    sensitive_access: triCell(n.hasAccessToSensitiveData),
+    high_priv: triCell(n.hasHighPrivileges),
+    admin_priv: triCell(n.hasAdminPrivileges),
+    guardrail_missing: triCell(n.guardrailMissing),
     technology_categories: (n.technologyCategories ?? []).join(","),
     severity: n.severity ?? null,
     aars: n.aars ?? null,
@@ -201,13 +212,25 @@ export function rowToAsset(r: Rec): GNode {
     lastSeen: (r["last_seen"] as string | null) ?? undefined,
     isAccessibleFromInternet: parseTri(r["internet"]),
     isOpenToAllInternet: parseTri(r["open_internet"]),
-    hasSensitiveData: parseBool(r["sensitive_data"]),
-    hasAccessToSensitiveData: parseBool(r["sensitive_access"]),
-    hasHighPrivileges: parseBool(r["high_priv"]),
-    hasAdminPrivileges: parseBool(r["admin_priv"]),
-    guardrailMissing: parseBool(r["guardrail_missing"]),
     projects: parseAssetProjects(r["projects_json"]),
   };
+  // The five tri-state flags, read the way `inactive` is read below: assigned only when the
+  // cell carries a verdict, so an unevaluated flag stays absent instead of arriving as a
+  // definite `false`. parseTri maps "true"/"false" to booleans and everything else — "null",
+  // an empty cell, a pre-upgrade row — to null, which is what makes this backward compatible:
+  // a ledger written before this change holds "false" and still reads back `false`, so no
+  // tenant re-scores on upgrade. The correction arrives on the next full sync, the same
+  // contract business_impact and posture_tier already ship under.
+  const sensitiveData = parseTri(r["sensitive_data"]);
+  if (sensitiveData !== null) node.hasSensitiveData = sensitiveData;
+  const sensitiveAccess = parseTri(r["sensitive_access"]);
+  if (sensitiveAccess !== null) node.hasAccessToSensitiveData = sensitiveAccess;
+  const highPriv = parseTri(r["high_priv"]);
+  if (highPriv !== null) node.hasHighPrivileges = highPriv;
+  const adminPriv = parseTri(r["admin_priv"]);
+  if (adminPriv !== null) node.hasAdminPrivileges = adminPriv;
+  const guardrailMissing = parseTri(r["guardrail_missing"]);
+  if (guardrailMissing !== null) node.guardrailMissing = guardrailMissing;
   const account = (r["account_id"] as string | null) ?? null;
   if (account) {
     node.cloudAccount = { id: account, name: String(r["account_name"] ?? account) };
@@ -359,6 +382,11 @@ export function issueToRow(i: IssueRow): Rec {
     problem_outcome: i.problemOutcome ?? null,
     problem_input_json: i.problemInput ? JSON.stringify(i.problemInput) : null,
     problem_rule_version: i.problemRuleVersion ?? null,
+    // Joined, not JSON: a short id list reads in the sheet, and nothing needs to round-trip
+    // a structure here. Empty string when attribution found nothing, which rowToIssue reads
+    // back as an empty ARRAY rather than as absent — "we looked and found none".
+    attributed_asset_ids: (i.attributedAssetIds ?? []).join(","),
+    attribution_hop: i.attributionHop ?? null,
   };
 }
 
@@ -407,6 +435,16 @@ export function rowToIssue(r: Rec): IssueRow {
   const ticketUrls = String(r["ticket_urls"] ?? "").split(",").filter(Boolean);
   if (ticketUrls.length) issue.ticketUrls = ticketUrls;
   if (parseBool(r["validated_exploitable"])) issue.validatedAsExploitable = true;
+  // Attribution. The HOP is what says whether the fold ran: a row synced before attribution
+  // existed carries neither, and must read back as undefined so `issuesByAssetFor` falls back
+  // to the raw assetId rather than treating the row as reaching no AI asset at all. An empty
+  // id list WITH a hop is the genuine "we looked and found none" — a different fact, and the
+  // reason these two are read together rather than the list alone deciding.
+  const attributionHop = (r["attribution_hop"] as string | null) ?? null;
+  if (attributionHop === "direct" || attributionHop === "RUNS_AS" || attributionHop === "none") {
+    issue.attributionHop = attributionHop;
+    issue.attributedAssetIds = String(r["attributed_asset_ids"] ?? "").split(",").filter(Boolean);
+  }
   // Phase 4: absent reads as undefined, never a default — a row this app synced before the
   // verdict existed (or a resolved issue that never got one) must not read as decided.
   const problemOutcome = (r["problem_outcome"] as string | null) ?? null;
@@ -836,7 +874,20 @@ export function persistSync(
     identityFindings: extras.identityFindings ?? [],
     effectiveAccess: extras.effectiveAccess ?? [],
   });
-  const enriched = enrichGraphDoc(reachable, issues, hints, rule);
+  // Attribution BEFORE enrichment, because enrichment is what reads it: `issuesByAssetFor`
+  // joins on `attributedAssetIds`, and a score computed from un-attributed issues would charge
+  // the service account and nothing else — which is the state this fold exists to end. It runs
+  // against `reachable`, the last doc before enrichment, so the RUNS_AS edges it walks are the
+  // ones the sync actually persisted.
+  //
+  // Unconditional, exactly like the exposure and human-reach joins above it: the fold only
+  // RECORDS where an issue could be attributed. Whether anything is scored from that is the
+  // rule's decision (`AarsRule.issueAttribution`, `ProblemRule.attributionJoin`), and both
+  // default to `direct`. Gating the fold itself on the rule would mean a tenant that later
+  // flips the knob has no attribution on its ledger to flip TO, and would need a full re-sync
+  // to get one — so the evidence is collected always and priced on request.
+  const attributedIssues = withIssueAttribution(reachable, issues);
+  const enriched = enrichGraphDoc(reachable, attributedIssues, hints, rule);
 
   // The problem/decision-vector verdict, BESIDE the AARS enrichment above, never inside
   // it — see withProblemVerdicts's own comment for why the two must stay independently
@@ -847,7 +898,7 @@ export function persistSync(
   const { version: problemRuleVersion, rule: problemRule } = settingsStore.getProblemRule();
   const { issues: decidedIssues, findings: decidedFindings } = withProblemVerdicts(
     enriched,
-    issues,
+    attributedIssues,
     findings,
     problemRule,
     problemRuleVersion,
@@ -988,10 +1039,29 @@ export function persistSync(
           settingsStore.getFiveRsPins(),
         )))
       : null,
+    // The posture distribution WITH its scope split — the third model's series.
+    // `censusPostureTiers` reports tiers plus `withheld` (in scope, not yet measured) plus
+    // `outOfScope` (this lattice does not describe the kind) plus the total, so every share
+    // it feeds has its own denominator travelling beside it. Counted over `postured.nodes`,
+    // the same population the columns above read, so the series cannot describe different
+    // landscapes.
+    posture_tier_json: JSON.stringify(censusPostureTiers(postured.nodes)),
+    // Which posture rule produced it; moves independently of the other two.
+    posture_rule_version: postureRuleVersion,
+    // The normalizer generation these readings were collected under. A change here means the
+    // stored facts changed MEANING, which Recompute cannot repair. Recorded per sync so the
+    // trend can mark the break rather than let a legitimate collapse in the tiered population
+    // read as risk improving.
+    derivation_version: DERIVATION_VERSION,
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
   settingsStore.setDecidedRuleVersion(problemRuleVersion);
   settingsStore.setComputedPostureVersion(postureRuleVersion);
+  // Stamped from commit() ONLY — never from rescoreInventory or redecideProblems. Those
+  // re-price facts already in the sheet; this records how those facts got there, and a
+  // rescore does not change that. Stamping it there would clear a staleness warning that a
+  // rescore cannot actually resolve.
+  settingsStore.setSyncDerivationVersion(DERIVATION_VERSION);
   commit();
   return postured;
 }

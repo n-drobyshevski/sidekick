@@ -28,7 +28,7 @@ import {
   stripProblemFields,
 } from "./problem";
 import { vectorSignature, type ProblemRule } from "./problemRule";
-import { decidePosture, derivePostureInput, tierEstablished, worstOpenProblem } from "./posture";
+import { decidePosture, derivePostureInput, tierEstablished, tierInScope, worstOpenProblem } from "./posture";
 import type { PostureRule } from "./postureRule";
 import { conditionHolds, conditionState } from "./riskConditions";
 import { worstBusinessImpact } from "./syncNormalize";
@@ -239,7 +239,7 @@ export function buildAarsHintsFromFindings(
   rule: AarsRule = DEFAULT_AARS_RULE,
 ): AarsHints {
   const open = issues.filter(isUnresolvedIssue);
-  const issuesByAsset = groupBy(open, (i) => i.assetId);
+  const issuesByAsset = issuesByAssetFor(open, rule.issueAttribution);
   const codesByResource = new Map<string, string[]>();
   // The worst severity any finding contributing this code carried, so a code reached by
   // both a CRITICAL and a LOW control is weighted by the CRITICAL — the same "worst wins"
@@ -294,6 +294,76 @@ export function buildAarsHintsFromFindings(
  * issues), combo membership, AARS for AI assets and any node carrying issues, plus
  * ISSUE nodes and HAS_ISSUE edges. Pure; returns a new document.
  */
+/**
+ * Attribute each issue to the AI assets it actually describes — ONE HOP along `RUNS_AS`, never
+ * transitively, and never by rewriting `assetId`.
+ *
+ * A separate exported fold rather than a step inside `enrichGraphDoc`, for the reason
+ * `withProblemVerdicts` gives for the same shape: it has to be re-runnable on its own, over a
+ * graph already in the sheet, without re-deriving everything around it.
+ *
+ * WHY ONE HOP AND NOT A WALK. `RUNS_AS` is agent -> service account, so this reads it backwards:
+ * an issue on the identity is an issue about whatever runs as it. Two hops would start charging
+ * an agent for issues on things its identity can merely reach, which is a different claim
+ * (`ALLOWS_ACCESS_TO`) with a different meaning, and the register would quietly become
+ * transitive-blame. The cap is the model, not an optimisation.
+ *
+ * FAN-OUT IS REAL AND IS NOT DEDUPLICATED. One identity shared by five agents attributes its
+ * issue to all five: each of those agents genuinely carries that exposure, and picking one
+ * would be arbitrary. The consequence is that the per-asset issue count no longer sums to the
+ * issue count — `kpis.issuesAttributed` reports the population and `issuesUnattributed` the
+ * remainder, so the multiplicity is stated rather than discovered.
+ */
+export function withIssueAttribution(doc: GraphDoc, issues: IssueRow[]): IssueRow[] {
+  const kindById = new Map<string, string>();
+  for (const n of doc.nodes) kindById.set(n.id, n.kind);
+  // Reverse index: identity id -> the AI assets that RUN AS it.
+  const runnersOf = new Map<string, string[]>();
+  for (const e of doc.edges) {
+    if (e.type !== "RUNS_AS") continue;
+    if (!AI_ASSET_KINDS.includes(kindById.get(e.src) as NodeKind)) continue;
+    pushInto(runnersOf, e.dst, e.src);
+  }
+  return issues.map((issue) => {
+    const own = kindById.get(issue.assetId);
+    if (own !== undefined && AI_ASSET_KINDS.includes(own as NodeKind)) {
+      return { ...issue, attributedAssetIds: [issue.assetId], attributionHop: "direct" as const };
+    }
+    const runners = runnersOf.get(issue.assetId);
+    if (runners && runners.length) {
+      // Sorted so a re-run cannot reorder a persisted list and look like a change.
+      return { ...issue, attributedAssetIds: [...runners].sort(), attributionHop: "RUNS_AS" as const };
+    }
+    // Reached no AI asset. Recorded as an empty list rather than left undefined, so "we looked
+    // and found none" is distinguishable from "attribution never ran over this row" — the same
+    // absent-is-not-zero discipline the flags themselves now keep.
+    return { ...issue, attributedAssetIds: [], attributionHop: "none" as const };
+  });
+}
+
+/**
+ * The issue-to-asset index both scoring paths join on, under whichever attribution the rule
+ * selects. `direct` keys by `assetId` alone — byte-identical to the behaviour before
+ * attribution existed, which is what makes the knob spec-neutral at its default.
+ */
+export function issuesByAssetFor(
+  open: IssueRow[],
+  mode: "direct" | "runsAs",
+): Map<string, IssueRow[]> {
+  if (mode === "direct") return groupBy(open, (i) => i.assetId);
+  const out = new Map<string, IssueRow[]>();
+  for (const issue of open) {
+    // STRICTLY ADDITIVE: the direct asset is always charged, and attribution only ever adds
+    // more. Keying on `attributedAssetIds` alone would silently REMOVE the charge from a
+    // service account whose issue reached no AI asset — turning a knob meant to widen
+    // coverage into one that can lower a score, which is the last thing an operator flipping
+    // it would expect. A Set because a direct AI-asset issue lists itself in both places.
+    const targets = new Set<string>([issue.assetId, ...(issue.attributedAssetIds ?? [])]);
+    for (const id of targets) pushInto(out, id, issue);
+  }
+  return out;
+}
+
 export function enrichGraphDoc(
   doc: GraphDoc,
   issues: IssueRow[],
@@ -301,7 +371,9 @@ export function enrichGraphDoc(
   rule: AarsRule = DEFAULT_AARS_RULE,
 ): GraphDoc {
   const open = issues.filter(isUnresolvedIssue);
-  const byAsset = groupBy(open, (i) => i.assetId);
+  // Joined under the rule.s attribution setting — `direct` is byte-identical to the
+  // groupBy this replaced, which is what keeps the default spec-neutral.
+  const byAsset = issuesByAssetFor(open, rule.issueAttribution);
   const reach = dataFindingReach(doc);
 
   const nodes: GNode[] = doc.nodes.map((raw) => {
@@ -440,9 +512,32 @@ export function withProblemVerdicts(
   const byId = indexBy(doc.nodes, (n) => n.id);
   const sig = vectorSignature(rule);
 
+  /**
+   * WHICH node judges this issue. Under `direct` that is the entity Wiz raised it on, exactly
+   * as before. Under `runsAs` an issue on an identity is judged against the AI asset that runs
+   * as it — the WORST-placed one when several do, never an arbitrary first, so a shared
+   * identity cannot be made to look safer by whichever agent happened to sort first.
+   *
+   * "Worst" here means most capable of turning the issue into consequence, which is what the
+   * two axes a node feeds actually read: `impactOf` wants admin privilege, `exposureOf` wants
+   * reachability. So an admin-privileged runner outranks a merely exposed one, and both
+   * outrank a runner with neither.
+   */
+  const judgeFor = (assetId: string, attributed?: string[]): GNode | undefined => {
+    const direct = byId.get(assetId);
+    if (rule.attributionJoin === "direct" || direct) return direct;
+    const candidates = (attributed ?? []).map((id) => byId.get(id)).filter((n): n is GNode => !!n);
+    if (!candidates.length) return undefined;
+    const rank = (n: GNode): number =>
+      (n.hasAdminPrivileges === true ? 4 : 0)
+      + (conditionState(n, "INTERNET_EXPOSURE") === true ? 2 : 0)
+      + (n.hasHighPrivileges === true ? 1 : 0);
+    return candidates.reduce((best, n) => (rank(n) > rank(best) ? n : best));
+  };
+
   const decidedIssues = issues.map((issue) => {
     if (!isUnresolvedIssue(issue)) return stripProblemFields(issue);
-    const input = deriveProblemInput(issue, byId.get(issue.assetId), rule);
+    const input = deriveProblemInput(issue, judgeFor(issue.assetId, issue.attributedAssetIds), rule);
     const { outcome } = decideProblem(input.vector, rule);
     return {
       ...issue,
@@ -515,13 +610,28 @@ export function withPostureTiers(
 
   const nodes = doc.nodes.map((node) => {
     if (node.kind === "ISSUE" || node.kind === "SUMMARY") return node;
-    const { vector, unknowns } = derivePostureInput(node, rule);
+    const { vector, unknowns, notApplicable } = derivePostureInput(node, rule);
     const { tier } = decidePosture(vector, rule);
     const worst = worstOpenProblem(outcomesByAsset.get(node.id) ?? []);
-    const next: GNode = {
-      ...node,
-      postureInput: unknowns.length ? { ...vector, unknowns } : { ...vector },
-    };
+    const next: GNode = { ...node };
+    // TWO GATES, ASKED IN THIS ORDER, because they are different questions with different
+    // remedies — see posture.tierInScope.
+    //
+    // Out of scope (the lattice does not describe this kind) drops the vector as well as the
+    // tier: a stored `postureInput` whose capability axis is a defaulted MINIMAL for a dataset
+    // would persist the category error rather than avoid it, and every reader of that field
+    // would then have to know not to trust one axis of it.
+    //
+    // In scope but unestablished keeps the vector — that IS the evidence trail for what is
+    // still missing, and it is what `unknownRate` counts.
+    if (!tierInScope(notApplicable)) {
+      delete next.postureInput;
+      delete next.postureTier;
+      if (worst) next.worstOpenProblem = worst;
+      else delete next.worstOpenProblem;
+      return next;
+    }
+    next.postureInput = unknowns.length ? { ...vector, unknowns } : { ...vector };
     if (tierEstablished(unknowns)) next.postureTier = tier;
     else delete next.postureTier;
     if (worst) next.worstOpenProblem = worst;

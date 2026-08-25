@@ -19,43 +19,70 @@ import { SAVED_VIEW_KEYS, readSavedViews } from "../src/client/js/savedViews.js"
 
 /** A PAGES-shaped fixture: the real map's shape, without importing app.js (it touches DOM). */
 const PAGES = {
-  graph: { title: "Security Graph", group: "Landscape" },
-  inventory: { title: "AI Inventory", group: "Landscape" },
+  graph: { hidden: true, title: "Security Graph", group: "Landscape" },
+  inventory: { hidden: true, title: "AI Inventory", group: "Landscape" },
   problems: { title: "Priorities", group: "Risk" },
-  combos: { title: "Toxic Combinations", group: "Risk" },
-  config: { title: "Cloud Configuration", group: "Risk" },
-  compliance: { title: "Compliance Posture", group: "Assurance" },
+  combos: { hidden: true, title: "Toxic Combinations", group: "Risk" },
+  config: { hidden: true, title: "Cloud Configuration", group: "Risk" },
+  compliance: { hidden: true, title: "Compliance Posture", group: "Assurance" },
   scans: { title: "Wiz Scans", group: "Assurance" },
   aars: { title: "Scoring Models", group: "Labs", experimental: true },
-  data: { title: "Data", group: null },
-  settings: { title: "Settings", group: null },
+  data: { hidden: true, title: "Data", group: null },
+  settings: { hidden: true, title: "Settings", group: null },
   help: { title: "Help", group: null },
 };
+
+/** The same map with nothing hidden — the lane rules are about arrangement, not scoping. */
+const FULL = Object.fromEntries(
+  Object.entries(PAGES).map(([k, v]) => [k, { ...v, hidden: false }]),
+);
 
 const ids = (items) => items.map((i) => i.id);
 
 describe("railItems", () => {
   it("draws one item per lane, and one per chrome page", () => {
-    const items = railItems(PAGES, { experimental: false });
+    const items = railItems(FULL, { experimental: false });
     expect(ids(items)).toEqual(["Landscape", "Risk", "Assurance", "data", "settings", "help"]);
     expect(items[1].pages.map((p) => p.key)).toEqual(["problems", "combos", "config"]);
     expect(items[3].kind).toBe("page");
   });
 
   it("leads a lane to its first page, so the panel is never the only way through", () => {
-    const items = railItems(PAGES, { experimental: false });
+    const items = railItems(FULL, { experimental: false });
     expect(items[0].route).toBe("graph");
     expect(items[1].route).toBe("problems");
   });
 
-  // The gate takes the heading with the page, the way it always has: a lane left standing
-  // over nothing would tell every reader that a page they cannot open exists.
+  // The gate takes the lane with the page, the way it always has: a lane left standing over
+  // nothing would tell every reader that a page they cannot open exists.
   it("drops a lane whose only page is gated away", () => {
-    expect(ids(railItems(PAGES, { experimental: false }))).not.toContain("Labs");
-    const on = railItems(PAGES, { experimental: true });
-    expect(ids(on)).toContain("Labs");
+    expect(ids(railItems(FULL, { experimental: false }))).not.toContain("aars");
+    const on = railItems(FULL, { experimental: true });
+    expect(ids(on)).toContain("aars");
     // …and it lands between Assurance and the chrome tail, not in the middle of the workflow.
-    expect(ids(on)).toEqual(["Landscape", "Risk", "Assurance", "Labs", "data", "settings", "help"]);
+    expect(ids(on)).toEqual(["Landscape", "Risk", "Assurance", "aars", "data", "settings", "help"]);
+  });
+
+  // Labs holds one page, so the rail draws the page. A rail item reading "Labs" over a panel
+  // whose only row is "Scoring Models" would be a category standing in for a name.
+  it("draws a one-page lane as its page, keeping the lane it belongs to", () => {
+    const labs = railItems(FULL, { experimental: true }).filter((i) => i.id === "aars")[0];
+    expect(labs.label).toBe("Scoring Models");
+    expect(labs.kind).toBe("page");
+    expect(labs.lane).toBe("Labs");
+    expect(hasPanel(labs, [])).toBe(false);
+  });
+
+  // `hidden` is this branch's PoC scoping — off the nav, still routable — and it applies
+  // before the lanes are built, so a lane it empties never reaches the rail at all.
+  it("takes hidden routes off the rail, and the lanes they empty with them", () => {
+    const poc = railItems(PAGES, { experimental: false });
+    // Landscape loses both its pages; Risk and Assurance each keep one and become it.
+    expect(ids(poc)).toEqual(["problems", "scans", "help"]);
+    expect(poc[0].label).toBe("Priorities");
+    expect(poc[0].lane).toBe("Risk");
+    expect(poc[1].label).toBe("Wiz Scans");
+    expect(poc[2].lane).toBeNull();
   });
 
   it("answers nothing for nothing rather than throwing", () => {
@@ -65,7 +92,7 @@ describe("railItems", () => {
 });
 
 describe("itemForRoute", () => {
-  const items = railItems(PAGES, { experimental: false });
+  const items = railItems(FULL, { experimental: false });
 
   // The rail marks a lane while you are on ANY of its pages — the whole reason the lane's own
   // link (which points at one of them) cannot carry that mark by itself.
@@ -84,7 +111,7 @@ describe("itemForRoute", () => {
 });
 
 describe("hasPanel", () => {
-  const items = railItems(PAGES, { experimental: true });
+  const items = railItems(FULL, { experimental: true });
   const byId = (id) => items.filter((i) => i.id === id)[0];
 
   it("gives a panel to a lane holding more than one page", () => {
@@ -95,18 +122,18 @@ describe("hasPanel", () => {
   // A panel whose only row repeats the rail item you opened it from is furniture — the same
   // rule that stops a labelled lane holding one page.
   it("gives none to a one-page lane, or to a chrome page", () => {
-    expect(hasPanel(byId("Labs"), [])).toBe(false);
+    expect(hasPanel(byId("aars"), [])).toBe(false);
     expect(hasPanel(byId("settings"), [])).toBe(false);
     expect(hasPanel(null, [])).toBe(false);
   });
 
   it("gives one to a single-page item that has blocks to show", () => {
-    expect(hasPanel(byId("Labs"), [{ id: "x", label: "X", rows: [{ label: "r" }] }])).toBe(true);
+    expect(hasPanel(byId("aars"), [{ id: "x", label: "X", rows: [{ label: "r" }] }])).toBe(true);
   });
 });
 
 describe("panelBlocks", () => {
-  const items = railItems(PAGES, { experimental: false });
+  const items = railItems(FULL, { experimental: false });
   const byId = (id) => items.filter((i) => i.id === id)[0];
 
   it("merges saved queries and saved views into one list, each keeping its page", () => {

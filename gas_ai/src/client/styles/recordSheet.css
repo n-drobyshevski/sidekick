@@ -14,9 +14,9 @@
 /* Kind tile: the record's own category, at the size the reference gives it. It is
    decorative — the kind is also spelled out in the subtitle and in Identity — so it is
    aria-hidden and carries no meaning color alone would have to bear. */
-.sheet--record .sheet-header { padding: 16px 20px 12px; }
+.sheet--record .sheet-header { padding: var(--space-4) var(--space-4) var(--space-3); }
 .sheet-icon {
-  flex: 0 0 auto; width: 36px; height: 36px; margin-right: 12px;
+  flex: 0 0 auto; width: 36px; height: 36px; margin-right: var(--space-3);
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: var(--radius-lg);
   background: var(--surface); color: var(--text-2);
@@ -31,14 +31,14 @@
 /* The heading takes the free space so the name starts beside the tile. Without it the
    headrow's space-between pushes a short title into the middle of a 960px sheet. */
 .sheet--record .sheet-heading { flex: 1 1 auto; min-width: 0; }
-.sheet--record .sheet-title { font-size: 1.125rem; overflow-wrap: anywhere; }
+.sheet--record .sheet-title { font-size: var(--fs-display-sm); overflow-wrap: anywhere; }
 
 /* Action toolbar. Small outlined buttons over the base button, not a new species. */
-.sheet-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.sheet-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-3); }
 .sheet-toolbar:empty { display: none; }
 .sheet-tool {
-  display: inline-flex; align-items: center; gap: 6px;
-  min-height: 30px; padding: 4px 10px; font-size: 12px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  min-height: 30px; padding: var(--space-1) var(--space-2); font-size: var(--fs-label); font-weight: 500;
   background: var(--page);
 }
 .sheet-tool svg { flex: 0 0 auto; color: var(--text-3); }
@@ -48,26 +48,26 @@
 .sheet-panes { flex: 1 1 auto; display: flex; min-height: 0; }
 .sheet-rail {
   flex: 0 0 var(--sheet-rail-w); width: var(--sheet-rail-w);
-  padding: 12px 10px 20px; overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--space-3) var(--space-2) var(--space-4); overflow-y: auto; overscroll-behavior: contain;
   border-right: 1px solid var(--hairline); background: var(--surface);
 }
 .sheet--record .sheet-body {
-  flex: 1 1 auto; min-width: 0; padding: 14px 20px 24px;
+  flex: 1 1 auto; min-width: 0; padding: var(--space-3) var(--space-4) var(--space-5);
 }
 /* The pane owns the scroll, so it is focusable even with no control in it — otherwise a
    keyboard user cannot read a long section at all. Its ring is inset: an outset one would
    sit on the rail's border. */
 .sheet--record .sheet-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 
-.sheet-rail-group { margin-top: 14px; }
+.sheet-rail-group { margin-top: var(--space-4); }
 .sheet-rail-label {
-  padding: 0 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  padding: 0 var(--space-2) var(--space-1); font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
 }
 .sheet-rail-item {
-  display: flex; align-items: center; gap: 8px; width: 100%;
-  min-height: 30px; padding: 5px 8px; margin: 1px 0;
-  font-size: 13px; text-align: left;
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  min-height: 30px; padding: var(--space-1) var(--space-2); margin: var(--space-half) 0;
+  font-size: var(--fs-body); text-align: left;
   background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
   color: var(--text-2);
 }
@@ -75,7 +75,7 @@
 .sheet-rail-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sheet-rail-item-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sheet-rail-count {
-  flex: 0 0 auto; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-3);
+  flex: 0 0 auto; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; color: var(--text-3);
 }
 /* Active section: the app's own rule for a nav rail (accent bar plus weight), not a tint
    on its own — DESIGN.md forbids leaning on a colored fill to carry state. */
@@ -99,7 +99,7 @@
    unreachable to a screen reader. */
 .sheet-cluster {
   position: absolute; top: 16px; left: -52px; z-index: 1;
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
 }
 .sheet-cluster-btn {
   width: 40px; height: 40px; min-height: 40px; padding: 0; border: none;
@@ -119,8 +119,8 @@
 /* The scrim is only 28% black over a white page, so white-on-scrim would be unreadable.
    The counter takes the buttons' own dark chip instead of trying to sit on the ground. */
 .sheet-cluster-pos {
-  font-size: 11px; font-variant-numeric: tabular-nums;
-  padding: 2px 8px; border-radius: var(--radius-pill);
+  font-size: var(--fs-micro); font-variant-numeric: tabular-nums;
+  padding: var(--space-half) var(--space-2); border-radius: var(--radius-pill);
   background: rgba(10, 10, 10, 0.82); color: var(--on-graphite);
 }
 .sheet-cluster-pos:empty { display: none; }
@@ -137,8 +137,8 @@
 /* ---------------------------------------------------------------- overview pane */
 /* Insight chips: one flag, one tinted glyph tile, one label. Never the tile alone — the
    label is what carries the meaning. */
-.insights { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 2px 0 4px; }
-.insight { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.insights { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: var(--space-half) 0 var(--space-1); }
+.insight { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--fs-body); }
 .insight-mark {
   flex: 0 0 auto; width: 24px; height: 24px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -150,43 +150,42 @@
 
 /* Properties: the reference's two columns, which is four grid tracks of dt/dd. Below the
    pane's own breakpoint it falls back to the one-column .kv in sheet.css. */
-.kv--cols2 { grid-template-columns: 132px minmax(0, 1fr) 132px minmax(0, 1fr); gap: 8px 20px; }
+.kv--cols2 { grid-template-columns: 132px minmax(0, 1fr) 132px minmax(0, 1fr); gap: var(--space-2) var(--space-4); }
 .kv--cols2 dd { min-width: 0; }
 /* Provider and external ids are long, opaque and not read left-to-right; clipping them
    keeps the grid legible and the full value stays in the title and on the clipboard. */
 .kv-trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kv-dot { display: inline-block; width: 7px; height: 7px; border-radius: var(--radius-pill); margin-right: 6px; }
+.kv-dot { display: inline-block; width: 7px; height: 7px; border-radius: var(--radius-pill); margin-right: var(--space-2); }
 .kv-dot--ok { background: var(--ok); }
 .kv-dot--idle { background: var(--text-3); }
-.kv-copy { margin-left: 6px; }
 
 .prov-strip {
-  display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 14px 0 0;
-  padding-top: 12px; border-top: 1px solid var(--hairline);
-  font-size: 12px; color: var(--text-3);
+  display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: var(--space-4) 0 0;
+  padding-top: var(--space-3); border-top: 1px solid var(--hairline);
+  font-size: var(--fs-label); color: var(--text-3);
 }
 
 /* A card inside the overlay gets the one-pixel whisper, never a second real shadow. */
 .sheet-card {
-  margin-top: 16px; border: 1px solid var(--hairline); border-radius: var(--radius-xl);
+  margin-top: var(--space-4); border: 1px solid var(--hairline); border-radius: var(--radius-xl);
   background: var(--page); box-shadow: var(--shadow-card); overflow: hidden;
 }
 .sheet-card-head {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px; border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--hairline);
 }
-.sheet-card-title { font-size: 13px; font-weight: 600; margin: 0; flex: 1 1 auto; }
-.sheet-card-body { padding: 4px 14px 10px; }
-.sheet-card-body .empty { border: none; padding: 12px 0; }
+.sheet-card-title { font-size: var(--fs-body); font-weight: 600; margin: 0; flex: 1 1 auto; }
+.sheet-card-body { padding: var(--space-1) var(--space-3) var(--space-2); }
+.sheet-card-body .empty { border: none; padding: var(--space-3) 0; }
 /* More than one tool in a card head; the head is a flex row, so they need their own box. */
-.sheet-card-tools { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.sheet-card-tools { display: flex; align-items: center; gap: var(--space-1); flex: 0 0 auto; }
 
 /* Where the connection map's contents came from — last sync, or a live read of the tenant.
    The two are indistinguishable on screen otherwise, and conflating them is exactly the
    failure PRODUCT.md's "honest state" principle names. Warn and bad carry a word as well
    as a colour, so the distinction survives without the hue. */
-.sheet-prov { padding-top: 8px; margin-top: 6px; border-top: 1px solid var(--hairline); }
-.sheet-prov p { margin: 2px 0; }
+.sheet-prov { padding-top: var(--space-2); margin-top: var(--space-2); border-top: 1px solid var(--hairline); }
+.sheet-prov p { margin: var(--space-half) 0; }
 .sheet-prov-warn { color: var(--warn); }
 .sheet-prov-bad { color: var(--bad); }
 /* The same statement, made BEFORE the content rather than after it: the seeded issue sheet
@@ -203,7 +202,7 @@
 .prov-spinner {
   --ring: var(--accent);
   --track: rgba(0, 0, 0, 0.10);
-  display: inline-block; vertical-align: -2px; margin-right: 6px;
+  display: inline-block; vertical-align: -2px; margin-right: var(--space-2);
   width: 11px; height: 11px; border-radius: 50%;
   background: conic-gradient(var(--ring) 0 25%, var(--track) 0);
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
@@ -221,7 +220,7 @@
    here as it does on the canvas the "Open in graph" button leads to.
    No dotted canvas ground: a dot grid reads as "this pans and zooms", which a static
    summary does not, and DESIGN.md rules out texture that carries no information. */
-.ego-scroll { overflow-x: auto; margin: 2px 0; }
+.ego-scroll { overflow-x: auto; margin: var(--space-half) 0; }
 .ego-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* No width rules here on purpose, for the reason scans.css states for its own diagram:
    the layout is measured, not scaled. egoGraph.js draws the viewBox at the container's

@@ -31,7 +31,7 @@
 //   rowReorder.js the cascade grip: drag as the shortcut, the row's arrows as the control
 //   diagList.js  the "is this rule quietly failing" read-out, shared by all three cascades
 
-export { clear, downloadText, el, motionOk } from "./ui/dom.js";
+export { appendAll, clear, downloadText, el, motionOk } from "./ui/dom.js";
 export { registerWideNote, scopeNote, trendScopeNote, trendScopeView } from "./ui/projectScope.js";
 export { DISPLAY_TZ, fmtDate, fmtDateTime, plural, pluralize, sevRank } from "./ui/format.js";
 export {
@@ -39,8 +39,8 @@ export {
 } from "./ui/severity.js";
 export { dataTable, meter, pager, progressBar } from "./ui/data.js";
 export {
-  field, filterChipRow, kpiCard, segmented, select, selectField, statRow, statusPill,
-  togglePills,
+  field, filterChipRow, heroStat, kpiCard, pageHeader, segmented, select, selectField,
+  statRow, statusPill, togglePills,
 } from "./ui/controls.js";
 export {
   confirmDialog, emptyState, errorState, skeleton, skeletonStack, toast,

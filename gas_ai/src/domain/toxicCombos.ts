@@ -145,7 +145,7 @@ export const OTHER_GROUP_ID = "other-ai-risk";
  *
  * It lives OUTSIDE COMBO_GROUPS, and that is not tidiness. COMBO_GROUPS is what
  * syncJobs.syncSteps() iterates to generate one per-rule `ISSUES_<ruleId>` fallback step
- * via Q_RULE_ASSETS; a member here would generate a step querying `ruleIds: [""]`. It is
+ * via the per-rule step that used to exist; that step is gone, but an empty id would still be
  * also what the combo legend, the graph's grouping order and the "N patterns" tally are
  * made of, and this is a bucket, not a pattern: it has no source rule to query and no
  * amplifier to justify.

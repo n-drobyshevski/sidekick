@@ -356,37 +356,3 @@ exports[`query documents > Q_PRINCIPALS is unchanged 1`] = `
 }
 "
 `;
-
-exports[`query documents > Q_RULE_ASSETS is unchanged 1`] = `
-"query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {
-  cloudResourcesV2(first: $first, after: $after, filterBy: {
-    relatedIssue: { sourceRuleId: { equals: $ruleIds }, status: { equals: ["OPEN"] } }
-  }) {
-    totalCount
-    pageInfo { hasNextPage endCursor }
-    nodes {
-      id
-      name
-      type
-      nativeType
-      cloudPlatform
-      region
-      status
-      firstSeen
-      lastSeen
-      externalId
-      isAccessibleFromInternet
-      isOpenToAllInternet
-      hasSensitiveData
-      hasAccessToSensitiveData
-      hasAdminPrivileges
-      hasHighPrivileges
-      technology { id name categories { id name } }
-      cloudAccount { id name externalId cloudProvider }
-      projects { id name isFolder riskProfile { businessImpact } }
-      tags { key value }
-    }
-  }
-}
-"
-`;

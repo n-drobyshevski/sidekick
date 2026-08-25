@@ -21,6 +21,7 @@ import {
   type InternetExposure,
   type IssueSeverityKey,
   type MultiIssueScaling,
+  type IssueAttribution,
 } from "./aars";
 import { effectiveCardinality, tieRate } from "./rankStats";
 import { CONDITION_KEYS } from "./toxicCombos";
@@ -190,6 +191,9 @@ export function cleanAarsRule(raw: unknown): AarsRule {
   // Same convention: an unreadable value reads as "code", the spec unit — never as
   // "condition", which would silently change WHICH GAPS a stored rule prices.
   const gapUnit: GapUnit = r["gapUnit"] === "condition" ? "condition" : "code";
+  // Same convention again, and here it matters most: an unreadable value reads as "direct",
+  // never as "runsAs", which would silently widen WHICH ISSUES a stored rule scores from.
+  const issueAttribution: IssueAttribution = r["issueAttribution"] === "runsAs" ? "runsAs" : "direct";
 
   return {
     severityPoints,
@@ -200,6 +204,7 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     multiIssueScaling,
     pillarACap: clampInt(r["pillarACap"], DEFAULT_AARS_RULE.pillarACap, POINTS_MIN, POINTS_MAX),
     gapUnit,
+    issueAttribution,
     gapPoints,
     gapFallbackPoints: clampInt(
       r["gapFallbackPoints"],

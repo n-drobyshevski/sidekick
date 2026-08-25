@@ -85,7 +85,11 @@ export function trendLine(canvas, points, { yLabel, series } = {}) {
   const opts = baseOptions();
   opts.scales.y.beginAtZero = true;
   if (yLabel) {
-    opts.scales.y.title = { display: true, text: yLabel, font: FONT, color: INK2 };
+    // An empty yLabel means the caller already names the axis outside the canvas (the
+  // header's own "Cumulative cover" label). A rotated title in a 124px-tall chart clips.
+  opts.scales.y.title = yLabel
+    ? { display: true, text: yLabel, font: FONT, color: INK2 }
+    : { display: false };
   }
   const multi = Array.isArray(series) && series.length > 1;
   if (multi) {

@@ -34,6 +34,7 @@ function row(over: Partial<ProblemRow> = {}): ProblemRow {
     unknowns: [],
     dueAt: null,
     postureTier: null,
+    postureState: null,
     amplification: {
       tools: null, identity: null, persistence: null, multiAgent: null, context: null, language: null,
     },

@@ -36,3 +36,25 @@ gas_ai/dev/server.dev.js
 spark-warehouse/
 metastore_db/
 derby.log
+# Local Wiz credentials for the gas_ai dev harness (dev/serve.mjs reads gas_ai/.env.local
+# and gas_ai/dev/.env.local). Unanchored, so a copy in any directory is covered: a
+# credential file one level from where it was expected must not become a commit.
+.env.local
+
+# Agent-tooling state that installs into the repo root. `npx skills add` writes .agents/
+# (the skill bodies), a .claude/skills/ symlink farm pointing back at them, and a lockfile;
+# .claude also collects a per-developer permission allowlist and a runtime lock. None of it
+# is this project's source.
+#
+# Listed one by one rather than as a bare `.claude/`, for the same reason the /data/ rule
+# above is anchored: a broad rule here would silently hide a shared .claude/settings.json,
+# .claude/agents/ or .claude/commands/ that a teammate later adds, and this file has been
+# bitten by exactly that once already.
+.agents/
+.claude/skills/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+skills-lock.json
+
+# Generated HTML review surfaces (lavish-axi serves these from a local express server).
+.lavish/

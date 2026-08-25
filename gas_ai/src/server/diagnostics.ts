@@ -373,10 +373,17 @@ export function registerScopeDiagnostic(): string {
         // `open_internet` is tested beside `internet` because conditionState treats
         // openToAllInternet as the STRONGER of the two (riskConditions.ts) — reading only the
         // weaker column is a second, quieter undercount of the same kind.
+        //
+        // All seven read through `parseTri` and test `=== true`. The five condition columns
+        // used to be written by boolCell and read here by parseBool, which was correct only
+        // because "held" wants a positive: parseBool("null") is false, and an unevaluated flag
+        // is indeed not a held condition. They are triCell columns now, and spelling the test
+        // as `=== true` keeps that honest — a future edit asking "is this false" cannot
+        // quietly get "yes" for a cell that never had an answer.
         const held =
-          parseBool(r["sensitive_data"]) || parseBool(r["sensitive_access"]) ||
-          parseBool(r["high_priv"]) || parseBool(r["admin_priv"]) ||
-          parseBool(r["guardrail_missing"]) ||
+          parseTri(r["sensitive_data"]) === true || parseTri(r["sensitive_access"]) === true ||
+          parseTri(r["high_priv"]) === true || parseTri(r["admin_priv"]) === true ||
+          parseTri(r["guardrail_missing"]) === true ||
           parseTri(r["internet"]) === true || parseTri(r["open_internet"]) === true;
         const signal = issueAssetIds.has(id) || findingResourceIds.has(id) || held;
 

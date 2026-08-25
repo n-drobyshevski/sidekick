@@ -571,9 +571,39 @@ export function fetchConnectionPage(field: string, o: FetchOptions): PageResult 
   return fetchPage(field, o);
 }
 
-/** graphSearch, which must always send `quick: true`. */
+/**
+ * graphSearch. Sends `quick: false`, and the reason is that QUICK MODE CANNOT PAGINATE.
+ *
+ * This used to send `quick: true`, copied from the console's own captured requests
+ * (exemples/ai_agent_expand_request.js and the two exposure captures all carry it). The
+ * console never paginates those views, so the capture never exercised what happens next:
+ * Wiz answers page 1, and refuses page 2 with `pagination is not supported in quick mode`.
+ *
+ * Measured against the tenant, one AI_AGENT traversal of 689 rows at `first: 250`:
+ *
+ *   quick=true,  after omitted   OK    page 1 only, then refused
+ *   quick=false, after cursor    OK    3 pages, 689 rows, matching totalCount exactly
+ *
+ * The consequence of the old behaviour was that EVERY graphSearch traversal was capped at
+ * its first page. Under a project scope only LINEAGE exceeded 250 rows, so only LINEAGE was
+ * reported skipped — and it was skipped for a reason that read like a tenant vocabulary
+ * problem rather than a page-two problem. Tenant-wide, four more steps truncate silently:
+ * GUARDRAIL_GAPS 1748 rows, SENSITIVE_DATA_ACCESS 1285, SA_FINDINGS 571, RUNS_AS 260.
+ *
+ * IT IS `false` ON EVERY PAGE, NOT JUST THE PAGINATED ONES, and that is not tidiness. The
+ * obvious cheaper fix — keep `quick: true` for page 1, drop to `false` only once a cursor
+ * exists — was tried and measured, and it LOSES ROWS: walking the same 689-row traversal
+ * that way yielded 534 unique ids against 689 for an all-`false` walk. 155 rows, 22%,
+ * silently missing. A quick-mode page 1 and a non-quick page 2 are not reading the same
+ * ordering, so the cursor is portable in the sense that Wiz accepts it and not in the sense
+ * that it continues where page 1 stopped.
+ *
+ * Cost of the change: none worth having. The same page measured 198-276ms under `quick:true`
+ * and 219-757ms under `quick:false`, inside run-to-run noise, and `totalCount` is exact under
+ * `false` where quick mode's is documented as approximate.
+ */
 export function fetchGraphSearchPage(o: FetchOptions): PageResult {
-  return fetchPage("graphSearch", o, { quick: true });
+  return fetchPage("graphSearch", o, { quick: false });
 }
 
 /**

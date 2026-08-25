@@ -40,6 +40,7 @@
 import type { GNode } from "./graphTypes";
 import { OUTCOME_VALUES, type Outcome } from "./problem";
 import { conditionState } from "./riskConditions";
+import { flagApplies } from "./measurability";
 import type { PostureRule } from "./postureRule";
 
 // ------------------------------------------------------------------------- the vector
@@ -202,6 +203,20 @@ export interface PostureInput {
   vector: PostureVector;
   /** Axis names ("capability" | "containment" | "consequence") whose reading could not be established. */
   unknowns: string[];
+  /**
+   * Axis names this KIND cannot carry at all — a different fact from `unknowns`, and kept in a
+   * separate list rather than merged into it because the two demand opposite responses.
+   *
+   * `unknowns` is a COVERAGE GAP: the axis applies, nobody measured it, and someone can go and
+   * fix that. `notApplicable` is a SCOPE STATEMENT: the axis means identity power, and a
+   * dataset has no identity, so there is nothing to go and measure — this model simply does
+   * not describe this asset. Folding the two together is what made the register read as ~90%
+   * "incomplete" with nothing anyone could do about it.
+   *
+   * See `measurability.ts` for which kinds structurally cannot carry which flag, and why that
+   * table is deliberately narrow.
+   */
+  notApplicable: string[];
 }
 
 /**
@@ -228,7 +243,9 @@ export interface PostureInput {
  * impact. A capability read as MINIMAL under this function is "nothing OBSERVED grants
  * broad power", never "tool access was checked and found narrow".
  */
-function capabilityOf(node: GNode | undefined): { capability: Capability; unknown: boolean } {
+function capabilityOf(
+  node: GNode | undefined,
+): { capability: Capability; unknown: boolean; notApplicable: boolean } {
   const admin = node?.hasAdminPrivileges;
   const highPriv = node?.hasHighPrivileges;
   const sensitiveAccess = node?.hasAccessToSensitiveData;
@@ -238,8 +255,20 @@ function capabilityOf(node: GNode | undefined): { capability: Capability; unknow
   const scoped = highPriv === true || sensitiveAccess === true;
   const capability: Capability = broad ? "BROAD" : scoped ? "SCOPED" : "MINIMAL";
 
-  const unknown = admin === undefined && highPriv === undefined && sensitiveAccess === undefined && !node?.humanAccess;
-  return { capability, unknown };
+  const unread = admin === undefined && highPriv === undefined && sensitiveAccess === undefined && !node?.humanAccess;
+  // UNREAD splits two ways, and this is the split the whole scope gate rests on. Every source
+  // for this axis is an identity fact, so a kind with no execution identity — a dataset, a
+  // bucket, a permission row — cannot carry ANY of them. That is not a coverage gap: there is
+  // nothing to go and measure. `measurability.flagApplies` owns which kinds those are, and is
+  // deliberately narrow: AI_MODEL reads all-null on the reference tenant and is still declared
+  // APPLICABLE, because Wiz's own rule wc-id-3231 prices "PaaS AI Model with high privileges",
+  // so its silence here is a real gap rather than an inapplicable question.
+  //
+  // A `humanAccess` record overrides the table: if a human identity can reach this asset,
+  // capability is answerable whatever its kind.
+  const kindCannotCarry =
+    !!node && !node.humanAccess && !flagApplies(node.kind, "hasAdminPrivileges");
+  return { capability, unknown: unread && !kindCannotCarry, notApplicable: unread && kindCannotCarry };
 }
 
 /**
@@ -327,9 +356,11 @@ function consequenceOf(node: GNode | undefined): { consequence: Consequence; unk
 export function derivePostureInput(node: GNode | undefined, rule: PostureRule): PostureInput {
   void rule; // see this function's own comment — accepted for symmetry, unread today
   const unknowns: string[] = [];
+  const notApplicable: string[] = [];
 
-  const { capability, unknown: capabilityUnknown } = capabilityOf(node);
-  if (capabilityUnknown) unknowns.push("capability");
+  const cap = capabilityOf(node);
+  if (cap.unknown) unknowns.push("capability");
+  if (cap.notApplicable) notApplicable.push("capability");
 
   const { containment, unknown: containmentUnknown } = containmentOf(node);
   if (containmentUnknown) unknowns.push("containment");
@@ -337,7 +368,34 @@ export function derivePostureInput(node: GNode | undefined, rule: PostureRule): 
   const { consequence, unknown: consequenceUnknown } = consequenceOf(node);
   if (consequenceUnknown) unknowns.push("consequence");
 
-  return { vector: { capability, containment, consequence }, unknowns };
+  // Only `capability` can be NOT_APPLICABLE today, and the asymmetry is deliberate rather
+  // than unfinished. Capability's every source is an identity fact, so a kind with no identity
+  // cannot carry the axis at all. Containment and consequence are not like that: containment
+  // reads guardrail coverage AND internet exposure, and a dataset can certainly be
+  // internet-exposed even though no guardrail scan roots at it; consequence reads
+  // `businessImpact`, which every cloud resource carries. Declaring either non-applicable
+  // would be the guess this whole change exists to stop making — so they stay applicable, and
+  // an unanswered reading on them is reported as the coverage gap it is.
+  return { vector: { capability: cap.capability, containment, consequence }, unknowns, notApplicable };
+}
+
+/**
+ * Whether this model DESCRIBES this asset at all — asked before `tierEstablished`, and the two
+ * answer different questions.
+ *
+ * `tierEstablished(unknowns) === false` means "the agent lattice applies here and we have not
+ * finished measuring it" — a coverage gap, and a tier withheld pending evidence.
+ * `tierInScope(notApplicable) === false` means "this lattice does not describe this kind" —
+ * no evidence would help, because capability means identity power and a dataset has no
+ * identity. Writing a vector for it would record the category error rather than avoid it,
+ * which is why `withPostureTiers` drops `postureInput` entirely for an out-of-scope node
+ * rather than storing a vector with a defaulted axis.
+ *
+ * On the reference tenant this is what separates 69 agents the lattice can genuinely rate from
+ * 585 datasets it cannot, instead of rating all 822 and reporting three occupied cells.
+ */
+export function tierInScope(notApplicable: readonly string[]): boolean {
+  return notApplicable.length === 0;
 }
 
 /**
@@ -369,6 +427,69 @@ export function countPostureTiers(nodes: ReadonlyArray<{ postureTier?: number }>
     if (t === 1 || t === 2 || t === 3 || t === 4) counts[t]++;
   }
   return counts;
+}
+
+/**
+ * The tier distribution PLUS the two ways an asset can carry no tier — which are different
+ * findings and must never be added together.
+ *
+ * A tier count on its own is unreadable without them. On the reference tenant 68 of 966 rows
+ * carry a tier; quoting that alone invites "97% unassessed", when in fact 585 of the rest are
+ * datasets this lattice was never meant to describe. `withheld` is the number someone can act
+ * on (go measure it); `outOfScope` is the number they cannot and should not try to.
+ *
+ * The two are told apart by `postureInput`, not by a second derivation:
+ * `graphEnrich.withPostureTiers` writes a vector for an in-scope asset even when it withholds
+ * the tier — that vector IS the evidence trail for what is missing — and writes none at all
+ * for an out-of-scope one, precisely so this distinction survives to here without being
+ * recomputed. `ISSUE` / `SUMMARY` nodes are skipped for the same reason that fold skips them:
+ * they are not assets and were never candidates.
+ */
+export interface PostureCensus {
+  tiers: Record<Tier, number>;
+  /** In scope, tier withheld pending evidence — a COVERAGE gap. */
+  withheld: number;
+  /** Out of scope — the lattice does not describe this kind. NOT a coverage gap. */
+  outOfScope: number;
+  /** Everything the census considered, so every share above has its denominator beside it. */
+  total: number;
+}
+
+/**
+ * Why one asset has the posture reading it has — the ONE definition of the three-way split,
+ * so the register cell, the census and any future reader cannot drift apart.
+ *
+ * `WITHHELD` and `OUT_OF_SCOPE` are told apart by `postureInput`, and that is not incidental:
+ * `graphEnrich.withPostureTiers` writes a vector for an in-scope asset even when it refuses to
+ * place it — the vector IS the record of which axes are missing — and writes none at all for an
+ * out-of-scope one, so the distinction survives persistence without being re-derived from the
+ * kind a second time.
+ */
+export type PostureState = "TIERED" | "WITHHELD" | "OUT_OF_SCOPE";
+
+export function postureStateOf(
+  node: { postureTier?: number; postureInput?: unknown },
+): PostureState {
+  const t = node.postureTier;
+  if (t === 1 || t === 2 || t === 3 || t === 4) return "TIERED";
+  return node.postureInput === undefined ? "OUT_OF_SCOPE" : "WITHHELD";
+}
+
+export function censusPostureTiers(
+  nodes: ReadonlyArray<{ kind?: string; postureTier?: number; postureInput?: unknown }>,
+): PostureCensus {
+  const tiers = countPostureTiers(nodes);
+  let withheld = 0;
+  let outOfScope = 0;
+  let total = 0;
+  for (const n of nodes) {
+    if (n.kind === "ISSUE" || n.kind === "SUMMARY") continue;
+    total++;
+    const state = postureStateOf(n);
+    if (state === "WITHHELD") withheld++;
+    else if (state === "OUT_OF_SCOPE") outOfScope++;
+  }
+  return { tiers, withheld, outOfScope, total };
 }
 
 export function worstOpenProblem(outcomes: readonly string[]): Outcome | undefined {

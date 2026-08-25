@@ -10,3 +10,7 @@ node_modules/
 # Raw probe output. The committed capture is exemples/tenant_vocabulary.js; this is the
 # re-runnable dump you diff against it.
 probe-vocabulary.json
+
+# Phase 0 measurement output. The tool is phase0.mjs and the write-up is
+# ai/AARS_LIVE_MEASUREMENTS.md section 6; this is the re-runnable dump behind them.
+phase0-report.json

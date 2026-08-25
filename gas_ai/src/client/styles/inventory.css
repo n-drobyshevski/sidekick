@@ -10,24 +10,18 @@
    score's levels do not (ai/AARS_SCORING_ASSESSMENT.md §3: the top level holds 19 of 30
    scored assets, two levels hold none). The strip was on the top row before this and read
    as the page's headline. */
-.inv-header {
-  display: grid;
-  grid-template-columns: minmax(150px, 0.45fr) minmax(320px, 2fr);
-  gap: 20px 36px; align-items: start;
-  margin: 0 0 18px; padding-bottom: 4px; border-bottom: 1px solid var(--hairline);
-}
-.inv-hero-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+/* .inv-header and .inv-hero-sub now come from .page-header (components.css). */
 
 /* The verdict row: the two posture tiers that carry an action. Read-outs, not controls —
    this table has no posture facet, and a chip shaped like the strip's filter keys but inert
    would read as a broken control. */
-.inv-verdict { display: flex; flex-direction: column; gap: 8px; }
+.inv-verdict { display: flex; flex-direction: column; gap: var(--space-2); }
 /* The three headline counts. `baseline` on the row so a delta chip sits on the number's
    baseline rather than centring against its cap height, which reads as a misalignment at
    this size. */
-.inv-count-row { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
-.inv-count { display: flex; flex-direction: column; gap: 2px; }
-.inv-count-n { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.inv-count-row { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); align-items: baseline; }
+.inv-count { display: flex; flex-direction: column; gap: var(--space-half); }
+.inv-count-n { font-size: var(--fs-display-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* Full width, under the hero and the verdict. */
 .inv-header .sev-strip { grid-column: 1 / -1; }
@@ -35,24 +29,23 @@
 /* The distribution strip. The bar is a graphic; the keys under it are the controls, so
    the cross-filter has a real keyboard path (a canvas would not). Both are the shared
    .sevbar / .sevkey-row components (components.css) — this page only sizes the stack. */
-.sev-strip { display: flex; flex-direction: column; gap: 8px; }
-.sev-strip-note { font-size: 12px; color: var(--text-3); margin: 0; }
+.sev-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; }
 
 /* The stat strip itself is shared (components.css); the header only says where it sits. */
 .inv-header .stat-list { grid-column: 1 / -1; }
 
 /* ------------------------------------------------------------- AI Inventory: toolbar */
 .inv-toolbar {
-  display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center;
-  padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-2); align-items: center;
+  padding: var(--space-2) var(--space-3); border: 1px solid var(--hairline); border-radius: var(--radius-lg);
   background: var(--surface);
 }
-.inv-toolbar-end { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-.inv-toolbar .count { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.inv-toolbar-end { margin-left: auto; display: flex; align-items: center; gap: var(--space-3); }
+.inv-toolbar .count { font-size: var(--fs-label); color: var(--text-2); font-variant-numeric: tabular-nums; }
 /* The graph's chips row is a full-bleed bar under a sticky top bar; in the page flow it
    needs neither the 16px inset nor the bottom rule. */
-.filter-chips.inv-chips { padding: 10px 0 0; border-bottom: none; }
-.saved-views { display: inline-flex; align-items: center; gap: 6px; }
+.filter-chips.inv-chips { padding: var(--space-2) 0 0; border-bottom: none; }
+.saved-views { display: inline-flex; align-items: center; gap: var(--space-1); }
 .saved-views select { max-width: 180px; }
 /* Name search. The rule lived in graph.css while the graph had a search box of its own; the
    register is the only `.workbench-search` left now that a node name is a `WHERE` filter
@@ -74,7 +67,7 @@
 /* The score as a quantity beside the chip that gives its level. Neutral graphite fill on
    purpose: the level is already coloured on the chip, and fifty tinted bars down a page is
    the wall of colour PRODUCT.md rejects. */
-.issue-cell { display: inline-flex; align-items: center; gap: 8px; }
+.issue-cell { display: inline-flex; align-items: center; gap: var(--space-2); }
 
 td .meter { background: rgba(0, 0, 0, 0.09); }
 /* Open issues split by severity is a .sevbar--xs (components.css). Here colour IS the
@@ -87,22 +80,33 @@ td .meter { background: rgba(0, 0, 0, 0.09); }
 /* ----------------------------------------------------------- AI Inventory: card view */
 /* The same marks as a table row, laid out for scanning by name instead of by column.
    Card whisper only, never a float (the Whisper-Or-Lift Rule). */
-.asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 12px; }
+.asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: var(--space-3); }
 .asset-card {
-  display: flex; flex-direction: column; align-items: stretch; gap: 8px;
-  padding: 12px 14px; min-height: 0; text-align: left; font: inherit; color: inherit;
+  display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2);
+  padding: var(--space-3) var(--space-3); min-height: 0; text-align: left; font: inherit; color: inherit;
 }
 .asset-card:hover { background: #f1f1f4; border-color: #d9d9de; }
-.asset-card-head { display: flex; align-items: center; gap: 8px; }
+.asset-card-head { display: flex; align-items: center; gap: var(--space-2); }
 .asset-card-icon { flex: 0 0 16px; color: var(--text-3); }
 .asset-card-icon .gnode-icon { stroke: currentColor; fill: none; stroke-width: 1.4; }
 .asset-card-name {
-  flex: 1; min-width: 0; font-weight: 600; font-size: 13px;
+  flex: 1; min-width: 0; font-weight: 600; font-size: var(--fs-body);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.asset-card-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.asset-card-marks { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
 .asset-card-marks:empty { display: none; }
-.asset-card-meta { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; color: var(--text-3); }
+.asset-card-meta { display: flex; flex-wrap: wrap; gap: var(--space-half) var(--space-2); font-size: var(--fs-label); color: var(--text-3); }
 
 @media (max-width: 1180px) { .inv-header { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 760px) { .inv-header { grid-template-columns: 1fr; gap: 18px; } }
+@media (max-width: 760px) { .inv-header { grid-template-columns: 1fr; gap: var(--space-4); } }
+
+/* -------------------------------------------------- Cloud Configuration: the facet rows */
+/* Its own name, because .facet-row is the filter DRAWER's four-column grid (sheet.css) and
+   reusing it here put this label in the 14px checkbox column. A label beside a pill row is a
+   different shape and now says so. */
+.config-facets { margin: var(--space-3) 0 var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+.config-facet { display: flex; align-items: baseline; gap: var(--space-3); }
+.config-facet-name {
+  flex: 0 0 104px; font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+}

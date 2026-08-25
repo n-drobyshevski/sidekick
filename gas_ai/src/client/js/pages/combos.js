@@ -21,8 +21,9 @@ import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
-  clear, dataTable, debounce, el, emptyState, errorState, kpiCard,
-  pager, plural, sectionLabel, select,
+  FINDINGS_SCORE_LABEL, ordinal,
+  clear, dataTable, debounce, el, emptyState, errorState, heroStat, outcomeBadge, pageHeader,
+  outcomeLabel, pager, plural, sectionLabel, select, statRow,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,
   togglePills,
 } from "../ui.js";
@@ -53,14 +54,17 @@ const SEARCH_DEBOUNCE_MS = 200;
 // mirrors the real page shape — KPI row, the two summary cards, then the pattern stack —
 // so the pane reveals a laid-out page instead of growing sections as data lands.
 function combosSkeleton(count) {
-  const kpis = el("div", { class: "kpi-row" });
-  for (let i = 0; i < 4; i++) {
-    kpis.append(el("div", { class: "kpi-card" },
-      el("div", { class: "skeleton-stack", style: "gap:9px" },
+  // Shape-matched to what lands: one hero over a three-cell stat strip, not four tiles.
+  const kpis = el("div", { class: "page-header" },
+    el("div", { class: "page-hero" },
+      skeleton("line", { width: "52%" }),
+      skeleton("stat", { width: "40%" }),
+      skeleton("line", { width: "70%" })),
+    el("div", {}),
+    el("div", { class: "stat-list" },
+      ...Array.from({ length: 3 }, () => el("div", { class: "stat-row" },
         skeleton("line", { width: "62%" }),
-        skeleton("stat", { width: "45%" }),
-        skeleton("line", { width: "78%" }))));
-  }
+        skeleton("stat", { width: "45%" })))));
   const summary = el("div", { class: "chart-row" },
     el("div", { class: "chart-card" },
       skeleton("line", { width: "220px" }),
@@ -202,14 +206,16 @@ export async function renderCombos(main, params) {
       openParts.push(totals.unclassified + " outside the four patterns");
     }
     if (totals.inProgress) openParts.push(totals.inProgress + " in progress");
-    return el("div", { class: "kpi-row" },
-      kpiCard("Open issues", String(totals.totalOpen), openParts.join(" · ")),
-      kpiCard("Assets affected", String(totals.assetsAffected),
+    return pageHeader({
+      hero: heroStat("Open issues", String(totals.totalOpen), openParts.join(" · ")),
+      stats: [
+      statRow("Assets affected", String(totals.assetsAffected),
         "distinct across every pattern"),
-      kpiCard("Patterns active", totals.patternsActive + " of " + totals.patternsTotal,
+      statRow("Patterns active", totals.patternsActive + " of " + totals.patternsTotal,
         "combination rules with open issues", null, { term: "toxic-combination" }),
-      kpiCard("Past due", String(totals.pastDue), dueSub),
-    );
+      statRow("Past due", String(totals.pastDue), dueSub),
+      ],
+    });
   }
 
   function summaryRow(digest, digestById) {

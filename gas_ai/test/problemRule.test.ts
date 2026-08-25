@@ -482,9 +482,41 @@ describe("problemCensus", () => {
     expect(c.comboGroups).toEqual([{ value: "real-group", issues: 1 }]);
   });
 
-  it("contributes nothing for rows carrying neither field", () => {
-    // What a FindingRow looks like here: both axes are issue vocabulary.
-    expect(problemCensus([{}, {}, {}])).toEqual({ verdicts: [], comboGroups: [] });
+  it("contributes nothing for rows carrying none of the fields", () => {
+    // What a FindingRow looks like here: every axis is issue vocabulary.
+    // `ruleIds` joins the shape additively — the claim this pins is unchanged, that a row
+    // carrying nothing contributes nothing, and the third empty list is the same claim.
+    expect(problemCensus([{}, {}, {}])).toEqual({ verdicts: [], comboGroups: [], ruleIds: [] });
+  });
+
+  it("counts issues per Wiz rule id, so the exploitation table has a list to name from", () => {
+    // The lever this exists for: one rule id can carry most of a register, and an operator
+    // cannot name what the editor never shows them.
+    const c = problemCensus([
+      { ruleId: "wc-id-2742" },
+      { ruleId: "wc-id-2742" },
+      { ruleId: "wc-id-2742" },
+      { ruleId: "wc-id-0001" },
+    ]);
+    expect(c.ruleIds).toEqual([
+      { value: "wc-id-2742", issues: 3 },
+      { value: "wc-id-0001", issues: 1 },
+    ]);
+  });
+
+  it("counts every rule id — there is no sentinel to exclude, unlike comboGroup", () => {
+    // `comboGroup` is synthesised by this app and backfilled with OTHER_GROUP_ID; `ruleId`
+    // is Wiz's own identifier and every issue carries a real one.
+    const c = problemCensus([{ ruleId: "other-ai-risk" }, { ruleId: "wc-id-1" }]);
+    expect(c.ruleIds.map((e) => e.value).sort()).toEqual(["other-ai-risk", "wc-id-1"]);
+  });
+
+  it("does NOT count findings, which price through the same table on ruleShortId", () => {
+    // Deliberate, and documented on problemCensus: the count understates a rule id's reach
+    // and can never overstate it. A finding-shaped row contributes nothing here.
+    const c = problemCensus([{ ruleId: "wc-id-2742" }] as Array<{ ruleId?: string }>);
+    expect(c.ruleIds).toEqual([{ value: "wc-id-2742", issues: 1 }]);
+    expect(problemCensus([{} as { ruleId?: string }]).ruleIds).toEqual([]);
   });
 
   it("ignores blank and whitespace-only values rather than counting an empty token", () => {

@@ -8,12 +8,57 @@
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-card);
 }
-.card { padding: 16px; }
-.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 0 0 20px; }
-.kpi-card { padding: 14px 16px; }
-.kpi-label { font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); }
-.kpi-value { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin-top: 2px; }
-.kpi-sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.card { padding: var(--space-4); }
+/* THE PAGE HEADER, which four routes had already invented separately.
+   .cov-header (scans) and .inv-header (inventory) were byte-identical rulesets — scans.css
+   even says so in a comment, "the same shape the AI Inventory header uses" — while
+   .help-header and .comp-header differed only in ways nothing appears to have intended: a
+   150px vs 170px first column, 0.45fr vs 0.5fr, an 18px vs 0 bottom margin, 4px vs 16px of
+   padding above the rule.
+
+   This is DESIGN.md's Hero Stat block: a borderless grid closed by a hairline, dominance
+   from size and position rather than from a card. Sharing it is also the only way the layout
+   tier reaches these pages, because retuning the shared literals in base.css moved the
+   >=16px share of spacing from 11.0% to 11.0% — the spacing that matters lives in rulesets
+   like these four, not in the shared file.
+
+   Grouped rather than renamed so no page markup has to change to get it. A new page should
+   use .page-header alone. */
+.page-header, .cov-header, .inv-header, .help-header, .comp-header {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.5fr) minmax(320px, 2fr);
+  gap: var(--space-5) var(--space-6);
+  align-items: start;
+  margin: 0 0 var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+}
+/* The hero's supporting line, previously four near-identical rules. */
+.page-hero-sub, .cov-hero-sub, .inv-hero-sub, .help-hero-sub {
+  font-size: var(--fs-label); color: var(--text-3); margin: var(--space-1) 0 0;
+}
+/* No aside: widen the column that is actually carrying something, from ~257px to up to
+   460px, so the hero's supporting line stops wrapping beside a thousand empty pixels. The
+   SECOND column stays (empty) rather than collapsing to one: .stat-list spans 1 / -1, and on
+   a single-column grid that would have penned the whole strip into 460px too. Capped rather
+   than 1fr so the sub-line still breaks at a readable length. */
+.page-header--solo { grid-template-columns: minmax(240px, 460px) 1fr; }
+
+/* The header's second column: a label over the one thing that qualifies the hero — a
+   distribution strip, a small curve. .cov-strip (scans) and .sev-strip (inventory) were
+   identical rulesets in two page files; .page-strip is the name for the next one. */
+.page-strip, .cov-strip, .sev-strip { display: flex; flex-direction: column; gap: var(--space-2); }
+/* The hero column itself needs nothing but permission to shrink inside the grid. */
+.page-hero { min-width: 0; }
+
+/* The stat strip always spans the full header, whichever page it is on. */
+.page-header > .stat-list, .cov-header .stat-list, .inv-header .stat-list { grid-column: 1 / -1; }
+
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-3); margin: 0 0 var(--space-5); }
+.kpi-card { padding: var(--space-3) var(--space-4); }
+.kpi-label { font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); }
+.kpi-value { font-size: var(--fs-display); font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin-top: var(--space-half); }
+.kpi-sub { font-size: var(--fs-label); color: var(--text-3); margin-top: var(--space-half); }
 
 /* ------------------------------------------------------------------- code + copy */
 /* The app's first text-at-scale container. Wraps nothing: a GraphQL document's indentation
@@ -21,18 +66,18 @@
    into something that is no longer the query. */
 .code-block {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px; line-height: 1.55; color: var(--ink);
+  font-size: var(--fs-label); line-height: 1.55; color: var(--ink);
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
-  margin: 0; padding: 10px 12px;
+  margin: 0; padding: var(--space-2) var(--space-3);
   overflow: auto; white-space: pre; max-height: 260px;
 }
 .code-block:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .copy-btn {
-  font-size: 11.5px; font-weight: 600; color: var(--accent);
+  font-size: var(--fs-label); font-weight: 600; color: var(--accent);
   background: var(--page); border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm); padding: 3px 9px; cursor: pointer;
+  border-radius: var(--radius-sm); padding: var(--space-half) var(--space-2); cursor: pointer;
 }
 .copy-btn:hover { background: var(--surface); }
 .copy-btn.is-done { color: var(--ok); border-color: rgba(21, 128, 61, 0.35); }
@@ -42,34 +87,37 @@
    deliberately borderless: DESIGN.md's Hero Stat takes its dominance from size, position
    and whitespace, never from a card, a gradient or an accent stripe. One .hero-value per
    page — it is the page's subject, and a second one means neither is. */
-.hero-value { font-size: 2rem; font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; }
+.hero-value { font-size: var(--fs-hero); font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; }
 
 /* The facts that would otherwise be cards, as one full-width strip: equal cells divided by
    hairlines, so the header reads as one surface with three levels of emphasis rather than
    a row of competing boxes. Pages position it; the cells are the same everywhere. */
 .stat-list {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
-  gap: 0; padding: 14px 0 16px; margin-top: 2px;
+  /* auto-FILL, not auto-fit: auto-fit collapses the empty tracks and 1fr then stretches
+     the survivors across the whole width, so a two-stat strip drew its divider in the
+     middle of empty space. Keeping the tracks left-aligns any count. */
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 0; padding: var(--space-3) 0 var(--space-4); margin-top: var(--space-half);
   background: none; border: none; border-top: 1px solid var(--hairline);
   border-radius: 0; box-shadow: none;
 }
-.stat-row { display: flex; flex-direction: column; gap: 2px; padding: 0 18px; }
+.stat-row { display: flex; flex-direction: column; gap: var(--space-half); padding: 0 var(--space-4); }
 .stat-row + .stat-row { border-left: 1px solid var(--hairline); }
 .stat-row .stat-name {
-  font-size: 12px; font-weight: 600; letter-spacing: 0.05em;
+  font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
 }
-.stat-row .stat-figure { display: flex; align-items: center; gap: 9px; }
-.stat-row .stat-sub { font-size: 11px; color: var(--text-3); }
-.stat-row .mini-value { font-size: 1.125rem; font-weight: 600; letter-spacing: -0.01em; }
+.stat-row .stat-figure { display: flex; align-items: center; gap: var(--space-2); }
+.stat-row .stat-sub { font-size: var(--fs-micro); color: var(--text-3); }
+.stat-row .mini-value { font-size: var(--fs-display-sm); font-weight: 600; letter-spacing: -0.01em; }
 
 @media (max-width: 620px) {
-  .stat-row { padding: 10px 0; }
+  .stat-row { padding: var(--space-2) 0; }
   .stat-row + .stat-row { border-left: none; border-top: 1px solid var(--hairline); }
 }
 
 /* change chips */
-.chg { font-size: 12px; font-weight: 600; border-radius: var(--radius-sm); padding: 1px 6px; margin-left: 6px; }
+.chg { font-size: var(--fs-label); font-weight: 600; border-radius: var(--radius-sm); padding: var(--space-half) var(--space-1); margin-left: var(--space-2); }
 .chg.up { color: var(--bad); background: rgba(185, 28, 28, 0.12); }
 .chg.down { color: var(--ok); background: rgba(21, 128, 61, 0.12); }
 .chg.flat { color: var(--text-3); background: rgba(0, 0, 0, 0.06); }
@@ -80,18 +128,18 @@
    actually differs — gap, padding, radius, colour — stays with each member, next to the
    rule that explains it. Members outside this file are listed here on purpose: this is
    the one place that says they are the same kind of thing. */
-.sev-badge, .aars-chip, .pill, .sev-key,
-.filter-chip, .combo-shift-key, .combo-cond {
+.sev-badge, .aars-chip, .pill,
+.filter-chip, .combo-cond {
   display: inline-flex;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
 }
 
 /* Tag base: the flat neutral code/label, not a status. */
 .domain-chip, .fw-tag {
   display: inline-block;
-  padding: 1px 7px;
+  padding: var(--space-half) var(--space-2);
   border-radius: var(--radius-sm);
   background: rgba(0, 0, 0, 0.06);
   color: var(--text-2);
@@ -125,8 +173,8 @@
 .meter--facet .meter-fill { background: rgba(0, 0, 0, 0.32); }
 
 /* --------------------------------------------------------------------- severity */
-.sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
-.sev-badge { border-radius: var(--radius-pill); padding: 2px 9px; }
+.sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: var(--space-2); vertical-align: 1px; }
+.sev-badge { border-radius: var(--radius-pill); padding: var(--space-half) var(--space-2); }
 
 /* Severity FILL as a background, for the marks the app draws itself: bar segments and
    pattern dots. The .sev-<LEVEL> tint classes below can't do this job — they paint a 14%
@@ -149,6 +197,39 @@
   display: flex; width: 100%; overflow: hidden;
   border-radius: var(--radius-pill); background: var(--track-bg);
 }
+/* THE SEVERITY MIX IS INFORMATION, NOT DECORATION, so it keeps its palette where every other
+   background is discarded. A segment bar is pure fill with no text of its own, so in
+   forced-colors mode every segment resolved to the forced background and the Severity column
+   rendered as an EMPTY CELL — measured: segment background rgb(255,255,255), cell text "".
+   The aria-label ("71 MEDIUM") still reached a screen reader, but a sighted reader in High
+   Contrast, which is a low-vision mode, saw nothing at all.
+
+   forced-color-adjust: none is the right tool exactly here and the palette already uses it
+   for the same reason (graphQuery.css:414). The track keeps its forced background so the
+   bar still reads as a bar against the page. */
+@media (forced-colors: active) {
+  .sevbar-seg { forced-color-adjust: none; }
+}
+
+/* THE SAME DEFECT, EVERYWHERE IT OCCURS, STATED ONCE.
+   Forced-colors mode discards backgrounds. Every graphic in this app that carries its meaning
+   as a FILL and has no text of its own therefore resolved to the forced background and
+   disappeared, leaving an empty box where a figure had been. Measured, each returning
+   background rgb(255,255,255) with zero text:
+
+     .sevbar-seg      the severity mix in a table cell
+     .meter-fill      every meter in the app - guardrail coverage, stat rows, AARS scores
+     .cov-bar-seg     the Wiz Scans coverage bar
+     .help-lexbar-seg the Help lexicon bar
+
+   These are information, not decoration, which is exactly the case forced-color-adjust: none
+   exists for; this codebase already reaches for it on the same grounds in graphQuery.css:414.
+   The TRACKS keep their forced background, so each still reads as a bar against the page.
+   Stated here rather than beside each rule because it is one defect with four instances, and
+   the fifth one somebody adds should find this comment. */
+@media (forced-colors: active) {
+  .meter-fill, .cov-bar-seg, .help-lexbar-seg { forced-color-adjust: none; }
+}
 /* THE SEPARATOR, and the reason it is a border rather than a gap. Fills that meet edge to
    edge assimilate at the shared edge, so adjacent hues read as one band — the defect that
    made the tier mass strip illegible. `border-right` costs NO layout: with the global
@@ -156,7 +237,7 @@
    geometry (and anything positioned against it, like the mass strip's ceiling marker)
    stays exactly where it was. A flex `gap` would move every boundary. */
 .sevbar-seg {
-  flex-basis: 0; min-width: 3px; transition: opacity 140ms ease-out;
+  flex-basis: 0; min-width: 3px; transition: opacity var(--dur-fast) ease-out;
   border-right: 2px solid var(--page);
 }
 .sevbar-seg:last-child { border-right: none; }
@@ -173,19 +254,19 @@
   45deg, transparent, transparent 4px, rgba(0, 0, 0, 0.06) 4px, rgba(0, 0, 0, 0.06) 8px); }
 
 .sevkey-row { display: flex; flex-wrap: wrap; }
-.sevkey-row--toggle { gap: 2px 12px; }
-.sevkey-row--legend { gap: 6px; }
+.sevkey-row--toggle { gap: var(--space-half) var(--space-3); }
+.sevkey-row--legend { gap: var(--space-1); }
 .sevkey { display: inline-flex; align-items: center; font-weight: 600; }
 /* Legend keys are tinted by their level (a name for a segment); toggle keys stay neutral,
    so "selected" reads as an interactive state rather than as a severity. The dot margin
    and the count offset are deliberately per-variant, not shared: the two rows space their
    dot/word/number differently, and flattening them to one value moves both. */
 .sevkey-row--legend .sevkey {
-  gap: 2px; padding: 1px 8px; font-size: 11px; border-radius: var(--radius-pill);
+  gap: var(--space-half); padding: var(--space-half) var(--space-2); font-size: var(--fs-micro); border-radius: var(--radius-pill);
 }
-.sevkey-row--legend .sevkey-num { margin-left: 4px; }
+.sevkey-row--legend .sevkey-num { margin-left: var(--space-1); }
 .sevkey-row--toggle .sevkey {
-  gap: 6px; padding: 3px 7px; font-size: 12px; border-radius: var(--radius-sm);
+  gap: var(--space-1); padding: var(--space-half) var(--space-2); font-size: var(--fs-label); border-radius: var(--radius-sm);
   background: none; border: 1px solid transparent; box-shadow: none; min-height: 0;
   color: var(--text-2);
 }
@@ -194,7 +275,7 @@
 .sevkey-row--toggle .sevkey:hover { background: var(--wash-hover); border-color: transparent; }
 /* Selected reads as selected without relying on colour: a tick plus the tint. */
 .sevkey-row--toggle .sevkey[aria-pressed="true"] { background: rgba(0, 0, 0, 0.06); color: var(--ink); }
-.sevkey-row--toggle .sevkey[aria-pressed="true"]::after { content: "✓"; font-size: 10px; color: var(--text-3); }
+.sevkey-row--toggle .sevkey[aria-pressed="true"]::after { content: "✓"; font-size: var(--fs-micro); color: var(--text-3); }
 .sev-CRITICAL { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical-text); }
 .sev-CRITICAL .sev-dot { background: var(--sev-critical); }
 .sev-HIGH { background: rgba(234, 88, 12, 0.14); color: var(--sev-high-text); }
@@ -211,14 +292,14 @@
 /* AARS chips reuse the severity tokens directly — the AARS scale carries the same
    values as the Wiz severity scale, and the brand crimson never scores risk. */
 .aars-chip {
-  gap: 5px; border-radius: var(--radius-pill); padding: 2px 9px;
+  gap: var(--space-1); border-radius: var(--radius-pill); padding: var(--space-half) var(--space-2);
   font-variant-numeric: tabular-nums;
 }
 .aars-chip .sev-dot { margin-right: 0; }
 
 
 /* status pills */
-.pill { gap: 6px; border-radius: var(--radius-pill); padding: 2px 9px; }
+.pill { gap: var(--space-1); border-radius: var(--radius-pill); padding: var(--space-half) var(--space-2); }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .pill.ok { color: var(--ok); background: rgba(21, 128, 61, 0.12); }
 .pill.warn { color: var(--warn); background: rgba(161, 98, 7, 0.12); }
@@ -233,13 +314,13 @@
 .pill--rank3 { color: var(--rank-3-text); background: var(--rank-3-tint); }
 .pill--rank4 { color: var(--rank-4-text); background: var(--rank-4-tint); }
 
-.domain-chip { font-size: 12px; }
+.domain-chip { font-size: var(--fs-label); }
 
 /* severity filter pills */
-.pill-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill-row { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .sev-pill, .kind-pill {
-  border-radius: var(--radius-pill); padding: 3px 12px; min-height: 0;
-  font-size: 12px; font-weight: 600;
+  border-radius: var(--radius-pill); padding: var(--space-half) var(--space-3); min-height: 0;
+  font-size: var(--fs-label); font-weight: 600;
   background: var(--page); border: 1px solid var(--hairline); box-shadow: none;
   color: var(--text-2);
 }
@@ -256,11 +337,6 @@
    is an interactive state, not a severity; the accent is the token for that. */
 .kind-pill[aria-pressed="true"] {
   background: rgba(190, 18, 60, .10); color: var(--accent-hover); border-color: rgba(190, 18, 60, .28);
-}
-.kind-filter { display: flex; flex-direction: column; gap: 12px; }
-.pill-group-label {
-  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
-  color: var(--text-3); margin-bottom: 5px;
 }
 
 /* ------------------------------------------------------------------------- tip */
@@ -319,7 +395,7 @@
 .tip-mark {
   display: inline-flex; align-items: center; justify-content: center;
   width: 18px; height: 18px; border-radius: var(--radius-pill);
-  font-size: 11px; font-weight: 600; color: var(--text-2);
+  font-size: var(--fs-micro); font-weight: 600; color: var(--text-2);
   background: var(--surface); border: 1px solid var(--hairline);
 }
 .tip-trigger:hover > .tip-mark { border-color: var(--text-3); color: var(--ink); }
@@ -335,11 +411,11 @@
    inline; nothing here may set them. */
 .tip {
   position: fixed; left: 0; top: 0; z-index: var(--z-tooltip);
-  width: max-content; max-width: min(300px, calc(100vw - 32px)); padding: 9px 11px;
+  width: max-content; max-width: min(300px, calc(100vw - 32px)); padding: var(--space-2) var(--space-3);
   background: var(--page); color: var(--ink);
   border: 1px solid var(--hairline); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
-  font-size: 12px; font-weight: 400; line-height: 1.45;
+  font-size: var(--fs-label); font-weight: 400; line-height: 1.45;
   letter-spacing: 0; text-transform: none; text-align: left; white-space: normal;
   opacity: 0; pointer-events: none; transform: translateY(-2px);
   transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
@@ -348,18 +424,18 @@
 /* A chart tip is passive: the canvas underneath is still hit-testing to decide what the card
    says, so the card must never intercept the pointer that is driving it. */
 .tip.passive { pointer-events: none; }
-.tip-body { display: flex; flex-direction: column; gap: 5px; }
+.tip-body { display: flex; flex-direction: column; gap: var(--space-1); }
 .tip-line { display: block; }
 /* A second name for the thing ("TC", "membership, never severity") — information, not a
    restated heading, which is why it is here and the term itself is not. */
 .tip-aka {
-  display: block; font-size: 11px; font-weight: 600;
+  display: block; font-size: var(--fs-micro); font-weight: 600;
   letter-spacing: 0.02em; color: var(--text-3);
 }
 .tip-more {
-  display: block; margin-top: 1px; padding-top: 5px;
+  display: block; margin-top: var(--space-half); padding-top: var(--space-1);
   border-top: 1px solid var(--hairline);
-  font-size: 11px; color: var(--text-3);
+  font-size: var(--fs-micro); color: var(--text-3);
 }
 /* The caret. `left` is set inline from the anchor's centre, clamped off both corners, because
    a card pushed against the window edge would otherwise point at nothing. Two stacked squares:
@@ -385,15 +461,15 @@
    the list is portaled to <body> because the panel it lives in scrolls and would clip it. */
 .combobox { position: relative; }
 .combobox-trigger {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  width: 100%; min-height: 36px; padding: 4px 10px;
-  font-family: var(--font); font-size: 0.875rem; font-weight: 400; text-align: left;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  width: 100%; min-height: 36px; padding: var(--space-1) var(--space-2);
+  font-family: var(--font); font-size: var(--fs-body); font-weight: 400; text-align: left;
   background: var(--page); color: var(--ink);
   border: 1px solid var(--hairline); border-radius: var(--radius-md); box-shadow: none;
 }
 .combobox-trigger:hover { background: #f1f1f4; }
 .combobox-trigger-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.combobox-caret { font-size: 0.7rem; color: var(--text-3); flex: 0 0 auto; }
+.combobox-caret { font-size: var(--fs-micro); color: var(--text-3); flex: 0 0 auto; }
 /* The generic portaled popover — openPopover's own surface, which callers dress from the
    inside. Same ground, radius and shadow as the combobox's list, because they are the same
    kind of thing floating over the same page; only the padding differs, since a palette owns
@@ -409,31 +485,31 @@
 
 .combobox-pop {
   position: fixed; z-index: var(--z-popover);
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 6px; background: var(--page); color: var(--ink);
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-1); background: var(--page); color: var(--ink);
   border: 1px solid var(--hairline); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sheet);
   font-family: var(--font);
 }
 .combobox-search { width: 100%; margin: 0; }
 /* The list scrolls (max-height set inline by position()) so the search input stays pinned. */
-.combobox-list { list-style: none; margin: 0; padding: 2px; overflow-y: auto; }
+.combobox-list { list-style: none; margin: 0; padding: var(--space-half); overflow-y: auto; }
 .combobox-option {
-  display: flex; align-items: baseline; gap: 8px;
-  padding: 6px 8px; border-radius: var(--radius-sm);
-  font-size: 0.8125rem; line-height: 1.3; color: var(--ink); cursor: pointer;
+  display: flex; align-items: baseline; gap: var(--space-2);
+  padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm);
+  font-size: var(--fs-body); line-height: 1.3; color: var(--ink); cursor: pointer;
 }
 .combobox-option:hover, .combobox-option.active { background: var(--surface); }
 /* Selected: weight AND color together, never color alone — aria-selected already carries
    it for assistive tech. */
 .combobox-option[aria-selected="true"] { font-weight: 600; color: var(--accent); }
-.combobox-option-hint { margin-left: auto; font-size: 11px; color: var(--text-3); flex: 0 0 auto; }
-.combobox-option--last-pinned { border-bottom: 1px solid var(--hairline); margin-bottom: 2px; padding-bottom: 8px; }
+.combobox-option-hint { margin-left: auto; font-size: var(--fs-micro); color: var(--text-3); flex: 0 0 auto; }
+.combobox-option--last-pinned { border-bottom: 1px solid var(--hairline); margin-bottom: var(--space-half); padding-bottom: var(--space-2); }
 .combobox-group {
-  padding: 8px 8px 3px; font-size: 11px; font-weight: 600;
+  padding: var(--space-2) var(--space-2) var(--space-half); font-size: var(--fs-micro); font-weight: 600;
   letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3);
 }
-.combobox-empty { padding: 6px 8px; font-size: 0.8125rem; color: var(--text-3); cursor: default; }
+.combobox-empty { padding: var(--space-1) var(--space-2); font-size: var(--fs-body); color: var(--text-3); cursor: default; }
 
 /* Editable mode: the field IS the combobox, so the box around it has to carry the border
    and the focus ring that a lone input would carry — the caret sits inside it and must not
@@ -445,22 +521,22 @@
 .combobox-edit:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 .combobox-input {
   flex: 1 1 auto; min-width: 0; min-height: 34px;
-  padding: 4px 2px 4px 10px; margin: 0;
+  padding: var(--space-1) var(--space-half) var(--space-1) var(--space-2); margin: 0;
   background: transparent; color: var(--ink);
   border: none; border-radius: var(--radius-md);
 }
 /* The box owns the ring; a second one on the input would double it. */
 .combobox-input:focus, .combobox-input:focus-visible { outline: none; }
 .combobox-caret-btn {
-  flex: 0 0 auto; padding: 0 8px; min-height: 34px;
-  font-size: 0.7rem; color: var(--text-3);
+  flex: 0 0 auto; padding: 0 var(--space-2); min-height: 34px;
+  font-size: var(--fs-micro); color: var(--text-3);
   background: none; border: none; box-shadow: none; cursor: pointer;
 }
 .combobox-caret-btn:hover { color: var(--ink); background: none; }
 /* A value the catalogue does not carry is a normal input, not an error — quieter than a
    real entry, separated from them, but a row you can land on like any other. */
 .combobox-option--custom {
-  border-top: 1px solid var(--hairline); margin-top: 2px; padding-top: 8px;
+  border-top: 1px solid var(--hairline); margin-top: var(--space-half); padding-top: var(--space-2);
   font-style: italic; color: var(--text-2);
 }
 
@@ -468,10 +544,10 @@
    the hint pinned right, which a sentence would blow out — here the hint drops to its own
    line and wraps, so a picker can carry meaning rather than just names. */
 .combobox-pop--rich .combobox-option {
-  display: block; padding: 7px 8px; line-height: 1.35;
+  display: block; padding: var(--space-2) var(--space-2); line-height: 1.35;
 }
 .combobox-pop--rich .combobox-option-hint {
-  display: block; margin: 2px 0 0; font-size: 11px; white-space: normal;
+  display: block; margin: var(--space-half) 0 0; font-size: var(--fs-micro); white-space: normal;
 }
 
 /* ------------------------------------------------------------------- segmented */
@@ -487,7 +563,7 @@
   background: var(--page); overflow: hidden;
 }
 .segmented > button {
-  min-height: 34px; padding: 4px 12px;
+  min-height: 34px; padding: var(--space-1) var(--space-3);
   border: none; border-radius: 0; box-shadow: none;
   background: none; color: var(--text-2); font-weight: 500;
 }
@@ -506,23 +582,34 @@
    above a body of content. Used by the compliance and config pages' framework/section
    switchers (pages/compliance.js, pages/config.js) — both reference this class already
    but it matched no rule anywhere in styles/, so the switchers rendered unspaced. */
-.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 16px; }
+/* THE CONTROL BAND, under whatever name a page gave it.
+   .filter-bar had NO base rule anywhere — only two descendant overrides scoped to
+   .combo-issues — so on Priorities its pills, kind select and search input were stacking
+   vertically as plain blocks. It looked cramped because it was never laid out.
+   .inv-toolbar and .combo-toolbar are this band under two more names, but each already
+   defines its own layout in a later file and would only inherit an unintended margin from
+   here. Folding those two in is a deliberate change to how they look, not a fix, so it
+   belongs in its own pass rather than riding along with a bug. */
+.toolbar, .filter-bar {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--space-2); margin: 0 0 var(--space-4);
+}
 
 /* A column of placeholder lines (ui/feedback.js skeletonStack). Every loading stub had
    written this out as an inline flex-column style. */
-.skeleton-stack { display: flex; flex-direction: column; gap: 10px; }
+.skeleton-stack { display: flex; flex-direction: column; gap: var(--space-3); }
 
 /* ------------------------------------------------- prune panel (ui/prunePanel.js) */
 /* The Data page's keep-one-project control. A column rather than the Reset card's row:
    it holds a picker, a census table and an action, and those are three steps of one
    sequence, not three things side by side. */
-.prune-card { display: flex; flex-direction: column; gap: 10px; }
+.prune-card { display: flex; flex-direction: column; gap: var(--space-2); }
 .prune-note { max-width: 74ch; }
-.prune-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.prune-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 /* Wide enough for a hyphenated project name plus its asset count, capped so the trigger
    does not stretch to the full card on a wide viewport and strand the button beside it. */
 .prune-combo { flex: 1 1 260px; min-width: 220px; max-width: 420px; }
-.prune-body { display: flex; flex-direction: column; gap: 10px; }
+.prune-body { display: flex; flex-direction: column; gap: var(--space-2); }
 .prune-body:empty, .prune-actions:empty { display: none; }
 .prune-actions { display: flex; }
 
@@ -550,11 +637,11 @@ table.data.prune-census tbody tr:hover { background: none; }
 
 /* Verdict line: the pill carries a word and a dot, the sentence carries the reason. Colour
    is the third signal here, never the only one. */
-.prune-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.prune-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
 
 .prune-error {
   color: var(--bad); background: rgba(185, 28, 28, 0.08);
-  border-radius: var(--radius-md); padding: 8px 10px; font-size: 13px;
+  border-radius: var(--radius-md); padding: var(--space-2) var(--space-2); font-size: var(--fs-label);
   max-width: 74ch;
 }
 
@@ -575,20 +662,20 @@ table.data.prune-census tbody tr:hover { background: none; }
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 8px;
-  margin: 6px 0 0;
-  font-size: 12px;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-label);
   line-height: 1.5;
   color: var(--text-2);
 }
 .register-wide-tag {
   flex: 0 0 auto;
-  padding: 1px 7px;
+  padding: var(--space-half) var(--space-2);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-micro);
   font-weight: 600;
   white-space: nowrap;
 }

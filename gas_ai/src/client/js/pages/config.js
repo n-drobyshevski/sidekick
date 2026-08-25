@@ -21,7 +21,8 @@
 import { setParams, swrCall } from "../store.js";
 import { openConfigFindingSheet } from "../detailSheets.js";
 import {
-  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, kpiCard,
+  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, heroStat, outcomeBadge,
+  pageHeader, statRow,
   pager, plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
   skeletonStack, statusPill, togglePills,
 } from "../ui.js";
@@ -147,28 +148,31 @@ export async function renderConfigFindings(main, params, ctx) {
 
     // Failing controls is the headline, not the row count: a resolved finding is stored
     // for its lifecycle date and must not read as outstanding risk.
-    const cards = el("div", { class: "kpi-row" },
-      kpiCard("Failing controls", String(totals.gaps ?? 0),
-        plural(totals.controls ?? 0, "distinct control")),
-      kpiCard("Resources affected", String(totals.resources ?? 0),
+    // The comment above already said which of these four is the headline; it just was not
+    // drawn as one. Four equal tiles is the hero-metric template PRODUCT.md rejects, so the
+    // headline becomes the hero and the other three become the strip beneath it.
+    const headerStats = [
+      statRow("Resources affected", String(totals.resources ?? 0),
         "evaluated against these rules"),
-      kpiCard("Not on an AI asset", String(totals.unlinkedGaps ?? 0),
+      statRow("Not on an AI asset", String(totals.unlinkedGaps ?? 0),
         "regions, policies and unattached identities", null,
         ["A configuration finding is keyed to the resource it was evaluated against, and most "
           + "AI-security rules fail on a region, an IAM policy or a service account no agent "
           + "runs as. None of those are AI assets, so none of them appear on an asset's row."]),
-      kpiCard("Traced to IaC", String(totals.iac ?? 0),
-        "fixable at source"),
-    );
-    headHost.append(cards);
+      statRow("Traced to IaC", String(totals.iac ?? 0), "fixable at source"),
+    ];
 
     // The strip is also the page's severity filter — its keys are toggle buttons, the
     // same affordance the inventory header uses, so the bar is not a picture you have to
     // read a separate control to act on.
     const mix = sevEntries(totals.severityMix || {}, SEVERITY_ORDER);
+    // The strip qualifies the headline, so it belongs in the header's second column rather
+    // than in a card of its own below it. It stays the page's severity filter either way.
+    let strip = null;
     if (mix.length) {
       const selected = new Set(view.query.severities);
-      headHost.append(el("div", { class: "card", style: "margin-top:12px" },
+      strip = el("div", { class: "page-strip" },
+        el("div", { class: "kpi-label" }, "By severity"),
         sevSegmentBar(mix, { size: "md", label: "Failing controls by severity", selected }),
         sevKeyRow(mix, {
           variant: "toggle",
@@ -176,8 +180,14 @@ export async function renderConfigFindings(main, params, ctx) {
           isOn: (sev) => selected.has(sev),
           describe: (e) => e.sev + ", " + plural(e.count, "failing control"),
           onToggle: (sev) => toggleFacet("severities", sev),
-        })));
+        }));
     }
+    headHost.append(pageHeader({
+      hero: heroStat("Failing controls", String(totals.gaps ?? 0),
+        plural(totals.controls ?? 0, "distinct control")),
+      aside: strip,
+      stats: headerStats,
+    }));
 
     headHost.append(el("div", {
       class: "toolbar",
@@ -215,13 +225,18 @@ export async function renderConfigFindings(main, params, ctx) {
     // ------------------------------------------------------------------- the facets
     const filtered = applyConfigFilters(rows, view.query);
     const counts = configFacetCounts(rows, view.query, FACET_KEYS);
-    const facetHost = el("div", { class: "card", style: "margin-top:12px" });
+    // Not a card. A row of filters is chrome, and DESIGN.md is explicit that a card is for
+    // content that is genuinely distinct and actionable, not a container to put things in.
+    const facetHost = el("div", { class: "config-facets" });
     for (const key of ["linkage", "flags", "statuses", "clouds", "resourceTypes"]) {
       const options = (counts[key] || []).filter((o) => o.count > 0 || view.query[key].indexOf(o.value) >= 0);
       if (options.length < 2) continue;
-      facetHost.append(el("div", { class: "facet-row", style: "margin-bottom:8px" },
-        el("span", { class: "small muted", style: "min-width:110px; display:inline-block" },
-          FACET_LABELS[key]),
+      // NOT .facet-row. That class belongs to the filter drawer (sheet.css) and is a FOUR
+      // COLUMN GRID — `14px 1fr 44px auto` — sized for a checkbox, a label, a count and a
+      // chevron. Borrowing the name here dropped this label into the 14px checkbox column,
+      // which is why "AI asset" was rendering as "Al as". One class name, two layouts.
+      facetHost.append(el("div", { class: "config-facet" },
+        el("span", { class: "config-facet-name" }, FACET_LABELS[key]),
         togglePills({
           options: options.map((o) => ({
             value: o.value,

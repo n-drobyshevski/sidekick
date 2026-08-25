@@ -45,12 +45,14 @@ function navPages() {
   for (const line of block[1].split("\n").filter((l) => !/^\s*\/\//.test(l))) {
     const key = line.match(/^\s{2}(\w+):\s*\{/);
     if (key) {
-      current = { key: key[1], group: undefined };
+      current = { key: key[1], group: undefined, hidden: false, experimental: false };
       pages.push(current);
     }
     if (!current) continue;
     const group = line.match(/\bgroup:\s*(?:"([^"]*)"|(null))/);
     if (group && current.group === undefined) current.group = group[1] !== undefined ? group[1] : null;
+    if (/\bhidden:\s*true\b/.test(line)) current.hidden = true;
+    if (/\bexperimental:\s*true\b/.test(line)) current.experimental = true;
     if (/^\s{2}\},?\s*$/.test(line)) current = null; // end of a multi-line entry
   }
   expect(pages.length, "no pages parsed out of PAGES").toBeGreaterThan(5);
@@ -147,16 +149,29 @@ describe("the lane marks", () => {
   });
 });
 
-// Two comments in app.js state this coupling — one on `compliance`, one on `help` — and
-// nothing checked it, so a page pasted at the top of the map would have moved the app's
-// front door with no test and no reviewer noticing.
+// The front door used to be decided by POSITION — the first key in PAGES — and two comments
+// in app.js said so while nothing checked it. It is an explicit DEFAULT_ROUTE now, which is
+// the better arrangement and needs the stricter guard: a constant can name anything, including
+// a route that no longer exists or one this branch keeps off the nav, and either would land a
+// reader on a page with no nav item marked current.
 describe("the landing route", () => {
-  it("is the first page in the rail", () => {
-    const fallback = STORE_JS.match(
-      /route:\s*ROUTE_ALIASES\[pathPart\]\s*\|\|\s*pathPart\s*\|\|\s*"(\w+)"/,
-    );
-    expect(fallback, "parseHash's default route not found in store.js").toBeTruthy();
-    expect(navPages()[0].key, "the first PAGES key is not parseHash's fallback")
-      .toBe(fallback[1]);
+  const defaultRoute = () => {
+    const m = STORE_JS.match(/export const DEFAULT_ROUTE = "(\w+)"/);
+    expect(m, "DEFAULT_ROUTE not found in store.js").toBeTruthy();
+    return m[1];
+  };
+
+  it("names a page that exists", () => {
+    expect(navPages().map((p) => p.key)).toContain(defaultRoute());
+  });
+
+  // A front door nobody can reach from the nav is worse than one that is not there: every
+  // route resolves, so the app would open on a page the rail does not list and cannot get
+  // back to.
+  it("names a page the nav actually draws", () => {
+    const page = navPages().filter((p) => p.key === defaultRoute())[0];
+    expect(page.hidden, defaultRoute() + " is the landing route but is hidden").toBe(false);
+    expect(page.experimental, defaultRoute() + " is the landing route but is gated")
+      .toBe(false);
   });
 });

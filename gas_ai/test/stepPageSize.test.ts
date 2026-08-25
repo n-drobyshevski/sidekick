@@ -73,10 +73,14 @@ describe("per-step page size", () => {
       "FRAMEWORKS_LIST", "AGENTIC_IDENTITIES"]) {
       expect(byId(id).pageSize).toBe(PAGE_SIZE_WIDE);
     }
-    // One per toxic-combination rule, all on the same flat resource shape.
-    const combo = steps.filter((s) => /^ISSUES_w[ct]-id-/.test(s.id));
-    expect(combo.length).toBeGreaterThan(0);
-    for (const s of combo) expect(s.pageSize).toBe(PAGE_SIZE_WIDE);
+    // FOUR PER-RULE ISSUES_<ruleId> STEPS USED TO BE PINNED HERE, all on the wide page.
+    // They were deleted on 2026-08-23 and the claim went with them. They reconstructed an
+    // issue row per ASSET from cloudResourcesV2, which can only ever add rows issuesV2 never
+    // returned — and ai_issues is meant to be exactly what Wiz returned. They had also never
+    // once run (three wrong field names), and repairing that exposed a second defect the
+    // failure had hidden: no projectScope(), so they collected tenant-wide into a
+    // project-scoped register. Inverted rather than deleted, so a re-introduction fails here.
+    expect(steps.filter((s) => /^ISSUES_w[ct]-id-/.test(s.id))).toEqual([]);
   });
 
   it("leaves the two widest documents on the small page", () => {

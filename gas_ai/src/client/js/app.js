@@ -9,7 +9,8 @@
 import { call } from "./api.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
 import {
-  bootstrap, bootstrapCached, buildHash, invalidateBootstrap, invalidateRpcCache, parseHash,
+  DEFAULT_ROUTE, bootstrap, bootstrapCached, buildHash, invalidateBootstrap,
+  invalidateRpcCache, parseHash,
 } from "./store.js";
 import { onExperimentalChange, showExperimental } from "./experimental.js";
 import {
@@ -52,24 +53,36 @@ import { SAVED_VIEW_KEYS, readSavedViews } from "./savedViews.js";
 //     security workflow rather than beside it — and it is drawn only when the gate is open.
 //   * LANES ARE CONTIGUOUS. The lastGroup detector below emits a fresh heading every time
 //     the value changes, so a lane split in two would quietly draw its heading twice.
+//
+// THREE FLAGS, THREE DIFFERENT QUESTIONS, and they compose:
+//   `hidden`        keeps a route off this branch's PoC nav. The minimal model reads two
+//                   flat fields and needs no graph, so most of this app is machinery for
+//                   axes the reference tenant holds constant, and showing that is the point
+//                   of the branch. A flag rather than seven deletions because helpContent.js
+//                   points at these routes about sixty times and helpContent.test.js asserts
+//                   every one resolves — a hidden route still resolves, still renders if
+//                   someone types its hash, and costs nothing.
+//   `experimental`  gates a route behind Settings → Show experimental content, for everyone.
+//   `group`         which lane it sits in, which is about arrangement and not availability.
+// A lane the first two empty out never reaches the rail, and a lane left holding ONE visible
+// page is drawn as that page rather than as a lane — see navModel.js, which is where the
+// three meet.
 const PAGES = {
   // fullBleed: the page owns the whole content pane (no main padding/max-width).
-  graph: { title: "Security Graph", group: "Landscape", render: renderGraphPage, fullBleed: true },
-  inventory: { title: "AI Inventory", group: "Landscape", render: renderInventory },
+  graph: { hidden: true, title: "Security Graph", group: "Landscape", render: renderGraphPage, fullBleed: true },
+  inventory: { hidden: true, title: "AI Inventory", group: "Landscape", render: renderInventory },
   // Phase 7: issues UNION findings, ranked together across the whole landscape — neither
   // `combos` (one toxic-combination pattern) nor `config` (findings only) can answer
   // "what do I work on Monday". It opens the Risk lane for that reason: it is the page an
-  // analyst lives in, and the two under it are lenses on subsets of what it ranks.
+  // analyst lives in, and the two under it are lenses on subsets of what it ranks. It is
+  // also this branch's front door — DEFAULT_ROUTE names it.
   problems: { title: "Priorities", group: "Risk", render: renderProblems },
-  combos: { title: "Toxic Combinations", group: "Risk", render: renderCombos },
-  config: { title: "Cloud Configuration", group: "Risk", render: renderConfigFindings },
-  // After config, never first: the FIRST key is the default landing route (parseHash's
-  // fallback is coupled to it), so inserting a page at the top silently changes the app's
-  // front door. It stays directly under Cloud Configuration — the two are the same subject
-  // at two grains, what is failing and what that scores against — and the lane boundary
-  // between them is the claim rather than a separation: one register is worked, the other
-  // is stated.
-  compliance: { title: "Compliance Posture", group: "Assurance", render: renderCompliance },
+  combos: { hidden: true, title: "Toxic Combinations", group: "Risk", render: renderCombos },
+  config: { hidden: true, title: "Cloud Configuration", group: "Risk", render: renderConfigFindings },
+  // Stays directly under Cloud Configuration — the two are the same subject at two grains,
+  // what is failing and what that scores against — and the lane boundary between them is the
+  // claim rather than a separation: one register is worked, the other is stated.
+  compliance: { hidden: true, title: "Compliance Posture", group: "Assurance", render: renderCompliance },
   // Assurance, not the lone "Coverage" heading this used to carry. One page under one
   // heading was a line of furniture; and this page answers the question Compliance Posture
   // answers, one step further back — "where did this figure come from" beside "how do we
@@ -85,14 +98,13 @@ const PAGES = {
   // `route`/`drawnOn` value keys on it, and renaming the key would break shared links to
   // buy nothing a reader can see.
   //
-  // Group "Labs", not "Scoring": the sidebar itself should say these sit outside the
-  // security workflow rather than beside it.
+  // Group "Labs", not "Scoring": the rail itself should say these sit outside the security
+  // workflow rather than beside it.
   //
-  // `experimental: true` gates it behind Settings → Show experimental content, which is OFF
-  // by default — so a first-time reader has no Labs group at all, and the models are opt-in
-  // rather than merely labelled. Gated, never removed: the key stays in this map so shared
-  // `#/aars` links keep working for anyone who has asked for them, and so helpContent's
-  // "routes only to pages that exist" guard still has a page to point at.
+  // `experimental: true`, and deliberately NOT `hidden`: the two flags answer different
+  // questions. Gated, never removed — the key stays in this map so shared `#/aars` links
+  // keep working for anyone who has asked for them, and so helpContent's "routes only to
+  // pages that exist" guard still has a page to point at.
   aars: {
     title: "Scoring Models", group: "Labs", render: renderAarsRules, fullBleed: true,
     experimental: true,
@@ -100,11 +112,11 @@ const PAGES = {
   // The tail: chrome, not a lane. A rule separates it and nothing labels it — "Data" under
   // a heading reading DATA, and "Help" under HELP, were two lines that restated the link
   // beneath them, and "Preferences" over "Settings" was the same line in a synonym.
-  data: { title: "Data", group: null, render: renderData },
-  settings: { title: "Settings", group: null, render: renderSettings },
-  // Last on purpose. The FIRST key is the default landing route, and parseHash's
-  // `|| "graph"` fallback is coupled to it — a page inserted at the top silently
-  // becomes the app's front door.
+  data: { hidden: true, title: "Data", group: null, render: renderData },
+  settings: { hidden: true, title: "Settings", group: null, render: renderSettings },
+  // Last on purpose. DEFAULT_ROUTE in store.js names the front door, and this map no longer
+  // decides it by position — which is what made the old coupling worth stating and then
+  // worth retiring: the fallback said "problems" while route() still said graph.
   help: { title: "Help", group: null, render: renderHelp },
 };
 
@@ -374,8 +386,10 @@ function renderRail(sidebar, items) {
   let ruled = false;
   for (const item of items) {
     // The tail is chrome rather than a lane, and the rule is what says so — the same rule the
-    // stacked list draws, for the same reason.
-    if (item.kind === "page" && !ruled) { sidebar.append(navRule()); ruled = true; }
+    // stacked list draws, for the same reason. Keyed on `lane`, never on `kind`: a lane left
+    // holding one visible page is drawn AS that page, so kind alone would put the rule in
+    // front of the first collapsed lane instead of in front of the chrome.
+    if (item.lane === null && !ruled) { sidebar.append(navRule()); ruled = true; }
     sidebar.append(railItem(item));
   }
 }
@@ -391,6 +405,9 @@ function renderStackedNav(sidebar) {
   // seeded with it would start the list inside that tail and never draw its rule.
   let lastGroup;
   for (const [key, page] of Object.entries(PAGES)) {
+    // Hidden routes still resolve and still render — they are only off the nav. See the
+    // PAGES header for why this branch is a flag rather than seven deletions.
+    if (page.hidden) continue;
     // A gated page is absent, not disabled: the rest of this list is the security workflow,
     // and a greyed-out row inside it would still be telling every reader that a model they
     // cannot open exists. The "Labs" heading goes with it for free — the lastGroup detector
@@ -619,21 +636,21 @@ export async function refresh() {
 async function route() {
   const seq = ++routeSeq;
   const parsed = parseHash();
-  let key = parsed.route;
+  // RESOLVE ONCE, then use the resolved key for everything. An unknown path (a stale link, a
+  // typo) lands on the front door rather than on whatever page this line happened to name
+  // when it was written — see DEFAULT_ROUTE in store.js. The nav highlight used to key off
+  // the RAW path, so an unresolved hash rendered a page while marking no nav item current.
+  let key = PAGES[parsed.route] ? parsed.route : DEFAULT_ROUTE;
   let params = parsed.params;
-  // A gated route is not merely unavailable, it is a link the reader followed in good faith
-  // — so unlike the unknown-route fallback below, this one REWRITES the hash. The bare
-  // fallback would leave `#/aars` in the address bar over a page titled "Security Graph"
-  // with no nav item marked current: three answers to "where am I", two of them wrong. The
-  // stale params go with it; they were addressed to a page that is not rendering.
-  // replaceState rather than a navigate(): no spurious history entry, no second route pass,
-  // and store.js's setParams already proves it works inside the HtmlService iframe.
+  // A gated route is a link the reader followed in good faith, so unlike the fallback above
+  // this one REWRITES the hash: leaving `#/aars` in the address bar over a different page
+  // with no nav item current is three answers to "where am I", two of them wrong.
   if (PAGES[key] && PAGES[key].experimental && !showExperimental()) {
-    key = "graph";
+    key = DEFAULT_ROUTE;
     params = {};
     history.replaceState(null, "", buildHash(key, params));
   }
-  const page = PAGES[key] || PAGES.graph;
+  const page = PAGES[key];
   document.title = `${page.title} — Wiz SIDEKICK AI`;
   document.querySelectorAll(".nav-link").forEach((a) => {
     const isActive = a.getAttribute("href") === `#/${key}`;

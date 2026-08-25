@@ -633,7 +633,40 @@ export interface IssueRow {
   nativeSeverity: Severity;
   adjustedSeverity: Severity;
   status: string;              // OPEN / RESOLVED / ...
+  /**
+   * The entity Wiz raised the issue on. NEVER rewritten by attribution — the register has to
+   * keep naming what the console names, or a drill-down stops matching the tenant's own view.
+   */
   assetId: string;
+  /**
+   * The AI assets this issue describes, which is not always the entity it was raised on.
+   *
+   * On the reference tenant 691 of 840 AI-category issues land on a SERVICE_ACCOUNT and only
+   * 120 on an AI_AGENT — because the rule that fires most (`wc-id-2742`, 659 of them) is about
+   * an identity's permission to invoke a model, not about the agent. The consequence was
+   * measured and it is not subtle: only 22 of 99 in-scope issues resolved to a synced AI asset,
+   * so `deriveProblemInput` was handed `node: undefined` for the other 77 and forced
+   * `impact -> unknown` and `exposure -> UNVERIFIED` on every one of them. The measured
+   * impact-unknown rate was exactly 77 of 99 — the same number — and row 7 of
+   * DEFAULT_PROBLEM_RULE (`{exposure: UNVERIFIED} -> TRACK_STAR`) then decided 83 of 99.
+   *
+   * So "5 of 54 leaves occupied, one rule row decides 84% of the register" was never a cascade
+   * that needed retuning. It was a join that was not being made.
+   *
+   * Includes the direct asset when THAT is AI-kinded, so a consumer can group on this field
+   * alone rather than unioning it with `assetId`. Empty when the issue reaches no AI asset at
+   * all, which is a real state and is counted (`kpis.issuesUnattributed`) rather than hidden.
+   */
+  attributedAssetIds?: string[];
+  /**
+   * How those ids were reached: `direct` when Wiz already named an AI asset, `RUNS_AS` when
+   * the hop found one, `none` when it reached nothing. This is the audit trail — a score that
+   * moved because of a traversal must be able to say which traversal.
+   *
+   * ABSENT is a fourth state and a different one: the fold never ran over this row at all (a
+   * ledger synced before attribution existed). `none` says we looked; absent says we did not.
+   */
+  attributionHop?: "direct" | "RUNS_AS" | "none";
   assetName: string;
   region?: string;
   account?: string;
@@ -651,9 +684,10 @@ export interface IssueRow {
   remediation?: string;              // config-finding remediation text (Phase 2)
 
   // ---- issuesV2 lifecycle and context (exemples/risk_issues_response.js)
-  // All optional: the per-rule Q_RULE_ASSETS fallback synthesises issues from the
-  // inventory API, which carries none of this, so absent means "not captured" and
-  // never "not true".
+  // All optional: a tenant or a query revision can omit any of them, so absent means
+  // "not captured" and never "not true". Until 2026-08-23 the reason given here was the
+  // per-rule Q_RULE_ASSETS fallback, which synthesised issues from the inventory API;
+  // that path is gone and ai_issues is now exactly what issuesV2 returned.
   issueType?: string;                // TOXIC_COMBINATION | CLOUD_CONFIGURATION
   updatedAt?: string;
   resolvedAt?: string;

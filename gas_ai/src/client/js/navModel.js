@@ -13,9 +13,18 @@
  *
  * A labelled lane collapses to ONE rail item carrying its pages; the unlabelled tail
  * (`group: null`) stays one item per page, because those three name themselves and a lane
- * over them would only restate the link. Gated pages are skipped before grouping, so a lane
- * left empty by the gate never reaches the rail — the way the Labs heading used to vanish
- * with its page.
+ * over them would only restate the link.
+ *
+ * TWO FLAGS TAKE PAGES OUT BEFORE ANY OF THAT HAPPENS: `hidden` (off this branch's PoC nav)
+ * and `experimental` (behind a setting). Both are applied first, so a lane they empty never
+ * reaches the rail — the way the Labs heading has always vanished with its page.
+ *
+ * AND A LANE LEFT HOLDING ONE VISIBLE PAGE IS DRAWN AS THAT PAGE. With seven routes hidden,
+ * "Risk" means Priorities and "Assurance" means Wiz Scans — a rail naming lanes there would
+ * be labelling every item with a category instead of its name, and its panel would open onto
+ * a single row repeating what was just clicked. It is the same rule that stops a labelled
+ * lane holding one page in the stacked list, applied one tier up: a lane earns its name by
+ * having more than one thing under it.
  *
  * @param {object} pages  the PAGES route table
  * @param {{experimental?: boolean}} opts
@@ -26,6 +35,7 @@ export function railItems(pages, opts) {
   const experimental = !!(opts && opts.experimental);
   const items = [];
   for (const [key, page] of Object.entries(pages || {})) {
+    if (page.hidden) continue;
     if (page.experimental && !experimental) continue;
     const entry = { key, title: page.title };
     const last = items[items.length - 1];
@@ -46,7 +56,14 @@ export function railItems(pages, opts) {
       pages: [entry],
     });
   }
-  return items;
+  // A lane of one is that one page. Its `lane` is kept, because the rail still marks the
+  // lane a route belongs to and the stacked list below 800px still draws the heading — only
+  // the rail item's own name and mark come from the page instead.
+  return items.map((item) => (
+    item.kind === "lane" && item.pages.length === 1
+      ? { ...item, kind: "page", id: item.pages[0].key, label: item.pages[0].title }
+      : item
+  ));
 }
 
 /**

@@ -102,11 +102,30 @@ export function normalizeCloudResource(raw: Rec): GNode | null {
     externalId: str(f("externalId")),
     isAccessibleFromInternet: triBool(f("isAccessibleFromInternet")),
     isOpenToAllInternet: triBool(f("isOpenToAllInternet")),
-    hasSensitiveData: bool(f("hasSensitiveData")),
-    hasAccessToSensitiveData: bool(f("hasAccessToSensitiveData")),
-    hasHighPrivileges: bool(f("hasHighPrivileges")),
-    hasAdminPrivileges: bool(f("hasAdminPrivileges")),
   };
+  // THE FOUR CAPABILITY FLAGS ARE TRI-STATE, NOT BOOLEAN, and the difference is the entire
+  // reason posture.capabilityOf, posture.containmentOf and problem.impactOf carry an
+  // `unknown` branch at all. Wiz returns `null` for a flag it never evaluated, and `bool()`
+  // used to collapse that to `false` — which every reader downstream is entitled to read as
+  // "evaluated, and the answer was no".
+  //
+  // On the reference tenant that was 753 of 822 assets. Most of them are datasets, models and
+  // tools, for which an identity flag does not APPLY rather than being unmeasured — but the
+  // collapse does not distinguish those either, and both readings are wrong in the same
+  // direction: an asset nothing was measured on rendered as an assessed, clean Tier 1.
+  //
+  // Assigned only when Wiz stated a value, exactly as `inactive` does below. Absent stays
+  // absent. This is a normalizer correction, not a rule change: every value branch downstream
+  // tests `=== true`, so no score, no verdict and no tier VALUE moves — only the `unknowns`
+  // that were never able to fire.
+  const sensitiveData = triBool(f("hasSensitiveData"));
+  if (sensitiveData !== null) node.hasSensitiveData = sensitiveData;
+  const sensitiveAccess = triBool(f("hasAccessToSensitiveData"));
+  if (sensitiveAccess !== null) node.hasAccessToSensitiveData = sensitiveAccess;
+  const highPriv = triBool(f("hasHighPrivileges"));
+  if (highPriv !== null) node.hasHighPrivileges = highPriv;
+  const adminPriv = triBool(f("hasAdminPrivileges"));
+  if (adminPriv !== null) node.hasAdminPrivileges = adminPriv;
   // Wiz returns `IdentityPurposeAgentic`, while the FILTER takes `AGENTIC` — one enum that
   // reads one way and filters another, exactly like DataFindingSeverity. Normalizing here is
   // what lets an identity reached through a traversal keep its real purpose instead of
@@ -289,37 +308,6 @@ export function normalizePrincipalsPage(rows: Rec[]): NormalizedPart {
     if (!node) continue;
     if (!node.identityPurpose) node.identityPurpose = "AGENTIC";
     part.nodes.push(node);
-  }
-  return part;
-}
-
-/**
- * cloudResourcesV2 page filtered by relatedIssue.sourceRuleId → nodes plus one
- * reconstructed OPEN issue per asset. The inventory API doesn't expose per-asset
- * issue multiplicity, so multi-instance issues collapse to one row per asset —
- * a documented fidelity limit until the Wiz issues API is wired.
- */
-export function normalizeRuleAssetsPage(rows: Rec[], group: ComboGroup): NormalizedPart {
-  const part = emptyPart();
-  for (const raw of rows) {
-    const node = normalizeCloudResource(raw);
-    if (!node) continue;
-    part.nodes.push(node);
-    part.issues.push({
-      id: `live-${group.ruleId}-${node.id}`,
-      ruleId: group.ruleId,
-      ruleName: group.title,
-      comboGroup: group.id,
-      nativeSeverity: group.nativeSeverity,
-      adjustedSeverity: group.adjustedSeverity,
-      status: "OPEN",
-      assetId: node.id,
-      assetName: node.name,
-      region: node.region,
-      account: node.cloudAccount?.name,
-      projects: (node.projects ?? []).map((p) => p.name),
-      frameworks: group.frameworks,
-    });
   }
   return part;
 }
@@ -517,23 +505,6 @@ export function normalizeIssuesPage(rows: Rec[]): NormalizedPart {
     }
   }
   return part;
-}
-
-/**
- * Augment de-dup: real issuesV2 rows win over the synthetic per-rule `Q_RULE_ASSETS`
- * rows. Drop each synthetic (`live-*`) issue whose (assetId, comboGroup) is already
- * covered by a real issue, so running both batteries never double-counts an asset in
- * the combos rollup or AARS pillar A. A synthetic issue for an (asset, group) that
- * issuesV2 didn't return survives — the per-rule step is the tenant-tolerance fallback.
- */
-export function reconcileIssues(issues: IssueRow[]): IssueRow[] {
-  const realKeys = new Set<string>();
-  for (const i of issues) {
-    if (!i.id.startsWith("live-")) realKeys.add(`${i.assetId}|${i.comboGroup}`);
-  }
-  return issues.filter(
-    (i) => !i.id.startsWith("live-") || !realKeys.has(`${i.assetId}|${i.comboGroup}`),
-  );
 }
 
 /**
