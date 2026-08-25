@@ -31,7 +31,7 @@
 /* The heading takes the free space so the name starts beside the tile. Without it the
    headrow's space-between pushes a short title into the middle of a 960px sheet. */
 .sheet--record .sheet-heading { flex: 1 1 auto; min-width: 0; }
-.sheet--record .sheet-title { font-size: 1.125rem; overflow-wrap: anywhere; }
+.sheet--record .sheet-title { font-size: var(--fs-display-sm); overflow-wrap: anywhere; }
 
 /* Action toolbar. Small outlined buttons over the base button, not a new species. */
 .sheet-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
@@ -67,7 +67,7 @@
 .sheet-rail-item {
   display: flex; align-items: center; gap: var(--space-2); width: 100%;
   min-height: 30px; padding: 5px var(--space-2); margin: 1px 0;
-  font-size: 13px; text-align: left;
+  font-size: var(--fs-body); text-align: left;
   background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
   color: var(--text-2);
 }
@@ -138,7 +138,7 @@
 /* Insight chips: one flag, one tinted glyph tile, one label. Never the tile alone — the
    label is what carries the meaning. */
 .insights { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: var(--space-half) 0 var(--space-1); }
-.insight { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 13px; }
+.insight { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--fs-body); }
 .insight-mark {
   flex: 0 0 auto; width: 24px; height: 24px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -174,7 +174,7 @@
   display: flex; align-items: center; gap: 10px;
   padding: 10px 14px; border-bottom: 1px solid var(--hairline);
 }
-.sheet-card-title { font-size: 13px; font-weight: 600; margin: 0; flex: 1 1 auto; }
+.sheet-card-title { font-size: var(--fs-body); font-weight: 600; margin: 0; flex: 1 1 auto; }
 .sheet-card-body { padding: var(--space-1) 14px 10px; }
 .sheet-card-body .empty { border: none; padding: var(--space-3) 0; }
 /* More than one tool in a card head; the head is a flex row, so they need their own box. */

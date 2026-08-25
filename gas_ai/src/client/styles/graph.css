@@ -7,7 +7,7 @@
   border-bottom: 1px solid var(--hairline);
   background: var(--surface);
 }
-.workbench-title { font-size: 1rem; margin: 0; }
+.workbench-title { font-size: var(--fs-lead); margin: 0; }
 .workbench-meta {
   display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
   font-size: var(--fs-label); color: var(--text-2);
@@ -103,7 +103,7 @@
 .filter-chip-body:hover, .filter-chip-x:hover { background: var(--wash-hover); }
 .filter-chip-key { font-weight: 500; opacity: 0.8; }
 .filter-chip-value { font-weight: 600; }
-.filter-chip-x { padding: 3px 6px; font-size: 10px; color: var(--text-2); }
+.filter-chip-x { padding: 3px 6px; font-size: var(--fs-micro); color: var(--text-2); }
 .filter-chip-x:hover { color: var(--ink); }
 /* A lens the page seeded itself, not a filter anyone applied — shown and clearable, but
    visibly quieter, and excluded from the count badge. */
@@ -346,7 +346,7 @@
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: var(--radius-pill); border: 1px solid var(--page);
   background: var(--accent); color: #fff;
-  font-size: 10px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums;
+  font-size: var(--fs-micro); font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums;
 }
 .graph-tool-badge:empty { display: none; }
 
@@ -361,7 +361,7 @@
 .graph-layouts-head {
   display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
 }
-.graph-layouts-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.graph-layouts-title { font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
 .graph-layouts-key { font-size: var(--fs-micro); color: var(--text-3); }
 .graph-layouts-key kbd {
   margin-left: 3px; padding: 1px var(--space-1);
@@ -387,7 +387,7 @@
   background: var(--track-bg); color: var(--text-2);
 }
 .graph-layouts-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.graph-layouts-label { font-size: 13px; color: var(--ink); }
+.graph-layouts-label { font-size: var(--fs-label); color: var(--ink); }
 /* WRAPS, rather than ellipsising. The blurb is the only thing on the row that tells one layout
    from another — five near-identical nouns is exactly the list where a reader is guessing — so
    cutting it at the panel's width would truncate the part that answers the question. Five rows
@@ -442,7 +442,7 @@
    already under it, and 0.015 over 0.015 reads as a smudge rather than as depth. The
    outline alone says "inside", and the smaller label says which level you are reading. */
 .ggroup-box.is-sub { fill: none; stroke-dasharray: 3 3; }
-.ggroup-label.is-sub { font-size: 10px; font-weight: 500; fill: var(--svg-text-2); }
+.ggroup-label.is-sub { font-size: var(--fs-micro); font-weight: 500; fill: var(--svg-text-2); }
 
 /* A connected component's outline. The lightest thing on the canvas, on purpose: the study behind
    it measured a ~25% accuracy cost on path-following for ANY group overlay, and this one sits over
@@ -457,11 +457,11 @@
 }
 /* How much of the picture the outline holds — the one thing the shape itself cannot say. */
 .gcluster-count {
-  font-size: 10px; font-weight: 600; fill: var(--svg-text-2);
+  font-size: var(--fs-micro); font-weight: 600; fill: var(--svg-text-2);
   font-variant-numeric: tabular-nums;
 }
 .gedge-label {
-  font-size: 10px; fill: var(--svg-text-2);
+  font-size: var(--fs-micro); fill: var(--svg-text-2);
   paint-order: stroke; stroke: #ffffff; stroke-width: 3; stroke-linejoin: round;
 }
 
@@ -477,16 +477,16 @@
 .gnode:focus { outline: none; }
 .gnode:focus-visible .gnode-box { stroke: var(--accent); stroke-width: 2; }
 .gnode-name { font-size: var(--fs-label); font-weight: 600; fill: var(--ink); }
-.gnode-kind { font-size: 10px; fill: var(--svg-text-2); letter-spacing: 0.04em; }
+.gnode-kind { font-size: var(--fs-micro); fill: var(--svg-text-2); letter-spacing: 0.04em; }
 .gnode-icon { fill: none; stroke: rgba(0, 0, 0, 0.6); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 /* The AARS figure on a node card: a number in a column of node cards, so tabular. */
-.gnode-aars { font-size: 10px; font-weight: 600; fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
+.gnode-aars { font-size: var(--fs-micro); font-weight: 600; fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
 /* Severity label on a node card. The Two-Token Severity Rule: the DOT is painted from the
    server palette (a graphical mark at >=3:1, and a deployment may retint it), the LABEL
    takes the darkened text token so it clears 4.5:1 on the pale category tints underneath.
    That is a deliberate divergence — if a deployment customises palette.colors, the dot
    moves and the label does not. */
-.gnode-chip-text { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.gnode-chip-text { font-size: var(--fs-micro); font-weight: 700; font-variant-numeric: tabular-nums; }
 .gnode-sev-CRITICAL { fill: var(--sev-critical-text); }
 .gnode-sev-HIGH { fill: var(--sev-high-text); }
 .gnode-sev-MEDIUM { fill: var(--sev-medium-text); }
@@ -522,13 +522,13 @@
    crimson (membership marker), while severity stays on the dot+label chip. */
 .gnode-halo { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 2 3; }
 .gnode-tc-badge { fill: var(--accent); }
-.gnode-tc-text { font-size: 9px; font-weight: 700; fill: #ffffff; }
+.gnode-tc-text { font-size: var(--fs-micro); font-weight: 700; fill: #ffffff; }
 /* Data-finding count badge — how many classified findings the store carries. It takes the
    TC slot, which an aggregate never uses, and sits in the data ink so it belongs to the
    node it counts rather than reading as a second severity channel. The number is never the
    only signal: the card also prints the worst severity as a dot and a word. */
 .gnode-count-badge { fill: var(--cat-data-ink); }
-.gnode-count-text { font-size: 10px; font-weight: 700; fill: #ffffff; }
+.gnode-count-text { font-size: var(--fs-micro); font-weight: 700; fill: #ffffff; }
 /* Summary (collapse) pill */
 .gnode.summary .gnode-box { fill: rgba(0, 0, 0, 0.04); stroke-dasharray: 4 3; }
 .gnode.summary .gnode-name { fill: var(--text-2); }

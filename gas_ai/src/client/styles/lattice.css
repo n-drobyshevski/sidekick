@@ -41,7 +41,7 @@
   flex-wrap: wrap;
 }
 .lat-panel-title {
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -73,7 +73,7 @@
   display: flex;
   align-items: center;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -102,7 +102,7 @@
   padding: var(--space-half);
   min-height: 34px;
   overflow: hidden;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 600;
   line-height: 1.15;
   border: 1px solid transparent;
@@ -112,7 +112,7 @@
   color: var(--text-2);
   transition: box-shadow var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
 }
-.lat-cell__mark { font-size: 9px; letter-spacing: 0.01em; }
+.lat-cell__mark { font-size: var(--fs-micro); letter-spacing: 0.01em; }
 .lat-cell__count { font-size: var(--fs-micro); font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* Rule / Change tones — the four .pill kinds, so the lattice cannot mint a fifth palette. */
@@ -237,7 +237,7 @@
   left: 5px;
   top: -13px;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: 0.02em;
   color: var(--ink);
@@ -327,10 +327,10 @@
 .lat-icicle text { font-family: var(--font); fill: var(--svg-text-2); }
 .lat-icicle .lat-band { stroke: var(--page); stroke-width: 1; }
 .lat-icicle .lat-band.is-lit { stroke: var(--ink); stroke-width: 2; }
-.lat-icicle .lat-band__label { font-size: 10px; font-weight: 600; fill: var(--ink); }
-.lat-icicle .lat-leaf__label { font-size: 9px; font-weight: 600; }
+.lat-icicle .lat-band__label { font-size: var(--fs-micro); font-weight: 600; fill: var(--ink); }
+.lat-icicle .lat-leaf__label { font-size: var(--fs-micro); font-weight: 600; }
 .lat-icicle .lat-colhead {
-  font-size: 9px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -367,7 +367,7 @@ table.data tr.is-lit > td { background: var(--wash-hover); }
 }
 .lat-trace__axis { display: flex; flex-direction: column; gap: 3px; }
 .lat-trace__axis > span {
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -397,10 +397,10 @@ table.data tr.rule-won > td:first-child {
 /* Belt and braces against the smear above: text never strokes, whatever it sits inside. */
 .lat-icicle text { stroke: none; paint-order: normal; }
 .lat-icicle .lat-band { fill: rgba(0, 0, 0, 0.045); stroke: var(--page); stroke-width: 1; }
-.lat-icicle .lat-band__label { font-size: 10px; font-weight: 600; fill: var(--ink); }
-.lat-icicle .lat-leaf__label { font-size: 9px; font-weight: 600; fill: var(--svg-text-2); }
+.lat-icicle .lat-band__label { font-size: var(--fs-micro); font-weight: 600; fill: var(--ink); }
+.lat-icicle .lat-leaf__label { font-size: var(--fs-micro); font-weight: 600; fill: var(--svg-text-2); }
 .lat-icicle .lat-colhead {
-  font-size: 9px; font-weight: 700; letter-spacing: 0.05em;
+  font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.05em;
   text-transform: uppercase; fill: var(--text-3);
 }
 
@@ -464,7 +464,7 @@ table.data tr.is-lit > td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
   justify-content: flex-end;
   gap: 3px;
   padding: 0 var(--space-3) 6px 0;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;

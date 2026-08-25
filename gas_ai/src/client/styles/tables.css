@@ -2,7 +2,7 @@
 .table-wrap { overflow-x: auto; border: 1px solid var(--hairline); border-radius: var(--radius-lg); }
 table.data {
   border-collapse: collapse; width: 100%;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 table.data th {
   text-align: left; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
@@ -20,7 +20,7 @@ table.data th {
   color: var(--text-3); cursor: pointer; border-radius: var(--radius-xs);
 }
 .th-sort:hover { color: var(--ink); background: none; }
-.th-sort-glyph { font-size: 9px; }
+.th-sort-glyph { font-size: var(--fs-micro); }
 table.data td {
   padding: 7px 10px; border-bottom: 1px solid var(--hairline);
   white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
@@ -31,12 +31,12 @@ table.data tbody tr.clickable { cursor: pointer; }
 td.num { text-align: right; }
 a { color: var(--accent); }
 
-.pager { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; color: var(--text-2); }
+.pager { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: var(--fs-label); color: var(--text-2); }
 
 /* Page-size select + pager under a paged table. */
 .table-footer { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-top: 10px; }
 .table-footer .pager { margin-top: 0; }
-.table-footer select { font-size: 13px; }
+.table-footer select { font-size: var(--fs-body); }
 /* A page fetched from the server: the old rows stay legible but read as superseded. */
 .table-host[aria-busy="true"] { opacity: 0.5; transition: opacity var(--dur-quick) ease; }
 @media (prefers-reduced-motion: reduce) {
@@ -61,7 +61,7 @@ a { color: var(--accent); }
 .chart-empty {
   display: flex; align-items: center; justify-content: center; text-align: center;
   height: 200px; padding: 0 var(--space-5);
-  font-size: 13px; color: var(--text-3);
+  font-size: var(--fs-body); color: var(--text-3);
   border: 1px dashed var(--hairline); border-radius: var(--radius-lg);
 }
 

@@ -18,7 +18,7 @@
 .inv-verdict { display: flex; flex-direction: column; gap: var(--space-2); }
 .inv-tier-row { display: flex; flex-wrap: wrap; gap: var(--space-2) 18px; align-items: center; }
 .inv-tier { display: inline-flex; align-items: baseline; gap: var(--space-2); }
-.inv-tier-n { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.inv-tier-n { font-size: var(--fs-display-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* Full width, under the hero and the verdict. */
 .inv-header .sev-strip { grid-column: 1 / -1; }
@@ -85,7 +85,7 @@ td .meter { background: rgba(0, 0, 0, 0.09); }
 .asset-card-icon { flex: 0 0 16px; color: var(--text-3); }
 .asset-card-icon .gnode-icon { stroke: currentColor; fill: none; stroke-width: 1.4; }
 .asset-card-name {
-  flex: 1; min-width: 0; font-weight: 600; font-size: 13px;
+  flex: 1; min-width: 0; font-weight: 600; font-size: var(--fs-body);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .asset-card .meter--score { width: auto; flex: 1 1 auto; }

@@ -46,7 +46,7 @@
   display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
 }
 .sheet-heading { min-width: 0; }
-.sheet-title { font-size: 1rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+.sheet-title { font-size: var(--fs-lead); font-weight: 600; margin: 0; letter-spacing: -0.01em; }
 .sheet-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius-xs); }
 .sheet-subtitle { margin-top: var(--space-half); }
 .sheet-back {
@@ -89,7 +89,7 @@
 /* The record's headline number — the one hero value per sheet, and always a data value. */
 .sheet-verdict { display: flex; align-items: baseline; gap: 10px; margin: var(--space-3) 0 var(--space-half); }
 .aars-total {
-  font-size: 2rem; font-weight: 600; line-height: 1.1; letter-spacing: -0.02em;
+  font-size: var(--fs-hero); font-weight: 600; line-height: 1.1; letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 .sheet-caption { color: var(--text-3); font-size: var(--fs-label); margin: var(--space-half) 0 0; }
@@ -108,7 +108,7 @@ button.sheet-row:hover { background: var(--wash-hover); border-color: var(--hair
 button.sheet-row:active { background: rgba(0, 0, 0, 0.05); }
 button.sheet-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sheet-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.sheet-row-title { font-size: 13px; margin-top: var(--space-1); }
+.sheet-row-title { font-size: var(--fs-body); margin-top: var(--space-1); }
 .sheet-row-note {
   font-size: var(--fs-label); color: var(--text-2); margin-top: var(--space-half); max-width: var(--measure);
 }
@@ -141,7 +141,7 @@ button.sheet-row:focus-visible { outline: 2px solid var(--accent); outline-offse
 /* The sheet owns the viewport while it is open; ≤800px un-hides #app's overflow. */
 html.sheet-open, html.sheet-open body { overflow: hidden; }
 .scan-stall-note {
-  margin: var(--space-3) 0 var(--space-1); padding: var(--space-2) 10px; font-size: 13px;
+  margin: var(--space-3) 0 var(--space-1); padding: var(--space-2) 10px; font-size: var(--fs-label);
   color: var(--warn); background: rgba(161, 98, 7, 0.08);
   border: 1px solid rgba(161, 98, 7, 0.18); border-radius: var(--radius-md);
 }
@@ -198,7 +198,7 @@ h3.sheet-section-title {
   display: grid; grid-template-columns: 14px 1fr 44px auto; align-items: center; gap: 9px;
   width: 100%; text-align: left; padding: 5px 6px; min-height: 30px;
   border: 1px solid transparent; background: none; box-shadow: none;
-  border-radius: var(--radius-sm); font-size: 13px; font-weight: 400; color: var(--ink);
+  border-radius: var(--radius-sm); font-size: var(--fs-body); font-weight: 400; color: var(--ink);
 }
 .facet-row:hover { background: var(--wash-hover); border-color: transparent; }
 .facet-row[aria-pressed="true"] { background: rgba(0, 0, 0, 0.05); font-weight: 600; }
@@ -206,7 +206,7 @@ h3.sheet-section-title {
   width: 14px; height: 14px; border: 1px solid var(--hairline); border-radius: 4px;
   background: var(--page);
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: 9px; line-height: 1; color: transparent;
+  font-size: var(--fs-micro); line-height: 1; color: transparent;
 }
 /* The checkbox affordance without a checkbox's second style vocabulary. The tick is a
    glyph rather than a CSS gradient — the gradient version reads as a caret at 14px. */
@@ -228,7 +228,7 @@ h3.sheet-section-title {
 .facet-row[aria-disabled="true"] { opacity: 0.45; }
 .facet-row[aria-disabled="true"]:hover { background: none; }
 .facet-empty { margin: var(--space-1) 6px; }
-.kv { display: grid; grid-template-columns: 150px 1fr; gap: 3px var(--space-3); font-size: 13px; }
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: 3px var(--space-3); font-size: var(--fs-body); }
 .kv dt { color: var(--text-3); margin: 0; }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 /* Below the phone breakpoint a 150px label column leaves ~129px for the value, which

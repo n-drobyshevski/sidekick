@@ -12,7 +12,7 @@
 
 /* .comp-header comes from .page-header (components.css). */
 .comp-header .stat-list { grid-column: 1 / -1; }
-.comp-hero-value { font-size: 2rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.comp-hero-value { font-size: var(--fs-hero); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .comp-hero-sub { font-size: var(--fs-label); color: var(--text-3); margin-top: 3px; }
 /* The hero's severity mark rides in this existing prose slot rather than a new one — see
    the tint comment on `.comp-fw-bar` below for the full rule this and the rail bar both
@@ -57,7 +57,7 @@
   background: var(--page);
   color: var(--text-2);
 }
-.comp-key-glyph { font-size: 10px; line-height: 1; }
+.comp-key-glyph { font-size: var(--fs-micro); line-height: 1; }
 .comp-key[data-state="scored"] .comp-key-glyph { color: var(--ok); }
 .comp-key[data-state="noResources"] .comp-key-glyph { color: var(--sev-info-text); }
 .comp-key[data-state="noPolicies"] .comp-key-glyph { color: var(--warn); }
@@ -121,7 +121,7 @@
   font-size: var(--fs-label);
   color: var(--text-3);
 }
-.comp-posture-empty .comp-key-glyph { font-size: 9px; }
+.comp-posture-empty .comp-key-glyph { font-size: var(--fs-micro); }
 .comp-posture-dash { color: var(--text-3); }
 
 /* Policy list inside the subcategory sheet. */
@@ -189,7 +189,7 @@
    into selector order. */
 .comp-axis-tick {
   position: absolute; bottom: 3px;
-  font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-micro); color: var(--text-3); font-variant-numeric: tabular-nums;
 }
 .comp-axis-tick[data-pos="0"] { left: 0; }
 .comp-axis-tick[data-pos="25"] { left: 25%; transform: translateX(-50%); }
@@ -224,7 +224,7 @@
    never fire on a box that is never allowed to be too small. */
 .comp-fw-head { display: flex; flex-direction: column; min-width: 0; }
 .comp-fw-name {
-  font-size: 13.5px; font-weight: 600; color: var(--ink);
+  font-size: var(--fs-body); font-weight: 600; color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .comp-fw-meta {
@@ -356,7 +356,7 @@
   border-top: 4px solid var(--accent);
 }
 
-.comp-fw-pct { font-size: 15px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.comp-fw-pct { font-size: var(--fs-lead); font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
 .comp-fw-pct--dash { color: var(--text-3); font-weight: 400; }
 
 .comp-rail-key { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: var(--fs-micro); color: var(--text-3); }
@@ -419,7 +419,7 @@
 .comp-auto {
   display: inline-flex; align-items: center;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 10px; font-weight: 600;
+  font-size: var(--fs-micro); font-weight: 600;
   color: var(--ok); background: rgba(21, 128, 61, 0.10);
   border-radius: var(--radius-sm); padding: 1px 6px;
 }
@@ -450,10 +450,10 @@
    rail keeps, everything else is the first to go. */
 .scope-rail-note {
   display: flex; align-items: center; gap: 5px;
-  margin-top: var(--space-half); font-size: 10.5px; color: var(--text-3);
+  margin-top: var(--space-half); font-size: var(--fs-micro); color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.scope-rail-glyph { font-size: 9px; color: var(--warn); }
+.scope-rail-glyph { font-size: var(--fs-micro); color: var(--warn); }
 
 @media (max-width: 760px) {
   .scope-rail-note { display: none; }
@@ -472,7 +472,7 @@
   display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) 14px;
   margin-bottom: 6px;
 }
-.scope-group-title { flex: 1 1 200px; font-weight: 600; font-size: 13px; color: var(--ink); }
+.scope-group-title { flex: 1 1 200px; font-weight: 600; font-size: var(--fs-body); color: var(--ink); }
 .scope-group-count { font-size: var(--fs-label); color: var(--text-3); white-space: nowrap; }
 /* A command, not a state pill: its label already says what pressing it does ("Select all" /
    "Deselect all"), so it does not need `aria-pressed` on top of that to be understood —
@@ -498,7 +498,7 @@
    it in words; this is reinforcement, not the only cue. */
 .scope-row[data-selected="false"] { opacity: 0.58; }
 .scope-row-main { flex: 1 1 220px; min-width: 0; }
-.scope-row-name { font-size: 13px; color: var(--ink); }
+.scope-row-name { font-size: var(--fs-body); color: var(--ink); }
 .scope-row-meta { margin-top: var(--space-half); }
 .scope-reason { flex: 0 1 auto; font-size: var(--fs-label); color: var(--text-3); text-align: right; }
 /* Pinned means a person decided this, not that the landscape did — a different kind of fact
@@ -513,7 +513,7 @@
    control planted in the middle of a page that has none. */
 .scope-toggle {
   display: inline-flex; align-items: center; gap: 7px; flex: none;
-  padding: var(--space-1) 10px var(--space-1) 6px; font-size: 12.5px; font-weight: 500;
+  padding: var(--space-1) 10px var(--space-1) 6px; font-size: var(--fs-label); font-weight: 500;
   border: 1px solid var(--hairline); border-radius: var(--radius-pill);
   background: var(--page); color: var(--text-2);
 }
@@ -522,7 +522,7 @@
   width: 14px; height: 14px; border: 1px solid var(--hairline); border-radius: 4px;
   background: var(--page);
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: 9px; line-height: 1; color: transparent;
+  font-size: var(--fs-micro); line-height: 1; color: transparent;
 }
 .scope-box::before { content: "✓"; }
 .scope-toggle[aria-pressed="true"] {
@@ -571,7 +571,7 @@
    register, not a panel inside a row. Scrolls in its own wrapper so a long Control name or
    a narrow viewport widens this box and never the page around it. */
 .comp-policy-wrap { overflow-x: auto; }
-.comp-policy-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.comp-policy-table { border-collapse: collapse; width: 100%; font-size: var(--fs-label); }
 .comp-policy-table th {
   text-align: left; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);

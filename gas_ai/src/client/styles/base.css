@@ -54,7 +54,7 @@
 }
 .sidebar .wordmark {
   font-weight: 600;
-  font-size: 1rem;
+  font-size: var(--fs-lead);
   letter-spacing: -0.02em;
   padding: var(--space-1) 10px 14px;
   display: flex;
@@ -77,10 +77,12 @@
 }
 /* Only ever visible in the collapsed rail — see the .collapsed block below. */
 .scope-rail-glyph { display: none; }
-/* 13px/500 — the nav-link size, one weight below the nav's 600. This control scopes every
+/* The nav-link size at weight 500, one step below the nav's 600. This control scopes every
    page in the list beneath it, so it must not read as smaller than the things it governs;
-   equally it is not a nav item, so it stops short of their weight. */
-.scope-switch .combobox-trigger { min-height: 32px; font-size: 13px; font-weight: 500; }
+   equally it is not a nav item, so it stops short of their weight. (Said as "13px/500" until
+   the type scale was enforced; both this and .nav-link are --fs-body now. The relationship
+   the comment describes is the point, so it stops naming a number that can drift.) */
+.scope-switch .combobox-trigger { min-height: 32px; font-size: var(--fs-body); font-weight: 500; }
 .scope-caption {
   font-size: var(--fs-micro);
   color: var(--text-3);
@@ -106,7 +108,7 @@
   padding: 7px 10px;
   border-radius: var(--radius-md);
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-body);
   text-decoration: none;
   border: none;
   background: none;
@@ -240,7 +242,7 @@
   box-shadow: var(--shadow-card);
 }
 .scan-progress-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
-.scan-progress-phase { font-size: 13px; font-weight: 600; color: var(--ink); }
+.scan-progress-phase { font-size: var(--fs-label); font-weight: 600; color: var(--ink); }
 .scan-progress-elapsed { font-size: var(--fs-label); color: var(--text-3); font-variant-numeric: tabular-nums; }
 .scan-progress-counts { font-size: var(--fs-label); color: var(--text-2); font-variant-numeric: tabular-nums; }
 .scan-progress.failed .scan-progress-counts { color: var(--bad); }
@@ -287,9 +289,9 @@
 .scan-progress.stuck .scan-spinner { --ring: var(--warn); }
 .scan-progress-mini-pct {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-size: 9px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-micro); font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums;
 }
-.scan-progress.done .scan-progress-mini-pct { color: var(--ok); font-size: 13px; }
+.scan-progress.done .scan-progress-mini-pct { color: var(--ok); font-size: var(--fs-label); }
 .scan-progress.failed .scan-progress-mini-pct { color: var(--bad); font-size: var(--fs-label); }
 .scan-progress.stuck .scan-progress-mini-pct { color: var(--warn); font-size: var(--fs-label); }
 @keyframes scan-spin { to { transform: rotate(360deg); } }
@@ -342,18 +344,18 @@
 
 /* Details drawer: phase stepper + fact grid */
 .scan-steps { display: flex; gap: 14px; margin: var(--space-1) 0 14px; }
-.scan-step { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-3); }
+.scan-step { display: flex; align-items: center; gap: 6px; font-size: var(--fs-body); color: var(--text-3); }
 .scan-step.done { color: var(--ok); }
 .scan-step.active { color: var(--accent); font-weight: 600; }
 .scan-step-dot { font-size: var(--fs-label); }
 .scan-detail-grid {
   display: grid; grid-template-columns: auto 1fr; gap: 6px var(--space-4);
-  margin-top: 14px; font-size: 13px;
+  margin-top: 14px; font-size: var(--fs-body);
 }
 .scan-detail-grid dt { color: var(--text-3); }
 .scan-detail-grid dd { margin: 0; font-variant-numeric: tabular-nums; }
 .scan-detail-error {
-  margin-top: 14px; padding: 10px var(--space-3); font-size: 13px;
+  margin-top: 14px; padding: 10px var(--space-3); font-size: var(--fs-label);
   color: var(--bad); background: rgba(185, 28, 28, 0.06);
   border-radius: var(--radius-md);
 }
@@ -459,7 +461,7 @@ main.full-bleed > .empty { margin: 28px var(--space-6); }
 }
 .boot-brand {
   display: flex; align-items: center; gap: 9px; font-weight: 600;
-  font-size: 1.0625rem; letter-spacing: -0.02em; color: var(--ink);
+  font-size: var(--fs-display-sm); letter-spacing: -0.02em; color: var(--ink);
 }
 .boot-brand .wordmark-dot { width: 11px; height: 11px; }
 .boot-splash-bar { width: 100%; }
@@ -518,7 +520,7 @@ main.full-bleed > .empty { margin: 28px var(--space-6); }
 }
 
 /* ------------------------------------------------------------------- typography */
-h1 { font-size: 1.5rem; font-weight: 600; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 var(--space-1); }
+h1 { font-size: var(--fs-display); font-weight: 600; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 var(--space-1); }
 .page-sub { color: var(--text-2); margin: 0 0 var(--space-5); max-width: var(--measure); }
 /* The explanatory notes under a card's controls (settings, scans) are running text. */
 p.small.muted { max-width: var(--measure); }
@@ -527,8 +529,8 @@ p.small.muted { max-width: var(--measure); }
    it, so sections ran together into one column of evenly-spaced rows. 32 above and 12 below
    makes the label belong to what FOLLOWS it rather than float between two neighbours, which
    is the whole job of a section heading. */
-h2.section-label { font-size: 0.9375rem; font-weight: 600; margin: var(--space-6) 0 var(--space-3); }
-h3 { font-size: 1rem; font-weight: 600; margin: 0 0 var(--space-2); }
+h2.section-label { font-size: var(--fs-lead); font-weight: 600; margin: var(--space-6) 0 var(--space-3); }
+h3 { font-size: var(--fs-lead); font-weight: 600; margin: 0 0 var(--space-2); }
 .label {
   font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3);
@@ -540,7 +542,7 @@ h3 { font-size: 1rem; font-weight: 600; margin: 0 0 var(--space-2); }
 /* ---------------------------------------------------------------------- buttons */
 button, .btn {
   font-family: inherit;
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   border-radius: var(--radius-md);
   min-height: 36px;
   padding: 6px 14px;
@@ -574,7 +576,7 @@ button.link {
 /* ----------------------------------------------------------------------- inputs */
 input[type="text"], input[type="search"], input[type="number"], select {
   font-family: inherit;
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   background: var(--page);
   color: var(--ink);
   border: 1px solid var(--hairline);

@@ -206,7 +206,7 @@
 .rail-amp-txt {
   position: absolute; top: 0; bottom: 0;
   display: flex; align-items: center; padding-left: var(--space-1);
-  font-size: 10px; font-weight: 600; color: var(--on-graphite);
+  font-size: var(--fs-micro); font-weight: 600; color: var(--on-graphite);
   pointer-events: none; overflow: hidden; white-space: nowrap;
 }
 /* Past the cap. The readout says "scores N" in words too — the hatch is never the only
@@ -254,7 +254,7 @@
 .rail--cap { margin-top: var(--space-2); padding-top: 10px; border-top: 1px solid var(--hairline); }
 .rail-axis {
   display: grid; grid-template-columns: 132px minmax(0, 1fr) 84px 118px; gap: var(--space-3);
-  margin-top: var(--space-1); font-size: 10.5px; color: var(--text-3);
+  margin-top: var(--space-1); font-size: var(--fs-micro); color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
 .rail-axis__ticks { display: flex; justify-content: space-between; }
@@ -465,7 +465,7 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent); }
   display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) 10px;
   margin-bottom: var(--space-half);
 }
-.axis-block__name { margin: 0; font-size: 0.9375rem; font-weight: 600; }
+.axis-block__name { margin: 0; font-size: var(--fs-lead); font-weight: 600; }
 /* The values the axis can take. Uppercase already, so no transform — these are the literal
    tokens the cascade's own dropdowns offer, and re-casing them would make them look like
    prose rather than the vocabulary they are. */
@@ -558,7 +558,7 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent); }
 .axis-steps { margin: 0; padding: 0 0 0 22px; display: flex; flex-direction: column; gap: 10px; }
 ol.axis-steps > li::marker { font-size: var(--fs-micro); font-weight: 600; color: var(--text-3); }
 ul.axis-steps { list-style: none; padding-left: 0; }
-.axis-step { font-size: 13px; }
+.axis-step { font-size: var(--fs-body); }
 ul.axis-steps > .axis-step { padding-left: 14px; position: relative; }
 ul.axis-steps > .axis-step::before {
   content: ""; position: absolute; left: 0; top: 8px;
@@ -571,7 +571,7 @@ ul.axis-steps > .axis-step::before {
    the ones they can, so it is marked rather than left to be inferred from the absence of a
    control. */
 .axis-step__origin {
-  font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--text-3);
   border: 1px solid var(--hairline); border-radius: var(--radius-sm);
   padding: 0 5px;
@@ -708,7 +708,7 @@ ul.axis-steps > .axis-step::before {
 .sandbox-gaps { flex: 1 1 100%; display: grid; gap: var(--space-half); margin-top: var(--space-1); }
 .sandbox-gap {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-2);
-  align-items: baseline; font-size: 11.5px;
+  align-items: baseline; font-size: var(--fs-label);
 }
 .sandbox-gap__code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -722,7 +722,7 @@ ul.axis-steps > .axis-step::before {
 .gap-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: var(--space-1) 0 var(--space-2); }
 .gap-chip {
   display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-  padding: var(--space-half) var(--space-1) var(--space-half) 9px; font-size: 11.5px;
+  padding: var(--space-half) var(--space-1) var(--space-half) 9px; font-size: var(--fs-label);
   background: var(--page); border: 1px solid var(--hairline); border-radius: var(--radius-pill);
 }
 .gap-chip__code {
@@ -754,7 +754,7 @@ ul.axis-steps > .axis-step::before {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: var(--fs-label); font-weight: 600;
 }
-.codebook-row__title { font-size: 12.5px; color: var(--ink); min-width: 0; }
+.codebook-row__title { font-size: var(--fs-label); color: var(--ink); min-width: 0; }
 .codebook-row__blurb { grid-column: 1 / -1; line-height: 1.35; }
 .codebook-row__price, .codebook-row__seen { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .codebook-row__act { white-space: nowrap; }
@@ -767,7 +767,7 @@ ul.axis-steps > .axis-step::before {
 .notice {
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
   margin-bottom: 14px; padding: 10px var(--space-3);
-  font-size: 13px; border-radius: var(--radius-lg);
+  font-size: var(--fs-body); border-radius: var(--radius-lg);
 }
 .notice::before { content: "⚠"; font-size: var(--fs-body); }
 .notice.warn {

@@ -115,7 +115,7 @@
 .gq-term-edge {
   flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 13px; font-weight: 500;
+  font-size: var(--fs-body); font-weight: 500;
   color: var(--text-2);
 }
 .gq-term:hover .gq-term-edge { color: var(--ink); }
@@ -129,7 +129,7 @@
   border: 1px solid var(--hairline);
   background: var(--page);
   box-shadow: none;
-  font-size: 13px; font-weight: 600;
+  font-size: var(--fs-body); font-weight: 600;
   color: var(--ink);
   max-width: 260px;
 }
@@ -208,7 +208,7 @@
 
 /* ------------------------------------------------------------------- header actions */
 .gq-head-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
-.gq-head-actions button { min-height: 30px; padding: var(--space-1) 10px; font-size: 13px; }
+.gq-head-actions button { min-height: 30px; padding: var(--space-1) 10px; font-size: var(--fs-body); }
 
 /* ------------------------------------------------------------------------ view row */
 .gq-viewbar {
@@ -221,7 +221,7 @@
 .gq-view-icon { display: inline-flex; margin-right: 6px; vertical-align: -2px; }
 /* The query editor's toggle, and the rule that separates changing the question from reading
    the answer — the two halves this row now holds. */
-.gq-edit-btn { min-height: 30px; padding: var(--space-1) 10px; font-size: 13px; }
+.gq-edit-btn { min-height: 30px; padding: var(--space-1) 10px; font-size: var(--fs-body); }
 /* Pressed-looking while the card is up, so the row says which state it is in without the
    reader having to look away from it and find the card. */
 .gq-edit-btn[aria-expanded="true"] { background: #f1f1f4; border-color: #d9d9de; }
@@ -359,7 +359,7 @@
 .gq-pal-rail-item {
   display: flex; align-items: center; gap: var(--space-2); width: 100%;
   min-height: 30px; padding: 5px var(--space-2); margin: 1px 0;
-  font-size: 13px; text-align: left;
+  font-size: var(--fs-body); text-align: left;
   background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
   color: var(--text-2);
 }
@@ -441,7 +441,7 @@
 .gq-pal-option[data-category="exposure"] .gq-pal-glyph-wrap { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
 .gq-pal-option-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .gq-pal-option-label {
-  font-size: 13px; font-weight: 600; color: var(--ink);
+  font-size: var(--fs-body); font-weight: 600; color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .gq-pal-option-sub {
@@ -454,7 +454,7 @@
   flex: 0 0 auto; font-size: var(--fs-label); color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-.gq-pal-empty { padding: 14px 10px; font-size: 13px; color: var(--text-3); }
+.gq-pal-empty { padding: 14px 10px; font-size: var(--fs-label); color: var(--text-3); }
 
 /* -- detail */
 /* The two side panes take fixed shares and the LIST gets the rest, so every pixel the popover
@@ -516,7 +516,7 @@
   background: var(--surface);
 }
 .gq-fe-pair-label {
-  font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3);
 }
 .gq-fe-pair input { min-width: 0; }
@@ -572,7 +572,7 @@
 .gq-table table.data th.is-alt + tr th { border-left-color: rgba(0, 0, 0, 0.28); }
 .gq-alt-kw {
   display: inline-block; margin-right: 6px;
-  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--text-3);
 }
 
@@ -588,7 +588,7 @@
   font-size: var(--fs-label); color: var(--text-2);
 }
 .gq-pal-back:hover { background: var(--wash-hover); border-color: transparent; color: var(--ink); }
-.gq-pal-drill-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.gq-pal-drill-title { font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
 .gq-pal-drill-body { display: block; padding: 0 var(--space-1) var(--space-1); }
 
 /* ------------------------------------------------------------------ column panel */
@@ -600,7 +600,7 @@
   display: flex; align-items: center; gap: var(--space-2);
   padding: 10px var(--space-3); border-bottom: 1px solid var(--hairline);
   background: var(--surface);
-  font-size: 13px; font-weight: 600; color: var(--ink);
+  font-size: var(--fs-body); font-weight: 600; color: var(--ink);
 }
 .gq-cols-master input { margin: 0; }
 .gq-cols-list { padding: 6px; overflow-y: auto; overscroll-behavior: contain; }
@@ -628,7 +628,7 @@
 .gq-cols-tile[data-category="vuln"] { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); }
 .gq-cols-tile[data-category="exposure"] { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
 .gq-cols-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.gq-cols-kind { font-size: 13px; font-weight: 600; color: var(--ink); }
+.gq-cols-kind { font-size: var(--fs-label); font-weight: 600; color: var(--ink); }
 /* The current columns as prose — the reference's summary line, and the reason a row does not
    have to be expanded to be understood. */
 .gq-cols-summary {
