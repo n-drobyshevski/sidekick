@@ -49,7 +49,7 @@
 // focus shows the definition, Enter or a tap opens the entry. That is also why this module
 // never calls portalOpened() — there is nothing in the card for the trap to stand down for.
 
-import { el } from "./dom.js";
+import { coarse, el } from "./dom.js";
 import { popoverDismiss } from "./popover.js";
 import { navigate } from "../store.js";
 import { findEntry } from "../helpContent.js";
@@ -76,11 +76,6 @@ let release = null;
 let muted = null;
 
 let seq = 0;
-
-/** True where there is no hover at all, so a tap has to do the work a hover would. */
-function coarse() {
-  return !!(window.matchMedia && window.matchMedia("(hover: none)").matches);
-}
 
 function ensureHost() {
   if (host) return host;

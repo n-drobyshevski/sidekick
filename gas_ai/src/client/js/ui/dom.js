@@ -42,6 +42,17 @@ export function motionOk() {
   return !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 }
 
+/**
+ * True where there is no hover at all, so a tap has to do the work a hover would.
+ *
+ * Here rather than in tip.js because the nav flyout needs the same answer: two surfaces that
+ * open on hover must agree on what "no hover" means, and a second copy of the query is how
+ * they would quietly stop agreeing.
+ */
+export function coarse() {
+  return !!(window.matchMedia && window.matchMedia("(hover: none)").matches);
+}
+
 /** Client-side file download from a text payload. */
 export function downloadText(filename, text, mime) {
   const blob = new Blob([text], { type: mime || "text/plain;charset=utf-8" });

@@ -51,23 +51,17 @@
 .appbar-sep { width: 1px; height: 20px; flex: 0 0 auto; background: var(--hairline); }
 
 .sidebar {
-  width: var(--rail-w);
-  flex: 0 0 var(--rail-w);
+  width: var(--rail-icon-w);
+  flex: 0 0 var(--rail-icon-w);
   height: 100%;
   overflow-y: auto;
   background: var(--surface);
   border-right: 1px solid var(--hairline);
-  padding: 16px 12px;
+  padding: 10px 6px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  /* Only the width animates, for the collapsed icon-only mode below. */
-  transition: flex-basis 0.18s ease, width 0.18s ease;
+  gap: 2px;
 }
-/* The rail's own first row, holding nothing but the collapse control. The wordmark that used
-   to live here is in the app header now — one brand, in one place, whatever the rail is
-   doing. Right-aligned when the rail is open, centred when it is 56px wide (below). */
-.sidebar .rail-head { display: flex; align-items: center; padding: 0 2px 10px; }
 /* The product mark. Its paint is on the presentation attributes too (ui/brandMark.js), so
    it draws correctly with no stylesheet at all — which is the case index.html's first
    paint is closest to. These rules exist so the three colours stay retintable from one
@@ -120,11 +114,10 @@
   padding: 12px 10px 4px;
   margin: 0;
 }
-/* The chrome tail's separator — and the shape a lane heading degrades to in the collapsed
-   rail below, where there is no room for its word. Decorative in the strict sense: what it
-   marks is a change of kind the reader can see (three pages that name themselves), and the
-   lanes above it are still named in the accessibility tree by the headings themselves, so
-   nothing here is the only carrier of anything. */
+/* The chrome tail's separator, drawn by both shapes of the nav: above the three chrome items
+   on the icon rail, and above the same three links in the stacked list below 800px.
+   Decorative in the strict sense — what it marks is a change of kind the reader can see
+   (three pages that name themselves), so nothing here is the only carrier of anything. */
 .nav-rule {
   height: 1px;
   flex: 0 0 auto;
@@ -157,6 +150,128 @@
 }
 .nav-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* ---------------------------------------------------------------- the two-tier rail */
+
+/* A rail item is a box holding two controls: the link that navigates, and — where the item
+   has a panel — the caret that discloses it. The box is what the pointer hovers, so either
+   one opens the panel and the link keeps its whole width as a target. */
+.rail-item { position: relative; display: block; }
+/* The rail's own link: the mark over its name, because at 76px there is no room beside it and
+   a name is what stops an icon rail being a rebus. */
+.rail-link {
+  flex-direction: column;
+  gap: 3px;
+  /* Asymmetric on purpose: the right padding is the caret's lane, so a label ellipsises
+     against it rather than running under it. */
+  padding: 8px 12px 7px 4px;
+  text-align: center;
+}
+.rail-link .nav-label {
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+  color: var(--text-2);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* `.current` is the lane holding the page you are on; `.active` is the link that IS that page.
+   They look the same on the rail on purpose — the rail answers "whereabouts", and the panel
+   beside it answers "which one" — and they are two classes rather than one because only the
+   second may ever carry aria-current. */
+.rail-item.current > .rail-link,
+.rail-link.active {
+  background: rgba(0, 0, 0, 0.07);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.rail-item.current > .rail-link .nav-label,
+.rail-link.active .nav-label { color: var(--ink); font-weight: 600; }
+.rail-item.current > .rail-link .nav-icon,
+.rail-link.active .nav-icon { color: var(--ink); }
+.rail-item.open > .rail-link { background: var(--wash-hover); }
+/* The submenu mark. Visible at rest, not on hover: which items open something is exactly what
+   a reader needs to know BEFORE pointing at one. */
+.rail-caret {
+  position: absolute;
+  right: 0; top: 50%;
+  transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 14px; height: 22px; padding: 0;
+  border: none; background: none; color: var(--text-3);
+  cursor: pointer;
+}
+.rail-item:hover .rail-caret, .rail-item.open .rail-caret { color: var(--ink); }
+.rail-caret:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px; }
+
+/* --------------------------------------------------------------------- the nav panel */
+
+/* The second tier: a full-height column, so it has no placement problem to solve. Unpinned it
+   floats over the content pane with the one real shadow this system allows an overlay;
+   pinned it joins the flex row and `main` shrinks beside it, at which point it is a surface
+   like the rail and drops the shadow for a hairline. */
+.nav-flyout {
+  position: absolute;
+  left: var(--rail-icon-w); top: 0; bottom: 0;
+  width: var(--nav-flyout-w);
+  z-index: var(--z-nav-flyout);
+  display: flex;
+  flex-direction: column;
+  background: var(--page);
+  border-right: 1px solid var(--hairline);
+  box-shadow: var(--shadow-flyout);
+  opacity: 0;
+  transform: translateX(-6px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+/* display:flex above would otherwise beat the UA's [hidden] rule and leave a closed panel on
+   screen at opacity 0, eating every click along the left edge of the page. */
+.nav-flyout[hidden] { display: none; }
+.nav-flyout.open { opacity: 1; transform: none; }
+.nav-flyout.pinned {
+  position: relative;
+  left: auto; top: auto; bottom: auto;
+  flex: 0 0 var(--nav-flyout-w);
+  opacity: 1;
+  transform: none;
+  box-shadow: none;
+}
+.nav-flyout-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 10px 8px 14px;
+  flex: 0 0 auto;
+}
+.nav-flyout-title {
+  font-size: 0.9375rem; font-weight: 600; letter-spacing: -0.01em;
+  color: var(--ink); margin: 0;
+}
+.nav-flyout-pin {
+  margin-left: auto; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  border: 1px solid transparent; border-radius: var(--radius-md);
+  background: none; color: var(--text-2); cursor: pointer;
+}
+.nav-flyout-pin:hover { background: var(--wash-hover); border-color: var(--hairline); }
+.nav-flyout-pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nav-flyout-pin[aria-pressed="true"] { color: var(--ink); border-color: var(--hairline); }
+.nav-flyout-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 0 10px 14px;
+}
+/* The panel's own group headings reuse the rail's, because they are the same kind of label in
+   the same nav — DESIGN.md's one sanctioned uppercase slot, spent once. */
+.nav-flyout-body .nav-group { padding: 14px 10px 4px; }
+/* A row with no mark of its own keeps the slot, so its name starts where every other name
+   does. A saved view carries the mark of the page it replays into; a framework has no mark to
+   carry, and inventing one would say it is a kind of thing this app draws. */
+.nav-icon-blank { visibility: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-flyout { transition: none; transform: none; }
+}
+
 .sidebar .scan-zone {
   margin-top: auto;
   border-top: 1px solid var(--hairline);
@@ -168,25 +283,14 @@
 .scan-caption { font-size: 12px; color: var(--text-3); }
 .scan-buttons { display: flex; gap: 8px; }
 
-/* Collapsible rail — icon-only mode (desktop only; the <=800px top-bar layout further
-   down ignores .collapsed). Width rides --rail-w so the flex main pane and the route
-   overlay's left edge follow automatically; only the width transitions. */
+/* The mark on a nav row, at the one size every one of them draws: rail item, panel row and
+   stacked-list link alike. */
 .nav-icon {
   display: inline-flex; align-items: center; justify-content: center;
   width: 18px; height: 18px; flex: 0 0 18px; color: var(--text-2);
 }
 .nav-icon svg { width: 18px; height: 18px; display: block; }
 .nav-link.active .nav-icon { color: var(--ink); }
-.rail-toggle {
-  margin-left: auto; flex: 0 0 auto;
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; padding: 0;
-  border: 1px solid var(--hairline); border-radius: var(--radius-md);
-  background: var(--page); color: var(--text-2); cursor: pointer;
-}
-.rail-toggle:hover { background: var(--wash-hover); }
-.rail-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.rail-toggle svg { width: 16px; height: 16px; display: block; transition: transform 0.18s ease; }
 .sidebar .scan-buttons button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .sidebar .scan-buttons .primary .nav-icon { color: inherit; width: 16px; height: 16px; flex-basis: 16px; }
 .sidebar .scan-buttons .primary .nav-icon svg { width: 16px; height: 16px; }
@@ -194,58 +298,34 @@
 .rail-status-dot.ok { background: var(--ok); }
 .rail-status-dot.neutral { background: var(--text-3); }
 
+/* The rail proper — everything here used to be the .collapsed variant of a rail that could
+   also be 232px wide. It cannot any more: the second tier is a panel beside the rail, not a
+   wider rail, so this IS the rail above 800px. Below that the nav is a stacked list where
+   every one of these would be wrong, which is what the media query is holding back. */
 @media (min-width: 801px) {
-  .sidebar.collapsed { padding-left: 8px; padding-right: 8px; }
-  .sidebar.collapsed .nav-label,
-  .sidebar.collapsed .scan-caption,
-  .sidebar.collapsed .btn-label,
-  .sidebar.collapsed .scan-buttons button:not(.primary) { display: none; }
-  /* THE COLLAPSED RAIL IS THE DEFAULT, so this is where the grouping has to survive: the
-     heading keeps its box and draws as the hairline between two icon clusters, and its word
-     is clipped rather than removed — same trick as .scan-progress-head below, and for the
-     same reason. A rail that dropped its headings at 56px was ten identical icons in one
-     undivided column, with no break between the workflow and the chrome. */
-  .sidebar.collapsed .nav-group {
-    height: 1px; padding: 0; margin: 10px 8px 6px; background: var(--hairline);
-  }
-  .sidebar.collapsed .nav-group-label {
-    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
-    overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
-  }
-  /* The first lane's rule would sit flush under the collapse control, where it reads as the
-     head's own underline rather than as a divider between two groups of links. */
-  .sidebar.collapsed .rail-head + .nav-group { display: none; }
-  .sidebar.collapsed .nav-rule { margin-left: 8px; margin-right: 8px; }
-  /* The toggle is the row's only occupant either way, so collapsing just centres it. */
-  .sidebar.collapsed .rail-head { justify-content: center; padding-left: 0; padding-right: 0; }
-  .sidebar.collapsed .rail-toggle { margin-left: 0; }
-  .sidebar.collapsed .rail-toggle svg { transform: rotate(180deg); }
-  .sidebar.collapsed .nav-link { justify-content: center; padding: 8px 0; }
-  .sidebar.collapsed .scan-buttons { justify-content: center; }
-  .sidebar.collapsed .scan-buttons .primary { padding: 8px; }
-  .sidebar.collapsed .rail-status-dot { display: block; }
+  .sidebar .scan-caption,
+  .sidebar .btn-label,
+  .sidebar .scan-buttons button:not(.primary) { display: none; }
+  .sidebar .scan-buttons { justify-content: center; }
+  .sidebar .scan-buttons .primary { padding: 8px; }
+  .sidebar .rail-status-dot { display: block; }
   /* Loading panel in the icon rail: drop the full card chrome and its text/bar/buttons,
      leaving the compact ring indicator centered — the card's phase, counts and controls
-     are too wide for 56px, so they collapse to the ring (status) + its Details button. */
-  .sidebar.collapsed .scan-progress {
+     are too wide for 76px, so they collapse to the ring (status) + its Details button. */
+  .sidebar .scan-progress {
     padding: 6px 0; gap: 0; align-items: center;
     background: transparent; border: none; box-shadow: none;
   }
-  .sidebar.collapsed .scan-progress-bar-slot,
-  .sidebar.collapsed .scan-progress-counts,
-  .sidebar.collapsed .scan-progress-actions { display: none; }
+  .sidebar .scan-progress-bar-slot,
+  .sidebar .scan-progress-counts,
+  .sidebar .scan-progress-actions { display: none; }
   /* The phase line is the card's aria-live announcement target — visually hide it rather
      than display:none it, so screen readers still hear phase transitions in the icon rail. */
-  .sidebar.collapsed .scan-progress-head {
+  .sidebar .scan-progress-head {
     position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
     overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
   }
-  .sidebar.collapsed .scan-progress-mini { display: inline-flex; }
-}
-/* The rail becomes a horizontal wrapping top-bar here, so icon-collapse doesn't apply. */
-@media (max-width: 800px) { .rail-toggle { display: none; } }
-@media (prefers-reduced-motion: reduce) {
-  .sidebar, .rail-toggle svg { transition: none; }
+  .sidebar .scan-progress-mini { display: inline-flex; }
 }
 
 /* Sync progress card (persistent, non-modal; lives in the sync zone while a job runs) */
@@ -271,8 +351,9 @@
 .scan-progress.stuck .scan-progress-counts { color: var(--warn); }
 .scan-progress-actions { display: flex; gap: 12px; }
 
-/* Compact collapsed-rail indicator: a ring (spinner / arc / filled) with a centered
-   glyph or percent. Hidden by default; the .sidebar.collapsed rule above reveals it. The
+/* Compact icon-rail indicator: a ring (spinner / arc / filled) with a centered glyph or
+   percent. Hidden by default; the rail block above reveals it, and the stacked list below
+   800px keeps the full card instead. The
    ring is a masked conic-gradient donut so a single element carries both the track and
    the coloured arc; --ring is re-tinted per run state, matching the progress-bar colours. */
 .scan-progress-mini {
@@ -526,6 +607,11 @@ main.full-bleed > .empty { margin: 28px 32px; }
     border-right: none;
     border-bottom: 1px solid var(--hairline);
   }
+  .sidebar { padding: 12px; }
+  /* No panel down here at all. The nav is a stacked list at this width — there is nothing to
+     fly out from and nowhere to put it, and a pinned panel left over from a wider window
+     would land as a 280px block across the top of the page. */
+  .nav-flyout, .nav-flyout.pinned { display: none; }
   .sidebar .scan-zone { margin-top: 0; border-top: none; padding-top: 0; }
   /* The rail turns into a ROW here, but `.nav-link` is width:100%, so the links go on
      stacking one per line and the lanes read exactly as they do in the open rail — words,

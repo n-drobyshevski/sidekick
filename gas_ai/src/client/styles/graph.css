@@ -23,9 +23,9 @@
    space it keeps clear is for the legend in the opposite corner. */
 .workbench-meta.overlay {
   position: absolute; bottom: 10px; z-index: var(--z-canvas-chrome);
-  left: calc(10px + var(--rail-w) + 8px);
+  left: calc(10px + var(--zoom-btn) + 8px);
   gap: 8px; padding: 7px 10px; font-size: 11px;
-  max-width: min(560px, calc(100% - 120px - var(--rail-w) - 8px));
+  max-width: min(560px, calc(100% - 120px - var(--zoom-btn) - 8px));
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
 }
@@ -120,10 +120,15 @@
    INSIDE the canvas — the corner overlays, the table, the empty states and the boot skeleton. */
 .workbench-split {
   display: flex; flex: 1; min-height: 0; position: relative;
-  /* One button of the bottom-left rail. Declared HERE, not on the canvas: the rail is a
-     sibling of the canvas now, and the counts overlay inside it indents past the rail by
-     this — the two must not disagree, so both have to be able to see it. */
-  --rail-w: 36px;
+  /* One button of the bottom-left ZOOM rail. Declared HERE, not on the canvas: that rail is
+     a sibling of the canvas now, and the counts overlay inside it indents past the rail by
+     this — the two must not disagree, so both have to be able to see it.
+     Named --zoom-btn and not --rail-w: it used to be the latter, which shadowed the NAV
+     rail's token of that name for this whole subtree. The two never met — the local
+     declaration won everywhere it mattered — but the shared name made a grep for the nav
+     width report a coupling that does not exist, and would have handed 36px to any future
+     rule in here that genuinely wanted it. */
+  --zoom-btn: 36px;
 }
 
 /* The query editor. Out of flow on purpose: it must not resize the canvas, or every toggle
@@ -332,7 +337,7 @@
 /* Circles, against a base recipe that gives none of it: `button` sets min-height 36, a 14px
    side padding and the medium radius, so all three have to be named here. */
 .graph-rail button {
-  width: var(--rail-w); height: var(--rail-w); min-height: var(--rail-w); padding: 0;
+  width: var(--zoom-btn); height: var(--zoom-btn); min-height: var(--zoom-btn); padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: var(--radius-pill);
   background: var(--page); box-shadow: var(--shadow-card);
@@ -420,7 +425,7 @@
    bare text on a canvas is legible only until something is drawn behind it. A pill and no
    shadow: it is a label, and the lift belongs to the things you can press. */
 .graph-zoom-pct {
-  min-width: var(--rail-w); text-align: center;
+  min-width: var(--zoom-btn); text-align: center;
   padding: 1px 4px; border-radius: var(--radius-pill); background: var(--page);
   font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums;
 }

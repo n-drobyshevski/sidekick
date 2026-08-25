@@ -14,6 +14,7 @@ import {
 import { onExperimentalChange, showExperimental } from "./experimental.js";
 import {
   clear, closeTip, el, fmtDateTime, progressBar, runPageTeardown, statusPill, tipAnchor,
+  uiIcon,
 } from "./ui.js";
 import { brandMark } from "./ui/brandMark.js";
 import { projectScopeControl } from "./ui/projectScope.js";
@@ -29,7 +30,13 @@ import { renderScans } from "./pages/scans.js";
 import { renderData } from "./pages/data.js";
 import { renderSettings } from "./pages/settings.js";
 import { renderHelp } from "./pages/help.js";
-import { ROUTE_ICONS } from "./routeIcons.js";
+import { LANE_ICONS, ROUTE_ICONS } from "./routeIcons.js";
+import { itemForRoute, railItems } from "./navModel.js";
+import {
+  closeNow as closeFlyout, focusFirstRow, itemHasPanel, mountNavFlyout, openFlyoutFor,
+  setActiveItem, setNavContext, tapOpensPanel, wireRail,
+} from "./navFlyout.js";
+import { SAVED_VIEW_KEYS, readSavedViews } from "./savedViews.js";
 
 // The rail's information architecture, stated once.
 //
@@ -102,11 +109,10 @@ const PAGES = {
   help: { title: "Help", group: null, render: renderHelp },
 };
 
-// Nav-route icons (ROUTE_ICONS) now live in routeIcons.js — see that module for why.
-// Circular-arrows glyph for the primary "Sync now" button; shrinks to the icon alone when
-// the rail is collapsed (its .btn-label is hidden by the collapsed CSS).
+// Nav icons (ROUTE_ICONS, LANE_ICONS) now live in routeIcons.js — see that module for why.
+// Circular-arrows glyph for the primary "Sync now" button; on the icon rail it is the icon
+// alone (its .btn-label is hidden there by CSS).
 const SYNC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a8 8 0 0 0-13.7-5L4 8.5"/><path d="M4 4.5v4h4"/><path d="M4 12.5a8 8 0 0 0 13.7 5L20 15.5"/><path d="M20 19.5v-4h-4"/></svg>';
-const CHEVRON_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg>';
 
 // A span carrying an inline SVG (el() builds HTML nodes, so SVG goes in via innerHTML).
 function iconSpan(svg, cls) {
@@ -115,41 +121,15 @@ function iconSpan(svg, cls) {
   return s;
 }
 
-// Collapsed-rail preference — persisted like a user setting, with its own try/catch since a
-// GAS iframe sandbox can block web storage. Desktop-only: the <=800px top-bar layout ignores
-// the .collapsed class (see styles.css), so a stored flag is simply inert there.
-const SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
-// Collapsed by default: an absent preference reads as collapsed, and only an explicit expand
-// (stored "0" by saveCollapsed) reopens it — so the rail stays out of the way until a user
-// deliberately widens it. A sandbox that blocks storage also lands on collapsed.
-function loadCollapsed() {
-  try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) !== "0"; } catch { return true; }
-}
-function saveCollapsed(v) {
-  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? "1" : "0"); } catch { /* sandboxed */ }
-}
-// Reflect the flag onto the (rebuilt-on-refresh) rail DOM. Width rides the shared --rail-w
-// custom property so the flex main pane and the route overlay's left edge track it for free.
-// Collapsed nav links get a native title = their label (the visible text is hidden).
-function applyCollapsed(collapsed) {
-  const sidebar = document.querySelector(".sidebar");
-  if (!sidebar) return;
-  sidebar.classList.toggle("collapsed", collapsed);
-  if (collapsed) document.documentElement.style.setProperty("--rail-w", "56px");
-  else document.documentElement.style.removeProperty("--rail-w");
-  const toggle = sidebar.querySelector(".rail-toggle");
-  if (toggle) {
-    toggle.setAttribute("aria-expanded", String(!collapsed));
-    toggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
-    tipAnchor(toggle, collapsed ? "Expand sidebar" : "Collapse sidebar");
-  }
-  // The collapsed rail is the default, and a native title was the only thing naming these
-  // links in it: unreachable by touch, and half a second late for everyone else. Re-registered
-  // rather than removed when the rail expands, because an expanded link says its own name.
-  sidebar.querySelectorAll(".nav-link").forEach((a) => {
-    const label = a.querySelector(".nav-label");
-    tipAnchor(a, collapsed && label ? label.textContent : null);
-  });
+// Below this width the rail is not a rail at all — it becomes a wrapping top bar, where a
+// panel has nowhere to fly out to and a 76px icon column would be a column of one. So the nav
+// has two shapes, and this is the switch between them: the icon rail plus its panel above
+// 800px, and the plain stacked list (lane headings as words, one rule above the chrome tail)
+// below it. The query is the one queryPalette.js already makes for the same reason — it
+// renders into a sheet instead of a popover at exactly this width.
+const NARROW_NAV = "(max-width: 800px)";
+function narrowNav() {
+  return !!(window.matchMedia && window.matchMedia(NARROW_NAV).matches);
 }
 
 const app = document.getElementById("app");
@@ -158,7 +138,6 @@ let mainEl = null;
 // content" changes which pages the rail lists and nothing else — a full refresh() would
 // re-fetch the whole bootstrap payload to answer a question already settled locally.
 let sidebarEl = null;
-let sidebarCollapsed = loadCollapsed();
 
 // The Settings toggle reaches the rail through here rather than by importing app.js, which
 // would close the app.js → pages/settings.js import into a cycle. No re-route: the toggle
@@ -258,10 +237,18 @@ async function boot() {
       el("div", { class: "route-overlay-fill" })),
     el("span", { class: "route-overlay-label" }),
   );
+  // The nav panel is a sibling of the rail rather than a child of it: .sidebar is
+  // overflow-y:auto and would clip it, and .app-body is already the positioning context the
+  // route overlay uses. Unpinned it floats over the content pane; pinned it is an in-flow
+  // column and `main` shrinks beside it.
+  const flyout = el("nav", { class: "nav-flyout", "aria-label": "Section pages" });
   // The overlay is a child of the BODY row, not of `app`: it veils the content pane while a
   // page refetches, and the header above it has to stay live — the rail already does, by
   // sitting outside the overlay's box.
-  app.append(appbar, el("div", { class: "app-body" }, sidebar, mainEl, routeOverlay));
+  app.append(appbar, el("div", { class: "app-body" }, sidebar, flyout, mainEl, routeOverlay));
+  mountNavFlyout(flyout);
+  setNavContext(navContext);
+  wireRail(sidebar, (id) => currentRailItems().filter((i) => i.id === id)[0] || null);
 
   let data;
   try {
@@ -336,32 +323,86 @@ function navRule() {
   return el("div", { class: "nav-rule", role: "presentation" });
 }
 
-function renderSidebar(sidebar, data) {
-  clear(sidebar);
-  const railToggle = el("button", {
-    class: "rail-toggle", type: "button",
-    onclick: () => {
-      sidebarCollapsed = !sidebarCollapsed;
-      saveCollapsed(sidebarCollapsed);
-      applyCollapsed(sidebarCollapsed);
+/**
+ * One rail item: a link that navigates, and — where the item has a panel — a caret that
+ * discloses it.
+ *
+ * TWO CONTROLS, because they do two things. An anchor that navigated on Enter *and* claimed
+ * to expand something would be lying in its aria-expanded, and a rail item that only opened a
+ * panel would put a second click between a reader and the page they come to every morning.
+ * So the link is a link, the caret is a disclosure, and the pointer gets both for free by
+ * hovering anywhere on the box.
+ */
+function railItem(item) {
+  const icon = item.kind === "lane" ? LANE_ICONS[item.id] : ROUTE_ICONS[item.route];
+  const node = el("div", { class: "rail-item", "data-nav-item": item.id });
+  const link = el(
+    "a",
+    {
+      class: "nav-link rail-link",
+      href: `#/${item.route}`,
+      // index.html sets <base target="_top"> so external links escape the GAS
+      // sandbox iframe; _self keeps hash routing in-frame.
+      target: "_self",
+      onclick: (e) => {
+        // Where there is no hover there is no flyout, so the first tap has to do the
+        // revealing — the same bargain tip.js strikes with its cards.
+        if (tapOpensPanel(item, node)) e.preventDefault();
+      },
+      onkeydown: (e) => {
+        if (e.key !== "ArrowRight" || !itemHasPanel(item)) return;
+        e.preventDefault();
+        openFlyoutFor(item, node, { viaFocus: true });
+        focusFirstRow();
+      },
     },
-  });
-  railToggle.innerHTML = CHEVRON_ICON;
-  // The rail opens with the collapse control alone. The wordmark that used to sit here is in
-  // the app header now, and the scope switcher with it — both describe the whole app rather
-  // than the list of pages, and the header is where the whole app is named.
-  sidebar.append(el("div", { class: "rail-head" }, railToggle));
+    iconSpan(icon),
+    el("span", { class: "nav-label" }, item.label),
+  );
+  node.append(link);
+  if (itemHasPanel(item)) {
+    const caret = el("button", {
+      class: "rail-caret",
+      type: "button",
+      "aria-expanded": "false",
+      "aria-label": `Show ${item.label} pages`,
+      onclick: () => {
+        if (node.classList.contains("open")) closeFlyout({ restoreFocus: true });
+        else { openFlyoutFor(item, node, { viaFocus: true }); focusFirstRow(); }
+      },
+    });
+    caret.append(uiIcon("chevron-right", 12));
+    node.append(caret);
+  }
+  return node;
+}
+
+/** The two-tier rail: one item per lane, then a rule, then the chrome pages. */
+function renderRail(sidebar, items) {
+  let ruled = false;
+  for (const item of items) {
+    // The tail is chrome rather than a lane, and the rule is what says so — the same rule the
+    // stacked list draws, for the same reason.
+    if (item.kind === "page" && !ruled) { sidebar.append(navRule()); ruled = true; }
+    sidebar.append(railItem(item));
+  }
+}
+
+/**
+ * The stacked list, for the top-bar layout below 800px: every page, lane headings as words,
+ * one rule above the chrome tail. This is the rail as it shipped before the panel existed,
+ * and it stays because at that width it is still the right answer.
+ */
+function renderStackedNav(sidebar) {
   const { route: active } = parseHash();
-  // `undefined`, not null: null is a real group now — the unlabelled chrome tail — and a
-  // detector seeded with it would start the rail inside that tail and never draw its rule.
+  // `undefined`, not null: null is a real group — the unlabelled chrome tail — and a detector
+  // seeded with it would start the list inside that tail and never draw its rule.
   let lastGroup;
   for (const [key, page] of Object.entries(PAGES)) {
-    // A gated page is absent, not disabled: the rest of this rail is the security workflow,
+    // A gated page is absent, not disabled: the rest of this list is the security workflow,
     // and a greyed-out row inside it would still be telling every reader that a model they
     // cannot open exists. The "Labs" heading goes with it for free — the lastGroup detector
-    // below only emits a header when a page that is actually being drawn changes group.
-    // The tail's rule goes on being drawn exactly once either way: gated off, the run is
-    // Assurance → null; gated on, Assurance → Labs → null.
+    // only emits a header when a page that is actually being drawn changes group.
     if (page.experimental && !showExperimental()) continue;
     if (page.group !== lastGroup) {
       sidebar.append(page.group ? navGroupHeading(page.group) : navRule());
@@ -373,8 +414,6 @@ function renderSidebar(sidebar, data) {
         {
           class: `nav-link${key === active ? " active" : ""}`,
           href: `#/${key}`,
-          // index.html sets <base target="_top"> so external links escape the GAS
-          // sandbox iframe; _self keeps hash routing in-frame.
           target: "_self",
           "aria-current": key === active ? "page" : null,
         },
@@ -383,6 +422,12 @@ function renderSidebar(sidebar, data) {
       ),
     );
   }
+}
+
+function renderSidebar(sidebar, data) {
+  clear(sidebar);
+  if (narrowNav()) renderStackedNav(sidebar);
+  else renderRail(sidebar, currentRailItems());
 
   // Sync zone
   const zone = el("div", { class: "scan-zone" });
@@ -422,9 +467,36 @@ function renderSidebar(sidebar, data) {
     }
   }
   sidebar.append(zone);
-  // Re-apply the persisted collapsed state — the rail is rebuilt wholesale on every
-  // refresh(), so the class + width + per-link titles must be re-stamped each time.
-  applyCollapsed(sidebarCollapsed);
+  // The rail is rebuilt wholesale on every refresh() and on every experimental-flag change,
+  // so the panel's marks on it — which item is open, which lane holds the current page — have
+  // to be re-stamped onto the new nodes each time. The panel's own state survives in
+  // navFlyout.js, which is why it is held there rather than on a rail item.
+  setActiveItem(itemForRoute(currentRailItems(), parseHash().route));
+}
+
+/** The rail's items for the gate as it stands right now. */
+function currentRailItems() {
+  return railItems(PAGES, { experimental: showExperimental() });
+}
+
+/**
+ * What the nav panel has to list, gathered from what the shell already holds.
+ *
+ * A function rather than a snapshot: `comboLegend` is settled once per boot, but the saved
+ * views are written by the reader mid-session, and a panel that only learned about them on
+ * the next full reload would be a menu that forgets what you just told it. Nothing here
+ * fetches — hovering a rail item costs a localStorage read and an object walk, never a round
+ * trip.
+ */
+function navContext() {
+  const data = bootstrapCached();
+  const savedViews = [];
+  for (const route of ["graph", "inventory"]) {
+    for (const v of readSavedViews(SAVED_VIEW_KEYS[route]) || []) {
+      savedViews.push({ name: v.name, route, params: v.params || {} });
+    }
+  }
+  return { savedViews, combos: (data && data.comboLegend) || [] };
 }
 
 /**
@@ -577,6 +649,15 @@ async function route() {
     if (isActive) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   });
+  // The rail's own pass, which the one above cannot do: a lane is marked while you are on ANY
+  // of its pages, and its link points at only one of them. It is deliberately a different
+  // mark and NOT aria-current — a lane that merely contains the page you are on is not itself
+  // the page, and saying so would put two "you are here" answers in one nav.
+  const here = itemForRoute(currentRailItems(), key);
+  document.querySelectorAll(".rail-item").forEach((node) => {
+    node.classList.toggle("current", !!here && node.getAttribute("data-nav-item") === here.id);
+  });
+  setActiveItem(here);
   // Before the DOM goes: cancel the outgoing page's pending work, so a debounced
   // callback cannot fire into a page that no longer exists.
   runPageTeardown();

@@ -123,6 +123,12 @@ const PATHS = {
   // control keeps is a place to come back to rather than a file.
   doc: ["M4 2.5 h5 L12.5 6 v7.5 h-8.5 z", "M8.8 2.6 V6.2 H12.4"],
   bookmark: ["M4 2.5 h8 v11 L8 10.6 L4 13.5 z"],
+  // The nav panel's pin control: an arrow docking against a wall, and the same arrow leaving
+  // it. Direction carries the whole meaning here, so the two are mirror images rather than
+  // one glyph rotated by a class — a rotation is a transform a reduced-motion reader may
+  // never see change, and a control whose state you cannot read is worse than two glyphs.
+  dock: ["M2.5 8 H9.8", "M7 5.2 L9.8 8 L7 10.8", "M13 3 V13"],
+  undock: ["M13.5 8 H6.2", "M9 5.2 L6.2 8 L9 10.8", "M3 3 V13"],
 };
 
 // Same fallback posture as kindIcon(): an unknown name reads as "more" rather than throwing.

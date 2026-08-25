@@ -20,6 +20,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { LANE_ICONS } from "../src/client/js/routeIcons.js";
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(join(root, p), "utf8");
 
@@ -111,6 +113,37 @@ describe("the sidebar's lanes", () => {
       all.filter((lane) => lane.group === null).length,
       "the tail is drawn in two places — its rule would be too",
     ).toBe(1);
+  });
+});
+
+// The rail draws lanes now, so a lane needs a mark the way a page does. helpContent.test.js
+// already holds ROUTE_ICONS against every page key; this is the same guard one tier up, and
+// it runs in both directions — a lane with no glyph renders an empty 18px hole, and a glyph
+// for a lane nobody declares is dead weight in a bundle whose bytes are first-paint latency.
+describe("the lane marks", () => {
+  const lanes = () => [...new Set(navPages().map((p) => p.group).filter(Boolean))];
+
+  it("draws every lane the rail lists", () => {
+    for (const lane of lanes()) {
+      expect(LANE_ICONS[lane], lane + " has no mark in routeIcons.js").toBeTruthy();
+    }
+  });
+
+  it("carries no mark for a lane that does not exist", () => {
+    const declared = lanes();
+    for (const lane of Object.keys(LANE_ICONS)) {
+      expect(declared, lane + " has a mark but is not a lane").toContain(lane);
+    }
+  });
+
+  // The rail puts a lane's mark beside the page marks its own panel lists, so a lane that
+  // borrowed one of them would draw the same picture twice in one nav and mean two things.
+  it("draws each lane differently from every other lane", () => {
+    const seen = new Map();
+    for (const [lane, svg] of Object.entries(LANE_ICONS)) {
+      expect(seen.has(svg), lane + " draws the same mark as " + seen.get(svg)).toBe(false);
+      seen.set(svg, lane);
+    }
   });
 });
 

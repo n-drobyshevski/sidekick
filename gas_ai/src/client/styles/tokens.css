@@ -1,6 +1,18 @@
 
 :root {
-  --rail-w: 232px;
+  /* The icon rail's own track. It never moves: the second tier is a panel beside it, not a
+     wider version of it. Sized by its longest label rather than by its icons — "Landscape"
+     and "Assurance" have to sit on one line at 10px, because a rail that ellipsised its own
+     item names would be an icon rail with decoration under it. */
+  --rail-icon-w: 84px;
+  /* The nav panel — wide enough for a framework's full name, which is the longest thing it
+     ever lists ("OWASP Top 10 For Agentic Applications 2026"). */
+  --nav-flyout-w: 280px;
+  /* HOW MUCH CHROME IS ON THE LEFT, which is what this has always meant and why the route
+     overlay can clear it with `left: var(--rail-w)` and nothing else. The rail alone while
+     the panel floats; rail + panel once the panel is pinned into the flow, which navFlyout.js
+     writes onto the root. */
+  --rail-w: var(--rail-icon-w);
   /* The app header's height. A token rather than a literal because the shell's rows, the
      sticky offset below 800px and the rail beneath it all have to agree on one number. */
   --appbar-h: 48px;
@@ -146,6 +158,12 @@
      detail sheet still covers it: a modal that dimmed the whole page except one bar would
      leave the project switcher live underneath it. */
   --z-appbar: 30;
+  /* The nav panel, floating over the content pane. ABOVE the route overlay (20): a panel open
+     while a page refetches must stay readable and clickable, and hovering the rail is exactly
+     what a reader is doing when a route reload starts. BELOW the scrim (40), so a record sheet
+     still covers it — deliberately not --z-popover (52), which is for surfaces that open from
+     INSIDE a sheet and must therefore outrank it. */
+  --z-nav-flyout: 25;
   --z-scrim: 40;
   --z-sheet: 41;
   --z-popover: 52;
@@ -158,6 +176,11 @@
   --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-button: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
   --shadow-sheet: -8px 0 24px -8px rgba(0, 0, 0, 0.18), -2px 0 8px -4px rgba(0, 0, 0, 0.1);
+  /* The sheet's shadow, mirrored. Both are the Whisper-Or-Lift Rule's "real elevation", spent
+     on an overlay rather than a card — but the sheet is anchored to the right edge and this is
+     anchored to the left, and a shadow that fell the same way would pool under the rail
+     instead of over the page the panel covers. */
+  --shadow-flyout: 8px 0 24px -8px rgba(0, 0, 0, 0.18), 2px 0 8px -4px rgba(0, 0, 0, 0.1);
 
   --font: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, "Helvetica Neue",
     sans-serif;
