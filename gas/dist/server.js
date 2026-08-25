@@ -4721,7 +4721,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "b5021b99ad31" : "dev";
+  var BUILD_ID = true ? "293d780ffccf" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -6749,7 +6749,10 @@ var Server = (() => {
       // "bootstrapCore" → "bootstrapCore2": counts / unassigned / filterOptions now honor the
       // show-no-fix toggle and settings gained `showNoFix`; params null → {showNoFix} so the
       // on/off states cache separately and no stale old-shape entry survives the deploy.
-      ...cached("bootstrapCore2", { showNoFix: getShowNoFix2() }, bootstrapCore),
+      // "bootstrapCore2" → "bootstrapCore3": the payload gained `scopeCounts`, which the header's
+      // scope switcher reads for its denominator. A cached old-shape entry has none, and the
+      // caption would render "undefined of undefined" until the next data version.
+      ...cached("bootstrapCore3", { showNoFix: getShowNoFix2() }, bootstrapCore),
       // Live per-request fields: never cached (activeJob changes every poll tick).
       dataVersion: dataVersion(),
       hasCredentials: hasWizCredentials(),
@@ -6757,17 +6760,25 @@ var Server = (() => {
     }));
   }
   function bootstrapCore() {
-    var _a;
+    var _a, _b, _c, _d, _e;
     const scan = currentScan();
     const latest = latestScanRow();
     const showNoFix = getShowNoFix2();
     const records = scan ? visibleFrame(scan.records) : [];
     const counts = {};
     let unassignedCount = 0;
+    const domainCounts = {};
+    const supportGroupCounts = {};
+    let noSupportGroup = 0;
     for (const r of records) {
       const sev2 = String(r["_sev"]);
       counts[sev2] = ((_a = counts[sev2]) != null ? _a : 0) + 1;
-      if (r["_domain"] === UNASSIGNED) unassignedCount += 1;
+      const dom = String((_b = r["_domain"]) != null ? _b : "");
+      if (dom) domainCounts[dom] = ((_c = domainCounts[dom]) != null ? _c : 0) + 1;
+      if (dom === UNASSIGNED) unassignedCount += 1;
+      const sg = String((_d = r["_supportGroup"]) != null ? _d : "");
+      if (sg) supportGroupCounts[sg] = ((_e = supportGroupCounts[sg]) != null ? _e : 0) + 1;
+      else noSupportGroup += 1;
     }
     return {
       // The deployed code stamp (esbuild-injected source hash; "dev" locally). Surfaced so an
@@ -6803,6 +6814,18 @@ var Server = (() => {
       unassignedCount,
       prevCounts: previousSeverityCounts(),
       domainNames: domainNames(getDomains2().items),
+      // The scope switcher's arithmetic, kept apart from `filterOptions.supportGroups` and
+      // `domainNames` so the readers that already take those as bare name lists (the domains
+      // editor, the switcher's own option builders) keep their shape. `register` is the
+      // denominator every caption carries: "1,204" alone cannot tell a small value chain from a
+      // small register, and those call for opposite reactions.
+      scopeCounts: {
+        register: records.length,
+        domains: domainCounts,
+        supportGroups: supportGroupCounts,
+        unassigned: unassignedCount,
+        noSupportGroup
+      },
       filterOptions: scan ? {
         statuses: distinct(records, "status"),
         assetTypes: distinct(records, "vulnerableAsset.type"),

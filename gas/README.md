@@ -29,6 +29,56 @@ vitest specs instead of fixture parity.
 | Scan jobs | `src/server/scanJobs.ts` | resumable page walk (6-min limit) via one-shot trigger continuation |
 | Web app | `src/client/` | hash-routed SPA served by `doGet`; Chart.js 4 bundled into `js_app.html` (no CDN); DESIGN.md system in `styles.css` |
 
+### The shell
+
+A header across the top, a two-tier nav under it, and the page beside that. The header carries
+exactly two things — the product mark and name, and the **scope switcher** — because both
+describe the whole app rather than any one page: the switcher scopes every figure on every
+page, so it reads as chrome rather than as one page's filter. Everything else stays in the
+rail: the nav, **Run scan** and **Quick refresh**, the credentials pill and the last-scan line.
+
+Above 800px the nav's **first tier** is a 76px icon rail: one item per lane — *Overview*,
+*Security* (MTTR & SLA, Program performance, OS vulnerabilities), *Data* (Data, Scan History,
+Attribution) — then a rule, then Settings, which names itself and so sits in an unlabelled
+chrome tail rather than under a "Preferences" heading over one link. **A lane holding one
+visible page is drawn AS that page**, which is why Overview appears on the rail as *Executive*.
+Pointing at a lane opens the **second tier**: a full-height 280px panel listing that lane's
+pages. **A rail item earns a panel by having something to put in it**, so the two multi-page
+lanes have one and Executive and Settings are plain links; the rail draws nothing to advertise
+which is which — the panel is what shows up, and `aria-haspopup` is what says so to a reader
+who cannot see it.
+
+The panel opens on a 220ms cold delay (nothing inside a 400ms warm window, and a grace period
+long enough for the pointer to cross the gap — SC 1.4.13), on `ArrowRight` from the keyboard,
+and on the first tap where there is no hover at all. Its `→|` control **pins** it open as a
+second column, which is what the old collapsed/expanded rail preference became — same
+`localStorage` key, so a reader who had widened the rail keeps a wide left edge. Below 800px
+the rail is a stacked list instead: every page, lane headings as words, one rule above the
+tail, and no panel. `test/navGroups.test.js` and `test/navModel.test.js` hold the shape —
+lanes contiguous, every lane and page marked, the tail drawn once, and the landing route the
+same in `app.js` and `store.js`.
+
+The switcher fronts the two dimensions this register actually scopes by, **value chains** and
+**support groups**, as two groups in one list. It is not a Wiz *project* picker, and cannot be:
+`src/domain/transform.ts` drops the `projects[]` array Wiz returns on every finding, and
+`WIZ_PROJECT_ID_V2` scopes the SYNC rather than the view — a picker over a dimension the ledger
+does not carry would offer slices whose pages all render zero, and a zero meaning "nothing
+here" is indistinguishable on screen from one meaning "never fetched".
+
+**One scope is in force at a time.** The two used to be independent comboboxes at the bottom of
+the rail and their intersection was expressible; picking from either group now clears the other,
+because a header that carries "the scope" cannot carry two of them and still answer "what am I
+looking at" in one line. Scoping stays client-side — the values ride the page context and each
+page passes them into its own RPC — so a pick costs no round trip.
+
+The caption beside the trigger always carries the **denominator** (`31 of 161 findings`), since
+a bare count cannot tell a small support group from a small register, and a **second figure**
+for the rows nobody claimed (`· 104 carry no support group`), since without it the caption
+silently attributes those to some other group. A scope that has fallen out of the register — a
+value chain deleted from Settings — stays in force and says so (`Not in this register — showing
+0 of 161`) rather than resetting silently, because a silent reset looks exactly like never
+having scoped at all. `test/scopeSwitchView.test.js` holds all of it.
+
 ### How SQLite transactions were replaced
 
 - **Commit-record ordering**: the `scans` row is appended **last**. A scan whose row

@@ -1,9 +1,23 @@
-// Wiz Sidekick OS SPA shell: sidebar navigation, scan zone, hash router.
+// Wiz Sidekick OS SPA shell: app header, two-tier navigation, scan zone, hash router.
 
 import { call } from "./api.js";
+import { brandMark } from "./brandMark.js";
+import {
+  focusFirstRow,
+  itemHasPanel,
+  mountNavFlyout,
+  openFlyoutFor,
+  setActiveItem,
+  setNavContext,
+  tapOpensPanel,
+  wireRail,
+} from "./navFlyout.js";
+import { itemForRoute, railItems } from "./navModel.js";
+import { LANE_ICONS, ROUTE_ICONS, RUN_ICON } from "./routeIcons.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
+import { scopeSwitchControl } from "./scopeSwitch.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
-import { clear, el, filterCombobox, fmtDateTime, progressBar, statusPill, toast } from "./ui.js";
+import { clear, el, fmtDateTime, progressBar, statusPill, toast } from "./ui.js";
 import { renderExecutive } from "./pages/executive.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderMttr } from "./pages/mttr.js";
@@ -13,8 +27,15 @@ import { renderData } from "./pages/data.js";
 import { renderSettings } from "./pages/settings.js";
 import { renderAttribution } from "./pages/attribution.js";
 
-// Order matters: the sidebar nav renders pages in this insertion order (grouped by
-// `group`), and the first key is the app's default landing page (see store.parseHash).
+// THE ONE SOURCE for both the router and the nav. Order matters twice over: pages are drawn
+// in this insertion order, LANES ARE THE CONTIGUOUS RUNS OF ONE `group` (navModel.railItems
+// walks it once and joins a page to the item still open, so a lane split in two would draw
+// two items with one name), and the first key is the app's default landing page — which
+// store.parseHash hardcodes as "executive"; test/navGroups.test.js holds the two together.
+//
+// `group: null` is the CHROME TAIL: pages that name themselves, drawn under a rule rather
+// than under a heading. Settings is the whole tail here — a "Preferences" heading over one
+// item would restate the link it sits on.
 const PAGES = {
   executive: { title: "Executive", group: "Overview", render: renderExecutive },
   mttr: { title: "MTTR & SLA", group: "Security", render: renderMttr },
@@ -23,24 +44,21 @@ const PAGES = {
   data: { title: "Data", group: "Data", render: renderData },
   scan_history: { title: "Scan History", group: "Data", render: renderHistory },
   attribution: { title: "Attribution", group: "Data", render: renderAttribution },
-  settings: { title: "Settings", group: "Preferences", render: renderSettings },
+  settings: { title: "Settings", group: null, render: renderSettings },
 };
 
-// Inline nav icons (one per page) — the client has no icon system, so these are small
-// stroke SVGs drawn on currentColor, inlined (the GAS/CSP sandbox blocks icon fonts/CDNs).
-// 24-grid, rendered at 18px. Used both expanded (icon + label) and collapsed (icon only).
-const NAV_ICONS = {
-  executive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 15l4-3"/><circle cx="12" cy="15" r="1"/></svg>',
-  mttr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13.5" r="7"/><path d="M12 13.5V9.5"/><path d="M12 13.5l3 2"/><path d="M9.5 3.5h5"/></svg>',
-  program: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3"/><path d="M12 18.5v3"/><path d="M2.5 12h3"/><path d="M18.5 12h3"/></svg>',
-  overview: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2l7 2.4v5.2c0 4.2-2.9 7-7 8.4-4.1-1.4-7-4.2-7-8.4V5.6z"/><path d="M12 8.5v3.4"/><path d="M12 15h.01"/></svg>',
-  scan_history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M3.5 4.5V9h4.5"/><path d="M12 8.5v4l2.8 1.7"/></svg>',
-  attribution: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4.5h6.5l9 9-6.5 6.5-9-9z"/><path d="M8 8.5h.01"/></svg>',
-  data: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.3" ry="2.8"/><path d="M4.7 5.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/><path d="M4.7 11.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/></svg>',
-  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7.5h8"/><path d="M16 7.5h4"/><circle cx="14" cy="7.5" r="2"/><path d="M4 16.5h4"/><path d="M12 16.5h8"/><circle cx="10" cy="16.5" r="2"/></svg>',
-};
-const RUN_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5l12 7.5-12 7.5z"/></svg>';
-const CHEVRON_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg>';
+// Below this the rail is a stacked list instead of an icon rail with a panel: at that width
+// there is nothing to fly out from and nowhere to put it.
+const NARROW_NAV = "(max-width: 800px)";
+function narrowNav() {
+  return !!(window.matchMedia && window.matchMedia(NARROW_NAV).matches);
+}
+
+/** The rail's items for the current PAGES table. Recomputed rather than cached — it is a
+ *  walk over eight entries, and a cached copy is a second list that could disagree. */
+function currentRailItems() {
+  return railItems(PAGES);
+}
 
 // A span carrying an inline SVG (el() builds HTML nodes, so SVG goes in via innerHTML).
 function iconSpan(svg, cls) {
@@ -49,70 +67,56 @@ function iconSpan(svg, cls) {
   return s;
 }
 
-// Collapsed-rail preference — persisted like the MTTR trend window (own try/catch, since a
-// GAS iframe sandbox can block web storage). Desktop-only: the <=800px top-bar layout
-// ignores the .collapsed class (see styles.css), so a stored flag is simply inert there.
-const SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
-// Collapsed by default: an absent preference reads as collapsed, and only an explicit expand
-// (stored "0" by saveCollapsed) reopens it — so the rail stays out of the way until a user
-// deliberately widens it. A sandbox that blocks storage also lands on collapsed.
-function loadCollapsed() {
-  try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) !== "0"; } catch { return true; }
-}
-function saveCollapsed(v) {
-  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? "1" : "0"); } catch { /* sandboxed */ }
-}
-// Reflect the flag onto the (rebuilt-on-refresh) rail DOM. Width rides the shared --rail-w
-// custom property so the flex main pane and the reload overlay's left edge track it for
-// free. Collapsed nav links get a native title = their label (the visible text is hidden).
-function applyCollapsed(collapsed) {
-  const sidebar = document.querySelector(".sidebar");
-  if (!sidebar) return;
-  sidebar.classList.toggle("collapsed", collapsed);
-  if (collapsed) document.documentElement.style.setProperty("--rail-w", "56px");
-  else document.documentElement.style.removeProperty("--rail-w");
-  const toggle = sidebar.querySelector(".rail-toggle");
-  if (toggle) {
-    toggle.setAttribute("aria-expanded", String(!collapsed));
-    toggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
-    toggle.setAttribute("title", collapsed ? "Expand sidebar" : "Collapse sidebar");
-  }
-  sidebar.querySelectorAll(".nav-link").forEach((a) => {
-    const label = a.querySelector(".nav-label");
-    if (collapsed && label) a.setAttribute("title", label.textContent);
-    else a.removeAttribute("title");
-  });
-}
-
 const app = document.getElementById("app");
 let mainEl = null;
-let sidebarCollapsed = loadCollapsed();
-// The global "Value Chain" filter, shared by every page. "" = the whole chain (no
-// filter). Module-level so it survives route() (which only re-renders mainEl, never
-// the sidebar) and page navigation — nav links carry no state.
+let appbarEl = null;
+let bootData = null; // the last bootstrap payload, so renderAppbar can re-derive on a pick
+// The global "Value Chain" scope, shared by every page. "" = the whole register. Module-level
+// so it survives route() (which only re-renders mainEl, never the shell) and page navigation —
+// nav links carry no state.
 let activeDomain = "";
-// The global "Support group" filter, shared by every page the same way. "" = all groups.
+// The global "Support group" scope, shared by every page the same way. "" = all groups.
+//
+// EXACTLY ONE OF THESE TWO IS EVER SET. They used to be independent filters that could
+// intersect, each with its own combobox at the bottom of the rail; they are now two groups in
+// one header control, and one scope is what a header can honestly name. pickScope() is where
+// that rule lives — clearScope() and the page chips only ever clear.
 let activeSupportGroup = "";
-// Live handles to the two sidebar filterCombobox() wrappers, rebuilt each refresh() —
-// held so clearScope() can reset their shown label/active state via wrapper.setValue()
-// without hunting the DOM (a combobox has no <select> to look up by id/value).
-let domainCombobox = null;
-let supportCombobox = null;
 
-// Toggle the scan-zone's "filtering" accent to match the active global filters.
+// Toggle the scan-zone's "filtering" accent to match the active scope.
 function syncScanZoneFiltering() {
   const zone = document.querySelector(".scan-zone");
   if (zone) zone.classList.toggle("filtering", !!(activeDomain || activeSupportGroup));
 }
 
-// Clear one global filter from a page-header scope chip: reset the state, sync the
-// matching sidebar combobox (shown label + active accent) via its setValue(), and
-// re-render the active page.
+/**
+ * The header switcher's pick: set one scope, clear the other, and re-read the page.
+ *
+ * No server round trip and no re-boot. This app scopes CLIENT-SIDE — the two values ride the
+ * page context and each page passes them into its own RPC — so the payload the switcher itself
+ * reads (`bootData`) is unchanged by a pick, and only the header's own label, caption and
+ * accent need re-deriving. `renderAppbar` does that by rebuilding from the same payload rather
+ * than patching, which is what keeps the caption and the trigger from ever disagreeing.
+ */
+function pickScope(pick) {
+  if (pick.kind === "supportGroup") {
+    activeSupportGroup = pick.value || "";
+    activeDomain = "";
+  } else {
+    activeDomain = pick.value || "";
+    activeSupportGroup = "";
+  }
+  renderAppbar(appbarEl, bootData);
+  syncScanZoneFiltering();
+  route();
+}
+
+// Clear the scope from a page-header chip. The header is rebuilt so its trigger drops the
+// accent and its caption returns to the register-wide figure.
 function clearScope(kind) {
   if (kind === "domain") activeDomain = "";
   else if (kind === "supportGroup") activeSupportGroup = "";
-  if (domainCombobox) domainCombobox.setValue(activeDomain);
-  if (supportCombobox) supportCombobox.setValue(activeSupportGroup);
+  renderAppbar(appbarEl, bootData);
   syncScanZoneFiltering();
   route();
 }
@@ -173,7 +177,7 @@ function bootSplash() {
     { class: "boot-splash", role: "status", "aria-live": "polite" },
     el("div", { class: "boot-splash-inner" },
       el("div", { class: "boot-brand" },
-        el("span", { class: "wordmark-dot", "aria-hidden": "true" }),
+        brandMark(112),
         el("span", { class: "boot-brand-label" }, "Wiz Sidekick OS")),
       bar,
       el("p", { class: "boot-splash-note" }, "Opening the ledger…")),
@@ -203,6 +207,8 @@ async function boot() {
   if (!splash) { splash = bootSplash(); app.append(splash); }
   for (const node of [...app.children]) if (node !== splash) node.remove();
 
+  const appbar = el("header", { class: "appbar" });
+  appbarEl = appbar;
   const sidebar = el("nav", { class: "sidebar", "aria-label": "Main navigation" });
   mainEl = el("main", { id: "main" });
   // Kept out of <main> so clear(mainEl) never removes it and it always covers the
@@ -214,7 +220,22 @@ async function boot() {
       el("div", { class: "route-overlay-fill" })),
     el("span", { class: "route-overlay-label" }),
   );
-  app.append(sidebar, mainEl, routeOverlay);
+  // The nav panel is a SIBLING of the rail rather than a child of it: .sidebar is
+  // overflow-y:auto and would clip it, and .app-body is already the positioning context the
+  // route overlay uses. Unpinned it floats over the content pane; pinned it is an in-flow
+  // column and `main` shrinks beside it.
+  const flyout = el("nav", { class: "nav-flyout", "aria-label": "Section pages" });
+  // The overlay is a child of the BODY row, not of `app`: it veils the content pane while a
+  // page refetches, and the header above it has to stay live — the rail already does, by
+  // sitting outside the overlay's box.
+  app.append(appbar, el("div", { class: "app-body" }, sidebar, flyout, mainEl, routeOverlay));
+  mountNavFlyout(flyout);
+  // The panel asks the shell what it holds each time it opens. Nothing yet — see
+  // navModel.panelBlocks for which candidates were considered and why none of them qualifies
+  // — but the provider is the seam a saved-view store would arrive through, and wiring it now
+  // is what keeps that a one-function change rather than a re-derivation.
+  setNavContext(() => ({}));
+  wireRail(sidebar, (id) => currentRailItems().filter((i) => i.id === id)[0] || null);
 
   let data;
   try {
@@ -227,10 +248,14 @@ async function boot() {
         el("button", { class: "primary", onclick: () => refresh() }, "Retry"),
       ),
     );
+    bootData = null;
+    renderAppbar(appbar, null);
     renderSidebar(sidebar, null);
     hideBootSplash(); // reveal the error card
     return;
   }
+  bootData = data;
+  renderAppbar(appbar, data);
   renderSidebar(sidebar, data);
   route(); // paints the page's skeleton synchronously up to its first data await
   // Fade the splash only after the skeleton has laid out — double rAF flushes the (cached)
@@ -238,28 +263,130 @@ async function boot() {
   requestAnimationFrame(() => requestAnimationFrame(hideBootSplash));
 }
 
-function renderSidebar(sidebar, data) {
-  clear(sidebar);
-  const railToggle = el("button", {
-    class: "rail-toggle", type: "button",
-    onclick: () => {
-      sidebarCollapsed = !sidebarCollapsed;
-      saveCollapsed(sidebarCollapsed);
-      applyCollapsed(sidebarCollapsed);
-    },
-  });
-  railToggle.innerHTML = CHEVRON_ICON;
-  sidebar.append(
-    el("div", { class: "wordmark" },
-      el("span", { class: "wordmark-dot", "aria-hidden": "true" }),
-      el("span", { class: "wordmark-label" }, "Wiz Sidekick OS"),
-      railToggle),
+/**
+ * The bar across the top: whose product this is, and which slice of the register it is showing.
+ *
+ * DELIBERATELY TWO THINGS. Both describe the whole app rather than any one page — the switcher
+ * scopes every figure on every page, so it reads as chrome rather than as one page's filter.
+ * The reference screens' search box, notification bell and avatar are absent because none of
+ * them has anything behind it here. Everything else stays in the rail: the nav, Run scan, the
+ * credentials pill and the last-scan line.
+ *
+ * Rebuilt wholesale rather than patched, and from one payload, so the switcher's label, its
+ * caption and its accent are always three readings of the same state.
+ *
+ * @param {HTMLElement} appbar
+ * @param {object|null} data  the bootstrap payload, or null when boot failed
+ */
+function renderAppbar(appbar, data) {
+  if (!appbar) return;
+  clear(appbar);
+  // Decorative, because the name is right there beside it in text and never hidden — the
+  // shell's other copy of the mark (the splash) is decorative for the same reason. The rail
+  // carries no mark at all now, so nothing in this file names the product twice.
+  appbar.append(
+    brandMark(22, { compact: true }),
+    el("span", { class: "appbar-name" }, "Wiz Sidekick OS"),
   );
+  // Null when there is no register to slice — including the boot-failure path, where offering
+  // a picker over data we could not fetch would be a control with nothing behind it. The rule
+  // goes with it: a separator with one side missing separates nothing.
+  const scopeSwitch = scopeSwitchControl(
+    data, { domain: activeDomain, supportGroup: activeSupportGroup }, pickScope,
+  );
+  if (scopeSwitch) {
+    appbar.append(el("span", { class: "appbar-sep", "aria-hidden": "true" }), scopeSwitch);
+  }
+}
+
+/**
+ * A lane heading.
+ *
+ * An h2 rather than a div, and the label inside a span rather than loose in it, so the icon
+ * rail can clip the words (rather than remove them) and draw the h2 itself as the hairline
+ * between two icon clusters. The heading stays announced and navigable in every state; only
+ * its pixels change.
+ */
+function navGroupHeading(label) {
+  return el("h2", { class: "nav-group" }, el("span", { class: "nav-group-label" }, label));
+}
+
+// The chrome tail's separator. Settings names itself, so the tail is marked rather than
+// labelled — presentational, because it says nothing a reader could not see, and the page
+// under it is already an ordinary link.
+function navRule() {
+  return el("div", { class: "nav-rule", role: "presentation" });
+}
+
+/**
+ * One rail item: a link that navigates, and — where the item has a panel — the trigger that
+ * opens it.
+ *
+ * ONE CONTROL, and no caret beside it. `aria-haspopup` and `aria-expanded` say a panel is there
+ * and whether it is open, ArrowRight opens it and lands focus inside, Escape closes it and
+ * hands focus back. Enter still navigates, because this is still a link: the panel is a way in,
+ * never the only one.
+ */
+function railItem(item) {
+  const icon = item.kind === "lane" ? LANE_ICONS[item.id] : ROUTE_ICONS[item.route];
+  const node = el("div", { class: "rail-item", "data-nav-item": item.id });
+  const link = el(
+    "a",
+    {
+      class: "nav-link rail-link",
+      href: `#/${item.route}`,
+      // index.html sets <base target="_top"> so external links escape the GAS sandbox iframe.
+      // Without an explicit _self, hash links inherit it and navigate the top window to the
+      // sandbox's own googleusercontent URL — which, loaded bare, is a blank page.
+      target: "_self",
+      // Only where there is one. A rail item that announced a popup it does not have would
+      // send a screen-reader user hunting for a panel that never opens.
+      "aria-haspopup": itemHasPanel(item) ? "true" : null,
+      "aria-expanded": itemHasPanel(item) ? "false" : null,
+      onclick: (e) => {
+        // Where there is no hover there is no flyout, so the first tap has to do the revealing.
+        if (tapOpensPanel(item, node)) e.preventDefault();
+      },
+      onkeydown: (e) => {
+        if (e.key !== "ArrowRight" || !itemHasPanel(item)) return;
+        e.preventDefault();
+        openFlyoutFor(item, node, { viaFocus: true });
+        focusFirstRow();
+      },
+    },
+    iconSpan(icon),
+    el("span", { class: "nav-label" }, item.label),
+  );
+  node.append(link);
+  return node;
+}
+
+/** The two-tier rail: one item per lane, then a rule, then the chrome tail. */
+function renderRail(sidebar, items) {
+  let ruled = false;
+  for (const item of items) {
+    // Keyed on `lane`, never on `kind`: a lane holding one visible page is drawn AS that page,
+    // so kind alone would put the rule in front of the first collapsed lane instead of in front
+    // of the chrome.
+    if (item.lane === null && !ruled) { sidebar.append(navRule()); ruled = true; }
+    sidebar.append(railItem(item));
+  }
+}
+
+/**
+ * The stacked list, for the top-bar layout below 800px: every page, lane headings as words, one
+ * rule above the chrome tail. This is the rail as it shipped before the panel existed, and it
+ * stays because at that width it is still the right answer.
+ */
+function renderStackedNav(sidebar) {
   const { route: active } = parseHash();
-  let lastGroup = null;
+  // `undefined`, not null: null is a real group — the unlabelled chrome tail — and a detector
+  // seeded with it would start the list inside that tail and never draw its rule.
+  let lastGroup;
   for (const [key, page] of Object.entries(PAGES)) {
+    if (page.hidden) continue;
     if (page.group !== lastGroup) {
-      sidebar.append(el("div", { class: "nav-group" }, page.group));
+      sidebar.append(page.group ? navGroupHeading(page.group) : navRule());
       lastGroup = page.group;
     }
     sidebar.append(
@@ -268,22 +395,24 @@ function renderSidebar(sidebar, data) {
         {
           class: `nav-link${key === active ? " active" : ""}`,
           href: `#/${key}`,
-          // index.html sets <base target="_top"> so external links escape the GAS
-          // sandbox iframe. Without an explicit _self, hash links inherit it and
-          // navigate the top window to the sandbox's own googleusercontent URL —
-          // which, loaded bare, is a blank page. _self keeps routing in-frame.
           target: "_self",
           "aria-current": key === active ? "page" : null,
         },
-        iconSpan(NAV_ICONS[key]),
+        iconSpan(ROUTE_ICONS[key]),
         el("span", { class: "nav-label" }, page.title),
       ),
     );
   }
+}
 
-  // Scan zone — carries a subtle "filtering" accent when a global filter is active, so
-  // the source of a scoped view is visible where the selects live (the scopeBar in the
-  // content pane is the primary cue).
+function renderSidebar(sidebar, data) {
+  clear(sidebar);
+  if (narrowNav()) renderStackedNav(sidebar);
+  else renderRail(sidebar, currentRailItems());
+
+  // Scan zone — carries a subtle "filtering" accent when a scope is active, so the source of a
+  // scoped view is visible where the scan controls live (the header switcher and the scopeBar
+  // in the content pane are the primary cues).
   const zone = el("div",
     { class: `scan-zone${activeDomain || activeSupportGroup ? " filtering" : ""}` });
   const runBtn = el("button", { class: "primary", onclick: () => startScan(false, runBtn) },
@@ -313,8 +442,8 @@ function renderSidebar(sidebar, data) {
           ? statusPill("ok", "Credentials loaded")
           : statusPill("neutral", "Dry-run (no credentials)"),
       ),
-      // Compact stand-in for the pill above, shown only while the rail is collapsed (the
-      // captions are hidden then) so the credentials/dry-run state stays glanceable.
+      // Compact stand-in for the pill above, shown on the icon rail (where the captions do not
+      // fit) so the credentials/dry-run state stays glanceable at 76px.
       el("span", {
         class: `rail-status-dot ${data.hasCredentials ? "ok" : "neutral"}`,
         "aria-hidden": "true",
@@ -340,66 +469,18 @@ function renderSidebar(sidebar, data) {
     }
   }
 
-  // Global "Value Chain" filter — one searchable combobox shared by every page, at the
-  // top of the bottom cluster (above the scan controls). Only shown when more than one
-  // value chain is configured; otherwise every page is already the whole chain. The
-  // sidebar (and this filter with it) is rebuilt wholesale on every refresh(), so the
-  // handle is re-created and re-stashed here each time too.
-  domainCombobox = null;
-  if (data && data.domainNames && data.domainNames.length > 1) {
-    // Drop a stale selection if its value chain was removed from settings.
-    if (activeDomain && !data.domainNames.includes(activeDomain)) activeDomain = "";
-    domainCombobox = filterCombobox({
-      value: activeDomain,
-      options: data.domainNames,
-      defaultLabel: "Value Chain",
-      ariaLabel: "Filter by value chain",
-      variant: "domain",
-      onChange: (v) => {
-        activeDomain = v;
-        syncScanZoneFiltering();
-        route();
-      },
-    });
-    // No visible label — the default option reads "Value Chain" and the trigger keeps
-    // its aria-label for assistive tech. The --domain modifier (set by filterCombobox)
-    // keeps this filter reachable in the collapsed icon rail (as a funnel trigger);
-    // Support group has its own --support modifier for the same purpose, below.
-    zone.prepend(domainCombobox);
-  }
-
-  // Global "Support group" filter — a second sidebar combobox alongside Value Chain,
-  // driven by the subscriptions' Wiz/provisioning tag. Shown only when the scan surfaced
-  // at least one support group (i.e. the map has been refreshed and joined). A
-  // deployment can have ~20 groups, so this is the one that actually needs the
-  // combobox's adaptive search box (searchThreshold defaults to 7).
-  const groups = (data && data.filterOptions && data.filterOptions.supportGroups) || [];
-  supportCombobox = null;
-  if (groups.length) {
-    if (activeSupportGroup && !groups.includes(activeSupportGroup)) activeSupportGroup = "";
-    supportCombobox = filterCombobox({
-      value: activeSupportGroup,
-      options: groups,
-      defaultLabel: "All support groups",
-      searchPlaceholder: "Search support groups…",
-      ariaLabel: "Filter by support group",
-      variant: "support",
-      onChange: (v) => {
-        activeSupportGroup = v;
-        syncScanZoneFiltering();
-        route();
-      },
-    });
-    // Visible "Support group" label above the trigger, expanded-rail only — the combobox
-    // wrapper already carries the sidebar-filter--support modifier the collapsed CSS
-    // hides this label inside (matching the funnel filter, which has no visible label).
-    supportCombobox.prepend(el("label", { class: "field-label" }, "Support group"));
-    zone.prepend(supportCombobox);
-  }
+  // The two global filters that used to live here — Value Chain and Support group — are one
+  // control in the app header now. They were the only things in the rail that were not
+  // destinations, and a scope is not a destination.
+  //
+  // A SCOPE THAT FELL OUT OF THE REGISTER IS NO LONGER SILENTLY DROPPED, which is what the two
+  // comboboxes did on every rebuild. Deleting a value chain in Settings and coming back to a
+  // whole-register view looks exactly like never having scoped at all — the numbers change,
+  // nothing says why, and the reader is left to work out which of the two happened. The
+  // switcher keeps the stale value in force and says so in words instead ("Not in this
+  // register — showing 0 of N", scopeSwitchView), so the empty pages behind it are explained
+  // by the control that caused them.
   sidebar.append(zone);
-  // Re-apply the persisted collapsed state — the rail is rebuilt wholesale on every
-  // refresh(), so the class + width + per-link titles must be re-stamped each time.
-  applyCollapsed(sidebarCollapsed);
 }
 
 async function startScan(incremental, btn) {
@@ -522,13 +603,22 @@ async function route() {
   const { route: key, params } = parseHash();
   const page = PAGES[key] || PAGES.executive;
   document.title = `${page.title} — Wiz Sidekick OS`;
-  // active nav state
+  // active nav state — every link, wherever it is drawn: the stacked list, the icon rail, and
+  // the panel's rows are all `.nav-link`, and all three have to agree on where you are.
   document.querySelectorAll(".nav-link").forEach((a) => {
     const isActive = a.getAttribute("href") === `#/${key}`;
     a.classList.toggle("active", isActive);
     if (isActive) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   });
+  // The rail marks the ITEM the route belongs to — a lane, usually. Deliberately a class and
+  // not `aria-current="page"`: the lane is not the page, and the page's own row inside the
+  // panel is already carrying that.
+  const here = itemForRoute(currentRailItems(), key);
+  document.querySelectorAll(".rail-item").forEach((node) => {
+    node.classList.toggle("current", !!here && node.getAttribute("data-nav-item") === here.id);
+  });
+  setActiveItem(here);
   clear(mainEl);
   // The first render after a boot is covered by the boot splash → page skeleton, so it skips
   // the veil to avoid stacking two loaders; later navigations use it as normal.

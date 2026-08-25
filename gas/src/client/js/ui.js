@@ -1,6 +1,8 @@
 // Shared DOM helpers and components: element builder, severity badges, KPI tiles,
 // change chips, toasts, pager, CSV download, dialogs, and the finding sheet shell.
 
+import { uiIcon } from "./uiIcons.js";
+
 export function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -616,64 +618,143 @@ export function severityScopeFilter({ selectable, scope, onApply, ariaContext = 
 let _comboboxSeq = 0;
 
 /**
+ * An option, in the one shape the list works in.
+ *
+ * A plain string is still an option — `value === label`, no hint, no group — because most
+ * lists in this app are exactly that and should not have to say so. The object form exists
+ * for the header's scope switcher, where the value is not the label (a value chain and a
+ * support group can share a name, so one kind carries a prefix) and where a row has to say
+ * in words which kind it is and how much of the register it covers.
+ */
+function comboNormalize(list) {
+  return (list || []).map((o) => (typeof o === "string"
+    ? { value: o, label: o, hint: "", group: "", icon: "" }
+    : {
+      value: o.value,
+      label: o.label == null ? o.value : o.label,
+      hint: o.hint || "",
+      group: o.group || "",
+      // A uiIcon name, drawn before the label. Decoration by contract: a row must still say
+      // in words whatever the glyph is meant to suggest, because a reader who cannot tell two
+      // 14px marks apart is reading the label either way.
+      icon: o.icon || "",
+    }));
+}
+
+/**
  * Reusable searchable combobox: a trigger `<button>` (same open/close/dismiss mechanics
  * as severityScopeFilter — capture-phase document click to close on outside click,
  * document keydown for Escape, focusout when focus leaves the widget) plus a listbox
- * popover. Used for the two global sidebar filters (Value Chain, Support group), each
- * needing ~20 options to stay scannable.
+ * popover.
  *
- * The popover is portaled to `document.body` (not appended inside the wrapper) because
- * the sidebar scrolls (`overflow-y:auto`) and would clip an in-rail popover, and is
- * positioned `fixed`, opening upward from the trigger since the filters sit at the rail
- * bottom. It closes (rather than repositions) on scroll/resize.
+ * The popover is portaled to `document.body` (not appended inside the wrapper) because a
+ * trigger can sit inside a scrolling region that would clip it, and is positioned `fixed`.
+ * It OPENS DOWNWARD and flips above only when there is genuinely no room below and more
+ * above — this used to open upward unconditionally, which was right while the only two
+ * callers were filters at the bottom of the rail and wrong the moment the scope switcher
+ * moved into the header. It closes (rather than repositions) on scroll/resize.
  *
- * `options` is the selectable string[], NOT including the reset entry — the reset row
- * (label `defaultLabel`, value "") is always pinned at the top of the list regardless of
- * the search query. A search input appears only once `options.length > searchThreshold`,
- * so a short list (e.g. Value Chain) stays a plain dropdown.
+ * `options` are plain strings or `{value, label, hint, group, icon}` (see comboNormalize).
+ * Rows are searched on label AND hint, and a `group` emits a heading when it changes while
+ * walking the list in order — so a list that does not sort by group would fragment its own
+ * headings. A search input appears only once the list is longer than `searchThreshold`, so a
+ * short list stays a plain dropdown.
  *
- * `onChange(newValue)` fires on selection. The returned wrapper carries `setValue(v)`,
- * which updates the shown label/active state WITHOUT firing onChange — for callers (e.g.
- * clearScope) that need to reset the control programmatically.
+ * `pinnedRows` are rows shown above the list and never filtered by the query — the reset row
+ * is one of these. Omit it and one is synthesised from `defaultLabel` at value "", which is
+ * what every plain filter wants.
+ *
+ * THREE EXTRAS ARE OPT-IN AND INERT UNLESS ASKED FOR, so a list that wants to be a plain list
+ * stays one: `header: {title, note}` puts a heading and a sentence above the search;
+ * `checkSelected` marks the chosen row with a glyph rather than colour and weight alone; and
+ * `leading` puts a node inside the trigger before its text. They exist because one caller —
+ * the app-header scope switcher — is not choosing a value, it is changing what every figure in
+ * the app is counted over, and that consequence has to be on the panel that does it.
+ *
+ * `fallbackLabel` is what the trigger prints for a value the option list does not carry.
+ * Without it a stale selection prints its raw value, which reads as corruption rather than as
+ * a scope that no longer matches what was scanned.
+ *
+ * `onChange(newValue)` fires on selection. The returned wrapper carries `setValue(v)`, which
+ * updates the shown label/active state WITHOUT firing onChange — for callers that need to
+ * reflect external state onto the control without looping.
  */
 export function filterCombobox({
-  value, options, defaultLabel, ariaLabel, searchPlaceholder = "Search…",
-  variant, searchThreshold = 7, onChange, id,
+  value, options, pinnedRows, defaultLabel, ariaLabel, searchPlaceholder = "Search…",
+  fallbackLabel = "", searchThreshold = 7, onChange, id, leading = null,
+  popClass = "", header = null, checkSelected = false,
 }) {
   const seq = ++_comboboxSeq;
   const listboxId = `combobox-list-${seq}`;
+  const noteId = `${listboxId}-note`;
   let current = value || "";
+  const opts = comboNormalize(options);
+  const pinned = pinnedRows
+    ? comboNormalize(pinnedRows)
+    : comboNormalize([{ value: "", label: defaultLabel }]);
 
-  const triggerText = el("span", { class: "combobox-trigger-text" }, current || defaultLabel);
+  /** What the trigger prints: the option's LABEL, resolved from the value. */
+  function labelFor(v) {
+    if (!v) return pinned[0] ? pinned[0].label : defaultLabel;
+    const hit = [...pinned, ...opts].find((o) => o.value === v);
+    return hit ? hit.label : (fallbackLabel || v);
+  }
+
+  const triggerText = el("span", { class: "combobox-trigger-text" }, labelFor(current));
   const trigger = el(
     "button",
     {
       type: "button", class: `combobox-trigger${current ? " active" : ""}`,
       "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": ariaLabel,
-      title: current || defaultLabel,
+      title: labelFor(current),
       onclick: (e) => { e.stopPropagation(); open ? close() : openPop(); },
     },
+    leading,
     triggerText,
     el("span", { class: "combobox-caret", "aria-hidden": "true" }, "▾"),
   );
-  const wrap = el(
-    "div",
-    { class: `combobox sidebar-filter sidebar-filter--${variant}`, id: id || null },
-    trigger,
-  );
+  const wrap = el("div", { class: "combobox", id: id || null }, trigger);
 
   let open = false;
   let pop = null;
   let searchEl = null;
   let listEl = null;
   let query = "";
-  let rows = []; // [{ value, id, node }], reset row first, in DOM order
+  let rows = []; // [{ value, id, node }], pinned rows first, in DOM order
   let activeIndex = 0;
 
   function matchingOptions() {
     const q = query.trim().toLowerCase();
-    if (!q) return options;
-    return options.filter((o) => o.toLowerCase().includes(q));
+    if (!q) return opts;
+    return opts.filter((o) => o.label.toLowerCase().includes(q)
+      || (o.hint && o.hint.toLowerCase().includes(q)));
+  }
+
+  /** One selectable row, with its optional glyph, hint and selected mark. */
+  function optionRow(opt, optId) {
+    const selected = current === opt.value;
+    const row = el(
+      "li",
+      { id: optId, role: "option", class: "combobox-option",
+        "aria-selected": selected ? "true" : "false" },
+      opt.icon ? el("span", { class: "combobox-option-icon", "aria-hidden": "true" },
+        uiIcon(opt.icon, 14)) : null,
+      el("span", { class: "combobox-option-body" },
+        el("span", { class: "combobox-option-label" }, opt.label),
+        opt.hint ? el("span", { class: "combobox-option-hint" }, opt.hint) : null),
+      checkSelected && selected
+        ? el("span", { class: "combobox-option-check", "aria-hidden": "true" }, uiIcon("check", 14))
+        : null,
+    );
+    // MOUSEDOWN WITH preventDefault, NOT CLICK, and this is a bug fix rather than a style.
+    // A `click` listener never fires when the popover has a search box: mousedown on a row
+    // blurs the input, the wrapper's `focusout` sees a null relatedTarget, close() removes the
+    // popover, and the click lands on nothing. The search box only appears above
+    // `searchThreshold` options, so every list in this app was under it and the defect stayed
+    // invisible — the one control that most needed the search was the one that could not be
+    // clicked. Preventing the default keeps focus in the input, so nothing blurs.
+    row.addEventListener("mousedown", (e) => { e.preventDefault(); select(opt.value); });
+    return row;
   }
 
   // Rebuilds the option rows for the current query. `resetActive` re-lands the active
@@ -683,29 +764,31 @@ export function filterCombobox({
   function buildRows({ resetActive = false } = {}) {
     clear(listEl);
     rows = [];
-    const resetId = `${listboxId}-opt-reset`;
-    const resetRow = el(
-      "li",
-      { id: resetId, role: "option", class: "combobox-option combobox-option--reset",
-        "aria-selected": current === "" ? "true" : "false" },
-      defaultLabel,
-    );
-    resetRow.addEventListener("click", () => select(""));
-    listEl.append(resetRow);
-    rows.push({ value: "", id: resetId, node: resetRow });
+    pinned.forEach((opt, i) => {
+      const optId = `${listboxId}-opt-pin-${i}`;
+      const row = optionRow(opt, optId);
+      row.classList.add("combobox-option--reset");
+      listEl.append(row);
+      rows.push({ value: opt.value, id: optId, node: row });
+    });
 
     const matches = matchingOptions();
+    // `undefined`, not "": the ungrouped list is a real state and a detector seeded with ""
+    // would suppress the first heading of a list whose first group is unnamed.
+    let lastGroup;
     matches.forEach((opt, i) => {
+      if (opt.group !== lastGroup) {
+        // role="presentation" so the keyboard walk (which reads `rows`) steps over it and a
+        // screen reader does not announce it as a choice.
+        if (opt.group) {
+          listEl.append(el("li", { role: "presentation", class: "combobox-group" }, opt.group));
+        }
+        lastGroup = opt.group;
+      }
       const optId = `${listboxId}-opt-${i}`;
-      const row = el(
-        "li",
-        { id: optId, role: "option", class: "combobox-option",
-          "aria-selected": current === opt ? "true" : "false" },
-        opt,
-      );
-      row.addEventListener("click", () => select(opt));
+      const row = optionRow(opt, optId);
       listEl.append(row);
-      rows.push({ value: opt, id: optId, node: row });
+      rows.push({ value: opt.value, id: optId, node: row });
     });
     if (matches.length === 0 && query.trim()) {
       listEl.append(el("li", { role: "presentation", class: "combobox-empty" }, "No matches"));
@@ -734,49 +817,73 @@ export function filterCombobox({
 
   function select(v) {
     current = v;
-    triggerText.textContent = current || defaultLabel;
-    trigger.title = current || defaultLabel;
+    triggerText.textContent = labelFor(current);
+    trigger.title = labelFor(current);
     trigger.classList.toggle("active", !!current);
     close();
     trigger.focus();
     if (onChange) onChange(current);
   }
 
-  // Position the portaled popover against the live trigger rect: clamp horizontally to
-  // the viewport, anchor its bottom edge just above the trigger (it always opens
-  // upward — the filters sit at the rail bottom, expanded or collapsed), and cap the
-  // list's own max-height to the space actually available above so the LIST scrolls
-  // internally rather than the popover running off the top of the screen.
+  // Position the portaled popover against the live trigger rect: clamp horizontally to the
+  // viewport, open DOWNWARD, and flip above only when there is genuinely no room below AND
+  // more above — flipping toward the smaller gap would trade one clipped edge for another.
+  // Either way the list's own max-height is capped to the space actually available on the
+  // chosen side, so the LIST scrolls internally rather than the popover running off screen.
   function position() {
     const rect = trigger.getBoundingClientRect();
     const popWidth = Math.min(Math.max(rect.width, 240), window.innerWidth - 16);
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - popWidth - 8));
+    const below = window.innerHeight - rect.bottom - 16;
+    const above = rect.top - 16;
+    const flipped = below < 200 && above > below;
     pop.style.width = `${popWidth}px`;
     pop.style.left = `${left}px`;
-    pop.style.bottom = `${window.innerHeight - rect.top + 6}px`;
-    listEl.style.maxHeight = `${Math.min(320, Math.max(120, rect.top - 24))}px`;
+    if (flipped) {
+      pop.style.top = "";
+      pop.style.bottom = `${window.innerHeight - rect.top + 6}px`;
+    } else {
+      pop.style.bottom = "";
+      pop.style.top = `${rect.bottom + 6}px`;
+    }
+    // The head (title, note, search) sits outside the scrolling list, so the room the LIST
+    // may take is what is left after it — measured rather than guessed, since the scope
+    // switcher's note is two lines on a narrow header and one on a wide one.
+    const headH = pop.clientHeight - (listEl.clientHeight || 0);
+    const room = (flipped ? above : below) - Math.max(0, headH) - 12;
+    listEl.style.maxHeight = `${Math.min(320, Math.max(120, room))}px`;
   }
 
   function openPop() {
     open = true;
     query = "";
-    const showSearch = options.length > searchThreshold;
+    const showSearch = opts.length > searchThreshold;
     listEl = el("ul", { role: "listbox", class: "combobox-list", id: listboxId, "aria-label": ariaLabel });
+    const head = [];
+    if (header) {
+      // WHAT THE PANEL HAS TO SAY THAT ITS ROWS CANNOT. Every row here is a name; none of them
+      // can tell you what picking one does to the rest of the app. A consequence that large
+      // should not have to be discovered by trying it.
+      head.push(el("div", { class: "combobox-head" },
+        el("div", { class: "combobox-head-title" }, header.title),
+        header.note ? el("p", { class: "combobox-head-note", id: noteId }, header.note) : null));
+    }
     if (showSearch) {
       searchEl = el("input", {
         type: "text", class: "combobox-search", placeholder: searchPlaceholder,
         role: "combobox", "aria-expanded": "true", "aria-controls": listboxId,
         "aria-autocomplete": "list", autocomplete: "off", spellcheck: "false",
+        "aria-describedby": header && header.note ? noteId : null,
         oninput: () => { query = searchEl.value; buildRows({ resetActive: true }); },
         onkeydown: onListKey,
       });
-      pop = el("div", { class: "combobox-pop" }, searchEl, listEl);
+      head.push(searchEl);
     } else {
       searchEl = null;
       listEl.setAttribute("tabindex", "-1");
       listEl.addEventListener("keydown", onListKey);
-      pop = el("div", { class: "combobox-pop" }, listEl);
     }
+    pop = el("div", { class: `combobox-pop${popClass ? " " + popClass : ""}` }, head, listEl);
     document.body.append(pop);
     buildRows();
     position();
@@ -830,8 +937,8 @@ export function filterCombobox({
   // calling onChange or touching open state.
   wrap.setValue = (v) => {
     current = v || "";
-    triggerText.textContent = current || defaultLabel;
-    trigger.title = current || defaultLabel;
+    triggerText.textContent = labelFor(current);
+    trigger.title = labelFor(current);
     trigger.classList.toggle("active", !!current);
   };
   return wrap;
