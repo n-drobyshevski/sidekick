@@ -267,9 +267,6 @@
 .gq-name[data-category="exposure"] .gq-cell-icon { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
 
 /* ----------------------------------------------------------------- column chooser */
-.gq-columns { display: flex; flex-direction: column; gap: 14px; min-width: 220px; }
-.gq-columns-group { display: flex; flex-direction: column; gap: 6px; }
-.gq-columns-group > .label { margin: 0; }
 
 @media (max-width: 800px) {
   .gq { padding: var(--space-2) 10px; }
@@ -593,8 +590,6 @@
 .gq-pal-back:hover { background: var(--wash-hover); border-color: transparent; color: var(--ink); }
 .gq-pal-drill-title { font-size: 13px; font-weight: 600; color: var(--ink); }
 .gq-pal-drill-body { display: block; padding: 0 var(--space-1) var(--space-1); }
-.gq-pal-text { width: 100%; margin: 0; }
-.gq-pal-hint { margin: 6px var(--space-half) 0; }
 
 /* ------------------------------------------------------------------ column panel */
 /* A compact popover on the Columns button, not a sheet: choosing columns is an adjustment to

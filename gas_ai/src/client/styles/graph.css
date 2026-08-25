@@ -42,10 +42,6 @@
   margin-left: auto;
   display: flex; flex-wrap: wrap; gap: var(--space-2) 14px; align-items: center;
 }
-.workbench-controls__group { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
-.workbench-controls__group + .workbench-controls__group {
-  padding-left: 14px; border-left: 1px solid var(--hairline);
-}
 
 /* A native select with its dimension named beside it, so "Rows" and "Smart order" stop
    floating with nothing attached. The label is aria-hidden — the select keeps its own

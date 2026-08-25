@@ -158,7 +158,6 @@
 .kv-dot { display: inline-block; width: 7px; height: 7px; border-radius: var(--radius-pill); margin-right: 6px; }
 .kv-dot--ok { background: var(--ok); }
 .kv-dot--idle { background: var(--text-3); }
-.kv-copy { margin-left: 6px; }
 
 .prov-strip {
   display: flex; flex-wrap: wrap; gap: var(--space-1) 18px; margin: 14px 0 0;

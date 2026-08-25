@@ -21,6 +21,18 @@
  * element that needs to be present-but-not-displayed has `.sr-only` for that. */
 [hidden] { display: none !important; }
 
+/* The present-but-not-displayed utility the guard above points at, defined here because the
+   comment above already calls it the app-wide answer and it was living in sheet.css.
+   There used to be TWO of these: this one, and a weaker `.visually-hidden` in aars.css that
+   omitted `clip-path: inset(50%)`, `margin: -1px`, `padding: 0` and `border: 0` — the
+   belt-and-braces half of the recipe, without which the element can still leak a visible
+   1px box in some engines. aars.js's twelve uses moved onto this one. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  border: 0;
+}
+
 /* ------------------------------------------------------------------ shell / nav */
 /* Fixed viewport-height shell: the rail always fills the viewport (pinning the sync
    zone to the bottom) and the content pane scrolls on its own. */
@@ -499,9 +511,6 @@ main.full-bleed > .empty { margin: 28px var(--space-6); }
      hosted as a modal sheet at this width, so the split is just the canvas. */
   .workbench-split { display: block; }
   .workbench-body { height: min(70vh, 640px); }
-  .workbench-controls__group + .workbench-controls__group {
-    padding-left: 0; border-left: none;
-  }
   .workbench-table { position: static; height: auto; max-height: 70vh; }
   .workbench-controls { margin-left: 0; width: 100%; }
   .workbench-search input[type="search"] { width: 100%; }

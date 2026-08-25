@@ -376,7 +376,7 @@ function axisBlock({ name, values, ordered, lede, steps, note }) {
         step.yields
           ? el(
             "span", { class: "axis-step__yield" },
-            el("span", { class: "visually-hidden" }, "reads "),
+            el("span", { class: "sr-only" }, "reads "),
             el("span", { "aria-hidden": "true" }, "→ "),
             step.yields,
           )
@@ -738,7 +738,7 @@ export async function renderAarsRules(main, _params, ctx) {
   const liveNote = el("span", {
     role: "status",
     "aria-live": "polite",
-    class: "visually-hidden",
+    class: "sr-only",
   });
   impact.append(liveNote);
 
@@ -943,7 +943,7 @@ export async function renderAarsRules(main, _params, ctx) {
     el(
       "table",
       { class: "data rule-table" },
-      el("caption", { class: "visually-hidden" },
+      el("caption", { class: "sr-only" },
         "Compliance-gap pricing rules, in the order they are tried"),
       el(
         "thead",
@@ -957,7 +957,7 @@ export async function renderAarsRules(main, _params, ctx) {
           el("th", {}, "Code"),
           el("th", {}, "Points"),
           el("th", { class: "rule-noteh" }, "Note"),
-          el("th", {}, el("span", { class: "visually-hidden" }, "Actions")),
+          el("th", {}, el("span", { class: "sr-only" }, "Actions")),
         ),
       ),
       cascadeBody,
@@ -2496,7 +2496,7 @@ export async function renderAarsRules(main, _params, ctx) {
       el(
         "table",
         { class: "data rule-table" },
-        el("caption", { class: "visually-hidden" }, "Problem tree outcome rules, tried in order"),
+        el("caption", { class: "sr-only" }, "Problem tree outcome rules, tried in order"),
         el(
           "thead",
           {},
@@ -2508,7 +2508,7 @@ export async function renderAarsRules(main, _params, ctx) {
             ...AXIS_DEFS.map((a) => el("th", {}, a.label)),
             el("th", {}, "Outcome"),
             el("th", { class: "rule-noteh" }, "Note"),
-            el("th", {}, el("span", { class: "visually-hidden" }, "Actions")),
+            el("th", {}, el("span", { class: "sr-only" }, "Actions")),
           ),
         ),
         pCascadeBody,
@@ -2737,7 +2737,7 @@ export async function renderAarsRules(main, _params, ctx) {
       el(
         "table",
         { class: "data rule-table" },
-        el("caption", { class: "visually-hidden" }, "Wiz combo rules with a known exploit maturity"),
+        el("caption", { class: "sr-only" }, "Wiz combo rules with a known exploit maturity"),
         el(
           "thead",
           {},
@@ -2746,7 +2746,7 @@ export async function renderAarsRules(main, _params, ctx) {
             {},
             el("th", {}, "Wiz combo rule id"),
             el("th", {}, "Maturity"),
-            el("th", {}, el("span", { class: "visually-hidden" }, "Actions")),
+            el("th", {}, el("span", { class: "sr-only" }, "Actions")),
           ),
         ),
         pExploitBody,
@@ -3043,7 +3043,7 @@ export async function renderAarsRules(main, _params, ctx) {
     const pImpactHeadline = el("p", { class: "impact-headline small muted" });
     const pLeavesLine = el("p", { class: "small muted", style: "margin:0 0 12px" });
     const pImpactState = el("div", {});
-    const pLiveNote = el("span", { role: "status", "aria-live": "polite", class: "visually-hidden" });
+    const pLiveNote = el("span", { role: "status", "aria-live": "polite", class: "sr-only" });
 
     // The per-axis unknown-rate readout — the finding this whole endpoint exists to
     // surface (problemRule.ts's own header). Presented with the same weight the AARS
@@ -3629,7 +3629,7 @@ export async function renderAarsRules(main, _params, ctx) {
       el(
         "table",
         { class: "data rule-table" },
-        el("caption", { class: "visually-hidden" }, "Posture tier rules, tried in order"),
+        el("caption", { class: "sr-only" }, "Posture tier rules, tried in order"),
         el(
           "thead",
           {},
@@ -3641,7 +3641,7 @@ export async function renderAarsRules(main, _params, ctx) {
             ...POSTURE_AXIS_DEFS.map((a) => el("th", {}, a.label)),
             el("th", {}, "Tier"),
             el("th", { class: "rule-noteh" }, "Note"),
-            el("th", {}, el("span", { class: "visually-hidden" }, "Actions")),
+            el("th", {}, el("span", { class: "sr-only" }, "Actions")),
           ),
         ),
         uCascadeBody,
@@ -3917,7 +3917,7 @@ export async function renderAarsRules(main, _params, ctx) {
     const uImpactHeadline = el("p", { class: "impact-headline small muted" });
     const uCellsLine = el("p", { class: "small muted", style: "margin:0 0 12px" });
     const uImpactState = el("div", {});
-    const uLiveNote = el("span", { role: "status", "aria-live": "polite", class: "visually-hidden" });
+    const uLiveNote = el("span", { role: "status", "aria-live": "polite", class: "sr-only" });
 
     const uUnknownList = el("div", { class: "diag-list" });
     const uUnknownWarn = el("div", {});

@@ -30,10 +30,6 @@
   .rule-impact.updating .mover-list { transition: none; }
 }
 /* Off-screen but announced / readable by assistive tech. */
-.visually-hidden {
-  position: absolute; width: 1px; height: 1px;
-  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
-}
 /* Below the split point the panes stack and the body scrolls as one. */
 @media (max-width: 1099px) {
   .rule-panes { position: static; display: block; overflow-y: auto; height: 100%; }
@@ -455,13 +451,6 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent); }
 /* Coverage: how many gap instances each rule actually priced. Neutral — this is a volume,
    not a severity — and the bar only reinforces a number that is already written. */
 .rule-prices { text-align: right; white-space: nowrap; }
-.cover-bar {
-  display: inline-block; vertical-align: middle; margin-right: 6px;
-  width: 44px; height: 6px; border-radius: var(--radius-pill);
-  background: var(--track-bg); overflow: hidden;
-}
-.cover-bar > i { display: block; height: 100%; background: rgba(0, 0, 0, 0.46); }
-.cover-n { font-variant-numeric: tabular-nums; }
 
 /* The fallback rendered as the cascade's last step, which is what it is. */
 .rule-fallback td { border-top: 1px solid var(--hairline); }

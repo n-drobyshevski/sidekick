@@ -111,8 +111,8 @@
    actually differs — gap, padding, radius, colour — stays with each member, next to the
    rule that explains it. Members outside this file are listed here on purpose: this is
    the one place that says they are the same kind of thing. */
-.sev-badge, .aars-chip, .pill, .sev-key,
-.filter-chip, .combo-shift-key, .combo-cond {
+.sev-badge, .aars-chip, .pill,
+.filter-chip, .combo-cond {
   display: inline-flex;
   align-items: center;
   font-size: var(--fs-label);
@@ -303,11 +303,6 @@
    is an interactive state, not a severity; the accent is the token for that. */
 .kind-pill[aria-pressed="true"] {
   background: rgba(190, 18, 60, .10); color: var(--accent-hover); border-color: rgba(190, 18, 60, .28);
-}
-.kind-filter { display: flex; flex-direction: column; gap: var(--space-3); }
-.pill-group-label {
-  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.02em;
-  color: var(--text-3); margin-bottom: 5px;
 }
 
 /* ------------------------------------------------------------------------- tip */
