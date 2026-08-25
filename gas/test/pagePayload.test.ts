@@ -16,8 +16,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  execGroupSlice, execMttrSlice, historyTrendSlice, mttrGroupTableSlice, mttrGroupTrendSlice,
-  mttrPageTrendSlice, oldestOpenSlice, overviewInsightsSlice, programTrendSlice, scanRowsSlice,
+  execGroupSlice, execMttrSlice, historyTrendSlice, jobSummarySlice, mttrGroupTableSlice,
+  mttrGroupTrendSlice, mttrPageTrendSlice, oldestOpenSlice, overviewInsightsSlice,
+  programTrendSlice, scanRowsSlice,
 } from "../src/domain/pagePayload";
 
 // A realistic mttrData return: everything the MTTR page reads, of which exec reads four numbers.
@@ -357,5 +358,59 @@ describe("the MTTR by-group split, cut in two", () => {
     expect(mttrGroupTableSlice({ dimension: "domain" })!.rows).toEqual([]);
     expect(mttrGroupTrendSlice({ dimension: "domain" })).toBeNull();
     expect(mttrGroupTrendSlice(null)).toBeNull();
+  });
+});
+
+// ------------------------------------------------------------------ job status
+
+describe("jobSummarySlice — what a 3-second poll is allowed to carry", () => {
+  const JOB = {
+    job_id: "scan-1", kind: "scan", phase: "FETCHING", page: 3, findings_so_far: 400,
+    total_count: 1200, started_at: "2026-08-25T10:00:00Z", updated_at: "2026-08-25T10:02:00Z",
+    error: null, scan_id: "s1", page_size: 500,
+    cursor: "eyJvZmZzZXQiOjUwMH0=", journal_ref: "1AbCdEfGhIjKlMnOpQrStUv",
+    params_json: '{"incremental":true,"severities":["CRITICAL"]}',
+  };
+
+  it("ships only the fields the progress card draws", () => {
+    expect(Object.keys(jobSummarySlice(JOB, false)!).sort()).toEqual([
+      "error", "findings_so_far", "incremental", "job_id", "kind", "page",
+      "phase", "stale", "started_at", "total_count", "updated_at",
+    ]);
+  });
+
+  // `cursor` is the Wiz endCursor for a production security tenant and `journal_ref` a Drive
+  // file id for the rollback journal. Neither has a client reader, and both were going to the
+  // browser ~1,200 times an hour during a scan.
+  it("drops the Wiz cursor and the journal ref", () => {
+    const json = JSON.stringify(jobSummarySlice(JOB, false));
+    expect(json).not.toContain("cursor");
+    expect(json).not.toContain("journal_ref");
+    expect(json).not.toContain("eyJvZmZzZXQiOjUwMH0=");
+  });
+
+  it("resolves incremental server-side instead of shipping the raw params blob", () => {
+    expect(jobSummarySlice(JOB, false)!.incremental).toBe(true);
+    expect(JSON.stringify(jobSummarySlice(JOB, false))).not.toContain("params_json");
+    expect(jobSummarySlice({ ...JOB, params_json: '{"incremental":false}' }, false)!.incremental)
+      .toBe(false);
+  });
+
+  // Tri-state, not boolean: null preserves scanMode's generic "Scan" label, which it used to
+  // reach through a JSON.parse catch in the browser.
+  it("says null rather than false when the params cannot be read", () => {
+    expect(jobSummarySlice({ ...JOB, params_json: "{not json" }, false)!.incremental).toBeNull();
+    expect(jobSummarySlice({ ...JOB, params_json: null }, false)!.incremental).toBeNull();
+  });
+
+  // Computed against the server clock; a browser with a skewed clock would draw a healthy job
+  // as wedged, so this stays a passed-in decision rather than something the client derives.
+  it("carries the caller's staleness verdict", () => {
+    expect(jobSummarySlice(JOB, true)!.stale).toBe(true);
+    expect(jobSummarySlice(JOB, false)!.stale).toBe(false);
+  });
+
+  it("returns null for no job", () => {
+    expect(jobSummarySlice(null, false)).toBeNull();
   });
 });

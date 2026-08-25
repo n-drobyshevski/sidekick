@@ -561,26 +561,38 @@ var Server = (() => {
     if (v === null || v === void 0) return "";
     return v;
   }
-  function readAll(tab) {
-    const sh = sheet(tab);
-    const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow < 2 || lastCol < 1) return [];
-    const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
-    const headers = values[0].map(String);
+  function mapRows(headers, values) {
     const out = [];
-    for (let i = 1; i < values.length; i++) {
+    for (const value of values) {
       const row = {};
       let empty = true;
       for (let j = 0; j < headers.length; j++) {
         if (!headers[j]) continue;
-        const v = fromCell(values[i][j]);
+        const v = fromCell(value[j]);
         row[headers[j]] = v;
         if (v !== null) empty = false;
       }
       if (!empty) out.push(row);
     }
     return out;
+  }
+  function readAll(tab) {
+    const sh = sheet(tab);
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    if (lastRow < 2 || lastCol < 1) return [];
+    const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+    return mapRows(values[0].map(String), values.slice(1));
+  }
+  function readTail(tab, n) {
+    const sh = sheet(tab);
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    if (lastRow < 2 || lastCol < 1) return [];
+    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    const first = Math.max(2, lastRow - n + 1);
+    const values = sh.getRange(first, 1, lastRow - first + 1, lastCol).getValues();
+    return mapRows(headers, values);
   }
   function overwrite(tab, rows) {
     const sh = sheet(tab);
@@ -4837,6 +4849,33 @@ var Server = (() => {
     if (!byGroup || typeof byGroup !== "object") return null;
     return (_a = byGroup["trend"]) != null ? _a : null;
   }
+  var JOB_KEYS = [
+    "job_id",
+    "kind",
+    "phase",
+    "page",
+    "findings_so_far",
+    "total_count",
+    "started_at",
+    "updated_at",
+    "error"
+  ];
+  function jobSummarySlice(job, stale) {
+    var _a, _b;
+    if (!job || typeof job !== "object") return null;
+    const j = job;
+    const out = { stale };
+    for (const k of JOB_KEYS) out[k] = (_a = j[k]) != null ? _a : null;
+    let incremental = null;
+    try {
+      const raw = j["params_json"];
+      if (typeof raw === "string" && raw) incremental = Boolean((_b = JSON.parse(raw)) == null ? void 0 : _b.incremental);
+    } catch {
+      incremental = null;
+    }
+    out["incremental"] = incremental;
+    return out;
+  }
 
   // src/server/errorLog.ts
   var KEY = "RECENT_ERRORS";
@@ -5199,7 +5238,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "773e9bbfaca4" : "dev";
+  var BUILD_ID = true ? "5ab73fc7bacb" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -5209,8 +5248,18 @@ var Server = (() => {
   function domainTagStamp() {
     return sha1Hex(resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey))).slice(0, 8);
   }
+  var versionStamp;
+  function stamp() {
+    if (versionStamp === void 0) {
+      versionStamp = `${BUILD_ID}.${dataVersion()}.${domainTagStamp()}`;
+    }
+    return versionStamp;
+  }
   function bumpDataVersion() {
-    setProp(VERSION_PROP, String(Date.now()));
+    const now = Date.now();
+    const prev = Number(dataVersion());
+    setProp(VERSION_PROP, String(Number.isFinite(prev) && prev >= now ? prev + 1 : now));
+    versionStamp = void 0;
   }
   function cacheKey(name, params, version) {
     const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
@@ -5256,7 +5305,7 @@ var Server = (() => {
   function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC) {
     let key = null;
     try {
-      key = cacheKey(name, params, `${BUILD_ID}.${dataVersion()}.${domainTagStamp()}`);
+      key = cacheKey(name, params, stamp());
       const hit = cacheGetJson(key);
       if (hit !== void 0) return hit;
     } catch (e) {
@@ -5355,30 +5404,33 @@ var Server = (() => {
       updated_at: nowIso(now)
     });
   }
-  function listJobs() {
-    return readAll(TABS.jobs).map((r) => {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
-      return {
-        job_id: String((_a = r["job_id"]) != null ? _a : ""),
-        kind: (_b = r["kind"]) != null ? _b : "scan",
-        phase: (_c = r["phase"]) != null ? _c : "FAILED",
-        scan_id: (_d = r["scan_id"]) != null ? _d : null,
-        cursor: (_e = r["cursor"]) != null ? _e : null,
-        page: Number((_f = r["page"]) != null ? _f : 0),
-        findings_so_far: Number((_g = r["findings_so_far"]) != null ? _g : 0),
-        page_size: Number((_h = r["page_size"]) != null ? _h : 0),
-        total_count: Number((_i = r["total_count"]) != null ? _i : 0),
-        params_json: (_j = r["params_json"]) != null ? _j : null,
-        journal_ref: (_k = r["journal_ref"]) != null ? _k : null,
-        error: normError(r["error"]),
-        started_at: String((_l = r["started_at"]) != null ? _l : ""),
-        updated_at: String((_m = r["updated_at"]) != null ? _m : "")
-      };
-    });
+  function rowToJob(r) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    return {
+      job_id: String((_a = r["job_id"]) != null ? _a : ""),
+      kind: (_b = r["kind"]) != null ? _b : "scan",
+      phase: (_c = r["phase"]) != null ? _c : "FAILED",
+      scan_id: (_d = r["scan_id"]) != null ? _d : null,
+      cursor: (_e = r["cursor"]) != null ? _e : null,
+      page: Number((_f = r["page"]) != null ? _f : 0),
+      findings_so_far: Number((_g = r["findings_so_far"]) != null ? _g : 0),
+      page_size: Number((_h = r["page_size"]) != null ? _h : 0),
+      total_count: Number((_i = r["total_count"]) != null ? _i : 0),
+      params_json: (_j = r["params_json"]) != null ? _j : null,
+      journal_ref: (_k = r["journal_ref"]) != null ? _k : null,
+      error: normError(r["error"]),
+      started_at: String((_l = r["started_at"]) != null ? _l : ""),
+      updated_at: String((_m = r["updated_at"]) != null ? _m : "")
+    };
   }
+  function listJobs() {
+    return readAll(TABS.jobs).map(rowToJob);
+  }
+  var JOB_TAIL_ROWS = 25;
   function getJob(jobId) {
-    var _a;
-    return (_a = listJobs().find((j) => j.job_id === jobId)) != null ? _a : null;
+    var _a, _b;
+    const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
+    return (_b = (_a = recent.find((j) => j.job_id === jobId)) != null ? _a : listJobs().find((j) => j.job_id === jobId)) != null ? _b : null;
   }
   var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
   function isTerminalPhase(phase) {
@@ -7685,10 +7737,7 @@ var Server = (() => {
   }
   function jobSummary(job) {
     if (!job) return null;
-    return {
-      ...job,
-      stale: !isTerminalPhase(job.phase) && isStaleJob(job)
-    };
+    return jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job));
   }
   function activeJobSummary() {
     return jobSummary(activeJob());
@@ -8546,7 +8595,7 @@ var Server = (() => {
       var _a, _b, _c;
       const params = p != null ? p : {};
       const quadrant = String((_a = params["quadrant"]) != null ? _a : "");
-      const rows = riskCohortRows(p, quadrant);
+      const rows = cachedRiskCohortRows(p, quadrant);
       const page = Math.max(0, Number((_b = params["page"]) != null ? _b : 0));
       const pageSize = Math.min(500, Math.max(1, Number((_c = params["pageSize"]) != null ? _c : 100)));
       const start = page * pageSize;
@@ -8589,6 +8638,22 @@ var Server = (() => {
       };
     });
   }
+  var cachedRiskCohortRows = (p, quadrant) => {
+    var _a, _b;
+    return cached(
+      "riskCohort1",
+      {
+        domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+        supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        severities: readSeverities(p),
+        quadrant,
+        showNoFix: getShowNoFix2(),
+        riskRuleVersion: getRiskRule2().version
+      },
+      () => riskCohortRows(p, quadrant),
+      3600
+    );
+  };
   function riskCohortRows(p, quadrant) {
     var _a, _b, _c;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
@@ -9048,8 +9113,8 @@ var Server = (() => {
         exportedAt,
         schemaVersion: SCHEMA_VERSION
       });
-      const stamp = exportedAt.replace(/[:]/g, "");
-      const written = writeMigrationExport(`migration-${stamp}.json.gz`, bundle);
+      const stamp2 = exportedAt.replace(/[:]/g, "");
+      const written = writeMigrationExport(`migration-${stamp2}.json.gz`, bundle);
       return { ...written, exported_at: exportedAt, counts: bundleCounts(bundle) };
     });
   }
@@ -9244,6 +9309,9 @@ var Server = (() => {
       warm("execSevCounts", () => cachedExecutiveSeverityCounts(p));
       warm("mttrTrend", () => cachedMttrTrendData(p));
       warm("insights", () => cachedInsightsData(p));
+      warm("program", () => cachedProgramData(p));
+      warm("programTrend", () => cachedProgramTrendData(p));
+      warm("mttrBySupportGroup", () => cachedMttrBySupportGroupData(p));
       warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
       warm("attribution", () => cachedAttributionData({ severities }));
     }

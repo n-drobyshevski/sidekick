@@ -3,7 +3,7 @@
 // the UI progress API.
 
 import { nowIso, parseTs, type Rec } from "../domain/util";
-import { appendRows, ensureTab, readAll, updateWhere, TABS } from "./sheetsDb";
+import { appendRows, ensureTab, readAll, readTail, updateWhere, TABS } from "./sheetsDb";
 
 export type JobKind = "scan" | "delete" | "compact" | "import" | "backfill" | "purge";
 export type JobPhase =
@@ -83,8 +83,8 @@ export function updateJob(jobId: string, patch: Partial<JobRow>, now?: number): 
   } as Rec);
 }
 
-export function listJobs(): JobRow[] {
-  return readAll(TABS.jobs).map((r) => ({
+function rowToJob(r: Rec): JobRow {
+  return {
     job_id: String(r["job_id"] ?? ""),
     kind: (r["kind"] ?? "scan") as JobKind,
     phase: (r["phase"] ?? "FAILED") as JobPhase,
@@ -99,11 +99,36 @@ export function listJobs(): JobRow[] {
     error: normError(r["error"]),
     started_at: String(r["started_at"] ?? ""),
     updated_at: String(r["updated_at"] ?? ""),
-  }));
+  };
 }
 
+export function listJobs(): JobRow[] {
+  return readAll(TABS.jobs).map(rowToJob);
+}
+
+/** How many trailing rows `getJob` scans before falling back to the full tab. A client only
+ *  ever polls a job it just started, and jobs are single-flight across kinds, so the one being
+ *  asked about is almost always the last row written. */
+const JOB_TAIL_ROWS = 25;
+
+/**
+ * One job by id.
+ *
+ * Reads the TAIL rather than the whole tab, because this is what a 3-second poll calls:
+ * `api_getJobStatus` -> `getJob` -> what used to be `listJobs()` -> a full-range `getValues`
+ * over a tab that only ever grows. Every scan, backfill and purge appends to it and nothing but
+ * a full ledger reset truncates it, so the poll got slower for the life of the deployment.
+ *
+ * THE FULL-READ FALLBACK IS NOT OPTIONAL. Without it, asking for a job older than the tail
+ * window returns null — and `app.js` reads a null job as "this job is gone, stop watching and
+ * clear the card", so a progress card would silently vanish mid-scan on a busy ledger. With it,
+ * the worst case is exactly today's cost.
+ */
 export function getJob(jobId: string): JobRow | null {
-  return listJobs().find((j) => j.job_id === jobId) ?? null;
+  const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
+  return recent.find((j) => j.job_id === jobId)
+    ?? listJobs().find((j) => j.job_id === jobId)
+    ?? null;
 }
 
 const TERMINAL: JobPhase[] = ["DONE", "FAILED", "CANCELLED"];
@@ -172,7 +197,14 @@ export function lastJobOfKind(kind: JobKind): JobRow | null {
   return rows.reduce((a, b) => (a.started_at >= b.started_at ? a : b));
 }
 
-/** The single in-flight job, or null (jobs are single-flight across kinds). */
+/**
+ * The single in-flight job, or null (jobs are single-flight across kinds).
+ *
+ * THIS ONE KEEPS THE FULL READ, and that is deliberate rather than an oversight `getJob` was
+ * spared. It is the single-flight guard the whole job system rests on: a wedged non-terminal
+ * job that had scrolled past a tail window would become invisible here, and `startScan` would
+ * launch a second scan alongside the first. That is a data-integrity failure, not a slow card.
+ */
 export function activeJob(): JobRow | null {
   return listJobs().find((j) => !isTerminalPhase(j.phase)) ?? null;
 }

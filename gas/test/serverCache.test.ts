@@ -16,10 +16,12 @@ import {
 
 const cacheStore = new Map<string, string>();
 const propStore = new Map<string, string>();
+let propReads: string[] = [];
 
 beforeEach(() => {
   cacheStore.clear();
   propStore.clear();
+  propReads = [];
   vi.stubGlobal("CacheService", {
     getScriptCache: () => ({
       get: (k: string) => cacheStore.get(k) ?? null,
@@ -48,7 +50,7 @@ beforeEach(() => {
   });
   vi.stubGlobal("PropertiesService", {
     getScriptProperties: () => ({
-      getProperty: (k: string) => propStore.get(k) ?? null,
+      getProperty: (k: string) => { propReads.push(k); return propStore.get(k) ?? null; },
       setProperty: (k: string, v: string) => {
         propStore.set(k, v);
       },
@@ -57,6 +59,13 @@ beforeEach(() => {
       },
     }),
   });
+  // Seed a version and, as a side effect, clear the module-level stamp memo. Both matter:
+  // `propStore.clear()` above wipes DATA_VERSION while the memo survives (module state lives
+  // for the whole file, as it lives for a whole GAS execution), so without this a test could
+  // key against a stamp from the previous one — and `bumpDataVersion`'s monotonic guard, which
+  // compares against the STORED version, cannot see a value that was just wiped.
+  bumpDataVersion();
+  propReads = [];
 });
 
 afterEach(() => {
@@ -145,5 +154,42 @@ describe("cached", () => {
     const compute = vi.fn(() => ({ ok: 1 }));
     expect(cached("stats", null, compute)).toEqual({ ok: 1 });
     expect(compute).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The version prefix every key carries used to be rebuilt inline on each `cached()` call: two
+// PropertiesService reads plus a pure-JS SHA-1, for an answer that cannot change mid-request
+// unless this module changes it. A single Executive load makes four `cached()` calls, so it
+// learned the same two values four times over. These specs pin the memo AND the one thing that
+// makes memoizing safe — that it falls when the version it caches is bumped.
+describe("the version stamp is read once per execution", () => {
+  it("reads DATA_VERSION and the domain-tag key once across several cached() calls", () => {
+    cached("a", { x: 1 }, () => 1);
+    cached("b", { x: 2 }, () => 2);
+    cached("c", { x: 3 }, () => 3);
+    cached("d", { x: 4 }, () => 4);
+    expect(propReads.filter((k) => k === "DATA_VERSION").length).toBe(1);
+    expect(propReads.filter((k) => k === "WIZ_DOMAIN_TAG_KEY").length).toBe(1);
+  });
+
+  // THE INVALIDATION IS THE WHOLE SAFETY ARGUMENT. A mutate() endpoint that bumps and then
+  // serves a cached payload in the same execution must not key that read to the pre-bump
+  // version — it would hand back exactly the state it just invalidated.
+  it("re-reads after bumpDataVersion, so a same-execution bump-then-read is not stale", () => {
+    cached("k", null, () => "before");
+    bumpDataVersion();
+    // Counted from AFTER the bump: the bump reads the version itself now, to guarantee the new
+    // one is strictly greater, and this spec is about the NEXT cached() call re-reading rather
+    // than serving the pre-bump stamp from the memo.
+    propReads = [];
+    cached("k", null, () => "after");
+    expect(propReads.filter((x) => x === "DATA_VERSION").length).toBe(1);
+  });
+
+  it("keys a value differently either side of a bump, so the stale entry is unreachable", () => {
+    expect(cached("k", null, () => "before")).toBe("before");
+    expect(cached("k", null, () => "SHOULD NOT COMPUTE")).toBe("before"); // warm
+    bumpDataVersion();
+    expect(cached("k", null, () => "after")).toBe("after"); // new key, recomputed
   });
 });

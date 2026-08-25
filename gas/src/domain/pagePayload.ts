@@ -243,3 +243,46 @@ export function mttrGroupTrendSlice(byGroup: unknown): Rec | null {
   if (!byGroup || typeof byGroup !== "object") return null;
   return ((byGroup as Rec)["trend"] as Rec | undefined) ?? null;
 }
+
+// ------------------------------------------------------------------ job status
+//
+// `api_getJobStatus` is polled every three seconds for the life of a scan — roughly 1,200
+// requests an hour — and each response spread the whole `JobRow`. Most of it has no client
+// reader, and two fields are things the browser has no business holding at all: `cursor` is
+// the Wiz `endCursor`, an opaque pagination token for a production security tenant, and
+// `journal_ref` is a Drive file id for the rollback journal.
+//
+// `params_json` was read, but only to answer one boolean. Parsing it in the browser also meant
+// a malformed value fell into `scanMode`'s catch and rendered a job as the generic "Scan"; a
+// tri-state resolved server-side keeps that fallback while removing the reason for it.
+
+/** The job fields the progress card actually draws. */
+const JOB_KEYS = [
+  "job_id", "kind", "phase", "page", "findings_so_far", "total_count",
+  "started_at", "updated_at", "error",
+] as const;
+
+/**
+ * One job, narrowed for the poll.
+ *
+ * `stale` is computed server-side and passed in — that decision reads the server clock against
+ * `updated_at`, and a browser with a skewed clock would draw a healthy job as wedged.
+ *
+ * `incremental` is `true | false | null`, replacing raw `params_json`. Null preserves
+ * `scanMode`'s three-way fallback for a job whose params are absent or unparseable.
+ */
+export function jobSummarySlice(job: unknown, stale: boolean): Rec | null {
+  if (!job || typeof job !== "object") return null;
+  const j = job as Rec;
+  const out: Rec = { stale };
+  for (const k of JOB_KEYS) out[k] = j[k] ?? null;
+  let incremental: boolean | null = null;
+  try {
+    const raw = j["params_json"];
+    if (typeof raw === "string" && raw) incremental = Boolean(JSON.parse(raw)?.incremental);
+  } catch {
+    incremental = null; // unparseable params are "we cannot say", not "full scan"
+  }
+  out["incremental"] = incremental;
+  return out;
+}

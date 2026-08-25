@@ -13,6 +13,7 @@ interface Row {
 }
 
 const tables: Record<string, Row[]> = {};
+const reads = { full: 0, tail: 0 };
 const ensured: string[] = [];
 const deletedTriggers: string[] = [];
 let projectTriggers: string[] = [];
@@ -27,7 +28,11 @@ vi.mock("../src/server/sheetsDb", () => {
     appendRows: (tab: string, rows: Row[]) => {
       tables[tab] = [...(tables[tab] ?? []), ...rows];
     },
-    readAll: (tab: string) => tables[tab] ?? [],
+    readAll: (tab: string) => { reads.full++; return tables[tab] ?? []; },
+    // The tail read `getJob` uses. Counted separately so a spec can assert that polling a job
+    // no longer touches the whole tab — the property that stops the 3s poll degrading as the
+    // append-only jobs tab grows.
+    readTail: (tab: string, n: number) => { reads.tail++; return (tables[tab] ?? []).slice(-n); },
     updateWhere: (tab: string, key: string, value: unknown, patch: Row) => {
       const row = (tables[tab] ?? []).find((r) => r[key] === value);
       if (!row) return false;
@@ -75,6 +80,8 @@ beforeEach(() => {
   ensured.length = 0;
   deletedTriggers.length = 0;
   projectTriggers = [];
+  reads.full = 0;
+  reads.tail = 0;
   vi.resetModules();
 });
 
@@ -160,5 +167,57 @@ describe("reclaimIfStale", () => {
     const { getJob, reclaimIfStale } = await load();
     reclaimIfStale(getJob("scan-1")!, NOW);
     expect(deletedTriggers).toEqual(["trigger_continueScan"]);
+  });
+});
+
+// THE 3-SECOND POLL USED TO READ THE WHOLE JOBS TAB. `api_getJobStatus` -> `getJob` ->
+// `listJobs()` -> a full-range `getValues` over a tab that only grows: every scan, backfill and
+// purge appends, and nothing but a full ledger reset truncates. So the poll got slower for the
+// life of the deployment, at roughly 1,200 requests an hour while a scan runs.
+//
+// These specs pin the two halves of the fix that pull against each other — the narrow read that
+// makes the poll cheap, and the full read that must survive because a data-integrity guard
+// depends on it.
+describe("getJob reads the tail, not the whole tab", () => {
+  it("finds a recent job without a full read", async () => {
+    const { createJob, getJob } = await load();
+    createJob(newRow(), NOW);
+    reads.full = 0; reads.tail = 0;
+    expect(getJob("backfill-1")?.job_id).toBe("backfill-1");
+    expect(reads.tail).toBe(1);
+    expect(reads.full).toBe(0);
+  });
+
+  // WITHOUT THE FALLBACK a job older than the window reads as null — and app.js treats a null
+  // job as "gone, stop watching and clear the card", so a progress card would silently vanish
+  // mid-scan on a busy ledger. The worst case here is exactly the old cost, never a wrong answer.
+  it("falls back to the full tab for a job past the tail window", async () => {
+    const { createJob, getJob } = await load();
+    createJob({ ...newRow(), job_id: "old-1" }, NOW);
+    for (let i = 0; i < 40; i++) createJob({ ...newRow(), job_id: "j-" + i }, NOW);
+    reads.full = 0; reads.tail = 0;
+    expect(getJob("old-1")?.job_id).toBe("old-1");
+    expect(reads.tail).toBe(1);
+    expect(reads.full).toBe(1); // the fallback fired
+  });
+
+  it("returns null for a job that does not exist, having tried both reads", async () => {
+    const { createJob, getJob } = await load();
+    createJob(newRow(), NOW);
+    reads.full = 0; reads.tail = 0;
+    expect(getJob("nope")).toBeNull();
+    expect(reads.full).toBe(1);
+  });
+
+  // activeJob is the cross-kind single-flight guard: a wedged non-terminal job that had
+  // scrolled past a tail window would become invisible, and startScan would launch a second
+  // scan alongside the first. That is why it keeps the full read.
+  it("activeJob still reads the whole tab, even when the job is in the tail", async () => {
+    const { createJob, activeJob } = await load();
+    createJob(newRow(), NOW);
+    reads.full = 0; reads.tail = 0;
+    expect(activeJob()?.job_id).toBe("backfill-1");
+    expect(reads.full).toBe(1);
+    expect(reads.tail).toBe(0);
   });
 });
