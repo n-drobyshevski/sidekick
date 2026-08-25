@@ -195,9 +195,16 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
     "runGraphQuery (agents reaching classified data, with the evidence)",
   ],
   ["getAssets", {}],
+  // The narrow projections Wiz Scans, Help and Settings read. They belong in this sweep for
+  // the reason the meta-guard below exists: a read endpoint outside READ_APIS escapes both
+  // the golden AND verdictIsolation's per-asset-claim check, and a projection is exactly the
+  // shape most likely to carry one through by accident.
+  ["getAssetsHead", {}],
   ["getAssetOptions", {}],
   ["getIssues", {}],
   ["getToxicCombos", {}],
+  ["getCombosDigest", {}],
+  ["getFiveRsScope", {}],
   // Phase 7: the landscape-wide Priorities page — issues ∪ findings, ranked together.
   ["getProblems", {}],
   // Phase P1a: remediation ACTIONS ranked by marginal set-cover over the same union.

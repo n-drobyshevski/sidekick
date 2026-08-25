@@ -1311,6 +1311,30 @@ function assetsModel(): AssetsModel {
   };
 }
 
+/**
+ * The whole-landscape HEAD of the inventory: the KPI band, the row total, and the reach
+ * summary. No rows, no facets, no trend.
+ *
+ * Wiz Scans and Help read exactly these three fields and never `rows`, and both were
+ * calling `getAssets({all: true, pageSize: 25})` to get them. That request is more
+ * misleading than it looks: `all` IS NOT A REQUEST PARAMETER — `resolveAssetQuery` never
+ * reads `params["all"]` and `AssetTableQuery` has no such field. The server decides it
+ * alone, from `model.rows.length <= CLIENT_ALL_MAX`, and on that branch it returns
+ * `rows: model.rows` and ignores `pageSize` entirely. So the `pageSize: 25` those pages
+ * sent did nothing below 1,500 assets, which is the normal case, and both received every
+ * row in the register with every per-severity breakdown to read three head fields:
+ * 29,247 bytes for 2,675, of which `rows` alone was 25,623.
+ *
+ * Projected off the same cached `assetsModel2` entry the full endpoint uses, so Inventory
+ * and these two still share one computation.
+ */
+export function getAssetsHead(_p?: unknown): ApiResult {
+  return run(() => {
+    const model = cached("assetsModel2", null, assetsModel) as AssetsModel;
+    return { total: model.rows.length, kpis: model.kpis, reach: model.reach };
+  });
+}
+
 export function getAssets(p?: unknown): ApiResult {
   return run(() => {
     const query = resolveAssetQuery((p ?? {}) as Rec);
@@ -1930,9 +1954,13 @@ function scopedPosture(
  * configuration register's can, and the two-mode all/paged machinery those need would be
  * complexity bought for nothing here.
  */
-export function getCompliance(p?: unknown): ApiResult {
-  return run(() => {
-    const params = (p ?? {}) as Rec;
+/**
+ * The Compliance read-model, cached once and shared by every endpoint that needs any part
+ * of it. Both `getCompliance` and `getFiveRsScope` resolve THIS entry rather than computing
+ * their own — a second, leaner derivation would cost the shared warm result and make two
+ * pages each pay for one.
+ */
+function cachedComplianceModel(): Rec {
     // `projectView` is in the KEY as well as read inside, for the reason expandAsset's
     // `projectId` is: it is a live input this closure branches on, so a view change has to
     // reach the cache. `saveSettings` bumps DATA_VERSION and would evict it anyway today —
@@ -2038,8 +2066,27 @@ export function getCompliance(p?: unknown): ApiResult {
         // a footnote is read after the reader has decided.
         postureScope,
       };
-    });
-  });
+  }) as Rec;
+}
+
+export function getCompliance(_p?: unknown): ApiResult {
+  return run(() => cachedComplianceModel());
+}
+
+/**
+ * `fiveRsScope` alone, for the Settings page's 5Rs card.
+ *
+ * Settings used to fetch the WHOLE compliance payload to read this one field — 22,215 bytes
+ * for 2,812 — and with `call` rather than `swrCall`, so it neither read nor populated the
+ * session cache and a Compliance -> Settings visit paid for the trees twice.
+ *
+ * PROJECTED FROM THE CACHED MODEL, never recomputed. A narrower derivation here would be a
+ * second entry: Compliance would warm one and Settings the other, and neither would help
+ * the other. This way Settings is a projection of whatever Compliance already warmed, and
+ * warming it from Settings first does the same for Compliance.
+ */
+export function getFiveRsScope(_p?: unknown): ApiResult {
+  return run(() => ({ fiveRsScope: cachedComplianceModel()["fiveRsScope"] ?? null }));
 }
 
 /** Save which frameworks the sync collects posture for. */
@@ -2188,9 +2235,12 @@ export function getIssueDetail(p?: unknown): ApiResult {
   });
 }
 
-export function getToxicCombos(_p?: unknown): ApiResult {
-  return run(() =>
-    cached("getToxicCombos", null, () => {
+/**
+ * The toxic-combination read-model, cached once and shared. `getToxicCombos` and
+ * `getCombosDigest` resolve THIS entry; neither recomputes a leaner one.
+ */
+function cachedCombos(): Rec {
+  return cached("getToxicCombos", null, () => {
       const issues = openIssues();
       const assetRows = viewAssets();
       const assets = new Map(assetRows.map((a) => [a.id, a]));
@@ -2241,8 +2291,36 @@ export function getToxicCombos(_p?: unknown): ApiResult {
         })),
         totalOpen: issues.length,
       };
-    }),
-  );
+  }) as Rec;
+}
+
+export function getToxicCombos(_p?: unknown): ApiResult {
+  return run(() => cachedCombos());
+}
+
+/**
+ * The digest alone, for the two pages that only ever read it.
+ *
+ * Wiz Scans and Help each pulled the whole combos payload — 7,791 bytes here — to render
+ * `digest` (2,579), discarding every group and its nested per-asset array. `groups` is the
+ * half that grows with the estate: one entry per pattern, each carrying every asset in it.
+ *
+ * THIS SPLITS AN SWR KEY, and the cost of that turned out to be smaller than expected —
+ * worth writing down, because the obvious reasoning is wrong. Scans, Help and Toxic
+ * Combinations all passed `{}` before, so the three shared one session cache entry, and the
+ * natural conclusion is that a reader arriving at the second of them paid no round trip.
+ * Measured off the client's own `[rpc]` line, the round-trip count on combos -> scans,
+ * scans -> combos, scans -> help and help -> scans is IDENTICAL before and after this split.
+ *
+ * The reason is `swrCall` itself (store.js): on a settled hit it returns the cached value
+ * AND calls `fetchFresh()`, every time. A shared key was never saving the call — it was
+ * saving the WAIT, by letting the second page paint from cache while the refetch ran behind
+ * it. That property survives for the pair that actually shares: Scans and Help still hold
+ * one key between them. What the Combinations page loses is only the instant first paint it
+ * used to prime for them, and vice versa.
+ */
+export function getCombosDigest(_p?: unknown): ApiResult {
+  return run(() => ({ digest: cachedCombos()["digest"] ?? null }));
 }
 
 // -------------------------------------------------------------------------- problems

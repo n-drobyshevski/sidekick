@@ -42,10 +42,13 @@ import {
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
 
 import { tipAnchor } from "../ui.js";
-// Only the whole-landscape head of api_getAssets is read (kpis, total) — never `rows`. Past
-// the server's row ceiling the payload downgrades to a single page, but the head still
-// describes the landscape, so a small pageSize keeps this page correct AND cheap at any size.
-const ASSETS_PARAMS = { all: true, pageSize: 25 };
+// This page reads three whole-landscape figures — `kpis`, `total` and `reach` — and never a
+// row. It used to get them from api_getAssets with `{all: true, pageSize: 25}`, and the
+// comment here claimed that "a small pageSize keeps this page correct AND cheap at any
+// size". It had the cost backwards. `all` is not a request parameter at all — the server
+// sets it from the register's own size — and on that branch it ships every row and ignores
+// pageSize, so below the ceiling (the normal case) this page received the entire inventory
+// to read three numbers. api_getAssetsHead projects those three off the same cached model.
 
 export async function renderScans(main, params, ctx) {
   // A sheet left open by the previous render of this route belongs to that render.
@@ -89,8 +92,9 @@ export async function renderScans(main, params, ctx) {
   let anchored = false;
 
   const settled = await Promise.allSettled([
-    swrCall("api_getAssets", ASSETS_PARAMS, (fresh) => { assets = fresh; paint(); }),
-    swrCall("api_getToxicCombos", {}, (fresh) => { combos = fresh; paint(); }),
+    swrCall("api_getAssetsHead", {}, (fresh) => { assets = fresh; paint(); }),
+    // The digest alone; this page draws no group and no per-asset row.
+    swrCall("api_getCombosDigest", {}, (fresh) => { combos = fresh; paint(); }),
     // Not SWR: this describes the battery as configured right now, and the panel states it
     // to the operator as fact. A cached answer is a claim about a query that may have moved.
     call("api_getScanQueries", {}),

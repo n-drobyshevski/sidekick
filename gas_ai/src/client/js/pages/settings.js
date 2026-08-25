@@ -4,7 +4,7 @@
 
 import { call } from "../api.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
-import { bootstrap } from "../store.js";
+import { bootstrap, swrCall } from "../store.js";
 import { clientBuild, describeBuild } from "../buildInfo.js";
 import {
   clear, debounce, el, emptyState, segmented, sevBadge, skeleton, statusPill, toast,
@@ -39,15 +39,24 @@ export async function renderSettings(main, _params, ctx) {
     boot = null; // the build card degrades to client-only rather than failing the page
   }
 
-  // The 5Rs policy list belongs to api_getCompliance, not api_getSettings — computing it
-  // needs posture, findings and assets, which api_getSettings has no business loading. So
-  // the two RPCs are fetched side by side (scans.js:80-106's idiom) and degraded on their
-  // own terms: losing settings fails the whole page, since nothing below can render
-  // without it, but losing compliance only costs the 5Rs card its rule list, which says so
+  // The 5Rs policy list belongs to the compliance read-model, not api_getSettings —
+  // computing it needs posture, findings and assets, which api_getSettings has no business
+  // loading. So the two RPCs are fetched side by side (scans.js's idiom) and degraded on
+  // their own terms: losing settings fails the whole page, since nothing below can render
+  // without it, but losing the scope only costs the 5Rs card its rule list, which says so
   // in a line of its own instead of taking the rest of Settings down with it.
+  //
+  // TWO CHANGES HERE, AND THE SECOND MATTERS MORE THAN THE FIRST. This asked
+  // api_getCompliance for the whole payload — trees, rails, catalogue, posture — to read
+  // one field, so `fiveRsScope` cost 22,215 bytes to deliver 2,812. And it used `call`
+  // rather than `swrCall`, so it neither read nor populated the session cache: visiting
+  // Compliance and then Settings computed and shipped the same model twice, because the
+  // key `api_getCompliance:{}` that Compliance had already warmed was never consulted.
+  // api_getFiveRsScope projects the SAME cached server-side entry, and swrCall means a
+  // second visit to this page costs nothing at all.
   const settled = await Promise.allSettled([
     call("api_getSettings", {}),
-    call("api_getCompliance", {}),
+    swrCall("api_getFiveRsScope", {}),
   ]);
 
   if (settled[0].status === "rejected") {

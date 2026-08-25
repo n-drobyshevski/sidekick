@@ -412,14 +412,27 @@ describe("the page", () => {
     expect(HELP_PAGE_JS).toMatch(/resolveAreas\(/);
   });
 
-  it("shares the assets cache key with the coverage page", () => {
-    // Byte-identical params mean one swrCall entry, so arriving from Wiz Scans or the
-    // Inventory costs no extra round trip. A drifted pageSize silently doubles the reads.
-    const help = HELP_PAGE_JS.match(/ASSETS_PARAMS = (\{[^}]*\})/);
-    const scans = read("src/client/js/pages/scans.js").match(/ASSETS_PARAMS = (\{[^}]*\})/);
-    expect(help).toBeTruthy();
-    expect(scans).toBeTruthy();
-    expect(help[1]).toBe(scans[1]);
+  // This used to compare a shared `ASSETS_PARAMS = { all: true, pageSize: 25 }` constant
+  // between this page and Wiz Scans, and its comment claimed byte-identical params meant
+  // "arriving from Wiz Scans OR THE INVENTORY costs no extra round trip". The Inventory half
+  // was never true and this spec could not have caught it, because it only ever compared
+  // help against scans: inventory.js sends thirteen keys and pageSize 50, and `rpcKey` is a
+  // JSON.stringify, so that key could never have collided.
+  //
+  // Both pages now call the narrow head endpoint instead, which takes no params at all — so
+  // the sharing this protects is stronger (there is no pageSize left to drift) and the claim
+  // is narrowed to the pair that really shares.
+  it("shares the assets and combos cache keys with the coverage page", () => {
+    const scansJs = read("src/client/js/pages/scans.js");
+    for (const call of ["api_getAssetsHead", "api_getCombosDigest"]) {
+      // Same endpoint, and `{}` on both sides — one swrCall entry between the two pages.
+      const re = new RegExp('swrCall\\("' + call + '", \\{\\}');
+      expect(HELP_PAGE_JS, "help.js must call " + call + " with {}").toMatch(re);
+      expect(scansJs, "scans.js must call " + call + " with {}").toMatch(re);
+    }
+    // And neither page asks for rows it does not draw.
+    expect(HELP_PAGE_JS).not.toMatch(/api_getAssets"/);
+    expect(scansJs).not.toMatch(/api_getAssets"/);
   });
 
   // The rail is a second address for the page's structure, and a second address is a

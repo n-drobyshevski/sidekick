@@ -8168,7 +8168,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "32e5754b32a2" : "dev";
+  var BUILD_ID = true ? "a44e1cf80d7c" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -11957,9 +11957,12 @@ var Server = (() => {
     getAssetDetail: () => getAssetDetail,
     getAssetOptions: () => getAssetOptions,
     getAssets: () => getAssets,
+    getAssetsHead: () => getAssetsHead,
+    getCombosDigest: () => getCombosDigest,
     getCompliance: () => getCompliance,
     getConfigFindingDetail: () => getConfigFindingDetail,
     getConfigFindings: () => getConfigFindings,
+    getFiveRsScope: () => getFiveRsScope,
     getGraph: () => getGraph,
     getIssueDetail: () => getIssueDetail,
     getIssues: () => getIssues,
@@ -16330,6 +16333,12 @@ var Server = (() => {
       }
     };
   }
+  function getAssetsHead(_p) {
+    return run(() => {
+      const model = cached("assetsModel2", null, assetsModel);
+      return { total: model.rows.length, kpis: model.kpis, reach: model.reach };
+    });
+  }
   function getAssets(p) {
     return run(() => {
       const query = resolveAssetQuery(p != null ? p : {});
@@ -16623,76 +16632,82 @@ var Server = (() => {
     }
     return { posture, frameworkPolicies, fetchedAt, frameworkCount: frameworkIds.length };
   }
-  function getCompliance(p) {
+  function cachedComplianceModel() {
+    const projectView = getProjectView2();
+    const domainView = getDomainView2();
+    return cached("getCompliance", { projectView, domainView }, () => {
+      var _a5, _b;
+      const storedPosture = loadPosture();
+      const catalogue = loadFrameworks();
+      const selected = getSelectedFrameworks2(() => catalogue);
+      const { policies: registerPolicies, scope: registerScope } = scopedFrameworkPolicies();
+      const live = domainView ? { reason: "domainScope", detail: domainView } : projectView ? scopedPosture(projectView, storedPosture) : null;
+      const scoped = live && "posture" in live ? live : null;
+      const refused = live && !("posture" in live) ? live : null;
+      const posture = scoped ? scoped.posture : storedPosture;
+      const policies = scoped ? dropUnselected(scoped.frameworkPolicies, registerScope) : registerPolicies;
+      const postureScope = {
+        projectId: projectView,
+        domainId: domainView,
+        source: scoped ? "live" : "stored",
+        fetchedAt: scoped ? scoped.fetchedAt : null,
+        frameworkCount: scoped ? scoped.frameworkCount : 0,
+        reason: refused ? refused.reason : null,
+        detail: refused ? refused.detail : null
+      };
+      const trees = buildAllFrameworkTrees(posture, policies, catalogue);
+      const fiveRsScope = scoped ? withCountsFrom(registerScope, trees) : registerScope;
+      const fiveRsPosture = fiveRsDerivedPosture(
+        fiveRsScope,
+        (_b = (_a5 = trees.find((t) => t.frameworkId === fiveRsScope.frameworkId)) == null ? void 0 : _a5.posturePct) != null ? _b : null
+      );
+      const merged = catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 }));
+      return {
+        trees,
+        kpis: complianceKpis(posture, policies),
+        selected,
+        // The Overview's four bands. Computed here rather than in the browser because the
+        // client bundle cannot import the domain layer at all — every client-side copy of
+        // domain logic in this app is a hand-kept mirror with a test holding the two
+        // together (assetQuery.js, configView.js), and that machinery exists to reconcile
+        // a client filtering a PAGE against a server filtering the WHOLE set. This payload
+        // is already shipped whole and cached, so there is no second scope to reconcile —
+        // a mirror here would be duplicated risk buying nothing.
+        rail: frameworkRail(trees),
+        weakestAreas: weakestAreas(trees),
+        sharedControls: sharedControls(trees),
+        // Every rule the 5Rs maps, in or out, with the reason. Shipped whole rather than
+        // as a count because the Settings card is the place an operator overturns a
+        // derivation, and it cannot argue with a verdict it cannot see.
+        //
+        // ALWAYS the register-wide object, even under a project view — `registerScope`, not
+        // the count-rescoped `fiveRsScope` the derived posture above is computed from. The
+        // card renders this and its toggle writes a GLOBAL pin: an operator standing in one
+        // project must not be shown "no AI link" for a rule that is linked in another and
+        // pin it out everywhere on the strength of it.
+        fiveRsScope: registerScope,
+        // Computed server-side for the same reason `rail` / `weakestAreas` / `sharedControls`
+        // above are: the client bundle cannot import the domain layer, so a browser-side
+        // recomputation would be a hand-kept mirror rather than a shared source. This
+        // payload is already shipped whole and cached, so there is no second scope for a
+        // mirror to reconcile against — computing it here instead buys nothing but risk.
+        fiveRsPosture,
+        coverage: coverageSummary(trees, merged),
+        // WHICH POPULATION every figure above describes, and — when a project view is set
+        // but the numbers are still the register's — why. The page prints this beside the
+        // hero rather than as a footnote, the discipline `registerWideNote` already keeps:
+        // a footnote is read after the reader has decided.
+        postureScope
+      };
+    });
+  }
+  function getCompliance(_p) {
+    return run(() => cachedComplianceModel());
+  }
+  function getFiveRsScope(_p) {
     return run(() => {
-      const params = p != null ? p : {};
-      const projectView = getProjectView2();
-      const domainView = getDomainView2();
-      return cached("getCompliance", { projectView, domainView }, () => {
-        var _a5, _b;
-        const storedPosture = loadPosture();
-        const catalogue = loadFrameworks();
-        const selected = getSelectedFrameworks2(() => catalogue);
-        const { policies: registerPolicies, scope: registerScope } = scopedFrameworkPolicies();
-        const live = domainView ? { reason: "domainScope", detail: domainView } : projectView ? scopedPosture(projectView, storedPosture) : null;
-        const scoped = live && "posture" in live ? live : null;
-        const refused = live && !("posture" in live) ? live : null;
-        const posture = scoped ? scoped.posture : storedPosture;
-        const policies = scoped ? dropUnselected(scoped.frameworkPolicies, registerScope) : registerPolicies;
-        const postureScope = {
-          projectId: projectView,
-          domainId: domainView,
-          source: scoped ? "live" : "stored",
-          fetchedAt: scoped ? scoped.fetchedAt : null,
-          frameworkCount: scoped ? scoped.frameworkCount : 0,
-          reason: refused ? refused.reason : null,
-          detail: refused ? refused.detail : null
-        };
-        const trees = buildAllFrameworkTrees(posture, policies, catalogue);
-        const fiveRsScope = scoped ? withCountsFrom(registerScope, trees) : registerScope;
-        const fiveRsPosture = fiveRsDerivedPosture(
-          fiveRsScope,
-          (_b = (_a5 = trees.find((t) => t.frameworkId === fiveRsScope.frameworkId)) == null ? void 0 : _a5.posturePct) != null ? _b : null
-        );
-        const merged = catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 }));
-        return {
-          trees,
-          kpis: complianceKpis(posture, policies),
-          selected,
-          // The Overview's four bands. Computed here rather than in the browser because the
-          // client bundle cannot import the domain layer at all — every client-side copy of
-          // domain logic in this app is a hand-kept mirror with a test holding the two
-          // together (assetQuery.js, configView.js), and that machinery exists to reconcile
-          // a client filtering a PAGE against a server filtering the WHOLE set. This payload
-          // is already shipped whole and cached, so there is no second scope to reconcile —
-          // a mirror here would be duplicated risk buying nothing.
-          rail: frameworkRail(trees),
-          weakestAreas: weakestAreas(trees),
-          sharedControls: sharedControls(trees),
-          // Every rule the 5Rs maps, in or out, with the reason. Shipped whole rather than
-          // as a count because the Settings card is the place an operator overturns a
-          // derivation, and it cannot argue with a verdict it cannot see.
-          //
-          // ALWAYS the register-wide object, even under a project view — `registerScope`, not
-          // the count-rescoped `fiveRsScope` the derived posture above is computed from. The
-          // card renders this and its toggle writes a GLOBAL pin: an operator standing in one
-          // project must not be shown "no AI link" for a rule that is linked in another and
-          // pin it out everywhere on the strength of it.
-          fiveRsScope: registerScope,
-          // Computed server-side for the same reason `rail` / `weakestAreas` / `sharedControls`
-          // above are: the client bundle cannot import the domain layer, so a browser-side
-          // recomputation would be a hand-kept mirror rather than a shared source. This
-          // payload is already shipped whole and cached, so there is no second scope for a
-          // mirror to reconcile against — computing it here instead buys nothing but risk.
-          fiveRsPosture,
-          coverage: coverageSummary(trees, merged),
-          // WHICH POPULATION every figure above describes, and — when a project view is set
-          // but the numbers are still the register's — why. The page prints this beside the
-          // hero rather than as a footnote, the discipline `registerWideNote` already keeps:
-          // a footnote is read after the reader has decided.
-          postureScope
-        };
-      });
+      var _a5;
+      return { fiveRsScope: (_a5 = cachedComplianceModel()["fiveRsScope"]) != null ? _a5 : null };
     });
   }
   function setSelectedFrameworks2(p) {
@@ -16781,63 +16796,70 @@ var Server = (() => {
       };
     });
   }
+  function cachedCombos() {
+    return cached("getToxicCombos", null, () => {
+      const issues2 = openIssues();
+      const assetRows = viewAssets();
+      const assets = new Map(assetRows.map((a) => [a.id, a]));
+      const digest = comboDigest(issues2, assetRows, (/* @__PURE__ */ new Date()).toISOString());
+      const digestById = new Map(digest.groups.map((g) => [g.id, g]));
+      return {
+        // Every count the page renders, computed once here rather than four times in the
+        // browser. Additive: the `groups` shape below is unchanged, so a payload cached
+        // before this shipped still renders the page (minus the summary sections).
+        digest,
+        groups: comboSummary(issues2).map((s) => {
+          var _a5, _b, _c, _d;
+          return {
+            id: s.group.id,
+            ruleId: s.group.ruleId,
+            title: s.group.title,
+            shortLabel: s.group.shortLabel,
+            nativeSeverity: s.group.nativeSeverity,
+            adjustedSeverity: s.group.adjustedSeverity,
+            amplifierNote: s.group.amplifierNote,
+            // Whether this group re-rates its issues. The card renders the shift badge and
+            // the amplifier note together off this flag, so the note can never go missing
+            // from beside an adjusted severity — and the Other bucket, which makes no such
+            // claim, renders neither.
+            amplified: s.group.amplified,
+            // The declared half of the condition matrix. It rides on the group rather than
+            // only on the digest so the card's condition strip still says what the rule
+            // tests when an older cached payload arrives with no digest attached.
+            conditions: s.group.conditions,
+            frameworks: s.group.frameworks,
+            // The measured severity mix, mirrored onto the group so the page's severity
+            // filter can ask what a card actually HOLDS. Filtering on the declared
+            // adjustedSeverity alone hides the Other bucket — whose declared severity is
+            // the worst it holds, not the only one — while it still holds matching rows.
+            adjustedMix: (_b = (_a5 = digestById.get(s.group.id)) == null ? void 0 : _a5.adjustedMix) != null ? _b : {},
+            nativeMix: (_d = (_c = digestById.get(s.group.id)) == null ? void 0 : _c.nativeMix) != null ? _d : {},
+            count: s.count,
+            assets: s.assetIds.map((id) => {
+              var _a6, _b2, _c2;
+              const a = assets.get(id);
+              return a ? {
+                id,
+                name: a.name,
+                severity: (_a6 = a.severity) != null ? _a6 : null,
+                openIssues: (_b2 = a.openIssues) != null ? _b2 : 0,
+                openFindings: (_c2 = a.openFindings) != null ? _c2 : 0
+              } : { id, name: id, severity: null, openIssues: 0, openFindings: 0 };
+            })
+          };
+        }),
+        totalOpen: issues2.length
+      };
+    });
+  }
   function getToxicCombos(_p) {
-    return run(
-      () => cached("getToxicCombos", null, () => {
-        const issues2 = openIssues();
-        const assetRows = viewAssets();
-        const assets = new Map(assetRows.map((a) => [a.id, a]));
-        const digest = comboDigest(issues2, assetRows, (/* @__PURE__ */ new Date()).toISOString());
-        const digestById = new Map(digest.groups.map((g) => [g.id, g]));
-        return {
-          // Every count the page renders, computed once here rather than four times in the
-          // browser. Additive: the `groups` shape below is unchanged, so a payload cached
-          // before this shipped still renders the page (minus the summary sections).
-          digest,
-          groups: comboSummary(issues2).map((s) => {
-            var _a5, _b, _c, _d;
-            return {
-              id: s.group.id,
-              ruleId: s.group.ruleId,
-              title: s.group.title,
-              shortLabel: s.group.shortLabel,
-              nativeSeverity: s.group.nativeSeverity,
-              adjustedSeverity: s.group.adjustedSeverity,
-              amplifierNote: s.group.amplifierNote,
-              // Whether this group re-rates its issues. The card renders the shift badge and
-              // the amplifier note together off this flag, so the note can never go missing
-              // from beside an adjusted severity — and the Other bucket, which makes no such
-              // claim, renders neither.
-              amplified: s.group.amplified,
-              // The declared half of the condition matrix. It rides on the group rather than
-              // only on the digest so the card's condition strip still says what the rule
-              // tests when an older cached payload arrives with no digest attached.
-              conditions: s.group.conditions,
-              frameworks: s.group.frameworks,
-              // The measured severity mix, mirrored onto the group so the page's severity
-              // filter can ask what a card actually HOLDS. Filtering on the declared
-              // adjustedSeverity alone hides the Other bucket — whose declared severity is
-              // the worst it holds, not the only one — while it still holds matching rows.
-              adjustedMix: (_b = (_a5 = digestById.get(s.group.id)) == null ? void 0 : _a5.adjustedMix) != null ? _b : {},
-              nativeMix: (_d = (_c = digestById.get(s.group.id)) == null ? void 0 : _c.nativeMix) != null ? _d : {},
-              count: s.count,
-              assets: s.assetIds.map((id) => {
-                var _a6, _b2, _c2;
-                const a = assets.get(id);
-                return a ? {
-                  id,
-                  name: a.name,
-                  severity: (_a6 = a.severity) != null ? _a6 : null,
-                  openIssues: (_b2 = a.openIssues) != null ? _b2 : 0,
-                  openFindings: (_c2 = a.openFindings) != null ? _c2 : 0
-                } : { id, name: id, severity: null, openIssues: 0, openFindings: 0 };
-              })
-            };
-          }),
-          totalOpen: issues2.length
-        };
-      })
-    );
+    return run(() => cachedCombos());
+  }
+  function getCombosDigest(_p) {
+    return run(() => {
+      var _a5;
+      return { digest: (_a5 = cachedCombos()["digest"]) != null ? _a5 : null };
+    });
   }
   function problemsModel() {
     var _a5, _b;
