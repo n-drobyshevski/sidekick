@@ -936,7 +936,11 @@ export async function renderInventory(main, params) {
       // room. `badge` is what keeps the Agentic pill, and retires the one inline `style`
       // attribute left in a table cell.
       name: (row) => nameCell(row.name, row.kind, {
-        badge: row.agentic ? el("span", { class: "pill" }, "Agentic") : null,
+        // `pill neutral`, not a bare `pill`. A bare one carries no kind, and the four
+        // kinds are where components.css puts the background — so this chip drew as text
+        // with a dot inheriting the cell's colour. Neutral is the right kind: agentic is a
+        // fact about the asset, not a verdict on it.
+        badge: row.agentic ? el("span", { class: "pill neutral" }, "Agentic") : null,
       }),
       kind: (row) => kindLabel(row.kind),
       cloud: (row) => row.cloud || absent(),
@@ -1011,7 +1015,7 @@ export async function renderInventory(main, params) {
           issueBars(row.issuesBySeverity),
           row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : null,
           row.guardrailMissing ? el("span", { class: "pill warn" }, "no guardrail") : null,
-          row.agentic ? el("span", { class: "pill" }, "Agentic") : null),
+          row.agentic ? el("span", { class: "pill neutral" }, "Agentic") : null),
         el("div", { class: "asset-card-meta" },
           el("span", {}, kindLabel(row.kind)),
           row.cloud ? el("span", {}, row.cloud) : null,

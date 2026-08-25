@@ -222,9 +222,17 @@ the sibling's values, which measured 4.27:1 and 4.20:1 on their own 0.12 tints a
 now measure 5.55 and 5.35.
 
 ### The posture tier scale — ordinal, not categorical
-Four steps, each with a solid (the mass strip), a tint (lattice cells, badges), a text token that
-clears 4.5:1 on that tint, and an edge that keeps adjacent cells apart. Tier 1 `#16a34a`, tier 2
-`#ffcb13`, tier 3 `#ff8605`, tier 4 `#dc2626`.
+Four steps, each with a solid (the mass strip, and the Compliance Posture bars), a tint (lattice
+cells, badges), a text token that clears 4.5:1 on that tint, and an edge that keeps adjacent cells
+apart. Tier 1 `#16a34a`, tier 2 `#ffcb13`, tier 3 `#ff8605`, tier 4 `#dc2626`.
+
+**One ramp for every ordinal posture reading.** A decision lattice's tier, a problem outcome and a
+compliance percentage band all ride these four steps, so "posture colour" is learned once. The
+compliance bands were cut to four, breaking at 90 / 70 / 50 (`compliancePosture.ts`), to join it
+rather than keep a palette of their own. The steps were measured against each other, not against
+a track: on `--track-bg` the solids read 2.82 / 1.30 / 2.07 / 4.13, so a bar drawn in them carries
+a `rgba(0,0,0,0.40)` inset edge to keep its *length* readable at tier 2. Darkening the track
+instead makes tier 2 worse, not better.
 
 **Adopted against a measurement, not a preference.** Every adjacent pair of solids separates by
 29.2 / 16.1 / 19.3 in OKLab and 18.0 / 12.0 / 16.5 under dichromatic simulation, against floors of
@@ -257,7 +265,10 @@ dots, a *darker text* token for any colored label. Never set severity text in th
 tint; it will fail contrast.
 
 **The Ordinal-Fork Rule.** The posture tier scale is not a fifth severity. An ordinal scale and a
-categorical one are different instruments and never share tokens.
+categorical one are different instruments and never share tokens. The test is what the fact IS,
+not which page draws it: on Compliance Posture the percentage *bands* are steps and take the
+ordinal ramp, while the four posture *states* — scored, no resources, no policies, not reported —
+are kinds and keep the status triad.
 
 ## 4. Layout
 

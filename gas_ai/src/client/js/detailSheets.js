@@ -236,9 +236,19 @@ function insightRow(node) {
   // alone misleads: an open port behind SSO rates Low and is not an exposure.
   if (node.portValidation || node.exposureLevel) {
     const rated = node.exposureLevel === "High" || node.exposureLevel === "Medium";
+    const port = node.portValidation ? " · port " + node.portValidation.toLowerCase() : "";
+    // A RATED LOW AND AN UNRATED ENDPOINT ARE NOT THE SAME CLAIM. Low staying neutral is
+    // deliberate and argued above — a Low exposure is not an exposure. But an endpoint Wiz
+    // never rated was drawing the identical tone and the identical mark, so the row said
+    // "we looked and it is fine" for a row where nothing was looked at. That is the
+    // conflation PRODUCT.md's sixth principle and ui/posture.js's STATE_META split exist to
+    // prevent, and it is why posture prints "Not measured" muted rather than as a tier.
+    // The tone stays neutral either way — an absent rating is not evidence of risk — and
+    // the absence is carried by the words plus the muted treatment, not by a colour.
     add(rated ? "bad" : "neutral", "ENDPOINT",
-      "Exposure level " + (node.exposureLevel || "unrated") +
-      (node.portValidation ? " · port " + node.portValidation.toLowerCase() : ""));
+      node.exposureLevel
+        ? "Exposure level " + node.exposureLevel + port
+        : el("span", { class: "muted" }, "Exposure level not rated" + port));
   }
   // Above the two flags below it, because it is the stronger claim: those say Wiz
   // classified something here, this says what was actually found.
@@ -1292,12 +1302,18 @@ export function openIssueSheet(issueId, opts = {}) {
 
 // -------------------------------------------------------------- cloud configuration
 
-/** OPEN / RESOLVED / REJECTED with a word, never a bare tint. */
+/** OPEN / RESOLVED / REJECTED with a word, never a bare tint.
+ *
+ * "ok", not "good". There is no `.pill.good` — components.css defines exactly four kinds,
+ * ok/warn/bad/neutral — and `statusPill` interpolates whatever it is handed, so these two
+ * rows rendered as a bare `.pill`: no background at all, with the ::before dot inheriting
+ * the cell's colour. The affirmative states were the only ones in the app drawn with no
+ * fill, which reads as an unstyled element rather than as a verdict. */
 function configStatusPill(finding, gap) {
   if (gap) return statusPill("bad", "Failing");
-  if (finding.status === "RESOLVED") return statusPill("good", "Resolved");
+  if (finding.status === "RESOLVED") return statusPill("ok", "Resolved");
   if (finding.status === "REJECTED") return statusPill("warn", "Rejected");
-  if (finding.result === "PASS") return statusPill("good", "Passing");
+  if (finding.result === "PASS") return statusPill("ok", "Passing");
   return statusPill("neutral", finding.status || "Unknown");
 }
 

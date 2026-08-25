@@ -1,15 +1,17 @@
 /* ------------------------------------------------------- AI Inventory: posture header */
 /* Four levels rather than eight peers: the hero says what the landscape IS, the verdict row
-   says which assets carry an action, the strip says what shape the findings score has, and
-   the stat list carries the supporting facts. Hero, verdict and strip are deliberately
+   says which assets carry an action, the strip says how the worst open issue is distributed,
+   and the stat list carries the supporting facts. Hero, verdict and strip are deliberately
    borderless — DESIGN.md's Hero Stat takes its dominance from size and position, never from
    a card, a gradient or an accent stripe.
 
    READING ORDER IS THE ARGUMENT HERE. The verdict shares the top row with the hero and the
-   score distribution sits underneath both, because the posture tier cuts a queue and the
-   score's levels do not (ai/AARS_SCORING_ASSESSMENT.md §3: the top level holds 19 of 30
-   scored assets, two levels hold none). The strip was on the top row before this and read
-   as the page's headline. */
+   distribution sits underneath both, because the posture tier cuts a queue and a severity
+   spread does not. The strip was on the top row before this and read as the page's headline.
+
+   The strip used to be the findings-score distribution, and this comment still described it
+   as such long after inventory.js:501 relabelled it "Worst open issue" — which is Wiz's own
+   rating carried through, not a level this app computes. */
 /* .inv-header and .inv-hero-sub now come from .page-header (components.css). */
 
 /* The verdict row: the two posture tiers that carry an action. Read-outs, not controls —
@@ -64,12 +66,20 @@
 }
 
 /* --------------------------------------------------- AI Inventory: in-row micro-viz */
-/* The score as a quantity beside the chip that gives its level. Neutral graphite fill on
-   purpose: the level is already coloured on the chip, and fifty tinted bars down a page is
-   the wall of colour PRODUCT.md rejects. */
 .issue-cell { display: inline-flex; align-items: center; gap: var(--space-2); }
 
-td .meter { background: rgba(0, 0, 0, 0.09); }
+/* `td .meter { background: rgba(0, 0, 0, 0.09) }` STOOD HERE AND IS GONE. It darkened the
+   track under the score meter this table drew beside each row's level chip — a column
+   retired with the 0-100 score itself (detailSheets.js explains why that number went).
+   Its comment went with the column; the rule did not, and the selector was never scoped to
+   this page.
+
+   So its only surviving effect was on another page entirely: it was the Compliance Posture
+   register's posture cells, the one place left where a `.meter` sits inside a `td`, giving
+   them a rgba(0,0,0,0.09) track while the rail and the two heroes on the SAME page kept
+   --track-bg at 0.07. One page, two tracks, and the tier-ramp fills were measured against
+   the lighter of them. Deleted rather than scoped: there is no column left to serve, and
+   if a darker track is ever wanted it belongs in --track-bg for everyone. */
 /* Open issues split by severity is a .sevbar--xs (components.css). Here colour IS the
    content — the mix of levels is the whole point — so it is rationed, not decorative,
    and the aria-label names the counts. */

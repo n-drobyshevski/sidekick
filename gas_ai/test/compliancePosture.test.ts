@@ -71,14 +71,22 @@ describe("postureState — emptiness is decided before the number", () => {
 });
 
 describe("postureBandOf — the ramp that tints every bar on the page", () => {
-  it("bands on the number, at 90 and 70", () => {
+  it("bands on the number, at 90, 70 and 50", () => {
     expect(postureBandOf(100)).toBe("strong");
     expect(postureBandOf(90)).toBe("strong");
-    // The breaks are inclusive-low, so 89 and 69 are the first rows of the band below —
+    // The breaks are inclusive-low, so 89, 69 and 49 are the first rows of the band below —
     // pinned because an off-by-one here recolours a quarter of a real register silently.
     expect(postureBandOf(89)).toBe("fair");
     expect(postureBandOf(70)).toBe("fair");
-    expect(postureBandOf(69)).toBe("weak");
+    // 69 USED TO BE "weak", and this line is the whole of what the fourth band changed.
+    // The claim it encoded was "everything below 70 is one band" — true while the page
+    // painted from a three-token palette, and retired by a product decision: the bars moved
+    // onto the four-step posture tier ramp (--rank-1..4) the Scoring Models page already
+    // draws, which needs a fourth step to read. The failing band split at 50 rather than 90
+    // or 70 moving, so every other assertion in this block is untouched.
+    expect(postureBandOf(69)).toBe("poor");
+    expect(postureBandOf(50)).toBe("poor");
+    expect(postureBandOf(49)).toBe("weak");
     expect(postureBandOf(0)).toBe("weak");
   });
 

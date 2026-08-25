@@ -8151,7 +8151,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7a85cf206673" : "dev";
+  var BUILD_ID = true ? "a933c002c1db" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8448,12 +8448,14 @@ var Server = (() => {
   var POSTURE_BANDS = {
     strong: { min: 90, label: "Strong" },
     fair: { min: 70, label: "Work to do" },
+    poor: { min: 50, label: "Falling short" },
     weak: { min: 0, label: "Materially failing" }
   };
   function postureBandOf(posturePct2) {
     if (posturePct2 === null || posturePct2 === void 0) return null;
     if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
     if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
+    if (posturePct2 >= POSTURE_BANDS.poor.min) return "poor";
     return "weak";
   }
   function postureState(posturePct2, emptyPostureReason) {
