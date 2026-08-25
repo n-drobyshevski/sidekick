@@ -209,6 +209,39 @@
 /* ------------------------------------------------------------------- header actions */
 .gq-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .gq-head-actions button { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+/* Every action on this row is a rectangle of the same height; the "?" is the one thing that
+   is not an action, so it keeps its circle and grows to the row rather than sitting at the
+   18px it uses inline in running text. The extra gap is the whole separation — a rule here
+   would be a third vertical line on a row that already has one. */
+.gq-head-actions .tip-trigger { margin-left: 4px; }
+.gq-head-actions .tip-mark { width: 26px; height: 26px; font-size: 12px; }
+
+/* Saving a query and reopening one, in one dropdown. Its caret is a text glyph rather than
+   an icon, matching the combobox trigger's — this is the same kind of control. */
+.gq-saved { display: inline-flex; }
+.gq-saved-btn { display: inline-flex; align-items: center; gap: 6px; }
+.gq-saved-caret { font-size: 0.7rem; color: var(--text-3); }
+.gq-saved-btn[aria-expanded="true"] { background: #f1f1f4; border-color: #d9d9de; }
+.gq-saved-menu { display: flex; flex-direction: column; padding: 4px; }
+/* Rows reset off the 36px bordered global button recipe the way .gq-iconbtn does — a menu
+   row is a line of text you can click, not a control surface stacked inside a card. */
+.gq-saved-item {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 0; padding: 7px 8px; width: 100%;
+  border: none; background: none; box-shadow: none; border-radius: var(--radius-md);
+  font: inherit; font-size: 13px; color: var(--ink); text-align: left;
+}
+.gq-saved-item:hover { background: var(--wash-hover); }
+.gq-saved-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* A saved name can be any length; the menu is 260px and the row must not set its width. The
+   left margin is the save row's icon (13px) and its gap (8px), so the two line up on one
+   text edge rather than one row starting a glyph's width further in than the other. */
+.gq-saved-item-name {
+  margin-left: 21px;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gq-saved-rule { height: 1px; margin: 4px 2px; background: var(--hairline); }
+.gq-saved-none { margin: 4px 8px 6px; }
 
 /* ------------------------------------------------------------------------ view row */
 .gq-viewbar {

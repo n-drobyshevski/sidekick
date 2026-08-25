@@ -1,4 +1,9 @@
-// The sidebar project switcher: which slice of the synced register every page is showing.
+// The app-header project switcher: which slice of the synced register every page is showing.
+//
+// It sits in the header rather than in the rail because it governs every page rather than
+// leading to one — the rail is a list of destinations, and a scope is not a destination. That
+// move also retired the control's second presentation: it used to shrink to a two-letter
+// glyph for the 56px collapsed rail, and the header has one width.
 //
 // The list comes from `filterOptions.projectList`, derived from the assets the sync
 // actually collected — never from the tenant's project catalogue. A picker built from the
@@ -13,6 +18,7 @@
 
 import { el } from "./dom.js";
 import { filterCombobox } from "./combobox.js";
+import { uiIcon } from "./uiIcons.js";
 
 import { tipAnchor } from "./tip.js";
 const nf = new Intl.NumberFormat();
@@ -45,27 +51,11 @@ export function scopeOptions(list) {
 }
 
 /**
- * Two characters for the 56px rail, where the trigger's own text has ~34px and ellipsises
- * every project name to "PRO…". Initials of the first two words, because the names that
- * matter here are hyphenated ("VALUE-CHAIN" → VC) and their first two characters are not:
- * a register full of PROJECT-* would render every glyph as "PR".
- *
- * A wayfinding hint, not an identifier — two projects can share a glyph. The full name is
- * on the hover title and is the control's accessible name, and expanding the rail is one
- * click away, so nothing here is the only way to know what is selected.
- */
-export function railGlyph(name) {
-  const words = String(name).split(/[^A-Za-z0-9]+/).filter(Boolean);
-  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
-  return (words[0] || "?").slice(0, 2).toUpperCase();
-}
-
-/**
  * Everything the control asserts, from the bootstrap payload alone.
  *
  * @param {object|null} bootstrapData
  * @returns {{show: boolean, current: string, label: string, caption: string,
- *            stale: boolean, glyph: string, options: object[], pinned: object[]}}
+ *            stale: boolean, options: object[], pinned: object[]}}
  */
 export function projectScopeView(bootstrapData) {
   const list = (bootstrapData && bootstrapData.filterOptions
@@ -73,9 +63,9 @@ export function projectScopeView(bootstrapData) {
   const scope = (bootstrapData && bootstrapData.scope) || null;
 
   // Nothing synced, or boot failed: no control at all. An empty picker is a promise the
-  // register cannot keep, and the sync zone directly below already says why it is empty.
+  // register cannot keep, and the rail's sync zone already says why it is empty.
   if (!scope || !list.length) {
-    return { show: false, current: "", label: "", caption: "", stale: false, glyph: "", options: [], pinned: [] };
+    return { show: false, current: "", label: "", caption: "", stale: false, options: [], pinned: [] };
   }
 
   const current = scope.projectView || "";
@@ -94,7 +84,6 @@ export function projectScopeView(bootstrapData) {
       : stale ? `Not in this register — showing 0 of ${nf.format(scope.register)}`
         : `${nf.format(scope.shown)} of ${nf.format(scope.register)} assets`,
     stale,
-    glyph: !current ? "ALL" : chosen ? railGlyph(chosen.name) : "!",
     options: scopeOptions(list),
     // "All synced projects", not "All projects". The register holds what the last sync was
     // scoped to fetch, which on a scoped tenant is one unit's subtree — calling that "all
@@ -120,27 +109,24 @@ export function projectScopeControl(bootstrapData, onPick) {
     // Without this the trigger prints the raw id, which reads as corruption rather than as
     // a scope that no longer matches what was fetched.
     fallbackLabel: "Project not in this register",
-    // Carries the CURRENT selection, not just the control's name. The rail is rebuilt
+    // Carries the CURRENT selection, not just the control's name. The header is rebuilt
     // wholesale on every refresh() and picking triggers one, so this is re-stamped with
-    // each change — and in the collapsed rail it is the only thing naming the scope, since
-    // the trigger's visible text is down to an initial or two there.
+    // each change.
     ariaLabel: `Project scope: ${v.label}`,
     searchPlaceholder: "Search projects…",
+    // Decoration inside the trigger, the way the reference screen marks its project picker.
+    // The trigger's accessible name is the ariaLabel above, so this adds no second reading.
+    leading: el("span", { class: "scope-combo-icon", "aria-hidden": "true" }, uiIcon("folder", 14)),
     onChange: (id) => onPick(id || ""),
   });
   combo.classList.add("scope-combo");
-  // Read on hover, and the collapsed rail's only pointer affordance for the full name — which
-  // is why it cannot be a native title: the collapsed rail is the default, and a tap reached
-  // none of it.
+  // Read on hover: the header is narrow enough to ellipsise a long project name, and the
+  // caption beside it answers a different question. Not a native title — a tap reaches none
+  // of those, which is the whole reason el() bans the attribute.
   tipAnchor(combo, "Project scope: " + v.label);
 
   return el("div", { class: "scope-switch" },
     combo,
-    // Painted OVER the trigger in the collapsed rail, never instead of it. The popover
-    // positions against the trigger's box, so the trigger has to keep its geometry and its
-    // click target — a stand-in button with the real one hidden would anchor the list at
-    // the viewport origin. This is inert decoration; the control underneath it is real.
-    el("span", { class: "scope-rail-glyph", "aria-hidden": "true" }, v.glyph),
     el("div", {
       class: `scope-caption${v.stale ? " stale" : ""}`,
       // The caption answers the control above it, so it should be heard on selection

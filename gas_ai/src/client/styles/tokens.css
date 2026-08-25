@@ -1,6 +1,9 @@
 
 :root {
   --rail-w: 232px;
+  /* The app header's height. A token rather than a literal because the shell's rows, the
+     sticky offset below 800px and the rail beneath it all have to agree on one number. */
+  --appbar-h: 48px;
   --accent: #be123c;
   --accent-hover: #9f1239;
   --ink: #171717;
@@ -128,8 +131,8 @@
   --sheet-rail-w: 184px;
 
   /* Semantic z-index, for the layers this app actually stacks. Only the values consumed
-     below are defined; the route overlay (20), the <=800px top bar (45), the boot splash
-     (55) and the toasts (60) stay literals until something needs to reason about them.
+     below are defined; the route overlay (20), the boot splash (55) and the toasts (60)
+     stay literals until something needs to reason about them.
      --z-popover outranks --z-sheet on purpose: the searchable combobox portals its list
      to <body> (the panel body scrolls and would clip it), and at <=800px the filter panel
      IS a real .sheet — a popover below it would open behind the panel that owns it. */
@@ -137,6 +140,12 @@
   /* The graph's query editor, floating over its own canvas: above the zoom capsule and the
      legend it must cover, below the scrim so an asset sheet still covers IT. */
   --z-canvas-panel: 10;
+  /* The app header. Above the route overlay (20), because the overlay veils the CONTENT
+     pane while a page refetches and the header is not part of it — the same clearance the
+     rail gets for free by sitting outside the overlay's box. Below the scrim (40) so a
+     detail sheet still covers it: a modal that dimmed the whole page except one bar would
+     leave the project switcher live underneath it. */
+  --z-appbar: 30;
   --z-scrim: 40;
   --z-sheet: 41;
   --z-popover: 52;

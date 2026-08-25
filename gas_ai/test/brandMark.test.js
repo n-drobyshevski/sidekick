@@ -191,10 +191,13 @@ describe("brandMark()", () => {
 });
 
 describe("the shell's call sites", () => {
-  it("labels exactly one mark: the collapsed rail's", () => {
-    // Two labelled marks would announce the product name twice in the same landmark; none
-    // would leave the 56px rail with no identity at all.
-    expect([...APP.matchAll(/brandMark\([^)]*label:/g)].length).toBe(1);
+  it("labels no mark, because every one of them sits beside the name in text", () => {
+    // This used to require exactly one: the collapsed rail hid its wordmark, so its mark was
+    // the only identity on screen and had to carry the name. The wordmark lives in the app
+    // header now and is never hidden, and the rail carries no mark at all — so both surviving
+    // marks (the header's and the splash's) have the words beside them, and a labelled one
+    // would announce the product name twice in the same landmark.
+    expect([...APP.matchAll(/brandMark\([^)]*label:/g)].length).toBe(0);
   });
 
   it("still carries the static splash's twin", () => {
