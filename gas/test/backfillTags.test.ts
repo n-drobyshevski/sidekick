@@ -6,9 +6,15 @@
 // back — and the reason `Not attributable` shrinks after an operator runs it.
 
 import { describe, expect, it } from "vitest";
-import { backfillTagsFromCheckpoint } from "../src/domain/maintenance";
+import {
+  backfillTagsFromCheckpoint,
+  backfillTagsFromRecords,
+  countUnattributable,
+  emptyBackfillResult,
+} from "../src/domain/maintenance";
 import { emptyState, type EpisodeRow, type LedgerState } from "../src/domain/ledgerCore";
 import { emptyRiskSignals, type LedgerRow } from "../src/domain/reconcile";
+import { type Rec } from "../src/domain/util";
 import { CHECKPOINT_VERSION, type Checkpoint } from "../src/domain/compaction";
 
 function episode(vuln_key: string, tags_json: string | null = null): EpisodeRow {
@@ -113,5 +119,105 @@ describe("backfillTagsFromCheckpoint", () => {
     const state = stateWith([]);
     expect(backfillTagsFromCheckpoint(state, checkpoint([ledgerRow("id:A", SAP)])))
       .toEqual({ recovered: 0, alreadyHad: 0, unrecoverable: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The other half: recovering a bag from the SCAN ARCHIVES rather than the checkpoint.
+//
+// The checkpoint chain cannot reach every unattributed row. History imported from a legacy
+// bundle was never in a GAS checkpoint — the Python exporter had no `tags_json` column to
+// export and its `resolved_episodes` table had none to lose — so `unrecoverable` above is
+// exactly that population. The archives still hold the records those lifecycles came from,
+// and the history backfill walks them for exploit signals already; this rides that walk.
+
+// The bag a RECORD produces, which is not JSON.stringify's output: reconcile.tagsJson writes
+// canonical JSON with sorted keys and a ", " separator, for byte-stability with the rows the
+// Python app wrote. The checkpoint constants above are supplied verbatim and so keep the
+// compact form; these come out of the canonicalizer, and pinning the difference here is what
+// stops a future "tidy-up" from silently changing what a recovered bag looks like on disk.
+const SAP_CANON = '{"Wiz/Domain": "SAP"}';
+
+/** A slim scan record as the archive holds it, with the nested asset shape. */
+function record(id: string, tags: Record<string, unknown> | null): Rec {
+  return {
+    id,
+    name: "CVE-2026-0001",
+    severity: "HIGH",
+    vulnerableAsset: { id: "a-1", name: "vm-1", type: "VIRTUAL_MACHINE", ...(tags ? { tags } : {}) },
+  };
+}
+
+describe("backfillTagsFromRecords", () => {
+  it("fills an episode's empty bag from a record the archive still holds", () => {
+    const state = stateWith([episode("id:A"), episode("id:B")]);
+    const result = emptyBackfillResult();
+    backfillTagsFromRecords(state, [record("A", { "Wiz/Domain": "SAP" })], result);
+    expect(result.tagsRecovered).toBe(1);
+    expect(state.episodes[0].tags_json).toBe(SAP_CANON);
+    // B was not in this scan and is untouched — no fabricated bag.
+    expect(state.episodes[1].tags_json).toBeNull();
+  });
+
+  it("fills a LIVE ledger row too, not only episodes", () => {
+    // reconcile keeps a live row's bag sticky (`?? row.tags_json`), so a null one means the
+    // bag was never captured — the same gap, on a row that was never compacted.
+    const state = { ...emptyState(), ledger: { "id:A": ledgerRow("id:A", null) } };
+    const result = emptyBackfillResult();
+    backfillTagsFromRecords(state, [record("A", { "Wiz/Domain": "SAP" })], result);
+    expect(result.tagsRecovered).toBe(1);
+    expect(state.ledger["id:A"].tags_json).toBe(SAP_CANON);
+  });
+
+  it("is FILL-ONLY, so the newest-first walk keeps the freshest surviving bag", () => {
+    // The property the caller's replay order depends on. Overwriting would invert it: a deep
+    // archive would clobber a fresher bag and the result would depend on where a run stopped.
+    const state = stateWith([episode("id:A", SAP)]);
+    const result = emptyBackfillResult();
+    backfillTagsFromRecords(state, [record("A", { "Wiz/Domain": "STALE" })], result);
+    expect(result.tagsRecovered).toBe(0);
+    expect(state.episodes[0].tags_json).toBe(SAP);
+  });
+
+  it("is order-independent and idempotent across replayed scans", () => {
+    const newest = [record("A", { "Wiz/Domain": "SAP" })];
+    const older = [record("A", { "Wiz/Domain": "STALE" })];
+    const run = (batches: Rec[][]) => {
+      const state = stateWith([episode("id:A")]);
+      const result = emptyBackfillResult();
+      for (const b of batches) backfillTagsFromRecords(state, b, result);
+      return state.episodes[0].tags_json;
+    };
+    // Newest-first (the real replay order) wins, and re-running converges on the same state.
+    expect(run([newest, older])).toBe(SAP_CANON);
+    expect(run([newest, older, newest, older])).toBe(SAP_CANON);
+  });
+
+  it("records with no tags at all recover nothing rather than writing an empty bag", () => {
+    const state = stateWith([episode("id:A")]);
+    const result = emptyBackfillResult();
+    backfillTagsFromRecords(state, [record("A", null)], result);
+    expect(result.tagsRecovered).toBe(0);
+    expect(state.episodes[0].tags_json).toBeNull();
+  });
+});
+
+describe("countUnattributable", () => {
+  it("counts only the rows no mechanism can still read an input off", () => {
+    const state: LedgerState = {
+      ...emptyState(),
+      ledger: { "id:L": ledgerRow("id:L", null) }, // has asset_name "vm-1" -> attributable
+      episodes: [episode("id:A"), episode("id:B", SAP)],
+    };
+    expect(countUnattributable(state)).toBe(1); // only the bagless episode
+  });
+
+  it("ignores episodes a live row supersedes, matching what baseRows surfaces", () => {
+    const state: LedgerState = {
+      ...emptyState(),
+      ledger: { "id:A": ledgerRow("id:A", SAP) },
+      episodes: [episode("id:A")], // shadowed by the live row above
+    };
+    expect(countUnattributable(state)).toBe(0);
   });
 });

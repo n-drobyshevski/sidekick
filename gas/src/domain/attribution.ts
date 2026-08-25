@@ -6,9 +6,9 @@
 // Pure functions over current-scan frame records: flat dotted keys
 // (vulnerableAsset.name / .subscriptionName / .subscriptionExternalId / .tags.<k>)
 // plus the server-attached _sev / _supportGroup / _domain. The engine mirrors
-// domainRules.assignDomain's loop semantics exactly — including the "(compacted)"
-// short-circuit — but traces every condition instead of short-circuiting on the
-// first match, which is what makes the "why is this Unassigned?" views possible.
+// domainRules.assignDomain's loop semantics exactly, but traces every condition instead of
+// short-circuiting on the first match, which is what makes the "why is this Unassigned?"
+// views possible.
 
 import {
   UNASSIGNED,
@@ -20,11 +20,6 @@ import {
 import { NOT_ATTRIBUTABLE, type DomainSource } from "./resolveDomain";
 import { normalizeSeverity } from "./severity";
 import { present, type Rec } from "./util";
-
-// Ledger episodes surface with this placeholder asset name; assignDomain force-stays
-// them Unassigned. Mirrored here so `assigned` agrees with assignDomain (the compiled
-// COMPACTED_ASSET / LEDGER_NAME_COLS constants are module-private in domainRules).
-const COMPACTED_ASSET = "(compacted)";
 
 const NAME_COL = "vulnerableAsset.name";
 const TYPE_COL = "vulnerableAsset.type";
@@ -99,18 +94,6 @@ function assetKey(r: Rec): string {
   return String(r[NAME_COL] ?? "");
 }
 
-/** Whether a record's ledger asset name marks it a compacted episode. */
-function isCompacted(record: Rec): boolean {
-  const v = record["asset_name"];
-  if (present(v)) return String(v) === COMPACTED_ASSET;
-  const va = record["vulnerableAsset"];
-  if (va && typeof va === "object" && !Array.isArray(va)) {
-    const leaf = (va as Rec)["asset_name"];
-    if (present(leaf)) return String(leaf) === COMPACTED_ASSET;
-  }
-  return false;
-}
-
 // --- traceRecord ----------------------------------------------------------------
 
 export interface ConditionTrace {
@@ -134,13 +117,17 @@ export interface RecordTrace {
 
 /**
  * Evaluate every condition of every rule against a single record. `assigned` mirrors
- * assignDomain (first domain with a fully-matching rule wins; compacted episodes force
- * Unassigned), while `rules` keeps the full per-condition breakdown the UI needs to
- * explain a non-match. recordTags is resolved once, exactly like assignDomain.
+ * assignDomain (first domain with a fully-matching rule wins), while `rules` keeps the full
+ * per-condition breakdown the UI needs to explain a non-match. recordTags is resolved once,
+ * exactly like assignDomain.
+ *
+ * There is no compacted-episode special case here any more, and there must not be one: the
+ * `(compacted)` placeholder is now excluded inside domainRules.conditionMatches' regex pool
+ * alone, so a sealed episode that kept its tag bag is claimable by a `tag` rule. A trace that
+ * still pinned such a record to Unassigned would contradict the verdict it exists to explain.
  */
 export function traceRecord(record: Rec, compiled: CompiledDomain[]): RecordTrace {
   const tags = recordTags(record);
-  const compacted = isCompacted(record);
   const rules: RuleTrace[] = [];
   let assigned = UNASSIGNED;
   compiled.forEach((dom, domainIndex) => {
@@ -152,7 +139,7 @@ export function traceRecord(record: Rec, compiled: CompiledDomain[]): RecordTrac
       const conditions = rule.map((spec, index) => ({ index, matched: conditionMatches(spec, record, tags) }));
       const matched = conditions.every((c) => c.matched);
       rules.push({ domainIndex, domain: dom.name, ruleIndex, malformed: false, matched, conditions });
-      if (matched && !compacted && assigned === UNASSIGNED) assigned = dom.name;
+      if (matched && assigned === UNASSIGNED) assigned = dom.name;
     });
   });
   return { assigned, rules };

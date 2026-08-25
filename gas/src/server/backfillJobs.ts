@@ -1,11 +1,19 @@
-// Risk-signal backfill: a resumable maintenance job that recovers exploit intelligence for
-// lifecycles recorded before the ledger stored it, by replaying the scan archives in Drive.
+// History backfill: a resumable maintenance job that recovers signals the ledger did not yet
+// store when a lifecycle was recorded, by replaying the scan archives in Drive.
 //
-// Why it exists: coverage and efficiency need to know whether a REMEDIATED finding was high
-// risk, and a finding resolved by disappearance is gone from the current scan frame entirely.
-// The durable ledger only started carrying has_kev / has_exploit / epss with this feature, so
-// without a backfill every pre-existing lifecycle reads as unclassified and both rates
-// describe only the newest slice of the register.
+// TWO SIGNALS, ONE WALK. Reading an archive is the expensive part; merging a second field out
+// of a record already in memory is free, and a second job would only contend for the same
+// single-flight slot and block the daily scan.
+//
+//   * EXPLOIT INTELLIGENCE (has_kev / has_exploit / epss). Coverage and efficiency need to know
+//     whether a REMEDIATED finding was high risk, and a finding resolved by disappearance is
+//     gone from the current scan frame entirely. Without this every pre-existing lifecycle
+//     reads as unclassified and both rates describe only the newest slice of the register.
+//   * ATTRIBUTION (tags_json). The `Wiz/Domain` tag lives in the bag, and a row without one
+//     resolves to `Not attributable` — a bucket no operator action can close. Episodes
+//     compacted before `EpisodeRow` carried the column, and every legacy imported bundle,
+//     landed there. Settings → *Domain-tag backfill* recovers the first population from one
+//     checkpoint read; only this walk reaches the second, which was never in a GAS checkpoint.
 //
 // Two phases, because the cheap one is worth having on its own:
 //   0. the current frame — one pass over the latest scan's slim records, which fills every
@@ -24,6 +32,8 @@
 
 import {
   backfillRiskFromRecords,
+  backfillTagsFromRecords,
+  countUnattributable,
   countUnknownRisk,
   emptyBackfillResult,
   recordsFromPayload,
@@ -173,6 +183,7 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       const scan = findings.currentScan();
       if (scan) {
         backfillRiskFromRecords(state, scan.records as Rec[], scan.ts, result);
+        backfillTagsFromRecords(state, scan.records as Rec[], result);
         dirty = true;
       }
     } catch (e) {
@@ -201,6 +212,7 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       continue;
     }
     backfillRiskFromRecords(state, records, row.ts, result);
+    backfillTagsFromRecords(state, records, result);
     result.scansReplayed += 1;
     dirty = true;
   }
@@ -208,6 +220,7 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
   if (dirty) ledgerStore.writeStateTables(state);
   archive.trashFile(journalRef);
   result.stillUnknown = countUnknownRisk(state);
+  result.stillUnattributable = countUnattributable(state);
   updateJob(job.job_id, {
     page: done,
     findings_so_far: result.ledgerRowsTouched + result.episodeRowsTouched,

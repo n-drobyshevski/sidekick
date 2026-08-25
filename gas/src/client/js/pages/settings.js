@@ -305,19 +305,22 @@ export async function renderSettings(main, params, ctx) {
     }
   }
 
-  // --------------------------------------------------- risk-signal backfill
-  // Exploit intelligence only started being written to the ledger with the Program
-  // performance feature, so lifecycles recorded before that read as unclassified. The scan
-  // archives in Drive still hold the records they came from, so most of it is recoverable.
+  // --------------------------------------------------- history backfill
+  // Two signals the ledger did not always store, recovered in one archive walk: exploit
+  // intelligence (added with Program performance) and the resource tag bag a finding's
+  // domain is read from (added when the tag had to survive compaction). Reading the archive
+  // is the expensive part; merging a second field out of a record already in memory is free.
   const backfillStatusEl = el("span", { class: "muted small" });
-  const backfillBtn = el("button", { onclick: runBackfill }, "Recover exploit signals");
+  const backfillBtn = el("button", { onclick: runBackfill }, "Recover history signals");
   main.append(settingsPanel({
-    title: "Risk-signal backfill",
-    description: "Replays the saved scan archives to fill in the CISA KEV / exploit / EPSS " +
-      "signals for findings recorded before those were stored in the ledger. Safe to re-run: " +
-      "signals only ever accumulate, so a repeated or interrupted run converges on the same " +
-      "result. Scans already sealed by compaction had their archives pruned and cannot be " +
-      "recovered.",
+    title: "History backfill",
+    description: "Replays the saved scan archives to fill in two things for findings recorded " +
+      "before the ledger stored them: the CISA KEV / exploit / EPSS signals behind Program " +
+      "performance, and the Wiz/Domain tag bag behind every by-domain figure — history with " +
+      "no bag reads as Not attributable. Safe to re-run: signals only accumulate and a tag " +
+      "bag is never overwritten, so a repeated or interrupted run converges on the same " +
+      "result. Scans already sealed by compaction had their archives pruned; for those, use " +
+      "Domain-tag backfill below, which reads the checkpoints instead.",
     body: el("div", { style: "display:flex; align-items:center; gap:10px; flex-wrap:wrap" },
       backfillBtn, backfillStatusEl),
   }));
@@ -347,11 +350,11 @@ export async function renderSettings(main, params, ctx) {
     try {
       const res = await call("api_startRiskBackfill", {});
       renderBackfillStatus(res);
-      toast("Risk-signal backfill started.");
+      toast("History backfill started.");
     } catch (e) {
       backfillBtn.disabled = false;
       backfillStatusEl.textContent = "";
-      toast(`Backfill failed to start: ${e.message}`, "error");
+      toast(`History backfill failed to start: ${e.message}`, "error");
     }
   }
 

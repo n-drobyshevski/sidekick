@@ -23,9 +23,9 @@ import {
   type ScanRow,
 } from "./ledgerCore";
 import { DEFAULT_DOMAIN_TAG_KEY, domainOfTags } from "./domainTag";
-import { recordTags } from "./domainRules";
+import { hasDomainInputs, recordTags } from "./domainRules";
 import { mttrFromLedger, vulnKey } from "./lifecycle";
-import { mergeRiskSignals, type LedgerRow, type Observation } from "./reconcile";
+import { mergeRiskSignals, tagsJson, type LedgerRow, type Observation } from "./reconcile";
 import { extractNodes } from "./transform";
 import { confusionMatrix, DEFAULT_RISK_RULE } from "./program";
 import { trendFromFrames } from "./trend";
@@ -567,7 +567,7 @@ export function isAfter(ts: string | null, ms: number): boolean {
 }
 
 // --------------------------------------------------------------------------- #
-//  Risk-signal backfill — recovering exploit intelligence from saved archives
+//  History backfill — recovering exploit intelligence AND attribution from archives
 // --------------------------------------------------------------------------- #
 
 export interface BackfillResult {
@@ -577,6 +577,10 @@ export interface BackfillResult {
   ledgerRowsTouched: number;
   episodeRowsTouched: number;
   stillUnknown: number;
+  /** Rows that gained a tag bag they did not have — the attribution half of the walk. */
+  tagsRecovered: number;
+  /** Rows still carrying no attribution input at all — the `Not attributable` residue. */
+  stillUnattributable: number;
 }
 
 export function emptyBackfillResult(): BackfillResult {
@@ -587,6 +591,8 @@ export function emptyBackfillResult(): BackfillResult {
     ledgerRowsTouched: 0,
     episodeRowsTouched: 0,
     stillUnknown: 0,
+    tagsRecovered: 0,
+    stillUnattributable: 0,
   };
 }
 
@@ -675,6 +681,77 @@ export function backfillRiskFromRecords(
       if (before !== ep.risk_observed_at) result.episodeRowsTouched += 1;
     }
   }
+}
+
+/**
+ * Merge one saved scan's TAG BAGS into the ledger, in place — the attribution twin of
+ * `backfillRiskFromRecords`, and it rides the same walk for the same reasons.
+ *
+ * `tags_json` is where the `Wiz/Domain` tag lives, and a row without one resolves to
+ * `Not attributable` — a bucket no operator action can close. Two populations arrived
+ * there: episodes compacted before `EpisodeRow` carried the column, and history imported
+ * from a legacy bundle, whose exporter never had it. `backfillTagsFromCheckpoint` reaches
+ * the first from one blob read; it cannot reach the second, because those rows were never
+ * in a GAS checkpoint. The scan archives still hold the records both came from.
+ *
+ * **FILL-ONLY, never overwrite**, which is what makes it order-independent and idempotent
+ * the way the risk merge is. Combined with the caller's newest-first walk, fill-only means
+ * the NEWEST surviving bag wins — so an abandoned run has still taken the freshest answer,
+ * a dead hop needs no rollback, and a re-run converges on identical state. Overwriting
+ * would invert that: a deep archive would clobber a fresher bag, and the result would
+ * depend on where the run stopped.
+ *
+ * Live ledger rows are merged too, not just episodes. A row whose resource lost its tags in
+ * Wiz keeps its last known bag by `reconcile`'s sticky `?? row.tags_json`, so a null one
+ * here means the bag was never captured — exactly the case this recovers.
+ */
+export function backfillTagsFromRecords(
+  state: LedgerState,
+  records: Rec[],
+  result: BackfillResult,
+): void {
+  const episodesByKey = new Map<string, EpisodeRow>();
+  for (const e of state.episodes) episodesByKey.set(e.vuln_key, e);
+  for (const rec of records) {
+    const key = vulnKey(rec);
+    const target: { tags_json: string | null } | undefined =
+      state.ledger[key] ?? episodesByKey.get(key);
+    if (!target || target.tags_json) continue;
+    const bag = tagsJson(rec);
+    if (bag) {
+      target.tags_json = bag;
+      result.tagsRecovered += 1;
+    }
+  }
+}
+
+/**
+ * Lifecycles carrying no attribution input at all — the `Not attributable` residue, counted
+ * over the same population `baseRows` surfaces (non-superseded episodes without a live row).
+ *
+ * IT ASKS `hasDomainInputs` RATHER THAN CHECKING COLUMNS ITSELF, and that is the whole point
+ * of the function existing: it is the same predicate `resolveDomain` uses to decide
+ * `NOT_ATTRIBUTABLE`, and it reads the same columns `conditionMatches` does, so a counter
+ * built on it cannot drift from the figure it claims to count. A hand-rolled column check
+ * here would be a second definition of "attributable", and the two would disagree the first
+ * time either side gained a column.
+ *
+ * An episode is passed as it is STORED — no `asset_name` at all, rather than the
+ * `(compacted)` sentinel `baseRows` materializes. The two agree: `hasDomainInputs` filters
+ * the sentinel out of its name check, so both reduce to "does it still have a tag bag",
+ * which for an episode is the only attribution input compaction leaves it.
+ */
+export function countUnattributable(state: LedgerState): number {
+  let n = 0;
+  for (const row of Object.values(state.ledger)) {
+    if (!hasDomainInputs(row as unknown as Rec)) n += 1;
+  }
+  for (const e of state.episodes) {
+    if (e.superseded_by_scan !== null) continue;
+    if (e.vuln_key in state.ledger) continue;
+    if (!hasDomainInputs(e as unknown as Rec)) n += 1;
+  }
+  return n;
 }
 
 /** Lifecycles still carrying no captured signal at all — the permanent-unknown residue. */

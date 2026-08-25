@@ -14,7 +14,10 @@ export const UNASSIGNED = "Unassigned";
 export const MAX_REGEX_LEN = 200;
 
 // ledger episodes surface with this placeholder asset name; a name regex must never
-// "match" it — episodes carry no asset data and stay Unassigned.
+// "match" it, because it is not a name. That is the whole of the rule, and it is narrower
+// than it once was: this used to pin the entire record to UNASSIGNED before any condition
+// ran, which also disqualified the `tag` conditions — on exactly the rows whose tag bag
+// compaction goes to the trouble of preserving.
 const COMPACTED_ASSET = "(compacted)";
 
 const FRAME_NAME_COLS = ["vulnerableAsset.name"];
@@ -300,7 +303,11 @@ export function conditionMatches(spec: CondSpec, record: Rec, tags: Rec): boolea
   if (spec.kind === "regex") {
     const names = recordValues(record, ...FRAME_NAME_COLS);
     const pool = names.length ? names : recordValues(record, ...LEDGER_NAME_COLS);
-    return pool.some((n) => spec.re.test(n));
+    // The placeholder is filtered HERE rather than pinning the whole record to UNASSIGNED:
+    // that is the difference between "a name regex cannot match a compacted episode" (true,
+    // and all this guard was ever for) and "no rule of any kind can claim a compacted
+    // episode" (which made a recovered tag bag unusable by the rules that read it).
+    return pool.some((n) => n !== COMPACTED_ASSET && spec.re.test(n));
   }
   if (spec.kind === "sg") {
     const sgs = [
@@ -318,8 +325,6 @@ export function conditionMatches(spec: CondSpec, record: Rec, tags: Rec): boolea
 
 /** The domain a single finding record belongs to (first match wins). */
 export function assignDomain(record: Rec, compiled: CompiledDomain[]): string {
-  const name = recordValues(record, ...LEDGER_NAME_COLS);
-  if (name.length && name[0] === COMPACTED_ASSET) return UNASSIGNED;
   const tags = recordTags(record);
   for (const dom of compiled) {
     for (const rule of dom.rules) {

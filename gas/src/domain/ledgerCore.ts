@@ -154,6 +154,14 @@ function reconcileEpisodeCollisions(
     } else {
       // The API re-listed an already-counted old resolution: the episode stays
       // authoritative; drop the fresh row and undo its deltas.
+      //
+      // TAKE THE TAG BAG OFF IT FIRST. The re-listed row carries the resource's CURRENT
+      // tags, and an episode's bag is where its domain comes from — the vulnerability query
+      // fetches `status: [OPEN, RESOLVED]`, so Wiz hands us the attribution for these sealed
+      // lifecycles on every single scan, and dropping the row unread is what left them
+      // permanently `Not attributable`. Fill-only, never overwrite: an episode that already
+      // carries a bag keeps its own, the same rule backfillTagsFromCheckpoint applies.
+      if (!episode.tags_json && row.tags_json) episode.tags_json = row.tags_json;
       delete updated[key];
       deltas.new_count -= 1;
       deltas.resolved_count -= 1;

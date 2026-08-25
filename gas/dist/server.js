@@ -2110,7 +2110,7 @@ var Server = (() => {
     if (spec.kind === "regex") {
       const names = recordValues(record, ...FRAME_NAME_COLS);
       const pool = names.length ? names : recordValues(record, ...LEDGER_NAME_COLS);
-      return pool.some((n) => spec.re.test(n));
+      return pool.some((n) => n !== COMPACTED_ASSET && spec.re.test(n));
     }
     if (spec.kind === "sg") {
       const sgs = [
@@ -2126,8 +2126,6 @@ var Server = (() => {
     return subs.some((s) => spec.values.has(fold(s)));
   }
   function assignDomain(record, compiled) {
-    const name = recordValues(record, ...LEDGER_NAME_COLS);
-    if (name.length && name[0] === COMPACTED_ASSET) return UNASSIGNED;
     const tags = recordTags(record);
     for (const dom of compiled) {
       for (const rule of dom.rules) {
@@ -2199,7 +2197,6 @@ var Server = (() => {
   }
 
   // src/domain/attribution.ts
-  var COMPACTED_ASSET2 = "(compacted)";
   var NAME_COL = "vulnerableAsset.name";
   var TYPE_COL = "vulnerableAsset.type";
   var SUB_COL = "vulnerableAsset.subscriptionName";
@@ -2246,19 +2243,8 @@ var Server = (() => {
     var _a;
     return String((_a = r[NAME_COL]) != null ? _a : "");
   }
-  function isCompacted(record) {
-    const v = record["asset_name"];
-    if (present(v)) return String(v) === COMPACTED_ASSET2;
-    const va = record["vulnerableAsset"];
-    if (va && typeof va === "object" && !Array.isArray(va)) {
-      const leaf = va["asset_name"];
-      if (present(leaf)) return String(leaf) === COMPACTED_ASSET2;
-    }
-    return false;
-  }
   function traceRecord(record, compiled) {
     const tags = recordTags(record);
-    const compacted = isCompacted(record);
     const rules = [];
     let assigned = UNASSIGNED;
     compiled.forEach((dom, domainIndex) => {
@@ -2270,7 +2256,7 @@ var Server = (() => {
         const conditions = rule.map((spec, index) => ({ index, matched: conditionMatches(spec, record, tags) }));
         const matched = conditions.every((c) => c.matched);
         rules.push({ domainIndex, domain: dom.name, ruleIndex, malformed: false, matched, conditions });
-        if (matched && !compacted && assigned === UNASSIGNED) assigned = dom.name;
+        if (matched && assigned === UNASSIGNED) assigned = dom.name;
       });
     });
     return { assigned, rules };
@@ -3315,6 +3301,7 @@ var Server = (() => {
         deltas.reopened_count += 1;
         episode.superseded_by_scan = scanId;
       } else {
+        if (!episode.tags_json && row.tags_json) episode.tags_json = row.tags_json;
         delete updated[key];
         deltas.new_count -= 1;
         deltas.resolved_count -= 1;
@@ -3395,7 +3382,7 @@ var Server = (() => {
     state.scans.push({ ...row });
   }
   var DAY_MS4 = 864e5;
-  var COMPACTED_ASSET3 = "(compacted)";
+  var COMPACTED_ASSET2 = "(compacted)";
   var ROLLOUT_MS2 = parseTs(REMEDIATION_ROLLOUT_ISO);
   function baseRows(state, now) {
     var _a;
@@ -3431,7 +3418,7 @@ var Server = (() => {
           cve: e.cve,
           severity: e.severity,
           asset_id: null,
-          asset_name: COMPACTED_ASSET3,
+          asset_name: COMPACTED_ASSET2,
           asset_type: null,
           cloud: null,
           first_seen: e.first_seen,
@@ -4364,7 +4351,9 @@ var Server = (() => {
       scansUnreadable: 0,
       ledgerRowsTouched: 0,
       episodeRowsTouched: 0,
-      stillUnknown: 0
+      stillUnknown: 0,
+      tagsRecovered: 0,
+      stillUnattributable: 0
     };
   }
   function backfillTagsFromCheckpoint(state, checkpoint) {
@@ -4404,6 +4393,33 @@ var Server = (() => {
         if (before !== ep.risk_observed_at) result.episodeRowsTouched += 1;
       }
     }
+  }
+  function backfillTagsFromRecords(state, records, result) {
+    var _a;
+    const episodesByKey = /* @__PURE__ */ new Map();
+    for (const e of state.episodes) episodesByKey.set(e.vuln_key, e);
+    for (const rec of records) {
+      const key = vulnKey(rec);
+      const target = (_a = state.ledger[key]) != null ? _a : episodesByKey.get(key);
+      if (!target || target.tags_json) continue;
+      const bag = tagsJson(rec);
+      if (bag) {
+        target.tags_json = bag;
+        result.tagsRecovered += 1;
+      }
+    }
+  }
+  function countUnattributable(state) {
+    let n = 0;
+    for (const row of Object.values(state.ledger)) {
+      if (!hasDomainInputs(row)) n += 1;
+    }
+    for (const e of state.episodes) {
+      if (e.superseded_by_scan !== null) continue;
+      if (e.vuln_key in state.ledger) continue;
+      if (!hasDomainInputs(e)) n += 1;
+    }
+    return n;
   }
   function countUnknownRisk(state) {
     let n = 0;
@@ -4564,9 +4580,12 @@ var Server = (() => {
       superseded_by_scan: str(r["superseded_by_scan"]),
       fix_date: str(r["fix_date"]),
       fix_observed_at: str(r["fix_observed_at"]),
-      // Null on every legacy bundle — the Python exporter never had the column — which is
-      // correct and not a loss: those episodes read as Not attributable, exactly as they did
-      // before this column existed.
+      // Null on every legacy bundle — the Python exporter never had the column, and its
+      // `resolved_episodes` table never had one to export. Correct at import, and no longer
+      // permanent: these episodes arrive as Not attributable, then recover their bag from the
+      // scan archives (the history backfill) or from the next scan that re-lists them. The one
+      // route that cannot reach them is backfillTagsFromCheckpoint — they were never in a GAS
+      // checkpoint to begin with.
       tags_json: str(r["tags_json"]),
       ...coerceRiskSignals(r)
     };
@@ -5267,7 +5286,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "5755f483090d" : "dev";
+  var BUILD_ID = true ? "142fab3dd412" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -6859,6 +6878,7 @@ var Server = (() => {
         const scan = currentScan();
         if (scan) {
           backfillRiskFromRecords(state, scan.records, scan.ts, result);
+          backfillTagsFromRecords(state, scan.records, result);
           dirty = true;
         }
       } catch (e) {
@@ -6884,12 +6904,14 @@ var Server = (() => {
         continue;
       }
       backfillRiskFromRecords(state, records, row.ts, result);
+      backfillTagsFromRecords(state, records, result);
       result.scansReplayed += 1;
       dirty = true;
     }
     if (dirty) writeStateTables(state);
     trashFile(journalRef);
     result.stillUnknown = countUnknownRisk(state);
+    result.stillUnattributable = countUnattributable(state);
     updateJob(job.job_id, {
       page: done,
       findings_so_far: result.ledgerRowsTouched + result.episodeRowsTouched,

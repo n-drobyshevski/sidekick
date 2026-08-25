@@ -74,7 +74,12 @@ describe("backfillStatusView terminal states", () => {
       },
       NOW,
     );
-    expect(v.text).toBe("7 scan(s) replayed · 42 lifecycle(s) filled · 5 still unclassified.");
+    // Both residues print even at zero: "0 still unattributable" and "we never looked" are
+    // different answers, and only an unconditional figure tells a reader which one this is.
+    expect(v.text).toBe(
+      "7 scan(s) replayed · 42 lifecycle(s) filled · 0 domain tag(s) recovered · " +
+        "5 still unclassified · 0 still unattributable.",
+    );
     expect(v.busy).toBe(false);
   });
 
