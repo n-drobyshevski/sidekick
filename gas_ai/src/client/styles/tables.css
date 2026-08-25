@@ -8,7 +8,7 @@ table.data th {
   text-align: left; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
   background: var(--surface);
-  padding: var(--space-2) 10px; border-bottom: 1px solid var(--hairline);
+  padding: var(--space-2) var(--space-2); border-bottom: 1px solid var(--hairline);
   position: sticky; top: 0;
   white-space: nowrap;
 }
@@ -22,7 +22,7 @@ table.data th {
 .th-sort:hover { color: var(--ink); background: none; }
 .th-sort-glyph { font-size: var(--fs-micro); }
 table.data td {
-  padding: 7px 10px; border-bottom: 1px solid var(--hairline);
+  padding: var(--space-2) var(--space-2); border-bottom: 1px solid var(--hairline);
   white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
 }
 table.data tbody tr:last-child td { border-bottom: none; }
@@ -31,10 +31,10 @@ table.data tbody tr.clickable { cursor: pointer; }
 td.num { text-align: right; }
 a { color: var(--accent); }
 
-.pager { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: var(--fs-label); color: var(--text-2); }
+.pager { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); font-size: var(--fs-label); color: var(--text-2); }
 
 /* Page-size select + pager under a paged table. */
-.table-footer { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-top: 10px; }
+.table-footer { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
 .table-footer .pager { margin-top: 0; }
 .table-footer select { font-size: var(--fs-body); }
 /* A page fetched from the server: the old rows stay legible but read as superseded. */
@@ -51,11 +51,11 @@ a { color: var(--accent); }
 .chart-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-  gap: 14px;
-  margin-bottom: 20px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
 }
 /* The line under a chart title: what the chart leaves out, or what it's still waiting for. */
-.chart-note { margin: -4px 0 10px; font-size: var(--fs-label); color: var(--text-3); }
+.chart-note { margin: -4px 0 var(--space-3); font-size: var(--fs-label); color: var(--text-3); }
 /* Stands in for the plot when there aren't enough points to draw one — matched to the
    chart-box height so the card doesn't resize when the first real line arrives. */
 .chart-empty {

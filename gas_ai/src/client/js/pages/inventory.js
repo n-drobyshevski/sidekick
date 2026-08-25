@@ -18,7 +18,6 @@
 // src/domain/assetTable.ts that test/assetQueryMirror.test.ts holds to it.
 
 import { bootstrap, buildHash, listJoin, navigate, setParams, swrCall } from "../store.js";
-import { staleNotices } from "../staleness.js";
 import { openAssetSheet } from "../detailSheets.js";
 import { trendLine } from "../charts.js";
 import {
@@ -415,15 +414,13 @@ export async function renderInventory(main, params) {
       { class: "link", href: buildHash("scans", { anchor: "reach" }), target: "_self" },
       known ? observed.covered + " of " + observed.total : "—",
     );
-    // A stat in the header's strip, not a card of its own below it. As a .kpi-card this was
-    // a SECOND hero-shaped figure directly under "818 AI assets", and DESIGN.md is explicit
-    // that one page gets one hero: a second one means neither is.
-    return statRow(
-      "Landscape reach",
-      link,
-      "AI-kinded assets carrying any signal, of the register's AI landscape. Wiz Scans has "
-        + "the full five-stage ladder.",
-    );
+    return el("div", { class: "kpi-row" },
+      kpiCard(
+        "Landscape reach — observed",
+        link,
+        "AI-kinded assets carrying any signal, of the register's AI landscape — open Wiz Scans "
+          + "for the full five-stage ladder.",
+      ));
   }
 
   // ---- header: one hero, the three counts, one distribution, one stat list
@@ -534,8 +531,6 @@ export async function renderInventory(main, params) {
         "of " + (posture ? posture.frameworks ?? 0 : 0) + " collected",
         null, { term: "coverage-state" }),
     );
-    const reachRow = reachHeadline(fresh.reach);
-    if (reachRow) stats.append(reachRow);
 
     // The strip is a control, so it has to reflect state it did not itself change — a
     // chip cleared outside it, or the drawer's own severity facet. Marked in place rather

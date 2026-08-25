@@ -34,7 +34,7 @@
 .sheet-header {
   /* The severity accent stripe above is absolutely positioned against this. */
   position: relative;
-  padding: 14px 18px var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-3);
   border-bottom: 1px solid transparent;
   transition: border-color var(--dur-quick) linear;
   display: flex; flex-direction: column; gap: var(--space-2);
@@ -43,7 +43,7 @@
 /* The affordance for "there is more below" is a hairline, never an ambient shadow. */
 .sheet.is-scrolled .sheet-header { border-bottom-color: var(--hairline); }
 .sheet-headrow {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2);
 }
 .sheet-heading { min-width: 0; }
 .sheet-title { font-size: var(--fs-lead); font-weight: 600; margin: 0; letter-spacing: -0.01em; }
@@ -65,7 +65,7 @@
 .sheet-widen[aria-pressed="true"] { color: var(--ink); background: rgba(0, 0, 0, 0.06); }
 .sheet-close:focus-visible, .sheet-widen:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Chips sit in the header so the verdict survives scrolling the evidence. */
-.sheet-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sheet-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
 .sheet-chips:empty { display: none; }
 .sheet-chip-label {
   font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
@@ -74,11 +74,11 @@
 .sheet-chip-label + * { margin-right: var(--space-1); }
 
 .sheet-body {
-  padding: var(--space-1) 18px var(--space-5); overflow-y: auto; flex: 1 1 auto;
+  padding: var(--space-1) var(--space-4) var(--space-5); overflow-y: auto; flex: 1 1 auto;
   overscroll-behavior: contain;
 }
 .sheet-footer {
-  flex: 0 0 auto; padding: var(--space-3) 18px; border-top: 1px solid var(--hairline);
+  flex: 0 0 auto; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--hairline);
   background: var(--page);
   display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2);
 }
@@ -91,12 +91,12 @@
    within them: `gap` separates a number from its own noun, and the margin-left on the
    second number is what keeps "4 open issues" and "1 cloud finding" reading as two
    phrases rather than four loose words. */
-.sheet-verdict { display: flex; align-items: baseline; gap: 6px; margin: var(--space-3) 0 var(--space-half); flex-wrap: wrap; }
+.sheet-verdict { display: flex; align-items: baseline; gap: var(--space-1); margin: var(--space-3) 0 var(--space-half); flex-wrap: wrap; }
 .sheet-count {
   font-size: var(--fs-hero); font-weight: 600; line-height: 1.1; letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
-.sheet-count + .muted + .sheet-count { margin-left: 18px; }
+.sheet-count + .muted + .sheet-count { margin-left: var(--space-4); }
 .sheet-caption { color: var(--text-3); font-size: var(--fs-label); margin: var(--space-half) 0 0; }
 
 /* List rows. `button` where the row leads somewhere, so it is reachable by keyboard. */
@@ -105,7 +105,7 @@
   display: block; width: 100%; text-align: left; font: inherit; color: inherit;
   background: none; border: none; border-bottom: 1px solid var(--hairline);
   border-radius: 0; box-shadow: none; min-height: 0;
-  padding: 9px var(--space-2) 10px; margin: 0 -8px;
+  padding: var(--space-2) var(--space-2) var(--space-2); margin: 0 -8px;
 }
 .sheet-row:last-child, .sheet-list > :last-child { border-bottom: none; }
 button.sheet-row { cursor: pointer; }
@@ -117,19 +117,19 @@ button.sheet-row:focus-visible { outline: 2px solid var(--accent); outline-offse
 .sheet-row-note {
   font-size: var(--fs-label); color: var(--text-2); margin-top: var(--space-half); max-width: var(--measure);
 }
-.sheet-row .fw-tags { margin-top: 6px; }
+.sheet-row .fw-tags { margin-top: var(--space-2); }
 .sheet-fix { margin-top: var(--space-2); }
 .sheet-fix-label {
   display: block; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
 }
 .sheet-fix-body {
-  margin: 3px 0 0; font-size: var(--fs-label); color: var(--text-2); white-space: pre-wrap;
+  margin: var(--space-1) 0 0; font-size: var(--fs-label); color: var(--text-2); white-space: pre-wrap;
   max-width: var(--measure);
 }
 .sheet-rel-dir { color: var(--text-3); }
-.sheet-rel .sheet-row-head { gap: 6px; }
-.sheet-more { margin-top: 10px; }
+.sheet-rel .sheet-row-head { gap: var(--space-1); }
+.sheet-more { margin-top: var(--space-3); }
 
 /* Skeleton stack: the placeholder is shaped like the record that is coming. */
 .sheet-loading .sheet-section > .skeleton + .skeleton { margin-top: var(--space-2); }
@@ -139,25 +139,25 @@ button.sheet-row:focus-visible { outline: 2px solid var(--accent); outline-offse
 /* Error state: a failure reads as a failure, with a way out. */
 .empty--error { border-style: solid; border-color: rgba(185, 28, 28, 0.28); text-align: left; padding: var(--space-4); }
 .empty-actions { margin-top: var(--space-3); }
-.empty-detail { margin-top: 10px; color: var(--text-3); }
+.empty-detail { margin-top: var(--space-3); color: var(--text-3); }
 .empty-detail summary { cursor: pointer; font-size: var(--fs-label); }
 
 /* .sr-only moved to base.css, which already named it as the app-wide utility. */
 /* The sheet owns the viewport while it is open; ≤800px un-hides #app's overflow. */
 html.sheet-open, html.sheet-open body { overflow: hidden; }
 .scan-stall-note {
-  margin: var(--space-3) 0 var(--space-1); padding: var(--space-2) 10px; font-size: var(--fs-label);
+  margin: var(--space-3) 0 var(--space-1); padding: var(--space-2) var(--space-2); font-size: var(--fs-label);
   color: var(--warn); background: rgba(161, 98, 7, 0.08);
   border: 1px solid rgba(161, 98, 7, 0.18); border-radius: var(--radius-md);
 }
-.sheet-section { margin-bottom: 18px; }
-.sheet-section .label { margin-bottom: 6px; display: block; }
+.sheet-section { margin-bottom: var(--space-4); }
+.sheet-section .label { margin-bottom: var(--space-2); display: block; }
 /* One scroll, but you always know which section you are in. Sticks directly under the
    header (which is outside the scroll container), over the page ground so rows pass
    behind it rather than through it. */
 h3.sheet-section-title {
   position: sticky; top: 0; z-index: 1;
-  margin: 0 0 6px; padding: var(--space-2) 0 5px;
+  margin: 0 0 var(--space-2); padding: var(--space-2) 0 var(--space-1);
   background: var(--page);
 }
 /* Collapsible group inside a sheet. Shares the legend's
@@ -176,7 +176,7 @@ h3.sheet-section-title {
 }
 .disclosure[open] > .disclosure-toggle::after { transform: rotate(45deg); }
 .disclosure > .disclosure-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.disclosure > .pill-row { padding: 6px 0 10px; }
+.disclosure > .pill-row { padding: var(--space-1) 0 var(--space-2); }
 @media (prefers-reduced-motion: reduce) {
   .disclosure > .disclosure-toggle::after { transition: none; }}
 
@@ -197,11 +197,11 @@ h3.sheet-section-title {
 .facet-list { display: flex; flex-direction: column; }
 .facet-subhead {
   font-size: var(--fs-micro); font-weight: 600; color: var(--text-3);
-  margin: var(--space-2) 0 var(--space-half); padding-left: 6px;
+  margin: var(--space-2) 0 var(--space-half); padding-left: var(--space-1);
 }
 .facet-row {
-  display: grid; grid-template-columns: 14px 1fr 44px auto; align-items: center; gap: 9px;
-  width: 100%; text-align: left; padding: 5px 6px; min-height: 30px;
+  display: grid; grid-template-columns: 14px 1fr 44px auto; align-items: center; gap: var(--space-2);
+  width: 100%; text-align: left; padding: var(--space-1) var(--space-1); min-height: 30px;
   border: 1px solid transparent; background: none; box-shadow: none;
   border-radius: var(--radius-sm); font-size: var(--fs-body); font-weight: 400; color: var(--ink);
 }
@@ -220,7 +220,7 @@ h3.sheet-section-title {
   background: var(--accent); border-color: var(--accent); color: #ffffff;
 }
 .facet-label {
-  display: flex; align-items: center; gap: 6px; min-width: 0;
+  display: flex; align-items: center; gap: var(--space-1); min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .facet-label .sev-dot { margin-right: 0; flex: 0 0 8px; }
@@ -232,8 +232,8 @@ h3.sheet-section-title {
    disabled, so the option stays focusable and its 0 stays discoverable. */
 .facet-row[aria-disabled="true"] { opacity: 0.45; }
 .facet-row[aria-disabled="true"]:hover { background: none; }
-.facet-empty { margin: var(--space-1) 6px; }
-.kv { display: grid; grid-template-columns: 150px 1fr; gap: 3px var(--space-3); font-size: var(--fs-body); }
+.facet-empty { margin: var(--space-1) var(--space-2); }
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: var(--space-half) var(--space-3); font-size: var(--fs-body); }
 .kv dt { color: var(--text-3); margin: 0; }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 /* Below the phone breakpoint a 150px label column leaves ~129px for the value, which

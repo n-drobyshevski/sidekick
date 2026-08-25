@@ -14,7 +14,7 @@
 /* Kind tile: the record's own category, at the size the reference gives it. It is
    decorative — the kind is also spelled out in the subtitle and in Identity — so it is
    aria-hidden and carries no meaning color alone would have to bear. */
-.sheet--record .sheet-header { padding: var(--space-4) 20px var(--space-3); }
+.sheet--record .sheet-header { padding: var(--space-4) var(--space-4) var(--space-3); }
 .sheet-icon {
   flex: 0 0 auto; width: 36px; height: 36px; margin-right: var(--space-3);
   display: inline-flex; align-items: center; justify-content: center;
@@ -34,11 +34,11 @@
 .sheet--record .sheet-title { font-size: var(--fs-display-sm); overflow-wrap: anywhere; }
 
 /* Action toolbar. Small outlined buttons over the base button, not a new species. */
-.sheet-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.sheet-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-3); }
 .sheet-toolbar:empty { display: none; }
 .sheet-tool {
-  display: inline-flex; align-items: center; gap: 6px;
-  min-height: 30px; padding: var(--space-1) 10px; font-size: var(--fs-label); font-weight: 500;
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  min-height: 30px; padding: var(--space-1) var(--space-2); font-size: var(--fs-label); font-weight: 500;
   background: var(--page);
 }
 .sheet-tool svg { flex: 0 0 auto; color: var(--text-3); }
@@ -48,25 +48,25 @@
 .sheet-panes { flex: 1 1 auto; display: flex; min-height: 0; }
 .sheet-rail {
   flex: 0 0 var(--sheet-rail-w); width: var(--sheet-rail-w);
-  padding: var(--space-3) 10px 20px; overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--space-3) var(--space-2) var(--space-4); overflow-y: auto; overscroll-behavior: contain;
   border-right: 1px solid var(--hairline); background: var(--surface);
 }
 .sheet--record .sheet-body {
-  flex: 1 1 auto; min-width: 0; padding: 14px 20px var(--space-5);
+  flex: 1 1 auto; min-width: 0; padding: var(--space-3) var(--space-4) var(--space-5);
 }
 /* The pane owns the scroll, so it is focusable even with no control in it — otherwise a
    keyboard user cannot read a long section at all. Its ring is inset: an outset one would
    sit on the rail's border. */
 .sheet--record .sheet-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 
-.sheet-rail-group { margin-top: 14px; }
+.sheet-rail-group { margin-top: var(--space-4); }
 .sheet-rail-label {
   padding: 0 var(--space-2) var(--space-1); font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
 }
 .sheet-rail-item {
   display: flex; align-items: center; gap: var(--space-2); width: 100%;
-  min-height: 30px; padding: 5px var(--space-2); margin: 1px 0;
+  min-height: 30px; padding: var(--space-1) var(--space-2); margin: var(--space-half) 0;
   font-size: var(--fs-body); text-align: left;
   background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
   color: var(--text-2);
@@ -150,17 +150,17 @@
 
 /* Properties: the reference's two columns, which is four grid tracks of dt/dd. Below the
    pane's own breakpoint it falls back to the one-column .kv in sheet.css. */
-.kv--cols2 { grid-template-columns: 132px minmax(0, 1fr) 132px minmax(0, 1fr); gap: var(--space-2) 20px; }
+.kv--cols2 { grid-template-columns: 132px minmax(0, 1fr) 132px minmax(0, 1fr); gap: var(--space-2) var(--space-4); }
 .kv--cols2 dd { min-width: 0; }
 /* Provider and external ids are long, opaque and not read left-to-right; clipping them
    keeps the grid legible and the full value stays in the title and on the clipboard. */
 .kv-trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kv-dot { display: inline-block; width: 7px; height: 7px; border-radius: var(--radius-pill); margin-right: 6px; }
+.kv-dot { display: inline-block; width: 7px; height: 7px; border-radius: var(--radius-pill); margin-right: var(--space-2); }
 .kv-dot--ok { background: var(--ok); }
 .kv-dot--idle { background: var(--text-3); }
 
 .prov-strip {
-  display: flex; flex-wrap: wrap; gap: var(--space-1) 18px; margin: 14px 0 0;
+  display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: var(--space-4) 0 0;
   padding-top: var(--space-3); border-top: 1px solid var(--hairline);
   font-size: var(--fs-label); color: var(--text-3);
 }
@@ -171,20 +171,20 @@
   background: var(--page); box-shadow: var(--shadow-card); overflow: hidden;
 }
 .sheet-card-head {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px; border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--hairline);
 }
 .sheet-card-title { font-size: var(--fs-body); font-weight: 600; margin: 0; flex: 1 1 auto; }
-.sheet-card-body { padding: var(--space-1) 14px 10px; }
+.sheet-card-body { padding: var(--space-1) var(--space-3) var(--space-2); }
 .sheet-card-body .empty { border: none; padding: var(--space-3) 0; }
 /* More than one tool in a card head; the head is a flex row, so they need their own box. */
-.sheet-card-tools { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.sheet-card-tools { display: flex; align-items: center; gap: var(--space-1); flex: 0 0 auto; }
 
 /* Where the connection map's contents came from — last sync, or a live read of the tenant.
    The two are indistinguishable on screen otherwise, and conflating them is exactly the
    failure PRODUCT.md's "honest state" principle names. Warn and bad carry a word as well
    as a colour, so the distinction survives without the hue. */
-.sheet-prov { padding-top: var(--space-2); margin-top: 6px; border-top: 1px solid var(--hairline); }
+.sheet-prov { padding-top: var(--space-2); margin-top: var(--space-2); border-top: 1px solid var(--hairline); }
 .sheet-prov p { margin: var(--space-half) 0; }
 .sheet-prov-warn { color: var(--warn); }
 .sheet-prov-bad { color: var(--bad); }
@@ -202,7 +202,7 @@
 .prov-spinner {
   --ring: var(--accent);
   --track: rgba(0, 0, 0, 0.10);
-  display: inline-block; vertical-align: -2px; margin-right: 6px;
+  display: inline-block; vertical-align: -2px; margin-right: var(--space-2);
   width: 11px; height: 11px; border-radius: 50%;
   background: conic-gradient(var(--ring) 0 25%, var(--track) 0);
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));

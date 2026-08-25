@@ -29,10 +29,10 @@
 .cov-bar-seg[data-state="unscanned"] { background: var(--sev-info); }
 .cov-bar-seg[data-state="empty"] { flex: 1; background: var(--track-bg); }
 
-.cov-keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.cov-keys { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .cov-key {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: var(--fs-label); padding: 3px 10px;
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  font-size: var(--fs-label); padding: var(--space-half) var(--space-2);
   border: 1px solid var(--hairline); border-radius: var(--radius-pill);
   background: var(--page); color: var(--text-2);
 }
@@ -50,7 +50,7 @@
 .cov-diagram-scroll {
   overflow-x: auto;
   border: 1px solid var(--hairline); border-radius: var(--radius-xl);
-  background: var(--page); padding: 6px var(--space-3) var(--space-2);
+  background: var(--page); padding: var(--space-1) var(--space-3) var(--space-2);
 }
 .cov-diagram-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* No width rules here on purpose. The layout is measured, not scaled: scans.js draws the
@@ -119,7 +119,7 @@
   font-size: var(--fs-label); color: var(--text-3);
 }
 .cov-area { font-weight: 600; color: var(--ink); }
-.cov-figure { display: flex; flex-direction: column; gap: 1px; }
+.cov-figure { display: flex; flex-direction: column; gap: var(--space-half); }
 .cov-figure-value { font-weight: 600; font-variant-numeric: tabular-nums; }
 .cov-figure-unit { font-size: var(--fs-label); color: var(--text-3); }
 .cov-lands { color: var(--text-2); }
@@ -129,7 +129,7 @@
    circle for every kind — it separates states by colour alone. Coverage needs the glyph to
    differ (● ◐ ○), so the pill's dot is suppressed rather than sitting beside a second mark
    that says the same thing less well. */
-.cov-state { gap: 6px; }
+.cov-state { gap: var(--space-1); }
 .cov-state::before { display: none; }
 .cov-state-glyph { font-size: var(--fs-micro); line-height: 1; }
 
@@ -141,10 +141,10 @@
 /* The number's lineage as a chain, not a paragraph: query → step → ledger → field. The rule
    down the left is the join; each row is one hop. */
 .prov { display: flex; flex-direction: column; }
-.prov-step { display: grid; grid-template-columns: 16px 1fr; gap: 10px; padding: 5px 0;
+.prov-step { display: grid; grid-template-columns: 16px 1fr; gap: var(--space-2); padding: var(--space-1) 0;
   position: relative; }
 .prov-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(0, 0, 0, 0.45);
-  margin: 6px 0 0 var(--space-1); }
+  margin: var(--space-2) 0 0 var(--space-1); }
 .prov-step:not(:last-child)::before {
   content: ""; position: absolute; left: 7.5px; top: 16px; bottom: -5px;
   width: 1px; background: var(--hairline);
@@ -157,20 +157,20 @@
 .prov-sub { font-size: var(--fs-label); color: var(--text-3); }
 
 /* ------------------------------------------------------------------ panel: one query */
-.step-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: 10px; }
+.step-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
 .step-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: var(--fs-label); font-weight: 600; }
-.q-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  margin: var(--space-3) 0 5px; }
+.q-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  margin: var(--space-3) 0 var(--space-1); }
 .q-label { font-size: var(--fs-micro); font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
   color: var(--text-3); }
-.q-cap { font-size: var(--fs-micro); color: var(--text-3); margin-top: 6px; }
+.q-cap { font-size: var(--fs-micro); color: var(--text-3); margin-top: var(--space-2); }
 
 /* --------------------------------------------------------- panel: variables editor */
-.vars { margin-top: var(--space-4); padding-top: 14px; border-top: 1px solid var(--hairline); }
-.vars-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+.vars { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--hairline); }
+.vars-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2);
   margin-bottom: var(--space-2); }
-.vars-fields { display: flex; flex-direction: column; gap: 14px; }
+.vars-fields { display: flex; flex-direction: column; gap: var(--space-3); }
 .vars-field { display: flex; flex-direction: column; gap: var(--space-1); }
 .vars-label { font-size: var(--fs-label); font-weight: 600; }
 .vars-help { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
@@ -179,27 +179,27 @@
 
 /* A set of values as removable chips. The empty state says what empty MEANS — an empty
    filter is not "no filter applied", it is "ask Wiz for everything". */
-.chipset { display: flex; flex-wrap: wrap; gap: 5px; }
+.chipset { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .chipset-empty { font-size: var(--fs-label); color: var(--warn); }
-.chip { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-label);
+.chip { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--fs-label);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: var(--surface); border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill); padding: var(--space-half) var(--space-1) var(--space-half) 9px; }
+  border-radius: var(--radius-pill); padding: var(--space-half) var(--space-1) var(--space-half) var(--space-2); }
 .chip-x { border: none; background: none; cursor: pointer; color: var(--text-3);
   font-size: var(--fs-label); line-height: 1; padding: 0 var(--space-1); border-radius: 50%; }
 .chip-x:hover { background: var(--wash-hover); color: var(--ink); }
-.chip-add { display: flex; gap: 6px; margin-top: var(--space-half); }
+.chip-add { display: flex; gap: var(--space-1); margin-top: var(--space-half); }
 .chip-input { font: inherit; font-size: var(--fs-label); padding: var(--space-1) var(--space-2); min-width: 0; flex: 1;
   border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--page); }
 
 .vars-json { margin-top: var(--space-3); }
 .vars-json summary { font-size: var(--fs-label); color: var(--text-2); cursor: pointer; }
-.vars-json .code-block { margin-top: 6px; }
+.vars-json .code-block { margin-top: var(--space-2); }
 
 .vars-error { font-size: var(--fs-label); color: var(--bad); margin: var(--space-2) 0 0; min-height: 0; }
 .vars-error:not(.is-on) { display: none; }
 
-.vars-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: 14px; }
+.vars-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-4); }
 .vars-state { margin-right: auto; }
 
 .vars-test { margin-top: var(--space-3); }
@@ -213,7 +213,7 @@
 .cov-sheet-figure strong { font-size: var(--fs-display-sm); font-weight: 600; }
 .cov-note {
   font-size: var(--fs-label); color: var(--text-2); background: rgba(0, 0, 0, 0.03);
-  border-radius: var(--radius-md); padding: var(--space-2) 10px; margin: var(--space-2) 0 0;
+  border-radius: var(--radius-md); padding: var(--space-2) var(--space-2); margin: var(--space-2) 0 0;
 }
 
 /* The tenant's own rejection message, verbatim. Monospace and wrapped rather than truncated:
@@ -225,7 +225,7 @@
   font-size: var(--fs-label); line-height: 1.55; color: var(--ink);
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
-  margin: var(--space-2) 0 0; padding: 10px var(--space-3);
+  margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3);
   max-height: 160px; overflow: auto;
   /* `pre-wrap`, unlike .code-block's `pre`: a GraphQL document's indentation is how it is
      read, but an error message is a sentence and wrapping it costs nothing. */
@@ -240,13 +240,13 @@
    severity or coverage bar. */
 .reach-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 
-.reach-ladder { display: flex; flex-direction: column; gap: 9px; margin: 10px 0 18px; }
+.reach-ladder { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-3) 0 var(--space-4); }
 .reach-stage {
   display: grid; grid-template-columns: minmax(120px, 190px) 1fr 48px;
   align-items: center; gap: var(--space-3);
 }
 .reach-stage-label { font-size: var(--fs-label); font-weight: 600; color: var(--ink); }
-.reach-stage-figure { display: flex; align-items: center; gap: 10px; }
+.reach-stage-figure { display: flex; align-items: center; gap: var(--space-2); }
 .reach-stage-count {
   min-width: 84px; font-size: var(--fs-label); font-variant-numeric: tabular-nums; color: var(--ink);
 }
@@ -277,6 +277,6 @@
   .cov-header { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 760px) {
-  .cov-header { grid-template-columns: 1fr; gap: 18px; }
-  .cov-diagram-scroll { padding: var(--space-1) 6px var(--space-2); }
+  .cov-header { grid-template-columns: 1fr; gap: var(--space-4); }
+  .cov-diagram-scroll { padding: var(--space-1) var(--space-1) var(--space-2); }
 }

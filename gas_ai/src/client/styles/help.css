@@ -54,7 +54,7 @@
 @media (min-width: 1100px) {
   .help-page {
     grid-template-columns: minmax(0, 1fr) 196px;
-    column-gap: 36px;
+    column-gap: var(--space-6);
     align-items: start;
   }
   .help-doc { grid-column: 1; grid-row: 1; }
@@ -72,11 +72,11 @@
   padding: 0 var(--space-2) var(--space-1); font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
 }
-.help-index-item + .help-index-label { margin-top: 14px; }
+.help-index-item + .help-index-label { margin-top: var(--space-4); }
 .help-index-item {
   position: relative;
   display: flex; align-items: baseline; gap: var(--space-2); width: 100%;
-  min-height: 28px; padding: 5px var(--space-2); margin: 1px 0;
+  min-height: 28px; padding: var(--space-1) var(--space-2); margin: var(--space-half) 0;
   font: inherit; font-size: var(--fs-label); line-height: 1.35; text-align: left;
   background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
   color: var(--text-2); cursor: pointer;
@@ -133,10 +133,10 @@
   );
 }
 
-.help-lexkeys { display: flex; flex-wrap: wrap; gap: 6px; }
+.help-lexkeys { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .help-lexkey {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 10px; font-size: var(--fs-label);
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-half) var(--space-2); font-size: var(--fs-label);
   border: 1px solid var(--hairline); border-radius: var(--radius-pill);
   background: var(--page); color: var(--text-2);
 }
@@ -152,10 +152,10 @@
    sections carried none, so the page read as one undifferentiated column. This is
    aars.css's `.rule-section` recipe — sections divide one surface with hairlines rather
    than floating as separate cards. */
-.help-section { padding: 22px 0 var(--space-1); border-top: 1px solid var(--hairline); }
+.help-section { padding: var(--space-5) 0 var(--space-1); border-top: 1px solid var(--hairline); }
 .help-section > .section-label { margin-top: 0; }
 /* The header already closes on a hairline; a second one 22px below it is a double rule. */
-.help-head + .help-section { border-top: none; padding-top: 14px; }
+.help-head + .help-section { border-top: none; padding-top: var(--space-3); }
 /* Jump targets clear the pane's top edge rather than tucking under it. */
 .help-section > .section-label, .help-family, .help-entry { scroll-margin-top: 16px; }
 
@@ -169,8 +169,8 @@
      own comment above names that failure, and a full-width page is exactly where it would
      otherwise happen. */
   grid-template-columns: 30px minmax(0, var(--measure)) 16px minmax(0, 1fr);
-  gap: 14px; align-items: center;
-  width: 100%; text-align: left; padding: 11px 10px; margin: 0; min-height: 0;
+  gap: var(--space-3); align-items: center;
+  width: 100%; text-align: left; padding: var(--space-3) var(--space-2); margin: 0; min-height: 0;
   background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
   color: inherit; font: inherit; cursor: pointer;
 }
@@ -189,7 +189,7 @@
 .help-map-item:focus-visible .help-map-icon { color: var(--accent); border-color: var(--accent); }
 .help-map-text { min-width: 0; }
 .help-map-q { display: block; font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
-.help-map-page { display: block; font-size: var(--fs-label); color: var(--text-3); margin-top: 1px; }
+.help-map-page { display: block; font-size: var(--fs-label); color: var(--text-3); margin-top: var(--space-half); }
 .help-map-go { display: inline-flex; color: var(--text-3); }
 .help-map-item:hover .help-map-go,
 .help-map-item:focus-visible .help-map-go { color: var(--accent); }
@@ -203,22 +203,22 @@
   display: grid;
   grid-template-columns:
     minmax(104px, auto) minmax(110px, 150px) minmax(0, var(--measure)) minmax(0, 1fr);
-  gap: var(--space-2) 14px; align-items: baseline;
-  padding: 9px 0; border-bottom: 1px solid var(--hairline);
+  gap: var(--space-2) var(--space-3); align-items: baseline;
+  padding: var(--space-2) 0; border-bottom: 1px solid var(--hairline);
 }
 /* The pill draws its own dot, and the coverage glyph inside the label is the SAME cue in
    the same pill — one of them is noise. The glyph wins, because ● ◐ ○ is the vocabulary
    Wiz Scans uses for these three states and this page teaches it. scans.css:136 retires
    the dot the same way, for the same reason. */
 .help-limit-row .pill::before { display: none; }
-.help-limit-row .pill { gap: 5px; }
+.help-limit-row .pill { gap: var(--space-1); }
 .help-limit-name { font-weight: 600; }
 /* The note is the longest running text on the page after a definition, and it had no cap
    at all — in a 1fr column it already overran the measure at 1080px. */
 .help-limit-note { color: var(--text-2); max-width: var(--measure); }
-.help-limits-src { margin: 10px 0 0; font-size: var(--fs-label); color: var(--text-3); max-width: var(--measure); }
+.help-limits-src { margin: var(--space-3) 0 0; font-size: var(--fs-label); color: var(--text-3); max-width: var(--measure); }
 .help-limits-none {
-  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
   margin: var(--space-1) 0 0; font-size: var(--fs-label); color: var(--text-3); max-width: var(--measure);
 }
 
@@ -226,7 +226,7 @@
 /* Figure over callouts, not beside them. Side by side, a 150px-tall drawing sat next to a
    six-item list and left most of a screen empty in both columns; stacked, the callouts
    wrap into as many columns as the pane affords and the whole section costs ~330px. */
-.help-anatomy { display: flex; flex-direction: column; gap: 14px; }
+.help-anatomy { display: flex; flex-direction: column; gap: var(--space-3); }
 .help-figure { min-width: 0; }
 /* Below its minimum the figure scrolls rather than scaling: 10px labels shrunk to fit a
    phone are not a smaller diagram, they are an unreadable one. The container is a real tab
@@ -246,7 +246,7 @@
 .help-figure-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .help-scene { display: block; min-width: 640px; width: 640px; height: auto; }
 .help-figure-note {
-  margin: 10px 0 0; font-size: var(--fs-label); color: var(--text-3); max-width: var(--measure);
+  margin: var(--space-3) 0 0; font-size: var(--fs-label); color: var(--text-3); max-width: var(--measure);
 }
 
 /* Dimming is the figure's only state. It rides opacity on the groups the callout names,
@@ -293,14 +293,14 @@
    this width lands on four columns, which leaves a two-item orphan row. */
 .help-callouts {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-half) 14px; align-items: start;
+  gap: var(--space-half) var(--space-3); align-items: start;
 }
 @media (max-width: 900px) { .help-callouts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .help-callouts { grid-template-columns: minmax(0, 1fr); } }
 .help-callout {
-  display: grid; grid-template-columns: 20px 1fr; gap: 10px;
+  display: grid; grid-template-columns: 20px 1fr; gap: var(--space-2);
   width: 100%; text-align: left; align-items: start;
-  padding: var(--space-2) 9px; border: 1px solid transparent; border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-2); border: 1px solid transparent; border-radius: var(--radius-md);
   background: none; color: inherit; font: inherit; cursor: pointer;
   /* base.css:463 gives every button --shadow-button. Overriding the background and the
      border but not the shadow left a whisper floating under a transparent surface — a card
@@ -343,7 +343,7 @@
 .help-family {
   position: sticky; top: -28px; z-index: 1;
   display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
-  margin: 22px 0 var(--space-half); padding: var(--space-2) 0 5px;
+  margin: var(--space-5) 0 var(--space-half); padding: var(--space-2) 0 var(--space-1);
   background: var(--page);
   font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3);
@@ -369,7 +369,7 @@
   grid-template-columns:
     92px minmax(0, var(--measure)) minmax(150px, 190px) minmax(0, 1fr);
   gap: var(--space-4); align-items: start;
-  padding: 14px 0; border-bottom: 1px solid var(--hairline);
+  padding: var(--space-3) 0; border-bottom: 1px solid var(--hairline);
   border-radius: var(--radius-md);
 }
 /* The row is a programmatic focus target (tabindex="-1"), never a tab stop; the ring is
@@ -381,25 +381,25 @@
    on a page whose whole thesis is that the two are one unit. */
 .help-entry-mark {
   display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap;
-  gap: 5px; padding-top: 1px;
+  gap: var(--space-1); padding-top: var(--space-half);
 }
 .help-entry-term { font-size: var(--fs-body); font-weight: 600; }
 .help-entry-term em { font-style: normal; font-weight: 400; color: var(--text-3); }
-.help-entry-def { margin: 3px 0 0; font-size: var(--fs-label); color: var(--text-2); max-width: var(--measure); }
+.help-entry-def { margin: var(--space-1) 0 0; font-size: var(--fs-label); color: var(--text-2); max-width: var(--measure); }
 .help-entry-more {
-  margin: 6px 0 0; font-size: var(--fs-label); color: var(--text-3); max-width: var(--measure);
+  margin: var(--space-2) 0 0; font-size: var(--fs-label); color: var(--text-3); max-width: var(--measure);
 }
 /* The destinations keep their words and gain the route's own sidebar mark, so the page
    names one set of pages in one vocabulary. Neutral ink, never accent: these are
    references, not links. */
 .help-entry-where {
-  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) 10px;
-  margin-top: 7px; font-size: var(--fs-label); color: var(--text-3);
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2);
+  margin-top: var(--space-2); font-size: var(--fs-label); color: var(--text-3);
 }
 .help-where-lead {
   font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
 }
-.help-where-item { display: inline-flex; align-items: center; gap: 5px; }
+.help-where-item { display: inline-flex; align-items: center; gap: var(--space-1); }
 .help-where-icon { display: inline-flex; color: var(--text-3); }
 .help-where-icon svg { display: block; width: 13px; height: 13px; }
 
@@ -411,7 +411,7 @@
    and 33 rows of 18px numbers would be the wall of figures PRODUCT.md rejects. */
 .help-entry-count {
   display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-half);
-  min-height: 38px; text-align: right; padding-top: 1px;
+  min-height: 38px; text-align: right; padding-top: var(--space-half);
 }
 .help-count-link, .help-count-value {
   font-size: var(--fs-body); font-weight: 600; letter-spacing: -0.01em;
@@ -420,7 +420,7 @@
 .help-count-none { font-size: var(--fs-label); color: var(--text-3); }
 
 .help-lex-foot {
-  margin: 18px 0 0; font-size: var(--fs-label); color: var(--text-3); max-width: var(--measure);
+  margin: var(--space-4) 0 0; font-size: var(--fs-label); color: var(--text-3); max-width: var(--measure);
 }
 
 /* A term arrived at from a term trigger anywhere in the app, or named by a callout.
@@ -457,7 +457,7 @@
 
 .help-tc {
   display: inline-flex; align-items: center;
-  padding: 1px 7px; border-radius: var(--radius-pill);
+  padding: var(--space-half) var(--space-2); border-radius: var(--radius-pill);
   font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.05em;
   background: var(--accent); color: #ffffff;
 }
@@ -482,10 +482,10 @@
 .help-twotoken::after { background: var(--sev-critical-text); }
 
 /* The category key under the node-kind entry. */
-.help-catstrip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--space-2); }
+.help-catstrip { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-2); }
 .help-cat {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 10px; border-radius: var(--radius-pill);
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-half) var(--space-2); border-radius: var(--radius-pill);
   border: 1px solid var(--hairline); background: var(--page);
   font-size: var(--fs-label); color: var(--text-2);
 }
@@ -504,10 +504,10 @@
   .help-family { top: 0; }
   .help-header { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
   .help-entry { grid-template-columns: minmax(0, 1fr); }
-  .help-entry-mark { justify-content: flex-start; margin-bottom: 5px; }
+  .help-entry-mark { justify-content: flex-start; margin-bottom: var(--space-1); }
   .help-entry-count {
     grid-column: 1; align-items: flex-start; text-align: left;
-    min-height: 0; margin-top: 6px;
+    min-height: 0; margin-top: var(--space-2);
   }
   .help-limit-row { grid-template-columns: auto 1fr; }
   .help-limit-note { grid-column: 1 / -1; }

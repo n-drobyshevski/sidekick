@@ -69,7 +69,7 @@
   font-size: var(--fs-label); line-height: 1.55; color: var(--ink);
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
-  margin: 0; padding: 10px var(--space-3);
+  margin: 0; padding: var(--space-2) var(--space-3);
   overflow: auto; white-space: pre; max-height: 260px;
 }
 .code-block:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -77,7 +77,7 @@
 .copy-btn {
   font-size: var(--fs-label); font-weight: 600; color: var(--accent);
   background: var(--page); border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm); padding: 3px 9px; cursor: pointer;
+  border-radius: var(--radius-sm); padding: var(--space-half) var(--space-2); cursor: pointer;
 }
 .copy-btn:hover { background: var(--surface); }
 .copy-btn.is-done { color: var(--ok); border-color: rgba(21, 128, 61, 0.35); }
@@ -97,27 +97,27 @@
      the survivors across the whole width, so a two-stat strip drew its divider in the
      middle of empty space. Keeping the tracks left-aligns any count. */
   display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 0; padding: 14px 0 var(--space-4); margin-top: var(--space-half);
+  gap: 0; padding: var(--space-3) 0 var(--space-4); margin-top: var(--space-half);
   background: none; border: none; border-top: 1px solid var(--hairline);
   border-radius: 0; box-shadow: none;
 }
-.stat-row { display: flex; flex-direction: column; gap: var(--space-half); padding: 0 18px; }
+.stat-row { display: flex; flex-direction: column; gap: var(--space-half); padding: 0 var(--space-4); }
 .stat-row + .stat-row { border-left: 1px solid var(--hairline); }
 .stat-row .stat-name {
   font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
 }
-.stat-row .stat-figure { display: flex; align-items: center; gap: 9px; }
+.stat-row .stat-figure { display: flex; align-items: center; gap: var(--space-2); }
 .stat-row .stat-sub { font-size: var(--fs-micro); color: var(--text-3); }
 .stat-row .mini-value { font-size: var(--fs-display-sm); font-weight: 600; letter-spacing: -0.01em; }
 
 @media (max-width: 620px) {
-  .stat-row { padding: 10px 0; }
+  .stat-row { padding: var(--space-2) 0; }
   .stat-row + .stat-row { border-left: none; border-top: 1px solid var(--hairline); }
 }
 
 /* change chips */
-.chg { font-size: var(--fs-label); font-weight: 600; border-radius: var(--radius-sm); padding: 1px 6px; margin-left: 6px; }
+.chg { font-size: var(--fs-label); font-weight: 600; border-radius: var(--radius-sm); padding: var(--space-half) var(--space-1); margin-left: var(--space-2); }
 .chg.up { color: var(--bad); background: rgba(185, 28, 28, 0.12); }
 .chg.down { color: var(--ok); background: rgba(21, 128, 61, 0.12); }
 .chg.flat { color: var(--text-3); background: rgba(0, 0, 0, 0.06); }
@@ -139,7 +139,7 @@
 /* Tag base: the flat neutral code/label, not a status. */
 .domain-chip, .fw-tag {
   display: inline-block;
-  padding: 1px 7px;
+  padding: var(--space-half) var(--space-2);
   border-radius: var(--radius-sm);
   background: rgba(0, 0, 0, 0.06);
   color: var(--text-2);
@@ -173,8 +173,8 @@
 .meter--facet .meter-fill { background: rgba(0, 0, 0, 0.32); }
 
 /* --------------------------------------------------------------------- severity */
-.sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
-.sev-badge { border-radius: var(--radius-pill); padding: var(--space-half) 9px; }
+.sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: var(--space-2); vertical-align: 1px; }
+.sev-badge { border-radius: var(--radius-pill); padding: var(--space-half) var(--space-2); }
 
 /* Severity FILL as a background, for the marks the app draws itself: bar segments and
    pattern dots. The .sev-<LEVEL> tint classes below can't do this job — they paint a 14%
@@ -255,18 +255,18 @@
 
 .sevkey-row { display: flex; flex-wrap: wrap; }
 .sevkey-row--toggle { gap: var(--space-half) var(--space-3); }
-.sevkey-row--legend { gap: 6px; }
+.sevkey-row--legend { gap: var(--space-1); }
 .sevkey { display: inline-flex; align-items: center; font-weight: 600; }
 /* Legend keys are tinted by their level (a name for a segment); toggle keys stay neutral,
    so "selected" reads as an interactive state rather than as a severity. The dot margin
    and the count offset are deliberately per-variant, not shared: the two rows space their
    dot/word/number differently, and flattening them to one value moves both. */
 .sevkey-row--legend .sevkey {
-  gap: var(--space-half); padding: 1px var(--space-2); font-size: var(--fs-micro); border-radius: var(--radius-pill);
+  gap: var(--space-half); padding: var(--space-half) var(--space-2); font-size: var(--fs-micro); border-radius: var(--radius-pill);
 }
 .sevkey-row--legend .sevkey-num { margin-left: var(--space-1); }
 .sevkey-row--toggle .sevkey {
-  gap: 6px; padding: 3px 7px; font-size: var(--fs-label); border-radius: var(--radius-sm);
+  gap: var(--space-1); padding: var(--space-half) var(--space-2); font-size: var(--fs-label); border-radius: var(--radius-sm);
   background: none; border: 1px solid transparent; box-shadow: none; min-height: 0;
   color: var(--text-2);
 }
@@ -292,14 +292,14 @@
 /* AARS chips reuse the severity tokens directly — the AARS scale carries the same
    values as the Wiz severity scale, and the brand crimson never scores risk. */
 .aars-chip {
-  gap: 5px; border-radius: var(--radius-pill); padding: var(--space-half) 9px;
+  gap: var(--space-1); border-radius: var(--radius-pill); padding: var(--space-half) var(--space-2);
   font-variant-numeric: tabular-nums;
 }
 .aars-chip .sev-dot { margin-right: 0; }
 
 
 /* status pills */
-.pill { gap: 6px; border-radius: var(--radius-pill); padding: var(--space-half) 9px; }
+.pill { gap: var(--space-1); border-radius: var(--radius-pill); padding: var(--space-half) var(--space-2); }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .pill.ok { color: var(--ok); background: rgba(21, 128, 61, 0.12); }
 .pill.warn { color: var(--warn); background: rgba(161, 98, 7, 0.12); }
@@ -317,9 +317,9 @@
 .domain-chip { font-size: var(--fs-label); }
 
 /* severity filter pills */
-.pill-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill-row { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .sev-pill, .kind-pill {
-  border-radius: var(--radius-pill); padding: 3px var(--space-3); min-height: 0;
+  border-radius: var(--radius-pill); padding: var(--space-half) var(--space-3); min-height: 0;
   font-size: var(--fs-label); font-weight: 600;
   background: var(--page); border: 1px solid var(--hairline); box-shadow: none;
   color: var(--text-2);
@@ -411,7 +411,7 @@
    inline; nothing here may set them. */
 .tip {
   position: fixed; left: 0; top: 0; z-index: var(--z-tooltip);
-  width: max-content; max-width: min(300px, calc(100vw - 32px)); padding: 9px 11px;
+  width: max-content; max-width: min(300px, calc(100vw - 32px)); padding: var(--space-2) var(--space-3);
   background: var(--page); color: var(--ink);
   border: 1px solid var(--hairline); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
@@ -424,7 +424,7 @@
 /* A chart tip is passive: the canvas underneath is still hit-testing to decide what the card
    says, so the card must never intercept the pointer that is driving it. */
 .tip.passive { pointer-events: none; }
-.tip-body { display: flex; flex-direction: column; gap: 5px; }
+.tip-body { display: flex; flex-direction: column; gap: var(--space-1); }
 .tip-line { display: block; }
 /* A second name for the thing ("TC", "membership, never severity") — information, not a
    restated heading, which is why it is here and the term itself is not. */
@@ -433,7 +433,7 @@
   letter-spacing: 0.02em; color: var(--text-3);
 }
 .tip-more {
-  display: block; margin-top: 1px; padding-top: 5px;
+  display: block; margin-top: var(--space-half); padding-top: var(--space-1);
   border-top: 1px solid var(--hairline);
   font-size: var(--fs-micro); color: var(--text-3);
 }
@@ -462,7 +462,7 @@
 .combobox { position: relative; }
 .combobox-trigger {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
-  width: 100%; min-height: 36px; padding: var(--space-1) 10px;
+  width: 100%; min-height: 36px; padding: var(--space-1) var(--space-2);
   font-family: var(--font); font-size: var(--fs-body); font-weight: 400; text-align: left;
   background: var(--page); color: var(--ink);
   border: 1px solid var(--hairline); border-radius: var(--radius-md); box-shadow: none;
@@ -485,8 +485,8 @@
 
 .combobox-pop {
   position: fixed; z-index: var(--z-popover);
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 6px; background: var(--page); color: var(--ink);
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-1); background: var(--page); color: var(--ink);
   border: 1px solid var(--hairline); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sheet);
   font-family: var(--font);
@@ -496,7 +496,7 @@
 .combobox-list { list-style: none; margin: 0; padding: var(--space-half); overflow-y: auto; }
 .combobox-option {
   display: flex; align-items: baseline; gap: var(--space-2);
-  padding: 6px var(--space-2); border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm);
   font-size: var(--fs-body); line-height: 1.3; color: var(--ink); cursor: pointer;
 }
 .combobox-option:hover, .combobox-option.active { background: var(--surface); }
@@ -506,10 +506,10 @@
 .combobox-option-hint { margin-left: auto; font-size: var(--fs-micro); color: var(--text-3); flex: 0 0 auto; }
 .combobox-option--last-pinned { border-bottom: 1px solid var(--hairline); margin-bottom: var(--space-half); padding-bottom: var(--space-2); }
 .combobox-group {
-  padding: var(--space-2) var(--space-2) 3px; font-size: var(--fs-micro); font-weight: 600;
+  padding: var(--space-2) var(--space-2) var(--space-half); font-size: var(--fs-micro); font-weight: 600;
   letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3);
 }
-.combobox-empty { padding: 6px var(--space-2); font-size: var(--fs-body); color: var(--text-3); cursor: default; }
+.combobox-empty { padding: var(--space-1) var(--space-2); font-size: var(--fs-body); color: var(--text-3); cursor: default; }
 
 /* Editable mode: the field IS the combobox, so the box around it has to carry the border
    and the focus ring that a lone input would carry — the caret sits inside it and must not
@@ -521,7 +521,7 @@
 .combobox-edit:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 .combobox-input {
   flex: 1 1 auto; min-width: 0; min-height: 34px;
-  padding: var(--space-1) var(--space-half) var(--space-1) 10px; margin: 0;
+  padding: var(--space-1) var(--space-half) var(--space-1) var(--space-2); margin: 0;
   background: transparent; color: var(--ink);
   border: none; border-radius: var(--radius-md);
 }
@@ -544,7 +544,7 @@
    the hint pinned right, which a sentence would blow out — here the hint drops to its own
    line and wraps, so a picker can carry meaning rather than just names. */
 .combobox-pop--rich .combobox-option {
-  display: block; padding: 7px var(--space-2); line-height: 1.35;
+  display: block; padding: var(--space-2) var(--space-2); line-height: 1.35;
 }
 .combobox-pop--rich .combobox-option-hint {
   display: block; margin: var(--space-half) 0 0; font-size: var(--fs-micro); white-space: normal;
@@ -603,13 +603,13 @@
 /* The Data page's keep-one-project control. A column rather than the Reset card's row:
    it holds a picker, a census table and an action, and those are three steps of one
    sequence, not three things side by side. */
-.prune-card { display: flex; flex-direction: column; gap: 10px; }
+.prune-card { display: flex; flex-direction: column; gap: var(--space-2); }
 .prune-note { max-width: 74ch; }
 .prune-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 /* Wide enough for a hyphenated project name plus its asset count, capped so the trigger
    does not stretch to the full card on a wide viewport and strand the button beside it. */
 .prune-combo { flex: 1 1 260px; min-width: 220px; max-width: 420px; }
-.prune-body { display: flex; flex-direction: column; gap: 10px; }
+.prune-body { display: flex; flex-direction: column; gap: var(--space-2); }
 .prune-body:empty, .prune-actions:empty { display: none; }
 .prune-actions { display: flex; }
 
@@ -641,7 +641,7 @@ table.data.prune-census tbody tr:hover { background: none; }
 
 .prune-error {
   color: var(--bad); background: rgba(185, 28, 28, 0.08);
-  border-radius: var(--radius-md); padding: var(--space-2) 10px; font-size: var(--fs-label);
+  border-radius: var(--radius-md); padding: var(--space-2) var(--space-2); font-size: var(--fs-label);
   max-width: 74ch;
 }
 
@@ -663,14 +663,14 @@ table.data.prune-census tbody tr:hover { background: none; }
   align-items: baseline;
   flex-wrap: wrap;
   gap: var(--space-2);
-  margin: 6px 0 0;
+  margin: var(--space-2) 0 0;
   font-size: var(--fs-label);
   line-height: 1.5;
   color: var(--text-2);
 }
 .register-wide-tag {
   flex: 0 0 auto;
-  padding: 1px 7px;
+  padding: var(--space-half) var(--space-2);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--surface);

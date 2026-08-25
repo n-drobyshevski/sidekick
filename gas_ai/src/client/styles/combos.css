@@ -16,8 +16,8 @@
    grown from the same total, so the second is the first's mix MOVED — the widths are
    the comparison, which is the only reason to stack them. The bars and their keys are
    the shared .sevbar--lg / .sevkey-row--legend components (components.css). */
-.combo-shift { display: flex; flex-direction: column; gap: 10px; }
-.combo-shift-row { display: flex; flex-direction: column; gap: 6px; }
+.combo-shift { display: flex; flex-direction: column; gap: var(--space-2); }
+.combo-shift-row { display: flex; flex-direction: column; gap: var(--space-1); }
 .combo-shift-head { display: flex; align-items: baseline; gap: var(--space-2); }
 /* The reason the second bar differs from the first. Not decoration: without it the two
    bars are a before/after with no stated cause. */
@@ -37,14 +37,14 @@
   border-bottom: 1px solid var(--hairline);
 }
 .combo-matrix-row:last-child { border-bottom: none; }
-.combo-matrix-corner { display: flex; align-items: flex-end; padding: 0 0 6px; }
+.combo-matrix-corner { display: flex; align-items: flex-end; padding: 0 0 var(--space-1); }
 .combo-matrix-colhead { display: flex; align-items: stretch; justify-content: center; }
 /* Column heads carry the graph's category tint, so a column and the risk node it names
    look like the same thing across the two pages. The tint is on the head only — the
    cells below stay neutral, which is what keeps this a ledger and not a heat map. */
 .combo-cond-btn {
   display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
-  gap: 3px; width: 100%; min-height: 0; padding: 5px var(--space-1) 6px;
+  gap: var(--space-half); width: 100%; min-height: 0; padding: var(--space-1) var(--space-1) var(--space-1);
   font-size: var(--fs-micro); font-weight: 600; line-height: 1.2; text-align: center;
   border: 1px solid transparent; border-radius: var(--radius-sm);
   background: none; box-shadow: none; color: var(--text-2);
@@ -63,8 +63,8 @@
 
 .combo-matrix-rowhead { display: flex; align-items: center; }
 .combo-matrix-jump {
-  display: flex; align-items: center; gap: 6px; width: 100%;
-  min-height: 0; padding: 7px 6px; text-align: left;
+  display: flex; align-items: center; gap: var(--space-1); width: 100%;
+  min-height: 0; padding: var(--space-2) var(--space-1); text-align: left;
   font-size: var(--fs-label); font-weight: 600; line-height: 1.25;
   background: none; border: none; box-shadow: none; color: var(--ink);
   border-radius: var(--radius-sm);
@@ -74,8 +74,8 @@
 .combo-matrix-jump-num { margin-left: auto; color: var(--text-3); font-weight: 600; }
 
 .combo-cell {
-  display: flex; align-items: center; justify-content: center; gap: 3px;
-  padding: 7px var(--space-half); font-size: var(--fs-label);
+  display: flex; align-items: center; justify-content: center; gap: var(--space-half);
+  padding: var(--space-2) var(--space-half); font-size: var(--fs-label);
 }
 /* Filled = the rule tests it; hollow = the assets carry it anyway; "?" = undetermined;
    em dash = absent. The glyph is the signal and the count is the quantity — the cell
@@ -90,18 +90,18 @@
 
 /* combo group cards */
 .combo-toolbar {
-  display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-3); margin-bottom: 10px;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-3);
 }
 .combo-toolbar > .section-label { margin: var(--space-5) 0 0; }
 .combo-toolbar-controls {
   display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-left: auto;
 }
-.combo-card { margin-bottom: 14px; }
+.combo-card { margin-bottom: var(--space-4); }
 /* The pattern's NAME leads. It used to sit third in this row, after the badge and a
    "Wiz native MEDIUM" caption, so the one thing you scan a stack of four for was the
    one thing not at the start of the line. */
 .combo-card .combo-head {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
 }
 .combo-card .combo-title { flex: 0 1 auto; margin: 0; }
 .combo-card .combo-count {
@@ -109,16 +109,16 @@
 }
 /* Native and adjusted as one reading. The arrow IS the amplifier, so the re-rating is a
    single object with one accessible name rather than a badge and a loose caption. */
-.combo-shift-badge { display: inline-flex; align-items: center; gap: 5px; }
+.combo-shift-badge { display: inline-flex; align-items: center; gap: var(--space-1); }
 .combo-shift-arrow { color: var(--text-3); font-weight: 600; }
 .combo-note {
-  margin: var(--space-2) 0; padding: var(--space-2) 10px; font-size: var(--fs-label); color: var(--text-2);
+  margin: var(--space-2) 0; padding: var(--space-2) var(--space-2); font-size: var(--fs-label); color: var(--text-2);
   background: rgba(0, 0, 0, 0.03); border-radius: var(--radius-md);
   max-width: var(--measure);
 }
-.combo-conds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.combo-conds { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin-top: var(--space-3); }
 .combo-cond {
-  gap: 5px; border-radius: var(--radius-sm); padding: var(--space-half) var(--space-2);
+  gap: var(--space-1); border-radius: var(--radius-sm); padding: var(--space-half) var(--space-2);
   font-size: var(--fs-micro);
   background: rgba(0, 0, 0, 0.05); color: var(--text-2);
 }
@@ -134,13 +134,13 @@
 .combo-cond-num { color: var(--text-3); font-variant-numeric: tabular-nums; }
 
 .combo-assets {
-  display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: 10px;
+  display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-3);
 }
 /* Its own chip, not the graph's severity FILTER pill this page used to borrow: an
    affected asset is a link to a record, not a toggle, and the two should not look alike. */
 .asset-chip, .asset-more {
-  display: inline-flex; align-items: center; gap: 6px;
-  border-radius: var(--radius-pill); padding: 3px 10px; min-height: 0;
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  border-radius: var(--radius-pill); padding: var(--space-half) var(--space-2); min-height: 0;
   font-size: var(--fs-label); background: var(--page); border: 1px solid var(--hairline);
   box-shadow: none; color: var(--ink);
 }
@@ -149,19 +149,19 @@
    findings score's band was demoted — see pages/combos.js at this call site. Neutral now,
    so the only tinted marks on a combo card are the ones that really are severities. */
 .asset-chip-score {
-  font-size: var(--fs-micro); font-weight: 600; border-radius: var(--radius-pill); padding: 0 6px;
+  font-size: var(--fs-micro); font-weight: 600; border-radius: var(--radius-pill); padding: 0 var(--space-1);
   color: var(--text-2); background: rgba(0, 0, 0, 0.05);
   font-variant-numeric: tabular-nums;
 }
 .asset-more { color: var(--text-2); font-weight: 600; border-style: dashed; }
 
-.combo-actions { display: flex; gap: var(--space-2); margin-top: 14px; }
+.combo-actions { display: flex; gap: var(--space-2); margin-top: var(--space-4); }
 .combo-issues:not(:empty) { margin-top: var(--space-3); }
-.combo-issues .filter-bar { margin-bottom: 10px; }
+.combo-issues .filter-bar { margin-bottom: var(--space-3); }
 /* Wide enough for the placeholder that names all four searchable fields — clipped, it
    advertises two of them and hides the rest. */
 .combo-issues .filter-bar input[type="search"] { min-width: 260px; }
-.combo-issues .pager { margin-top: 10px; }
+.combo-issues .pager { margin-top: var(--space-3); }
 
 
 @media (max-width: 720px) {
@@ -173,8 +173,8 @@
 .fw-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .fw-tag { font-size: var(--fs-micro); font-weight: 600; }
 /* Four taxonomies in one strip read as one vocabulary. Name each family instead. */
-.fw-groups { display: flex; flex-direction: column; gap: 6px; }
-.fw-group { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+.fw-groups { display: flex; flex-direction: column; gap: var(--space-1); }
+.fw-group { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-1); }
 .fw-group-label {
   font-size: var(--fs-micro); font-weight: 600; color: var(--text-3);
   min-width: 92px;

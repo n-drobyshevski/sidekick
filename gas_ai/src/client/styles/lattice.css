@@ -37,7 +37,7 @@
    routes to them on purpose any more. */
 .lat-panels {
   display: flex;
-  gap: 26px;
+  gap: var(--space-5);
   flex-wrap: wrap;
 }
 .lat-panel-title {
@@ -46,8 +46,8 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--ink);
-  padding-bottom: 7px;
-  margin-bottom: 7px;
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-2);
   border-bottom: 1px solid var(--hairline);
 }
 
@@ -81,15 +81,15 @@
 }
 .lat-hgroup {
   justify-content: center;
-  padding-bottom: 5px;
+  padding-bottom: var(--space-1);
   margin-bottom: var(--space-1);
   border-bottom: 1px solid var(--hairline);
 }
 /* Narrow panels put two header words shoulder to shoulder ("PARTIALSTRONG"), so the inner
    band keeps a gutter of its own rather than relying on the cell width below it. */
-.lat-hsub { justify-content: center; padding: 0 var(--space-1) 6px; }
-.lat-rgroup { padding-right: 10px; }
-.lat-rsub { padding-right: 10px; font-weight: 600; color: var(--text-2); }
+.lat-hsub { justify-content: center; padding: 0 var(--space-1) var(--space-1); }
+.lat-rgroup { padding-right: var(--space-2); }
+.lat-rsub { padding-right: var(--space-2); font-weight: 600; color: var(--text-2); }
 
 /* ------------------------------------------------------------------------- the cell */
 .lat-cell {
@@ -97,8 +97,8 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
-  margin: 1px;
+  gap: var(--space-half);
+  margin: var(--space-half);
   padding: var(--space-half);
   min-height: 34px;
   overflow: hidden;
@@ -194,7 +194,7 @@
    time; the mirror makes it answer while you drag. The marker lives in the frame, NOT in
    the bar — overflow:hidden on the bar would eat both its overhang and its label. */
 .lat-mass { margin-top: var(--space-5); }
-.lat-mass__frame { position: relative; padding-top: 15px; }
+.lat-mass__frame { position: relative; padding-top: var(--space-4); }
 .lat-mass__bar {
   display: flex;
   /* 16, not 12: a thin strip gives each fill so few pixels that its edges dominate it. */
@@ -245,7 +245,7 @@
 .lat-mass__legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 14px;
+  gap: var(--space-1) var(--space-3);
   margin-top: var(--space-4);
   font-size: var(--fs-micro);
   color: var(--text-2);
@@ -279,7 +279,7 @@
    which is why the count has been sitting under its own bar rather than "beside" it, as
    that file has always said it should. Harmless while the column sat mid-table at 44px;
    as the spine it is the first thing read. */
-.claim-rail { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
+.claim-rail { display: inline-flex; align-items: center; gap: var(--space-1); vertical-align: middle; }
 .claim-rail__track {
   position: relative;
   flex: 1;
@@ -344,7 +344,7 @@ table.data tr.is-lit > td { background: var(--wash-hover); }
 
 /* ------------------------------------------------------------------- the cell popover */
 /* What decided this leaf, and the one edit that usually follows from reading it. */
-.popover--lattice { padding: var(--space-3) 13px; max-width: 320px; }
+.popover--lattice { padding: var(--space-3) var(--space-3); max-width: 320px; }
 .lat-pop__vector {
   margin: 0 0 var(--space-2);
   font-size: var(--fs-label);
@@ -358,14 +358,14 @@ table.data tr.is-lit > td { background: var(--wash-hover); }
 /* ---------------------------------------------------------------------------- tracer */
 /* One vector walked through the cascade, so "why did this get Act" stops being work the
    reader does in their head against an ordered table. */
-.lat-trace { margin-top: 18px; }
+.lat-trace { margin-top: var(--space-4); }
 .lat-trace__axes {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px var(--space-4);
-  margin-top: 10px;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-3);
 }
-.lat-trace__axis { display: flex; flex-direction: column; gap: 3px; }
+.lat-trace__axis { display: flex; flex-direction: column; gap: var(--space-half); }
 .lat-trace__axis > span {
   font-size: var(--fs-micro);
   font-weight: 700;
@@ -380,7 +380,7 @@ table.data tr.is-lit > td { background: var(--wash-hover); }
 table.data tr.rule-tried > td { opacity: 0.5; }
 table.data tr.rule-tried > td:first-child::before {
   content: "·";
-  margin-right: 3px;
+  margin-right: var(--space-1);
   font-weight: 700;
   color: var(--text-3);
 }
@@ -454,7 +454,7 @@ table.data tr.is-lit > td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
    rest. The corner was reserved by the row headers and otherwise empty, so the key costs
    nothing in either dimension and sits directly above the labels it explains. */
 .lat-ax {
-  margin-right: 5px;
+  margin-right: var(--space-1);
   color: var(--accent);
   font-weight: 700;
 }
@@ -462,8 +462,8 @@ table.data tr.is-lit > td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  gap: 3px;
-  padding: 0 var(--space-3) 6px 0;
+  gap: var(--space-half);
+  padding: 0 var(--space-3) var(--space-1) 0;
   font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -475,4 +475,4 @@ table.data tr.is-lit > td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
 .lat-key__line b { color: var(--ink); font-weight: 700; }
 /* The arrow says which way to read the axis, and is aria-hidden: a screen reader gets the
    whole vector in words from every cell's own label, where direction is not a concept. */
-.lat-key__dir { margin-right: 5px; font-weight: 400; color: var(--accent); }
+.lat-key__dir { margin-right: var(--space-1); font-weight: 400; color: var(--accent); }

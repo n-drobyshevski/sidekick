@@ -56,7 +56,7 @@
   font-weight: 600;
   font-size: var(--fs-lead);
   letter-spacing: -0.02em;
-  padding: var(--space-1) 10px 14px;
+  padding: var(--space-1) var(--space-2) var(--space-3);
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -77,7 +77,7 @@
 .brand-mark .mark-knockout { stroke: var(--page); }
 /* Expanded rail: the small mark beside the name. The labelled copy is the collapsed
    rail's and is hidden here — see the note at its call site in app.js. */
-.wordmark .brand-mark--compact + .wordmark-label { margin-left: 1px; }
+.wordmark .brand-mark--compact + .wordmark-label { margin-left: var(--space-half); }
 .wordmark > .brand-mark--compact ~ .brand-mark--compact { display: none; }
 /* Project scope switcher — sits between the wordmark and the nav, and scopes every page
    under it. Full-bleed to the rail's padding box so it reads as part of the chrome rather
@@ -113,13 +113,13 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-3);
-  padding: var(--space-3) 10px var(--space-1);
+  padding: var(--space-3) var(--space-2) var(--space-1);
 }
 .nav-link {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 7px 10px;
+  padding: var(--space-2) var(--space-2);
   border-radius: var(--radius-md);
   color: var(--ink);
   font-size: var(--fs-body);
@@ -172,7 +172,7 @@
 .rail-toggle:hover { background: var(--wash-hover); }
 .rail-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .rail-toggle svg { width: 16px; height: 16px; display: block; transition: transform var(--dur-base) ease; }
-.sidebar .scan-buttons button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.sidebar .scan-buttons button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); }
 .sidebar .scan-buttons .primary .nav-icon { color: inherit; width: 16px; height: 16px; flex-basis: 16px; }
 .sidebar .scan-buttons .primary .nav-icon svg { width: 16px; height: 16px; }
 .rail-status-dot { display: none; width: 9px; height: 9px; border-radius: 50%; align-self: center; }
@@ -194,7 +194,7 @@
   /* Stacked, not in a row: the mark plus the toggle side by side is 46px of content in a
      40px box. Above/below fits, and puts the mark where the name was. */
   .sidebar.collapsed .wordmark {
-    flex-direction: column; justify-content: center; gap: 10px; padding: 6px 0 14px;
+    flex-direction: column; justify-content: center; gap: var(--space-2); padding: var(--space-1) 0 var(--space-3);
   }
   .sidebar.collapsed .wordmark > .brand-mark--compact ~ .brand-mark--compact { display: block; }
   .sidebar.collapsed .rail-toggle { margin-left: 0; }
@@ -232,7 +232,7 @@
      leaving the compact ring indicator centered — the card's phase, counts and controls
      are too wide for 56px, so they collapse to the ring (status) + its Details button. */
   .sidebar.collapsed .scan-progress {
-    padding: 6px 0; gap: 0; align-items: center;
+    padding: var(--space-1) 0; gap: 0; align-items: center;
     background: transparent; border: none; box-shadow: none;
   }
   .sidebar.collapsed .scan-progress-bar-slot,
@@ -256,8 +256,8 @@
 .scan-progress {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 10px var(--space-3);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   background: var(--page);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
@@ -365,19 +365,19 @@
 }
 
 /* Details drawer: phase stepper + fact grid */
-.scan-steps { display: flex; gap: 14px; margin: var(--space-1) 0 14px; }
-.scan-step { display: flex; align-items: center; gap: 6px; font-size: var(--fs-body); color: var(--text-3); }
+.scan-steps { display: flex; gap: var(--space-3); margin: var(--space-1) 0 var(--space-4); }
+.scan-step { display: flex; align-items: center; gap: var(--space-1); font-size: var(--fs-body); color: var(--text-3); }
 .scan-step.done { color: var(--ok); }
 .scan-step.active { color: var(--accent); font-weight: 600; }
 .scan-step-dot { font-size: var(--fs-label); }
 .scan-detail-grid {
-  display: grid; grid-template-columns: auto 1fr; gap: 6px var(--space-4);
-  margin-top: 14px; font-size: var(--fs-body);
+  display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-4);
+  margin-top: var(--space-4); font-size: var(--fs-body);
 }
 .scan-detail-grid dt { color: var(--text-3); }
 .scan-detail-grid dd { margin: 0; font-variant-numeric: tabular-nums; }
 .scan-detail-error {
-  margin-top: 14px; padding: 10px var(--space-3); font-size: var(--fs-label);
+  margin-top: var(--space-4); padding: var(--space-2) var(--space-3); font-size: var(--fs-label);
   color: var(--bad); background: rgba(185, 28, 28, 0.06);
   border-radius: var(--radius-md);
 }
@@ -403,7 +403,7 @@ main.full-bleed {
   display: flex;
   flex-direction: column;
 }
-main.full-bleed > .empty { margin: 28px var(--space-6); }
+main.full-bleed > .empty { margin: var(--space-6) var(--space-6); }
 
 /* Route-reload overlay: a translucent veil + indeterminate top bar over the content
    pane (the sidebar stays clear and interactive) while the active page refetches. */
@@ -452,7 +452,7 @@ main.full-bleed > .empty { margin: 28px var(--space-6); }
   background: var(--page);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-pill);
-  padding: 5px var(--space-3);
+  padding: var(--space-1) var(--space-3);
   box-shadow: var(--shadow-card);
 }
 .route-overlay-label:empty { display: none; }
@@ -478,13 +478,13 @@ main.full-bleed > .empty { margin: 28px var(--space-6); }
 }
 .boot-splash.hiding { opacity: 0; }
 .boot-splash-inner {
-  display: flex; flex-direction: column; align-items: center; gap: 18px;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-4);
   padding: var(--space-5); width: min(280px, 80vw);
 }
 /* Mark above the name, not beside it: at 72px the globe is the point of the splash, and a
    row would push the pair past the 280px column. */
 .boot-brand {
-  display: flex; flex-direction: column; align-items: center; gap: 14px; font-weight: 600;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-3); font-weight: 600;
   font-size: var(--fs-display-sm); letter-spacing: -0.02em; color: var(--ink);
 }
 .boot-splash-bar { width: 100%; }
@@ -527,7 +527,7 @@ main.full-bleed > .empty { margin: 28px var(--space-6); }
   /* The top bar must stay above the full-width route overlay so nav + sync controls remain
      visible and clickable during a reload (desktop clears the rail via left:var(--rail-w)). */
   .sidebar { position: relative; z-index: 45; }
-  main { height: auto; overflow: visible; padding: 20px var(--space-4) 40px; }
+  main { height: auto; overflow: visible; padding: var(--space-4) var(--space-4) var(--space-6); }
   .route-overlay { position: fixed; left: 0; }
   /* Full-bleed workbench degrades to a tall block inside the scrolling page. */
   main.full-bleed { display: block; overflow: visible; height: auto; padding: 0; }
@@ -568,7 +568,7 @@ button, .btn {
   font-size: var(--fs-body);
   border-radius: var(--radius-md);
   min-height: 36px;
-  padding: 6px 14px;
+  padding: var(--space-1) var(--space-3);
   cursor: pointer;
   border: 1px solid var(--hairline);
   background: var(--surface);
@@ -605,7 +605,7 @@ input[type="text"], input[type="search"], input[type="number"], select {
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   min-height: 36px;
-  padding: var(--space-1) 10px;
+  padding: var(--space-1) var(--space-2);
 }
 label.field-label { display: block; font-size: var(--fs-label); color: var(--text-2); margin-bottom: var(--space-1); }
 

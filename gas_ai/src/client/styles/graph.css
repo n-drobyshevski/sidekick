@@ -2,14 +2,14 @@
 /* Full-page canvas: slim top bar + chips row + a body the SVG fills entirely. */
 .workbench { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .workbench-bar {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
-  padding: 10px var(--space-4);
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--hairline);
   background: var(--surface);
 }
 .workbench-title { font-size: var(--fs-lead); margin: 0; }
 .workbench-meta {
-  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center;
   font-size: var(--fs-label); color: var(--text-2);
 }
 /* Counts + "Load more", along the bottom edge over the canvas. Needs the panel treatment the
@@ -24,7 +24,7 @@
 .workbench-meta.overlay {
   position: absolute; bottom: 10px; z-index: var(--z-canvas-chrome);
   left: calc(10px + var(--rail-w) + 8px);
-  gap: var(--space-2); padding: 7px 10px; font-size: var(--fs-micro);
+  gap: var(--space-2); padding: var(--space-2) var(--space-2); font-size: var(--fs-micro);
   max-width: min(560px, calc(100% - 120px - var(--rail-w) - 8px));
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
@@ -40,7 +40,7 @@
    breakpoint, where the groups stack and a vertical hairline would orphan at a row end. */
 .workbench-controls {
   margin-left: auto;
-  display: flex; flex-wrap: wrap; gap: var(--space-2) 14px; align-items: center;
+  display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center;
 }
 
 /* A native select with its dimension named beside it, so "Rows" and "Smart order" stop
@@ -52,7 +52,7 @@
   background: var(--page); overflow: hidden;
 }
 .select-field-label {
-  padding: 0 var(--space-half) 0 10px; font-size: var(--fs-label); color: var(--text-3); white-space: nowrap;
+  padding: 0 var(--space-half) 0 var(--space-2); font-size: var(--fs-label); color: var(--text-3); white-space: nowrap;
 }
 .select-field select {
   border: none; border-radius: 0; background: none; padding-left: var(--space-1);
@@ -61,7 +61,7 @@
 .select-field select:focus-visible { outline: none; }
 .filter-count {
   display: inline-flex; align-items: center; justify-content: center;
-  min-width: 18px; padding: 0 5px; margin-left: 7px;
+  min-width: 18px; padding: 0 var(--space-1); margin-left: var(--space-2);
   border-radius: var(--radius-pill); background: var(--track-bg);
   font-size: var(--fs-micro); font-weight: 600; font-variant-numeric: tabular-nums;
   color: var(--text-2); line-height: 17px;
@@ -76,7 +76,7 @@
    This band once rendered 37px tall and empty while `row.hidden` was true, because an
    author `display` beats the UA sheet's `[hidden]`. base.css now guards that globally. */
 .filter-chips {
-  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center;
   min-height: 37px;
   padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--hairline);
 }
@@ -99,11 +99,11 @@
   min-height: 0; border: none; background: none; box-shadow: none;
   color: inherit; font: inherit; border-radius: var(--radius-pill);
 }
-.filter-chip-body { display: inline-flex; align-items: center; gap: 6px; padding: 3px var(--space-1) 3px 9px; }
+.filter-chip-body { display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-half) var(--space-1) var(--space-half) var(--space-2); }
 .filter-chip-body:hover, .filter-chip-x:hover { background: var(--wash-hover); }
 .filter-chip-key { font-weight: 500; opacity: 0.8; }
 .filter-chip-value { font-weight: 600; }
-.filter-chip-x { padding: 3px 6px; font-size: var(--fs-micro); color: var(--text-2); }
+.filter-chip-x { padding: var(--space-half) var(--space-1); font-size: var(--fs-micro); color: var(--text-2); }
 .filter-chip-x:hover { color: var(--ink); }
 /* A lens the page seeded itself, not a filter anyone applied — shown and clearable, but
    visibly quieter, and excluded from the count badge. */
@@ -189,7 +189,7 @@
 }
 .workbench-empty { padding: var(--space-6); max-width: 640px; margin: 0 auto; width: 100%; }
 /* emptyState() is message + hint only, so the way out of a dead end lives beside it. */
-.workbench-empty-action { display: flex; justify-content: center; margin-top: 14px; }
+.workbench-empty-action { display: flex; justify-content: center; margin-top: var(--space-4); }
 
 /* ------------------------------------------------------------------- the ghost graph */
 /* `.graph-skeleton` used to be one inline-styled div wrapping a single pulsing rectangle —
@@ -286,13 +286,13 @@
    solid pill background is what keeps it legible sitting over the wireframe. */
 .gs-status {
   position: absolute; left: 2px; bottom: 2px; z-index: 1;
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: var(--space-2);
 }
 .gs-status .progress-track { flex: 0 0 88px; }
 .gs-phase {
   font-size: var(--fs-label); font-weight: 600; color: var(--text-2);
   background: var(--page); border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill); padding: 5px var(--space-3); box-shadow: var(--shadow-card);
+  border-radius: var(--radius-pill); padding: var(--space-1) var(--space-3); box-shadow: var(--shadow-card);
 }
 
 @media (max-width: 800px) {
@@ -317,12 +317,12 @@
    that it outlives a repaint, so a control on it can open a popover. */
 .graph-rail {
   position: absolute; left: 10px; bottom: 10px; z-index: var(--z-canvas-chrome);
-  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
 }
 /* The rail describes the canvas, so it goes with it in table view. */
 .graph-rail-zoom:empty { display: none; }
 .graph-zoom {
-  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
 }
 .graph-zoom-scale { display: flex; flex-direction: column; align-items: center; gap: var(--space-half); }
 /* Circles, against a base recipe that gives none of it: `button` sets min-height 36, a 14px
@@ -342,7 +342,7 @@
    trigger's badge expresses zero. */
 .graph-tool-badge {
   position: absolute; top: -2px; right: -2px;
-  min-width: 15px; height: 15px; padding: 0 3px;
+  min-width: 15px; height: 15px; padding: 0 var(--space-half);
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: var(--radius-pill); border: 1px solid var(--page);
   background: var(--accent); color: #fff;
@@ -364,7 +364,7 @@
 .graph-layouts-title { font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
 .graph-layouts-key { font-size: var(--fs-micro); color: var(--text-3); }
 .graph-layouts-key kbd {
-  margin-left: 3px; padding: 1px var(--space-1);
+  margin-left: var(--space-1); padding: var(--space-half) var(--space-1);
   border: 1px solid var(--hairline); border-radius: var(--radius-xs);
   background: var(--track-bg);
   font: inherit; font-weight: 600; color: var(--text-2);
@@ -377,8 +377,8 @@
 .graph-layouts-row {
   /* Top, not centre: the blurb wraps, and a centred glyph beside two lines of text floats
      between them instead of marking the row it belongs to. */
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 7px var(--space-2); border-radius: var(--radius-md);
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-2) var(--space-2); border-radius: var(--radius-md);
   cursor: pointer;
 }
 .graph-layouts-glyph {
@@ -386,7 +386,7 @@
   width: 24px; height: 24px; border-radius: var(--radius-sm);
   background: var(--track-bg); color: var(--text-2);
 }
-.graph-layouts-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.graph-layouts-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--space-half); }
 .graph-layouts-label { font-size: var(--fs-label); color: var(--ink); }
 /* WRAPS, rather than ellipsising. The blurb is the only thing on the row that tells one layout
    from another — five near-identical nouns is exactly the list where a reader is guessing — so
@@ -417,7 +417,7 @@
    shadow: it is a label, and the lift belongs to the things you can press. */
 .graph-zoom-pct {
   min-width: var(--rail-w); text-align: center;
-  padding: 1px var(--space-1); border-radius: var(--radius-pill); background: var(--page);
+  padding: var(--space-half) var(--space-1); border-radius: var(--radius-pill); background: var(--page);
   font-size: var(--fs-micro); color: var(--text-2); font-variant-numeric: tabular-nums;
 }
 
@@ -537,7 +537,7 @@
 .graph-legend {
   font-size: var(--fs-label); color: var(--text-2);
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg); background: var(--surface); margin-top: 10px;
+  border-radius: var(--radius-lg); background: var(--surface); margin-top: var(--space-3);
 }
 .graph-legend.overlay {
   position: absolute; right: 10px; bottom: 10px; z-index: var(--z-canvas-chrome);
@@ -549,8 +549,8 @@
    chevron that rotates on open. */
 .legend-toggle {
   list-style: none; cursor: pointer; user-select: none;
-  display: flex; align-items: center; gap: 10px;
-  padding: 7px 10px; font-weight: 600; color: var(--ink);
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-2); font-weight: 600; color: var(--ink);
   border-radius: inherit;
 }
 .legend-toggle::-webkit-details-marker { display: none; }
@@ -565,16 +565,16 @@
    glyph. It used to be sized to match the zoom capsule across the canvas; the zoom is a rail
    of circles now, and this keeps its own height because a legend is opened by its NAME. */
 .graph-legend.overlay > .legend-toggle {
-  gap: var(--space-2); padding: 6px var(--space-3); min-height: 34px; margin-left: auto;
+  gap: var(--space-2); padding: var(--space-1) var(--space-3); min-height: 34px; margin-left: auto;
 }
 .graph-legend.overlay:not([open]) { border-radius: var(--radius-pill); }
 .graph-legend[open] > .legend-toggle { border-bottom: 1px solid var(--hairline); }
 .legend-body {
-  display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
-  padding: 9px 10px 10px;
+  display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center;
+  padding: var(--space-2) var(--space-2) var(--space-2);
 }
-.graph-legend.overlay .legend-body { gap: 10px; }
-.graph-legend .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.graph-legend.overlay .legend-body { gap: var(--space-2); }
+.graph-legend .legend-item { display: inline-flex; align-items: center; gap: var(--space-1); }
 @media (prefers-reduced-motion: reduce) {
   .legend-toggle::after { transition: none; }
 }
@@ -597,6 +597,6 @@
 }
 
 /* AARS pillar bars (asset sheet) */
-.pillar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: var(--fs-label); }
+.pillar-row { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-2) 0; font-size: var(--fs-label); }
 .pillar-row .pillar-name { width: 120px; color: var(--text-2); }
 .pillar-row .pillar-val { width: 44px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
