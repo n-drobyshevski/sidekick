@@ -33,7 +33,7 @@ import {
   absent, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
   emptyState, errorState,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtDate, kpiCard, plural,
-  sectionLabel, sevBadge, sevEntries, sevKeyRow,
+  nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
   trendScopeNote,
 } from "../ui.js";
@@ -925,8 +925,19 @@ export async function renderInventory(main, params) {
   function assetTable(rows) {
     /** Cell renderers, keyed to COLUMNS above so header and body cannot drift apart. */
     const CELLS = {
-      name: (row) => [row.name,
-        row.agentic ? el("span", { class: "pill", style: "margin-left:6px" }, "Agentic") : null],
+      // The kind medallion the Security Graph's results table carries, so a row and a node
+      // read as the same thing in two views. It does not restate the Kind column beside it —
+      // that column is the word, this is the shape, and the shape is what a reader scanning
+      // 250 rows for "which of these are buckets" actually uses. The graph pairs the two the
+      // same way whenever a query selects its `kind` field.
+      //
+      // It costs the name about 26px out of a cell tables.css clips at 320px, which is why
+      // the column asks for a wider cap by name (`.inv-name-col`) rather than spending the
+      // room. `badge` is what keeps the Agentic pill, and retires the one inline `style`
+      // attribute left in a table cell.
+      name: (row) => nameCell(row.name, row.kind, {
+        badge: row.agentic ? el("span", { class: "pill" }, "Agentic") : null,
+      }),
       kind: (row) => kindLabel(row.kind),
       cloud: (row) => row.cloud || absent(),
       region: (row) => row.region || absent(),
@@ -964,6 +975,7 @@ export async function renderInventory(main, params) {
         key: col.sort || col.key,
         label: col.label,
         sortable: !!col.sort,
+        className: col.key === "name" ? "inv-name-col" : null,
         cell: CELLS[col.key],
       })),
       rows,
