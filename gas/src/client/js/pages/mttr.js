@@ -6,6 +6,7 @@ import {
   openResolvedLines, stackedAgeBar, survivalCurve, trendLine,
 } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
+import { mttrPaintPlan } from "./mttrPaintPlan.js";
 import {
   changeChip, clear, el, emptyState, fmtDays, helpTip, openSheet, scopeBar,
   sectionLabel, sevBadge, severityScopeFilter, skeleton,
@@ -271,6 +272,14 @@ export async function renderMttr(main, _params, ctx) {
   // clock above; a stale value from an earlier layout degrades to "impact".
   let byDomainLens = loadPref("mttrByDomainLens", ["impact", "median"], "impact");
 
+  // Bumped by every load(); a callback whose seq is stale belongs to a superseded scope.
+  // DECLARED ABOVE THE FIRST `await load()` DELIBERATELY: `load` is a hoisted function
+  // declaration but this is not a hoisted binding, so declaring it after that call put
+  // `++loadSeq` in the temporal dead zone and the page died on boot with "Cannot access
+  // 'loadSeq' before initialization" — while every unit test still passed, because none of
+  // them boots the page.
+  let loadSeq = 0;
+
   await load();
 
   // Null when every selectable severity is chosen (no filter → shares the default cache
@@ -278,6 +287,21 @@ export async function renderMttr(main, _params, ctx) {
   function scopeParam() {
     return sevScope.length === boot.palette.selectable.length ? null : [...sevScope];
   }
+
+  // Whether the hero's change chips must be suppressed. ONE DEFINITION ON PURPOSE: the comment
+  // at its only former call site records that a scope was once threaded through this page's RPC
+  // without joining this predicate, so a domain-scoped median was diffed against a
+  // whole-register snapshot. `mttrPaintPlan` needs the same answer — to know whether a page
+  // arrival adds anything to the hero — and a second copy is precisely how that recurs.
+  function chipsSuppressed() {
+    // The prev snapshot (mttr_history) is register-wide across domain/support/severity, while
+    // the current values are scoped, so diffing them shows a fake delta. The vendor-fix filter
+    // folds in too: with it off the current values exclude no-fix findings while the snapshots
+    // never did, which is the same mismatch as any other scope.
+    return boot.settings.showNoFix === false
+      || scopeParam() !== null || Boolean(domain) || Boolean(supportGroup);
+  }
+
 
   async function load() {
     // Put every section into a pending state before the await, so a severity change never
@@ -287,36 +311,70 @@ export async function renderMttr(main, _params, ctx) {
     clear(byDomainHost);
     const params = { domain, supportGroup, severities: scopeParam() };
 
-    // Progressive paint over two parallel RPCs that share the same server cache entries
-    // getMttrPage's slices use (so a warm revisit is still a single-shot repaint):
+    // Progressive paint over two parallel RPCs that share the same server cache entries (so a
+    // warm revisit is still a single-shot repaint):
     //   - api_getMttr is the summary alone — no trend reconstruction — so the hero, survival
     //     curve and SLA table land as soon as the (cheaper) KM summary is ready.
     //   - api_getMttrPage carries trends + byDomain, the heaviest slice (per-point KM over the
     //     reconstructed history); it fills the chart cards, the per-domain section, and the
     //     hero's history-based change chips when the reconstruction finishes.
-    // The full paint always supersedes the summary for the hero, so a slow summary
-    // revalidation can never drop the chips a completed full paint drew.
-    let fullDone = false;
-    const paintSummary = (mttr) => {
-      if (fullDone) return;
-      renderHero(mttr, { history: [] }); // chips need trend history — they arrive with the full paint
-      renderSurvivalCurve(mttr);
-      renderSla(mttr);
+    //
+    // getMttrPage NO LONGER CARRIES THE SUMMARY — it was byte-identical to the other RPC's
+    // whole payload and shipped twice per load. So the two are composed here instead, as two
+    // latest-value slots feeding a reducer: `mttrPaintPlan` decides which sections a given
+    // arrival should repaint, and every section reads the newest of its OWN inputs. Awaiting
+    // the summary promise inside the page handler would be the obvious alternative and is
+    // wrong — swrCall re-fires per RPC on revalidation, so an await pins the charts to the
+    // first summary forever.
+    //
+    // `seq` guards re-entrancy: the severity filter's onApply calls load() again on a 300ms
+    // debounce, and without this an older load's callbacks can paint the previous scope's
+    // numbers over the new skeleton.
+    const seq = ++loadSeq;
+    let mttr = null;
+    let pageData = null;
+    let pagePainted = false;
+
+    const apply = ({ summaryChanged = false, pageChanged = false } = {}) => {
+      if (seq !== loadSeq) return;
+      const plan = mttrPaintPlan({
+        mttr, page: pageData, pagePainted, summaryChanged, pageChanged, scoped: chipsSuppressed(),
+      });
+      if (plan.hero) renderHero(mttr, plan.historyChips ? pageData.trends : { history: [] });
+      if (plan.survival) renderSurvivalCurve(mttr);
+      if (plan.sla) renderSla(mttr);
+      if (plan.charts) renderCharts(pageData.trends, mttr);
+      if (plan.byDomain) renderByDomain(pageData.byDomain, mttr);
+      if (plan.charts || plan.byDomain) pagePainted = true;
     };
-    const paintFull = (data) => {
-      fullDone = true;
-      renderHero(data.mttr, data.trends);
-      renderCharts(data.trends, data.mttr);
-      renderSurvivalCurve(data.mttr);
-      renderSla(data.mttr);
-      renderByDomain(data.byDomain, data.mttr);
-    };
-    const summary = swrCall("api_getMttr", params, paintSummary)
-      .then(paintSummary).catch(() => {});
-    const full = swrCall("api_getMttrPage", params, paintFull)
-      .then(paintFull).catch((e) => {
+    const onSummary = (next) => { if (next) { mttr = next; apply({ summaryChanged: true }); } };
+    const onPage = (next) => { if (next) { pageData = next; apply({ pageChanged: true }); } };
+
+    // THE TWO CATCHES HAVE SWAPPED ROLES, and getting this wrong is the regression this change
+    // could ship. The summary is now the only source of the hero, survival curve and SLA
+    // table, so if it fails while the page succeeds, nothing renders and all four skeletons
+    // pulse forever — it has to be the loud one. The page failing is now survivable: the
+    // summary still paints three of five sections, and clearing the two chart hosts also fixes
+    // a pre-existing bug where only renderCharts ever cleared chartsHost, so a getMttrPage
+    // rejection left it pulsing indefinitely.
+    const summary = swrCall("api_getMttr", params, onSummary)
+      .then(onSummary).catch((e) => {
+        if (seq !== loadSeq) return;
+        // eslint-disable-next-line no-console
+        console.error("[mttr] getMttr failed:", e);
+        clear(chartsHost); clear(survivalHost); clear(slaHost); clear(byDomainHost);
+        clear(heroHost).append(emptyState(
+          "Couldn't load remediation data.",
+          "Try running a scan or reloading the page.",
+        ));
+      });
+    const full = swrCall("api_getMttrPage", params, onPage)
+      .then(onPage).catch((e) => {
+        if (seq !== loadSeq) return;
         // eslint-disable-next-line no-console
         console.error("[mttr] getMttrPage failed:", e);
+        clear(chartsHost).append(emptyState("Couldn't load trends."));
+        clear(byDomainHost);
       });
     await Promise.allSettled([summary, full]);
   }
@@ -727,8 +785,7 @@ export async function renderMttr(main, _params, ctx) {
     // The vendor-fix filter folds in too: with it off, the current values exclude no-fix
     // findings while mttr_history's snapshots never did, so a chip would diff filtered
     // against unfiltered populations exactly like a domain/support/severity scope would.
-    const scoped = boot.settings.showNoFix === false
-      || scopeParam() !== null || domain || supportGroup;
+    const scoped = chipsSuppressed();
 
     // `remediation` is additive on the server (see the plan) — a stale cached response
     // from before the rollout won't carry it, so every read below is optional-chained and
