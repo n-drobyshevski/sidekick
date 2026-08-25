@@ -14,7 +14,6 @@
 import { describe, expect, it } from "vitest";
 import * as ts from "../src/domain/configFindings";
 import * as js from "../src/client/js/pages/configView.js";
-import { OUTCOME_VALUES } from "../src/domain/problem";
 
 /** Register rows as toConfigView emits them — the only shape either side ever sees. */
 const ROWS = [
@@ -25,6 +24,9 @@ const ROWS = [
     cloud: "AWS", subscriptionName: "aws-prod", projects: ["PROJECT-ALPHA"],
     businessImpact: "LBI", firstSeenAt: "2026-01-06T10:48:24Z", analyzedAt: "2026-08-07T07:37:39Z",
     risks: ["AI_SECURITY"], linked: false, ignored: false, iac: false, gap: true,
+    // Unlinked: no node to join, so no domain. The blank must filter and facet the same
+    // way on both sides — it is the commonest row on this register, not an edge case.
+    domain: "",
     problemOutcome: "ATTEND",
   },
   {
@@ -34,6 +36,7 @@ const ROWS = [
     cloud: "GCP", subscriptionName: "gcp-01", projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     businessImpact: "MBI", firstSeenAt: "2026-06-12T19:42:35Z", analyzedAt: "2026-06-19T10:27:22Z",
     risks: ["AI_SECURITY", "UNPROTECTED_DATA"], linked: false, ignored: true, iac: false, gap: true,
+    domain: "",
     problemOutcome: "ACT",
   },
   {
@@ -43,6 +46,7 @@ const ROWS = [
     cloud: "GCP", subscriptionName: "gcp-05", projects: ["PROJECT-ALPHA"],
     businessImpact: "LBI", firstSeenAt: "2026-05-02T08:15:00Z", analyzedAt: "2026-07-13T21:52:08Z",
     risks: ["AI_SECURITY"], linked: true, ignored: false, iac: true, gap: true,
+    domain: "VALUE-CHAIN",
     problemOutcome: "TRACK_STAR",
   },
   {
@@ -80,6 +84,12 @@ const QUERIES = [
   { projects: "PROJECT-ALPHA" },
   { projects: "PROJECT-BETA,PROJECT-GAMMA" },
   { linkage: "unlinked" },
+  // The domain dimension. The unmatched value and the all-unlinked selection matter
+  // most: both sides must agree on an empty answer, and on a blank never matching.
+  { domains: "VALUE-CHAIN" },
+  { domains: "VALUE-CHAIN,SAP" },
+  { domains: "NOPE" },
+  { domains: "VALUE-CHAIN", linkage: "unlinked" },
   { linkage: "linked" },
   { linkage: "linked,unlinked" },
   { flags: "gap" },
@@ -90,10 +100,10 @@ const QUERIES = [
   { severities: "HIGH", clouds: "GCP", flags: "gap" },
   { severities: "HIGH", linkage: "unlinked" },
   { q: "agent", statuses: "OPEN", flags: "iac" },
-  // Phase 5: the problem tree's outcome as its own filter dimension.
+  // The retired outcome facet: a link carrying it resolves to no filter, and both sides
+  // must drop it the same way or a shared link would answer differently by register size.
   { outcomes: "ACT" },
   { outcomes: "ACT,ATTEND" },
-  { outcomes: "TRACK_STAR" },
   { severities: "HIGH", outcomes: "ATTEND" },
   // Values outside the vocabulary, which both sides must drop rather than match on.
   { linkage: "sideways" },
@@ -105,7 +115,7 @@ const QUERIES = [
 
 const FACET_KEYS = [
   "severities", "statuses", "clouds", "resourceTypes", "rules", "projects",
-  "linkage", "flags", "outcomes",
+  "domains", "linkage", "flags",
 ];
 
 describe("configView mirrors src/domain/configFindings", () => {
@@ -167,6 +177,7 @@ describe("configView mirrors src/domain/configFindings", () => {
     expect(js.LINKAGE_VALUES).toEqual([...ts.LINKAGE_VALUES]);
     expect(js.CONFIG_FLAGS).toEqual([...ts.CONFIG_FLAGS]);
     // Phase 5: the problem tree's outcome scale, worst (ACT) first.
-    expect(js.OUTCOME_RANK).toEqual([...OUTCOME_VALUES]);
+    // The outcome vocabulary is gone from both sides, not merely unused on one.
+    expect(js.OUTCOME_RANK).toBeUndefined();
   });
 });

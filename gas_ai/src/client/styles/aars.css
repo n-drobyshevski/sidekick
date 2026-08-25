@@ -775,3 +775,14 @@ ul.axis-steps > .axis-step::before {
   border: 1px solid rgba(161, 98, 7, 0.30);
 }
 .chart-note.warn { color: var(--warn); }
+
+/* The experimental note under the workbench toolbar. Full-bleed like the bar above it, and
+   not a `.notice`: a notice reads as something that happened, and this is a standing fact
+   about the page. Quiet type, one line, with the pill carrying the emphasis. */
+.workbench-exp {
+  display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap;
+  margin: 0; padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--text-3); font-size: var(--fs-label); line-height: 1.5;
+}

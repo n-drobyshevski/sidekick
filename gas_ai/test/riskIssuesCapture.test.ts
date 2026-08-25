@@ -220,6 +220,19 @@ describe("the Risk Issues capture reaches the register intact", () => {
     expect(byId["3bc6f796-8d25-4589-a1a2-1e36efeace83"]).toBe(OTHER_GROUP_ID);
   });
 
+  it("does NOT take an entitySnapshot's Wiz/Domain onto the node", () => {
+    // The Gemini CLI snapshot carries `tags: { "Wiz/Domain": "SAP" }` and this is the one
+    // tag source deliberately left on the floor. An entitySnapshot is a point-in-time copy
+    // taken when the issue FIRED; ISSUES_TOXIC runs after INVENTORY_AI and mergeParts
+    // overwrites field-wise on any truthy value, so reading it here would let a stale
+    // snapshot replace whatever the inventory and the traversals had just established.
+    // The issue's domain comes from its joined asset instead. See the note at the
+    // normalizer's `entitySnapshot` branch.
+    const agent = part.nodes.find((n) => n.id === "36341fba-70e0-5191-a266-df086d644148");
+    expect(agent).toBeDefined();
+    expect(agent!.tags).toBeUndefined();
+  });
+
   it("keeps a SERVICE_ACCOUNT entity rather than dropping the row", () => {
     // Half this register's issues hang off IAM roles, not agents. kindFromWizType has to
     // resolve them or normalizeIssuesPage skips the row for having no attachable entity.

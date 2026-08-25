@@ -23,7 +23,12 @@ export interface GraphParamContext {
   defaultDepth: number;
   maxNodes: number;
   issues: IssueRow[]; // OPEN issues (seed resolution source)
-  scoredAssetIds?: string[]; // node ids with AARS > 0 — seed source for the "scored" start
+  /**
+   * Just enough of every node to resolve a `seedKind=domain` start set. Narrow on purpose
+   * — this module stays free of the whole GNode surface, and a start set needs nothing
+   * more than "which ids carry this domain".
+   */
+  nodes?: Array<{ id: string; domain?: string | null }>;
 }
 
 /**
@@ -125,7 +130,19 @@ export function resolveLayoutParams(p: Rec): GraphLayoutParams {
       ? (groupBy[0] === "asset" ? "radial" : "grid")
       : pick(p["layout"], LAYOUT_MODES, DEFAULT_LAYOUT),
     groupBy,
-    sort: pick(p["sort"], SORT_KEYS, "smart"),
+    // `sort=aars` IS AN OLD LINK too, and it maps to `issues` rather than falling through
+    // to `smart`. The two are the closest honest pair: the score's own ordering was driven
+    // almost entirely by its issue pillar (tau-b 0.863 — ai/AARS_SCORING_ASSESSMENT.md §3,
+    // pinned by test/scoreOrdinality.test.ts), so a reader who asked for "worst score
+    // first" gets the ordering they were actually looking at. Falling back to `smart`
+    // would silently answer a different question and give no sign it had.
+    sort: pick(
+      typeof p["sort"] === "string" && (p["sort"] as string).toLowerCase() === "aars"
+        ? "issues"
+        : p["sort"],
+      SORT_KEYS,
+      "smart",
+    ),
   };
 }
 
@@ -134,10 +151,32 @@ export function resolveGraphParams(p: Rec, ctx: GraphParamContext): ProjectOptio
   const seedKind = typeof p["seedKind"] === "string" ? (p["seedKind"] as string) : "";
 
   let seedIds: string[];
-  if (seedKind === "scored") {
-    seedIds = ctx.scoredAssetIds ?? [];
+  // "Every asset carrying an open issue", which is what this start set was always FOR.
+  // It used to be "every asset with an AARS above zero" and read from a `scoredAssetIds`
+  // list the caller had to assemble — a set defined by a scoring model's coverage rather
+  // than by anything about the landscape, so an asset dropped out of the graph's default
+  // view because a rule stopped pricing it. Derived here from `ctx.issues`, which
+  // resolveGraphParams already holds for the combo seeds, so the caller passes nothing.
+  //
+  // `scored` stays accepted as the param value: it is in shared links, saved views and
+  // the graph page's own start-set control, and "issues" is the same question answered
+  // honestly rather than a different one.
+  if (seedKind === "scored" || seedKind === "issues") {
+    const withIssues: string[] = [];
+    const seen: Record<string, true> = {};
+    for (const issue of ctx.issues) {
+      if (!issue.assetId || seen[issue.assetId]) continue;
+      seen[issue.assetId] = true;
+      withIssues.push(issue.assetId);
+    }
+    seedIds = withIssues;
   } else if (seed && (seedKind === "combo" || comboGroupById(seed))) {
     seedIds = comboAssetIds(ctx.issues, seed);
+  } else if (seed && seedKind === "domain") {
+    // Explicit seedKind, and it has to be: a bare `?seed=CROSS` still means "the asset
+    // whose id is CROSS", which is what every existing link means. Ordered after the
+    // combo branch and before the bare-seed fallthrough for that reason.
+    seedIds = (ctx.nodes ?? []).filter((n) => n.domain === seed).map((n) => n.id);
   } else if (seed) {
     seedIds = [seed];
   } else {
@@ -149,10 +188,11 @@ export function resolveGraphParams(p: Rec, ctx: GraphParamContext): ProjectOptio
     kinds: toList(p["kinds"]),
     projects: toList(p["projects"]),
     clouds: toList(p["clouds"]),
+    domains: toList(p["domains"]),
   };
   const hasFilters =
     filters.severities.length || filters.kinds.length ||
-    filters.projects.length || filters.clouds.length;
+    filters.projects.length || filters.clouds.length || filters.domains.length;
 
   // "" depth means "use the configured default" (the client sends the raw hash
   // value); clampDepth alone would coerce "" to the minimum. `maxNodes` reads the same
@@ -171,7 +211,7 @@ export function resolveGraphParams(p: Rec, ctx: GraphParamContext): ProjectOptio
     filters: hasFilters ? filters : undefined,
     maxNodes,
     maxEdges: Math.round(maxNodes * EDGE_BUDGET_RATIO),
-    ...(seedKind === "scored" ? { filterSeeds: true } : {}),
+    ...(seedKind === "scored" || seedKind === "issues" ? { filterSeeds: true } : {}),
   };
 }
 
@@ -195,6 +235,7 @@ export function graphCacheParams(p: Rec): Rec {
     kinds: sorted(p["kinds"]),
     projects: sorted(p["projects"]),
     clouds: sorted(p["clouds"]),
+    domains: sorted(p["domains"]),
     view: resolveLayoutParams(p),
   };
 }

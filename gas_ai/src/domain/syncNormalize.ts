@@ -20,6 +20,7 @@ import {
   AI_ASSET_KINDS,
   edgeId,
   entityField,
+  entityTags,
   kindFromWizType,
   severityRank,
   type ConfigRuleRow,
@@ -201,16 +202,12 @@ export function normalizeCloudResource(raw: Rec): GNode | null {
   // Guard kept: projectsOf answers [] for a non-array, and an asset whose response
   // carried no projects key must stay `undefined` here rather than gain an empty list.
   if (Array.isArray(projects)) node.projects = projectsOf(projects);
-  const tags = raw["tags"];
-  if (Array.isArray(tags)) {
-    node.tags = tags
-      .map((t) => {
-        const rec = t as Rec;
-        const key = str(rec["key"]);
-        return key ? { key, value: str(rec["value"]) ?? "" } : null;
-      })
-      .filter((t): t is NonNullable<typeof t> => t !== null);
-  }
+  // Both shapes, both roots — see entityTags. This used to read `raw["tags"]` and guard on
+  // Array.isArray, which was the one fact in this function that did not consult the
+  // properties bag, so every graphSearch-fed node arrived with no tags at all and every
+  // `Wiz/Domain` value in the payload was discarded.
+  const tags = entityTags(raw);
+  if (tags) node.tags = tags;
   return node;
 }
 

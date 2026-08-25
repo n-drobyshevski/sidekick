@@ -16,8 +16,8 @@
 import type { DecisionVector, AmplificationFactor } from "./problem";
 import { OUTCOME_VALUES, nodeAmplificationVector } from "./problem";
 import type { FindingRow, GNode, IssueRow } from "./graphTypes";
+import { SEVERITY_ORDER, isOpenGap, isUnresolvedIssue, type Severity } from "./config";
 import { rankOne, type RankRule } from "./rank";
-import { isOpenGap, isUnresolvedIssue, type Severity } from "./config";
 import { postureStateOf, type PostureState, type Tier } from "./posture";
 
 export type ProblemKind = "ISSUE" | "FINDING";
@@ -46,6 +46,11 @@ export interface ProblemRow {
   /** Null when the row's resource is not an asset the AI graph models (an unlinked finding). */
   assetId: string | null;
   assetName: string;
+  /**
+   * The asset's owning business domain. Null for the same rows `assetId` is null for, and
+   * for the same reason: an unlinked finding has no node to read a tag from.
+   */
+  domain: string | null;
   /**
    * `Outcome`, stored as a bare string — `""` when this row was never decided (a row
    * synced before Phase 4, or one `decideProblemsWith` skipped). `""` is not a fifth
@@ -136,6 +141,7 @@ export function issueToProblemRow(issue: IssueRow, node: GNode | undefined): Pro
     title: issue.ruleName,
     assetId: issue.assetId || null,
     assetName: issue.assetName,
+    domain: node?.domain ?? null,
     problemOutcome: issue.problemOutcome ?? "",
     vector: issue.problemInput?.vector ?? null,
     unknowns: issue.problemInput?.unknowns ?? [],
@@ -168,6 +174,7 @@ export function findingToProblemRow(finding: FindingRow, node: GNode | undefined
     title: finding.ruleName || finding.ruleShortId || "",
     assetId: node ? node.id : null,
     assetName: node ? node.name : (finding.resourceName || finding.resourceId),
+    domain: node?.domain ?? null,
     problemOutcome: finding.problemOutcome ?? "",
     vector: finding.problemInput?.vector ?? null,
     unknowns: finding.problemInput?.unknowns ?? [],
@@ -236,25 +243,6 @@ export function withRankScores(
 
 // ------------------------------------------------------------------------------ ranking
 
-/**
- * Position on the outcome scale, worst (ACT) first; undecided (`""`) sorts LAST, after
- * TRACK — mirrors `configFindings.ts`'s `priorityRank` exactly, for the identical reason.
- */
-function outcomeRank(o: string): number {
-  const i = (OUTCOME_VALUES as readonly string[]).indexOf(o);
-  return i < 0 ? OUTCOME_VALUES.length : i;
-}
-
-/**
- * Worse tier (4) ranks first; an unscored asset (`null`) is UNKNOWN, not "no capability",
- * and must not silently outrank a known worse tier — so it sorts as though it were BELOW
- * tier 1, the same "missing sorts last" convention `assetTable.ts`'s own `score()` applies
- * to a missing AARS/posture-tier value.
- */
-function postureRank(t: Tier | null): number {
-  return t === null ? 0 : t;
-}
-
 const DAY_MS = 86400000;
 
 /**
@@ -267,75 +255,71 @@ const DAY_MS = 86400000;
  * subtract to `0` so the comparator falls through to the next tiebreak level.
  * `Infinity - Infinity` is `NaN`, and a comparator that ever returns `NaN` stops the sort
  * on that pair (undefined behaviour that reads as "did nothing" in the engines this app
- * runs on) — silently burying the amplification and id levels beneath it. This was caught
- * by `problems.test.ts` before it ever reached a page.
+ * runs on) — silently burying the age and id levels beneath it. This was caught by
+ * `problems.test.ts` before it ever reached a page.
  */
 function slaRank(dueAt: string | null): number {
   const t = Date.parse(dueAt || "");
   return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
 }
 
-/** The amplification vector's fixed axis order — `nodeAmplificationVector`'s own key order. */
-const AMPLIFICATION_KEYS = ["tools", "identity", "persistence", "multiAgent", "context", "language"] as const;
-
 /**
- * One amplification factor as a sortable number, HIGHER reading first. `null` (unmeasured)
- * is not evidence of amplification and must never outrank a confirmed reading — problem.ts's
- * own "absent must be null, never 0" discipline applies here too, so an unmeasured factor
- * sorts as the LOWEST possible reading on its axis, strictly below an explicit `0`.
+ * Wiz's severity as a sortable number, worst first; an unrated row sorts LAST.
+ *
+ * Same "missing sorts last" convention every other comparator in this app keeps. A row with
+ * no severity is not a mild row — it is one Wiz never rated — and it must not be able to
+ * outrank a known CRITICAL by being absent.
  */
-function amplificationFactorRank(v: AmplificationFactor | undefined): number {
-  return v === null || v === undefined ? -1 : v;
+function severityRank(sev: Severity | null): number {
+  const i = (SEVERITY_ORDER as readonly string[]).indexOf(String(sev ?? ""));
+  return i < 0 ? SEVERITY_ORDER.length : i;
 }
 
 /**
  * The Priorities page's ranking, worst-first at every level. Each level exists because the
- * level above it can and does tie — two rows in the same queue, on assets of the same
- * posture, due the same day — and the page still has to put ONE of them above the other,
- * every time, the same row, forever.
+ * level above it can and does tie — two rows of the same severity, due the same day — and
+ * the page still has to put ONE of them above the other, every time, the same row, forever.
  *
- * 1. OUTCOME (ACT < ATTEND < TRACK_STAR < TRACK, undecided last). The whole reason this
- *    page exists: which queue a problem belongs in is the first and loudest fact about it.
+ * THE OUTCOME AND THE POSTURE TIER USED TO LEAD IT, and both are gone from here. They are
+ * this app's own derived verdicts, they are experimental, and they now reach the Scoring
+ * Models page and nothing else. What replaced them is not a weaker version of the same
+ * claim; it is a claim Wiz itself makes, plus a clock.
  *
- * 2. ASSET POSTURE TIER, worst (4) first, unscored last. Two rows sharing an outcome can
- *    still describe very different Mondays: a TRACK_STAR issue on a BROAD-capability,
- *    WEAK-containment asset carries standing exposure a TRACK_STAR issue on a
- *    MINIMAL/STRONG asset does not. Posture is exactly the "what could this asset do, and
- *    what stands in its way" reading `posture.ts`'s own header argues is a fact
- *    independent of what has been found — which is why it breaks a tie the outcome itself
- *    cannot.
+ * 1. SEVERITY, worst first, unrated last. Wiz's own rating — adjusted for an issue, the
+ *    finding's own for a finding. It is the loudest fact about a problem that this app did
+ *    not invent.
  *
- * 3. SLA URGENCY from `dueAt`, soonest (including overdue) first, no-deadline last. Once
- *    outcome and posture agree, a clock is the next most legible, most actionable
- *    difference between two problems — and the one a reader would reach for by hand if
- *    asked to break the tie themselves.
+ * 2. SLA URGENCY from `dueAt`, soonest (including overdue) first, no-deadline last. Once
+ *    severity agrees, a clock is the next most legible, most actionable difference between
+ *    two problems — and the one a reader would reach for by hand if asked to break the tie
+ *    themselves. It was level 3 before and simply moved up.
  *
- * 4. THE AMPLIFICATION VECTOR, compared lexicographically over its fixed axis order
- *    (tools, identity, persistence, multiAgent, context, language), each axis read
- *    higher-reading-first. `problem.ts`'s own header calls this vector "a within-outcome
- *    tiebreak for display" — this is that use, one level further down than "within
- *    outcome" alone because posture and SLA already resolved the two more legible ties
- *    first. It never reaches this deep for most rows; it exists for the residue.
+ * 3. AGE from `firstSeenAt`, oldest first. A problem that has been open longer has been
+ *    declined longer. This replaces the amplification vector, which was the problem
+ *    MODEL's own input vector — ranking by it was ranking by the model through a side
+ *    door — and unlike that vector, "this one has been open since April" is a fact a
+ *    reader can verify in the row itself.
  *
- * 5. ID, ascending. Final stability: two rows that agree on all four readings above must
- *    still sort the same way every time this runs, or a repaint would silently reshuffle
- *    a page nothing about the underlying data changed — the same discipline
+ * 4. ID, ascending. Final stability: two rows that agree on all three readings above must
+ *    still sort the same way every time this runs, or a repaint would silently reshuffle a
+ *    page nothing about the underlying data changed — the same discipline
  *    `comboView.js`'s `sortIssues` and `assetTable.ts`'s comparators both keep.
  */
 export function compareProblems(a: ProblemRow, b: ProblemRow): number {
-  const outcome = outcomeRank(a.problemOutcome) - outcomeRank(b.problemOutcome);
-  if (outcome !== 0) return outcome;
-
-  const posture = postureRank(b.postureTier) - postureRank(a.postureTier);
-  if (posture !== 0) return posture;
+  const sev = severityRank(a.severity) - severityRank(b.severity);
+  if (sev !== 0) return sev;
 
   const sla = slaRank(a.dueAt) - slaRank(b.dueAt);
   if (sla !== 0) return sla;
 
-  for (const key of AMPLIFICATION_KEYS) {
-    const diff = amplificationFactorRank(b.amplification[key])
-      - amplificationFactorRank(a.amplification[key]);
-    if (diff !== 0) return diff;
+  // Oldest first, and an absent date last: a row whose source never carried one is not
+  // "brand new", it is unknown, and it must not jump ahead of a dated row either way.
+  const aSeen = a.firstSeenAt || "";
+  const bSeen = b.firstSeenAt || "";
+  if (aSeen !== bSeen) {
+    if (!aSeen) return 1;
+    if (!bSeen) return -1;
+    return aSeen < bSeen ? -1 : 1;
   }
 
   return a.id.localeCompare(b.id);

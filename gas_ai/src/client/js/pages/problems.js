@@ -1,6 +1,6 @@
 // Priorities: every unresolved issue and every open configuration finding, ranked
-// together across the whole landscape — outcome first, then asset posture, then how soon it
-// is due, then how much it would amplify. `combos.js` scopes issues to one expanded
+// together across the whole landscape — severity first, then how soon it is due, then how
+// long it has been open. `combos.js` scopes issues to one expanded
 // toxic-combination pattern; `config.js` scopes findings to the Cloud Configuration
 // register. Neither can answer "what do I work on Monday" — this page is the union.
 //
@@ -30,11 +30,11 @@
 import { bootstrap, setParams, swrCall } from "../store.js";
 import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets.js";
 import { coverCurve } from "../charts.js";
-import { meter,
-  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, glossaryTip, heroStat,
-  outcomeBadge, outcomeLabel, pageHeader, pager, plural, segmented, select,
-  selectField, sevBadge, sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection,
-  skeleton, statRow, statusPill, tierBadge, tipMark, togglePills,
+import {
+  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, kpiCard,
+  pager, plural, sectionLabel, segmented, select, selectField, sevBadge,
+  sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statusPill,
+  togglePills,
 } from "../ui.js";
 import {
   PAGE_SIZE, PROBLEM_SORT_DESC, SEVERITY_RANK,
@@ -46,7 +46,6 @@ import {
   applyActionFilters, actionFilterOptions, sortActions,
 } from "./actionView.js";
 
-import { outcomeNote } from "../ui.js";
 const SEARCH_DEBOUNCE_MS = 200;
 
 // Placeholder shown until api_getProblems resolves; paint() clears the host. Mirrors the
@@ -91,14 +90,10 @@ export async function renderProblems(main, params) {
   const boot = await bootstrap();
   main.append(
     el("h1", {}, "Priorities"),
-    // NINE WORDS, not thirty-seven. The cascade this page ranks by — outcome, then posture
-    // tier, then due date, then amplification — is a definition, and DESIGN.md is explicit
-    // that a definition belongs in the tip that routes to its Help entry rather than in a
-    // paragraph every reader passes on every visit. The term already existed; only the
-    // paragraph restating it was new.
     el("p", { class: "page-sub" },
-      "Every open issue and finding, ranked on one scale.",
-      glossaryTip(tipMark(), "priorities-rank")),
+      "Every unresolved issue and every open configuration finding, ranked together on " +
+      "one scale: Wiz's severity first, then how soon it is due, then how long it has " +
+      "been open."),
   );
 
   if (!boot.latestSync) {
@@ -120,7 +115,7 @@ export async function renderProblems(main, params) {
   // being read by `problemParamPatch`.
   const view = readProblemParams(params);
   view.openActions = new Set();
-  view.aOutcome = "";
+  view.aSeverity = "";
   view.aKind = "";
   view.aQ = "";
   view.aSort = "";
@@ -197,7 +192,7 @@ export async function renderProblems(main, params) {
     host.append(modeSwitch());
     if (view.mode === "problems") {
       if (!problemsData) return; // unreached on a real load path; loadProblems() awaits first
-      host.append(problemHeader(problemsData));
+      host.append(kpiRow(problemsData));
       if (problemsData.all) renderAll(problemsData); else renderPaged(problemsData);
     } else {
       if (!actionsData) return;
@@ -224,41 +219,37 @@ export async function renderProblems(main, params) {
       }));
   }
 
-  /**
-   * The same header shape the By-action view uses, so switching modes changes the CONTENT of
-   * the page rather than its architecture. It was four equal .kpi-card tiles, which is the
-   * hero-metric template PRODUCT.md rejects and also left the two modes of one page looking
-   * like two different pages.
-   *
-   * The union's size is the hero; CISA's four outcome names are the breakdown that qualifies
-   * it, and each keeps the tip carrying CISA's own wording (ui/outcome.js) exactly as the
-   * tiles did.
-   */
-  function problemHeader(fresh) {
-    const counts = fresh.outcomeCounts || {};
-    const undecided = counts[""] || 0;
-    // Summed rather than read off a total field: domain/problems.ts's invariant is that no
-    // row is ever dropped for lacking a verdict, so the verdict counts ARE the union.
-    const total = (counts.ACT || 0) + (counts.ATTEND || 0) + (counts.TRACK_STAR || 0)
-      + (counts.TRACK || 0) + undecided;
+  // The four severities that get a headline card. UNKNOWN is not among them: a row Wiz
+  // rated UNKNOWN and a row it never rated at all are both "no usable rating", and the
+  // Unrated card below counts them together rather than splitting one idea across two.
+  const SEVERITY_CARDS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 
-    const stats = [
-      statRow("Act", String(counts.ACT || 0), "a human interrupts today", null,
-        { term: "priorities-rank", lines: [outcomeNote("ACT")] }),
-      statRow("Attend", String(counts.ATTEND || 0), "on this week's plan", null,
-        { term: "priorities-rank", lines: [outcomeNote("ATTEND")] }),
-      statRow("Track*", String(counts.TRACK_STAR || 0), "an unresolved coverage gap", null,
-        { term: "priorities-rank", lines: [outcomeNote("TRACK_STAR")] }),
-      statRow("Track", String(counts.TRACK || 0), "no action implied", null,
-        { term: "priorities-rank", lines: [outcomeNote("TRACK")] }),
-    ];
-    if (undecided) {
-      stats.push(statRow("Undecided", String(undecided), "never reached a verdict"));
+  /** "CRITICAL" -> "Critical" — a card title, not a badge, so it takes sentence case. */
+  function sevLabel(sev) {
+    const s = String(sev || "");
+    return s ? s.charAt(0) + s.slice(1).toLowerCase() : "";
+  }
+
+  // The union by Wiz severity, where this used to be the four decision-tree queues. The
+  // cascade that produced them is experimental and lives on the Scoring Models page; what
+  // is left is the register's own shape, counted, and it still answers the question the
+  // queues were standing in for — how much of this is bad.
+  //
+  // Unrated rows get a card only when there are any, the same rule the Undecided card
+  // followed: nothing in this union is ever dropped for lacking a rating
+  // (src/domain/problems.ts's own invariant), so a row Wiz never rated still needs a place
+  // on the page rather than silently vanishing from every count.
+  function kpiRow(fresh) {
+    const counts = fresh.severityCounts || {};
+    const total = Number(fresh.total || 0);
+    const rated = SEVERITY_CARDS.reduce((n, sev) => n + (counts[sev] || 0), 0);
+    const cards = SEVERITY_CARDS.map((sev) =>
+      kpiCard(sevLabel(sev), String(counts[sev] || 0), "open problems", null,
+        { term: "severity" }));
+    if (total > rated) {
+      cards.push(kpiCard("Unrated", String(total - rated), "no severity from Wiz"));
     }
-    return pageHeader({
-      hero: heroStat("Open problems", String(total), "issues ∪ findings, the whole union"),
-      stats,
-    });
+    return el("div", { class: "kpi-row" }, ...cards);
   }
 
   // ------------------------------------------------------ all-mode: whole union in hand
@@ -332,7 +323,7 @@ export async function renderProblems(main, params) {
     try {
       const fresh = await swrCall(
         "api_getProblems",
-        { outcome: view.outcome, page: view.page, pageSize: PAGE_SIZE },
+        { severity: view.severity, page: view.page, pageSize: PAGE_SIZE },
         (f) => { problemsData = f; if (view.mode === "problems") paint(); },
       );
       problemsData = fresh;
@@ -350,12 +341,12 @@ export async function renderProblems(main, params) {
     const rerankRemote = () => (serverPaged ? refetch() : paint());
 
     const pills = togglePills({
-      options: options.outcomes.map((o) => ({ value: o, label: outcomeLabel(o) })),
-      selected: view.outcome,
-      ariaLabel: "Filter by priority",
-      sevClass: false,
+      options: options.severities.map((sv) => ({ value: sv, label: sevLabel(sv) })),
+      selected: view.severity,
+      ariaLabel: "Filter by severity",
+      sevClass: true,
       onToggle: (o) => {
-        view.outcome = view.outcome === o ? "" : o;
+        view.severity = view.severity === o ? "" : o;
         view.page = 0;
         persist();
         rerankRemote();
@@ -394,11 +385,11 @@ export async function renderProblems(main, params) {
     }, SEARCH_DEBOUNCE_MS));
 
     const bar = el("div", { class: "filter-bar" }, pills, kindField, el("div", { class: "field" }, search));
-    if (view.outcome || view.kind || view.q) {
+    if (view.severity || view.kind || view.q) {
       bar.append(el("button", {
         class: "link",
         onclick: () => {
-          view.outcome = "";
+          view.severity = "";
           view.kind = "";
           view.q = "";
           view.page = 0;
@@ -421,34 +412,21 @@ export async function renderProblems(main, params) {
     const COLS = [
       // A column heading is asked once per table, so this is where a metric can be DEFINED
       // by a real control without multiplying the tab order by the row count.
-      { key: "priority", label: "Priority", help: { term: "priorities-rank" },
-        cell: (r) => outcomeBadge(r.problemOutcome) },
       {
         key: "kind", label: "Kind",
         cell: (r) => statusPill("neutral", r.kind === "ISSUE" ? "Issue" : "Finding"),
       },
       { key: "title", label: "Rule", cell: (r) => r.title },
       { key: "asset", label: "Asset", cell: (r) => r.assetName },
-      { key: "posture", label: "Posture", help: { term: "posture-tier" },
-        cell: (r) => tierBadge(r.postureTier, r.postureState) },
+      // Null for an unlinked finding, for the same reason its asset id is — there is no
+      // node to read a tag from. Same em dash every other absent cell uses.
+      { key: "domain", label: "Domain", cell: (r) => r.domain || "—" },
       { key: "severity", label: "Severity", help: { term: "adjusted-severity" },
         cell: (r) => sevBadge(r.severity) },
       { key: "due", label: "Due", cell: (r) => dueChip(r.dueAt) || "—" },
-      // The one column the minimal model adds. `decorative` because the score is already
-      // spoken by the row's other cells; an undated row draws at its rule-only score and says
-      // so, rather than drawing a full bar for a reading half of which nobody took.
-      {
-        key: "rank", label: "Order", help: { term: "priorities-rank" },
-        cell: (r) => (typeof r.rankScore === "number"
-          ? meter(r.rankScore, {
-            max: 1,
-            decorative: true,
-            label: r.rankTimed
-              ? `Order ${r.rankScore.toFixed(2)}`
-              : `Order ${r.rankScore.toFixed(2)} — no deadline, rule only`,
-          })
-          : "—"),
-      },
+      // The ranking's third level, shown because a reader should be able to see the order
+      // they are being given rather than take it on trust.
+      { key: "firstSeen", label: "First seen", cell: (r) => fmtDate(r.firstSeenAt) || "—" },
     ];
     const descending = view.sort && (PROBLEM_SORT_DESC[view.sort] ? view.dir === 1 : view.dir === -1);
 
@@ -491,14 +469,14 @@ export async function renderProblems(main, params) {
       return;
     }
 
-    host.append(actionHeader(data));
+    host.append(actionHeadline(data), coverChartCard(data));
 
     const rows = data.rows || [];
     const options = actionFilterOptions(rows);
     host.append(actionToolbar(options));
 
     const filtered = applyActionFilters(rows, {
-      outcome: view.aOutcome, kind: view.aKind, q: view.aQ,
+      severity: view.aSeverity, kind: view.aKind, q: view.aQ,
     });
     const sorted = view.aSort ? sortActions(filtered, view.aSort, view.aDir) : filtered;
 
@@ -519,50 +497,23 @@ export async function renderProblems(main, params) {
     host.append(actionTable(sorted));
   }
 
-  /**
-   * "N open problems collapse to M actions, and the top 10 close K%" — the self-evidencing
-   * result this feature exists to produce (`concentrationRatio`, actions.ts), stated as ONE
-   * header instead of four blocks.
-   *
-   * It used to be a sentence saying exactly that, then three equal .kpi-card tiles repeating
-   * the same three numbers underneath it, then a separate .chart-card for the curve. The
-   * sentence was redundant with the tiles by construction, and a row of equal tiles is the
-   * hero-metric template PRODUCT.md's anti-references reject. Now the count is the hero, the
-   * curve is the thing that qualifies it, and the other two figures are supporting facts —
-   * three levels of emphasis rather than four competing blocks saying the same thing.
-   */
-  function actionHeader(data) {
+  /** "N open problems collapse to M actions — the top 10 close K%." — the self-evidencing
+   *  headline this whole feature exists to produce (`concentrationRatio`, actions.ts). */
+  function actionHeadline(data) {
     const c = data.concentration || {};
     const problems = c.problems ?? data.totalProblems ?? 0;
     const actions = c.actions ?? data.total ?? 0;
     const pctText = formatShare(c.top10Share);
-    const curve = data.curve || [];
-    const enough = curve.length >= 3;
+    const sentence = plural(problems, "open problem") + " collapse to " +
+      plural(actions, "action") + " — the top 10 close " + pctText + ".";
 
-    const canvas = el("canvas", {
-      "aria-label":
-        "Cumulative share of open problems closed as actions are taken, ranked by cover",
-      role: "img",
-    });
-    const aside = el("div", { class: "page-strip" },
-      el("div", { class: "kpi-label" }, "Cumulative cover"),
-      enough
-        ? el("div", { class: "chart-box", style: "height:124px" }, canvas)
-        : el("p", { class: "page-hero-sub" },
-            "Fewer than three actions close the whole board here."),
-    );
-    // Laid out before Chart.js measures it, or it reads a 0x0 box — the same reason
-    // inventory.js's trend chart defers its draw one frame.
-    if (enough) requestAnimationFrame(() => coverCurve(canvas, curve, { yLabel: "" }));
-
-    return pageHeader({
-      hero: heroStat("Open problems", String(problems), "issues ∪ findings, the whole union"),
-      aside,
-      stats: [
-        statRow("Collapse to", String(actions), "distinct remediation actions"),
-        statRow("Top 10 close", pctText, "of every open problem, ranked by cover"),
-      ],
-    });
+    return el("div", { style: "margin-bottom:14px" },
+      el("p", { class: "page-sub", style: "font-size:15px; font-weight:500; color:var(--ink)" },
+        sentence),
+      el("div", { class: "kpi-row" },
+        kpiCard("Open problems", String(problems), "issues ∪ findings, the whole union"),
+        kpiCard("Collapse to", String(actions), "distinct remediation actions"),
+        kpiCard("Top 10 close", pctText, "of every open problem, ranked by cover")));
   }
 
   /** 94.7%, not 94.7000000000001% or a bare "95%" that hides how close the top 10 came to
@@ -572,14 +523,46 @@ export async function renderProblems(main, params) {
     return (Number.isInteger(v) ? String(v) : v.toFixed(1)) + "%";
   }
 
+  /** The `.chart-card`/`.chart-note`/`.chart-box` shell `inventory.js`'s trend chart uses,
+   *  degrading to `.chart-empty` below ~3 actions the same way that chart degrades below 2
+   *  syncs — a curve with one or two points has no shape worth drawing. */
+  function coverChartCard(data) {
+    const curve = data.curve || [];
+    const enough = curve.length >= 3;
+    const canvas = el("canvas", {
+      "aria-label": "Cumulative share of open problems closed as actions are taken, ranked by cover",
+      role: "img",
+    });
+
+    const card = el("div", { class: "chart-card", style: "margin-bottom:16px" },
+      el("h3", {}, "Cumulative cover"),
+      el("p", { class: "chart-note" },
+        enough
+          ? plural(curve.length, "ranked action")
+          : "Too few actions to shape a curve"),
+      enough
+        ? el("div", { class: "chart-box", style: "height:220px" }, canvas)
+        : el("div", { class: "chart-empty", role: "status" },
+            "Fewer than three actions close the whole board here — there is no curve to draw."),
+    );
+
+    if (enough) {
+      // The canvas must be laid out before Chart.js measures it, or it reads a 0×0 box —
+      // the same reason inventory.js's own trend chart defers its draw one frame.
+      requestAnimationFrame(() => coverCurve(canvas, curve));
+    }
+
+    return card;
+  }
+
   function actionToolbar(options) {
     const pills = togglePills({
-      options: options.outcomes.map((o) => ({ value: o, label: outcomeLabel(o) })),
-      selected: view.aOutcome,
-      ariaLabel: "Filter by priority",
-      sevClass: false,
+      options: options.severities.map((sv) => ({ value: sv, label: sevLabel(sv) })),
+      selected: view.aSeverity,
+      ariaLabel: "Filter by severity",
+      sevClass: true,
       onToggle: (o) => {
-        view.aOutcome = view.aOutcome === o ? "" : o;
+        view.aSeverity = view.aSeverity === o ? "" : o;
         paint();
       },
     });
@@ -612,11 +595,11 @@ export async function renderProblems(main, params) {
     }, SEARCH_DEBOUNCE_MS));
 
     const bar = el("div", { class: "filter-bar" }, pills, kindField, el("div", { class: "field" }, search));
-    if (view.aOutcome || view.aKind || view.aQ) {
+    if (view.aSeverity || view.aKind || view.aQ) {
       bar.append(el("button", {
         class: "link",
         onclick: () => {
-          view.aOutcome = "";
+          view.aSeverity = "";
           view.aKind = "";
           view.aQ = "";
           paint();
@@ -628,8 +611,8 @@ export async function renderProblems(main, params) {
 
   function actionTable(rows) {
     const COLS = [
-      { key: "priority", label: "Priority", help: { term: "priorities-rank" },
-        cell: (r) => outcomeBadge(r.worstOutcome) },
+      { key: "worstSeverity", label: "Worst", help: { term: "severity" },
+        cell: (r) => (r.worstSeverity ? sevBadge(r.worstSeverity) : "—") },
       { key: "title", label: "Action", cell: (r) => r.title },
       {
         key: "kind", label: "Kind",
@@ -645,6 +628,14 @@ export async function renderProblems(main, params) {
             ? sevSegmentBar(entries, { size: "xs", label: sevSpoken(entries) })
             : el("span", { class: "muted small" }, "—");
         },
+      },
+      {
+        // Whose problems this one action collapses. An action spanning three domains is
+        // a coordination cost the "N collapse to M" headline hides.
+        key: "domains", label: "Domain", sortable: false,
+        cell: (r) => ((r.domains || []).length
+          ? el("span", {}, r.domains.join(", "))
+          : el("span", { class: "muted small" }, "—")),
       },
       {
         key: "impact", label: "Business impact", sortable: false,
@@ -664,10 +655,8 @@ export async function renderProblems(main, params) {
     ];
     const descending = view.aSort && (ACTION_SORT_DESC[view.aSort] ? view.aDir === 1 : view.aDir === -1);
 
-    // No section label here. The .filter-meta count directly above the table already reads
-    // "10 actions" (or "6 of 10 actions" when filtered, which the label could not say), and a
-    // heading repeating the same count 30px below it was the page saying one thing twice.
     return el("div", {},
+      sectionLabel(plural(rows.length, "action") + ", ranked by cover"),
       dataTable({
         columns: COLS.map((col) => ({
           key: col.key, label: col.label, help: col.help,
@@ -769,7 +758,7 @@ export async function renderProblems(main, params) {
     }
     return el("div", { class: "action-members" },
       ...members.map((r) => sheetRow({
-        badge: outcomeBadge(r.problemOutcome),
+        badge: r.severity ? sevBadge(r.severity) : null,
         title: r.title + " on " + r.assetName,
         onOpen: () => openRow(r),
         ariaLabel: (r.kind === "ISSUE" ? "Issue on " : "Finding on ") + r.assetName,

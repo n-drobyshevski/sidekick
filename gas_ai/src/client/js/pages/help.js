@@ -35,8 +35,9 @@
 
 import { COVERAGE, coverageTally, resolveAreas } from "../scanContent.js";
 import {
-  ENTRIES, ROUTE_TITLES, findEntry, groupByFamily, lexTally, resolveEntries,
+  ENTRIES, ROUTE_TITLES, groupByFamily, lexTally, resolveEntries, visibleEntries,
 } from "../helpContent.js";
+import { showExperimental } from "../experimental.js";
 import { CATEGORY_LABELS, kindIcon, svgEl } from "../icons.js";
 import { ROUTE_ICONS } from "../routeIcons.js";
 import { bootstrap, bootstrapCached, navigate, setParams, swrCall } from "../store.js";
@@ -57,14 +58,27 @@ let clearLexFilter = null;
 const ASSETS_PARAMS = { all: true, pageSize: 25 };
 const COMBOS_PARAMS = {};
 
-// The five questions, one per page, phrased as the question rather than the feature.
+// The five questions, one per page, phrased as the question rather than the feature. Four of
+// them for a reader with experimental content off — see hiddenRoutes().
 const PAGE_MAP = [
   ["graph", "Which paths reach a sensitive asset?"],
   ["inventory", "What do we have, and what scores worst?"],
   ["combos", "Which risks only matter when they combine?"],
-  ["aars", "How is the score calculated? What does LLM06 mean?"],
+  ["aars", "How is the findings score calculated? What does LLM06 mean?"],
   ["scans", "Where did this figure come from?"],
 ];
+
+/**
+ * The routes this reader cannot open, which this page must not send them to.
+ *
+ * The key sheet is the one screen whose whole job is to point at other screens, so it is
+ * also the one that breaks worst when a page is gated: a definition of a term drawn only on
+ * Scoring Models, under a heading counting it, beside a button that lands on the Security
+ * Graph. Everything below reads from here, so there is one answer rather than five.
+ */
+function hiddenRoutes() {
+  return showExperimental() ? [] : ["aars"];
+}
 
 // The page's own sections, named once. renderHelp() lays them out and pageIndex() lists
 // them, both from this array, so the rail can never name a heading the page does not have
@@ -79,6 +93,12 @@ const SECTIONS = [
 export async function renderHelp(main, params, _ctx) {
   const boot = bootstrapCached() || (await bootstrap());
 
+  // Resolved once, before anything is built: the shell's headings, the index rail's counts,
+  // the hero's denominator and the rows themselves all have to be the same book, and rule 4
+  // above means the shell is built exactly once and never rebuilt.
+  const hidden = hiddenRoutes();
+  const shown = visibleEntries(ENTRIES, hidden);
+
   // The page spans the pane, like every other page here. It used to stop at 1080px, on the
   // argument that a document is not a canvas and "a definition whose count sits 900px to
   // its right is two facts, not one row". The observation was right and the remedy was too
@@ -92,7 +112,7 @@ export async function renderHelp(main, params, _ctx) {
   // Below its breakpoint it is display:none and costs no tab stop.
   const page = el("div", { class: "help-page" });
   const doc = el("div", { class: "help-doc" });
-  const index = pageIndex();
+  const index = pageIndex(shown);
   page.append(index, doc);
   main.append(page);
 
@@ -105,13 +125,13 @@ export async function renderHelp(main, params, _ctx) {
 
   const headHost = el("div", { class: "help-head" });
   const limitsHost = el("div", { class: "help-limits" });
-  const lex = lexiconShell();
+  const lex = lexiconShell(shown, hidden);
   clearLexFilter = () => lex.reveal();
   onPageTeardown(() => { clearLexFilter = null; });
 
   doc.append(
     headHost,
-    section(0, pageMap()),
+    section(0, pageMap(hidden)),
     section(1, limitsHost),
     section(2, anatomy()),
     section(3, lex.node),
@@ -144,7 +164,12 @@ export async function renderHelp(main, params, _ctx) {
   // A ?term= deep link, from a term trigger anywhere in the app. Runs after the first
   // paint so the entry exists to scroll to; a term the book does not carry is simply
   // ignored rather than reported, because a stale bookmark is not an error state.
-  const wanted = findEntry(params.term);
+  //
+  // Resolved against `shown`, not against helpContent's whole index: a gated term is one
+  // the book does not carry for this reader, and asking revealEntry to focus a row that was
+  // never rendered would scroll the page to nothing.
+  const want = String(params.term || "").trim().toLowerCase();
+  const wanted = want ? shown.find((e) => e.id === want) : null;
   if (wanted) revealEntry(wanted.id);
 
   function paint() {
@@ -163,9 +188,9 @@ export async function renderHelp(main, params, _ctx) {
 
     // Resolved once and read twice — the header states how the book answers, the rows
     // state how each term does, and they are the same array.
-    const resolved = resolveEntries(ctx);
+    const resolved = resolveEntries(ctx, shown);
 
-    clear(headHost).append(header(boot, lexTally(resolved)));
+    clear(headHost).append(header(boot, lexTally(resolved), shown.length));
     clear(limitsHost).append(limits(areas));
     lex.fill(resolved);
   }
@@ -206,7 +231,7 @@ const LEX_STATES = [
   { key: "convention", glyph: "–", label: "conventions, not quantities" },
 ];
 
-function header(boot, tally) {
+function header(boot, tally, total) {
   const sync = boot.latestSync || null;
   const dryRun = !!sync && String(sync.mode || "") === "dry-run";
   // A zero is an answer. "None in this tenant" is a figure the last sync produced, so it
@@ -215,7 +240,10 @@ function header(boot, tally) {
 
   const hero = el("div", { class: "help-hero" },
     el("div", { class: "kpi-label" }, "Carrying a figure"),
-    el("div", { class: "hero-value num" }, answered + " of " + ENTRIES.length),
+    // `total` is what this reader can actually see, not ENTRIES.length: the denominator has
+    // to count the same rows the page below it draws, or the hero reports a book with terms
+    // missing from it.
+    el("div", { class: "hero-value num" }, answered + " of " + total),
     el("p", { class: "help-hero-sub" },
       "terms this key sheet can put a number on right now"),
     sync
@@ -293,7 +321,7 @@ function lexKeys(tally) {
 // Buttons, not anchors: the app is hash-routed, so an href="#help-family-graph" would
 // clobber the route rather than scroll to the heading.
 
-function pageIndex() {
+function pageIndex(shown) {
   const nav = el("nav", { class: "help-index", "aria-label": "On this page" });
   const items = [];
 
@@ -315,11 +343,13 @@ function pageIndex() {
   nav.append(el("div", { class: "help-index-label" }, "On this page"));
   for (const [id, title] of SECTIONS) add(id, title, null);
 
-  // The per-family counts are lengths of ENTRIES, not resolved figures — structural, known
-  // before the first await, and unchanged by any payload. That is what lets the rail paint
-  // once and never repaint, which is what lets its scroll targets stay put.
+  // The per-family counts are lengths of the visible entries, not resolved figures —
+  // structural, known before the first await, and unchanged by any payload. That is what
+  // lets the rail paint once and never repaint, which is what lets its scroll targets stay
+  // put. A family the gate empties loses its heading here and in the lexicon alike, because
+  // both read groupByFamily, which drops empty families.
   nav.append(el("div", { class: "help-index-label" }, "The vocabulary"));
-  for (const g of groupByFamily(ENTRIES)) {
+  for (const g of groupByFamily(shown)) {
     add("help-family-" + g.family.id, g.family.title, g.entries.length,
       g.family.title + ", " + g.entries.length + " terms");
   }
@@ -417,9 +447,12 @@ function wireIndex(nav, page, items) {
 // The glyph is the route's OWN sidebar mark, from routeIcons.js. A reader who follows this
 // row is going to look for that page in the nav next time, and finding the same mark there
 // is the whole of PRODUCT.md's "earned familiarity".
-function pageMap() {
+function pageMap(hidden) {
   const list = el("div", { class: "help-map" });
   for (const [route, question] of PAGE_MAP) {
+    // "Where each question is answered" cannot answer with a page this reader has no way
+    // to open, so the row goes rather than degrading to a dead destination.
+    if (hidden.includes(route)) continue;
     list.append(el("button", {
       class: "help-map-item",
       type: "button",
@@ -519,10 +552,10 @@ const CALLOUTS = [
   },
   {
     parts: ["aars"],
-    title: "The findings score",
-    text: "0 to 100 across four pillars. The card shows p<N>, its percentile among the scored " +
-      "assets — the number is on the detail sheet. Levels are set on the AARS Rules page.",
-    term: "aars",
+    title: "The count badge",
+    text: "Open issues on the asset, and after a middot the failing configuration findings " +
+      "evaluated against it. A node with neither carries no badge at all.",
+    term: "toxic-combination",
   },
   {
     parts: ["absent"],
@@ -541,7 +574,8 @@ const CALLOUTS = [
 const FIG_LABEL =
   "A worked example of a security graph node. An AI agent named checkout-bot sits inside a " +
   "dashed crimson halo carrying a TC badge, which marks toxic-combination membership. The " +
-  "node shows a High severity dot and label and p92, the findings-score percentile. A dashed edge labelled " +
+  "node shows a High severity dot and label, and a count badge reading 4 open issues and " +
+  "2 cloud findings. A dashed edge labelled " +
   "PROTECTED_BY, absent, joins it to a No Guardrail risk node.";
 
 function anatomy() {
@@ -669,7 +703,7 @@ function anatomySvg() {
   add(sev, "text", { class: "help-node-sev", x: 89, y: 94 }, "High");
 
   const aars = group("aars");
-  add(aars, "text", { class: "help-node-aars", x: 230, y: 94, "text-anchor": "end" }, "p92");
+  add(aars, "text", { class: "help-node-counts", x: 230, y: 94, "text-anchor": "end" }, "4\u00b72");
 
   // The negated edge, and the node it raises.
   const absent = group("absent");
@@ -705,10 +739,11 @@ function anatomySvg() {
  * are `entries.length`, a property of the book rather than of the landscape, so they are known
  * from the synchronous first paint and never move.
  *
- * groupByFamily reads only `.family`, a static field, so the raw ENTRIES give exactly the
- * group set the resolved entries will.
+ * groupByFamily reads only `.family`, a static field, so the visible entries give exactly the
+ * group set the resolved entries will — provided both are the SAME visible set, which is why
+ * it is resolved once in renderHelp and passed in rather than re-derived here.
  */
-function lexiconShell() {
+function lexiconShell(shown, hidden) {
   const host = el("div", { id: "help-lexicon" });
   const lists = new Map();
   const blocks = new Map();
@@ -730,7 +765,7 @@ function lexiconShell() {
   host.append(el("div", { class: "toolbar" },
     el("div", { class: "field" }, search), count));
 
-  for (const g of groupByFamily(ENTRIES)) {
+  for (const g of groupByFamily(shown)) {
     const head = el("h3", { class: "help-family", id: "help-family-" + g.family.id },
       el("span", { class: "help-family-t" }, g.family.title),
       el("span", { class: "help-family-n num" }, String(g.entries.length)));
@@ -750,17 +785,21 @@ function lexiconShell() {
   const empty = el("p", { class: "help-lex-none", hidden: true });
   host.append(empty);
 
-  host.append(el("p", { class: "help-lex-foot" },
-    el("span", {},
-      "Framework codes (LLM06, ASI03, ML_DATA_POISONING and the rest) are defined in " +
-      "full on the AARS Rules code reference, which also says what this draft prices each " +
-      "one at and how many live assets carry it. "),
-    el("button", {
-      class: "linklike",
-      type: "button",
-      onclick: () => navigate("aars", {}),
-    }, "Open the code reference →"),
-  ));
+  // The whole paragraph, not just its button: every clause is about what the code reference
+  // holds, so with that page gated the prose would describe a room the reader cannot enter.
+  if (!hidden.includes("aars")) {
+    host.append(el("p", { class: "help-lex-foot" },
+      el("span", {},
+        "Framework codes (LLM06, ASI03, ML_DATA_POISONING and the rest) are defined in " +
+        "full on the Scoring Models code reference, which also says what this draft prices " +
+        "each one at and how many live assets carry it. "),
+      el("button", {
+        class: "linklike",
+        type: "button",
+        onclick: () => navigate("aars", {}),
+      }, "Open the code reference →"),
+    ));
+  }
 
   /** Hide rows that do not match, then hide any family left with nothing visible. */
   function applyFilter(raw) {

@@ -11,8 +11,8 @@
 // The other thing this page exists to say out loud: most of these findings are not on an
 // AI asset at all. They are evaluated against a region, an IAM policy or a service
 // account no agent runs as, none of which the AI inventory holds — so they are real
-// compliance gaps that price no AARS score. The inventory's stat tile can only report the
-// number; here it is a column, a filter and a chip.
+// compliance gaps that appear on no asset's row. The inventory's stat tile can only report
+// the number; here it is a column, a filter and a chip.
 //
 // All view state (mode, filters, sort, page) lives in `view`, outside paint(), and is
 // mirrored into the hash — the same discipline combos.js documents, so a background SWR
@@ -27,7 +27,7 @@ import {
   skeletonStack, statusPill, togglePills,
 } from "../ui.js";
 import {
-  CONFIG_SORTS, CONFIG_SORT_DESC, FLAG_LABELS, LINKAGE_LABELS, OUTCOME_LABELS,
+  CONFIG_SORTS, CONFIG_SORT_DESC, FLAG_LABELS, LINKAGE_LABELS,
   SEVERITY_ORDER, SEVERITY_RANK, activeConfigFilters, applyConfigFilters, configFacetCounts,
   readConfigParams, sortConfigRows,
 } from "./configView.js";
@@ -47,7 +47,7 @@ function sevRank(sev) {
 
 const FACET_KEYS = [
   "severities", "statuses", "clouds", "resourceTypes", "rules", "projects",
-  "linkage", "flags", "outcomes",
+  "linkage", "flags",
 ];
 
 const FACET_LABELS = {
@@ -57,15 +57,14 @@ const FACET_LABELS = {
   resourceTypes: "Resource type",
   rules: "Control",
   projects: "Project",
+  domains: "Domain",
   linkage: "AI asset",
   flags: "Signals",
-  outcomes: "Priority",
 };
 
 function optionLabel(key, value) {
   if (key === "flags") return FLAG_LABELS[value] || value;
   if (key === "linkage") return LINKAGE_LABELS[value] || value;
-  if (key === "outcomes") return OUTCOME_LABELS[value] || value;
   return value;
 }
 
@@ -120,9 +119,9 @@ export async function renderConfigFindings(main, params, ctx) {
       resourceTypes: view.query.resourceTypes.join(",") || null,
       rules: view.query.rules.join(",") || null,
       projects: view.query.projects.join(",") || null,
+      domains: view.query.domains.join(",") || null,
       linkage: view.query.linkage.join(",") || null,
       flags: view.query.flags.join(",") || null,
-      outcomes: view.query.outcomes.join(",") || null,
       sort: view.sort === "severity" ? null : view.sort,
       dir: view.descending === CONFIG_SORT_DESC[view.sort] ? null : (view.descending ? "desc" : "asc"),
       page: view.page ? String(view.page) : null,
@@ -159,7 +158,7 @@ export async function renderConfigFindings(main, params, ctx) {
         "regions, policies and unattached identities", null,
         ["A configuration finding is keyed to the resource it was evaluated against, and most "
           + "AI-security rules fail on a region, an IAM policy or a service account no agent "
-          + "runs as. None of those are AI assets, so none of them price an AARS score."]),
+          + "runs as. None of those are AI assets, so none of them appear on an asset's row."]),
       statRow("Traced to IaC", String(totals.iac ?? 0), "fixable at source"),
     ];
 
@@ -229,7 +228,7 @@ export async function renderConfigFindings(main, params, ctx) {
     // Not a card. A row of filters is chrome, and DESIGN.md is explicit that a card is for
     // content that is genuinely distinct and actionable, not a container to put things in.
     const facetHost = el("div", { class: "config-facets" });
-    for (const key of ["linkage", "flags", "outcomes", "statuses", "clouds", "resourceTypes"]) {
+    for (const key of ["linkage", "flags", "statuses", "clouds", "resourceTypes"]) {
       const options = (counts[key] || []).filter((o) => o.count > 0 || view.query[key].indexOf(o.value) >= 0);
       if (options.length < 2) continue;
       // NOT .facet-row. That class belongs to the filter drawer (sheet.css) and is a FOUR
@@ -300,6 +299,10 @@ export async function renderConfigFindings(main, params, ctx) {
       const resources = new Set();
       const gapResources = new Set();
       const unlinkedGapResources = new Set();
+      // Mirrors ControlRollup.domains in src/domain/configFindings.ts — under
+      // CONFIG_CLIENT_ALL_MAX this loop is the ONLY rollup that runs, so a field added
+      // there and not here is a column that reads empty on every small tenant.
+      const domains = new Set();
       let worst = "UNKNOWN";
       let iac = 0;
       let firstSeenAt = "";
@@ -312,6 +315,7 @@ export async function renderConfigFindings(main, params, ctx) {
           gapResources.add(r.resourceId);
           if (!r.linked) unlinkedGapResources.add(r.resourceId);
         }
+        if (r.domain) domains.add(r.domain);
         if (r.iac) iac += 1;
         if (r.firstSeenAt && (!firstSeenAt || r.firstSeenAt < firstSeenAt)) {
           firstSeenAt = r.firstSeenAt;
@@ -325,6 +329,7 @@ export async function renderConfigFindings(main, params, ctx) {
         gaps: gapResources.size,
         resources: resources.size,
         unlinked: unlinkedGapResources.size,
+        domains: Array.from(domains).sort(),
         iac,
         firstSeenAt,
         mix,
@@ -365,12 +370,21 @@ export async function renderConfigFindings(main, params, ctx) {
         {
           key: "unlinked", label: "Off-inventory", sortable: false, className: "num",
           // Not a warning — a fact about where the control applies. It is the reason the
-          // gap total and the AARS-priced total differ.
+          // register's gap total and the inventory's per-asset counts differ.
           cell: (g) => (g.unlinked
             ? tipAnchor(
               el("span", {}, String(g.unlinked),
                 el("span", { class: "sr-only" }, ", not on an AI asset")),
               g.unlinked + " not on an AI asset")
+            : el("span", { class: "muted" }, "—")),
+        },
+        {
+          // Which domains one fix would touch. The by-control view's argument is that N
+          // near-identical rows are one piece of work; this says how many owners that work
+          // needs. Empty for an all-unlinked control, which is most of them here.
+          key: "domains", label: "Domain", sortable: false,
+          cell: (g) => ((g.domains || []).length
+            ? el("span", {}, g.domains.join(", "))
             : el("span", { class: "muted" }, "—")),
         },
         {
@@ -411,9 +425,6 @@ export async function renderConfigFindings(main, params, ctx) {
     const table = dataTable({
       columns: [
         { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
-        // The problem tree's outcome (Phase 5) — decided from exploitation/impact/exposure/
-        // mission, a separate scale from the Wiz severity column beside it.
-        { key: "priority", label: "Priority", sortable: true, cell: (r) => outcomeBadge(r.problemOutcome) },
         {
           key: "rule", label: "Control", sortable: true,
           cell: (r) => el("div", {},
@@ -425,6 +436,14 @@ export async function renderConfigFindings(main, params, ctx) {
           cell: (r) => el("div", {},
             el("div", {}, r.resourceName || r.resourceId),
             el("div", { class: "small muted" }, r.resourceType)),
+        },
+        {
+          key: "domain", label: "Domain", sortable: false,
+          // Blank for an unlinked finding, and it reads as the same em dash every other
+          // absent cell uses. The AI asset column beside it says WHY.
+          cell: (r) => (r.domain
+            ? el("span", {}, r.domain)
+            : el("span", { class: "small muted" }, "—")),
         },
         {
           key: "linked", label: "AI asset", sortable: false,

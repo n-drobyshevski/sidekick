@@ -216,22 +216,22 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // Appended, same no-migration contract: rows without it have no scoped series, which the
     // trend reports rather than fabricates.
     "project_totals_json",
-    // The posture distribution this sync produced, and which posture rule produced it — the
-    // analogue of the two AARS columns and the two problem columns above. It was the only one
-    // of the three models with NO series at all, which is the one the Inventory header leads
-    // with and the one compareProblems uses as its second-level tiebreak.
-    //
-    // It carries the SCOPE SPLIT, not just tiers: an asset can lack a tier because nobody
+    // The count trend's two new series. `issue_count` above is the third and has been
+    // written since the first sync this ledger ever recorded, which is why the issues line
+    // has full history and these two start empty — appended under the same no-migration,
+    // no-backfill contract as everything above them. A row written before these existed
+    // carries NO value, and the reader plots a gap rather than a zero: see
+    // CountTrendPoint in aarsTrend.ts for why that distinction is load-bearing.
+    "finding_count", "posture_fail_count",
+    // The posture distribution this sync produced, and which posture rule produced it. It
+    // carries the SCOPE SPLIT, not just tiers: an asset can lack a tier because nobody
     // measured it (a coverage gap) or because the lattice does not describe its kind (not a
-    // gap at all), and a bare tier count cannot tell those apart — see posture.censusPostureTiers.
-    // Without that split the tri-state normalizer fix reads as risk improving, because the
-    // tiered population legitimately collapses on the sync that first tells the truth.
+    // gap at all), and a bare tier count cannot tell those apart.
     "posture_tier_json", "posture_rule_version",
-    // Which NORMALIZER produced the readings above, as opposed to which RULE priced them.
-    // A rule version moves when an operator edits a model; this moves when a code change
-    // alters what a stored fact MEANS — and only a full sync can repair the difference,
-    // because the old value was destroyed at ingest rather than merely re-priced. The trend
-    // marks the break here so a step is never read as movement. See DERIVATION_VERSION.
+    // Which NORMALIZER produced the readings above, as opposed to which RULE priced them. A
+    // rule version moves when an operator edits a model; this moves when a code change alters
+    // what a stored fact MEANS, which only a full sync can repair. The trend marks the break
+    // here so a step is never read as movement.
     "derivation_version",
   ],
   [TABS.settings]: ["key", "value_json"],
@@ -246,6 +246,19 @@ export const TAB_HEADERS: Record<string, string[]> = {
 export const SCHEMA_VERSION = 1;
 
 let spreadsheetCache: GoogleAppsScript.Spreadsheet.Spreadsheet | null = null;
+
+/**
+ * Drop this module's per-execution memos.
+ *
+ * Test-only. In GAS these memos die with the execution, so nothing in production ever needs
+ * to clear them; under vitest the module registry outlives a test, and `test/gasEnv.ts`
+ * calls this so a shared server can be reset without re-importing the whole graph. See the
+ * comment on `resetToSynced` there.
+ */
+export function __resetMemosForTest(): void {
+  spreadsheetCache = null;
+}
+
 
 export function ledgerSpreadsheet(): GoogleAppsScript.Spreadsheet.Spreadsheet {
   if (spreadsheetCache === null) {

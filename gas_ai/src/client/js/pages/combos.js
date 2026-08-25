@@ -23,8 +23,7 @@ import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
   FINDINGS_SCORE_LABEL, ordinal,
   clear, dataTable, debounce, el, emptyState, errorState, heroStat, outcomeBadge, pageHeader,
-  statRow,
-  outcomeLabel, pager, sectionLabel, select,
+  outcomeLabel, pager, plural, sectionLabel, select, statRow,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,
   togglePills,
 } from "../ui.js";
@@ -597,20 +596,18 @@ export async function renderCombos(main, params) {
     const chips = group.assets.map((a) => el("button", {
       class: "asset-chip",
       onclick: () => openAsset(a),
-      "aria-label": a.name + ", " + FINDINGS_SCORE_LABEL.toLowerCase() + " " +
-        (a.aars === null || a.aars === undefined ? "unscored" : a.aars) +
-        (typeof a.aarsPercentile === "number"
-          ? ", " + ordinal(a.aarsPercentile) + " percentile"
-          : ""),
+      "aria-label": a.name + ", " + plural(Number(a.openIssues || 0), "open issue"),
     },
       el("span", { class: "asset-chip-name" }, a.name),
-      // The percentile, untinted. This carried the raw score painted in its BAND's severity
-      // token, which put a red pill on an asset chip sitting inches from real issue
-      // severities on the same card — one threshold reading as a finding. The card is a way
-      // into a record; the number on it is placement, not a verdict.
-      typeof a.aarsPercentile === "number"
+      // The open-issue count, untinted. This carried a percentile of the scoring model's
+      // population, and before that the raw score painted in its band's severity token —
+      // which put a red pill on an asset chip sitting inches from real issue severities on
+      // the same card, one threshold reading as a finding. A count needs no tint and makes
+      // no claim: the card is a way into a record, and the number on it says how much is
+      // open there.
+      Number(a.openIssues || 0)
         ? el("span", { class: "asset-chip-score num", "aria-hidden": "true" },
-            "p" + a.aarsPercentile)
+            String(a.openIssues))
         : null));
 
     const head = chips.slice(0, ASSET_PREVIEW);
@@ -706,7 +703,6 @@ export async function renderCombos(main, params) {
       el("div", { class: "field" }, search),
       issueFilterField("Account", "acct", options.accounts, rerender),
       issueFilterField("Project", "proj", options.projects, rerender),
-      issueFilterField("Priority", "outcome", options.outcomes, rerender, outcomeLabel),
       el("div", { class: "filter-meta" },
         el("span", { class: "count" },
           shownCount === totalCount
@@ -749,9 +745,7 @@ export async function renderCombos(main, params) {
       { key: "asset", label: "Asset", cell: (i) => i.assetName },
       { key: "severity", label: "Adjusted", cell: (i) => sevBadge(i.adjustedSeverity) },
       { key: "native", label: "Wiz native", cell: (i) => i.nativeSeverity },
-      // The problem tree's outcome (Phase 5) — a separate scale from the severity columns
       // above, decided from exploitation/impact/exposure/mission, not from Wiz severity.
-      { key: "priority", label: "Priority", cell: (i) => outcomeBadge(i.problemOutcome) },
       // The status the register used to collect and never show. statusPill carries the
       // word, so the state never rides on the tint alone.
       {

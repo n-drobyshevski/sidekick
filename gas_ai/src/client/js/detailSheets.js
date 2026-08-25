@@ -1,4 +1,4 @@
-// Shared drill-down sheets: asset detail (verdict, evidence, AARS pillars, topology,
+// Shared drill-down sheets: asset detail (counts, evidence, topology,
 // identity) and issue detail (justification, fix, frameworks, amplifier note). Used by
 // the graph, inventory, and combos pages so every surface opens the same drawer.
 //
@@ -15,32 +15,15 @@ import {
   assetSections, configFindingSections, issueSections, recordCursor,
 } from "./recordSections.js";
 import {
-  FINDINGS_SCORE_LABEL, clear, codeBlock, copyButton, el, emptyState, errorState, fmtDate,
+  clear, codeBlock, copyButton, el, emptyState, errorState, fmtDate,
   fmtDateTime,
-  meter, openSheet, outcomeBadge, percentileText, plural, scoreChip, sevBadge, sheetRow,
-  sheetSection, skeleton, statusPill, tierBadge, uiIcon,
+  openSheet, plural, sevBadge, sheetRow,
+  sheetSection, skeleton, statusPill, uiIcon,
 } from "./ui.js";
 
 import { tipAnchor, truncTip } from "./ui.js";
 import { lookupGap } from "./codebook.js";
-/** Fallback only — the caps in force ride on the bootstrap payload. */
-const PILLAR_MAX = { toxic: 50, compliance: 30, data: 22 };
-const PILLAR_LABEL = {
-  toxic: "Toxic combinations",
-  compliance: "Compliance gaps",
-  data: "Data exposure",
-};
 const NEIGHBOR_PREVIEW = 12;
-
-/**
- * The pillar ceilings the score was actually computed against. They are editable on the
- * AARS Rules page, so reading them off the rule keeps the bars, the x/max labels and the
- * announced aria-valuemax honest after an edit.
- */
-function pillarCaps() {
-  const boot = bootstrapCached();
-  return (boot && boot.aarsRule && boot.aarsRule.pillarCaps) || PILLAR_MAX;
-}
 
 /** The combination's own name — "Toxic combination" alone doesn't say which one. */
 function comboTitle(id) {
@@ -58,25 +41,6 @@ function comboNote(id) {
   return hit ? hit.amplifierNote : "";
 }
 
-function pillarBars(pillars, caps) {
-  const wrap = el("div", {});
-  for (const key of ["toxic", "compliance", "data"]) {
-    const value = Number(pillars[key] ?? 0);
-    const max = Number(caps[key] ?? PILLAR_MAX[key]) || 1;
-    wrap.append(
-      el("div", { class: "pillar-row" },
-        el("span", { class: "pillar-name" }, PILLAR_LABEL[key]),
-        meter(value, {
-          max,
-          className: "meter--flex",
-          label: `${PILLAR_LABEL[key]}, ${value} of ${max} points`,
-        }),
-        el("span", { class: "pillar-val" }, `${value}/${max}`),
-      ),
-    );
-  }
-  return wrap;
-}
 
 // Framework mappings are lookup keys, not narrative: grouped by taxonomy so four
 // vocabularies stop reading as one undifferentiated row of codes.
@@ -508,7 +472,6 @@ export function openAssetSheet(assetId, opts = {}) {
       let autoExpandStarted = false;
       let expanding = false;
       const compliance = findings || [];
-      const caps = pillarCaps();
       clear(body);
 
       const openNeighbor = (n) => openAssetSheet(n.node.id, {
@@ -559,25 +522,14 @@ export function openAssetSheet(assetId, opts = {}) {
           })),
         ],
         chips: [
-          // Order is the argument: the two models that decide something lead, and the
-          // findings score follows as context. Each is named, because they routinely
-          // disagree and an unlabelled row of pills would read as one escalating scale.
-          //
-          // Keyed on `postureInput`, not `postureTier` — a real node the fold reached
-          // always carries `postureInput` (the vector it derived), whether or not it could
-          // PLACE that vector on a numbered tier (see posture.ts's `tierEstablished`). A
-          // node with `postureInput` but no `postureTier` is "assessed, not established",
-          // and `tierBadge` already renders that as an explicit dash rather than a tier —
-          // showing nothing here would read as "never assessed", which is a different claim.
-          node.postureInput ? el("span", { class: "sheet-chip-label" }, "Posture") : null,
-          node.postureInput ? tierBadge(node.postureTier) : null,
-          node.worstOpenProblem
-            ? el("span", { class: "sheet-chip-label" }, "Worst problem") : null,
-          node.worstOpenProblem ? outcomeBadge(node.worstOpenProblem) : null,
+          // What this asset HOLDS, named rather than graded. The three derived verdicts
+          // that used to lead this row — posture tier, worst problem outcome, findings
+          // score — are experimental and live on the Scoring Models page; a sheet about
+          // one asset is exactly where a model still under calibration did the most
+          // damage, because a reader takes a chip beside a name as a fact about the thing
+          // named.
           node.severity ? el("span", { class: "sheet-chip-label" }, "Worst issue") : null,
           node.severity ? sevBadge(node.severity) : null,
-          el("span", { class: "sheet-chip-label" }, FINDINGS_SCORE_LABEL),
-          scoreChip(node.aars, node.aarsPercentile, node.aarsSeverity),
           ...(node.comboGroups || []).map((g) => el("span", { class: "pill bad" }, comboTitle(g))),
           node.guardrailMissing ? el("span", { class: "pill warn" }, "No guardrail") : null,
           node.identityPurpose === "AGENTIC" ? el("span", { class: "pill neutral" }, "Agentic") : null,
@@ -593,32 +545,30 @@ export function openAssetSheet(assetId, opts = {}) {
       // in what sequence, and it is the thing under test.
       const panes = {
         overview(pane) {
-          // The score leads as a number, and the number is immediately placed: a bare 72
-          // out of 100 reads as "72% of the way to the worst possible asset", which is not
-          // what it means. The percentile says what it does mean — where this asset sits
-          // among the ones actually scored — and it carries its denominator, because
-          // "60th percentile" of an unnamed population is not a measurement.
-          if (node.aars !== null && node.aars !== undefined) {
-            const p = node.aarsPillars;
-            const scored = (bootstrapCached() || {}).counts;
-            const place = percentileText(node.aarsPercentile, scored && scored.aarsScored);
-            pane.append(
-              el("div", { class: "sheet-section" },
-                el("div", { class: "sheet-verdict" },
-                  el("span", { class: "aars-total" }, String(node.aars)),
-                  el("span", { class: "muted small" }, FINDINGS_SCORE_LABEL + " out of 100")),
-                place
-                  ? el("p", { class: "sheet-caption" },
-                      place +
-                      (node.aarsSeverity ? ` · level ${node.aarsSeverity}` : ""))
-                  : null,
-                p
-                  ? el("p", { class: "sheet-caption" },
-                      `Toxic ${p.toxic ?? 0} · Compliance ${p.compliance ?? 0} · Data ${p.data ?? 0}`)
-                  : null,
-              ),
-            );
-          }
+          // Two counts where a 0-100 score used to be. The score led as one number and was
+          // then immediately explained — a bare 72 out of 100 reads as "72% of the way to
+          // the worst possible asset", which is not what it meant — and the explanation
+          // was a percentile of a population this page could not show. These need none:
+          // "4 open issues" is the whole claim, and both panes that itemise them are one
+          // click away in the rail.
+          //
+          // Rendered even at zero, unlike the graph node's badge. A sheet is a record of
+          // one asset, and "0 open issues" is an answer a reader came for; a missing line
+          // would read as "not measured".
+          pane.append(
+            el("div", { class: "sheet-section" },
+              el("div", { class: "sheet-verdict" },
+                el("span", { class: "sheet-count" }, String(node.openIssues || 0)),
+                el("span", { class: "muted small" },
+                  plural(Number(node.openIssues || 0), "open issue").replace(/^\d+\s/, "")),
+                el("span", { class: "sheet-count" }, String(node.openFindings || 0)),
+                el("span", { class: "muted small" },
+                  plural(Number(node.openFindings || 0), "cloud finding").replace(/^\d+\s/, ""))),
+              el("p", { class: "sheet-caption" },
+                "Open issues on this asset, and failing configuration findings evaluated "
+                + "against it."),
+            ),
+          );
           const insights = insightRow(node);
           if (insights) pane.append(sheetSection("Insights", insights));
           pane.append(sheetSection("Properties", propsGrid(node), provStrip(node)));
@@ -820,25 +770,6 @@ export function openAssetSheet(assetId, opts = {}) {
           }
         },
 
-        aars(pane) {
-          if (!node.aarsPillars) {
-            pane.append(emptyState(
-              "This asset carries no " + FINDINGS_SCORE_LABEL.toLowerCase() + ".",
-              "Only AI assets are scored; supporting infrastructure is not.",
-            ));
-            return;
-          }
-          pane.append(pillarBars(node.aarsPillars, caps));
-          const gaps = (node.aarsInput && node.aarsInput.gaps) || [];
-          if (gaps.length) {
-            pane.append(sheetSection(
-              `Gaps priced into the score (${gaps.length})`,
-              el("div", { class: "tag-strip" },
-                ...gaps.map((g) => el("span", { class: "fw-tag" }, String(g.code || g)))),
-            ));
-          }
-        },
-
         // Rendered whether or not anything is set: six explicit "No"s ARE the answer, and
         // an empty pane would leave the reader unsure the question was asked.
         exposure(pane) {
@@ -943,9 +874,9 @@ export function openAssetSheet(assetId, opts = {}) {
         ? recordCursor(opts.records.ids, opts.records.index)
         : { position: 0, total: 0 };
       ctx.announce(
-        `${node.name}. ${FINDINGS_SCORE_LABEL} ` +
-        `${node.aars === null || node.aars === undefined ? "unscored" : node.aars}, ` +
-        `${plural(openIssues.length, "open issue")}, ${plural(rels.length, "relationship")}.` +
+        `${node.name}. ${plural(openIssues.length, "open issue")}, ` +
+        `${plural(Number(node.openFindings || 0), "cloud finding")}, ` +
+        `${plural(rels.length, "relationship")}.` +
         (cursor.total ? ` Record ${cursor.position} of ${cursor.total}.` : ""),
       );
 
@@ -1392,8 +1323,8 @@ export function openConfigFindingSheet(findingId, opts = {}) {
       if ((f.ignoreRuleIds || []).length) chips.push(statusPill("warn", "Ignored"));
       if ((f.iacFindingIds || []).length) chips.push(statusPill("neutral", "From IaC"));
       if (!detail.asset) {
-        // Stated, not hidden. A finding on a region or an IAM policy prices no AARS
-        // score, and the sheet should say so where the score would otherwise be looked for.
+        // Stated, not hidden. A finding on a region or an IAM policy belongs to no asset
+        // row, and the sheet should say so where a reader would go looking for one.
         chips.push(statusPill("neutral", "Not an AI asset"));
       }
 
@@ -1528,8 +1459,8 @@ export function openConfigFindingSheet(findingId, opts = {}) {
             pane.append(emptyState(
               "This finding is not on an AI asset.",
               "It was evaluated against a " + (f.resourceType || "resource").toLowerCase() +
-              ", which the AI inventory does not hold — so it counts as a compliance gap " +
-              "but prices no asset's " + FINDINGS_SCORE_LABEL.toLowerCase() + ".",
+              ", which the AI inventory does not hold — so it counts toward the register's " +
+              "cloud-findings total but appears on no asset's row.",
             ));
             return;
           }

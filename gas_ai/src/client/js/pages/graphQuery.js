@@ -1028,12 +1028,48 @@ export function migrateLegacyParams(params) {
   // One kind is a root; several cannot be, so the root goes wild and the kinds become a filter
   // on it — which is what the old node-type facet meant anyway.
   const query = { kind: kinds.length === 1 ? kinds[0] : "ANY" };
-  if (has("seed") && params.seedKind !== "combo") put(0, "id", [params.seed]);
+  // WHAT THE SEED NAMES depends on seedKind, and getting that wrong is SILENT — which is the
+  // whole reason this is one total table rather than a chain of special cases.
+  //
+  // A bare `?seed=` — and `seedKind=asset` — names ONE node by id, so `id` is the fallthrough.
+  // The other two name a SET, and each has a query field that already means exactly it:
+  //
+  //   domain  a business domain owns many resources, so every one of them is a start. Read as
+  //           an id this resolved to `where 0.id.CROSS`, a filter no node satisfies — an empty
+  //           canvas, reported as nothing wrong.
+  //   combo   a toxic-combination pattern holds many assets. This was excluded outright rather
+  //           than mistranslated: two `!== "combo"` guards dropped both the filter AND the hop
+  //           step, so the combo register's "Open in graph" button returned `find=ANY` with
+  //           nothing narrowing it and opened the WHOLE LANDSCAPE. Worse than the domain case,
+  //           because a full graph looks like an answer.
+  //
+  // `comboGroup` is the right field and not an approximation of one: `GNode.comboGroups` is
+  // built in graphEnrich from the OPEN issues on an asset, which is the same population
+  // `comboAssetIds` walks on the server for this seed. The two sides select the same assets.
+  //
+  // One deliberate difference from the server, and one gap left open:
+  //
+  //   ISSUE nodes match too, because graphEnrich puts `comboGroups` on the issue nodes it
+  //   synthesises as well as on their assets, where `comboAssetIds` returns assets alone. The
+  //   canvas is the same either way — a depth walk reaches an issue from its asset regardless —
+  //   and the extra table rows are the pattern's own members on a page about that pattern. It
+  //   is left rather than negated: an unasked-for `NOT kind ISSUE` chip would be furniture.
+  //
+  //   A BARE `?seed=<combo-id>` with no seedKind still resolves as an id here, though
+  //   graphApiParams accepts it as a combo via `comboGroupById`. Telling the two apart needs
+  //   the group list, which lives in the domain layer this bundle cannot import; hardcoding
+  //   the five ids here is exactly the drift this file keeps getting caught by. No UI writes
+  //   that shape — every caller sends seedKind — so it stays named rather than guessed at.
+  const SEED_FIELD = { domain: "domain", combo: "comboGroup" };
+  const seedKind = typeof params.seedKind === "string" ? params.seedKind : "";
+  const seedField = SEED_FIELD[seedKind] ?? "id";
+  if (has("seed")) put(0, seedField, [params.seed]);
   if (kinds.length > 1) put(0, "kind", kinds);
 
   // A seed meant "show me around this asset", which is a hop step now. Without a seed the old
-  // page listed a whole population, and depth had nothing to walk from.
-  if (has("seed") && params.seedKind !== "combo") {
+  // page listed a whole population, and depth had nothing to walk from. A domain or combo seed
+  // means the same thing of several assets at once, so they walk too.
+  if (has("seed")) {
     const depth = Math.min(3, Math.max(1, Number(params.depth) || 2));
     query.steps = [{ edge: "ANY", hops: depth, optional: true, node: { kind: "ANY" } }];
   }

@@ -30,11 +30,11 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  FINDINGS_SCORE_LABEL, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
+  clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
   emptyState, errorState,
-  fmtDate, meter, pager, percentileText, plural, scoreChip,
+  fmtDate, kpiCard, pager, plural,
   sectionLabel, sevBadge, sevEntries, sevKeyRow,
-  sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tierBadge, toast,
+  sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, toast,
   trendScopeNote,
 } from "../ui.js";
 
@@ -42,12 +42,9 @@ import { tipAnchor } from "../ui.js";
 const PAGE_SIZES = [25, 50, 100, 250];
 const DEFAULT_PAGE_SIZE = 50;
 
-/** The findings-score levels the trend draws. Mirrors TREND_SEVERITIES in
- *  src/domain/aarsTrend.ts. The trend is a DISTRIBUTION over time, which is one of the two
- *  readings of a band this page still makes — see the strip's own note for the other. */
-const CHARTED_SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
-/** The strip shows every level, INFO included — a distribution that hides its biggest
- *  bucket is not a distribution. The trend still omits it; each says which it is doing. */
+/** Every issue severity the strip can show. An asset with no open issue carries no
+ *  severity at all and belongs to no segment — it is counted in the strip's note instead,
+ *  which is the honest place for "these have nothing wrong that we found". */
 const STRIP_SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
 
 const FLAG_LABELS = {
@@ -58,12 +55,12 @@ const FLAG_LABELS = {
 };
 
 const FACET_LABELS = {
-  aarsSeverities: FINDINGS_SCORE_LABEL + " level",
   severities: "Issue severity",
   kinds: "Asset kind",
   clouds: "Cloud",
   regions: "Region",
   projects: "Project",
+  domains: "Domain",
   flags: "Risk signals",
 };
 
@@ -73,15 +70,20 @@ const COLUMNS = [
   { key: "kind", label: "Kind", sort: "kind" },
   { key: "cloud", label: "Cloud", sort: "cloud" },
   { key: "region", label: "Region", sort: "region" },
-  // Sorted by the raw score, not the percentile: the percentile is a monotone transform
-  // of it, so a second sort control would offer the same ordering under a second name.
-  { key: "aars", label: FINDINGS_SCORE_LABEL, sort: "aars" },
-  // BESIDE aars, never merged into it — a posture tier is a capability envelope, not an
-  // aggregate of AARS or of open problems. See src/domain/posture.ts's own header.
-  { key: "postureTier", label: "Posture", sort: "postureTier" },
-  { key: "severity", label: "Issues", sort: "severity" },
+  // The two counts, and the column that says how bad the worst of them is. Three columns
+  // rather than one graded verdict: "4 open issues, worst of them HIGH, and 2 failing
+  // controls" is three facts a reader can check against Wiz, where a single 0-100 score
+  // was one number they had to take on trust. Sorting by "Issues" sorts by the COUNT and
+  // by "Severity" by the worst — the same split, offered twice, because both are real
+  // questions and neither implies the other.
+  { key: "severity", label: "Severity", sort: "severity" },
+  { key: "issues", label: "Issues", sort: "issues" },
+  { key: "findings", label: "Cloud findings", sort: "findings" },
   { key: "combos", label: "Toxic combo", sort: "combos" },
   { key: "guardrail", label: "Guardrail", sort: null },
+  // The owning business domain, off the resource's own Wiz/Domain tag. Sortable because
+  // it is an identity column like Cloud and Region, and read the same way: A-Z first.
+  { key: "domain", label: "Domain", sort: "domain" },
   { key: "projects", label: "Projects", sort: null },
   { key: "actions", label: "", sort: null },
 ];
@@ -89,38 +91,32 @@ const COLUMNS = [
 const VIEWS_KEY = "sidekickai.inventoryViews";
 /** Params a saved view carries. Never `page` (a view opens at the top) and never `panel`. */
 const VIEW_PARAMS = [
-  "q", "aarsSeverities", "severities", "kinds", "clouds", "regions", "projects", "flags",
+  "q", "severities", "kinds", "clouds", "regions", "projects", "domains", "flags",
   "sort", "dir", "view", "size",
 ];
 
 // -------------------------------------------------------------------- small helpers
 
 /**
- * The score as a quantity beside the chip that gives its level. Neutral graphite on
- * purpose: the level is already colored on the chip, and fifty tinted bars down a page is
- * the wall of color PRODUCT.md rejects. Decorative because scoreChip already names the
- * percentile, the number and the level — one announcement per cell, not four.
- */
-function aarsMeter(score) {
-  return meter(score, { decorative: true, className: "meter--score" });
-}
-
-/**
  * Open issues on this asset, split by severity. The row's severity badge says which is
  * worst; this says how many of each, which is the difference between one stray HIGH and
  * a pile of them. Both come from the same issue rows, so they cannot disagree.
  */
-function issueBars(counts) {
+function issueBars(counts, noun) {
   const entries = sevEntries(counts, STRIP_SEVERITIES.concat(["UNKNOWN"]));
   if (!entries.length) return null;
   const total = entries.reduce((n, e) => n + e.count, 0);
   // Length carries the volume and the segments carry the mix, so one issue and eight of
   // them don't draw the same bar — a normalized bar would make them identical and say the
   // opposite of what it looks like it says.
+  //
+  // The noun is a parameter because two columns draw this bar over two different
+  // populations. A findings bar announcing "3 open issues" would be a plain lie to a
+  // screen reader while looking perfectly right to everyone else.
   return sevSegmentBar(entries, {
     size: "xs",
     width: `${Math.min(46, 10 + total * 4)}px`,
-    label: `${plural(total, "open issue")}: ${sevSpoken(entries, { lower: true })}`,
+    label: `${plural(total, noun || "open issue")}: ${sevSpoken(entries, { lower: true })}`,
   });
 }
 
@@ -180,8 +176,7 @@ export async function renderInventory(main, params) {
     el("h1", {}, "AI Inventory"),
     el("p", { class: "page-sub" },
       "Every AI asset and its supporting identity/data surface from the last sync, " +
-      "ranked by posture tier and by where its " + FINDINGS_SCORE_LABEL.toLowerCase() +
-      " sits in the landscape."),
+      "ranked by how many issues and failing controls are open on it."),
   );
 
   if (!boot.latestSync) {
@@ -215,17 +210,21 @@ export async function renderInventory(main, params) {
   function persistParams() {
     setParams({
       q: query.q,
-      aarsSeverities: listJoin(query.aarsSeverities),
       severities: listJoin(query.severities),
       kinds: listJoin(query.kinds),
       clouds: listJoin(query.clouds),
       regions: listJoin(query.regions),
       projects: listJoin(query.projects),
+      domains: listJoin(query.domains),
       flags: listJoin(query.flags),
       // The single-select spellings were folded into the plural dimensions above; blank
-      // them so a link carries one spelling of each filter rather than two.
-      kind: "", cloud: "", region: "", project: "", aarsSeverity: "", severity: "", band: "",
-      sort: query.sort === "aars" ? "" : query.sort,
+      // them so a link carries one spelling of each filter rather than two. The three
+      // AARS-level spellings are blanked for a different reason: they name a facet this
+      // register no longer has, `resolveAssetQuery` drops them, and leaving them in the
+      // address bar would advertise a filter that is not applied.
+      kind: "", cloud: "", region: "", project: "", severity: "", domain: "",
+      aarsSeverities: "", aarsSeverity: "", band: "",
+      sort: query.sort === "issues" ? "" : query.sort,
       dir: query.dir === DEFAULT_SORT_DIR[query.sort] ? "" : query.dir,
       view: view === "table" ? "" : view,
       panel: panelName,
@@ -243,9 +242,9 @@ export async function renderInventory(main, params) {
     return {
       all: true, // the server downgrades this to one page when the landscape is too big
       q: query.q,
-      aarsSeverities: query.aarsSeverities, severities: query.severities,
+      severities: query.severities,
       kinds: query.kinds, clouds: query.clouds, regions: query.regions,
-      projects: query.projects, flags: query.flags,
+      projects: query.projects, domains: query.domains, flags: query.flags,
       sort: query.sort, dir: query.dir, page: query.page, pageSize: query.pageSize,
     };
   }
@@ -283,7 +282,7 @@ export async function renderInventory(main, params) {
         : key === "flags" ? (FLAG_LABELS[value] || value)
         : value,
       count: counts.get(value) || 0,
-      sev: (key === "aarsSeverities" || key === "severities") ? value : "",
+      sev: key === "severities" ? value : "",
       group: key === "kinds" ? (CATEGORY_LABELS[categoryOf(value)] || "Other") : "",
     }));
     // Kinds carry a category heading, so they have to arrive grouped — the vocabulary is
@@ -334,7 +333,7 @@ export async function renderInventory(main, params) {
     }
     for (const key of FACET_KEYS) {
       for (const value of query[key]) {
-        const sev = (key === "aarsSeverities" || key === "severities") ? value : "";
+        const sev = key === "severities" ? value : "";
         const shown = key === "kinds" ? kindLabel(value)
           : key === "flags" ? (FLAG_LABELS[value] || value)
           : value;
@@ -375,22 +374,15 @@ export async function renderInventory(main, params) {
     clear(host);
 
     const kpis = fresh.kpis || {};
-    // Band captions come from the AARS rule in force, so tuning a threshold on the AARS
-    // Rules page renames these rather than leaving them quoting the old model.
-    const bandLabel = (sev) => {
-      const found = (boot.aarsRule?.bandRanges || []).find((b) => b.severity === sev);
-      return found ? found.label : "";
-    };
 
-    for (const notice of staleNotices(boot)) {
-      host.append(
-        el("div", { class: "notice warn", role: "status" },
-          el("span", {}, notice.text),
-          el("a", { class: "link", href: notice.href, target: "_self" }, notice.link)),
-      );
-    }
+    // NO STALE-SCORES BANNER. It used to live here, because the scores it warned about set
+    // this page's sort order and filled its strip. Nothing on this page reads a score now,
+    // so a warning that some of them are behind the current rule is news about a model the
+    // reader cannot see from here — it belongs beside the model, and that is where it went.
 
-    host.append(postureHeader(kpis, fresh, bandLabel));
+    host.append(countHeader(kpis, fresh));
+    const reachCard = reachHeadline(fresh.reach);
+    if (reachCard) host.append(reachCard);
     host.append(toolbar());
     host.append(panel.chips);
     panel.chips.classList.add("inv-chips");
@@ -409,7 +401,7 @@ export async function renderInventory(main, params) {
   }
 
   // ---- one-glance reach headline, linking to the Scans page's full stage ladder. Placed
-  // beside the posture header rather than inside it: postureHeader answers "what did we
+  // beside the count header rather than inside it: countHeader answers "what did we
   // find"; this answers "how much of the landscape did the pipeline ever reach" — a different
   // question, and folding it into the same header would read as one more posture number
   // rather than the coverage caveat it actually is.
@@ -434,12 +426,11 @@ export async function renderInventory(main, params) {
     );
   }
 
-  // ---- posture header: one hero, one distribution, one stat list
-  function postureHeader(kpis, fresh, bandLabel) {
-    const counts = fresh.aarsSeverityCounts || {};
-    const deltas = fresh.aarsDeltas || null;
-    const scored = STRIP_SEVERITIES.reduce((n, sev) => n + (counts[sev] || 0), 0);
-    const unscored = Number(fresh.total || 0) - scored;
+  // ---- header: one hero, the three counts, one distribution, one stat list
+  function countHeader(kpis, fresh) {
+    const counts = fresh.severityCounts || {};
+    const deltas = fresh.countDeltas || null;
+    const withIssues = STRIP_SEVERITIES.reduce((n, sev) => n + (counts[sev] || 0), 0);
 
     const hero = el("div", { class: "inv-hero" },
       el("div", { class: "kpi-label" }, "AI assets"),
@@ -448,53 +439,65 @@ export async function renderInventory(main, params) {
         `${kpis.agents ?? 0} agents · ${kpis.agenticIdentities ?? 0} agentic identities`),
     );
 
-    // The verdict row: the two posture tiers that carry an action, which is what used to
-    // be claimed for the score's top two BANDS. Tier 4 is the lattice's worst reading
-    // (src/domain/posture.ts) — unlike the CRITICAL band it is scarce, which is the whole
-    // property a headline needs.
+    // The three counts, which is what this header claims now that it claims no verdict.
+    // Each is a number a reader can go and check in Wiz: open issues, failing
+    // configuration findings, and distinct policies with a failing evaluation.
     //
-    // Read-outs, not toggles: this table has no posture-tier facet (FACET_KEYS in
-    // src/domain/assetTable.ts), and a control that looks like the strip's filter keys but
-    // does nothing would be worse than a number. The tier is filterable where it is
-    // decided — the Priorities page.
-    const tierStat = (tier, n) => el("div", { class: "inv-tier" },
-      tierBadge(tier),
-      el("span", { class: "inv-tier-n num" }, String(n ?? 0)));
+    // The third has NO PER-ASSET GRAIN and never will — Wiz reports posture per framework,
+    // category, subcategory and policy, never per resource — so it appears here and in no
+    // table column. Saying "landscape-wide" out loud is cheaper than letting a reader
+    // assume the column is missing.
+    //
+    // Read-outs, not toggles: only the strip below filters, and a number that looked like
+    // a filter key but did nothing would be worse than a plain number.
+    const posture = kpis.frameworkPosture || null;
+    const postureFails = posture && posture.frameworks ? posture.failingPolicies : null;
+    const deltaChip = (key) => {
+      const d = deltas && deltas.counts ? deltas.counts[key] : undefined;
+      if (d === undefined || d === null || d === 0) return null;
+      const since = `since the sync of ${fmtDate(deltas.since)}`;
+      return tipAnchor(el("span", { class: "chg " + (d > 0 ? "up" : "down") },
+        (d > 0 ? "+" : "") + d,
+        el("span", { class: "sr-only" }, ", " + since)), since);
+    };
+    const countStat = (label, value, key, term) => el("div", { class: "inv-count" },
+      el("div", { class: "kpi-label" }, label),
+      el("div", { class: "inv-count-row" },
+        el("span", { class: "inv-count-n num" }, value === null ? "—" : String(value)),
+        deltaChip(key)),
+      term);
     const verdict = el("div", { class: "inv-verdict" },
-      el("div", { class: "kpi-label" }, "Posture"),
-      el("div", { class: "inv-tier-row" },
-        tierStat(4, kpis.tier4Assets),
-        tierStat(3, kpis.tier3Assets)),
+      el("div", { class: "inv-count-row" },
+        countStat("Open issues", kpis.openIssues ?? 0, "issues"),
+        countStat("Cloud findings", kpis.complianceGaps ?? 0, "findings"),
+        countStat("Posture fails", postureFails, "postureFails")),
       el("p", { class: "sev-strip-note" },
-        "Capability × containment × consequence — the tier that selects a remediation " +
-        "target. Open Priorities for the per-problem verdict."),
+        "Counts, not a score" +
+        (kpis.complianceGapsUnlinked
+          ? ` · ${kpis.complianceGapsUnlinked} findings are not on an AI asset`
+          : "") +
+        (postureFails === null
+          ? " · no framework posture collected"
+          : " · posture fails are landscape-wide, with no per-asset grain")),
     );
 
     // The distribution strip: the page's cross-filter, and the keyboard-reachable twin of
     // clicking a bar. The bar itself is decoration (the keys carry the same numbers as
     // text), and every key is a real toggle button, so nothing here is mouse-only.
+    //
+    // It counts ASSETS BY WORST OPEN ISSUE, not issues, because the `severities` facet it
+    // toggles filters rows by exactly that field. A strip counting issues would add up to
+    // the KPI above it and then hand a reader segments whose click could not reproduce the
+    // number they had just read.
     const entries = sevEntries(counts, STRIP_SEVERITIES);
-    const selected = () => new Set(query.aarsSeverities);
+    const selected = () => new Set(query.severities);
     const track = sevSegmentBar(entries, { size: "md", selected: selected() });
     const keys = sevKeyRow(entries, {
       variant: "toggle",
-      ariaLabel: "Filter by " + FINDINGS_SCORE_LABEL.toLowerCase() + " level",
-      isOn: (sev) => query.aarsSeverities.indexOf(sev) >= 0,
-      describe: (e) => `${e.sev}, ${plural(e.count, "asset")}` +
-        (bandLabel(e.sev) ? `, ${bandLabel(e.sev)}` : ""),
-      // A delta only appears where history actually supports one: aarsTrend records
-      // per-sync level counts, so these two are real. Nothing else on this header has
-      // a recorded history, and nothing else gets a chip.
-      suffix: (e) => {
-        const delta = deltas && deltas.counts ? Number(deltas.counts[e.sev] || 0) : 0;
-        if (!delta || (e.sev !== "CRITICAL" && e.sev !== "HIGH")) return null;
-        const since = `since the sync of ${fmtDate(deltas.since)}`;
-        return tipAnchor(el("span", {
-          class: "chg " + (delta > 0 ? "up" : "down"),
-        }, (delta > 0 ? "+" : "") + delta,
-          el("span", { class: "sr-only" }, ", " + since)), since);
-      },
-      onToggle: (sev) => toggleFacet("aarsSeverities", sev),
+      ariaLabel: "Filter by issue severity",
+      isOn: (sev) => query.severities.indexOf(sev) >= 0,
+      describe: (e) => `${e.sev}, ${plural(e.count, "asset")}`,
+      onToggle: (sev) => toggleFacet("severities", sev),
     });
     const segs = new Map();
     const keyBtns = new Map();
@@ -504,19 +507,15 @@ export async function renderInventory(main, params) {
     });
 
     const strip = el("div", { class: "sev-strip" },
-      el("div", { class: "kpi-label" }, FINDINGS_SCORE_LABEL + " levels"),
+      el("div", { class: "kpi-label" }, "Worst open issue"),
       track,
       keys,
-      // The note says what the levels ARE, because the widest misreading of this strip is
-      // that its top segment is a work queue. It is the shape of one distribution over the
-      // landscape — the same object the trend below charts over time — and a level is a cut
-      // of the score, not an instruction. The per-asset reading is the percentile in the
-      // table's score column.
+      // The note says what the strip IS, because the widest misreading of a severity
+      // distribution is that its top segment is a work queue. It is the shape of one
+      // distribution over the landscape, counted one asset at a time.
       el("p", { class: "sev-strip-note" },
-        `${scored} of ${fresh.total || 0} assets scored` +
-        (unscored > 0 ? " · covers AI assets and what they reach" : "") +
-        " · the score's distribution, not a queue" +
-        (deltas ? ` · change since ${fmtDate(deltas.since)}` : "")),
+        `${withIssues} of ${fresh.total || 0} assets carry an open issue` +
+        " · assets, not issues — the bar in each row counts those"),
     );
 
     const coverage = kpis.guardrailCoveragePct;
@@ -528,28 +527,21 @@ export async function renderInventory(main, params) {
         { term: "missing-guardrail" }),
       statRow("Sensitive data access", String(kpis.sensitiveAccess ?? 0), "AI assets",
         null, { term: "sensitive-data" }),
-      statRow("Open issues", String(kpis.openIssues ?? 0), "toxic-combination instances",
-        null, { term: "toxic-combination" }),
-      // The unlinked count is not a caveat, it is the number's shape. A configuration
-      // finding is keyed to the resource it was evaluated against, and most AI-security
-      // rules fail on a region, an IAM policy or a service account no agent runs as —
-      // none of which are AI assets, so none of them price an AARS score. Saying how many
-      // stops the total reading as "gaps on the assets below".
-      statRow("Compliance gaps", String(kpis.complianceGaps ?? 0),
-        "failing config findings" +
-        (kpis.complianceGapsUnlinked
-          ? ` · ${kpis.complianceGapsUnlinked} not on an AI asset`
-          : ""),
-        null, { term: "pillar-b" }),
+      statRow("Reaches classified data", String(kpis.dataFindings ?? 0),
+        "classified findings reachable from an AI asset", null, { term: "sensitive-data" }),
+      statRow("Frameworks scored",
+        posture && posture.scoredFrameworks !== undefined ? String(posture.scoredFrameworks) : "—",
+        "of " + (posture ? posture.frameworks ?? 0 : 0) + " collected",
+        null, { term: "coverage-state" }),
     );
     const reachRow = reachHeadline(fresh.reach);
     if (reachRow) stats.append(reachRow);
 
     // The strip is a control, so it has to reflect state it did not itself change — a
-    // chip cleared outside it, or the drawer's own level facet. Marked in place rather
+    // chip cleared outside it, or the drawer's own severity facet. Marked in place rather
     // than rebuilt, so the key you just pressed keeps focus.
     syncStrip = () => {
-      const active = query.aarsSeverities;
+      const active = query.severities;
       // Dimming lives on the bar, not on the strip wrapper: the bar is the thing that
       // recedes, and the class that does it now belongs to the shared .sevbar component.
       track.classList.toggle("sevbar--dim", active.length > 0);
@@ -561,7 +553,7 @@ export async function renderInventory(main, params) {
       }
     };
 
-    // hero and verdict share the top row; the score distribution sits under them.
+    // hero and the counts share the top row; the distribution sits under them.
     return el("div", { class: "inv-header" }, hero, verdict, strip, stats);
   }
 
@@ -915,6 +907,32 @@ export async function renderInventory(main, params) {
     }, "Graph");
   }
 
+  /**
+   * The Domain cell, as the way into the graph for that domain.
+   *
+   * This is where a reader already sees the domain and asks to be shown it, and the text is
+   * drawn either way — so it costs no new element. A LINK and not a button for the same reason
+   * the Graph column is one button and not one per fact: ~4 distinct domains spread over 87 rows
+   * would otherwise become 87 buttons, and a register that shouts is a register nobody scans.
+   *
+   * It navigates with the `seedKind` vocabulary rather than assembling query DSL here. The graph
+   * page translates that on arrival and rewrites the hash canonically, so what a reader ends up
+   * holding IS the builder-native `find`/`where` — an editable Where chip, shareable — while this
+   * page keeps knowing nothing about the DSL. Same shape as the toxic-combination page's own
+   * "Open in graph", and it means the link form `graphApiParams.ts` documents is the one the app
+   * itself writes rather than a second spelling nothing produces.
+   */
+  function domainLink(row) {
+    return el("button", {
+      class: "link",
+      "aria-label": `Open ${row.domain} in the Security Graph`,
+      onclick: (e) => {
+        e.stopPropagation();
+        navigate("graph", { seed: row.domain, seedKind: "domain" });
+      },
+    }, row.domain);
+  }
+
   function assetTable(rows) {
     /** Cell renderers, keyed to COLUMNS above so header and body cannot drift apart. */
     const CELLS = {
@@ -923,20 +941,30 @@ export async function renderInventory(main, params) {
       kind: (row) => kindLabel(row.kind),
       cloud: (row) => row.cloud || "—",
       region: (row) => row.region || "—",
-      // Percentile leads — a rank within THIS landscape, not the population-dependent band
-      // (see aars-band's own caveat and ai/AARS_SCORING_ASSESSMENT.md §3). The posture
-      // tier sits in its own column right beside this one and must stay visibly
-      // independent of it — a tier is not a restatement of the score.
-      aars: (row) => (row.aars === null || row.aars === undefined
-        ? el("span", { class: "muted small" }, "—")
-        : el("span", { class: "aars-cell" },
-            scoreChip(row.aars, row.aarsPercentile, row.aarsSeverity), aarsMeter(row.aars))),
-      postureTier: (row) => tierBadge(row.postureTier, row.postureState),
-      severity: (row) => (row.severity
-        ? el("span", { class: "issue-cell" }, sevBadge(row.severity), issueBars(row.issuesBySeverity))
-        : "—"),
+      // The worst open issue's severity — Wiz's own rating, carried through, not a grade
+      // this app computed. A dash means no open issue, which is a real state and not an
+      // unscored one.
+      severity: (row) => (row.severity ? sevBadge(row.severity) : "—"),
+      // The count, with the same severity split drawn as a bar: the badge beside it says
+      // which is worst, this says how many of each, and the two come from one set of issue
+      // rows so they cannot disagree.
+      issues: (row) => (row.openIssues
+        ? el("span", { class: "issue-cell" },
+            el("span", { class: "num" }, String(row.openIssues)),
+            issueBars(row.issuesBySeverity))
+        : el("span", { class: "muted small" }, "0")),
+      // Failing configuration findings evaluated against this asset. Most of the
+      // landscape's findings are evaluated against a region or an access policy no asset
+      // models, so this column reads lower than the register total by design — the header
+      // stat says how many are off-inventory rather than leaving the gap to look like a bug.
+      findings: (row) => (row.openFindings
+        ? el("span", { class: "issue-cell" },
+            el("span", { class: "num" }, String(row.openFindings)),
+            issueBars(row.findingsBySeverity, "cloud finding"))
+        : el("span", { class: "muted small" }, "0")),
       combos: (row) => (row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : "—"),
       guardrail: (row) => (row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : "—"),
+      domain: (row) => (row.domain ? domainLink(row) : "—"),
       projects: (row) => (row.projects || []).join(", ") || "—",
       actions: (row) => graphButton(row),
     };
@@ -965,24 +993,18 @@ export async function renderInventory(main, params) {
       svg.setAttribute("class", "asset-card-icon");
       grid.append(el("button", {
         class: "asset-card",
-        "aria-label": `${row.name}, ${kindLabel(row.kind)}` +
-          (row.aars === null || row.aars === undefined
-            ? ""
-            : `, ${FINDINGS_SCORE_LABEL} ${row.aars}` +
-              (row.aarsPercentile === null || row.aarsPercentile === undefined
-                ? ""
-                : `, ${percentileText(row.aarsPercentile)}`)),
+        // The two counts are spoken, not just drawn: a card's marks are pills and bars,
+        // and a screen reader would otherwise get the name and nothing about the state.
+        "aria-label": `${row.name}, ${kindLabel(row.kind)}, ` +
+          `${plural(row.openIssues || 0, "open issue")}, ` +
+          `${plural(row.openFindings || 0, "cloud finding")}` +
+          (row.severity ? `, worst ${sevSpoken(row.severity)}` : ""),
         onclick: openRow(row),
       },
         el("div", { class: "asset-card-head" },
           svg,
-          el("span", { class: "asset-card-name" }, row.name),
-          row.aars === null || row.aars === undefined
-            ? null
-            : scoreChip(row.aars, row.aarsPercentile, row.aarsSeverity)),
-        row.aars === null || row.aars === undefined ? null : aarsMeter(row.aars),
+          el("span", { class: "asset-card-name" }, row.name)),
         el("div", { class: "asset-card-marks" },
-          row.postureTier ? tierBadge(row.postureTier) : null,
           row.severity ? sevBadge(row.severity) : null,
           issueBars(row.issuesBySeverity),
           row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : null,
@@ -999,32 +1021,44 @@ export async function renderInventory(main, params) {
 
   // ---- history: one point per sync, and it cannot be backfilled
   function trendSection(fresh) {
-    const trend = fresh.aarsTrend || [];
-    const ruleChanges = fresh.aarsTrendRuleChanges || [];
+    const trend = fresh.countTrend || [];
     // A stale SWR payload from before this shipped carries no trendScope at all, which reads
     // as unscoped — the same degradation the rest of the page's optional fields take.
     const trendScope = fresh.trendScope || null;
     const scopedGap = Boolean(trendScope && trendScope.scoped
       && trendScope.points < trendScope.registerPoints);
-    const colorOf = (sev) => (boot.palette?.colors || {})[sev];
+    // Non-severity series, so they take categorical hues rather than the severity palette
+    // (charts.js's own rule). Each is named in the legend, so colour is never the only cue.
+    const SERIES = [
+      { key: "issues", label: "Open issues", color: "#be123c" },
+      { key: "findings", label: "Cloud findings", color: "#3b82f6" },
+      { key: "postureFails", label: "Posture fails", color: "#8b5cf6" },
+    ];
+    // Which series this window actually has a number for. A series that is null at every
+    // point is not charted at all — an empty legend entry invites "why is that line zero".
+    const present = SERIES.filter((s) =>
+      trend.some((pt) => (pt.counts || {})[s.key] !== null
+        && (pt.counts || {})[s.key] !== undefined));
+    // Points a series is missing INSIDE its own window: the two newer columns start part
+    // way through a ledger that already had issue counts, and the note says so rather than
+    // letting a line that begins in mid-air look like a rendering fault.
+    const partial = present.filter((s) =>
+      trend.some((pt) => (pt.counts || {})[s.key] === null
+        || (pt.counts || {})[s.key] === undefined));
+
     const canvas = el("canvas", {
-      "aria-label":
-        FINDINGS_SCORE_LABEL + " levels over time, one line per level, excluding INFO",
+      "aria-label": "Open issues, cloud findings and compliance posture fails over time, "
+        + "one line per count",
       role: "img",
     });
 
     const card = el("div", { class: "chart-card" },
-      el("h3", {}, FINDINGS_SCORE_LABEL + " levels over time"),
+      el("h3", {}, "Counts over time"),
       el("p", { class: "chart-note" },
-        trend.length >= 2
-          ? `${trend.length} syncs · INFO not charted`
-          : "One point per sync"),
-      // This series FOLLOWS the project view now, which it could not before: sync_history
-      // carried register-wide totals with nothing on the row to re-scope by, and this note
-      // said so. It now carries a per-project blob beside them, so a scoped read is a
-      // different column rather than a filter — see trendScopeView for the three things this
-      // can say, and why the coverage count is the load-bearing one. `null` when no view is
-      // set, so nothing changes for an unscoped reader.
+        trend.length >= 2 ? `${trend.length} syncs` : "One point per sync"),
+      // This series FOLLOWS the project view: sync_history carries a per-project blob
+      // beside its register-wide columns, so a scoped read is a different column rather
+      // than a filter. `null` when no view is set.
       trendScopeNote(fresh.trendScope),
       trend.length >= 2
         ? el("div", { class: "chart-box", style: "height:220px" }, canvas)
@@ -1033,30 +1067,46 @@ export async function renderInventory(main, params) {
               ? "One sync recorded so far — the trend draws from the second."
               // "No history yet" would be a lie under a project view on a ledger that HAS
               // history: what is missing is the breakdown, not the syncs, and the note above
-              // already carries the count. Saying it twice, differently, is worse than once.
+              // already carries the count.
               : scopedGap
                 ? "No sync has recorded totals for this project yet — the series starts at " +
                   "the next one."
                 : "No history yet. Each sync adds a point; earlier syncs can't be recovered."),
-      // Points scored under different AARS rules are not on the same scale. Rather than
-      // let a threshold edit read as the landscape moving, the note names the breaks.
-      trend.length >= 2 && ruleChanges.length
-        ? el("p", { class: "chart-note warn" },
-            `The scoring rule changed ${ruleChanges.length} time` +
-            `${ruleChanges.length === 1 ? "" : "s"} in this window ` +
-            `(${ruleChanges.map((i) => fmtDate(trend[i].at)).join(", ")}). ` +
-            "Points either side of a change were scored by different models.")
+      // A GAP IS NOT A ZERO, and this is where that distinction becomes visible. Two of the
+      // three counts were added to sync_history after the issue count, and history cannot
+      // be backfilled, so their lines simply begin later. Saying which ones stops a reader
+      // reading "the line starts here" as "this was zero until then".
+      trend.length >= 2 && partial.length
+        ? el("p", { class: "chart-note" },
+            (partial.length === 1
+              ? `${partial[0].label} has`
+              : `${partial.map((s) => s.label).join(" and ")} have`) +
+            " no figure for every sync in this window — earlier syncs predate the column, " +
+            "and a sync that collected no framework posture records none. Those points " +
+            "are gaps, not zeros.")
+        : null,
+      trend.length >= 2 && present.length < SERIES.length
+        ? el("p", { class: "chart-note" },
+            SERIES.filter((s) => present.indexOf(s) < 0).map((s) => s.label).join(" and ") +
+            (present.length === SERIES.length - 1 ? " is" : " are") +
+            " not charted: no sync in this window recorded a figure.")
         : null,
     );
 
     if (trend.length >= 2) {
       requestAnimationFrame(() => {
         trendLine(canvas, trend.map((pt) => ({ x: pt.at })), {
-          yLabel: "assets",
-          series: CHARTED_SEVERITIES.map((sev) => ({
-            label: sev,
-            color: colorOf(sev),
-            data: trend.map((pt) => (pt.counts || {})[sev] ?? 0),
+          yLabel: "count",
+          series: present.map((s) => ({
+            label: s.label,
+            color: s.color,
+            // NULL, not `?? 0` — Chart.js breaks the line at a null, which is exactly the
+            // reading we want. Coercing to zero here would undo the whole nullable-count
+            // design one line before it reached the screen.
+            data: trend.map((pt) => {
+              const v = (pt.counts || {})[s.key];
+              return v === undefined ? null : v;
+            }),
           })),
         });
       });

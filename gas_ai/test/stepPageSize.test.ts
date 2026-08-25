@@ -8,7 +8,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { bootServer, teardownServer } from "./gasEnv";
 import {
   getTruncatedSteps,
@@ -34,7 +34,11 @@ interface Step {
 
 let steps: Step[];
 
-beforeEach(async () => {
+// Booted ONCE, not per test. `getScanQueries` is a read-only derivation of the query
+// battery — nothing below writes to the store or mutates `steps`, so a boot per test was
+// re-deriving nineteen identical answers. It cost 1.9s of the suite's wall clock, which is
+// what a beforeEach buys you when the thing it rebuilds cannot change.
+beforeAll(async () => {
   const server = await bootServer();
   server.setup();
   const res = server.api.getScanQueries({}) as { ok: boolean; data?: { steps: Step[] } };
@@ -42,7 +46,7 @@ beforeEach(async () => {
   steps = res.data!.steps;
 });
 
-afterEach(() => {
+afterAll(() => {
   teardownServer();
 });
 

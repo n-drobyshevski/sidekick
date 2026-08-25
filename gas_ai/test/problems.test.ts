@@ -22,6 +22,7 @@ function row(over: Partial<ProblemRow> = {}): ProblemRow {
     title: "Rule",
     assetId: "asset-1",
     assetName: "Asset",
+    domain: null,
     problemOutcome: "TRACK",
     vector: null,
     unknowns: [],
@@ -97,28 +98,18 @@ describe("issueToProblemRow / findingToProblemRow", () => {
 });
 
 describe("compareProblems — each level in isolation", () => {
-  it("1. orders by outcome, worst (ACT) first, undecided last", () => {
+  it("1. orders by Wiz severity, worst first, unrated last", () => {
     const rows = [
-      row({ id: "a", problemOutcome: "TRACK" }),
-      row({ id: "b", problemOutcome: "" }),
-      row({ id: "c", problemOutcome: "ACT" }),
-      row({ id: "d", problemOutcome: "ATTEND" }),
-      row({ id: "e", problemOutcome: "TRACK_STAR" }),
+      row({ id: "a", severity: "LOW" }),
+      row({ id: "b", severity: null }),
+      row({ id: "c", severity: "CRITICAL" }),
+      row({ id: "d", severity: "HIGH" }),
+      row({ id: "e", severity: "MEDIUM" }),
     ];
     expect(rankProblems(rows).map((r) => r.id)).toEqual(["c", "d", "e", "a", "b"]);
   });
 
-  it("2. within one outcome, orders by posture tier, worst (4) first, unscored last", () => {
-    const rows = [
-      row({ id: "a", postureTier: 2 }),
-      row({ id: "b", postureTier: null }),
-      row({ id: "c", postureTier: 4 }),
-      row({ id: "d", postureTier: 1 }),
-    ];
-    expect(rankProblems(rows).map((r) => r.id)).toEqual(["c", "a", "d", "b"]);
-  });
-
-  it("3. within one outcome and tier, orders by SLA urgency, no-deadline last", () => {
+  it("2. within one severity, orders by SLA urgency, no-deadline last", () => {
     const rows = [
       row({ id: "future", dueAt: "2026-09-01T00:00:00Z" }),
       row({ id: "none", dueAt: null }),
@@ -128,18 +119,19 @@ describe("compareProblems — each level in isolation", () => {
     expect(rankProblems(rows).map((r) => r.id)).toEqual(["overdue", "soon", "future", "none"]);
   });
 
-  it("4. within one outcome, tier and SLA, orders by the amplification vector lexicographically", () => {
-    const base = { problemOutcome: "TRACK", postureTier: null, dueAt: null } as const;
+  it("3. within one severity and SLA, orders by age — oldest first, undated last", () => {
+    // Replaces the amplification level, which ranked by the problem model's own input
+    // vector. "Open since April" is a fact in the row; an amplification reading was a
+    // fact about a model.
     const rows = [
-      row({ id: "low", ...base, amplification: { tools: null, identity: 0, persistence: null, multiAgent: null, context: null, language: null } }),
-      row({ id: "high", ...base, amplification: { tools: null, identity: 1, persistence: null, multiAgent: null, context: null, language: null } }),
-      // Unmeasured (null) must not outrank an explicit 0 on the same axis.
-      row({ id: "unmeasured", ...base, amplification: { tools: null, identity: null, persistence: null, multiAgent: null, context: null, language: null } }),
+      row({ id: "newer", firstSeenAt: "2026-06-01T00:00:00Z" }),
+      row({ id: "undated" }),
+      row({ id: "older", firstSeenAt: "2026-04-01T00:00:00Z" }),
     ];
-    expect(rankProblems(rows).map((r) => r.id)).toEqual(["high", "low", "unmeasured"]);
+    expect(rankProblems(rows).map((r) => r.id)).toEqual(["older", "newer", "undated"]);
   });
 
-  it("5. ties on everything else break on id, ascending, for stability", () => {
+  it("4. ties on everything else break on id, ascending, for stability", () => {
     const base = row({ id: "z" });
     const rows = [{ ...base, id: "z" }, { ...base, id: "a" }, { ...base, id: "m" }];
     expect(rankProblems(rows).map((r) => r.id)).toEqual(["a", "m", "z"]);
@@ -147,10 +139,10 @@ describe("compareProblems — each level in isolation", () => {
 
   it("is a total, deterministic order — re-sorting a ranked list is a no-op", () => {
     const rows = [
-      row({ id: "a", problemOutcome: "ACT", postureTier: 4, dueAt: "2026-08-01T00:00:00Z" }),
-      row({ id: "b", problemOutcome: "ACT", postureTier: 2 }),
-      row({ id: "c", problemOutcome: "TRACK" }),
-      row({ id: "d", problemOutcome: "" }),
+      row({ id: "a", severity: "CRITICAL", dueAt: "2026-08-01T00:00:00Z" }),
+      row({ id: "b", severity: "CRITICAL" }),
+      row({ id: "c", severity: "LOW" }),
+      row({ id: "d", severity: null }),
     ];
     const once = rankProblems(rows).map((r) => r.id);
     const twice = rankProblems(rankProblems(rows)).map((r) => r.id);

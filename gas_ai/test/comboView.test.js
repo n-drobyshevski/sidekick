@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  CONDITION_KEYS, DUE_SOON_DAYS, OUTCOME_RANK, SEVERITY_RANK,
+  CONDITION_KEYS, DUE_SOON_DAYS, SEVERITY_RANK,
   applyIssueFilters, comboParamPatch, conditionPresent, groupMatches, issueFilterOptions,
   rankGroups, readComboParams, shiftSegments, shiftSummary, slaState, sortIssues,
 } from "../src/client/js/pages/comboView.js";
@@ -46,13 +46,11 @@ describe("URL round-trip", () => {
   it("reads a full view back out of the hash", () => {
     const state = readComboParams({
       open: "gcp-managed-privileged", cond: "internet_exposure", sev: "high",
-      outcome: "attend",
       q: "agent", acct: "gcp-account-01", proj: "PROJECT-ALPHA",
       sort: "due", dir: "-1", page: "3",
     });
     expect(state).toEqual({
       open: "gcp-managed-privileged", cond: "INTERNET_EXPOSURE", sev: "HIGH",
-      outcome: "ATTEND",
       q: "agent", acct: "gcp-account-01", proj: "PROJECT-ALPHA",
       sort: "due", dir: -1, page: 2, // 1-based in the URL, 0-based in the page
     });
@@ -60,18 +58,17 @@ describe("URL round-trip", () => {
 
   it("drops values this page does not offer instead of trusting the link", () => {
     const state = readComboParams({
-      cond: "NOT_A_CONDITION", sev: "SPICY", outcome: "SOMEDAY", sort: "nonsense", page: "-4",
+      cond: "NOT_A_CONDITION", sev: "SPICY", sort: "nonsense", page: "-4",
     });
     expect(state.cond).toBe("");
     expect(state.sev).toBe("");
-    expect(state.outcome).toBe("");
     expect(state.sort).toBe("");
     expect(state.page).toBe(0);
   });
 
   it("defaults cleanly with no params at all", () => {
     expect(readComboParams(undefined)).toEqual({
-      open: "", cond: "", sev: "", outcome: "", q: "", acct: "", proj: "",
+      open: "", cond: "", sev: "", q: "", acct: "", proj: "",
       sort: "", dir: 1, page: 0,
     });
   });
@@ -85,7 +82,7 @@ describe("URL round-trip", () => {
     // buildHash drops empty values; a key left out entirely would keep its old value.
     const patch = comboParamPatch(readComboParams({ sev: "HIGH" }));
     expect(Object.keys(patch).sort()).toEqual(
-      ["acct", "cond", "dir", "open", "outcome", "page", "proj", "q", "sev", "sort"]);
+      ["acct", "cond", "dir", "open", "page", "proj", "q", "sev", "sort"]);
     expect(patch.cond).toBe("");
   });
 
@@ -142,17 +139,13 @@ describe("issue filtering", () => {
       id: "3", assetName: "svc-billing", adjustedSeverity: "MEDIUM", nativeSeverity: "LOW",
       region: "europe-west4", account: "gcp-account-01", projects: [],
       dueAt: "2026-07-01T00:00:00Z",
-      // No verdict at all — the undecided case the priority column and facet must handle.
     },
   ];
 
-  it("filters on severity, account, project and priority", () => {
+  it("filters on severity, account and project", () => {
     expect(applyIssueFilters(ROWS, { sev: "MEDIUM" }).map((r) => r.id)).toEqual(["3"]);
     expect(applyIssueFilters(ROWS, { acct: "gcp-account-01" }).map((r) => r.id)).toEqual(["1", "3"]);
     expect(applyIssueFilters(ROWS, { proj: "PROJECT-BETA" }).map((r) => r.id)).toEqual(["2"]);
-    expect(applyIssueFilters(ROWS, { outcome: "ACT" }).map((r) => r.id)).toEqual(["2"]);
-    // The undecided row (no problemOutcome) never matches an outcome filter.
-    expect(applyIssueFilters(ROWS, { outcome: "TRACK" }).map((r) => r.id)).toEqual([]);
   });
 
   it("searches asset, region, account and project, case-insensitively", () => {
@@ -167,13 +160,12 @@ describe("issue filtering", () => {
       .toEqual(["1"]);
   });
 
-  it("offers only the values actually present, sorted (priority worst-first)", () => {
+  it("offers only the values actually present, sorted", () => {
     expect(issueFilterOptions(ROWS)).toEqual({
       accounts: ["gcp-account-01", "gcp-account-05"],
       projects: ["PROJECT-ALPHA", "PROJECT-BETA"],
       // ACT before ATTEND, not alphabetical (which would put ACT after ATTEND) — and the
       // undecided row contributes nothing, the same way an unset account or project would.
-      outcomes: ["ACT", "ATTEND"],
     });
   });
 
@@ -182,11 +174,6 @@ describe("issue filtering", () => {
     expect(sortIssues(ROWS, "severity", 1).map((r) => r.id)).toEqual(["1", "2", "3"]);
     expect(sortIssues(ROWS, "severity", -1).map((r) => r.id)).toEqual(["3", "1", "2"]);
     expect(sortIssues(ROWS, "account", 1).map((r) => r.id)).toEqual(["1", "3", "2"]);
-  });
-
-  it("sorts by priority, worst (ACT) first, with the undecided row last", () => {
-    expect(sortIssues(ROWS, "priority", 1).map((r) => r.id)).toEqual(["2", "1", "3"]);
-    expect(sortIssues(ROWS, "priority", -1).map((r) => r.id)).toEqual(["3", "1", "2"]);
   });
 
   it("sorts the soonest deadline first and parks the undated rows last", () => {
@@ -270,7 +257,6 @@ describe("severity-shift bars", () => {
 import { DUE_SOON_DAYS as DOMAIN_DUE_SOON_DAYS } from "../src/domain/comboDigest";
 import { CONDITION_KEYS as DOMAIN_CONDITION_KEYS } from "../src/domain/toxicCombos";
 import { SEVERITY_ORDER } from "../src/domain/config";
-import { OUTCOME_VALUES as DOMAIN_OUTCOME_VALUES } from "../src/domain/problem";
 
 describe("mirrors of the domain layer", () => {
   it("agrees with comboDigest about how soon 'due soon' is", () => {
@@ -279,10 +265,6 @@ describe("mirrors of the domain layer", () => {
 
   it("agrees with toxicCombos about which conditions exist, and in what order", () => {
     expect(CONDITION_KEYS).toEqual([...DOMAIN_CONDITION_KEYS]);
-  });
-
-  it("agrees with problem.ts about the outcome scale, worst first", () => {
-    expect(OUTCOME_RANK).toEqual([...DOMAIN_OUTCOME_VALUES]);
   });
 
   it("agrees with config about the severity scale", () => {

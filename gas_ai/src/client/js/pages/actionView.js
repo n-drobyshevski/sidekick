@@ -8,7 +8,7 @@
 // verbatim in spirit and restated here because the stakes are higher on this table, not
 // lower. `src/domain/actions.ts`'s `rankActionsByCover` is a greedy MARGINAL set-cover: on
 // every round it re-scores every remaining action against the problems the ROUNDS BEFORE IT
-// haven't already claimed, worst-outcome first, then remaining-problems-closed, then
+// haven't already claimed, worst-severity first, then remaining-problems-closed, then
 // distinct-assets-touched, then key. That is not a static three-key sort a client-side
 // comparator can reproduce — the "remaining problems" a round scores against shrink after
 // every earlier pick, so the true rank of action #7 depends on which six actions already
@@ -29,16 +29,16 @@
 // reading the page would be able to tell which one is real. A reader who wants the cover
 // order gets it by clearing every column sort, not by trusting a client-side stand-in for it.
 
-export const OUTCOME_RANK = ["ACT", "ATTEND", "TRACK_STAR", "TRACK"];
+export const SEVERITY_RANK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 export const KIND_VALUES = ["ISSUE", "FINDING"];
 
 // ------------------------------------------------------------------------- filtering
 
-/** Position on the outcome scale, worst first; undecided (`""`) sorts last — mirrors
- *  problemView.js's own `outcomeIndex` at the action's own `worstOutcome` grain. */
-function outcomeIndex(o) {
-  const i = OUTCOME_RANK.indexOf(String(o || "").toUpperCase());
-  return i < 0 ? OUTCOME_RANK.length : i;
+/** Position on the severity scale, worst first; unrated (`""`) sorts last — mirrors
+ *  problemView.js's own `sevIndex` at the action's own `worstSeverity` grain. */
+function sevIndex(sev) {
+  const i = SEVERITY_RANK.indexOf(String(sev || "").toUpperCase());
+  return i < 0 ? SEVERITY_RANK.length : i;
 }
 
 /**
@@ -50,7 +50,7 @@ export function applyActionFilters(rows, state) {
   const s = state || {};
   const q = String(s.q || "").trim().toLowerCase();
   return (rows || []).filter((r) => {
-    if (s.outcome && String(r.worstOutcome || "").toUpperCase() !== s.outcome) return false;
+    if (s.severity && String(r.worstSeverity || "").toUpperCase() !== s.severity) return false;
     if (s.kind && r.kind !== s.kind) return false;
     if (q) {
       const hay = [r.title, r.ruleShortId].filter(Boolean).join(" ").toLowerCase();
@@ -60,17 +60,17 @@ export function applyActionFilters(rows, state) {
   });
 }
 
-/** The outcome and kind values actually present, for the filter pills — worst-outcome-first,
+/** The severity and kind values actually present, for the filter pills — worst-first,
  *  mirroring `problemFilterOptions`. */
 export function actionFilterOptions(rows) {
-  const outcomes = new Set();
+  const severities = new Set();
   const kinds = new Set();
   for (const r of rows || []) {
-    if (r.worstOutcome) outcomes.add(String(r.worstOutcome).toUpperCase());
+    if (r.worstSeverity) severities.add(String(r.worstSeverity).toUpperCase());
     if (r.kind) kinds.add(r.kind);
   }
   return {
-    outcomes: OUTCOME_RANK.filter((o) => outcomes.has(o)),
+    severities: SEVERITY_RANK.filter((sv) => severities.has(sv)),
     kinds: KIND_VALUES.filter((k) => kinds.has(k)),
   };
 }
@@ -95,7 +95,7 @@ function firstSeenRank(row) {
  * flips it.
  */
 export const ACTION_COMPARATORS = {
-  priority: (a, b) => outcomeIndex(a.worstOutcome) - outcomeIndex(b.worstOutcome),
+  worstSeverity: (a, b) => sevIndex(a.worstSeverity) - sevIndex(b.worstSeverity),
   title: (a, b) => String(a.title || "").localeCompare(String(b.title || "")),
   kind: (a, b) => String(a.kind || "").localeCompare(String(b.kind || "")),
   // The leverage figure this whole feature exists to surface — most problems closed first.
@@ -105,7 +105,7 @@ export const ACTION_COMPARATORS = {
 };
 
 /** Columns whose natural order reads as descending — for aria-sort and the glyph. */
-export const ACTION_SORT_DESC = { priority: true, closes: true, assets: true };
+export const ACTION_SORT_DESC = { worstSeverity: true, closes: true, assets: true };
 
 export function sortActions(rows, key, dir) {
   const cmp = ACTION_COMPARATORS[key];

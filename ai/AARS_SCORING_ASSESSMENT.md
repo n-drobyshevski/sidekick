@@ -267,6 +267,18 @@ assignee or a ticket within N days of first detection is itself a published meas
 > **Change — the bands were demoted to a percentile and the label was renamed.** The finding
 > above is the one that shipped a fix, and this is what it is.
 >
+> **SUPERSEDED — the percentile itself has since been removed.** What follows is the record
+> of P2c as it shipped, kept because the reasoning is still the reasoning; it is no longer a
+> description of the app. P2c demoted the band by promoting a percentile in its place, which
+> made the ASSET SURFACES honest about ranking while leaving them reading a figure derived
+> from a model that does not discriminate. The later phase took the whole model off those
+> surfaces instead: the register, the asset sheet, the graph node and the combination card
+> now lead with counts — open issues and failing cloud findings — and the score, the band and
+> the percentile reach only the Scoring Models page. `withAarsPercentile` and
+> `GNode.aarsPercentile` are gone with the surfaces that read them; `midrankPercentiles`
+> stays in `rankStats.ts`, where the ordinality suites still measure the model with it. The
+> per-asset ranking role this section created was retired, not refilled.
+>
 > **1. A percentile, and its tie handling.** `rankStats.midrankPercentiles` computes each
 > asset's placement in the scored population as `(below + equal/2) / N`, and
 > `syncStore.withAarsPercentile` stamps it — rounded to whole percent — on every read path
@@ -430,6 +442,10 @@ edge and never by arithmetic**:
 - **The coupling** — the asset tier selects the *policy target in days*, rendered as a delta against
   Wiz's `dueAt`; the asset carries its worst open problem as a typed **max pointer**, never a mean
   and never a count. The 0–100 AARS number survives as an estate percentile caption.
+  (**Superseded**: the percentile caption shipped as P2c and was later removed with every
+  other per-asset reading of the score — see §7's own superseding note. The number survives
+  on the Scoring Models page as a distribution and a model diagnostic, which is the half of
+  this sentence that held up.)
 
 `DEFAULT_AARS_RULE` does not move. Every step is a spec-neutral knob or an opt-in preset, so
 [custom_score.md](custom_score.md)'s applied 14-row table keeps reproducing and no tenant re-scores

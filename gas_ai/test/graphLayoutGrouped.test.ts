@@ -5,13 +5,16 @@ import { describe, expect, it } from "vitest";
 import { SEVERITY_ORDER } from "../src/domain/config";
 import {
   enrichGraphDoc,
+  withOpenCounts,
   withDataFindingNodes,
   withExcessivePrivilegeNodes,
   withInternetExposureNodes,
+  withDomains,
   withMissingGuardrailNodes,
   withSensitiveDataNodes,
 } from "../src/domain/graphEnrich";
 import {
+  GROUP_KEYS,
   GROUP_NONE,
   layoutGraph,
   type GroupKey,
@@ -20,10 +23,20 @@ import {
 } from "../src/domain/graphLayout";
 import { nodeOrder, projectGraph, type Projection } from "../src/domain/graphProject";
 import { NODE_KINDS } from "../src/domain/graphTypes";
+import { DEFAULT_DOMAIN_TAG_KEY } from "../src/domain/domainTag";
 import { COMBO_GROUPS } from "../src/domain/toxicCombos";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
-const DOC = enrichGraphDoc(seedGraphDoc("2026-06-28T05:00:00Z"), SEED_ISSUES, SEED_AARS_HINTS);
+const ENRICHED = enrichGraphDoc(seedGraphDoc("2026-06-28T05:00:00Z"), SEED_ISSUES, SEED_AARS_HINTS);
+// The counts are a read-time fold; see graphLayout.test.ts's own note. So is the domain, and it
+// is folded here for a reason the structural cases below depend on: `node.domain` is set by
+// `withDomains` and by nothing else, so without this every node arrives untagged, `groupBy=domain`
+// collapses to one Ungrouped box, and the whole ALL_KEYS sweep passes over that key while
+// asserting nothing about it. A green tick over a single box is worse than no case at all.
+const DOC = {
+  ...ENRICHED,
+  nodes: withDomains(withOpenCounts(ENRICHED.nodes, SEED_ISSUES, []), DEFAULT_DOMAIN_TAG_KEY),
+};
 const PROJECTION = projectGraph(DOC, { seedIds: ["agent-h-chatbot", "agent-autogen"], depth: 3 });
 
 /**
@@ -55,7 +68,12 @@ function nested(outer: GroupKey, inner: GroupKey, p: Projection = PROJECTION): L
   return layoutGraph(p, { mode: "grid", groupBy: [outer, inner], sort: "smart" });
 }
 
-const ALL_KEYS: GroupKey[] = ["asset", "combo", "project", "cloud", "kind", "severity"];
+// Every key the engine accepts, and it has to STAY every key: the structural invariants below
+// — placed exactly once, boxes that do not overlap, every node inside its own box, the same
+// picture twice, Ungrouped last — are the ones a new dimension is most likely to break, and
+// a key missing from this array is a key none of them ever run against. `domain` was such a
+// key: it arrived with three risk-evidence cases of its own further down and none of this.
+const ALL_KEYS: GroupKey[] = [...GROUP_KEYS];
 
 /** The outer boxes. With one level that is all of them. */
 const tops = (l: Layout) => l.groups!.filter((g) => g.depth === 0);
@@ -413,10 +431,10 @@ describe("layoutGrouped: sort within groups", () => {
     }
   });
 
-  it("sort=aars orders members by descending score", () => {
-    const nodes = firstGroupMembers("aars");
+  it("sort=issues orders members by descending open-issue count", () => {
+    const nodes = firstGroupMembers("issues");
     for (let i = 1; i < nodes.length; i++) {
-      expect((nodes[i - 1].aars ?? -1) >= (nodes[i].aars ?? -1)).toBe(true);
+      expect((nodes[i - 1].openIssues ?? 0) >= (nodes[i].openIssues ?? 0)).toBe(true);
     }
   });
 
@@ -441,7 +459,18 @@ describe("layoutGrouped: sort within groups", () => {
 const RISK_DOC = withMissingGuardrailNodes(
   withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(DOC))),
 );
+// The domain is a READ-TIME fold, so a doc assembled straight from the seed carries none
+// until withDomains runs. Applying it here is what makes `domain` a real grouping key in
+// this fixture rather than one that silently files everything under Ungrouped.
+const RISK_DOC_WITH_DOMAINS = {
+  ...RISK_DOC,
+  nodes: withDomains(RISK_DOC.nodes, DEFAULT_DOMAIN_TAG_KEY),
+};
 const RISK_PROJECTION = projectGraph(RISK_DOC, { seedIds: ["agent-h-chatbot"], depth: 2 });
+const RISK_PROJECTION_DOMAINS = projectGraph(
+  RISK_DOC_WITH_DOMAINS,
+  { seedIds: ["agent-h-chatbot"], depth: 2 },
+);
 
 describe("layoutGrouped: risk evidence", () => {
   /**
@@ -481,6 +510,26 @@ describe("layoutGrouped: risk evidence", () => {
         expect(blockOf(layout, id)?.key, `${id} under ${key}`).toBe(host!.key);
       }
     }
+  });
+
+  // The same inheritance rule as combo/project/cloud above, for the dimension added last.
+  // Risk evidence carries no domain of its own — an ISSUE node is a statement about an
+  // asset — so it has to inherit its asset's block rather than be exiled to Ungrouped,
+  // which is what tore the attack path apart the last time a grouping key was added.
+  it("keeps the derived nodes in their asset's domain block", () => {
+    const layout = grouped("domain", "smart", RISK_PROJECTION_DOMAINS);
+    const host = blockOf(layout, "agent-h-chatbot");
+    expect(host).toBeDefined();
+    expect(host!.key).toBe("VALUE-CHAIN");
+    for (const id of evidence) {
+      expect(blockOf(layout, id)?.key, id).toBe("VALUE-CHAIN");
+    }
+  });
+
+  it("files an untagged node under Ungrouped rather than inventing a domain", () => {
+    const layout = grouped("domain", "smart", RISK_PROJECTION_DOMAINS);
+    const untagged = RISK_PROJECTION_DOMAINS.nodes.find((n) => !n.domain && n.kind !== "ISSUE");
+    if (untagged) expect(blockOf(layout, untagged.id)?.key).toBe(GROUP_NONE);
   });
 
   it("still groups the derived nodes by their own kind under 'kind'", () => {

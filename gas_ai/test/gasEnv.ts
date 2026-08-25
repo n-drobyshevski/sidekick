@@ -61,6 +61,81 @@ export function teardownServer(): void {
   vi.useRealTimers();
 }
 
+// --------------------------------------------------------------- shared fixture
+//
+// `bootServer()` above is exact and expensive: a module-registry reset, a re-import of the
+// whole server graph, and — for most callers — a `setup()` and a full dry-run sync on top.
+// Run from `beforeEach` that is half a megabyte of TypeScript re-executed and a whole sample
+// landscape regenerated to undo a handful of row writes. Four files did exactly that, and
+// they were the four slowest in the suite.
+//
+// So: boot ONCE per file, sync ONCE, and photograph the fakes. Each test then restores the
+// photograph and drops the server's per-execution memos, which is the same starting state
+// reached by copying grids instead of rebuilding the world.
+//
+// The memo list is the honest cost of this. Every module holding state across a call has to
+// be named, and one we forget is state quietly leaking between tests. Two things keep that
+// bounded: the list is small and enumerable (module-level mutable state in `src/server` is
+// six memos, and `src/domain` has none at all), and `GAS_TEST_FULL_ISOLATION=1` puts the old
+// workload back exactly — `npm run test:exact` proves the fast path did not hide anything.
+
+/** `npm run test:exact` sets this. See the comment above. */
+const EXACT = process.env["GAS_TEST_FULL_ISOLATION"] === "1";
+
+interface GasFakes {
+  snapshot(): unknown;
+  restore(snap: unknown): void;
+}
+
+function fakes(): GasFakes {
+  const f = (globalThis as Record<string, unknown>)["__gasFakes"];
+  if (!f) throw new Error("__gasFakes missing — dev/gas-shims.js was not evaluated");
+  return f as GasFakes;
+}
+
+/** Every module in `src/server` that memoizes across a call. Nothing else holds state. */
+async function resetServerMemos(): Promise<void> {
+  const mods = await Promise.all([
+    // api.ts is absent on purpose — its one memo is identity-keyed on syncStore's, so
+    // clearing syncStore below already invalidates it. See the note where it is declared.
+    import("../src/server/archiveStore"),
+    import("../src/server/settingsStore"),
+    import("../src/server/sheetsDb"),
+    import("../src/server/syncStore"),
+  ]);
+  for (const m of mods) m.__resetMemosForTest();
+}
+
+let syncedServer: ServerModule | undefined;
+let syncedSnapshot: unknown;
+
+/**
+ * `beforeAll`: a booted server carrying one dry-run sync, photographed for `resetToSynced`.
+ */
+export async function bootSyncedServer(): Promise<ServerModule> {
+  syncedServer = await bootServer();
+  syncedServer.setup();
+  const res = syncedServer.api.runSync({}) as { ok: boolean; error?: string };
+  if (!res.ok) throw new Error(`seed sync failed: ${res.error}`);
+  syncedSnapshot = fakes().snapshot();
+  return syncedServer;
+}
+
+/**
+ * `beforeEach`: back to the state `bootSyncedServer` photographed.
+ *
+ * Returns the server so callers can rebind — under `EXACT` it is a genuinely new instance,
+ * and holding the old one would reach a dead module registry.
+ */
+export async function resetToSynced(): Promise<ServerModule> {
+  if (EXACT) return bootSyncedServer();
+  fakes().restore(syncedSnapshot);
+  await resetServerMemos();
+  // bootServer froze the clock; tests are free to advance it, so put it back too.
+  vi.setSystemTime(FROZEN_NOW);
+  return syncedServer!;
+}
+
 /**
  * The `api_*` surface, as `dist/entry.js` exposes it to `google.script.run`.
  *

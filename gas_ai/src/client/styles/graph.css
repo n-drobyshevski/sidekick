@@ -480,7 +480,7 @@
 .gnode-kind { font-size: var(--fs-micro); fill: var(--svg-text-2); letter-spacing: 0.04em; }
 .gnode-icon { fill: none; stroke: rgba(0, 0, 0, 0.6); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 /* The AARS figure on a node card: a number in a column of node cards, so tabular. */
-.gnode-aars { font-size: var(--fs-micro); font-weight: 600; fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
+.gnode-counts { font-size: var(--fs-micro); font-weight: 600; fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
 /* Severity label on a node card. The Two-Token Severity Rule: the DOT is painted from the
    server palette (a graphical mark at >=3:1, and a deployment may retint it), the LABEL
    takes the darkened text token so it clears 4.5:1 on the pale category tints underneath.

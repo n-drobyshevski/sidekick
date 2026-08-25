@@ -16,7 +16,7 @@ import {
 } from "../src/domain/actions";
 import { buildProblemRows, type ProblemRow } from "../src/domain/problems";
 import { isOpenGap, isUnresolvedIssue } from "../src/domain/config";
-import { OUTCOME_VALUES } from "../src/domain/problem";
+import { SEVERITY_ORDER } from "../src/domain/config";
 import { findingFixture, issueFixture } from "./problem.fixture";
 import { SEED_FINDINGS, SEED_FRAMEWORK_POLICIES, SEED_ISSUES } from "../src/server/sampleData";
 import type { FindingRow, GNode, IssueRow } from "../src/domain/graphTypes";
@@ -28,6 +28,7 @@ function row(over: Partial<ProblemRow> = {}): ProblemRow {
     title: "Rule",
     assetId: "asset-1",
     assetName: "Asset",
+    domain: null,
     problemOutcome: "TRACK",
     vector: null,
     unknowns: [],
@@ -94,15 +95,20 @@ describe("set-cover completeness", () => {
     expect(seenIds.size).toBe(expectedTotal);
   });
 
-  it("keeps a row with no verdict in the union, and reports it under its own action", () => {
-    const issue = issueFixture({ ruleId: "rule-undecided", status: "OPEN" });
-    delete issue.problemOutcome;
-    delete issue.problemInput;
+  it("keeps an unrated row in the union, and reports it under its own action", () => {
+    // The union drops nothing for lacking a rating — problems.ts's own invariant. It used
+    // to be a verdict this row lacked; now it is Wiz's severity, and the rule is the same:
+    // an unrated problem is still a problem, and still needs somewhere to be counted.
+    const issue = issueFixture({
+      ruleId: "rule-unrated", status: "OPEN",
+      adjustedSeverity: "" as unknown as IssueRow["adjustedSeverity"],
+      nativeSeverity: "" as unknown as IssueRow["nativeSeverity"],
+    });
     const rows = buildProblemRows([issue], [], new Map());
     const ranked = rankActionsByCover(rows);
     expect(ranked).toHaveLength(1);
     expect(ranked[0]!.problems).toBe(1);
-    expect(ranked[0]!.worstOutcome).toBe("");
+    expect(ranked[0]!.worstSeverity).toBe("");
   });
 });
 
@@ -161,9 +167,9 @@ describe("greedy removal — the asset-overlap trap", () => {
 describe("determinism", () => {
   it("same input, same order, twice — and independent of the input array's own order", () => {
     const rows: ProblemRow[] = [
-      row({ id: "z", kind: "ISSUE", ruleId: "r1", problemOutcome: "ACT", assetId: "a1" }),
-      row({ id: "a", kind: "ISSUE", ruleId: "r1", problemOutcome: "ATTEND", assetId: "a2" }),
-      row({ id: "m", kind: "FINDING", ruleShortId: "r2", problemOutcome: "TRACK", assetId: "a3" }),
+      row({ id: "z", kind: "ISSUE", ruleId: "r1", severity: "CRITICAL", assetId: "a1" }),
+      row({ id: "a", kind: "ISSUE", ruleId: "r1", severity: "HIGH", assetId: "a2" }),
+      row({ id: "m", kind: "FINDING", ruleShortId: "r2", severity: "LOW", assetId: "a3" }),
     ];
     const once = rankActionsByCover(rows).map((a) => [a.key, a.problems]);
     const twice = rankActionsByCover(rows).map((a) => [a.key, a.problems]);
@@ -174,36 +180,36 @@ describe("determinism", () => {
   });
 });
 
-describe("worstOutcome", () => {
-  it("is a typed outcome string — never a number, never a mean of the group", () => {
+describe("worstSeverity", () => {
+  it("is a typed severity string — never a number, never a mean of the group", () => {
     const rows = [
-      row({ id: "p1", ruleId: "r1", problemOutcome: "ACT" }),
-      row({ id: "p2", ruleId: "r1", problemOutcome: "TRACK" }),
+      row({ id: "p1", ruleId: "r1", severity: "CRITICAL" }),
+      row({ id: "p2", ruleId: "r1", severity: "LOW" }),
     ];
     const [action] = rankActionsByCover(rows) as [ActionRow];
-    expect(typeof action.worstOutcome).toBe("string");
-    expect([...OUTCOME_VALUES, ""]).toContain(action.worstOutcome);
-    // MAX (worst), never a mean: two problems averaging ACT(0) and TRACK(3) is NOT
-    // ATTEND(1) or TRACK_STAR(2) — it is ACT, the worse of the two readings.
-    expect(action.worstOutcome).toBe("ACT");
+    expect(typeof action.worstSeverity).toBe("string");
+    expect([...SEVERITY_ORDER, ""]).toContain(action.worstSeverity);
+    // MAX (worst), never a mean: a group holding a CRITICAL and a LOW is not a MEDIUM
+    // action — it is a CRITICAL one, the worse of the two readings.
+    expect(action.worstSeverity).toBe("CRITICAL");
   });
 
-  it("reports \"\" only when every problem in the action is undecided", () => {
+  it("reports \"\" only when no problem in the action carries a rating", () => {
     const rows = [
-      row({ id: "p1", ruleId: "r1", problemOutcome: "" }),
-      row({ id: "p2", ruleId: "r1", problemOutcome: "" }),
+      row({ id: "p1", ruleId: "r1", severity: null }),
+      row({ id: "p2", ruleId: "r1", severity: null }),
     ];
     const [action] = rankActionsByCover(rows) as [ActionRow];
-    expect(action.worstOutcome).toBe("");
+    expect(action.worstSeverity).toBe("");
   });
 
-  it("a single decided reading always outranks the undecided rows beside it", () => {
+  it("a single rated problem always outranks the unrated rows beside it", () => {
     const rows = [
-      row({ id: "p1", ruleId: "r1", problemOutcome: "" }),
-      row({ id: "p2", ruleId: "r1", problemOutcome: "TRACK" }),
+      row({ id: "p1", ruleId: "r1", severity: null }),
+      row({ id: "p2", ruleId: "r1", severity: "LOW" }),
     ];
     const [action] = rankActionsByCover(rows) as [ActionRow];
-    expect(action.worstOutcome).toBe("TRACK");
+    expect(action.worstSeverity).toBe("LOW");
   });
 });
 
@@ -253,13 +259,13 @@ describe("withAutoRemediation — the dual-key join", () => {
   it("matches by ruleId first, then ruleShortId, mirroring complianceScope.ts's own join", () => {
     const actions: ActionRow[] = [
       { key: "k1", kind: "ISSUE", ruleId: "policy-1", title: "t", problems: 1, assets: 1,
-        worstOutcome: "ACT", outcomeMix: {}, severityMix: {}, businessImpacts: [],
+        worstSeverity: "CRITICAL", severityMix: {}, businessImpacts: [], domains: [],
         autoRemediable: false, iac: 0, ignored: 0 },
       { key: "k2", kind: "FINDING", ruleShortId: "SUB-999", title: "t", problems: 1, assets: 1,
-        worstOutcome: "ACT", outcomeMix: {}, severityMix: {}, businessImpacts: [],
+        worstSeverity: "CRITICAL", severityMix: {}, businessImpacts: [], domains: [],
         autoRemediable: false, iac: 0, ignored: 0 },
       { key: "k3", kind: "FINDING", ruleShortId: "SUB-000", title: "t", problems: 1, assets: 1,
-        worstOutcome: "ACT", outcomeMix: {}, severityMix: {}, businessImpacts: [],
+        worstSeverity: "CRITICAL", severityMix: {}, businessImpacts: [], domains: [],
         autoRemediable: false, iac: 0, ignored: 0 },
     ];
     const policies = [

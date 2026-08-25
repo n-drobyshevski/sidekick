@@ -2,10 +2,15 @@
 
 import { call } from "./api.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
-import { DEFAULT_ROUTE, bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
+import {
+  DEFAULT_ROUTE, bootstrap, bootstrapCached, buildHash, invalidateBootstrap,
+  invalidateRpcCache, parseHash,
+} from "./store.js";
+import { onExperimentalChange, showExperimental } from "./experimental.js";
 import {
   clear, closeTip, el, fmtDateTime, progressBar, runPageTeardown, statusPill, tipAnchor,
 } from "./ui.js";
+import { brandMark } from "./ui/brandMark.js";
 import { projectScopeControl } from "./ui/projectScope.js";
 import { toast } from "./ui.js";
 import { renderGraphPage } from "./pages/graph.js";
@@ -52,7 +57,18 @@ const PAGES = {
   // front door. Sits beside Cloud Configuration because the two are the same subject at
   // two grains — what is failing, and what that scores against.
   compliance: { hidden: true, title: "Compliance Posture", group: "Security", render: renderCompliance },
-  aars: { title: "AARS Rules", group: "Scoring", render: renderAarsRules, fullBleed: true },
+  // "Scoring Models", not "AARS Rules": this page has hosted three models since the Problem
+  // and Posture tabs landed, and it is now the ONLY consumer of all three. The route key
+  // stays `aars` — every hash link, ROUTE_ICONS entry and helpContent `route` value keys on
+  // it, and renaming would break shared links to buy nothing a reader can see.
+  //
+  // `experimental: true` gates it behind Settings → Show experimental content, which is OFF
+  // by default. It is NOT `hidden`: the two flags answer different questions. `hidden` keeps
+  // a route off this branch's PoC nav; `experimental` gates it behind a setting for everyone.
+  aars: {
+    title: "Scoring Models", group: "Labs", render: renderAarsRules, fullBleed: true,
+    experimental: true,
+  },
   scans: { title: "Wiz Scans", group: "Coverage", render: renderScans },
   data: { hidden: true, title: "Data", group: "Data", render: renderData },
   settings: { hidden: true, title: "Settings", group: "Preferences", render: renderSettings },
@@ -115,7 +131,19 @@ function applyCollapsed(collapsed) {
 
 const app = document.getElementById("app");
 let mainEl = null;
+// Held past boot() so the rail can be redrawn on its own. Flipping "show experimental
+// content" changes which pages the rail lists and nothing else — a full refresh() would
+// re-fetch the whole bootstrap payload to answer a question already settled locally.
+let sidebarEl = null;
 let sidebarCollapsed = loadCollapsed();
+
+// The Settings toggle reaches the rail through here rather than by importing app.js, which
+// would close the app.js → pages/settings.js import into a cycle. No re-route: the toggle
+// lives on Settings, so the page being hidden is never the page you are on.
+onExperimentalChange(() => {
+  if (!sidebarEl) return;
+  renderSidebar(sidebarEl, bootstrapCached());
+});
 
 // Route-reload overlay: veils the content pane (not the sidebar) with a progress bar
 // while the active page refetches. Shown only if the load outlasts a short delay, so
@@ -166,7 +194,7 @@ function bootSplash() {
     { class: "boot-splash", role: "status", "aria-live": "polite" },
     el("div", { class: "boot-splash-inner" },
       el("div", { class: "boot-brand" },
-        el("span", { class: "wordmark-dot", "aria-hidden": "true" }),
+        brandMark(112),
         el("span", { class: "boot-brand-label" }, "Wiz SIDEKICK AI")),
       bar,
       el("p", { class: "boot-splash-note" }, "Opening the graph…")),
@@ -197,6 +225,7 @@ async function boot() {
   for (const node of [...app.children]) if (node !== splash) node.remove();
 
   const sidebar = el("nav", { class: "sidebar", "aria-label": "Main navigation" });
+  sidebarEl = sidebar;
   mainEl = el("main", { id: "main" });
   routeOverlay = el(
     "div",
@@ -242,8 +271,14 @@ function renderSidebar(sidebar, data) {
   railToggle.innerHTML = CHEVRON_ICON;
   sidebar.append(
     el("div", { class: "wordmark" },
-      el("span", { class: "wordmark-dot", "aria-hidden": "true" }),
+      // Two marks, one shown at a time: the expanded rail pairs the compact mark with the
+      // name, and the collapsed rail hides the name — so THAT copy carries the accessible
+      // label and this one stays decorative, rather than the picture and the word saying
+      // the same thing twice to a screen reader. CSS picks which is visible; both are in
+      // the DOM because the rail toggles without a re-render.
+      brandMark(20, { compact: true }),
       el("span", { class: "wordmark-label" }, "Wiz SIDEKICK AI"),
+      brandMark(28, { compact: true, label: "Wiz SIDEKICK AI" }),
       railToggle),
   );
   // Above the nav, below the wordmark: the scope applies to every page in the list under
@@ -259,6 +294,9 @@ function renderSidebar(sidebar, data) {
     // Hidden routes still resolve and still render — they are only off the nav. See the
     // PAGES header for why this branch is a flag rather than seven deletions.
     if (page.hidden) continue;
+    // A gated page is absent, not disabled: a greyed-out row would still tell every reader
+    // that a model they cannot open exists. The "Labs" heading goes with it for free.
+    if (page.experimental && !showExperimental()) continue;
     if (page.group !== lastGroup) {
       sidebar.append(el("div", { class: "nav-group" }, page.group));
       lastGroup = page.group;
@@ -450,13 +488,21 @@ export async function refresh() {
 
 async function route() {
   const seq = ++routeSeq;
-  const { route: raw, params } = parseHash();
+  const parsed = parseHash();
   // RESOLVE ONCE, then use the resolved key for everything. An unknown path (a stale link, a
   // typo) lands on the front door rather than on whatever page this line happened to name
-  // when it was written — see DEFAULT_ROUTE in store.js. Resolving in one place is the part
-  // that matters: the nav highlight used to key off the RAW path, so an unresolved hash
-  // rendered a page while marking no nav item current, and the rail disagreed with the pane.
-  const key = PAGES[raw] ? raw : DEFAULT_ROUTE;
+  // when it was written — see DEFAULT_ROUTE in store.js. The nav highlight used to key off
+  // the RAW path, so an unresolved hash rendered a page while marking no nav item current.
+  let key = PAGES[parsed.route] ? parsed.route : DEFAULT_ROUTE;
+  let params = parsed.params;
+  // A gated route is a link the reader followed in good faith, so unlike the fallback above
+  // this one REWRITES the hash: leaving `#/aars` in the address bar over a different page
+  // with no nav item current is three answers to "where am I", two of them wrong.
+  if (PAGES[key] && PAGES[key].experimental && !showExperimental()) {
+    key = DEFAULT_ROUTE;
+    params = {};
+    history.replaceState(null, "", buildHash(key, params));
+  }
   const page = PAGES[key];
   document.title = `${page.title} — Wiz SIDEKICK AI`;
   document.querySelectorAll(".nav-link").forEach((a) => {

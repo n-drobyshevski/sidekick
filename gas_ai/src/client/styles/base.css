@@ -65,6 +65,20 @@
   width: 10px; height: 10px; border-radius: var(--radius-xs); background: var(--accent);
   display: inline-block;
 }
+/* The product mark. Its paint is on the presentation attributes too (ui/brandMark.js), so
+   it draws correctly with no stylesheet at all — which is the case index.html's first
+   paint is closest to. These rules exist so the three colours stay retintable from one
+   place, not because the mark needs them. */
+.brand-mark { display: block; flex: none; }
+.brand-mark .mark-map { stroke: var(--mark-map-blue); }
+.brand-mark .mark-map--warm { stroke: var(--mark-map-red); }
+.brand-mark .mark-ink { stroke: var(--mark-ink); }
+.brand-mark .mark-ink-fill { fill: var(--mark-ink); }
+.brand-mark .mark-knockout { stroke: var(--page); }
+/* Expanded rail: the small mark beside the name. The labelled copy is the collapsed
+   rail's and is hidden here — see the note at its call site in app.js. */
+.wordmark .brand-mark--compact + .wordmark-label { margin-left: 1px; }
+.wordmark > .brand-mark--compact ~ .brand-mark--compact { display: none; }
 /* Project scope switcher — sits between the wordmark and the nav, and scopes every page
    under it. Full-bleed to the rail's padding box so it reads as part of the chrome rather
    than as a widget dropped into it. */
@@ -169,12 +183,20 @@
   .sidebar.collapsed { padding-left: var(--space-2); padding-right: var(--space-2); }
   .sidebar.collapsed .wordmark-label,
   .sidebar.collapsed .wordmark-dot,
+  /* The 56px rail drops the name, so the mark becomes the only identity on screen: the
+     small decorative copy goes and the larger LABELLED one takes its place. */
+  .sidebar.collapsed .wordmark > .brand-mark--compact:first-of-type,
   .sidebar.collapsed .nav-label,
   .sidebar.collapsed .nav-group,
   .sidebar.collapsed .scan-caption,
   .sidebar.collapsed .btn-label,
   .sidebar.collapsed .scan-buttons button:not(.primary) { display: none; }
-  .sidebar.collapsed .wordmark { justify-content: center; padding: var(--space-1) 0 14px; }
+  /* Stacked, not in a row: the mark plus the toggle side by side is 46px of content in a
+     40px box. Above/below fits, and puts the mark where the name was. */
+  .sidebar.collapsed .wordmark {
+    flex-direction: column; justify-content: center; gap: 10px; padding: 6px 0 14px;
+  }
+  .sidebar.collapsed .wordmark > .brand-mark--compact ~ .brand-mark--compact { display: block; }
   .sidebar.collapsed .rail-toggle { margin-left: 0; }
   .sidebar.collapsed .rail-toggle svg { transform: rotate(180deg); }
   .sidebar.collapsed .nav-link { justify-content: center; padding: var(--space-2) 0; }
@@ -459,11 +481,12 @@ main.full-bleed > .empty { margin: 28px var(--space-6); }
   display: flex; flex-direction: column; align-items: center; gap: 18px;
   padding: var(--space-5); width: min(280px, 80vw);
 }
+/* Mark above the name, not beside it: at 72px the globe is the point of the splash, and a
+   row would push the pair past the 280px column. */
 .boot-brand {
-  display: flex; align-items: center; gap: 9px; font-weight: 600;
+  display: flex; flex-direction: column; align-items: center; gap: 14px; font-weight: 600;
   font-size: var(--fs-display-sm); letter-spacing: -0.02em; color: var(--ink);
 }
-.boot-brand .wordmark-dot { width: 11px; height: 11px; }
 .boot-splash-bar { width: 100%; }
 .boot-splash-note { margin: 0; font-size: var(--fs-label); color: var(--text-2); }
 @media (prefers-reduced-motion: reduce) { .boot-splash { transition: none; } }

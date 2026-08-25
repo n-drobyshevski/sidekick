@@ -125,10 +125,14 @@ export function effectiveCardinality(values: number[]): number {
  * form here would reintroduce exactly the false ordering this statistic was added to stop.
  *
  * Returns exact, unrounded percentages in the input's own index order, never sorted — a
- * caller zipping these back onto nodes by position must be able to trust the alignment.
- * Rounding is the caller's decision and belongs where the population size is known
- * (`syncStore.withAarsPercentile` rounds to whole percent, because 1/30 of a landscape is
- * ~3.3 points and a decimal would imply precision the population does not have).
+ * caller zipping these back onto values by position must be able to trust the alignment.
+ * Rounding is the caller's decision and belongs where the population size is known.
+ *
+ * NO PRODUCTION CALLER TODAY. `syncStore.withAarsPercentile` was one, and went when the
+ * asset surfaces that led with a percentile stopped reading any derived verdict. It stays
+ * because this module is the measurement instrument the audit in ai/AARS_SCORING_ASSESSMENT.md
+ * is built on, and `kendallTauB`, `cohensKappa` and `bootstrapCI` beside it have only ever
+ * had test callers — the ordinality suites are consumers, not scaffolding.
  *
  * A constant list gives every entry 50 — one block spanning the whole landscape, centred.
  * That is the correct reading of "this model separates nothing", and it is the same

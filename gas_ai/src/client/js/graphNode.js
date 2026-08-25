@@ -6,7 +6,7 @@
 
 import { categoryOf, kindIcon, kindLabel, svgEl } from "./icons.js";
 import { sevEntries, sevSpoken } from "./ui/severity.js";
-import { FINDINGS_SCORE_LABEL, ordinal } from "./ui/scoreLabel.js";
+import { plural } from "./ui/format.js";
 
 import { tipAnchor } from "./ui.js";
 // Mirrors SEVERITY_ORDER in src/domain/config.ts, for the same reason egoLayout.js,
@@ -21,14 +21,14 @@ const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
  * share it). "p60" says where the asset sits, which is the only comparison a card can
  * usefully make. The raw score is still spoken in the accessible name and shown in full on
  * the detail sheet.
- *
- * Falls back to the bare score on a payload cached before the percentile existed, rather
- * than drawing an empty badge.
  */
-function scoreBadgeText(node) {
-  return typeof node.aarsPercentile === "number"
-    ? "p" + node.aarsPercentile
-    : String(node.aars);
+function countBadgeText(node) {
+  const issues = Number(node.openIssues || 0);
+  const findings = Number(node.openFindings || 0);
+  // "4" alone when there is nothing else to say, "4·2" when both are live. A node with
+  // neither draws no badge at all rather than a "0" that adds a mark and no information.
+  if (!issues && !findings) return "";
+  return findings ? issues + "\u00b7" + findings : String(issues);
 }
 
 export const NODE_W = 196;
@@ -52,15 +52,12 @@ export function severityMixText(mix) {
 export function nodeAriaLabel(node) {
   const parts = [kindLabel(node.kind), node.name];
   if (node.severity) parts.push("severity " + node.severity);
-  if (node.aars !== undefined && node.aars !== null) {
-    // The score and its placement. The BAND is deliberately not spoken here any more: it
-    // separates almost nothing on live data (ai/AARS_SCORING_ASSESSMENT.md §3), so reading
-    // "CRITICAL" onto a card next to a real issue severity announced two lines earlier put
-    // two different scales under one word.
-    parts.push(FINDINGS_SCORE_LABEL.toLowerCase() + " " + node.aars +
-      (typeof node.aarsPercentile === "number"
-        ? ", " + ordinal(node.aarsPercentile) + " percentile"
-        : ""));
+  // The two counts, spoken in full rather than as the badge's "4·2" — a screen reader
+  // gets no help from a middot. Zero is not announced: the card draws no badge for it,
+  // and saying "0 open issues" on every quiet node in a hundred-node graph is noise.
+  if (Number(node.openIssues || 0)) parts.push(plural(Number(node.openIssues), "open issue"));
+  if (Number(node.openFindings || 0)) {
+    parts.push(plural(Number(node.openFindings), "cloud finding"));
   }
   if ((node.comboGroups || []).length) parts.push("toxic combination member");
   if (node.guardrailMissing) parts.push("no guardrail");
@@ -159,13 +156,14 @@ function drawFullCard(node, palette) {
     sevText.textContent = node.severity;
     g.append(sevText);
   }
-  if (node.aars !== undefined && node.aars !== null && !isSummary) {
-    const aars = svgEl("text", {
-      class: "gnode-aars",
+  const countText = isSummary ? "" : countBadgeText(node);
+  if (countText) {
+    const counts = svgEl("text", {
+      class: "gnode-counts",
       x: NODE_W - 10, y: 49.5, "text-anchor": "end",
     });
-    aars.textContent = scoreBadgeText(node);
-    g.append(aars);
+    counts.textContent = countText;
+    g.append(counts);
   }
 
   // "TC" toxic-combination badge (top-right corner, on the halo).
@@ -226,10 +224,11 @@ function drawCompactCard(node, palette) {
   icon.setAttribute("transform", "translate(14, 12)");
   g.append(icon);
 
-  // Line 1: name, AARS right-aligned against it. The two share the row, so the name's
-  // budget depends on whether a score is coming to sit beside it — at a flat 16 the two
-  // collided on any scored node.
-  const hasAars = node.aars !== undefined && node.aars !== null && !isSummary;
+  // Line 1: name, the count badge right-aligned against it. The two share the row, so the
+  // name's budget depends on whether a badge is coming to sit beside it — at a flat 16 the
+  // two collided on any node carrying one.
+  const smallCounts = isSummary ? "" : countBadgeText(node);
+  const hasAars = Boolean(smallCounts);
   const name = svgEl("text", { class: "gnode-name", x: 42, y: 17 });
   // The count rides in the NAME here rather than as a badge: the full card's badge sits at
   // y:-2, outside the card bounds, which clips against the compact viewBox — the same
@@ -237,16 +236,16 @@ function drawCompactCard(node, palette) {
   const label = node.kind === "DATA_FINDING" && node.summaryCount
     ? node.name + " ×" + node.summaryCount
     : isSummary ? node.name + " " + kindLabel(node.summaryOf) : node.name;
-  // 15, not the old 12: the badge shrank from "AARS 72" to "p60", and the row-sharing
-  // arithmetic above is what decides how much of the name survives.
+  // 15, not the old 12: the badge shrank from "AARS 72" to "p60" to "4·2", and the
+  // row-sharing arithmetic above is what decides how much of the name survives.
   name.textContent = truncate(label, hasAars ? 15 : 19);
   g.append(name);
   if (hasAars) {
-    const aars = svgEl("text", {
-      class: "gnode-aars", x: NODE_W_SM - 10, y: 17, "text-anchor": "end",
+    const counts = svgEl("text", {
+      class: "gnode-counts", x: NODE_W_SM - 10, y: 17, "text-anchor": "end",
     });
-    aars.textContent = scoreBadgeText(node);
-    g.append(aars);
+    counts.textContent = smallCounts;
+    g.append(counts);
   }
 
   // Line 2: kind label, severity dot + word. Toxic-combination membership rides here as

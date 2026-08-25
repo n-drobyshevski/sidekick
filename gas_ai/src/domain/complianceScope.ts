@@ -49,7 +49,7 @@
 
 import { SEVERITY_ORDER, isOpenGap, type Severity } from "./config";
 import type { FrameworkTree } from "./compliancePosture";
-import type { FindingRow, PolicyKind } from "./graphTypes";
+import type { FindingRow, FrameworkPolicyRow, PolicyKind } from "./graphTypes";
 import { frameworkFamily } from "./syncNormalize";
 import { cmp, pushInto } from "./util";
 
@@ -404,4 +404,48 @@ export function withCountsFrom(scope: FiveRsScope, trees: FrameworkTree[]): Five
     selected: policies.filter((p) => p.selected).length,
     total: policies.length,
   };
+}
+
+/**
+ * Apply a 5Rs scope's out-of-scope verdicts to a set of policy rows.
+ *
+ * Dropped from the 5Rs FRAMEWORK's rows only, never globally by policy id. A rule can be
+ * mapped by the 5Rs and by OWASP Agentic at once — that is what the cross-mapping signal
+ * is built on — and an operator who pins such a rule out is saying "not under the
+ * data-security framework", not "not anywhere". Filtering on the id alone would delete it
+ * from the AI framework that legitimately claims it, and the shared-controls band would
+ * lose the very crosswalk it exists to show.
+ *
+ * LIVES HERE, not beside one of its callers, because there are now three: the project-wide
+ * read and the project-scoped read in api.ts, and the sync that records the failing-policy
+ * COUNT into sync_history for the inventory's trend. The first two apply the same
+ * register-wide verdicts to different row sets; the third has to reach the same number the
+ * first one will report on the next read, or the chart and the figure above it would
+ * disagree about one landscape. Two copies of this filter would be two answers to "is this
+ * rule in AI scope" — and the third copy is exactly the one nobody would notice drifting.
+ */
+export function dropUnselected(
+  rows: FrameworkPolicyRow[],
+  scope: FiveRsScope,
+): FrameworkPolicyRow[] {
+  const dropped = new Set(unselectedPolicyIds(scope));
+  if (!dropped.size) return rows;
+  return rows.filter(
+    (pol) => pol.frameworkId !== scope.frameworkId || !dropped.has(pol.policyId),
+  );
+}
+
+/**
+ * Distinct policies with a failing evaluation, over the AI-scoped rows — the ONE definition
+ * of "compliance posture fails" this app publishes.
+ *
+ * Deduped by policy id because one control mapped to six subcategories is one thing to fix,
+ * not six; scoped because a 5Rs rule nothing has judged AI-relevant is not a failure of the
+ * AI landscape. `complianceKpis.failingPolicies` counts the same way over the same rows,
+ * which is what lets the stored trend point and the live KPI beside it be the same claim.
+ */
+export function failingPolicyCount(scopedPolicies: FrameworkPolicyRow[]): number {
+  const failing = new Set<string>();
+  for (const p of scopedPolicies) if (p.failCount > 0) failing.add(p.policyId);
+  return failing.size;
 }

@@ -416,4 +416,94 @@
       };
     },
   };
+
+  // ------------------------------------------------------------------- __gasFakes
+  //
+  // Save and reinstate every mutable thing the fakes above hold, so a test can get back to
+  // a known state without rebuilding the world.
+  //
+  // The alternative, and what the suite used to do, was `vi.resetModules()` plus a re-import
+  // of the server graph plus a fresh dry-run sync before EVERY test — half a megabyte of
+  // TypeScript re-executed and a whole sample landscape regenerated to undo a handful of
+  // row writes. This turns that into a copy of the grids.
+  //
+  // Object IDENTITY is preserved on purpose: `restore` writes back into the same FakeSheet,
+  // FakeFolder and FakeFile instances rather than building new ones, so a handle something
+  // memoized before the snapshot still refers to the live object afterwards. Instances
+  // created after the snapshot are dropped from the id maps, which is what makes a restore
+  // an undo rather than a merge.
+  //
+  // It lives here, with the fakes, rather than in a test-only file: these are the closures
+  // that own the state, and a second copy of this knowledge would be one more thing to keep
+  // in step.
+
+  const snapshotSheet = (sh) => ({
+    sh, name: sh._name, maxCols: sh._maxCols, grid: sh._grid.map((r) => r.slice()),
+  });
+  const restoreSheet = (s) => {
+    s.sh._name = s.name;
+    s.sh._maxCols = s.maxCols;
+    // Copied again on the way out, so one snapshot can be restored any number of times.
+    s.sh._grid = s.grid.map((r) => r.slice());
+  };
+
+  window.__gasFakes = {
+    snapshot() {
+      return {
+        props: new Map(props),
+        cache: new Map(cache),
+        triggers: triggers.slice(),
+        triggerSeq,
+        ssSeq,
+        driveSeq,
+        spreadsheets: [...spreadsheets].map(([id, ss]) => ({
+          id, ss, sheets: ss._sheets.map(snapshotSheet),
+        })),
+        driveFolders: [...driveFolders].map(([id, f]) => ({
+          id, f, name: f._name, trashed: f._trashed,
+          folders: f._folders.slice(), files: f._files.slice(),
+        })),
+        driveFiles: [...driveFiles].map(([id, f]) => ({
+          id, f, blob: f._blob, parent: f._parent, trashed: f._trashed,
+        })),
+      };
+    },
+
+    restore(snap) {
+      props.clear();
+      for (const [k, v] of snap.props) props.set(k, v);
+      cache.clear();
+      for (const [k, v] of snap.cache) cache.set(k, v);
+
+      triggers.length = 0;
+      triggers.push(...snap.triggers);
+      triggerSeq = snap.triggerSeq;
+      ssSeq = snap.ssSeq;
+      driveSeq = snap.driveSeq;
+
+      spreadsheets.clear();
+      for (const e of snap.spreadsheets) {
+        e.ss._sheets = e.sheets.map((s) => s.sh);
+        e.sheets.forEach(restoreSheet);
+        spreadsheets.set(e.id, e.ss);
+      }
+
+      driveFolders.clear();
+      for (const e of snap.driveFolders) {
+        e.f._name = e.name;
+        e.f._trashed = e.trashed;
+        e.f._folders = e.folders.slice();
+        e.f._files = e.files.slice();
+        driveFolders.set(e.id, e.f);
+      }
+
+      driveFiles.clear();
+      for (const e of snap.driveFiles) {
+        e.f._blob = e.blob;
+        e.f._parent = e.parent;
+        e.f._trashed = e.trashed;
+        driveFiles.set(e.id, e.f);
+      }
+    },
+  };
 })();

@@ -44,36 +44,6 @@ export function aarsChip(score, severity) {
   );
 }
 
-/**
- * The lead mark for a claim about ONE asset: percentile first, score second, and
- * deliberately NEVER colour-coded by the AARS band — see the `aars-band` help entry's own
- * caveat and ai/AARS_SCORING_ASSESSMENT.md §3 ("every asset above LOW is CRITICAL" on one
- * live landscape, "97.58% at INFO" on another, same rule). A percentile is a statement about
- * RANK WITHIN THIS LANDSCAPE — it moves whenever the landscape does, even when this asset's own
- * score does not — so the aria-label says so in the same words the "of the scored landscape"
- * copy gives a sighted reader.
- *
- * This is the table/sheet/badge REPLACEMENT for `aarsChip` wherever a surface makes a claim
- * about one asset. `aarsChip` itself is unchanged and stays correct where a band is a
- * MODEL diagnostic rather than a claim — the AARS trend, the AARS Rules page's band
- * movers and sandbox.
- */
-export function aarsPercentileMark(percentile, score) {
-  if (percentile === null || percentile === undefined || score === null || score === undefined) {
-    return el("span", { class: "muted small" }, "—");
-  }
-  const p = Math.round(percentile);
-  return el(
-    "span",
-    {
-      class: "aars-chip aars-chip--neutral",
-      role: "img",
-      "aria-label": `AARS ${score}, percentile ${p} of the scored landscape`,
-    },
-    el("span", { class: "aars-chip-p num" }, "P" + p),
-    el("span", { class: "aars-chip-score num" }, String(score)),
-  );
-}
 
 // ------------------------------------------------------- severity distributions
 

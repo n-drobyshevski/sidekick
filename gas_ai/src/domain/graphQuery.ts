@@ -308,18 +308,26 @@ export const QUERY_FIELDS: readonly FieldSpec[] = [
       .map((t) => (t.value ? `${t.key}: ${t.value}` : t.key))
       .join(", ")),
   },
+  // The business domain, off the resource's own Wiz/Domain tag — and `choice` where `tags`
+  // above is `pairs`, for exactly the reason stated there. A tenant has tens of domains, not
+  // thousands of key/value strings, so this one stays inside VALUE_CARDINALITY_MAX and
+  // `fieldValuesFor` can offer a real picker rather than two free-text boxes. Asking through
+  // `tags` still works and still means the same thing — this is the shorthand for the one
+  // tag key the app names, not a second source of truth.
+  { key: "domain", label: "Domain", type: "choice", get: (n) => orNull(n.domain) },
   { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
   { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
-  // Keys are the persisted identifiers and never change; the LABELS are the display name
-  // (aars.AARS_DISPLAY_LABEL) — see its comment for why the two deliberately differ.
-  { key: "aars", label: "Findings score", type: "number", numeric: true, get: (n) => (n.aars ?? null) },
+  // The two counts that replaced the score, the percentile and the level here. A query is
+  // a question about the landscape, and these are answerable from what Wiz reported;
+  // "findings score above 70" was answerable only from a model this app was still
+  // calibrating, which is why it now lives on the workbench and nowhere else.
   {
-    key: "aarsPercentile", label: "Findings percentile", type: "number", numeric: true,
-    get: (n) => (n.aarsPercentile ?? null),
+    key: "openIssues", label: "Open issues", type: "number", numeric: true,
+    get: (n) => (n.openIssues ?? 0),
   },
   {
-    key: "aarsSeverity", label: "Findings score level", type: "choice",
-    get: (n) => orNull(n.aarsSeverity),
+    key: "openFindings", label: "Cloud findings", type: "number", numeric: true,
+    get: (n) => (n.openFindings ?? 0),
   },
   {
     key: "projects", label: "Projects", type: "choice", multi: true,
@@ -600,10 +608,45 @@ const EDGE_SET = new Set<string>(EDGE_TYPES as readonly string[]);
  * execution budget before the first row.
  */
 export function validateQuery(raw: unknown): QueryNode {
-  const counter = { nodes: 0 };
-  const q = readNode(raw, 1, counter);
-  return q;
+  return validateQueryWithWarnings(raw).query;
 }
+
+/** What a validation pass accumulates besides the query: the caps, and the fields it skipped. */
+interface QueryCounter {
+  nodes: number;
+  retired: string[];
+}
+
+/**
+ * `validateQuery` plus the retired filter fields it dropped, so a caller can tell the
+ * reader their question was narrower than the answer.
+ *
+ * Separate entry point rather than a changed return type: `validateQuery` has callers that
+ * only want the query, and a query is still perfectly valid when a stale field was skipped.
+ */
+export function validateQueryWithWarnings(
+  raw: unknown,
+): { query: QueryNode; retired: string[] } {
+  const counter: QueryCounter = { nodes: 0, retired: [] };
+  const query = readNode(raw, 1, counter);
+  // Deduped: the same stale key can appear on several nodes of one query, and a reader
+  // needs to know WHICH field went, not how many times they wrote it.
+  const retired = counter.retired.filter((k, i, all) => all.indexOf(k) === i);
+  return { query, retired };
+}
+
+/**
+ * Filter fields the query vocabulary no longer offers, tolerated so an old saved view or
+ * shared link still renders.
+ *
+ * All five are the derived verdicts, which reach the model workbench and nothing else. The
+ * alternative to this set is not "a slightly wrong result" — `readNode` throws on an
+ * unknown field, so it is a blank Security Graph and an error message, for a link that
+ * used to work.
+ */
+const RETIRED_FIELDS = new Set([
+  "aars", "aarsPercentile", "aarsSeverity", "postureTier", "problemOutcome",
+]);
 
 /**
  * The kinds one node names, canonicalised so a selection has exactly one spelling.
@@ -637,7 +680,7 @@ function readKinds(raw: unknown): QueryKind | QueryKind[] {
   return out.length === 1 ? out[0] : out;
 }
 
-function readNode(raw: unknown, depth: number, counter: { nodes: number }): QueryNode {
+function readNode(raw: unknown, depth: number, counter: QueryCounter): QueryNode {
   if (!raw || typeof raw !== "object") fail("query node must be an object");
   if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
   if (++counter.nodes > MAX_QUERY_NODES) fail(`query has more than ${MAX_QUERY_NODES} nodes`);
@@ -657,7 +700,19 @@ function readNode(raw: unknown, depth: number, counter: { nodes: number }): Quer
       const values = (f as Rec)["values"];
       // `id` is not in QUERY_FIELDS — it is not a column anyone wants — but it IS the filter a
       // deep link from the inventory or a detail sheet lands on, so it is allowed by name.
-      if (typeof key !== "string" || (key !== "id" && !FIELD_BY_KEY.has(key))) {
+      if (typeof key !== "string") fail(`unknown filter field: ${String(key)}`);
+      // A RETIRED FIELD IS DROPPED, NOT REJECTED, and this is the one place in the app
+      // where that distinction decides whether a page renders at all. `fail` throws, and
+      // this validator sits in front of the whole query — so a saved view or a shared
+      // `where=` naming the score would not have degraded, it would have taken the entire
+      // Security Graph down with an "unknown filter field: aars". The filter is skipped
+      // and the caller is handed a warning to print, which is the honest version: the
+      // question was narrower than the answer now on screen, and the reader is told.
+      if (RETIRED_FIELDS.has(key)) {
+        counter.retired.push(key);
+        continue;
+      }
+      if (key !== "id" && !FIELD_BY_KEY.has(key)) {
         fail(`unknown filter field: ${String(key)}`);
       }
       if (!Array.isArray(values) || !values.length) fail(`filter ${key} has no values`);
@@ -696,7 +751,7 @@ function readNode(raw: unknown, depth: number, counter: { nodes: number }): Quer
   return node;
 }
 
-function readStep(raw: unknown, depth: number, counter: { nodes: number }): QueryStep {
+function readStep(raw: unknown, depth: number, counter: QueryCounter): QueryStep {
   if (!raw || typeof raw !== "object") fail("step must be an object");
   const r = raw as Rec;
   if (r["op"] !== undefined) return readGroup(r, depth, counter);
@@ -729,7 +784,7 @@ function readStep(raw: unknown, depth: number, counter: { nodes: number }): Quer
  * a group is built by adding it and then adding branches to it, and rejecting the intermediate
  * state would make the builder unusable for the sake of a rule nothing depends on.
  */
-function readGroup(r: Rec, depth: number, counter: { nodes: number }): GroupStep {
+function readGroup(r: Rec, depth: number, counter: QueryCounter): GroupStep {
   const op = r["op"];
   if (op !== "and" && op !== "or") fail(`unknown group operator: ${String(op)}`);
   if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);

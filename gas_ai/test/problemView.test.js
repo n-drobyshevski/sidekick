@@ -12,36 +12,40 @@ import {
 const ROWS = [
   {
     id: "iss-1", kind: "ISSUE", title: "Missing guardrail", assetName: "Bravo Agent",
-    problemOutcome: "ACT", postureTier: 4, severity: "CRITICAL", dueAt: "2026-08-01T00:00:00Z",
+    severity: "CRITICAL", dueAt: "2026-08-01T00:00:00Z",
   },
   {
     id: "cfg-1", kind: "FINDING", title: "Encryption at rest", assetName: "Alpha Store",
-    problemOutcome: "TRACK_STAR", postureTier: null, severity: "MEDIUM", dueAt: null,
+    severity: "MEDIUM", dueAt: null,
   },
   {
     id: "iss-2", kind: "ISSUE", title: "Excessive privilege", assetName: "Charlie Agent",
-    problemOutcome: "TRACK", postureTier: 2, severity: "HIGH", dueAt: "2026-08-20T00:00:00Z",
+    severity: "HIGH", dueAt: "2026-08-20T00:00:00Z",
   },
   {
-    id: "iss-3", kind: "ISSUE", title: "No verdict yet", assetName: "Delta Agent",
-    problemOutcome: "", postureTier: 1, severity: "LOW", dueAt: null,
+    id: "iss-3", kind: "ISSUE", title: "Weak TLS", assetName: "Delta Agent",
+    severity: "LOW", dueAt: null,
   },
 ];
 
 describe("URL round-trip", () => {
   it("reads a full view back out of the hash", () => {
     const state = readProblemParams({
-      outcome: "attend", kind: "finding", q: "agent", sort: "due", dir: "-1", page: "3",
+      severity: "high", kind: "finding", q: "agent", sort: "due", dir: "-1", page: "3",
     });
     expect(state).toEqual({
-      mode: "actions", outcome: "ATTEND", kind: "FINDING", q: "agent",
+      mode: "actions", severity: "HIGH", kind: "FINDING", q: "agent",
       sort: "due", dir: -1, page: 2, // 1-based in the URL, 0-based in the page
     });
   });
 
-  it("drops an outcome, kind or sort key this page doesn't offer", () => {
-    const state = readProblemParams({ outcome: "SOMETHING_ELSE", kind: "ASSET", sort: "bogus" });
-    expect(state.outcome).toBe("");
+  it("drops a severity, kind or sort key this page doesn't offer", () => {
+    // `?outcome=ACT` is among them: the decision cascade's vocabulary does not overlap
+    // this register's, so a link carrying one resolves to no filter rather than to a
+    // severity that happens to share a name.
+    const state = readProblemParams({ outcome: "ACT", severity: "SOMETHING_ELSE", kind: "ASSET", sort: "bogus" });
+    expect(state.severity).toBe("");
+    expect(state.outcome).toBeUndefined();
     expect(state.kind).toBe("");
     expect(state.sort).toBe("");
   });
@@ -53,15 +57,15 @@ describe("URL round-trip", () => {
   });
 
   it("round-trips through problemParamPatch, dropping only what is empty", () => {
-    const state = readProblemParams({ outcome: "act", q: "x", sort: "due", dir: "-1", page: "2" });
+    const state = readProblemParams({ severity: "critical", q: "x", sort: "due", dir: "-1", page: "2" });
     expect(problemParamPatch(state)).toEqual({
-      mode: "", outcome: "ACT", kind: "", q: "x", sort: "due", dir: "-1", page: "2",
+      mode: "", severity: "CRITICAL", kind: "", q: "x", sort: "due", dir: "-1", page: "2",
     });
   });
 
   it("clears dir and page from the patch once their driving state clears", () => {
     expect(problemParamPatch({})).toEqual({
-      mode: "", outcome: "", kind: "", q: "", sort: "", dir: "", page: "",
+      mode: "", severity: "", kind: "", q: "", sort: "", dir: "", page: "",
     });
   });
 });
@@ -101,8 +105,8 @@ describe("mode round-trip", () => {
 });
 
 describe("applyProblemFilters", () => {
-  it("filters by outcome", () => {
-    const filtered = applyProblemFilters(ROWS, { outcome: "ACT" });
+  it("filters by severity", () => {
+    const filtered = applyProblemFilters(ROWS, { severity: "CRITICAL" });
     expect(filtered.map((r) => r.id)).toEqual(["iss-1"]);
   });
 
@@ -117,7 +121,7 @@ describe("applyProblemFilters", () => {
   });
 
   it("ANDs every active dimension", () => {
-    const filtered = applyProblemFilters(ROWS, { kind: "ISSUE", outcome: "TRACK" });
+    const filtered = applyProblemFilters(ROWS, { kind: "ISSUE", severity: "HIGH" });
     expect(filtered.map((r) => r.id)).toEqual(["iss-2"]);
   });
 
@@ -127,27 +131,32 @@ describe("applyProblemFilters", () => {
 });
 
 describe("problemFilterOptions", () => {
-  it("lists only the outcomes and kinds actually present, outcomes worst-first", () => {
+  it("lists only the severities and kinds actually present, worst-first", () => {
     const options = problemFilterOptions(ROWS);
-    expect(options.outcomes).toEqual(["ACT", "TRACK_STAR", "TRACK"]);
+    expect(options.severities).toEqual(["CRITICAL", "HIGH", "MEDIUM", "LOW"]);
     expect(options.kinds).toEqual(KIND_VALUES); // both ISSUE and FINDING appear
   });
 
-  it("never lists the undecided ('') outcome as a pill", () => {
+  it("never lists an unrated ('') severity as a pill", () => {
     const options = problemFilterOptions(ROWS);
-    expect(options.outcomes).not.toContain("");
+    expect(options.severities).not.toContain("");
   });
 });
 
 describe("PROBLEM_COMPARATORS / sortProblems", () => {
-  it("priority: worst outcome (ACT) first, undecided last", () => {
-    const sorted = sortProblems(ROWS, "priority", 1);
-    expect(sorted.map((r) => r.id)).toEqual(["iss-1", "cfg-1", "iss-2", "iss-3"]);
+  it("severity: worst (CRITICAL) first, unrated last", () => {
+    const sorted = sortProblems(ROWS, "severity", 1);
+    expect(sorted.map((r) => r.id)).toEqual(["iss-1", "iss-2", "cfg-1", "iss-3"]);
   });
 
-  it("posture: worst tier (4) first, unscored last", () => {
-    const sorted = sortProblems(ROWS, "posture", 1);
-    expect(sorted.map((r) => r.id)).toEqual(["iss-1", "iss-2", "iss-3", "cfg-1"]);
+  it("firstSeen: oldest first, undated last", () => {
+    const rows = [
+      { id: "newer", firstSeenAt: "2026-06-01T00:00:00Z" },
+      { id: "undated" },
+      { id: "older", firstSeenAt: "2026-04-01T00:00:00Z" },
+    ];
+    expect(sortProblems(rows, "firstSeen", 1).map((r) => r.id))
+      .toEqual(["older", "newer", "undated"]);
   });
 
   it("severity: worst first", () => {
@@ -178,7 +187,7 @@ describe("PROBLEM_COMPARATORS / sortProblems", () => {
 
   it("does not mutate its input", () => {
     const input = ROWS.slice();
-    sortProblems(input, "priority", 1);
+    sortProblems(input, "severity", 1);
     expect(input.map((r) => r.id)).toEqual(ROWS.map((r) => r.id));
   });
 
@@ -189,10 +198,15 @@ describe("PROBLEM_COMPARATORS / sortProblems", () => {
   });
 
   it("flags the risk columns as naturally-descending", () => {
-    // `rank` joined these on 2026-08-23 for the same reason the other three are here: a
-    // higher score is a worse row, so the first click must show the worst first. The contrast
-    // the case actually guards is `due`, which opens soonest-first and so stays out.
-    expect(PROBLEM_SORT_DESC).toEqual({ priority: true, posture: true, severity: true, rank: true });
+    // `rank` joined `severity` here in the merge that brought main's Priorities model onto
+    // this branch. THE CLAIM THIS ASSERTION USED TO ENCODE was "severity is the only
+    // descending column", which was true on main because main has no `rank` comparator. The
+    // merged tree does have one — the three cases below this block exercise it, and one of
+    // them asserts PROBLEM_SORT_DESC.rank is true — so the exhaustive form contradicted a
+    // sibling case rather than describing the code. A comparator that sorts worst-first has
+    // to be flagged descending or the first click shows the BEST row first, which is the
+    // same reason severity is here.
+    expect(PROBLEM_SORT_DESC).toEqual({ severity: true, rank: true });
     expect(PROBLEM_COMPARATORS.due).toBeTypeOf("function");
     expect(PROBLEM_SORT_DESC.due).toBeUndefined(); // due opens soonest-first, i.e. ascending
   });

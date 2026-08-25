@@ -86,12 +86,17 @@
    horizontal scrollbar inside the drawer at phone widths. */
 .sheet-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
 
-/* The record's headline number — the one hero value per sheet, and always a data value. */
-.sheet-verdict { display: flex; align-items: baseline; gap: 10px; margin: var(--space-3) 0 var(--space-half); }
-.aars-total {
+/* The record's headline numbers — always data values, never a grade. Two of them now
+   (open issues, cloud findings), so the row gets a wider gap between the pairs than
+   within them: `gap` separates a number from its own noun, and the margin-left on the
+   second number is what keeps "4 open issues" and "1 cloud finding" reading as two
+   phrases rather than four loose words. */
+.sheet-verdict { display: flex; align-items: baseline; gap: 6px; margin: var(--space-3) 0 var(--space-half); flex-wrap: wrap; }
+.sheet-count {
   font-size: var(--fs-hero); font-weight: 600; line-height: 1.1; letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
+.sheet-count + .muted + .sheet-count { margin-left: 18px; }
 .sheet-caption { color: var(--text-3); font-size: var(--fs-label); margin: var(--space-half) 0 0; }
 
 /* List rows. `button` where the row leads somewhere, so it is reachable by keyboard. */
