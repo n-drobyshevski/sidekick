@@ -19,13 +19,20 @@
 //   no attribution inputs  → NOT_ATTRIBUTABLE                   source "missing"
 //
 // The third state is the population `hasDomainInputs` identifies: compacted episodes and
-// pre-v5 / imported resolved history, which carry no name, no subscription and no tags and so
-// could never have matched anything. They used to be DROPPED from the MTTR split behind a
-// footnote, precisely because counting them as UNASSIGNED "would swamp the breakdown with a
-// giant fake Unassigned domain that has no counterpart on the live Attribution page". Naming
-// them instead solves that better than dropping did: UNASSIGNED goes back to meaning only the
-// actionable "had a chance and matched nothing" population, the unattributable rows stay
-// visible in every figure they affect, and nothing is quietly missing from a total.
+// pre-v5 / imported resolved history, which carry no name, no subscription and no tags, so
+// there is nothing for any mechanism to read. They used to be DROPPED from the MTTR split
+// behind a footnote, precisely because counting them as UNASSIGNED "would swamp the breakdown
+// with a giant fake Unassigned domain that has no counterpart on the live Attribution page".
+// Naming them instead solves that better than dropping did: UNASSIGNED goes back to meaning
+// only the actionable "had a chance and matched nothing" population, the unattributable rows
+// stay visible in every figure they affect, and nothing is quietly missing from a total.
+//
+// READ IT AS "NO INPUT SURVIVED", NOT "NO INPUT EVER EXISTED" — this bucket is smaller than it
+// looks and shrinks without an operator doing anything. The vulnerability query fetches
+// `status: [OPEN, RESOLVED]`, so Wiz keeps re-listing these sealed lifecycles with their
+// resource's full tag bag; `reconcileEpisodeCollisions` takes the bag off the re-listed row
+// before dropping it, and the history backfill recovers the rest from the scan archives. What
+// stays here is what nothing we can still read holds an input for.
 //
 // RESOLVED ON READ, never baked. `WIZ_DOMAIN_TAG_KEY` is a Script Property and the rules are a
 // settings blob; both must stay correctable without a re-scan.

@@ -246,7 +246,7 @@ def test_assign_domains_ledger_support_group_vectorized_parity():
         assert dr.assign_domain(rec, compiled) == want
 
 
-def test_compacted_episode_rows_are_pinned_unassigned():
+def test_no_name_regex_can_match_the_compacted_placeholder():
     # a greedy regex that would match anything, incl. the placeholder
     items = [_domain("Greedy", [rx(".")])]
     df = _ledger_df([
@@ -255,6 +255,43 @@ def test_compacted_episode_rows_are_pinned_unassigned():
     ])
     got = dr.assign_domains_ledger(df, dr.compile_domains(items))
     assert list(got) == [dr.UNASSIGNED, "Greedy"]
+    # and the per-record path agrees, which is the point of filtering the sentinel out of
+    # the name pool in both rather than pinning the record in one of them
+    compiled = dr.compile_domains(items)
+    assert dr.assign_domain({"asset_name": "(compacted)"}, compiled) == dr.UNASSIGNED
+
+
+def test_compacted_episode_with_a_tag_bag_is_claimable_by_a_tag_rule():
+    """THE CLAIM THIS TEST REPLACED, and why it was wrong.
+
+    This assertion used to read "compacted episode rows are PINNED Unassigned" — the whole
+    record short-circuited before a single condition ran. The claim it encoded was that an
+    episode has no rule inputs at all, which stopped being true when ``tags_json`` was
+    carried through compaction precisely so a sealed lifecycle keeps the bag its domain is
+    read from. The guard was wider than its own stated reason ("a name regex must never
+    match the placeholder"), and the excess disqualified the ``tag`` conditions on exactly
+    the rows the bag was preserved for.
+
+    Measurement falsifying the old claim: with the guard narrowed to the name pool, the
+    pinned golden vector in ``gas/test/fixtures/domain_rules.json`` regenerates
+    byte-identical — the record it pins carries no tags, so nothing an operator has today
+    moves. Only rows with a recovered bag change, and they change from wrong to right.
+    """
+    items = [_domain("Payments", [tag("team", "payments")])]
+    compiled = dr.compile_domains(items)
+    df = _ledger_df([
+        {"asset_name": "(compacted)", "tags_json": json.dumps({"team": "payments"})},
+        {"asset_name": "(compacted)", "tags_json": json.dumps({"team": "other"})},
+        {"asset_name": "(compacted)"},
+    ])
+    assert list(dr.assign_domains_ledger(df, compiled)) == [
+        "Payments", dr.UNASSIGNED, dr.UNASSIGNED,
+    ]
+    # per-record parity on the same three rows
+    assert [
+        dr.assign_domain(r, compiled)
+        for r in df.to_dict("records")
+    ] == ["Payments", dr.UNASSIGNED, dr.UNASSIGNED]
 
 
 def test_ledger_null_inputs_only_name_regex_can_classify():

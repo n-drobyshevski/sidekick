@@ -52,9 +52,9 @@ describe("resolveDomain — the precedence table", () => {
   });
 
   it("names a row with no attribution input at all rather than calling it Unassigned", () => {
-    // A compacted episode: the placeholder asset name, no subscription, no tags. It could never
-    // have matched anything, so counting it as Unassigned would swamp that bucket with a
-    // population no operator can act on.
+    // A compacted episode: the placeholder asset name, no subscription, no tags. Nothing any
+    // mechanism reads survives on it, so counting it as Unassigned would swamp that bucket
+    // with a population no operator can act on.
     const episode = { asset_name: "(compacted)", tags_json: null };
     expect(resolveDomain(episode, COMPILED)).toEqual({
       name: NOT_ATTRIBUTABLE, source: "missing",
@@ -67,6 +67,21 @@ describe("resolveDomain — the precedence table", () => {
     // — exactly what the tags_json backfill recovers — to Not attributable.
     const episode = { asset_name: "(compacted)", tags_json: JSON.stringify({ "Wiz/Domain": "SAP" }) };
     expect(resolveDomain(episode, COMPILED)).toEqual({ name: "SAP", source: "tag" });
+  });
+
+  it("lets a MANUAL RULE claim a compacted episode whose bag has no Wiz/Domain key", () => {
+    // The leg the tag test above cannot cover, and the one that was silently impossible: a
+    // recovered bag with no `Wiz/Domain` key falls past the tag stage into the rules, where
+    // `assignDomain` used to pin every `(compacted)` row to Unassigned before evaluating a
+    // single condition. Carrying the bag through compaction bought nothing for such a row
+    // until that guard was narrowed to the name-regex pool it was written for.
+    const items = [
+      { name: "Payments", rules: [{ conditions: [{ type: "tag", key: "team", value: "payments" }] }] },
+    ];
+    const episode = { asset_name: "(compacted)", tags_json: JSON.stringify({ team: "payments" }) };
+    expect(resolveDomain(episode, compileDomains(items))).toEqual({
+      name: "Payments", source: "rule",
+    });
   });
 
   it("honors a non-default tag key", () => {
