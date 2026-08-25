@@ -38,6 +38,9 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "reopened_count", "compaction_id", "superseded_by_scan",
     "fix_date", "fix_observed_at",
     "has_kev", "has_exploit", "epss", "risk_observed_at",
+    // The resource's tag bag, carried through compaction so a sealed episode keeps the
+    // `Wiz/Domain` tag its domain is read from. See the comment on EpisodeRow.
+    "tags_json",
   ],
   [TABS.compactions]: [
     "compaction_id", "ts", "floor_scan_id", "floor_ts", "scans_sealed",

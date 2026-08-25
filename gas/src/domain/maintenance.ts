@@ -22,6 +22,8 @@ import {
   type LedgerState,
   type ScanRow,
 } from "./ledgerCore";
+import { DEFAULT_DOMAIN_TAG_KEY, domainOfTags } from "./domainTag";
+import { recordTags } from "./domainRules";
 import { mttrFromLedger, vulnKey } from "./lifecycle";
 import { mergeRiskSignals, type LedgerRow, type Observation } from "./reconcile";
 import { extractNodes } from "./transform";
@@ -151,6 +153,9 @@ export function toEpisodeRow(live: LedgerRow, compactionId: string): EpisodeRow 
     has_exploit: live.has_exploit ?? null,
     epss: live.epss ?? null,
     risk_observed_at: live.risk_observed_at ?? null,
+    // And the tag bag, for the same reason one tier over: a sealed episode is still a
+    // remediated lifecycle that the by-domain split has to be able to attribute.
+    tags_json: live.tags_json ?? null,
   };
 }
 
@@ -365,6 +370,38 @@ function trendOf(state: LedgerState, now: number): unknown {
 }
 
 /**
+ * How many rows carry each attribution INPUT — the fourth leg of the stats-identity gate.
+ *
+ * THE GATE HAD A HOLE EXACTLY THIS SHAPE ONCE ALREADY. The risk columns were dropped by
+ * compaction and the metric moved silently, because nothing in the gate looked at them; the
+ * comment on EpisodeRow's `has_kev` records that. `tags_json` was in the same position until
+ * this release — it is where the `Wiz/Domain` tag lives, and therefore where every by-domain
+ * figure comes from — so it gets its own leg rather than an assurance that the carry-through
+ * is right.
+ *
+ * IT CHECKS THE TAG AND NOTHING ELSE, and the exclusions are the point rather than an
+ * oversight. Compaction deliberately sheds `asset_name` (to the `(compacted)` sentinel) and
+ * the subscription columns — that is what an episode IS, and it is why `hasDomainInputs`
+ * exists — so a leg that counted those would abort every compaction ever run. What compaction
+ * now PROMISES to preserve is the tag bag, so that is what the gate holds it to.
+ *
+ * It counts under the DEFAULT tag key rather than the configured one, for the same reason
+ * `coverageOf` pins DEFAULT_RISK_RULE: the invariant must hold under ANY configuration, so it
+ * is tested against a fixed one. Both figures are kept — a bag that survived and a domain that
+ * resolves out of it are different failures, and a gate that reported only the second could
+ * not tell a dropped column from a mangled one.
+ */
+function attributionOf(state: LedgerState, now: number): unknown {
+  let bagged = 0;
+  let domained = 0;
+  for (const r of baseRows(state, now)) {
+    if (r.tags_json) bagged += 1;
+    if (domainOfTags(recordTags(r as unknown as Rec), DEFAULT_DOMAIN_TAG_KEY)) domained += 1;
+  }
+  return { bagged, domained };
+}
+
+/**
  * Plan (and optionally apply) a compaction — the pure core of ledger.compact_ledger.
  * The dry-run preview and the real run compute identical numbers; obsCountByScan
  * supplies each candidate scan's observation count (read from Drive obs files) and
@@ -447,6 +484,7 @@ export function compactLedgerCore(
   const beforeMttr = mttrFromLedger(openAndResolved(state), { now: nowMs });
   const beforeTrend = trendOf(state, nowMs);
   const beforeCoverage = coverageOf(state, nowMs);
+  const beforeAttribution = attributionOf(state, nowMs);
 
   const applied: LedgerState = {
     scans: state.scans.map((r) =>
@@ -485,6 +523,13 @@ export function compactLedgerCore(
   if (!statsEqual(beforeCoverage, coverageOf(applied, nowMs))) {
     throw new LedgerRebuildError(
       "Compaction aborted: coverage/efficiency would change — rolled back.",
+    );
+  }
+  // Attribution gets the same treatment for the same reason. Its own message, so an abort
+  // names the metric that moved rather than sending a reader through three candidates.
+  if (!statsEqual(beforeAttribution, attributionOf(applied, nowMs))) {
+    throw new LedgerRebuildError(
+      "Compaction aborted: domain attribution would change — rolled back.",
     );
   }
 
@@ -543,6 +588,48 @@ export function emptyBackfillResult(): BackfillResult {
     episodeRowsTouched: 0,
     stillUnknown: 0,
   };
+}
+
+export interface TagBackfillResult {
+  /** Episodes that gained a tag bag they did not have. */
+  recovered: number;
+  /** Episodes that already carried one — the re-run case. */
+  alreadyHad: number;
+  /** Episodes the checkpoint chain does not hold, which stay Not attributable. */
+  unrecoverable: number;
+}
+
+/**
+ * Recover `tags_json` for episodes sealed before the column existed, from a checkpoint blob.
+ *
+ * WHY THIS IS ONE PASS AND NOT AN ARCHIVE WALK. The risk backfill below replays every scan
+ * archive because exploit signals live on the RECORDS. A tag bag lives on the LEDGER ROW, and
+ * `buildCheckpoint` seeds each checkpoint from the previous one — so the newest checkpoint is
+ * cumulative and holds every row compaction ever converted, with its tags. One blob read
+ * answers the whole question. (The raw scan archives could not answer it anyway: they are
+ * trashed for sealed scans, which is exactly the population needing recovery.)
+ *
+ * IDEMPOTENT, and the counters say which case each episode hit rather than reporting one total
+ * that a second run would silently halve. A row already carrying a bag is never overwritten:
+ * the live ledger's value is at least as fresh as the checkpoint's.
+ *
+ * An episode the checkpoint does not hold is left alone and counted. That is the honest
+ * outcome for history imported from a legacy bundle, which never had tags to lose.
+ */
+export function backfillTagsFromCheckpoint(
+  state: LedgerState,
+  checkpoint: Checkpoint | null,
+): TagBackfillResult {
+  const out: TagBackfillResult = { recovered: 0, alreadyHad: 0, unrecoverable: 0 };
+  const byKey = new Map<string, LedgerRow>();
+  for (const row of checkpoint?.ledger ?? []) byKey.set(row.vuln_key, row);
+  for (const e of state.episodes) {
+    if (e.tags_json) { out.alreadyHad += 1; continue; }
+    const tags = byKey.get(e.vuln_key)?.tags_json ?? null;
+    if (tags) { e.tags_json = tags; out.recovered += 1; }
+    else out.unrecoverable += 1;
+  }
+  return out;
 }
 
 /**

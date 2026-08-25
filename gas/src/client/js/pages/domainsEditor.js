@@ -79,7 +79,8 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
     refreshDirty();
     if (!items.length) {
       listHost.append(el("p", { class: "muted small" },
-        "No manual groups defined — every finding shows as Unassigned."));
+        "No manual groups defined — findings the Wiz/Domain tag doesn't cover show as "
+        + "Unassigned."));
       return;
     }
     items.forEach((item, i) => {

@@ -12,7 +12,8 @@
 // chunk reads as a miss. Everything degrades to compute() on any cache failure.
 
 import { sha1Hex } from "../domain/sha1";
-import { getProp, setProp } from "./props";
+import { resolveDomainTagKey } from "../domain/domainTag";
+import { getProp, PROP_KEYS, setProp } from "./props";
 
 const VERSION_PROP = "DATA_VERSION";
 const KEY_PREFIX = "wsk";
@@ -31,6 +32,24 @@ const DEFAULT_TTL_SEC = 21_600; // the CacheService maximum (6 h)
 /** Monotonic-enough stamp of the last mutation; part of every cache key. */
 export function dataVersion(): string {
   return getProp(VERSION_PROP) ?? "0";
+}
+
+/**
+ * The `Wiz/Domain` tag key in force, folded into every cache key beside the data version.
+ *
+ * IT BELONGS IN THE GLOBAL KEY, not in one endpoint's params, because it changes WHICH TAG
+ * EVERY ROW IS READ FROM — and through `resolveDomain` that is now the principal input to
+ * `_domain`, so it moves the domain split on essentially every cached payload in the app. It is
+ * a Script Property, so `DATA_VERSION` never bumps for it: an operator who corrects a mistyped
+ * key would otherwise watch the knob do nothing for up to six hours while every entry computed
+ * under the old key stayed reachable. One endpoint used to carry it in its own params, which
+ * covered that endpoint and no other.
+ *
+ * Read through `getProp`'s cache and folded in as a short hash so the key stays under the
+ * 250-char cap — the key is opaque, and only its stability matters.
+ */
+function domainTagStamp(): string {
+  return sha1Hex(resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey))).slice(0, 8);
 }
 
 /** Call after every mutation commit (persist/delete/compact/settings/snapshot). */
@@ -103,7 +122,7 @@ export function cached<T>(
 ): T {
   let key: string | null = null;
   try {
-    key = cacheKey(name, params, `${BUILD_ID}.${dataVersion()}`);
+    key = cacheKey(name, params, `${BUILD_ID}.${dataVersion()}.${domainTagStamp()}`);
     const hit = cacheGetJson(key);
     if (hit !== undefined) return hit as T;
   } catch (e) {

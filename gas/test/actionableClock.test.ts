@@ -105,7 +105,7 @@ describe("withDerived actionable clock", () => {
       vuln_key: "id:ep", cve: "CVE-2026-9", severity: "HIGH",
       first_seen: "2026-07-04T00:00:00Z", resolved_at: "2026-07-18T00:00:00Z",
       resolution_src: "api", reopened_count: 0, compaction_id: "cmp",
-      superseded_by_scan: null, fix_date: "2026-07-10T00:00:00Z",
+      superseded_by_scan: null, tags_json: null, fix_date: "2026-07-10T00:00:00Z",
       fix_observed_at: "2026-07-08T00:00:00Z", ...emptyRiskSignals(),
     });
     const d = baseRows(state, NOW).find((r) => r.vuln_key === "id:ep")!;

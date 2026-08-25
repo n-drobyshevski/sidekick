@@ -17,17 +17,21 @@ import {
 const RESOLUTION_LABELS = ["≤1d", "2–7d", "8–30d", "31–90d", "90+d"];
 
 // The breakdown section (renderByDomain) serves two dimensions from one renderer, chosen by
-// the server payload's `dimension`: per-manual-group at the unscoped view, per-support-group
-// when a manual group is selected (that split would be a single row then). These carry the
+// the server payload's `dimension`: per-domain at the unscoped view, per-support-group
+// when a domain is selected (that split would be a single row then). These carry the
 // visible copy; the group-name reads go through a `.group ?? .domain` accessor so the same code
 // paints both. Keep the phrasing parallel so the two views read the same.
+//
+// "By domain", not "By manual group": the split is over the RESOLVED domain — the `Wiz/Domain`
+// tag where the tenant wrote one, a manual group where it did not — so naming it after the
+// fallback mechanism would describe the smaller half of its own rows.
 const DOMAIN_DIM = {
-  noun: "manual group",
-  Noun: "Manual group",
-  title: "By manual group",
-  subtitle: "Per-group remediation — each manual group's contribution to the overall MTTR, its "
+  noun: "domain",
+  Noun: "Domain",
+  title: "By domain",
+  subtitle: "Per-domain remediation — each domain's contribution to the overall MTTR, its "
     + "median vs the register, the KM median trend, and a full breakdown table.",
-  sheetSubtitle: "Remediation for each manual group in the register.",
+  sheetSubtitle: "Remediation for each domain in the register.",
 };
 const SUPPORT_GROUP_DIM = {
   noun: "support group",
@@ -232,8 +236,7 @@ export async function renderMttr(main, _params, ctx) {
   );
 
   const scopeChips = scopeBar({
-    domain: ctx.domain, supportGroup: ctx.supportGroup, bizDomain: ctx.bizDomain,
-    onClear: ctx.clearScope,
+    domain: ctx.domain, supportGroup: ctx.supportGroup, onClear: ctx.clearScope,
   });
   if (scopeChips) main.append(scopeChips);
 
@@ -244,11 +247,10 @@ export async function renderMttr(main, _params, ctx) {
   const byDomainHost = el("div", {});
   main.append(heroHost, chartsHost, survivalHost, slaHost, byDomainHost);
 
-  // Scope comes from the header switcher — a manual group, a VC domain or a support group,
-  // at most one of them; "" = no filter on that dimension.
+  // Scope comes from the header switcher — a domain or a support group, at most one of them;
+  // "" = no filter on that dimension.
   const domain = ctx.domain || "";
   const supportGroup = ctx.supportGroup || "";
-  const bizDomain = ctx.bizDomain || "";
 
   // Trends timeframe (days back from now; null = full history). Recalled from
   // localStorage across visits; falls back to All where storage is unavailable.
@@ -283,7 +285,7 @@ export async function renderMttr(main, _params, ctx) {
     // real layout so the swap to live content doesn't reflow; by-domain stays cleared.
     renderMttrSkeleton({ heroHost, chartsHost, survivalHost, slaHost });
     clear(byDomainHost);
-    const params = { domain, supportGroup, bizDomain, severities: scopeParam() };
+    const params = { domain, supportGroup, severities: scopeParam() };
 
     // Progressive paint over two parallel RPCs that share the same server cache entries
     // getMttrPage's slices use (so a warm revisit is still a single-shot repaint):
@@ -663,18 +665,12 @@ export async function renderMttr(main, _params, ctx) {
         + `these ${dim.noun}s are awaiting a vendor fix — excluded from Open past SLA until a fix appears.`)
       : null;
 
-    // Resolved history the server set aside for carrying no domain inputs — compacted episodes
-    // and imported/pre-triage rows that could only ever read as Unassigned. Kept out of the
-    // split so the breakdown isn't swamped by a fake Unassigned domain with no live counterpart;
-    // this note keeps the set-aside population honest. Optional-chained so a stale payload
-    // lacking `excluded` degrades to no note rather than throwing.
-    const excludedResolved = byDomain.excluded?.resolved ?? 0;
-    const excludedNote = excludedResolved > 0
-      ? el("p", { class: "small muted", style: "margin:8px 0 0" },
-        `${excludedResolved.toLocaleString()} resolved finding${excludedResolved === 1 ? "" : "s"} `
-        + "from sealed history are excluded from this breakdown — they carry no rule inputs and "
-        + "can't be attributed to a manual group.")
-      : null;
+    // NOTHING IS SET ASIDE ANY MORE, and this is where a footnote used to say otherwise.
+    // Resolved history carrying no attribution input — compacted episodes and imported rows —
+    // was dropped from the split and reported here, because counting it as Unassigned would
+    // have swamped the breakdown with a bucket that has no live counterpart. It now gets a
+    // bucket of its own, "Not attributable", sorted last, so the population is a row you can
+    // read rather than a number in a note under a table it is missing from.
 
     // Progressive disclosure: the whole breakdown opens in a right-drawer instead of
     // stacking on the page. openSheet calls renderBody synchronously, so the paint rAF
@@ -682,7 +678,6 @@ export async function renderMttr(main, _params, ctx) {
     function renderBody(body) {
       body.append(chartPair, tableWrap);
       if (footnote) body.append(footnote);
-      if (excludedNote) body.append(excludedNote);
       requestAnimationFrame(() => {
         applyLens(byDomainLens); // paints the active lens (contribution or median)
         paintLine();
@@ -720,10 +715,15 @@ export async function renderMttr(main, _params, ctx) {
     }
     const hist = trends.history;
     const prev = hist.length > 1 ? hist[hist.length - 2] : null;
-    // The prev snapshot (mttr_history) is global across chain/support/severity, while the
+    // The prev snapshot (mttr_history) is global across domain/support/severity, while the
     // current values are scoped by the active filters. Diffing them would show a fake delta
     // (a small domain's 5d vs the global 45d prev reads as "−40d"), so only show the change
-    // chips at the unscoped whole-chain / all-severities view where the populations match.
+    // chips at the unscoped whole-register / all-severities view where the populations match.
+    // EVERY SCOPE THE SHELL CAN HOLD HAS TO BE LISTED HERE, and for one release one was not:
+    // the VC Domain dimension was threaded through this page's RPC but never joined this
+    // predicate, so a domain-scoped median was diffed against the whole-register snapshot and
+    // drew exactly the fake "−40d" the paragraph above warns about. That dimension has since
+    // merged into `domain`; the lesson is that this line is part of adding a scope.
     // The vendor-fix filter folds in too: with it off, the current values exclude no-fix
     // findings while mttr_history's snapshots never did, so a chip would diff filtered
     // against unfiltered populations exactly like a domain/support/severity scope would.
