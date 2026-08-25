@@ -22,7 +22,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
   const fold = (s) => String(s).trim().toLowerCase();
 
   const listHost = el("div", {});
-  const addBtn = el("button", { onclick: () => openEditor(null) }, "Add domain");
+  const addBtn = el("button", { onclick: () => openEditor(null) }, "Add manual group");
   const exportBtn = el("button", { onclick: exportJson }, "Export JSON");
   const fileInput = el("input", {
     type: "file", accept: "application/json", style: "display:none",
@@ -30,7 +30,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
   });
   fileInput.addEventListener("change", importJson);
   const importBtn = el("button", { onclick: () => fileInput.click() }, "Import JSON");
-  const saveBtn = el("button", { class: "primary", onclick: save }, "Save domains");
+  const saveBtn = el("button", { class: "primary", onclick: save }, "Save manual groups");
   const dirtyHost = el("span", { style: "display:inline-flex; align-items:center; margin-left:2px" });
   host.append(listHost, el("div",
     { style: "display:flex; gap:8px; margin-top:10px; align-items:center" },
@@ -62,16 +62,16 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
       return;
     }
     const ok = await confirmDialog({
-      title: "Replace all domains?",
+      title: "Replace all manual groups?",
       body: `Import ${res.items.length} domain(s), replacing the current list of ` +
-        `${items.length}. Nothing is stored until you press Save domains.`,
+        `${items.length}. Nothing is stored until you press Save manual groups.`,
       confirmLabel: "Replace",
       danger: true,
     });
     if (!ok) return;
     items = res.items;
     renderList();
-    toast(`Imported ${res.items.length} domain(s) — press Save domains to persist.`);
+    toast(`Imported ${res.items.length} manual group(s) — press Save manual groups to persist.`);
   }
 
   function renderList() {
@@ -79,7 +79,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
     refreshDirty();
     if (!items.length) {
       listHost.append(el("p", { class: "muted small" },
-        "No domains defined — every finding shows as Unassigned."));
+        "No manual groups defined — every finding shows as Unassigned."));
       return;
     }
     items.forEach((item, i) => {
@@ -112,8 +112,8 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
   async function remove(i) {
     const ok = await confirmDialog({
       title: `Delete domain “${items[i].name}”?`,
-      body: "Findings it claimed fall through to lower-priority domains or Unassigned. " +
-        "Not saved until you press Save domains.",
+      body: "Findings it claimed fall through to lower-priority manual groups or Unassigned. " +
+        "Not saved until you press Save manual groups.",
       confirmLabel: "Delete",
       danger: true,
     });
@@ -132,7 +132,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
         toast(res.errors[0] || "Validation failed.", "warn");
         return;
       }
-      toast("Domains saved.");
+      toast("Manual groups saved.");
       ctx.refresh();
     } catch (e) {
       toast(`Save failed: ${e.message}`, "error");
@@ -157,7 +157,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
     }
 
     const nameInput = el("input", { type: "text", value: editing.name,
-      placeholder: "e.g. Payments", "aria-label": "Domain name", style: "width:100%" });
+      placeholder: "e.g. Payments", "aria-label": "Manual group name", style: "width:100%" });
     const rulesHost = el("div", { class: "rules-host" });
     const previewHost = el("div", { class: "rule-preview", "aria-live": "polite" },
       el("span", { class: "rule-preview__text small muted" }, "Matching…"));
@@ -479,7 +479,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
       return;
     }
     const NEW_DOMAIN = "__new__";
-    const select = el("select", { "aria-label": "Domain to add a rule to" },
+    const select = el("select", { "aria-label": "Manual group to add a rule to" },
       ...items.map((item, i) => el("option", { value: String(i) }, item.name)),
       el("option", { value: NEW_DOMAIN }, "New domain…"),
     );
@@ -488,7 +488,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
       el("div", { class: "dialog-scroll" },
         el("p", { class: "small muted" },
           "Add a rule for this resource to an existing domain, or start a new one."),
-        el("label", { class: "field-label" }, "Domain"),
+        el("label", { class: "field-label" }, "Manual group"),
         select,
       ),
       el("div", { class: "dialog-actions" },

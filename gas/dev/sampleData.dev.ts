@@ -119,6 +119,18 @@ const CLOUDS: Array<[string, string, string]> = [
 ];
 const OSES = ["Ubuntu", "Ubuntu", "Ubuntu", "Amazon Linux", "Debian"];
 
+// The business domains the tenant writes on resources as `Wiz/Domain` (see
+// src/domain/domainTag.ts). DELIBERATELY PARTIAL: every fourth asset carries no domain tag at
+// all, because a fleet where everything is tagged would make the header switcher's coverage
+// figure ("N carry no Wiz/Domain tag") permanently read zero — and that figure is the whole
+// defence against reading a thin Domains group as a fact about the tenant. A seed that can
+// only exercise the happy path is a seed that hides the case worth seeing.
+//
+// They cut ACROSS the roles that drive the value chains on purpose: a domain that lined up
+// with a value chain would make the two dimensions look like two spellings of one thing, and
+// the switcher lists them separately precisely because they can disagree.
+const DOMAINS = ["CROSS", "SAP", "RETAIL", "SUPPLY"];
+
 const ASSETS: AssetSpec[] = Array.from({ length: 26 }, (_, i) => {
   const role = ROLES[i % ROLES.length];
   const [cloud, sub, subExt] = CLOUDS[Math.floor(rnd() * CLOUDS.length)];
@@ -133,7 +145,17 @@ const ASSETS: AssetSpec[] = Array.from({ length: 26 }, (_, i) => {
     os: pick(OSES),
     sub, subExt,
     subId: `sub-${subExt}`,
-    tags: { env, team: pick(["platform", "sre", "app", "data"]), owner: pick(["sre", "secops", "core"]) },
+    tags: {
+      env,
+      team: pick(["platform", "sre", "app", "data"]),
+      owner: pick(["sre", "secops", "core"]),
+      // Keyed off `i` rather than off the seeded RNG so which assets are untagged is stable
+      // and inspectable, and on a modulus COPRIME with DOMAINS.length so the untagged set
+      // cuts across the domains instead of eating one of them: at `i % 4` the untagged assets
+      // were exactly the ones that would have been SUPPLY, and the fourth domain never
+      // appeared in the switcher at all.
+      ...(i % 5 === 3 ? {} : { "Wiz/Domain": DOMAINS[i % DOMAINS.length] }),
+    },
     // Exposure is a per-asset fact, set deterministically by role so one asset never
     // shows contradictory exposure across findings (templates carried random values).
     wide: role === "edge-proxy" || role === "web-prod",

@@ -54,7 +54,7 @@ function deltaChip(current, previous) {
 // Groupable dimensions for the multi-level Breakdown table (value -> label). Mirrors
 // GROUP_COLUMNS in src/domain/insights.ts (the client bundle can't import the TS module).
 const GROUP_DIMENSIONS = [
-  ["domain", "Domain"],
+  ["domain", "Manual group"],
   ["supportGroup", "Support group"],
   ["asset", "Asset"],
   ["atype", "Asset type"],
@@ -71,7 +71,7 @@ const OLDEST_VIEWS = [
   ["findings", "Findings"],
   ["byAsset", "Assets"],
   ["bySupportGroup", "Support groups"],
-  ["byDomain", "Domains"],
+  ["byDomain", "Manual groups"],
 ];
 
 export async function renderOverview(main, params, ctx) {
@@ -98,7 +98,8 @@ export async function renderOverview(main, params, ctx) {
   );
 
   const scopeChips = scopeBar({
-    domain: ctx.domain, supportGroup: ctx.supportGroup, onClear: ctx.clearScope,
+    domain: ctx.domain, supportGroup: ctx.supportGroup, bizDomain: ctx.bizDomain,
+    onClear: ctx.clearScope,
   });
   if (scopeChips) main.append(scopeChips);
 
@@ -111,7 +112,7 @@ export async function renderOverview(main, params, ctx) {
   }
 
   // Ordered grouping path for the Breakdown table, persisted across insights repaints.
-  // Seeded from the URL (?by=domain,asset) or a default: the value chain's domains at
+  // Seeded from the URL (?by=domain,asset) or a default: the manual groups at
   // the whole-chain view, else asset type. Mutated in place (splice/push) so the closure
   // reference stays stable.
   const groupDims = GROUP_DIMENSIONS.map(([v]) => v);
@@ -156,6 +157,7 @@ export async function renderOverview(main, params, ctx) {
   async function loadInsights() {
     paint(await swrCall("api_getInsights",
       { domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
+        bizDomain: ctx.bizDomain || "",
         severities: scopeParam() },
       paint));
   }
@@ -169,12 +171,12 @@ export async function renderOverview(main, params, ctx) {
 
   /** Scan-summary band (Total / Open / Resolved) + severity breakdown. At the
    *  whole-chain view counts come from bootstrap so they match the sidebar and survive
-   *  grouped scans; under a Value Chain filter they come from the (domain-scoped)
+   *  grouped scans; under a manual-group scope they come from the (scoped)
    *  insights payload instead. Open/Resolved need insights, so they show "…" until it
    *  loads. */
   function renderHeadline(insights) {
     clear(kpiRow);
-    // Any active scope (value chain, sidebar support group, or severity filter) makes the
+    // Any active scope (manual group, VC domain, support group, or severity filter) makes the
     // headline read the server's scoped counts instead of whole-scan bootstrap counts, so
     // Total/Open/Resolved and the severity split stay coherent with the sections below.
     const scoped = ctx.domain || ctx.supportGroup || scopeParam();
@@ -219,7 +221,7 @@ export async function renderOverview(main, params, ctx) {
    *  the sub-line, and a delta chip comparing open against the previous scan's open. All
    *  three need the insights payload, so the value shows "…" until it loads; the delta
    *  needs a second scan for a baseline. The open-per-severity series is scoped like the
-   *  rest of the page, so the baseline stays valid under a Value Chain / support filter. */
+   *  rest of the page, so the baseline stays valid under any header scope. */
   function renderSevCard(insights) {
     const loaded = insights && insights.flatScan;
     const sevStats = loaded ? insights.sevStats : null;
@@ -290,7 +292,7 @@ export async function renderOverview(main, params, ctx) {
     // focused. The grouping path still persists to the URL (?by=) from inside the sheet.
     insightsHost.append(sectionLabel("Breakdown"));
     insightsHost.append(el("p", { class: "small muted", style: "margin:-6px 0 10px" },
-      "Group open findings by any dimension — domain, asset, CVE, OS … — and drill in."));
+      "Group open findings by any dimension — manual group, asset, CVE, OS … — and drill in."));
     insightsHost.append(el("button", {
       type: "button",
       onclick: () => openSheet((body) => renderBreakdown(body),
@@ -360,7 +362,8 @@ export async function renderOverview(main, params, ctx) {
         onclick: () => openSheet(
           (body) => body.append(renderOldestPanel(insights.oldest)),
           { title: "Oldest open findings",
-            subtitle: "The longest-open findings, and the assets, groups and domains carrying the aged backlog." }),
+            subtitle: "The longest-open findings, and the assets, support groups and manual groups carrying "
+          + "the aged backlog." }),
       }, "Oldest open findings →"));
     }
     requestAnimationFrame(() => {
@@ -612,6 +615,7 @@ export async function renderOverview(main, params, ctx) {
       if (tailOpen > 0) series.push({ name: "Other", color: colors.get("Other") });
       const params = {
         domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
+        bizDomain: ctx.bizDomain || "",
         key: key0, groups: names, severities: scopeParam(),
       };
       const paintTrend = (td) => {
@@ -683,6 +687,7 @@ export async function renderOverview(main, params, ctx) {
       };
       paint(await swrCall("api_getGrouping",
         { domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
+          bizDomain: ctx.bizDomain || "",
           keys, severities: scopeParam() }, paint));
     }
   }

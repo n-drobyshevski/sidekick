@@ -1,4 +1,4 @@
-// Settings — scan scope, display filter, domain rules editor, data retention.
+// Settings — scan scope, display filter, manual-group rules editor, data retention.
 
 import { call } from "../api.js";
 import { backfillStatusView } from "../backfillStatus.js";
@@ -15,7 +15,8 @@ export async function renderSettings(main, params, ctx) {
   const boot = await bootstrap();
   main.append(
     el("h1", {}, "Settings"),
-    el("p", { class: "page-sub" }, "Scan scope, display filter, domains, and data retention."),
+    el("p", { class: "page-sub" },
+      "Scan scope, display filter, manual groups, and data retention."),
   );
 
   // ---------------------------------------------- severity scope (scan + display)
@@ -111,8 +112,8 @@ export async function renderSettings(main, params, ctx) {
     const domainsBad = !ignoreDomains && domainsEditor && domainsEditor.isDirty();
     const scopeBad = !ignoreScope && scopeDirty();
     if (!domainsBad && !scopeBad) return true;
-    const what = domainsBad && scopeBad ? "domains and severity scope"
-      : domainsBad ? "domains" : "the severity scope";
+    const what = domainsBad && scopeBad ? "manual groups and severity scope"
+      : domainsBad ? "manual groups" : "the severity scope";
     return confirmDialog({
       title: "Discard unsaved changes?",
       body: `This page has unsaved changes to ${what}. Saving here reloads the page and ` +
@@ -403,10 +404,11 @@ export async function renderSettings(main, params, ctx) {
   }
   domainsBody.push(domainsHost);
   main.append(settingsPanel({
-    title: "Domains",
-    description: "Rule-based triage: route findings to named domains by tag, asset-name " +
+    title: "Manual groups",
+    description: "Rule-based triage: route findings to named groups by tag, asset-name " +
       "pattern, subscription, or support group. Order is priority — the first matching " +
-      "domain wins.",
+      "group wins. Named MANUAL because you write the rules — a VC Domain, by contrast, is " +
+      "a label the tenant already wrote on the resource in Wiz.",
     body: domainsBody,
   }));
   // Saving domains also reloads the page, so it must warn about unsaved severity-scope edits.

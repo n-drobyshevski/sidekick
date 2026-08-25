@@ -12,7 +12,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  BIZ_DOMAIN_PREFIX,
   SUPPORT_GROUP_PREFIX,
+  bizDomainScopeOptions,
   domainScopeOptions,
   scopeSwitchView,
   supportScopeOptions,
@@ -23,19 +25,22 @@ import { UI_ICON_NAMES } from "../src/client/js/uiIcons.js";
 function boot(over) {
   return {
     domainNames: ["Customer-facing", "Data & batch", "Unassigned"],
-    filterOptions: { supportGroups: ["CS-CORE", "CS-ENMS"] },
+    filterOptions: { supportGroups: ["CS-CORE", "CS-ENMS"], bizDomains: ["CROSS", "SAP"] },
+    domainTagKey: "Wiz/Domain",
     scopeCounts: {
       register: 161,
       domains: { "Customer-facing": 71, "Data & batch": 63, Unassigned: 27 },
       supportGroups: { "CS-CORE": 31, "CS-ENMS": 26 },
+      bizDomains: { CROSS: 48, SAP: 30 },
       unassigned: 27,
       noSupportGroup: 104,
+      noBizDomain: 83,
     },
     ...over,
   };
 }
 
-const none = { domain: "", supportGroup: "" };
+const none = { domain: "", supportGroup: "", bizDomain: "" };
 
 describe("when there is nothing truthful to offer", () => {
   // An empty picker is a promise the register cannot keep, and the rail's scan zone already
@@ -53,29 +58,58 @@ describe("when there is nothing truthful to offer", () => {
     expect(scopeSwitchView(data, none).show).toBe(false);
   });
 
-  // The boundary is ONE CONFIGURED CHAIN, not one entry in the list, and this test was
+  // The boundary is ONE CONFIGURED GROUP, not one entry in the list, and this test was
   // written the other way round first. `domainNames()` always appends Unassigned, so a
-  // register with a single configured chain arrives here as a list of TWO — and those two
+  // register with a single configured group arrives here as a list of TWO — and those two
   // are genuinely different populations (what the rule claimed, and what it did not), so
   // the switcher has something to offer. The `> 1` threshold reads on the returned array
-  // and therefore already means "at least one configured chain".
-  it("hides itself when no value chain is configured and there is no support group", () => {
-    const data = boot({ domainNames: ["Unassigned"], filterOptions: { supportGroups: [] } });
+  // and therefore already means "at least one configured group".
+  it("hides itself when none of the three dimensions has anything to offer", () => {
+    const data = boot({
+      domainNames: ["Unassigned"],
+      filterOptions: { supportGroups: [], bizDomains: [] },
+    });
     expect(scopeSwitchView(data, none).show).toBe(false);
   });
 
-  it("shows itself for one configured chain, because Unassigned is the other half of it", () => {
+  // THE GROUP IS ABSENT, NOT EMPTY, WHEN NOTHING IS TAGGED. The domain tag is optional and the
+  // tenant's to write, so a "VC Domains" heading over nothing would say that nobody owns
+  // anything — a claim about the tenant rather than about what we managed to read.
+  it("omits the VC Domains group entirely when nothing carries the tag", () => {
+    const data = boot({
+      filterOptions: { supportGroups: ["CS-CORE"], bizDomains: [] },
+      scopeCounts: { ...boot().scopeCounts, bizDomains: {}, noBizDomain: 161 },
+    });
+    const v = scopeSwitchView(data, none);
+    expect(v.show).toBe(true);
+    expect(v.options.map((o) => o.group)).not.toContain("VC Domains");
+  });
+
+  it("shows itself for VC Domains alone", () => {
+    const data = boot({
+      domainNames: ["Unassigned"],
+      filterOptions: { supportGroups: [], bizDomains: ["CROSS", "SAP"] },
+    });
+    const v = scopeSwitchView(data, none);
+    expect(v.show).toBe(true);
+    expect(v.options.map((o) => o.label)).toEqual(["CROSS", "SAP"]);
+  });
+
+  it("shows itself for one configured group, because Unassigned is the other half of it", () => {
     const data = boot({
       domainNames: ["Everything", "Unassigned"],
-      filterOptions: { supportGroups: [] },
+      filterOptions: { supportGroups: [], bizDomains: [] },
     });
     const v = scopeSwitchView(data, none);
     expect(v.show).toBe(true);
     expect(v.options.map((o) => o.label)).toEqual(["Everything", "Unassigned"]);
   });
 
-  it("shows itself for support groups alone, with no value chains configured", () => {
-    const data = boot({ domainNames: ["Unassigned"] });
+  it("shows itself for support groups alone, with no manual groups and no VC Domains", () => {
+    const data = boot({
+      domainNames: ["Unassigned"],
+      filterOptions: { supportGroups: ["CS-CORE", "CS-ENMS"], bizDomains: [] },
+    });
     const v = scopeSwitchView(data, none);
     expect(v.show).toBe(true);
     expect(v.options.map((o) => o.label)).toEqual(["CS-CORE", "CS-ENMS"]);
@@ -85,39 +119,45 @@ describe("when there is nothing truthful to offer", () => {
 describe("the list", () => {
   const v = scopeSwitchView(boot(), none);
 
-  it("groups the two dimensions under their own headings, chains first", () => {
+  // Sorted by kind so the combobox emits each heading once — it walks the list in order and
+  // starts a new heading whenever the group changes, so a list that did not sort by kind would
+  // fragment its own headings.
+  it("groups the three dimensions under their own headings, in a fixed order", () => {
     expect(v.options.map((o) => o.group)).toEqual([
-      "Value chains", "Value chains", "Value chains",
+      "Manual groups", "Manual groups", "Manual groups",
+      "VC Domains", "VC Domains",
       "Support groups", "Support groups",
     ]);
   });
 
-  // A value chain named `Payments` and a support group named `Payments` must never be one row
+  // A manual group named `Payments` and a support group named `Payments` must never be one row
   // or one value. The control strips the prefix again on pick.
-  it("prefixes one kind's values so the two can never collide", () => {
+  it("prefixes two of the three kinds so the values can never collide", () => {
     const collide = boot({
       domainNames: ["Payments", "Unassigned"],
-      filterOptions: { supportGroups: ["Payments"] },
+      filterOptions: { supportGroups: ["Payments"], bizDomains: ["Payments"] },
     });
     const values = scopeSwitchView(collide, none).options.map((o) => o.value);
     expect(new Set(values).size).toBe(values.length);
     expect(values).toContain("Payments");
     expect(values).toContain(SUPPORT_GROUP_PREFIX + "Payments");
+    expect(values).toContain(BIZ_DOMAIN_PREFIX + "Payments");
   });
 
   it("says in words which kind each row is, and how much it covers", () => {
-    expect(v.options[0].hint).toBe("Value chain · 71 findings");
-    expect(v.options[3].hint).toBe("Support group · 31 findings");
+    expect(v.options[0].hint).toBe("Manual group · 71 findings");
+    expect(v.options[3].hint).toBe("VC Domain · 48 findings");
+    expect(v.options[5].hint).toBe("Support group · 31 findings");
   });
 
   // Unassigned is a real, selectable bucket — domainNames() appends it — but calling it a
-  // value chain would be wrong: it is the absence of one.
+  // manual group would be wrong: it is the absence of one.
   it("names Unassigned for what it is", () => {
     expect(v.options[2].label).toBe("Unassigned");
-    expect(v.options[2].hint).toBe("No value chain · 27 findings");
+    expect(v.options[2].hint).toBe("No manual group · 27 findings");
   });
 
-  // The row means "no scope", so naming it after one of the two kinds describes half of what
+  // The row means "no scope", so naming it after one of the three kinds describes a third of what
   // it does — and the register holds what the last scan was scoped to fetch, so "everything"
   // never stands alone.
   it("offers one reset row that names the register", () => {
@@ -134,12 +174,12 @@ describe("the list", () => {
 
   it("counts a row the register has no tally for as zero rather than throwing", () => {
     const data = boot({ scopeCounts: { ...boot().scopeCounts, domains: {} } });
-    expect(scopeSwitchView(data, none).options[0].hint).toBe("Value chain · 0 findings");
+    expect(scopeSwitchView(data, none).options[0].hint).toBe("Manual group · 0 findings");
   });
 
   it("says finding, not findings, for one", () => {
     const data = boot({ scopeCounts: { ...boot().scopeCounts, domains: { "Customer-facing": 1 } } });
-    expect(scopeSwitchView(data, none).options[0].hint).toBe("Value chain · 1 finding");
+    expect(scopeSwitchView(data, none).options[0].hint).toBe("Manual group · 1 finding");
   });
 });
 
@@ -164,6 +204,29 @@ describe("the caption", () => {
     expect(v.kind).toBe("domain");
     expect(v.current).toBe("Customer-facing");
     expect(v.label).toBe("Customer-facing");
+  });
+
+  // The domain's second figure is the one that works hardest: the tag is the tenant's to write
+  // and most tenants have not finished writing it, so a bare "48 of 161" reads as a small domain
+  // in a big register when what it says is that 83 resources are unattributed. It names the tag,
+  // too — an operator who mistyped WIZ_DOMAIN_TAG_KEY would otherwise read a tenant-wide tagging
+  // failure off their own typo.
+  it("carries the denominator and the untagged tail under a VC Domain", () => {
+    const v = scopeSwitchView(boot(), { bizDomain: "CROSS" });
+    expect(v.caption).toBe("48 of 161 findings · 83 carry no Wiz/Domain tag");
+    expect(v.kind).toBe("bizDomain");
+    expect(v.current).toBe(BIZ_DOMAIN_PREFIX + "CROSS");
+    expect(v.label).toBe("CROSS");
+  });
+
+  it("falls back to the word domain when the payload names no tag key", () => {
+    const v = scopeSwitchView(boot({ domainTagKey: "" }), { bizDomain: "CROSS" });
+    expect(v.caption).toBe("48 of 161 findings · 83 carry no domain tag");
+  });
+
+  it("names a non-default tag key, because the figure is a fact about that key", () => {
+    const v = scopeSwitchView(boot({ domainTagKey: "cost-centre" }), { bizDomain: "CROSS" });
+    expect(v.caption).toBe("48 of 161 findings · 83 carry no cost-centre tag");
   });
 
   it("carries the denominator and the ungrouped tail under a support group", () => {
@@ -198,8 +261,19 @@ describe("a scope the register no longer holds", () => {
     expect(v.current).toBe(SUPPORT_GROUP_PREFIX + "CS-GONE");
   });
 
+  // The VC Domain has its own way of going stale that the other two do not: correcting
+  // WIZ_DOMAIN_TAG_KEY re-reads every row off a different tag, and the domain in force may
+  // simply not exist under the new key.
+  it("catches a VC Domain that vanished when the tag key changed", () => {
+    const v = scopeSwitchView(boot(), { bizDomain: "GONE" });
+    expect(v.stale).toBe(true);
+    expect(v.current).toBe(BIZ_DOMAIN_PREFIX + "GONE");
+    expect(v.caption).toBe("Not in this register — showing 0 of 161");
+  });
+
   it("calls a live scope fresh", () => {
     expect(scopeSwitchView(boot(), { domain: "Data & batch" }).stale).toBe(false);
+    expect(scopeSwitchView(boot(), { bizDomain: "SAP" }).stale).toBe(false);
     expect(scopeSwitchView(boot(), none).stale).toBe(false);
   });
 });
@@ -208,5 +282,15 @@ describe("the row builders", () => {
   it("tolerate an absent list and an absent tally", () => {
     expect(domainScopeOptions(null, null)).toEqual([]);
     expect(supportScopeOptions(undefined, undefined)).toEqual([]);
+    expect(bizDomainScopeOptions(null, null)).toEqual([]);
+  });
+
+  // An untagged resource contributes nothing to a facet, exactly as a blank cloud already does.
+  // A synthetic row here would offer the resources we know least about as though they were an
+  // owner — the coverage figure in the caption is what answers that instead.
+  it("offer no synthetic Untagged row among the VC Domains", () => {
+    const labels = bizDomainScopeOptions(["CROSS", "SAP"], { CROSS: 1, SAP: 2 })
+      .map((o) => o.label);
+    expect(labels).toEqual(["CROSS", "SAP"]);
   });
 });

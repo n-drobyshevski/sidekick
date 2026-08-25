@@ -1,6 +1,6 @@
-// Attribution — audits how OS findings map onto the value chain (domain rules) and
+// Attribution — audits how OS findings map onto the manual groups (rule-based) and
 // support groups (subscription Wiz/provisioning tag) across the WHOLE register. Unlike
-// the other pages it deliberately ignores the sidebar Value Chain / Support group
+// the other pages it deliberately ignores the header scope
 // filters (it measures the mapping itself), so there is no scopeBar here. Coverage KPIs,
 // a per-domain coverage table, an unassigned-resource explorer with a closed-loop
 // "Attribute…" handoff into Settings, per-rule health, and untagged subscriptions —
@@ -69,8 +69,8 @@ export async function renderAttribution(main, params, ctx) {
         onApply: () => { page = 0; setParams({}); load(); }, ariaContext: "Attribution",
       })),
     el("p", { class: "page-sub" },
-      "How every finding maps onto the value chain and support groups, across the whole " +
-      "register. The sidebar Value Chain and Support group filters are deliberately not " +
+      "How every finding maps onto the manual groups and support groups, across the whole " +
+      "register. The header scope switcher is deliberately not " +
       "applied here — this page audits the mapping itself.",
     ),
   );
@@ -148,7 +148,7 @@ export async function renderAttribution(main, params, ctx) {
     if (allClear) {
       bodyHost.append(emptyState(
         "Everything is attributed.",
-        "Every finding maps to a value chain and every subscription with findings carries a " +
+        "Every finding maps to a manual group and every subscription with findings carries a " +
         "support group. Nothing to troubleshoot.",
       ));
       return;
@@ -181,9 +181,9 @@ export async function renderAttribution(main, params, ctx) {
       kpiCard("Attributed findings", `${attributed.toLocaleString()} (${pct}%)`,
         `of ${total.toLocaleString()} findings`),
       kpiCard("Unassigned findings", (coverage.unassignedFindings || 0).toLocaleString(),
-        "matched no domain rule"),
+        "matched no rule"),
       kpiCard("Unassigned resources", unassignedResources.toLocaleString(),
-        "distinct assets with no domain"),
+        "distinct assets with no manual group"),
       kpiCard("Untagged subscriptions", untagged.length.toLocaleString(),
         "no support group tag"),
     ));
@@ -195,9 +195,9 @@ export async function renderAttribution(main, params, ctx) {
     const byDomain = coverage.byDomain || [];
     if (!byDomain.length) {
       bodyHost.append(settingsPanel({
-        title: "Coverage by value chain",
-        body: emptyState("No domains defined — every finding is Unassigned.",
-          "Add value chains in Settings to attribute findings."),
+        title: "Coverage by manual group",
+        body: emptyState("No manual groups defined — every finding is Unassigned.",
+          "Add manual groups in Settings to attribute findings."),
       }));
       return;
     }
@@ -224,12 +224,12 @@ export async function renderAttribution(main, params, ctx) {
       ));
     }
     bodyHost.append(settingsPanel({
-      title: "Coverage by value chain",
-      description: "How this scan's findings distribute across your value-chain domains.",
+      title: "Coverage by manual group",
+      description: "How this scan's findings distribute across your manual groups.",
       body: el("div", { class: "table-wrap panel-flush" },
         el("table", { class: "data" },
           el("thead", {}, el("tr", {},
-            ...["Value chain", "Findings", "Assets", "Share"].map((h) => el("th", { scope: "col" }, h)))),
+            ...["Manual group", "Findings", "Assets", "Share"].map((h) => el("th", { scope: "col" }, h)))),
           body)),
     }));
   }
@@ -338,7 +338,7 @@ export async function renderAttribution(main, params, ctx) {
       bodyHost.append(settingsPanel({
         title: "Unassigned resources",
         body: emptyState("No unassigned resources on this page.",
-          "Every finding here maps to a value chain."),
+          "Every finding here maps to a manual group."),
       }));
       return;
     }
@@ -378,8 +378,8 @@ export async function renderAttribution(main, params, ctx) {
     }
     bodyHost.append(settingsPanel({
       title: "Unassigned resources",
-      description: "Assets whose findings matched no domain rule. “Attribute…” seeds a new " +
-        "rule for the resource in the domain editor.",
+      description: "Assets whose findings matched no rule. “Attribute…” seeds a new " +
+        "rule for the resource in the manual-group editor.",
       body: [
         el("div", { class: "table-wrap panel-flush" },
           el("table", { class: "data" },
@@ -399,15 +399,16 @@ export async function renderAttribution(main, params, ctx) {
     const desc = ["How each mapping rule performs against this scan. ",
       helpTip(el("span", { class: "linklike" }, "status guide"),
         ["Fires — claims findings under first-match priority.",
-         "Shadowed — matches findings, but an earlier rule or domain claims them first.",
+         "Shadowed — matches findings, but an earlier rule or group claims them first.",
          "Never matches — matches nothing in this scan (a dead rule).",
          "Malformed — the rule failed to compile and never matches."])];
-    const footer = el("a", { href: "#/settings", target: "_self" }, "Edit domains in Settings →");
+    const footer = el("a", { href: "#/settings", target: "_self" },
+      "Edit manual groups in Settings →");
     if (!rows.length) {
       bodyHost.append(settingsPanel({
         title: "Rule health", description: desc, footer,
-        body: emptyState("No domain rules to check.",
-          "Add value chains in Settings to route findings."),
+        body: emptyState("No rules to check.",
+          "Add manual groups in Settings to route findings."),
       }));
       return;
     }
@@ -432,7 +433,7 @@ export async function renderAttribution(main, params, ctx) {
       body: el("div", { class: "table-wrap panel-flush" },
         el("table", { class: "data" },
           el("thead", {}, el("tr", {},
-            ...["Value chain", "Rule", "Fired", "Matched", "Status", ""].map((h) => el("th", { scope: "col" }, h)))),
+            ...["Manual group", "Rule", "Fired", "Matched", "Status", ""].map((h) => el("th", { scope: "col" }, h)))),
           body)),
     }));
   }
