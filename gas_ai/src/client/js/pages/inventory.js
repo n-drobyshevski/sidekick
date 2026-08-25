@@ -30,7 +30,7 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
+  absent, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
   emptyState, errorState,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtDate, kpiCard, plural,
   sectionLabel, sevBadge, sevEntries, sevKeyRow,
@@ -928,12 +928,12 @@ export async function renderInventory(main, params) {
       name: (row) => [row.name,
         row.agentic ? el("span", { class: "pill", style: "margin-left:6px" }, "Agentic") : null],
       kind: (row) => kindLabel(row.kind),
-      cloud: (row) => row.cloud || "—",
-      region: (row) => row.region || "—",
+      cloud: (row) => row.cloud || absent(),
+      region: (row) => row.region || absent(),
       // The worst open issue's severity — Wiz's own rating, carried through, not a grade
       // this app computed. A dash means no open issue, which is a real state and not an
       // unscored one.
-      severity: (row) => (row.severity ? sevBadge(row.severity) : "—"),
+      severity: (row) => (row.severity ? sevBadge(row.severity) : absent()),
       // The count, with the same severity split drawn as a bar: the badge beside it says
       // which is worst, this says how many of each, and the two come from one set of issue
       // rows so they cannot disagree.
@@ -951,10 +951,10 @@ export async function renderInventory(main, params) {
             el("span", { class: "num" }, String(row.openFindings)),
             issueBars(row.findingsBySeverity, "cloud finding"))
         : el("span", { class: "muted small" }, "0")),
-      combos: (row) => (row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : "—"),
-      guardrail: (row) => (row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : "—"),
-      domain: (row) => (row.domain ? domainLink(row) : "—"),
-      projects: (row) => (row.projects || []).join(", ") || "—",
+      combos: (row) => (row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : absent()),
+      guardrail: (row) => (row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : absent()),
+      domain: (row) => (row.domain ? domainLink(row) : absent()),
+      projects: (row) => (row.projects || []).join(", ") || absent(),
       actions: (row) => graphButton(row),
     };
 
