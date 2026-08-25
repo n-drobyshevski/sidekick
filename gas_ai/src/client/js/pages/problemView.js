@@ -18,6 +18,8 @@
 // has to the toxic-combination ranking `rankGroups` already applied. "No sort selected"
 // means "trust the order the server sent."
 
+import { dueRank } from "../ui/format.js";
+
 export const KIND_VALUES = ["ISSUE", "FINDING"];
 export const SEVERITY_RANK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 
@@ -120,17 +122,6 @@ export function problemFilterOptions(rows) {
 function sevIndex(sev) {
   const i = SEVERITY_RANK.indexOf(String(sev || "").toUpperCase());
   return i < 0 ? SEVERITY_RANK.length : i;
-}
-
-/**
- * Deadline as a sortable number; a row with no readable date sorts last either way.
- * `Number.MAX_SAFE_INTEGER`, not `Infinity` — two rows that both lack a deadline must
- * subtract to `0`, or the comparator returns `NaN` and the sort silently stops moving that
- * pair. See `src/domain/problems.ts`'s `slaRank` for the same fix and the fuller reasoning.
- */
-function dueRank(row) {
-  const t = Date.parse((row && row.dueAt) || "");
-  return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
 }
 
 /**
