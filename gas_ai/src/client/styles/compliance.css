@@ -160,6 +160,11 @@
    part, the 5Rs scope, is now a footnote under the rail. */
 .comp-ov-section { padding: 22px 0 var(--space-1); border-top: 1px solid var(--hairline); }
 .comp-ov-section:first-child { border-top: none; padding-top: 0; }
+/* Inside the overview the header IS the section's content, and the next section's border-top
+   is already the divider — so the header drawing its own closing rule put two hairlines about
+   28px apart with nothing between them. The section separator wins; the header keeps its
+   shape and drops the duplicate. */
+.comp-ov-section .comp-header { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
 
 /* --------------------------------------------------------- band B: the framework rail */
 /* Small-multiple bullet rows sharing ONE 0-100 axis, so a reader compares frameworks by

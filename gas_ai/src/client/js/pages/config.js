@@ -226,13 +226,18 @@ export async function renderConfigFindings(main, params, ctx) {
     // ------------------------------------------------------------------- the facets
     const filtered = applyConfigFilters(rows, view.query);
     const counts = configFacetCounts(rows, view.query, FACET_KEYS);
-    const facetHost = el("div", { class: "card", style: "margin-top:12px" });
+    // Not a card. A row of filters is chrome, and DESIGN.md is explicit that a card is for
+    // content that is genuinely distinct and actionable, not a container to put things in.
+    const facetHost = el("div", { class: "config-facets" });
     for (const key of ["linkage", "flags", "outcomes", "statuses", "clouds", "resourceTypes"]) {
       const options = (counts[key] || []).filter((o) => o.count > 0 || view.query[key].indexOf(o.value) >= 0);
       if (options.length < 2) continue;
-      facetHost.append(el("div", { class: "facet-row", style: "margin-bottom:8px" },
-        el("span", { class: "small muted", style: "min-width:110px; display:inline-block" },
-          FACET_LABELS[key]),
+      // NOT .facet-row. That class belongs to the filter drawer (sheet.css) and is a FOUR
+      // COLUMN GRID — `14px 1fr 44px auto` — sized for a checkbox, a label, a count and a
+      // chevron. Borrowing the name here dropped this label into the 14px checkbox column,
+      // which is why "AI asset" was rendering as "Al as". One class name, two layouts.
+      facetHost.append(el("div", { class: "config-facet" },
+        el("span", { class: "config-facet-name" }, FACET_LABELS[key]),
         togglePills({
           options: options.map((o) => ({
             value: o.value,

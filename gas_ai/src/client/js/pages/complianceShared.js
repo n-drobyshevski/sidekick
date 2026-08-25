@@ -17,7 +17,7 @@
 import { el, fmtDateTime, meter, plural, scopeNote, sevBadge } from "../ui.js";
 
 import { lookupGap } from "../codebook.js";
-import { tipAnchor } from "../ui.js";
+import { tip, tipAnchor, tipMark } from "../ui.js";
 /**
  * The four posture states, mirroring domain/compliancePosture.POSTURE_STATES.
  *
@@ -203,19 +203,26 @@ export function stateStrip(tree) {
     bar,
     keys,
     el("p", { class: "comp-strip-note" },
-      "Subcategories by state. A subcategory with no resources or no policies is not a " +
-      "failure and not a pass — it is not scored, and it is left out of the framework " +
-      "percentage rather than counted as zero." +
-      // The sentence that keeps the filter's removal honest: the rows are not merely
-      // unranked now, they are absent, and the reader is told so in the one place that
-      // still counts them.
-      (unscored
-        ? (unscored === 1
-          ? " The 1 unscored subcategory is not listed below — there is nothing evaluated " +
-            "under it to act on."
-          : ` The ${unscored} unscored subcategories are not listed below — there is ` +
-            "nothing evaluated under them to act on.")
-        : "")));
+      "Subcategories by state.",
+      // 44 words of caveat in a caption slot. Every sentence of it is load-bearing — an
+      // unscored subcategory is neither a pass nor a zero, and saying so is what stops the
+      // percentage being misread — so it moves onto the mark rather than going away.
+      tip(tipMark(), [
+        "A subcategory with no resources or no policies is not a failure and not a pass. "
+          + "It is not scored, and it is left out of the framework percentage rather than "
+          + "counted as zero.",
+        // The sentence that keeps the filter's removal honest: the rows are not merely
+        // unranked now, they are absent, and the reader is told so in the one place that
+        // still counts them.
+        unscored === 0
+          ? null
+          : unscored === 1
+            ? "The 1 unscored subcategory is not listed below. There is nothing evaluated "
+              + "under it to act on."
+            : `The ${unscored} unscored subcategories are not listed below. There is `
+              + "nothing evaluated under them to act on.",
+      ].filter(Boolean)),
+    ));
 }
 
 /** A Control is a graph query over the landscape, a cloud rule is a Rego evaluation against one
