@@ -19,6 +19,7 @@ interface Row {
 }
 
 const tables: Record<string, Row[]> = {};
+const reads = { full: 0, tail: 0 };
 const calls: string[] = [];
 let projectTriggers: string[] = [];
 const createdTriggers: Array<{ handler: string; afterMs: number }> = [];
@@ -36,7 +37,11 @@ vi.mock("../src/server/sheetsDb", () => {
     appendRows: (tab: string, rows: Row[]) => {
       tables[tab] = [...(tables[tab] ?? []), ...rows];
     },
-    readAll: (tab: string) => tables[tab] ?? [],
+    readAll: (tab: string) => { reads.full++; return tables[tab] ?? []; },
+    // The tail read `getJob` uses. Counted separately so a spec can assert that polling a job
+    // no longer touches the whole tab — the property that stops the 3s poll degrading as the
+    // append-only jobs tab grows.
+    readTail: (tab: string, n: number) => { reads.tail++; return (tables[tab] ?? []).slice(-n); },
     updateWhere: (tab: string, key: string, value: unknown, patch: Row) => {
       const row = (tables[tab] ?? []).find((r) => r[key] === value);
       if (!row) return false;

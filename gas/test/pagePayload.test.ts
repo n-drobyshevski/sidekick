@@ -16,7 +16,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  execGroupSlice, execMttrSlice, historyTrendSlice, mttrPageTrendSlice,
+  execGroupSlice, execMttrSlice, historyTrendSlice, jobSummarySlice, mttrGroupTableSlice,
+  mttrGroupTrendSlice, mttrPageTrendSlice, oldestOpenSlice, overviewInsightsSlice,
   programTrendSlice, scanRowsSlice,
 } from "../src/domain/pagePayload";
 
@@ -272,5 +273,144 @@ describe("scanRowsSlice — the ten columns the table draws", () => {
 
   it("returns [] for a missing scans array", () => {
     expect(scanRowsSlice(undefined)).toEqual([]);
+  });
+});
+
+// ------------------------------------------------------------- drawer payloads
+
+describe("overviewInsightsSlice — everything except the drawer's rows", () => {
+  const INSIGHTS = {
+    flatScan: true, counts: { HIGH: 4 }, total: 4, sevStats: {}, openTrend: [], exploit: {},
+    aging: { totalOpen: 3 }, movement: {}, awaiting: {}, scan: { scanId: "s1" },
+    oldest: { findings: [{ cve: "CVE-1" }], byAsset: [], bySupportGroup: [], byDomain: [] },
+  };
+
+  // 16,434 of 18,064 bytes on the seeded estate — 91% of the payload — for four ranked views
+  // of up to 100 rows, of which the panel renders ten rows of one, inside a drawer many
+  // readers never open.
+  it("drops oldest and keeps every other key", () => {
+    const out = overviewInsightsSlice(INSIGHTS)!;
+    expect(out).not.toHaveProperty("oldest");
+    expect(Object.keys(out).sort()).toEqual([
+      "aging", "awaiting", "counts", "exploit", "flatScan", "movement",
+      "openTrend", "scan", "sevStats", "total",
+    ]);
+  });
+
+  // Written as an omit rather than an enumeration precisely so a new insights key travels
+  // without anyone editing this file — unlike the executive slices, every other key is read.
+  it("passes through a key it has never heard of", () => {
+    expect(overviewInsightsSlice({ ...INSIGHTS, somethingNew: 1 })).toHaveProperty("somethingNew");
+  });
+
+  it("returns null for a missing payload", () => {
+    expect(overviewInsightsSlice(null)).toBeNull();
+  });
+});
+
+describe("oldestOpenSlice — one view, and the view it answers for", () => {
+  const INSIGHTS = {
+    oldest: { findings: [{ cve: "CVE-1" }], byAsset: [{ key: "vm" }], bySupportGroup: [], byDomain: [] },
+  };
+
+  it("returns the requested view", () => {
+    expect(oldestOpenSlice(INSIGHTS, "byAsset")).toEqual({ view: "byAsset", rows: [{ key: "vm" }] });
+  });
+
+  // The echo is load-bearing: the toggle can be clicked again mid-flight, and the panel drops
+  // any response whose view is no longer active rather than painting it under the wrong heading.
+  it("echoes the view back so a raced response can be discarded", () => {
+    expect(oldestOpenSlice(INSIGHTS, "byDomain").view).toBe("byDomain");
+  });
+
+  it("falls back to findings for an unknown or empty view", () => {
+    expect(oldestOpenSlice(INSIGHTS, "nonsense").view).toBe("findings");
+    expect(oldestOpenSlice(INSIGHTS, "").rows).toEqual([{ cve: "CVE-1" }]);
+  });
+
+  it("returns an empty row set rather than throwing on a payload with no oldest block", () => {
+    expect(oldestOpenSlice({ flatScan: false }, "findings")).toEqual({ view: "findings", rows: [] });
+    expect(oldestOpenSlice(null, "byAsset")).toEqual({ view: "byAsset", rows: [] });
+  });
+});
+
+describe("the MTTR by-group split, cut in two", () => {
+  const GROUP = {
+    dimension: "domain",
+    rows: [{ group: "CROSS", open: 18, awaiting: 2 }, { group: "SAP", open: 13, awaiting: 0 }],
+    trend: { groups: ["CROSS"], points: [{ d: 1 }], kmPoints: [{ d: 1 }] },
+  };
+
+  // rows stay eager: bounded by group count, and the awaiting footnote sums them before the
+  // drawer exists.
+  it("mttrGroupTableSlice keeps the table and drops the series", () => {
+    const out = mttrGroupTableSlice(GROUP)!;
+    expect(Object.keys(out).sort()).toEqual(["dimension", "rows"]);
+    expect(out.rows).toEqual(GROUP.rows);
+    expect(JSON.stringify(out)).not.toContain("kmPoints");
+  });
+
+  it("mttrGroupTrendSlice returns exactly the series the drawer draws", () => {
+    expect(mttrGroupTrendSlice(GROUP)).toEqual(GROUP.trend);
+  });
+
+  it("both survive a payload with no trend at all", () => {
+    expect(mttrGroupTableSlice({ dimension: "domain" })!.rows).toEqual([]);
+    expect(mttrGroupTrendSlice({ dimension: "domain" })).toBeNull();
+    expect(mttrGroupTrendSlice(null)).toBeNull();
+  });
+});
+
+// ------------------------------------------------------------------ job status
+
+describe("jobSummarySlice — what a 3-second poll is allowed to carry", () => {
+  const JOB = {
+    job_id: "scan-1", kind: "scan", phase: "FETCHING", page: 3, findings_so_far: 400,
+    total_count: 1200, started_at: "2026-08-25T10:00:00Z", updated_at: "2026-08-25T10:02:00Z",
+    error: null, scan_id: "s1", page_size: 500,
+    cursor: "eyJvZmZzZXQiOjUwMH0=", journal_ref: "1AbCdEfGhIjKlMnOpQrStUv",
+    params_json: '{"incremental":true,"severities":["CRITICAL"]}',
+  };
+
+  it("ships only the fields the progress card draws", () => {
+    expect(Object.keys(jobSummarySlice(JOB, false)!).sort()).toEqual([
+      "error", "findings_so_far", "incremental", "job_id", "kind", "page",
+      "phase", "stale", "started_at", "total_count", "updated_at",
+    ]);
+  });
+
+  // `cursor` is the Wiz endCursor for a production security tenant and `journal_ref` a Drive
+  // file id for the rollback journal. Neither has a client reader, and both were going to the
+  // browser ~1,200 times an hour during a scan.
+  it("drops the Wiz cursor and the journal ref", () => {
+    const json = JSON.stringify(jobSummarySlice(JOB, false));
+    expect(json).not.toContain("cursor");
+    expect(json).not.toContain("journal_ref");
+    expect(json).not.toContain("eyJvZmZzZXQiOjUwMH0=");
+  });
+
+  it("resolves incremental server-side instead of shipping the raw params blob", () => {
+    expect(jobSummarySlice(JOB, false)!.incremental).toBe(true);
+    expect(JSON.stringify(jobSummarySlice(JOB, false))).not.toContain("params_json");
+    expect(jobSummarySlice({ ...JOB, params_json: '{"incremental":false}' }, false)!.incremental)
+      .toBe(false);
+  });
+
+  // Tri-state, not boolean: null preserves scanMode's generic "Scan" label, which it used to
+  // reach through a JSON.parse catch in the browser.
+  it("says null rather than false when the params cannot be read", () => {
+    expect(jobSummarySlice({ ...JOB, params_json: "{not json" }, false)!.incremental).toBeNull();
+    expect(jobSummarySlice({ ...JOB, params_json: null }, false)!.incremental).toBeNull();
+  });
+
+  // Computed against the server clock; a browser with a skewed clock would draw a healthy job
+  // as wedged, so this stays a passed-in decision rather than something the client derives.
+  it("carries the caller's staleness verdict", () => {
+    expect(jobSummarySlice(JOB, true)!.stale).toBe(true);
+    expect(jobSummarySlice(JOB, false)!.stale).toBe(false);
+  });
+
+  it("returns null for no job", () => {
+    expect(jobSummarySlice(null, false)).toBeNull();
   });
 });

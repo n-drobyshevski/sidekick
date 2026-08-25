@@ -31,6 +31,9 @@ vi.mock("../src/server/sheetsDb", () => ({
     tables[tab] = [...(tables[tab] ?? []), ...rows];
   },
   readAll: (tab: string) => tables[tab] ?? [],
+  // `getJob` reads the tail rather than the whole tab; the fake mirrors that so the
+  // module under test can be loaded at all.
+  readTail: (tab: string, n: number) => (tables[tab] ?? []).slice(-n),
   updateWhere: (tab: string, key: string, value: unknown, patch: Row) => {
     const row = (tables[tab] ?? []).find((r) => r[key] === value);
     if (!row) return false;
