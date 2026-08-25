@@ -176,7 +176,10 @@ import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { buildInfo } from "./buildInfo";
 import { domainTagKey, hasWizCredentials, projectScope } from "./props";
 import { domainCoverage, domainOfTags } from "../domain/domainTag";
-import { cached, dataVersion, wizDataVersion } from "./serverCache";
+import { cached, wizDataVersion } from "./serverCache";
+// The Drive-backed second level, for the time-invariant read-models only. See that
+// module's header for which are eligible and why the other two are not.
+import { durablyCached } from "./readModelStore";
 import {
   AGENT_EXPANSION,
   decodeExpansion,
@@ -364,7 +367,7 @@ function openIssues(): IssueRow[] {
 
 export function bootstrap(_p?: unknown): ApiResult {
   return run(() => ({
-    ...(cached("bootstrapCore", null, bootstrapCore) as Rec),
+    ...(durablyCached("bootstrapCore", null, bootstrapCore) as Rec),
     hasCredentials: hasWizCredentials(),
     // Outside the cached core on purpose: a cached build stamp would be the one thing
     // guaranteed to lie after a deploy.
@@ -622,7 +625,7 @@ export function getGraph(p?: unknown): ApiResult {
     // the CacheService fetch — no Sheets or Drive I/O at all. Seed resolution
     // and settings defaults live INSIDE the compute; they only change when the
     // data version bumps, and the version is part of the key.
-    return cached("getGraph", graphCacheParams(params), () => {
+    return durablyCached("getGraph", graphCacheParams(params), () => {
       const doc = viewGraphDoc();
       if (!doc) return { empty: true };
       const options = resolveGraphParams(params, {
@@ -680,7 +683,7 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
     ? (raw as QueryKind)
     : null;
   return run(() =>
-    cached("queryVocabulary", { kind }, () => {
+    durablyCached("queryVocabulary", { kind }, () => {
       const doc = viewGraphDoc();
       if (!doc) {
         return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
@@ -1330,7 +1333,7 @@ function assetsModel(): AssetsModel {
  */
 export function getAssetsHead(_p?: unknown): ApiResult {
   return run(() => {
-    const model = cached("assetsModel2", null, assetsModel) as AssetsModel;
+    const model = durablyCached("assetsModel2", null, assetsModel) as AssetsModel;
     return { total: model.rows.length, kpis: model.kpis, reach: model.reach };
   });
 }
@@ -1347,7 +1350,7 @@ export function getAssets(p?: unknown): ApiResult {
     // computed into this model and read by nothing but the payload line below, and both are
     // gone. A still-warm "assetsModel" entry would answer with the old shape. The bump is
     // for the shape alone — nothing about how the surviving fields are derived moved.
-    const model = cached("assetsModel2", null, assetsModel) as AssetsModel;
+    const model = durablyCached("assetsModel2", null, assetsModel) as AssetsModel;
     const head = {
       total: model.rows.length,
       kpis: model.kpis,
@@ -1450,7 +1453,7 @@ function postureFailCount(kpis: Rec): number | null {
  */
 export function getAssetOptions(_p?: unknown): ApiResult {
   return run(() =>
-    cached("assetOptions", null, () => ({
+    durablyCached("assetOptions", null, () => ({
       rows: [...viewAssets()]
         .sort((a, b) =>
           Number(b.openIssues ?? 0) - Number(a.openIssues ?? 0)
@@ -1708,7 +1711,7 @@ export function getConfigFindings(p?: unknown): ApiResult {
     );
     const page = Math.max(0, Number(params["page"]) || 0);
 
-    const model = cached("configModel", null, configModel) as ReturnType<typeof configModel>;
+    const model = durablyCached("configModel", null, configModel) as ReturnType<typeof configModel>;
     // `pageSize`, `sort` and `dir` used to be echoed back here and had no reader: the client
     // holds its own copy of all three in `query`. THE REST OF THIS PAYLOAD IS DELIBERATELY
     // LEFT ALONE even though config.js dereferences only `rows`, `totals` and `scopeLoss`,
@@ -2204,7 +2207,7 @@ export function getIssues(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
     const group = String(params["group"] ?? "");
-    return cached("getIssues", { group }, () => {
+    return durablyCached("getIssues", { group }, () => {
       let rows = viewIssues();
       if (group) rows = rows.filter((i) => i.comboGroup === group);
       return { rows: rows.map((r) => publicRow(r as unknown as Rec)) };
@@ -2466,7 +2469,7 @@ export function getProblems(p?: unknown): ApiResult {
     );
     const page = Math.max(0, Number(params["page"]) || 0);
 
-    const model = cached("problemsModel", null, problemsModel) as ProblemsModel;
+    const model = durablyCached("problemsModel", null, problemsModel) as ProblemsModel;
     const head = {
       // The union invariant's left-hand side — every unresolved issue and every open
       // finding, regardless of the outcome filter or the mode below.
@@ -2528,7 +2531,7 @@ export function getActions(p?: unknown): ApiResult {
     const limitParam = Number(params["limit"]);
     const limit = Number.isFinite(limitParam) && limitParam >= 0 ? Math.floor(limitParam) : undefined;
 
-    const model = cached("problemsModel", null, problemsModel) as ProblemsModel;
+    const model = durablyCached("problemsModel", null, problemsModel) as ProblemsModel;
     const fullyRanked = withAutoRemediation(
       rankActionsByCover(model.rows),
       syncStore.loadFrameworkPolicies(),
@@ -2560,7 +2563,7 @@ export function cancelSync(p?: unknown): ApiResult {
 }
 
 export function getSyncHistory(_p?: unknown): ApiResult {
-  return run(() => cached("getSyncHistory", null, () => ({
+  return run(() => durablyCached("getSyncHistory", null, () => ({
     rows: syncStore.syncHistory().reverse(),
   })));
 }
@@ -3312,7 +3315,7 @@ export function pruneToProject(p?: unknown): ApiResult {
 
 export function getStorageStats(_p?: unknown): ApiResult {
   return run(() =>
-    cached("getStorageStats", null, () => ({
+    durablyCached("getStorageStats", null, () => ({
       cellCount: cellCount(),
       archiveBytes: archiveBytes(),
       rows: {

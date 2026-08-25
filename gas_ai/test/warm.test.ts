@@ -25,6 +25,18 @@ function flushCache(): void {
   f.restore(snap);
 }
 
+/**
+ * Drop BOTH cache levels — a genuinely cold read.
+ *
+ * `flushCache` alone models a CacheService expiry, which the durable level is specifically
+ * built to absorb, so it no longer produces a cold read of anything durable.
+ */
+async function flushBoth(): Promise<void> {
+  flushCache();
+  const { trashReadModels } = await import("../src/server/archiveStore");
+  trashReadModels();
+}
+
 beforeAll(async () => {
   server = await bootSyncedServer();
 });
@@ -35,21 +47,39 @@ describe("warmReadModels", () => {
     server = await resetToSynced();
     const { warmReadModels } = await warmMod();
 
-    flushCache();
-    // Cold: bootstrap has to compute its core.
+    // A GENUINELY cold read now needs BOTH levels flushed, and that is the durable store
+    // doing its job rather than an inconvenience: dropping CacheService alone is exactly the
+    // six-hourly lapse the L2 exists to absorb. This spec used to flush L1 and call the
+    // result cold; once the L2 landed that read cost 0 ledger cells and the assertion
+    // became `expect(0).toBeLessThan(0)`.
+    await flushBoth();
     const cold = measure(() => server.api.bootstrap({}));
-    flushCache();
+    expect(cold.counters.cellsRead).toBeGreaterThan(0);
 
+    await flushBoth();
     const res = warmReadModels();
     expect(res.warmed).toBeGreaterThan(8);
     expect(res.failed).toBe(0);
     expect(res.skipped).toBe(0);
 
-    // Warm: the same call now resolves from cache. Sheets reads are the honest signal —
-    // a cold bootstrap walks the ledger, a warm one does not.
+    // Warm: no ledger read at all.
     const warm = measure(() => server.api.bootstrap({}));
-    expect(warm.counters.cellsRead).toBeLessThan(cold.counters.cellsRead);
+    expect(warm.counters.cellsRead).toBe(0);
     expect((warm.value as { ok: boolean }).ok).toBe(true);
+  });
+
+  it("survives the six-hour lapse: L1 gone, Drive answers, the ledger is untouched", async () => {
+    server = await resetToSynced();
+    const { warmReadModels } = await warmMod();
+
+    await flushBoth();
+    warmReadModels();
+
+    // What a CacheService expiry looks like: entries gone, Drive intact.
+    flushCache();
+    const after = measure(() => server.api.bootstrap({}));
+    expect(after.counters.cellsRead).toBe(0);
+    expect((after.value as { ok: boolean }).ok).toBe(true);
   });
 
   it("answers identically warm and cold — a warm changes cost, never content", async () => {

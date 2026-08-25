@@ -2101,7 +2101,7 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       "problem_outcome_json": "{"ACT":0,"ATTEND":7,"TRACK_STAR":15,"TRACK":16}",
       "problem_rule_version": 0,
       "project_totals_json": "{"proj-demo-business-unit":{"aars":{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8},"outcome":{"ACT":0,"ATTEND":7,"TRACK_STAR":12,"TRACK":16},"counts":{"issues":32,"findings":3}},"proj-project-beta":{"aars":{"CRITICAL":1,"HIGH":4,"MEDIUM":0,"LOW":2,"INFO":0},"outcome":{"ACT":0,"ATTEND":0,"TRACK_STAR":7,"TRACK":4},"counts":{"issues":10,"findings":1}},"proj-project-alpha":{"aars":{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8},"outcome":{"ACT":0,"ATTEND":7,"TRACK_STAR":12,"TRACK":16},"counts":{"issues":32,"findings":3}},"proj-project-gamma":{"aars":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":0,"TRACK_STAR":5,"TRACK":0},"counts":{"issues":4,"findings":1}},"proj-cs-demo-platform":{"aars":{"CRITICAL":1,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":3,"TRACK_STAR":0,"TRACK":2},"counts":{"issues":4,"findings":1}},"proj-project-eta":{"aars":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":0,"TRACK_STAR":0,"TRACK":2},"counts":{"issues":2,"findings":0}},"proj-project-delta":{"aars":{"CRITICAL":1,"HIGH":0,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":3,"TRACK_STAR":0,"TRACK":0},"counts":{"issues":2,"findings":1}},"proj-project-epsilon":{"aars":{"CRITICAL":1,"HIGH":0,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":3,"TRACK_STAR":0,"TRACK":0},"counts":{"issues":2,"findings":1}},"proj-project-zeta":{"aars":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":4,"TRACK_STAR":0,"TRACK":0},"counts":{"issues":4,"findings":0}}}",
-      "snapshot_ref": "file-4",
+      "snapshot_ref": "file-5",
       "started_at": "2026-08-13T09:00:00Z",
       "status": "SUCCESS",
       "sync_id": "sync-2026-08-13T090000Z",
@@ -14692,7 +14692,7 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 97035,
+    "archiveBytes": 276242,
     "cellCount": 40600,
     "rows": {
       "assets": 87,
@@ -14728,7 +14728,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "problem_outcome_json": "{"ACT":0,"ATTEND":7,"TRACK_STAR":15,"TRACK":16}",
         "problem_rule_version": 0,
         "project_totals_json": "{"proj-demo-business-unit":{"aars":{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8},"outcome":{"ACT":0,"ATTEND":7,"TRACK_STAR":12,"TRACK":16},"counts":{"issues":32,"findings":3}},"proj-project-beta":{"aars":{"CRITICAL":1,"HIGH":4,"MEDIUM":0,"LOW":2,"INFO":0},"outcome":{"ACT":0,"ATTEND":0,"TRACK_STAR":7,"TRACK":4},"counts":{"issues":10,"findings":1}},"proj-project-alpha":{"aars":{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8},"outcome":{"ACT":0,"ATTEND":7,"TRACK_STAR":12,"TRACK":16},"counts":{"issues":32,"findings":3}},"proj-project-gamma":{"aars":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":0,"TRACK_STAR":5,"TRACK":0},"counts":{"issues":4,"findings":1}},"proj-cs-demo-platform":{"aars":{"CRITICAL":1,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":3,"TRACK_STAR":0,"TRACK":2},"counts":{"issues":4,"findings":1}},"proj-project-eta":{"aars":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":0,"TRACK_STAR":0,"TRACK":2},"counts":{"issues":2,"findings":0}},"proj-project-delta":{"aars":{"CRITICAL":1,"HIGH":0,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":3,"TRACK_STAR":0,"TRACK":0},"counts":{"issues":2,"findings":1}},"proj-project-epsilon":{"aars":{"CRITICAL":1,"HIGH":0,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":3,"TRACK_STAR":0,"TRACK":0},"counts":{"issues":2,"findings":1}},"proj-project-zeta":{"aars":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":4,"TRACK_STAR":0,"TRACK":0},"counts":{"issues":4,"findings":0}}}",
-        "snapshot_ref": "file-4",
+        "snapshot_ref": "file-5",
         "started_at": "2026-08-13T09:00:00Z",
         "status": "SUCCESS",
         "sync_id": "sync-2026-08-13T090000Z",

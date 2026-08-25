@@ -128,6 +128,8 @@ async function resetServerMemos(): Promise<void> {
     // the request; here the module registry outlives the test, so without this a stamp read
     // in one test would answer in the next — which is exactly the staleness the memos are
     // careful to drop on a version bump.
+    // Its warm scope and per-execution breaker; module-level, so the same rule applies.
+    import("../src/server/readModelStore"),
     import("../src/server/serverCache"),
     import("../src/server/settingsStore"),
     import("../src/server/sheetsDb"),

@@ -133,7 +133,7 @@ var Server = (() => {
   }
 
   // src/server/archiveStore.ts
-  var SUBFOLDERS = ["syncs", "snapshots"];
+  var SUBFOLDERS = ["syncs", "snapshots", "readmodels"];
   var rootFolderMemo;
   var subfolderMemo = /* @__PURE__ */ new Map();
   var syncFolderMemo = /* @__PURE__ */ new Map();
@@ -175,6 +175,24 @@ var Server = (() => {
     const existing = folder.getFilesByName(name);
     while (existing.hasNext()) existing.next().setTrashed(true);
     return folder.createFile(blob);
+  }
+  function readGzJsonNamed(folder, name) {
+    const it = subfolder(folder).getFilesByName(name);
+    if (!it.hasNext()) return null;
+    return parseGzBlob(it.next().getBlob());
+  }
+  function listNames(folder) {
+    const out = [];
+    const it = subfolder(folder).getFiles();
+    while (it.hasNext()) out.push(it.next().getName());
+    return out;
+  }
+  function trashNamed(folder, name) {
+    const it = subfolder(folder).getFilesByName(name);
+    while (it.hasNext()) it.next().setTrashed(true);
+  }
+  function trashReadModels() {
+    for (const name of listNames("readmodels")) trashNamed("readmodels", name);
   }
   function readGzJsonFile(fileId) {
     try {
@@ -5115,7 +5133,7 @@ var Server = (() => {
       else if (edge2.type === "SERVES") pushInto(servesOf, edge2.src, edge2.dst);
     }
     if (!hostsOf.size && !servesOf.size) return doc;
-    let touched = false;
+    let touched2 = false;
     const nodes = doc.nodes.map((node2) => {
       var _a5, _b, _c, _d, _e, _f, _g;
       if (!AI_ASSET_KINDS.includes(node2.kind)) return node2;
@@ -5152,10 +5170,10 @@ var Server = (() => {
       if (worst) evidence.exposureLevel = worst;
       if (ports.length) evidence.ports = ports;
       if (sourceIpRanges.length) evidence.sourceIpRanges = sourceIpRanges;
-      touched = true;
+      touched2 = true;
       return { ...node2, exposureEvidence: evidence };
     });
-    return touched ? { nodes, edges: doc.edges, syncedAt: doc.syncedAt } : doc;
+    return touched2 ? { nodes, edges: doc.edges, syncedAt: doc.syncedAt } : doc;
   }
   function withExcessivePrivilegeNodes(doc) {
     return withDerivedNodes(doc, {
@@ -5539,23 +5557,23 @@ var Server = (() => {
     const spec = varSpecFor(stepId);
     if (!spec || !raw || typeof raw !== "object" || Array.isArray(raw)) return null;
     const out = {};
-    let touched = false;
+    let touched2 = false;
     for (const field of spec.fields) {
       const value = readPath(raw, field.path);
       if (value === void 0 || value === null) continue;
       if (field.kind === "list") {
         const list2 = cleanList(value);
         writePath(out, field.path, list2);
-        touched = true;
+        touched2 = true;
       } else {
         const s = cleanValue(value).toUpperCase();
         if (!s) continue;
         if (field.options && field.options.indexOf(s) < 0) continue;
         writePath(out, field.path, s);
-        touched = true;
+        touched2 = true;
       }
     }
-    return touched ? out : null;
+    return touched2 ? out : null;
   }
   function validateStepVars(stepId, vars) {
     const spec = varSpecFor(stepId);
@@ -8197,7 +8215,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "aa954ec1b615" : "dev";
+  var BUILD_ID = true ? "9e0824e61f96" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8251,6 +8269,9 @@ var Server = (() => {
       configStampMemo = sha1Hex(`${domainTagKey()}\0${(_a5 = getProp(PROP_KEYS.wizProjectIdV2)) != null ? _a5 : ""}`).slice(0, 8);
     }
     return configStampMemo;
+  }
+  function currentStamp(version) {
+    return `${KEY_PREFIX}:${version != null ? version : dataVersion()}.${configStamp()}`;
   }
   function splitChunks(s, size = CHUNK_CHARS) {
     const out = [];
@@ -10030,12 +10051,12 @@ var Server = (() => {
     return graphDocMemo;
   }
   function normalizeLegacyAars(doc) {
-    let touched = false;
+    let touched2 = false;
     const nodes = doc.nodes.map((n) => {
       var _a5;
       const loose = n;
       if (loose.aarsBand === void 0 && n.aarsSeverity === void 0) return n;
-      touched = true;
+      touched2 = true;
       const next = { ...loose };
       delete next.aarsBand;
       const sev = normalizeAarsSeverity((_a5 = n.aarsSeverity) != null ? _a5 : loose.aarsBand);
@@ -10043,7 +10064,7 @@ var Server = (() => {
       else delete next.aarsSeverity;
       return next;
     });
-    return touched ? { ...doc, nodes } : doc;
+    return touched2 ? { ...doc, nodes } : doc;
   }
   function withRiskNodes(doc) {
     return withMissingGuardrailNodes(
@@ -10055,15 +10076,15 @@ var Server = (() => {
     );
   }
   function withCurrentBands(nodes, bands) {
-    let touched = false;
+    let touched2 = false;
     const out = nodes.map((n) => {
       if (typeof n.aars !== "number") return n;
       const sev = aarsSeverity(n.aars, bands);
       if (sev === n.aarsSeverity) return n;
-      touched = true;
+      touched2 = true;
       return { ...n, aarsSeverity: sev };
     });
-    return touched ? out : nodes;
+    return touched2 ? out : nodes;
   }
   function currentBands() {
     return getAarsRule2().rule.bands;
@@ -10188,6 +10209,7 @@ var Server = (() => {
     overwrite(TABS.dataFindings, []);
     overwrite(TABS.syncHistory, []);
     trashGraphSnapshot();
+    trashReadModels();
     commit();
   }
   var PRUNE_CHILDREN = [
@@ -14050,6 +14072,87 @@ var Server = (() => {
     };
   }
 
+  // src/server/readModelStore.ts
+  var FOLDER = "readmodels";
+  var ENVELOPE_V = 1;
+  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+  var warming = false;
+  var touched = null;
+  function duringWarm(fn) {
+    warming = true;
+    touched = /* @__PURE__ */ new Set();
+    try {
+      return fn();
+    } finally {
+      warming = false;
+      touched = null;
+    }
+  }
+  var disabled = false;
+  function readModelFileName(name, params) {
+    return `rm-${name}-${paramsHash(params)}.json.gz`;
+  }
+  function l2Read(name, params, version) {
+    if (disabled) return { hit: false, why: "absent" };
+    try {
+      const raw = readGzJsonNamed(FOLDER, readModelFileName(name, params));
+      if (!raw || typeof raw !== "object") return { hit: false, why: "absent" };
+      const env = raw;
+      if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
+      if (env.stamp !== currentStamp(version)) return { hit: false, why: "stale" };
+      if (typeof env.writtenAtMs !== "number") return { hit: false, why: "stale" };
+      if (Date.now() - env.writtenAtMs > MAX_AGE_MS) return { hit: false, why: "stale" };
+      return { hit: true, value: env.value };
+    } catch (e) {
+      disabled = true;
+      console.warn(`Durable read-model read failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+      return { hit: false, why: "absent" };
+    }
+  }
+  function l2Write(name, params, version, value) {
+    if (disabled) return;
+    try {
+      const env = {
+        v: ENVELOPE_V,
+        stamp: currentStamp(version),
+        name,
+        hash: paramsHash(params),
+        writtenAtMs: Date.now(),
+        value
+      };
+      writeGzJson(subfolder(FOLDER), readModelFileName(name, params), env);
+    } catch (e) {
+      disabled = true;
+      console.warn(`Durable read-model write failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+    }
+  }
+  function durablyCached(name, params, compute, ttlSec, version) {
+    if (warming && touched) touched.add(readModelFileName(name, params));
+    return cached(name, params, () => {
+      const hit = l2Read(name, params, version);
+      if (hit.hit) return hit.value;
+      const value = compute();
+      if (warming) l2Write(name, params, version, value);
+      return value;
+    }, ttlSec, version);
+  }
+  function sweepReadModels() {
+    if (disabled || !touched) return 0;
+    const keep = touched;
+    let trashed = 0;
+    try {
+      for (const name of listNames(FOLDER)) {
+        if (!keep.has(name)) {
+          trashNamed(FOLDER, name);
+          trashed += 1;
+        }
+      }
+    } catch (e) {
+      console.warn(`Durable read-model sweep failed: ${e}`);
+    }
+    return trashed;
+  }
+
   // src/server/api.ts
   function viewAssets() {
     const all = loadAssets();
@@ -14118,7 +14221,7 @@ var Server = (() => {
     return run(() => {
       var _a5;
       return {
-        ...cached("bootstrapCore", null, bootstrapCore),
+        ...durablyCached("bootstrapCore", null, bootstrapCore),
         hasCredentials: hasWizCredentials(),
         // Outside the cached core on purpose: a cached build stamp would be the one thing
         // guaranteed to lie after a deploy.
@@ -14324,7 +14427,7 @@ var Server = (() => {
   function getGraph(p) {
     return run(() => {
       const params = p != null ? p : {};
-      return cached("getGraph", graphCacheParams(params), () => {
+      return durablyCached("getGraph", graphCacheParams(params), () => {
         var _a5;
         const doc = viewGraphDoc();
         if (!doc) return { empty: true };
@@ -14365,7 +14468,7 @@ var Server = (() => {
     const raw = params["kind"];
     const kind = typeof raw === "string" && (raw === "ANY" || NODE_KINDS.includes(raw)) ? raw : null;
     return run(
-      () => cached("queryVocabulary", { kind }, () => {
+      () => durablyCached("queryVocabulary", { kind }, () => {
         const doc = viewGraphDoc();
         if (!doc) {
           return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
@@ -14811,14 +14914,14 @@ var Server = (() => {
   }
   function getAssetsHead(_p) {
     return run(() => {
-      const model = cached("assetsModel2", null, assetsModel);
+      const model = durablyCached("assetsModel2", null, assetsModel);
       return { total: model.rows.length, kpis: model.kpis, reach: model.reach };
     });
   }
   function getAssets(p) {
     return run(() => {
       const query = resolveAssetQuery(p != null ? p : {});
-      const model = cached("assetsModel2", null, assetsModel);
+      const model = durablyCached("assetsModel2", null, assetsModel);
       const head = {
         total: model.rows.length,
         kpis: model.kpis,
@@ -14883,7 +14986,7 @@ var Server = (() => {
   }
   function getAssetOptions(_p) {
     return run(
-      () => cached("assetOptions", null, () => ({
+      () => durablyCached("assetOptions", null, () => ({
         rows: [...viewAssets()].sort((a, b) => {
           var _a5, _b, _c, _d;
           return Number((_a5 = b.openIssues) != null ? _a5 : 0) - Number((_b = a.openIssues) != null ? _b : 0) || Number((_c = b.openFindings) != null ? _c : 0) - Number((_d = a.openFindings) != null ? _d : 0) || String(a.name).localeCompare(String(b.name));
@@ -15014,7 +15117,7 @@ var Server = (() => {
         Math.max(1, Number(params["pageSize"]) || DEFAULT_CONFIG_PAGE_SIZE)
       );
       const page = Math.max(0, Number(params["page"]) || 0);
-      const model = cached("configModel", null, configModel);
+      const model = durablyCached("configModel", null, configModel);
       const head = {
         total: model.rows.length,
         totals: model.totals,
@@ -15245,7 +15348,7 @@ var Server = (() => {
       var _a5;
       const params = p != null ? p : {};
       const group = String((_a5 = params["group"]) != null ? _a5 : "");
-      return cached("getIssues", { group }, () => {
+      return durablyCached("getIssues", { group }, () => {
         let rows = viewIssues();
         if (group) rows = rows.filter((i) => i.comboGroup === group);
         return { rows: rows.map((r) => publicRow(r)) };
@@ -15408,7 +15511,7 @@ var Server = (() => {
         Math.max(1, Number(params["pageSize"]) || DEFAULT_PAGE_SIZE)
       );
       const page = Math.max(0, Number(params["page"]) || 0);
-      const model = cached("problemsModel", null, problemsModel);
+      const model = durablyCached("problemsModel", null, problemsModel);
       const head = {
         // The union invariant's left-hand side — every unresolved issue and every open
         // finding, regardless of the outcome filter or the mode below.
@@ -15450,7 +15553,7 @@ var Server = (() => {
       const params = p != null ? p : {};
       const limitParam = Number(params["limit"]);
       const limit = Number.isFinite(limitParam) && limitParam >= 0 ? Math.floor(limitParam) : void 0;
-      const model = cached("problemsModel", null, problemsModel);
+      const model = durablyCached("problemsModel", null, problemsModel);
       const fullyRanked = withAutoRemediation(
         rankActionsByCover(model.rows),
         loadFrameworkPolicies()
@@ -15480,7 +15583,7 @@ var Server = (() => {
     });
   }
   function getSyncHistory(_p) {
-    return run(() => cached("getSyncHistory", null, () => ({
+    return run(() => durablyCached("getSyncHistory", null, () => ({
       rows: syncHistory().reverse()
     })));
   }
@@ -15989,7 +16092,7 @@ var Server = (() => {
   }
   function getStorageStats(_p) {
     return run(
-      () => cached("getStorageStats", null, () => ({
+      () => durablyCached("getStorageStats", null, () => ({
         cellCount: cellCount(),
         archiveBytes: archiveBytes(),
         rows: {
@@ -16020,6 +16123,9 @@ var Server = (() => {
     ["storageStats", () => getStorageStats({})]
   ];
   function warmReadModels(budgetMs = WARM_BUDGET_MS) {
+    return duringWarm(() => warmInner(budgetMs));
+  }
+  function warmInner(budgetMs) {
     const t0 = Date.now();
     let warmed = 0;
     let skipped = 0;
@@ -16037,13 +16143,16 @@ var Server = (() => {
         console.warn(`Cache warm (${label}) failed: ${e}`);
       }
     }
+    const swept = skipped ? -1 : sweepReadModels();
     const ms = Date.now() - t0;
     if (skipped) {
       console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
     } else {
-      console.log(`Cache warm: ${warmed} entries in ${ms}ms` + (failed ? `, ${failed} failed` : ""));
+      console.log(
+        `Cache warm: ${warmed} entries in ${ms}ms` + (failed ? `, ${failed} failed` : "") + (swept > 0 ? `, swept ${swept} stale durable file(s)` : "")
+      );
     }
-    return { warmed, skipped, failed, ms };
+    return { warmed, skipped, failed, ms, swept };
   }
   function warmReadModelsScheduled() {
     const job = activeJob();

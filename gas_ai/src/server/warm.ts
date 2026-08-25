@@ -21,6 +21,7 @@
 
 import * as api from "./api";
 import { activeJob } from "./jobsStore";
+import { duringWarm, sweepReadModels } from "./readModelStore";
 
 /**
  * Wall-clock budget for one pass.
@@ -61,6 +62,8 @@ export interface WarmResult {
   skipped: number;
   failed: number;
   ms: number;
+  /** Durable files trashed by the sweep. -1 when the sweep was skipped. */
+  swept: number;
 }
 
 /**
@@ -68,6 +71,12 @@ export interface WarmResult {
  * cost the rest, because a warm is an optimization and never a correctness dependency.
  */
 export function warmReadModels(budgetMs: number = WARM_BUDGET_MS): WarmResult {
+  // `duringWarm` is what permits durable WRITES and what collects the sweep's keep-list.
+  // Outside it the Drive layer is read-only, which is what keeps the file count bounded.
+  return duringWarm(() => warmInner(budgetMs));
+}
+
+function warmInner(budgetMs: number): WarmResult {
   const t0 = Date.now();
   let warmed = 0;
   let skipped = 0;
@@ -87,13 +96,24 @@ export function warmReadModels(budgetMs: number = WARM_BUDGET_MS): WarmResult {
     }
   }
 
+  // The keep-list now names every durable file this pass touched, so anything else in the
+  // folder is a leftover — from a bumped cache namespace, a changed param, or a model dropped
+  // from the warm — that no future write would ever overwrite, because nothing asks for it.
+  //
+  // SKIPPED AFTER A BUDGET CUT-OUT: the keep-list would be short by whatever never ran, and
+  // sweeping against it would trash live entries only to rewrite them next pass.
+  const swept = skipped ? -1 : sweepReadModels();
+
   const ms = Date.now() - t0;
   if (skipped) {
     console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
   } else {
-    console.log(`Cache warm: ${warmed} entries in ${ms}ms` + (failed ? `, ${failed} failed` : ""));
+    console.log(
+      `Cache warm: ${warmed} entries in ${ms}ms` + (failed ? `, ${failed} failed` : "") +
+      (swept > 0 ? `, swept ${swept} stale durable file(s)` : ""),
+    );
   }
-  return { warmed, skipped, failed, ms };
+  return { warmed, skipped, failed, ms, swept };
 }
 
 /**
