@@ -37,18 +37,28 @@ export async function renderData(main, _params, ctx) {
       skeleton("line", { width: "60%" }),
       skeleton("stat", { width: "45%" })))));
 
-  try {
-    const history = await swrCall("api_getSyncHistory", {}, (fresh) => paintHistory(fresh));
-    paintHistory(history);
-  } catch (e) {
-    historyHost.append(emptyState("Couldn't load sync history.", String(e.message || e)));
+  // In parallel, not in sequence. These two RPCs are independent — different endpoints,
+  // different hosts, different skeletons, and each already degrades on its own terms — but
+  // they were two serial `await`s, so `api_getStorageStats` did not START until
+  // `api_getSyncHistory` had resolved. Nothing needed that ordering; it was only where the
+  // awaits sat. `Promise.allSettled` is the idiom every other multi-fetch page here uses
+  // (scans.js, help.js, settings.js), and it keeps the per-call failure handling those need:
+  // one endpoint failing must cost its own section a message, not take the other down.
+  const [historyRes, statsRes] = await Promise.allSettled([
+    swrCall("api_getSyncHistory", {}, (fresh) => paintHistory(fresh)),
+    swrCall("api_getStorageStats", {}, (fresh) => paintStats(fresh)),
+  ]);
+
+  if (historyRes.status === "fulfilled") paintHistory(historyRes.value);
+  else {
+    const e = historyRes.reason;
+    historyHost.append(emptyState("Couldn't load sync history.", String((e && e.message) || e)));
   }
 
-  try {
-    const stats = await swrCall("api_getStorageStats", {}, (fresh) => paintStats(fresh));
-    paintStats(stats);
-  } catch (e) {
-    statsHost.append(emptyState("Couldn't load storage stats.", String(e.message || e)));
+  if (statsRes.status === "fulfilled") paintStats(statsRes.value);
+  else {
+    const e = statsRes.reason;
+    statsHost.append(emptyState("Couldn't load storage stats.", String((e && e.message) || e)));
   }
 
   main.append(sectionLabel("Maintenance"));
