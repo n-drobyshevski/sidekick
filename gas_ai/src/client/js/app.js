@@ -30,66 +30,100 @@ import { renderScans } from "./pages/scans.js";
 import { renderData } from "./pages/data.js";
 import { renderSettings } from "./pages/settings.js";
 import { renderHelp } from "./pages/help.js";
-import { ROUTE_ICONS } from "./routeIcons.js";
+import { LANE_ICONS, ROUTE_ICONS } from "./routeIcons.js";
+import { itemForRoute, railItems } from "./navModel.js";
+import {
+  focusFirstRow, itemHasPanel, mountNavFlyout, openFlyoutFor, setActiveItem, setNavContext,
+  tapOpensPanel, wireRail,
+} from "./navFlyout.js";
+import { SAVED_VIEW_KEYS, readSavedViews } from "./savedViews.js";
 
-/**
- * THE POC NAV IS FOUR SURFACES, and the other seven are hidden rather than deleted.
- *
- * The minimal model (domain/rank.ts) reads two flat fields and needs no graph, so most of
- * this app is machinery for axes the reference tenant holds constant. Showing that is the
- * point of the branch. But `hidden` rather than `delete` is deliberate: the glossary in
- * helpContent.js points at these routes about sixty times and `test/helpContent.test.js`
- * asserts every one resolves, so removing them from PAGES means gutting real documentation
- * to make a demo look smaller. A hidden route still resolves, still renders if someone types
- * its hash, and costs nothing.
- *
- * `problems` is FIRST now, because the first key is the default landing route — the front
- * door should be the queue the model exists to order. store.js's parseHash fallback moved
- * with it; the two are coupled and this file used to say so about `graph`.
- */
+// The rail's information architecture, stated once.
+//
+// THREE LANES, A GATE AND A TAIL. Every page in this app is a security page, so "Security"
+// as a heading distinguished nothing while holding six of them; what a reader actually
+// chooses between is the landscape (what we have), the risk in it (what is open, and what
+// to do first) and what we can state about it (how we score, and where the figures came
+// from). Those are the three labelled lanes. `Labs` is the gate. The tail — `group: null` —
+// is chrome, separated by a rule and never labelled.
+//
+// Two rules renderSidebar depends on, both held by test/navGroups.test.js:
+//   * A LABELLED LANE EARNS ITS HEADING BY HOLDING TWO PAGES. `Labs` is the one exception,
+//     because there the heading IS the statement — it says the page sits outside the
+//     security workflow rather than beside it — and it is drawn only when the gate is open.
+//   * LANES ARE CONTIGUOUS. The lastGroup detector below emits a fresh heading every time
+//     the value changes, so a lane split in two would quietly draw its heading twice.
+//
+// THREE FLAGS, THREE DIFFERENT QUESTIONS, and they compose:
+//   `hidden`        keeps a route off this branch's PoC nav. The minimal model reads two
+//                   flat fields and needs no graph, so most of this app is machinery for
+//                   axes the reference tenant holds constant, and showing that is the point
+//                   of the branch. A flag rather than seven deletions because helpContent.js
+//                   points at these routes about sixty times and helpContent.test.js asserts
+//                   every one resolves — a hidden route still resolves, still renders if
+//                   someone types its hash, and costs nothing.
+//   `experimental`  gates a route behind Settings → Show experimental content, for everyone.
+//   `group`         which lane it sits in, which is about arrangement and not availability.
+// A lane the first two empty out never reaches the rail, and a lane left holding ONE visible
+// page is drawn as that page rather than as a lane — see navModel.js, which is where the
+// three meet.
 const PAGES = {
   // fullBleed: the page owns the whole content pane (no main padding/max-width).
-  graph: { hidden: true, title: "Security Graph", group: "Security", render: renderGraphPage, fullBleed: true },
-  inventory: { hidden: true, title: "AI Inventory", group: "Security", render: renderInventory },
+  graph: { hidden: true, title: "Security Graph", group: "Landscape", render: renderGraphPage, fullBleed: true },
+  inventory: { hidden: true, title: "AI Inventory", group: "Landscape", render: renderInventory },
   // Phase 7: issues UNION findings, ranked together across the whole landscape — neither
   // `combos` (one toxic-combination pattern) nor `config` (findings only) can answer
-  // "what do I work on Monday". Sits right after inventory: both name the landscape, this one
-  // orders what is wrong with it.
-  problems: { title: "Priorities", group: "Security", render: renderProblems },
-  combos: { hidden: true, title: "Toxic Combinations", group: "Security", render: renderCombos },
-  config: { hidden: true, title: "Cloud Configuration", group: "Security", render: renderConfigFindings },
-  // After config, never first: the FIRST key is the default landing route (parseHash's
-  // fallback is coupled to it), so inserting a page at the top silently changes the app's
-  // front door. Sits beside Cloud Configuration because the two are the same subject at
-  // two grains — what is failing, and what that scores against.
-  compliance: { hidden: true, title: "Compliance Posture", group: "Security", render: renderCompliance },
+  // "what do I work on Monday". It opens the Risk lane for that reason: it is the page an
+  // analyst lives in, and the two under it are lenses on subsets of what it ranks. It is
+  // also this branch's front door — DEFAULT_ROUTE names it.
+  problems: { title: "Priorities", group: "Risk", render: renderProblems },
+  combos: { hidden: true, title: "Toxic Combinations", group: "Risk", render: renderCombos },
+  config: { hidden: true, title: "Cloud Configuration", group: "Risk", render: renderConfigFindings },
+  // Stays directly under Cloud Configuration — the two are the same subject at two grains,
+  // what is failing and what that scores against — and the lane boundary between them is the
+  // claim rather than a separation: one register is worked, the other is stated.
+  compliance: { hidden: true, title: "Compliance Posture", group: "Assurance", render: renderCompliance },
+  // Assurance, not the lone "Coverage" heading this used to carry. One page under one
+  // heading was a line of furniture; and this page answers the question Compliance Posture
+  // answers, one step further back — "where did this figure come from" beside "how do we
+  // score" — which is the same reader on the same errand.
+  scans: { title: "Wiz Scans", group: "Assurance", render: renderScans },
   // "Scoring Models", not "AARS Rules": this page has hosted three models since the Problem
-  // and Posture tabs landed, and it is now the ONLY consumer of all three. The route key
-  // stays `aars` — every hash link, ROUTE_ICONS entry and helpContent `route` value keys on
-  // it, and renaming would break shared links to buy nothing a reader can see.
+  // and Posture tabs landed, and it is now the ONLY consumer of all three — the title is
+  // the boundary as much as the name. Deliberately not "Risk Models": this codebase is
+  // careful that these are not risk scores (the glossary says so in as many words), and
+  // bare "Models" would collide with the MODEL node kind the graph draws.
   //
-  // `experimental: true` gates it behind Settings → Show experimental content, which is OFF
-  // by default. It is NOT `hidden`: the two flags answer different questions. `hidden` keeps
-  // a route off this branch's PoC nav; `experimental` gates it behind a setting for everyone.
+  // The route key stays `aars`. Every hash link, ROUTE_ICONS entry and helpContent
+  // `route`/`drawnOn` value keys on it, and renaming the key would break shared links to
+  // buy nothing a reader can see.
+  //
+  // Group "Labs", not "Scoring": the rail itself should say these sit outside the security
+  // workflow rather than beside it.
+  //
+  // `experimental: true`, and deliberately NOT `hidden`: the two flags answer different
+  // questions. Gated, never removed — the key stays in this map so shared `#/aars` links
+  // keep working for anyone who has asked for them, and so helpContent's "routes only to
+  // pages that exist" guard still has a page to point at.
   aars: {
     title: "Scoring Models", group: "Labs", render: renderAarsRules, fullBleed: true,
     experimental: true,
   },
-  scans: { title: "Wiz Scans", group: "Coverage", render: renderScans },
-  data: { hidden: true, title: "Data", group: "Data", render: renderData },
-  settings: { hidden: true, title: "Settings", group: "Preferences", render: renderSettings },
-  // Last on purpose. The FIRST key is the default landing route, and DEFAULT_ROUTE in
-  // store.js has to name it — a page inserted at the top silently becomes the app's front
-  // door. (This comment used to say the coupling was to parseHash's `|| "graph"`, which had
-  // already stopped being true: the fallback said "problems" while route() still said graph.)
-  help: { title: "Help", group: "Help", render: renderHelp },
+  // The tail: chrome, not a lane. A rule separates it and nothing labels it — "Data" under
+  // a heading reading DATA, and "Help" under HELP, were two lines that restated the link
+  // beneath them, and "Preferences" over "Settings" was the same line in a synonym.
+  data: { hidden: true, title: "Data", group: null, render: renderData },
+  settings: { hidden: true, title: "Settings", group: null, render: renderSettings },
+  // Last on purpose. DEFAULT_ROUTE in store.js names the front door, and this map no longer
+  // decides it by position — which is what made the old coupling worth stating and then
+  // worth retiring: the fallback said "problems" while route() still said graph.
+  help: { title: "Help", group: null, render: renderHelp },
 };
 
-// Nav-route icons (ROUTE_ICONS) now live in routeIcons.js — see that module for why.
-// Circular-arrows glyph for the primary "Sync now" button; shrinks to the icon alone when
-// the rail is collapsed (its .btn-label is hidden by the collapsed CSS).
+// Nav icons (ROUTE_ICONS, LANE_ICONS) now live in routeIcons.js — see that module for why.
+// Circular-arrows glyph for the primary "Sync now" button; on the icon rail it is the icon
+// alone (its .btn-label is hidden there by CSS).
 const SYNC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a8 8 0 0 0-13.7-5L4 8.5"/><path d="M4 4.5v4h4"/><path d="M4 12.5a8 8 0 0 0 13.7 5L20 15.5"/><path d="M20 19.5v-4h-4"/></svg>';
-const CHEVRON_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg>';
 
 // A span carrying an inline SVG (el() builds HTML nodes, so SVG goes in via innerHTML).
 function iconSpan(svg, cls) {
@@ -98,41 +132,15 @@ function iconSpan(svg, cls) {
   return s;
 }
 
-// Collapsed-rail preference — persisted like a user setting, with its own try/catch since a
-// GAS iframe sandbox can block web storage. Desktop-only: the <=800px top-bar layout ignores
-// the .collapsed class (see styles.css), so a stored flag is simply inert there.
-const SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
-// Collapsed by default: an absent preference reads as collapsed, and only an explicit expand
-// (stored "0" by saveCollapsed) reopens it — so the rail stays out of the way until a user
-// deliberately widens it. A sandbox that blocks storage also lands on collapsed.
-function loadCollapsed() {
-  try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) !== "0"; } catch { return true; }
-}
-function saveCollapsed(v) {
-  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? "1" : "0"); } catch { /* sandboxed */ }
-}
-// Reflect the flag onto the (rebuilt-on-refresh) rail DOM. Width rides the shared --rail-w
-// custom property so the flex main pane and the route overlay's left edge track it for free.
-// Collapsed nav links get a native title = their label (the visible text is hidden).
-function applyCollapsed(collapsed) {
-  const sidebar = document.querySelector(".sidebar");
-  if (!sidebar) return;
-  sidebar.classList.toggle("collapsed", collapsed);
-  if (collapsed) document.documentElement.style.setProperty("--rail-w", "56px");
-  else document.documentElement.style.removeProperty("--rail-w");
-  const toggle = sidebar.querySelector(".rail-toggle");
-  if (toggle) {
-    toggle.setAttribute("aria-expanded", String(!collapsed));
-    toggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
-    tipAnchor(toggle, collapsed ? "Expand sidebar" : "Collapse sidebar");
-  }
-  // The collapsed rail is the default, and a native title was the only thing naming these
-  // links in it: unreachable by touch, and half a second late for everyone else. Re-registered
-  // rather than removed when the rail expands, because an expanded link says its own name.
-  sidebar.querySelectorAll(".nav-link").forEach((a) => {
-    const label = a.querySelector(".nav-label");
-    tipAnchor(a, collapsed && label ? label.textContent : null);
-  });
+// Below this width the rail is not a rail at all — it becomes a wrapping top bar, where a
+// panel has nowhere to fly out to and a 76px icon column would be a column of one. So the nav
+// has two shapes, and this is the switch between them: the icon rail plus its panel above
+// 800px, and the plain stacked list (lane headings as words, one rule above the chrome tail)
+// below it. The query is the one queryPalette.js already makes for the same reason — it
+// renders into a sheet instead of a popover at exactly this width.
+const NARROW_NAV = "(max-width: 800px)";
+function narrowNav() {
+  return !!(window.matchMedia && window.matchMedia(NARROW_NAV).matches);
 }
 
 const app = document.getElementById("app");
@@ -141,7 +149,6 @@ let mainEl = null;
 // content" changes which pages the rail lists and nothing else — a full refresh() would
 // re-fetch the whole bootstrap payload to answer a question already settled locally.
 let sidebarEl = null;
-let sidebarCollapsed = loadCollapsed();
 
 // The Settings toggle reaches the rail through here rather than by importing app.js, which
 // would close the app.js → pages/settings.js import into a cycle. No re-route: the toggle
@@ -241,10 +248,18 @@ async function boot() {
       el("div", { class: "route-overlay-fill" })),
     el("span", { class: "route-overlay-label" }),
   );
+  // The nav panel is a sibling of the rail rather than a child of it: .sidebar is
+  // overflow-y:auto and would clip it, and .app-body is already the positioning context the
+  // route overlay uses. Unpinned it floats over the content pane; pinned it is an in-flow
+  // column and `main` shrinks beside it.
+  const flyout = el("nav", { class: "nav-flyout", "aria-label": "Section pages" });
   // The overlay is a child of the BODY row, not of `app`: it veils the content pane while a
   // page refetches, and the header above it has to stay live — the rail already does, by
   // sitting outside the overlay's box.
-  app.append(appbar, el("div", { class: "app-body" }, sidebar, mainEl, routeOverlay));
+  app.append(appbar, el("div", { class: "app-body" }, sidebar, flyout, mainEl, routeOverlay));
+  mountNavFlyout(flyout);
+  setNavContext(navContext);
+  wireRail(sidebar, (id) => currentRailItems().filter((i) => i.id === id)[0] || null);
 
   let data;
   try {
@@ -298,32 +313,108 @@ function renderAppbar(appbar, data) {
   }
 }
 
-function renderSidebar(sidebar, data) {
-  clear(sidebar);
-  const railToggle = el("button", {
-    class: "rail-toggle", type: "button",
-    onclick: () => {
-      sidebarCollapsed = !sidebarCollapsed;
-      saveCollapsed(sidebarCollapsed);
-      applyCollapsed(sidebarCollapsed);
+/**
+ * A lane heading.
+ *
+ * An h2 rather than a div, and the label inside a span rather than loose in it, for the
+ * same reason: the collapsed rail is the DEFAULT, and it used to `display: none` these
+ * outright — so the one state most readers see had no grouping in it at all, on screen or
+ * in the accessibility tree. Collapsed, the span is what goes (clipped, not removed) and the
+ * h2 itself draws as the hairline between two icon clusters. The heading stays announced and
+ * navigable in every state; only its pixels change.
+ */
+function navGroupHeading(label) {
+  return el("h2", { class: "nav-group" }, el("span", { class: "nav-group-label" }, label));
+}
+
+// The chrome tail's separator. Data, Settings and Help name themselves, so the tail is
+// marked rather than labelled — presentational, because it says nothing a reader could not
+// see, and the pages under it are already three ordinary links.
+function navRule() {
+  return el("div", { class: "nav-rule", role: "presentation" });
+}
+
+/**
+ * One rail item: a link that navigates, and — where the item has a panel — the trigger that
+ * opens it.
+ *
+ * ONE CONTROL, and no caret beside it. The rail carried a disclosure button for a while and
+ * it earned its place at 12px on a 76px item: a second target crowding a label, drawing a
+ * mark on the chrome that the panel it opens draws again as a heading. What it was for
+ * survives without it — `aria-haspopup` and `aria-expanded` say a panel is there and whether
+ * it is open, ArrowRight opens it and lands focus inside, Escape closes it and hands focus
+ * back — so the announcement and the keyboard path are unchanged and only the pixels are
+ * gone. Enter still navigates, because this is still a link: the panel is a way in, never the
+ * only one.
+ */
+function railItem(item) {
+  const icon = item.kind === "lane" ? LANE_ICONS[item.id] : ROUTE_ICONS[item.route];
+  const node = el("div", { class: "rail-item", "data-nav-item": item.id });
+  const link = el(
+    "a",
+    {
+      class: "nav-link rail-link",
+      href: `#/${item.route}`,
+      // index.html sets <base target="_top"> so external links escape the GAS
+      // sandbox iframe; _self keeps hash routing in-frame.
+      target: "_self",
+      // Only where there is one. A rail item that announced a popup it does not have would
+      // send a screen-reader user hunting for a panel that never opens.
+      "aria-haspopup": itemHasPanel(item) ? "true" : null,
+      "aria-expanded": itemHasPanel(item) ? "false" : null,
+      onclick: (e) => {
+        // Where there is no hover there is no flyout, so the first tap has to do the
+        // revealing — the same bargain tip.js strikes with its cards.
+        if (tapOpensPanel(item, node)) e.preventDefault();
+      },
+      onkeydown: (e) => {
+        if (e.key !== "ArrowRight" || !itemHasPanel(item)) return;
+        e.preventDefault();
+        openFlyoutFor(item, node, { viaFocus: true });
+        focusFirstRow();
+      },
     },
-  });
-  railToggle.innerHTML = CHEVRON_ICON;
-  // The rail opens with the collapse control alone. The wordmark that used to sit here is in
-  // the app header now, and the scope switcher with it — both describe the whole app rather
-  // than the list of pages, and the header is where the whole app is named.
-  sidebar.append(el("div", { class: "rail-head" }, railToggle));
+    iconSpan(icon),
+    el("span", { class: "nav-label" }, item.label),
+  );
+  node.append(link);
+  return node;
+}
+
+/** The two-tier rail: one item per lane, then a rule, then the chrome pages. */
+function renderRail(sidebar, items) {
+  let ruled = false;
+  for (const item of items) {
+    // The tail is chrome rather than a lane, and the rule is what says so — the same rule the
+    // stacked list draws, for the same reason. Keyed on `lane`, never on `kind`: a lane left
+    // holding one visible page is drawn AS that page, so kind alone would put the rule in
+    // front of the first collapsed lane instead of in front of the chrome.
+    if (item.lane === null && !ruled) { sidebar.append(navRule()); ruled = true; }
+    sidebar.append(railItem(item));
+  }
+}
+
+/**
+ * The stacked list, for the top-bar layout below 800px: every page, lane headings as words,
+ * one rule above the chrome tail. This is the rail as it shipped before the panel existed,
+ * and it stays because at that width it is still the right answer.
+ */
+function renderStackedNav(sidebar) {
   const { route: active } = parseHash();
-  let lastGroup = null;
+  // `undefined`, not null: null is a real group — the unlabelled chrome tail — and a detector
+  // seeded with it would start the list inside that tail and never draw its rule.
+  let lastGroup;
   for (const [key, page] of Object.entries(PAGES)) {
     // Hidden routes still resolve and still render — they are only off the nav. See the
     // PAGES header for why this branch is a flag rather than seven deletions.
     if (page.hidden) continue;
-    // A gated page is absent, not disabled: a greyed-out row would still tell every reader
-    // that a model they cannot open exists. The "Labs" heading goes with it for free.
+    // A gated page is absent, not disabled: the rest of this list is the security workflow,
+    // and a greyed-out row inside it would still be telling every reader that a model they
+    // cannot open exists. The "Labs" heading goes with it for free — the lastGroup detector
+    // only emits a header when a page that is actually being drawn changes group.
     if (page.experimental && !showExperimental()) continue;
     if (page.group !== lastGroup) {
-      sidebar.append(el("div", { class: "nav-group" }, page.group));
+      sidebar.append(page.group ? navGroupHeading(page.group) : navRule());
       lastGroup = page.group;
     }
     sidebar.append(
@@ -332,8 +423,6 @@ function renderSidebar(sidebar, data) {
         {
           class: `nav-link${key === active ? " active" : ""}`,
           href: `#/${key}`,
-          // index.html sets <base target="_top"> so external links escape the GAS
-          // sandbox iframe; _self keeps hash routing in-frame.
           target: "_self",
           "aria-current": key === active ? "page" : null,
         },
@@ -342,6 +431,12 @@ function renderSidebar(sidebar, data) {
       ),
     );
   }
+}
+
+function renderSidebar(sidebar, data) {
+  clear(sidebar);
+  if (narrowNav()) renderStackedNav(sidebar);
+  else renderRail(sidebar, currentRailItems());
 
   // Sync zone
   const zone = el("div", { class: "scan-zone" });
@@ -381,9 +476,36 @@ function renderSidebar(sidebar, data) {
     }
   }
   sidebar.append(zone);
-  // Re-apply the persisted collapsed state — the rail is rebuilt wholesale on every
-  // refresh(), so the class + width + per-link titles must be re-stamped each time.
-  applyCollapsed(sidebarCollapsed);
+  // The rail is rebuilt wholesale on every refresh() and on every experimental-flag change,
+  // so the panel's marks on it — which item is open, which lane holds the current page — have
+  // to be re-stamped onto the new nodes each time. The panel's own state survives in
+  // navFlyout.js, which is why it is held there rather than on a rail item.
+  setActiveItem(itemForRoute(currentRailItems(), parseHash().route));
+}
+
+/** The rail's items for the gate as it stands right now. */
+function currentRailItems() {
+  return railItems(PAGES, { experimental: showExperimental() });
+}
+
+/**
+ * What the nav panel has to list, gathered from what the shell already holds.
+ *
+ * A function rather than a snapshot: `comboLegend` is settled once per boot, but the saved
+ * views are written by the reader mid-session, and a panel that only learned about them on
+ * the next full reload would be a menu that forgets what you just told it. Nothing here
+ * fetches — hovering a rail item costs a localStorage read and an object walk, never a round
+ * trip.
+ */
+function navContext() {
+  const data = bootstrapCached();
+  const savedViews = [];
+  for (const route of ["graph", "inventory"]) {
+    for (const v of readSavedViews(SAVED_VIEW_KEYS[route]) || []) {
+      savedViews.push({ name: v.name, route, params: v.params || {} });
+    }
+  }
+  return { savedViews, combos: (data && data.comboLegend) || [] };
 }
 
 /**
@@ -536,6 +658,15 @@ async function route() {
     if (isActive) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   });
+  // The rail's own pass, which the one above cannot do: a lane is marked while you are on ANY
+  // of its pages, and its link points at only one of them. It is deliberately a different
+  // mark and NOT aria-current — a lane that merely contains the page you are on is not itself
+  // the page, and saying so would put two "you are here" answers in one nav.
+  const here = itemForRoute(currentRailItems(), key);
+  document.querySelectorAll(".rail-item").forEach((node) => {
+    node.classList.toggle("current", !!here && node.getAttribute("data-nav-item") === here.id);
+  });
+  setActiveItem(here);
   // Before the DOM goes: cancel the outgoing page's pending work, so a debounced
   // callback cannot fire into a page that no longer exists.
   runPageTeardown();

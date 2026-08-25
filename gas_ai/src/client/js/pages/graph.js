@@ -41,6 +41,7 @@ import {
   bootstrap, navigate, parseHash, setParams, swrCall,
 } from "../store.js";
 import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
+import { SAVED_VIEW_KEYS, readSavedViews } from "../savedViews.js";
 import { renderGraph } from "../graphView.js";
 import { renderGraphSkeleton } from "../graphSkeleton.js";
 import { queryTable, DEFAULT_PAGE_SIZE } from "../queryTable.js";
@@ -174,7 +175,7 @@ const DATA_KEYS = ["find", "where", "maxNodes", "layout", "groupBy", "sort", "co
 
 /** Table-only view state: repainted from the rows already fetched, never refetched. */
 const TABLE_KEYS = ["page", "pageSize", "sortCol", "dir"];
-const VIEWS_KEY = "sidekickai.graphQueries";
+const VIEWS_KEY = SAVED_VIEW_KEYS.graph;
 /** Per-KIND column preferences, beside the saved queries. See readColumnDefaults. */
 const COLS_KEY = "sidekickai.graphColumns";
 /** What a saved query remembers. The whole page state, minus transient panel/focus intent. */
@@ -1224,14 +1225,12 @@ export async function renderGraphPage(main, params, _ctx) {
 
   // ------------------------------------------------------------- saved views
   /** Saved views live per browser; a sandboxed iframe or private mode may refuse. */
+  // The parse lives in savedViews.js, which owns both keys — the nav panel lists these
+  // queries too, and a third copy of the same six lines is how a stored shape drifts.
+  // Storage refused still answers null, and this caller still offers nothing rather than a
+  // broken control.
   function readViews() {
-    try {
-      const raw = window.localStorage.getItem(VIEWS_KEY);
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed.filter((v) => v && v.name) : [];
-    } catch {
-      return null; // storage refused — the caller offers nothing rather than a broken control
-    }
+    return readSavedViews(VIEWS_KEY);
   }
 
   /** Name the query in the hash and store it — the menu's first row, factored out of it. */

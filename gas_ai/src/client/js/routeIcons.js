@@ -1,4 +1,7 @@
-// Nav-route icon set: one inline stroke SVG glyph per PAGES route (graph, inventory,
+// Nav icon sets: one glyph per LANE (the items the 76px rail draws) and one per PAGES route
+// (the rows its panel lists, and the chrome pages that are rail items in their own right).
+//
+// Route set: one inline stroke SVG glyph per PAGES route (graph, inventory,
 // combos, aars, scans, data, settings, help). The client has no icon system, so these are
 // small stroke SVGs drawn on currentColor, inlined (the GAS/CSP sandbox blocks icon
 // fonts/CDNs). 24-grid, rendered at 18px. Used both expanded (icon + label) and collapsed
@@ -7,6 +10,29 @@
 // Lives outside app.js rather than inside it: app.js reads `document` at module scope and
 // imports every page module, so a page importing app.js just to reach these icons would be
 // a cycle. This module has neither problem — any page can import it directly.
+// The LANE marks — one per labelled lane, drawn on the 76px rail where the lane, not the
+// page, is the item. Same 24-grid stroke construction as the route glyphs below, and
+// deliberately NOT a copy of any of them: a lane's mark has to be recognisable beside the
+// page marks its own panel lists, so Risk is not the combos triangle and Assurance is not the
+// compliance clipboard. The chrome pages (Data, Settings, Help) stay their own rail items and
+// keep their route glyph, since there the item IS the page.
+export const LANE_ICONS = {
+  // A horizon. The lane answers "what have we got and how does it sit together", which is a
+  // terrain rather than an object — and it is the one mark here that could not be mistaken
+  // for a page's.
+  Landscape: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 18h18.4"/><path d="M4.4 14.8l3.7-4.9 2.7 3.5"/><path d="M9.3 14.8l4-5.7 4.7 6"/></svg>',
+  // A flag: what has been raised for attention. Not the warning triangle — Toxic
+  // Combinations owns that inside this very panel — and not a bell, which would promise
+  // alerting this app does not do.
+  Risk: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.2 20.5V4"/><path d="M6.2 5h11.3l-2.4 3.6 2.4 3.6H6.2"/></svg>',
+  // A shield with a check: the position we can state and stand behind. The check is what
+  // separates it from a bare shield, which would read as protection rather than as evidence.
+  Assurance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.4l7 2.6v5.3c0 4-2.9 7.3-7 8.9-4.1-1.6-7-4.9-7-8.9V6z"/><path d="M8.9 11.9l2.2 2.2 4.1-4.3"/></svg>',
+  // A flask. The lane is one page under calibration, and the mark says so before the label
+  // does — which is the whole reason this lane keeps a heading it could not otherwise earn.
+  Labs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.8 3.5h4.4"/><path d="M10.8 3.5v5.3l-4.9 8.4a2 2 0 0 0 1.7 3h8.8a2 2 0 0 0 1.7-3l-4.9-8.4V3.5"/><path d="M8.3 14.6h7.4"/></svg>',
+};
+
 export const ROUTE_ICONS = {
   graph: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="7" r="2.3"/><circle cx="18.5" cy="6" r="2.3"/><circle cx="12" cy="17.5" r="2.3"/><path d="M7.6 8.1l3 7.3"/><path d="M16.6 7.7l-3.3 8"/><path d="M7.7 7.2l8.6-0.7"/></svg>',
   inventory: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4-8 4-8-4z"/><path d="M4 11l8 4 8-4"/><path d="M4 15l8 4 8-4"/></svg>',

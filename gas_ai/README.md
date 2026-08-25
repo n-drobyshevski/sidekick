@@ -16,10 +16,10 @@ and reads by **counts** instead — open issues, cloud configuration findings, a
 posture fails. `test/verdictIsolation.test.ts` enforces that on the wire.
 
 That page is also **off by default**. Settings → **Show experimental content** decides
-whether it exists for a reader at all: with it off there is no Labs group in the sidebar,
+whether it exists for a reader at all: with it off there is no Labs item on the rail,
 `#/aars` falls back to the Security Graph, and the Help key sheet drops the definitions that
 are only ever drawn there — so the models are opt-in rather than merely labelled. The
-preference is remembered in the browser (`localStorage`, like the sidebar's collapse), not in
+preference is remembered in the browser (`localStorage`, like the nav panel's pin), not in
 the ledger, because it changes what one reader can open and never what anything computes.
 
 Same architecture as `gas/`: a Google Sheet as the durable store, Drive for gzipped
@@ -43,13 +43,43 @@ palette is deliberately identical across both tools.
 
 ### The shell
 
-A header across the top, a collapsible icon rail under it, and the page beside that. The
+A header across the top, a two-tier nav under it, and the page beside that. The
 header carries exactly two things — the product mark and name, and the **project scope
 switcher** — because both describe the whole app rather than any one page: the switcher
 scopes every figure on every page, so it reads as chrome rather than as one page's filter.
 The reference screen's search box, notification icons and avatar are deliberately absent;
 none of them has anything behind it here. Everything else stays in the rail: the nav, the
 collapse control, **Sync now**, the credential pill and the last-sync line.
+
+The nav runs in **three lanes, a gate and a tail**: *Landscape* (Security Graph, AI
+Inventory — what we have), *Risk* (Priorities, Toxic Combinations, Cloud Configuration —
+what is open and what to do first), *Assurance* (Compliance Posture, Wiz Scans — how we
+score, and where the figures came from), then the gated *Labs*, then Data, Settings and Help
+under a rule with no heading over them, because those three name themselves.
+
+Above 800px those lanes are the nav's **first tier**: a 76px icon rail, one item per lane
+plus the three chrome pages, each a link that navigates. Pointing at one opens the **second
+tier** — a full-height 280px panel listing that lane's pages and, under a heading, its own
+instances: the reader's saved graph queries and inventory views under *Saved*, the
+toxic-combination patterns under *Combination patterns*. **A rail item earns a panel by
+having something to put in it**, the same rule that makes a labelled lane earn its heading by
+holding two pages, so Labs and the chrome pages are plain links. The rail draws nothing to
+advertise which is which: the panel is what shows up, and `aria-haspopup` is what says so to
+a reader who cannot see it. The panel lists only destinations that already deep-link, and
+never fetches: pointing at a rail item costs a `localStorage` read, not a round trip — which
+is also why there is no *Frameworks* block, since those names arrive only with the compliance
+payload and a block that appeared on your second visit would be a nav that changes shape
+depending on where you had been.
+
+The panel opens on the delays the hover card already settled (220ms cold, nothing inside the
+warm window, a grace period long enough to cross the gap), on `ArrowRight` from the keyboard,
+and on the first tap where there is no hover at all. Its `→|` control **pins**
+it open as a second column, which is what the old collapsed/expanded rail preference becomes —
+same `localStorage` key, so a reader who had widened the rail keeps a wide left edge. Below
+800px the rail is a stacked list instead: every page, lane headings as words, one rule above
+the chrome tail, and no panel at all. `test/navGroups.test.js` and `test/navFlyout.test.js`
+hold the shape — lanes contiguous, every lane marked, a block never drawn empty, and the
+coupling between the first page in the map and the route `#/` lands on.
 
 The switcher's list comes from the assets the sync actually collected, never from the
 tenant's project catalogue — a picker built from the catalogue would offer projects this

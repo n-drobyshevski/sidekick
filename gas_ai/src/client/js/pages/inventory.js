@@ -18,6 +18,7 @@
 // src/domain/assetTable.ts that test/assetQueryMirror.test.ts holds to it.
 
 import { bootstrap, buildHash, listJoin, navigate, setParams, swrCall } from "../store.js";
+import { SAVED_VIEW_KEYS, readSavedViews } from "../savedViews.js";
 import { openAssetSheet } from "../detailSheets.js";
 import { trendLine } from "../charts.js";
 import {
@@ -87,7 +88,7 @@ const COLUMNS = [
   { key: "actions", label: "", sort: null },
 ];
 
-const VIEWS_KEY = "sidekickai.inventoryViews";
+const VIEWS_KEY = SAVED_VIEW_KEYS.inventory;
 /** Params a saved view carries. Never `page` (a view opens at the top) and never `panel`. */
 const VIEW_PARAMS = [
   "q", "severities", "kinds", "clouds", "regions", "projects", "domains", "flags",
@@ -120,14 +121,10 @@ function issueBars(counts, noun) {
 }
 
 /** Saved views live per browser; a sandboxed iframe or private mode may refuse. */
+// The parse lives in savedViews.js, which owns both keys — the nav panel lists these views
+// too. Storage unavailable still answers null, and this caller still hides the control.
 function readViews() {
-  try {
-    const raw = window.localStorage.getItem(VIEWS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((v) => v && v.name) : [];
-  } catch (e) {
-    return null; // storage unavailable — the caller hides the control entirely
-  }
+  return readSavedViews(VIEWS_KEY);
 }
 
 function writeViews(views) {
