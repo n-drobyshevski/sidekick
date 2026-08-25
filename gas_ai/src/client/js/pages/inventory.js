@@ -32,7 +32,7 @@ import {
 import {
   FINDINGS_SCORE_LABEL, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
   emptyState, errorState,
-  fmtDate, kpiCard, meter, pager, percentileText, plural, scoreChip,
+  fmtDate, meter, pager, percentileText, plural, scoreChip,
   sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tierBadge, toast,
   trendScopeNote,
@@ -391,8 +391,6 @@ export async function renderInventory(main, params) {
     }
 
     host.append(postureHeader(kpis, fresh, bandLabel));
-    const reachCard = reachHeadline(fresh.reach);
-    if (reachCard) host.append(reachCard);
     host.append(toolbar());
     host.append(panel.chips);
     panel.chips.classList.add("inv-chips");
@@ -425,13 +423,15 @@ export async function renderInventory(main, params) {
       { class: "link", href: buildHash("scans", { anchor: "reach" }), target: "_self" },
       known ? observed.covered + " of " + observed.total : "—",
     );
-    return el("div", { class: "kpi-row" },
-      kpiCard(
-        "Landscape reach — observed",
-        link,
-        "AI-kinded assets carrying any signal, of the register's AI landscape — open Wiz Scans "
-          + "for the full five-stage ladder.",
-      ));
+    // A stat in the header's strip, not a card of its own below it. As a .kpi-card this was
+    // a SECOND hero-shaped figure directly under "818 AI assets", and DESIGN.md is explicit
+    // that one page gets one hero: a second one means neither is.
+    return statRow(
+      "Landscape reach",
+      link,
+      "AI-kinded assets carrying any signal, of the register's AI landscape. Wiz Scans has "
+        + "the full five-stage ladder.",
+    );
   }
 
   // ---- posture header: one hero, one distribution, one stat list
@@ -542,6 +542,8 @@ export async function renderInventory(main, params) {
           : ""),
         null, { term: "pillar-b" }),
     );
+    const reachRow = reachHeadline(fresh.reach);
+    if (reachRow) stats.append(reachRow);
 
     // The strip is a control, so it has to reflect state it did not itself change — a
     // chip cleared outside it, or the drawer's own level facet. Marked in place rather

@@ -322,7 +322,10 @@ export function heroStat(label, value, sub, help) {
  * a hero.
  */
 export function pageHeader({ hero, aside, stats } = {}) {
-  return el("div", { class: "page-header" },
+  // Without an aside the two-column grid leaves the hero in a narrow column with a thousand
+  // empty pixels beside it, which is where its sub-line starts wrapping for no reason. The
+  // modifier widens the one column that is actually carrying anything.
+  return el("div", { class: "page-header" + (aside ? "" : " page-header--solo") },
     hero || null,
     aside || null,
     stats && stats.length ? el("div", { class: "stat-list" }, ...stats) : null,

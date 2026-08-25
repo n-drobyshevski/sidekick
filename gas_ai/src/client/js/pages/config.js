@@ -21,7 +21,8 @@
 import { setParams, swrCall } from "../store.js";
 import { openConfigFindingSheet } from "../detailSheets.js";
 import {
-  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, kpiCard, outcomeBadge,
+  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, heroStat, outcomeBadge,
+  pageHeader, statRow,
   pager, plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
   skeletonStack, statusPill, togglePills,
 } from "../ui.js";
@@ -148,28 +149,31 @@ export async function renderConfigFindings(main, params, ctx) {
 
     // Failing controls is the headline, not the row count: a resolved finding is stored
     // for its lifecycle date and must not read as outstanding risk.
-    const cards = el("div", { class: "kpi-row" },
-      kpiCard("Failing controls", String(totals.gaps ?? 0),
-        plural(totals.controls ?? 0, "distinct control")),
-      kpiCard("Resources affected", String(totals.resources ?? 0),
+    // The comment above already said which of these four is the headline; it just was not
+    // drawn as one. Four equal tiles is the hero-metric template PRODUCT.md rejects, so the
+    // headline becomes the hero and the other three become the strip beneath it.
+    const headerStats = [
+      statRow("Resources affected", String(totals.resources ?? 0),
         "evaluated against these rules"),
-      kpiCard("Not on an AI asset", String(totals.unlinkedGaps ?? 0),
+      statRow("Not on an AI asset", String(totals.unlinkedGaps ?? 0),
         "regions, policies and unattached identities", null,
         ["A configuration finding is keyed to the resource it was evaluated against, and most "
           + "AI-security rules fail on a region, an IAM policy or a service account no agent "
           + "runs as. None of those are AI assets, so none of them price an AARS score."]),
-      kpiCard("Traced to IaC", String(totals.iac ?? 0),
-        "fixable at source"),
-    );
-    headHost.append(cards);
+      statRow("Traced to IaC", String(totals.iac ?? 0), "fixable at source"),
+    ];
 
     // The strip is also the page's severity filter — its keys are toggle buttons, the
     // same affordance the inventory header uses, so the bar is not a picture you have to
     // read a separate control to act on.
     const mix = sevEntries(totals.severityMix || {}, SEVERITY_ORDER);
+    // The strip qualifies the headline, so it belongs in the header's second column rather
+    // than in a card of its own below it. It stays the page's severity filter either way.
+    let strip = null;
     if (mix.length) {
       const selected = new Set(view.query.severities);
-      headHost.append(el("div", { class: "card", style: "margin-top:12px" },
+      strip = el("div", { class: "page-strip" },
+        el("div", { class: "kpi-label" }, "By severity"),
         sevSegmentBar(mix, { size: "md", label: "Failing controls by severity", selected }),
         sevKeyRow(mix, {
           variant: "toggle",
@@ -177,8 +181,14 @@ export async function renderConfigFindings(main, params, ctx) {
           isOn: (sev) => selected.has(sev),
           describe: (e) => e.sev + ", " + plural(e.count, "failing control"),
           onToggle: (sev) => toggleFacet("severities", sev),
-        })));
+        }));
     }
+    headHost.append(pageHeader({
+      hero: heroStat("Failing controls", String(totals.gaps ?? 0),
+        plural(totals.controls ?? 0, "distinct control")),
+      aside: strip,
+      stats: headerStats,
+    }));
 
     headHost.append(el("div", {
       class: "toolbar",

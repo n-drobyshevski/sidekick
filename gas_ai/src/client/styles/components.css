@@ -37,6 +37,13 @@
 .page-hero-sub, .cov-hero-sub, .inv-hero-sub, .help-hero-sub {
   font-size: var(--fs-label); color: var(--text-3); margin: var(--space-1) 0 0;
 }
+/* No aside: widen the column that is actually carrying something, from ~257px to up to
+   460px, so the hero's supporting line stops wrapping beside a thousand empty pixels. The
+   SECOND column stays (empty) rather than collapsing to one: .stat-list spans 1 / -1, and on
+   a single-column grid that would have penned the whole strip into 460px too. Capped rather
+   than 1fr so the sub-line still breaks at a readable length. */
+.page-header--solo { grid-template-columns: minmax(240px, 460px) 1fr; }
+
 /* The header's second column: a label over the one thing that qualifies the hero — a
    distribution strip, a small curve. .cov-strip (scans) and .sev-strip (inventory) were
    identical rulesets in two page files; .page-strip is the name for the next one. */
