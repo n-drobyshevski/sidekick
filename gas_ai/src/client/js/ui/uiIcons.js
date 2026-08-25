@@ -118,6 +118,14 @@ const PATHS = {
   // projects nest as — `scopeOptions` groups them under "Business units" and "Projects", and a
   // business unit reaches its whole subtree.
   folder: ["M2 12.5 V4 a1 1 0 0 1 1 -1 h3.2 l1.4 1.8 H13 a1 1 0 0 1 1 1 V12.5 a1 1 0 0 1 -1 1 H3 a1 1 0 0 1 -1 -1 z"],
+  // One folder with another behind it: more than one project — the whole synced register on
+  // the switcher's "all" row. It is the same folder shifted, deliberately, so the pair reads
+  // as one-versus-many rather than as two unrelated marks; the row's words carry the meaning
+  // either way, which is why a 14px difference is allowed to be this quiet.
+  folders: [
+    "M4.5 3.5 V2.8 a0.8 0.8 0 0 1 0.8 -0.8 h2.4 l1.1 1.4 H13.5",
+    "M1.5 13 V5.4 a0.9 0.9 0 0 1 0.9 -0.9 h3 l1.3 1.6 h5.4 a0.9 0.9 0 0 1 0.9 0.9 V13 a0.9 0.9 0 0 1 -0.9 0.9 H2.4 A0.9 0.9 0 0 1 1.5 13 z",
+  ],
   // The graph's title-row actions. `doc` heads "New search" — a fresh sheet of paper, the
   // thing the button hands you; `bookmark` heads the saved-queries menu, because what that
   // control keeps is a place to come back to rather than a file.

@@ -100,6 +100,19 @@
    name, so it stops short of that weight. */
 .scope-switch .combobox-trigger { min-height: 32px; font-size: var(--fs-body); font-weight: 500; }
 .scope-combo-icon { display: inline-flex; flex: 0 0 auto; color: var(--text-3); }
+/* SCOPED: a project is narrowing the register, and every figure on every page is counted
+   over it. The trigger is the only thing on screen that is true on all of them, so it is
+   where the state belongs. Unscoped it is the plain field above — "showing everything" is
+   the resting state, and a control that were always lit would report nothing. */
+.scope-combo.scoped .combobox-trigger {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.scope-combo.scoped .combobox-trigger:hover { background: var(--accent-wash-hover); }
+.scope-combo.scoped .scope-combo-icon,
+.scope-combo.scoped .combobox-caret { color: var(--accent); }
 .scope-caption {
   font-size: var(--fs-micro);
   color: var(--text-3);

@@ -47,6 +47,11 @@ export function scopeOptions(list) {
     hint: p.isFolder === true ? `Business unit · ${assetCount(p.assets)}` : assetCount(p.assets),
     group: !anyRecorded ? "" : (p.isFolder === true ? "Business units"
       : p.isFolder === false ? "Projects" : "Not yet recorded"),
+    // The glyph is the THIRD carrier, after the hint above and the group heading — a reader
+    // who cannot tell one folder from two at 14px has already been told twice in words. That
+    // ordering is the whole licence for it: an icon that had to be understood would be
+    // exactly the shorthand the hint exists to avoid.
+    icon: p.isFolder === true ? "folders" : "folder",
   }));
 }
 
@@ -88,7 +93,9 @@ export function projectScopeView(bootstrapData) {
     // "All synced projects", not "All projects". The register holds what the last sync was
     // scoped to fetch, which on a scoped tenant is one unit's subtree — calling that "all
     // projects" would name a population this register does not contain.
-    pinned: [{ value: "", label: "All synced projects", hint: assetCount(scope.register) }],
+    pinned: [{
+      value: "", label: "All synced projects", hint: assetCount(scope.register), icon: "folders",
+    }],
   };
 }
 
@@ -114,12 +121,36 @@ export function projectScopeControl(bootstrapData, onPick) {
     // each change.
     ariaLabel: `Project scope: ${v.label}`,
     searchPlaceholder: "Search projects…",
+    // WHAT THE PANEL HAS TO SAY THAT ITS ROWS CANNOT. Every row is a project name; none of
+    // them can tell you that choosing one re-scopes every figure in the app, or that a few
+    // figures refuse to be scoped and say so where they are drawn (registerWideNote, below,
+    // is that promise kept). A consequence this large should not have to be discovered by
+    // trying it.
+    header: {
+      title: "Project scope",
+      note: "Every page answers for the project you pick. Figures that cannot be scoped say "
+        + "so where they are drawn.",
+    },
+    // The scope persists server-side and outlives the session, so which row is in force is a
+    // standing fact about the app rather than a highlight in an open menu — worth a mark of
+    // its own rather than weight and colour alone.
+    checkSelected: true,
+    // The popover is portaled to <body>, so this class is the only way to reach inside it.
+    popClass: "combobox-pop--scope",
     // Decoration inside the trigger, the way the reference screen marks its project picker.
     // The trigger's accessible name is the ariaLabel above, so this adds no second reading.
-    leading: el("span", { class: "scope-combo-icon", "aria-hidden": "true" }, uiIcon("folder", 14)),
+    leading: el("span", { class: "scope-combo-icon", "aria-hidden": "true" },
+      uiIcon(v.current ? "folder" : "folders", 14)),
     onChange: (id) => onPick(id || ""),
   });
   combo.classList.add("scope-combo");
+  // A NARROWED REGISTER IS A STATE, and this is the one state in the app that silently
+  // re-reads every number on every page. DESIGN.md spends colour on "a severity level, an SLA
+  // breach, a state change"; this is the third. Unscoped it stays the neutral field it has
+  // always been, because "showing everything" is the resting state and a permanently lit
+  // control signals nothing. The colour is never alone either way — the trigger names the
+  // project, and the caption beside it carries the count.
+  if (v.current) combo.classList.add("scoped");
   // Read on hover: the header is narrow enough to ellipsise a long project name, and the
   // caption beside it answers a different question. Not a native title — a tap reaches none
   // of those, which is the whole reason el() bans the attribute.

@@ -55,34 +55,39 @@ import { SAVED_VIEW_KEYS, readSavedViews } from "./savedViews.js";
 //     the value changes, so a lane split in two would quietly draw its heading twice.
 //
 // THREE FLAGS, THREE DIFFERENT QUESTIONS, and they compose:
-//   `hidden`        keeps a route off this branch's PoC nav. The minimal model reads two
-//                   flat fields and needs no graph, so most of this app is machinery for
-//                   axes the reference tenant holds constant, and showing that is the point
-//                   of the branch. A flag rather than seven deletions because helpContent.js
-//                   points at these routes about sixty times and helpContent.test.js asserts
-//                   every one resolves — a hidden route still resolves, still renders if
-//                   someone types its hash, and costs nothing.
+//   `hidden`        keeps a route off the nav while leaving it routable. NOTHING CARRIES IT
+//                   TODAY — the whole register is on the rail — but the flag stays supported
+//                   because the PoC cut that introduced it (seven routes off the nav, so a
+//                   demo could show that the minimal model needs no graph) is one line per
+//                   route to reinstate. It was a flag rather than seven deletions in the
+//                   first place because helpContent.js points at these routes about sixty
+//                   times and helpContent.test.js asserts every one resolves; a hidden route
+//                   still resolves, still renders if someone types its hash, and costs
+//                   nothing. The landing route stayed at Priorities when the seven came
+//                   back: DEFAULT_ROUTE is its own decision, and the queue is a defensible
+//                   front door whatever else is on the rail.
 //   `experimental`  gates a route behind Settings → Show experimental content, for everyone.
 //   `group`         which lane it sits in, which is about arrangement and not availability.
 // A lane the first two empty out never reaches the rail, and a lane left holding ONE visible
 // page is drawn as that page rather than as a lane — see navModel.js, which is where the
-// three meet.
+// three meet. Both of those are why hiding routes degrades the rail gracefully instead of
+// leaving lane headings standing over nothing.
 const PAGES = {
   // fullBleed: the page owns the whole content pane (no main padding/max-width).
-  graph: { hidden: true, title: "Security Graph", group: "Landscape", render: renderGraphPage, fullBleed: true },
-  inventory: { hidden: true, title: "AI Inventory", group: "Landscape", render: renderInventory },
+  graph: { title: "Security Graph", group: "Landscape", render: renderGraphPage, fullBleed: true },
+  inventory: { title: "AI Inventory", group: "Landscape", render: renderInventory },
   // Phase 7: issues UNION findings, ranked together across the whole landscape — neither
   // `combos` (one toxic-combination pattern) nor `config` (findings only) can answer
   // "what do I work on Monday". It opens the Risk lane for that reason: it is the page an
   // analyst lives in, and the two under it are lenses on subsets of what it ranks. It is
   // also this branch's front door — DEFAULT_ROUTE names it.
   problems: { title: "Priorities", group: "Risk", render: renderProblems },
-  combos: { hidden: true, title: "Toxic Combinations", group: "Risk", render: renderCombos },
-  config: { hidden: true, title: "Cloud Configuration", group: "Risk", render: renderConfigFindings },
+  combos: { title: "Toxic Combinations", group: "Risk", render: renderCombos },
+  config: { title: "Cloud Configuration", group: "Risk", render: renderConfigFindings },
   // Stays directly under Cloud Configuration — the two are the same subject at two grains,
   // what is failing and what that scores against — and the lane boundary between them is the
   // claim rather than a separation: one register is worked, the other is stated.
-  compliance: { hidden: true, title: "Compliance Posture", group: "Assurance", render: renderCompliance },
+  compliance: { title: "Compliance Posture", group: "Assurance", render: renderCompliance },
   // Assurance, not the lone "Coverage" heading this used to carry. One page under one
   // heading was a line of furniture; and this page answers the question Compliance Posture
   // answers, one step further back — "where did this figure come from" beside "how do we
@@ -112,8 +117,8 @@ const PAGES = {
   // The tail: chrome, not a lane. A rule separates it and nothing labels it — "Data" under
   // a heading reading DATA, and "Help" under HELP, were two lines that restated the link
   // beneath them, and "Preferences" over "Settings" was the same line in a synonym.
-  data: { hidden: true, title: "Data", group: null, render: renderData },
-  settings: { hidden: true, title: "Settings", group: null, render: renderSettings },
+  data: { title: "Data", group: null, render: renderData },
+  settings: { title: "Settings", group: null, render: renderSettings },
   // Last on purpose. DEFAULT_ROUTE in store.js names the front door, and this map no longer
   // decides it by position — which is what made the old coupling worth stating and then
   // worth retiring: the fallback said "problems" while route() still said graph.
