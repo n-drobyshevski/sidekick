@@ -364,16 +364,41 @@
       const i = triggers.indexOf(t);
       if (i >= 0) triggers.splice(i, 1);
     },
+    // THE FULL DOCUMENTED ClockTriggerBuilder SURFACE, not just the methods this codebase
+    // happens to call today. It carried four of them, so adding a trigger that used
+    // `nearMinute()` or `inTimezone()` would throw HERE — and because dev/boot.js runs
+    // setup() during boot, that throw takes down the whole google.script.run shim and every
+    // page renders "Couldn't reach the server". Listing the real API rather than accepting
+    // any method keeps a genuine typo failing while stopping the shim lagging behind again.
+    //
+    // THE SCHEDULE ARGUMENTS ARE RECORDED RATHER THAN DISCARDED, which is strictly more than
+    // production offers: a real GAS Trigger exposes its handler function and NOTHING else —
+    // no hour, no minute, no timezone. But the warm is a SET of triggers at specific hours,
+    // and without this the dev environment cannot show whether setup() built the right one.
+    // It is also what makes test/setup.test.ts able to pin the builder chain at all.
     newTrigger: (handler) => {
+      const schedule = {};
+      const rec = (k, v) => { schedule[k] = v; return builder; };
       const builder = {
         timeBased: () => builder,
-        everyDays: () => builder,
-        atHour: () => builder,
-        after: () => builder,
+        after: (ms) => rec("after", ms),
+        at: (date) => rec("at", date),
+        atDate: (y, m, d) => rec("atDate", [y, m, d]),
+        atHour: (h) => rec("atHour", h),
+        everyDays: (n) => rec("everyDays", n),
+        everyHours: (n) => rec("everyHours", n),
+        everyMinutes: (n) => rec("everyMinutes", n),
+        everyWeeks: (n) => rec("everyWeeks", n),
+        inTimezone: (tz) => rec("inTimezone", tz),
+        nearMinute: (m) => rec("nearMinute", m),
+        onMonthDay: (d) => rec("onMonthDay", d),
+        onWeekDay: (d) => rec("onWeekDay", d),
         create: () => {
           const trigger = {
             getHandlerFunction: () => handler,
             getUniqueId: () => `trigger-${++triggerSeq}`,
+            // Not part of the real Trigger API — see the note above.
+            __schedule: schedule,
           };
           triggers.push(trigger);
           // Both names on purpose: gas_ai spills a long live sync onto trigger_continueSync

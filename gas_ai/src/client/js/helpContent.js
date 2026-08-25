@@ -894,7 +894,7 @@ export const ENTRIES = [
     blurb:
       "One pass of the Wiz query battery, normalised and enriched once, then written " +
       "wholesale. The sync-history row is written LAST and is the commit record: no history " +
-      "row means the sync never happened. It runs on demand and daily at 05:00 UTC, and " +
+      "row means the sync never happened. It runs on demand and daily at 05:00 Europe/Paris, and " +
       "resumes itself if one execution runs long.",
     drawnOn: ["data", "scans"],
     mark: () => el("span", { class: "pill neutral" }, "↻"),

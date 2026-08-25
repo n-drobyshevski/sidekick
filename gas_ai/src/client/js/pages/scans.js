@@ -143,7 +143,7 @@ export async function renderScans(main, params, ctx) {
       sectionLabel("The register"),
       register(ranked, diagram),
       el("p", { class: "small muted", style: "margin-top:14px" },
-        "Sync cadence: daily at 05:00 UTC plus on-demand “Sync now”. Every figure above " +
+        "Sync cadence: daily at 05:00 Europe/Paris plus on-demand “Sync now”. Every figure above " +
         "is the one the last sync produced, read through the project view currently set; " +
         "an area with no figure says so rather than carrying a number from somewhere else."),
       reachSection(assets.reach),

@@ -89,7 +89,11 @@ var Server = (() => {
     // Defaults to `Wiz/Domain` (domain/domainTag.ts) and is matched case-insensitively, so
     // this only needs setting by a tenant that spells the key differently rather than
     // merely differently-cased. Mirrors WIZ_SUPPORT_GROUP_TAG_KEY in the OS-vulns tool.
-    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY"
+    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
+    // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
+    // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
+    // from one an older deployment left behind. Written by setup(), read by setup().
+    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE"
   };
   var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
   function getProp(key) {
@@ -853,6 +857,14 @@ var Server = (() => {
   var FOLDER_NAME = "wiz-sidekick-ai";
   var DAILY_TRIGGER_HANDLER = "trigger_dailySync";
   var DAILY_TRIGGER_HOUR = 5;
+  var WARM_TRIGGER_HANDLER = "trigger_warmReadModels";
+  var WARM_READY_BY_HOURS = [9, 13, 17];
+  var WARM_TRIGGER_NEAR_MINUTE = 30;
+  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
+  var WARM_TRIGGER_TZ = "Europe/Paris";
+  function warmScheduleSignature() {
+    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  }
   function setup() {
     const notes = [];
     let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
@@ -882,9 +894,25 @@ var Server = (() => {
     );
     if (!existing.length) {
       ScriptApp.newTrigger(DAILY_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(DAILY_TRIGGER_HOUR).create();
-      notes.push(`daily trigger: installed (hour ${DAILY_TRIGGER_HOUR} UTC)`);
+      notes.push(`daily trigger: installed (hour ${DAILY_TRIGGER_HOUR} Europe/Paris)`);
     } else {
       notes.push("daily trigger: already installed");
+    }
+    const warmExisting = ScriptApp.getProjectTriggers().filter(
+      (t) => t.getHandlerFunction() === WARM_TRIGGER_HANDLER
+    );
+    const wantSchedule = warmScheduleSignature();
+    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
+      notes.push(`warm triggers: already installed (${wantSchedule})`);
+    } else {
+      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
+      for (const hour of WARM_TRIGGER_HOURS) {
+        ScriptApp.newTrigger(WARM_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
+      }
+      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
+      notes.push(
+        `warm triggers: installed ${WARM_TRIGGER_HOURS.length} (${wantSchedule}), ready by ${WARM_READY_BY_HOURS.join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
+      );
     }
     const missing = [
       PROP_KEYS.wizClientId,
@@ -8169,7 +8197,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "8fe1928a9ecb" : "dev";
+  var BUILD_ID = true ? "aa954ec1b615" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
