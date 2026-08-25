@@ -58,57 +58,108 @@ tail, and no panel. `test/navGroups.test.js` and `test/navModel.test.js` hold th
 lanes contiguous, every lane and page marked, the tail drawn once, and the landing route the
 same in `app.js` and `store.js`.
 
-The switcher fronts the three dimensions this register actually scopes by, as three groups in
-one list:
+The switcher fronts the two dimensions this register scopes by, as two groups in one list:
 
 | group | what it is | where it comes from |
 | --- | --- | --- |
-| **Manual groups** | a bucket **this app computes** from rules an operator wrote in Settings | `src/domain/domainRules.ts` → `_domain` |
-| **VC Domains** | the owner **the tenant wrote** on the resource | the `Wiz/Domain` tag → `_bizDomain` |
+| **Domains** | the owner of the **resource** | the `Wiz/Domain` tag, else a manual group's rules → `_domain` |
 | **Support groups** | the team **the tenant wrote** on the subscription | the `Wiz/provisioning` tag → `_supportGroup` |
 
-The three are **orthogonal, not nested**, and listing them as three flat groups rather than one
-tree is the honest shape: any of them can cut across either of the others, and when a manual
-group and a VC Domain disagree the disagreement is information. The dev fleet is seeded that
-way on purpose — the domains cut across the roles that drive the manual groups, so the two can
-never read as two spellings of one thing.
+**The tag leads and the rules fill the gaps.** `Wiz/Domain` is a label the tenant wrote on the
+resource in Wiz; wherever it is present it wins outright. The manual groups an operator writes
+in Settings are the FALLBACK — they claim what the tenant has not tagged yet, and should have
+less to do as tagging improves. One resolved answer per finding
+(`src/domain/resolveDomain.ts`), in a fixed order, with three terminal states:
 
-**The code still says `domain` for the first and `bizDomain` for the second.** Those are the
-wire and storage names — the `domains` settings blob, the RPC params, the ledger's `_domain`
-column, `api_getMttrByDomain` — and renaming them would churn a persisted schema and every
-cache key for nothing a reader can see. The labels are the only place the two vocabularies
-meet; `scopeSwitch.js` is where they are written down.
+| order | condition | result | `_domainSource` |
+| --- | --- | --- | --- |
+| 1 | the tag is present | that value, verbatim | `tag` |
+| 2 | no tag, but the row carries some attribution input | the rule verdict, or `Unassigned` | `rule` / `none` |
+| 3 | the row carries **no** attribution input at all | **`Not attributable`** | `missing` |
+
+State 3 is compacted episodes and imported resolved history: no name, no subscription, no tags,
+so nothing could ever have matched them. They used to be silently **dropped** from the MTTR
+by-domain split behind a footnote, because counting them as `Unassigned` would have swamped the
+breakdown with a bucket that has no live counterpart. Naming them solves that better than
+dropping did: `Unassigned` goes back to meaning only the actionable "had a chance and matched
+nothing" population Attribution shows, the unattributable rows stay visible in every figure
+they affect, and nothing is quietly missing from a total.
+
+It briefly WAS two dimensions — `Wiz/Domain` shipped as its own "VC Domains" group beside the
+manual groups — and that was one too many: both answered "which domain owns this", and a header
+carrying "the scope" cannot carry two spellings of one question. The switcher's Domains list
+now mixes tag values and manual-group names and does not say which is which, because by the
+time a row reaches a page they are the same field. **Attribution is where that question is
+answered**, by a per-source strip: `tag` rising and `rule` falling is the estate being tagged.
+
+**The code still says `domain`.** That is the wire and storage name — the `domains` settings
+blob, the RPC params, the ledger's `_domain` column, `api_getMttrByDomain` — and renaming it
+would churn a persisted schema and every cache key for nothing a reader can see.
 
 It is not a Wiz *project* picker, and cannot be: `src/domain/transform.ts` drops the
 `projects[]` array Wiz returns on every finding, and `WIZ_PROJECT_ID_V2` scopes the SYNC rather
 than the view — a picker over a dimension the ledger does not carry would offer slices whose
 pages all render zero, and a zero meaning "nothing here" is indistinguishable on screen from one
-meaning "never fetched". The VC Domain has the opposite property and is why it can be there at
-all: the tag is already fetched and already persisted, so every domain the list offers is one
-the register can answer for.
+meaning "never fetched". The `Wiz/Domain` tag has the opposite property and is why it can lead
+at all: it is already fetched and already persisted, so every domain the list offers is one the
+register can answer for.
 
-**One scope is in force at a time.** Manual group and support group used to be independent
-comboboxes at the bottom of the rail and their intersection was expressible; picking from any
-group now clears the other two, because a header that carries "the scope" cannot carry three of
-them and still answer "what am I looking at" in one line. Scoping stays client-side — the values
-ride the page context and each page passes them into its own RPC — so a pick costs no round
-trip.
+**One scope is in force at a time.** Domain and support group used to be independent comboboxes
+at the bottom of the rail and their intersection was expressible; picking from either group now
+clears the other. Scoping stays client-side — the values ride the page context and each page
+passes them into its own RPC — so a pick costs no round trip.
 
 The caption beside the trigger always carries the **denominator** (`31 of 161 findings`), since
 a bare count cannot tell a small support group from a small register, and a **second figure**
-for the rows nobody claimed (`· 104 carry no support group`), since without it the caption
-silently attributes those to some other group. Under a VC Domain that second figure names the
-tag it read — `· 83 carry no Wiz/Domain tag` — because the figure is a fact about that key
-specifically, and an operator who mistyped `WIZ_DOMAIN_TAG_KEY` would otherwise read a
-tenant-wide tagging failure off their own typo. A scope that has fallen out of the register — a
-manual group deleted from Settings, a domain that vanished when the tag key was corrected under
-it — stays in force and says so (`Not in this register — showing 0 of 161`) rather than
-resetting silently, because a silent reset looks exactly like never having scoped at all.
-`test/scopeSwitchView.test.js` and `test/domainTag.test.ts` hold all of it.
+for the rows nobody claimed (`· 104 carry no support group`, `· 27 unassigned`), since without
+it the caption silently attributes those to some other group. Unscoped it also carries the
+not-attributable count when there is one (`· 412 resolved with no attribution input`) — computed
+over **base rows**, not the frame, because no open finding can land there and the historical
+charts are built from base rows. That row is dropped from the list entirely when the count is
+zero, which on a register that has never compacted is always. A scope that has fallen out of the
+register — a manual group deleted from Settings, a tag value that vanished when the tag key was
+corrected under it — stays in force and says so (`Not in this register — showing 0 of 161`)
+rather than resetting silently, because a silent reset looks exactly like never having scoped at
+all. `test/scopeSwitchView.test.js`, `test/resolveDomain.test.ts` and `test/domainTag.test.ts`
+hold all of it.
 
-Two things the VC Domain is deliberately **not**, yet: a column in the CSV export, and a
-grouping dimension on the Breakdown. Both are natural and both are additive; neither is needed
-to scope by it, and each would widen a payload the other two dimensions already fill.
+#### Three things worth knowing about the tag
+
+- **It is sticky.** `reconcile.ts` merges tags with `?? row.tags_json`, so a resource whose tags
+  are removed entirely in Wiz keeps its last known domain forever. That is deliberate — losing
+  attribution on a transient empty payload is the worse failure — but it means a domain can
+  outlive its tag.
+- **Repository-branch assets are structurally untaggable.** `VulnerableAssetRepositoryBranch` is
+  the one variant in `wizQuery.ts` with no `tags` field, so those findings can only ever reach a
+  domain by rule.
+- **The bundled `sampleData.ts` carries no `Wiz/Domain` at all** (it has a bare `Domain: "VMM"`,
+  which correctly does not match). A deployed dry-run therefore shows no tag-attributed domains;
+  that is the fixture, not a bug. The dev fleet (`dev/sampleData.dev.ts`) does carry the tag.
+
+#### The tag has to survive compaction, and it did not
+
+Compaction rewrites resolved ledger rows into `EpisodeRow`, which had **no `tags_json` column at
+all** — and auto-compact defaults ON, runs after every scan, with a 180-day retention floor.
+Resolved lifecycles are exactly the MTTR denominator, so promoting the tag without fixing that
+would have given by-domain figures that thinned out silently as the floor advanced, with the
+compaction stats-identity gate reporting green the whole way. The same mistake had already been
+made once here with the exploit-intelligence columns.
+
+Three parts, and none of them is optional:
+
+1. **`EpisodeRow` carries `tags_json`**, through `toEpisodeRow`, `baseRows`, the episodes tab
+   headers, and both ends of the export/import round-trip (`BUNDLE_EPISODE_COLUMNS`,
+   `coerceEpisode`) — a bundle that dropped it would re-lose the tag on the way back in.
+2. **The stats-identity gate has an attribution leg**, beside MTTR/trend and coverage. It counts
+   only the tag bag and the domain that resolves out of it, because compaction deliberately
+   sheds `asset_name` and the subscription columns — that is what an episode IS — so a leg that
+   counted those would abort every compaction ever run.
+3. **A one-shot backfill recovers already-compacted history.** The Drive checkpoint chain is
+   cumulative and still holds every converted lifecycle with its tags; `deleteScansCore` just
+   skips episode keys, so the data was unreachable rather than gone. Settings → *Domain-tag
+   backfill* reads the latest checkpoint and reports `recovered` / `alreadyHad` /
+   `unrecoverable` — the third being history imported from a legacy bundle, which never had tags
+   to lose. Idempotent, and it never overwrites a bag an episode already carries.
 
 ### How SQLite transactions were replaced
 
@@ -278,7 +329,7 @@ a view of it. What rides along:
 | --- | --- |
 | `scans` | every run, minus `raw_ref` / `obs_ref` — Drive ids, meaningless elsewhere |
 | `vuln_ledger` | every live lifecycle, **all 24 columns** including the vendor-fix clock and the exploit signals |
-| `resolved_episodes` | every sealed lifecycle, all 15 columns |
+| `resolved_episodes` | every sealed lifecycle, all 16 columns (including `tags_json`) |
 | `mttr_history` | the daily KPI series, including `open_past_sla` |
 
 The two wider column lists are deliberate: `wiz_dashboard/data/migrate.py`'s lists predate
@@ -407,13 +458,16 @@ and the result reports the true zero rather than claiming a reclaim.
    - `WIZ_SUPPORT_GROUP_TAG_KEY` *(optional)* — the subscription tag whose value is the
      Support Group. Defaults to `Wiz/provisioning`; set it only if your tenant uses a
      different tag key.
-   - `WIZ_DOMAIN_TAG_KEY` *(optional)* — the **resource** tag whose value is the **VC Domain**
-     that owns it. Defaults to `Wiz/Domain`; matched case-insensitively, so
-     `Wiz/domain` also works. Costs no extra API calls: `vulnerableAsset.tags` is already
-     in the vulnerability query and already persisted per finding as `tags_json`, so turning
-     this on is a property, not a re-scan. The key is resolved **on read** — correcting a
-     typo repaints on the next request rather than needing a full re-scan — and a register
-     where nothing carries the tag simply has no VC Domains group in the switcher.
+   - `WIZ_DOMAIN_TAG_KEY` *(optional)* — the **resource** tag whose value is the **domain**
+     that owns it, and the principal way a finding is attributed. Defaults to `Wiz/Domain`;
+     matched case-insensitively, so `Wiz/domain` also works. Costs no extra API calls:
+     `vulnerableAsset.tags` is already in the vulnerability query and already persisted per
+     finding as `tags_json`, so turning this on is a property, not a re-scan. The key is
+     resolved **on read** — correcting a typo repaints on the next request rather than
+     needing a full re-scan, and it is folded into the global cache stamp
+     (`serverCache.ts`) so every cached payload is recomputed under the new key rather than
+     the knob appearing to do nothing for six hours. A register where nothing carries the
+     tag falls back entirely to the manual groups.
    Without credentials the app runs in dry-run mode over sample data.
 6. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain),
    or `npm run deploy`.

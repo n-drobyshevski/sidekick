@@ -355,6 +355,44 @@ export async function renderSettings(main, params, ctx) {
     }
   }
 
+  // --------------------------------------------------- domain-tag backfill
+  // Compaction converted resolved lifecycles into episodes before the episode carried a tag
+  // bag, so those rows lost the Wiz/Domain tag their domain is read from and show as Not
+  // attributable. The Drive checkpoints still hold them.
+  const tagfillStatusEl = el("span", { class: "muted small" });
+  const tagfillBtn = el("button", { onclick: runTagBackfill }, "Recover domain tags");
+  main.append(settingsPanel({
+    title: "Domain-tag backfill",
+    description: "Recovers the Wiz/Domain tag for resolved findings that were compacted " +
+      "before the ledger kept it — they read as Not attributable in every by-domain figure " +
+      "until this runs. Reads the compaction checkpoints in Drive, which still hold them. " +
+      "Safe to re-run: a row that already carries its tags is never overwritten, and a run " +
+      "that recovers nothing writes nothing.",
+    body: el("div", { style: "display:flex; align-items:center; gap:10px; flex-wrap:wrap" },
+      tagfillBtn, tagfillStatusEl),
+  }));
+
+  async function runTagBackfill() {
+    tagfillBtn.disabled = true;
+    tagfillStatusEl.textContent = "Recovering…";
+    try {
+      const res = await call("api_backfillEpisodeTags", {});
+      // All three figures, always — "recovered 0" and "there was nothing to recover" are
+      // different answers, and only the unrecoverable count tells them apart.
+      tagfillStatusEl.textContent =
+        `${res.recovered.toLocaleString()} recovered · ` +
+        `${res.alreadyHad.toLocaleString()} already had tags · ` +
+        `${res.unrecoverable.toLocaleString()} not in any checkpoint`;
+      if (res.recovered) toast(`Recovered domain tags for ${res.recovered} finding(s).`);
+      else toast("Nothing to recover — every sealed episode already carries its tags.");
+    } catch (e) {
+      tagfillStatusEl.textContent = "";
+      toast(`Domain-tag backfill failed: ${e.message}`, "error");
+    } finally {
+      tagfillBtn.disabled = false;
+    }
+  }
+
   // -------------------------------------------------------------- support groups
   const sgStatus = el("span", { class: "muted small" });
   const refreshSgBtn = el("button", {
@@ -405,10 +443,11 @@ export async function renderSettings(main, params, ctx) {
   domainsBody.push(domainsHost);
   main.append(settingsPanel({
     title: "Manual groups",
-    description: "Rule-based triage: route findings to named groups by tag, asset-name " +
+    description: "THE FALLBACK, not the primary. A finding takes its domain from the " +
+      "Wiz/Domain tag wherever the tenant wrote one; a manual group claims only what is left " +
+      "untagged. Rule-based triage: route those findings to named groups by tag, asset-name " +
       "pattern, subscription, or support group. Order is priority — the first matching " +
-      "group wins. Named MANUAL because you write the rules — a VC Domain, by contrast, is " +
-      "a label the tenant already wrote on the resource in Wiz.",
+      "group wins. As tagging in Wiz improves, these rules should have less to do.",
     body: domainsBody,
   }));
   // Saving domains also reloads the page, so it must warn about unsaved severity-scope edits.

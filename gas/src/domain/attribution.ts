@@ -17,6 +17,7 @@ import {
   type CompiledDomain,
   type CondSpec,
 } from "./domainRules";
+import { NOT_ATTRIBUTABLE, type DomainSource } from "./resolveDomain";
 import { normalizeSeverity } from "./severity";
 import { present, type Rec } from "./util";
 
@@ -31,6 +32,7 @@ const SUB_COL = "vulnerableAsset.subscriptionName";
 const EXT_COL = "vulnerableAsset.subscriptionExternalId";
 const SG_COL = "_supportGroup";
 const DOMAIN_COL = "_domain";
+const SOURCE_COL = "_domainSource";
 const NONE = "(none)";
 
 // Row/value caps for the unassigned-resource explorer payload (kept small so the
@@ -53,6 +55,26 @@ const KIND_LABEL: Record<CondSpec["kind"], string> = {
 function domainOf(r: Rec): string {
   const v = r[DOMAIN_COL];
   return present(v) ? String(v) : UNASSIGNED;
+}
+
+/**
+ * WHICH MECHANISM CLAIMED THE ROW. `resolveDomain` writes `_domainSource` beside `_domain` at
+ * every attach site, and that is the only reading that can tell a tag from a rule — the two
+ * produce indistinguishable names by design (a manual group may be named after a tag value).
+ *
+ * The fallback is for a caller that resolved without recording provenance (older cached
+ * payloads, hand-built test records). It reads the two tails off the name, which are
+ * unambiguous, and calls everything else "rule" — under-reporting tag attribution rather than
+ * inventing it, so a missing provenance shows up as a coverage story that looks worse than the
+ * truth instead of better.
+ */
+function sourceOf(r: Rec): DomainSource {
+  const v = r[SOURCE_COL];
+  if (v === "tag" || v === "rule" || v === "none" || v === "missing") return v;
+  const dom = domainOf(r);
+  if (dom === NOT_ATTRIBUTABLE) return "missing";
+  if (dom === UNASSIGNED) return "none";
+  return "rule";
 }
 
 /** Severity of a record — the _sev the frame carries, else normalized `severity`. */
@@ -198,19 +220,43 @@ export interface Coverage {
   unassignedAssets: number;
   supportGroupResolved: number; // findings with _supportGroup present
   supportGroupUnresolved: number; // findings lacking _supportGroup
-  byDomain: CoverageDomain[]; // priority order, zero-count domains kept, Unassigned last
+  byDomain: CoverageDomain[]; // priority order, zero-count domains kept, the two tails last
+  bySource: CoverageSources; // which mechanism claimed each finding
 }
 
-/** Priority-ordered names deduped with Unassigned forced to the end exactly once. */
-function orderedWithUnassignedLast(names: string[]): string[] {
-  const seen = new Set<string>();
+/**
+ * The per-mechanism split, and the reason this page did not become redundant when the tag took
+ * over: "coverage" now has two ways to succeed and two ways to fail, and an operator's next
+ * action is different for each. `tag` rising is the tenant tagging its estate. `rule` is what
+ * the manual groups are still carrying, and is the number that should shrink. `none` is the
+ * actionable gap — the row had inputs and nothing claimed it. `missing` is not a gap anyone can
+ * close from here; it is history that arrived with nothing to match on.
+ */
+export interface CoverageSources {
+  tag: number;
+  rule: number;
+  none: number;
+  missing: number;
+}
+
+/**
+ * Priority-ordered names deduped with the two tails forced to the end exactly once.
+ *
+ * `Unassigned` is always present — a register with nothing unassigned still wants the row, at
+ * zero, as the statement that nothing is unassigned. `Not attributable` is appended only when
+ * something actually landed there, because on a live frame it is structurally empty (every open
+ * finding carries a name and a subscription) and a permanent zero row would read as a bug.
+ */
+function orderedWithTailsLast(names: string[], includeNotAttributable: boolean): string[] {
+  const seen = new Set<string>([UNASSIGNED, NOT_ATTRIBUTABLE]);
   const out: string[] = [];
   for (const n of names) {
-    if (n === UNASSIGNED || seen.has(n)) continue;
+    if (seen.has(n)) continue;
     seen.add(n);
     out.push(n);
   }
   out.push(UNASSIGNED);
+  if (includeNotAttributable) out.push(NOT_ATTRIBUTABLE);
   return out;
 }
 
@@ -230,9 +276,11 @@ export function coverage(records: Rec[], orderedDomainNames: string[]): Coverage
   let unassignedFindings = 0;
   let sgResolved = 0;
   let sgUnresolved = 0;
+  const bySource: CoverageSources = { tag: 0, rule: 0, none: 0, missing: 0 };
   for (const r of records) {
     const domain = domainOf(r);
     const asset = assetKey(r);
+    bySource[sourceOf(r)] += 1;
     findingsByDomain.set(domain, (findingsByDomain.get(domain) ?? 0) + 1);
     let set = assetsByDomain.get(domain);
     if (!set) assetsByDomain.set(domain, (set = new Set()));
@@ -240,7 +288,15 @@ export function coverage(records: Rec[], orderedDomainNames: string[]): Coverage
       set.add(asset);
       allAssets.add(asset);
     }
-    if (domain === UNASSIGNED) {
+    // THREE-WAY, NOT TWO. `Not attributable` counts as neither attributed nor unassigned:
+    // calling it attributed would claim an owner that does not exist, and calling it unassigned
+    // would put it in the same figure as the explorer below, which lists only rows that HAD
+    // inputs and matched nothing — the KPI and the table it links to would then disagree. So
+    // `attributedFindings + unassignedFindings + bySource.missing === totalFindings`. On a live
+    // frame the third term is structurally zero, so no existing figure moves.
+    if (domain === NOT_ATTRIBUTABLE) {
+      // no-op: counted only in `bySource.missing` and its own `byDomain` row
+    } else if (domain === UNASSIGNED) {
       unassignedFindings += 1;
       if (asset) unassignedAssets.add(asset);
     } else {
@@ -250,11 +306,13 @@ export function coverage(records: Rec[], orderedDomainNames: string[]): Coverage
     if (present(r[SG_COL])) sgResolved += 1;
     else sgUnresolved += 1;
   }
-  const byDomain = orderedWithUnassignedLast(orderedDomainNames).map((domain) => ({
-    domain,
-    findings: findingsByDomain.get(domain) ?? 0,
-    assets: assetsByDomain.get(domain)?.size ?? 0,
-  }));
+  const byDomain = orderedWithTailsLast(orderedDomainNames, bySource.missing > 0).map(
+    (domain) => ({
+      domain,
+      findings: findingsByDomain.get(domain) ?? 0,
+      assets: assetsByDomain.get(domain)?.size ?? 0,
+    }),
+  );
   return {
     totalFindings: records.length,
     totalAssets: allAssets.size,
@@ -265,6 +323,7 @@ export function coverage(records: Rec[], orderedDomainNames: string[]): Coverage
     supportGroupResolved: sgResolved,
     supportGroupUnresolved: sgUnresolved,
     byDomain,
+    bySource,
   };
 }
 

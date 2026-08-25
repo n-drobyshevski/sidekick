@@ -168,6 +168,58 @@ describe("coverage", () => {
     expect(cov.unassignedFindings).toBe(1);
     expect(cov.byDomain.map((d) => d.domain)).toEqual(["Payments", "Unassigned"]);
   });
+
+  // WHICH MECHANISM CLAIMED THE ROW — the split that keeps this page useful now that a domain
+  // can arrive two ways. "Attributed 90%" says nothing about whether the estate is tagged.
+  it("splits attributed findings by source", () => {
+    const records = [
+      rec({ _domain: "SAP", _domainSource: "tag", [NAME]: "a" }),
+      rec({ _domain: "SAP", _domainSource: "tag", [NAME]: "b" }),
+      rec({ _domain: "Payments", _domainSource: "rule", [NAME]: "c" }),
+      rec({ _domain: "Unassigned", _domainSource: "none", [NAME]: "d" }),
+      rec({ _domain: "Not attributable", _domainSource: "missing", [NAME]: "" }),
+    ];
+    const cov = coverage(records, ["SAP", "Payments"]);
+    expect(cov.bySource).toEqual({ tag: 2, rule: 1, none: 1, missing: 1 });
+  });
+
+  it("counts Not attributable as neither attributed nor unassigned", () => {
+    // Calling it attributed claims an owner that does not exist; calling it unassigned puts it
+    // in the same figure as the explorer, which lists only rows that HAD inputs and matched
+    // nothing — the KPI and the table it links to would then disagree.
+    const records = [
+      rec({ _domain: "SAP", _domainSource: "tag", [NAME]: "a" }),
+      rec({ _domain: "Unassigned", _domainSource: "none", [NAME]: "b" }),
+      rec({ _domain: "Not attributable", _domainSource: "missing", [NAME]: "c" }),
+    ];
+    const cov = coverage(records, ["SAP"]);
+    expect(cov.attributedFindings).toBe(1);
+    expect(cov.unassignedFindings).toBe(1);
+    expect(cov.attributedFindings + cov.unassignedFindings + cov.bySource.missing)
+      .toBe(cov.totalFindings);
+  });
+
+  it("lists Not attributable last, and only when something landed there", () => {
+    const live = [rec({ _domain: "SAP", _domainSource: "tag", [NAME]: "a" })];
+    // A permanent zero row on a live frame — where nothing CAN land there — reads as a bug.
+    expect(coverage(live, ["SAP", "Not attributable"]).byDomain.map((d) => d.domain))
+      .toEqual(["SAP", "Unassigned"]);
+    const withHistory = [...live, rec({ _domain: "Not attributable", _domainSource: "missing" })];
+    expect(coverage(withHistory, ["SAP"]).byDomain.map((d) => d.domain))
+      .toEqual(["SAP", "Unassigned", "Not attributable"]);
+  });
+
+  it("derives a source from the name when the record carries no provenance", () => {
+    // Older cached payloads and hand-built records. The two tails are unambiguous; everything
+    // else is called "rule", which UNDER-reports tag attribution rather than inventing it — a
+    // missing provenance should make coverage look worse than the truth, never better.
+    const cov = coverage([
+      rec({ _domain: "SAP", [NAME]: "a" }),
+      rec({ _domain: "Unassigned", [NAME]: "b" }),
+      rec({ _domain: "Not attributable", [NAME]: "c" }),
+    ], ["SAP"]);
+    expect(cov.bySource).toEqual({ tag: 0, rule: 1, none: 1, missing: 1 });
+  });
 });
 
 describe("unassignedResources", () => {

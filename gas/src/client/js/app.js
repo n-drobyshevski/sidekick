@@ -71,52 +71,52 @@ const app = document.getElementById("app");
 let mainEl = null;
 let appbarEl = null;
 let bootData = null; // the last bootstrap payload, so renderAppbar can re-derive on a pick
-// The global "Manual group" scope, shared by every page. "" = the whole register. Module-level
+// The global "Domain" scope, shared by every page. "" = the whole register. Module-level
 // so it survives route() (which only re-renders mainEl, never the shell) and page navigation —
 // nav links carry no state.
+//
+// ONE VALUE FOR ONE QUESTION. A domain arrives from the resource's `Wiz/Domain` tag where the
+// tenant wrote one and from a manual group's rules where it did not, resolved server-side into
+// a single `_domain` (src/domain/resolveDomain.ts) — so this is one scope, not two. It briefly
+// was two, and the second is gone: "which domain owns this" asked twice is a control that
+// cannot answer "what am I looking at" in one line.
 let activeDomain = "";
 // The global "Support group" scope, shared by every page the same way. "" = all groups.
-let activeSupportGroup = "";
-// The global "VC Domain" scope — the owner named by a resource's `Wiz/Domain` tag.
-// Orthogonal to the two above rather than nested under either: a domain can cut across manual
-// groups and support groups alike, which is why the switcher lists three flat groups.
 //
-// EXACTLY ONE OF THESE THREE IS EVER SET. The first two used to be independent filters that
-// could intersect, each with its own combobox at the bottom of the rail; all three are groups
-// in one header control now, and one scope is what a header can honestly name. pickScope() is
-// where that rule lives — clearScope() and the page chips only ever clear.
-let activeBizDomain = "";
+// EXACTLY ONE OF THESE TWO IS EVER SET. They used to be independent filters that could
+// intersect, each with its own combobox at the bottom of the rail; both are groups in one
+// header control now, and one scope is what a header can honestly name. pickScope() is where
+// that rule lives — clearScope() and the page chips only ever clear.
+let activeSupportGroup = "";
 
-/** The three scopes as the pages take them. One object, so no caller can pass two of three. */
+/** The two scopes as the pages take them. One object, so no caller can pass both. */
 function activeScope() {
-  return { domain: activeDomain, supportGroup: activeSupportGroup, bizDomain: activeBizDomain };
+  return { domain: activeDomain, supportGroup: activeSupportGroup };
 }
 
 // Toggle the scan-zone's "filtering" accent to match the active scope.
 function syncScanZoneFiltering() {
   const zone = document.querySelector(".scan-zone");
-  const scoped = !!(activeDomain || activeSupportGroup || activeBizDomain);
+  const scoped = !!(activeDomain || activeSupportGroup);
   if (zone) zone.classList.toggle("filtering", scoped);
 }
 
 /**
  * The header switcher's pick: set one scope, clear the others, and re-read the page.
  *
- * No server round trip and no re-boot. This app scopes CLIENT-SIDE — the three values ride the
+ * No server round trip and no re-boot. This app scopes CLIENT-SIDE — both values ride the
  * page context and each page passes them into its own RPC — so the payload the switcher itself
  * reads (`bootData`) is unchanged by a pick, and only the header's own label, caption and
  * accent need re-deriving. `renderAppbar` does that by rebuilding from the same payload rather
  * than patching, which is what keeps the caption and the trigger from ever disagreeing.
  */
 function pickScope(pick) {
-  // Set one, clear the other two. Written as a clear-then-set rather than three branches so
-  // the "one at a time" rule is structural: there is no path through this function that leaves
-  // two of them non-empty.
+  // Set one, clear the other. Written as a clear-then-set rather than two branches so the
+  // "one at a time" rule is structural: there is no path through this function that leaves
+  // both of them non-empty.
   activeDomain = "";
   activeSupportGroup = "";
-  activeBizDomain = "";
   if (pick.kind === "supportGroup") activeSupportGroup = pick.value || "";
-  else if (pick.kind === "bizDomain") activeBizDomain = pick.value || "";
   else activeDomain = pick.value || "";
   renderAppbar(appbarEl, bootData);
   syncScanZoneFiltering();
@@ -128,7 +128,6 @@ function pickScope(pick) {
 function clearScope(kind) {
   if (kind === "domain") activeDomain = "";
   else if (kind === "supportGroup") activeSupportGroup = "";
-  else if (kind === "bizDomain") activeBizDomain = "";
   renderAppbar(appbarEl, bootData);
   syncScanZoneFiltering();
   route();
@@ -480,7 +479,7 @@ function renderSidebar(sidebar, data) {
     }
   }
 
-  // The two global filters that used to live here — Value Chain and Support group — are one
+  // The two global filters that used to live here — domain and Support group — are one
   // control in the app header now. They were the only things in the rail that were not
   // destinations, and a scope is not a destination.
   //

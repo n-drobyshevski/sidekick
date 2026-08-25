@@ -50,6 +50,20 @@ export interface EpisodeRow {
   has_exploit: boolean | null;
   epss: number | null;
   risk_observed_at: string | null;
+  // And likewise for the resource's tag bag, which is where the `Wiz/Domain` tag lives and
+  // therefore where a finding's DOMAIN comes from. The same argument as the risk columns
+  // above, and it was learned the same way: compaction converts RESOLVED ledger rows into
+  // episodes, resolved lifecycles are exactly the MTTR denominator, and an episode with no
+  // tags is a resolved finding that can never be attributed to a domain again. Without this
+  // column every by-domain figure silently thins out as the retention floor advances —
+  // and the stats-identity gate would report green, because it never looked at attribution.
+  //
+  // The BAG, not a resolved domain name: `WIZ_DOMAIN_TAG_KEY` is a Script Property, so the
+  // key must stay correctable without a re-scan, and a sealed episode is the one row that can
+  // never be re-scanned. Carrying the bag keeps resolve-on-read true for history as well as
+  // for live rows — and fixes the manual rules' `tag:` conditions, which lost their inputs
+  // here for the same reason and just as quietly.
+  tags_json: string | null;
 }
 
 export interface LedgerState {
@@ -346,7 +360,10 @@ export function baseRows(state: LedgerState, now?: number): BaseRow[] {
         last_scan_id: null,
         subscription_name: null,
         subscription_ext_id: null,
-        tags_json: null,
+        // Carried through compaction now (see EpisodeRow), so a sealed episode still knows
+        // which domain owned it. Null on episodes written before the column existed, and on
+        // every legacy imported bundle — those read as Not attributable, which is the truth.
+        tags_json: e.tags_json ?? null,
         fix_date: e.fix_date,
         fix_observed_at: e.fix_observed_at,
         has_kev: e.has_kev,

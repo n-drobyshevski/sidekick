@@ -107,8 +107,7 @@ export async function renderProgram(main, _params, ctx) {
 
   const domain = ctx.domain || "";
   const supportGroup = ctx.supportGroup || "";
-  const bizDomain = ctx.bizDomain || "";
-  const params = { domain, supportGroup, bizDomain, severities };
+  const params = { domain, supportGroup, severities };
 
   let paint;
   const dataPromise = swrCall("api_getProgramPage", params, (fresh) => paint && paint(fresh));
@@ -126,9 +125,7 @@ export async function renderProgram(main, _params, ctx) {
       "high-risk. They pull against each other, so neither means anything alone."),
   );
 
-  const scopeChips = scopeBar({
-    domain, supportGroup, bizDomain, onClear: ctx.clearScope,
-  });
+  const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
   if (scopeChips) main.append(scopeChips);
 
   const heroHost = el("div", {});

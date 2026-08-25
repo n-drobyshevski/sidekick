@@ -1,6 +1,6 @@
 // Executive View — the default landing page. A calm, centered summary of the numbers
 // leadership acts on: one big Kaplan–Meier MTTR score, open vulnerabilities by severity,
-// the last scan (with a Run scan button), and KM MTTR by manual group. Composes existing
+// the last scan (with a Run scan button), and KM MTTR by domain. Composes existing
 // read-models (api_bootstrap + api_getExecutivePage) — the latter a lean sibling of the
 // MTTR page's endpoint that ships only the hero + per-domain slices this page paints,
 // sharing their cache entries but skipping the unused trend reconstruction.
@@ -89,7 +89,7 @@ export async function renderExecutive(main, _params, ctx) {
   let paint;
   const execData = swrCall(
     "api_getExecutivePage",
-    { domain: "", supportGroup: "", bizDomain: "", severities },
+    { domain: "", supportGroup: "", severities },
     (fresh) => paint && paint(fresh),
   );
 
@@ -130,7 +130,7 @@ export async function renderExecutive(main, _params, ctx) {
   // ships exactly those two slices and skips the trend reconstruction the MTTR page needs.
   paint = (data) => {
     guard("MTTR", heroHost, () => renderHero(data && data.mttr, data && data.weekTrend));
-    guard("by manual group", byDomainHost, () => renderByDomain(data && data.byDomain));
+    guard("by domain", byDomainHost, () => renderByDomain(data && data.byDomain));
   };
   try {
     paint(await execData);
@@ -257,7 +257,7 @@ export async function renderExecutive(main, _params, ctx) {
     sevHost.append(row);
   }
 
-  // KM MTTR by manual group — the per-group remediation split. The server ships `byDomain` only at
+  // KM MTTR by domain — the per-domain remediation split. The server ships `byDomain` only at
   // the whole-chain view (which this always is) and the MTTR page gates the section on ≥2
   // configured domains, so mirror that: hidden entirely when there's nothing meaningful to
   // split. A compact table (domain · KM median · open) sorted by open backlog, capped so the
@@ -270,10 +270,10 @@ export async function renderExecutive(main, _params, ctx) {
       .sort((a, b) => (b.open ?? 0) - (a.open ?? 0))
       .slice(0, 5);
 
-    byDomainHost.append(sectionLabel("MTTR by manual group"));
+    byDomainHost.append(sectionLabel("MTTR by domain"));
     const table = el("table", { class: "data" },
       el("thead", {}, el("tr", {},
-        el("th", { scope: "col" }, "Manual group"),
+        el("th", { scope: "col" }, "Domain"),
         el("th", { scope: "col" },
           helpTip("Median MTTR (KM)",
             ["Kaplan–Meier median time-to-remediation for this group — still-open findings " +

@@ -1,10 +1,17 @@
-// Attribution — audits how OS findings map onto the manual groups (rule-based) and
-// support groups (subscription Wiz/provisioning tag) across the WHOLE register. Unlike
+// Attribution — audits how OS findings map onto domains and support groups
+// (subscription Wiz/provisioning tag) across the WHOLE register. Unlike
 // the other pages it deliberately ignores the header scope
 // filters (it measures the mapping itself), so there is no scopeBar here. Coverage KPIs,
 // a per-domain coverage table, an unassigned-resource explorer with a closed-loop
 // "Attribute…" handoff into Settings, per-rule health, and untagged subscriptions —
 // all from one paginated RPC (api_getAttribution).
+//
+// THIS PAGE AUDITS TWO MECHANISMS, NOT ONE. A finding reaches its domain by the tenant's
+// `Wiz/Domain` tag where there is one, and by a manual group's rules where there is not. The
+// by-source strip is what separates them, and it is the page's most useful number now: `tag`
+// rising and `rule` falling is the estate being tagged, which is the direction of travel. The
+// rule-health and unassigned-explorer sections below still audit the FALLBACK only — they are
+// about rules, and a tag-attributed finding never reaches a rule to be traced.
 
 import { bootstrap, setParams, swrCall } from "../store.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
@@ -16,6 +23,10 @@ import {
 // The engine's placeholder domain for findings that matched no rule (domainRules.UNASSIGNED).
 // The client bundle can't import the TS constant; mirrored here like overview.js does.
 const UNASSIGNED = "Unassigned";
+// Its counterpart for rows that carried no attribution input at all (resolveDomain's
+// NOT_ATTRIBUTABLE) — compacted and imported resolved history. Structurally absent from a live
+// frame, so this page shows it only if it ever appears.
+const NOT_ATTRIBUTABLE = "Not attributable";
 
 // Condition-type -> a short human phrase for the rule-health condition summary. Mirrors the
 // shapes domainsEditor.js writes (tag: key/value, name_regex: pattern, subscription/
@@ -181,23 +192,48 @@ export async function renderAttribution(main, params, ctx) {
       kpiCard("Attributed findings", `${attributed.toLocaleString()} (${pct}%)`,
         `of ${total.toLocaleString()} findings`),
       kpiCard("Unassigned findings", (coverage.unassignedFindings || 0).toLocaleString(),
-        "matched no rule"),
+        "no tag, and matched no rule"),
       kpiCard("Unassigned resources", unassignedResources.toLocaleString(),
-        "distinct assets with no manual group"),
+        "distinct assets with no domain"),
       kpiCard("Untagged subscriptions", untagged.length.toLocaleString(),
         "no support group tag"),
     ));
+    renderBySource(coverage.bySource, total, boot.domainTagKey);
   }
 
-  // ---------------------------------------------------- coverage by value chain
+  // WHICH MECHANISM CLAIMED EACH FINDING — the split the two KPIs above cannot show, because
+  // "attributed" is now the sum of two very different stories. Rendered as one line of figures
+  // rather than four more cards: it is a composition, and four cards would read as four
+  // independent measures. Omitted entirely on a payload without `bySource` (a cached
+  // pre-upgrade entry) rather than drawn as four zeroes, which would read as total failure.
+  function renderBySource(bySource, total, tagKey) {
+    if (!bySource) return;
+    const parts = [
+      ["tag", `by ${tagKey || "Wiz/Domain"} tag`],
+      ["rule", "by a manual group rule"],
+      ["none", "claimed by neither"],
+      ["missing", "no attribution input"],
+    ].filter(([k]) => (bySource[k] || 0) > 0 || k === "tag" || k === "rule");
+    const line = el("p", { class: "small muted", style: "margin:-4px 0 14px" },
+      "Attributed ");
+    parts.forEach(([k, label], i) => {
+      const n = bySource[k] || 0;
+      const pctOf = total ? Math.round((n / total) * 100) : 0;
+      if (i) line.append(" · ");
+      line.append(el("strong", {}, n.toLocaleString()), ` ${label} (${pctOf}%)`);
+    });
+    bodyHost.append(line);
+  }
+
+  // -------------------------------------------------------- coverage by domain
 
   function renderCoverageTable(coverage) {
     const byDomain = coverage.byDomain || [];
     if (!byDomain.length) {
       bodyHost.append(settingsPanel({
-        title: "Coverage by manual group",
-        body: emptyState("No manual groups defined — every finding is Unassigned.",
-          "Add manual groups in Settings to attribute findings."),
+        title: "Coverage by domain",
+        body: emptyState("Nothing to split — no Wiz/Domain tags and no manual groups.",
+          "Tag resources in Wiz, or add manual groups in Settings, to attribute findings."),
       }));
       return;
     }
@@ -205,12 +241,17 @@ export async function renderAttribution(main, params, ctx) {
     const body = el("tbody", {});
     for (const d of byDomain) {
       const isUnassigned = d.domain === UNASSIGNED;
+      const isMissing = d.domain === NOT_ATTRIBUTABLE;
       const share = total ? d.findings / total : 0;
       // Zero-count real domains never matched anything (possibly dead); a non-empty
       // Unassigned row is a coverage gap. Never a warning on an empty Unassigned row (good).
-      const marker = isUnassigned
-        ? (d.findings > 0 ? statusPill("bad", "coverage gap") : null)
-        : (d.findings === 0 ? statusPill("warn", "no matches") : null);
+      // `Not attributable` is NEITHER: nothing an operator does here can close it, so flagging
+      // it as a gap would put a permanent red pill beside work that does not exist.
+      const marker = isMissing
+        ? statusPill("neutral", "no inputs")
+        : isUnassigned
+          ? (d.findings > 0 ? statusPill("bad", "coverage gap") : null)
+          : (d.findings === 0 ? statusPill("warn", "no matches") : null);
       body.append(el("tr", {},
         el("td", {},
           el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
@@ -224,12 +265,13 @@ export async function renderAttribution(main, params, ctx) {
       ));
     }
     bodyHost.append(settingsPanel({
-      title: "Coverage by manual group",
-      description: "How this scan's findings distribute across your manual groups.",
+      title: "Coverage by domain",
+      description: "How this scan's findings distribute across domains — Wiz/Domain tag values "
+        + "and the manual groups that claim what is untagged.",
       body: el("div", { class: "table-wrap panel-flush" },
         el("table", { class: "data" },
           el("thead", {}, el("tr", {},
-            ...["Manual group", "Findings", "Assets", "Share"].map((h) => el("th", { scope: "col" }, h)))),
+            ...["Domain", "Findings", "Assets", "Share"].map((h) => el("th", { scope: "col" }, h)))),
           body)),
     }));
   }

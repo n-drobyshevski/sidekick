@@ -22,11 +22,15 @@
 //
 // ABSENCE IS REPORTED AS A COUNT, NOT AS A SENTINEL VALUE. An untagged resource has a blank
 // domain and contributes nothing to a facet, exactly as a blank cloud or subscription already
-// does — there is deliberately no "Untagged" row in the switcher, because offering "the assets
-// we know least about" as though it were an owner is the lie the coverage figure exists to
-// prevent. `domainCoverage` discharges that duty instead, and discharges it better: a tenant
-// that tags nothing has no domain data at all, which must read as "we never learned" rather
-// than as "nobody owns any of this", and a per-row sentinel could not tell those apart.
+// does — there is deliberately no "Untagged" tag value, because offering "the assets we know
+// least about" as though it were an owner is the lie the coverage figures exist to prevent.
+// Two figures discharge that duty, and discharge it better than a sentinel could: the
+// bootstrap's `scopeCounts.noBizDomain` and Attribution's `coverage().bySource`. A tenant that
+// tags nothing has no domain data at all, which must read as "we never learned" rather than as
+// "nobody owns any of this", and a per-row sentinel could not tell those apart.
+//
+// An untagged row is NOT left without a domain, though — that is `resolveDomain`'s job, and it
+// falls through to the manual-group rules and then to one of the two named tails.
 
 import { present, type Rec } from "./util";
 
@@ -66,21 +70,4 @@ export function domainOfTags(tags: Rec | null | undefined, key: string = DEFAULT
 export function resolveDomainTagKey(configured: string | null | undefined): string {
   const k = (configured ?? "").trim();
   return k || DEFAULT_DOMAIN_TAG_KEY;
-}
-
-/**
- * How much of the register the domain tag actually covers.
- *
- * This is the switcher's defence against reading a thin Domains group as a fact about the
- * tenant. Reported as an aggregate over the whole set, so it stays a count of something Wiz
- * said and never becomes a per-row claim.
- */
-export function domainCoverage(
-  records: ReadonlyArray<Rec>,
-  key: string,
-  domainOf: (record: Rec) => string | null,
-): { key: string; tagged: number; total: number } {
-  let tagged = 0;
-  for (const r of records) if (domainOf(r)) tagged += 1;
-  return { key, tagged, total: records.length };
 }

@@ -20,7 +20,9 @@
 //     recovered from anywhere else once a finding stops being returned by the API, so
 //     an export that dropped them would be lossy in exactly the fields that matter for
 //     coverage and efficiency.
-//   * episode rows carry all of EpisodeRow for the same reason.
+//   * episode rows carry all of EpisodeRow for the same reason — `tags_json` included, or
+//     an export/import round-trip would re-lose the domain attribution compaction was just
+//     taught to keep.
 //
 // What stays behind is storage-specific and meaningless off this deployment: `raw_ref`
 // and `obs_ref` are Drive ids. Same call migrate.py makes, and importMerge.coerceScan
@@ -43,6 +45,7 @@ export const BUNDLE_EPISODE_COLUMNS: (keyof EpisodeRow)[] = [
   "resolution_src", "reopened_count", "compaction_id", "superseded_by_scan",
   "fix_date", "fix_observed_at",
   "has_kev", "has_exploit", "epss", "risk_observed_at",
+  "tags_json",
 ];
 
 /** mttr_history, including `open_past_sla` which the legacy Python export lacks. */

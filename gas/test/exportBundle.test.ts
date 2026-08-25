@@ -194,7 +194,8 @@ describe("migration bundle export — compacted history", () => {
       vuln_key: "id:f-old", cve: "CVE-OLD", severity: "HIGH",
       first_seen: "2026-05-01T00:00:00Z", resolved_at: "2026-05-20T00:00:00Z",
       resolution_src: "api", reopened_count: 0, compaction_id: "cmp-1",
-      superseded_by_scan: null, fix_date: "2026-05-10T00:00:00Z",
+      superseded_by_scan: null, tags_json: JSON.stringify({ "Wiz/Domain": "SAP" }),
+      fix_date: "2026-05-10T00:00:00Z",
       fix_observed_at: "2026-05-12T00:00:00Z", has_kev: true, has_exploit: null,
       epss: 0.9, risk_observed_at: "2026-05-02T00:00:00Z",
     });
@@ -206,6 +207,10 @@ describe("migration bundle export — compacted history", () => {
     expect(ep["has_exploit"]).toBeNull();
     expect(ep["epss"]).toBe(0.9);
     expect(ep["fix_date"]).toBe("2026-05-10T00:00:00Z");
+    // The tag bag is part of the bundle, not just of the sheet: an episode that reaches another
+    // surface without it arrives already unattributable, and nothing downstream can tell that
+    // apart from a resource nobody ever tagged.
+    expect(JSON.parse(String(ep["tags_json"]))["Wiz/Domain"]).toBe("SAP");
     expect(bundle.schema_version).toBeNull();
   });
 });

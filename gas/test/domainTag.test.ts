@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_DOMAIN_TAG_KEY,
-  domainCoverage,
   domainOfTags,
   resolveDomainTagKey,
 } from "../src/domain/domainTag";
@@ -75,26 +74,12 @@ describe("resolveDomainTagKey", () => {
   });
 });
 
-// The switcher's defence against reading a thin Domains group as a fact about the tenant.
-describe("domainCoverage", () => {
-  const of = (r: Record<string, unknown>) => domainOfTags(r["tags"] as Record<string, unknown>);
-
-  it("counts how many rows carry a domain, and names the key it read", () => {
-    const rows = [
-      { tags: { "Wiz/Domain": "SAP" } },
-      { tags: { "Wiz/Domain": "CROSS" } },
-      { tags: { env: "prod" } },
-      { tags: {} },
-    ];
-    expect(domainCoverage(rows, "Wiz/Domain", of)).toEqual({
-      key: "Wiz/Domain", tagged: 2, total: 4,
-    });
-  });
-
-  it("reports nothing tagged rather than throwing on an empty register", () => {
-    expect(domainCoverage([], "Wiz/Domain", of)).toEqual({ key: "Wiz/Domain", tagged: 0, total: 0 });
-  });
-});
+// `domainCoverage` USED TO BE TESTED HERE, and its removal is deliberate rather than a lapse
+// in coverage: it counted "how many rows carry a domain tag" over a set handed to it, and both
+// production readers of that figure now count it inside a pass they already make — the
+// bootstrap's `scopeCounts.noBizDomain` and `attribution.coverage()`'s `bySource.tag`. Keeping
+// it would have meant a helper with no caller and a second traversal for anyone who used it.
+// The behaviour it asserted is covered by `domainOfTags` above and by `attribution.test.ts`.
 
 // bizDomainOf leans on domainRules.recordTags, which is what lets one scope read the same tags
 // from a raw node, a flattened frame record and a ledger row alike. All three shapes are live in

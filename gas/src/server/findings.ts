@@ -2,7 +2,8 @@
 // the latest flat scan's slim records (Drive), flattened to dotted keys — the same
 // shape the Streamlit pages filtered. Memoized per execution.
 
-import { assignDomain, compileDomains, UNASSIGNED } from "../domain/domainRules";
+import { compileDomains, UNASSIGNED } from "../domain/domainRules";
+import { resolveDomain } from "../domain/resolveDomain";
 import { vulnKey } from "../domain/lifecycle";
 import { normalizeSeverity } from "../domain/severity";
 import { extractNodes, flattenNode } from "../domain/transform";
@@ -71,13 +72,17 @@ export function currentScan(): CurrentScan | null {
     });
   }
   attachSupportGroups(records);
-  // Before domain assignment, like the support group above and for the same reason: both are
+  // Before resolution, like the support group above and for the same reason: both are
   // resolved live rather than baked, and a manual group's rules may read either.
   attachBizDomains(records);
-  if (compiled.length) {
-    for (const flat of records) flat["_domain"] = assignDomain(flat, compiled);
-  } else {
-    for (const flat of records) flat["_domain"] = UNASSIGNED;
+  // TAG FIRST, RULES AS FALLBACK (resolveDomain). The `compiled.length` special case that used
+  // to sit here — force every row to UNASSIGNED when no rules are configured — is gone with
+  // it: a register with no rules but a tagged fleet is fully attributed now, and forcing
+  // UNASSIGNED there would have thrown the tag away.
+  for (const flat of records) {
+    const resolved = resolveDomain(flat, compiled);
+    flat["_domain"] = resolved.name;
+    flat["_domainSource"] = resolved.source;
   }
   memo = {
     scanId: row.scan_id,
@@ -96,12 +101,11 @@ export interface FindingsFilters {
   statuses?: string[];
   assetTypes?: string[];
   clouds?: string[];
+  // The RESOLVED domain — a `Wiz/Domain` tag value or a manual group, whichever claimed the
+  // row (src/domain/resolveDomain.ts). One dimension: the tag briefly had a `bizDomains` filter
+  // of its own beside this, and two filters for one question is what that was.
   domains?: string[];
   supportGroups?: string[];
-  // VC Domains, read off the resource's Wiz/Domain tag and attached as `_bizDomain` by
-  // currentScan(). A separate dimension from `domains` above, which are the rule-derived
-  // manual groups — the two can disagree, and when they do the disagreement is information.
-  bizDomains?: string[];
   q?: string;
 }
 
@@ -130,10 +134,6 @@ export function applyFilters(records: Rec[], f: FindingsFilters): Rec[] {
   if (f.supportGroups?.length) {
     const keep = new Set(f.supportGroups);
     out = out.filter((r) => keep.has(String(r["_supportGroup"] ?? "")));
-  }
-  if (f.bizDomains?.length) {
-    const keep = new Set(f.bizDomains);
-    out = out.filter((r) => keep.has(String(r["_bizDomain"] ?? "")));
   }
   if (f.q && f.q.trim()) {
     const q = f.q.trim().toLowerCase();

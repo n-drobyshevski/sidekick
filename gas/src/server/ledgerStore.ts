@@ -33,8 +33,10 @@ import {
   compactionRow,
   deleteScansCore,
   recordsFromPayload,
+  backfillTagsFromCheckpoint,
   type CompactionResult,
   type DeleteResult,
+  type TagBackfillResult,
 } from "../domain/maintenance";
 import type { RiskRule } from "../domain/program";
 import {
@@ -190,6 +192,10 @@ export function loadState(useSnapshot = true): LedgerState {
     superseded_by_scan: (r["superseded_by_scan"] as string | null) ?? null,
     fix_date: (r["fix_date"] as string | null) ?? null,
     fix_observed_at: (r["fix_observed_at"] as string | null) ?? null,
+    // Null on every episode sealed before this column existed — the backfill job
+    // (backfillTags) recovers those from the Drive checkpoints; until it runs they read as
+    // Not attributable, which is the honest answer rather than a guess.
+    tags_json: (r["tags_json"] as string | null) ?? null,
     ...coerceRiskSignals(r),
   }));
   if (useSnapshot) stateMemo = state;
@@ -333,7 +339,7 @@ export function loadTrend(
   // fix that lands later re-admits the row at that point (see trend.awaitingFixAsOf). The
   // resolved / median / SLA-burn / attainment series are untouched. Default true = today.
   showNoFix = true,
-  // Pre-scoped base rows (already narrowed to a Value Chain / Support group by the caller).
+  // Pre-scoped base rows (already narrowed to a domain / Support group by the caller).
   // When omitted the whole durable base is used, so existing callers stay byte-identical. A
   // scope narrows which findings the trend replays, never which scans it samples at — the
   // scans backbone always comes from state below.
@@ -445,6 +451,35 @@ function latestCheckpoint(): Checkpoint | null {
   if (!rows.length) return null;
   rows.sort((a, b) => (String(a["ts"]) < String(b["ts"]) ? 1 : -1));
   return archive.readCheckpoint(rows[0]["checkpoint_ref"] as string);
+}
+
+/**
+ * Recover `tags_json` for episodes sealed before the column existed, from the newest
+ * checkpoint — the domain-attribution counterpart of the risk backfill.
+ *
+ * ONE RPC, NOT A RESUMABLE JOB, unlike `backfillJobs`. That job walks every scan archive in
+ * Drive and needs a budget and a continuation; this reads ONE blob (the checkpoint chain is
+ * cumulative) and makes one pass over the episodes tab. If a register ever grows large enough
+ * for that to approach the six-minute cap, `backfillJobs` is the harness to adopt — but
+ * paying for its single-flight slot and its trigger today would be machinery around a
+ * single read.
+ *
+ * Journaled like every other wholesale write: `writeStateTables` is three sheet writes plus a
+ * snapshot and that sequence is not atomic.
+ */
+export function backfillEpisodeTags(): TagBackfillResult {
+  const state = loadState();
+  const journalRef = archive.writeJournal(newJobId("compact"), state);
+  const result = backfillTagsFromCheckpoint(state, latestCheckpoint());
+  // Nothing recovered means nothing to write — a re-run on an already-filled ledger costs
+  // one blob read and leaves the tabs untouched, so it is safe to press twice.
+  if (result.recovered) {
+    writeStateTables(state);
+    archive.writeLedgerSnapshot(state);
+    invalidateLedgerMemos();
+  }
+  archive.trashFile(journalRef);
+  return result;
 }
 
 // -------------------------------------------------------------------------- delete

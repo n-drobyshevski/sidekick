@@ -622,9 +622,9 @@ let _comboboxSeq = 0;
  *
  * A plain string is still an option — `value === label`, no hint, no group — because most
  * lists in this app are exactly that and should not have to say so. The object form exists
- * for the header's scope switcher, where the value is not the label (a manual group and a
- * support group can share a name, so one kind carries a prefix) and where a row has to say
- * in words which kind it is and how much of the register it covers.
+ * for the header's scope switcher, where the value is not the label (a domain and a support
+ * group can share a name, so one kind carries a prefix) and where a row has to say in words
+ * which kind it is and how much of the register it covers.
  */
 function comboNormalize(list) {
   return (list || []).map((o) => (typeof o === "string"
@@ -997,13 +997,12 @@ export function helpTip(content, lines, { label, className } = {}) {
 }
 
 /**
- * Header scope bar: dismissible chips for the global scope — manual group, VC Domain or
- * support group —
+ * Header scope bar: dismissible chips for the global scope — domain or support group —
  * rendered where the numbers are so a scoped dashboard never silently reads as the whole
  * register. Returns null when no global filter is active. `onClear(kind)` clears one.
  */
-export function scopeBar({ domain, supportGroup, bizDomain, onClear }) {
-  if (!domain && !supportGroup && !bizDomain) return null;
+export function scopeBar({ domain, supportGroup, onClear }) {
+  if (!domain && !supportGroup) return null;
   const bar = el("div", { class: "scope-bar", role: "status", "aria-label": "Active filters" });
   const chip = (kind, name, value) =>
     el("span", { class: "scope-chip" },
@@ -1017,10 +1016,9 @@ export function scopeBar({ domain, supportGroup, bizDomain, onClear }) {
           }, "✕")
         : null);
   // At most one of these is ever set — the header switcher enforces it (app.js pickScope) —
-  // but all three branches stay, because the bar's job is to echo whatever the shell holds
-  // rather than to assume how many things it may hold.
-  if (domain) bar.append(chip("domain", "Manual group", domain));
-  if (bizDomain) bar.append(chip("bizDomain", "VC Domain", bizDomain));
+  // but both branches stay, because the bar's job is to echo whatever the shell holds rather
+  // than to assume how many things it may hold.
+  if (domain) bar.append(chip("domain", "Domain", domain));
   if (supportGroup) bar.append(chip("supportGroup", "Support group", supportGroup));
   return bar;
 }

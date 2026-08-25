@@ -421,4 +421,14 @@ describe("import round-trips vendor-fix fields", () => {
     expect(legacy.fix_date).toBeNull();
     expect(legacy.fix_observed_at).toBeNull();
   });
+
+  it("coerceEpisode carries tags_json, so an export/import round-trip keeps the domain", () => {
+    // Without this the round-trip re-loses exactly what compaction was just taught to keep:
+    // the `Wiz/Domain` tag every by-domain figure over resolved history is built from.
+    const bag = JSON.stringify({ "Wiz/Domain": "SAP" });
+    expect(coerceEpisode({ vuln_key: "id:G", tags_json: bag }).tags_json).toBe(bag);
+    // A legacy bundle predates the column; absent coerces to null, never to "{}", which would
+    // claim an empty tag bag was observed rather than that none was recorded.
+    expect(coerceEpisode({ vuln_key: "id:H" }).tags_json).toBeNull();
+  });
 });

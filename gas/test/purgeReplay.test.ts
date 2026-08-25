@@ -169,6 +169,7 @@ describe("episode prune survives a scan deletion", () => {
         first_seen: bRow.first_seen, resolved_at: "2026-02-15T00:00:00Z",
         resolution_src: "disappeared", reopened_count: 0, compaction_id: "cmp-1",
         superseded_by_scan: null, fix_date: null, fix_observed_at: null,
+        tags_json: bRow.tags_json,
         has_kev: null, has_exploit: null, epss: null, risk_observed_at: null,
       }],
     };

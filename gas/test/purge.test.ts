@@ -33,7 +33,7 @@ function episode(vuln_key: string, severity: string, resolved_at: string | null)
   return {
     vuln_key, cve: null, severity, first_seen: "2026-01-01T00:00:00Z", resolved_at,
     resolution_src: "api", reopened_count: 0, compaction_id: "cmp-1",
-    superseded_by_scan: null, fix_date: null, fix_observed_at: null,
+    superseded_by_scan: null, fix_date: null, fix_observed_at: null, tags_json: null,
     has_kev: null, has_exploit: null, epss: null, risk_observed_at: null,
   };
 }
