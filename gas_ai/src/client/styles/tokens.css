@@ -22,7 +22,11 @@
 
   /* Readable line length for running text. The pane fills the viewport; prose does
      not follow it out to 1800px, where a sentence becomes a scan across the desk. */
-  --measure: 84ch;
+  /* 84ch was above the readable band for running text, and it is the reason a page subtitle
+     could run to 40 words without ever looking too long: it had a whole desk to spread across.
+     72ch sits inside the 65-75ch the shared document already asks for, and it makes an
+     overlong paragraph visibly overlong, which is the point. */
+  --measure: 72ch;
 
   /* THE SPACING RAMP, which ../../../DESIGN.md specified from the start and this file never
      carried. Every padding, margin and gap in the tree was a bare literal: 837 declarations,

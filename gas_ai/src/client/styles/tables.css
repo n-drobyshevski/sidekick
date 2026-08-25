@@ -45,7 +45,7 @@ a { color: var(--accent); }
 
 /* ------------------------------------------------------------------ chart cards */
 .chart-card { padding: var(--space-4); }
-.chart-card h3 { margin-bottom: 10px; }
+.chart-card h3 { margin-bottom: var(--space-3); }
 .chart-box { position: relative; height: 240px; }
 /* Two charts side by side, stacking below the width where a plot stops being readable. */
 .chart-row {
