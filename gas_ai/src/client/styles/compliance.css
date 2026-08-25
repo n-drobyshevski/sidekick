@@ -87,6 +87,16 @@
   transition: transform var(--dur-quick) ease-out;
 }
 .comp-row-toggle[aria-expanded="true"] .comp-row-chevron { transform: rotate(90deg); }
+/* The row band, asked for by name. tables.css now reserves it for `tr.clickable` — a row that
+   is a `role="button"` — because a band on a row nothing happens to is a promise the row
+   cannot keep. These rows are the one honest exception: they are deliberately NOT clickable
+   (the disclosure is a real button in the first cell, so the row is not a button containing a
+   button — see compliance.js) and they are still operable. `:has()` names them by the toggle
+   they contain, which keeps the shared-controls table beside them — genuinely inert — dark.
+   Same value as the base band, so these rows read exactly as they did.
+   The toggle itself carries no hover state of its own and never has; it was living on this
+   band, which is why removing it from the base sheet had to put it back here. */
+.comp-table table.data tbody tr:has(.comp-row-toggle):hover { background: rgba(0, 0, 0, 0.025); }
 .comp-sub-row > td { background: var(--surface); }
 /* Indent by padding on the first cell, not by a nested table: one table keeps one set of
    column widths, one sort model and one keyboard path. */

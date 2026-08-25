@@ -674,12 +674,7 @@
    stretch to the full card regardless of what width says. */
 table.data.prune-census { width: auto; min-width: min(480px, 100%); align-self: start; }
 table.data.prune-census th { position: static; background: none; }
-/* The base sheet right-aligns numeric CELLS (td.num) but leaves every header left-aligned, so
-   a column heading sits adrift from the figures underneath it. */
-table.data.prune-census th.num { text-align: right; }
 table.data.prune-census td { white-space: nowrap; }
-/* Nothing here is clickable, so a hover band is a promise the row cannot keep. */
-table.data.prune-census tbody tr:hover { background: none; }
 
 /* Verdict line: the pill carries a word and a dot, the sentence carries the reason. Colour
    is the third signal here, never the only one. */

@@ -114,8 +114,16 @@ export function dataTable(spec) {
   // once per row, so this is the one place a definition can be a real control without
   // multiplying the tab order by the row count. `col.help` takes any of tipLabel's shapes.
   for (const col of columns) {
+    // `col.className` lands on the HEADER as well as the cells. Two rules in the stylesheet
+    // were already written for it and had never once matched: `table.data th.num`, added for
+    // the prune census because a numeric heading otherwise sits adrift from its own figures,
+    // and `.gq-table table.data th.gq-group-start`, the graph's column-group boundary. Both
+    // were dead selectors waiting for this line.
     if (!col.sortable || !onSort) {
-      headRow.append(el("th", { scope: "col" }, tipLabel(col.label, col.help)));
+      headRow.append(el("th", {
+        scope: "col",
+        class: col.className || null,
+      }, tipLabel(col.label, col.help)));
       continue;
     }
     const sortBtn = el("button", {
@@ -127,7 +135,7 @@ export function dataTable(spec) {
       col.label,
       el("span", { class: "th-sort-glyph", "aria-hidden": "true" }),
     );
-    const th = el("th", { scope: "col" }, sortBtn);
+    const th = el("th", { scope: "col", class: col.className || null }, sortBtn);
     // Attached to the sort button rather than wrapping it: pressing a heading sorts, and a
     // second control inside it would offer two meanings for one press. The description hangs
     // off the <th>, which is outside the button's own name.

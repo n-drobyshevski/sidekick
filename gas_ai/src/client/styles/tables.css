@@ -26,9 +26,18 @@ table.data td {
   white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
 }
 table.data tbody tr:last-child td { border-bottom: none; }
-table.data tbody tr:hover { background: rgba(0, 0, 0, 0.025); }
+/* CLICKABLE ROWS ONLY. The band used to light every row in every table, including the ones
+   with no `onRowOpen` — scans' reach kinds, the shared-controls list, the sync history, the
+   two panel tables. The prune census had to switch it back off locally and said why: "Nothing
+   here is clickable, so a hover band is a promise the row cannot keep." That is the general
+   rule, so it lives here now rather than in one caller's override. */
+table.data tbody tr.clickable:hover { background: rgba(0, 0, 0, 0.025); }
 table.data tbody tr.clickable { cursor: pointer; }
-td.num { text-align: right; }
+/* The heading goes right with its figures. `td.num` alone left every numeric column's label
+   adrift from the numbers underneath it — components.css patched exactly this for one table
+   and called the base sheet wrong; it was. Reaches the header now that dataTable puts
+   `col.className` on the <th>. */
+th.num, td.num { text-align: right; }
 
 /* ------------------------------------------------------------------- the name cell */
 /* A node's name behind its kind icon, in that kind's category tint — the same cue the graph
