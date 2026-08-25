@@ -7,7 +7,12 @@
 //   dom.js       el, clear, motionOk, downloadText — the element builder
 //   format.js    dates in the display zone
 //   severity.js  the severity marks (dot + word, never colour alone)
-//   data.js      quantity display: progress track, pager
+//   data.js      quantity display: progress track, the sortable table, the paging footer
+//   tableModel.js how a register orders and pages its rows — comparators, where an unknown
+//                goes, what a tie does. DOM-free, so the half that can be WRONG is the half
+//                vitest can hold
+//   cells.js     what a cell says when the answer is "nothing", "maybe", or "this is a
+//                node" — the one muted em dash, yes/no/unknown, the kind medallion
 //   controls.js  status pills, KPI tiles, stat rows
 //   feedback.js  loading / empty / error / toast / dialog
 //   tip.js       the one hover card: the app's only answer to "what does this mean"
@@ -33,11 +38,18 @@
 
 export { appendAll, clear, downloadText, el, motionOk } from "./ui/dom.js";
 export { registerWideNote, scopeNote, trendScopeNote, trendScopeView } from "./ui/projectScope.js";
-export { DISPLAY_TZ, fmtDate, fmtDateTime, plural, pluralize, sevRank } from "./ui/format.js";
+export {
+  DISPLAY_TZ, dueRank, fmtDate, fmtDateTime, plural, pluralize, sevRank,
+} from "./ui/format.js";
 export {
   aarsChip, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
 } from "./ui/severity.js";
-export { dataTable, meter, pager, progressBar } from "./ui/data.js";
+export { dataTable, meter, pager, progressBar, tableFooter } from "./ui/data.js";
+export {
+  DEFAULT_PAGE_SIZE, PAGE_SIZES, compareValues, nullsLast, pageForSize, pageOf, sortRows,
+  triState,
+} from "./ui/tableModel.js";
+export { absent, nameCell, triCell } from "./ui/cells.js";
 export {
   field, filterChipRow, heroStat, kpiCard, pageHeader, segmented, select, selectField,
   statRow, statusPill, togglePills,

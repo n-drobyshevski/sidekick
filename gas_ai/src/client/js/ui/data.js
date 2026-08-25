@@ -1,6 +1,7 @@
 // Quantity display: meters, the sortable data table, and the table pager.
 
 import { clear, el } from "./dom.js";
+import { PAGE_SIZES, pageForSize } from "./tableModel.js";
 import { pluralize } from "./format.js";
 import { tip, tipLabel, tipLines, truncTip } from "./tip.js";
 
@@ -105,6 +106,24 @@ export function dataTable(spec) {
     rowDetail = null,
     // (row) => boolean. Sets aria-expanded on a clickable row. Only meaningful with onRowOpen.
     rowExpanded = null,
+    // A table nested inside another surface rather than standing as a page-level register —
+    // the compliance tree's policy list, which lives in a <td>, and the Data page's prune
+    // census, which lives in a card. Both were hand-built to avoid exactly this component,
+    // and both said so in the same words: it brought a register's chrome — the wrapper's
+    // border, a sticky heading, a ground behind it — into a panel that already has a surface
+    // of its own. `panel` leaves that chrome behind and changes nothing else: a panel table
+    // is still the same aria-sort, th-scope, clickable-row component. Density is deliberately
+    // NOT part of it — the two callers want different padding, and folding both in would
+    // quietly retune one of them, so each keeps its own `className` for that.
+    panel = false,
+    // Opt-in sticky heading. The base sheet used to declare one for every register and never
+    // had it: sticky resolves against `.table-wrap`, whose `overflow-x: auto` makes a scroll
+    // container that never scrolls vertically (styles/tables.css carries the full diagnosis).
+    // The fix releases the wrap at a width where the table fits, so the heading sticks to
+    // whatever is really scrolling — which trades the table's own sideways scroll for the
+    // page's, and is why each register asks for it rather than inheriting it. Take it where
+    // the row count is unbounded; leave it where the table is bounded by construction.
+    stickyHeader = false,
   } = spec;
 
   const headCells = new Map();
@@ -113,8 +132,16 @@ export function dataTable(spec) {
   // once per row, so this is the one place a definition can be a real control without
   // multiplying the tab order by the row count. `col.help` takes any of tipLabel's shapes.
   for (const col of columns) {
+    // `col.className` lands on the HEADER as well as the cells. Two rules in the stylesheet
+    // were already written for it and had never once matched: `table.data th.num`, added for
+    // the prune census because a numeric heading otherwise sits adrift from its own figures,
+    // and `.gq-table table.data th.gq-group-start`, the graph's column-group boundary. Both
+    // were dead selectors waiting for this line.
     if (!col.sortable || !onSort) {
-      headRow.append(el("th", { scope: "col" }, tipLabel(col.label, col.help)));
+      headRow.append(el("th", {
+        scope: "col",
+        class: col.className || null,
+      }, tipLabel(col.label, col.help)));
       continue;
     }
     const sortBtn = el("button", {
@@ -126,7 +153,7 @@ export function dataTable(spec) {
       col.label,
       el("span", { class: "th-sort-glyph", "aria-hidden": "true" }),
     );
-    const th = el("th", { scope: "col" }, sortBtn);
+    const th = el("th", { scope: "col", class: col.className || null }, sortBtn);
     // Attached to the sort button rather than wrapping it: pressing a heading sorts, and a
     // second control inside it would offer two meanings for one press. The description hangs
     // off the <th>, which is outside the button's own name.
@@ -173,7 +200,18 @@ export function dataTable(spec) {
           "aria-label": rowLabel ? rowLabel(row) : null,
           "aria-expanded": rowExpanded ? String(rowExpanded(row)) : null,
           onclick: () => onRowOpen(row),
-          onkeydown: (e) => { if (e.key === "Enter") onRowOpen(row); },
+          // Enter AND Space. A `role="button"` is required to answer both, and this answered
+          // one — so a keyboard reader who pressed the key a button normally takes scrolled
+          // the page instead, which is why `preventDefault` is half the fix.
+          //
+          // Only when the ROW itself has focus. A cell can hold its own control (config's
+          // rule tip, compliance's disclosure), and swallowing Space from a focused descendant
+          // would trade this bug for a worse one.
+          onkeydown: (e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === "Enter") { onRowOpen(row); return; }
+            if (e.key === " " || e.key === "Spacebar") { e.preventDefault(); onRowOpen(row); }
+          },
         }, ...cells));
       }
       // No `aria-controls`: the detail row immediately follows its trigger in DOM order,
@@ -206,7 +244,10 @@ export function dataTable(spec) {
       }, g.label)))
     : null;
 
-  const wrap = el("div", { class: `table-wrap${className ? " " + className : ""}` },
+  const wrap = el("div", {
+    class: "table-wrap" + (panel ? " table-wrap--panel" : "")
+      + (stickyHeader ? " table-wrap--sticky" : "") + (className ? " " + className : ""),
+  },
     el("table", { class: "data" },
       el("thead", {}, ...(groupRow ? [groupRow, headRow] : [headRow])),
       tbody));
@@ -240,4 +281,56 @@ export function pager(page, pageCount, total, onPage) {
       disabled: page >= pageCount - 1,
     }, "Next ›"),
   );
+}
+
+/**
+ * The pager and the rows-per-page control, as one strip under a paged table.
+ *
+ * Two copies of this shipped — inventory.js and the Security Graph's queryTable.js — and each
+ * had half of the right answer, so this is assembled the way `dataTable` above was: take the
+ * stronger part of each rather than pick a file to win.
+ *
+ *   FROM THE GRAPH: the pager leads and the size control follows. The count is the primary
+ *   fact ("Page 1 of 8 — 200 rows"); how many fit on a page is an adjustment to it.
+ *   FROM THE INVENTORY: `N / page` options, so the control names its own unit and needs no
+ *   separate label beside it — and, more importantly, the page recompute below.
+ *
+ * CHANGING HOW MANY ROWS YOU CAN SEE IS NOT A REQUEST TO GO SOMEWHERE ELSE. The graph's copy
+ * reset to page 1 on every size change; on page 12 of a register at 25 rows that is the
+ * difference between a control and a trap. `onPageSize` therefore receives the size AND the
+ * page still holding the row that was at the top, computed once here rather than by each
+ * caller — which is what stopped the two copies agreeing in the first place.
+ *
+ * `page` is ZERO-BASED, matching `pager` above and `pageOf`. A caller whose own page state is
+ * one-based (the graph, because that is what belongs in a shareable URL) converts at this
+ * boundary rather than leaving the two to disagree by one.
+ *
+ *   page      zero-based index of the page on screen
+ *   pageCount total pages, >= 1
+ *   total     rows across every page, for the count the pager prints
+ *   pageSize  rows per page now
+ *   sizes     the options to offer; PAGE_SIZES unless a caller has a reason
+ *   onPage    (page) => void, zero-based
+ *   onPageSize(size, page) => void — `page` is already recomputed
+ */
+export function tableFooter(spec) {
+  const {
+    page = 0, pageCount = 1, total = 0, pageSize = 0,
+    sizes = PAGE_SIZES, onPage = null, onPageSize = null,
+  } = spec || {};
+
+  const kids = [pager(page, pageCount, total, (p) => onPage && onPage(p))];
+
+  if (onPageSize) {
+    const sizeSelect = el("select", { "aria-label": "Rows per page" },
+      ...sizes.map((n) => el("option", { value: String(n) }, n + " / page")));
+    sizeSelect.value = String(pageSize);
+    sizeSelect.addEventListener("change", () => {
+      const next = Number(sizeSelect.value);
+      onPageSize(next, pageForSize(page, pageSize, next));
+    });
+    kids.push(sizeSelect);
+  }
+
+  return el("div", { class: "table-footer" }, ...kids);
 }

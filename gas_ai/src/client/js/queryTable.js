@@ -11,45 +11,28 @@
 // in-place `setRows`/`setSort` repaint and the clickable `role="button"` rows all come for free
 // — the same bargain inventory.js took.
 
-import { dataTable, el, pager, sevBadge } from "./ui.js";
-import { categoryOf, kindIconSvg, kindLabel, kindsLabel } from "./icons.js";
-
-import { truncTip } from "./ui.js";
-const PAGE_SIZES = [25, 50, 100, 250];
-export const DEFAULT_PAGE_SIZE = 50;
-
-/** The app's one way of saying "nothing here", used by every register on every page. */
-const EMPTY = "—";
+import {
+  absent, dataTable, el, nameCell, sevBadge, sortRows, tableFooter, triCell,
+} from "./ui.js";
+import { kindLabel, kindsLabel } from "./icons.js";
+// Re-exported so graph.js keeps one import for the table it draws. The list itself is
+// ui/tableModel.js's — two registers had shipped the same four numbers independently.
+export { DEFAULT_PAGE_SIZE } from "./ui.js";
 
 /**
- * A yes/no/unknown cell. Three states, never two: the codebase is emphatic that an absent
- * property means Wiz never reported one, and printing that as "No" asserts the opposite of
- * what is known. The word carries the state — colour never does it alone.
+ * WHICH treatment a field gets. The treatments themselves are ui/cells.js's, shared with every
+ * other register; this switch is the graph's alone and stays here.
+ *
+ * It cannot be caller-supplied per column the way every other page writes `cell(row)`, because
+ * these columns are built at runtime from the query's own groups — there is no author to write
+ * a renderer for a column the reader just asked into existence. And `name`, `kind`, `severity`
+ * and `guardrail` are this payload's field names, not a vocabulary: moving the switch into
+ * ui/ would put one page's schema in the shared layer, which is the drift dataTable's own
+ * docblock was written to end.
  */
-function triCell(v) {
-  if (v === true) return "Yes";
-  if (v === false) return "No";
-  return el("span", { class: "muted" }, EMPTY);
-}
-
-/** The node's kind icon in its category tint, then the name. Mirrors the graph's medallion. */
-function nameCell(cell) {
-  const icon = kindIconSvg(cell.kind, 14);
-  icon.setAttribute("class", "gq-cell-icon");
-  // The tip hangs off the clipped span, not its wrapper: .gq-name-text is the box the
-  // ellipsis happens in, so it is the box that knows whether anything was lost.
-  const text = truncTip(el("span", { class: "gq-name-text" }, cell.name), cell.name);
-  return el("span", {
-    class: "gq-name",
-    "data-category": categoryOf(cell.kind),
-  }, icon, text);
-}
-
 function renderValue(key, value, cell) {
-  if (key === "name") return nameCell(cell);
-  if (value === null || value === undefined || value === "") {
-    return el("span", { class: "muted" }, EMPTY);
-  }
+  if (key === "name") return nameCell(cell.name, cell.kind);
+  if (value === null || value === undefined || value === "") return absent();
   if (typeof value === "boolean") return triCell(value);
   if (key === "kind") return kindLabel(cell.kind);
   if (key === "severity") return sevBadge(String(value));
@@ -67,28 +50,6 @@ function sortValue(row, groupIndex, key) {
   if (!cell) return null;
   const v = cell.fields[key];
   return v === undefined ? null : v;
-}
-
-/** Ordinary comparison for two present values. Nulls are handled by the caller. */
-function compare(a, b) {
-  if (typeof a === "number" && typeof b === "number") return a - b;
-  if (typeof a === "boolean" && typeof b === "boolean") return (a ? 1 : 0) - (b ? 1 : 0);
-  const sa = String(a).toLowerCase();
-  const sb = String(b).toLowerCase();
-  return sa < sb ? -1 : sa > sb ? 1 : 0;
-}
-
-/**
- * Nulls sink to the bottom in BOTH directions, which is why this sits outside the ascending /
- * descending flip. An unknown is not a small value: letting it lead the ascending page would
- * bury the rows someone sorted the column to find, and reversing would then bury the others.
- * Returns null when both values are present and the caller should compare them normally.
- */
-function nullOrder(a, b) {
-  if (a === null && b === null) return 0;
-  if (a === null) return 1;
-  if (b === null) return -1;
-  return null;
 }
 
 /**
@@ -133,7 +94,7 @@ export function queryTable(payload, opts = {}) {
         className: (field.numeric ? "num" : "") + (fi === 0 && gi > 0 ? " gq-group-start" : ""),
         cell: (row) => {
           const cell = row.cells[gi];
-          if (!cell) return el("span", { class: "muted" }, EMPTY);
+          if (!cell) return absent();
           return renderValue(field.key, cell.fields[field.key], cell);
         },
         groupIndex: gi,
@@ -147,21 +108,14 @@ export function queryTable(payload, opts = {}) {
   let rows = allRows;
   const active = columns.find((c) => c.key === sortKey);
   if (active) {
-    rows = allRows.slice().sort((ra, rb) => {
-      const va = sortValue(ra, active.groupIndex, active.fieldKey);
-      const vb = sortValue(rb, active.groupIndex, active.fieldKey);
-      const nulls = nullOrder(va, vb);
-      if (nulls !== null && nulls !== 0) return nulls;
-      if (nulls === null) {
-        const d = compare(va, vb);
-        if (d !== 0) return descending ? -d : d;
-      }
-      // A stable secondary key, or two rows that tie swap places between repaints and the
-      // table appears to shuffle itself when nothing changed.
-      const na = sortValue(ra, 0, "name");
-      const nb = sortValue(rb, 0, "name");
-      const nn = nullOrder(na, nb);
-      return nn === null ? compare(na, nb) : nn;
+    // The tiebreak is passed rather than defaulted: "group 0's name" is THIS payload's stable
+    // key — a path's leading node — and the shared sorter has no business guessing it. Without
+    // one, two rows tied on the sorted column swap places between repaints and the table
+    // appears to shuffle itself when nothing changed.
+    rows = sortRows(allRows, {
+      value: (row) => sortValue(row, active.groupIndex, active.fieldKey),
+      descending,
+      tiebreak: (row) => sortValue(row, 0, "name"),
     });
   }
 
@@ -172,6 +126,7 @@ export function queryTable(payload, opts = {}) {
 
   const table = dataTable({
     className: "gq-table",
+    stickyHeader: true,
     groups: headerGroups.length > 1 ? headerGroups : null,
     columns,
     rows: pageRows,
@@ -189,18 +144,18 @@ export function queryTable(payload, opts = {}) {
     emptyText: "No paths match this query.",
   });
 
-  const sizeSelect = el("select", { "aria-label": "Rows per page" },
-    ...PAGE_SIZES.map((n) => el("option", { value: String(n) }, String(n))));
-  sizeSelect.value = String(pageSize);
-  sizeSelect.addEventListener("change", () => opts.onPageSize && opts.onPageSize(Number(sizeSelect.value)));
-
-  // `pager` counts from ZERO — it prints `page + 1` and disables Next at `pageCount - 1`.
-  // Our page state is one-based because that is what belongs in a shareable URL, so the two
-  // are converted at this boundary rather than left to disagree by one.
-  const footer = el("div", { class: "table-footer" },
-    pager(page - 1, pageCount, rows.length, (p) => opts.onPage && opts.onPage(p + 1)),
-    el("label", { class: "small muted" }, "Rows ", sizeSelect),
-  );
+  // `tableFooter` counts from ZERO, as `pager` always has. Our page state is one-based
+  // because that is what belongs in a shareable URL, so the two are converted at this
+  // boundary rather than left to disagree by one — including the page the footer hands back
+  // when the size changes, which used to be discarded here in favour of a reset to page 1.
+  const footer = tableFooter({
+    page: page - 1,
+    pageCount,
+    total: rows.length,
+    pageSize,
+    onPage: (p) => opts.onPage && opts.onPage(p + 1),
+    onPageSize: (size, nextPage) => opts.onPageSize && opts.onPageSize(size, nextPage + 1),
+  });
 
   return el("div", { class: "gq-results" }, table, footer);
 }

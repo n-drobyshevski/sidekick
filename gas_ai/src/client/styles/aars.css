@@ -294,7 +294,12 @@
    scrolls vertically, so the sticky resolves against a box that cannot move. The cascade
    tables opt out of that box at the width where they fit anyway, and the header then sticks
    to `.rule-editor`, which is the pane actually doing the scrolling. Below the split point
-   the wrap goes back to scrolling sideways, because there the table genuinely is too wide. */
+   the wrap goes back to scrolling sideways, because there the table genuinely is too wide.
+
+   `.table-wrap--sticky` (tables.css) is this rule generalised — same release, same 1100px, now
+   available to any register that asks. These two stay separate because the cascade tables are
+   not dataTable's and have no spec to set the flag on; if they ever become its callers, this
+   block is what they replace. */
 @media (min-width: 1100px) {
   .table-wrap--cascade { overflow: visible; }
 }

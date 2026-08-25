@@ -229,6 +229,27 @@ export function truncateAfter(tab: string, keepDataRows: number): void {
   }
 }
 
+// Rows kept allocated below the data so ordinary appends don't force the grid to grow on
+// every scan — Sheets charges for a row insert, not for an empty allocated one.
+const SHRINK_SPARE_ROWS = 200;
+
+/**
+ * Delete surplus ALLOCATED rows below a tab's data.
+ *
+ * `overwrite` clears data with `clearContent()`, which leaves `getMaxRows()` exactly where it
+ * was — and `cellUsage()` prices the allocated grid (rows × columns), because that is what the
+ * 10M-cell ceiling enforces. So removing rows without this reclaims no headroom at all: the
+ * Storage meter reads byte-identical after a purge that dropped 100k lifecycles. Call it after
+ * any write that leaves a tab meaningfully shorter than it was.
+ */
+export function shrinkTab(tab: string, keepSpare = SHRINK_SPARE_ROWS): void {
+  const sh = sheet(tab);
+  // Never drop the header, and never leave a sheet with zero rows (Sheets rejects that).
+  const needed = Math.max(sh.getLastRow(), 1) + Math.max(keepSpare, 0);
+  const max = sh.getMaxRows();
+  if (max > needed) sh.deleteRows(needed + 1, max - needed);
+}
+
 /** Update the first row where keyColumn === keyValue (returns false when absent). */
 export function updateWhere(tab: string, keyColumn: string, keyValue: unknown, patch: Rec): boolean {
   const sh = sheet(tab);

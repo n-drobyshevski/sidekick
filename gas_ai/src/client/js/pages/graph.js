@@ -1036,7 +1036,9 @@ export async function renderGraphPage(main, params, _ctx) {
           sort: state.sortCol,
           dir: state.dir,
           onPage: (p) => update({ page: p === 1 ? "" : String(p) }),
-          onPageSize: (n) => update({ pageSize: String(n), page: "" }),
+          // The footer hands back the page still holding the row that was at the top, so a
+          // size change no longer throws a reader on page 12 back to the start.
+          onPageSize: (n, p) => update({ pageSize: String(n), page: p === 1 ? "" : String(p) }),
           onSort: (key) => update({
             sortCol: key,
             dir: state.sortCol === key && state.dir === "asc" ? "desc" : "asc",

@@ -14,6 +14,7 @@
 // the census and in nothing else an operator can see beforehand.
 
 import { el } from "./dom.js";
+import { dataTable } from "./data.js";
 import { filterCombobox } from "./combobox.js";
 import { scopeOptions } from "./projectScope.js";
 import { pluralize } from "./format.js";
@@ -165,24 +166,20 @@ export function prunePanelView(bootstrapData, preview) {
 }
 
 function censusTable(census) {
-  const body = el("tbody", {});
-  for (const r of census.rows) {
-    body.append(el("tr", {},
-      el("td", {}, r.label),
-      el("td", { class: "num" }, nf.format(r.before)),
-      el("td", { class: "num" }, nf.format(r.after)),
-      el("td", { class: "num" }, r.removed ? "-" + nf.format(r.removed) : "0"),
-    ));
-  }
-  return el("table", { class: "data prune-census" },
-    el("thead", {}, el("tr", {},
-      el("th", {}, "Table"),
-      el("th", { class: "num" }, "Rows now"),
-      el("th", { class: "num" }, "After"),
-      el("th", { class: "num" }, "Removed"),
-    )),
-    body,
-  );
+  return dataTable({
+    panel: true,
+    className: "prune-census",
+    columns: [
+      { key: "label", label: "Table", cell: (r) => r.label },
+      { key: "before", label: "Rows now", className: "num", cell: (r) => nf.format(r.before) },
+      { key: "after", label: "After", className: "num", cell: (r) => nf.format(r.after) },
+      {
+        key: "removed", label: "Removed", className: "num",
+        cell: (r) => (r.removed ? "-" + nf.format(r.removed) : "0"),
+      },
+    ],
+    rows: census.rows,
+  });
 }
 
 /**

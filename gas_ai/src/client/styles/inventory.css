@@ -110,3 +110,14 @@ td .meter { background: rgba(0, 0, 0, 0.09); }
   flex: 0 0 104px; font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
 }
+
+/* The Name column carries a kind medallion (ui/cells.js), which costs about 26px of a cell
+   tables.css clips at 320px. Paid for out of the table's width rather than out of the name:
+   this is the widest thing in the register and the one column where the clip actually bites,
+   since a resource name is the value a reader is scanning FOR.
+
+   Qualified with `table.data`, not left as a bare `.inv-name-col`: the base rule is
+   `table.data td { max-width: 320px }` and a single class loses to it on specificity no matter
+   which file is imported first. components.css states the same trap for the prune census, and
+   this rule was inert until it was written out this way. */
+table.data td.inv-name-col { max-width: 380px; }

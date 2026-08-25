@@ -25,6 +25,7 @@ function trigger_continueScan(e) { Server.jobs.continueJob(e); }
 // Its own handler name, NOT trigger_continueScan: each job clears only its own
 // pending one-shot trigger, so sharing a name would let one strand the other.
 function trigger_continueBackfill(e) { Server.backfill.continueBackfill(e); }
+function trigger_continuePurge(e) { Server.purge.continuePurge(e); }
 
 // google.script.run API surface — thin delegators so the client can call api_* by name.
 // Each is timed to the execution log ({"api":name,"ms":n} lines) so server cost can be
@@ -85,3 +86,8 @@ function api_importAbort(p) { return timedApi_("importAbort", p); }
 function api_importStatus(p) { return timedApi_("importStatus", p); }
 function api_resetLedger(p) { return timedApi_("resetLedger", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }
+function api_previewMaintenance(p) { return timedApi_("previewMaintenance", p); }
+function api_startSeverityPurge(p) { return timedApi_("startSeverityPurge", p); }
+function api_getPurgeStatus(p) { return timedApi_("getPurgeStatus", p); }
+function api_pruneEpisodes(p) { return timedApi_("pruneEpisodes", p); }
+function api_trimHistory(p) { return timedApi_("trimHistory", p); }

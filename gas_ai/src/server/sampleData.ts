@@ -34,6 +34,30 @@ const T1 = "2026-06-28T05:00:00Z"; // lastSeen (the seed "sync" horizon)
  */
 const DEMO_UNIT = { id: "proj-demo-business-unit", name: "DEMO-BUSINESS-UNIT" };
 
+/**
+ * The support group over part of the register — the tenant's OTHER kind of folder.
+ *
+ * A support group is not a business unit: the register tells them apart by the name, not by
+ * `isFolder`, because both are folders in Wiz and only the `CS`/`CE`/`LU` prefix says which
+ * one you are looking at. So this entry is deliberately `isFolder: true` AND `CS`-prefixed —
+ * it is the row that proves the name wins. With only DEMO-BUSINESS-UNIT seeded, a dry run
+ * drew the Business units heading and nothing else, and the support-group half of the rule
+ * shipped undemonstrated.
+ *
+ * Synthetic, for the reason DEMO_UNIT states above: a real support group's name and id in a
+ * fixture would put one customer's org chart in a demo anybody can open.
+ *
+ * It sits over TWO projects, not one, and over neither of them wholly — an asset in
+ * PROJECT-DELTA is usually in PROJECT-ALPHA as well. That is the point: a support group whose
+ * population happened to equal one project's would make the grouping a second spelling of the
+ * project picker, the same failure the domain tag's own comment refuses further down. Picking
+ * it selects a subtree of the unit that no single project selects.
+ */
+const DEMO_SUPPORT = { id: "proj-cs-demo-platform", name: "CS-DEMO-PLATFORM" };
+
+/** The leaf projects DEMO_SUPPORT is an ancestor of, matching the capture's folder chain. */
+const SUPPORT_GROUP_OVER = ["PROJECT-DELTA", "PROJECT-ETA"];
+
 interface NodeSeed {
   id: string;
   kind: NodeKind;
@@ -125,9 +149,17 @@ function node(seed: NodeSeed): GNode {
     // is a leaf and picking one selects one, so the folder path would ship untested and
     // undemonstrated. Every seeded asset shares it, which is what makes "select the unit" and
     // "select a project inside it" visibly different in the demo.
+    //
+    // A SECOND folder — DEMO_SUPPORT — sits between the unit and the leaves for part of the
+    // register only, so "select the unit", "select the support group" and "select a project"
+    // are three visibly different selections rather than two. See its own comment for why it
+    // is a folder and still not a business unit.
     projects: (seed.projects ?? []).length
       ? [
         { id: DEMO_UNIT.id, name: DEMO_UNIT.name, isFolder: true },
+        ...((seed.projects ?? []).some((name) => SUPPORT_GROUP_OVER.indexOf(name) >= 0)
+          ? [{ id: DEMO_SUPPORT.id, name: DEMO_SUPPORT.name, isFolder: true }]
+          : []),
         ...(seed.projects ?? []).map((name) => ({
           id: `proj-${name.toLowerCase()}`,
           name,

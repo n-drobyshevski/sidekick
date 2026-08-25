@@ -3,8 +3,8 @@
 import { call, } from "../api.js";
 import { bootstrapCached, swrCall } from "../store.js";
 import {
-  appendAll, clear, confirmDialog, el, emptyState, fmtDateTime, prunePanel, registerWideNote,
-  statRow,
+  absent, appendAll, clear, confirmDialog, dataTable, el, emptyState, fmtDateTime,
+  prunePanel, registerWideNote, statRow,
   sectionLabel, skeleton, statusPill, toast,
 } from "../ui.js";
 
@@ -97,36 +97,26 @@ export async function renderData(main, _params, ctx) {
     // A sync is a register-wide operation and its row records register-wide totals.
     appendAll(historyHost,
       registerWideNote(bootstrapCached(), "a sync collects for the whole register"));
-    const tbody = el("tbody", {});
-    for (const row of payload.rows) {
-      tbody.append(el("tr", {},
-        el("td", {}, fmtDateTime(row.finished_at)),
-        el("td", {}, row.status === "SUCCESS"
-          ? statusPill("ok", "Success")
-          : statusPill("bad", String(row.status || "Failed"))),
-        el("td", {}, String(row.mode || "—")),
-        el("td", { class: "num" }, String(row.node_count ?? "—")),
-        el("td", { class: "num" }, String(row.edge_count ?? "—")),
-        el("td", { class: "num" }, String(row.issue_count ?? "—")),
-        el("td", { class: "num" }, String(row.api_calls ?? "—")),
-      ));
-    }
-    historyHost.append(
-      el("div", { class: "table-wrap" },
-        el("table", { class: "data" },
-          el("thead", {},
-            el("tr", {},
-              el("th", {}, "Finished"),
-              el("th", {}, "Status"),
-              el("th", {}, "Mode"),
-              el("th", {}, "Nodes"),
-              el("th", {}, "Edges"),
-              el("th", {}, "Issues"),
-              el("th", {}, "API calls"),
-            )),
-          tbody,
-        )),
-    );
+    // A count Wiz never reported is `absent()`, not a plain dash: a sync row that failed
+    // before it counted anything must not read in the same ink as one that counted zero.
+    const count = (n) => (n === null || n === undefined ? absent() : String(n));
+    historyHost.append(dataTable({
+      columns: [
+        { key: "finished", label: "Finished", cell: (r) => fmtDateTime(r.finished_at) },
+        {
+          key: "status", label: "Status",
+          cell: (r) => (r.status === "SUCCESS"
+            ? statusPill("ok", "Success")
+            : statusPill("bad", String(r.status || "Failed"))),
+        },
+        { key: "mode", label: "Mode", cell: (r) => r.mode || absent() },
+        { key: "nodes", label: "Nodes", className: "num", cell: (r) => count(r.node_count) },
+        { key: "edges", label: "Edges", className: "num", cell: (r) => count(r.edge_count) },
+        { key: "issues", label: "Issues", className: "num", cell: (r) => count(r.issue_count) },
+        { key: "calls", label: "API calls", className: "num", cell: (r) => count(r.api_calls) },
+      ],
+      rows: payload.rows,
+    }));
   }
 
   function paintStats(stats) {

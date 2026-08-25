@@ -659,27 +659,23 @@
 .prune-body:empty, .prune-actions:empty { display: none; }
 .prune-actions { display: flex; }
 
-/* No wrapper border. Inside a card the table's own hairline rules ARE the structure, and a
-   bordered box here would be a surface inside a surface.
-
-   Sized to its contents rather than to the card. `table.data` is 100% wide because its usual
+/* Sized to its contents rather than to the card. `table.data` is 100% wide because its usual
    home is a full-page register; six rows of four figures stretched across 1300px puts a hand's
    width between a row's label and its numbers, and the subtraction stops being readable as one
    thought. The whole point of this table is that the arithmetic can be checked at a glance.
 
-   Every selector here is qualified with `table.data` on purpose: the base rules are
-   `table.data th` and `table.data tbody tr:hover`, and a bare `.prune-census th` loses to them
-   on specificity. */
-/* `align-self` as well as `width`: .prune-body is a column flex container, so its children
-   stretch to the full card regardless of what width says. */
-table.data.prune-census { width: auto; min-width: min(480px, 100%); align-self: start; }
-table.data.prune-census th { position: static; background: none; }
-/* The base sheet right-aligns numeric CELLS (td.num) but leaves every header left-aligned, so
-   a column heading sits adrift from the figures underneath it. */
-table.data.prune-census th.num { text-align: right; }
-table.data.prune-census td { white-space: nowrap; }
-/* Nothing here is clickable, so a hover band is a promise the row cannot keep. */
-table.data.prune-census tbody tr:hover { background: none; }
+   The border this used to turn off is `panel: true`'s job now — a nested table leaving a
+   register's chrome behind is the general case, not this one table's quirk.
+
+   `.prune-census` is dataTable's `className` and lands on the WRAPPER, so the width rules
+   split across the two boxes: the wrapper is the flex child (hence `align-self`, since
+   .prune-body is a column flex container and stretches its children regardless of width), and
+   the table inside it is what has to stop being 100%. Every selector still qualifies with
+   `table.data`, because the base rules are `table.data th`/`table.data td` and a bare
+   `.prune-census td` loses to them on specificity. */
+.prune-census { align-self: start; max-width: 100%; }
+.prune-census table.data { width: auto; min-width: min(480px, 100%); }
+.prune-census table.data td { white-space: nowrap; }
 
 /* Verdict line: the pill carries a word and a dot, the sentence carries the reason. Colour
    is the third signal here, never the only one. */

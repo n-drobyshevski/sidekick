@@ -361,6 +361,79 @@ Two things the breakdown makes visible that a single total hides:
   that reclaim room: the retention window and compaction. Colour never carries that alone —
   the percentage and the note say it too.
 
+## Maintenance (manual cleanup by criteria)
+
+Compaction never *removes* anything — it moves settled lifecycles from `vuln_ledger` into
+`resolved_episodes` and prunes those scans' raw archives. So `resolved_episodes` grows
+monotonically, `mttr_history` likewise, and nothing shrinks a register that is carrying
+severities it was never meant to track. **Data → Maintenance** is the manual lever, three
+operations, each with a dry-run preview computed by the same functions that commit it.
+
+### Purge findings by severity
+
+Deletes every trace of the chosen severities. The reason it is a background job rather than a
+single write is that **the ledger is derived state**: `deleteScansCore` rebuilds `vuln_ledger`
+from the compaction checkpoint plus a replay of the surviving `scans/<id>/page-*.json.gz`
+archives. A purge that stops at the tabs is silently undone the first time anyone deletes a
+scan. So it reaches, in this order:
+
+1. `vuln_ledger` + `resolved_episodes`, and each scan row's recorded `severities` scope;
+2. every compaction checkpoint (`compactions.checkpoint_ref`, re-pointed — a rewritten blob
+   gets a new Drive id);
+3. then, resumably across the 6-minute cap on its own `trigger_continuePurge` one-shot, every
+   unsealed scan's `page-*`, `slim`, `frame` and `obs` artifacts.
+
+Three things that are easy to get wrong and are pinned by tests:
+
+- **The predicate is `effectiveSeverity`, not `normalizeSeverity`.** Archives hold a mix — full
+  scans write raw unbaked Wiz nodes, incremental scans write already-baked slim records — and
+  `slimRecord` bakes the `vendorSeverity`/`nvdSeverity` fallback at ingest. A node with a blank
+  `severity` but a usable `vendorSeverity` is HIGH in the ledger; classifying it UNKNOWN in the
+  archive leaves exactly the row the purge claimed to remove.
+- **Scan rows get their `severities` scope narrowed too.** A quick refresh builds its delta
+  query from the *baseline scan row's* scope, "never the current settings" — so dropping a
+  severity from `fetch_severities` alone does not stop an incremental scan re-ingesting it.
+- **An emptied page is written back empty, never deleted.** An unreadable archive makes
+  `deleteScansCore` throw `LedgerRebuildError`, permanently blocking scan deletion.
+
+`api_deleteScans` and `api_compact` refuse while a purge is walking (`assertNoActivePurge`):
+both replay archives, and the walk releases the script lock between hops. Jobs are
+single-flight across kinds, so a long purge also postpones the daily scan.
+
+The completion line reports what actually happened — rows removed, archives rewritten, scans
+**sealed** (archives already pruned, nothing to rewrite) versus **unreadable** (real residue,
+still replayable, re-run to retry), and the **measured** cell delta. A run with any unreadable
+archive is never reported as complete.
+
+### Prune resolved episodes
+
+Drops sealed lifecycles resolved before a cutoff, optionally limited by severity. It **must**
+purge the checkpoint too, and this is the non-obvious part of an operation that reads as inert:
+`deleteScansCore` seeds the rebuilt ledger from the checkpoint *minus the keys present in
+`resolved_episodes`*, so removing an episode row un-masks its checkpoint entry and the next
+scan deletion restores it as a live RESOLVED `vuln_ledger` row.
+
+Unlike compaction — which is *gated* on leaving MTTR, trend and coverage identical — this
+**changes the past**: episodes feed `baseRows()`, so historical figures move. The dialog says so.
+
+### Trim trend history
+
+Drops `mttr_history` snapshots older than the window. The only one with no replay exposure:
+the tab is written solely by `recordSnapshot` and `importHistory` and is never rebuilt from
+archives. Note it carries no severity column, so after a severity purge the history-based
+change chips keep counting the purged findings and will disagree with the recomputed trend.
+
+### Why `shrinkTab` exists
+
+`cellUsage()` prices the **allocated grid** (`getMaxRows × getMaxColumns`), while `overwrite`
+clears data with `clearContent()`, which never shrinks `getMaxRows`. Deleting rows therefore
+reclaims **nothing** on its own — the Storage meter reads byte-identical after a purge that
+dropped 100k lifecycles. Every maintenance write ends with `sheetsDb.shrinkTab`, which deletes
+the surplus rows (keeping a 200-row spare so ordinary appends don't re-grow the grid each
+scan). Measured in the dev harness: a `vuln_ledger` grown to 5000 allocated rows went
+**150,800 → 28,600 cells** across the purge. On a small estate the shrink correctly no-ops,
+and the result reports the true zero rather than claiming a reclaim.
+
 ## Setup (one-time)
 
 1. `npm install && npm run check` (typecheck + tests + build).
@@ -532,6 +605,17 @@ Things node tests cannot cover — verify after the first deployment:
 - [ ] Delete of a sealed scan refuses; delete of an unsealed scan rebuilds and the
       MTTR page numbers match the pre-delete values for surviving data.
 - [ ] Compact-now dry run numbers equal the applied run's result.
+- [ ] **Severity purge, end to end.** Note the Storage cell count, purge LOW+MEDIUM, and
+      confirm the number *drops* (a no-op means the ledger had no allocated slack, not that
+      `shrinkTab` failed — check the reported `cellsBefore`/`cellsAfter` pair). Then confirm
+      the walk resumes across `trigger_continuePurge` hops (this needs a register large enough
+      to exceed one 4.5-min hop — the node tests cover the cursor logic, not the real trigger
+      timing), and that a mid-purge **Delete selected** on Scan History is refused rather than
+      replaying half-rewritten archives.
+- [ ] After the purge completes, delete an unsealed scan and confirm the purged severities do
+      **not** reappear — the archive rewrite is the only thing preventing it.
+- [ ] Quick refresh after a purge does not re-ingest the purged severities (it rides the
+      baseline scan row's narrowed `severities` scope, not `fetch_severities`).
 - [ ] Timing at production scale: `vuln_ledger` wholesale rewrite and cold
       `api_bootstrap` stay inside the 6-min execution cap (Settings → Storage shows
       the cell budget; lower retention if approaching 6M cells).
