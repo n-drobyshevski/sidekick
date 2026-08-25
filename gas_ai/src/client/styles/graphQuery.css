@@ -142,7 +142,7 @@
    (`.gnode[data-category] .gnode-icon`) and combos.css both already do it this way.
    `color: inherit` matters as well as `stroke`: a solid glyph path fills with currentColor. */
 .gq-chip-icon .gnode-icon,
-.gq-cell-icon .gnode-icon,
+.cell-icon .gnode-icon,
 .gq-cols-icon .gnode-icon,
 .gq-pal-glyph .gnode-icon { stroke: currentColor; color: inherit; }
 /* Category tinting, matching the canvas medallions exactly: pale ground, saturated ink on the
@@ -283,21 +283,6 @@
    and left a header-coloured band where the other should have been. The base recipe's `top: 0`
    (tables.css) is right for that case, so it is simply left alone. */
 .gq-table table.data thead:has(.th-groups) tr:last-child th { top: 27px; }
-
-.gq-name { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%; }
-.gq-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The kind icon in a tinted tile, the same category cue the canvas medallion carries. */
-.gq-cell-icon {
-  flex: 0 0 auto; width: 18px; height: 18px; padding: var(--space-half);
-  border-radius: var(--radius-sm);
-  background: var(--track-bg);
-  color: var(--text-2);
-}
-.gq-name[data-category="asset"] .gq-cell-icon { background: var(--cat-asset-tint); color: var(--cat-asset-ink); }
-.gq-name[data-category="data"] .gq-cell-icon { background: var(--cat-data-tint); color: var(--cat-data-ink); }
-.gq-name[data-category="iam"] .gq-cell-icon { background: var(--cat-iam-tint); color: var(--cat-iam-ink); }
-.gq-name[data-category="vuln"] .gq-cell-icon { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); }
-.gq-name[data-category="exposure"] .gq-cell-icon { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
 
 /* ----------------------------------------------------------------- column chooser */
 

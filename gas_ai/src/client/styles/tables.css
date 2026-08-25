@@ -29,6 +29,31 @@ table.data tbody tr:last-child td { border-bottom: none; }
 table.data tbody tr:hover { background: rgba(0, 0, 0, 0.025); }
 table.data tbody tr.clickable { cursor: pointer; }
 td.num { text-align: right; }
+
+/* ------------------------------------------------------------------- the name cell */
+/* A node's name behind its kind icon, in that kind's category tint — the same cue the graph
+   canvas's medallion carries, so a row and a node read as the same thing in two views. Moved
+   here from graphQuery.css when ui/cells.js made the renderer shared: the rules did not
+   change, only the three class names, which were spelled for one page. */
+.cell-name { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%; }
+.cell-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* One more rule reaches this class from graphQuery.css: `.cell-icon .gnode-icon` sets
+   `stroke: currentColor; color: inherit`, without which the tint below is set on the wrapper
+   and the glyph renders grey anyway. It stays there because it is one selector in a group of
+   four that share the declaration and a comment explaining a hard-won fight; splitting it out
+   would duplicate both. Everything ships as one bundle, so the file it sits in is a question
+   of where a reader finds it, not of whether it applies. */
+.cell-icon {
+  flex: 0 0 auto; width: 18px; height: 18px; padding: var(--space-half);
+  border-radius: var(--radius-sm);
+  background: var(--track-bg);
+  color: var(--text-2);
+}
+.cell-name[data-category="asset"] .cell-icon { background: var(--cat-asset-tint); color: var(--cat-asset-ink); }
+.cell-name[data-category="data"] .cell-icon { background: var(--cat-data-tint); color: var(--cat-data-ink); }
+.cell-name[data-category="iam"] .cell-icon { background: var(--cat-iam-tint); color: var(--cat-iam-ink); }
+.cell-name[data-category="vuln"] .cell-icon { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); }
+.cell-name[data-category="exposure"] .cell-icon { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
 a { color: var(--accent); }
 
 .pager { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); font-size: var(--fs-label); color: var(--text-2); }
