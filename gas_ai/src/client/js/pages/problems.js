@@ -447,6 +447,7 @@ export async function renderProblems(main, params) {
             ? totalCount + " problem" + (totalCount === 1 ? "" : "s")
             : shownCount + " of " + totalCount)),
       dataTable({
+        stickyHeader: true,
         columns: COLS.map((col) => ({
           key: col.key, label: col.label, help: col.help, sortable: true, cell: col.cell,
         })),
@@ -659,6 +660,7 @@ export async function renderProblems(main, params) {
       // "12 actions" (or "6 of 12 actions" when filtered, which the label could not say), and
       // a heading repeating the same count 30px below it was the page saying one thing twice.
       dataTable({
+        stickyHeader: true,
         columns: COLS.map((col) => ({
           key: col.key, label: col.label, help: col.help,
           sortable: col.sortable !== false && !!ACTION_COMPARATORS[col.key],

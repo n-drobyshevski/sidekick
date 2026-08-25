@@ -126,6 +126,7 @@ export function queryTable(payload, opts = {}) {
 
   const table = dataTable({
     className: "gq-table",
+    stickyHeader: true,
     groups: headerGroups.length > 1 ? headerGroups : null,
     columns,
     rows: pageRows,

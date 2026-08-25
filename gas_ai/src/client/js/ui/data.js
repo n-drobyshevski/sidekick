@@ -106,6 +106,24 @@ export function dataTable(spec) {
     rowDetail = null,
     // (row) => boolean. Sets aria-expanded on a clickable row. Only meaningful with onRowOpen.
     rowExpanded = null,
+    // A table nested inside another surface rather than standing as a page-level register —
+    // the compliance tree's policy list, which lives in a <td>, and the Data page's prune
+    // census, which lives in a card. Both were hand-built to avoid exactly this component,
+    // and both said so in the same words: it brought a register's chrome — the wrapper's
+    // border, a sticky heading, a ground behind it — into a panel that already has a surface
+    // of its own. `panel` leaves that chrome behind and changes nothing else: a panel table
+    // is still the same aria-sort, th-scope, clickable-row component. Density is deliberately
+    // NOT part of it — the two callers want different padding, and folding both in would
+    // quietly retune one of them, so each keeps its own `className` for that.
+    panel = false,
+    // Opt-in sticky heading. The base sheet used to declare one for every register and never
+    // had it: sticky resolves against `.table-wrap`, whose `overflow-x: auto` makes a scroll
+    // container that never scrolls vertically (styles/tables.css carries the full diagnosis).
+    // The fix releases the wrap at a width where the table fits, so the heading sticks to
+    // whatever is really scrolling — which trades the table's own sideways scroll for the
+    // page's, and is why each register asks for it rather than inheriting it. Take it where
+    // the row count is unbounded; leave it where the table is bounded by construction.
+    stickyHeader = false,
   } = spec;
 
   const headCells = new Map();
@@ -182,7 +200,18 @@ export function dataTable(spec) {
           "aria-label": rowLabel ? rowLabel(row) : null,
           "aria-expanded": rowExpanded ? String(rowExpanded(row)) : null,
           onclick: () => onRowOpen(row),
-          onkeydown: (e) => { if (e.key === "Enter") onRowOpen(row); },
+          // Enter AND Space. A `role="button"` is required to answer both, and this answered
+          // one — so a keyboard reader who pressed the key a button normally takes scrolled
+          // the page instead, which is why `preventDefault` is half the fix.
+          //
+          // Only when the ROW itself has focus. A cell can hold its own control (config's
+          // rule tip, compliance's disclosure), and swallowing Space from a focused descendant
+          // would trade this bug for a worse one.
+          onkeydown: (e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === "Enter") { onRowOpen(row); return; }
+            if (e.key === " " || e.key === "Spacebar") { e.preventDefault(); onRowOpen(row); }
+          },
         }, ...cells));
       }
       // No `aria-controls`: the detail row immediately follows its trigger in DOM order,
@@ -215,7 +244,10 @@ export function dataTable(spec) {
       }, g.label)))
     : null;
 
-  const wrap = el("div", { class: `table-wrap${className ? " " + className : ""}` },
+  const wrap = el("div", {
+    class: "table-wrap" + (panel ? " table-wrap--panel" : "")
+      + (stickyHeader ? " table-wrap--sticky" : "") + (className ? " " + className : ""),
+  },
     el("table", { class: "data" },
       el("thead", {}, ...(groupRow ? [groupRow, headRow] : [headRow])),
       tbody));

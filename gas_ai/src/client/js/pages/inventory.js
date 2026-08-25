@@ -959,6 +959,7 @@ export async function renderInventory(main, params) {
     };
 
     return dataTable({
+      stickyHeader: true,
       columns: COLUMNS.map((col) => ({
         key: col.sort || col.key,
         label: col.label,

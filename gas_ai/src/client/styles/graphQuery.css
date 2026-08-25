@@ -274,15 +274,23 @@
 .gq-table table.data thead .th-groups th + th,
 .gq-table table.data th.gq-group-start,
 .gq-table table.data td.gq-group-start { border-left: 1px solid var(--hairline); }
-/* Two header rows, so the second one sticks below the first rather than on top of it. */
-.gq-table table.data thead .th-groups th { top: 0; }
-/* ONLY when there are two. `queryTable` renders the group row for more than one column group, so
-   a single-node query — `FIND AI Agent` with no steps, which is the default lens — has one header
-   row and no group row above it. Offsetting that row by 27px anyway stuck it 27px BELOW the top
-   of the scroll box, where it painted over the first result: the table said "2 rows", showed one,
-   and left a header-coloured band where the other should have been. The base recipe's `top: 0`
-   (tables.css) is right for that case, so it is simply left alone. */
-.gq-table table.data thead:has(.th-groups) tr:last-child th { top: 27px; }
+/* Two header rows, so the second one sticks below the first rather than on top of it.
+   Inside the sticky media query, because until now the offsets below were resolving against a
+   box that never scrolled — which is the whole reason the 27px went wrong once already. */
+@media (min-width: 1100px) {
+  .gq-table.table-wrap--sticky table.data thead .th-groups th { top: 0; }
+  /* ONLY when there are two. `queryTable` renders the group row for more than one column group,
+     so a single-node query — `FIND AI Agent` with no steps, which is the default lens — has one
+     header row and no group row above it. Offsetting that row by 27px anyway stuck it 27px BELOW
+     the top of the scroll box, where it painted over the first result: the table said "2 rows",
+     showed one, and left a header-coloured band where the other should have been. The base
+     recipe's `top: 0` is right for that case, so it is simply left alone.
+
+     27px IS THE GROUP ROW'S HEIGHT, and it becomes load-bearing here for the first time — it has
+     only ever been measured against a header that could not move. If the group row's padding or
+     type step changes, this number is wrong and the second row will overlap or float. */
+  .gq-table.table-wrap--sticky table.data thead:has(.th-groups) tr:last-child th { top: 27px; }
+}
 
 /* ----------------------------------------------------------------- column chooser */
 

@@ -431,6 +431,7 @@ export async function renderConfigFindings(main, params, ctx) {
 
     bodyHost.append(sectionLabel(plural(sorted.length, "finding")));
     const table = dataTable({
+      stickyHeader: true,
       columns: [
         { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
         {

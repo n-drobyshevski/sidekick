@@ -581,24 +581,20 @@
 }
 .comp-detail-block p { margin: 0; max-width: var(--measure); }
 
-/* The policy list nested inside the detail cell. Its own small table, not dataTable(): that
-   component's sticky th, sort model and `.table-wrap` border are all built for a page-level
-   register, not a panel inside a row. Scrolls in its own wrapper so a long Control name or
-   a narrow viewport widens this box and never the page around it. */
-.comp-policy-wrap { overflow-x: auto; }
-.comp-policy-table { border-collapse: collapse; width: 100%; font-size: var(--fs-label); }
-.comp-policy-table th {
-  text-align: left; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
-  text-transform: uppercase; color: var(--text-3);
-  padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--hairline);
-}
-.comp-policy-table td {
-  padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--hairline); vertical-align: top;
-}
-.comp-policy-table tbody tr:last-child td { border-bottom: none; }
-.comp-policy-table th.num, .comp-policy-table td.num {
-  text-align: right; font-variant-numeric: tabular-nums;
-}
+/* The policy list nested inside the detail cell — `dataTable({panel: true})` now, so all this
+   file still carries is the DENSITY. Everything else it used to spell out by hand was the base
+   sheet's already: the collapse, the full width, the uppercase heading, the hairline under
+   each row and none under the last, the right-aligned figures in tabular numerals, and the
+   sideways scroll that widens this box rather than the page around it.
+
+   Density stays local on purpose. The panel variant deliberately does not set type or padding:
+   this table wants the smaller step and tighter rows because it is a list inside a row, while
+   the prune census beside it wants the base — one variant covering both would quietly retune
+   one of them. `vertical-align: top` because the Control cell is two lines and its severity
+   badge belongs beside the first. */
+.comp-policy table.data { font-size: var(--fs-label); }
+.comp-policy table.data th, .comp-policy table.data td { padding: var(--space-1) var(--space-2); }
+.comp-policy table.data td { vertical-align: top; }
 
 /* The 5Rs scope card's per-group disclosure. That one card was 7,909px of an 8,912px page —
    120 rule rows in six groups, all expanded — so the rows fold and the head stays, because

@@ -479,6 +479,7 @@ export async function renderCompliance(main, params, ctx) {
     }
 
     host.append(dataTable({
+      stickyHeader: true,
       columns: COLUMNS,
       rows,
       className: "comp-table",
