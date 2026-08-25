@@ -1292,12 +1292,18 @@ export function openIssueSheet(issueId, opts = {}) {
 
 // -------------------------------------------------------------- cloud configuration
 
-/** OPEN / RESOLVED / REJECTED with a word, never a bare tint. */
+/** OPEN / RESOLVED / REJECTED with a word, never a bare tint.
+ *
+ * "ok", not "good". There is no `.pill.good` — components.css defines exactly four kinds,
+ * ok/warn/bad/neutral — and `statusPill` interpolates whatever it is handed, so these two
+ * rows rendered as a bare `.pill`: no background at all, with the ::before dot inheriting
+ * the cell's colour. The affirmative states were the only ones in the app drawn with no
+ * fill, which reads as an unstyled element rather than as a verdict. */
 function configStatusPill(finding, gap) {
   if (gap) return statusPill("bad", "Failing");
-  if (finding.status === "RESOLVED") return statusPill("good", "Resolved");
+  if (finding.status === "RESOLVED") return statusPill("ok", "Resolved");
   if (finding.status === "REJECTED") return statusPill("warn", "Rejected");
-  if (finding.result === "PASS") return statusPill("good", "Passing");
+  if (finding.result === "PASS") return statusPill("ok", "Passing");
   return statusPill("neutral", finding.status || "Unknown");
 }
 

@@ -693,7 +693,9 @@ export async function renderProblems(main, params) {
 
   function actionSignalChips(r) {
     const chips = [];
-    if (r.autoRemediable) chips.push(statusPill("good", "Auto-remediable"));
+    // "ok", not "good": there is no `.pill.good` in components.css, and statusPill
+    // interpolates the kind it is handed — so this chip drew with no fill at all.
+    if (r.autoRemediable) chips.push(statusPill("ok", "Auto-remediable"));
     if (r.iac) chips.push(statusPill("neutral", "IaC ×" + r.iac));
     if (r.ignored) chips.push(statusPill("warn", "Ignored ×" + r.ignored));
     if (!chips.length) return el("span", { class: "muted small" }, "—");

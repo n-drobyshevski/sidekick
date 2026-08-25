@@ -161,8 +161,22 @@
   height: 100%;
   border-radius: var(--radius-pill);
 }
-/* Neutral graphite fill: the level is already carried by the chip beside the meter, and
-   fifty tinted bars down a page is the wall of colour PRODUCT.md rejects. */
+/* NEUTRAL GRAPHITE FILL, AND THE REASON IS NOT THE ONE THAT USED TO BE WRITTEN HERE. It
+   said "the level is already carried by the chip beside the meter" — inherited from a
+   caller that no longer exists. No chip sits beside a reach stage (scans.js), a guardrail
+   coverage stat (inventory.js) or an axis coverage row; those are bare percentages.
+
+   The reason that actually holds: a coverage fraction has NO BANDING POLICY. Nothing in
+   the domain says 62% enrichment is "failing", so a ramp here would assert a threshold
+   nobody set — and in this codebase thresholds live in the domain, stated once, tested and
+   shipped with the row (POSTURE_BANDS in compliancePosture.ts). The number beside the bar
+   is the reading; the fill is magnitude only. Fifty tinted bars down a page is also the
+   wall of colour PRODUCT.md rejects, but that is the second reason, not the first.
+
+   SO THE GATE FOR JOINING THE RAMP, for whoever asks next: a domain-defined, tested
+   threshold for this particular metric. With one, a meter here can take the posture tier
+   ramp the way the Compliance Posture bars do (compliance.css). Without one, it stays
+   neutral however ordinal the fraction is. */
 .meter { display: block; height: 8px; overflow: hidden; }
 .meter-fill { background: var(--graphite); }
 /* The four jobs it does: fill a sheet row, sit in a stat cell, sit in a table cell, and
@@ -221,14 +235,30 @@
      .meter-fill      every meter in the app - guardrail coverage, stat rows, AARS scores
      .cov-bar-seg     the Wiz Scans coverage bar
      .help-lexbar-seg the Help lexicon bar
+     .comp-fw-bar     the Compliance Posture framework rail lane
+     .comp-bar-seg    the Compliance Posture state strip
+     .lat-mass__seg   the tier mass strip on Scoring Models
 
    These are information, not decoration, which is exactly the case forced-color-adjust: none
    exists for; this codebase already reaches for it on the same grounds in graphQuery.css:414.
    The TRACKS keep their forced background, so each still reads as a bar against the page.
-   Stated here rather than beside each rule because it is one defect with four instances, and
-   the fifth one somebody adds should find this comment. */
+   Stated here rather than beside each rule because it is one defect with many instances, and
+   the next one somebody adds should find this comment.
+
+   THE LAST THREE WERE ADDED LATE AND DID NOT FIND IT. `.comp-fw-bar` matters most: the
+   Compliance Posture bars carry an inset box-shadow edge (compliance.css) and forced-colors
+   discards shadows as well as backgrounds, so that lane lost its fill AND its boundary. The
+   hero and register meters on the same page were never affected — they ARE `.meter-fill`.
+
+   STILL BROKEN, KNOWINGLY, and not fixable by adding them to this list: the monotone-ink
+   bars — .axis-bar__seg, .model-stack__seg--*, .rail-base/.rail-amp, .claim-rail__fill.
+   Their fills are rgba(0,0,0,...), so opting them out would pin near-black onto a forced
+   background that may itself be black — trading an invisible bar for an invisible bar. They
+   need the other fallback PRODUCT.md names, a real border or outline, which is a different
+   change from this one. */
 @media (forced-colors: active) {
-  .meter-fill, .cov-bar-seg, .help-lexbar-seg { forced-color-adjust: none; }
+  .meter-fill, .cov-bar-seg, .help-lexbar-seg,
+  .comp-fw-bar, .comp-bar-seg, .lat-mass__seg { forced-color-adjust: none; }
 }
 /* THE SEPARATOR, and the reason it is a border rather than a gap. Fills that meet edge to
    edge assimilate at the shared edge, so adjacent hues read as one band — the defect that

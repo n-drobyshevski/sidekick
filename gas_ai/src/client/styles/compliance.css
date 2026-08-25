@@ -344,6 +344,15 @@
    Composited over each solid, rgba(0,0,0,0.40) measures 6.40 / 3.49 / 5.12 / 8.48 against
    the track — every step clears the 3:1 floor for a graphical mark, worst case tier 2.
 
+   THOSE FIGURES WERE FIRST WRITTEN AS IF ONE TRACK SERVED ALL THREE SLOTS, AND IT DID NOT.
+   A stale unscoped rule in inventory.css — `td .meter`, left behind by a column that no
+   longer exists — was giving the register cells a rgba(0,0,0,0.09) track (~#e8e8e8) while
+   the rail and both heroes sat on 0.07. On the darker one the fills read 2.69 / 1.24 / 1.98
+   / 3.94 and the edge 6.12 / 3.33 / 4.89 / 8.10: the conclusion survived, worst case still
+   over 3:1, but the numbers claimed a precision they did not have. That rule is deleted, so
+   the figures above now describe every bar on this page rather than most of them. Anything
+   that reintroduces a per-slot track invalidates them again.
+
    Hue-neutral on purpose: a per-step edge token would be a fifth thing to keep in sync with
    the ramp, and this one says nothing except "the fill ends here". */
 .comp-fw-bar[data-band],
