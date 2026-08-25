@@ -1,7 +1,38 @@
 // Chart.js wrappers themed to DESIGN.md. Chart.js 4 is bundled (no CDN) so the app
-// works behind proxies that block or rewrite third-party script hosts. Only the
-// components these chart types use are registered — chart.js/auto would roughly
-// double the bundle's Chart.js footprint.
+// works behind proxies that block or rewrite third-party script hosts.
+//
+// WHAT THE NARROW REGISTRATION BELOW DOES AND DOES NOT BUY, because the comment that used
+// to sit here claimed more than it delivered and sent at least one reader looking for a
+// tree-shaking bug that does not exist.
+//
+// It said "only the components these chart types use are registered — chart.js/auto would
+// roughly double the bundle's Chart.js footprint". The first half is true. The second is
+// wrong by about five times, and the implication that registering narrowly keeps the
+// SHIPPED bytes down is wrong outright. Measured with esbuild against this project's own
+// settings:
+//
+//   import { Chart } alone                 122,518 b
+//   the nine named imports below           170,667 b
+//   import Chart from "chart.js/auto"      205,084 b   (+20%, not +100%)
+//
+// So the floor is 122 KB whatever you import, and auto costs a fifth more rather than
+// double. In the real client bundle chart.js accounts for 170,785 bytes of 732,267 —
+// 23.3%, across chart.js/dist/chart.js (131,494), its helpers.dataset chunk (31,566) and
+// @kurkle/color (7,725), from an esbuild metafile rather than a byte scan.
+//
+// THE UNREGISTERED COMPONENTS SHIP ANYWAY, AND NO IMPORT STYLE CHANGES THAT. The bundle
+// carries RadialLinearScale (`pointLabels`, `angleLines`), TimeScale and TimeSeriesScale
+// (`isoWeek`, `millisecond`) and LogarithmicScale, none of them registered. The reason is
+// that the chart.js package ships ONE pre-bundled ESM file: `dist/chart.js` is a single
+// 131 KB module in the graph, `dist/scales/` contains only `.d.ts` type files, and the
+// package's `exports` map blocks any deeper path. There are no per-component modules for a
+// bundler to drop, and inside that one file the component classes carry static property
+// assignments a bundler must treat as side-effectful. Importing `Chart` on its own pulls
+// all of them in, which is the measurement that settles it.
+//
+// Registering narrowly is still right — it is what keeps those components from being
+// INITIALIZED and from widening the default config — but it is not a size lever, and the
+// only lever that remains is not shipping this module on routes that draw no chart.
 
 import {
   CategoryScale,
