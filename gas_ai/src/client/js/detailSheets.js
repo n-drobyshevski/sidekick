@@ -236,9 +236,19 @@ function insightRow(node) {
   // alone misleads: an open port behind SSO rates Low and is not an exposure.
   if (node.portValidation || node.exposureLevel) {
     const rated = node.exposureLevel === "High" || node.exposureLevel === "Medium";
+    const port = node.portValidation ? " · port " + node.portValidation.toLowerCase() : "";
+    // A RATED LOW AND AN UNRATED ENDPOINT ARE NOT THE SAME CLAIM. Low staying neutral is
+    // deliberate and argued above — a Low exposure is not an exposure. But an endpoint Wiz
+    // never rated was drawing the identical tone and the identical mark, so the row said
+    // "we looked and it is fine" for a row where nothing was looked at. That is the
+    // conflation PRODUCT.md's sixth principle and ui/posture.js's STATE_META split exist to
+    // prevent, and it is why posture prints "Not measured" muted rather than as a tier.
+    // The tone stays neutral either way — an absent rating is not evidence of risk — and
+    // the absence is carried by the words plus the muted treatment, not by a colour.
     add(rated ? "bad" : "neutral", "ENDPOINT",
-      "Exposure level " + (node.exposureLevel || "unrated") +
-      (node.portValidation ? " · port " + node.portValidation.toLowerCase() : ""));
+      node.exposureLevel
+        ? "Exposure level " + node.exposureLevel + port
+        : el("span", { class: "muted" }, "Exposure level not rated" + port));
   }
   // Above the two flags below it, because it is the stronger claim: those say Wiz
   // classified something here, this says what was actually found.

@@ -250,12 +250,21 @@
    discards shadows as well as backgrounds, so that lane lost its fill AND its boundary. The
    hero and register meters on the same page were never affected — they ARE `.meter-fill`.
 
-   STILL BROKEN, KNOWINGLY, and not fixable by adding them to this list: the monotone-ink
-   bars — .axis-bar__seg, .model-stack__seg--*, .rail-base/.rail-amp, .claim-rail__fill.
-   Their fills are rgba(0,0,0,...), so opting them out would pin near-black onto a forced
-   background that may itself be black — trading an invisible bar for an invisible bar. They
-   need the other fallback PRODUCT.md names, a real border or outline, which is a different
-   change from this one. */
+   THE MONOTONE-INK BARS ARE FINE AND MUST BE LEFT OUT — .axis-bar__seg,
+   .model-stack__seg--*, .rail-base/.rail-amp, .claim-rail__fill. An earlier version of this
+   comment called them "still broken, knowingly", on the assumption that an rgba(0,0,0,...)
+   fill suffers the same fate as an opaque one. Measured instead, under
+   Emulation.setEmulatedMedia forced-colors:active, and it does not:
+
+     .claim-rail__track   rgba(0,0,0,0.07) -> rgba(255,255,255,0.07)
+     .claim-rail__fill    rgba(0,0,0,0.55) -> rgba(255,255,255,0.55)
+
+   The UA inverts achromatic alphas toward the forced foreground and keeps the ALPHA, so the
+   fill/track relationship these bars are read by survives intact — 0.55 against 0.07, the
+   same ratio as on the page. That only works because they are ink at an alpha rather than a
+   hue at full opacity; it is the same property that makes them wrong for the list above.
+   Adding forced-color-adjust: none here would pin near-black onto a forced background that
+   may itself be black, which is how the assumption would have become the bug. Leave them. */
 @media (forced-colors: active) {
   .meter-fill, .cov-bar-seg, .help-lexbar-seg,
   .comp-fw-bar, .comp-bar-seg, .lat-mass__seg { forced-color-adjust: none; }

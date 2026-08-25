@@ -287,7 +287,10 @@ export async function renderScans(main, params, ctx) {
 
   function statePill(state) {
     const meta = COVERAGE[state];
-    return el("span", { class: "pill " + meta.pill + " cov-state" },
+    // `data-state` alongside the pill kind, matching what `.cov-bar-seg` and `.cov-key`
+    // already carry. The kind says how it is drawn; this says which state it IS, and
+    // scans.css needs the second to dim an unscanned row without depending on the first.
+    return el("span", { class: "pill " + meta.pill + " cov-state", "data-state": state },
       el("span", { class: "cov-state-glyph", "aria-hidden": "true" }, meta.glyph),
       meta.label);
   }

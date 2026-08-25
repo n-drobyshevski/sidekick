@@ -134,8 +134,15 @@
 .cov-state-glyph { font-size: var(--fs-micro); line-height: 1; }
 
 /* An unscanned row recedes without disappearing: it is still a row of the record, and the
-   thing it records is that nothing was recorded. */
-.cov-register tbody tr:has(.pill.neutral) .cov-area { color: var(--text-2); }
+   thing it records is that nothing was recorded.
+
+   KEYED ON THE STATE, NOT ON THE COLOUR. This selected `.pill.neutral`, which is the pill
+   KIND the unscanned state happens to wear — so the rule was really saying "dim any row
+   holding a grey pill". Two ways that breaks silently: give the state a different kind and
+   the dimming stops with no error, or put any other neutral pill in this table and an
+   unrelated row starts receding. `[data-state]` names the fact instead, the way
+   `.cov-bar-seg` and `.cov-key` already do. Same rendering today. */
+.cov-register tbody tr:has(.cov-state[data-state="unscanned"]) .cov-area { color: var(--text-2); }
 
 /* ------------------------------------------------------------- panel: provenance chain */
 /* The number's lineage as a chain, not a paragraph: query → step → ledger → field. The rule

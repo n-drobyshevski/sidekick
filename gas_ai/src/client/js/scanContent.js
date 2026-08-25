@@ -21,7 +21,32 @@
 // The durable fix is a `coverage_json` column on sync_history, written at commit time with
 // one row per step; then this page would report what ran rather than what resolved.
 
-/** The three coverage states, worst-informed last. Glyph + label, never colour alone. */
+/**
+ * The three coverage states. Glyph + label, never colour alone.
+ *
+ * TWO RUNGS AND AN ABSENCE, WHICH IS NOT WHAT "worst-informed last" USED TO SAY HERE. That
+ * wording, plus `rank` running 0..2, reads as one three-step scale — and the palette then
+ * looks broken, because the supposed worst step (`unscanned`) is drawn CALMER than the step
+ * above it: ok, warn, then a neutral grey. That is the failure ui/posture.js reports, where
+ * a middle rung drawn grey read as DISABLED to an operator.
+ *
+ * It is not that failure, and the palette is right. `live` and `partial` are rungs of one
+ * reading — how well this area is covered. `unscanned` is not a worse reading; it is the
+ * ABSENCE of one, and it says so in words: no query runs in this deployment. PRODUCT.md's
+ * sixth principle ("Absent is never zero") and ui/posture.js's STATE_META split both hold
+ * that such a case gets its own kind of mark rather than the bad end of a scale — posture
+ * renders "Not measured" as muted text, deliberately off the ordinal ramp, for exactly this
+ * reason. Painting "we never asked Wiz" in an alarm colour would assert a risk verdict
+ * where no measurement exists at all.
+ *
+ * `rank` therefore orders the SORT — least informed last, so unscanned areas fall to the
+ * bottom of a register — and is not a claim that the three are one scale. Anything reading
+ * `rank` as severity is reading it wrong.
+ *
+ * `pill` is the pill KIND, and nothing may key off it to identify a state: scans.css keys
+ * its row-dimming off `[data-state]` for that reason, so a retint cannot silently change
+ * which rows recede.
+ */
 export const COVERAGE = {
   live: {
     glyph: "●",
