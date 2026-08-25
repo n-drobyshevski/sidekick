@@ -1008,3 +1008,39 @@ export function projectCatalogue(assets: readonly GNode[]): ProjectCatalogueEntr
   return [...byId.values()].sort((x, y) =>
     x.isFolder === y.isFolder ? x.name.localeCompare(y.name) : (x.isFolder ? -1 : 1));
 }
+
+export interface DomainCatalogueEntry {
+  /** The tag's value as the tenant wrote it. There is no id — a domain IS its name. */
+  name: string;
+  /** Assets in the CURRENT register carrying this domain. Not a Wiz-side total. */
+  assets: number;
+}
+
+/**
+ * The distinct domains the synced assets carry, by name.
+ *
+ * The sibling of `projectCatalogue` above, and derived from the register for the same reason:
+ * a list built this way can only offer a domain there IS data for, so the switcher cannot
+ * render a domain nobody tagged as an empty one.
+ *
+ * NO UNTAGGED BUCKET, deliberately. An untagged resource has a blank domain and contributes
+ * nothing to a facet, exactly as a blank cloud or region already does (`domainTag.ts` states
+ * the rule); a synthetic "no domain" row here would be a scope whose population is "the
+ * assets we know least about", offered as though it were an owner. Absence is reported as
+ * `domainCoverage` instead — a count, which can tell "nobody tagged any" from "we never
+ * successfully asked", where a sentinel row could tell neither.
+ *
+ * Flat, and never nested under a project. A project spans domains in the seeded landscape by
+ * construction, so a tree here would assert a hierarchy the data does not have.
+ */
+export function domainCatalogue(assets: readonly GNode[]): DomainCatalogueEntry[] {
+  const byName = new Map<string, DomainCatalogueEntry>();
+  for (const a of assets) {
+    const name = a.domain;
+    if (!name) continue;
+    const seen = byName.get(name);
+    if (seen) seen.assets += 1;
+    else byName.set(name, { name, assets: 1 });
+  }
+  return [...byName.values()].sort((x, y) => x.name.localeCompare(y.name));
+}

@@ -37,21 +37,114 @@ function assetCount(n) {
  * every row under "Projects" would assert leaf-ness of the whole register on the strength
  * of a field nobody has filled in yet.
  */
+/**
+ * The tenant's naming convention: a project whose name begins `CS`, `CE` or `LU` is a
+ * SUPPORT GROUP, and a business unit is anything that is not one.
+ *
+ * A rule read off a NAME, which this codebase is otherwise careful not to do — `aarsRule`
+ * refuses to guess a control's meaning from its title for exactly this reason. What makes it
+ * legitimate here is that it is not an inference about what something IS: it is the tenant's
+ * own convention for what they CALL things, the same class of fact as `WIZ_DOMAIN_TAG_KEY`,
+ * and the app has no other way to learn it. Wiz reports `isFolder`; it does not report that
+ * `CS-LOG-ZEN-ECOM` — a folder in the captures — is a support group rather than a unit.
+ *
+ * THE FIRST SEGMENT, NOT A BARE PREFIX. `CE-DPCP-PORTAL` matches, `CENTRAL-OPS` must not, and
+ * `owner-CE-INDUS-SUPPLY-cloud` — a real captured name with CE in the middle — must not
+ * either. Splitting on the separator answers all three, where `startsWith("CE")` gets the
+ * second wrong and `includes("CE")` gets the third wrong.
+ *
+ * One list, exported, because a convention is a thing that changes: a fourth prefix is one
+ * edit here rather than a hunt through three files.
+ */
+export const SUPPORT_GROUP_PREFIXES = ["CS", "CE", "LU"];
+
+export function isSupportGroup(name) {
+  const first = String(name || "").trim().toUpperCase().split(/[-_\s]/)[0];
+  return SUPPORT_GROUP_PREFIXES.indexOf(first) >= 0;
+}
+
+/**
+ * What to call one row: a support group, a business unit, a project, or nothing yet.
+ *
+ * The name rule wins over `isFolder`, because the two answer different questions and only one
+ * of them is about naming. `CS-LOG-ZEN-ECOM` is a folder AND a support group; calling it a
+ * business unit because Wiz says it nests things would be the app overruling the tenant on
+ * the tenant's own vocabulary.
+ */
+function projectKind(p) {
+  if (isSupportGroup(p.name)) return "support";
+  if (p.isFolder === true) return "unit";
+  if (p.isFolder === false) return "project";
+  return "unknown";
+}
+
+const KIND_GROUP = {
+  support: "Support groups",
+  unit: "Business units",
+  project: "Projects",
+  unknown: "Not yet recorded",
+};
+// Support groups sort AFTER units, so the list reads widest-first: a unit reaches a whole
+// subtree, a support group reaches its own, a project is a leaf. The combobox emits a heading
+// only when the group value changes while walking in order, so a list that did not sort by
+// kind would fragment its own headings.
+const KIND_RANK = { unit: 0, support: 1, project: 2, unknown: 3 };
+
 export function scopeOptions(list) {
+  // `isFolder` is tri-state and the third state is load-bearing: `undefined` means the row
+  // predates the field. So the FOLDER half of the grouping only claims anything once the
+  // register has recorded it for someone. The SUPPORT-GROUP half is not gated on it, because
+  // it is read off the name and needs nothing from Wiz — knowing which four rows are support
+  // groups is worth saying even on a register that cannot yet say which are folders.
   const anyRecorded = list.some((p) => p.isFolder !== undefined);
-  return list.map((p) => ({
-    value: p.id,
-    label: p.name,
-    // Folders are declared in words rather than by icon or colour: picking one reaches its
-    // whole subtree, and that is a meaning, so it does not travel by colour alone.
-    hint: p.isFolder === true ? `Business unit · ${assetCount(p.assets)}` : assetCount(p.assets),
-    group: !anyRecorded ? "" : (p.isFolder === true ? "Business units"
-      : p.isFolder === false ? "Projects" : "Not yet recorded"),
-    // The glyph is the THIRD carrier, after the hint above and the group heading — a reader
-    // who cannot tell one folder from two at 14px has already been told twice in words. That
-    // ordering is the whole licence for it: an icon that had to be understood would be
-    // exactly the shorthand the hint exists to avoid.
-    icon: p.isFolder === true ? "folders" : "folder",
+  const rows = list.map((p) => {
+    const kind = projectKind(p);
+    return {
+      value: p.id,
+      label: p.name,
+      kind,
+      // Declared in words rather than by icon or colour: picking a unit or a support group
+      // reaches its whole subtree, and that is a meaning, so it does not travel by colour
+      // alone.
+      hint: kind === "support" ? `Support group · ${assetCount(p.assets)}`
+        : kind === "unit" ? `Business unit · ${assetCount(p.assets)}`
+          : assetCount(p.assets),
+      group: kind === "support" ? KIND_GROUP.support
+        : !anyRecorded ? "" : KIND_GROUP[kind],
+      // The glyph is the THIRD carrier, after the hint above and the group heading — a reader
+      // who cannot tell one folder from two at 14px has already been told twice in words. That
+      // ordering is the whole licence for it: an icon that had to be understood would be
+      // exactly the shorthand the hint exists to avoid.
+      icon: kind === "unit" || kind === "support" ? "folders" : "folder",
+    };
+  });
+  // Sorted by kind so each heading is emitted once. Stable within a kind, which keeps the
+  // server's folders-first-then-name ordering wherever it still applies.
+  return rows
+    .map((row, at) => ({ row, at }))
+    .sort((x, y) => (KIND_RANK[x.row.kind] - KIND_RANK[y.row.kind]) || (x.at - y.at))
+    .map(({ row }) => row);
+}
+
+/**
+ * The domains on offer, as switcher rows.
+ *
+ * A flat group, never nested under a project and never a tier above one. The seeded landscape
+ * puts four domains inside PROJECT-ALPHA on purpose — "grouping by domain has to visibly cut
+ * across an attack path or the dimension is just a second spelling of the project" — so a tree
+ * here would assert a hierarchy the data does not have.
+ *
+ * No "untagged" row. An untagged resource contributes nothing to a facet, exactly as a blank
+ * cloud or region already does, and a synthetic one here would offer "the assets we know least
+ * about" as though it were an owner. The coverage figure in the caption answers that instead.
+ */
+export function domainScopeOptions(list) {
+  return (list || []).map((d) => ({
+    value: `d:${d.name}`,
+    label: d.name,
+    hint: assetCount(d.assets),
+    group: "Domains",
+    icon: "tag",
   }));
 }
 
@@ -63,45 +156,79 @@ export function scopeOptions(list) {
  *            stale: boolean, options: object[], pinned: object[]}}
  */
 export function projectScopeView(bootstrapData) {
-  const list = (bootstrapData && bootstrapData.filterOptions
-    && bootstrapData.filterOptions.projectList) || [];
+  const opts = (bootstrapData && bootstrapData.filterOptions) || {};
+  const list = opts.projectList || [];
+  const domains = opts.domainList || [];
   const scope = (bootstrapData && bootstrapData.scope) || null;
 
   // Nothing synced, or boot failed: no control at all. An empty picker is a promise the
   // register cannot keep, and the rail's sync zone already says why it is empty.
   if (!scope || !list.length) {
-    return { show: false, current: "", label: "", caption: "", stale: false, options: [], pinned: [] };
+    return {
+      show: false, current: "", label: "", caption: "", stale: false, options: [], pinned: [],
+    };
   }
 
-  const current = scope.projectView || "";
-  const chosen = list.find((p) => p.id === current) || null;
-  // A stored view whose project fell out of the register after a re-sync scoped elsewhere.
-  const stale = Boolean(current) && !chosen;
+  const cover = scope.domainCoverage || null;
+  const tagged = cover ? cover.tagged : 0;
+  const untagged = cover ? Math.max(0, cover.total - cover.tagged) : 0;
+  // THE GROUP IS ABSENT, NOT EMPTY, WHEN NOTHING IS TAGGED. `AI_ASSET_PROPERTIES` is an
+  // optional sync step that swallows an HTTP 400, so a tenant that rejects it has no domain
+  // data at all — and a "Domains" heading over nothing would say that nobody owns anything,
+  // which is a claim about the tenant rather than about what we managed to ask.
+  const domainRows = tagged > 0 ? domainScopeOptions(domains) : [];
+
+  const domainView = scope.domainView || "";
+  const projectView = scope.projectView || "";
+  const chosenDomain = domainView
+    ? domains.filter((d) => d.name === domainView)[0] || null : null;
+  const chosen = projectView ? list.find((p) => p.id === projectView) || null : null;
+  // A stored view whose project or domain fell out of the register after a re-sync scoped
+  // elsewhere — or, for a domain, after the tag key changed under it.
+  const stale = Boolean(domainView ? !chosenDomain : projectView && !chosen);
+
+  const label = domainView
+    ? (chosenDomain ? chosenDomain.name : "a domain this register does not hold")
+    : !projectView ? "everything synced"
+      : chosen ? chosen.name : "a project this register does not hold";
 
   return {
     show: true,
-    current,
-    label: !current ? "all synced projects"
-      : chosen ? chosen.name : "a project this register does not hold",
+    // Prefixed for domains so a project whose id is `SAP` and the domain `SAP` can never be
+    // one row. The control strips it again on pick; the server keys its caches the same way.
+    current: domainView ? `d:${domainView}` : projectView,
+    kind: domainView ? "domain" : projectView ? "project" : "",
+    label,
     // The denominator travels with the number: "826" alone cannot tell a small unit from a
     // small register, and those call for opposite reactions.
-    caption: !current ? `${assetCount(scope.register)} synced`
-      : stale ? `Not in this register — showing 0 of ${nf.format(scope.register)}`
-        : `${nf.format(scope.shown)} of ${nf.format(scope.register)} assets`,
+    //
+    // A DOMAIN CARRIES A SECOND FIGURE, and leaving it off would be the more comfortable lie.
+    // Only some resources are tagged — 15 of 36 in the seeded landscape — so "36 of 87" under
+    // a domain silently attributes the other 51 to some other domain, when the truth is that
+    // nobody said. The count says which.
+    caption: stale ? `Not in this register — showing 0 of ${nf.format(scope.register)}`
+      : domainView
+        ? `${nf.format(scope.shown)} of ${nf.format(scope.register)} assets · `
+          + `${nf.format(untagged)} carry no domain`
+        : !projectView ? `${assetCount(scope.register)} synced`
+          : `${nf.format(scope.shown)} of ${nf.format(scope.register)} assets`,
     stale,
-    options: scopeOptions(list),
-    // "All synced projects", not "All projects". The register holds what the last sync was
-    // scoped to fetch, which on a scoped tenant is one unit's subtree — calling that "all
-    // projects" would name a population this register does not contain.
+    options: [...scopeOptions(list), ...domainRows],
+    // "Everything synced", not "All projects" and no longer "All synced projects": the row
+    // means "no scope", and once the scope can be a domain, naming the reset after one of the
+    // two kinds describes half of what it clears. The care in the original wording is kept
+    // where it was load-bearing — the register holds what the last sync was scoped to fetch,
+    // so "synced" stays and "all" never stands alone.
     pinned: [{
-      value: "", label: "All synced projects", hint: assetCount(scope.register), icon: "folders",
+      value: "", label: "Everything synced", hint: assetCount(scope.register), icon: "folders",
     }],
   };
 }
 
 /**
  * @param {object|null} bootstrapData  the bootstrap payload, or null when boot failed
- * @param {(id: string) => void} onPick  called with the chosen project id, "" for all
+ * @param {(pick: {kind: string, value: string}) => void} onPick  the chosen scope; a project
+ *   id or a domain name, either of them "" for the whole register
  * @returns {HTMLElement|null}  null when there is nothing truthful to offer
  */
 export function projectScopeControl(bootstrapData, onPick) {
@@ -119,17 +246,21 @@ export function projectScopeControl(bootstrapData, onPick) {
     // Carries the CURRENT selection, not just the control's name. The header is rebuilt
     // wholesale on every refresh() and picking triggers one, so this is re-stamped with
     // each change.
-    ariaLabel: `Project scope: ${v.label}`,
-    searchPlaceholder: "Search projects…",
+    ariaLabel: `Scope: ${v.label}`,
+    searchPlaceholder: "Search projects and domains…",
     // WHAT THE PANEL HAS TO SAY THAT ITS ROWS CANNOT. Every row is a project name; none of
     // them can tell you that choosing one re-scopes every figure in the app, or that a few
     // figures refuse to be scoped and say so where they are drawn (registerWideNote, below,
     // is that promise kept). A consequence this large should not have to be discovered by
     // trying it.
     header: {
-      title: "Project scope",
-      note: "Every page answers for the project you pick. Figures that cannot be scoped say "
-        + "so where they are drawn.",
+      title: "Scope",
+      // Names both kinds, because both are in the list below it and they are not the same
+      // question: a project is a thing Wiz nests resources in, a domain is a tag someone
+      // wrote on them, and the seeded landscape puts four domains inside one project to make
+      // sure neither reads as the other.
+      note: "Every page answers for the project or domain you pick. Figures that cannot be "
+        + "scoped say so where they are drawn.",
     },
     // The scope persists server-side and outlives the session, so which row is in force is a
     // standing fact about the app rather than a highlight in an open menu — worth a mark of
@@ -140,8 +271,12 @@ export function projectScopeControl(bootstrapData, onPick) {
     // Decoration inside the trigger, the way the reference screen marks its project picker.
     // The trigger's accessible name is the ariaLabel above, so this adds no second reading.
     leading: el("span", { class: "scope-combo-icon", "aria-hidden": "true" },
-      uiIcon(v.current ? "folder" : "folders", 14)),
-    onChange: (id) => onPick(id || ""),
+      uiIcon(v.kind === "domain" ? "tag" : v.current ? "folder" : "folders", 14)),
+    // The prefix is the control's, not the caller's: onPick takes the two kinds apart so the
+    // shell can send each to its own setter, which is where "one at a time" is enforced.
+    onChange: (v) => (String(v || "").startsWith("d:")
+      ? onPick({ kind: "domain", value: String(v).slice(2) })
+      : onPick({ kind: "project", value: v || "" })),
   });
   combo.classList.add("scope-combo");
   // A NARROWED REGISTER IS A STATE, and this is the one state in the app that silently
@@ -154,7 +289,7 @@ export function projectScopeControl(bootstrapData, onPick) {
   // Read on hover: the header is narrow enough to ellipsise a long project name, and the
   // caption beside it answers a different question. Not a native title — a tap reaches none
   // of those, which is the whole reason el() bans the attribute.
-  tipAnchor(combo, "Project scope: " + v.label);
+  tipAnchor(combo, "Scope: " + v.label);
 
   return el("div", { class: "scope-switch" },
     combo,
@@ -232,6 +367,21 @@ export function scopeNote({ tag, text, live }) {
  * @param {{projectId: string, scoped: boolean, points: number, registerPoints: number}|null} scope
  */
 export function trendScopeView(scope) {
+  // A DOMAIN VIEW IS NOT A SHORT SERIES, IT IS NO SERIES, and the difference has to be said.
+  // `sync_history` records per-project totals beside its register-wide ones; there is no
+  // per-domain column and there cannot be a backfilled one, because the ledger never held the
+  // dimension. Left to the branch below this would read as `scoped: false` and print nothing,
+  // and the chart would sit under a header naming a domain while charting the register.
+  if (scope && !scope.scoped && scope.domainId) {
+    return {
+      show: true,
+      live: false,
+      tag: "Whole register",
+      text: "This series is recorded per project, so a domain has no point on it — these are "
+        + "the register's totals. Nothing here can be broken down after the fact: the ledger "
+        + "never held the dimension.",
+    };
+  }
   if (!scope || !scope.scoped) return { show: false, live: false, tag: "", text: "" };
   const points = Number(scope.points) || 0;
   const register = Number(scope.registerPoints) || 0;

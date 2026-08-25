@@ -522,13 +522,18 @@ function navContext() {
  * the client instead would leave every server-computed count answering for the old scope.
  */
 let scopeSwitchInFlight = false;
-async function pickProjectScope(id) {
+async function pickProjectScope(pick) {
   // The rail is rebuilt by refresh(), so a second pick mid-flight would race a control
   // that is about to be replaced underneath it.
   if (scopeSwitchInFlight) return;
   scopeSwitchInFlight = true;
   try {
-    await call("api_setSettings", { projectView: id });
+    // ONE FIELD, NEVER BOTH. The two settings clear each other server-side (settingsLogic's
+    // withProjectView / withDomainView), so sending both would leave which one survived to
+    // the order the setter happened to run them in.
+    await call("api_setSettings", pick.kind === "domain"
+      ? { domainView: pick.value }
+      : { projectView: pick.value });
     await refresh();
   } catch (e) {
     toast(`Couldn't change project scope: ${e.message || e}`);

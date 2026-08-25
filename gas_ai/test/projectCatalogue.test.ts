@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { projectCatalogue, type GNode } from "../src/domain/graphTypes";
+import { domainCatalogue, projectCatalogue, type GNode } from "../src/domain/graphTypes";
 
 function asset(id: string, projects: GNode["projects"]): GNode {
   return { id, kind: "AI_AGENT", name: id, projects } as GNode;
@@ -73,5 +73,31 @@ describe("projectCatalogue", () => {
   it("offers nothing for an empty register, rather than a tenant's project list", () => {
     expect(projectCatalogue([])).toEqual([]);
     expect(projectCatalogue([asset("a1", undefined)])).toEqual([]);
+  });
+});
+
+// `domainCatalogue`, the switcher's other list. Beside projectCatalogue because they answer
+// the same question about two dimensions — "what could I scope to, and how much would I see"
+// — and the properties worth pinning are the ones they share.
+describe("domainCatalogue", () => {
+  const asset = (domain?: string | null): GNode =>
+    ({ id: `a-${domain ?? "none"}-${Math.random()}`, kind: "AI_AGENT", name: "x", domain } as GNode);
+
+  it("counts assets per domain, register-wide", () => {
+    const out = domainCatalogue([asset("SAP"), asset("SAP"), asset("CROSS")]);
+    expect(out).toEqual([{ name: "CROSS", assets: 1 }, { name: "SAP", assets: 2 }]);
+  });
+
+  // No synthetic bucket. An untagged resource contributes nothing to a facet, exactly as a
+  // blank cloud or region already does, and a "no domain" row here would offer the assets we
+  // know least about as though they had an owner. `domainCoverage` answers that as a count.
+  it("offers no bucket for the untagged, however many there are", () => {
+    const out = domainCatalogue([asset(null), asset(undefined), asset(""), asset("SAP")]);
+    expect(out).toEqual([{ name: "SAP", assets: 1 }]);
+  });
+
+  it("offers nothing at all rather than an empty name", () => {
+    expect(domainCatalogue([])).toEqual([]);
+    expect(domainCatalogue([asset(null)])).toEqual([]);
   });
 });

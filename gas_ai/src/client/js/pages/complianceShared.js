@@ -383,6 +383,13 @@ const SCOPE_REFUSALS = {
   fetchFailed:
     "Wiz could not re-score this project just now, so this stays at the scope the sync " +
     "fetched",
+  // The one refusal here that is not a condition waiting to clear. Wiz owns these
+  // percentages and scopes them by project; a domain is a tag on a resource, and there is no
+  // query that asks Wiz for a tag's posture. Worded as a fact about the dimension rather
+  // than as a failure, because retrying will never change it.
+  domainScope:
+    "posture is Wiz's own aggregate and Wiz scopes it by project, so a domain has no " +
+    "posture of its own to re-score",
 };
 
 /**
@@ -420,7 +427,7 @@ function sentence(text) {
  *
  * THREE OUTCOMES, and the middle one is why this replaced a fixed `registerWideNote` call:
  *
- *   - no project view — `show: false`. Unscoped, there is nothing to disambiguate, and a
+ *   - no scope at all — `show: false`. Unscoped, there is nothing to disambiguate, and a
  *     permanent "register-wide" badge on a register-wide page is noise (registerWideNote's
  *     own rule).
  *   - a view, and Wiz re-aggregated for it — the figures DO follow the sidebar, so the note
@@ -441,7 +448,13 @@ function sentence(text) {
  */
 export function postureScopeView(data) {
   const scope = (data && data.postureScope) || null;
-  if (!scope || !scope.projectId) return { show: false, live: false, tag: "", text: "" };
+  // ANY scope, not just a project one. Gating on `projectId` alone was right while a project
+  // was the only kind there was; under a domain view it would take the "never silence" branch
+  // below and silence it — the numbers would describe the register while the header named a
+  // domain, with nothing on the page saying which.
+  if (!scope || (!scope.projectId && !scope.domainId)) {
+    return { show: false, live: false, tag: "", text: "" };
+  }
 
   if (scope.source === "live") {
     return {

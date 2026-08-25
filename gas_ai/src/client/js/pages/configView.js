@@ -185,3 +185,55 @@ export function activeConfigFilters(q) {
   if (q.q) out.push({ key: "q", value: q.q });
   return out;
 }
+
+/**
+ * What a scope costs this register, as a sentence — or null when it costs nothing.
+ *
+ * DOM-free like the rest of this module, because the WORDING is the decision. A scoped
+ * register is shorter than an unscoped one for two unrelated reasons, and collapsing them
+ * into one number would be the comfortable half-truth: some findings hang off an asset in
+ * another project or domain, and some hang off no AI asset at all — one evaluated against a
+ * region, an IAM policy, a service account no agent runs as. The second group can never be in
+ * any view, which is a fact about this register rather than about the scope, and a reader who
+ * is not told it will read a short list as a clean landscape.
+ *
+ * @param {{outOfView: number, register: number, unattributed: number}|null} loss
+ * @param {{projectView?: string, domainView?: string}|null} scope
+ */
+export function configScopeLossView(loss, scope) {
+  if (!loss || !loss.outOfView) return null;
+  const nf = new Intl.NumberFormat();
+  const noun = loss.register === 1 ? "finding" : "findings";
+  const domain = (scope && scope.domainView) || "";
+
+  // "7 of 7 are outside this view" is true and reads like an arithmetic error. When the scope
+  // takes the whole register, say so as the fact it is — an empty table under a header with a
+  // count of zero needs the sentence more than any other case, not a more awkward one.
+  const lead = loss.outOfView < loss.register
+    ? `${nf.format(loss.outOfView)} of ${nf.format(loss.register)} ${noun} are outside `
+      + "this view."
+    // A register of one has to be said differently again — "None of the 1 finding are in this
+    // view" is the kind of small wrongness that makes a careful page look careless.
+    : loss.register === 1 ? "The one finding on this register is not in this view."
+      : `None of the ${nf.format(loss.register)} ${noun} are in this view.`;
+
+  // The structural half, and it is a different sentence for each kind of scope: a project is
+  // something a finding's own resource can carry, a domain is only ever joined from the AI
+  // asset the finding names. Both end on the group that can be in NO view — the reason this
+  // register is short is partly the scope and partly the register, and a reader owed one
+  // number is owed both.
+  const why = domain
+    ? "A finding carries no tags of its own, so its domain is joined from the AI asset it "
+      + "names."
+    : "A finding evaluated against a region, an IAM policy or a service account belongs to "
+      + "no project.";
+  const orphans = loss.unattributed > 0
+    ? ` ${nf.format(loss.unattributed)} ${loss.unattributed === 1 ? "names" : "name"} no AI `
+      + "asset at all, and can be in no view."
+    : "";
+
+  return {
+    tag: "Whole register",
+    text: `${lead} ${why}${orphans} Clearing the scope brings them back.`,
+  };
+}

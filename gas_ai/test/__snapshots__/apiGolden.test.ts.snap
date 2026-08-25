@@ -127,6 +127,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       },
       "filterOptions": {
         "clouds": [],
+        "domainList": [],
         "domains": [],
         "kinds": [],
         "projectList": [],
@@ -168,6 +169,12 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         ],
       },
       "scope": {
+        "domainCoverage": {
+          "key": "Wiz/Domain",
+          "tagged": 0,
+          "total": 0,
+        },
+        "domainView": "",
         "projectView": "",
         "register": 0,
         "shown": 0,
@@ -801,6 +808,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "sort": "issues",
       "total": 0,
       "trendScope": {
+        "domainId": "",
         "points": 0,
         "projectId": "",
         "registerPoints": 0,
@@ -831,6 +839,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "pageCount": 1,
       "pageSize": 50,
       "rows": [],
+      "scopeLoss": null,
       "sort": "severity",
       "total": 0,
       "totals": {
@@ -1658,6 +1667,24 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
         "AWS",
         "GCP",
       ],
+      "domainList": [
+        {
+          "assets": 3,
+          "name": "CROSS",
+        },
+        {
+          "assets": 2,
+          "name": "EXAMPLE DOMAIN",
+        },
+        {
+          "assets": 5,
+          "name": "SAP",
+        },
+        {
+          "assets": 5,
+          "name": "VALUE-CHAIN",
+        },
+      ],
       "domains": [
         "CROSS",
         "EXAMPLE DOMAIN",
@@ -1808,6 +1835,12 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       ],
     },
     "scope": {
+      "domainCoverage": {
+        "key": "Wiz/Domain",
+        "tagged": 15,
+        "total": 87,
+      },
+      "domainView": "",
       "projectView": "",
       "register": 87,
       "shown": 87,
@@ -6375,6 +6408,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
     "sort": "issues",
     "total": 87,
     "trendScope": {
+      "domainId": "",
       "points": 1,
       "projectId": "",
       "registerPoints": 1,
@@ -6688,6 +6722,7 @@ exports[`read endpoints > getConfigFindings answers the same shape 1`] = `
         "subscriptionName": "aws-account-prod-01",
       },
     ],
+    "scopeLoss": null,
     "sort": "severity",
     "total": 7,
     "totals": {

@@ -79,7 +79,21 @@ export const getProjectView = (): string => logic.getProjectView(loadSettings())
 export function setProjectView(id: unknown): void {
   const settings = loadSettings();
   const next = logic.withProjectView(settings, id);
-  if (next["project_view"] === logic.getProjectView(settings)) return;
+  // The domain half of the pair is in the comparison because withProjectView clears it:
+  // re-selecting the project you are already on is a no-op, but selecting it while a DOMAIN
+  // is in force is a real change, and comparing the project alone would swallow it.
+  if (next["project_view"] === logic.getProjectView(settings)
+    && next["domain_view"] === logic.getDomainView(settings)) return;
+  saveSettings(next);
+}
+
+export const getDomainView = (): string => logic.getDomainView(loadSettings());
+/** The mirror of setProjectView, down to the no-op rule and the paired comparison. */
+export function setDomainView(domain: unknown): void {
+  const settings = loadSettings();
+  const next = logic.withDomainView(settings, domain);
+  if (next["domain_view"] === logic.getDomainView(settings)
+    && next["project_view"] === logic.getProjectView(settings)) return;
   saveSettings(next);
 }
 
