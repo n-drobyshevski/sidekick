@@ -142,7 +142,6 @@ export async function renderScans(main, params, ctx) {
         "Sync cadence: daily at 05:00 UTC plus on-demand “Sync now”. Every figure above " +
         "is the one the last sync produced, read through the project view currently set; " +
         "an area with no figure says so rather than carrying a number from somewhere else."),
-      el("p", { class: "small muted cov-diagram-note" }, REACH_VS_SCAN_AREA_NOTE),
       reachSection(assets.reach),
     );
     // A link from AI Inventory's headline figure sends the reader here with ?anchor=reach —
@@ -308,20 +307,22 @@ export async function renderScans(main, params, ctx) {
     }
 
     wrap.append(
-      sectionLabel("Landscape reach"),
-      el("p", { class: "page-sub" },
-        "Of everything on the AI register, how much did the pipeline actually touch — five " +
+      sectionLabel("Landscape reach", { lines: [
+        "Of everything on the AI register, how much the pipeline actually touched: five " +
         "paired counts, never a bare percentage, because an empty denominator is a fact " +
-        "worth showing, not a number to divide by."),
+        "worth showing rather than a number to divide by.",
+        REACH_VS_SCAN_AREA_NOTE,
+      ] }),
       reachLadder(reach.stages),
-      sectionLabel("By kind"),
-      reachKindSummary(reach),
+      // The kind summary was a generated sentence sitting directly on top of the table that
+      // states the same rows. It is the heading's definition now, not a second reading of
+      // the data underneath it.
+      sectionLabel("By kind", { lines: [kindSummaryText(reach)] }),
       reachKindTable(reach.kinds),
       sectionLabel("Edge census"),
       reachEdgeCensus(reach.edges),
       reachImpactTagged(reach.impactTagged),
-      sectionLabel("Decision-tree axis coverage"),
-      el("p", { class: "cov-note" }, AXIS_KNOWN_WARNING),
+      sectionLabel("Decision-tree axis coverage", { lines: [AXIS_KNOWN_WARNING] }),
       reachAxes(reach.axes, reach.axesPopulation),
     );
     return wrap;
@@ -374,7 +375,7 @@ export async function renderScans(main, params, ctx) {
     );
   }
 
-  function reachKindSummary(reach) {
+  function kindSummaryText(reach) {
     const register = reach.stages.find((s) => s.key === "register");
     const aiKinds = reach.kinds.filter((k) => k.ai).sort((a, b) => b.total - a.total);
     const largest = aiKinds[0];
@@ -391,7 +392,7 @@ export async function renderScans(main, params, ctx) {
           + largest.signal + " of them carrying signal"
         : "no AI-kinded row is on the register",
     ].filter(Boolean);
-    return el("p", { class: "page-sub" }, parts.join(" — ") + ".");
+    return parts.join(". ") + ".";
   }
 
   function reachKindTable(kinds) {
@@ -423,7 +424,7 @@ export async function renderScans(main, params, ctx) {
   function reachEdgeCensus(edges) {
     const wrap = el("div", { class: "reach-edges" });
     wrap.append(
-      el("p", { class: "page-sub" },
+      el("p", { class: "small muted" },
         edges.populated.length + " of " + edges.declared + " relationship types populated " +
         "on this landscape's persisted graph."),
       el("div", { class: "chipset" },

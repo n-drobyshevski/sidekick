@@ -4,6 +4,7 @@
 import { clampSheetWidth, recordCursor } from "../recordSections.js";
 import { parseHash } from "../store.js";
 import { clear, el, motionOk } from "./dom.js";
+import { tipLabel } from "./tip.js";
 import { portalsOpen } from "./portals.js";
 import { uiIcon } from "./uiIcons.js";
 
@@ -717,6 +718,13 @@ export function sheetRow(o) {
   );
 }
 
-export function sectionLabel(text) {
-  return el("h2", { class: "section-label" }, text);
+/**
+ * `help` accepts the same three shapes kpiCard, statRow and dataTable's column headings take
+ * (a string, an array of lines, or { term } / { lines, term }), so a section heading is a
+ * place a definition can live instead of a paragraph under it. That is the channel DESIGN.md
+ * assumes when it says a definition belongs in the tip that routes to its Help entry, and
+ * every section label in the app now has it.
+ */
+export function sectionLabel(text, help) {
+  return el("h2", { class: "section-label" }, tipLabel(text, help));
 }
