@@ -9,6 +9,37 @@
   box-shadow: var(--shadow-card);
 }
 .card { padding: var(--space-4); }
+/* THE PAGE HEADER, which four routes had already invented separately.
+   .cov-header (scans) and .inv-header (inventory) were byte-identical rulesets — scans.css
+   even says so in a comment, "the same shape the AI Inventory header uses" — while
+   .help-header and .comp-header differed only in ways nothing appears to have intended: a
+   150px vs 170px first column, 0.45fr vs 0.5fr, an 18px vs 0 bottom margin, 4px vs 16px of
+   padding above the rule.
+
+   This is DESIGN.md's Hero Stat block: a borderless grid closed by a hairline, dominance
+   from size and position rather than from a card. Sharing it is also the only way the layout
+   tier reaches these pages, because retuning the shared literals in base.css moved the
+   >=16px share of spacing from 11.0% to 11.0% — the spacing that matters lives in rulesets
+   like these four, not in the shared file.
+
+   Grouped rather than renamed so no page markup has to change to get it. A new page should
+   use .page-header alone. */
+.page-header, .cov-header, .inv-header, .help-header, .comp-header {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.5fr) minmax(320px, 2fr);
+  gap: var(--space-5) var(--space-6);
+  align-items: start;
+  margin: 0 0 var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+}
+/* The hero's supporting line, previously four near-identical rules. */
+.page-hero-sub, .cov-hero-sub, .inv-hero-sub, .help-hero-sub {
+  font-size: var(--fs-label); color: var(--text-3); margin: var(--space-1) 0 0;
+}
+/* The stat strip always spans the full header, whichever page it is on. */
+.page-header > .stat-list, .cov-header .stat-list, .inv-header .stat-list { grid-column: 1 / -1; }
+
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-3); margin: 0 0 var(--space-5); }
 .kpi-card { padding: var(--space-3) var(--space-4); }
 .kpi-label { font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); }

@@ -10,13 +10,7 @@
    score's levels do not (ai/AARS_SCORING_ASSESSMENT.md §3: the top level holds 19 of 30
    scored assets, two levels hold none). The strip was on the top row before this and read
    as the page's headline. */
-.inv-header {
-  display: grid;
-  grid-template-columns: minmax(150px, 0.45fr) minmax(320px, 2fr);
-  gap: 20px 36px; align-items: start;
-  margin: 0 0 18px; padding-bottom: var(--space-1); border-bottom: 1px solid var(--hairline);
-}
-.inv-hero-sub { font-size: var(--fs-label); color: var(--text-3); margin-top: 3px; }
+/* .inv-header and .inv-hero-sub now come from .page-header (components.css). */
 
 /* The verdict row: the two posture tiers that carry an action. Read-outs, not controls —
    this table has no posture facet, and a chip shaped like the strip's filter keys but inert

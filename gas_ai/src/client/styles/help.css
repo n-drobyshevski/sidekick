@@ -102,12 +102,9 @@
 /* The posture header shape scans.css and inventory.css both use, at two levels instead of
    three. Hero and strip are borderless: dominance comes from size and position, never from
    a card or a stripe. */
-.help-header {
-  display: grid; grid-template-columns: minmax(150px, 0.45fr) minmax(320px, 2fr);
-  gap: 20px 36px; align-items: start;
-  margin: 0; padding-bottom: var(--space-4); border-bottom: 1px solid var(--hairline);
-}
-.help-hero-sub { font-size: var(--fs-label); color: var(--text-3); margin: 3px 0 9px; }
+/* .help-header comes from .page-header (components.css). The one difference kept: this
+   hero carries a status pill under its sub-line, so the sub keeps a bottom margin. */
+.help-hero-sub { margin-bottom: var(--space-2); }
 .help-strip { display: flex; flex-direction: column; gap: var(--space-2); }
 .help-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
 

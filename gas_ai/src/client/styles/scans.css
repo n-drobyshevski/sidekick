@@ -8,14 +8,8 @@
    scan surface reports, the strip says how that splits, the stat strip carries the sync
    that produced both. Hero and strip are borderless — dominance from size and position,
    never from a card or a stripe. */
-.cov-header {
-  display: grid;
-  grid-template-columns: minmax(150px, 0.45fr) minmax(320px, 2fr);
-  gap: 20px 36px; align-items: start;
-  margin: 0 0 18px; padding-bottom: var(--space-1); border-bottom: 1px solid var(--hairline);
-}
-.cov-header .stat-list { grid-column: 1 / -1; }
-.cov-hero-sub { font-size: var(--fs-label); color: var(--text-3); margin-top: 3px; }
+/* .cov-header, .cov-hero-sub and the stat-list span now come from .page-header
+   (components.css); only the page-specific pieces below remain. */
 .cov-strip { display: flex; flex-direction: column; gap: var(--space-2); }
 .cov-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
 

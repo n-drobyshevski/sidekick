@@ -10,15 +10,7 @@
    guarantee the severity tokens carry. Control severity on this page still uses sevBadge,
    because that IS a Wiz severity. */
 
-.comp-header {
-  display: grid;
-  grid-template-columns: minmax(170px, 0.5fr) minmax(320px, 2fr);
-  gap: 20px 36px;
-  align-items: start;
-  margin: 0 0 18px;
-  padding-bottom: var(--space-1);
-  border-bottom: 1px solid var(--hairline);
-}
+/* .comp-header comes from .page-header (components.css). */
 .comp-header .stat-list { grid-column: 1 / -1; }
 .comp-hero-value { font-size: 2rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .comp-hero-sub { font-size: var(--fs-label); color: var(--text-3); margin-top: 3px; }
