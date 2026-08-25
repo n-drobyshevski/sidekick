@@ -37,8 +37,6 @@ function timedApi_(name, p) {
   return res;
 }
 function api_bootstrap(p) { return timedApi_("bootstrap", p); }
-function api_getFindings(p) { return timedApi_("getFindings", p); }
-function api_getFindingDetail(p) { return timedApi_("getFindingDetail", p); }
 function api_getInsights(p) { return timedApi_("getInsights", p); }
 function api_getGrouping(p) { return timedApi_("getGrouping", p); }
 function api_getGroupTrend(p) { return timedApi_("getGroupTrend", p); }
@@ -53,7 +51,6 @@ function api_getExportCoverageCsv(p) { return timedApi_("getExportCoverageCsv", 
 function api_startRiskBackfill(p) { return timedApi_("startRiskBackfill", p); }
 function api_getRiskBackfillStatus(p) { return timedApi_("getRiskBackfillStatus", p); }
 function api_getScanHistory(p) { return timedApi_("getScanHistory", p); }
-function api_getHistoryPage(p) { return timedApi_("getHistoryPage", p); }
 function api_runScan(p) { return timedApi_("runScan", p); }
 function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }
 function api_cancelScan(p) { return timedApi_("cancelScan", p); }

@@ -15,7 +15,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { execGroupSlice, execMttrSlice } from "../src/domain/executivePayload";
+import {
+  execGroupSlice, execMttrSlice, historyTrendSlice, mttrPageTrendSlice,
+  programTrendSlice, scanRowsSlice,
+} from "../src/domain/pagePayload";
 
 // A realistic mttrData return: everything the MTTR page reads, of which exec reads four numbers.
 const FULL_MTTR = {
@@ -152,5 +155,122 @@ describe("execGroupSlice — three columns and the dimension tag", () => {
   it("survives a missing or empty payload", () => {
     expect(execGroupSlice(null)).toBeNull();
     expect(execGroupSlice({ dimension: "domain" })!.rows).toEqual([]);
+  });
+});
+
+// --------------------------------------------------------------- trend series
+
+// One backbone, three pages, three different reads. `trendFromBase(..., {backfill:true})`
+// emits a point per saved scan PLUS one per DAY of pre-first-scan history, so every unread
+// field on a point is multiplied by a length the register decides. Measured on the seeded
+// estate: 119 points, and the Program page read 4 of the 12 fields on each.
+const TREND_POINT = {
+  date: "2026-08-01", open: 40, resolved: 12, median_days: 9, sla_pct: 61,
+  oldest_open_days: 412, reconstructed: false, open_past_sla: 7, sla_entered: 3,
+  sla_cleared: 2, sla_net: 1, sla_attainment_pct: 88, km_median_days: 14,
+  coverage_pct: 33, efficiency_pct: 41, high_risk_open: 9, high_risk_remediated: 4,
+  unknown_pct: 2,
+};
+const TRENDS = { history: [{ date: "2026-07-01", median_days: 8 }], trend: [TREND_POINT] };
+const keysOf = (o: unknown, path: string) => {
+  const rows = (o as Record<string, unknown>)[path] as Record<string, unknown>[];
+  return Object.keys(rows[0]!).sort();
+};
+
+describe("mttrPageTrendSlice — nine fields of thirteen", () => {
+  it("keeps every series the MTTR page draws", () => {
+    expect(keysOf(mttrPageTrendSlice(TRENDS), "trend")).toEqual([
+      "date", "km_median_days", "median_days", "open", "open_past_sla",
+      "reconstructed", "resolved", "sla_attainment_pct", "sla_net",
+    ]);
+  });
+
+  it("drops the four nothing reads", () => {
+    const json = JSON.stringify(mttrPageTrendSlice(TRENDS)!.trend);
+    for (const gone of ["sla_pct", "oldest_open_days", "sla_entered", "sla_cleared"]) {
+      expect(json).not.toContain(gone);
+    }
+  });
+
+  // sla_net is a difference, so shipping both of its operands is shipping the answer twice.
+  it("keeps sla_net, whose operands it drops", () => {
+    expect((mttrPageTrendSlice(TRENDS)!.trend as { sla_net: number }[])[0]!.sla_net).toBe(1);
+  });
+
+  // The MTTR page reads history TWICE — hist[len-2] for the change chips, and the whole array
+  // as the chart fallback when the reconstructed series is empty. Dropping it there would
+  // blank those charts on exactly the young ledger they exist to cover.
+  it("keeps history, unlike the Scan History slice", () => {
+    expect(mttrPageTrendSlice(TRENDS)!.history).toEqual(TRENDS.history);
+  });
+});
+
+describe("historyTrendSlice — five fields, and no history array at all", () => {
+  it("keeps only what the two charts draw", () => {
+    expect(keysOf(historyTrendSlice(TRENDS), "trend"))
+      .toEqual(["date", "km_median_days", "open", "reconstructed", "resolved"]);
+  });
+
+  // The whole mttr_history tab, shipped on every visit to a page that never dereferences it.
+  it("drops history entirely", () => {
+    expect(historyTrendSlice(TRENDS)).not.toHaveProperty("history");
+  });
+});
+
+describe("programTrendSlice — four fields of twelve", () => {
+  it("keeps the coverage/efficiency pair and its axis", () => {
+    expect(keysOf(programTrendSlice(TRENDS), "trend"))
+      .toEqual(["coverage_pct", "date", "efficiency_pct", "reconstructed"]);
+  });
+
+  it("drops the TrendPoint base and the high-risk decorator", () => {
+    const json = JSON.stringify(programTrendSlice(TRENDS));
+    for (const gone of ["median_days", "sla_pct", "high_risk_open", "high_risk_remediated",
+      "unknown_pct", "oldest_open_days"]) {
+      expect(json).not.toContain(gone);
+    }
+  });
+});
+
+describe("the trend slices — shared behaviour", () => {
+  it("survive an absent or trendless payload", () => {
+    expect(mttrPageTrendSlice(null)).toBeNull();
+    expect(historyTrendSlice(undefined)).toBeNull();
+    expect(programTrendSlice({})!.trend).toEqual([]);
+  });
+
+  it("drop a key the point does not carry rather than emitting undefined", () => {
+    const sparse = { trend: [{ date: "2026-08-01" }] };
+    expect(Object.keys((historyTrendSlice(sparse)!.trend as object[])[0]!)).toEqual(["date"]);
+  });
+});
+
+// --------------------------------------------------------------- scan history
+
+describe("scanRowsSlice — the ten columns the table draws", () => {
+  const ROW = {
+    scan_id: "s1", ts: "2026-08-01T00:00:00Z", mode: "full", shape: "flat", total: 161,
+    new_count: 4, resolved_count: 2, reopened_count: 0, severities: "CRITICAL,HIGH",
+    sealed: false, raw_ref: "1AbCdEfGhIjKlMnOpQrStUvWxYz012345", obs_ref: "1ZyXwVuTsRqPoNmLkJ",
+  };
+
+  it("keeps every column the page reads", () => {
+    expect(Object.keys(scanRowsSlice([ROW])[0]!).sort()).toEqual([
+      "mode", "new_count", "reopened_count", "resolved_count", "scan_id",
+      "sealed", "severities", "shape", "total", "ts",
+    ]);
+  });
+
+  // Drive file ids for the archived pages and the observation set: internal storage addresses
+  // with no client reader, which the browser had no business receiving.
+  it("drops the Drive refs", () => {
+    const json = JSON.stringify(scanRowsSlice([ROW]));
+    expect(json).not.toContain("raw_ref");
+    expect(json).not.toContain("obs_ref");
+    expect(json).not.toContain("1AbCdEfGhIjKlMnOpQrStUvWxYz012345");
+  });
+
+  it("returns [] for a missing scans array", () => {
+    expect(scanRowsSlice(undefined)).toEqual([]);
   });
 });

@@ -714,14 +714,6 @@ var Server = (() => {
     INFO: "#64748b",
     UNKNOWN: "#475569"
   };
-  var SEVERITY_GLYPHS = {
-    CRITICAL: "\u{1F534}",
-    HIGH: "\u{1F7E0}",
-    MEDIUM: "\u{1F7E1}",
-    LOW: "\u{1F535}",
-    INFO: "\u26AA",
-    UNKNOWN: "\u26AB"
-  };
   var SLA_TARGETS = {
     CRITICAL: 7,
     HIGH: 14,
@@ -1796,11 +1788,8 @@ var Server = (() => {
     getExportCoverageCsv: () => getExportCoverageCsv,
     getExportCsv: () => getExportCsv,
     getExportRawUrl: () => getExportRawUrl,
-    getFindingDetail: () => getFindingDetail,
-    getFindings: () => getFindings,
     getGroupTrend: () => getGroupTrend,
     getGrouping: () => getGrouping,
-    getHistoryPage: () => getHistoryPage,
     getInsights: () => getInsights,
     getJobStatus: () => getJobStatus,
     getMttr: () => getMttr,
@@ -2690,87 +2679,6 @@ var Server = (() => {
     return summarize(work, opts.now);
   }
 
-  // src/domain/transform.ts
-  function coerceResults(results) {
-    if (results === null || results === void 0) return results;
-    if (typeof results === "object") return results;
-    if (typeof results === "string") {
-      const s = results.trim();
-      try {
-        return JSON.parse(s);
-      } catch {
-        return results;
-      }
-    }
-    return results;
-  }
-  function extractNodes(results) {
-    var _a, _b, _c;
-    const coerced = coerceResults(results);
-    if (!coerced) return [];
-    if (Array.isArray(coerced) && coerced.length && typeof coerced[0] === "object") {
-      const merged = [];
-      let ok = false;
-      for (const page of coerced) {
-        if (page && typeof page === "object" && !Array.isArray(page)) {
-          const sub = extractNodes(page);
-          if (sub.length) {
-            pushAll(merged, sub);
-            ok = true;
-          }
-        }
-      }
-      if (ok) return merged;
-    }
-    if (coerced && typeof coerced === "object" && !Array.isArray(coerced)) {
-      const obj = coerced;
-      const data = obj["data"];
-      if (data && typeof data === "object" && !Array.isArray(data)) {
-        const d = data;
-        const vf = d["vulnerabilityFindings"];
-        if (vf && typeof vf === "object" && !Array.isArray(vf) && "nodes" in vf) {
-          return (_a = vf["nodes"]) != null ? _a : [];
-        }
-        for (const v of Object.values(d)) {
-          if (v && typeof v === "object" && !Array.isArray(v) && "nodes" in v) {
-            return (_b = v["nodes"]) != null ? _b : [];
-          }
-        }
-      }
-      if ("nodes" in obj) return (_c = obj["nodes"]) != null ? _c : [];
-    }
-    if (Array.isArray(coerced)) return coerced;
-    return [coerced];
-  }
-  function mergeNodes(baselineNodes, deltaNodes) {
-    const byKey = /* @__PURE__ */ new Map();
-    for (const node of deltaNodes != null ? deltaNodes : []) byKey.set(vulnKey(node), node);
-    const merged = [];
-    for (const node of baselineNodes != null ? baselineNodes : []) {
-      const key = vulnKey(node);
-      if (byKey.has(key)) {
-        merged.push(byKey.get(key));
-        byKey.delete(key);
-      } else {
-        merged.push(node);
-      }
-    }
-    pushAll(merged, byKey.values());
-    return merged;
-  }
-  function flattenNode(node, prefix = "") {
-    const out = {};
-    for (const [k, v] of Object.entries(node)) {
-      const key = prefix ? `${prefix}.${k}` : k;
-      if (v && typeof v === "object" && !Array.isArray(v)) {
-        Object.assign(out, flattenNode(v, key));
-      } else {
-        out[key] = v;
-      }
-    }
-    return out;
-  }
-
   // src/domain/remediation.ts
   var DAY_MS3 = 864e5;
   var ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
@@ -3508,15 +3416,86 @@ var Server = (() => {
     }
     return out;
   }
-  function severityCountsFromObservations(observations) {
-    var _a;
-    const counts = {};
-    for (const o of observations) {
-      if (o.present !== 1) continue;
-      const sev2 = normalizeSeverity(o.severity);
-      counts[sev2] = ((_a = counts[sev2]) != null ? _a : 0) + 1;
+
+  // src/domain/transform.ts
+  function coerceResults(results) {
+    if (results === null || results === void 0) return results;
+    if (typeof results === "object") return results;
+    if (typeof results === "string") {
+      const s = results.trim();
+      try {
+        return JSON.parse(s);
+      } catch {
+        return results;
+      }
     }
-    return counts;
+    return results;
+  }
+  function extractNodes(results) {
+    var _a, _b, _c;
+    const coerced = coerceResults(results);
+    if (!coerced) return [];
+    if (Array.isArray(coerced) && coerced.length && typeof coerced[0] === "object") {
+      const merged = [];
+      let ok = false;
+      for (const page of coerced) {
+        if (page && typeof page === "object" && !Array.isArray(page)) {
+          const sub = extractNodes(page);
+          if (sub.length) {
+            pushAll(merged, sub);
+            ok = true;
+          }
+        }
+      }
+      if (ok) return merged;
+    }
+    if (coerced && typeof coerced === "object" && !Array.isArray(coerced)) {
+      const obj = coerced;
+      const data = obj["data"];
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        const d = data;
+        const vf = d["vulnerabilityFindings"];
+        if (vf && typeof vf === "object" && !Array.isArray(vf) && "nodes" in vf) {
+          return (_a = vf["nodes"]) != null ? _a : [];
+        }
+        for (const v of Object.values(d)) {
+          if (v && typeof v === "object" && !Array.isArray(v) && "nodes" in v) {
+            return (_b = v["nodes"]) != null ? _b : [];
+          }
+        }
+      }
+      if ("nodes" in obj) return (_c = obj["nodes"]) != null ? _c : [];
+    }
+    if (Array.isArray(coerced)) return coerced;
+    return [coerced];
+  }
+  function mergeNodes(baselineNodes, deltaNodes) {
+    const byKey = /* @__PURE__ */ new Map();
+    for (const node of deltaNodes != null ? deltaNodes : []) byKey.set(vulnKey(node), node);
+    const merged = [];
+    for (const node of baselineNodes != null ? baselineNodes : []) {
+      const key = vulnKey(node);
+      if (byKey.has(key)) {
+        merged.push(byKey.get(key));
+        byKey.delete(key);
+      } else {
+        merged.push(node);
+      }
+    }
+    pushAll(merged, byKey.values());
+    return merged;
+  }
+  function flattenNode(node, prefix = "") {
+    const out = {};
+    for (const [k, v] of Object.entries(node)) {
+      const key = prefix ? `${prefix}.${k}` : k;
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        Object.assign(out, flattenNode(v, key));
+      } else {
+        out[key] = v;
+      }
+    }
+    return out;
   }
 
   // src/domain/trend.ts
@@ -4092,17 +4071,17 @@ var Server = (() => {
       return { state, result: zero, observationsByScan: {} };
     }
     const rows = scansAsc(state.scans);
-    const present2 = new Set(rows.filter((r) => targets.has(r.scan_id)).map((r) => r.scan_id));
-    if (!present2.size) {
+    const present3 = new Set(rows.filter((r) => targets.has(r.scan_id)).map((r) => r.scan_id));
+    if (!present3.size) {
       return { state, result: zero, observationsByScan: {} };
     }
-    const sealedTargets = rows.filter((r) => present2.has(r.scan_id) && r.sealed).map((r) => r.scan_id).sort();
+    const sealedTargets = rows.filter((r) => present3.has(r.scan_id) && r.sealed).map((r) => r.scan_id).sort();
     if (sealedTargets.length) {
       throw new SealedScanError(
         `Cannot delete sealed scan(s) ${sealedTargets.join(", ")}: they are part of the compacted baseline (their raw archives were pruned), so their effects can no longer be un-replayed.`
       );
     }
-    const survivors = rows.filter((r) => !present2.has(r.scan_id));
+    const survivors = rows.filter((r) => !present3.has(r.scan_id));
     const replay = loadReplayPayloads(
       survivors,
       readPayload,
@@ -4123,7 +4102,7 @@ var Server = (() => {
     return {
       state: rebuilt,
       result: {
-        deleted: present2.size,
+        deleted: present3.size,
         scans: rebuilt.scans.length,
         tracked: baseRows(rebuilt, now).length
       },
@@ -4754,7 +4733,7 @@ var Server = (() => {
     };
   }
 
-  // src/domain/executivePayload.ts
+  // src/domain/pagePayload.ts
   function execMttrSlice(mttr) {
     var _a, _b;
     if (!mttr || typeof mttr !== "object") return null;
@@ -4782,6 +4761,56 @@ var Server = (() => {
         };
       })
     };
+  }
+  function pickRows(rows, keys) {
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r) => {
+      const out = {};
+      for (const k of keys) if (k in r) out[k] = r[k];
+      return out;
+    });
+  }
+  var MTTR_TREND_KEYS = [
+    "date",
+    "reconstructed",
+    "open",
+    "resolved",
+    "median_days",
+    "km_median_days",
+    "open_past_sla",
+    "sla_net",
+    "sla_attainment_pct"
+  ];
+  var HISTORY_TREND_KEYS = ["date", "reconstructed", "open", "resolved", "km_median_days"];
+  var PROGRAM_TREND_KEYS = ["date", "reconstructed", "coverage_pct", "efficiency_pct"];
+  function mttrPageTrendSlice(trends) {
+    var _a;
+    if (!trends || typeof trends !== "object") return null;
+    const t = trends;
+    return { history: (_a = t["history"]) != null ? _a : [], trend: pickRows(t["trend"], MTTR_TREND_KEYS) };
+  }
+  function historyTrendSlice(trends) {
+    if (!trends || typeof trends !== "object") return null;
+    return { trend: pickRows(trends["trend"], HISTORY_TREND_KEYS) };
+  }
+  function programTrendSlice(trends) {
+    if (!trends || typeof trends !== "object") return null;
+    return { trend: pickRows(trends["trend"], PROGRAM_TREND_KEYS) };
+  }
+  var SCAN_ROW_KEYS = [
+    "scan_id",
+    "ts",
+    "mode",
+    "shape",
+    "total",
+    "new_count",
+    "resolved_count",
+    "reopened_count",
+    "severities",
+    "sealed"
+  ];
+  function scanRowsSlice(scans) {
+    return pickRows(scans, SCAN_ROW_KEYS);
   }
 
   // src/server/errorLog.ts
@@ -5145,7 +5174,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "1944f96ab170" : "dev";
+  var BUILD_ID = true ? "d69fe6546879" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -5597,12 +5626,6 @@ var Server = (() => {
     );
     return withCoverageEfficiency(points, base, rule, severities);
   }
-  function previousSeverityCounts() {
-    const flats = loadScanRows().filter((s) => s.shape === "flat");
-    if (flats.length < 2) return {};
-    const prev = flats[flats.length - 2];
-    return severityCountsFromObservations(readObservations(prev.obs_ref));
-  }
   function latestScanRow() {
     return latestScan(loadScanRows());
   }
@@ -5882,8 +5905,8 @@ var Server = (() => {
       mttr_history: (_b = rawManifest == null ? void 0 : rawManifest["mttr_history"]) != null ? _b : [],
       totals: { ledger: 0, episodes: 0 }
     });
-    const present2 = new Set(loadScanRows().map((s) => s.scan_id));
-    const toAppend = session.sealedScans.filter((s) => !present2.has(s.scan_id));
+    const present3 = new Set(loadScanRows().map((s) => s.scan_id));
+    const toAppend = session.sealedScans.filter((s) => !present3.has(s.scan_id));
     chunkedAppend(TABS.scans, toAppend);
     invalidateLedgerMemos();
     const cpRef = writeCheckpointManifest(
@@ -6517,12 +6540,6 @@ var Server = (() => {
     "vulnerableAsset.subscriptionName",
     "vulnerableAsset.operatingSystem"
   ];
-  function tableRow(r) {
-    var _a;
-    const out = {};
-    for (const c of TABLE_COLUMNS) out[c] = (_a = r[c]) != null ? _a : null;
-    return out;
-  }
 
   // src/server/locks.ts
   var LedgerBusyError = class extends Error {
@@ -7522,9 +7539,15 @@ var Server = (() => {
       // which tag every row is read from, which now moves the domain split on every cached
       // payload in the app, not just this one — and carrying it here as well would only hash a
       // value the key already carries.
-      ...cached("bootstrapCore5", { showNoFix: getShowNoFix2() }, bootstrapCore),
+      // "bootstrapCore5" → "bootstrapCore6": the payload SHED its unread fields — `prevCounts`
+      // (which cost a Drive fetch, ungzip and parse of the previous scan's entire observation
+      // set for six integers nothing rendered), the `statuses`/`assetTypes`/`clouds` filter
+      // vocabularies (three O(N) passes over the frame, no reader), `scopeCounts.noBizDomain`
+      // (whose own comment admitted as much), `palette.glyphs`/`slaTargets`, and
+      // `latestScan.shape`/`severities`. Bump so no stale fat entry survives the persistent
+      // dataVersion; a reader that wanted any of them would have been broken already.
+      ...cached("bootstrapCore6", { showNoFix: getShowNoFix2() }, bootstrapCore),
       // Live per-request fields: never cached (activeJob changes every poll tick).
-      dataVersion: dataVersion(),
       hasCredentials: hasWizCredentials(),
       activeJob: activeJobSummary()
     }));
@@ -7576,8 +7599,6 @@ var Server = (() => {
       palette: {
         order: SEVERITY_ORDER,
         colors: SEVERITY_COLORS,
-        glyphs: SEVERITY_GLYPHS,
-        slaTargets: SLA_TARGETS,
         selectable: SELECTABLE_SEVERITIES
       },
       settings: {
@@ -7594,13 +7615,10 @@ var Server = (() => {
         scanId: latest.scan_id,
         ts: latest.ts,
         mode: latest.mode,
-        shape: latest.shape,
-        total: latest.total,
-        severities: latest.severities
+        total: latest.total
       } : null,
       counts,
       unassignedCount,
-      prevCounts: previousSeverityCounts(),
       // THE RESOLVED UNIVERSE, not the rule list. A tag value is a domain a finding can actually
       // land in, so a switcher built from `domainNames(items)` alone would offer only the manual
       // groups and leave every tag-attributed bucket unreachable — the exact failure the tag-first
@@ -7618,11 +7636,6 @@ var Server = (() => {
         supportGroups: supportGroupCounts,
         unassigned: unassignedCount,
         noSupportGroup,
-        // How many findings carry no `Wiz/Domain` tag. Nothing renders it today — the tag stopped
-        // being a scope of its own when it became the principal input to `_domain` — but it is
-        // the denominator of the tag-coverage story Attribution tells, and it is one line here
-        // versus a second traversal there.
-        noBizDomain,
         // Both over base rows, and paired on purpose: "412 not attributable" is unreadable
         // without the population it is 412 of, and that population is not `register`.
         baseRows: baseRows2.length,
@@ -7634,9 +7647,6 @@ var Server = (() => {
       // tagging failure off their own typo.
       domainTagKey: configuredDomainTagKey(),
       filterOptions: scan ? {
-        statuses: distinct(records, "status"),
-        assetTypes: distinct(records, "vulnerableAsset.type"),
-        clouds: distinct(records, "vulnerableAsset.cloudPlatform"),
         subscriptions: distinct(records, "vulnerableAsset.subscriptionName"),
         supportGroups: distinct(records, "_supportGroup")
       } : {
@@ -7658,92 +7668,6 @@ var Server = (() => {
   function activeJobSummary() {
     return jobSummary(activeJob());
   }
-  function getFindings(p) {
-    return run(() => {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
-      const params = p != null ? p : {};
-      const scan = currentScan();
-      if (!scan) return { rows: [], total: 0, counts: {}, page: 0, pageCount: 0, groups: null };
-      const filters = {
-        severities: (_a = params["severities"]) != null ? _a : getDisplaySeverities2(),
-        statuses: (_b = params["statuses"]) != null ? _b : [],
-        assetTypes: (_c = params["assetTypes"]) != null ? _c : [],
-        clouds: (_d = params["clouds"]) != null ? _d : [],
-        domains: (_e = params["domains"]) != null ? _e : [],
-        supportGroups: (_f = params["supportGroups"]) != null ? _f : [],
-        q: (_g = params["q"]) != null ? _g : ""
-      };
-      const filtered = visibleFrame(applyFilters(scan.records, filters));
-      const counts = {};
-      for (const r of filtered) {
-        const sev2 = String(r["_sev"]);
-        counts[sev2] = ((_h = counts[sev2]) != null ? _h : 0) + 1;
-      }
-      const groupBy = (_i = params["groupBy"]) != null ? _i : "";
-      if (groupBy) {
-        const keyFor = groupKeyFn(groupBy);
-        const groups = /* @__PURE__ */ new Map();
-        for (const r of filtered) {
-          const k = keyFor(r);
-          if (!groups.has(k)) groups.set(k, []);
-          groups.get(k).push(r);
-        }
-        const ordered = [...groups.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, 30);
-        return {
-          rows: [],
-          total: filtered.length,
-          counts,
-          page: 0,
-          pageCount: 0,
-          groups: ordered.map(([key, rows]) => ({
-            key,
-            count: rows.length,
-            sevCounts: sevCountsOf(rows),
-            rows: rows.slice(0, 250).map(tableRow)
-            // per-group row cap
-          }))
-        };
-      }
-      if (params["all"] === true && filtered.length <= CLIENT_ALL_MAX) {
-        return {
-          rows: filtered.map(tableRow),
-          total: filtered.length,
-          counts,
-          page: 0,
-          pageCount: 1,
-          groups: null,
-          all: true
-        };
-      }
-      const pageSize = Math.min(Number((_j = params["pageSize"]) != null ? _j : 100), 500);
-      const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-      const page = Math.min(Math.max(Number((_k = params["page"]) != null ? _k : 0), 0), pageCount - 1);
-      return {
-        rows: filtered.slice(page * pageSize, (page + 1) * pageSize).map(tableRow),
-        total: filtered.length,
-        counts,
-        page,
-        pageCount,
-        groups: null
-      };
-    });
-  }
-  var CLIENT_ALL_MAX = 3e3;
-  function groupKeyFn(groupBy) {
-    var _a;
-    const col = {
-      severity: "_sev",
-      status: "status",
-      atype: "vulnerableAsset.type",
-      cloud: "vulnerableAsset.cloudPlatform",
-      asset: "vulnerableAsset.name",
-      subscription: "vulnerableAsset.subscriptionName",
-      domain: "_domain",
-      supportGroup: "_supportGroup"
-    };
-    const c = (_a = col[groupBy]) != null ? _a : "_sev";
-    return (r) => present(r[c]) ? String(r[c]) : "(none)";
-  }
   function readStringArray(p, key) {
     const raw = p == null ? void 0 : p[key];
     return Array.isArray(raw) ? raw.map(String) : [];
@@ -7760,35 +7684,6 @@ var Server = (() => {
       out[sev2] = ((_a = out[sev2]) != null ? _a : 0) + 1;
     }
     return out;
-  }
-  function getFindingDetail(p) {
-    return run(() => {
-      var _a, _b, _c, _d;
-      const key = String((_a = p == null ? void 0 : p["vulnKey"]) != null ? _a : "");
-      const scan = currentScan();
-      if (!scan || !key) return { record: null, raw: null };
-      const record = (_b = visibleFrame(scan.records).find(
-        (r) => r["_vuln_key"] === key
-      )) != null ? _b : null;
-      let raw = null;
-      const pageNo = record && typeof record["_page"] === "number" ? record["_page"] : null;
-      if (pageNo !== null) {
-        const page = readScanPage(scan.scanId, pageNo);
-        if (page) raw = (_c = extractNodes(page).find((n) => vulnKey(n) === key)) != null ? _c : null;
-      }
-      if (!raw) {
-        const row = loadScanRows().find((s) => s.scan_id === scan.scanId);
-        const payload = row ? readScanPayload(row.raw_ref) : null;
-        if (payload && Array.isArray(payload)) {
-          for (const page of payload) {
-            const nodes = extractNodes(page);
-            raw = (_d = nodes.find((n) => vulnKey(n) === key)) != null ? _d : null;
-            if (raw) break;
-          }
-        }
-      }
-      return { record, raw };
-    });
   }
   function insightsData(p) {
     var _a, _b;
@@ -8198,7 +8093,8 @@ var Server = (() => {
         kmP90PerSev[s] = kmQuantileFromCurve(k.curve, 0.9);
       }
     }
-    const km = kaplanMeier(remRows);
+    const kmFull = kaplanMeier(remRows);
+    const km = { ...kmFull, curve: kmFull.curve.map((p2) => ({ t: p2.t, s: p2.s })) };
     const remediation = {
       pctiles: mttrPercentiles(remRows),
       buckets: resolutionBuckets(remRows),
@@ -8206,14 +8102,20 @@ var Server = (() => {
       // Overall censoring-aware KM p90 off that same curve (smallest t with S(t) ≤ 0.10) — the
       // slow-tail sibling of the KM median that replaces the naive `pctiles.overall.p90` in the
       // KPI band. Null (renders "—") when too much is still open to observe it.
-      kmP90: kmQuantileFromCurve(km.curve, 0.9),
+      kmP90: kmQuantileFromCurve(kmFull.curve, 0.9),
       kmMedianPerSev,
       kmP90PerSev,
       openPastSla: openPastSla(remRows),
-      // Actionable-clock companions (clock starts at vendor-fix availability): the same
-      // functions over the actionableView projection. Awaiting-vendor-fix rows carry null
-      // actionable fields, so they drop out of these while staying in `awaiting`.
-      kmActionable: kaplanMeier(actionableView(remRows)),
+      // Actionable-clock companion (clock starts at vendor-fix availability): the same function
+      // over the actionableView projection. Awaiting-vendor-fix rows carry null actionable
+      // fields, so they drop out of it while staying in `awaiting`.
+      //
+      // ITS KM ESTIMATE USED TO SIT BESIDE IT and had no reader anywhere — a second complete
+      // `KMResult`, curve included, built by a second `kaplanMeier` over a second
+      // `actionableView` pass, serialized on every MTTR and Executive load. The actionable
+      // CLOCK is read (`mttr.js` draws `openPastSlaActionable` in the KPI band and the
+      // per-severity table); only its survival estimate never was. Removing it is compute as
+      // well as transfer.
       openPastSlaActionable: openPastSla(actionableView(remRows)),
       awaiting: awaitingVendorFix(remRows)
     };
@@ -8414,10 +8316,14 @@ var Server = (() => {
       // rows dropped when off); key gains showNoFix so on/off states don't share an entry.
       // "mttr5" → "mttr6": remediation gained `kmMedianPerSev` (per-severity KM median for the
       // per-severity table); bump so no stale entry lacks it.
+      // "mttr7" → "mttr8": remediation DROPPED `kmActionable` (a full second KMResult with no
+      // reader in the client) and `km.curve` points lost `atRisk`/`events` (the survival chart
+      // plots only `t` and `s`). A stale entry is not merely fatter — it is a different shape —
+      // so bump rather than let one survive the persistent dataVersion.
       // "mttr6" → "mttr7": remediation gained the censoring-aware KM p90 — `kmP90` (overall, for
       // the KPI band) and `kmP90PerSev` (per-severity table) — replacing the naive `pctiles` p90
       // at those call sites; bump so no stale entry lacks them.
-      "mttr7",
+      "mttr8",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -8564,14 +8470,14 @@ var Server = (() => {
     return run(() => cachedMttrData(p));
   }
   function getMttrTrend(p) {
-    return run(() => cachedMttrTrendData(p));
+    return run(() => historyTrendSlice(cachedMttrTrendData(p)));
   }
   function getMttrPage(p) {
     var _a;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     return run(() => ({
       mttr: cachedMttrData(p),
-      trends: cachedMttrTrendData(p),
+      trends: mttrPageTrendSlice(cachedMttrTrendData(p)),
       byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
     }));
   }
@@ -8584,7 +8490,10 @@ var Server = (() => {
   function getProgramPage(p) {
     return run(() => ({
       program: cachedProgramData(p),
-      trends: cachedProgramTrendData(p)
+      // Four fields of twelve: the coverage/efficiency pair the two lines are drawn from. The
+      // rest is the shared `TrendPoint` base plus the high-risk decorator, none of it read here,
+      // multiplied by a backbone that carries one point per day of pre-scan history.
+      trends: programTrendSlice(cachedProgramTrendData(p))
     }));
   }
   function getRiskCohort(p) {
@@ -8775,13 +8684,10 @@ var Server = (() => {
     cached("scanHistory2", { showNoFix: getShowNoFix2() }, scanHistoryData)
   );
   function getScanHistory(_p) {
-    return run(() => cachedScanHistoryData());
-  }
-  function getHistoryPage(p) {
-    return run(() => ({
-      history: cachedScanHistoryData(),
-      trends: cachedMttrTrendData(p)
-    }));
+    return run(() => {
+      const d = cachedScanHistoryData();
+      return { ...d, scans: scanRowsSlice(d["scans"]) };
+    });
   }
   function runScan(p) {
     const params = p != null ? p : {};
