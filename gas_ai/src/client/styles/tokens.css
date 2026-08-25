@@ -220,13 +220,37 @@
 
 * { box-sizing: border-box; }
 
+/* THE 0.875rem WAS BEING APPLIED TWICE, and every rem in the tree inherited the mistake.
+   `html, body { font-size: 0.875rem }` sets BOTH: on the root, `rem` resolves against the
+   initial 16px and gives 14px; on body, the same declaration then resolves against the 14px
+   root it just created and gives 12.25px. Measured in the browser before this change:
+
+     html 14px | body 12.25px | 1rem 14px | 1.125rem 15.75px | 1.5rem 21px | 2rem 28px
+
+   So the documented body size was rendering at 12.25px, and the rem-based display tier was
+   landing 12% under spec everywhere. That the corrected root puts 2rem/1.5rem/1.125rem back
+   onto DESIGN.md's own 32/24/18 is the evidence this was always a bug rather than a taste:
+   the intent was a 16px root, and the accidental 14px one shrank the whole display tier.
+
+   Across the 11 routes this moved 2,036 of 8,309 nodes (24.5%) off an inherited 12.25px that
+   no stylesheet ever asked for. The root now keeps the browser's own size rather than
+   overriding it, which is what makes the remaining rem values honour a raised default font.
+   The --fs-* tokens are still px and still do not scale; whether they should is a real open
+   question, deliberately not answered in the same change that fixes the arithmetic. */
+html {
+  font-size: 100%;
+}
+
 html, body {
   margin: 0;
   padding: 0;
   background: var(--page);
   color: var(--ink);
   font-family: var(--font);
-  font-size: 0.875rem;
   line-height: 1.5;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+body {
+  font-size: var(--fs-body);
 }
