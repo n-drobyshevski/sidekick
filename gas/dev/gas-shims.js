@@ -323,10 +323,25 @@
     },
     newTrigger: (handler) => {
       const builder = {
+        // The full documented ClockTriggerBuilder surface, not just the methods this codebase
+        // happens to call today. The shim previously carried four of them, so adding a trigger
+        // that used everyHours() threw here — and because dev/boot.js runs setup() during boot,
+        // that throw took down the whole google.script.run shim and every page rendered
+        // "Couldn't reach the server". Listing the real API rather than accepting any method
+        // keeps a genuine typo failing while stopping the shim from lagging behind again.
         timeBased: () => builder,
-        everyDays: () => builder,
-        atHour: () => builder,
         after: () => builder,
+        at: () => builder,
+        atDate: () => builder,
+        atHour: () => builder,
+        everyDays: () => builder,
+        everyHours: () => builder,
+        everyMinutes: () => builder,
+        everyWeeks: () => builder,
+        inTimezone: () => builder,
+        nearMinute: () => builder,
+        onMonthDay: () => builder,
+        onWeekDay: () => builder,
         create: () => {
           const trigger = {
             getHandlerFunction: () => handler,

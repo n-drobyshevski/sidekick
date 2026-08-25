@@ -26,6 +26,9 @@ function trigger_continueScan(e) { Server.jobs.continueJob(e); }
 // pending one-shot trigger, so sharing a name would let one strand the other.
 function trigger_continueBackfill(e) { Server.backfill.continueBackfill(e); }
 function trigger_continuePurge(e) { Server.purge.continuePurge(e); }
+// Re-warms the read-model cache between scans: CacheService caps TTLs at six hours, so a
+// daily-scan tenant would otherwise go cold three or four times between scans.
+function trigger_warmReadModels() { Server.api.warmReadModelsScheduled(); }
 
 // google.script.run API surface — thin delegators so the client can call api_* by name.
 // Each is timed to the execution log ({"api":name,"ms":n} lines) so server cost can be

@@ -16,6 +16,8 @@ const SPREADSHEET_NAME = "Wiz Sidekick OS Ledger";
 const FOLDER_NAME = "wiz-sidekick";
 const DAILY_TRIGGER_HANDLER = "trigger_dailyScan";
 const DAILY_TRIGGER_HOUR = 5; // UTC
+const WARM_TRIGGER_HANDLER = "trigger_warmReadModels";
+const WARM_TRIGGER_HOURS = 4;
 
 export function setup(): string {
   const notes: string[] = [];
@@ -61,6 +63,32 @@ export function setup(): string {
     notes.push(`daily trigger: installed (hour ${DAILY_TRIGGER_HOUR} UTC)`);
   } else {
     notes.push("daily trigger: already installed");
+  }
+
+  // Read-model warm trigger, deduplicated by handler name exactly like the daily scan above.
+  //
+  // FOUR HOURS IS SET BY QUOTA, not by taste. Trigger runtime is capped at 90 min/day on a
+  // consumer account (6h on Workspace) and the daily scan's continuation hops already draw on
+  // it; at roughly a minute per pass, six fires a day is single-digit minutes while hourly
+  // would be a quarter of the consumer budget. It also sits comfortably under the six-hour
+  // CacheService ceiling it exists to stay ahead of, with room for the scheduling jitter a
+  // time-based trigger has (GAS fires within a window, not on the minute).
+  //
+  // It cannot keep the 1h entries warm and does not try: `everyMinutes` accepts only
+  // 1/5/10/15/30, so chasing them would cost several times the quota for a fraction more
+  // coverage. Those stay warm for an hour after each fire and cold otherwise, which is what
+  // their TTL already meant.
+  const warmExisting = ScriptApp.getProjectTriggers().filter(
+    (t) => t.getHandlerFunction() === WARM_TRIGGER_HANDLER,
+  );
+  if (!warmExisting.length) {
+    ScriptApp.newTrigger(WARM_TRIGGER_HANDLER)
+      .timeBased()
+      .everyHours(WARM_TRIGGER_HOURS)
+      .create();
+    notes.push(`warm trigger: installed (every ${WARM_TRIGGER_HOURS}h)`);
+  } else {
+    notes.push("warm trigger: already installed");
   }
 
   const missing = [
