@@ -8168,7 +8168,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "77ff5a9ec183" : "dev";
+  var BUILD_ID = true ? "32e5754b32a2" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -10541,8 +10541,10 @@ var Server = (() => {
       // `tags { key value }` array — only in the properties bag — so for an AI ASSET this step
       // is the sole route by which a domain arrives. A tenant that rejects `graphEntity` on
       // this root gets domains on its substrate (the traversals read their own bags) and none
-      // on its agents, which is why getAssets publishes `domainCoverage` rather than letting an
-      // empty Domain facet read as "nobody tagged anything".
+      // on its agents, which is why `bootstrap.scope.domainCoverage` publishes a count rather
+      // than letting an empty Domain facet read as "nobody tagged anything". (It named
+      // getAssets until that endpoint's duplicate copy was removed as unread — the argument
+      // is unchanged, but only the bootstrap one ever had a reader.)
       {
         id: "AI_ASSET_PROPERTIES",
         area: "aispm",
@@ -15638,7 +15640,6 @@ var Server = (() => {
       var _a5;
       return {
         ...cached("bootstrapCore", null, bootstrapCore),
-        dataVersion: dataVersion(),
         hasCredentials: hasWizCredentials(),
         // Outside the cached core on purpose: a cached build stamp would be the one thing
         // guaranteed to lie after a deploy.
@@ -15733,11 +15734,18 @@ var Server = (() => {
         remedy: "sync"
       },
       latestSync: latest,
+      // This block is dereferenced in exactly ONE place in the client — helpContent's
+      // "severity" lexicon entry — and it reads `openIssues` alone. `aiAssets`, `totalAssets`
+      // and `bySeverity` had no reader anywhere and are gone.
+      //
+      // THE TWO BELOW HAVE NO CLIENT READER EITHER, AND STAY, which is the one place a grep
+      // is the wrong test. test/verdictIsolation.test.ts asserts both, and that file's whole
+      // argument is the distinction between an AGGREGATE, which bootstrap may publish, and a
+      // per-asset CLAIM, which nothing outside the workbench may. Removing them would not be
+      // trimming an unread field; it would be retracting a stated contract, and it would take
+      // editing the test that exists precisely so it cannot be re-recorded.
       counts: {
-        aiAssets: assets.filter((a) => AI_ASSET_KINDS.includes(a.kind)).length,
-        totalAssets: assets.length,
         openIssues: issues2.length,
-        bySeverity,
         // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is
         // a legitimate thing to publish and is what the workbench's band rail draws. It is
         // not a per-asset claim, and there is no longer any per-asset claim to be — the
@@ -15821,13 +15829,10 @@ var Server = (() => {
     }
     return {
       kinds: [...kinds].sort(),
-      clouds: [...clouds].sort(),
       projects: [...projects].sort(),
-      domains: [...domains].sort(),
-      // Beside the flat `domains` above and NOT replacing it, for the reason `projectList` is
-      // beside `projects`: that one is a facet over the assets IN VIEW, this one is the
-      // switcher's catalogue over the whole register, answering "how much would I see if I
-      // picked this" rather than "what can I still narrow to".
+      // The switcher's catalogue over the whole register, answering "how much would I see if
+      // I picked this" rather than "what can I still narrow to" — which is why it survives the
+      // removal of the flat `domains` facet above rather than going with it.
       domainList: domainCatalogue(register),
       // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
       // filter on every page matches project names, and there is no reason to migrate them
@@ -15871,8 +15876,7 @@ var Server = (() => {
             layout: view.mode,
             groupBy: view.groupBy,
             sort: view.sort
-          },
-          syncedAt: doc.syncedAt
+          }
         };
       });
     });
@@ -15890,7 +15894,6 @@ var Server = (() => {
         const vocab = queryVocabulary(doc);
         if (!kind) return vocab;
         return {
-          ...vocab,
           // ANY gets them too, over every node in the graph. `fieldsForKind("ANY")` already keeps
           // only the kind-agnostic fields, so the union is never one of things that cannot
           // co-occur — it is "which clouds does this landscape use", which is the question.
@@ -15941,8 +15944,7 @@ var Server = (() => {
           summaries: projection.summaries,
           counts: projection.counts,
           layout: layoutGraph(projection, view),
-          options: { maxNodes, layout: view.mode, groupBy: view.groupBy, sort: view.sort },
-          syncedAt: doc.syncedAt
+          options: { maxNodes, layout: view.mode, groupBy: view.groupBy, sort: view.sort }
         };
       });
       return retired.length ? { ...answer, retiredFilters: retired } : answer;
@@ -16325,14 +16327,13 @@ var Server = (() => {
         severities: SEVERITY_ORDER.filter((sev) => severities.has(sev)),
         projects: [...projects].sort(),
         domains: [...domains].sort()
-      },
-      domainCoverage: domainCoverage(assets, domainTagKey())
+      }
     };
   }
   function getAssets(p) {
     return run(() => {
       const query = resolveAssetQuery(p != null ? p : {});
-      const model = cached("assetsModel", null, assetsModel);
+      const model = cached("assetsModel2", null, assetsModel);
       const head = {
         total: model.rows.length,
         kpis: model.kpis,
@@ -16341,11 +16342,7 @@ var Server = (() => {
         trendScope: model.trendScope,
         countDeltas: countDeltas(model.countTrend, model.kpis),
         reach: model.reach,
-        facets: model.facets,
-        domainCoverage: model.domainCoverage,
-        pageSize: query.pageSize,
-        sort: query.sort,
-        dir: query.dir
+        facets: model.facets
       };
       if (model.rows.length <= CLIENT_ALL_MAX) {
         return {
@@ -16537,10 +16534,7 @@ var Server = (() => {
         total: model.rows.length,
         totals: model.totals,
         facets: model.facets,
-        scopeLoss: model.scopeLoss,
-        pageSize,
-        sort,
-        dir
+        scopeLoss: model.scopeLoss
       };
       if (model.rows.length <= CONFIG_CLIENT_ALL_MAX) {
         return {
@@ -16631,13 +16625,11 @@ var Server = (() => {
   }
   function getCompliance(p) {
     return run(() => {
-      var _a5;
       const params = p != null ? p : {};
-      const requested = String((_a5 = params["frameworkId"]) != null ? _a5 : "");
       const projectView = getProjectView2();
       const domainView = getDomainView2();
-      return cached("getCompliance", { frameworkId: requested, projectView, domainView }, () => {
-        var _a6, _b;
+      return cached("getCompliance", { projectView, domainView }, () => {
+        var _a5, _b;
         const storedPosture = loadPosture();
         const catalogue = loadFrameworks();
         const selected = getSelectedFrameworks2(() => catalogue);
@@ -16660,13 +16652,12 @@ var Server = (() => {
         const fiveRsScope = scoped ? withCountsFrom(registerScope, trees) : registerScope;
         const fiveRsPosture = fiveRsDerivedPosture(
           fiveRsScope,
-          (_b = (_a6 = trees.find((t) => t.frameworkId === fiveRsScope.frameworkId)) == null ? void 0 : _a6.posturePct) != null ? _b : null
+          (_b = (_a5 = trees.find((t) => t.frameworkId === fiveRsScope.frameworkId)) == null ? void 0 : _a5.posturePct) != null ? _b : null
         );
         const merged = catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 }));
         return {
           trees,
           kpis: complianceKpis(posture, policies),
-          catalogue: merged,
           selected,
           // The Overview's four bands. Computed here rather than in the browser because the
           // client bundle cannot import the domain layer at all — every client-side copy of
@@ -16699,11 +16690,7 @@ var Server = (() => {
           // but the numbers are still the register's — why. The page prints this beside the
           // hero rather than as a footnote, the discipline `registerWideNote` already keeps:
           // a footnote is read after the reader has decided.
-          postureScope,
-          // Named so the page can open on a framework it was linked to rather than guessing.
-          // Null when the requested id has no stored posture, which the page reports as such
-          // instead of silently falling back to a different framework's numbers.
-          requested: requested && trees.some((t) => t.frameworkId === requested) ? requested : null
+          postureScope
         };
       });
     });
@@ -16770,7 +16757,7 @@ var Server = (() => {
       return cached("getIssues", { group }, () => {
         let rows = viewIssues();
         if (group) rows = rows.filter((i) => i.comboGroup === group);
-        return { rows: rows.map((r) => publicRow(r)), total: rows.length };
+        return { rows: rows.map((r) => publicRow(r)) };
       });
     });
   }
@@ -16928,8 +16915,7 @@ var Server = (() => {
         // The union invariant's left-hand side — every unresolved issue and every open
         // finding, regardless of the outcome filter or the mode below.
         total: model.rows.length,
-        severityCounts: model.severityCounts,
-        pageSize
+        severityCounts: model.severityCounts
       };
       if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
         return {

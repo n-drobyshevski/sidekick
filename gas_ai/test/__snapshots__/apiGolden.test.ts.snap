@@ -112,13 +112,9 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       ],
       "counts": {
         "aarsScored": 0,
-        "aiAssets": 0,
         "byAarsSeverity": {},
-        "bySeverity": {},
         "openIssues": 0,
-        "totalAssets": 0,
       },
-      "dataVersion": "<dataVersion>",
       "derivation": {
         "current": 2,
         "lastSync": 0,
@@ -126,9 +122,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "stale": true,
       },
       "filterOptions": {
-        "clouds": [],
         "domainList": [],
-        "domains": [],
         "kinds": [],
         "projectList": [],
         "projects": [],
@@ -676,12 +670,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "all": true,
       "countDeltas": null,
       "countTrend": [],
-      "dir": "desc",
-      "domainCoverage": {
-        "key": "Wiz/Domain",
-        "tagged": 0,
-        "total": 0,
-      },
       "facets": {
         "clouds": [],
         "domains": [],
@@ -728,7 +716,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       },
       "page": 0,
       "pageCount": 1,
-      "pageSize": 50,
       "reach": {
         "axes": {
           "exploitation": 0,
@@ -805,7 +792,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       },
       "rows": [],
       "severityCounts": {},
-      "sort": "issues",
       "total": 0,
       "trendScope": {
         "domainId": "",
@@ -824,7 +810,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getConfigFindings": {
     "data": {
       "all": true,
-      "dir": "desc",
       "facets": {
         "clouds": [],
         "domains": [],
@@ -837,10 +822,8 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "filtered": 0,
       "page": 0,
       "pageCount": 1,
-      "pageSize": 50,
       "rows": [],
       "scopeLoss": null,
-      "sort": "severity",
       "total": 0,
       "totals": {
         "controls": 0,
@@ -868,7 +851,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getIssues": {
     "data": {
       "rows": [],
-      "total": 0,
     },
     "ok": true,
   },
@@ -1106,7 +1088,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "filtered": 0,
       "page": 0,
       "pageCount": 1,
-      "pageSize": 50,
       "rows": [],
       "severityCounts": {
         "CRITICAL": 0,
@@ -1640,22 +1621,14 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
     ],
     "counts": {
       "aarsScored": 30,
-      "aiAssets": 22,
       "byAarsSeverity": {
         "CRITICAL": 2,
         "HIGH": 17,
         "INFO": 8,
         "LOW": 3,
       },
-      "bySeverity": {
-        "HIGH": 27,
-        "LOW": 2,
-        "MEDIUM": 3,
-      },
       "openIssues": 32,
-      "totalAssets": 87,
     },
-    "dataVersion": "<dataVersion>",
     "derivation": {
       "current": 2,
       "lastSync": 2,
@@ -1663,10 +1636,6 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       "stale": false,
     },
     "filterOptions": {
-      "clouds": [
-        "AWS",
-        "GCP",
-      ],
       "domainList": [
         {
           "assets": 3,
@@ -1684,12 +1653,6 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
           "assets": 5,
           "name": "VALUE-CHAIN",
         },
-      ],
-      "domains": [
-        "CROSS",
-        "EXAMPLE DOMAIN",
-        "SAP",
-        "VALUE-CHAIN",
       ],
       "kinds": [
         "ACCESS_KEY",
@@ -4487,12 +4450,6 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
       },
     ],
-    "dir": "desc",
-    "domainCoverage": {
-      "key": "Wiz/Domain",
-      "tagged": 15,
-      "total": 87,
-    },
     "facets": {
       "clouds": [
         "AWS",
@@ -4585,7 +4542,6 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
     },
     "page": 0,
     "pageCount": 2,
-    "pageSize": 50,
     "reach": {
       "axes": {
         "exploitation": 0.02631578947368418,
@@ -6439,7 +6395,6 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       "HIGH": 19,
       "MEDIUM": 2,
     },
-    "sort": "issues",
     "total": 87,
     "trendScope": {
       "domainId": "",
@@ -6514,7 +6469,6 @@ exports[`read endpoints > getConfigFindings answers the same shape 1`] = `
 {
   "data": {
     "all": true,
-    "dir": "desc",
     "facets": {
       "clouds": [
         "AWS",
@@ -6554,7 +6508,6 @@ exports[`read endpoints > getConfigFindings answers the same shape 1`] = `
     "filtered": 7,
     "page": 0,
     "pageCount": 1,
-    "pageSize": 50,
     "rows": [
       {
         "analyzedAt": "2026-07-13T21:52:08Z",
@@ -6757,7 +6710,6 @@ exports[`read endpoints > getConfigFindings answers the same shape 1`] = `
       },
     ],
     "scopeLoss": null,
-    "sort": "severity",
     "total": 7,
     "totals": {
       "controls": 5,
@@ -10355,7 +10307,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "parentId": "agent-h-chatbot",
       },
     ],
-    "syncedAt": "2026-08-13T09:00:00Z",
   },
   "ok": true,
 }
@@ -12164,7 +12115,6 @@ Ignored until: Feb 1, 2026",
         "updatedAt": "2026-08-13T10:30:01Z",
       },
     ],
-    "total": 32,
   },
   "ok": true,
 }
@@ -12411,7 +12361,6 @@ exports[`read endpoints > getProblems answers the same shape 1`] = `
     "filtered": 38,
     "page": 0,
     "pageCount": 1,
-    "pageSize": 50,
     "rows": [
       {
         "assetId": "role-finance-admin-01",
@@ -13936,745 +13885,6 @@ exports[`read endpoints > getQueryVocabulary (values for AI Agent) answers the s
           "key": "adminPriv",
           "label": "Admin privileges",
           "type": "boolean",
-        },
-      ],
-    },
-    "kinds": [
-      {
-        "count": 14,
-        "kind": "AI_AGENT",
-      },
-      {
-        "count": 2,
-        "kind": "AI_MODEL",
-      },
-      {
-        "count": 3,
-        "kind": "AI_GUARDRAIL",
-      },
-      {
-        "count": 1,
-        "kind": "AI_PIPELINE",
-      },
-      {
-        "count": 1,
-        "kind": "AI_DATASET",
-      },
-      {
-        "count": 1,
-        "kind": "MCP_SERVER",
-      },
-      {
-        "count": 14,
-        "kind": "SERVICE_ACCOUNT",
-      },
-      {
-        "count": 12,
-        "kind": "USER_ACCOUNT",
-      },
-      {
-        "count": 8,
-        "kind": "ACCESS_ROLE",
-      },
-      {
-        "count": 1,
-        "kind": "ACCESS_KEY",
-      },
-      {
-        "count": 19,
-        "kind": "BUCKET",
-      },
-      {
-        "count": 2,
-        "kind": "DATABASE",
-      },
-      {
-        "count": 1,
-        "kind": "VIRTUAL_MACHINE",
-      },
-      {
-        "count": 1,
-        "kind": "SERVERLESS",
-      },
-      {
-        "count": 1,
-        "kind": "CONTAINER_IMAGE",
-      },
-      {
-        "count": 1,
-        "kind": "REPOSITORY",
-      },
-      {
-        "count": 2,
-        "kind": "EXCESSIVE_ACCESS_FINDING",
-      },
-      {
-        "count": 1,
-        "kind": "LATERAL_MOVEMENT_FINDING",
-      },
-      {
-        "count": 1,
-        "kind": "IDENTITY_ACCESS_FINDING",
-      },
-      {
-        "count": 32,
-        "kind": "ISSUE",
-      },
-      {
-        "count": 10,
-        "kind": "SENSITIVE_DATA",
-      },
-      {
-        "count": 4,
-        "kind": "INTERNET_EXPOSURE",
-      },
-      {
-        "count": 32,
-        "kind": "EXCESSIVE_PRIVILEGE",
-      },
-      {
-        "count": 19,
-        "kind": "MISSING_GUARDRAIL",
-      },
-      {
-        "count": 3,
-        "kind": "DATA_FINDING",
-      },
-      {
-        "count": 2,
-        "kind": "ENDPOINT",
-      },
-    ],
-    "shortcuts": [
-      {
-        "blurb": "Reads the asset's own guardrail flag, which is what the canvas draws its MISSING_GUARDRAIL stub from — so the two always agree.
-
-Deliberately not the “NOT protected by a guardrail” traversal, which answers a wider question: it counts every asset with no guardrail relationship in the graph, including ones Wiz reports as protected without naming the guardrail. Add a NOT on a PROTECTED_BY step if that wider question is the one you want.",
-        "filters": [
-          {
-            "key": "guardrail",
-            "path": [],
-            "values": [
-              "missing",
-            ],
-          },
-        ],
-        "helpId": "missing-guardrail",
-        "id": "no-guardrail",
-        "kinds": [
-          "AI_AGENT",
-          "AI_MODEL",
-          "AI_GUARDRAIL",
-          "AI_PIPELINE",
-          "AI_DATASET",
-          "MCP_SERVER",
-        ],
-        "label": "Has no guardrail",
-        "phrase": "Wiz reports the guardrail missing",
-        "steps": [],
-      },
-      {
-        "blurb": "Reads the identity's own privilege flag rather than walking to the EXCESSIVE_PRIVILEGE stub, which is suppressed wherever a real access finding exists — walking to it would quietly answer with the leftovers. Admin privilege is the stronger claim and has its own field.",
-        "filters": [
-          {
-            "key": "highPriv",
-            "path": [
-              0,
-            ],
-            "values": [
-              "true",
-            ],
-          },
-        ],
-        "helpId": "excessive-privilege",
-        "id": "runs-as-privileged",
-        "kinds": [
-          "AI_AGENT",
-        ],
-        "label": "Runs as a privileged identity",
-        "phrase": "its service account holds high privileges",
-        "steps": [
-          {
-            "edge": "RUNS_AS",
-            "node": {
-              "kind": "SERVICE_ACCOUNT",
-            },
-          },
-        ],
-      },
-      {
-        "blurb": "An identity nobody has used in ninety days, still able to act on the asset's behalf. The dormancy is a field Wiz reports, not something derived here.",
-        "filters": [
-          {
-            "key": "inactive",
-            "path": [
-              0,
-            ],
-            "values": [
-              "true",
-            ],
-          },
-        ],
-        "helpId": "agentic-identity",
-        "id": "runs-as-dormant",
-        "kinds": [
-          "AI_AGENT",
-        ],
-        "label": "Runs as a dormant identity",
-        "phrase": "its service account has been idle 90 days",
-        "steps": [
-          {
-            "edge": "RUNS_AS",
-            "node": {
-              "kind": "SERVICE_ACCOUNT",
-            },
-          },
-        ],
-      },
-      {
-        "blurb": "The real path — asset to identity to bucket — with the identity hidden, so the table reads asset beside data. Deliberately NOT the SENSITIVE_DATA stub, which graphEnrich suppresses exactly where this chain exists: walking to the stub would return only the assets whose path could not be traced.",
-        "helpId": "sensitive-data",
-        "id": "reaches-classified",
-        "kinds": [
-          "AI_AGENT",
-        ],
-        "label": "Reaches classified data",
-        "phrase": "through its identity, to a bucket",
-        "steps": [
-          {
-            "edge": "RUNS_AS",
-            "node": {
-              "kind": "SERVICE_ACCOUNT",
-              "show": false,
-              "steps": [
-                {
-                  "edge": "ALLOWS_ACCESS_TO",
-                  "node": {
-                    "kind": "BUCKET",
-                  },
-                },
-              ],
-            },
-          },
-        ],
-      },
-      {
-        "blurb": "Assets carrying an internet exposure node. Exposure is inherited from the compute underneath, so this is the topology answer rather than a flag read off the asset.",
-        "helpId": "internet-exposure",
-        "id": "internet-reachable",
-        "kinds": [
-          "AI_AGENT",
-        ],
-        "label": "Reachable from the internet",
-        "phrase": "an exposure path reaches it",
-        "steps": [
-          {
-            "edge": "EXPOSED_TO_INTERNET",
-            "node": {
-              "kind": "INTERNET_EXPOSURE",
-            },
-          },
-        ],
-      },
-      {
-        "blurb": "Human access read backwards: the accounts that ALLOW_ACCESS_TO this asset, narrowed to the ones nobody has signed into in ninety days. Standing access that no longer has a person behind it.",
-        "filters": [
-          {
-            "key": "inactive",
-            "path": [
-              0,
-            ],
-            "values": [
-              "true",
-            ],
-          },
-        ],
-        "id": "dormant-human-access",
-        "kinds": [
-          "AI_AGENT",
-        ],
-        "label": "A dormant person can reach it",
-        "phrase": "a human account, idle 90 days, still has access",
-        "steps": [
-          {
-            "edge": "ALLOWS_ACCESS_TO",
-            "node": {
-              "kind": "USER_ACCOUNT",
-            },
-            "reverse": true,
-          },
-        ],
-      },
-    ],
-    "stepsFrom": {
-      "ACCESS_KEY": [
-        {
-          "count": 1,
-          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
-          "kind": "SENSITIVE_DATA",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "RUNS_AS",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-      "ACCESS_ROLE": [
-        {
-          "count": 8,
-          "edge": "CAN_INVOKE",
-          "kind": "AI_MODEL",
-          "reverse": false,
-        },
-        {
-          "count": 8,
-          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
-          "kind": "SENSITIVE_DATA",
-          "reverse": false,
-        },
-        {
-          "count": 8,
-          "edge": "HAS_EXCESSIVE_PRIVILEGE",
-          "kind": "EXCESSIVE_PRIVILEGE",
-          "reverse": false,
-        },
-        {
-          "count": 8,
-          "edge": "HAS_ISSUE",
-          "kind": "ISSUE",
-          "reverse": false,
-        },
-      ],
-      "AI_AGENT": [
-        {
-          "count": 24,
-          "edge": "HAS_ISSUE",
-          "kind": "ISSUE",
-          "reverse": false,
-        },
-        {
-          "count": 14,
-          "edge": "RUNS_AS",
-          "kind": "SERVICE_ACCOUNT",
-          "reverse": false,
-        },
-        {
-          "count": 13,
-          "edge": "HAS_EXCESSIVE_PRIVILEGE",
-          "kind": "EXCESSIVE_PRIVILEGE",
-          "reverse": false,
-        },
-        {
-          "count": 12,
-          "edge": "ALLOWS_ACCESS_TO",
-          "kind": "USER_ACCOUNT",
-          "reverse": true,
-        },
-        {
-          "count": 3,
-          "edge": "EXPOSED_TO_INTERNET",
-          "kind": "INTERNET_EXPOSURE",
-          "reverse": false,
-        },
-        {
-          "count": 2,
-          "edge": "INVOKES_TOOL",
-          "kind": "MCP_SERVER",
-          "reverse": false,
-        },
-        {
-          "count": 2,
-          "edge": "USES_MODEL",
-          "kind": "AI_MODEL",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "BUILT_FROM",
-          "kind": "CONTAINER_IMAGE",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "HAS_FINDING",
-          "kind": "IDENTITY_ACCESS_FINDING",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "HOSTED_ON",
-          "kind": "SERVERLESS",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "HOSTED_ON",
-          "kind": "VIRTUAL_MACHINE",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "PROTECTED_BY",
-          "kind": "AI_GUARDRAIL",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "READS_DATA_FROM",
-          "kind": "AI_DATASET",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "RUNS_AS",
-          "kind": "ACCESS_KEY",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "SERVES",
-          "kind": "ENDPOINT",
-          "reverse": false,
-        },
-      ],
-      "AI_DATASET": [
-        {
-          "count": 1,
-          "edge": "HAS_SENSITIVE_DATA",
-          "kind": "SENSITIVE_DATA",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "STORES_DATA_IN",
-          "kind": "BUCKET",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "READS_DATA_FROM",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "READS_DATA_FROM",
-          "kind": "AI_PIPELINE",
-          "reverse": true,
-        },
-      ],
-      "AI_GUARDRAIL": [
-        {
-          "count": 1,
-          "edge": "ENFORCES",
-          "kind": "AI_MODEL",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "PROTECTED_BY",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-      "AI_MODEL": [
-        {
-          "count": 8,
-          "edge": "CAN_INVOKE",
-          "kind": "ACCESS_ROLE",
-          "reverse": true,
-        },
-        {
-          "count": 2,
-          "edge": "USES_MODEL",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "ENFORCES",
-          "kind": "AI_GUARDRAIL",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "PRODUCES",
-          "kind": "AI_PIPELINE",
-          "reverse": true,
-        },
-      ],
-      "AI_PIPELINE": [
-        {
-          "count": 1,
-          "edge": "PRODUCES",
-          "kind": "AI_MODEL",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "READS_DATA_FROM",
-          "kind": "AI_DATASET",
-          "reverse": false,
-        },
-      ],
-      "BUCKET": [
-        {
-          "count": 24,
-          "edge": "ALLOWS_ACCESS_TO",
-          "kind": "SERVICE_ACCOUNT",
-          "reverse": true,
-        },
-        {
-          "count": 2,
-          "edge": "HAS_DATA_FINDING",
-          "kind": "DATA_FINDING",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "STORES_DATA_IN",
-          "kind": "AI_DATASET",
-          "reverse": true,
-        },
-      ],
-      "CONTAINER_IMAGE": [
-        {
-          "count": 1,
-          "edge": "BUILT_FROM",
-          "kind": "REPOSITORY",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "BUILT_FROM",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-      "DATABASE": [
-        {
-          "count": 8,
-          "edge": "ALLOWS_ACCESS_TO",
-          "kind": "SERVICE_ACCOUNT",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "HAS_DATA_FINDING",
-          "kind": "DATA_FINDING",
-          "reverse": false,
-        },
-      ],
-      "DATA_FINDING": [
-        {
-          "count": 2,
-          "edge": "HAS_DATA_FINDING",
-          "kind": "BUCKET",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "HAS_DATA_FINDING",
-          "kind": "DATABASE",
-          "reverse": true,
-        },
-      ],
-      "ENDPOINT": [
-        {
-          "count": 1,
-          "edge": "SERVES",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "SERVES",
-          "kind": "SERVERLESS",
-          "reverse": true,
-        },
-      ],
-      "EXCESSIVE_ACCESS_FINDING": [
-        {
-          "count": 2,
-          "edge": "HAS_FINDING",
-          "kind": "SERVICE_ACCOUNT",
-          "reverse": true,
-        },
-      ],
-      "EXCESSIVE_PRIVILEGE": [
-        {
-          "count": 13,
-          "edge": "HAS_EXCESSIVE_PRIVILEGE",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 11,
-          "edge": "HAS_EXCESSIVE_PRIVILEGE",
-          "kind": "SERVICE_ACCOUNT",
-          "reverse": true,
-        },
-        {
-          "count": 8,
-          "edge": "HAS_EXCESSIVE_PRIVILEGE",
-          "kind": "ACCESS_ROLE",
-          "reverse": true,
-        },
-      ],
-      "IDENTITY_ACCESS_FINDING": [
-        {
-          "count": 1,
-          "edge": "HAS_FINDING",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-      "INTERNET_EXPOSURE": [
-        {
-          "count": 3,
-          "edge": "EXPOSED_TO_INTERNET",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "EXPOSED_TO_INTERNET",
-          "kind": "SERVERLESS",
-          "reverse": true,
-        },
-      ],
-      "ISSUE": [
-        {
-          "count": 24,
-          "edge": "HAS_ISSUE",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 8,
-          "edge": "HAS_ISSUE",
-          "kind": "ACCESS_ROLE",
-          "reverse": true,
-        },
-      ],
-      "LATERAL_MOVEMENT_FINDING": [
-        {
-          "count": 1,
-          "edge": "HAS_FINDING",
-          "kind": "SERVICE_ACCOUNT",
-          "reverse": true,
-        },
-      ],
-      "MCP_SERVER": [
-        {
-          "count": 2,
-          "edge": "INVOKES_TOOL",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-      "REPOSITORY": [
-        {
-          "count": 1,
-          "edge": "BUILT_FROM",
-          "kind": "CONTAINER_IMAGE",
-          "reverse": true,
-        },
-      ],
-      "SENSITIVE_DATA": [
-        {
-          "count": 8,
-          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
-          "kind": "ACCESS_ROLE",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
-          "kind": "ACCESS_KEY",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "HAS_SENSITIVE_DATA",
-          "kind": "AI_DATASET",
-          "reverse": true,
-        },
-      ],
-      "SERVERLESS": [
-        {
-          "count": 1,
-          "edge": "EXPOSED_TO_INTERNET",
-          "kind": "INTERNET_EXPOSURE",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "SERVES",
-          "kind": "ENDPOINT",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "HOSTED_ON",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-      "SERVICE_ACCOUNT": [
-        {
-          "count": 24,
-          "edge": "ALLOWS_ACCESS_TO",
-          "kind": "BUCKET",
-          "reverse": false,
-        },
-        {
-          "count": 14,
-          "edge": "RUNS_AS",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 11,
-          "edge": "HAS_EXCESSIVE_PRIVILEGE",
-          "kind": "EXCESSIVE_PRIVILEGE",
-          "reverse": false,
-        },
-        {
-          "count": 8,
-          "edge": "ALLOWS_ACCESS_TO",
-          "kind": "DATABASE",
-          "reverse": false,
-        },
-        {
-          "count": 2,
-          "edge": "HAS_FINDING",
-          "kind": "EXCESSIVE_ACCESS_FINDING",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "HAS_FINDING",
-          "kind": "LATERAL_MOVEMENT_FINDING",
-          "reverse": false,
-        },
-      ],
-      "USER_ACCOUNT": [
-        {
-          "count": 12,
-          "edge": "ALLOWS_ACCESS_TO",
-          "kind": "AI_AGENT",
-          "reverse": false,
-        },
-      ],
-      "VIRTUAL_MACHINE": [
-        {
-          "count": 1,
-          "edge": "HOSTED_ON",
-          "kind": "AI_AGENT",
-          "reverse": true,
         },
       ],
     },
@@ -18211,7 +17421,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
       },
     ],
     "summaries": [],
-    "syncedAt": "2026-08-13T09:00:00Z",
     "total": 14,
     "truncated": false,
   },
@@ -20504,7 +19713,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
       },
     ],
     "summaries": [],
-    "syncedAt": "2026-08-13T09:00:00Z",
     "total": 11,
     "truncated": false,
   },
@@ -21803,7 +21011,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
       },
     ],
     "summaries": [],
-    "syncedAt": "2026-08-13T09:00:00Z",
     "total": 14,
     "truncated": false,
   },

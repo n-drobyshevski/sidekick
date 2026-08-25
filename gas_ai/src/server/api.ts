@@ -365,7 +365,6 @@ function openIssues(): IssueRow[] {
 export function bootstrap(_p?: unknown): ApiResult {
   return run(() => ({
     ...(cached("bootstrapCore", null, bootstrapCore) as Rec),
-    dataVersion: dataVersion(),
     hasCredentials: hasWizCredentials(),
     // Outside the cached core on purpose: a cached build stamp would be the one thing
     // guaranteed to lie after a deploy.
@@ -461,11 +460,18 @@ function bootstrapCore(): Rec {
       remedy: "sync",
     },
     latestSync: latest,
+    // This block is dereferenced in exactly ONE place in the client — helpContent's
+    // "severity" lexicon entry — and it reads `openIssues` alone. `aiAssets`, `totalAssets`
+    // and `bySeverity` had no reader anywhere and are gone.
+    //
+    // THE TWO BELOW HAVE NO CLIENT READER EITHER, AND STAY, which is the one place a grep
+    // is the wrong test. test/verdictIsolation.test.ts asserts both, and that file's whole
+    // argument is the distinction between an AGGREGATE, which bootstrap may publish, and a
+    // per-asset CLAIM, which nothing outside the workbench may. Removing them would not be
+    // trimming an unread field; it would be retracting a stated contract, and it would take
+    // editing the test that exists precisely so it cannot be re-recorded.
     counts: {
-      aiAssets: assets.filter((a) => AI_ASSET_KINDS.includes(a.kind)).length,
-      totalAssets: assets.length,
       openIssues: issues.length,
-      bySeverity,
       // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is
       // a legitimate thing to publish and is what the workbench's band rail draws. It is
       // not a per-asset claim, and there is no longer any per-asset claim to be — the
@@ -583,15 +589,20 @@ function filterOptions(assets: GNode[], register: GNode[]): Rec {
     if (conditionHolds(a, "EXCESSIVE_PRIVILEGE")) kinds.add("EXCESSIVE_PRIVILEGE");
     if (conditionHolds(a, "MISSING_GUARDRAIL")) kinds.add("MISSING_GUARDRAIL");
   }
+  // FOUR KEYS, NOT SIX. The flat `clouds` and `domains` facets used to ship here and had no
+  // reader: every cloud/domain filter in the client is built from `getAssets.facets`, which
+  // is scoped to the rows in view and is the only one that can shrink as an analyst narrows.
+  // A register-wide copy on bootstrap could only ever disagree with the pills on screen.
+  //
+  // The four that stay all have exactly one reader each: `kinds` (helpContent's kind list),
+  // `projects` (scanContent), and `projectList` / `domainList` (the scope switcher, plus
+  // `projectList` again in the prune panel).
   return {
     kinds: [...kinds].sort(),
-    clouds: [...clouds].sort(),
     projects: [...projects].sort(),
-    domains: [...domains].sort(),
-    // Beside the flat `domains` above and NOT replacing it, for the reason `projectList` is
-    // beside `projects`: that one is a facet over the assets IN VIEW, this one is the
-    // switcher's catalogue over the whole register, answering "how much would I see if I
-    // picked this" rather than "what can I still narrow to".
+    // The switcher's catalogue over the whole register, answering "how much would I see if
+    // I picked this" rather than "what can I still narrow to" — which is why it survives the
+    // removal of the flat `domains` facet above rather than going with it.
     domainList: domainCatalogue(register),
     // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
     // filter on every page matches project names, and there is no reason to migrate them
@@ -641,7 +652,6 @@ export function getGraph(p?: unknown): ApiResult {
           groupBy: view.groupBy,
           sort: view.sort,
         },
-        syncedAt: doc.syncedAt,
       };
     });
   });
@@ -677,8 +687,13 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
       }
       const vocab = queryVocabulary(doc);
       if (!kind) return vocab;
+      // NO `...vocab` HERE. The per-kind response used to spread the whole base vocabulary —
+      // `kinds`, `stepsFrom` and `shortcuts` — into every per-kind answer, and the only reader
+      // of this branch takes two keys off it: graph.js's `loadFields` reads `fieldsFor[k]` and
+      // `valuesFor[k]` and nothing else. The base vocabulary IS read, but only off the BARE
+      // call (`{}`), which the page prefetches once per session and hands to the palette; so
+      // spreading it here re-shipped a whole second copy on every kind the reader clicks.
       return {
-        ...vocab,
         // ANY gets them too, over every node in the graph. `fieldsForKind("ANY")` already keeps
         // only the kind-agnostic fields, so the union is never one of things that cannot
         // co-occur — it is "which clouds does this landscape use", which is the question.
@@ -745,7 +760,6 @@ export function runGraphQuery(p?: unknown): ApiResult {
         counts: projection.counts,
         layout: layoutGraph(projection, view),
         options: { maxNodes, layout: view.mode, groupBy: view.groupBy, sort: view.sort },
-        syncedAt: doc.syncedAt,
       };
     }) as Rec;
     return retired.length ? { ...answer, retiredFilters: retired } : answer;
@@ -1071,17 +1085,6 @@ interface AssetsModel {
     projects: string[];
     domains: string[];
   };
-  /**
-   * How much of the landscape carries the domain tag at all.
-   *
-   * The Domain facet lists only values that exist, so an empty one is ambiguous between
-   * "nobody tagged anything" and "we never successfully asked" — AI_ASSET_PROPERTIES is
-   * optional and swallows an HTTP 400, and it is the only route by which an AI asset's
-   * properties bag arrives. A count beside the facet is what keeps the page from
-   * publishing the second case as the first. An aggregate over the whole set, so it is a
-   * count of what Wiz said and never a claim about any one asset.
-   */
-  domainCoverage: { key: string; tagged: number; total: number };
 }
 
 /**
@@ -1305,7 +1308,6 @@ function assetsModel(): AssetsModel {
       projects: [...projects].sort(),
       domains: [...domains].sort(),
     },
-    domainCoverage: domainCoverage(assets, domainTagKey()),
   };
 }
 
@@ -1317,7 +1319,11 @@ export function getAssets(p?: unknown): ApiResult {
     // and filter combination; only the filter/sort/slice below runs per request. The
     // cache name deliberately differs from the pre-pagination "getAssets" entry, so a
     // still-warm cache can't answer a paginating client with the old payload shape.
-    const model = cached("assetsModel", null, assetsModel) as AssetsModel;
+    // "assetsModel2", bumped because the CACHED SHAPE changed: `domainCoverage` was
+    // computed into this model and read by nothing but the payload line below, and both are
+    // gone. A still-warm "assetsModel" entry would answer with the old shape. The bump is
+    // for the shape alone — nothing about how the surviving fields are derived moved.
+    const model = cached("assetsModel2", null, assetsModel) as AssetsModel;
     const head = {
       total: model.rows.length,
       kpis: model.kpis,
@@ -1327,10 +1333,6 @@ export function getAssets(p?: unknown): ApiResult {
       countDeltas: countDeltas(model.countTrend, model.kpis),
       reach: model.reach,
       facets: model.facets,
-      domainCoverage: model.domainCoverage,
-      pageSize: query.pageSize,
-      sort: query.sort,
-      dir: query.dir,
     };
 
     // Small inventory: ship it whole and let the browser filter, sort and page with no
@@ -1683,14 +1685,20 @@ export function getConfigFindings(p?: unknown): ApiResult {
     const page = Math.max(0, Number(params["page"]) || 0);
 
     const model = cached("configModel", null, configModel) as ReturnType<typeof configModel>;
+    // `pageSize`, `sort` and `dir` used to be echoed back here and had no reader: the client
+    // holds its own copy of all three in `query`. THE REST OF THIS PAYLOAD IS DELIBERATELY
+    // LEFT ALONE even though config.js dereferences only `rows`, `totals` and `scopeLoss`,
+    // because the unread remainder is covering a real defect rather than being slack. The
+    // page never reads `all`, and builds its own pager and control rollup from the rows it
+    // holds — so past CONFIG_CLIENT_ALL_MAX, where the server switches to returning ONE page,
+    // it would render that page as if it were the whole register, under header totals that
+    // describe all of it. Trimming the paged branch would harden that into the wire. The
+    // discriminator is the thing to fix, and it is not this commit's.
     const head = {
       total: model.rows.length,
       totals: model.totals,
       facets: model.facets,
       scopeLoss: model.scopeLoss,
-      pageSize,
-      sort,
-      dir,
     };
 
     // The all path deliberately ships NO control rollup. Filtering happens in the browser
@@ -1908,8 +1916,13 @@ function scopedPosture(
 }
 
 /**
- * The Compliance page: every synced framework as a tree, plus the catalogue for the
- * Settings picker.
+ * The Compliance page: every synced framework as a tree.
+ *
+ * It used to ship the framework `catalogue` too, "for the Settings picker". There is no
+ * Settings picker: `api_setSelectedFrameworks` has no caller anywhere in the client, and
+ * nothing reads `catalogue`. What the catalogue is genuinely FOR still ships — `coverage`
+ * is `coverageSummary(trees, merged)`, the collected-of-catalogued count the Overview
+ * draws — so the aggregate survives and only the array behind it stopped travelling.
  *
  * Shipped whole rather than paged. The payload is bounded by the FRAMEWORK, not by the
  * landscape — ten categories of ten subcategories is the shape of a published Top-10 list,
@@ -1920,14 +1933,18 @@ function scopedPosture(
 export function getCompliance(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
-    const requested = String(params["frameworkId"] ?? "");
     // `projectView` is in the KEY as well as read inside, for the reason expandAsset's
     // `projectId` is: it is a live input this closure branches on, so a view change has to
     // reach the cache. `saveSettings` bumps DATA_VERSION and would evict it anyway today —
     // this stops that from being load-bearing.
     const projectView = settingsStore.getProjectView();
     const domainView = settingsStore.getDomainView();
-    return cached("getCompliance", { frameworkId: requested, projectView, domainView }, () => {
+    // `frameworkId` is NOT in this key any more, and that is a consequence of the trim
+    // rather than an oversight. It only ever selected the `requested` echo, which had no
+    // reader — neither client caller even sends the param, and the page opens on a linked
+    // framework from its own hash. With the echo gone the response does not vary by it, so
+    // keeping it in the key would fragment one entry into N identical copies.
+    return cached("getCompliance", { projectView, domainView }, () => {
       const storedPosture = syncStore.loadPosture();
       const catalogue = syncStore.loadFrameworks();
       const selected = settingsStore.getSelectedFrameworks(() => catalogue);
@@ -1987,7 +2004,6 @@ export function getCompliance(p?: unknown): ApiResult {
       return {
         trees,
         kpis: complianceKpis(posture, policies),
-        catalogue: merged,
         selected,
         // The Overview's four bands. Computed here rather than in the browser because the
         // client bundle cannot import the domain layer at all — every client-side copy of
@@ -2021,12 +2037,6 @@ export function getCompliance(p?: unknown): ApiResult {
         // hero rather than as a footnote, the discipline `registerWideNote` already keeps:
         // a footnote is read after the reader has decided.
         postureScope,
-        // Named so the page can open on a framework it was linked to rather than guessing.
-        // Null when the requested id has no stored posture, which the page reports as such
-        // instead of silently falling back to a different framework's numbers.
-        requested: requested && trees.some((t) => t.frameworkId === requested)
-          ? requested
-          : null,
       };
     });
   });
@@ -2150,7 +2160,7 @@ export function getIssues(p?: unknown): ApiResult {
     return cached("getIssues", { group }, () => {
       let rows = viewIssues();
       if (group) rows = rows.filter((i) => i.comboGroup === group);
-      return { rows: rows.map((r) => publicRow(r as unknown as Rec)), total: rows.length };
+      return { rows: rows.map((r) => publicRow(r as unknown as Rec)) };
     });
   });
 }
@@ -2384,7 +2394,6 @@ export function getProblems(p?: unknown): ApiResult {
       // finding, regardless of the outcome filter or the mode below.
       total: model.rows.length,
       severityCounts: model.severityCounts,
-      pageSize,
     };
 
     if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {

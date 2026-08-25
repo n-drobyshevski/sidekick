@@ -483,8 +483,10 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
     // `tags { key value }` array — only in the properties bag — so for an AI ASSET this step
     // is the sole route by which a domain arrives. A tenant that rejects `graphEntity` on
     // this root gets domains on its substrate (the traversals read their own bags) and none
-    // on its agents, which is why getAssets publishes `domainCoverage` rather than letting an
-    // empty Domain facet read as "nobody tagged anything".
+    // on its agents, which is why `bootstrap.scope.domainCoverage` publishes a count rather
+    // than letting an empty Domain facet read as "nobody tagged anything". (It named
+    // getAssets until that endpoint's duplicate copy was removed as unread — the argument
+    // is unchanged, but only the bootstrap one ever had a reader.)
     {
       id: "AI_ASSET_PROPERTIES",
       area: "aispm",
