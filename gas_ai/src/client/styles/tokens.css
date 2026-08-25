@@ -182,6 +182,12 @@
      (0.03…0.05 for hover), which is five slightly different answers to one question. */
   --track-bg: rgba(0, 0, 0, 0.07);
   --wash-hover: rgba(0, 0, 0, 0.045);
+  /* The accent's own wash, for the one control that reports a STANDING state rather than a
+     hover: the project switcher while a scope is narrowing the register. Low enough that
+     --accent ink on it still clears 4.5:1, which is the only reason a tint is allowed to
+     carry a state at all — and it never carries it alone. */
+  --accent-wash: rgba(190, 18, 60, 0.08);
+  --accent-wash-hover: rgba(190, 18, 60, 0.13);
 
   /* Detail-sheet geometry. The register's asset record carries issues, compliance
      findings, relationships AND identity, so it runs wider than DESIGN.md's flat

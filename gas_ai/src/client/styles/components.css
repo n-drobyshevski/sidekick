@@ -491,7 +491,19 @@
   box-shadow: var(--shadow-sheet);
   font-family: var(--font);
 }
+/* The search field, with its own mark inside it. The glyph is positioned rather than laid
+   out so the input keeps its full width and its own focus ring — a ring around the pair
+   would be a ring around a box that is not the control. */
+.combobox-search-wrap { position: relative; display: flex; align-items: center; }
+.combobox-search-icon {
+  position: absolute; left: var(--space-2); display: inline-flex;
+  color: var(--text-3); pointer-events: none;
+}
+/* Two classes, not one: the global field rule is `input[type="text"]`, and an attribute
+   selector weighs the same as a class — so a lone `.combobox-search` loses the padding
+   argument to it and the glyph lands on top of the placeholder. */
 .combobox-search { width: 100%; margin: 0; }
+.combobox-search-wrap .combobox-search { padding-left: var(--space-6); }
 /* The list scrolls (max-height set inline by position()) so the search input stays pinned. */
 .combobox-list { list-style: none; margin: 0; padding: var(--space-half); overflow-y: auto; }
 .combobox-option {
@@ -504,12 +516,46 @@
    it for assistive tech. */
 .combobox-option[aria-selected="true"] { font-weight: 600; color: var(--accent); }
 .combobox-option-hint { margin-left: auto; font-size: var(--fs-micro); color: var(--text-3); flex: 0 0 auto; }
+/* A row's own mark, and the check on the row in force. Both are decoration by contract — the
+   row says in words whatever they suggest — so they are muted, and only the check takes the
+   accent, because it reports a state rather than naming a kind. `align-self: center` because
+   the row is baseline-aligned for its text and a glyph has no baseline to sit on. */
+.combobox-option-icon {
+  display: inline-flex; flex: 0 0 auto; align-self: center; color: var(--text-3);
+}
+.combobox-check {
+  display: inline-flex; flex: 0 0 auto; align-self: center; margin-left: var(--space-1);
+  color: var(--accent);
+}
+.combobox-option[aria-selected="true"] .combobox-option-icon { color: var(--accent); }
 .combobox-option--last-pinned { border-bottom: 1px solid var(--hairline); margin-bottom: var(--space-half); padding-bottom: var(--space-2); }
 .combobox-group {
   padding: var(--space-2) var(--space-2) var(--space-half); font-size: var(--fs-micro); font-weight: 600;
   letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3);
 }
 .combobox-empty { padding: var(--space-1) var(--space-2); font-size: var(--fs-body); color: var(--text-3); cursor: default; }
+
+/* The panel's heading: what this list is, and what picking from it does. Opt-in (`header`),
+   because most lists here choose a value and have nothing to add — this exists for the one
+   that changes what every figure in the app is counted over. */
+.combobox-head {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: var(--space-half);
+}
+.combobox-head-title {
+  font-size: var(--fs-body); font-weight: 600; color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.combobox-head-note {
+  margin: var(--space-half) 0 0;
+  font-size: var(--fs-micro); line-height: 1.45; color: var(--text-2);
+}
+/* The project switcher's panel. Wider than the trigger it hangs from: positionPopover sizes a
+   popover from its anchor (floored at 240px), and the note above needs two lines rather than
+   five. A min-width beats the inline width without teaching the widget a width option that
+   exactly one caller would ever pass. */
+.combobox-pop--scope { min-width: 360px; }
 
 /* Editable mode: the field IS the combobox, so the box around it has to carry the border
    and the focus ring that a lone input would carry — the caret sits inside it and must not

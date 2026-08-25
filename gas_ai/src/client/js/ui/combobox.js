@@ -7,6 +7,7 @@ import { debounce } from "./timing.js";
 
 
 import { truncTip } from "./tip.js";
+import { uiIcon } from "./uiIcons.js";
 let _comboboxSeq = 0;
 
 /** How many matches the list will render before it stops and says so. Rebuilding runs
@@ -16,8 +17,15 @@ const COMBOBOX_DEBOUNCE_MS = 120;
 
 function comboNormalize(list) {
   return (list || []).map((o) => (typeof o === "string"
-    ? { value: o, label: o, hint: "", group: "" }
-    : { value: o.value, label: o.label == null ? o.value : o.label, hint: o.hint || "", group: o.group || "" }));
+    ? { value: o, label: o, hint: "", group: "", icon: "" }
+    : {
+      value: o.value, label: o.label == null ? o.value : o.label,
+      hint: o.hint || "", group: o.group || "",
+      // A uiIcon name, drawn before the label. Decoration by contract: a row must still say
+      // in words whatever the glyph is meant to suggest, because a reader who cannot tell
+      // two 14px marks apart is reading the label either way.
+      icon: o.icon || "",
+    }));
 }
 
 function comboMatches(o, q) {
@@ -31,7 +39,7 @@ function comboMatches(o, q) {
  * fronts ~20 sidebar options where the value IS the label. This one fronts the whole
  * asset landscape from inside a scrolling panel, so it differs in six ways:
  *
- *   - options are `{value, label, hint, group}` (or plain strings), searched on `label`
+ *   - options are `{value, label, hint, group, icon}` (or plain strings), searched on `label`
  *     and rendered under `role="presentation"` group headers that the keyboard walk skips;
  *   - `pinnedRows` replaces the hardwired `value === ""` reset row, because "Start from"
  *     has two preset rows and "" is a real state rather than "no filter";
@@ -61,14 +69,23 @@ function comboMatches(o, q) {
  * So in editable mode: `allowCustom` synthesises a "use what you typed" row, Escape
  * dismisses the list WITHOUT reverting what was typed, and `onChange` fires on Enter, on
  * a click, and on blur — the three ways a person finishes typing.
+ *
+ * THREE EXTRAS ARE OPT-IN AND INERT UNLESS ASKED FOR, so a list that wants to be a plain
+ * list stays one: `header: {title, note}` puts a heading and a sentence above the search;
+ * `checkSelected` marks the chosen row with a glyph rather than colour and weight alone; and
+ * a per-option `icon` draws a uiIcon before the label. They exist because one caller — the
+ * app-header project switcher — is not choosing a value, it is changing what every figure in
+ * the app is counted over, and that consequence has to be on the panel that does it.
  */
 export function filterCombobox({
   value, options, pinnedRows, defaultLabel, ariaLabel, searchPlaceholder = "Search…",
   fallbackLabel = "", searchThreshold = 7, onChange, id, leading = null,
   editable = false, allowCustom = false, inputClass = "", popClass = "", transform,
+  header = null, checkSelected = false,
 }) {
   const seq = ++_comboboxSeq;
   const listboxId = `combobox-list-${seq}`;
+  const noteId = `${listboxId}-note`;
   let current = value || "";
   let opts = comboNormalize(options);
   const pinned = comboNormalize(pinnedRows);
@@ -172,12 +189,21 @@ export function filterCombobox({
 
   function optionRow(o, idx) {
     const optId = `${listboxId}-opt-${idx}`;
+    const chosen = current === o.value;
     const row = el(
       "li",
       { id: optId, role: "option", class: `combobox-option${o.custom ? " combobox-option--custom" : ""}`,
-        "aria-selected": current === o.value ? "true" : "false" },
+        "aria-selected": chosen ? "true" : "false" },
+      o.icon ? el("span", { class: "combobox-option-icon", "aria-hidden": "true" }, uiIcon(o.icon, 14)) : null,
       o.label,
       o.hint ? el("span", { class: "combobox-option-hint" }, o.hint) : null,
+      // The mark this list has always been missing. Selected was weight AND colour, which the
+      // CSS beside it says is the floor, not the ceiling — a glyph is what "never colour
+      // alone" actually asks for. Opt-in, because a check against a list that offers no
+      // persistent choice (an operator, a code) would be claiming a state it does not keep.
+      checkSelected && chosen
+        ? el("span", { class: "combobox-check", "aria-hidden": "true" }, uiIcon("check", 14))
+        : null,
     );
     // mousedown, not click: in editable mode a click would blur the input first, and the
     // blur handler would commit the half-typed text before the pick landed.
@@ -312,13 +338,33 @@ export function filterCombobox({
     return `combobox-pop${popClass ? " " + popClass : ""}`;
   }
 
+  /**
+   * The panel's own heading: what this list is, and what picking from it does.
+   *
+   * A list of project names cannot say that choosing one re-scopes every figure on every
+   * page — the consequence is not in any of the rows, and a control whose consequence is
+   * invisible is one a reader has to discover by trying it. The note carries an id and the
+   * listbox points `aria-describedby` at it, so the sentence is read once when the list is
+   * reached rather than never.
+   */
+  function headerBlock() {
+    if (!header) return null;
+    return el("div", { class: "combobox-head" },
+      header.title ? el("div", { class: "combobox-head-title" }, header.title) : null,
+      header.note ? el("p", { class: "combobox-head-note", id: noteId }, header.note) : null,
+    );
+  }
+
   function openPop(initialQuery) {
     open = true;
     query = editable ? (initialQuery === undefined ? editInput.value : initialQuery) : "";
-    listEl = el("ul", { role: "listbox", class: "combobox-list", id: listboxId, "aria-label": ariaLabel });
+    listEl = el("ul", {
+      role: "listbox", class: "combobox-list", id: listboxId, "aria-label": ariaLabel,
+      "aria-describedby": header && header.note ? noteId : null,
+    });
     if (editable) {
       searchEl = null;
-      pop = el("div", { class: popClasses() }, listEl);
+      pop = el("div", { class: popClasses() }, headerBlock(), listEl);
       editInput.setAttribute("aria-expanded", "true");
     } else {
       const showSearch = opts.length > searchThreshold;
@@ -333,12 +379,21 @@ export function filterCombobox({
           oninput: onSearchInput,
           onkeydown: onListKey,
         });
-        pop = el("div", { class: popClasses() }, searchEl, listEl);
+        // The field is composed rather than bare so the magnifier can be a real node: this
+        // app draws icons through uiIcon, and the CSS alternative — a data URI on
+        // background-image — cannot even be written here, since an SVG namespace carries a
+        // `//` and the middlebox guard fails the build on one surviving into the stylesheet.
+        pop = el("div", { class: popClasses() },
+          headerBlock(),
+          el("div", { class: "combobox-search-wrap" },
+            el("span", { class: "combobox-search-icon", "aria-hidden": "true" }, uiIcon("search", 14)),
+            searchEl),
+          listEl);
       } else {
         searchEl = null;
         listEl.setAttribute("tabindex", "-1");
         listEl.addEventListener("keydown", onListKey);
-        pop = el("div", { class: popClasses() }, listEl);
+        pop = el("div", { class: popClasses() }, headerBlock(), listEl);
       }
       trigger.setAttribute("aria-expanded", "true");
     }

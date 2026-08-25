@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { projectScopeView, trendScopeView } from "../src/client/js/ui/projectScope.js";
+import { UI_ICON_NAMES } from "../src/client/js/ui/uiIcons.js";
 
 const boot = (scope, projectList) => ({ scope, filterOptions: { projectList } });
 
@@ -57,6 +58,29 @@ describe("projectScopeView", () => {
     expect(v.options[1].hint).toBe("12 assets");
     // Singular, because "1 assets" is the tell of a count nobody looked at.
     expect(v.options[2].hint).toBe("1 asset");
+  });
+
+  // The glyph on a row is the THIRD carrier, after the hint and the group heading. These two
+  // tests are what stop it becoming the first: the moment a row's folder-ness is legible only
+  // as one folder versus two at 14px, the hint above has quietly stopped being the answer.
+  it("draws a mark beside the words, never instead of them", () => {
+    const v = projectScopeView(boot({ projectView: "", shown: 826, register: 826 }, LIST));
+    expect(v.options[0].icon).toBe("folders");   // a business unit: reaches a subtree
+    expect(v.options[1].icon).toBe("folder");    // a leaf project
+    // …and every one of them still says which it is, in words, with no icon involved.
+    for (const o of v.options) expect(o.hint).toBeTruthy();
+    expect(v.pinned[0].icon).toBe("folders");
+    expect(v.pinned[0].hint).toBe("826 assets");
+  });
+
+  // uiIcon falls back to a one-pixel dot on an unknown name rather than throwing, and
+  // icons.test.js's chrome-icon sweep only sees literal `uiIcon("…")` calls in the client —
+  // a name that travels as option data is invisible to it. This is that guard.
+  it("names only glyphs the icon set actually draws", () => {
+    const v = projectScopeView(boot({ projectView: "", shown: 826, register: 826 }, LIST));
+    for (const o of [...v.pinned, ...v.options]) {
+      expect(UI_ICON_NAMES, o.label + " asks for " + o.icon).toContain(o.icon);
+    }
   });
 
   it("claims nothing about folders when the register has not recorded any", () => {
