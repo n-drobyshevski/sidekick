@@ -190,9 +190,12 @@ export function coerceEpisode(r: Rec): EpisodeRow {
     superseded_by_scan: str(r["superseded_by_scan"]),
     fix_date: str(r["fix_date"]),
     fix_observed_at: str(r["fix_observed_at"]),
-    // Null on every legacy bundle — the Python exporter never had the column — which is
-    // correct and not a loss: those episodes read as Not attributable, exactly as they did
-    // before this column existed.
+    // Null on every legacy bundle — the Python exporter never had the column, and its
+    // `resolved_episodes` table never had one to export. Correct at import, and no longer
+    // permanent: these episodes arrive as Not attributable, then recover their bag from the
+    // scan archives (the history backfill) or from the next scan that re-lists them. The one
+    // route that cannot reach them is backfillTagsFromCheckpoint — they were never in a GAS
+    // checkpoint to begin with.
     tags_json: str(r["tags_json"]),
     ...coerceRiskSignals(r),
   };

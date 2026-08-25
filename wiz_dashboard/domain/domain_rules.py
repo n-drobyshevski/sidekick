@@ -47,8 +47,11 @@ UNASSIGNED = "Unassigned"
 # Backtracking mitigation for user-supplied patterns (stdlib ``re`` has no timeout).
 MAX_REGEX_LEN = 200
 
-# ``ledger._base_df`` surfaces compacted episodes with this asset-name placeholder;
-# a name regex must never "match" it — episodes carry no asset data and stay Unassigned.
+# ``ledger._base_df`` surfaces compacted episodes with this asset-name placeholder; a name
+# regex must never "match" it, because it is not a name. That is the whole of the rule, and
+# it is narrower than it once was: this used to pin the entire record to ``UNASSIGNED``
+# before any condition ran, which also disqualified the ``tag`` conditions — on exactly the
+# rows whose tag bag compaction goes to the trouble of preserving.
 _COMPACTED_ASSET = "(compacted)"
 
 # Column candidates per frame shape. The live findings frame is the json_normalize
@@ -282,7 +285,12 @@ def _condition_matches(spec, record, tags) -> bool:
         names = _record_values(record, *_FRAME_NAME_COLS) or _record_values(
             record, *_LEDGER_NAME_COLS
         )
-        return any(spec[1].search(n) for n in names)
+        # The placeholder is not a name. Filtering it HERE rather than pinning the whole
+        # record to UNASSIGNED is the difference between "a name regex cannot match a
+        # compacted episode" (true, and all this guard was ever for) and "no rule of any
+        # kind can claim a compacted episode" (which is what it used to mean, and which
+        # made a recovered tag bag unusable by the rules that read it).
+        return any(spec[1].search(n) for n in names if n != _COMPACTED_ASSET)
     if kind == "sub":
         subs = _record_values(record, *_FRAME_SUB_COLS) + _record_values(
             record, *_LEDGER_SUB_COLS
@@ -298,9 +306,6 @@ def _condition_matches(spec, record, tags) -> bool:
 
 def assign_domain(record, compiled) -> str:
     """The domain a single finding record belongs to (first match wins)."""
-    name = _record_values(record, *_LEDGER_NAME_COLS)
-    if name and name[0] == _COMPACTED_ASSET:
-        return UNASSIGNED
     tags = _record_tags(record)
     for dom in compiled:
         for rule in dom.rules:
@@ -363,7 +368,14 @@ class _FrameContext:
             mask = self._false.copy()
             for col in self.name_cols:
                 s = self.df[col]
-                mask |= s.notna() & s.astype(str).str.contains(spec[1], na=False)
+                # The `!= _COMPACTED_ASSET` term is the vectorized twin of the filter in
+                # _condition_matches: the placeholder is not a name, so no pattern may match
+                # it — while every other condition kind stays free to claim the row.
+                mask |= (
+                    s.notna()
+                    & (s.astype(str) != _COMPACTED_ASSET)
+                    & s.astype(str).str.contains(spec[1], na=False)
+                )
             return mask
         if kind == "sub":
             mask = self._false.copy()
@@ -426,14 +438,15 @@ def _parse_tags_json(s):
 def assign_domains_ledger(df, compiled) -> pd.Series:
     """Domain per row of the ledger base frame (``ledger.load_base_df`` shape).
 
-    Compacted episode rows (placeholder asset name, no rule inputs) are pinned to
-    ``UNASSIGNED`` before any condition runs — honest degradation over sealed data.
+    Compacted episode rows carry the placeholder asset name, so no ``name_regex``
+    condition can match them (``_FrameContext.condition_mask`` excludes the sentinel).
+    Every other condition kind still applies: an episode that kept its tag bag through
+    compaction is claimable by a ``tag`` rule, which is the whole reason the bag is
+    carried. A row with no surviving input at all reaches ``UNASSIGNED`` by matching
+    nothing, rather than by being pinned there before the rules run.
     """
     if df is None or df.empty:
         return pd.Series([], dtype=object)
     tags_dicts = df["tags_json"].map(_parse_tags_json) if "tags_json" in df.columns else None
     ctx = _FrameContext(df, _LEDGER_NAME_COLS, _LEDGER_SUB_COLS, tags_dicts, _LEDGER_SG_COLS)
-    eligible = pd.Series(True, index=df.index)
-    if "asset_name" in df.columns:
-        eligible &= df["asset_name"].astype(str) != _COMPACTED_ASSET
-    return _assign_over(ctx, compiled, eligible)
+    return _assign_over(ctx, compiled, pd.Series(True, index=df.index))

@@ -1,4 +1,4 @@
-// Pure view-model for the risk-signal backfill status line (Settings). No DOM, so it is
+// Pure view-model for the history-backfill status line (Settings). No DOM, so it is
 // unit-tested — the `scanProgressView` pattern in scanProgress.js.
 //
 // It exists mainly to keep two honest-state rules from being quietly lost in render code:
@@ -67,6 +67,11 @@ export function backfillStatusView(b, now = Date.now()) {
   // zeroes is noise.
   if (r.scansSealed) parts.push(r.scansSealed + " sealed (archives pruned)");
   if (r.scansUnreadable) parts.push(r.scansUnreadable + " unreadable");
+  parts.push((r.tagsRecovered || 0) + " domain tag(s) recovered");
+  // BOTH residues, always, even at zero — same rule as the recovered counts above. "0 still
+  // unattributable" and "we never looked" are different answers, and only printing the
+  // figure unconditionally tells a reader which one they are looking at.
   parts.push((r.stillUnknown || 0) + " still unclassified");
+  parts.push((r.stillUnattributable || 0) + " still unattributable");
   return { text: parts.join(" · ") + ".", busy: false, poll: false };
 }
