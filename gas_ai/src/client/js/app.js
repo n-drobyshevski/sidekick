@@ -1,4 +1,10 @@
-// Wiz SIDEKICK AI SPA shell: sidebar navigation, sync zone, hash router.
+// Wiz SIDEKICK AI SPA shell: app header, sidebar navigation, sync zone, hash router.
+//
+// THE HEADER CARRIES IDENTITY AND SCOPE, and nothing else. The reference screen puts a
+// search box, notification icons and an avatar along the same bar; none of those has
+// anything behind it here, and a control with nothing behind it is the one thing this app's
+// chrome is careful never to offer (see ui/projectScope.js). The sync controls stay in the
+// rail, where they have always been and where the last-sync caption can afford its words.
 
 import { call } from "./api.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
@@ -224,6 +230,7 @@ async function boot() {
   if (!splash) { splash = bootSplash(); app.append(splash); }
   for (const node of [...app.children]) if (node !== splash) node.remove();
 
+  const appbar = el("header", { class: "appbar" });
   const sidebar = el("nav", { class: "sidebar", "aria-label": "Main navigation" });
   sidebarEl = sidebar;
   mainEl = el("main", { id: "main" });
@@ -234,7 +241,10 @@ async function boot() {
       el("div", { class: "route-overlay-fill" })),
     el("span", { class: "route-overlay-label" }),
   );
-  app.append(sidebar, mainEl, routeOverlay);
+  // The overlay is a child of the BODY row, not of `app`: it veils the content pane while a
+  // page refetches, and the header above it has to stay live — the rail already does, by
+  // sitting outside the overlay's box.
+  app.append(appbar, el("div", { class: "app-body" }, sidebar, mainEl, routeOverlay));
 
   let data;
   try {
@@ -247,15 +257,45 @@ async function boot() {
         el("button", { class: "primary", onclick: () => refresh() }, "Retry"),
       ),
     );
+    renderAppbar(appbar, null);
     renderSidebar(sidebar, null);
     hideBootSplash(); // reveal the error card
     return;
   }
+  renderAppbar(appbar, data);
   renderSidebar(sidebar, data);
   route(); // paints the page's skeleton synchronously up to its first data await
   // Fade the splash only after the skeleton has laid out — double rAF flushes the (cached)
   // bootstrap microtasks and one layout tick, so the splash reveals the skeleton, never a blank pane.
   requestAnimationFrame(() => requestAnimationFrame(hideBootSplash));
+}
+
+/**
+ * The bar across the top: whose product this is, and which register it is showing.
+ *
+ * Rebuilt wholesale like the rail is, and from the same payload — `pickProjectScope` ends in
+ * a `refresh()`, so the switcher's own label and caption are re-derived rather than patched.
+ *
+ * @param {HTMLElement} appbar
+ * @param {object|null} data  the bootstrap payload, or null when boot failed
+ */
+function renderAppbar(appbar, data) {
+  clear(appbar);
+  // Decorative, because the name is right there beside it in text and never hidden — the
+  // shell's other mark (the splash) is decorative for the same reason. The rail used to hold
+  // a labelled copy for its 56px width, where the mark was the only identity on screen; the
+  // rail carries no mark at all now, so nothing in this file names the product twice.
+  appbar.append(
+    brandMark(22, { compact: true }),
+    el("span", { class: "appbar-name" }, "Wiz SIDEKICK AI"),
+  );
+  // Null when there is no register to slice — including the boot-failure path, where offering
+  // a picker over data we could not fetch would be a control with nothing behind it. The rule
+  // goes with it: a separator with one side missing separates nothing.
+  const scopeSwitch = projectScopeControl(data, pickProjectScope);
+  if (scopeSwitch) {
+    appbar.append(el("span", { class: "appbar-sep", "aria-hidden": "true" }), scopeSwitch);
+  }
 }
 
 function renderSidebar(sidebar, data) {
@@ -269,25 +309,10 @@ function renderSidebar(sidebar, data) {
     },
   });
   railToggle.innerHTML = CHEVRON_ICON;
-  sidebar.append(
-    el("div", { class: "wordmark" },
-      // Two marks, one shown at a time: the expanded rail pairs the compact mark with the
-      // name, and the collapsed rail hides the name — so THAT copy carries the accessible
-      // label and this one stays decorative, rather than the picture and the word saying
-      // the same thing twice to a screen reader. CSS picks which is visible; both are in
-      // the DOM because the rail toggles without a re-render.
-      brandMark(20, { compact: true }),
-      el("span", { class: "wordmark-label" }, "Wiz SIDEKICK AI"),
-      brandMark(28, { compact: true, label: "Wiz SIDEKICK AI" }),
-      railToggle),
-  );
-  // Above the nav, below the wordmark: the scope applies to every page in the list under
-  // it, so it reads as a heading for the nav rather than as one page's filter. Returns
-  // null when there is no register to slice — including the `renderSidebar(sidebar, null)`
-  // boot-failure path, where offering a picker over data we could not fetch would be a
-  // control with nothing behind it.
-  const scopeSwitch = projectScopeControl(data, pickProjectScope);
-  if (scopeSwitch) sidebar.append(scopeSwitch);
+  // The rail opens with the collapse control alone. The wordmark that used to sit here is in
+  // the app header now, and the scope switcher with it — both describe the whole app rather
+  // than the list of pages, and the header is where the whole app is named.
+  sidebar.append(el("div", { class: "rail-head" }, railToggle));
   const { route: active } = parseHash();
   let lastGroup = null;
   for (const [key, page] of Object.entries(PAGES)) {

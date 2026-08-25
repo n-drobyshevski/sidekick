@@ -34,14 +34,38 @@
 }
 
 /* ------------------------------------------------------------------ shell / nav */
-/* Fixed viewport-height shell: the rail always fills the viewport (pinning the sync
-   zone to the bottom) and the content pane scrolls on its own. */
-#app { display: flex; height: 100vh; overflow: hidden; position: relative; }
+/* Fixed viewport-height shell, in two rows: the app header across the top, and beneath it
+   the rail (which fills what is left, pinning the sync zone to its bottom) beside a content
+   pane that scrolls on its own.
+   .app-body, not #app, is the positioning context for the route overlay — the overlay veils
+   the content while a page refetches, and the header above it stays live. */
+#app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.app-body { flex: 1; min-height: 0; display: flex; position: relative; }
+
+/* The app header: what register you are reading, and whose product it is. Deliberately just
+   those two things — the reference screen's search box, notification icons and avatar have
+   nothing behind them here, and the sync controls stay in the rail where they have always
+   been. */
+.appbar {
+  flex: 0 0 var(--appbar-h);
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: 0 var(--space-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+  z-index: var(--z-appbar);
+}
+.appbar-name {
+  font-weight: 600; font-size: var(--fs-lead); letter-spacing: -0.02em; color: var(--ink);
+  white-space: nowrap;
+}
+/* The rule between the product and the scope it is showing — two different kinds of fact,
+   and without it the project name reads as part of the wordmark. */
+.appbar-sep { width: 1px; height: 20px; flex: 0 0 auto; background: var(--hairline); }
 
 .sidebar {
   width: var(--rail-w);
   flex: 0 0 var(--rail-w);
-  height: 100vh;
+  height: 100%;
   overflow-y: auto;
   background: var(--surface);
   border-right: 1px solid var(--hairline);
@@ -52,19 +76,10 @@
   /* Only the width animates, for the collapsed icon-only mode below. */
   transition: flex-basis var(--dur-base) ease, width var(--dur-base) ease;
 }
-.sidebar .wordmark {
-  font-weight: 600;
-  font-size: var(--fs-lead);
-  letter-spacing: -0.02em;
-  padding: var(--space-1) var(--space-2) var(--space-3);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.wordmark-dot {
-  width: 10px; height: 10px; border-radius: var(--radius-xs); background: var(--accent);
-  display: inline-block;
-}
+/* The rail's own first row, holding nothing but the collapse control. The wordmark that used
+   to live here is in the app header now — one brand, in one place, whatever the rail is
+   doing. Right-aligned when the rail is open, centred when it is 56px wide (below). */
+.sidebar .rail-head { display: flex; align-items: center; padding: 0 var(--space-half) var(--space-2); }
 /* The product mark. Its paint is on the presentation attributes too (ui/brandMark.js), so
    it draws correctly with no stylesheet at all — which is the case index.html's first
    paint is closest to. These rules exist so the three colours stay retintable from one
@@ -75,37 +90,35 @@
 .brand-mark .mark-ink { stroke: var(--mark-ink); }
 .brand-mark .mark-ink-fill { fill: var(--mark-ink); }
 .brand-mark .mark-knockout { stroke: var(--page); }
-/* Expanded rail: the small mark beside the name. The labelled copy is the collapsed
-   rail's and is hidden here — see the note at its call site in app.js. */
-.wordmark .brand-mark--compact + .wordmark-label { margin-left: var(--space-half); }
-.wordmark > .brand-mark--compact ~ .brand-mark--compact { display: none; }
-/* Project scope switcher — sits between the wordmark and the nav, and scopes every page
-   under it. Full-bleed to the rail's padding box so it reads as part of the chrome rather
-   than as a widget dropped into it. */
+/* Project scope switcher — in the app header, beside the wordmark, because it scopes every
+   page rather than any one of them. A row, not a column: the caption reads as a subtitle to
+   the trigger when it is under it, and as the trigger's denominator when it is beside it,
+   and the second is what it is. */
 .scope-switch {
-  position: relative;   /* the rail glyph is positioned against this */
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: 0 var(--space-1) var(--space-3);
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
 }
-/* Only ever visible in the collapsed rail — see the .collapsed block below. */
-.scope-rail-glyph { display: none; }
-/* The nav-link size at weight 500, one step below the nav's 600. This control scopes every
-   page in the list beneath it, so it must not read as smaller than the things it governs;
-   equally it is not a nav item, so it stops short of their weight. (Said as "13px/500" until
-   the type scale was enforced; both this and .nav-link are --fs-body now. The relationship
-   the comment describes is the point, so it stops naming a number that can drift.) */
+.scope-combo { width: clamp(180px, 22vw, 280px); flex: 0 1 auto; }
+/* 13px/500 — one step down from the wordmark it sits beside. It names the register every
+   page is showing, so it must not read as an afterthought; equally it is not the product's
+   name, so it stops short of that weight. */
 .scope-switch .combobox-trigger { min-height: 32px; font-size: var(--fs-body); font-weight: 500; }
+.scope-combo-icon { display: inline-flex; flex: 0 0 auto; color: var(--text-3); }
 .scope-caption {
   font-size: var(--fs-micro);
   color: var(--text-3);
-  padding: 0 var(--space-half);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
 /* A stored scope naming a project the register no longer holds. Amber, and the caption
    already says so in words — the colour is the second signal, never the only one. */
 .scope-caption.stale { color: var(--warn); }
+/* On a phone the caption is down to "87…", which is worse than absent: a denominator you can
+   only half-read tells you nothing, and the trigger beside it still names the scope. */
+@media (max-width: 560px) { .scope-caption { display: none; } }
 
 .nav-group {
   font-size: var(--fs-micro);
@@ -161,7 +174,6 @@
 }
 .nav-icon svg { width: 18px; height: 18px; display: block; }
 .nav-link.active .nav-icon { color: var(--ink); }
-.wordmark-label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
 .rail-toggle {
   margin-left: auto; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
@@ -181,53 +193,19 @@
 
 @media (min-width: 801px) {
   .sidebar.collapsed { padding-left: var(--space-2); padding-right: var(--space-2); }
-  .sidebar.collapsed .wordmark-label,
-  .sidebar.collapsed .wordmark-dot,
-  /* The 56px rail drops the name, so the mark becomes the only identity on screen: the
-     small decorative copy goes and the larger LABELLED one takes its place. */
-  .sidebar.collapsed .wordmark > .brand-mark--compact:first-of-type,
   .sidebar.collapsed .nav-label,
   .sidebar.collapsed .nav-group,
   .sidebar.collapsed .scan-caption,
   .sidebar.collapsed .btn-label,
   .sidebar.collapsed .scan-buttons button:not(.primary) { display: none; }
-  /* Stacked, not in a row: the mark plus the toggle side by side is 46px of content in a
-     40px box. Above/below fits, and puts the mark where the name was. */
-  .sidebar.collapsed .wordmark {
-    flex-direction: column; justify-content: center; gap: var(--space-2); padding: var(--space-1) 0 var(--space-3);
-  }
-  .sidebar.collapsed .wordmark > .brand-mark--compact ~ .brand-mark--compact { display: block; }
+  /* The toggle is the row's only occupant either way, so collapsing just centres it. */
+  .sidebar.collapsed .rail-head { justify-content: center; padding-left: 0; padding-right: 0; }
   .sidebar.collapsed .rail-toggle { margin-left: 0; }
   .sidebar.collapsed .rail-toggle svg { transform: rotate(180deg); }
   .sidebar.collapsed .nav-link { justify-content: center; padding: var(--space-2) 0; }
   .sidebar.collapsed .scan-buttons { justify-content: center; }
   .sidebar.collapsed .scan-buttons .primary { padding: var(--space-2); }
   .sidebar.collapsed .rail-status-dot { display: block; }
-  /* The switcher SHRINKS rather than hides. A 56px rail that silently shows one unit's
-     numbers with nothing on screen saying so is the failure to avoid, so the trigger stays
-     — as a square carrying the first characters of the project name, its caret and caption
-     dropped for width. It has to be the real trigger and not a stand-in button: the
-     popover positions against this element's box, and a display:none stand-in would anchor
-     it at the viewport origin. The full name stays reachable by hover title and is the
-     control's accessible name. */
-  .sidebar.collapsed .scope-switch { padding: 0 0 var(--space-3); align-items: center; }
-  .sidebar.collapsed .scope-caption { display: none; }
-  .sidebar.collapsed .scope-combo { width: 40px; }
-  .sidebar.collapsed .scope-switch .combobox-trigger {
-    width: 40px; padding: var(--space-1) var(--space-half); justify-content: center;
-    font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.02em;
-  }
-  /* `visibility`, not `display`: the text node keeps its box so the trigger keeps its
-     size, and the trigger is what the popover measures itself against. */
-  .sidebar.collapsed .scope-switch .combobox-trigger-text { visibility: hidden; }
-  .sidebar.collapsed .scope-switch .combobox-caret { display: none; }
-  .sidebar.collapsed .scope-rail-glyph {
-    display: flex; align-items: center; justify-content: center;
-    position: absolute; top: 0; left: 0; width: 100%; height: 32px;
-    font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.02em; color: var(--text-2);
-    /* Inert: every click belongs to the real trigger underneath. */
-    pointer-events: none;
-  }
   /* Loading panel in the icon rail: drop the full card chrome and its text/bar/buttons,
      leaving the compact ring indicator centered — the card's phase, counts and controls
      are too wide for 56px, so they collapse to the ring (status) + its Details button. */
@@ -390,7 +368,7 @@
 main {
   flex: 1;
   min-width: 0;
-  height: 100vh;
+  height: 100%;
   overflow-y: auto;
   padding: var(--space-6) var(--space-6) var(--space-7);
 }
@@ -406,7 +384,9 @@ main.full-bleed {
 main.full-bleed > .empty { margin: var(--space-6) var(--space-6); }
 
 /* Route-reload overlay: a translucent veil + indeterminate top bar over the content
-   pane (the sidebar stays clear and interactive) while the active page refetches. */
+   pane while the active page refetches. The rail and the app header stay clear and
+   interactive — the rail because it sits outside this box, the header because it outranks
+   it (--z-appbar). */
 .route-overlay {
   position: absolute;
   top: 0;
@@ -511,7 +491,12 @@ main.full-bleed > .empty { margin: var(--space-6) var(--space-6); }
 }
 
 @media (max-width: 800px) {
-  #app { flex-direction: column; height: auto; min-height: 100vh; overflow: visible; }
+  #app { height: auto; min-height: 100vh; overflow: visible; }
+  .app-body { flex-direction: column; min-height: 0; overflow: visible; }
+  /* The header follows the page down rather than scrolling off it: the scope switcher is
+     the one control that answers "what am I even looking at", and at this width the page
+     below it is long. Sticky rather than fixed so it still takes part in the flow. */
+  .appbar { position: sticky; top: 0; }
   .sidebar {
     width: auto;
     flex: none;

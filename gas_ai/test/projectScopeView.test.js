@@ -1,11 +1,11 @@
-// What the sidebar switcher CLAIMS, from the bootstrap payload alone.
+// What the app-header switcher CLAIMS, from the bootstrap payload alone.
 //
 // DOM-free half of the control, tested the way syncProgressView is: the assembly in
 // `projectScopeControl` is a handful of `el()` calls, but the wording, the denominator and
 // the stale-scope detection are decisions, and a decision that can be wrong gets a test.
 
 import { describe, expect, it } from "vitest";
-import { projectScopeView, railGlyph, trendScopeView } from "../src/client/js/ui/projectScope.js";
+import { projectScopeView, trendScopeView } from "../src/client/js/ui/projectScope.js";
 
 const boot = (scope, projectList) => ({ scope, filterOptions: { projectList } });
 
@@ -17,7 +17,7 @@ const LIST = [
 
 describe("projectScopeView", () => {
   it("offers nothing when there is no register to slice", () => {
-    // Including the boot-failure path, where renderSidebar is called with null.
+    // Including the boot-failure path, where renderAppbar is called with null.
     expect(projectScopeView(null).show).toBe(false);
     expect(projectScopeView(boot({ projectView: "", shown: 0, register: 0 }, [])).show).toBe(false);
   });
@@ -29,7 +29,6 @@ describe("projectScopeView", () => {
     expect(v.pinned[0].label).toBe("All synced projects");
     expect(v.caption).toBe("826 assets synced");
     expect(v.stale).toBe(false);
-    expect(v.glyph).toBe("ALL");
   });
 
   it("keeps the denominator beside the number", () => {
@@ -47,7 +46,6 @@ describe("projectScopeView", () => {
     expect(v.stale).toBe(true);
     expect(v.caption).toContain("Not in this register");
     expect(v.label).toBe("a project this register does not hold");
-    expect(v.glyph).toBe("!");
     // And every real project is still on offer, so the state is escapable.
     expect(v.options.map((o) => o.value)).toEqual(["p-unit", "p-a", "p-b"]);
   });
@@ -80,22 +78,6 @@ describe("projectScopeView", () => {
       .toEqual(["Business units", "Not yet recorded", "Not yet recorded"]);
   });
 });
-
-describe("railGlyph", () => {
-  it("takes word initials, because these names are hyphenated", () => {
-    // First-two-characters would render every PROJECT-* in a register as "PR".
-    expect(railGlyph("VALUE-CHAIN")).toBe("VC");
-    expect(railGlyph("CS-VALUECHAIN-SECURITY")).toBe("CV");
-    expect(railGlyph("PROJECT-ALPHA")).toBe("PA");
-    expect(railGlyph("PROJECT-BETA")).toBe("PB");
-  });
-
-  it("falls back to two characters for a single-word name", () => {
-    expect(railGlyph("Production")).toBe("PR");
-    expect(railGlyph("")).toBe("?");
-  });
-});
-
 
 // The inventory trend's own scope claim — the last figure in the app that had to refuse the
 // switcher, and the one whose note is easiest to get subtly wrong.
