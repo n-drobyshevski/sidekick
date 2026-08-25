@@ -32,15 +32,13 @@ import {
 import {
   clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
   emptyState, errorState,
-  fmtDate, kpiCard, pager, plural,
+  DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtDate, kpiCard, plural,
   sectionLabel, sevBadge, sevEntries, sevKeyRow,
-  sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, toast,
+  sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
   trendScopeNote,
 } from "../ui.js";
 
 import { tipAnchor } from "../ui.js";
-const PAGE_SIZES = [25, 50, 100, 250];
-const DEFAULT_PAGE_SIZE = 50;
 
 /** Every issue severity the strip can show. An asset with no open issue carries no
  *  severity at all and belongs to no segment — it is counted in the strip's note instead,
@@ -854,18 +852,17 @@ export async function renderInventory(main, params) {
     visibleRows = pageRows;
     resultsHost.append(view === "cards" ? cardGrid(pageRows) : assetTable(pageRows));
 
-    const sizeSel = el("select", { "aria-label": "Rows per page" },
-      ...PAGE_SIZES.map((n) => el("option", { value: String(n) }, `${n} / page`)));
-    sizeSel.value = String(query.pageSize);
-    sizeSel.addEventListener("change", () => {
-      const firstRow = query.page * query.pageSize; // keep the top of the page in view
-      query.pageSize = Number(sizeSel.value);
-      goToPage(Math.floor(firstRow / query.pageSize));
-    });
-
-    resultsHost.append(
-      el("div", { class: "table-footer" }, sizeSel, pager(query.page, pageCount, shown, goToPage)),
-    );
+    // The "keep the top of the page in view" recompute this used to do inline now lives in
+    // `tableFooter`, which is where the graph's copy of this strip was missing it.
+    resultsHost.append(tableFooter({
+      page: query.page,
+      pageCount,
+      total: shown,
+      pageSize: query.pageSize,
+      sizes: PAGE_SIZES,
+      onPage: goToPage,
+      onPageSize: (size, page) => { query.pageSize = size; goToPage(page); },
+    }));
   }
 
   function openAsset(row) {

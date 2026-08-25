@@ -1,6 +1,7 @@
 // Quantity display: meters, the sortable data table, and the table pager.
 
 import { clear, el } from "./dom.js";
+import { PAGE_SIZES, pageForSize } from "./tableModel.js";
 import { pluralize } from "./format.js";
 import { tip, tipLabel, tipLines, truncTip } from "./tip.js";
 
@@ -240,4 +241,56 @@ export function pager(page, pageCount, total, onPage) {
       disabled: page >= pageCount - 1,
     }, "Next ›"),
   );
+}
+
+/**
+ * The pager and the rows-per-page control, as one strip under a paged table.
+ *
+ * Two copies of this shipped — inventory.js and the Security Graph's queryTable.js — and each
+ * had half of the right answer, so this is assembled the way `dataTable` above was: take the
+ * stronger part of each rather than pick a file to win.
+ *
+ *   FROM THE GRAPH: the pager leads and the size control follows. The count is the primary
+ *   fact ("Page 1 of 8 — 200 rows"); how many fit on a page is an adjustment to it.
+ *   FROM THE INVENTORY: `N / page` options, so the control names its own unit and needs no
+ *   separate label beside it — and, more importantly, the page recompute below.
+ *
+ * CHANGING HOW MANY ROWS YOU CAN SEE IS NOT A REQUEST TO GO SOMEWHERE ELSE. The graph's copy
+ * reset to page 1 on every size change; on page 12 of a register at 25 rows that is the
+ * difference between a control and a trap. `onPageSize` therefore receives the size AND the
+ * page still holding the row that was at the top, computed once here rather than by each
+ * caller — which is what stopped the two copies agreeing in the first place.
+ *
+ * `page` is ZERO-BASED, matching `pager` above and `pageOf`. A caller whose own page state is
+ * one-based (the graph, because that is what belongs in a shareable URL) converts at this
+ * boundary rather than leaving the two to disagree by one.
+ *
+ *   page      zero-based index of the page on screen
+ *   pageCount total pages, >= 1
+ *   total     rows across every page, for the count the pager prints
+ *   pageSize  rows per page now
+ *   sizes     the options to offer; PAGE_SIZES unless a caller has a reason
+ *   onPage    (page) => void, zero-based
+ *   onPageSize(size, page) => void — `page` is already recomputed
+ */
+export function tableFooter(spec) {
+  const {
+    page = 0, pageCount = 1, total = 0, pageSize = 0,
+    sizes = PAGE_SIZES, onPage = null, onPageSize = null,
+  } = spec || {};
+
+  const kids = [pager(page, pageCount, total, (p) => onPage && onPage(p))];
+
+  if (onPageSize) {
+    const sizeSelect = el("select", { "aria-label": "Rows per page" },
+      ...sizes.map((n) => el("option", { value: String(n) }, n + " / page")));
+    sizeSelect.value = String(pageSize);
+    sizeSelect.addEventListener("change", () => {
+      const next = Number(sizeSelect.value);
+      onPageSize(next, pageForSize(page, pageSize, next));
+    });
+    kids.push(sizeSelect);
+  }
+
+  return el("div", { class: "table-footer" }, ...kids);
 }

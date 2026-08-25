@@ -7,7 +7,7 @@
 //   dom.js       el, clear, motionOk, downloadText — the element builder
 //   format.js    dates in the display zone
 //   severity.js  the severity marks (dot + word, never colour alone)
-//   data.js      quantity display: progress track, pager
+//   data.js      quantity display: progress track, the sortable table, the paging footer
 //   tableModel.js how a register orders and pages its rows — comparators, where an unknown
 //                goes, what a tie does. DOM-free, so the half that can be WRONG is the half
 //                vitest can hold
@@ -44,7 +44,7 @@ export {
 export {
   aarsChip, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
 } from "./ui/severity.js";
-export { dataTable, meter, pager, progressBar } from "./ui/data.js";
+export { dataTable, meter, pager, progressBar, tableFooter } from "./ui/data.js";
 export {
   DEFAULT_PAGE_SIZE, PAGE_SIZES, compareValues, nullsLast, pageForSize, pageOf, sortRows,
   triState,

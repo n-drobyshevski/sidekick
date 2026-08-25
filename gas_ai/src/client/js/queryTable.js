@@ -12,11 +12,12 @@
 // — the same bargain inventory.js took.
 
 import {
-  absent, dataTable, el, nameCell, pager, sevBadge, sortRows, triCell,
+  absent, dataTable, el, nameCell, sevBadge, sortRows, tableFooter, triCell,
 } from "./ui.js";
 import { kindLabel, kindsLabel } from "./icons.js";
-const PAGE_SIZES = [25, 50, 100, 250];
-export const DEFAULT_PAGE_SIZE = 50;
+// Re-exported so graph.js keeps one import for the table it draws. The list itself is
+// ui/tableModel.js's — two registers had shipped the same four numbers independently.
+export { DEFAULT_PAGE_SIZE } from "./ui.js";
 
 /**
  * WHICH treatment a field gets. The treatments themselves are ui/cells.js's, shared with every
@@ -142,18 +143,18 @@ export function queryTable(payload, opts = {}) {
     emptyText: "No paths match this query.",
   });
 
-  const sizeSelect = el("select", { "aria-label": "Rows per page" },
-    ...PAGE_SIZES.map((n) => el("option", { value: String(n) }, String(n))));
-  sizeSelect.value = String(pageSize);
-  sizeSelect.addEventListener("change", () => opts.onPageSize && opts.onPageSize(Number(sizeSelect.value)));
-
-  // `pager` counts from ZERO — it prints `page + 1` and disables Next at `pageCount - 1`.
-  // Our page state is one-based because that is what belongs in a shareable URL, so the two
-  // are converted at this boundary rather than left to disagree by one.
-  const footer = el("div", { class: "table-footer" },
-    pager(page - 1, pageCount, rows.length, (p) => opts.onPage && opts.onPage(p + 1)),
-    el("label", { class: "small muted" }, "Rows ", sizeSelect),
-  );
+  // `tableFooter` counts from ZERO, as `pager` always has. Our page state is one-based
+  // because that is what belongs in a shareable URL, so the two are converted at this
+  // boundary rather than left to disagree by one — including the page the footer hands back
+  // when the size changes, which used to be discarded here in favour of a reset to page 1.
+  const footer = tableFooter({
+    page: page - 1,
+    pageCount,
+    total: rows.length,
+    pageSize,
+    onPage: (p) => opts.onPage && opts.onPage(p + 1),
+    onPageSize: (size, nextPage) => opts.onPageSize && opts.onPageSize(size, nextPage + 1),
+  });
 
   return el("div", { class: "gq-results" }, table, footer);
 }
