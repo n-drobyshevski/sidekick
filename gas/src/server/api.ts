@@ -1280,7 +1280,12 @@ export function getMttrTrend(p?: unknown): ApiResult {
 export function getMttrPage(p?: unknown): ApiResult {
   const domain = String((p as Rec)?.["domain"] ?? "");
   return run(() => ({
-    mttr: cachedMttrData(p),
+    // THE SUMMARY IS NOT MISSING — it is the other RPC's job. `mttr.js` already fires
+    // `api_getMttr` with identical params, and both endpoints resolve the SAME
+    // `cachedMttrData` entry, so returning it here too shipped it twice per page load: 9,372
+    // bytes on the seeded estate, two Kaplan-Meier curves included. On a cold cache it was
+    // worse than duplicate transfer — the two RPCs are separate GAS executions, so both
+    // computed it. The page composes the two payloads instead; see `mttrPaintPlan`.
     trends: mttrPageTrendSlice(cachedMttrTrendData(p)),
     byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
   }));

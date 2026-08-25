@@ -5174,7 +5174,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "d69fe6546879" : "dev";
+  var BUILD_ID = true ? "c1eb3cf449ac" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -8476,7 +8476,12 @@ var Server = (() => {
     var _a;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     return run(() => ({
-      mttr: cachedMttrData(p),
+      // THE SUMMARY IS NOT MISSING — it is the other RPC's job. `mttr.js` already fires
+      // `api_getMttr` with identical params, and both endpoints resolve the SAME
+      // `cachedMttrData` entry, so returning it here too shipped it twice per page load: 9,372
+      // bytes on the seeded estate, two Kaplan-Meier curves included. On a cold cache it was
+      // worse than duplicate transfer — the two RPCs are separate GAS executions, so both
+      // computed it. The page composes the two payloads instead; see `mttrPaintPlan`.
       trends: mttrPageTrendSlice(cachedMttrTrendData(p)),
       byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
     }));
