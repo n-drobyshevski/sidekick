@@ -243,6 +243,23 @@ describe("kaplanMeier", () => {
     expect(kmMedian(rows)).toBe(kaplanMeier(rows).median);
   });
 
+  // THIS TEST CARRIES AN EXPLICIT TIMEOUT BECAUSE IT IS LEGITIMATELY SLOW, not because it is
+  // flaky. `kaplanMeier` costs about 7us per row and this feeds it 200k of them, so it measures
+  // ~2.8s on a 4-core x64 box — against vitest's 5s default, which is only 1.7x headroom. On a
+  // smaller machine (a 2-vCPU cloud shell, a shared CI runner) that tips over and the suite
+  // fails on a claim that is still perfectly true. The generous budget below is the honest fix:
+  // nothing about the assertion is weakened, only the clock it is judged against.
+  //
+  // N STAYS AT 200k, and shrinking it would be the wrong way to make this fast. The argument
+  // limit is a function of the available stack, so it MOVES with the engine and the
+  // environment — measured at 125,275 on node 22 / x64, but lower where the stack is smaller
+  // and higher where it is larger. Tuning N toward that number would calibrate the test to one
+  // machine and risk it silently ceasing to test anything on another.
+  //
+  // For fast feedback this is no longer the only guard: `test/util.test.ts` asserts the same
+  // regression directly against `maxNum` / `minNum` / `pushAll` in ~15ms. What THIS test adds,
+  // and why it stays, is coverage of a spread written inline somewhere on the estimator's own
+  // path, where no helper would be involved to catch it.
   it("large risk set does not overflow the call stack (regression: Math.max(...times) spread)", () => {
     // The risk set holds one observation per finding, so a real register is tens of thousands
     // of entries. Spreading it into Math.max/Math.min ("Math.max(...times)") overflows the call
@@ -256,7 +273,7 @@ describe("kaplanMeier", () => {
     expect(km.total).toBe(N);
     expect(km.events).toBe(N);
     expect(km.restrictionTime).toBe(500); // maxNum(times) — the largest mttr_days
-  });
+  }, 30_000);
 });
 
 describe("kmQuantileFromCurve", () => {
