@@ -56,6 +56,7 @@ import {
   skeleton,
   statusPill,
   rowDrag,
+  appendAll,
   registerWideNote,
   ruleGrip,
   tierBadge,
@@ -1271,7 +1272,8 @@ export async function renderAarsRules(main, _params, ctx) {
     diagWarn,
   );
 
-  impact.append(
+  appendAll(
+    impact,
     el("h2", { class: "section-label" }, "Impact on the current inventory"),
       registerWideNote(bootstrapCached(),
         "a rule preview has to answer for every asset it would rescore"),

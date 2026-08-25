@@ -32,7 +32,7 @@
 //   rowReorder.js the cascade grip: drag as the shortcut, the row's arrows as the control
 //   diagList.js  the "is this rule quietly failing" read-out, shared by all three cascades
 
-export { clear, downloadText, el, motionOk } from "./ui/dom.js";
+export { appendAll, clear, downloadText, el, motionOk } from "./ui/dom.js";
 export { registerWideNote, scopeNote, trendScopeNote, trendScopeView } from "./ui/projectScope.js";
 export { DISPLAY_TZ, fmtDate, fmtDateTime, plural, pluralize, sevRank } from "./ui/format.js";
 export {

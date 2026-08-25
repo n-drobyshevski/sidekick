@@ -36,6 +36,7 @@ import { svgEl } from "../icons.js";
 import { openAreaSheet } from "./scanSheet.js";
 import {
   clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtDate, fmtDateTime,
+  appendAll,
   meter, motionOk, onPageTeardown, plural, registerWideNote, sectionLabel, skeleton, statRow,
 } from "../ui.js";
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
@@ -51,7 +52,8 @@ export async function renderScans(main, params, ctx) {
   closeActiveSheet();
 
   const boot = await bootstrap();
-  main.append(
+  appendAll(
+    main,
     el("h1", {}, "Wiz Scans"),
     el("p", { class: "page-sub" },
       // Counted, not typed. This sentence said "nine" while the page rendered ten areas —

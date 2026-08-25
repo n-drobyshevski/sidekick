@@ -32,6 +32,28 @@ export function el(tag, attrs, ...children) {
   return node;
 }
 
+/**
+ * `host.append(...)` with el()'s child rule, for the case el() cannot cover: appending to a
+ * node that already exists (main, a host div, a panel) rather than building a new one.
+ *
+ * THE TRAP THIS CLOSES. el() drops null / undefined / false children, so
+ * `el("div", {}, maybeNothing)` is safe and reads as safe. Node.append does not: it runs
+ * every argument through String(), so the same value reaching a raw .append() renders the
+ * literal text "null". Several builders here return null to mean "there is no note" —
+ * registerWideNote() is the common one, null whenever no project view is set — and four call
+ * sites passed that straight to .append(). The word "null" was rendering above the hero on
+ * Wiz Scans, above the sync history on Data, and in the AARS impact rail.
+ *
+ * The asymmetry is the bug, not the four call sites, so this restores the symmetry.
+ */
+export function appendAll(host, ...children) {
+  for (const child of children.flat()) {
+    if (child === null || child === undefined || child === false) continue;
+    host.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return host;
+}
+
 export function clear(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
   return node;
