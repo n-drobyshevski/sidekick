@@ -388,6 +388,31 @@ function readGrid(
   return out;
 }
 
+/**
+ * Data rows as objects keyed by header name, skipping wholly-empty rows.
+ *
+ * Shared by `readAll` and `readTail` so the two cannot drift in how they coerce a cell or
+ * decide a row is empty. `headers` names column i+1 by position and a blank header skips
+ * that column rather than compacting it — see `ensureHeaders` for why that alignment is
+ * load-bearing.
+ */
+function mapRows(headers: string[], rows: unknown[][]): Rec[] {
+  const out: Rec[] = [];
+  for (const values of rows) {
+    const row: Rec = {};
+    let empty = true;
+    for (let j = 0; j < headers.length; j++) {
+      const h = headers[j];
+      if (!h) continue;
+      const v = fromCell(values[j]);
+      row[h] = v;
+      if (v !== null) empty = false;
+    }
+    if (!empty) out.push(row);
+  }
+  return out;
+}
+
 /** All data rows of a tab as objects keyed by header name. */
 export function readAll(tab: string): Rec[] {
   const sh = sheet(tab);
@@ -395,20 +420,35 @@ export function readAll(tab: string): Rec[] {
   const lastCol = sh.getLastColumn();
   if (lastRow < 2 || lastCol < 1) return [];
   const values = readGrid(sh, tab, lastRow, lastCol);
-  const headers = values[0].map(String);
-  const out: Rec[] = [];
-  for (let i = 1; i < values.length; i++) {
-    const row: Rec = {};
-    let empty = true;
-    for (let j = 0; j < headers.length; j++) {
-      if (!headers[j]) continue;
-      const v = fromCell(values[i][j]);
-      row[headers[j]] = v;
-      if (v !== null) empty = false;
-    }
-    if (!empty) out.push(row);
-  }
-  return out;
+  return mapRows(values[0]!.map(String), values.slice(1));
+}
+
+/**
+ * The LAST `n` data rows of a tab, for a caller that only ever wants recent ones.
+ *
+ * Two small `getValues` calls — the header row, then a bounded window at the bottom —
+ * instead of one over the whole grid. The motivating caller is the progress poll: it runs
+ * every three seconds against the `jobs` tab, which gains a row per sync and is never
+ * trimmed, so a full read there gets more expensive for the life of the deployment while
+ * always answering about a job appended moments ago.
+ *
+ * Headers are re-read on every call rather than memoized, because the write path
+ * (`ensureHeaders`) can append a column between two reads and a stale header list would
+ * silently misname every value after the new one.
+ *
+ * IT IS NOT A SUBSTITUTE FOR `readAll` AND CALLERS MUST NOT TREAT IT AS ONE. A row outside
+ * the window is absent, not missing — so any caller whose "not found" means something has to
+ * fall back to the full read before believing it. `jobsStore.getJob` does exactly that.
+ */
+export function readTail(tab: string, n: number): Rec[] {
+  const sh = sheet(tab);
+  const lastRow = sh.getLastRow();
+  const lastCol = sh.getLastColumn();
+  if (lastRow < 2 || lastCol < 1) return [];
+  const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0]!.map(String);
+  const first = Math.max(2, lastRow - Math.max(1, n) + 1);
+  const values = sh.getRange(first, 1, lastRow - first + 1, lastCol).getValues();
+  return mapRows(headers, values);
 }
 
 /**

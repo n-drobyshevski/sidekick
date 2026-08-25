@@ -733,26 +733,39 @@ var Server = (() => {
     }
     return out;
   }
+  function mapRows(headers, rows) {
+    const out = [];
+    for (const values of rows) {
+      const row = {};
+      let empty = true;
+      for (let j = 0; j < headers.length; j++) {
+        const h = headers[j];
+        if (!h) continue;
+        const v = fromCell(values[j]);
+        row[h] = v;
+        if (v !== null) empty = false;
+      }
+      if (!empty) out.push(row);
+    }
+    return out;
+  }
   function readAll(tab) {
     const sh = sheet(tab);
     const lastRow = sh.getLastRow();
     const lastCol = sh.getLastColumn();
     if (lastRow < 2 || lastCol < 1) return [];
     const values = readGrid(sh, tab, lastRow, lastCol);
-    const headers = values[0].map(String);
-    const out = [];
-    for (let i = 1; i < values.length; i++) {
-      const row = {};
-      let empty = true;
-      for (let j = 0; j < headers.length; j++) {
-        if (!headers[j]) continue;
-        const v = fromCell(values[i][j]);
-        row[headers[j]] = v;
-        if (v !== null) empty = false;
-      }
-      if (!empty) out.push(row);
-    }
-    return out;
+    return mapRows(values[0].map(String), values.slice(1));
+  }
+  function readTail(tab, n) {
+    const sh = sheet(tab);
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    if (lastRow < 2 || lastCol < 1) return [];
+    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    const first = Math.max(2, lastRow - Math.max(1, n) + 1);
+    const values = sh.getRange(first, 1, lastRow - first + 1, lastCol).getValues();
+    return mapRows(headers, values);
   }
   function ensureHeaders(sh, tab) {
     var _a5, _b;
@@ -5584,30 +5597,33 @@ var Server = (() => {
     });
     if (patch.phase && TERMINAL.includes(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
   }
-  function listJobs() {
-    return readAll(TABS.jobs).map((r) => {
-      var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
-      return {
-        job_id: String((_a5 = r["job_id"]) != null ? _a5 : ""),
-        kind: (_b = r["kind"]) != null ? _b : "sync",
-        phase: (_c = r["phase"]) != null ? _c : "FAILED",
-        sync_id: (_d = r["sync_id"]) != null ? _d : null,
-        step_index: Number((_e = r["step_index"]) != null ? _e : 0),
-        cursor: (_f = r["cursor"]) != null ? _f : null,
-        page: Number((_g = r["page"]) != null ? _g : 0),
-        nodes_so_far: Number((_h = r["nodes_so_far"]) != null ? _h : 0),
-        total_count: Number((_i = r["total_count"]) != null ? _i : 0),
-        part_refs_json: (_j = r["part_refs_json"]) != null ? _j : null,
-        params_json: (_k = r["params_json"]) != null ? _k : null,
-        error: normError(r["error"]),
-        started_at: String((_l = r["started_at"]) != null ? _l : ""),
-        updated_at: String((_m = r["updated_at"]) != null ? _m : "")
-      };
-    });
+  function rowToJob(r) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    return {
+      job_id: String((_a5 = r["job_id"]) != null ? _a5 : ""),
+      kind: (_b = r["kind"]) != null ? _b : "sync",
+      phase: (_c = r["phase"]) != null ? _c : "FAILED",
+      sync_id: (_d = r["sync_id"]) != null ? _d : null,
+      step_index: Number((_e = r["step_index"]) != null ? _e : 0),
+      cursor: (_f = r["cursor"]) != null ? _f : null,
+      page: Number((_g = r["page"]) != null ? _g : 0),
+      nodes_so_far: Number((_h = r["nodes_so_far"]) != null ? _h : 0),
+      total_count: Number((_i = r["total_count"]) != null ? _i : 0),
+      part_refs_json: (_j = r["part_refs_json"]) != null ? _j : null,
+      params_json: (_k = r["params_json"]) != null ? _k : null,
+      error: normError(r["error"]),
+      started_at: String((_l = r["started_at"]) != null ? _l : ""),
+      updated_at: String((_m = r["updated_at"]) != null ? _m : "")
+    };
   }
+  function listJobs() {
+    return readAll(TABS.jobs).map(rowToJob);
+  }
+  var JOB_TAIL_ROWS = 25;
   function getJob(jobId) {
-    var _a5;
-    return (_a5 = listJobs().find((j) => j.job_id === jobId)) != null ? _a5 : null;
+    var _a5, _b;
+    const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
+    return (_b = (_a5 = recent.find((j) => j.job_id === jobId)) != null ? _a5 : listJobs().find((j) => j.job_id === jobId)) != null ? _b : null;
   }
   var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
   function activeJob() {
@@ -8152,7 +8168,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "a933c002c1db" : "dev";
+  var BUILD_ID = true ? "77ff5a9ec183" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -11056,7 +11072,19 @@ var Server = (() => {
     deleteProp(CANCEL_PROP);
   }
   function jobStatus(jobId) {
-    return getJob(jobId);
+    const j = getJob(jobId);
+    if (!j) return null;
+    return {
+      job_id: j.job_id,
+      phase: j.phase,
+      step_index: j.step_index,
+      page: j.page,
+      nodes_so_far: j.nodes_so_far,
+      total_count: j.total_count,
+      error: j.error,
+      started_at: j.started_at,
+      updated_at: j.updated_at
+    };
   }
 
   // src/domain/reach.ts

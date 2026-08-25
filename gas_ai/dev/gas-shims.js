@@ -14,6 +14,18 @@
 (function () {
   "use strict";
 
+  // -------------------------------------------------------------------- counters
+  //
+  // Service-call counters, so a claim about cost can be MEASURED rather than asserted.
+  // Both of these count something the real platform charges for and the fakes do not:
+  // a PropertiesService read is a ~10-50ms round trip in GAS and free here, and a
+  // getValues() over a whole tab is the single most expensive thing this app does.
+  //
+  // Deliberately NOT part of snapshot()/restore(): they describe what the code just
+  // DID, not what the world currently holds, so restoring a grid must not rewind them.
+  // Reset explicitly instead.
+  const counters = { propGet: 0, propSet: 0, rangeReads: 0, cellsRead: 0 };
+
   // ------------------------------------------------------------------------ Blob
   class FakeBlob {
     constructor(data, contentType, name) {
@@ -86,8 +98,8 @@
   const props = new Map();
   window.PropertiesService = {
     getScriptProperties: () => ({
-      getProperty: (k) => (props.has(k) ? props.get(k) : null),
-      setProperty: (k, v) => { props.set(k, String(v)); },
+      getProperty: (k) => { counters.propGet++; return props.has(k) ? props.get(k) : null; },
+      setProperty: (k, v) => { counters.propSet++; props.set(k, String(v)); },
       deleteProperty: (k) => { props.delete(k); },
       getProperties: () => Object.fromEntries(props),
       getKeys: () => [...props.keys()],
@@ -230,6 +242,8 @@
       return this;
     }
     getValues() {
+      counters.rangeReads++;
+      counters.cellsRead += this._nr * this._nc;
       this._sh._ensure(this._r + this._nr - 1, this._c + this._nc - 1);
       const out = [];
       for (let i = 0; i < this._nr; i++) {
@@ -448,6 +462,12 @@
   };
 
   window.__gasFakes = {
+    /** Service calls made since the last resetCounters(). See `counters` above. */
+    counters() { return { ...counters }; },
+    resetCounters() {
+      for (const k of Object.keys(counters)) counters[k] = 0;
+    },
+
     snapshot() {
       return {
         props: new Map(props),

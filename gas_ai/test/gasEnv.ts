@@ -82,15 +82,38 @@ export function teardownServer(): void {
 /** `npm run test:exact` sets this. See the comment above. */
 const EXACT = process.env["GAS_TEST_FULL_ISOLATION"] === "1";
 
+/** Service-call tallies the shim keeps. See the `counters` block in dev/gas-shims.js. */
+export interface GasCounters {
+  propGet: number;
+  propSet: number;
+  rangeReads: number;
+  cellsRead: number;
+}
+
 interface GasFakes {
   snapshot(): unknown;
   restore(snap: unknown): void;
+  counters(): GasCounters;
+  resetCounters(): void;
 }
 
 function fakes(): GasFakes {
   const f = (globalThis as Record<string, unknown>)["__gasFakes"];
   if (!f) throw new Error("__gasFakes missing — dev/gas-shims.js was not evaluated");
   return f as GasFakes;
+}
+
+/**
+ * Run `fn` and report what it cost the fake platform.
+ *
+ * This is what lets a spec assert that a read got CHEAPER rather than merely that it still
+ * returns the right answer — the two are independent, and only the second one is usually
+ * tested. Counts service calls, not wall clock, so it does not vary with machine speed.
+ */
+export function measure<T>(fn: () => T): { value: T; counters: GasCounters } {
+  fakes().resetCounters();
+  const value = fn();
+  return { value, counters: fakes().counters() };
 }
 
 /** Every module in `src/server` that memoizes across a call. Nothing else holds state. */

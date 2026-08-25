@@ -40,7 +40,9 @@ import { resolveHygieneRules } from "../domain/identityHygiene";
 import { changedPaths, effectiveStepVars, isEditableStep } from "../domain/scanVars";
 import { nowIso, type Rec } from "../domain/util";
 import { readGzJsonFile, syncFolder, writeGzJson, writeSyncPage } from "./archiveStore";
-import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "./jobsStore";
+import {
+  activeJob, createJob, getJob, newJobId, updateJob, type JobPhase, type JobRow,
+} from "./jobsStore";
 import { withScriptLock } from "./locks";
 import { getProp, hasWizCredentials, projectScope, setProp, deleteProp } from "./props";
 import {
@@ -1214,6 +1216,49 @@ export function clearCancelFlag(): void {
   deleteProp(CANCEL_PROP);
 }
 
-export function jobStatus(jobId: string): JobRow | null {
-  return getJob(jobId);
+/**
+ * The subset of a JobRow the progress card and its drawer actually read.
+ *
+ * Nine of the row's fourteen fields. Enumerated as a type rather than produced by deleting
+ * keys, so growing `JobRow` cannot silently grow what the browser receives.
+ */
+export interface JobStatus {
+  job_id: string;
+  phase: JobPhase;
+  step_index: number;
+  page: number;
+  nodes_so_far: number;
+  total_count: number;
+  error: string | null;
+  started_at: string;
+  updated_at: string;
+}
+
+/**
+ * One job's progress, projected.
+ *
+ * It used to return the whole `JobRow`, and three of the five fields nothing reads had no
+ * business crossing the wire at all: `cursor` is the Wiz `endCursor` for a production
+ * security tenant, `part_refs_json` is a JSON array of Drive file ids for the raw pages, and
+ * `params_json` is the sync's parameter blob. Those are internal storage addresses and a
+ * tenant pagination handle, and the poll shipped them every three seconds for the length of
+ * every sync. `sync_id` and `kind` simply have no reader.
+ *
+ * Projected at the endpoint rather than narrowed at source: `JobRow` is the durable row and
+ * the walker needs every column of it. This is a transport concern, so it belongs here.
+ */
+export function jobStatus(jobId: string): JobStatus | null {
+  const j = getJob(jobId);
+  if (!j) return null;
+  return {
+    job_id: j.job_id,
+    phase: j.phase,
+    step_index: j.step_index,
+    page: j.page,
+    nodes_so_far: j.nodes_so_far,
+    total_count: j.total_count,
+    error: j.error,
+    started_at: j.started_at,
+    updated_at: j.updated_at,
+  };
 }
