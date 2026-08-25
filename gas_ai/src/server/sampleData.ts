@@ -640,6 +640,26 @@ const RULE_G2 = "Managed AI Agent with high privileges or sensitive data access"
 const RULE_G3 = "AI Agent hosted on VM/serverless with high privileges or sensitive data access";
 const RULE_G4 = "AI resource using overly permissive execution identity";
 
+/**
+ * EVERY ISSUE CARRIES A `dueAt`, AND MOST OF THEM ARE PAST IT.
+ *
+ * Until 2026-08-23 only Group 2 had one, and it was 2026-08-18 — five days AFTER the frozen
+ * clock — so all 32 seed rows read "not yet due" and nothing here could exercise an overdue
+ * reading at all. That is not what the tenant looks like: measured live, `dueAt` coverage is
+ * 100% and 82.6% of issues are past it (`ai/AARS_LIVE_MEASUREMENTS.md` §3).
+ *
+ * The windows below are per-group and deliberately uneven, because Wiz's are: it sizes the
+ * SLA roughly in proportion to what makes an issue urgent. The split lands 27 past due, 2 due
+ * soon and 3 with no deadline at all — 84% overdue against the live 82.6%.
+ *
+ * THE THREE UNDATED ROWS ARE DELIBERATE and must stay. A first pass gave all 32 a deadline,
+ * which read as more representative and quietly deleted two things: comboDigest's
+ * `noDueDate` branch (whose test says a KPI row without it "would imply every issue has a
+ * deadline and that nothing is late") and rank.ts's UNMEASURED path. A fixture that covers
+ * only the common case is not a better fixture. `createdAt` is untouched — the seed's issues
+ * are younger than the tenant's (median age 266 days live), and shifting their birthdays
+ * would move far more than this.
+ */
 const issues: IssueRow[] = [];
 let issueSeq = 0;
 function nextIssueId(): string {
@@ -668,6 +688,7 @@ awsRoles.forEach((role, n) => {
       "No content filtering, data protection, or compliance enforcement on AI model calls.",
     frameworks: { owaspLlm: ["LLM06", "LLM02"], owaspAgentic: ["ASI02", "ASI03"], fiveRs: ["Restrict"] },
     createdAt: "2026-05-14T09:12:00Z",
+    dueAt: "2026-06-13T09:12:00Z",
     // TOXIC_COMBINATION (the default), because that is what the tenant returns for
     // wc-id-2742 — every node in exemples/risk_issues_response.js carries that type,
     // guardrail rule included. Wiz's issue TYPE and this register's pattern grouping are
@@ -723,7 +744,7 @@ for (const g of G2) {
       justification: g.why,
       frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, owaspMl: g.ml, fiveRs: g.fiveRs },
       createdAt: "2026-05-20T11:40:00Z",
-      dueAt: "2026-08-18T11:40:00Z",
+      dueAt: "2026-07-19T11:40:00Z",
       resolutionRecommendation:
         "Apply least-privilege to the agent's execution service account; remove IAM " +
         "bindings that grant access to sensitive data, and attach a guardrail that limits " +
@@ -753,6 +774,7 @@ for (const g of G3) {
       justification: g.why,
       frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, fiveRs: g.fiveRs },
       createdAt: "2026-06-03T07:25:00Z",
+      dueAt: "2026-07-03T07:25:00Z",
     }));
   }
 }
@@ -774,6 +796,7 @@ for (const assetId of ["agent-j", "agent-k"]) {
       "Latent privileges — a compromised agent inherits every permission of its execution identity.",
     frameworks: { owaspAgentic: ["ASI03"], fiveRs: ["Reconfigure"] },
     createdAt: "2026-06-10T15:02:00Z",
+    dueAt: "2026-08-18T15:02:00Z",
   }));
 }
 

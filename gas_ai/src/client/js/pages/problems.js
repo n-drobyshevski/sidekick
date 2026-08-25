@@ -31,10 +31,10 @@ import { bootstrap, setParams, swrCall } from "../store.js";
 import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets.js";
 import { coverCurve } from "../charts.js";
 import {
-  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, kpiCard,
-  pager, plural, sectionLabel, segmented, select, selectField, sevBadge,
-  sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statusPill,
-  togglePills,
+  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, glossaryTip, heroStat,
+  pageHeader, pager, plural, segmented, select, selectField, sevBadge,
+  sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statRow,
+  statusPill, tipMark, togglePills,
 } from "../ui.js";
 import {
   PAGE_SIZE, PROBLEM_SORT_DESC, SEVERITY_RANK,
@@ -90,10 +90,13 @@ export async function renderProblems(main, params) {
   const boot = await bootstrap();
   main.append(
     el("h1", {}, "Priorities"),
+    // NINE WORDS. The cascade this page ranks by — Wiz's severity, then how soon it is due,
+    // then how long it has been open — is a definition, and DESIGN.md is explicit that a
+    // definition belongs in the tip that routes to its Help entry rather than in a paragraph
+    // above the thing it describes. The term already existed; only the paragraph was new.
     el("p", { class: "page-sub" },
-      "Every unresolved issue and every open configuration finding, ranked together on " +
-      "one scale: Wiz's severity first, then how soon it is due, then how long it has " +
-      "been open."),
+      "Every open issue and finding, ranked on one scale.",
+      glossaryTip(tipMark(), "priorities-rank")),
   );
 
   if (!boot.latestSync) {
@@ -243,13 +246,20 @@ export async function renderProblems(main, params) {
     const counts = fresh.severityCounts || {};
     const total = Number(fresh.total || 0);
     const rated = SEVERITY_CARDS.reduce((n, sev) => n + (counts[sev] || 0), 0);
-    const cards = SEVERITY_CARDS.map((sev) =>
-      kpiCard(sevLabel(sev), String(counts[sev] || 0), "open problems", null,
+    const stats = SEVERITY_CARDS.map((sev) =>
+      statRow(sevLabel(sev), String(counts[sev] || 0), "open problems", null,
         { term: "severity" }));
     if (total > rated) {
-      cards.push(kpiCard("Unrated", String(total - rated), "no severity from Wiz"));
+      stats.push(statRow("Unrated", String(total - rated), "no severity from Wiz"));
     }
-    return el("div", { class: "kpi-row" }, ...cards);
+    // The union's SIZE is the page's subject; the severity split is what qualifies it. As
+    // four or five equal .kpi-card tiles this was the hero-metric template PRODUCT.md's
+    // anti-references reject, and it left the two modes of one page looking like two
+    // different pages. Each level keeps the tip it already carried.
+    return pageHeader({
+      hero: heroStat("Open problems", String(total), "issues ∪ findings, the whole union"),
+      stats,
+    });
   }
 
   // ------------------------------------------------------ all-mode: whole union in hand
@@ -469,7 +479,7 @@ export async function renderProblems(main, params) {
       return;
     }
 
-    host.append(actionHeadline(data), coverChartCard(data));
+    host.append(actionHeadline(data));
 
     const rows = data.rows || [];
     const options = actionFilterOptions(rows);
@@ -504,16 +514,37 @@ export async function renderProblems(main, params) {
     const problems = c.problems ?? data.totalProblems ?? 0;
     const actions = c.actions ?? data.total ?? 0;
     const pctText = formatShare(c.top10Share);
-    const sentence = plural(problems, "open problem") + " collapse to " +
-      plural(actions, "action") + " — the top 10 close " + pctText + ".";
 
-    return el("div", { style: "margin-bottom:14px" },
-      el("p", { class: "page-sub", style: "font-size:15px; font-weight:500; color:var(--ink)" },
-        sentence),
-      el("div", { class: "kpi-row" },
-        kpiCard("Open problems", String(problems), "issues ∪ findings, the whole union"),
-        kpiCard("Collapse to", String(actions), "distinct remediation actions"),
-        kpiCard("Top 10 close", pctText, "of every open problem, ranked by cover")));
+    const curve = data.curve || [];
+    const enough = curve.length >= 3;
+    const canvas = el("canvas", {
+      "aria-label":
+        "Cumulative share of open problems closed as actions are taken, ranked by cover",
+      role: "img",
+    });
+    const aside = el("div", { class: "page-strip" },
+      el("div", { class: "kpi-label" }, "Cumulative cover"),
+      enough
+        ? el("div", { class: "chart-box", style: "height:124px" }, canvas)
+        : el("p", { class: "page-hero-sub" },
+            "Fewer than three actions close the whole board here."),
+    );
+    // Laid out before Chart.js measures it, or it reads a 0x0 box — the same reason
+    // inventory.js's trend chart defers its draw one frame.
+    if (enough) requestAnimationFrame(() => coverCurve(canvas, curve, { yLabel: "" }));
+
+    // The sentence that used to lead here said "N open problems collapse to M actions, the
+    // top 10 close K%", and the three tiles beneath it repeated all three of those numbers.
+    // The count is the hero, the curve is what qualifies it, the other two are the strip:
+    // three levels of emphasis instead of four blocks saying one thing.
+    return pageHeader({
+      hero: heroStat("Open problems", String(problems), "issues ∪ findings, the whole union"),
+      aside,
+      stats: [
+        statRow("Collapse to", String(actions), "distinct remediation actions"),
+        statRow("Top 10 close", pctText, "of every open problem, ranked by cover"),
+      ],
+    });
   }
 
   /** 94.7%, not 94.7000000000001% or a bare "95%" that hides how close the top 10 came to
@@ -521,38 +552,6 @@ export async function renderProblems(main, params) {
   function formatShare(share) {
     const v = Math.round((Number(share) || 0) * 1000) / 10;
     return (Number.isInteger(v) ? String(v) : v.toFixed(1)) + "%";
-  }
-
-  /** The `.chart-card`/`.chart-note`/`.chart-box` shell `inventory.js`'s trend chart uses,
-   *  degrading to `.chart-empty` below ~3 actions the same way that chart degrades below 2
-   *  syncs — a curve with one or two points has no shape worth drawing. */
-  function coverChartCard(data) {
-    const curve = data.curve || [];
-    const enough = curve.length >= 3;
-    const canvas = el("canvas", {
-      "aria-label": "Cumulative share of open problems closed as actions are taken, ranked by cover",
-      role: "img",
-    });
-
-    const card = el("div", { class: "chart-card", style: "margin-bottom:16px" },
-      el("h3", {}, "Cumulative cover"),
-      el("p", { class: "chart-note" },
-        enough
-          ? plural(curve.length, "ranked action")
-          : "Too few actions to shape a curve"),
-      enough
-        ? el("div", { class: "chart-box", style: "height:220px" }, canvas)
-        : el("div", { class: "chart-empty", role: "status" },
-            "Fewer than three actions close the whole board here — there is no curve to draw."),
-    );
-
-    if (enough) {
-      // The canvas must be laid out before Chart.js measures it, or it reads a 0×0 box —
-      // the same reason inventory.js's own trend chart defers its draw one frame.
-      requestAnimationFrame(() => coverCurve(canvas, curve));
-    }
-
-    return card;
   }
 
   function actionToolbar(options) {
@@ -656,7 +655,9 @@ export async function renderProblems(main, params) {
     const descending = view.aSort && (ACTION_SORT_DESC[view.aSort] ? view.aDir === 1 : view.aDir === -1);
 
     return el("div", {},
-      sectionLabel(plural(rows.length, "action") + ", ranked by cover"),
+      // No section label here. The .filter-meta count directly above the table already reads
+      // "12 actions" (or "6 of 12 actions" when filtered, which the label could not say), and
+      // a heading repeating the same count 30px below it was the page saying one thing twice.
       dataTable({
         columns: COLS.map((col) => ({
           key: col.key, label: col.label, help: col.help,

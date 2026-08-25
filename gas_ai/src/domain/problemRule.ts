@@ -43,6 +43,11 @@ export interface OutcomeRule {
   outcome: Outcome;
 }
 
+/**
+ * Which asset a problem is judged against — see ProblemRule.attributionJoin.
+ */
+export type AttributionJoin = "direct" | "runsAs";
+
 export interface ProblemRule {
   /** Ordered; first match wins — see `problem.decideProblem`. */
   outcomeRules: OutcomeRule[];
@@ -56,6 +61,20 @@ export interface ProblemRule {
   totalImpactGroups: string[];
   /** What a missing business-impact tier reads as. Default `"MEDIUM"`, never `"LOW"`. */
   missingMission: Mission;
+  /**
+   * WHICH ASSET a problem is judged against — not how the judgement is made.
+   *
+   * `direct` looks up the entity Wiz raised the issue on. `runsAs` also accepts the AI asset
+   * that runs as it, one hop (IssueRow.attributedAssetIds). Deliberately SEPARATE from
+   * AarsRule.issueAttribution rather than one shared switch: an AARS-side decision must not be
+   * able to silently re-decide every problem verdict, which is the exact coupling
+   * withProblemVerdicts exists as its own fold to avoid.
+   *
+   * A DERIVATION knob, so it joins vectorSignature: it changes which node impactOf and
+   * exposureOf read, so a persisted problemInput from the other setting must be re-derived
+   * rather than re-decided. Default `direct`.
+   */
+  attributionJoin: AttributionJoin;
   /**
    * The max share of the 54 leaves allowed to reach ACT, checked by `validateProblemRule`.
    * Default `0.15`. This is a VALIDATION-only knob: it never appears in `decideProblem` or
@@ -133,6 +152,7 @@ export const DEFAULT_PROBLEM_RULE: ProblemRule = {
   // but the specific pattern whose own framework tags say RCE.
   totalImpactGroups: ["gcp-hosted-privileged"],
   missingMission: "MEDIUM",
+  attributionJoin: "direct",
   actLeafCeiling: 0.15,
 };
 
@@ -230,6 +250,10 @@ export function cleanProblemRule(raw: unknown): ProblemRule {
     ? (r["missingMission"] as Mission)
     : DEFAULT_PROBLEM_RULE.missingMission;
 
+  // Unreadable reads as "direct", never "runsAs" — same convention as every other derivation
+  // field: a rule blob written before this existed must keep deciding exactly as it did.
+  const attributionJoin: AttributionJoin = r["attributionJoin"] === "runsAs" ? "runsAs" : "direct";
+
   const ceilingRaw = Number(r["actLeafCeiling"]);
   const actLeafCeiling = Number.isFinite(ceilingRaw)
     ? Math.min(1, Math.max(ACT_CEILING_FLOOR, ceilingRaw))
@@ -240,6 +264,7 @@ export function cleanProblemRule(raw: unknown): ProblemRule {
     fallbackOutcome,
     exploitationByRuleId,
     remediateVerdicts,
+    attributionJoin,
     totalImpactGroups,
     missingMission,
     actLeafCeiling,
@@ -548,6 +573,7 @@ export function vectorSignature(rule: ProblemRule): string {
     `remediateVerdicts:${rule.remediateVerdicts.join(",")}`,
     `totalImpactGroups:${rule.totalImpactGroups.join(",")}`,
     `missingMission:${rule.missingMission}`,
+    `attributionJoin:${rule.attributionJoin}`,
   ].join("|");
 }
 
@@ -569,10 +595,11 @@ export function decisionEqual(a: ProblemRule, b: ProblemRule): boolean {
 }
 
 /**
- * What this tenant actually carries on the two axes an operator can name values for.
+ * What this tenant actually carries on the three axes an operator can name values for.
  *
- * The two fields at issue — `remediateVerdicts` and `totalImpactGroups` — are free lists of
- * opaque strings matched literally, so a typo does not fail: it silently matches nothing,
+ * The three fields at issue — `remediateVerdicts`, `totalImpactGroups` and the `ruleId`
+ * column of `exploitationByRuleId` — are opaque strings matched literally, so a typo does
+ * not fail: it silently matches nothing,
  * and the axis quietly reads UNKNOWN for the rest of the landscape. The editor's only
  * defence against that is being able to show what the strings could be, which is exactly
  * what `tenantCodeOptions` does for gap codes on the AARS tab.
@@ -581,10 +608,20 @@ export function decisionEqual(a: ProblemRule, b: ProblemRule): boolean {
  * semantics and imports nothing from the graph vocabulary; a structural parameter keeps it
  * that way and makes the function trivially testable.
  *
- * ISSUES ONLY, and the type says so rather than a comment: both fields are issue
- * vocabulary, and a `FindingRow` carries neither. Widening the parameter to accept the
- * union would need a cast — TypeScript's weak-type check rejects a type with no properties
- * in common — and would imply findings contribute to a census they cannot reach.
+ * ISSUES ONLY, and the type says so rather than a comment. For `aiVerdict` and
+ * `comboGroup` that is the whole story: both are issue vocabulary and a `FindingRow`
+ * carries neither, so widening the parameter to accept the union would need a cast —
+ * TypeScript's weak-type check rejects a type with no properties in common — and would
+ * imply findings contribute to a census they cannot reach.
+ *
+ * `ruleIds` IS DIFFERENT, AND DELIBERATELY STILL ISSUES ONLY. A configuration finding
+ * prices through the SAME `exploitationByRuleId` table, keyed on `finding.ruleShortId`
+ * instead of `issue.ruleId` (see `exploitationOfFinding` in problem.ts), so the finding
+ * side of that vocabulary is real and is not counted here. The count therefore UNDERSTATES
+ * a rule id's reach and can never overstate it — naming one from this list can only match
+ * more than the number shown, which is the safe direction for a table that only ever
+ * raises exploitation. Merging the two would make `CensusEntry.issues` untrue; the honest
+ * version of that merge is its own change, and `AARS_LIVE_MEASUREMENTS.md` §4 carries it.
  *
  * `OTHER_GROUP_ID` is excluded on purpose: it is `syncNormalize`'s "no rule pattern
  * matched" sentinel, so offering it as a group that grants code execution would invite an
@@ -602,13 +639,16 @@ export interface CensusEntry {
 export interface ProblemCensus {
   verdicts: CensusEntry[];
   comboGroups: CensusEntry[];
+  /** Wiz combo rule ids, for the `exploitationByRuleId` table. Issues only — see above. */
+  ruleIds: CensusEntry[];
 }
 
 export function problemCensus(
-  rows: ReadonlyArray<{ aiVerdict?: string; comboGroup?: string }>,
+  rows: ReadonlyArray<{ aiVerdict?: string; comboGroup?: string; ruleId?: string }>,
 ): ProblemCensus {
   const verdicts: Record<string, number> = {};
   const groups: Record<string, number> = {};
+  const ruleIds: Record<string, number> = {};
 
   for (const row of rows ?? []) {
     if (!row) continue;
@@ -616,6 +656,11 @@ export function problemCensus(
     if (verdict) verdicts[verdict] = (verdicts[verdict] ?? 0) + 1;
     const group = String(row.comboGroup ?? "").trim();
     if (group && group !== OTHER_COMBO_GROUP) groups[group] = (groups[group] ?? 0) + 1;
+    // No sentinel to exclude: `ruleId` is Wiz's own identifier for the control that raised
+    // the issue, and every issue carries a real one — unlike `comboGroup`, which this app
+    // synthesises and backfills with OTHER_GROUP_ID when no pattern matched.
+    const ruleId = String(row.ruleId ?? "").trim();
+    if (ruleId) ruleIds[ruleId] = (ruleIds[ruleId] ?? 0) + 1;
   }
 
   // Commonest first, then alphabetical — a stable order across two previews of the same
@@ -626,5 +671,7 @@ export function problemCensus(
       .sort((a, b) => b.issues - a.issues || a.value.localeCompare(b.value))
       .slice(0, PROBLEM_CENSUS_MAX);
 
-  return { verdicts: rank(verdicts), comboGroups: rank(groups) };
+  return { verdicts: rank(verdicts), comboGroups: rank(groups), ruleIds: rank(ruleIds) };
 }
+
+

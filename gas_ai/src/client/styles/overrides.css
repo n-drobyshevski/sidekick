@@ -16,7 +16,7 @@
 @media (max-width: 1120px) {
   .sheet-cluster {
     position: static; flex-direction: row; justify-content: flex-end;
-    gap: 6px; padding: 10px 16px 0;
+    gap: var(--space-1); padding: var(--space-2) var(--space-4) 0;
   }
   .sheet-cluster-pos {
     margin-right: auto; background: none; padding: 0;
@@ -40,12 +40,12 @@
   .sheet-panes { flex-direction: column; }
   .sheet-rail {
     flex: 0 0 auto; width: auto; max-width: 100%;
-    display: flex; align-items: center; gap: 4px;
-    padding: 8px 12px; overflow-x: auto; overflow-y: hidden;
+    display: flex; align-items: center; gap: var(--space-1);
+    padding: var(--space-2) var(--space-3); overflow-x: auto; overflow-y: hidden;
     border-right: none; border-bottom: 1px solid var(--hairline);
   }
   .sheet-rail-group { display: contents; }
-  .sheet-rail-label { padding: 0 6px 0 10px; white-space: nowrap; }
+  .sheet-rail-label { padding: 0 var(--space-1) 0 var(--space-2); white-space: nowrap; }
   .sheet-rail-item { width: auto; margin: 0; white-space: nowrap; }
   .sheet-rail-item.is-active::before {
     left: 8px; right: 8px; top: auto; bottom: 0; width: auto; height: 2px;
@@ -65,13 +65,13 @@
   .sheet--record, .sheet--record.sheet--wide { width: 100vw; }
   .sheet-header, .sheet-body, .sheet-footer,
   .sheet--record .sheet-header, .sheet--record .sheet-body {
-    padding-left: 14px; padding-right: 14px;
+    padding-left: var(--space-3); padding-right: var(--space-3);
   }
-  .sheet-cluster { padding-left: 14px; padding-right: 14px; }
+  .sheet-cluster { padding-left: var(--space-3); padding-right: var(--space-3); }
   /* DESIGN.md stacks the property list on phones; the two-column variant follows it. */
   .kv--cols2 { grid-template-columns: 1fr; gap: 0 0; }
-  .kv--cols2 dt { margin-top: 8px; }
+  .kv--cols2 dt { margin-top: var(--space-2); }
   .kv--cols2 dt:first-child { margin-top: 0; }
-  .sheet-footer { padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .sheet-footer { padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px)); }
   .sheet-footer > button { flex: 1 1 auto; }
 }

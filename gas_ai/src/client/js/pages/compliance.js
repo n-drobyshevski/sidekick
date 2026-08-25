@@ -103,9 +103,10 @@ export async function renderCompliance(main, params, ctx) {
 
   main.append(
     el("h1", {}, "Compliance Posture"),
+    // Nine words. The three grains it used to enumerate (category, subcategory, policy) are
+    // the page's own structure, and the reader meets all three by scrolling.
     el("p", { class: "page-sub" },
-      "How this landscape scores against the security frameworks Wiz tracks — by category, " +
-      "subcategory and the policies behind them."),
+      "How this landscape scores against the frameworks Wiz tracks."),
   );
 
   const host = el("div", {});

@@ -293,6 +293,45 @@ export function filterChipRow({
   return row;
 }
 
+/**
+ * DESIGN.md's Hero Stat: the one headline figure a page exists to state.
+ *
+ * Borderless on purpose — dominance comes from size, position and the whitespace around it,
+ * never from a card, a gradient or an accent stripe. At most ONE per page: a second hero
+ * means neither is.
+ *
+ * Wiz Scans, AI Inventory, Help and Compliance had each hand-rolled this block before it had
+ * a name (.cov-hero, .inv-hero, .help-hero, the .comp-header hero). This is that block, so
+ * the next page does not make a fifth.
+ */
+export function heroStat(label, value, sub, help) {
+  return el("div", { class: "page-hero" },
+    el("div", { class: "kpi-label" }, tipLabel(label, help)),
+    el("div", { class: "hero-value num" }, value),
+    sub ? el("div", { class: "page-hero-sub" }, sub) : null,
+  );
+}
+
+/**
+ * The header those four pages share: a borderless grid closed by a hairline, reading in
+ * three levels rather than as a row of equal tiles. `hero` is the subject, `aside` is the
+ * one thing that qualifies it (a distribution strip, a small curve), and `stats` are the
+ * supporting facts as a full-width strip divided by hairlines.
+ *
+ * Every slot is optional and el() drops the empty ones, so a page that only has a hero gets
+ * a hero.
+ */
+export function pageHeader({ hero, aside, stats } = {}) {
+  // Without an aside the two-column grid leaves the hero in a narrow column with a thousand
+  // empty pixels beside it, which is where its sub-line starts wrapping for no reason. The
+  // modifier widens the one column that is actually carrying anything.
+  return el("div", { class: "page-header" + (aside ? "" : " page-header--solo") },
+    hero || null,
+    aside || null,
+    stats && stats.length ? el("div", { class: "stat-list" }, ...stats) : null,
+  );
+}
+
 export function kpiCard(label, value, sub, chip, help) {
   return el(
     "div",

@@ -42,6 +42,13 @@ export async function bootServer(): Promise<ServerModule> {
 
   const g = globalThis as Record<string, unknown>;
   g["window"] = globalThis;
+  // Set BEFORE the shims are evaluated, because `Utilities.sleep` reads it on every call and
+  // the very first thing a retrying test does is call it. See that shim's own comment: it
+  // spins on `Date.now()`, which the frozen clock two lines above makes an INFINITE loop —
+  // synchronous, so no test timeout can break it. The flag keeps the real backoff intact for
+  // the browser harness, where there is a live tenant to be polite to, and skips it here,
+  // where there is not.
+  g["__GAS_SHIM_INSTANT_SLEEP__"] = true;
   runInThisContext(readFileSync(join(ROOT, "dev/gas-shims.js"), "utf8"), {
     filename: "dev/gas-shims.js",
   });

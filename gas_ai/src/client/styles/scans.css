@@ -8,16 +8,9 @@
    scan surface reports, the strip says how that splits, the stat strip carries the sync
    that produced both. Hero and strip are borderless — dominance from size and position,
    never from a card or a stripe. */
-.cov-header {
-  display: grid;
-  grid-template-columns: minmax(150px, 0.45fr) minmax(320px, 2fr);
-  gap: 20px 36px; align-items: start;
-  margin: 0 0 18px; padding-bottom: 4px; border-bottom: 1px solid var(--hairline);
-}
-.cov-header .stat-list { grid-column: 1 / -1; }
-.cov-hero-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
-.cov-strip { display: flex; flex-direction: column; gap: 8px; }
-.cov-strip-note { font-size: 12px; color: var(--text-3); margin: 0; max-width: var(--measure); }
+/* .cov-header, .cov-hero-sub and the stat-list span now come from .page-header
+   (components.css); only the page-specific pieces below remain. */
+.cov-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
 
 /* The coverage bar and its keys. Same visual recipe as .sevbar / .sevkey-row, but a
    separate family on purpose: coverage is not severity, and minting `sev-fill-live` would
@@ -36,14 +29,14 @@
 .cov-bar-seg[data-state="unscanned"] { background: var(--sev-info); }
 .cov-bar-seg[data-state="empty"] { flex: 1; background: var(--track-bg); }
 
-.cov-keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.cov-keys { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .cov-key {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12px; padding: 3px 10px;
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  font-size: var(--fs-label); padding: var(--space-half) var(--space-2);
   border: 1px solid var(--hairline); border-radius: var(--radius-pill);
   background: var(--page); color: var(--text-2);
 }
-.cov-key-glyph { font-size: 10px; line-height: 1; }
+.cov-key-glyph { font-size: var(--fs-micro); line-height: 1; }
 .cov-key[data-state="live"] .cov-key-glyph { color: var(--ok); }
 .cov-key[data-state="partial"] .cov-key-glyph { color: var(--warn); }
 .cov-key[data-state="unscanned"] .cov-key-glyph { color: var(--sev-info-text); }
@@ -57,7 +50,7 @@
 .cov-diagram-scroll {
   overflow-x: auto;
   border: 1px solid var(--hairline); border-radius: var(--radius-xl);
-  background: var(--page); padding: 6px 12px 8px;
+  background: var(--page); padding: var(--space-1) var(--space-3) var(--space-2);
 }
 .cov-diagram-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* No width rules here on purpose. The layout is measured, not scaled: scans.js draws the
@@ -66,14 +59,14 @@
    height that depends only on how many scan areas there are. Anything like `width: 100%`
    with a fixed viewBox would put the scaling back and take the height with it. */
 .cov-diagram { display: block; height: auto; }
-.cov-diagram-note { margin: 8px 0 0; max-width: var(--measure); }
+.cov-diagram-note { margin: var(--space-2) 0 0; max-width: var(--measure); }
 
 .cov-node-box { fill: var(--surface); stroke: var(--hairline); stroke-width: 1; }
 .cov-node[data-state="unscanned"] .cov-node-box {
   fill: var(--page); stroke: rgba(0, 0, 0, 0.28); stroke-dasharray: 5 4;
 }
-.cov-node-name { font-size: 11.5px; font-weight: 600; fill: var(--ink); }
-.cov-node-fig { font-size: 11px; fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
+.cov-node-name { font-size: var(--fs-label); font-weight: 600; fill: var(--ink); }
+.cov-node-fig { font-size: var(--fs-micro); fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
 .cov-node[data-state="unscanned"] .cov-node-name { fill: var(--svg-text-2); }
 
 /* Filled / half / hollow. The dot is never the only cue — the node prints its figure or
@@ -85,8 +78,8 @@
 .cov-dot[data-state="partial"] .cov-dot-fill { fill: var(--warn); }
 
 .cov-spine { fill: var(--surface); stroke: var(--hairline); }
-.cov-spine-title { font-size: 12px; font-weight: 600; fill: var(--ink); }
-.cov-spine-step { font-size: 10.5px; fill: var(--svg-text-2); }
+.cov-spine-title { font-size: var(--fs-label); font-weight: 600; fill: var(--ink); }
+.cov-spine-step { font-size: var(--fs-micro); fill: var(--svg-text-2); }
 
 /* The edge ink mirrors .gedge (graph.css) so the two pictures read as one system. An
    unscanned path is dashed in NEUTRAL ink, not the graph's amber: there, dashed-amber means
@@ -98,11 +91,11 @@
 .cov-edge[data-state="unscanned"] { stroke-dasharray: 5 4; stroke-opacity: 0.55; }
 
 .cov-dest-box { fill: var(--page); stroke: var(--accent); stroke-opacity: 0.35; }
-.cov-dest-name { font-size: 12px; font-weight: 600; fill: var(--accent); }
-.cov-dest-sub { font-size: 10.5px; fill: var(--svg-text-2); }
+.cov-dest-name { font-size: var(--fs-label); font-weight: 600; fill: var(--accent); }
+.cov-dest-sub { font-size: var(--fs-micro); fill: var(--svg-text-2); }
 
 /* Lighting one area from its register row. Opacity only, so nothing moves. */
-.cov-node, .cov-edge, .cov-dest { transition: opacity 140ms ease-out; }
+.cov-node, .cov-edge, .cov-dest { transition: opacity var(--dur-fast) ease-out; }
 .cov-diagram.is-dimmed .cov-node,
 .cov-diagram.is-dimmed .cov-edge { opacity: 0.34; }
 .cov-diagram.is-dimmed .cov-node.is-lit,
@@ -123,12 +116,12 @@
 .cov-register td .cov-q { white-space: normal; max-width: 34ch; display: inline-block; }
 .cov-q {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px; color: var(--text-3);
+  font-size: var(--fs-label); color: var(--text-3);
 }
 .cov-area { font-weight: 600; color: var(--ink); }
-.cov-figure { display: flex; flex-direction: column; gap: 1px; }
+.cov-figure { display: flex; flex-direction: column; gap: var(--space-half); }
 .cov-figure-value { font-weight: 600; font-variant-numeric: tabular-nums; }
-.cov-figure-unit { font-size: 11.5px; color: var(--text-3); }
+.cov-figure-unit { font-size: var(--fs-label); color: var(--text-3); }
 .cov-lands { color: var(--text-2); }
 .cov-none { color: var(--text-3); }
 
@@ -136,9 +129,9 @@
    circle for every kind — it separates states by colour alone. Coverage needs the glyph to
    differ (● ◐ ○), so the pill's dot is suppressed rather than sitting beside a second mark
    that says the same thing less well. */
-.cov-state { gap: 6px; }
+.cov-state { gap: var(--space-1); }
 .cov-state::before { display: none; }
-.cov-state-glyph { font-size: 10px; line-height: 1; }
+.cov-state-glyph { font-size: var(--fs-micro); line-height: 1; }
 
 /* An unscanned row recedes without disappearing: it is still a row of the record, and the
    thing it records is that nothing was recorded. */
@@ -148,79 +141,79 @@
 /* The number's lineage as a chain, not a paragraph: query → step → ledger → field. The rule
    down the left is the join; each row is one hop. */
 .prov { display: flex; flex-direction: column; }
-.prov-step { display: grid; grid-template-columns: 16px 1fr; gap: 10px; padding: 5px 0;
+.prov-step { display: grid; grid-template-columns: 16px 1fr; gap: var(--space-2); padding: var(--space-1) 0;
   position: relative; }
 .prov-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(0, 0, 0, 0.45);
-  margin: 6px 0 0 4px; }
+  margin: var(--space-2) 0 0 var(--space-1); }
 .prov-step:not(:last-child)::before {
   content: ""; position: absolute; left: 7.5px; top: 16px; bottom: -5px;
   width: 1px; background: var(--hairline);
 }
-.prov-k { font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+.prov-k { font-size: var(--fs-micro); font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
   color: var(--text-3); }
-.prov-v { font-size: 12.5px; color: var(--ink); }
+.prov-v { font-size: var(--fs-label); color: var(--ink); }
 .prov-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px; overflow-wrap: anywhere; }
-.prov-sub { font-size: 11.5px; color: var(--text-3); }
+  font-size: var(--fs-label); overflow-wrap: anywhere; }
+.prov-sub { font-size: var(--fs-label); color: var(--text-3); }
 
 /* ------------------------------------------------------------------ panel: one query */
-.step-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.step-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
 .step-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px; font-weight: 600; }
-.q-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  margin: 12px 0 5px; }
-.q-label { font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+  font-size: var(--fs-label); font-weight: 600; }
+.q-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  margin: var(--space-3) 0 var(--space-1); }
+.q-label { font-size: var(--fs-micro); font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
   color: var(--text-3); }
-.q-cap { font-size: 11px; color: var(--text-3); margin-top: 6px; }
+.q-cap { font-size: var(--fs-micro); color: var(--text-3); margin-top: var(--space-2); }
 
 /* --------------------------------------------------------- panel: variables editor */
-.vars { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hairline); }
-.vars-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-  margin-bottom: 8px; }
-.vars-fields { display: flex; flex-direction: column; gap: 14px; }
-.vars-field { display: flex; flex-direction: column; gap: 4px; }
-.vars-label { font-size: 12.5px; font-weight: 600; }
-.vars-help { font-size: 11.5px; color: var(--text-3); margin: 0; max-width: var(--measure); }
-.vars-select { font: inherit; font-size: 12.5px; padding: 4px 8px; border-radius: var(--radius-sm);
+.vars { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--hairline); }
+.vars-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2);
+  margin-bottom: var(--space-2); }
+.vars-fields { display: flex; flex-direction: column; gap: var(--space-3); }
+.vars-field { display: flex; flex-direction: column; gap: var(--space-1); }
+.vars-label { font-size: var(--fs-label); font-weight: 600; }
+.vars-help { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
+.vars-select { font: inherit; font-size: var(--fs-label); padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm);
   border: 1px solid var(--hairline); background: var(--page); align-self: flex-start; }
 
 /* A set of values as removable chips. The empty state says what empty MEANS — an empty
    filter is not "no filter applied", it is "ask Wiz for everything". */
-.chipset { display: flex; flex-wrap: wrap; gap: 5px; }
-.chipset-empty { font-size: 11.5px; color: var(--warn); }
-.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px;
+.chipset { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.chipset-empty { font-size: var(--fs-label); color: var(--warn); }
+.chip { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--fs-label);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: var(--surface); border: 1px solid var(--hairline);
-  border-radius: var(--radius-pill); padding: 2px 4px 2px 9px; }
+  border-radius: var(--radius-pill); padding: var(--space-half) var(--space-1) var(--space-half) var(--space-2); }
 .chip-x { border: none; background: none; cursor: pointer; color: var(--text-3);
-  font-size: 13px; line-height: 1; padding: 0 4px; border-radius: 50%; }
+  font-size: var(--fs-label); line-height: 1; padding: 0 var(--space-1); border-radius: 50%; }
 .chip-x:hover { background: var(--wash-hover); color: var(--ink); }
-.chip-add { display: flex; gap: 6px; margin-top: 2px; }
-.chip-input { font: inherit; font-size: 12px; padding: 4px 8px; min-width: 0; flex: 1;
+.chip-add { display: flex; gap: var(--space-1); margin-top: var(--space-half); }
+.chip-input { font: inherit; font-size: var(--fs-label); padding: var(--space-1) var(--space-2); min-width: 0; flex: 1;
   border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--page); }
 
-.vars-json { margin-top: 12px; }
-.vars-json summary { font-size: 11.5px; color: var(--text-2); cursor: pointer; }
-.vars-json .code-block { margin-top: 6px; }
+.vars-json { margin-top: var(--space-3); }
+.vars-json summary { font-size: var(--fs-label); color: var(--text-2); cursor: pointer; }
+.vars-json .code-block { margin-top: var(--space-2); }
 
-.vars-error { font-size: 12px; color: var(--bad); margin: 8px 0 0; min-height: 0; }
+.vars-error { font-size: var(--fs-label); color: var(--bad); margin: var(--space-2) 0 0; min-height: 0; }
 .vars-error:not(.is-on) { display: none; }
 
-.vars-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.vars-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-4); }
 .vars-state { margin-right: auto; }
 
-.vars-test { margin-top: 12px; }
-.vars-test-out { display: flex; flex-direction: column; gap: 4px; }
-.vars-test-line { font-size: 12.5px; color: var(--text-2); margin: 0; }
+.vars-test { margin-top: var(--space-3); }
+.vars-test-out { display: flex; flex-direction: column; gap: var(--space-1); }
+.vars-test-line { font-size: var(--fs-label); color: var(--text-2); margin: 0; }
 .vars-test-line.is-bad { color: var(--bad); }
 
 /* ------------------------------------------------------- sheet body, page-local prose */
-.cov-para { margin: 0; font-size: 13px; color: var(--text-2); }
-.cov-sheet-figure { color: var(--ink); font-size: 14px; }
-.cov-sheet-figure strong { font-size: 1.125rem; font-weight: 600; }
+.cov-para { margin: 0; font-size: var(--fs-body); color: var(--text-2); }
+.cov-sheet-figure { color: var(--ink); font-size: var(--fs-body); }
+.cov-sheet-figure strong { font-size: var(--fs-display-sm); font-weight: 600; }
 .cov-note {
-  font-size: 12.5px; color: var(--text-2); background: rgba(0, 0, 0, 0.03);
-  border-radius: var(--radius-md); padding: 8px 10px; margin: 8px 0 0;
+  font-size: var(--fs-label); color: var(--text-2); background: rgba(0, 0, 0, 0.03);
+  border-radius: var(--radius-md); padding: var(--space-2) var(--space-2); margin: var(--space-2) 0 0;
 }
 
 /* The tenant's own rejection message, verbatim. Monospace and wrapped rather than truncated:
@@ -229,10 +222,10 @@
    drawer — the page body must never scroll sideways. */
 .cov-reason {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px; line-height: 1.55; color: var(--ink);
+  font-size: var(--fs-label); line-height: 1.55; color: var(--ink);
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
-  margin: 8px 0 0; padding: 10px 12px;
+  margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3);
   max-height: 160px; overflow: auto;
   /* `pre-wrap`, unlike .code-block's `pre`: a GraphQL document's indentation is how it is
      read, but an error message is a sentence and wrapping it costs nothing. */
@@ -247,15 +240,15 @@
    severity or coverage bar. */
 .reach-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 
-.reach-ladder { display: flex; flex-direction: column; gap: 9px; margin: 10px 0 18px; }
+.reach-ladder { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-3) 0 var(--space-4); }
 .reach-stage {
   display: grid; grid-template-columns: minmax(120px, 190px) 1fr 48px;
-  align-items: center; gap: 12px;
+  align-items: center; gap: var(--space-3);
 }
-.reach-stage-label { font-size: 12.5px; font-weight: 600; color: var(--ink); }
-.reach-stage-figure { display: flex; align-items: center; gap: 10px; }
+.reach-stage-label { font-size: var(--fs-label); font-weight: 600; color: var(--ink); }
+.reach-stage-figure { display: flex; align-items: center; gap: var(--space-2); }
 .reach-stage-count {
-  min-width: 84px; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--ink);
+  min-width: 84px; font-size: var(--fs-label); font-variant-numeric: tabular-nums; color: var(--ink);
 }
 .reach-stage-figure .meter { height: 8px; }
 .reach-stage-bar-empty {
@@ -265,17 +258,17 @@
   );
 }
 .reach-stage-pct {
-  font-size: 12px; color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums;
+  font-size: var(--fs-label); color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums;
 }
 
 .reach-kind-ai { font-weight: 600; color: var(--ink); }
 .reach-kinds td .num { font-variant-numeric: tabular-nums; }
 
-.reach-edges { margin-top: 4px; }
+.reach-edges { margin-top: var(--space-1); }
 .reach-chip-dead { color: var(--text-3); opacity: 0.75; }
 
 @media (max-width: 620px) {
-  .reach-stage { grid-template-columns: 1fr; gap: 4px; }
+  .reach-stage { grid-template-columns: 1fr; gap: var(--space-1); }
   .reach-stage-pct { text-align: left; }
 }
 
@@ -284,6 +277,6 @@
   .cov-header { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 760px) {
-  .cov-header { grid-template-columns: 1fr; gap: 18px; }
-  .cov-diagram-scroll { padding: 4px 6px 8px; }
+  .cov-header { grid-template-columns: 1fr; gap: var(--space-4); }
+  .cov-diagram-scroll { padding: var(--space-1) var(--space-1) var(--space-2); }
 }

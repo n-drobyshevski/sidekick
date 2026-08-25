@@ -3,7 +3,8 @@
 import { call, } from "../api.js";
 import { bootstrapCached, swrCall } from "../store.js";
 import {
-  clear, confirmDialog, el, emptyState, fmtDateTime, prunePanel, registerWideNote,
+  appendAll, clear, confirmDialog, el, emptyState, fmtDateTime, prunePanel, registerWideNote,
+  statRow,
   sectionLabel, skeleton, statusPill, toast,
 } from "../ui.js";
 
@@ -30,11 +31,11 @@ export async function renderData(main, _params, ctx) {
     role: "status", "aria-label": "Loading sync history",
     style: "display:flex; flex-direction:column; gap:12px",
   }, ...Array.from({ length: 4 }, () => skeleton("line", { height: "18px" }))));
-  statsHost.append(el("div", { class: "kpi-row", role: "status", "aria-label": "Loading storage" },
-    ...Array.from({ length: 3 }, () => el("div", { class: "kpi-card" },
-      el("div", { style: "display:flex; flex-direction:column; gap:9px" },
-        skeleton("line", { width: "60%" }),
-        skeleton("stat", { width: "45%" }))))));
+  // Shape-matched to what lands: a stat strip, not three cards.
+  statsHost.append(el("div", { class: "stat-list", role: "status", "aria-label": "Loading storage" },
+    ...Array.from({ length: 3 }, () => el("div", { class: "stat-row" },
+      skeleton("line", { width: "60%" }),
+      skeleton("stat", { width: "45%" })))));
 
   try {
     const history = await swrCall("api_getSyncHistory", {}, (fresh) => paintHistory(fresh));
@@ -94,7 +95,7 @@ export async function renderData(main, _params, ctx) {
       return;
     }
     // A sync is a register-wide operation and its row records register-wide totals.
-    historyHost.append(
+    appendAll(historyHost,
       registerWideNote(bootstrapCached(), "a sync collects for the whole register"));
     const tbody = el("tbody", {});
     for (const row of payload.rows) {
@@ -133,21 +134,18 @@ export async function renderData(main, _params, ctx) {
     // Storage is the ledger's own size, and this page carries the control that wipes it.
     // Scoping any of it would be actively wrong: someone checking headroom against the 10M
     // cell ceiling, or about to clear everything, has to see everything.
-    statsHost.append(
+    appendAll(statsHost,
       registerWideNote(bootstrapCached(), "storage describes the ledger, not a project"),
-      el("div", { class: "kpi-row" },
-        el("div", { class: "kpi-card" },
-          el("div", { class: "kpi-label" }, "Spreadsheet cells"),
-          el("div", { class: "kpi-value num" }, Number(stats.cellCount).toLocaleString()),
-          el("div", { class: "kpi-sub" }, "10M ceiling")),
-        el("div", { class: "kpi-card" },
-          el("div", { class: "kpi-label" }, "Drive archive"),
-          el("div", { class: "kpi-value num" }, fmtBytes(Number(stats.archiveBytes)))),
-        el("div", { class: "kpi-card" },
-          el("div", { class: "kpi-label" }, "Rows"),
-          el("div", { class: "kpi-value num" },
-            `${stats.rows.assets} / ${stats.rows.edges} / ${stats.rows.issues}`),
-          el("div", { class: "kpi-sub" }, "assets / edges / issues")),
+      // These three were hand-built .kpi-card divs rather than calls to kpiCard(), which is
+      // how a page drifts off the shared vocabulary without anyone deciding to. They are
+      // three readings of one thing (how big the ledger is), not three headlines, so they are
+      // a stat strip: same figures, hairlines instead of three competing boxes.
+      el("div", { class: "stat-list" },
+        statRow("Spreadsheet cells", Number(stats.cellCount).toLocaleString(), "10M ceiling"),
+        statRow("Drive archive", fmtBytes(Number(stats.archiveBytes)), ""),
+        statRow("Rows",
+          `${stats.rows.assets} / ${stats.rows.edges} / ${stats.rows.issues}`,
+          "assets / edges / issues"),
       ),
     );
   }

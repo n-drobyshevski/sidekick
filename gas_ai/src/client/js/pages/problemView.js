@@ -146,6 +146,12 @@ export const PROBLEM_COMPARATORS = {
   due: (a, b) => dueRank(a) - dueRank(b),
   // The ranking's third level, offered as a column so a reader can see the order they were
   // given. Oldest first, undated last — the same rule compareProblems applies.
+  // The minimal model's order. The number is computed SERVER-SIDE and arrives on the row —
+  // this only reads it, which is the distinction actionView.js's header insists on. An
+  // unscored row sorts last rather than as zero. The column is not surfaced while the
+  // scoring models sit behind the experimental gate; the comparator stays because the model
+  // it reads is still computed and still pinned by test/rank.test.ts.
+  rank: (a, b) => rankValue(b) - rankValue(a),
   firstSeen: (a, b) => {
     const x = String((a && a.firstSeenAt) || "");
     const y = String((b && b.firstSeenAt) || "");
@@ -156,8 +162,21 @@ export const PROBLEM_COMPARATORS = {
   },
 };
 
+/** `-1` for a row the server never scored, so it lands after every scored one either way. */
+function rankValue(row) {
+  const v = row && typeof row.rankScore === "number" ? row.rankScore : -1;
+  return v;
+}
+
 /** Columns whose natural order reads as descending — for aria-sort and the glyph. */
-export const PROBLEM_SORT_DESC = { severity: true };
+/**
+ * Columns whose natural order reads as descending — for aria-sort and the glyph.
+ *
+ * `rank` is here for the reason `severity` is: a higher score is a WORSE row, so the first
+ * click has to show the worst first. `due` and `firstSeen` stay out — both open at the near
+ * end (soonest, oldest), which is already ascending.
+ */
+export const PROBLEM_SORT_DESC = { severity: true, rank: true };
 
 export function sortProblems(rows, key, dir) {
   const cmp = PROBLEM_COMPARATORS[key];

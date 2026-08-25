@@ -62,13 +62,14 @@ import {
   treeDiscrimination,
   validateProblemRule,
 } from "../domain/problemRule";
-import { countPostureTiers, TIER_VALUES, type PostureVector, type Tier } from "../domain/posture";
+import { countPostureTiers, postureStateOf, TIER_VALUES, type PostureVector, type Tier } from "../domain/posture";
 import {
   buildProblemRows,
   PROBLEMS_CLIENT_ALL_MAX,
   rankProblems,
   type ProblemRow,
 } from "../domain/problems";
+import { rankRuleFromExploitation } from "../domain/rank";
 import {
   concentrationRatio,
   coverCurve,
@@ -87,6 +88,7 @@ import {
 } from "../domain/postureRule";
 import {
   AARS_SEVERITY_ORDER,
+  DERIVATION_VERSION,
   isOpenGap,
   isUnresolvedIssue,
   MAX_NODES_CEILING,
@@ -404,6 +406,24 @@ function bootstrapCore(): Rec {
       },
       scoredVersion,
       stale: scoredVersion !== aarsRule.version,
+    },
+    // A SECOND kind of staleness, deliberately not folded into `aarsRule.stale` above.
+    //
+    // That one means "the model moved since these scores were computed", and Recompute fixes
+    // it — no Wiz call, the inputs are all in the sheet. This one means "the STORED FACTS were
+    // collected by an older normalizer", and Recompute cannot fix it at all: the old value was
+    // destroyed at ingest, so a cell reading "false" carries no memory of Wiz never having
+    // answered. Only a full sync repairs it.
+    //
+    // Shipping them as one flag would point an operator at a button that cannot help, which is
+    // worse than not warning at all — so the remedy travels WITH the warning.
+    derivation: {
+      current: DERIVATION_VERSION,
+      lastSync: settingsStore.getSyncDerivationVersion(),
+      stale: settingsStore.derivationIsStale(),
+      // Named here rather than in the client so the one sentence that matters cannot drift
+      // from the condition that raises it.
+      remedy: "sync",
     },
     latestSync: latest,
     counts: {
@@ -823,7 +843,13 @@ function assetRow(n: GNode): Rec {
     sensitiveData: n.hasSensitiveData ?? false,
     highPriv: n.hasHighPrivileges ?? false,
     adminPriv: n.hasAdminPrivileges ?? false,
-    guardrailMissing: n.guardrailMissing ?? false,
+    // `?? null`, not `?? false`. The store now keeps this tri-state, and re-collapsing it
+    // here would undo that fix one layer above it: the guardrail scan is a NEGATED traversal
+    // that only ever sets the flag TRUE, so `false` has never meant "we looked and a
+    // guardrail is attached". Every client reader tests `=== true` (assetTable.ts flag()),
+    // so a null reads as "not flagged" exactly as before — what changes is that "never
+    // scanned" stops being reported as a confirmed negative.
+    guardrailMissing: n.guardrailMissing ?? null,
     // Null, not 0, when the sensitive-data traversal never reached this node: the graph
     // card and the insight row both key on truthiness, and a 0 would make "we never asked"
     // render exactly like "we looked and it is clean".
@@ -880,7 +906,13 @@ function assetTableRow(
     openIssues: n.openIssues ?? 0,
     openFindings: n.openFindings ?? 0,
     combos: (n.comboGroups ?? []).length,
-    guardrailMissing: n.guardrailMissing ?? false,
+    // `?? null`, not `?? false`. The store now keeps this tri-state, and re-collapsing it
+    // here would undo that fix one layer above it: the guardrail scan is a NEGATED traversal
+    // that only ever sets the flag TRUE, so `false` has never meant "we looked and a
+    // guardrail is attached". Every client reader tests `=== true` (assetTable.ts flag()),
+    // so a null reads as "not flagged" exactly as before — what changes is that "never
+    // scanned" stops being reported as a confirmed negative.
+    guardrailMissing: n.guardrailMissing ?? null,
     agentic: n.identityPurpose === "AGENTIC",
     // How many classified findings this asset can REACH — its own if it is a datastore,
     // whatever its execution identity can read if it is an agent.
@@ -1057,7 +1089,13 @@ function assetsModel(): AssetsModel {
   const openGaps = viewFindings().filter(isOpenGap);
   const unlinkedGaps = openGaps.filter((f) => !assetIds[f.resourceId]).length;
   const agents = assets.filter((a) => a.kind === "AI_AGENT");
-  const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
+  // `=== false`, not `!a.guardrailMissing`. The old test counted an agent the coverage scan
+  // NEVER REACHED as protected, which is the same absence-of-evidence-as-a-control error
+  // posture.containmentOf spends twenty lines refusing — and measureSpec.ts.s own
+  // `guardrail-coverage-pct` record already described this defect in the present tense.
+  // Three states now, published as three numbers rather than folded into two.
+  const protectedAgents = agents.filter((a) => a.guardrailMissing === false).length;
+  const guardrailUnknownAgents = agents.filter((a) => a.guardrailMissing === undefined).length;
   const issueRollup = issuesBySeverityByAsset(issues);
   // Over `openGaps`, the already-gated population above — so the per-asset breakdown and
   // `kpis.complianceGaps` count the same rows under the same definition.
@@ -1098,6 +1136,10 @@ function assetsModel(): AssetsModel {
       // "3 of 71 agents"; without this it had to recover the 3 by counting rows, which
       // only works while the client holds every row.
       protectedAgents,
+      // The third state, published rather than folded away. An agent the coverage scan never
+      // reached is not protected and not unprotected, and before this it was silently counted
+      // as protected — see protectedAgents above.
+      guardrailUnknownAgents,
       // The two asset-level headline counts, and they come from the POSTURE TIER rather
       // than from the AARS band.
       //
@@ -1118,6 +1160,21 @@ function assetsModel(): AssetsModel {
       ).length,
       dataFindings: assets.reduce((sum, a) => sum + (a.dataFindingCount ?? 0), 0),
       openIssues: issues.length,
+      // The attribution denominator, published beside its total for the same reason
+      // `complianceGapsUnlinked` is: a widened join has to say what it did NOT reach, or the
+      // number it does report reads as the whole register.
+      //
+      // On the reference tenant this is the sharpest figure the app publishes about its own
+      // coverage: 691 of 840 AI-category issues land on a SERVICE_ACCOUNT, and only 22 of 99
+      // in-scope issues resolved to a synced AI asset before the RUNS_AS hop existed. A rising
+      // `issuesAttributed` is evidence the traversal ran, never evidence the estate got safer.
+      issuesAttributed: issues.filter((i) => (i.attributedAssetIds ?? []).length > 0).length,
+      // Reached no AI asset at all. Counts only rows attribution actually RAN over — a row
+      // synced before the fold existed carries no hop and is excluded from both halves rather
+      // than silently counted as a failure to attribute.
+      issuesUnattributed: issues.filter(
+        (i) => i.attributionHop !== undefined && (i.attributedAssetIds ?? []).length === 0,
+      ).length,
       complianceGaps: openGaps.length,
       complianceGapsUnlinked: unlinkedGaps,
       // Framework POSTURE, which is a different axis from the two counts above: those
@@ -2776,7 +2833,9 @@ export function previewProblemRule(p?: unknown): ApiResult {
     // Issues held separately as well as in the union: the census below is over issues
     // alone, because `aiVerdict` and `comboGroup` are issue vocabulary and a FindingRow
     // carries neither. Passing the union would typecheck only behind a cast and would say
-    // something untrue about where the values come from.
+    // something untrue about where the values come from. `ruleIds` rides the same call and
+    // is issues-only for a DIFFERENT reason — a finding prices through the same rule table
+    // on `ruleShortId` — which `problemCensus`'s own header states in full.
     // Whole register, like the AARS preview above — a rule preview answers "what would
     // this change?", and the answer does not depend on what the sidebar is looking at.
     const beforeIssues = syncStore.loadIssues();

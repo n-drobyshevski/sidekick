@@ -5,8 +5,11 @@
 //     archiveStore.parseGzBlob sniffs the gzip magic bytes and falls back to
 //     plain-text parsing, and serverCache only round-trips its own blobs.
 //   - LockService always grants the lock (single-threaded page).
-//   - ScriptApp triggers are recorded; a trigger_continueScan one-shot actually
-//     fires via setTimeout so a (hypothetical) multi-hop scan still completes.
+//   - ScriptApp triggers are recorded; a trigger_continueScan / trigger_continueSync
+//     one-shot actually fires via setTimeout so a multi-hop sync still completes.
+//   - UrlFetchApp is the one shim that is NOT a fake: it forwards to the dev server
+//     (/_fetch), which holds the credentials and makes the real call. With none
+//     configured the proxy refuses and the app stays dry-run, as before.
 
 (function () {
   "use strict";
@@ -54,7 +57,27 @@
         ? btoa(bytesToBinary(new TextEncoder().encode(input)))
         : btoa(bytesToBinary(input)),
     base64Decode: (s) => Array.from(atob(s), (c) => c.charCodeAt(0)),
-    sleep: () => {},
+    // A real block, not a no-op: the only caller is the 429/5xx backoff in wizClientAi,
+    // and against a live tenant a backoff that returns instantly is the burst it was
+    // written to break up. Server code here is synchronous (see UrlFetchApp), so spinning
+    // is the only way to wait. Capped so a bad number cannot hang the tab indefinitely.
+    //
+    // THE ESCAPE HATCH IS NOT OPTIONAL, and the reason is specific rather than tidiness.
+    // `test/gasEnv.ts` boots this file under `vi.useFakeTimers({ toFake: ["Date"] })` with a
+    // FROZEN clock, so `Date.now()` never advances and `Date.now() < end` can never become
+    // false — the spin is INFINITE, not slow, and being synchronous it cannot be interrupted
+    // by a test timeout. It bites exactly one test today (`scopedPosture.test.ts` stubs an
+    // HTTP 500 and drives the 5xx backoff), which is how it went unnoticed: 8 of its 9 cases
+    // pass and the 9th takes the vitest worker down with it.
+    //
+    // So the block is skipped when the harness says so. There is nothing to be polite to in a
+    // unit test — vitest never reaches a tenant — and honouring the flag keeps live behaviour
+    // byte-identical rather than trading a real backoff for a faster suite.
+    sleep: (ms) => {
+      if (window.__GAS_SHIM_INSTANT_SLEEP__) return;
+      const end = Date.now() + Math.min(Math.max(0, Number(ms) || 0), 30_000);
+      while (Date.now() < end) { /* spin */ }
+    },
     getUuid: () =>
       (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)),
   };
@@ -331,7 +354,10 @@
             getUniqueId: () => `trigger-${++triggerSeq}`,
           };
           triggers.push(trigger);
-          if (handler === "trigger_continueScan") {
+          // Both names on purpose: gas_ai spills a long live sync onto trigger_continueSync
+          // (syncJobs.CONTINUE_HANDLER), and without firing it a real sync stops at the first
+          // budget expiry and never resumes — looking exactly like a hang.
+          if (handler === "trigger_continueScan" || handler === "trigger_continueSync") {
             setTimeout(() => {
               try { window.Server.jobs.continueJob(); }
               catch (e) { console.error("continueJob failed:", e); }
@@ -345,9 +371,49 @@
   };
 
   // ----------------------------------------------------------------- UrlFetchApp
+  // Forwarded to the dev server (/_fetch), which holds the credentials and does the real
+  // call — the browser cannot reach api.wiz.io itself (CORS), and the secrets are kept out
+  // of the page: what travels from here is a placeholder the proxy substitutes.
+  //
+  // Synchronous XHR, deliberately. UrlFetchApp blocks in GAS and every caller is written
+  // for that, so the alternative is not "async here" but "rewrite the server". The cost is
+  // a frozen tab for the duration of a sync, which is what a GAS execution is anyway.
   window.UrlFetchApp = {
-    fetch: () => {
-      throw new Error("UrlFetchApp is unavailable in the local dev harness (dry-run only).");
+    fetch: (url, params) => {
+      const p = params || {};
+      const method = String(p.method || "get").toUpperCase();
+      const contentType = p.contentType || null;
+      let payload = p.payload;
+      if (payload != null && typeof payload !== "string") {
+        if (payload instanceof FakeBlob) payload = payload.getDataAsString();
+        else if (contentType && contentType.indexOf("json") >= 0) payload = JSON.stringify(payload);
+        // GAS form-encodes an object payload when the content type is not JSON; the token
+        // request depends on that, so reproduce it rather than posting [object Object].
+        else payload = new URLSearchParams(payload).toString();
+      }
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/_fetch", false);
+      xhr.setRequestHeader("content-type", "application/json");
+      xhr.send(JSON.stringify({ url, method, contentType, headers: p.headers || {}, payload }));
+      if (xhr.status !== 200) {
+        throw new Error(`dev fetch proxy unreachable (HTTP ${xhr.status}) for ${url}`);
+      }
+      const res = JSON.parse(xhr.responseText);
+      // A proxy refusal is not a tenant answer, so it throws instead of arriving as a
+      // status code the app would report as "Wiz said no".
+      if (res.error) throw new Error(`dev fetch proxy: ${res.error}`);
+      if (!p.muteHttpExceptions && res.status >= 400) {
+        throw new Error(`Request failed for ${url} returned code ${res.status}.`);
+      }
+      const headers = res.headers || {};
+      return {
+        getResponseCode: () => res.status,
+        getContentText: () => res.body,
+        getAllHeaders: () => headers,
+        getHeaders: () => headers,
+        getBlob: () =>
+          new FakeBlob(res.body, headers["content-type"] || "application/octet-stream", "response"),
+      };
     },
   };
 

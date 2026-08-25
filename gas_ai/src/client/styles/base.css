@@ -21,6 +21,18 @@
  * element that needs to be present-but-not-displayed has `.sr-only` for that. */
 [hidden] { display: none !important; }
 
+/* The present-but-not-displayed utility the guard above points at, defined here because the
+   comment above already calls it the app-wide answer and it was living in sheet.css.
+   There used to be TWO of these: this one, and a weaker `.visually-hidden` in aars.css that
+   omitted `clip-path: inset(50%)`, `margin: -1px`, `padding: 0` and `border: 0` — the
+   belt-and-braces half of the recipe, without which the element can still leak a visible
+   1px box in some engines. aars.js's twelve uses moved onto this one. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  border: 0;
+}
+
 /* ------------------------------------------------------------------ shell / nav */
 /* Fixed viewport-height shell, in two rows: the app header across the top, and beneath it
    the rail (which fills what is left, pinning the sync zone to its bottom) beside a content
@@ -36,14 +48,14 @@
    been. */
 .appbar {
   flex: 0 0 var(--appbar-h);
-  display: flex; align-items: center; gap: 12px;
-  padding: 0 14px;
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: 0 var(--space-3);
   background: var(--surface);
   border-bottom: 1px solid var(--hairline);
   z-index: var(--z-appbar);
 }
 .appbar-name {
-  font-weight: 600; font-size: 1rem; letter-spacing: -0.02em; color: var(--ink);
+  font-weight: 600; font-size: var(--fs-lead); letter-spacing: -0.02em; color: var(--ink);
   white-space: nowrap;
 }
 /* The rule between the product and the scope it is showing — two different kinds of fact,
@@ -57,17 +69,17 @@
   overflow-y: auto;
   background: var(--surface);
   border-right: 1px solid var(--hairline);
-  padding: 16px 12px;
+  padding: var(--space-4) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   /* Only the width animates, for the collapsed icon-only mode below. */
-  transition: flex-basis 0.18s ease, width 0.18s ease;
+  transition: flex-basis var(--dur-base) ease, width var(--dur-base) ease;
 }
 /* The rail's own first row, holding nothing but the collapse control. The wordmark that used
    to live here is in the app header now — one brand, in one place, whatever the rail is
    doing. Right-aligned when the rail is open, centred when it is 56px wide (below). */
-.sidebar .rail-head { display: flex; align-items: center; padding: 0 2px 10px; }
+.sidebar .rail-head { display: flex; align-items: center; padding: 0 var(--space-half) var(--space-2); }
 /* The product mark. Its paint is on the presentation attributes too (ui/brandMark.js), so
    it draws correctly with no stylesheet at all — which is the case index.html's first
    paint is closest to. These rules exist so the three colours stay retintable from one
@@ -85,17 +97,17 @@
 .scope-switch {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   min-width: 0;
 }
 .scope-combo { width: clamp(180px, 22vw, 280px); flex: 0 1 auto; }
 /* 13px/500 — one step down from the wordmark it sits beside. It names the register every
    page is showing, so it must not read as an afterthought; equally it is not the product's
    name, so it stops short of that weight. */
-.scope-switch .combobox-trigger { min-height: 32px; font-size: 13px; font-weight: 500; }
+.scope-switch .combobox-trigger { min-height: 32px; font-size: var(--fs-body); font-weight: 500; }
 .scope-combo-icon { display: inline-flex; flex: 0 0 auto; color: var(--text-3); }
 .scope-caption {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -109,21 +121,21 @@
 @media (max-width: 560px) { .scope-caption { display: none; } }
 
 .nav-group {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-3);
-  padding: 12px 10px 4px;
+  padding: var(--space-3) var(--space-2) var(--space-1);
 }
 .nav-link {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2);
   border-radius: var(--radius-md);
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-body);
   text-decoration: none;
   border: none;
   background: none;
@@ -145,13 +157,13 @@
 .sidebar .scan-zone {
   margin-top: auto;
   border-top: 1px solid var(--hairline);
-  padding-top: 12px;
+  padding-top: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
-.scan-caption { font-size: 12px; color: var(--text-3); }
-.scan-buttons { display: flex; gap: 8px; }
+.scan-caption { font-size: var(--fs-label); color: var(--text-3); }
+.scan-buttons { display: flex; gap: var(--space-2); }
 
 /* Collapsible rail — icon-only mode (desktop only; the <=800px top-bar layout further
    down ignores .collapsed). Width rides --rail-w so the flex main pane and the route
@@ -171,8 +183,8 @@
 }
 .rail-toggle:hover { background: var(--wash-hover); }
 .rail-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.rail-toggle svg { width: 16px; height: 16px; display: block; transition: transform 0.18s ease; }
-.sidebar .scan-buttons button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.rail-toggle svg { width: 16px; height: 16px; display: block; transition: transform var(--dur-base) ease; }
+.sidebar .scan-buttons button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); }
 .sidebar .scan-buttons .primary .nav-icon { color: inherit; width: 16px; height: 16px; flex-basis: 16px; }
 .sidebar .scan-buttons .primary .nav-icon svg { width: 16px; height: 16px; }
 .rail-status-dot { display: none; width: 9px; height: 9px; border-radius: 50%; align-self: center; }
@@ -180,7 +192,7 @@
 .rail-status-dot.neutral { background: var(--text-3); }
 
 @media (min-width: 801px) {
-  .sidebar.collapsed { padding-left: 8px; padding-right: 8px; }
+  .sidebar.collapsed { padding-left: var(--space-2); padding-right: var(--space-2); }
   .sidebar.collapsed .nav-label,
   .sidebar.collapsed .nav-group,
   .sidebar.collapsed .scan-caption,
@@ -190,15 +202,15 @@
   .sidebar.collapsed .rail-head { justify-content: center; padding-left: 0; padding-right: 0; }
   .sidebar.collapsed .rail-toggle { margin-left: 0; }
   .sidebar.collapsed .rail-toggle svg { transform: rotate(180deg); }
-  .sidebar.collapsed .nav-link { justify-content: center; padding: 8px 0; }
+  .sidebar.collapsed .nav-link { justify-content: center; padding: var(--space-2) 0; }
   .sidebar.collapsed .scan-buttons { justify-content: center; }
-  .sidebar.collapsed .scan-buttons .primary { padding: 8px; }
+  .sidebar.collapsed .scan-buttons .primary { padding: var(--space-2); }
   .sidebar.collapsed .rail-status-dot { display: block; }
   /* Loading panel in the icon rail: drop the full card chrome and its text/bar/buttons,
      leaving the compact ring indicator centered — the card's phase, counts and controls
      are too wide for 56px, so they collapse to the ring (status) + its Details button. */
   .sidebar.collapsed .scan-progress {
-    padding: 6px 0; gap: 0; align-items: center;
+    padding: var(--space-1) 0; gap: 0; align-items: center;
     background: transparent; border: none; box-shadow: none;
   }
   .sidebar.collapsed .scan-progress-bar-slot,
@@ -222,24 +234,24 @@
 .scan-progress {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 10px 12px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   background: var(--page);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
 }
-.scan-progress-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.scan-progress-phase { font-size: 13px; font-weight: 600; color: var(--ink); }
-.scan-progress-elapsed { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
-.scan-progress-counts { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.scan-progress-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.scan-progress-phase { font-size: var(--fs-label); font-weight: 600; color: var(--ink); }
+.scan-progress-elapsed { font-size: var(--fs-label); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.scan-progress-counts { font-size: var(--fs-label); color: var(--text-2); font-variant-numeric: tabular-nums; }
 .scan-progress.failed .scan-progress-counts { color: var(--bad); }
 /* A run with no progress for minutes: flag it amber on the always-visible card, not only
    behind the details drawer, so a likely-dead sync is legible at a glance. */
 .scan-progress.stuck { border-color: rgba(161, 98, 7, 0.4); }
 .scan-progress.stuck .scan-progress-phase,
 .scan-progress.stuck .scan-progress-counts { color: var(--warn); }
-.scan-progress-actions { display: flex; gap: 12px; }
+.scan-progress-actions { display: flex; gap: var(--space-3); }
 
 /* Compact collapsed-rail indicator: a ring (spinner / arc / filled) with a centered
    glyph or percent. Hidden by default; the .sidebar.collapsed rule above reveals it. The
@@ -247,7 +259,7 @@
    the coloured arc; --ring is re-tinted per run state, matching the progress-bar colours. */
 .scan-progress-mini {
   display: none; position: relative; align-items: center; justify-content: center;
-  width: 100%; padding: 2px 0; border: none; background: none; cursor: pointer;
+  width: 100%; padding: var(--space-half) 0; border: none; background: none; cursor: pointer;
 }
 .scan-progress-mini:disabled { cursor: default; }
 .scan-progress-mini:focus-visible {
@@ -277,11 +289,11 @@
 .scan-progress.stuck .scan-spinner { --ring: var(--warn); }
 .scan-progress-mini-pct {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-size: 9px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-micro); font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums;
 }
-.scan-progress.done .scan-progress-mini-pct { color: var(--ok); font-size: 13px; }
-.scan-progress.failed .scan-progress-mini-pct { color: var(--bad); font-size: 12px; }
-.scan-progress.stuck .scan-progress-mini-pct { color: var(--warn); font-size: 12px; }
+.scan-progress.done .scan-progress-mini-pct { color: var(--ok); font-size: var(--fs-label); }
+.scan-progress.failed .scan-progress-mini-pct { color: var(--bad); font-size: var(--fs-label); }
+.scan-progress.stuck .scan-progress-mini-pct { color: var(--warn); font-size: var(--fs-label); }
 @keyframes scan-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   /* No spin: a calm 40% arc still reads as "working" without motion. */
@@ -290,11 +302,11 @@
   }
 }
 .linklike {
-  background: none; border: none; padding: 0; font-size: 12px; font-weight: 600;
+  background: none; border: none; padding: 0; font-size: var(--fs-label); font-weight: 600;
   color: var(--accent); cursor: pointer;
 }
 .linklike.danger { color: var(--bad); }
-.linklike:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.linklike:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-xs); }
 
 /* Track/fill progress bar. Fill is the brand accent — a state color, not severity. */
 .progress-track {
@@ -331,19 +343,19 @@
 }
 
 /* Details drawer: phase stepper + fact grid */
-.scan-steps { display: flex; gap: 14px; margin: 4px 0 14px; }
-.scan-step { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-3); }
+.scan-steps { display: flex; gap: var(--space-3); margin: var(--space-1) 0 var(--space-4); }
+.scan-step { display: flex; align-items: center; gap: var(--space-1); font-size: var(--fs-body); color: var(--text-3); }
 .scan-step.done { color: var(--ok); }
 .scan-step.active { color: var(--accent); font-weight: 600; }
-.scan-step-dot { font-size: 12px; }
+.scan-step-dot { font-size: var(--fs-label); }
 .scan-detail-grid {
-  display: grid; grid-template-columns: auto 1fr; gap: 6px 16px;
-  margin-top: 14px; font-size: 13px;
+  display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-4);
+  margin-top: var(--space-4); font-size: var(--fs-body);
 }
 .scan-detail-grid dt { color: var(--text-3); }
 .scan-detail-grid dd { margin: 0; font-variant-numeric: tabular-nums; }
 .scan-detail-error {
-  margin-top: 14px; padding: 10px 12px; font-size: 13px;
+  margin-top: var(--space-4); padding: var(--space-2) var(--space-3); font-size: var(--fs-label);
   color: var(--bad); background: rgba(185, 28, 28, 0.06);
   border-radius: var(--radius-md);
 }
@@ -358,7 +370,7 @@ main {
   min-width: 0;
   height: 100%;
   overflow-y: auto;
-  padding: 28px 32px 48px;
+  padding: var(--space-6) var(--space-6) var(--space-7);
 }
 
 /* Full-bleed routes (the graph workbench): the page owns the whole content pane. */
@@ -369,7 +381,7 @@ main.full-bleed {
   display: flex;
   flex-direction: column;
 }
-main.full-bleed > .empty { margin: 28px 32px; }
+main.full-bleed > .empty { margin: var(--space-6) var(--space-6); }
 
 /* Route-reload overlay: a translucent veil + indeterminate top bar over the content
    pane while the active page refetches. The rail and the app header stay clear and
@@ -388,13 +400,13 @@ main.full-bleed > .empty { margin: 28px 32px; }
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transition: opacity 140ms ease-out, visibility 0s linear 140ms;
+  transition: opacity var(--dur-fast) ease-out, visibility 0s linear var(--dur-fast);
 }
 .route-overlay.visible {
   opacity: 1;
   visibility: visible;
   pointer-events: auto; /* absorb clicks on stale content while it reloads */
-  transition: opacity 140ms ease-out;
+  transition: opacity var(--dur-fast) ease-out;
 }
 .route-overlay-bar {
   position: absolute;
@@ -414,13 +426,13 @@ main.full-bleed > .empty { margin: 28px 32px; }
 .route-overlay-label {
   margin-top: 84px;
   align-self: flex-start;
-  font-size: 12px;
+  font-size: var(--fs-label);
   font-weight: 600;
   color: var(--text-2);
   background: var(--page);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-pill);
-  padding: 5px 12px;
+  padding: var(--space-1) var(--space-3);
   box-shadow: var(--shadow-card);
 }
 .route-overlay-label:empty { display: none; }
@@ -442,21 +454,21 @@ main.full-bleed > .empty { margin: 28px 32px; }
 .boot-splash {
   position: fixed; inset: 0; z-index: 55;
   display: flex; align-items: center; justify-content: center;
-  background: var(--page); opacity: 1; transition: opacity 180ms ease-out;
+  background: var(--page); opacity: 1; transition: opacity var(--dur-base) ease-out;
 }
 .boot-splash.hiding { opacity: 0; }
 .boot-splash-inner {
-  display: flex; flex-direction: column; align-items: center; gap: 18px;
-  padding: 24px; width: min(280px, 80vw);
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-4);
+  padding: var(--space-5); width: min(280px, 80vw);
 }
 /* Mark above the name, not beside it: at 72px the globe is the point of the splash, and a
    row would push the pair past the 280px column. */
 .boot-brand {
-  display: flex; flex-direction: column; align-items: center; gap: 14px; font-weight: 600;
-  font-size: 1.0625rem; letter-spacing: -0.02em; color: var(--ink);
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-3); font-weight: 600;
+  font-size: var(--fs-display-sm); letter-spacing: -0.02em; color: var(--ink);
 }
 .boot-splash-bar { width: 100%; }
-.boot-splash-note { margin: 0; font-size: 12px; color: var(--text-2); }
+.boot-splash-note { margin: 0; font-size: var(--fs-label); color: var(--text-2); }
 @media (prefers-reduced-motion: reduce) { .boot-splash { transition: none; } }
 
 /* Skeleton placeholders: calm opacity pulse only — NO diagonal shimmer sweep (the SaaS tell
@@ -467,7 +479,7 @@ main.full-bleed > .empty { margin: 28px 32px; }
 }
 @keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 .skeleton--line { height: 12px; border-radius: 4px; }
-.skeleton--title { height: 30px; border-radius: 6px; }
+.skeleton--title { height: 30px; border-radius: var(--radius-sm); }
 .skeleton--stat { height: 18px; border-radius: 5px; }
 .skeleton--pill { height: 30px; border-radius: var(--radius-pill); }
 .skeleton--chart { position: absolute; inset: 0; }
@@ -500,7 +512,7 @@ main.full-bleed > .empty { margin: 28px 32px; }
   /* The top bar must stay above the full-width route overlay so nav + sync controls remain
      visible and clickable during a reload (desktop clears the rail via left:var(--rail-w)). */
   .sidebar { position: relative; z-index: 45; }
-  main { height: auto; overflow: visible; padding: 20px 16px 40px; }
+  main { height: auto; overflow: visible; padding: var(--space-4) var(--space-4) var(--space-6); }
   .route-overlay { position: fixed; left: 0; }
   /* Full-bleed workbench degrades to a tall block inside the scrolling page. */
   main.full-bleed { display: block; overflow: visible; height: auto; padding: 0; }
@@ -509,9 +521,6 @@ main.full-bleed > .empty { margin: 28px 32px; }
      hosted as a modal sheet at this width, so the split is just the canvas. */
   .workbench-split { display: block; }
   .workbench-body { height: min(70vh, 640px); }
-  .workbench-controls__group + .workbench-controls__group {
-    padding-left: 0; border-left: none;
-  }
   .workbench-table { position: static; height: auto; max-height: 70vh; }
   .workbench-controls { margin-left: 0; width: 100%; }
   .workbench-search input[type="search"] { width: 100%; }
@@ -519,27 +528,32 @@ main.full-bleed > .empty { margin: 28px 32px; }
 }
 
 /* ------------------------------------------------------------------- typography */
-h1 { font-size: 1.5rem; font-weight: 600; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 4px; }
-.page-sub { color: var(--text-2); margin: 0 0 20px; max-width: var(--measure); }
+h1 { font-size: var(--fs-display); font-weight: 600; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 var(--space-1); }
+.page-sub { color: var(--text-2); margin: 0 0 var(--space-5); max-width: var(--measure); }
 /* The explanatory notes under a card's controls (settings, scans) are running text. */
 p.small.muted { max-width: var(--measure); }
-h2.section-label { font-size: 0.9375rem; font-weight: 600; margin: 28px 0 10px; }
-h3 { font-size: 1rem; font-weight: 600; margin: 0 0 8px; }
+/* THE SECTION SEPARATOR, and the single biggest lever on the missing layout tier. 28px above
+   a section heading is not separation, it is the same beat as the 24px inside the block above
+   it, so sections ran together into one column of evenly-spaced rows. 32 above and 12 below
+   makes the label belong to what FOLLOWS it rather than float between two neighbours, which
+   is the whole job of a section heading. */
+h2.section-label { font-size: var(--fs-lead); font-weight: 600; margin: var(--space-6) 0 var(--space-3); }
+h3 { font-size: var(--fs-lead); font-weight: 600; margin: 0 0 var(--space-2); }
 .label {
-  font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3);
 }
 .num, .kpi-value, td.num, .hero-value, .mini-value { font-variant-numeric: tabular-nums; }
 .muted { color: var(--text-2); }
-.small { font-size: 12px; }
+.small { font-size: var(--fs-label); }
 
 /* ---------------------------------------------------------------------- buttons */
 button, .btn {
   font-family: inherit;
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   border-radius: var(--radius-md);
   min-height: 36px;
-  padding: 6px 14px;
+  padding: var(--space-1) var(--space-3);
   cursor: pointer;
   border: 1px solid var(--hairline);
   background: var(--surface);
@@ -564,21 +578,21 @@ button.danger { color: var(--bad); border-color: rgba(185, 28, 28, 0.35); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 button.link {
   background: none; border: none; box-shadow: none; color: var(--accent);
-  padding: 2px 4px; min-height: 0;
+  padding: var(--space-half) var(--space-1); min-height: 0;
 }
 
 /* ----------------------------------------------------------------------- inputs */
 input[type="text"], input[type="search"], input[type="number"], select {
   font-family: inherit;
-  font-size: 0.875rem;
+  font-size: var(--fs-body);
   background: var(--page);
   color: var(--ink);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   min-height: 36px;
-  padding: 4px 10px;
+  padding: var(--space-1) var(--space-2);
 }
-label.field-label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
+label.field-label { display: block; font-size: var(--fs-label); color: var(--text-2); margin-bottom: var(--space-1); }
 
 input[type="range"] { accent-color: var(--accent); }
 
@@ -590,4 +604,4 @@ input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="
 input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visible {
   outline-color: var(--bad);
 }
-.field-error { color: var(--bad); font-size: 12px; margin-top: 4px; }
+.field-error { color: var(--bad); font-size: var(--fs-label); margin-top: var(--space-1); }

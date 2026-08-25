@@ -166,6 +166,9 @@ export type GapAggregation = "sum" | "rss";
  */
 export type GapUnit = "code" | "condition";
 
+/** See AarsRule.issueAttribution. */
+export type IssueAttribution = "direct" | "runsAs";
+
 /**
  * Which derivations are allowed to RAISE a gap, as opposed to how gaps are priced.
  *
@@ -233,6 +236,20 @@ export interface AarsRule {
    * `"code"`. See `GapUnit` for what `"condition"` changes and why.
    */
   gapUnit: GapUnit;
+  /**
+   * WHICH ISSUES an asset is scored from — not how they are priced.
+   *
+   * `direct` charges an asset only for issues Wiz raised ON it. `runsAs` also charges it for
+   * issues on the identity it runs as, one hop, via IssueRow.attributedAssetIds.
+   *
+   * This is a DERIVATION knob, and a more radical one than any pricing knob in this file: it
+   * changes the population pillar A reads, not the arithmetic over it. It therefore joins
+   * derivationSignature below, so a persisted aarsInput computed under the other setting is
+   * re-derived rather than reused — the same trap gapSources documented once already.
+   *
+   * Default `direct`, which reproduces every pinned figure exactly.
+   */
+  issueAttribution: IssueAttribution;
   /** Ordered pricing cascade for gap codes — FIRST MATCH WINS. */
   gapPoints: GapPointRule[];
   /** Price for a code no row matches. Governs tenant-specific finding shortIds. */
@@ -299,6 +316,7 @@ export const DEFAULT_AARS_RULE: AarsRule = {
   pillarACap: 50,
   // "code": the spec's unit — one gap per distinct framework code. See `GapUnit`.
   gapUnit: "code",
+  issueAttribution: "direct",
   gapPoints: [
     { match: "exact", code: "NO_GUARDRAIL", points: 10 },
     { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
@@ -384,6 +402,7 @@ export const AARS_V2_RULE: AarsRule = {
   // against the code-unit shape, and switching the unit is a bigger act than this pass —
   // `AARS_V3_RULE` is that act, kept separate so v2 keeps meaning what it always meant.
   gapUnit: "code",
+  issueAttribution: "direct",
   gapPoints: [
     { match: "exact", code: "NO_GUARDRAIL", points: 10 },
     { match: "exact", code: "INACTIVE_AGENT", points: 10 },
@@ -473,6 +492,7 @@ export const AARS_V2_RULE: AarsRule = {
 export const AARS_V3_RULE: AarsRule = {
   ...AARS_V2_RULE,
   gapUnit: "condition",
+  issueAttribution: "direct",
   gapPoints: [
     { match: "exact", code: "INACTIVE_AGENT", points: 10 },
     { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
@@ -545,6 +565,7 @@ export function derivationSignature(rule: AarsRule): string {
   const s = rule.gapSources;
   return [
     `gapUnit:${rule.gapUnit}`,
+    `issueAttribution:${rule.issueAttribution}`,
     `fiveRs:${s.fiveRs ? 1 : 0}`,
     `deprecatedModel:${s.deprecatedModel ? 1 : 0}`,
     `inactiveAgent:${s.inactiveAgent ? 1 : 0}`,

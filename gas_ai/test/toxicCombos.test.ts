@@ -72,7 +72,7 @@ describe("classifyIssue", () => {
 describe("the Other AI risk bucket", () => {
   it("is not a member of COMBO_GROUPS", () => {
     // syncJobs.syncSteps() maps COMBO_GROUPS into one per-rule ISSUES_<ruleId> step via
-    // Q_RULE_ASSETS. A membership here would generate a step querying ruleIds: [""].
+    // the per-rule step that used to exist. It is gone, but an empty id is still not a rule.
     expect(COMBO_GROUPS.map((g) => g.id)).not.toContain(OTHER_GROUP_ID);
     expect(COMBO_GROUPS.every((g) => g.ruleId !== "")).toBe(true);
     expect(REGISTER_GROUPS.map((g) => g.id)).toContain(OTHER_GROUP_ID);

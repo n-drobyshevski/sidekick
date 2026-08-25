@@ -10,26 +10,18 @@
    guarantee the severity tokens carry. Control severity on this page still uses sevBadge,
    because that IS a Wiz severity. */
 
-.comp-header {
-  display: grid;
-  grid-template-columns: minmax(170px, 0.5fr) minmax(320px, 2fr);
-  gap: 20px 36px;
-  align-items: start;
-  margin: 0 0 18px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--hairline);
-}
+/* .comp-header comes from .page-header (components.css). */
 .comp-header .stat-list { grid-column: 1 / -1; }
-.comp-hero-value { font-size: 2rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.comp-hero-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+.comp-hero-value { font-size: var(--fs-hero); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.comp-hero-sub { font-size: var(--fs-label); color: var(--text-3); margin-top: var(--space-1); }
 /* The hero's severity mark rides in this existing prose slot rather than a new one — see
    the tint comment on `.comp-fw-bar` below for the full rule this and the rail bar both
    follow. A small left margin only, since the badge follows running text inline. */
-.comp-hero-sub .sev-badge { margin-left: 6px; vertical-align: -1px; }
-.comp-hero-meter { margin-top: 10px; max-width: 260px; }
+.comp-hero-sub .sev-badge { margin-left: var(--space-2); vertical-align: -1px; }
+.comp-hero-meter { margin-top: var(--space-3); max-width: 260px; }
 
-.comp-strip { display: flex; flex-direction: column; gap: 8px; }
-.comp-strip-note { font-size: 12px; color: var(--text-3); margin: 0; max-width: var(--measure); }
+.comp-strip { display: flex; flex-direction: column; gap: var(--space-2); }
+.comp-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
 
 .comp-bar {
   display: flex;
@@ -46,7 +38,7 @@
 .comp-bar-seg[data-state="unknown"] { background: var(--text-3); }
 .comp-bar-seg[data-state="empty"] { flex: 1; background: var(--track-bg); }
 
-.comp-keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.comp-keys { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 /* A <span>, not a <button>. The strip was the page's cross-filter and every key was
    operable; the tables now list scored subcategories only, so three of the four states
    filter to nothing and the affordance was removed rather than left to disappoint. The
@@ -57,15 +49,15 @@
 .comp-key {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  padding: 3px 10px;
+  gap: var(--space-1);
+  font-size: var(--fs-label);
+  padding: var(--space-half) var(--space-2);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-pill);
   background: var(--page);
   color: var(--text-2);
 }
-.comp-key-glyph { font-size: 10px; line-height: 1; }
+.comp-key-glyph { font-size: var(--fs-micro); line-height: 1; }
 .comp-key[data-state="scored"] .comp-key-glyph { color: var(--ok); }
 .comp-key[data-state="noResources"] .comp-key-glyph { color: var(--sev-info-text); }
 .comp-key[data-state="noPolicies"] .comp-key-glyph { color: var(--warn); }
@@ -79,7 +71,7 @@
 .comp-row-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   background: none;
   border: 0;
   padding: 0;
@@ -92,19 +84,19 @@
   display: inline-block;
   width: 10px;
   color: var(--text-3);
-  transition: transform 120ms ease-out;
+  transition: transform var(--dur-quick) ease-out;
 }
 .comp-row-toggle[aria-expanded="true"] .comp-row-chevron { transform: rotate(90deg); }
 .comp-sub-row > td { background: var(--surface); }
 /* Indent by padding on the first cell, not by a nested table: one table keeps one set of
    column widths, one sort model and one keyboard path. */
-.comp-sub-row .comp-sub-title { padding-left: 26px; }
+.comp-sub-row .comp-sub-title { padding-left: var(--space-5); }
 
 .comp-ext {
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
-  font-size: 12px;
-  margin-right: 8px;
+  font-size: var(--fs-label);
+  margin-right: var(--space-2);
 }
 
 /* The posture cell: meter + number, or a state pill when there is no number. Fixed width
@@ -113,7 +105,7 @@
    It briefly held a severity badge too, when the bar was tinted by severity rather than by
    its own percentage. The badge went with that encoding: the number is the non-colour cue
    for a band, and it was already here. */
-.comp-posture { display: flex; align-items: center; gap: 10px; min-width: 150px; }
+.comp-posture { display: flex; align-items: center; gap: var(--space-2); min-width: 150px; }
 .comp-posture .meter { flex: 1; min-width: 48px; }
 .comp-posture-num {
   font-variant-numeric: tabular-nums;
@@ -125,18 +117,18 @@
 .comp-posture-empty {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: var(--space-1);
+  font-size: var(--fs-label);
   color: var(--text-3);
 }
-.comp-posture-empty .comp-key-glyph { font-size: 9px; }
+.comp-posture-empty .comp-key-glyph { font-size: var(--fs-micro); }
 .comp-posture-dash { color: var(--text-3); }
 
 /* Policy list inside the subcategory sheet. */
 .comp-policy-counts {
   display: flex;
-  gap: 12px;
-  font-size: 12px;
+  gap: var(--space-3);
+  font-size: var(--fs-label);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -146,7 +138,7 @@
   .comp-header { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 760px) {
-  .comp-header { grid-template-columns: 1fr; gap: 18px; }
+  .comp-header { grid-template-columns: 1fr; gap: var(--space-4); }
   .comp-posture { min-width: 110px; }
 }
 
@@ -166,8 +158,13 @@
    uncollected frameworks: one row against seeded data, thirty-seven against a real landscape,
    at which point it was a catalogue transcribed rather than a finding. Its one surviving
    part, the 5Rs scope, is now a footnote under the rail. */
-.comp-ov-section { padding: 22px 0 4px; border-top: 1px solid var(--hairline); }
+.comp-ov-section { padding: var(--space-5) 0 var(--space-1); border-top: 1px solid var(--hairline); }
 .comp-ov-section:first-child { border-top: none; padding-top: 0; }
+/* Inside the overview the header IS the section's content, and the next section's border-top
+   is already the divider — so the header drawing its own closing rule put two hairlines about
+   28px apart with nothing between them. The section separator wins; the header keeps its
+   shape and drops the duplicate. */
+.comp-ov-section .comp-header { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
 
 /* --------------------------------------------------------- band B: the framework rail */
 /* Small-multiple bullet rows sharing ONE 0-100 axis, so a reader compares frameworks by
@@ -176,15 +173,15 @@
    (aars.css:139-143). `--rail-cols` is set once on the container and read by both the
    axis header and every row, so the two responsive steps below only have to change it
    in one place instead of repeating the column list per breakpoint. */
-.comp-rail { display: flex; flex-direction: column; margin-top: 6px; --rail-cols: 210px 1fr 58px; }
+.comp-rail { display: flex; flex-direction: column; margin-top: var(--space-2); --rail-cols: 210px 1fr 58px; }
 
 /* The tick header. It sits on `--rail-cols` too, but only its middle cell is styled —
    `.comp-axis-ticks` is pinned to grid-column 2 explicitly (rather than left to fall
    there by DOM order) so it always lines up over the lane column regardless of what,
    if anything, the page puts in the header's outer two cells. */
 .comp-rail-axis {
-  display: grid; grid-template-columns: var(--rail-cols); gap: 18px;
-  margin-bottom: 2px;
+  display: grid; grid-template-columns: var(--rail-cols); gap: var(--space-4);
+  margin-bottom: var(--space-half);
 }
 .comp-axis-ticks {
   grid-column: 2;
@@ -197,7 +194,7 @@
    into selector order. */
 .comp-axis-tick {
   position: absolute; bottom: 3px;
-  font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-micro); color: var(--text-3); font-variant-numeric: tabular-nums;
 }
 .comp-axis-tick[data-pos="0"] { left: 0; }
 .comp-axis-tick[data-pos="25"] { left: 25%; transform: translateX(-50%); }
@@ -211,8 +208,8 @@
    row. `position: relative` is not decorative: it makes this button the containing
    block that gives `.comp-fw-mean` below a coordinate space to anchor into. */
 .comp-fw-row {
-  display: grid; grid-template-columns: var(--rail-cols); gap: 18px; align-items: center;
-  position: relative; width: 100%; min-height: 0; margin: 0; padding: 9px 0;
+  display: grid; grid-template-columns: var(--rail-cols); gap: var(--space-4); align-items: center;
+  position: relative; width: 100%; min-height: 0; margin: 0; padding: var(--space-2) 0;
   border: none; border-bottom: 1px solid var(--hairline); border-radius: 0;
   background: none; box-shadow: none; font: inherit; color: inherit;
   text-align: left; cursor: pointer;
@@ -232,18 +229,18 @@
    never fire on a box that is never allowed to be too small. */
 .comp-fw-head { display: flex; flex-direction: column; min-width: 0; }
 .comp-fw-name {
-  font-size: 13.5px; font-weight: 600; color: var(--ink);
+  font-size: var(--fs-body); font-weight: 600; color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .comp-fw-meta {
-  margin-top: 2px; font-size: 11px; color: var(--text-3);
+  margin-top: var(--space-half); font-size: var(--fs-micro); color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* The meta line and its severity badge share a row, so the "N of M failing" text and the
    worst-severity mark read as one clause rather than stacking into two. Only present when
    a badge is actually drawn (worstFailingSeverity is null on a clean framework), so an
    empty gap never opens up on a row with nothing to flag. */
-.comp-fw-meta-row { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 2px; }
+.comp-fw-meta-row { display: flex; align-items: center; gap: var(--space-1); min-width: 0; margin-top: var(--space-half); }
 .comp-fw-meta-row .comp-fw-meta { flex: 1 1 auto; min-width: 0; margin-top: 0; }
 .comp-fw-meta-row .sev-badge { flex: none; }
 
@@ -320,10 +317,10 @@
    to a flex row so the state's glyph and its reason in words both fit beside each
    other, in the same lane a scored framework's bar would otherwise fill. */
 .comp-fw-lane--empty {
-  display: flex; align-items: center; gap: 6px; padding: 0 10px;
+  display: flex; align-items: center; gap: var(--space-1); padding: 0 var(--space-2);
   background: repeating-linear-gradient(
     45deg, rgba(0, 0, 0, 0.055) 0 4px, transparent 4px 8px);
-  font-size: 11px; color: var(--text-3);
+  font-size: var(--fs-micro); color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Reuses `.comp-key-glyph` (components.css glyph, already sized for this row height)
@@ -364,10 +361,10 @@
   border-top: 4px solid var(--accent);
 }
 
-.comp-fw-pct { font-size: 15px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.comp-fw-pct { font-size: var(--fs-lead); font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
 .comp-fw-pct--dash { color: var(--text-3); font-weight: 400; }
 
-.comp-rail-key { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 11px; color: var(--text-3); }
+.comp-rail-key { display: flex; align-items: center; gap: var(--space-1); margin-top: var(--space-3); font-size: var(--fs-micro); color: var(--text-3); }
 .comp-rail-key-swatch { display: inline-block; width: 14px; height: 2px; background: var(--accent); }
 
 /* The 5Rs scope footnote. Back to block flow, because the base key is a flex row built for
@@ -377,7 +374,7 @@
    <button>, and a link inside a button is two tab stops for one control. */
 .comp-rail-key--scope {
   display: block;
-  margin-top: 6px;
+  margin-top: var(--space-2);
   max-width: var(--measure);
   line-height: 1.5;
 }
@@ -394,7 +391,7 @@
      force the page to scroll sideways, so the name column shrinks too rather than
      holding 210px on a phone. */
   .comp-rail { --rail-cols: 112px 1fr 42px; }
-  .comp-rail-axis, .comp-fw-row { gap: 10px; }
+  .comp-rail-axis, .comp-fw-row { gap: var(--space-2); }
   .comp-fw-meta { display: none; }
 }
 
@@ -412,12 +409,12 @@
    swallowed and never announced — the redundant cue would exist visually and vanish for
    exactly the reader it is there for. The outer gap separates picture from count; the
    inner one separates the dots. */
-.comp-dots { display: inline-flex; align-items: center; gap: 7px; }
-.comp-dots-pic { display: inline-flex; align-items: center; gap: 5px; }
+.comp-dots { display: inline-flex; align-items: center; gap: var(--space-2); }
+.comp-dots-pic { display: inline-flex; align-items: center; gap: var(--space-1); }
 .comp-dot { width: 9px; height: 9px; border-radius: 50%; box-sizing: border-box; }
 .comp-dot--on { background: var(--accent); }
 .comp-dot--off { background: none; border: 1.5px solid rgba(0, 0, 0, 0.22); }
-.comp-dots-n { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.comp-dots-n { font-size: var(--fs-label); color: var(--text-2); white-space: nowrap; }
 
 /* Auto-remediation chip: a small code-like mark (mono, like `.step-id` / `.prov-mono`)
    rather than a status pill, because "this control fixes itself" is closer to a
@@ -427,9 +424,9 @@
 .comp-auto {
   display: inline-flex; align-items: center;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 10px; font-weight: 600;
+  font-size: var(--fs-micro); font-weight: 600;
   color: var(--ok); background: rgba(21, 128, 61, 0.10);
-  border-radius: var(--radius-sm); padding: 1px 6px;
+  border-radius: var(--radius-sm); padding: var(--space-half) var(--space-1);
 }
 
 /* =================================================================== the .scope- family */
@@ -457,11 +454,11 @@
    up its line at, for the same reason: the name and the score are the two facts a narrow
    rail keeps, everything else is the first to go. */
 .scope-rail-note {
-  display: flex; align-items: center; gap: 5px;
-  margin-top: 2px; font-size: 10.5px; color: var(--text-3);
+  display: flex; align-items: center; gap: var(--space-1);
+  margin-top: var(--space-half); font-size: var(--fs-micro); color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.scope-rail-glyph { font-size: 9px; color: var(--warn); }
+.scope-rail-glyph { font-size: var(--fs-micro); color: var(--warn); }
 
 @media (max-width: 760px) {
   .scope-rail-note { display: none; }
@@ -474,19 +471,19 @@
    this already lives inside one `.card`, and a second surface per group would be the
    Whisper-Or-Lift violation DESIGN.md warns against. */
 .scope-groups { display: flex; flex-direction: column; }
-.scope-group { padding: 14px 0; border-top: 1px solid var(--hairline); }
+.scope-group { padding: var(--space-3) 0; border-top: 1px solid var(--hairline); }
 .scope-group:first-child { padding-top: 0; border-top: none; }
 .scope-group-head {
-  display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 14px;
-  margin-bottom: 6px;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
 }
-.scope-group-title { flex: 1 1 200px; font-weight: 600; font-size: 13px; color: var(--ink); }
-.scope-group-count { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.scope-group-title { flex: 1 1 200px; font-weight: 600; font-size: var(--fs-body); color: var(--ink); }
+.scope-group-count { font-size: var(--fs-label); color: var(--text-3); white-space: nowrap; }
 /* A command, not a state pill: its label already says what pressing it does ("Select all" /
    "Deselect all"), so it does not need `aria-pressed` on top of that to be understood —
    unlike `.scope-toggle` below, which IS a persistent per-rule state and carries one. */
 .scope-bulk {
-  flex: none; font-size: 12px; padding: 3px 10px;
+  flex: none; font-size: var(--fs-label); padding: var(--space-half) var(--space-2);
   border: 1px solid var(--hairline); border-radius: var(--radius-pill);
   background: var(--page); color: var(--text-2);
 }
@@ -494,9 +491,9 @@
 
 .scope-rows { display: flex; flex-direction: column; }
 .scope-row {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
-  padding: 8px 0; border-bottom: 1px solid var(--hairline);
-  transition: opacity 120ms ease-out;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) 0; border-bottom: 1px solid var(--hairline);
+  transition: opacity var(--dur-quick) ease-out;
 }
 .scope-row:last-child { border-bottom: none; }
 /* Dimmed, not removed: a rule scoped out stays in its group (pulling it from the list
@@ -506,9 +503,9 @@
    it in words; this is reinforcement, not the only cue. */
 .scope-row[data-selected="false"] { opacity: 0.58; }
 .scope-row-main { flex: 1 1 220px; min-width: 0; }
-.scope-row-name { font-size: 13px; color: var(--ink); }
-.scope-row-meta { margin-top: 2px; }
-.scope-reason { flex: 0 1 auto; font-size: 12px; color: var(--text-3); text-align: right; }
+.scope-row-name { font-size: var(--fs-body); color: var(--ink); }
+.scope-row-meta { margin-top: var(--space-half); }
+.scope-reason { flex: 0 1 auto; font-size: var(--fs-label); color: var(--text-3); text-align: right; }
 /* Pinned means a person decided this, not that the landscape did — a different kind of fact
    from crossMapped/linkedFindings/noAiLink, and it earns its own tint so a reader scanning
    the column can tell "derived" from "somebody's call" without reading every word. */
@@ -520,8 +517,8 @@
    app is a pressed button, so a lone real checkbox here would read as a different kind of
    control planted in the middle of a page that has none. */
 .scope-toggle {
-  display: inline-flex; align-items: center; gap: 7px; flex: none;
-  padding: 4px 10px 4px 6px; font-size: 12.5px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: var(--space-2); flex: none;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1); font-size: var(--fs-label); font-weight: 500;
   border: 1px solid var(--hairline); border-radius: var(--radius-pill);
   background: var(--page); color: var(--text-2);
 }
@@ -530,7 +527,7 @@
   width: 14px; height: 14px; border: 1px solid var(--hairline); border-radius: 4px;
   background: var(--page);
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: 9px; line-height: 1; color: transparent;
+  font-size: var(--fs-micro); line-height: 1; color: transparent;
 }
 .scope-box::before { content: "✓"; }
 .scope-toggle[aria-pressed="true"] {
@@ -546,8 +543,8 @@
    comment above fiveRsCard() in pages/settings.js) and the two bars should keep reading
    as the same control if either is ever touched again. */
 .scope-bar {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hairline);
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--hairline);
 }
 .scope-state { margin-right: auto; }
 
@@ -561,15 +558,15 @@
    `.detail-row` itself and its clipping-trap reset are tables.css's — generic to any
    dataTable() caller. Everything below is scoped to `.comp-table`, and gives the cell a
    `--surface` ground + padding so it reads as a nested region rather than a stray row. */
-.comp-table .detail-row > td { background: var(--surface); padding: 14px 20px 18px; }
+.comp-table .detail-row > td { background: var(--surface); padding: var(--space-3) var(--space-4) var(--space-4); }
 
-.comp-detail { display: flex; flex-direction: column; gap: 14px; }
-.comp-detail-block { display: flex; flex-direction: column; gap: 4px; }
+.comp-detail { display: flex; flex-direction: column; gap: var(--space-3); }
+.comp-detail-block { display: flex; flex-direction: column; gap: var(--space-1); }
 /* A small local heading, not sectionLabel()/sheetSection() — both are vocabulary for their
    own overlay chrome, and this panel isn't one. Same look as `.label` (base.css) so it
    still reads as this app's one "small caps heading" idiom. */
 .comp-detail-heading {
-  font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3); margin: 0;
 }
 .comp-detail-block p { margin: 0; max-width: var(--measure); }
@@ -579,16 +576,30 @@
    register, not a panel inside a row. Scrolls in its own wrapper so a long Control name or
    a narrow viewport widens this box and never the page around it. */
 .comp-policy-wrap { overflow-x: auto; }
-.comp-policy-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.comp-policy-table { border-collapse: collapse; width: 100%; font-size: var(--fs-label); }
 .comp-policy-table th {
-  text-align: left; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-align: left; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
-  padding: 6px 10px; border-bottom: 1px solid var(--hairline);
+  padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--hairline);
 }
 .comp-policy-table td {
-  padding: 6px 10px; border-bottom: 1px solid var(--hairline); vertical-align: top;
+  padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--hairline); vertical-align: top;
 }
 .comp-policy-table tbody tr:last-child td { border-bottom: none; }
 .comp-policy-table th.num, .comp-policy-table td.num {
   text-align: right; font-variant-numeric: tabular-nums;
 }
+
+/* The 5Rs scope card's per-group disclosure. That one card was 7,909px of an 8,912px page —
+   120 rule rows in six groups, all expanded — so the rows fold and the head stays, because
+   the head already says the subcategory, "N of M in scope" and the bulk action. Sized and
+   coloured as a quiet secondary control: it reveals, it does not commit anything. */
+.scope-disclose {
+  flex: 0 0 auto;
+  font: inherit; font-size: var(--fs-label); font-weight: 600;
+  color: var(--text-2); background: var(--page);
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  padding: var(--space-half) var(--space-2); cursor: pointer;
+}
+.scope-disclose:hover { background: var(--wash-hover); color: var(--ink); }
+.scope-disclose:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -130,3 +130,29 @@ export const EDGE_BUDGET_RATIO = 2.5;
  * neighbors run out before the budget does, the next wave takes the remainder.
  */
 export const SEED_WAVE_RATIO = 0.4;
+
+/**
+ * WHICH NORMALIZER PRODUCED THE STORED FACTS — as distinct from which RULE priced them.
+ *
+ * Every version marker this app already carries (`aars_rule_version`, `problem_rule_version`,
+ * `posture_rule_version`, the `*_scored_version` settings keys) answers "under which model was
+ * this scored", and every one of them is repaired by Recompute, because the inputs survived
+ * and only the arithmetic over them changed.
+ *
+ * This one answers a different question, and it has a different remedy. It moves when a code
+ * change alters WHAT A STORED FACT MEANS, so the persisted value is not merely priced
+ * differently — it is wrong, and no amount of recomputing can recover it, because the truth
+ * was destroyed at ingest. Only a full sync can repair it.
+ *
+ * Bump this when a normalizer or a store round-trip changes the meaning of a column. Do NOT
+ * bump it for a pricing change, a band move or a cascade edit; those are rule versions, and
+ * conflating the two would tell operators to spend a sync on something Recompute already fixed.
+ *
+ * 1 -> 2 (the tri-state boundary fix): `hasSensitiveData`, `hasAccessToSensitiveData`,
+ *   `hasHighPrivileges`, `hasAdminPrivileges` and `guardrailMissing` were written through
+ *   `bool()` / `boolCell()`, which collapsed Wiz's `null` — "never evaluated" — into `false`
+ *   — "evaluated, and negative". A ledger written under version 1 holds that `false` and reads
+ *   back as a confident negative, which is exactly why the fix cannot be applied on read: the
+ *   cell says "false" and nothing in it remembers that Wiz never answered.
+ */
+export const DERIVATION_VERSION = 2;

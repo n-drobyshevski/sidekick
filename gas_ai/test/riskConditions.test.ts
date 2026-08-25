@@ -78,19 +78,62 @@ describe("the graph and the matrix agree", () => {
   });
 });
 
-describe("the other three keep the contract they had", () => {
-  it("are strictly boolean — only exposure can be undetermined", () => {
+// THE CONTRACT THESE THREE USED TO KEEP WAS WITHDRAWN, and this block records why rather
+// than quietly re-baselining. It read: "are strictly boolean — only exposure can be
+// undetermined", on the stated grounds that "the other three read a flag on the resource
+// itself, where an unset value is a definite no — a bucket has no guardrail to be missing."
+//
+// The live tenant falsified it. Wiz returns `null` — never evaluated — for the privilege and
+// sensitive-data flags on 753 of 822 assets, and `guardrailMissing` is only ever set TRUE (the
+// coverage scan is a negated traversal), so an unset value there had never once meant "we
+// looked and a guardrail is attached". The old contract held only because `syncNormalize.bool`
+// and `syncStore.boolCell` collapsed every `null` to `false` before it could reach this
+// predicate — so the assertion was true of the pipeline while being false of the tenant.
+//
+// The measured consequence: `guardrailMissing === false` paired with a non-exposed flag let
+// `posture.containmentOf` read STRONG containment for assets nothing had ever been checked on.
+// All four conditions are tri-state now, on one shared rule.
+describe("all four conditions are tri-state", () => {
+  it("answers null — not false — when no source was ever evaluated", () => {
     const blank = asset();
     for (const key of CONDITION_KEYS) {
-      if (key === "INTERNET_EXPOSURE") continue;
-      expect(conditionState(blank, key), key).toBe(false);
+      expect(conditionState(blank, key), key).toBeNull();
     }
   });
 
-  it("MISSING_GUARDRAIL needs the flag explicitly set", () => {
+  it("answers false only when every source gave a definite negative", () => {
+    const answered = asset({
+      guardrailMissing: false,
+      hasAdminPrivileges: false, hasHighPrivileges: false,
+      hasSensitiveData: false, hasAccessToSensitiveData: false,
+      isAccessibleFromInternet: false, isOpenToAllInternet: false,
+    });
+    for (const key of CONDITION_KEYS) {
+      expect(conditionState(answered, key), key).toBe(false);
+    }
+  });
+
+  it("withholds a negative while any one source is still unanswered", () => {
+    // Half-answered is not answered: a positive could still be hiding in the flag nobody read.
+    expect(conditionState(asset({ hasAdminPrivileges: false }), "EXCESSIVE_PRIVILEGE")).toBeNull();
+    expect(conditionState(asset({ hasSensitiveData: false }), "SENSITIVE_DATA")).toBeNull();
+  });
+
+  it("MISSING_GUARDRAIL distinguishes scanned-and-clean from never-scanned", () => {
     expect(conditionState(asset({ guardrailMissing: true }), "MISSING_GUARDRAIL")).toBe(true);
+    // The scan reached this asset and found a guardrail.
     expect(conditionState(asset({ guardrailMissing: false }), "MISSING_GUARDRAIL")).toBe(false);
-    expect(conditionState(asset(), "MISSING_GUARDRAIL")).toBe(false);
+    // The scan never reached it — which is NOT the same claim, and used to be reported as one.
+    expect(conditionState(asset(), "MISSING_GUARDRAIL")).toBeNull();
+  });
+
+  it("conditionHolds still means strictly true, so no topology builder moved", () => {
+    // The whole tri-state widening is invisible to every consumer that asks "does this hold",
+    // which is what let it ship without moving a score, a verdict or a drawn node.
+    for (const key of CONDITION_KEYS) {
+      expect(conditionHolds(asset(), key), key).toBe(false);
+    }
+    expect(conditionHolds(asset({ guardrailMissing: true }), "MISSING_GUARDRAIL")).toBe(true);
   });
 
   it("EXCESSIVE_PRIVILEGE and SENSITIVE_DATA take either of their two flags", () => {

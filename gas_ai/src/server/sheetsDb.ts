@@ -101,6 +101,11 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // was built to replace. If a number is ever genuinely needed, it belongs in a rule's own
     // preview surface, never on the row.
     "problem_outcome", "problem_input_json", "problem_rule_version",
+    // Which AI assets this issue actually describes, and how they were reached. Appended,
+    // same no-migration contract. NOT a replacement for asset_id, which keeps naming the
+    // entity Wiz raised the issue on so the drill-down still matches the console — see
+    // IssueRow.attributedAssetIds for the measurement that made this necessary.
+    "attributed_asset_ids", "attribution_hop",
   ],
   [TABS.findings]: [
     "id", "resource_id", "rule_short_id", "severity", "remediation", "framework_codes",
@@ -218,6 +223,16 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // carries NO value, and the reader plots a gap rather than a zero: see
     // CountTrendPoint in aarsTrend.ts for why that distinction is load-bearing.
     "finding_count", "posture_fail_count",
+    // The posture distribution this sync produced, and which posture rule produced it. It
+    // carries the SCOPE SPLIT, not just tiers: an asset can lack a tier because nobody
+    // measured it (a coverage gap) or because the lattice does not describe its kind (not a
+    // gap at all), and a bare tier count cannot tell those apart.
+    "posture_tier_json", "posture_rule_version",
+    // Which NORMALIZER produced the readings above, as opposed to which RULE priced them. A
+    // rule version moves when an operator edits a model; this moves when a code change alters
+    // what a stored fact MEANS, which only a full sync can repair. The trend marks the break
+    // here so a step is never read as movement.
+    "derivation_version",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [

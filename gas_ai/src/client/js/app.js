@@ -9,7 +9,8 @@
 import { call } from "./api.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
 import {
-  bootstrap, bootstrapCached, buildHash, invalidateBootstrap, invalidateRpcCache, parseHash,
+  DEFAULT_ROUTE, bootstrap, bootstrapCached, buildHash, invalidateBootstrap,
+  invalidateRpcCache, parseHash,
 } from "./store.js";
 import { onExperimentalChange, showExperimental } from "./experimental.js";
 import {
@@ -31,50 +32,56 @@ import { renderSettings } from "./pages/settings.js";
 import { renderHelp } from "./pages/help.js";
 import { ROUTE_ICONS } from "./routeIcons.js";
 
+/**
+ * THE POC NAV IS FOUR SURFACES, and the other seven are hidden rather than deleted.
+ *
+ * The minimal model (domain/rank.ts) reads two flat fields and needs no graph, so most of
+ * this app is machinery for axes the reference tenant holds constant. Showing that is the
+ * point of the branch. But `hidden` rather than `delete` is deliberate: the glossary in
+ * helpContent.js points at these routes about sixty times and `test/helpContent.test.js`
+ * asserts every one resolves, so removing them from PAGES means gutting real documentation
+ * to make a demo look smaller. A hidden route still resolves, still renders if someone types
+ * its hash, and costs nothing.
+ *
+ * `problems` is FIRST now, because the first key is the default landing route — the front
+ * door should be the queue the model exists to order. store.js's parseHash fallback moved
+ * with it; the two are coupled and this file used to say so about `graph`.
+ */
 const PAGES = {
   // fullBleed: the page owns the whole content pane (no main padding/max-width).
-  graph: { title: "Security Graph", group: "Security", render: renderGraphPage, fullBleed: true },
-  inventory: { title: "AI Inventory", group: "Security", render: renderInventory },
+  graph: { hidden: true, title: "Security Graph", group: "Security", render: renderGraphPage, fullBleed: true },
+  inventory: { hidden: true, title: "AI Inventory", group: "Security", render: renderInventory },
   // Phase 7: issues UNION findings, ranked together across the whole landscape — neither
   // `combos` (one toxic-combination pattern) nor `config` (findings only) can answer
   // "what do I work on Monday". Sits right after inventory: both name the landscape, this one
   // orders what is wrong with it.
   problems: { title: "Priorities", group: "Security", render: renderProblems },
-  combos: { title: "Toxic Combinations", group: "Security", render: renderCombos },
-  config: { title: "Cloud Configuration", group: "Security", render: renderConfigFindings },
+  combos: { hidden: true, title: "Toxic Combinations", group: "Security", render: renderCombos },
+  config: { hidden: true, title: "Cloud Configuration", group: "Security", render: renderConfigFindings },
   // After config, never first: the FIRST key is the default landing route (parseHash's
   // fallback is coupled to it), so inserting a page at the top silently changes the app's
   // front door. Sits beside Cloud Configuration because the two are the same subject at
   // two grains — what is failing, and what that scores against.
-  compliance: { title: "Compliance Posture", group: "Security", render: renderCompliance },
+  compliance: { hidden: true, title: "Compliance Posture", group: "Security", render: renderCompliance },
   // "Scoring Models", not "AARS Rules": this page has hosted three models since the Problem
-  // and Posture tabs landed, and it is now the ONLY consumer of all three — the title is
-  // the boundary as much as the name. Deliberately not "Risk Models": this codebase is
-  // careful that these are not risk scores (the glossary says so in as many words), and
-  // bare "Models" would collide with the MODEL node kind the graph draws.
-  //
-  // The route key stays `aars`. Every hash link, ROUTE_ICONS entry and helpContent
-  // `route`/`drawnOn` value keys on it, and renaming the key would break shared links to
-  // buy nothing a reader can see.
-  //
-  // Group "Labs", not "Scoring": the sidebar itself should say these sit outside the
-  // security workflow rather than beside it.
+  // and Posture tabs landed, and it is now the ONLY consumer of all three. The route key
+  // stays `aars` — every hash link, ROUTE_ICONS entry and helpContent `route` value keys on
+  // it, and renaming would break shared links to buy nothing a reader can see.
   //
   // `experimental: true` gates it behind Settings → Show experimental content, which is OFF
-  // by default — so a first-time reader has no Labs group at all, and the models are opt-in
-  // rather than merely labelled. Gated, never removed: the key stays in this map so shared
-  // `#/aars` links keep working for anyone who has asked for them, and so helpContent's
-  // "routes only to pages that exist" guard still has a page to point at.
+  // by default. It is NOT `hidden`: the two flags answer different questions. `hidden` keeps
+  // a route off this branch's PoC nav; `experimental` gates it behind a setting for everyone.
   aars: {
     title: "Scoring Models", group: "Labs", render: renderAarsRules, fullBleed: true,
     experimental: true,
   },
   scans: { title: "Wiz Scans", group: "Coverage", render: renderScans },
-  data: { title: "Data", group: "Data", render: renderData },
-  settings: { title: "Settings", group: "Preferences", render: renderSettings },
-  // Last on purpose. The FIRST key is the default landing route, and parseHash's
-  // `|| "graph"` fallback is coupled to it — a page inserted at the top silently
-  // becomes the app's front door.
+  data: { hidden: true, title: "Data", group: "Data", render: renderData },
+  settings: { hidden: true, title: "Settings", group: "Preferences", render: renderSettings },
+  // Last on purpose. The FIRST key is the default landing route, and DEFAULT_ROUTE in
+  // store.js has to name it — a page inserted at the top silently becomes the app's front
+  // door. (This comment used to say the coupling was to parseHash's `|| "graph"`, which had
+  // already stopped being true: the fallback said "problems" while route() still said graph.)
   help: { title: "Help", group: "Help", render: renderHelp },
 };
 
@@ -309,10 +316,11 @@ function renderSidebar(sidebar, data) {
   const { route: active } = parseHash();
   let lastGroup = null;
   for (const [key, page] of Object.entries(PAGES)) {
-    // A gated page is absent, not disabled: the rest of this rail is the security workflow,
-    // and a greyed-out row inside it would still be telling every reader that a model they
-    // cannot open exists. The "Labs" heading goes with it for free — the lastGroup detector
-    // below only emits a header when a page that is actually being drawn changes group.
+    // Hidden routes still resolve and still render — they are only off the nav. See the
+    // PAGES header for why this branch is a flag rather than seven deletions.
+    if (page.hidden) continue;
+    // A gated page is absent, not disabled: a greyed-out row would still tell every reader
+    // that a model they cannot open exists. The "Labs" heading goes with it for free.
     if (page.experimental && !showExperimental()) continue;
     if (page.group !== lastGroup) {
       sidebar.append(el("div", { class: "nav-group" }, page.group));
@@ -506,21 +514,21 @@ export async function refresh() {
 async function route() {
   const seq = ++routeSeq;
   const parsed = parseHash();
-  let key = parsed.route;
+  // RESOLVE ONCE, then use the resolved key for everything. An unknown path (a stale link, a
+  // typo) lands on the front door rather than on whatever page this line happened to name
+  // when it was written — see DEFAULT_ROUTE in store.js. The nav highlight used to key off
+  // the RAW path, so an unresolved hash rendered a page while marking no nav item current.
+  let key = PAGES[parsed.route] ? parsed.route : DEFAULT_ROUTE;
   let params = parsed.params;
-  // A gated route is not merely unavailable, it is a link the reader followed in good faith
-  // — so unlike the unknown-route fallback below, this one REWRITES the hash. The bare
-  // fallback would leave `#/aars` in the address bar over a page titled "Security Graph"
-  // with no nav item marked current: three answers to "where am I", two of them wrong. The
-  // stale params go with it; they were addressed to a page that is not rendering.
-  // replaceState rather than a navigate(): no spurious history entry, no second route pass,
-  // and store.js's setParams already proves it works inside the HtmlService iframe.
+  // A gated route is a link the reader followed in good faith, so unlike the fallback above
+  // this one REWRITES the hash: leaving `#/aars` in the address bar over a different page
+  // with no nav item current is three answers to "where am I", two of them wrong.
   if (PAGES[key] && PAGES[key].experimental && !showExperimental()) {
-    key = "graph";
+    key = DEFAULT_ROUTE;
     params = {};
     history.replaceState(null, "", buildHash(key, params));
   }
-  const page = PAGES[key] || PAGES.graph;
+  const page = PAGES[key];
   document.title = `${page.title} — Wiz SIDEKICK AI`;
   document.querySelectorAll(".nav-link").forEach((a) => {
     const isActive = a.getAttribute("href") === `#/${key}`;

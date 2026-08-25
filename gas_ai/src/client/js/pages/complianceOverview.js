@@ -165,24 +165,36 @@ function renderHeadline(host, data) {
   // The sub-line is the hero's one prose slot, so the severity mark folds into it rather
   // than opening a new one — a sevBadge beside the sentence that already explains the
   // number, never colour without the word next to it.
-  const subKids = [scored
-    ? `Derived here — the mean of ${plural(kpis.scoredFrameworks || 0, "scored framework")}, ` +
-      "each at Wiz's own score." +
-      (derivedRow
-        // The one place this mean could read as contradicting the rail row beside it: that
-        // row now states an AI-scoped DERIVED figure for this framework, not the Wiz score
-        // this mean is still averaging for it. Different questions, different denominators
-        // — not two answers disagreeing.
-        ? ` ${derivedRow.name} is included here at Wiz's figure; the rail row below states ` +
-          "a different, AI-scoped derived figure for it."
-        : "") +
-      " Wiz publishes no cross-framework figure."
-    : "Derived here — no framework has a compliance posture to average yet. " +
-      "Wiz publishes no cross-framework figure."];
+  // A HERO SUB IS A CAPTION, NOT A FOOTNOTE. This slot was carrying 48 words: the
+  // derivation, the reconciliation against the rail row below, and the reason Wiz has no
+  // cross-framework figure — seven wrapped lines under a two-character number. Every one of
+  // those sentences keeps the figure honest and none is deleted; they move onto the label,
+  // which is what DESIGN.md means by the Tip being the app's answer to "what is this".
+  const heroLead = scored
+    ? `Mean of ${plural(kpis.scoredFrameworks || 0, "scored framework")}, each at Wiz's own score.`
+    : "No framework has a compliance posture to average yet.";
+  const heroWhy = [
+    scored
+      ? "Derived here, not published by Wiz: this is the mean of the frameworks collected "
+        + "for this landscape, each taken at Wiz's own score."
+      : "Derived here, not published by Wiz. No framework has a compliance posture to "
+        + "average yet.",
+    "Wiz publishes no cross-framework figure.",
+  ];
+  if (scored && derivedRow) {
+    // The one place this mean could read as contradicting the rail row beside it: that row
+    // states an AI-scoped DERIVED figure for this framework, not the Wiz score this mean is
+    // still averaging for it. Different questions, different denominators, not two answers
+    // disagreeing.
+    heroWhy.splice(1, 0,
+      `${derivedRow.name} is included here at Wiz's figure. The rail row below states a `
+      + "different, AI-scoped derived figure for it.");
+  }
+  const subKids = [heroLead];
   if (worstSeverity) subKids.push(sevBadge(worstSeverity));
 
   const hero = el("div", {},
-    el("div", { class: "label" }, "Compliance posture"),
+    el("div", { class: "label" }, tip("Compliance posture", heroWhy)),
     scored
       ? el("div", { class: "comp-hero-value num" }, `${kpis.averagePosture}%`)
       : el("div", { class: "comp-hero-value" }, "—"),
