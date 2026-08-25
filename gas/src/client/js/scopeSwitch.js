@@ -5,7 +5,7 @@
 // move also retired the control's second presentation: the two filters it replaces used to
 // shrink to 40x34 glyph boxes for the collapsed rail, and the header has one width.
 //
-// THREE DIMENSIONS, ONE CONTROL, ONE AT A TIME. Value chain and support group were separate
+// THREE DIMENSIONS, ONE CONTROL, ONE AT A TIME. Manual group and support group were separate
 // comboboxes that could both be live, and their intersection was expressible. It is not any
 // more, deliberately: a header that carries "the scope" cannot carry three of them and still
 // answer "what am I looking at" in one line. Picking from any group clears the others, and
@@ -13,19 +13,24 @@
 // pages that read them.
 //
 // THE THREE ARE ORTHOGONAL, NOT NESTED, and listing them as three flat groups rather than one
-// tree is the honest shape. A VALUE CHAIN is a bucket this app computes from rules an operator
-// wrote in Settings. A SUPPORT GROUP is the team named by a subscription's `Wiz/provisioning`
-// tag. A BUSINESS DOMAIN is the owner named by a resource's `Wiz/Domain` tag. Any of the three
-// can cut across either of the others, and a tree here would assert a hierarchy the data does
-// not have.
+// tree is the honest shape. A MANUAL GROUP is a bucket this app computes from rules an
+// operator wrote in Settings — manual because a person writes them. A VC DOMAIN is the owner
+// named by a resource's `Wiz/Domain` tag. A SUPPORT GROUP is the team named by a
+// subscription's `Wiz/provisioning` tag. Any of the three can cut across either of the
+// others, and a tree here would assert a hierarchy the data does not have.
+//
+// THE CODE STILL SAYS `domain` FOR THE FIRST ONE AND `bizDomain` FOR THE SECOND. Those are
+// the wire and storage names — the settings blob key, the RPC params, the ledger's `_domain`
+// column — and renaming them would churn a persisted schema and every cache key for no
+// visible gain. The labels below are the only place the two vocabularies meet.
 //
 // WHY NOT A WIZ PROJECT, which is what the sibling gas_ai app's switcher picks. This ledger
 // holds no project dimension: `src/domain/transform.ts` drops the `projects[]` array Wiz
 // returns on every finding, and `WIZ_PROJECT_ID_V2` scopes the SYNC rather than the view. A
 // picker built over a dimension the register does not carry would offer slices whose pages all
 // render zero — and a zero meaning "nothing here" and a zero meaning "never fetched" look
-// identical on screen while calling for opposite reactions. The business domain has the
-// opposite property and is why it can be here at all: `vulnerableAsset.tags` is already in the
+// identical on screen while calling for opposite reactions. The VC Domain has the opposite
+// property and is why it can be here at all: `vulnerableAsset.tags` is already in the
 // vulnerability query and already persisted per finding as `tags_json`, so every domain the
 // list offers is one the register can actually answer for.
 //
@@ -54,9 +59,9 @@ function findingCount(n) {
 }
 
 /**
- * Two of the three kinds carry a prefix on their value; the value chain does not.
+ * Two of the three kinds carry a prefix on their value; the manual group does not.
  *
- * Two of them have to, or a value chain, a support group and a business domain all named
+ * Two of them have to, or a manual group, a support group and a VC Domain all named
  * `Payments` are one row in the list and one value on the wire. The prefixes are the control's
  * own: `onPick` takes the kinds apart again and hands the caller `{kind, value}`, so nothing
  * outside this file ever sees them.
@@ -76,22 +81,22 @@ const SCOPE_KIND_ICON = {
 };
 
 /**
- * The value chains on offer, as switcher rows.
+ * The manual groups on offer, as switcher rows.
  *
  * `Unassigned` sits in this list because `domainNames()` puts it there, and it is a scope a
  * reader genuinely wants — it is the queue of findings nobody has claimed. Its hint says what
- * it is rather than calling it a value chain, because it is the absence of one.
+ * it is rather than calling it a manual group, because it is the absence of one.
  */
 export function domainScopeOptions(names, counts) {
   return (names || []).map((name) => ({
     value: name,
     label: name,
-    // Declared in words rather than by glyph: the two kinds mean different things — a value
-    // chain is a rule someone wrote, a support group is a team someone owns — and that is a
-    // meaning, so it does not travel by mark alone.
-    hint: (name === UNASSIGNED ? "No value chain · " : "Value chain · ")
+    // Declared in words rather than by glyph: the three kinds mean different things — a manual
+    // group is a rule someone wrote here, a VC Domain is a label someone wrote in Wiz — and
+    // that is a meaning, so it does not travel by mark alone.
+    hint: (name === UNASSIGNED ? "No manual group · " : "Manual group · ")
       + findingCount((counts && counts[name]) || 0),
-    group: "Value chains",
+    group: "Manual groups",
     icon: "funnel",
   }));
 }
@@ -108,7 +113,7 @@ export function supportScopeOptions(names, counts) {
 }
 
 /**
- * The business domains on offer, as switcher rows.
+ * The VC Domains on offer, as switcher rows.
  *
  * NO "UNTAGGED" ROW. An untagged resource contributes nothing to a facet, exactly as a blank
  * cloud or subscription already does, and a synthetic one here would offer "the resources we
@@ -119,8 +124,8 @@ export function bizDomainScopeOptions(names, counts) {
   return (names || []).map((name) => ({
     value: BIZ_DOMAIN_PREFIX + name,
     label: name,
-    hint: `Business domain · ${findingCount((counts && counts[name]) || 0)}`,
-    group: "Business domains",
+    hint: `VC Domain · ${findingCount((counts && counts[name]) || 0)}`,
+    group: "VC Domains",
     icon: "tag",
   }));
 }
@@ -142,7 +147,7 @@ export function scopeSwitchView(data, active) {
   const counts = (data && data.scopeCounts) || null;
   const register = counts ? counts.register : 0;
 
-  // A value chain that is one bucket is not a scope — every page is already the whole chain —
+  // A manual group that is the only bucket is not a scope — every page is already all of it —
   // so the list only carries them once settings define more than one, exactly as the sidebar
   // filter it replaces did.
   const domainNames = (data && data.domainNames) || [];
@@ -151,7 +156,7 @@ export function scopeSwitchView(data, active) {
   const groups = opts.supportGroups || [];
   // THE GROUP IS ABSENT, NOT EMPTY, WHEN NOTHING IS TAGGED. The domain tag is optional and the
   // tenant's to write, so a register where nobody has written it has no domain data at all —
-  // and a "Business domains" heading over nothing would say that nobody owns anything, which is
+  // and a "VC Domains" heading over nothing would say that nobody owns anything, which is
   // a claim about the tenant rather than about what we managed to read.
   const bizDomains = opts.bizDomains || [];
 
@@ -173,9 +178,9 @@ export function scopeSwitchView(data, active) {
   ];
 
   const kind = domain ? "domain" : bizDomain ? "bizDomain" : supportGroup ? "support" : "";
-  // A stored scope naming something the register no longer holds — a value chain deleted from
-  // settings, a support group that fell out after a scan scoped elsewhere, or a business domain
-  // that vanished when WIZ_DOMAIN_TAG_KEY was corrected under it.
+  // A stored scope naming something the register no longer holds — a manual group deleted from
+  // settings, a support group that fell out after a scan scoped elsewhere, or a VC Domain that
+  // vanished when WIZ_DOMAIN_TAG_KEY was corrected under it.
   const stale = Boolean(
     (domain && domains.indexOf(domain) < 0)
     || (supportGroup && groups.indexOf(supportGroup) < 0)
@@ -192,15 +197,15 @@ export function scopeSwitchView(data, active) {
         : supportGroup ? (counts.supportGroups[supportGroup] || 0)
           : register;
 
-  // THE DENOMINATOR TRAVELS WITH THE NUMBER. "1,204" alone cannot tell a small value chain
+  // THE DENOMINATOR TRAVELS WITH THE NUMBER. "1,204" alone cannot tell a small manual group
   // from a small register, and those two call for opposite reactions.
   //
   // AND A SCOPED CAPTION CARRIES A SECOND FIGURE, because leaving it off would be the more
-  // comfortable lie. Under a value chain, `unassigned` is how many findings no rule claimed;
-  // under a support group, `noSupportGroup` is how many carry no group at all; under a business
-  // domain, `noBizDomain` is how many carry no domain tag. Without it, "1,204 of 8,331" quietly
-  // attributes the other 7,127 to some other chain, group or domain, when the truth for most of
-  // them is that nobody said.
+  // comfortable lie. Under a manual group, `unassigned` is how many findings no rule claimed;
+  // under a support group, `noSupportGroup` is how many carry no group at all; under a VC
+  // Domain, `noBizDomain` is how many carry no domain tag. Without it, "1,204 of 8,331" quietly
+  // attributes the other 7,127 to some other group or domain, when the truth for most of them
+  // is that nobody said.
   //
   // THE DOMAIN'S SECOND FIGURE IS THE ONE THAT WORKS HARDEST, because the tag is the tenant's
   // to write and most tenants have not finished writing it: a bare "5 of 87" under a domain
@@ -240,7 +245,7 @@ export function scopeSwitchView(data, active) {
     caption,
     stale,
     options,
-    // "Everything in the register", not "All value chains": the row clears ALL THREE kinds, and
+    // "Everything in the register", not "All manual groups": the row clears ALL THREE kinds, and
     // naming it after one of them describes a third of what it does. "In the register" rather
     // than a bare "everything", because the register holds what the last scan was scoped to
     // fetch and this control cannot widen that.
@@ -254,8 +259,8 @@ export function scopeSwitchView(data, active) {
 /**
  * @param {object|null} data  the bootstrap payload, or null when boot failed
  * @param {{domain?: string, supportGroup?: string, bizDomain?: string}} active
- * @param {(pick: {kind: string, value: string}) => void} onPick  the chosen scope; a value
- *   chain, business domain or support group name, any of them "" for the whole register
+ * @param {(pick: {kind: string, value: string}) => void} onPick  the chosen scope; a manual
+ *   group, VC Domain or support group name, any of them "" for the whole register
  * @returns {HTMLElement|null}  null when there is nothing truthful to offer
  */
 export function scopeSwitchControl(data, active, onPick) {
@@ -273,16 +278,16 @@ export function scopeSwitchControl(data, active, onPick) {
     // Carries the CURRENT selection, not just the control's name. The header is rebuilt on
     // every pick, so this is re-stamped with each change.
     ariaLabel: `Scope: ${v.label}`,
-    searchPlaceholder: "Search value chains, domains and support groups…",
+    searchPlaceholder: "Search manual groups, VC domains and support groups…",
     header: {
       title: "Scope",
       // Names all three kinds, because all three are in the list below it and they are not the
-      // same question: a value chain is a rule someone wrote in Settings, a business domain is
-      // a tag someone wrote in Wiz, and a support group is the team a subscription's tag names.
+      // same question: a manual group is a rule someone wrote in Settings, a VC Domain is a tag
+      // someone wrote in Wiz, and a support group is the team a subscription's tag names.
       // Naming only some of them would leave a reader to guess which heading they had picked
       // from — and the three can cut across each other, so guessing wrong is easy.
-      note: "Every page answers for the value chain, business domain or support group you "
-        + "pick. Executive always answers for the whole register.",
+      note: "Every page answers for the manual group, VC domain or support group you pick. "
+        + "Executive always answers for the whole register.",
     },
     // The scope outlives the page you picked it on, so which row is in force is a standing
     // fact about the app rather than a highlight in an open menu — worth a mark of its own

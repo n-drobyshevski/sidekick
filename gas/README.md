@@ -63,25 +63,31 @@ one list:
 
 | group | what it is | where it comes from |
 | --- | --- | --- |
-| **Value chains** | a bucket **this app computes** from rules an operator wrote | `src/domain/domainRules.ts` → `_domain` |
-| **Business domains** | the owner **the tenant wrote** on the resource | the `Wiz/Domain` tag → `_bizDomain` |
+| **Manual groups** | a bucket **this app computes** from rules an operator wrote in Settings | `src/domain/domainRules.ts` → `_domain` |
+| **VC Domains** | the owner **the tenant wrote** on the resource | the `Wiz/Domain` tag → `_bizDomain` |
 | **Support groups** | the team **the tenant wrote** on the subscription | the `Wiz/provisioning` tag → `_supportGroup` |
 
 The three are **orthogonal, not nested**, and listing them as three flat groups rather than one
-tree is the honest shape: any of them can cut across either of the others, and when a value
-chain and a business domain disagree the disagreement is information. The dev fleet is seeded
-that way on purpose — the domains cut across the roles that drive the value chains, so the two
-can never read as two spellings of one thing.
+tree is the honest shape: any of them can cut across either of the others, and when a manual
+group and a VC Domain disagree the disagreement is information. The dev fleet is seeded that
+way on purpose — the domains cut across the roles that drive the manual groups, so the two can
+never read as two spellings of one thing.
+
+**The code still says `domain` for the first and `bizDomain` for the second.** Those are the
+wire and storage names — the `domains` settings blob, the RPC params, the ledger's `_domain`
+column, `api_getMttrByDomain` — and renaming them would churn a persisted schema and every
+cache key for nothing a reader can see. The labels are the only place the two vocabularies
+meet; `scopeSwitch.js` is where they are written down.
 
 It is not a Wiz *project* picker, and cannot be: `src/domain/transform.ts` drops the
 `projects[]` array Wiz returns on every finding, and `WIZ_PROJECT_ID_V2` scopes the SYNC rather
 than the view — a picker over a dimension the ledger does not carry would offer slices whose
 pages all render zero, and a zero meaning "nothing here" is indistinguishable on screen from one
-meaning "never fetched". The business domain has the opposite property and is why it can be
-there at all: the tag is already fetched and already persisted, so every domain the list offers
-is one the register can answer for.
+meaning "never fetched". The VC Domain has the opposite property and is why it can be there at
+all: the tag is already fetched and already persisted, so every domain the list offers is one
+the register can answer for.
 
-**One scope is in force at a time.** Value chain and support group used to be independent
+**One scope is in force at a time.** Manual group and support group used to be independent
 comboboxes at the bottom of the rail and their intersection was expressible; picking from any
 group now clears the other two, because a header that carries "the scope" cannot carry three of
 them and still answer "what am I looking at" in one line. Scoping stays client-side — the values
@@ -91,16 +97,16 @@ trip.
 The caption beside the trigger always carries the **denominator** (`31 of 161 findings`), since
 a bare count cannot tell a small support group from a small register, and a **second figure**
 for the rows nobody claimed (`· 104 carry no support group`), since without it the caption
-silently attributes those to some other group. Under a business domain that second figure names
-the tag it read — `· 83 carry no Wiz/Domain tag` — because the figure is a fact about that key
+silently attributes those to some other group. Under a VC Domain that second figure names the
+tag it read — `· 83 carry no Wiz/Domain tag` — because the figure is a fact about that key
 specifically, and an operator who mistyped `WIZ_DOMAIN_TAG_KEY` would otherwise read a
 tenant-wide tagging failure off their own typo. A scope that has fallen out of the register — a
-value chain deleted from Settings, a domain that vanished when the tag key was corrected under
+manual group deleted from Settings, a domain that vanished when the tag key was corrected under
 it — stays in force and says so (`Not in this register — showing 0 of 161`) rather than
 resetting silently, because a silent reset looks exactly like never having scoped at all.
 `test/scopeSwitchView.test.js` and `test/domainTag.test.ts` hold all of it.
 
-Two things the business domain is deliberately **not**, yet: a column in the CSV export, and a
+Two things the VC Domain is deliberately **not**, yet: a column in the CSV export, and a
 grouping dimension on the Breakdown. Both are natural and both are additive; neither is needed
 to scope by it, and each would widen a payload the other two dimensions already fill.
 
@@ -328,13 +334,13 @@ Two things the breakdown makes visible that a single total hides:
    - `WIZ_SUPPORT_GROUP_TAG_KEY` *(optional)* — the subscription tag whose value is the
      Support Group. Defaults to `Wiz/provisioning`; set it only if your tenant uses a
      different tag key.
-   - `WIZ_DOMAIN_TAG_KEY` *(optional)* — the **resource** tag whose value is the business
-     domain that owns it. Defaults to `Wiz/Domain`; matched case-insensitively, so
+   - `WIZ_DOMAIN_TAG_KEY` *(optional)* — the **resource** tag whose value is the **VC Domain**
+     that owns it. Defaults to `Wiz/Domain`; matched case-insensitively, so
      `Wiz/domain` also works. Costs no extra API calls: `vulnerableAsset.tags` is already
      in the vulnerability query and already persisted per finding as `tags_json`, so turning
      this on is a property, not a re-scan. The key is resolved **on read** — correcting a
      typo repaints on the next request rather than needing a full re-scan — and a register
-     where nothing carries the tag simply has no Business domains group in the switcher.
+     where nothing carries the tag simply has no VC Domains group in the switcher.
    Without credentials the app runs in dry-run mode over sample data.
 6. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain),
    or `npm run deploy`.

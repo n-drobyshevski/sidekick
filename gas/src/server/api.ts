@@ -204,7 +204,7 @@ function bootstrapCore(): Rec {
     // The scope switcher's arithmetic, kept apart from `filterOptions.supportGroups` and
     // `domainNames` so the readers that already take those as bare name lists (the domains
     // editor, the switcher's own option builders) keep their shape. `register` is the
-    // denominator every caption carries: "1,204" alone cannot tell a small value chain from a
+    // denominator every caption carries: "1,204" alone cannot tell a small manual group from a
     // small register, and those call for opposite reactions.
     scopeCounts: {
       register: records.length,
@@ -430,7 +430,7 @@ export function getFindingDetail(p?: unknown): ApiResult {
 function insightsData(p?: unknown): Rec {
   const scan = findings.currentScan();
   if (!scan) return { flatScan: false };
-  // Global "Value Chain" filter: "" means the whole chain (no filter). The frame
+  // Global manual-group filter: "" means all of them (no filter). The frame
   // records already carry _domain (findings.currentScan); base rows get it assigned
   // here, mirroring mttrData/baseRowsData. Filter up front and feed the existing
   // aggregations unchanged — no insights.ts signature changes.
@@ -555,8 +555,8 @@ export function getInsights(p?: unknown): ApiResult {
 // ------------------------------------------------------------------------- grouping
 
 /**
- * Frame records for the current scan, scoped to a Value Chain, Support Group(s) and/or a
- * business domain.
+ * Frame records for the current scan, scoped to a manual group, Support Group(s) and/or a
+ * VC Domain.
  *
  * `_bizDomain` is already on every frame record (findings.currentScan attaches it beside
  * `_supportGroup`), so this is a filter and never a join. An UNSET field means the resource
@@ -626,8 +626,8 @@ export function getGrouping(p?: unknown): ApiResult {
 /**
  * Open findings over scan history for the top-level breakdown groups — the durable-ledger
  * counterpart of the current-scan `groupingData` tree, powering the Breakdown
- * group-evolution line chart. Scopes the base rows to the same Value Chain / Support
- * Group filters (mirroring `insightsData`), then replays the ledger per flat scan.
+ * group-evolution line chart. Scopes the base rows to the same header scope
+ * (mirroring `insightsData`), then replays the ledger per flat scan.
  *
  * `key` is the top-level grouping dimension; `groups` are the canonical top-N group names
  * the client already derived from the grouping payload, so pie and line bucket/color the
@@ -859,7 +859,7 @@ function visibleBase(rows: Rec[]): Rec[] {
   );
 }
 
-// The durable base rows narrowed to the active Value Chain / Support group / business domain
+// The durable base rows narrowed to the active manual group / support group / VC Domain
 // scope — the shared preamble both the MTTR summary and the MTTR trend key their populations
 // off, so the hero and the charts beneath it always measure the same findings. The joins run
 // only when a scope is active (otherwise the whole base passes through untouched), matching the
@@ -1104,10 +1104,9 @@ function remediationGroups(
   return { rows: out, trend: { groups, points, kmPoints } };
 }
 
-// Per-domain remediation summary for the "By domain" section shown at the whole-chain
-// (aggregate) view — a value chain is composed of domains, so this splits the same
-// ledger base rows the MTTR hero uses by their assigned domain. Priority order (with
-// Unassigned last), empty domains omitted.
+// Per-group remediation summary for the "By manual group" section shown at the unscoped
+// (aggregate) view — this splits the same ledger base rows the MTTR hero uses by their
+// assigned manual group. Priority order (with Unassigned last), empty groups omitted.
 function mttrByDomainData(p?: unknown): Rec {
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
   const bizDomain = String((p as Rec)?.["bizDomain"] ?? "");
@@ -1119,8 +1118,8 @@ function mttrByDomainData(p?: unknown): Rec {
   rows = visibleBase(rows);
   supportGroups.attachSupportGroups(rows);
   if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
-  // A business-domain scope narrows the population the same way the hero above it is narrowed,
-  // so the by-value-chain split answers for the same findings the headline figure does.
+  // A VC Domain scope narrows the population the same way the hero above it is narrowed, so
+  // the by-manual-group split answers for the same findings the headline figure does.
   if (bizDomain) {
     const key = bizDomains.configuredDomainTagKey();
     rows = rows.filter((r) => bizDomains.bizDomainOf(r, key) === bizDomain);
@@ -1174,15 +1173,15 @@ function mttrBySupportGroupData(p?: unknown): Rec {
   );
   rows = visibleBase(rows);
   supportGroups.attachSupportGroups(rows);
-  // Scope to the selected value chain (assign domains, keep the matching rows) so the split
-  // shows the support groups WITHIN this domain — mirroring how the hero is scoped.
+  // Scope to the selected manual group (assign groups, keep the matching rows) so the split
+  // shows the support groups WITHIN it — mirroring how the hero is scoped.
   const compiled = compileDomains(settingsStore.getDomains().items);
   if (domain) rows = rows.filter((r) => assignDomain(r, compiled) === domain);
-  // A header Support-group scope narrows to that one group (the split then collapses to a
+  // A header support-group scope narrows to that one group (the split then collapses to a
   // single row and the client hides it) — applied so the population matches the hero.
   if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
-  // Likewise a business-domain scope: the split then shows the support groups WITHIN that
-  // domain, which is the same relationship the value-chain scope above has to it.
+  // Likewise a VC Domain scope: the split then shows the support groups WITHIN that domain,
+  // which is the same relationship the manual-group scope above has to it.
   if (bizDomain) {
     const key = bizDomains.configuredDomainTagKey();
     rows = rows.filter((r) => bizDomains.bizDomainOf(r, key) === bizDomain);

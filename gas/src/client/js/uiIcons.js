@@ -34,10 +34,10 @@ export function svgEl(tag, attrs) {
 }
 
 const PATHS = {
-  // The scope switcher's marks. A funnel for a value chain, because that is what a value chain
-  // is here — a rule that admits some findings and not others — and it is the mark the rail's
-  // own Value Chain filter drew before the switcher took the job, so a reader who knew the old
-  // control recognises the new one.
+  // The scope switcher's marks. A funnel for a manual group, because that is what one is here —
+  // a rule that admits some findings and not others — and it is the mark the rail's own Value
+  // Chain filter drew before the switcher took the job and the name changed, so a reader who
+  // knew the old control recognises the new one.
   funnel: ["M2.2 3.2 H13.8 L9.6 8.1 V13.2 L6.4 11.5 V8.1 Z"],
   // Two figures for a support group: the dimension is a team, not a filter, and the difference
   // matters on a list where the two kinds sit under separate headings.
@@ -47,7 +47,7 @@ const PATHS = {
     "M14.1 13.6 v-1.1 a3 3 0 0 0 -2.25 -2.9",
     "M10.6 3.6 a2.6 2.6 0 0 1 0 4.8",
   ],
-  // A label with a punched hole, for a business domain. NOT a folder and not a funnel, because
+  // A label with a punched hole, for a VC Domain. NOT a folder and not a funnel, because
   // it is neither: `Wiz/Domain` is a tag a person wrote on a resource, not a container Wiz
   // nests things in and not a rule this app evaluates. The hole is what separates it from a
   // plain rotated square at 14px.

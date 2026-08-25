@@ -32,7 +32,7 @@ export function configuredDomainTagKey(): string {
  * `recordTags` is the domain engine's own normaliser and handles all three: the nested
  * `vulnerableAsset.tags` object a raw node carries, the `vulnerableAsset.tags.<key>` columns a
  * flattened frame carries, and the `tags_json` string a ledger row carries. Reusing it is what
- * keeps a value chain's `tag:` condition and this scope reading the same tags.
+ * keeps a manual group's `tag:` condition and this scope reading the same tags.
  */
 export function bizDomainOf(record: Rec, key: string): string | null {
   return domainOfTags(recordTags(record), key);

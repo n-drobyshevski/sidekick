@@ -71,15 +71,15 @@ const app = document.getElementById("app");
 let mainEl = null;
 let appbarEl = null;
 let bootData = null; // the last bootstrap payload, so renderAppbar can re-derive on a pick
-// The global "Value Chain" scope, shared by every page. "" = the whole register. Module-level
+// The global "Manual group" scope, shared by every page. "" = the whole register. Module-level
 // so it survives route() (which only re-renders mainEl, never the shell) and page navigation —
 // nav links carry no state.
 let activeDomain = "";
 // The global "Support group" scope, shared by every page the same way. "" = all groups.
 let activeSupportGroup = "";
-// The global "Business domain" scope — the owner named by a resource's `Wiz/Domain` tag.
-// Orthogonal to the two above rather than nested under either: a domain can cut across value
-// chains and support groups alike, which is why the switcher lists three flat groups.
+// The global "VC Domain" scope — the owner named by a resource's `Wiz/Domain` tag.
+// Orthogonal to the two above rather than nested under either: a domain can cut across manual
+// groups and support groups alike, which is why the switcher lists three flat groups.
 //
 // EXACTLY ONE OF THESE THREE IS EVER SET. The first two used to be independent filters that
 // could intersect, each with its own combobox at the bottom of the rail; all three are groups
@@ -135,7 +135,7 @@ function clearScope(kind) {
 }
 
 // Route-reload overlay: veils the content pane (not the sidebar) with a progress bar
-// while the active page refetches — most visibly after a Value Chain change, which
+// while the active page refetches — most visibly after a scope change, which
 // otherwise reloads silently. Shown only if the load outlasts a short delay, so cached
 // switches never flash; a sequence guard keeps it up across rapid successive changes.
 let routeOverlay = null;
@@ -485,7 +485,7 @@ function renderSidebar(sidebar, data) {
   // destinations, and a scope is not a destination.
   //
   // A SCOPE THAT FELL OUT OF THE REGISTER IS NO LONGER SILENTLY DROPPED, which is what the two
-  // comboboxes did on every rebuild. Deleting a value chain in Settings and coming back to a
+  // comboboxes did on every rebuild. Deleting a manual group in Settings and coming back to a
   // whole-register view looks exactly like never having scoped at all — the numbers change,
   // nothing says why, and the reader is left to work out which of the two happened. The
   // switcher keeps the stale value in force and says so in words instead ("Not in this

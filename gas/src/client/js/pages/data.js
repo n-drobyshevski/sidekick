@@ -27,8 +27,8 @@ import {
 // downloaded audit artifact says what population it covers instead of leaving it to guess.
 function scopeLine(domain, supportGroup, bizDomain) {
   const parts = [];
-  if (domain) parts.push(`Value chain: ${domain}`);
-  if (bizDomain) parts.push(`Business domain: ${bizDomain}`);
+  if (domain) parts.push(`Manual group: ${domain}`);
+  if (bizDomain) parts.push(`VC Domain: ${bizDomain}`);
   if (supportGroup) parts.push(`Support group: ${supportGroup}`);
   return parts.length ? `Scoped to ${parts.join(" · ")}.` : "The whole register.";
 }
@@ -101,7 +101,7 @@ function renderStorageSection(main) {
 // ------------------------------------------------------------------------- report
 
 function renderReportSection(main, boot, domain, supportGroup, bizDomain) {
-  // Scope the report to the global Value Chain + Support group filters ("" = no filter).
+  // Scope the report to whatever the header switcher holds ("" = no filter).
   const domains = domain ? [domain] : [];
   const supportGroups = supportGroup ? [supportGroup] : [];
   // The report and export endpoints have always taken arrays; the header switcher sets at

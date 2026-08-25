@@ -6,12 +6,12 @@
 // deriving anything: not a rule, not a score, not a verdict, just a string the tenant wrote
 // on the resource.
 //
-// IT IS NOT A VALUE CHAIN, and the two must never be conflated in the UI. A value chain
+// IT IS NOT A MANUAL GROUP, and the two must never be conflated in the UI. A manual group
 // (`domainRules.ts`, `_domain`) is a bucket THIS APP computes from rules an operator wrote in
-// Settings; a business domain is a label the TENANT wrote in Wiz. They can disagree, and when
-// they do the disagreement is information — which is why the header switcher lists them as two
-// groups rather than merging them into one dimension. The field is `_bizDomain` for the same
-// reason: `_domain` was taken, and by the other thing.
+// Settings — manual because a person writes them; a VC Domain is a label the TENANT wrote in
+// Wiz. They can disagree, and when they do the disagreement is information — which is why the
+// header switcher lists them as two groups rather than merging them into one dimension. The
+// field is `_bizDomain` for the same reason: `_domain` was taken, and by the other thing.
 //
 // RESOLVED ON READ, NEVER BAKED. The key is configurable, and a key baked into the ledger
 // would mean a full re-scan to correct a typo. The raw material is already persisted —

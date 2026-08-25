@@ -4722,7 +4722,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "da80e1162eb8" : "dev";
+  var BUILD_ID = true ? "8df26fdfe5b3" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -6873,7 +6873,7 @@ var Server = (() => {
       // The scope switcher's arithmetic, kept apart from `filterOptions.supportGroups` and
       // `domainNames` so the readers that already take those as bare name lists (the domains
       // editor, the switcher's own option builders) keep their shape. `register` is the
-      // denominator every caption carries: "1,204" alone cannot tell a small value chain from a
+      // denominator every caption carries: "1,204" alone cannot tell a small manual group from a
       // small register, and those call for opposite reactions.
       scopeCounts: {
         register: records.length,

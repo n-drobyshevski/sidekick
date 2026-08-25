@@ -48,7 +48,7 @@ export function currentScan(): CurrentScan | null {
   // cheap request-dependent fields are attached here — _sev, _supportGroup, _bizDomain
   // and _domain, none baked into the frame so domain-settings / support-group /
   // domain-tag-key edits never stale it. Support group and business domain are both
-  // attached BEFORE domain assignment so a value chain's conditions can see them.
+  // attached BEFORE group assignment so a manual group's conditions can see them.
   const frame = archive.readFrame(row.scan_id) as Rec[] | null;
   let records: Rec[];
   if (frame) {
@@ -72,7 +72,7 @@ export function currentScan(): CurrentScan | null {
   }
   attachSupportGroups(records);
   // Before domain assignment, like the support group above and for the same reason: both are
-  // resolved live rather than baked, and a value chain's rules may read either.
+  // resolved live rather than baked, and a manual group's rules may read either.
   attachBizDomains(records);
   if (compiled.length) {
     for (const flat of records) flat["_domain"] = assignDomain(flat, compiled);
@@ -98,9 +98,9 @@ export interface FindingsFilters {
   clouds?: string[];
   domains?: string[];
   supportGroups?: string[];
-  // Business domains, read off the resource's Wiz/Domain tag and attached as `_bizDomain` by
-  // currentScan(). A separate dimension from `domains` above, which are the rule-derived value
-  // chains — the two can disagree, and when they do the disagreement is information.
+  // VC Domains, read off the resource's Wiz/Domain tag and attached as `_bizDomain` by
+  // currentScan(). A separate dimension from `domains` above, which are the rule-derived
+  // manual groups — the two can disagree, and when they do the disagreement is information.
   bizDomains?: string[];
   q?: string;
 }
