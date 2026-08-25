@@ -51,6 +51,19 @@ The reference screen's search box, notification icons and avatar are deliberatel
 none of them has anything behind it here. Everything else stays in the rail: the nav, the
 collapse control, **Sync now**, the credential pill and the last-sync line.
 
+The nav runs in **three lanes, a gate and a tail**: *Landscape* (Security Graph, AI
+Inventory — what we have), *Risk* (Priorities, Toxic Combinations, Cloud Configuration —
+what is open and what to do first), *Assurance* (Compliance Posture, Wiz Scans — how we
+score, and where the figures came from), then the gated *Labs*, then Data, Settings and Help
+under a rule with no heading over them, because those three name themselves. A labelled lane
+earns its heading by holding two pages; Labs is the one exception, since there the heading is
+what says the page sits outside the workflow. The grouping is drawn as **words when the rail
+is open and as hairlines when it is not** — collapsed, and in the top-bar layout below 800px,
+each heading keeps its box, sheds its word and draws as the rule between two clusters, still
+announced as a heading. The collapsed rail is the default state, so grouping that disappeared
+there would be grouping most readers never saw. `test/navGroups.test.js` holds all of it,
+including the coupling between the first page in the map and the route `#/` lands on.
+
 The switcher's list comes from the assets the sync actually collected, never from the
 tenant's project catalogue — a picker built from the catalogue would offer projects this
 register was never asked for, and the page behind such a pick renders zero, which looks

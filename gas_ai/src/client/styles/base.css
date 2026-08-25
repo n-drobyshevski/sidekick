@@ -108,6 +108,9 @@
    only half-read tells you nothing, and the trigger beside it still names the scope. */
 @media (max-width: 560px) { .scope-caption { display: none; } }
 
+/* A lane heading. An <h2> since the rail's grouping is real structure — margin: 0 because
+   nothing else in this stylesheet resets a bare h2 and the UA's 0.83em would land here. The
+   type is DESIGN.md's one sanctioned uppercase slot, unchanged. */
 .nav-group {
   font-size: 11px;
   font-weight: 600;
@@ -115,6 +118,18 @@
   text-transform: uppercase;
   color: var(--text-3);
   padding: 12px 10px 4px;
+  margin: 0;
+}
+/* The chrome tail's separator — and the shape a lane heading degrades to in the collapsed
+   rail below, where there is no room for its word. Decorative in the strict sense: what it
+   marks is a change of kind the reader can see (three pages that name themselves), and the
+   lanes above it are still named in the accessibility tree by the headings themselves, so
+   nothing here is the only carrier of anything. */
+.nav-rule {
+  height: 1px;
+  flex: 0 0 auto;
+  background: var(--hairline);
+  margin: 10px 10px 6px;
 }
 .nav-link {
   display: flex;
@@ -182,10 +197,25 @@
 @media (min-width: 801px) {
   .sidebar.collapsed { padding-left: 8px; padding-right: 8px; }
   .sidebar.collapsed .nav-label,
-  .sidebar.collapsed .nav-group,
   .sidebar.collapsed .scan-caption,
   .sidebar.collapsed .btn-label,
   .sidebar.collapsed .scan-buttons button:not(.primary) { display: none; }
+  /* THE COLLAPSED RAIL IS THE DEFAULT, so this is where the grouping has to survive: the
+     heading keeps its box and draws as the hairline between two icon clusters, and its word
+     is clipped rather than removed — same trick as .scan-progress-head below, and for the
+     same reason. A rail that dropped its headings at 56px was ten identical icons in one
+     undivided column, with no break between the workflow and the chrome. */
+  .sidebar.collapsed .nav-group {
+    height: 1px; padding: 0; margin: 10px 8px 6px; background: var(--hairline);
+  }
+  .sidebar.collapsed .nav-group-label {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  }
+  /* The first lane's rule would sit flush under the collapse control, where it reads as the
+     head's own underline rather than as a divider between two groups of links. */
+  .sidebar.collapsed .rail-head + .nav-group { display: none; }
+  .sidebar.collapsed .nav-rule { margin-left: 8px; margin-right: 8px; }
   /* The toggle is the row's only occupant either way, so collapsing just centres it. */
   .sidebar.collapsed .rail-head { justify-content: center; padding-left: 0; padding-right: 0; }
   .sidebar.collapsed .rail-toggle { margin-left: 0; }
@@ -497,6 +527,12 @@ main.full-bleed > .empty { margin: 28px 32px; }
     border-bottom: 1px solid var(--hairline);
   }
   .sidebar .scan-zone { margin-top: 0; border-top: none; padding-top: 0; }
+  /* The rail turns into a ROW here, but `.nav-link` is width:100%, so the links go on
+     stacking one per line and the lanes read exactly as they do in the open rail — words,
+     each on its own line. The tail's rule is the one thing that does not survive the switch:
+     an empty div in a row container shrink-to-fits to nothing, so it needs a line of its
+     own, and takes it with zero side margins rather than a width the margins then overflow. */
+  .sidebar .nav-rule { flex: 0 0 100%; margin: 8px 0; }
   /* The top bar must stay above the full-width route overlay so nav + sync controls remain
      visible and clickable during a reload (desktop clears the rail via left:var(--rail-w)). */
   .sidebar { position: relative; z-index: 45; }

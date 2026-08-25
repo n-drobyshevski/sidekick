@@ -31,22 +31,44 @@ import { renderSettings } from "./pages/settings.js";
 import { renderHelp } from "./pages/help.js";
 import { ROUTE_ICONS } from "./routeIcons.js";
 
+// The rail's information architecture, stated once.
+//
+// THREE LANES, A GATE AND A TAIL. Every page in this app is a security page, so "Security"
+// as a heading distinguished nothing while holding six of them; what a reader actually
+// chooses between is the landscape (what we have), the risk in it (what is open, and what
+// to do first) and what we can state about it (how we score, and where the figures came
+// from). Those are the three labelled lanes. `Labs` is the gate. The tail — `group: null` —
+// is chrome, separated by a rule and never labelled.
+//
+// Two rules renderSidebar depends on, both held by test/navGroups.test.js:
+//   * A LABELLED LANE EARNS ITS HEADING BY HOLDING TWO PAGES. `Labs` is the one exception,
+//     because there the heading IS the statement — it says the page sits outside the
+//     security workflow rather than beside it — and it is drawn only when the gate is open.
+//   * LANES ARE CONTIGUOUS. The lastGroup detector below emits a fresh heading every time
+//     the value changes, so a lane split in two would quietly draw its heading twice.
 const PAGES = {
   // fullBleed: the page owns the whole content pane (no main padding/max-width).
-  graph: { title: "Security Graph", group: "Security", render: renderGraphPage, fullBleed: true },
-  inventory: { title: "AI Inventory", group: "Security", render: renderInventory },
+  graph: { title: "Security Graph", group: "Landscape", render: renderGraphPage, fullBleed: true },
+  inventory: { title: "AI Inventory", group: "Landscape", render: renderInventory },
   // Phase 7: issues UNION findings, ranked together across the whole landscape — neither
   // `combos` (one toxic-combination pattern) nor `config` (findings only) can answer
-  // "what do I work on Monday". Sits right after inventory: both name the landscape, this one
-  // orders what is wrong with it.
-  problems: { title: "Priorities", group: "Security", render: renderProblems },
-  combos: { title: "Toxic Combinations", group: "Security", render: renderCombos },
-  config: { title: "Cloud Configuration", group: "Security", render: renderConfigFindings },
+  // "what do I work on Monday". It opens the Risk lane for that reason: it is the page an
+  // analyst lives in, and the two under it are lenses on subsets of what it ranks.
+  problems: { title: "Priorities", group: "Risk", render: renderProblems },
+  combos: { title: "Toxic Combinations", group: "Risk", render: renderCombos },
+  config: { title: "Cloud Configuration", group: "Risk", render: renderConfigFindings },
   // After config, never first: the FIRST key is the default landing route (parseHash's
   // fallback is coupled to it), so inserting a page at the top silently changes the app's
-  // front door. Sits beside Cloud Configuration because the two are the same subject at
-  // two grains — what is failing, and what that scores against.
-  compliance: { title: "Compliance Posture", group: "Security", render: renderCompliance },
+  // front door. It stays directly under Cloud Configuration — the two are the same subject
+  // at two grains, what is failing and what that scores against — and the lane boundary
+  // between them is the claim rather than a separation: one register is worked, the other
+  // is stated.
+  compliance: { title: "Compliance Posture", group: "Assurance", render: renderCompliance },
+  // Assurance, not the lone "Coverage" heading this used to carry. One page under one
+  // heading was a line of furniture; and this page answers the question Compliance Posture
+  // answers, one step further back — "where did this figure come from" beside "how do we
+  // score" — which is the same reader on the same errand.
+  scans: { title: "Wiz Scans", group: "Assurance", render: renderScans },
   // "Scoring Models", not "AARS Rules": this page has hosted three models since the Problem
   // and Posture tabs landed, and it is now the ONLY consumer of all three — the title is
   // the boundary as much as the name. Deliberately not "Risk Models": this codebase is
@@ -69,13 +91,15 @@ const PAGES = {
     title: "Scoring Models", group: "Labs", render: renderAarsRules, fullBleed: true,
     experimental: true,
   },
-  scans: { title: "Wiz Scans", group: "Coverage", render: renderScans },
-  data: { title: "Data", group: "Data", render: renderData },
-  settings: { title: "Settings", group: "Preferences", render: renderSettings },
+  // The tail: chrome, not a lane. A rule separates it and nothing labels it — "Data" under
+  // a heading reading DATA, and "Help" under HELP, were two lines that restated the link
+  // beneath them, and "Preferences" over "Settings" was the same line in a synonym.
+  data: { title: "Data", group: null, render: renderData },
+  settings: { title: "Settings", group: null, render: renderSettings },
   // Last on purpose. The FIRST key is the default landing route, and parseHash's
   // `|| "graph"` fallback is coupled to it — a page inserted at the top silently
   // becomes the app's front door.
-  help: { title: "Help", group: "Help", render: renderHelp },
+  help: { title: "Help", group: null, render: renderHelp },
 };
 
 // Nav-route icons (ROUTE_ICONS) now live in routeIcons.js — see that module for why.
@@ -291,6 +315,27 @@ function renderAppbar(appbar, data) {
   }
 }
 
+/**
+ * A lane heading.
+ *
+ * An h2 rather than a div, and the label inside a span rather than loose in it, for the
+ * same reason: the collapsed rail is the DEFAULT, and it used to `display: none` these
+ * outright — so the one state most readers see had no grouping in it at all, on screen or
+ * in the accessibility tree. Collapsed, the span is what goes (clipped, not removed) and the
+ * h2 itself draws as the hairline between two icon clusters. The heading stays announced and
+ * navigable in every state; only its pixels change.
+ */
+function navGroupHeading(label) {
+  return el("h2", { class: "nav-group" }, el("span", { class: "nav-group-label" }, label));
+}
+
+// The chrome tail's separator. Data, Settings and Help name themselves, so the tail is
+// marked rather than labelled — presentational, because it says nothing a reader could not
+// see, and the pages under it are already three ordinary links.
+function navRule() {
+  return el("div", { class: "nav-rule", role: "presentation" });
+}
+
 function renderSidebar(sidebar, data) {
   clear(sidebar);
   const railToggle = el("button", {
@@ -307,15 +352,19 @@ function renderSidebar(sidebar, data) {
   // than the list of pages, and the header is where the whole app is named.
   sidebar.append(el("div", { class: "rail-head" }, railToggle));
   const { route: active } = parseHash();
-  let lastGroup = null;
+  // `undefined`, not null: null is a real group now — the unlabelled chrome tail — and a
+  // detector seeded with it would start the rail inside that tail and never draw its rule.
+  let lastGroup;
   for (const [key, page] of Object.entries(PAGES)) {
     // A gated page is absent, not disabled: the rest of this rail is the security workflow,
     // and a greyed-out row inside it would still be telling every reader that a model they
     // cannot open exists. The "Labs" heading goes with it for free — the lastGroup detector
     // below only emits a header when a page that is actually being drawn changes group.
+    // The tail's rule goes on being drawn exactly once either way: gated off, the run is
+    // Assurance → null; gated on, Assurance → Labs → null.
     if (page.experimental && !showExperimental()) continue;
     if (page.group !== lastGroup) {
-      sidebar.append(el("div", { class: "nav-group" }, page.group));
+      sidebar.append(page.group ? navGroupHeading(page.group) : navRule());
       lastGroup = page.group;
     }
     sidebar.append(
