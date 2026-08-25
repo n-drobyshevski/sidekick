@@ -5070,7 +5070,11 @@ var Server = (() => {
     return nodes.map((n) => {
       if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
       const domain = domainOfTags(n.tags, tagKey);
-      return domain ? { ...n, domain } : n;
+      if (domain) return { ...n, domain };
+      if (n.domain === void 0) return n;
+      const out = { ...n };
+      delete out.domain;
+      return out;
     });
   }
 
@@ -7967,7 +7971,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "223123bba596" : "dev";
+  var BUILD_ID = true ? "63b7da94eaae" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -9535,7 +9539,7 @@ var Server = (() => {
     if (!view) {
       assetNodes = rescored;
     } else {
-      const priorById = new Map(loadAssets().map((a) => [a.id, a]));
+      const priorById = new Map(loadAssetsRaw().map((a) => [a.id, a]));
       const keptIds = new Set(kept.map((n) => n.id));
       assetNodes = rescored.map((n) => {
         var _a5;

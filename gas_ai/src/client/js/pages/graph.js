@@ -1510,7 +1510,12 @@ export async function renderGraphPage(main, params, _ctx) {
    * is outermost-or-nothing and the resolver drops it anywhere else.
    */
   function openGroups() {
-    const DIMS = ["asset", "combo", "project", "cloud", "kind", "severity"];
+    // APPENDED, never sorted into place: this is display order, and moving an existing
+    // option would move it under everyone who has learned where it sits. Held against the
+    // domain's GROUP_KEYS by test/graphLayout.test.ts — `domain` shipped in the engine, the
+    // resolver, GROUP_LABELS and the tests, and was missing from THIS list alone, which is
+    // the same drift the arrangement list suffered and the same way it went unseen.
+    const DIMS = ["asset", "combo", "project", "cloud", "kind", "severity", "domain"];
     const levels = groupLevels();
     let g1 = levels[0] || "";
     let g2 = levels[1] || "";
