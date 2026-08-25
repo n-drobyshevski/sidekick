@@ -42,7 +42,12 @@ table.data th {
 @media (min-width: 1100px) {
   .table-wrap--sticky { overflow: visible; }
   .table-wrap--sticky table.data th {
-    position: sticky; top: 0; z-index: 1;
+    /* Pinned flush with the top of what the reader can see, not with the top of the content
+       box. A scrollport clips at its PADDING box, so rows scrolling through its top padding
+       stay visible — `top: 0` would pin the heading below that strip and let rows ride above
+       it. Each scrollport declares its own `--sticky-inset` beside the padding it cancels
+       (`main` in base.css, `.workbench-table` in graph.css); anything that does not gets 0. */
+    position: sticky; top: calc(-1 * var(--sticky-inset, 0px)); z-index: 1;
     /* `border-collapse` paints a cell's border with the TABLE, not the cell, so the heading's
        hairline is left behind the moment the row lifts off. An inset shadow travels with it. */
     border-bottom: none; box-shadow: inset 0 -1px 0 var(--hairline);
@@ -72,8 +77,14 @@ table.data tbody tr.clickable { cursor: pointer; }
 /* The heading goes right with its figures. `td.num` alone left every numeric column's label
    adrift from the numbers underneath it — components.css patched exactly this for one table
    and called the base sheet wrong; it was. Reaches the header now that dataTable puts
-   `col.className` on the <th>. */
-th.num, td.num { text-align: right; }
+   `col.className` on the <th>.
+
+   QUALIFIED WITH `table.data`, and measured. Written as a bare `th.num` it is inert: the base
+   rule is `table.data th { text-align: left }` at (0,1,2) and a lone `th.num` scores (0,1,1),
+   so the class landed on every numeric heading in the app and changed nothing. The browser
+   said `text-align: left` on all four headings of the sync history before this line was
+   qualified. `td.num` never had the problem — nothing else sets a td's alignment. */
+table.data th.num, td.num { text-align: right; }
 
 /* ------------------------------------------------------------------- the name cell */
 /* A node's name behind its kind icon, in that kind's category tint — the same cue the graph
