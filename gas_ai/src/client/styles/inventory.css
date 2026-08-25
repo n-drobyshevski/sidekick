@@ -26,7 +26,6 @@
 /* The distribution strip. The bar is a graphic; the keys under it are the controls, so
    the cross-filter has a real keyboard path (a canvas would not). Both are the shared
    .sevbar / .sevkey-row components (components.css) — this page only sizes the stack. */
-.sev-strip { display: flex; flex-direction: column; gap: var(--space-2); }
 .sev-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; }
 
 /* The stat strip itself is shared (components.css); the header only says where it sits. */

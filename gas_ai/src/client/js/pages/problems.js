@@ -31,10 +31,10 @@ import { bootstrap, setParams, swrCall } from "../store.js";
 import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets.js";
 import { coverCurve } from "../charts.js";
 import { meter,
-  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, kpiCard, outcomeBadge,
-  outcomeLabel, pager, plural, sectionLabel, segmented, select, selectField, sevBadge,
-  sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statusPill,
-  tierBadge, togglePills,
+  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, glossaryTip, heroStat,
+  outcomeBadge, outcomeLabel, pageHeader, pager, plural, segmented, select,
+  selectField, sevBadge, sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection,
+  skeleton, statRow, statusPill, tierBadge, tipMark, togglePills,
 } from "../ui.js";
 import {
   PAGE_SIZE, PROBLEM_SORT_DESC, SEVERITY_RANK,
@@ -91,10 +91,14 @@ export async function renderProblems(main, params) {
   const boot = await bootstrap();
   main.append(
     el("h1", {}, "Priorities"),
+    // NINE WORDS, not thirty-seven. The cascade this page ranks by — outcome, then posture
+    // tier, then due date, then amplification — is a definition, and DESIGN.md is explicit
+    // that a definition belongs in the tip that routes to its Help entry rather than in a
+    // paragraph every reader passes on every visit. The term already existed; only the
+    // paragraph restating it was new.
     el("p", { class: "page-sub" },
-      "Every unresolved issue and every open configuration finding, ranked together on " +
-      "one scale: outcome first, then the asset's posture tier, then how soon it is due, " +
-      "then how much it would amplify if it went wrong."),
+      "Every open issue and finding, ranked on one scale.",
+      glossaryTip(tipMark(), "priorities-rank")),
   );
 
   if (!boot.latestSync) {
@@ -193,7 +197,7 @@ export async function renderProblems(main, params) {
     host.append(modeSwitch());
     if (view.mode === "problems") {
       if (!problemsData) return; // unreached on a real load path; loadProblems() awaits first
-      host.append(kpiRow(problemsData));
+      host.append(problemHeader(problemsData));
       if (problemsData.all) renderAll(problemsData); else renderPaged(problemsData);
     } else {
       if (!actionsData) return;
@@ -220,28 +224,41 @@ export async function renderProblems(main, params) {
       }));
   }
 
-  function kpiRow(fresh) {
+  /**
+   * The same header shape the By-action view uses, so switching modes changes the CONTENT of
+   * the page rather than its architecture. It was four equal .kpi-card tiles, which is the
+   * hero-metric template PRODUCT.md rejects and also left the two modes of one page looking
+   * like two different pages.
+   *
+   * The union's size is the hero; CISA's four outcome names are the breakdown that qualifies
+   * it, and each keeps the tip carrying CISA's own wording (ui/outcome.js) exactly as the
+   * tiles did.
+   */
+  function problemHeader(fresh) {
     const counts = fresh.outcomeCounts || {};
     const undecided = counts[""] || 0;
-    const cards = [
-      // The four names are CISA's, and the sub-line is a fragment rather than a definition.
-      // ui/outcome.js now carries CISA's own wording, and these four read it.
-      kpiCard("Act", String(counts.ACT || 0), "a human interrupts today", null,
+    // Summed rather than read off a total field: domain/problems.ts's invariant is that no
+    // row is ever dropped for lacking a verdict, so the verdict counts ARE the union.
+    const total = (counts.ACT || 0) + (counts.ATTEND || 0) + (counts.TRACK_STAR || 0)
+      + (counts.TRACK || 0) + undecided;
+
+    const stats = [
+      statRow("Act", String(counts.ACT || 0), "a human interrupts today", null,
         { term: "priorities-rank", lines: [outcomeNote("ACT")] }),
-      kpiCard("Attend", String(counts.ATTEND || 0), "on this week's plan", null,
+      statRow("Attend", String(counts.ATTEND || 0), "on this week's plan", null,
         { term: "priorities-rank", lines: [outcomeNote("ATTEND")] }),
-      kpiCard("Track*", String(counts.TRACK_STAR || 0), "an unresolved coverage gap", null,
+      statRow("Track*", String(counts.TRACK_STAR || 0), "an unresolved coverage gap", null,
         { term: "priorities-rank", lines: [outcomeNote("TRACK_STAR")] }),
-      kpiCard("Track", String(counts.TRACK || 0), "no action implied", null,
+      statRow("Track", String(counts.TRACK || 0), "no action implied", null,
         { term: "priorities-rank", lines: [outcomeNote("TRACK")] }),
     ];
     if (undecided) {
-      // Nothing in this union is ever dropped for lacking a verdict (src/domain/problems.ts's
-      // own invariant) — an undecided row still needs a place on the page rather than
-      // silently vanishing from every count.
-      cards.push(kpiCard("Undecided", String(undecided), "never reached a verdict"));
+      stats.push(statRow("Undecided", String(undecided), "never reached a verdict"));
     }
-    return el("div", { class: "kpi-row" }, ...cards);
+    return pageHeader({
+      hero: heroStat("Open problems", String(total), "issues ∪ findings, the whole union"),
+      stats,
+    });
   }
 
   // ------------------------------------------------------ all-mode: whole union in hand
@@ -474,7 +491,7 @@ export async function renderProblems(main, params) {
       return;
     }
 
-    host.append(actionHeadline(data), coverChartCard(data));
+    host.append(actionHeader(data));
 
     const rows = data.rows || [];
     const options = actionFilterOptions(rows);
@@ -502,23 +519,50 @@ export async function renderProblems(main, params) {
     host.append(actionTable(sorted));
   }
 
-  /** "N open problems collapse to M actions — the top 10 close K%." — the self-evidencing
-   *  headline this whole feature exists to produce (`concentrationRatio`, actions.ts). */
-  function actionHeadline(data) {
+  /**
+   * "N open problems collapse to M actions, and the top 10 close K%" — the self-evidencing
+   * result this feature exists to produce (`concentrationRatio`, actions.ts), stated as ONE
+   * header instead of four blocks.
+   *
+   * It used to be a sentence saying exactly that, then three equal .kpi-card tiles repeating
+   * the same three numbers underneath it, then a separate .chart-card for the curve. The
+   * sentence was redundant with the tiles by construction, and a row of equal tiles is the
+   * hero-metric template PRODUCT.md's anti-references reject. Now the count is the hero, the
+   * curve is the thing that qualifies it, and the other two figures are supporting facts —
+   * three levels of emphasis rather than four competing blocks saying the same thing.
+   */
+  function actionHeader(data) {
     const c = data.concentration || {};
     const problems = c.problems ?? data.totalProblems ?? 0;
     const actions = c.actions ?? data.total ?? 0;
     const pctText = formatShare(c.top10Share);
-    const sentence = plural(problems, "open problem") + " collapse to " +
-      plural(actions, "action") + " — the top 10 close " + pctText + ".";
+    const curve = data.curve || [];
+    const enough = curve.length >= 3;
 
-    return el("div", { style: "margin-bottom:14px" },
-      el("p", { class: "page-sub", style: "font-size:15px; font-weight:500; color:var(--ink)" },
-        sentence),
-      el("div", { class: "kpi-row" },
-        kpiCard("Open problems", String(problems), "issues ∪ findings, the whole union"),
-        kpiCard("Collapse to", String(actions), "distinct remediation actions"),
-        kpiCard("Top 10 close", pctText, "of every open problem, ranked by cover")));
+    const canvas = el("canvas", {
+      "aria-label":
+        "Cumulative share of open problems closed as actions are taken, ranked by cover",
+      role: "img",
+    });
+    const aside = el("div", { class: "page-strip" },
+      el("div", { class: "kpi-label" }, "Cumulative cover"),
+      enough
+        ? el("div", { class: "chart-box", style: "height:124px" }, canvas)
+        : el("p", { class: "page-hero-sub" },
+            "Fewer than three actions close the whole board here."),
+    );
+    // Laid out before Chart.js measures it, or it reads a 0x0 box — the same reason
+    // inventory.js's trend chart defers its draw one frame.
+    if (enough) requestAnimationFrame(() => coverCurve(canvas, curve, { yLabel: "" }));
+
+    return pageHeader({
+      hero: heroStat("Open problems", String(problems), "issues ∪ findings, the whole union"),
+      aside,
+      stats: [
+        statRow("Collapse to", String(actions), "distinct remediation actions"),
+        statRow("Top 10 close", pctText, "of every open problem, ranked by cover"),
+      ],
+    });
   }
 
   /** 94.7%, not 94.7000000000001% or a bare "95%" that hides how close the top 10 came to
@@ -526,38 +570,6 @@ export async function renderProblems(main, params) {
   function formatShare(share) {
     const v = Math.round((Number(share) || 0) * 1000) / 10;
     return (Number.isInteger(v) ? String(v) : v.toFixed(1)) + "%";
-  }
-
-  /** The `.chart-card`/`.chart-note`/`.chart-box` shell `inventory.js`'s trend chart uses,
-   *  degrading to `.chart-empty` below ~3 actions the same way that chart degrades below 2
-   *  syncs — a curve with one or two points has no shape worth drawing. */
-  function coverChartCard(data) {
-    const curve = data.curve || [];
-    const enough = curve.length >= 3;
-    const canvas = el("canvas", {
-      "aria-label": "Cumulative share of open problems closed as actions are taken, ranked by cover",
-      role: "img",
-    });
-
-    const card = el("div", { class: "chart-card", style: "margin-bottom:16px" },
-      el("h3", {}, "Cumulative cover"),
-      el("p", { class: "chart-note" },
-        enough
-          ? plural(curve.length, "ranked action")
-          : "Too few actions to shape a curve"),
-      enough
-        ? el("div", { class: "chart-box", style: "height:220px" }, canvas)
-        : el("div", { class: "chart-empty", role: "status" },
-            "Fewer than three actions close the whole board here — there is no curve to draw."),
-    );
-
-    if (enough) {
-      // The canvas must be laid out before Chart.js measures it, or it reads a 0×0 box —
-      // the same reason inventory.js's own trend chart defers its draw one frame.
-      requestAnimationFrame(() => coverCurve(canvas, curve));
-    }
-
-    return card;
   }
 
   function actionToolbar(options) {
@@ -652,8 +664,10 @@ export async function renderProblems(main, params) {
     ];
     const descending = view.aSort && (ACTION_SORT_DESC[view.aSort] ? view.aDir === 1 : view.aDir === -1);
 
+    // No section label here. The .filter-meta count directly above the table already reads
+    // "10 actions" (or "6 of 10 actions" when filtered, which the label could not say), and a
+    // heading repeating the same count 30px below it was the page saying one thing twice.
     return el("div", {},
-      sectionLabel(plural(rows.length, "action") + ", ranked by cover"),
       dataTable({
         columns: COLS.map((col) => ({
           key: col.key, label: col.label, help: col.help,

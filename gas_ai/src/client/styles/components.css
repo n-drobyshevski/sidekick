@@ -37,6 +37,13 @@
 .page-hero-sub, .cov-hero-sub, .inv-hero-sub, .help-hero-sub {
   font-size: var(--fs-label); color: var(--text-3); margin: var(--space-1) 0 0;
 }
+/* The header's second column: a label over the one thing that qualifies the hero — a
+   distribution strip, a small curve. .cov-strip (scans) and .sev-strip (inventory) were
+   identical rulesets in two page files; .page-strip is the name for the next one. */
+.page-strip, .cov-strip, .sev-strip { display: flex; flex-direction: column; gap: var(--space-2); }
+/* The hero column itself needs nothing but permission to shrink inside the grid. */
+.page-hero { min-width: 0; }
+
 /* The stat strip always spans the full header, whichever page it is on. */
 .page-header > .stat-list, .cov-header .stat-list, .inv-header .stat-list { grid-column: 1 / -1; }
 
@@ -79,7 +86,10 @@
    hairlines, so the header reads as one surface with three levels of emphasis rather than
    a row of competing boxes. Pages position it; the cells are the same everywhere. */
 .stat-list {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  /* auto-FILL, not auto-fit: auto-fit collapses the empty tracks and 1fr then stretches
+     the survivors across the whole width, so a two-stat strip drew its divider in the
+     middle of empty space. Keeping the tracks left-aligns any count. */
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
   gap: 0; padding: 14px 0 var(--space-4); margin-top: var(--space-half);
   background: none; border: none; border-top: 1px solid var(--hairline);
   border-radius: 0; box-shadow: none;
@@ -548,7 +558,18 @@
    above a body of content. Used by the compliance and config pages' framework/section
    switchers (pages/compliance.js, pages/config.js) — both reference this class already
    but it matched no rule anywhere in styles/, so the switchers rendered unspaced. */
-.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-4); }
+/* THE CONTROL BAND, under whatever name a page gave it.
+   .filter-bar had NO base rule anywhere — only two descendant overrides scoped to
+   .combo-issues — so on Priorities its pills, kind select and search input were stacking
+   vertically as plain blocks. It looked cramped because it was never laid out.
+   .inv-toolbar and .combo-toolbar are this band under two more names, but each already
+   defines its own layout in a later file and would only inherit an unintended margin from
+   here. Folding those two in is a deliberate change to how they look, not a fix, so it
+   belongs in its own pass rather than riding along with a bug. */
+.toolbar, .filter-bar {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--space-2); margin: 0 0 var(--space-4);
+}
 
 /* A column of placeholder lines (ui/feedback.js skeletonStack). Every loading stub had
    written this out as an inline flex-column style. */

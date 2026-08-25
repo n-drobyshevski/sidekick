@@ -43,8 +43,8 @@ export {
 } from "./ui/findingsScore.js";
 export { dataTable, meter, pager, progressBar } from "./ui/data.js";
 export {
-  field, filterChipRow, kpiCard, segmented, select, selectField, statRow, statusPill,
-  togglePills,
+  field, filterChipRow, heroStat, kpiCard, pageHeader, segmented, select, selectField,
+  statRow, statusPill, togglePills,
 } from "./ui/controls.js";
 export {
   confirmDialog, emptyState, errorState, skeleton, skeletonStack, toast,
