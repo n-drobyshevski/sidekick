@@ -240,7 +240,7 @@ export async function renderSettings(main, _params, ctx) {
     const groups = [];
     const byKey = new Map();
     for (const row of scope.policies) {
-      const key = row.categoryExternalId + " " + row.subcategoryExternalId;
+      const key = row.categoryExternalId + "\u0000" + row.subcategoryExternalId;
       let g = byKey.get(key);
       if (!g) {
         g = {
