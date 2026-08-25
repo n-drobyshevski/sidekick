@@ -22,6 +22,7 @@ import {
   runQuery,
   shortcutsFor,
   validateQuery,
+  validateQueryWithWarnings,
   type QueryShortcut,
 } from "../src/domain/graphQuery";
 import { EDGE_TYPES, NODE_KINDS } from "../src/domain/graphTypes";
@@ -522,7 +523,10 @@ describe("filter vocabulary", () => {
     expect(typeOf("name")).toBe("text");
     expect(typeOf("cloud")).toBe("choice");
     expect(typeOf("inactive")).toBe("boolean");
-    expect(typeOf("aars")).toBe("number");
+    expect(typeOf("openIssues")).toBe("number");
+    // The verdicts are gone from the vocabulary, not renamed inside it.
+    expect(typeOf("aars")).toBeUndefined();
+    expect(typeOf("postureTier")).toBeUndefined();
     expect(typeOf("tags")).toBe("pairs");
   });
 
@@ -1052,5 +1056,51 @@ describe("a node naming several kinds", () => {
     }));
     expect(open.total).toBe(both("AI_AGENT", "AI_MODEL"));
     expect(narrowed.total).toBe(both("AI_MODEL"));
+  });
+});
+
+// The one compat path in this app where getting it wrong blanks a page rather than
+// degrading a result: `readNode` THROWS on an unknown filter field, and it sits in front
+// of the whole query. A saved view or a shared `where=` naming a retired verdict would
+// have taken the Security Graph down with "unknown filter field: aars".
+describe("retired filter fields", () => {
+  const withFilter = (key: string) => ({
+    kind: "AI_AGENT",
+    where: [{ key, values: ["70"] }],
+  });
+
+  it("drops a retired field and names it, instead of refusing the query", () => {
+    for (const key of ["aars", "aarsPercentile", "aarsSeverity", "postureTier", "problemOutcome"]) {
+      const { query, retired } = validateQueryWithWarnings(withFilter(key));
+      expect(retired, key).toEqual([key]);
+      // The filter is gone, not silently kept under a name nothing evaluates.
+      expect(query.where ?? [], key).toEqual([]);
+      expect(() => validateQuery(withFilter(key)), key).not.toThrow();
+    }
+  });
+
+  it("still refuses a field that was never real", () => {
+    expect(() => validateQuery(withFilter("nonsense"))).toThrow(/unknown filter field/);
+  });
+
+  it("keeps the filters that are still real, beside a retired one", () => {
+    const { query, retired } = validateQueryWithWarnings({
+      kind: "AI_AGENT",
+      where: [
+        { key: "aars", values: ["70"] },
+        { key: "openIssues", values: ["2"] },
+      ],
+    });
+    expect(retired).toEqual(["aars"]);
+    expect((query.where ?? []).map((f) => f.key)).toEqual(["openIssues"]);
+  });
+
+  it("names a repeated retired field once, not once per node", () => {
+    const { retired } = validateQueryWithWarnings({
+      kind: "AI_AGENT",
+      where: [{ key: "aars", values: ["70"] }],
+      steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT", where: [{ key: "aars", values: ["1"] }] } }],
+    });
+    expect(retired).toEqual(["aars"]);
   });
 });

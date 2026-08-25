@@ -211,6 +211,13 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // Appended, same no-migration contract: rows without it have no scoped series, which the
     // trend reports rather than fabricates.
     "project_totals_json",
+    // The count trend's two new series. `issue_count` above is the third and has been
+    // written since the first sync this ledger ever recorded, which is why the issues line
+    // has full history and these two start empty — appended under the same no-migration,
+    // no-backfill contract as everything above them. A row written before these existed
+    // carries NO value, and the reader plots a gap rather than a zero: see
+    // CountTrendPoint in aarsTrend.ts for why that distinction is load-bearing.
+    "finding_count", "posture_fail_count",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [
@@ -224,6 +231,19 @@ export const TAB_HEADERS: Record<string, string[]> = {
 export const SCHEMA_VERSION = 1;
 
 let spreadsheetCache: GoogleAppsScript.Spreadsheet.Spreadsheet | null = null;
+
+/**
+ * Drop this module's per-execution memos.
+ *
+ * Test-only. In GAS these memos die with the execution, so nothing in production ever needs
+ * to clear them; under vitest the module registry outlives a test, and `test/gasEnv.ts`
+ * calls this so a shared server can be reset without re-importing the whole graph. See the
+ * comment on `resetToSynced` there.
+ */
+export function __resetMemosForTest(): void {
+  spreadsheetCache = null;
+}
+
 
 export function ledgerSpreadsheet(): GoogleAppsScript.Spreadsheet.Spreadsheet {
   if (spreadsheetCache === null) {

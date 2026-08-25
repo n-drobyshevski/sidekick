@@ -12,16 +12,15 @@
 
 import { isOpenGap, SEVERITY_ORDER, type Severity } from "./config";
 import type { FindingRow } from "./graphTypes";
-import { OUTCOME_VALUES } from "./problem";
 import { pageOf, type SortDir } from "./assetTable";
 import { toStr as str, type Rec } from "./util";
 
 export { pageOf };
 
-export type ConfigSort = "severity" | "rule" | "resource" | "firstSeen" | "status" | "priority";
+export type ConfigSort = "severity" | "rule" | "resource" | "firstSeen" | "status";
 
 export const CONFIG_SORTS: ConfigSort[] = [
-  "severity", "rule", "resource", "firstSeen", "status", "priority",
+  "severity", "rule", "resource", "firstSeen", "status",
 ];
 
 /** Risk columns open worst-first; identity columns open A→Z. Same rule as the inventory. */
@@ -29,7 +28,6 @@ export const DEFAULT_CONFIG_SORT_DIR: Record<ConfigSort, SortDir> = {
   severity: "desc", firstSeen: "desc",
   rule: "asc", resource: "asc", status: "asc",
   // Phase 5: the problem tree's outcome, worst (ACT) first — same convention as severity.
-  priority: "desc",
 };
 
 export const CONFIG_PAGE_SIZES = [25, 50, 100, 250];
@@ -46,7 +44,7 @@ export const CONFIG_CLIENT_ALL_MAX = 1000;
 
 export const CONFIG_FACET_KEYS = [
   "severities", "statuses", "clouds", "resourceTypes", "rules", "projects",
-  "linkage", "flags", "outcomes",
+  "domains", "linkage", "flags",
 ] as const;
 export type ConfigFacetKey = (typeof CONFIG_FACET_KEYS)[number];
 
@@ -95,16 +93,23 @@ export interface ConfigFindingView {
   risks: string[];
   /** Derived, never stored: whether this resource is in the AI inventory. */
   linked: boolean;
+  /**
+   * The resource's owning business domain — joined from the AI inventory, not read off the
+   * finding.
+   *
+   * `""` FOR AN UNLINKED FINDING, AND THAT IS NOT AN OVERSIGHT. `configurationFindings`
+   * selects `resource { id name type status projects }` and no tags at all, so a finding
+   * on a region, an IAM policy or a service account the AI graph does not model has no tag
+   * source anywhere in the payload. Widening that selection is possible but not free:
+   * CONFIG_FINDINGS is an optional step that swallows an HTTP 400, so a field the tenant
+   * rejects would empty `ai_findings` and look exactly like a landscape with nothing to
+   * report. The blank is the same fact the `linkage` dimension already publishes, said in
+   * a second column rather than guessed at.
+   */
+  domain: string;
   ignored: boolean;
   iac: boolean;
   gap: boolean;
-  /**
-   * Phase 4: the problem/decision-vector `Outcome` (ACT | ATTEND | TRACK_STAR | TRACK) this
-   * finding was last decided as, empty when it has none — a passing or resolved finding
-   * gets no verdict (graphEnrich.withProblemVerdicts), the same absent-not-defaulted
-   * contract every other optional column on this view already follows.
-   */
-  problemOutcome: string;
 }
 
 export interface ControlRollup {
@@ -132,6 +137,14 @@ export interface ControlRollup {
   iac: number;
   clouds: string[];
   projects: string[];
+  /**
+   * The business domains this control's findings span — the by-control view's own
+   * argument, at its own grain. "One trust-policy fix closes sixteen roles" is the
+   * claim the grouping exists to make; saying which domains those sixteen belong to is
+   * the same claim, and it is what tells one team's cleanup from a landscape-wide one.
+   * Blank domains contribute nothing, so an all-unlinked control lists none.
+   */
+  domains: string[];
   severityMix: Record<string, number>;
   /** Earliest firstSeenAt across the control's findings — how long this has been true. */
   firstSeenAt: string;
@@ -145,9 +158,9 @@ export interface ConfigQuery {
   resourceTypes: string[];
   rules: string[];
   projects: string[];
+  domains: string[];
   linkage: string[];
   flags: string[];
-  outcomes: string[];
 }
 
 const sevRank = (s: string): number => {
@@ -155,19 +168,8 @@ const sevRank = (s: string): number => {
   return i < 0 ? SEVERITY_ORDER.length : i;
 };
 
-/**
- * Position on the problem tree's outcome scale, worst (ACT) first — same shape as sevRank,
- * over OUTCOME_VALUES (problem.ts) instead of SEVERITY_ORDER. An empty `problemOutcome`
- * (never decided, or not eligible for one) sorts last, after TRACK: it is not a "TRACK or
- * better" claim, it is the absence of one.
- */
-const priorityRank = (o: string): number => {
-  const i = (OUTCOME_VALUES as readonly string[]).indexOf(o);
-  return i < 0 ? OUTCOME_VALUES.length : i;
-};
-
 /** FindingRow + "is its resource in the inventory" → the row the register renders. */
-export function toConfigView(f: FindingRow, linked: boolean): ConfigFindingView {
+export function toConfigView(f: FindingRow, linked: boolean, domain = ""): ConfigFindingView {
   return {
     id: f.id,
     name: f.name ?? f.ruleName ?? "",
@@ -187,10 +189,10 @@ export function toConfigView(f: FindingRow, linked: boolean): ConfigFindingView 
     analyzedAt: f.analyzedAt ?? "",
     risks: f.risks ?? [],
     linked,
+    domain,
     ignored: (f.ignoreRuleIds ?? []).length > 0,
     iac: (f.iacFindingIds ?? []).length > 0,
     gap: isOpenGap(f),
-    problemOutcome: f.problemOutcome ?? "",
   };
 }
 
@@ -210,14 +212,12 @@ export function resolveConfigQuery(params: Rec): ConfigQuery {
     resourceTypes: listParam(params["resourceTypes"]),
     rules: listParam(params["rules"]),
     projects: listParam(params["projects"]),
+    domains: listParam(params["domains"]),
     linkage: listParam(params["linkage"]).filter(
       (v) => (LINKAGE_VALUES as readonly string[]).indexOf(v) >= 0,
     ),
     flags: listParam(params["flags"]).filter(
       (v) => (CONFIG_FLAGS as readonly string[]).indexOf(v) >= 0,
-    ),
-    outcomes: listParam(params["outcomes"]).filter(
-      (v) => (OUTCOME_VALUES as readonly string[]).indexOf(v) >= 0,
     ),
   };
 }
@@ -240,8 +240,8 @@ export function matchesConfigQuery(row: ConfigFindingView, q: ConfigQuery): bool
   if (!anyOf(q.resourceTypes, row.resourceType)) return false;
   if (!anyOf(q.rules, row.ruleShortId)) return false;
   if (q.projects.length && !row.projects.some((p) => q.projects.indexOf(p) >= 0)) return false;
+  if (q.domains.length && q.domains.indexOf(row.domain) < 0) return false;
   if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
-  if (!anyOf(q.outcomes, row.problemOutcome)) return false;
   // ANDs inside itself, unlike every dimension above.
   for (const flag of q.flags) if (!hasConfigFlag(row, flag)) return false;
   if (q.q) {
@@ -277,7 +277,6 @@ export function configComparator(sort: ConfigSort, dir?: SortDir): Cmp {
     else if (sort === "resource") cmp = a.resourceName.localeCompare(b.resourceName);
     else if (sort === "status") cmp = a.status.localeCompare(b.status);
     else if (sort === "firstSeen") cmp = a.firstSeenAt.localeCompare(b.firstSeenAt);
-    else if (sort === "priority") cmp = priorityRank(b.problemOutcome) - priorityRank(a.problemOutcome);
     return cmp !== 0 ? cmp * d : tie(a, b);
   };
 }
@@ -304,14 +303,13 @@ function facetValues(key: ConfigFacetKey, row: ConfigFindingView): string[] {
   if (key === "resourceTypes") return [row.resourceType].filter(Boolean);
   if (key === "rules") return [row.ruleShortId].filter(Boolean);
   if (key === "projects") return row.projects;
+  if (key === "domains") return [row.domain].filter(Boolean);
   if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
-  if (key === "outcomes") return row.problemOutcome ? [row.problemOutcome] : [];
   return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f)) as unknown as string[];
 }
 
 function facetSorter(key: ConfigFacetKey): (a: ConfigFacetCount, b: ConfigFacetCount) => number {
   if (key === "severities") return (a, b) => sevRank(a.value) - sevRank(b.value);
-  if (key === "outcomes") return (a, b) => priorityRank(a.value) - priorityRank(b.value);
   if (key === "flags") {
     const order = CONFIG_FLAGS as readonly string[];
     return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
@@ -375,6 +373,7 @@ export function rollupByControl(rows: ConfigFindingView[]): ControlRollup[] {
     const unlinkedGapResources = new Set<string>();
     const clouds = new Set<string>();
     const projects = new Set<string>();
+    const domains = new Set<string>();
     const risks = new Set<string>();
     const severityMix: Record<string, number> = {};
     let worst = "UNKNOWN";
@@ -389,6 +388,7 @@ export function rollupByControl(rows: ConfigFindingView[]): ControlRollup[] {
       resources.add(row.resourceId);
       if (row.cloud) clouds.add(row.cloud);
       for (const p of row.projects) projects.add(p);
+      if (row.domain) domains.add(row.domain);
       for (const r of row.risks) risks.add(r);
       severityMix[row.severity] = (severityMix[row.severity] ?? 0) + 1;
       if (sevRank(row.severity) < sevRank(worst)) worst = row.severity;
@@ -423,6 +423,7 @@ export function rollupByControl(rows: ConfigFindingView[]): ControlRollup[] {
       iac,
       clouds: [...clouds].sort(),
       projects: [...projects].sort(),
+      domains: [...domains].sort(),
       severityMix,
       firstSeenAt,
     });

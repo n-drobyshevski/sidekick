@@ -481,12 +481,19 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       optional: true,
       pageSize: PAGE_SIZE_TRAVERSAL,
     },
-    // AI-asset provenance: publisher + how Wiz discovered it. Optional and separate from
-    // INVENTORY_AI on purpose — see the note on Q_AI_PROPERTIES. Losing it costs two columns.
+    // AI-asset provenance: publisher, how Wiz discovered it, and the properties bag's TAGS.
+    // Optional and separate from INVENTORY_AI on purpose — see the note on Q_AI_PROPERTIES.
+    //
+    // Losing it no longer costs only two columns. `Wiz/Domain` appears in no capture's flat
+    // `tags { key value }` array — only in the properties bag — so for an AI ASSET this step
+    // is the sole route by which a domain arrives. A tenant that rejects `graphEntity` on
+    // this root gets domains on its substrate (the traversals read their own bags) and none
+    // on its agents, which is why getAssets publishes `domainCoverage` rather than letting an
+    // empty Domain facet read as "nobody tagged anything".
     {
       id: "AI_ASSET_PROPERTIES",
       area: "aispm",
-      writes: ["ai_assets.publisher", "ai_assets.discovery_methods"],
+      writes: ["ai_assets.publisher", "ai_assets.discovery_methods", "ai_assets.tags_json"],
       run: "cloudResources",
       query: Q_AI_PROPERTIES,
       extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types, projectScope()) as Rec),

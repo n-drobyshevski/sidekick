@@ -1,6 +1,6 @@
 // Priorities: every unresolved issue and every open configuration finding, ranked
-// together across the whole landscape — outcome first, then asset posture, then how soon it
-// is due, then how much it would amplify. `combos.js` scopes issues to one expanded
+// together across the whole landscape — severity first, then how soon it is due, then how
+// long it has been open. `combos.js` scopes issues to one expanded
 // toxic-combination pattern; `config.js` scopes findings to the Cloud Configuration
 // register. Neither can answer "what do I work on Monday" — this page is the union.
 //
@@ -31,10 +31,10 @@ import { bootstrap, setParams, swrCall } from "../store.js";
 import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets.js";
 import { coverCurve } from "../charts.js";
 import {
-  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, kpiCard, outcomeBadge,
-  outcomeLabel, pager, plural, sectionLabel, segmented, select, selectField, sevBadge,
+  clear, dataTable, debounce, el, emptyState, errorState, fmtDate, kpiCard,
+  pager, plural, sectionLabel, segmented, select, selectField, sevBadge,
   sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statusPill,
-  tierBadge, togglePills,
+  togglePills,
 } from "../ui.js";
 import {
   PAGE_SIZE, PROBLEM_SORT_DESC, SEVERITY_RANK,
@@ -46,7 +46,6 @@ import {
   applyActionFilters, actionFilterOptions, sortActions,
 } from "./actionView.js";
 
-import { outcomeNote } from "../ui.js";
 const SEARCH_DEBOUNCE_MS = 200;
 
 // Placeholder shown until api_getProblems resolves; paint() clears the host. Mirrors the
@@ -93,8 +92,8 @@ export async function renderProblems(main, params) {
     el("h1", {}, "Priorities"),
     el("p", { class: "page-sub" },
       "Every unresolved issue and every open configuration finding, ranked together on " +
-      "one scale: outcome first, then the asset's posture tier, then how soon it is due, " +
-      "then how much it would amplify if it went wrong."),
+      "one scale: Wiz's severity first, then how soon it is due, then how long it has " +
+      "been open."),
   );
 
   if (!boot.latestSync) {
@@ -116,7 +115,7 @@ export async function renderProblems(main, params) {
   // being read by `problemParamPatch`.
   const view = readProblemParams(params);
   view.openActions = new Set();
-  view.aOutcome = "";
+  view.aSeverity = "";
   view.aKind = "";
   view.aQ = "";
   view.aSort = "";
@@ -220,26 +219,35 @@ export async function renderProblems(main, params) {
       }));
   }
 
+  // The four severities that get a headline card. UNKNOWN is not among them: a row Wiz
+  // rated UNKNOWN and a row it never rated at all are both "no usable rating", and the
+  // Unrated card below counts them together rather than splitting one idea across two.
+  const SEVERITY_CARDS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+
+  /** "CRITICAL" -> "Critical" — a card title, not a badge, so it takes sentence case. */
+  function sevLabel(sev) {
+    const s = String(sev || "");
+    return s ? s.charAt(0) + s.slice(1).toLowerCase() : "";
+  }
+
+  // The union by Wiz severity, where this used to be the four decision-tree queues. The
+  // cascade that produced them is experimental and lives on the Scoring Models page; what
+  // is left is the register's own shape, counted, and it still answers the question the
+  // queues were standing in for — how much of this is bad.
+  //
+  // Unrated rows get a card only when there are any, the same rule the Undecided card
+  // followed: nothing in this union is ever dropped for lacking a rating
+  // (src/domain/problems.ts's own invariant), so a row Wiz never rated still needs a place
+  // on the page rather than silently vanishing from every count.
   function kpiRow(fresh) {
-    const counts = fresh.outcomeCounts || {};
-    const undecided = counts[""] || 0;
-    const cards = [
-      // The four names are CISA's, and the sub-line is a fragment rather than a definition.
-      // ui/outcome.js now carries CISA's own wording, and these four read it.
-      kpiCard("Act", String(counts.ACT || 0), "a human interrupts today", null,
-        { term: "priorities-rank", lines: [outcomeNote("ACT")] }),
-      kpiCard("Attend", String(counts.ATTEND || 0), "on this week's plan", null,
-        { term: "priorities-rank", lines: [outcomeNote("ATTEND")] }),
-      kpiCard("Track*", String(counts.TRACK_STAR || 0), "an unresolved coverage gap", null,
-        { term: "priorities-rank", lines: [outcomeNote("TRACK_STAR")] }),
-      kpiCard("Track", String(counts.TRACK || 0), "no action implied", null,
-        { term: "priorities-rank", lines: [outcomeNote("TRACK")] }),
-    ];
-    if (undecided) {
-      // Nothing in this union is ever dropped for lacking a verdict (src/domain/problems.ts's
-      // own invariant) — an undecided row still needs a place on the page rather than
-      // silently vanishing from every count.
-      cards.push(kpiCard("Undecided", String(undecided), "never reached a verdict"));
+    const counts = fresh.severityCounts || {};
+    const total = Number(fresh.total || 0);
+    const rated = SEVERITY_CARDS.reduce((n, sev) => n + (counts[sev] || 0), 0);
+    const cards = SEVERITY_CARDS.map((sev) =>
+      kpiCard(sevLabel(sev), String(counts[sev] || 0), "open problems", null,
+        { term: "severity" }));
+    if (total > rated) {
+      cards.push(kpiCard("Unrated", String(total - rated), "no severity from Wiz"));
     }
     return el("div", { class: "kpi-row" }, ...cards);
   }
@@ -315,7 +323,7 @@ export async function renderProblems(main, params) {
     try {
       const fresh = await swrCall(
         "api_getProblems",
-        { outcome: view.outcome, page: view.page, pageSize: PAGE_SIZE },
+        { severity: view.severity, page: view.page, pageSize: PAGE_SIZE },
         (f) => { problemsData = f; if (view.mode === "problems") paint(); },
       );
       problemsData = fresh;
@@ -333,12 +341,12 @@ export async function renderProblems(main, params) {
     const rerankRemote = () => (serverPaged ? refetch() : paint());
 
     const pills = togglePills({
-      options: options.outcomes.map((o) => ({ value: o, label: outcomeLabel(o) })),
-      selected: view.outcome,
-      ariaLabel: "Filter by priority",
-      sevClass: false,
+      options: options.severities.map((sv) => ({ value: sv, label: sevLabel(sv) })),
+      selected: view.severity,
+      ariaLabel: "Filter by severity",
+      sevClass: true,
       onToggle: (o) => {
-        view.outcome = view.outcome === o ? "" : o;
+        view.severity = view.severity === o ? "" : o;
         view.page = 0;
         persist();
         rerankRemote();
@@ -377,11 +385,11 @@ export async function renderProblems(main, params) {
     }, SEARCH_DEBOUNCE_MS));
 
     const bar = el("div", { class: "filter-bar" }, pills, kindField, el("div", { class: "field" }, search));
-    if (view.outcome || view.kind || view.q) {
+    if (view.severity || view.kind || view.q) {
       bar.append(el("button", {
         class: "link",
         onclick: () => {
-          view.outcome = "";
+          view.severity = "";
           view.kind = "";
           view.q = "";
           view.page = 0;
@@ -404,19 +412,21 @@ export async function renderProblems(main, params) {
     const COLS = [
       // A column heading is asked once per table, so this is where a metric can be DEFINED
       // by a real control without multiplying the tab order by the row count.
-      { key: "priority", label: "Priority", help: { term: "priorities-rank" },
-        cell: (r) => outcomeBadge(r.problemOutcome) },
       {
         key: "kind", label: "Kind",
         cell: (r) => statusPill("neutral", r.kind === "ISSUE" ? "Issue" : "Finding"),
       },
       { key: "title", label: "Rule", cell: (r) => r.title },
       { key: "asset", label: "Asset", cell: (r) => r.assetName },
-      { key: "posture", label: "Posture", help: { term: "posture-tier" },
-        cell: (r) => tierBadge(r.postureTier) },
+      // Null for an unlinked finding, for the same reason its asset id is — there is no
+      // node to read a tag from. Same em dash every other absent cell uses.
+      { key: "domain", label: "Domain", cell: (r) => r.domain || "—" },
       { key: "severity", label: "Severity", help: { term: "adjusted-severity" },
         cell: (r) => sevBadge(r.severity) },
       { key: "due", label: "Due", cell: (r) => dueChip(r.dueAt) || "—" },
+      // The ranking's third level, shown because a reader should be able to see the order
+      // they are being given rather than take it on trust.
+      { key: "firstSeen", label: "First seen", cell: (r) => fmtDate(r.firstSeenAt) || "—" },
     ];
     const descending = view.sort && (PROBLEM_SORT_DESC[view.sort] ? view.dir === 1 : view.dir === -1);
 
@@ -466,7 +476,7 @@ export async function renderProblems(main, params) {
     host.append(actionToolbar(options));
 
     const filtered = applyActionFilters(rows, {
-      outcome: view.aOutcome, kind: view.aKind, q: view.aQ,
+      severity: view.aSeverity, kind: view.aKind, q: view.aQ,
     });
     const sorted = view.aSort ? sortActions(filtered, view.aSort, view.aDir) : filtered;
 
@@ -547,12 +557,12 @@ export async function renderProblems(main, params) {
 
   function actionToolbar(options) {
     const pills = togglePills({
-      options: options.outcomes.map((o) => ({ value: o, label: outcomeLabel(o) })),
-      selected: view.aOutcome,
-      ariaLabel: "Filter by priority",
-      sevClass: false,
+      options: options.severities.map((sv) => ({ value: sv, label: sevLabel(sv) })),
+      selected: view.aSeverity,
+      ariaLabel: "Filter by severity",
+      sevClass: true,
       onToggle: (o) => {
-        view.aOutcome = view.aOutcome === o ? "" : o;
+        view.aSeverity = view.aSeverity === o ? "" : o;
         paint();
       },
     });
@@ -585,11 +595,11 @@ export async function renderProblems(main, params) {
     }, SEARCH_DEBOUNCE_MS));
 
     const bar = el("div", { class: "filter-bar" }, pills, kindField, el("div", { class: "field" }, search));
-    if (view.aOutcome || view.aKind || view.aQ) {
+    if (view.aSeverity || view.aKind || view.aQ) {
       bar.append(el("button", {
         class: "link",
         onclick: () => {
-          view.aOutcome = "";
+          view.aSeverity = "";
           view.aKind = "";
           view.aQ = "";
           paint();
@@ -601,8 +611,8 @@ export async function renderProblems(main, params) {
 
   function actionTable(rows) {
     const COLS = [
-      { key: "priority", label: "Priority", help: { term: "priorities-rank" },
-        cell: (r) => outcomeBadge(r.worstOutcome) },
+      { key: "worstSeverity", label: "Worst", help: { term: "severity" },
+        cell: (r) => (r.worstSeverity ? sevBadge(r.worstSeverity) : "—") },
       { key: "title", label: "Action", cell: (r) => r.title },
       {
         key: "kind", label: "Kind",
@@ -618,6 +628,14 @@ export async function renderProblems(main, params) {
             ? sevSegmentBar(entries, { size: "xs", label: sevSpoken(entries) })
             : el("span", { class: "muted small" }, "—");
         },
+      },
+      {
+        // Whose problems this one action collapses. An action spanning three domains is
+        // a coordination cost the "N collapse to M" headline hides.
+        key: "domains", label: "Domain", sortable: false,
+        cell: (r) => ((r.domains || []).length
+          ? el("span", {}, r.domains.join(", "))
+          : el("span", { class: "muted small" }, "—")),
       },
       {
         key: "impact", label: "Business impact", sortable: false,
@@ -740,7 +758,7 @@ export async function renderProblems(main, params) {
     }
     return el("div", { class: "action-members" },
       ...members.map((r) => sheetRow({
-        badge: outcomeBadge(r.problemOutcome),
+        badge: r.severity ? sevBadge(r.severity) : null,
         title: r.title + " on " + r.assetName,
         onOpen: () => openRow(r),
         ariaLabel: (r.kind === "ISSUE" ? "Issue on " : "Finding on ") + r.assetName,

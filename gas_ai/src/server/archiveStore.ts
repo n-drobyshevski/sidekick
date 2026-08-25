@@ -23,6 +23,20 @@ let rootFolderMemo: GoogleAppsScript.Drive.Folder | undefined;
 const subfolderMemo = new Map<string, GoogleAppsScript.Drive.Folder>();
 const syncFolderMemo = new Map<string, GoogleAppsScript.Drive.Folder>();
 
+/**
+ * Drop this module's per-execution memos.
+ *
+ * Test-only. In GAS these memos die with the execution, so nothing in production ever needs
+ * to clear them; under vitest the module registry outlives a test, and `test/gasEnv.ts`
+ * calls this so a shared server can be reset without re-importing the whole graph. See the
+ * comment on `resetToSynced` there.
+ */
+export function __resetMemosForTest(): void {
+  // `forgetFolders` already owns the list; a second copy here would be one to keep in step.
+  forgetFolders();
+}
+
+
 /** Drop the memos — for `ensureFolders`, which may have just created what they cached. */
 function forgetFolders(): void {
   rootFolderMemo = undefined;

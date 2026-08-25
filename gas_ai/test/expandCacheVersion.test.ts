@@ -11,21 +11,30 @@
 // because the dev shims throw on UrlFetchApp.fetch: without credentials the endpoint
 // answers `stored` and never reaches the cache at all.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bootServer, teardownServer } from "./gasEnv";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { bootSyncedServer, resetToSynced, teardownServer } from "./gasEnv";
 // cacheKey is pure, so it does not matter that bootServer resets the module registry
 // underneath it — this instance and the server's compute the same string.
 import { cacheKey } from "../src/server/serverCache";
 
-type Server = Awaited<ReturnType<typeof bootServer>>;
+type Server = Awaited<ReturnType<typeof bootSyncedServer>>;
 type Result = { ok: boolean; data?: unknown; error?: string };
 
 let server: Server;
 
+beforeAll(async () => {
+  server = await bootSyncedServer();
+});
+
+// Each test saves settings or wipes data, and both move a version stamp — so each needs the
+// Script Properties back where they started, and the frozen clock back where `tick()` found
+// it. `resetToSynced` does both.
 beforeEach(async () => {
+  server = await resetToSynced();
+});
+
+afterAll(() => {
   teardownServer();
-  server = await bootServer();
-  server.setup();
 });
 
 /** Both versions, as the Script Properties hold them. */

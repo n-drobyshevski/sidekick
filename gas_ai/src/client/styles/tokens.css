@@ -24,6 +24,16 @@
      not follow it out to 1800px, where a sentence becomes a scan across the desk. */
   --measure: 84ch;
 
+  /* The product mark's three colours (ui/brandMark.js). DECORATIVE ONLY, and deliberately
+     their own tokens rather than aliases of anything below: the mark's warm dots land near
+     --sev-critical and its cool dots on the --sev-low hue, and DESIGN.md reserves that
+     channel for meaning. Naming them apart is what stops a later reader treating the globe
+     as a severity reading, and makes a retint one edit in one place. Nothing but
+     .brand-mark may consume them. */
+  --mark-map-blue: #5cb2e3;
+  --mark-map-red: #f32b2b;
+  --mark-ink: #0a0a0a;
+
   --sev-critical: #dc2626;  --sev-critical-text: #b91c1c;
   --sev-high: #ea580c;      --sev-high-text: #c2410c;
   --sev-medium: #d97706;    --sev-medium-text: #b45309;

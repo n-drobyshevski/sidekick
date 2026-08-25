@@ -2,10 +2,14 @@
 
 import { call } from "./api.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
-import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
+import {
+  bootstrap, bootstrapCached, buildHash, invalidateBootstrap, invalidateRpcCache, parseHash,
+} from "./store.js";
+import { onExperimentalChange, showExperimental } from "./experimental.js";
 import {
   clear, closeTip, el, fmtDateTime, progressBar, runPageTeardown, statusPill, tipAnchor,
 } from "./ui.js";
+import { brandMark } from "./ui/brandMark.js";
 import { projectScopeControl } from "./ui/projectScope.js";
 import { toast } from "./ui.js";
 import { renderGraphPage } from "./pages/graph.js";
@@ -37,7 +41,28 @@ const PAGES = {
   // front door. Sits beside Cloud Configuration because the two are the same subject at
   // two grains — what is failing, and what that scores against.
   compliance: { title: "Compliance Posture", group: "Security", render: renderCompliance },
-  aars: { title: "AARS Rules", group: "Scoring", render: renderAarsRules, fullBleed: true },
+  // "Scoring Models", not "AARS Rules": this page has hosted three models since the Problem
+  // and Posture tabs landed, and it is now the ONLY consumer of all three — the title is
+  // the boundary as much as the name. Deliberately not "Risk Models": this codebase is
+  // careful that these are not risk scores (the glossary says so in as many words), and
+  // bare "Models" would collide with the MODEL node kind the graph draws.
+  //
+  // The route key stays `aars`. Every hash link, ROUTE_ICONS entry and helpContent
+  // `route`/`drawnOn` value keys on it, and renaming the key would break shared links to
+  // buy nothing a reader can see.
+  //
+  // Group "Labs", not "Scoring": the sidebar itself should say these sit outside the
+  // security workflow rather than beside it.
+  //
+  // `experimental: true` gates it behind Settings → Show experimental content, which is OFF
+  // by default — so a first-time reader has no Labs group at all, and the models are opt-in
+  // rather than merely labelled. Gated, never removed: the key stays in this map so shared
+  // `#/aars` links keep working for anyone who has asked for them, and so helpContent's
+  // "routes only to pages that exist" guard still has a page to point at.
+  aars: {
+    title: "Scoring Models", group: "Labs", render: renderAarsRules, fullBleed: true,
+    experimental: true,
+  },
   scans: { title: "Wiz Scans", group: "Coverage", render: renderScans },
   data: { title: "Data", group: "Data", render: renderData },
   settings: { title: "Settings", group: "Preferences", render: renderSettings },
@@ -99,7 +124,19 @@ function applyCollapsed(collapsed) {
 
 const app = document.getElementById("app");
 let mainEl = null;
+// Held past boot() so the rail can be redrawn on its own. Flipping "show experimental
+// content" changes which pages the rail lists and nothing else — a full refresh() would
+// re-fetch the whole bootstrap payload to answer a question already settled locally.
+let sidebarEl = null;
 let sidebarCollapsed = loadCollapsed();
+
+// The Settings toggle reaches the rail through here rather than by importing app.js, which
+// would close the app.js → pages/settings.js import into a cycle. No re-route: the toggle
+// lives on Settings, so the page being hidden is never the page you are on.
+onExperimentalChange(() => {
+  if (!sidebarEl) return;
+  renderSidebar(sidebarEl, bootstrapCached());
+});
 
 // Route-reload overlay: veils the content pane (not the sidebar) with a progress bar
 // while the active page refetches. Shown only if the load outlasts a short delay, so
@@ -150,7 +187,7 @@ function bootSplash() {
     { class: "boot-splash", role: "status", "aria-live": "polite" },
     el("div", { class: "boot-splash-inner" },
       el("div", { class: "boot-brand" },
-        el("span", { class: "wordmark-dot", "aria-hidden": "true" }),
+        brandMark(112),
         el("span", { class: "boot-brand-label" }, "Wiz SIDEKICK AI")),
       bar,
       el("p", { class: "boot-splash-note" }, "Opening the graph…")),
@@ -181,6 +218,7 @@ async function boot() {
   for (const node of [...app.children]) if (node !== splash) node.remove();
 
   const sidebar = el("nav", { class: "sidebar", "aria-label": "Main navigation" });
+  sidebarEl = sidebar;
   mainEl = el("main", { id: "main" });
   routeOverlay = el(
     "div",
@@ -226,8 +264,14 @@ function renderSidebar(sidebar, data) {
   railToggle.innerHTML = CHEVRON_ICON;
   sidebar.append(
     el("div", { class: "wordmark" },
-      el("span", { class: "wordmark-dot", "aria-hidden": "true" }),
+      // Two marks, one shown at a time: the expanded rail pairs the compact mark with the
+      // name, and the collapsed rail hides the name — so THAT copy carries the accessible
+      // label and this one stays decorative, rather than the picture and the word saying
+      // the same thing twice to a screen reader. CSS picks which is visible; both are in
+      // the DOM because the rail toggles without a re-render.
+      brandMark(20, { compact: true }),
       el("span", { class: "wordmark-label" }, "Wiz SIDEKICK AI"),
+      brandMark(28, { compact: true, label: "Wiz SIDEKICK AI" }),
       railToggle),
   );
   // Above the nav, below the wordmark: the scope applies to every page in the list under
@@ -240,6 +284,11 @@ function renderSidebar(sidebar, data) {
   const { route: active } = parseHash();
   let lastGroup = null;
   for (const [key, page] of Object.entries(PAGES)) {
+    // A gated page is absent, not disabled: the rest of this rail is the security workflow,
+    // and a greyed-out row inside it would still be telling every reader that a model they
+    // cannot open exists. The "Labs" heading goes with it for free — the lastGroup detector
+    // below only emits a header when a page that is actually being drawn changes group.
+    if (page.experimental && !showExperimental()) continue;
     if (page.group !== lastGroup) {
       sidebar.append(el("div", { class: "nav-group" }, page.group));
       lastGroup = page.group;
@@ -431,7 +480,21 @@ export async function refresh() {
 
 async function route() {
   const seq = ++routeSeq;
-  const { route: key, params } = parseHash();
+  const parsed = parseHash();
+  let key = parsed.route;
+  let params = parsed.params;
+  // A gated route is not merely unavailable, it is a link the reader followed in good faith
+  // — so unlike the unknown-route fallback below, this one REWRITES the hash. The bare
+  // fallback would leave `#/aars` in the address bar over a page titled "Security Graph"
+  // with no nav item marked current: three answers to "where am I", two of them wrong. The
+  // stale params go with it; they were addressed to a page that is not rendering.
+  // replaceState rather than a navigate(): no spurious history entry, no second route pass,
+  // and store.js's setParams already proves it works inside the HtmlService iframe.
+  if (PAGES[key] && PAGES[key].experimental && !showExperimental()) {
+    key = "graph";
+    params = {};
+    history.replaceState(null, "", buildHash(key, params));
+  }
   const page = PAGES[key] || PAGES.graph;
   document.title = `${page.title} — Wiz SIDEKICK AI`;
   document.querySelectorAll(".nav-link").forEach((a) => {

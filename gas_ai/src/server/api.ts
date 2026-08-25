@@ -40,10 +40,11 @@ import {
   validateAarsRule,
 } from "../domain/aarsRule";
 import {
-  aarsTrendFromHistory,
+  COUNT_KEYS,
   countAarsSeverities,
-  ruleChangePoints,
-  type AarsTrendPoint,
+  countTrendFromHistory,
+  type CountKey,
+  type CountTrendPoint,
 } from "../domain/aarsTrend";
 import {
   countProblemOutcomes,
@@ -64,7 +65,6 @@ import {
 import { countPostureTiers, TIER_VALUES, type PostureVector, type Tier } from "../domain/posture";
 import {
   buildProblemRows,
-  countProblemRowsByOutcome,
   PROBLEMS_CLIENT_ALL_MAX,
   rankProblems,
   type ProblemRow,
@@ -120,7 +120,7 @@ import {
   sharedControls,
   weakestAreas,
 } from "../domain/complianceOverview";
-import { scopeFiveRs, unselectedPolicyIds, withCountsFrom } from "../domain/complianceScope";
+import { dropUnselected, scopeFiveRs, withCountsFrom } from "../domain/complianceScope";
 import { fiveRsDerivedPosture } from "../domain/fiveRsPosture";
 import { cleanFiveRsPins } from "../domain/settingsLogic";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
@@ -145,7 +145,7 @@ import {
   type QueryResult,
   queryVocabulary,
   runQuery,
-  validateQuery,
+  validateQueryWithWarnings,
 } from "../domain/graphQuery";
 import {
   AI_ASSET_KINDS,
@@ -162,7 +162,6 @@ import {
 } from "../domain/graphTypes";
 import { normalizeCompliancePosturePage } from "../domain/syncNormalize";
 import { DATASTORE_KINDS } from "../domain/graphEnrich";
-import { midrankPercentiles } from "../domain/rankStats";
 import { comboDigest } from "../domain/comboDigest";
 import { estateReach, type EstateReach } from "../domain/reach";
 import { comboGroupById, comboSummary, REGISTER_GROUPS } from "../domain/toxicCombos";
@@ -172,7 +171,8 @@ import { archiveBytes } from "./archiveStore";
 import { activeJob } from "./jobsStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { buildInfo } from "./buildInfo";
-import { hasWizCredentials, projectScope } from "./props";
+import { domainTagKey, hasWizCredentials, projectScope } from "./props";
+import { domainCoverage, domainOfTags } from "../domain/domainTag";
 import { cached, dataVersion, wizDataVersion } from "./serverCache";
 import {
   AGENT_EXPANSION,
@@ -268,6 +268,16 @@ function viewAssetIds(): Set<string> | null {
  * its identity is exact and costs nothing.
  */
 let graphDocMemo: { view: string; raw: GraphDoc | null; doc: GraphDoc | null } | null = null;
+
+// NO `__resetMemosForTest` here, unlike the other memo-holding modules in this directory,
+// and deliberately: every `export function` in this file must have a matching GAS delegator
+// in dist/entry.js (esbuild.config.mjs enforces it), and a test hook is not an endpoint.
+//
+// It does not need one. `graphDocMemo` is keyed on the IDENTITY of `syncStore.loadGraphDoc()`,
+// so once syncStore drops its own memos the next `loadGraphDoc()` builds a fresh object, the
+// `raw ===` check misses, and this memo re-derives on its own. A memo added here that is NOT
+// identity-keyed would break that, and would need the guard question answered again.
+
 function viewGraphDoc(): GraphDoc | null {
   const view = settingsStore.getProjectView();
   const raw = syncStore.loadGraphDoc();
@@ -401,12 +411,13 @@ function bootstrapCore(): Rec {
       totalAssets: assets.length,
       openIssues: issues.length,
       bySeverity,
-      // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is a
-      // legitimate thing to publish and is the same object the trend charts over time. It
-      // is not the per-asset claim; that moved to `aarsPercentile`.
+      // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is
+      // a legitimate thing to publish and is what the workbench's band rail draws. It is
+      // not a per-asset claim, and there is no longer any per-asset claim to be — the
+      // percentile that briefly carried one went with the surfaces that led with it.
       byAarsSeverity,
-      // The percentile's denominator, so a surface reading a percentile off a node can
-      // name the population it is a percentile OF without a second round trip.
+      // How much of the landscape the model actually prices, which is the denominator
+      // under the distribution above: "19 CRITICAL" means nothing without "of 30 scored".
       aarsScored: assets.filter((a) => typeof a.aars === "number").length,
     },
     filterOptions: filterOptions(assets, syncStore.loadAssets()),
@@ -493,10 +504,12 @@ function filterOptions(assets: GNode[], register: GNode[]): Rec {
   const kinds = new Set<string>();
   const clouds = new Set<string>();
   const projects = new Set<string>();
+  const domains = new Set<string>();
   for (const a of assets) {
     kinds.add(a.kind);
     if (a.cloudPlatform) clouds.add(a.cloudPlatform);
     for (const p of a.projects ?? []) projects.add(p.name);
+    if (a.domain) domains.add(a.domain);
     // The risk nodes are derived on read and never land in TABS.assets, so the flags they
     // come from are the only trace of them here. Offer each kind as a pill exactly when
     // some asset would produce one, so the evidence stays curatable. `conditionHolds` is
@@ -511,6 +524,7 @@ function filterOptions(assets: GNode[], register: GNode[]): Rec {
     kinds: [...kinds].sort(),
     clouds: [...clouds].sort(),
     projects: [...projects].sort(),
+    domains: [...domains].sort(),
     // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
     // filter on every page matches project names, and there is no reason to migrate them
     // here; the switcher needs ids because only an id carries ancestry — an asset lists its
@@ -536,13 +550,16 @@ export function getGraph(p?: unknown): ApiResult {
         defaultDepth: settingsStore.getDefaultDepth(),
         maxNodes: settingsStore.getMaxNodes(),
         issues: openIssues(),
-        scoredAssetIds: doc.nodes.filter((n) => (n.aars ?? 0) > 0).map((n) => n.id),
+        // The graph doc's own nodes, so `seedKind=domain` starts from every resource one
+        // domain owns. Read from `doc` rather than viewAssets(): the graph is what is
+        // being seeded, and it holds the risk-topology nodes the inventory never does.
+        nodes: doc.nodes,
       });
       const view = resolveLayoutParams(params);
       const projection = projectGraph(doc, options);
       const layout = layoutGraph(projection, view);
       return {
-        nodes: projection.nodes,
+        nodes: projection.nodes.map((n) => publicNode(n as unknown as Rec)),
         edges: projection.edges,
         summaries: projection.summaries,
         counts: projection.counts,
@@ -625,7 +642,11 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
 export function runGraphQuery(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
-    const query = validateQuery(params["query"] ?? DEFAULT_QUERY);
+    // `retired` names the filter fields the vocabulary dropped rather than rejected — the
+    // derived verdicts. A saved view or a shared link written against them still runs; the
+    // page prints one line saying which filter is no longer being applied, because a query
+    // silently answering something broader than it was asked is worse than a stale link.
+    const { query, retired } = validateQueryWithWarnings(params["query"] ?? DEFAULT_QUERY);
     const columns = readColumnSelection(params["columns"]);
     const view = resolveLayoutParams(params);
     const maxNodes = clampInt(
@@ -637,7 +658,9 @@ export function runGraphQuery(p?: unknown): ApiResult {
     // The validated tree is the cache key, not the raw params: two spellings of the same query
     // (an absent `show: true`, a step order the builder rewrote) must not each buy their own
     // cache entry and their own Sheets read.
-    return cached("graphQuery", { query, columns, view, maxNodes }, () => {
+    // `retired` rides outside the cache key on purpose: it is a property of the REQUEST,
+    // and two spellings of one query must still share a cache entry.
+    const answer = cached("graphQuery", { query, columns, view, maxNodes }, () => {
       const doc = viewGraphDoc();
       if (!doc) return { empty: true };
       const result = runQuery(doc, query, { columns });
@@ -648,7 +671,7 @@ export function runGraphQuery(p?: unknown): ApiResult {
         total: result.total,
         capped: result.capped,
         truncated: result.truncated,
-        nodes: projection.nodes,
+        nodes: projection.nodes.map((n) => publicNode(n as unknown as Rec)),
         edges: projection.edges,
         summaries: projection.summaries,
         counts: projection.counts,
@@ -656,7 +679,8 @@ export function runGraphQuery(p?: unknown): ApiResult {
         options: { maxNodes, layout: view.mode, groupBy: view.groupBy, sort: view.sort },
         syncedAt: doc.syncedAt,
       };
-    });
+    }) as Rec;
+    return retired.length ? { ...answer, retiredFilters: retired } : answer;
   });
 }
 
@@ -772,17 +796,13 @@ function assetRow(n: GNode): Rec {
     externalId: n.externalId ?? null,
     projects: (n.projects ?? []).map((p) => p.name),
     severity: n.severity ?? null,
-    aars: n.aars ?? null,
-    aarsSeverity: n.aarsSeverity ?? null,
-    // The landscape percentile, which is what the asset surfaces LEAD with now — the band
-    // beside it is context. Read-derived (syncStore.withAarsPercentile), so null here
-    // means "not in the scored population", never "we have not computed it yet".
-    aarsPercentile: n.aarsPercentile ?? null,
-    // Phase 6: the posture tier, BESIDE the AARS score above, never blended into it — see
-    // posture.ts's own header for why a tier is not an aggregate of what has been found.
-    postureTier: n.postureTier ?? null,
-    postureInput: n.postureInput ?? null,
-    worstOpenProblem: n.worstOpenProblem ?? null,
+    // What every asset surface leads with now: two counts and the severity of the worst
+    // thing in the first of them. No score, no band, no percentile, no posture tier, no
+    // problem outcome — the three models this app derives reach the workbench and nothing
+    // else, so this projection is where that stops being a UI convention and becomes a
+    // property of the payload.
+    openIssues: n.openIssues ?? 0,
+    openFindings: n.openFindings ?? 0,
     comboGroups: n.comboGroups ?? [],
     internet: n.isAccessibleFromInternet ?? null,
     openInternet: n.isOpenToAllInternet ?? null,
@@ -817,6 +837,10 @@ function assetRow(n: GNode): Rec {
     // name string since existing client code already reads it as one.
     cloudAccountRef: n.cloudAccount ?? null,
     tags: n.tags ?? [],
+    // The resolved Wiz/Domain, beside the raw tag list it came from. A fact Wiz
+    // reported, not a verdict this app derived — which is why it may ride a payload
+    // the AARS score, the posture tier and the problem outcome may not.
+    domain: n.domain ?? null,
     identityPurpose: n.identityPurpose ?? null,
     issueAnalytics: n.issueAnalytics ?? null,
     // Full project objects, for the detail sheet — projects above stays name-only.
@@ -833,15 +857,15 @@ function assetRow(n: GNode): Rec {
  * the ~25 assetRow carries. The table is the one place that ships every asset at once, so
  * everything the drill-down needs and the list doesn't stays behind getAssetDetail.
  *
- * `aarsPercentile` arrives precomputed (`assetsModel`'s `aarsPercentileById`) rather than
- * being derived per-row here: a percentile is a fact about the whole SCORED POPULATION
- * (rankStats.midrankPercentiles), not about one asset, so it has to be computed once over
- * every scored asset together — a per-row call here would have nothing to rank against.
+ * NO DERIVED VERDICT REACHES THIS ROW. No score, no band, no percentile, no posture tier,
+ * no problem outcome — the register ranks and reads by counts now, and the three models
+ * are published only by the endpoints the workbench calls. The two breakdowns below are
+ * severity mixes of things Wiz reported, not gradings of them.
  */
 function assetTableRow(
   n: GNode,
   issuesBySeverity?: Record<string, number>,
-  aarsPercentile?: number | null,
+  findingsBySeverity?: Record<string, number>,
 ): Rec {
   const row: Rec = {
     id: n.id,
@@ -850,13 +874,11 @@ function assetTableRow(
     cloud: n.cloudPlatform ?? null,
     region: n.region ?? null,
     severity: n.severity ?? null,
-    aars: n.aars ?? null,
-    aarsSeverity: n.aarsSeverity ?? null,
-    // What the table's score cell leads with. See assetRow's note.
-    aarsPercentile: n.aarsPercentile ?? null,
-    // Phase 6: BESIDE aars — the two must be visibly independent columns, never merged.
-    postureTier: n.postureTier ?? null,
-    worstOpenProblem: n.worstOpenProblem ?? null,
+    // The two counts the register sorts, ranks and leads with. Read-derived on the node
+    // (syncStore.withOpenCounts) rather than recounted here, so the table, the graph and
+    // the asset sheet publish one number per asset instead of three that agree by luck.
+    openIssues: n.openIssues ?? 0,
+    openFindings: n.openFindings ?? 0,
     combos: (n.comboGroups ?? []).length,
     guardrailMissing: n.guardrailMissing ?? false,
     agentic: n.identityPurpose === "AGENTIC",
@@ -868,13 +890,25 @@ function assetTableRow(
     // holding three findings would otherwise report 0 in the register while the graph drew
     // them. Identities fall in the same gap and stay uncovered here — service accounts are
     // unscored for reasons that predate this chain, so nothing persists their reach.
+    //
+    // READING `aarsInput` IS NOT READING A VERDICT, and this line survives the cut that
+    // took the score off every page for that reason. `aarsInput.dataFindings` is the
+    // persisted reach WALK — how many classified findings this asset can get to — which
+    // the scoring model happens to price and which nothing else re-derives. Deleting it as
+    // "aars stuff" would silently zero a column about data exposure that has no opinion
+    // about any model. Pinned by a test for exactly that reason.
     dataFindings: (n.aarsInput?.dataFindings ?? []).reduce((sum, f) => sum + f.count, 0)
       || (n.dataFindingCount ?? 0),
     projects: (n.projects ?? []).map((p) => p.name),
+    // Read-derived from the asset's own tags (graphEnrich.withDomains), never a
+    // column — so a changed WIZ_DOMAIN_TAG_KEY repaints without a re-sync.
+    domain: n.domain ?? null,
   };
   // Only the rows that have open issues carry the breakdown. Most of a healthy landscape has
   // none, and an empty object per row is pure weight in the all-inventory payload.
   if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
+  // Same "only when there are any" rule as the issue breakdown above, for the same reason.
+  if (findingsBySeverity) row["findingsBySeverity"] = findingsBySeverity;
   return row;
 }
 
@@ -896,14 +930,39 @@ function issuesBySeverityByAsset(issues: IssueRow[]): Map<string, Record<string,
   return out;
 }
 
+/**
+ * Failing configuration findings rolled up per asset and severity — the breakdown behind
+ * the table's `openFindings` count, and the exact analogue of the issue rollup above.
+ *
+ * Keyed by `resourceId`, because a finding is an evaluation of one rule against one
+ * resource and that resource is what ties it to an asset. Most findings tie to nothing the
+ * AI graph models — a region, a raw access policy, a service account no agent runs as — so
+ * this map is deliberately much smaller than the finding population, and the difference is
+ * published as `complianceGapsUnlinked` rather than left to look like a miscount.
+ *
+ * Callers pass an already-gated population (`isOpenGap`); this does not re-filter, so the
+ * one definition of "failing control" stays in one place.
+ */
+function findingsBySeverityByAsset(findings: FindingRow[]): Map<string, Record<string, number>> {
+  const out = new Map<string, Record<string, number>>();
+  for (const finding of findings) {
+    if (!finding.resourceId) continue;
+    const bucket = out.get(finding.resourceId) ?? {};
+    const sev = finding.severity ?? "UNKNOWN";
+    bucket[sev] = (bucket[sev] ?? 0) + 1;
+    out.set(finding.resourceId, bucket);
+  }
+  return out;
+}
+
 interface AssetsModel {
   rows: Rec[];
   kpis: Rec;
-  aarsSeverityCounts: Record<string, number>;
-  aarsTrend: AarsTrendPoint[];
-  /** Indices in aarsTrend where the scoring model changed — the chart marks them. */
-  aarsTrendRuleChanges: number[];
-  /** Which population `aarsTrend` describes, and how much of the ledger it covers. */
+  /** Assets by worst open-issue severity — the inventory strip's distribution. */
+  severityCounts: Record<string, number>;
+  /** Open issues / cloud findings / compliance posture fails over time. */
+  countTrend: CountTrendPoint[];
+  /** Which population `countTrend` describes, and how much of the ledger it covers. */
   trendScope: {
     /** The project view the series was read for, "" when register-wide. */
     projectId: string;
@@ -919,10 +978,21 @@ interface AssetsModel {
     kinds: string[];
     clouds: string[];
     regions: string[];
-    aarsSeverities: string[];
     severities: string[];
     projects: string[];
+    domains: string[];
   };
+  /**
+   * How much of the landscape carries the domain tag at all.
+   *
+   * The Domain facet lists only values that exist, so an empty one is ambiguous between
+   * "nobody tagged anything" and "we never successfully asked" — AI_ASSET_PROPERTIES is
+   * optional and swallows an HTTP 400, and it is the only route by which an AI asset's
+   * properties bag arrives. A count beside the facet is what keeps the page from
+   * publishing the second case as the first. An aggregate over the whole set, so it is a
+   * count of what Wiz said and never a claim about any one asset.
+   */
+  domainCoverage: { key: string; tagged: number; total: number };
 }
 
 /**
@@ -942,8 +1012,8 @@ function assetsModel(): AssetsModel {
   // which it is looking at.
   const history = syncStore.syncHistory();
   const projectView = settingsStore.getProjectView();
-  const trend = aarsTrendFromHistory(history, 90, projectView);
-  const registerPoints = projectView ? aarsTrendFromHistory(history).length : trend.length;
+  const trend = countTrendFromHistory(history, 90, projectView);
+  const registerPoints = projectView ? countTrendFromHistory(history).length : trend.length;
   const assets = viewAssets();
   const issues = openIssues();
   // reach.ts wants the WHOLE issues/findings population (resolved and passing rows
@@ -989,36 +1059,34 @@ function assetsModel(): AssetsModel {
   const agents = assets.filter((a) => a.kind === "AI_AGENT");
   const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
   const issueRollup = issuesBySeverityByAsset(issues);
-  // Read-time, over the population as it scores RIGHT NOW — never persisted (see
-  // assetTableRow's own doc comment). Computed once here, over every scored asset together,
-  // and looked up per row below rather than recomputed per row: midrankPercentiles needs the
-  // whole population to rank against, and one pass keeps that population identical for every
-  // row instead of risking each row seeing a subtly different snapshot of `assets`.
-  const scoredForPercentile = assets.filter(
-    (a): a is GNode & { aars: number } => typeof a.aars === "number",
-  );
-  const percentileValues = midrankPercentiles(scoredForPercentile.map((a) => a.aars));
-  const aarsPercentileById = new Map<string, number>(
-    scoredForPercentile.map((a, i) => [a.id, Math.round(percentileValues[i]!)]),
-  );
+  // Over `openGaps`, the already-gated population above — so the per-asset breakdown and
+  // `kpis.complianceGaps` count the same rows under the same definition.
+  const findingRollup = findingsBySeverityByAsset(openGaps);
   const rows = assets
-    .map((a) => assetTableRow(a, issueRollup.get(a.id), aarsPercentileById.get(a.id) ?? null))
-    .sort(ASSET_COMPARATORS.aars);
+    .map((a) => assetTableRow(a, issueRollup.get(a.id), findingRollup.get(a.id)))
+    .sort(ASSET_COMPARATORS.issues);
 
-  const postureTiers = countPostureTiers(assets);
-  const aarsSeverityCounts: Record<string, number> = {};
+
+  // Assets by WORST open-issue severity — the distribution the inventory strip draws and
+  // cross-filters on. Assets, not issues: the `severities` facet filters rows by this same
+  // field, so a strip counting issues would offer segments a click could not reproduce.
+  const severityCounts: Record<string, number> = {};
   const kinds = new Set<string>();
   const clouds = new Set<string>();
   const regions = new Set<string>();
   const severities = new Set<string>();
   const projects = new Set<string>();
+  const domains = new Set<string>();
   for (const a of assets) {
-    if (a.aarsSeverity) aarsSeverityCounts[a.aarsSeverity] = (aarsSeverityCounts[a.aarsSeverity] ?? 0) + 1;
     kinds.add(a.kind);
     if (a.cloudPlatform) clouds.add(a.cloudPlatform);
     if (a.region) regions.add(a.region);
-    if (a.severity) severities.add(a.severity);
+    if (a.severity) {
+      severities.add(a.severity);
+      severityCounts[a.severity] = (severityCounts[a.severity] ?? 0) + 1;
+    }
     for (const p of a.projects ?? []) if (p.name) projects.add(p.name);
+    if (a.domain) domains.add(a.domain);
   }
 
   return {
@@ -1034,18 +1102,6 @@ function assetsModel(): AssetsModel {
       // than from the AARS band.
       //
       // `criticalAars` / `highAars` used to sit here and were removed, not renamed. They
-      // could not carry a headline: on live data the CRITICAL band holds 19 of 30 scored
-      // assets while HIGH and MEDIUM hold none (ai/AARS_SCORING_ASSESSMENT.md §3, pinned
-      // by test/scoreOrdinality.test.ts), so "criticals" counted the whole working
-      // population and "highs" counted nothing. A KPI that reads as a queue has to be cut
-      // by a model that cuts queues; the tier lattice is that model, and tier 4 is its
-      // worst reading (posture.ts's TIER_VALUES — 4 = worst).
-      tier4Assets: postureTiers[4],
-      tier3Assets: postureTiers[3],
-      // The percentile's DENOMINATOR, published rather than implied — the S-test
-      // AARS_SCORING_ASSESSMENT.md §3 sets for any aggregate this app ships. Without it
-      // "60th percentile" is a number with no population behind it.
-      aarsScored: assets.filter((a) => typeof a.aars === "number").length,
       guardrailCoveragePct: agents.length
         ? Math.round((protectedAgents / agents.length) * 100)
         : null,
@@ -1115,10 +1171,10 @@ function assetsModel(): AssetsModel {
       ...identityHygieneKpis(assets),
       highPrivilege: assets.filter((a) => conditionHolds(a, "EXCESSIVE_PRIVILEGE")).length,
     },
-    aarsSeverityCounts,
-    // Recorded per sync, so the window is short at first and cannot be backfilled.
-    aarsTrend: trend,
-    aarsTrendRuleChanges: ruleChangePoints(trend),
+    severityCounts,
+    // Recorded per sync, so the window is short at first and cannot be backfilled — and
+    // per SERIES, since the three counts entered the ledger on three different days.
+    countTrend: trend,
     trendScope: {
       projectId: projectView,
       scoped: Boolean(projectView),
@@ -1130,10 +1186,11 @@ function assetsModel(): AssetsModel {
       kinds: [...kinds].sort(),
       clouds: [...clouds].sort(),
       regions: [...regions].sort(),
-      aarsSeverities: AARS_SEVERITY_ORDER.filter((sev) => aarsSeverityCounts[sev]),
       severities: SEVERITY_ORDER.filter((sev) => severities.has(sev)),
       projects: [...projects].sort(),
+      domains: [...domains].sort(),
     },
+    domainCoverage: domainCoverage(assets, domainTagKey()),
   };
 }
 
@@ -1149,13 +1206,13 @@ export function getAssets(p?: unknown): ApiResult {
     const head = {
       total: model.rows.length,
       kpis: model.kpis,
-      aarsSeverityCounts: model.aarsSeverityCounts,
-      aarsTrend: model.aarsTrend,
-      aarsTrendRuleChanges: model.aarsTrendRuleChanges,
+      severityCounts: model.severityCounts,
+      countTrend: model.countTrend,
       trendScope: model.trendScope,
-      aarsDeltas: aarsDeltas(model.aarsTrend, model.aarsSeverityCounts),
+      countDeltas: countDeltas(model.countTrend, model.kpis),
       reach: model.reach,
       facets: model.facets,
+      domainCoverage: model.domainCoverage,
       pageSize: query.pageSize,
       sort: query.sort,
       dir: query.dir,
@@ -1192,50 +1249,72 @@ export function getAssets(p?: unknown): ApiResult {
 }
 
 /**
- * Change in each AARS severity count since the previous sync, or null when the comparison
- * would be dishonest. Three things can make it so, and all three are silence rather than a
- * hedged number:
+ * Change in each of the three counts since the previous sync, or null per series when the
+ * comparison would be dishonest. Same silence-over-a-hedged-number rule the AARS band
+ * deltas followed, minus the one cause that no longer exists:
  *  - fewer than two points: nothing to compare against;
- *  - the scoring rule changed between them: the two points aren't on the same scale;
- *  - the latest point disagrees with the live counts: the landscape was rescored (AARS
- *    Rules → Recompute) without a sync, so a delta would explain a figure that is not the
- *    one on screen.
+ *  - either point has no number for that series: a sync recorded before the column existed,
+ *    or one that collected no framework posture. Absent is not zero, so the difference is
+ *    not zero either — it is unknown, and the chip stays away;
+ *  - the latest point disagrees with the live count: the register moved since the last sync
+ *    (a rescore, a project switch onto a series the ledger has no scoped point for), so a
+ *    delta would explain a figure that is not the one on screen.
  *
- * A PROJECT VIEW USED TO BE A FOURTH CAUSE and no longer is. `sync_history` carried
- * register-wide totals only, so a scoped live count could never match the last point and the
- * chips vanished the moment anyone picked a project. Now the series is read per project
- * (aarsTrend.ts PROJECT_TOTALS_COLUMN) and the two agree again, so the deltas come back —
- * scoped, against a scoped baseline. They still vanish for syncs recorded before that column
- * existed, which is the first cause above doing its job rather than a special case.
+ * THE RULE-VERSION CAUSE IS GONE, and its absence is the point of this whole change. Two
+ * band distributions from different scoring models were not on the same scale, so a rule
+ * edit had to suppress the delta. A count of open issues is on the same scale as every
+ * other count of open issues, so nothing an operator does to a model can invalidate this
+ * comparison.
  */
-function aarsDeltas(
-  trend: AarsTrendPoint[],
-  live: Record<string, number>,
-): { counts: Record<string, number>; since: string } | null {
+function countDeltas(
+  trend: CountTrendPoint[],
+  kpis: Rec,
+): { counts: Partial<Record<CountKey, number>>; since: string } | null {
   if (trend.length < 2) return null;
-  const last = trend[trend.length - 1];
-  const prev = trend[trend.length - 2];
-  if (last.ruleVersion !== prev.ruleVersion) return null;
-  for (const sev of AARS_SEVERITY_ORDER) {
-    if ((last.counts?.[sev] ?? 0) !== (live[sev] ?? 0)) return null;
+  const last = trend[trend.length - 1]!;
+  const prev = trend[trend.length - 2]!;
+  const liveBy: Record<CountKey, number | null> = {
+    issues: Number(kpis["openIssues"] ?? 0),
+    findings: Number(kpis["complianceGaps"] ?? 0),
+    postureFails: postureFailCount(kpis),
+  };
+  const counts: Partial<Record<CountKey, number>> = {};
+  for (const key of COUNT_KEYS) {
+    const a = last.counts[key];
+    const b = prev.counts[key];
+    if (a === null || b === null) continue;
+    if (liveBy[key] === null || a !== liveBy[key]) continue;
+    counts[key] = a - b;
   }
-  const counts: Record<string, number> = {};
-  for (const sev of AARS_SEVERITY_ORDER) {
-    counts[sev] = (last.counts?.[sev] ?? 0) - (prev.counts?.[sev] ?? 0);
-  }
-  return { counts, since: prev.at };
+  return Object.keys(counts).length ? { counts, since: prev.at } : null;
+}
+
+/**
+ * The live compliance-posture failure count — distinct policies with a failing evaluation.
+ *
+ * Null, not zero, when no posture was collected: the same "we never asked" state the
+ * `posture_fail_count` column records as null, kept distinct here so a landscape with no
+ * collected frameworks does not publish "0 failing policies" as if it had been checked.
+ */
+function postureFailCount(kpis: Rec): number | null {
+  const posture = kpis["frameworkPosture"] as { frameworks?: number; failingPolicies?: number } | undefined;
+  if (!posture || !posture.frameworks) return null;
+  return Number(posture.failingPolicies ?? 0);
 }
 
 /**
  * Every asset as {id, name, kind} for the graph page's seed picker — a dropdown needs the
  * whole list, but not the table projection's other ten fields (and certainly not one page
- * of it). Same order as the inventory's default sort: worst AARS first.
+ * of it). Same order as the inventory's default sort, which is now most open issues first.
  */
 export function getAssetOptions(_p?: unknown): ApiResult {
   return run(() =>
     cached("assetOptions", null, () => ({
       rows: [...viewAssets()]
-        .sort((a, b) => Number(b.aars ?? -1) - Number(a.aars ?? -1))
+        .sort((a, b) =>
+          Number(b.openIssues ?? 0) - Number(a.openIssues ?? 0)
+          || Number(b.openFindings ?? 0) - Number(a.openFindings ?? 0)
+          || String(a.name).localeCompare(String(b.name)))
         .map((n) => ({ id: n.id, name: n.name, kind: n.kind })),
     })),
   );
@@ -1250,13 +1329,10 @@ export function getAssetOptions(_p?: unknown): ApiResult {
  * with an empty issue list, which reads as "nothing wrong with this asset" rather than "not in
  * the project you are looking at". A security tool must not have that failure mode.
  *
- * The one exception is `aarsPercentile`, and it is deliberate. A percentile is a rank WITHIN a
- * population, so it is read off `assetsModel` — the same population the inventory table ranks
- * against — because a sheet and the row it was opened from disagreeing about the same asset's
- * rank is the "two answers to one question" failure this codebase spends its comments
- * avoiding. For an asset outside the current view there is no rank to report, so the field is
- * absent and the label simply omits it (scoreLabel.js prints the score without a place)
- * rather than inventing one.
+ * The sheet used to make ONE exception to that rule, for `aarsPercentile`: a rank is a
+ * fact about a population, so it was read off the register's own model to stop the sheet
+ * and the row it was opened from giving one asset two ranks. Both the exception and the
+ * figure are gone — nothing here reads a percentile, and nothing computes one.
  */
 export function getAssetDetail(p?: unknown): ApiResult {
   return run(() => {
@@ -1308,21 +1384,13 @@ export function getAssetDetail(p?: unknown): ApiResult {
           remediation: f.remediation ?? null,
           frameworkCodes: f.frameworkCodes,
         }));
-      // The SAME percentile the inventory table shows for this asset — read off the one
-      // place it is computed (assetsModel, cached and shared by every reader) rather than
-      // re-derived here over a different population. loadGraphDoc's nodes and loadAssets'
-      // rows carry identical aars/aarsSeverity (both run through withCurrentBands off the
-      // same assetRows), so this id always resolves when the asset is scored.
-      const percentileRow = (cached("assetsModel", null, assetsModel) as AssetsModel).rows
-        .find((r) => r["id"] === id);
       return {
-        node: {
-          ...assetRow(node),
-          aarsPillars: node.aarsPillars ?? null,
-          aarsInput: node.aarsInput ?? null,
-          aarsPercentile: percentileRow ? percentileRow["aarsPercentile"] ?? null : null,
-        },
-        issues,
+        // No verdict block. The sheet used to carry `aarsPillars` and `aarsInput` so it
+        // could draw the score's breakdown; the breakdown of a model under calibration
+        // belongs beside the model, and the sheet now reads the same counts, issues and
+        // findings every other asset surface does.
+        node: assetRow(node),
+        issues: issues.map((r) => publicRow(r as unknown as Rec)),
         neighbors,
         findings,
       };
@@ -1407,38 +1475,20 @@ function scopedFrameworkPolicies(): {
   return { policies: dropUnselected(allPolicies, scope), scope };
 }
 
-/**
- * Apply a 5Rs scope's out-of-scope verdicts to a set of policy rows.
- *
- * Dropped from the 5Rs FRAMEWORK's rows only, never globally by policy id. A rule can be
- * mapped by the 5Rs and by OWASP Agentic at once — that is what the cross-mapping signal
- * is built on — and an operator who pins such a rule out is saying "not under the
- * data-security framework", not "not anywhere". Filtering on the id alone would delete it
- * from the AI framework that legitimately claims it, and the shared-controls band would
- * lose the very crosswalk it exists to show.
- *
- * Its own function because the project-scoped read (`getCompliance`) has to apply the SAME
- * register-wide verdicts to a DIFFERENT set of rows — the ones Wiz re-aggregated for one
- * project. Two copies of this filter would be two answers to "is this rule in AI scope".
- */
-function dropUnselected(
-  rows: FrameworkPolicyRow[],
-  scope: ReturnType<typeof scopeFiveRs>,
-): FrameworkPolicyRow[] {
-  const dropped = new Set(unselectedPolicyIds(scope));
-  if (!dropped.size) return rows;
-  return rows.filter(
-    (pol) => pol.frameworkId !== scope.frameworkId || !dropped.has(pol.policyId),
-  );
-}
-
 function configModel(): {
   rows: ConfigFindingView[];
   totals: ConfigTotals;
   facets: Record<string, string[]>;
 } {
-  const assetIds = aiAssetIdSet();
-  const rows = viewFindings().map((f) => toConfigView(f, !!assetIds[f.resourceId]));
+  // A MAP, not the id set: the domain is joined off the asset, and the linkage flag is
+  // the same lookup. An unlinked finding has no node and so no domain — its resource
+  // carries no tags in the configurationFindings payload at all (see ConfigFindingView).
+  const assetsById: Record<string, GNode> = {};
+  for (const a of syncStore.loadAssets()) assetsById[a.id] = a;
+  const rows = viewFindings().map((f) => {
+    const node = assetsById[f.resourceId];
+    return toConfigView(f, !!node, node?.domain ?? "");
+  });
 
   const severities = new Set<string>();
   const statuses = new Set<string>();
@@ -1446,6 +1496,7 @@ function configModel(): {
   const resourceTypes = new Set<string>();
   const rules = new Set<string>();
   const projects = new Set<string>();
+  const domains = new Set<string>();
   for (const r of rows) {
     if (r.severity) severities.add(r.severity);
     if (r.status) statuses.add(r.status);
@@ -1453,6 +1504,7 @@ function configModel(): {
     if (r.resourceType) resourceTypes.add(r.resourceType);
     if (r.ruleShortId) rules.add(r.ruleShortId);
     for (const p of r.projects) projects.add(p);
+    if (r.domain) domains.add(r.domain);
   }
 
   return {
@@ -1465,6 +1517,7 @@ function configModel(): {
       resourceTypes: [...resourceTypes].sort(),
       rules: [...rules].sort(),
       projects: [...projects].sort(),
+      domains: [...domains].sort(),
     },
   };
 }
@@ -1556,7 +1609,7 @@ export function getConfigFindingDetail(p?: unknown): ApiResult {
       // resource". Two different facts must not share one rendering.
       const asset = syncStore.loadAssets().filter((a) => a.id === finding.resourceId)[0];
       return {
-        finding,
+        finding: publicRow(finding as unknown as Rec),
         gap: isOpenGap(finding),
         // The asset the finding is keyed to, when the inventory holds it. Null is the
         // common case and is not an error: most AI-security rules fail on a region, an
@@ -1894,7 +1947,19 @@ export function expandAsset(p?: unknown): ApiResult {
         },
       });
       const decoded = decodeExpansion(slots, page.rows);
-      const nodes = decoded.nodes.slice(0, EXPAND_MAX_NODES);
+      // The domain fold, here rather than in graphExpand: that module is pure and the tag
+      // key is a Script Property. Same resolution every stored node gets through
+      // graphEnrich.withDomains, so a live-expanded node and a synced one agree.
+      const expandDomainKey = domainTagKey();
+      const nodes = decoded.nodes
+        .slice(0, EXPAND_MAX_NODES)
+        .map((n) => ({
+          ...n,
+          domain: domainOfTags(
+            n["tags"] as Array<{ key: string; value: string }> | undefined,
+            expandDomainKey,
+          ),
+        }));
       const keep = new Set(nodes.map((n) => n.id));
       const edges = decoded.edges
         .filter((e) => keep.has(e.src) && keep.has(e.dst))
@@ -1927,7 +1992,7 @@ export function getIssues(p?: unknown): ApiResult {
     return cached("getIssues", { group }, () => {
       let rows = viewIssues();
       if (group) rows = rows.filter((i) => i.comboGroup === group);
-      return { rows, total: rows.length };
+      return { rows: rows.map((r) => publicRow(r as unknown as Rec)), total: rows.length };
     });
   });
 }
@@ -1940,7 +2005,7 @@ export function getIssueDetail(p?: unknown): ApiResult {
     if (!issue) return null;
     const group = issue.comboGroup ? comboGroupById(issue.comboGroup) : null;
     return {
-      issue,
+      issue: publicRow(issue as unknown as Rec),
       group: group
         ? {
             id: group.id,
@@ -1999,11 +2064,11 @@ export function getToxicCombos(_p?: unknown): ApiResult {
               ? {
                   id,
                   name: a.name,
-                  aars: a.aars ?? null,
-                  aarsSeverity: a.aarsSeverity ?? null,
-                  aarsPercentile: a.aarsPercentile ?? null,
+                  severity: a.severity ?? null,
+                  openIssues: a.openIssues ?? 0,
+                  openFindings: a.openFindings ?? 0,
                 }
-              : { id, name: id, aars: null, aarsSeverity: null, aarsPercentile: null };
+              : { id, name: id, severity: null, openIssues: 0, openFindings: 0 };
           }),
         })),
         totalOpen: issues.length,
@@ -2017,7 +2082,8 @@ export function getToxicCombos(_p?: unknown): ApiResult {
 interface ProblemsModel {
   /** Ranked once, by `compareProblems` — never re-sorted per request. */
   rows: ProblemRow[];
-  outcomeCounts: Record<string, number>;
+  /** Problems by Wiz severity, the register's own filter dimension. */
+  severityCounts: Record<string, number>;
 }
 
 /**
@@ -2033,7 +2099,97 @@ function problemsModel(): ProblemsModel {
   // against a filtered `assetsById` would keep every row and merely un-enrich the ones out
   // of view — rows missing their posture tier rather than rows correctly absent.
   const rows = rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById));
-  return { rows, outcomeCounts: countProblemRowsByOutcome(rows) };
+  const severityCounts: Record<string, number> = {};
+  for (const sev of SEVERITY_ORDER) severityCounts[sev] = 0;
+  for (const r of rows) {
+    const sev = String(r.severity ?? "");
+    if (sev) severityCounts[sev] = (severityCounts[sev] ?? 0) + 1;
+  }
+  return { rows, severityCounts };
+}
+
+/**
+ * A graph node as the canvas receives it: the whole node, minus the derived verdicts.
+ *
+ * The graph ships `GNode`s straight out of the projection rather than through `assetRow`,
+ * which is why stripping `assetRow` did not reach it — the canvas needs geometry-adjacent
+ * fields the table projection drops, so it was never routed through one. Everything else
+ * survives; only the six model fields go.
+ *
+ * `aarsInput` matters most here and is the least obvious: it is the whole priced input
+ * blob, gaps and all, and it rode in every graph payload for every node.
+ */
+function publicNode(n: Rec): Rec {
+  const out: Rec = {};
+  for (const [k, v] of Object.entries(n)) {
+    if (VERDICT_NODE_KEYS.indexOf(k) >= 0) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * The per-node model fields — the ones that EXIST, which is why this list is shorter than
+ * test/verdictIsolation.test.ts's. That one is a prohibition and may name a field nothing
+ * computes (`aarsPercentile`); this one is a strip, and listing a field no node carries
+ * would only obscure which ones it really has to remove.
+ *
+ * The difference is load-bearing rather than pedantic: if a percentile were reintroduced,
+ * omitting it here lets it reach a payload, where the guard fails loudly and names it.
+ * Listing it here would strip it silently and leave the reintroduction unremarked.
+ */
+const VERDICT_NODE_KEYS = [
+  "aars", "aarsSeverity", "aarsPillars", "aarsInput", "aarsRuleVersion",
+  "postureTier", "postureInput", "worstOpenProblem",
+];
+
+/** The per-problem model fields, on an issue or a finding row. */
+const VERDICT_ROW_KEYS = ["problemOutcome", "problemInput"];
+
+/**
+ * An issue or finding row as a page receives it — same rule as `publicNode`, at the row
+ * grain. The problem tree decides a verdict for every one of these and stores it beside
+ * the row; the registers rank by Wiz's severity, and the verdict reaches the workbench's
+ * preview alone.
+ */
+function publicRow<T extends Rec>(r: T): Rec {
+  const out: Rec = {};
+  for (const [k, v] of Object.entries(r)) {
+    if (VERDICT_ROW_KEYS.indexOf(k) >= 0) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * A problem row as the page receives it: everything the register renders, and none of the
+ * problem model's own fields.
+ *
+ * `ProblemRow` keeps `problemOutcome`, `vector`, `unknowns`, `postureTier` and
+ * `amplification` because the workbench's rule preview reads them — it is measuring the
+ * model, which is exactly the surface the model belongs on. Shipping them here would put
+ * a verdict about one problem in front of a reader who cannot see the rule that produced
+ * it, which is the thing this whole change exists to stop.
+ */
+function publicProblemRow(r: ProblemRow): Rec {
+  return {
+    id: r.id,
+    kind: r.kind,
+    title: r.title,
+    assetId: r.assetId,
+    assetName: r.assetName,
+    // An explicit allow-list, so a field not named here never reaches the page.
+    domain: r.domain,
+    severity: r.severity,
+    dueAt: r.dueAt,
+    firstSeenAt: r.firstSeenAt ?? null,
+    ruleId: r.ruleId,
+    ruleShortId: r.ruleShortId,
+    ruleRemediation: r.ruleRemediation,
+    businessImpact: r.businessImpact,
+    iac: r.iac,
+    ignored: r.ignored,
+  };
 }
 
 /**
@@ -2051,8 +2207,13 @@ function problemsModel(): ProblemsModel {
 export function getProblems(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
-    const outcome = String(params["outcome"] ?? "").toUpperCase();
-    const validOutcome = (OUTCOME_VALUES as readonly string[]).includes(outcome) ? outcome : "";
+    // `severity`, where this used to take `outcome`. The register filters on Wiz's own
+    // rating now; the decision cascade that produced the outcomes is experimental and
+    // lives on the Scoring Models page. An `?outcome=` link resolves to no filter rather
+    // than to a severity of the same name — the two vocabularies do not overlap, and
+    // guessing which queue a reader meant would answer a question they did not ask.
+    const severity = String(params["severity"] ?? "").toUpperCase();
+    const validSeverity = (SEVERITY_ORDER as readonly string[]).includes(severity) ? severity : "";
     const pageSize = Math.min(
       MAX_PAGE_SIZE,
       Math.max(1, Number(params["pageSize"]) || DEFAULT_PAGE_SIZE),
@@ -2064,7 +2225,7 @@ export function getProblems(p?: unknown): ApiResult {
       // The union invariant's left-hand side — every unresolved issue and every open
       // finding, regardless of the outcome filter or the mode below.
       total: model.rows.length,
-      outcomeCounts: model.outcomeCounts,
+      severityCounts: model.severityCounts,
       pageSize,
     };
 
@@ -2072,21 +2233,26 @@ export function getProblems(p?: unknown): ApiResult {
       return {
         ...head,
         all: true,
-        rows: model.rows,
+        rows: model.rows.map(publicProblemRow),
         filtered: model.rows.length,
         page: 0,
         pageCount: Math.max(1, Math.ceil(model.rows.length / pageSize)),
       };
     }
 
-    const filtered = validOutcome
-      ? model.rows.filter((r) => r.problemOutcome === validOutcome)
+    // Server-side only, mirroring the severity filter above: under PROBLEMS_CLIENT_ALL_MAX
+    // the browser holds every row and filters locally, so this branch is the large-tenant
+    // path and the two must agree on what a filter means.
+    const domain = String(params["domain"] ?? "");
+    let filtered = validSeverity
+      ? model.rows.filter((r) => String(r.severity ?? "") === validSeverity)
       : model.rows;
+    if (domain) filtered = filtered.filter((r) => (r.domain ?? "") === domain);
     const paged = pageOf(filtered as unknown as Rec[], page, pageSize);
     return {
       ...head,
       all: false,
-      rows: paged.rows,
+      rows: (paged.rows as unknown as ProblemRow[]).map(publicProblemRow),
       filtered: filtered.length,
       page: paged.page,
       pageCount: paged.pageCount,

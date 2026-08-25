@@ -125,8 +125,9 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     responsibleParties: "AARS Rules page operator (the model); security analysts (the ranking).",
     dataSource: "ai_assets.aars, ai_assets.aars_input_json",
     reportingFormat:
-      "AI Inventory register (sortable score column, shown beside aars-percentile); asset "
-      + "detail sheet's verdict number and pillar bars.",
+      "Scoring Models page only \u2014 the model editor, its rule preview and its sandbox. It "
+      + "left the AI Inventory register and the asset detail sheet with the rest of the "
+      + "derived verdicts; both read counts now.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
@@ -137,9 +138,9 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "a MODEL diagnostic (the AARS trend, the AARS Rules page's band occupancy) and as "
       + "an opt-in filter, over its own scored population every time. NOT a claim about one "
       + "asset (P2c): the same rule has put nearly an entire landscape in CRITICAL on one "
-      + "tenant and nearly an entire landscape in INFO on another under identical thresholds, "
-      + "so the Inventory table and the asset sheet lead with aars-percentile instead — see "
-      + "that record.",
+      + "tenant and nearly an entire landscape in INFO on another under identical thresholds. "
+      + "The Inventory table and the asset sheet led with a percentile for one phase because "
+      + "of that, then stopped reading either: both count what is open instead.",
     scope: "Every AI asset carrying an aars_severity value.",
     measure: "AARS band: CRITICAL / HIGH / MEDIUM / LOW / INFO, re-derived from the stored "
       + "score against the rule's band thresholds on every read.",
@@ -153,66 +154,24 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "is itself the signal aars-tie-rate and aars-effective-cardinality quantify, and on "
       + "the seed landscape it is severe: 19 of 30 scored assets in the top band with two "
       + "bands empty. The band is therefore published as CONTEXT beside a score and as a "
-      + "distribution over the landscape, never as a per-asset decision; aars-percentile is "
-      + "the placement statistic that replaced it in that role.",
+      + "distribution over the landscape, never as a per-asset decision. Nothing replaced it "
+      + "in the per-asset role \u2014 that role was retired rather than refilled.",
     implementationEvidence: "aarsRule.bands on the settings row (settingsStore.getAarsRule) "
       + "carries four distinct, ordered thresholds — validateAarsRule rejects a rule that does not.",
     timeBasedReference: "Read live against the rule in force. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "AARS Rules page operator (thresholds); security analysts (the read).",
     dataSource: "ai_assets.aars, ai_assets.aars_severity",
     reportingFormat:
-      "As CONTEXT: a plain word beside the score in the AI Inventory register and the asset "
-      + "detail sheet — never a tinted verdict chip. As a DISTRIBUTION: the Inventory's "
-      + "level strip and its per-sync trend chart. As a MODEL DIAGNOSTIC: the AARS Rules "
-      + "page's band rail and occupancy read-out, the one surface that still tints it. No "
-      + "KPI counts it: the criticalAars and highAars tiles were withdrawn once the top "
-      + "band was measured holding the whole working population.",
+      "Scoring Models page only, as a MODEL DIAGNOSTIC: the band rail and its occupancy "
+      + "read-out. It was also context beside a score on the register and the asset sheet, "
+      + "and a distribution in the Inventory\u0027s level strip and per-sync trend \u2014 that page "
+      + "charts open issues, cloud findings and posture fails over time now. No KPI counts "
+      + "it: the criticalAars and highAars tiles were withdrawn once the top band was "
+      + "measured holding the whole working population.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
 
-  {
-    id: "aars-percentile",
-    goal:
-      "Say where one asset's findings score sits in the landscape that was actually scored, "
-      + "so a reader can act on a placement instead of on a band that does not separate "
-      + "assets. The band it replaces in this role holds 19 of 30 scored assets in its top "
-      + "level on the seed landscape, with two levels empty.",
-    scope:
-      "Every asset carrying a numeric score at read time — the same population the "
-      + "published denominator counts, and the same one the percentile is computed over. "
-      + "Unscored assets are excluded from both, never counted as zero.",
-    measure:
-      "Midrank percentile of the score within the scored population, 0-100, higher = worse. "
-      + "Tied scores share ONE percentile by construction, which is the point: a block of "
-      + "assets the model cannot separate must not be handed an order it did not earn.",
-    type: "impact",
-    formula:
-      "midrankPercentiles(scores) = (count below + count equal / 2) / N, rounded to whole "
-      + "percent when published. The midrank form rather than the cumulative one: with a "
-      + "14-asset tie block on the seed landscape, cumulative would read every member at the "
-      + "top of its own block and claim it beat the assets genuinely above it.",
-    target:
-      "No target — a placement is not a threshold. The diagnostic reading is the opposite "
-      + "of a bad value: a percentile IDENTICAL across many assets is the honest report of "
-      + "a tie the score cannot break, and aars-tie-rate quantifies how much of that there is.",
-    implementationEvidence:
-      "Every scored asset carries a percentile on every read path (register, graph, detail "
-      + "sheet) and none carries one in the ledger — there is no percentile column, and the "
-      + "persisted-ledger golden snapshot has none.",
-    timeBasedReference:
-      "Recomputed on every read against the population as it stands, so an unchanged score "
-      + "reads differently once other assets move. " + NO_PER_ENTITY_HISTORY,
-    responsibleParties:
-      "Security analysts (the read); AARS Rules page operator (the model it is a placement in).",
-    dataSource: "ai_assets.aars",
-    reportingFormat:
-      "AI Inventory register (leads the score cell); asset detail sheet's verdict line, with "
-      + "the population size beside it; security graph node badge.",
-    measurementMethod: "Objective",
-    revisionDue: REVISION_DUE,
-  },
-  // ----------------------------------------------------- the model's own discrimination
   {
     id: "aars-distinct-scores",
     goal:

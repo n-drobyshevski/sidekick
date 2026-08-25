@@ -199,6 +199,66 @@ function propertyBag(raw: Rec): Rec | null {
   return nested && typeof nested === "object" ? (nested as Rec) : null;
 }
 
+/**
+ * Tags, from either shape Wiz sends them in.
+ *
+ * The flat roots select `tags { key value }` and get an ARRAY of `{key, value}`. The
+ * properties bag holds the same fact as an OBJECT MAP — `{"Wiz/Domain": "CROSS"}` — because
+ * a bag has no sub-selection and Wiz flattens it. Both appear on the same node in
+ * exemples/get_ai_agents_reponse.js (the array at :4517, the map at :4462).
+ *
+ * Returns `undefined` rather than `[]` when there is nothing. That is not tidiness:
+ * `mergeParts` copies any value that is not undefined/null/false, and an empty array is
+ * truthy — so a later step returning `[]` would ERASE the tags an earlier one established.
+ */
+export function tagPairs(value: unknown): Array<{ key: string; value: string }> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const out: Array<{ key: string; value: string }> = [];
+  if (Array.isArray(value)) {
+    for (const t of value) {
+      if (!t || typeof t !== "object") continue;
+      const key = String((t as Rec)["key"] ?? "").trim();
+      if (key) out.push({ key, value: String((t as Rec)["value"] ?? "") });
+    }
+  } else {
+    for (const [k, v] of Object.entries(value as Rec)) {
+      const key = k.trim();
+      // A nested object under a tag key is not a tag; the bag holds scalars here.
+      if (key && (v === null || typeof v !== "object")) {
+        out.push({ key, value: v === null || v === undefined ? "" : String(v) });
+      }
+    }
+  }
+  return out.length ? out : undefined;
+}
+
+/**
+ * Every tag on an entity, whichever root it arrived from — the union of the flat field and
+ * the properties bag, the bag winning a key collision because it is the richer source.
+ *
+ * This does NOT go through `entityField`, and that is the whole reason it exists.
+ * `entityField` returns the flat value the moment it is not `undefined`, and the real
+ * inventory capture sends flat `"tags": null` on 39 of its 40 nodes — so a reader built on
+ * it would stop at the null and never see the bag, which is the only place `Wiz/Domain`
+ * ever appears (exemples/ai_agent_expand_response.js:316,
+ * exemples/ai_exposure_host_response.js:94).
+ */
+export function entityTags(raw: Rec): Array<{ key: string; value: string }> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const flat = tagPairs(raw["tags"]);
+  const bag = tagPairs(propertyBag(raw)?.["tags"]);
+  if (!flat) return bag;
+  if (!bag) return flat;
+  const merged = [...flat];
+  const at = new Map(merged.map((t, i) => [t.key, i]));
+  for (const t of bag) {
+    const i = at.get(t.key);
+    if (i === undefined) merged.push(t);
+    else merged[i] = t;
+  }
+  return merged;
+}
+
 export const EDGE_TYPES = [
   "HAS_ISSUE",            // asset → ISSUE
   "PROTECTED_BY",         // AI_AGENT → AI_GUARDRAIL (negated = guardrail MISSING)
@@ -330,6 +390,15 @@ export interface GNode {
   cloudAccount?: { id: string; name: string; externalId?: string; cloudProvider?: string };
   projects?: ProjectRef[];
   tags?: Array<{ key: string; value: string }>;
+  /**
+   * The business domain owning this resource — the value of its `Wiz/Domain` tag.
+   *
+   * READ-TIME ONLY. Never a column, never written by `assetToRow`, never read back from the
+   * sheet. `graphEnrich.withDomains` folds it on every read from `tags` above, because the
+   * tag key is configurable and a baked value would mean re-syncing a landscape to change a
+   * string. See domain/domainTag.ts for the whole argument.
+   */
+  domain?: string | null;
   technologyCategories?: string[]; // Wiz technology.categories[].name (e.g. "AI Service")
   /**
    * Who published the AI asset, and how Wiz found it — both out of the properties bag, both
@@ -428,22 +497,26 @@ export interface GNode {
    */
   businessImpact?: string;
   severity?: Severity;      // worst attached open-issue severity (ISSUE nodes: own severity)
+  /**
+   * The two counts the register leads with, now that no derived verdict does: open issues
+   * attached to this asset, and failing configuration findings evaluated against it
+   * (`isOpenGap`, the app's single definition of a compliance gap).
+   *
+   * DERIVED ON READ, NEVER PERSISTED — the same contract the risk-topology nodes follow,
+   * but for a different reason than theirs. A count IS a fact about one asset and would
+   * survive being snapshotted; what it would not survive is the tabs moving underneath it.
+   * Both populations live in their own tabs and change without `ai_assets` being rewritten
+   * — a finding that resolves is an edit to `ai_findings` — so a stored copy here would go
+   * stale exactly when someone had fixed something. `syncStore.withOpenCounts` attaches
+   * them on every read path and nothing on the write path sets them.
+   *
+   * Absent on a node the fold never reached (ISSUE / SUMMARY / risk-topology stubs).
+   * Zero means "counted, and there are none" — never "not counted".
+   */
+  openIssues?: number;
+  openFindings?: number;
   aars?: number;            // findings score 0–100 (AI assets only) — see AARS_DISPLAY_LABEL
   aarsSeverity?: AarsSeverity;
-  /**
-   * Where `aars` sits in the whole scored landscape, as a whole-percent midrank percentile.
-   *
-   * DERIVED ON READ, NEVER PERSISTED, and unlike `aarsSeverity` it has no persisted
-   * fallback at all — because it is not a statement about this asset. It is a statement
-   * about this asset's POSITION IN A POPULATION, so it goes stale the instant any other
-   * asset is added, removed or rescored; a stored copy would be wrong far more often than
-   * it was right, and wrong silently. `syncStore.withAarsPercentile` attaches it on every
-   * read path and nothing on the write path sets it, which is what keeps the Drive graph
-   * snapshot free of a number that cannot survive being snapshotted.
-   *
-   * Tied assets share one value on purpose — see `rankStats.midrankPercentiles`.
-   */
-  aarsPercentile?: number;
   aarsPillars?: { toxic: number; compliance: number; data: number; exposure?: number };
   /**
    * What the score was computed FROM, minus the issue severities (those stay in the issues

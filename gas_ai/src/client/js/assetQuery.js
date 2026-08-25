@@ -15,23 +15,23 @@
 // Keep in step with src/domain/assetTable.ts.
 
 export const ASSET_SORTS = [
-  "aars", "postureTier", "name", "kind", "cloud", "region", "severity", "combos",
+  "issues", "findings", "name", "kind", "cloud", "region", "severity", "combos", "domain",
 ];
 
 export const DEFAULT_SORT_DIR = {
-  aars: "desc", postureTier: "desc", severity: "desc", combos: "desc",
-  name: "asc", kind: "asc", cloud: "asc", region: "asc",
+  issues: "desc", findings: "desc", severity: "desc", combos: "desc",
+  name: "asc", kind: "asc", cloud: "asc", region: "asc", domain: "asc",
 };
 
 export const FACET_KEYS = [
-  "aarsSeverities", "severities", "kinds", "clouds", "regions", "projects", "flags",
+  "severities", "kinds", "clouds", "regions", "projects", "domains", "flags",
 ];
 
 export const ASSET_FLAGS = ["combo", "guardrail", "agentic", "datafindings"];
 
-// Mirrors SEVERITY_ORDER / AARS_SEVERITY_ORDER in src/domain/config.ts.
+// Mirrors SEVERITY_ORDER in src/domain/config.ts. The AARS level vocabulary is gone from
+// this module with the facet that used it — the register filters on Wiz's issue severity.
 const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
-const AARS_SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
 
 const SEV_RANK = {};
 SEVERITY_ORDER.forEach((sev, i) => {
@@ -47,21 +47,9 @@ function num(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function score(v) {
-  const n = Number(v === null || v === undefined ? -1 : v);
-  return Number.isFinite(n) ? n : -1;
-}
-
 function sevRank(v) {
   const r = SEV_RANK[str(v).toUpperCase()];
   return r === undefined ? -1 : r;
-}
-
-/** Mirrors normalizeAarsSeverity in src/domain/config.ts — MINIMAL was the old INFO. */
-export function normalizeAarsSeverity(v) {
-  const s = str(v).trim().toUpperCase();
-  if (s === "MINIMAL") return "INFO";
-  return AARS_SEVERITY_ORDER.indexOf(s) >= 0 ? s : "";
 }
 
 function list(v) {
@@ -89,23 +77,23 @@ function keepValid(values, allowed) {
 export function resolveAssetQuery(params) {
   const p = params || {};
   const sort = str(p.sort);
-  const resolvedSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
+  const resolvedSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "issues";
   const dir = str(p.dir).toLowerCase();
   const page = Number(p.page);
   const pageSize = Number(p.pageSize);
 
-  const aarsSeverities = listWithLegacy(p.aarsSeverities, p.aarsSeverity, p.band)
-    .map((v) => normalizeAarsSeverity(v))
-    .filter((v, i, all) => v !== "" && all.indexOf(v) === i);
+  // `aarsSeverities` / `aarsSeverity` / `band` are IGNORED, not remapped onto
+  // `severities` — see resolveAssetQuery in src/domain/assetTable.ts for why the two
+  // scales must not be aliased to each other.
 
   return {
     q: str(p.q).trim().toLowerCase(),
-    aarsSeverities,
     severities: keepValid(listWithLegacy(p.severities, p.severity), SEVERITY_ORDER),
     kinds: listWithLegacy(p.kinds, p.kind),
     clouds: listWithLegacy(p.clouds, p.cloud),
     regions: listWithLegacy(p.regions, p.region),
     projects: listWithLegacy(p.projects, p.project),
+    domains: listWithLegacy(p.domains, p.domain),
     flags: list(p.flags).map((v) => v.toLowerCase()).filter((v) => ASSET_FLAGS.indexOf(v) >= 0),
     sort: resolvedSort,
     dir: dir === "asc" || dir === "desc" ? dir : DEFAULT_SORT_DIR[resolvedSort],
@@ -133,8 +121,8 @@ export function matchesAssetQuery(row, q) {
   if (q.kinds.length && q.kinds.indexOf(str(row.kind)) < 0) return false;
   if (q.clouds.length && q.clouds.indexOf(str(row.cloud)) < 0) return false;
   if (q.regions.length && q.regions.indexOf(str(row.region)) < 0) return false;
-  if (q.aarsSeverities.length && q.aarsSeverities.indexOf(str(row.aarsSeverity)) < 0) return false;
   if (q.severities.length && q.severities.indexOf(str(row.severity)) < 0) return false;
+  if (q.domains.length && q.domains.indexOf(str(row.domain)) < 0) return false;
   if (q.projects.length) {
     const mine = rowProjects(row);
     if (!q.projects.some((p) => mine.indexOf(p) >= 0)) return false;
@@ -149,22 +137,29 @@ export function filterAssetRows(rows, q) {
 }
 
 const PRIMARY = {
-  aars: (a, b) => score(a.aars) - score(b.aars),
-  postureTier: (a, b) => score(a.postureTier) - score(b.postureTier),
   name: (a, b) => str(a.name).localeCompare(str(b.name)),
   kind: (a, b) => str(a.kind).localeCompare(str(b.kind)),
   cloud: (a, b) => str(a.cloud).localeCompare(str(b.cloud)),
   region: (a, b) => str(a.region).localeCompare(str(b.region)),
   severity: (a, b) => sevRank(a.severity) - sevRank(b.severity),
   combos: (a, b) => num(a.combos) - num(b.combos),
+  issues: (a, b) => num(a.openIssues) - num(b.openIssues),
+  findings: (a, b) => num(a.openFindings) - num(b.openFindings),
+  domain: (a, b) => str(a.domain).localeCompare(str(b.domain)),
 };
 
-const byScoreDesc = (a, b) => score(b.aars) - score(a.aars);
+/** Mirrors `byRiskDesc` in src/domain/assetTable.ts — see there for why severity leads. */
+const byRiskDesc = (a, b) =>
+  sevRank(b.severity) - sevRank(a.severity)
+  || num(b.openIssues) - num(a.openIssues)
+  || num(b.openFindings) - num(a.openFindings)
+  || str(a.name).localeCompare(str(b.name))
+  || str(a.id).localeCompare(str(b.id));
 
 export function assetComparator(sort, dir) {
-  const primary = PRIMARY[sort] || PRIMARY.aars;
+  const primary = PRIMARY[sort] || PRIMARY.issues;
   const sign = dir === "desc" ? -1 : 1;
-  return (a, b) => sign * primary(a, b) || byScoreDesc(a, b);
+  return (a, b) => sign * primary(a, b) || byRiskDesc(a, b);
 }
 
 export const ASSET_COMPARATORS = ASSET_SORTS.reduce((acc, s) => {
@@ -173,7 +168,7 @@ export const ASSET_COMPARATORS = ASSET_SORTS.reduce((acc, s) => {
 }, {});
 
 export function sortAssetRows(rows, sort, dir) {
-  const resolved = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
+  const resolved = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "issues";
   return rows.slice().sort(assetComparator(resolved, dir || DEFAULT_SORT_DIR[resolved]));
 }
 
@@ -181,16 +176,14 @@ function facetValues(key, row) {
   if (key === "kinds") return [str(row.kind)].filter(Boolean);
   if (key === "clouds") return [str(row.cloud)].filter(Boolean);
   if (key === "regions") return [str(row.region)].filter(Boolean);
-  if (key === "aarsSeverities") return [str(row.aarsSeverity)].filter(Boolean);
   if (key === "severities") return [str(row.severity)].filter(Boolean);
   if (key === "projects") return rowProjects(row);
+  // Blank contributes nothing — see facetValues in src/domain/assetTable.ts.
+  if (key === "domains") return [str(row.domain)].filter(Boolean);
   return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f));
 }
 
 function facetSorter(key) {
-  if (key === "aarsSeverities") {
-    return (a, b) => AARS_SEVERITY_ORDER.indexOf(a.value) - AARS_SEVERITY_ORDER.indexOf(b.value);
-  }
   if (key === "severities") {
     return (a, b) => SEVERITY_ORDER.indexOf(a.value) - SEVERITY_ORDER.indexOf(b.value);
   }

@@ -3,6 +3,8 @@
 // on purpose — this is a separate Apps Script project, so there is no collision, and
 // operators only learn one vocabulary.
 
+import { resolveDomainTagKey } from "../domain/domainTag";
+
 export const PROP_KEYS = {
   wizApiToken: "WIZ_API_TOKEN",
   wizClientId: "WIZ_CLIENT_ID",
@@ -20,6 +22,11 @@ export const PROP_KEYS = {
   // other is a memo, and conflating them would let a cached answer masquerade as a
   // configured one (and survive the operator clearing the override).
   wizAiResourceTypesResolved: "WIZ_AI_RESOURCE_TYPES_RESOLVED",
+  // Optional override of the resource tag key naming the owning business domain.
+  // Defaults to `Wiz/Domain` (domain/domainTag.ts) and is matched case-insensitively, so
+  // this only needs setting by a tenant that spells the key differently rather than
+  // merely differently-cased. Mirrors WIZ_SUPPORT_GROUP_TAG_KEY in the OS-vulns tool.
+  wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
 } as const;
 
 export const DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
@@ -56,6 +63,15 @@ export function deleteProp(key: string): void {
 export function projectScope(): string[] | null {
   const id = getProp(PROP_KEYS.wizProjectIdV2);
   return id && id.trim() ? [id.trim()] : null;
+}
+
+/**
+ * The tag key naming a resource's owning business domain — the configured override, else
+ * the default. The single source of truth for the read-time fold and for the Settings
+ * page's account of what it is reading, so the two cannot drift.
+ */
+export function domainTagKey(): string {
+  return resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey));
 }
 
 /**

@@ -5,12 +5,14 @@
 // every claim the app makes about a score has to survive a mixed register, and the mixed
 // state has to be visible rather than averaged away.
 
-import { beforeEach, describe, expect, it } from "vitest";
-import { bootServer } from "./gasEnv";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { bootSyncedServer, resetToSynced, teardownServer } from "./gasEnv";
 import type { Rec } from "../src/domain/util";
 
-type Server = Awaited<ReturnType<typeof bootServer>>;
+type Server = Awaited<ReturnType<typeof bootSyncedServer>>;
+type SyncStore = typeof import("../src/server/syncStore");
 let server: Server;
+let syncStore: SyncStore;
 
 const SMALL = "proj-project-delta";
 
@@ -22,13 +24,18 @@ function ok<T = Rec>(res: unknown): T {
 
 const setView = (id: string) => ok(server.api.setSettings({ projectView: id }));
 
-/** Every asset with its score and the rule that produced it, register-wide. */
+/**
+ * Every asset with its score and the rule that produced it, register-wide.
+ *
+ * Read from the store rather than from `getAssets`: the register's payload carries no
+ * score any more (the models reach only the workbench), and a rescore is a claim about
+ * what is PERSISTED, which is what this file is about either way.
+ */
 function scores(): Map<string, { aars: number | null; version: number | null }> {
   setView("");
-  const rows = ok<Rec>(server.api.getAssets({ page: 1, pageSize: 500 }))["rows"] as Rec[];
-  return new Map(rows.map((r) => [
-    String(r["id"]),
-    { aars: (r["aars"] ?? null) as number | null, version: null },
+  return new Map(syncStore.loadAssets().map((a) => [
+    a.id,
+    { aars: a.aars ?? null, version: a.aarsRuleVersion ?? null },
   ]));
 }
 
@@ -55,10 +62,18 @@ function bumpRule(): void {
   ok(server.api.setAarsRule({ rule: next }));
 }
 
+beforeAll(async () => {
+  server = await bootSyncedServer();
+});
+
+// Every test bumps the AARS rule and rescores, which writes versions across the register.
 beforeEach(async () => {
-  server = await bootServer();
-  server.setup();
-  ok(server.api.runSync({}));
+  server = await resetToSynced();
+  syncStore = await import("../src/server/syncStore");
+});
+
+afterAll(() => {
+  teardownServer();
 });
 
 describe("rescore under a project view", () => {

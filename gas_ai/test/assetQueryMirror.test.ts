@@ -19,34 +19,44 @@ import type { Rec } from "../src/domain/util";
 // A variable specifier on purpose: a literal would make tsc demand type declarations for a
 // plain-JS client module that has no business carrying any.
 const MIRROR_PATH = "../src/client/js/assetQuery.js";
-const LABEL_MIRROR_PATH = "../src/client/js/ui/scoreLabel.js";
 const js = (await import(MIRROR_PATH)) as unknown as typeof ts;
 
 const ROWS: Rec[] = [
   {
     id: "a", name: "Agent-Alpha", kind: "AI_AGENT", cloud: "AWS", region: "us-east-1",
     aars: 62, aarsSeverity: "HIGH", severity: "HIGH",
+    openIssues: 2, openFindings: 0,
     combos: 1, guardrailMissing: true, agentic: true, projects: ["Alpha", "Shared"],
+    domain: "CROSS",
   },
   {
     id: "b", name: "agent-beta", kind: "AI_AGENT", cloud: "GCP", region: "eu-west-1",
     aars: 71, aarsSeverity: "CRITICAL", severity: "CRITICAL",
+    openIssues: 2, openFindings: 3,
     combos: 3, guardrailMissing: false, agentic: true, projects: ["Shared"],
+    domain: "SAP",
   },
   {
     id: "c", name: "Model-Gamma", kind: "AI_MODEL", cloud: "AWS", region: "us-east-1",
     aars: null, aarsSeverity: null, severity: null,
+    openIssues: 0, openFindings: 0,
     combos: 0, guardrailMissing: false, agentic: false, projects: [],
+    // No `domain` key at all: the tag never reached this asset. Distinct from `null`
+    // below, and both must sort and facet identically on the two sides.
   },
   {
     id: "d", name: "Bucket-Delta", kind: "BUCKET", cloud: null, region: null,
     aars: 30, aarsSeverity: "MEDIUM", severity: "LOW",
+    openIssues: 5, openFindings: 1,
     combos: 0, guardrailMissing: true, agentic: false, projects: ["Beta"],
+    domain: null,
   },
   {
     id: "e", name: "mcp-Epsilon", kind: "MCP_SERVER", cloud: "AZURE", region: "westeurope",
     aars: 30, aarsSeverity: "MEDIUM", severity: "MEDIUM",
+    openIssues: 1, openFindings: 1,
     combos: 2, guardrailMissing: true, agentic: false, projects: ["Beta", "Shared"],
+    domain: "CROSS",
   },
 ];
 
@@ -73,6 +83,26 @@ const PARAM_CASES: Rec[] = [
   { severities: "critical,bogus,LOW" },
   { severity: "MEDIUM" },
   { flags: "combo" },
+  // The domain dimension, including the legacy singular a shared link may carry and a
+  // value nothing matches — the two sides must agree on an empty answer too.
+  { domain: "CROSS" },
+  { domains: "CROSS,SAP" },
+  { domains: ["SAP"] },
+  { domains: ",, CROSS ,CROSS," },
+  { domains: "NOPE" },
+  { domains: "CROSS", kinds: "AI_AGENT" },
+  { sort: "domain" },
+  { sort: "domain", dir: "desc" },
+  // The sorts and the retired-param spellings. `sort=aars` and `sort=postureTier` name
+  // columns the register no longer offers; both sides must fall back to the SAME default
+  // rather than one honouring a stale deep link the other has forgotten.
+  { sort: "issues" },
+  { sort: "findings" },
+  { sort: "issues", dir: "asc" },
+  { sort: "name" },
+  { sort: "aars" },
+  { sort: "postureTier" },
+  { sort: "bogus" },
   { flags: "guardrail,agentic" },
   { flags: "combo,nope,AGENTIC" },
   { kinds: "AI_AGENT", clouds: "GCP", flags: "agentic" },
@@ -156,32 +186,5 @@ describe("assetQuery.js mirrors assetTable.ts", () => {
           .toEqual(ts.pageOf(ROWS, page, size));
       }
     }
-  });
-});
-
-// The display label is a second, much smaller mirror across the same boundary, and it is
-// pinned here rather than in its own file because the reason is identical: the client
-// bundle cannot import a TS module, so the string exists twice and nothing else would
-// notice one copy moving. It matters more than most strings because the whole point of
-// ai/AARS_SCORING_ASSESSMENT.md's label change is that the model is called ONE thing on
-// every asset surface — a drifted copy would put "Findings score" on the table header and
-// something else on the sheet caption, which is the failure the constant was created to
-// prevent. See AARS_DISPLAY_LABEL's own comment for why the label and the persisted
-// `aars*` identifiers are deliberately different.
-describe("the findings-score display label", () => {
-  it("the client mirror carries exactly the domain constant", async () => {
-    const { AARS_DISPLAY_LABEL } = await import("../src/domain/aars");
-    // A variable specifier, for the same reason MIRROR_PATH above is one: a literal makes
-    // tsc demand type declarations for a plain-JS client module that has no business
-    // carrying any.
-    const { FINDINGS_SCORE_LABEL } = (await import(LABEL_MIRROR_PATH)) as {
-      FINDINGS_SCORE_LABEL: string;
-    };
-    expect(FINDINGS_SCORE_LABEL).toBe(AARS_DISPLAY_LABEL);
-  });
-
-  it("is not the acronym — the AARS Rules page keeps that, asset surfaces do not", async () => {
-    const { AARS_DISPLAY_LABEL } = await import("../src/domain/aars");
-    expect(AARS_DISPLAY_LABEL).not.toMatch(/AARS/i);
   });
 });

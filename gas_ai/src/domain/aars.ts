@@ -38,10 +38,11 @@ import type { AarsSeverity, Severity } from "./config";
  * (`normalizeLegacyAars`, `rowToAsset`'s dual read, and two branches in diagnostics.ts). A
  * label is free to change; a column name is a migration this app cannot perform.
  *
- * The acronym AARS survives on the AARS Rules page, where it names a specific tunable model
- * rather than making a claim about an asset. `src/client/js/ui/findingsScore.js` mirrors
- * this constant for the client bundle (which cannot import a TS module) and
- * test/assetQueryMirror.test.ts asserts the two agree.
+ * The acronym AARS survives on the Scoring Models page, where it names a specific tunable
+ * model rather than making a claim about an asset — and that page is now the only place
+ * either the label or the number appears. The client mirror of this constant went with the
+ * asset surfaces that used to render it: nothing outside this module reads it any more, so
+ * there is no second copy left to drift.
  */
 export const AARS_DISPLAY_LABEL = "Findings score";
 

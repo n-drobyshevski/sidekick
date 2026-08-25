@@ -20,7 +20,7 @@
 // above scope to.
 
 import type { FrameworkPolicyRow } from "./graphTypes";
-import { OUTCOME_VALUES } from "./problem";
+import { SEVERITY_ORDER } from "./config";
 import type { ProblemRow } from "./problems";
 
 // --------------------------------------------------------------------------- the key
@@ -69,18 +69,29 @@ export interface ActionRow {
   /** Distinct assets it touches — an unlinked problem (`assetId` null) contributes none. */
   assets: number;
   /**
-   * MAX over the group's own problem verdicts, never a mean — the identical "worst wins"
+   * MAX over the group's own problem severities, never a mean — the identical "worst wins"
    * discipline `configFindings.rollupByControl`'s `severity` field and `problems.ts`'s
-   * `compareProblems` both already apply, at this rollup's own grain. A bare `Outcome`
-   * string, or `""` when EVERY problem in the group is undecided — never a number, and
-   * never an average of the four queues, which is not a value there is a queue for.
+   * `compareProblems` both already apply, at this rollup's own grain. `""` when no problem
+   * in the group carries a rating, which is "unrated", not "mild".
+   *
+   * This was `worstOutcome`, a MAX over the problem model's four queues. Same shape, same
+   * "worst wins" rule, sourced from Wiz's rating instead of from a cascade this app is
+   * still calibrating.
    */
-  worstOutcome: string;
-  /** Count of the group's problems per `Outcome` value, zeros omitted — the shape's own detail. */
-  outcomeMix: Record<string, number>;
+  worstSeverity: string;
   severityMix: Record<string, number>;
   /** Distinct, so an analyst sees at a glance whether HBI is anywhere in this action's blast. */
   businessImpacts: string[];
+  /**
+   * The business domains this one action would touch, distinct and sorted.
+   *
+   * The page's headline is that N problems collapse to M actions; this says whose problems
+   * they are. One action spanning three domains is a coordination cost the count alone
+   * hides, and one confined to a single domain is a fix that needs exactly one owner —
+   * the same question `businessImpacts` answers for blast radius, asked about ownership.
+   * Rows with no domain contribute nothing, so an all-unlinked action lists none.
+   */
+  domains: string[];
   /** `hasAutoRemediation` where known — false until `withAutoRemediation` below joins it in. */
   autoRemediable: boolean;
   /** Problems with an IaC origin — a shift-left fix exists for this many of them. */
@@ -101,18 +112,16 @@ export interface ActionRow {
   remediation?: string;
 }
 
-const NO_OUTCOME = "";
+const NO_SEVERITY = "";
 
 /**
- * Worst-first position on the outcome scale, mirroring `problems.ts`'s own private
- * `outcomeRank` and `configFindings.ts`'s `priorityRank` exactly — three byte-identical
- * copies now, kept apart because none of the three files may import from the others'
- * private scope, and because "worst first" is cheap enough to duplicate correctly but
- * expensive to get wrong from a shared import three ranking modules would all have to trust.
+ * Wiz's severity as a sortable number, worst first; an unrated group sorts LAST — the same
+ * "missing sorts last" convention `problems.ts`'s own `severityRank` keeps, and for the
+ * same reason: unrated is not mild.
  */
-function outcomeRank(o: string): number {
-  const i = (OUTCOME_VALUES as readonly string[]).indexOf(o);
-  return i < 0 ? OUTCOME_VALUES.length : i;
+function severityRank(sev: string): number {
+  const i = (SEVERITY_ORDER as readonly string[]).indexOf(sev);
+  return i < 0 ? SEVERITY_ORDER.length : i;
 }
 
 /** One action candidate's stats over whatever pool of rows it was scored against. */
@@ -135,10 +144,10 @@ function candidatesFrom(pool: readonly ProblemRow[]): Map<ActionKey, ProblemRow[
 }
 
 function scoreCandidate(key: ActionKey, rows: ProblemRow[]): Candidate {
-  let worstRank = OUTCOME_VALUES.length; // starts at NO_OUTCOME's own rank
+  let worstRank: number = SEVERITY_ORDER.length; // starts at "unrated"'s own rank
   const assetIds = new Set<string>();
   for (const row of rows) {
-    const rank = outcomeRank(row.problemOutcome);
+    const rank = severityRank(String(row.severity ?? ""));
     if (rank < worstRank) worstRank = rank;
     if (row.assetId) assetIds.add(row.assetId);
   }
@@ -149,13 +158,14 @@ function scoreCandidate(key: ActionKey, rows: ProblemRow[]): Candidate {
  * The round's winner, worst-first at every level — mirrors `compareProblems`'s own numbered
  * cascade in shape, at the action grain instead of the problem grain:
  *
- * 1. WORST OUTCOME among the candidate's OWN remaining problems (ACT < ATTEND < TRACK_STAR
- *    < TRACK, undecided last) — the same reason `compareProblems` puts outcome first: which
- *    queue a problem belongs in is the loudest fact about it, and an action inherits its
- *    urgency from the worst thing it would close.
+ * 1. WORST SEVERITY among the candidate's OWN remaining problems, unrated last — the same
+ *    reason `compareProblems` puts severity first: it is the loudest fact about a problem
+ *    that this app did not invent, and an action inherits its urgency from the worst thing
+ *    it would close. This level used to read the problem model's four queues; the level
+ *    below it is unchanged, and is what this module was always really about.
  * 2. REMAINING PROBLEMS CLOSED, descending — the leverage this whole module exists to
  *    surface: an action worth ranking first is one that clears the most of the board.
- * 3. DISTINCT ASSETS TOUCHED, descending — two actions tied on outcome and count can still
+ * 3. DISTINCT ASSETS TOUCHED, descending — two actions tied on severity and count can still
  *    describe very different blast radii; the wider one is the more consequential fix.
  * 4. KEY, ascending — final stability, the same role `compareProblems`'s own id tiebreak plays.
  */
@@ -176,11 +186,11 @@ function buildActionRow(key: ActionKey, rows: ProblemRow[]): ActionRow {
   const first = sorted[0]!;
 
   const assetIds = new Set<string>();
-  const outcomeMix: Record<string, number> = {};
   const severityMix: Record<string, number> = {};
   const businessImpacts = new Set<string>();
-  let worstRank = OUTCOME_VALUES.length;
-  let worstOutcome = NO_OUTCOME;
+  const domains = new Set<string>();
+  let worstRank: number = SEVERITY_ORDER.length;
+  let worstSeverity = NO_SEVERITY;
   let iac = 0;
   let ignored = 0;
   let firstSeenAt = "";
@@ -189,16 +199,16 @@ function buildActionRow(key: ActionKey, rows: ProblemRow[]): ActionRow {
 
   for (const row of sorted) {
     if (row.assetId) assetIds.add(row.assetId);
-    outcomeMix[row.problemOutcome] = (outcomeMix[row.problemOutcome] ?? 0) + 1;
     if (row.severity) severityMix[row.severity] = (severityMix[row.severity] ?? 0) + 1;
     if (row.businessImpact) businessImpacts.add(row.businessImpact);
-    const rank = outcomeRank(row.problemOutcome);
+    if (row.domain) domains.add(row.domain);
+    const rank = severityRank(String(row.severity ?? ""));
     // Strict `<`, not `<=`: the FIRST row (by id) to reach a given worst rank keeps it,
     // matching the same "first non-empty wins, deterministically" rule `title` and
     // `remediation` below already follow.
     if (rank < worstRank) {
       worstRank = rank;
-      worstOutcome = row.problemOutcome;
+      worstSeverity = String(row.severity ?? "");
     }
     if (row.iac) iac += 1;
     if (row.ignored) ignored += 1;
@@ -220,10 +230,10 @@ function buildActionRow(key: ActionKey, rows: ProblemRow[]): ActionRow {
     title: title || first.title,
     problems: rows.length,
     assets: assetIds.size,
-    worstOutcome,
-    outcomeMix,
+    worstSeverity,
     severityMix,
     businessImpacts: [...businessImpacts].sort(),
+    domains: [...domains].sort(),
     autoRemediable: false,
     iac,
     ignored,

@@ -20,22 +20,22 @@ import type { Rec } from "../src/domain/util";
 const ROWS: Rec[] = [
   {
     id: "a", name: "Agent-A", kind: "AI_AGENT", cloud: "AWS", region: "us-east-1",
-    aars: 62, aarsSeverity: "HIGH", severity: "HIGH",
+    severity: "HIGH", openIssues: 3, openFindings: 0,
     combos: 1, guardrailMissing: true, agentic: true, projects: ["Alpha"],
   },
   {
     id: "b", name: "agent-b", kind: "AI_AGENT", cloud: "GCP", region: "eu-west-1",
-    aars: 71, aarsSeverity: "CRITICAL", severity: "CRITICAL",
+    severity: "CRITICAL", openIssues: 1, openFindings: 2,
     combos: 2, guardrailMissing: false, agentic: true, projects: ["Alpha", "Beta"],
   },
   {
     id: "c", name: "Model-C", kind: "AI_MODEL", cloud: "AWS", region: "us-east-1",
-    aars: null, aarsSeverity: null, severity: null,
+    severity: null, openIssues: 0, openFindings: 0,
     combos: 0, guardrailMissing: false, agentic: false, projects: [],
   },
   {
     id: "d", name: "Bucket-D", kind: "BUCKET", cloud: null, region: null,
-    aars: 30, aarsSeverity: "MEDIUM", severity: "LOW",
+    severity: "LOW", openIssues: 2, openFindings: 1,
     combos: 0, guardrailMissing: false, agentic: false, projects: ["Beta"],
   },
 ];
@@ -43,12 +43,12 @@ const ROWS: Rec[] = [
 const ids = (rows: Rec[]): unknown[] => rows.map((r) => r["id"]);
 
 describe("resolveAssetQuery", () => {
-  it("defaults an empty param bag to page 0 of the AARS sort, worst-first", () => {
+  it("defaults an empty param bag to page 0 of the open-issue sort, worst-first", () => {
     expect(resolveAssetQuery({})).toEqual({
       q: "",
-      aarsSeverities: [], severities: [], kinds: [], clouds: [], regions: [],
-      projects: [], flags: [],
-      sort: "aars", dir: "desc", page: 0, pageSize: DEFAULT_PAGE_SIZE,
+      severities: [], kinds: [], clouds: [], regions: [],
+      projects: [], domains: [], flags: [],
+      sort: "issues", dir: "desc", page: 0, pageSize: DEFAULT_PAGE_SIZE,
     });
   });
 
@@ -56,8 +56,12 @@ describe("resolveAssetQuery", () => {
     expect(resolveAssetQuery({ q: "  Agent " }).q).toBe("agent");
   });
 
-  it("falls back to the AARS sort for an unknown sort key", () => {
-    expect(resolveAssetQuery({ sort: "nonsense" }).sort).toBe("aars");
+  it("falls back to the open-issue sort for an unknown or retired sort key", () => {
+    expect(resolveAssetQuery({ sort: "nonsense" }).sort).toBe("issues");
+    // The two columns the register no longer offers. A deep link or a saved view carrying
+    // either must land on the default rather than on a column that cannot be rendered.
+    expect(resolveAssetQuery({ sort: "aars" }).sort).toBe("issues");
+    expect(resolveAssetQuery({ sort: "postureTier" }).sort).toBe("issues");
     expect(resolveAssetQuery({ sort: "name" }).sort).toBe("name");
     expect(resolveAssetQuery({ sort: "region" }).sort).toBe("region");
   });
@@ -65,11 +69,12 @@ describe("resolveAssetQuery", () => {
   it("opens risk columns worst-first and identity columns A→Z, unless told otherwise", () => {
     // A pre-direction `?sort=` link carried no dir, so the default has to reproduce what
     // that link used to mean.
-    expect(resolveAssetQuery({ sort: "aars" }).dir).toBe("desc");
+    expect(resolveAssetQuery({ sort: "issues" }).dir).toBe("desc");
+    expect(resolveAssetQuery({ sort: "findings" }).dir).toBe("desc");
     expect(resolveAssetQuery({ sort: "severity" }).dir).toBe("desc");
     expect(resolveAssetQuery({ sort: "combos" }).dir).toBe("desc");
     expect(resolveAssetQuery({ sort: "name" }).dir).toBe("asc");
-    expect(resolveAssetQuery({ sort: "aars", dir: "asc" }).dir).toBe("asc");
+    expect(resolveAssetQuery({ sort: "issues", dir: "asc" }).dir).toBe("asc");
     expect(resolveAssetQuery({ sort: "name", dir: "DESC" }).dir).toBe("desc");
     expect(resolveAssetQuery({ sort: "name", dir: "sideways" }).dir).toBe("asc");
   });
@@ -90,19 +95,22 @@ describe("resolveAssetQuery", () => {
     expect(resolveAssetQuery({ kinds: "BUCKET", kind: "AI_AGENT" }).kinds).toEqual(["BUCKET"]);
   });
 
-  it("still honors the pre-rename `band` param, MINIMAL included", () => {
-    // Links shared before AARS bands were renamed to AARS severity must keep resolving.
-    expect(resolveAssetQuery({ band: "CRITICAL" }).aarsSeverities).toEqual(["CRITICAL"]);
-    expect(resolveAssetQuery({ band: "MINIMAL" }).aarsSeverities).toEqual(["INFO"]);
-    expect(resolveAssetQuery({ aarsSeverity: "minimal" }).aarsSeverities).toEqual(["INFO"]);
-    // The newer spelling wins when a link somehow carries several.
-    expect(resolveAssetQuery({ aarsSeverity: "HIGH", band: "LOW" }).aarsSeverities)
-      .toEqual(["HIGH"]);
-    expect(resolveAssetQuery({ aarsSeverities: "LOW,HIGH", band: "CRITICAL" }).aarsSeverities)
-      .toEqual(["LOW", "HIGH"]);
-    // Junk resolves to "no filter" rather than a filter nothing can match.
-    expect(resolveAssetQuery({ band: "BOGUS" }).aarsSeverities).toEqual([]);
-    expect(resolveAssetQuery({ aarsSeverities: "HIGH,BOGUS" }).aarsSeverities).toEqual(["HIGH"]);
+  it("drops the retired AARS-level params instead of remapping them onto severities", () => {
+    // The register used to filter on an asset's AARS LEVEL, and three spellings of that
+    // param are still out there in shared links and saved views. They resolve to NO
+    // FILTER, and deliberately not to the same word on the issue-severity scale: the two
+    // measure different things over different populations, so answering `?band=CRITICAL`
+    // with the CRITICAL-issue rows would quietly return a different set of assets than the
+    // link was made for. Whole register, or a filter the reader chose — nothing in between.
+    for (const params of [
+      { band: "CRITICAL" }, { band: "MINIMAL" }, { aarsSeverity: "minimal" },
+      { aarsSeverities: "LOW,HIGH" }, { aarsSeverity: "HIGH", band: "LOW" },
+    ]) {
+      const q = resolveAssetQuery(params as Rec);
+      expect(q.severities).toEqual([]);
+      expect((q as unknown as Rec)["aarsSeverities"]).toBeUndefined();
+      expect(filterAssetRows(ROWS, q)).toHaveLength(ROWS.length);
+    }
   });
 
   it("keeps only real issue severities and real risk flags", () => {
@@ -130,10 +138,10 @@ describe("matchesAssetQuery", () => {
     expect(ids(filterAssetRows(ROWS, q({ q: "-c" })))).toEqual(["c"]);
   });
 
-  it("filters kind, cloud and AARS severity exactly", () => {
+  it("filters kind, cloud and issue severity exactly", () => {
     expect(ids(filterAssetRows(ROWS, q({ kind: "AI_AGENT" })))).toEqual(["a", "b"]);
     expect(ids(filterAssetRows(ROWS, q({ cloud: "AWS" })))).toEqual(["a", "c"]);
-    expect(ids(filterAssetRows(ROWS, q({ aarsSeverity: "CRITICAL" })))).toEqual(["b"]);
+    expect(ids(filterAssetRows(ROWS, q({ severity: "CRITICAL" })))).toEqual(["b"]);
   });
 
   it("treats a missing cloud as empty, never as a match", () => {
@@ -143,14 +151,12 @@ describe("matchesAssetQuery", () => {
 
   it("ORs the values inside one dimension", () => {
     expect(ids(filterAssetRows(ROWS, q({ kinds: "AI_MODEL,BUCKET" })))).toEqual(["c", "d"]);
-    expect(ids(filterAssetRows(ROWS, q({ aarsSeverities: "CRITICAL,MEDIUM" }))))
-      .toEqual(["b", "d"]);
     expect(ids(filterAssetRows(ROWS, q({ severities: "CRITICAL,LOW" })))).toEqual(["b", "d"]);
   });
 
   it("ANDs across dimensions, so adding one can only ever narrow", () => {
     expect(ids(filterAssetRows(ROWS, q({ q: "agent", clouds: "GCP" })))).toEqual(["b"]);
-    expect(filterAssetRows(ROWS, q({ kinds: "AI_AGENT", aarsSeverities: "MEDIUM" }))).toEqual([]);
+    expect(filterAssetRows(ROWS, q({ kinds: "AI_AGENT", severities: "LOW" }))).toEqual([]);
     expect(ids(filterAssetRows(ROWS, q({ kinds: "AI_AGENT,BUCKET", clouds: "AWS" }))))
       .toEqual(["a"]);
   });
@@ -184,11 +190,18 @@ describe("matchesAssetQuery", () => {
 });
 
 describe("sortAssetRows", () => {
-  it("orders by AARS descending, unscored assets last", () => {
-    expect(ids(sortAssetRows(ROWS, "aars"))).toEqual(["b", "a", "d", "c"]);
+  it("orders by open issues descending, quiet assets last", () => {
+    // a:3, d:2, b:1, c:0.
+    expect(ids(sortAssetRows(ROWS, "issues"))).toEqual(["a", "d", "b", "c"]);
   });
 
-  it("orders by name, and by kind/cloud with AARS breaking the tie", () => {
+  it("orders by failing findings descending", () => {
+    // b:2, d:1, then the two with none, separated by the tie-break's severity leg (a HIGH
+    // before c's unset) rather than by whatever order the array happened to be in.
+    expect(ids(sortAssetRows(ROWS, "findings"))).toEqual(["b", "d", "a", "c"]);
+  });
+
+  it("orders by name, and by kind/cloud with the risk tie-break settling the group", () => {
     expect(ids(sortAssetRows(ROWS, "name"))).toEqual(["a", "b", "d", "c"]);
     expect(ids(sortAssetRows(ROWS, "kind"))).toEqual(["b", "a", "c", "d"]);
     expect(ids(sortAssetRows(ROWS, "cloud"))).toEqual(["d", "a", "c", "b"]);
@@ -206,10 +219,28 @@ describe("sortAssetRows", () => {
     expect(ids(sortAssetRows(ROWS, "region"))).toEqual(["d", "b", "a", "c"]);
   });
 
-  it("flips the column but never the AARS tie-break", () => {
-    // kind descending: BUCKET, AI_MODEL, then the two AI_AGENTs — still worst-first.
+  it("flips the column but never the tie-break", () => {
+    // kind descending: BUCKET, AI_MODEL, then the two AI_AGENTs — and within that pair the
+    // tie-break still reads worst-first (b is CRITICAL, a is HIGH) rather than flipping.
     expect(ids(sortAssetRows(ROWS, "kind", "desc"))).toEqual(["d", "c", "b", "a"]);
-    expect(ids(sortAssetRows(ROWS, "aars", "asc"))).toEqual(["c", "d", "a", "b"]);
+    expect(ids(sortAssetRows(ROWS, "issues", "asc"))).toEqual(["c", "b", "d", "a"]);
+  });
+
+  it("breaks a tie by severity before count, so one CRITICAL leads five LOWs", () => {
+    // The whole argument for severity-first: both rows carry the same (zero) counts under
+    // the `name` column, and the reader still wants the CRITICAL one first.
+    const rows: Rec[] = [
+      { id: "x", name: "same", severity: "LOW", openIssues: 5, openFindings: 0 },
+      { id: "y", name: "same", severity: "CRITICAL", openIssues: 1, openFindings: 0 },
+    ];
+    expect(ids(sortAssetRows(rows, "name"))).toEqual(["y", "x"]);
+  });
+
+  it("is a TOTAL order — rows alike on every key still sort by id, not by input order", () => {
+    const twin = (id: string): Rec =>
+      ({ id, name: "twin", severity: "HIGH", openIssues: 1, openFindings: 1 });
+    expect(ids(sortAssetRows([twin("z"), twin("a")], "name"))).toEqual(["a", "z"]);
+    expect(ids(sortAssetRows([twin("a"), twin("z")], "name"))).toEqual(["a", "z"]);
   });
 
   it("copies rather than reordering the cached model's array", () => {
@@ -218,10 +249,13 @@ describe("sortAssetRows", () => {
     expect(ROWS).toEqual(original);
   });
 
-  it("sorts an unscored-only set without throwing", () => {
-    const rows: Rec[] = [{ name: "x" }, { name: "y" }];
-    expect(sortAssetRows(rows, "aars")).toHaveLength(2);
-    expect(ASSET_COMPARATORS.aars(rows[0], rows[1])).toBe(0);
+  it("sorts a countless set without throwing, and orders it by name", () => {
+    const rows: Rec[] = [{ id: "1", name: "y" }, { id: "2", name: "x" }];
+    expect(sortAssetRows(rows, "issues")).toHaveLength(2);
+    // Nothing to rank on but the tie-break's terminal legs, which is exactly when a
+    // predictable order matters most.
+    expect(ids(sortAssetRows(rows, "issues"))).toEqual(["2", "1"]);
+    expect(ASSET_COMPARATORS.issues(rows[0], rows[0])).toBe(0);
   });
 });
 
@@ -234,10 +268,7 @@ describe("facetCounts", () => {
       { value: "AI_AGENT", count: 2 }, { value: "AI_MODEL", count: 1 },
       { value: "BUCKET", count: 1 },
     ]);
-    // Severity dimensions come back worst-first, not alphabetically.
-    expect(f.aarsSeverities).toEqual([
-      { value: "CRITICAL", count: 1 }, { value: "HIGH", count: 1 }, { value: "MEDIUM", count: 1 },
-    ]);
+    // The severity dimension comes back worst-first, not alphabetically.
     expect(f.severities).toEqual([
       { value: "CRITICAL", count: 1 }, { value: "HIGH", count: 1 }, { value: "LOW", count: 1 },
     ]);

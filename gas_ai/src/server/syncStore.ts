@@ -10,10 +10,12 @@ import {
   buildAarsHintsFromFindings,
   enrichGraphDoc,
   withDataFindingNodes,
+  withDomains,
   withExcessivePrivilegeNodes,
   withExposureEvidence,
   withHumanAccess,
   withIdentityAccessNodes,
+  withOpenCounts,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
   withPostureTiers,
@@ -22,6 +24,7 @@ import {
   type AarsHints,
 } from "../domain/graphEnrich";
 import { withDataFindingCounts } from "../domain/syncNormalize";
+import { domainTagKey } from "./props";
 import type {
   ConfigRuleRow, DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow, GEdge, GNode,
   GraphDoc, IdentityFindingRow, IssueRow, NodeKind, PostureRow,
@@ -30,6 +33,8 @@ import type { EffectiveAccessRow } from "../domain/effectiveAccess";
 import { edgeId } from "../domain/graphTypes";
 import { aarsSeverity, derivationSignature, type AarsBands, type AarsRule } from "../domain/aars";
 import { isOpenGap, isUnresolvedIssue, normalizeAarsSeverity } from "../domain/config";
+import { buildAllFrameworkTrees } from "../domain/compliancePosture";
+import { dropUnselected, failingPolicyCount, scopeFiveRs } from "../domain/complianceScope";
 import {
   countProblemOutcomes,
   decideProblem,
@@ -44,7 +49,6 @@ import type { PostureRule } from "../domain/postureRule";
 import { OTHER_GROUP_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
 import { countAarsSeverities, countProjectTotals, encodeProjectTotals } from "../domain/aarsTrend";
-import { midrankPercentiles } from "../domain/rankStats";
 import { inProject, planPrune, type PruneCensus } from "../domain/prunePlan";
 import { nowIso, type Rec } from "../domain/util";
 import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot } from "./archiveStore";
@@ -946,8 +950,44 @@ export function persistSync(
     // scoped series with a missing point says so rather than inventing one. A trend
     // refinement must not be able to fail a commit.
     project_totals_json: encodeProjectTotals(
-      countProjectTotals(postured.nodes, [...decidedIssues, ...decidedFindings]),
+      // GATED, both populations, to the same predicates the register-wide columns use.
+      // The findings tab stores RESOLVED and PASS rows for the lifecycle clock, so an
+      // ungated count here would put a bigger number on the scoped line than
+      // `finding_count` puts on the register-wide one — two definitions of "a failing
+      // control" on one chart. The outcome series is unaffected: a row that fails either
+      // gate carries no verdict to count.
+      countProjectTotals(postured.nodes, [
+        ...decidedIssues.filter(isUnresolvedIssue),
+        ...decidedFindings.filter(isOpenGap),
+      ]),
     ),
+    // The count trend's other two series (`issue_count` above is the first). Gated by
+    // `isOpenGap`, the app's one definition of a failing control, so this column and
+    // `kpis.complianceGaps` count the same rows.
+    finding_count: decidedFindings.filter(isOpenGap).length,
+    // Distinct policies with a failing evaluation, over the AI-SCOPED rows — the same
+    // definition, through the same two functions, that `complianceKpis.failingPolicies`
+    // will report on the next read.
+    //
+    // Counting the raw rows instead was wrong in a way worth recording: it read 9 against
+    // the KPI's 5 on the seed landscape, because the 5Rs rules nothing has judged
+    // AI-relevant are dropped before the live count and were not dropped before this one.
+    // Nothing would have failed — the trend would simply have drawn its posture line at a
+    // level the figure above it never showed, and the delta chip would have stayed away
+    // forever because the two never agreed.
+    //
+    // NULL, NOT ZERO, when no posture was collected. The posture steps are optional and
+    // per-framework, so a tenant that declines them (or an operator who has selected no
+    // framework) has no number here — and "no failing policies" is a very different claim
+    // from "we never asked". The trend reader plots null as a gap.
+    posture_fail_count: frameworkPolicies.length
+      ? failingPolicyCount(dropUnselected(frameworkPolicies, scopeFiveRs(
+          buildAllFrameworkTrees(posture, frameworkPolicies, frameworks),
+          decidedFindings,
+          aiAssetIds(assetNodes),
+          settingsStore.getFiveRsPins(),
+        )))
+      : null,
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
   settingsStore.setDecidedRuleVersion(problemRuleVersion);
@@ -1001,7 +1041,17 @@ export function rescoreInventory(): {
   } else {
     // Merge: out-of-view rows keep the score AND the version they already had. Reading the
     // prior rows before the write is what makes this a merge rather than a partial wipe.
-    const priorById = new Map(loadAssets().map((a) => [a.id, a]));
+    //
+    // RAW, and that is load-bearing. `loadAssets()` is the READ model — it folds on bands,
+    // open counts and the domain — and these rows do not merely go to the tab, where
+    // `assetToRow` would drop all three. They go into `doc` below and on to the Drive
+    // snapshot, which is the graph's fast read path. `domain` is the one fold that does not
+    // survive that: it is resolved from a Script Property the operator can change, and
+    // `withDomains` sets-if-present, so a value baked here could never be corrected by any
+    // later read. The register would report no domains while the graph still grouped by the
+    // old ones. Raw rows carry exactly what the sheet holds, which is what "the score AND the
+    // version they already had" meant in the first place.
+    const priorById = new Map(loadAssetsRaw().map((a) => [a.id, a]));
     const keptIds = new Set(kept.map((n) => n.id));
     assetNodes = rescored.map((n) => (keptIds.has(n.id) ? n : priorById.get(n.id) ?? n));
     // The snapshot has to agree with the tab. `registerScopeDiagnostic` treats a snapshot
@@ -1311,9 +1361,6 @@ function stripAarsScore(n: GNode): GNode {
   delete next.aars;
   delete next.aarsSeverity;
   delete next.aarsPillars;
-  // Nothing writes `aarsPercentile` (it is read-derived), but an unscored node must not
-  // carry one either way — a percentile with no score behind it is a rank into nothing.
-  delete next.aarsPercentile;
   return next;
 }
 
@@ -1337,12 +1384,16 @@ let identityFindingsMemo: IdentityFindingRow[] | undefined;
 /**
  * `loadAssets`'s output, keyed by what produced it.
  *
- * `assetsMemo` above holds the RAW rows, and until the percentile landed that was enough:
+ * `assetsMemo` above holds the RAW rows, and for a while that was enough on its own:
  * `withCurrentBands` returns its input array unchanged whenever every stored band already
  * agrees with the rule, which for a freshly-scored ledger is every time — so `loadAssets`
- * cost nothing to call repeatedly and four call sites per request did. Stamping a
- * percentile always allocates (every scored node gets a field the raw row does not have),
- * so without this the same landscape would be copied once per caller.
+ * cost nothing to call repeatedly and four call sites per request did.
+ *
+ * STILL NEEDED, and no longer for the reason it was added. The percentile fold that always
+ * allocated is gone; `withOpenCounts` took its place and allocates unconditionally — it
+ * stamps two counts on every real node whether or not either is zero. Without this memo
+ * the same landscape would be copied once per caller, exactly as before. Deleting it on
+ * the grounds that the percentile went would reintroduce the cost under a new name.
  *
  * Keyed on the raw array's IDENTITY and on the bands in force, not merely stored, so
  * settingsStore.saveSettings's invariant survives verbatim: it bumps the data version
@@ -1350,7 +1401,20 @@ let identityFindingsMemo: IdentityFindingRow[] | undefined;
  * because the bands are read per call. A band edit changes `bandKey`, misses this memo and
  * re-derives — which is that same promise, kept by the key rather than by luck.
  */
-let derivedAssetsMemo: { raw: GNode[]; bandKey: string; out: GNode[] } | undefined;
+let derivedAssetsMemo: { raw: GNode[]; bandKey: string; domainKey: string; out: GNode[] } | undefined;
+
+
+/**
+ * Drop this module's per-execution memos.
+ *
+ * Test-only. In GAS these memos die with the execution, so nothing in production ever needs
+ * to clear them; under vitest the module registry outlives a test, and `test/gasEnv.ts`
+ * calls this so a shared server can be reset without re-importing the whole graph. See the
+ * comment on `resetToSynced` there.
+ */
+export function __resetMemosForTest(): void {
+  invalidateReadMemos();
+}
 
 function invalidateReadMemos(): void {
   graphDocMemo = undefined;
@@ -1461,54 +1525,37 @@ export function withCurrentBands(nodes: GNode[], bands: AarsBands): GNode[] {
   return touched ? out : nodes;
 }
 
-/**
- * Attach each scored asset's landscape percentile — the statistic that carries the ranking
- * claim now that the BAND does not (ai/AARS_SCORING_ASSESSMENT.md §3: 19 of 30 assets land
- * CRITICAL, HIGH and MEDIUM empty, so the band names no queue).
- *
- * READ PATH ONLY, and the asymmetry with `withCurrentBands` above is deliberate. A band is
- * re-derivable from ONE asset's stored score, so a persisted `aars_severity` is a usable
- * fallback for a node the current rule cannot band. A percentile is not: it is computed
- * against the whole scored population, so it is invalidated by any change to any OTHER
- * asset. There is therefore no column, no fallback and no write — attaching it here, after
- * the population is assembled, is the only place it can be correct.
- *
- * The population is exactly "nodes carrying a numeric `aars`", which excludes ISSUE nodes
- * and every unscored asset. Callers publish that count (`api.ts`'s `aarsScored`) rather
- * than leaving the denominator implied — the S-test AARS_SCORING_ASSESSMENT.md §3 sets for
- * any published aggregate.
- */
-export function withAarsPercentile(nodes: GNode[]): GNode[] {
-  const scored: number[] = [];
-  for (const n of nodes) if (typeof n.aars === "number") scored.push(n.aars);
-  if (!scored.length) return nodes;
-  const percentiles = midrankPercentiles(scored);
-  // Whole percent: 1/30 of a landscape is ~3.3 points, so a decimal would advertise a
-  // precision the population does not have. Rounded here rather than in rankStats.ts,
-  // which stays a pure-statistics module with no opinion about display.
-  let i = 0;
-  return nodes.map((n) => {
-    if (typeof n.aars !== "number") return n;
-    return { ...n, aarsPercentile: Math.round(percentiles[i++]!) };
-  });
-}
-
 function currentBands(): AarsBands {
   return settingsStore.getAarsRule().rule.bands;
 }
 
 /**
- * The two read-time AARS derivations, applied together. Both are population- or
- * rule-dependent and neither is persisted in a usable form, so a read path that ran only
- * one of them would ship a banded asset with no percentile (or the reverse) and the
- * surfaces would disagree about the same asset. One helper, three call sites.
+ * The read-time AARS derivation: re-band every stored score under the rule in force.
+ *
+ * It used to attach a landscape percentile beside the band. That figure existed to carry
+ * the per-asset ranking claim the band could not (ai/AARS_SCORING_ASSESSMENT.md §3), and
+ * it went when the surfaces that led with it did — the register, the asset sheet and the
+ * graph node badge all read counts now, so nothing was left to rank. `midrankPercentiles`
+ * stays in rankStats.ts, where the ordinality tests still measure the model with it.
  */
 function withAarsReadDerivations(nodes: GNode[]): GNode[] {
-  return withAarsPercentile(withCurrentBands(nodes, currentBands()));
+  return withCurrentBands(nodes, currentBands());
+}
+
+/**
+ * Every read-time node derivation, applied together — the counts the pages publish and the
+ * AARS figures the workbench still needs. One helper so a read path cannot pick up half of
+ * them, which is the bug `withAarsReadDerivations` was itself introduced to prevent.
+ */
+function withReadDerivations(nodes: GNode[]): GNode[] {
+  return withDomains(
+    withOpenCounts(withAarsReadDerivations(nodes), loadIssues(), loadFindings()),
+    domainTagKey(),
+  );
 }
 
 function withBandsApplied(doc: GraphDoc): GraphDoc {
-  const nodes = withAarsReadDerivations(doc.nodes);
+  const nodes = withReadDerivations(doc.nodes);
   return nodes === doc.nodes ? doc : { ...doc, nodes };
 }
 
@@ -1518,7 +1565,7 @@ function loadGraphDocUncached(): GraphDoc | null {
 
   const assetRows = readAll(TABS.assets);
   if (!assetRows.length) return null;
-  const nodes = withAarsReadDerivations(assetRows.map(rowToAsset));
+  const nodes = withReadDerivations(assetRows.map(rowToAsset));
   const edges = readAll(TABS.edges).map(rowToEdge);
   const issues = loadIssues().filter(isUnresolvedIssue);
   for (const issue of issues) {
@@ -1545,6 +1592,20 @@ function loadGraphDocUncached(): GraphDoc | null {
   });
 }
 
+/**
+ * The asset ids this sync is about to persist, as the set `scopeFiveRs` wants.
+ *
+ * Over the nodes IN HAND rather than `loadAssets()`, which is the whole reason this exists
+ * separately from api.ts's `aiAssetIdSet`: at this point in a sync the tabs still hold the
+ * PREVIOUS landscape, so reading them back would scope this sync's posture count against
+ * last sync's assets.
+ */
+function aiAssetIds(nodes: GNode[]): Record<string, true> {
+  const ids: Record<string, true> = {};
+  for (const n of nodes) ids[n.id] = true;
+  return ids;
+}
+
 /** Assets exactly as persisted — the recompute's input, and nobody else's. */
 function loadAssetsRaw(): GNode[] {
   if (assetsMemo === undefined) assetsMemo = readAll(TABS.assets).map(rowToAsset);
@@ -1560,10 +1621,17 @@ export function loadAssets(): GNode[] {
   const raw = loadAssetsRaw();
   const bands = currentBands();
   const bandKey = `${bands.critical}|${bands.high}|${bands.medium}|${bands.low}`;
+  // `domainKey` for the same reason `bandKey` is here, one setting removed: the domain tag
+  // key is a SCRIPT PROPERTY, so it never passes through settingsStore.saveSettings and
+  // never bumps DATA_VERSION. Without it in the key, changing the property would leave this
+  // memo answering under the old key for the rest of the execution.
+  const domainKey = domainTagKey();
   const memo = derivedAssetsMemo;
-  if (memo && memo.raw === raw && memo.bandKey === bandKey) return memo.out;
-  const out = withAarsReadDerivations(raw);
-  derivedAssetsMemo = { raw, bandKey, out };
+  if (memo && memo.raw === raw && memo.bandKey === bandKey && memo.domainKey === domainKey) {
+    return memo.out;
+  }
+  const out = withReadDerivations(raw);
+  derivedAssetsMemo = { raw, bandKey, domainKey, out };
   return out;
 }
 

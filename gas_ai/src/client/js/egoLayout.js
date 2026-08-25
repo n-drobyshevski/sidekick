@@ -50,10 +50,14 @@ function compareRels(a, b) {
   d = sevRank(an.severity) - sevRank(bn.severity);
   if (d !== 0) return d;
 
-  var aHasAars = an.aars !== null && an.aars !== undefined;
-  var bHasAars = bn.aars !== null && bn.aars !== undefined;
-  if (aHasAars !== bHasAars) return aHasAars ? -1 : 1; // present beats absent (null last)
-  if (aHasAars && bHasAars && an.aars !== bn.aars) return bn.aars - an.aars; // higher first
+  // The same "worst first" the register's tie-break and the graph's own neighbour
+  // priority use (byRiskDesc in assetTable.ts, nodeOrder in graphProject.ts): severity
+  // above, then the two counts. This picture chooses which neighbours survive the cap, so
+  // it is a claim about what matters, and one app should make that claim one way.
+  d = Number(bn.openIssues || 0) - Number(an.openIssues || 0);
+  if (d !== 0) return d;
+  d = Number(bn.openFindings || 0) - Number(an.openFindings || 0);
+  if (d !== 0) return d;
 
   return String(an.name || "").localeCompare(String(bn.name || ""));
 }

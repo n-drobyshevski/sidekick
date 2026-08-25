@@ -1,7 +1,9 @@
-// Settings: default graph depth, node budget, and credential status (read-only —
-// secrets are set as Script Properties in the GAS editor, never through the UI).
+// Settings: default graph depth, node budget, credential status (read-only — secrets are set
+// as Script Properties in the GAS editor, never through the UI), the 5Rs policy scope, and
+// whether this browser shows the app's experimental surfaces at all.
 
 import { call } from "../api.js";
+import { setShowExperimental, showExperimental } from "../experimental.js";
 import { bootstrap } from "../store.js";
 import { clientBuild, describeBuild } from "../buildInfo.js";
 import {
@@ -11,7 +13,7 @@ import {
 export async function renderSettings(main, _params, ctx) {
   main.append(
     el("h1", {}, "Settings"),
-    el("p", { class: "page-sub" }, "Graph defaults and connection status."),
+    el("p", { class: "page-sub" }, "Graph defaults, connection status and what this app shows you."),
   );
 
   const host = el("div", {});
@@ -182,7 +184,54 @@ export async function renderSettings(main, _params, ctx) {
 
     host.append(fiveRsCard(s));
 
+    host.append(experimentalCard());
+
     host.append(buildCard());
+  }
+
+  /**
+   * The one control on this page that saves nothing to the ledger.
+   *
+   * It sits here, below the cards that configure the product, because it decides how much of
+   * the product there is — and it is deliberately the last thing before the build stamp: app
+   * chrome, not data. Save-on-change, for the reason stated at the autoExpand toggle above:
+   * a single binary with an immediately reversible effect. What it does NOT copy from that
+   * toggle is the snap-back arm — there is no server here to reject the write, so a control
+   * that reverted itself would be inventing a failure that cannot happen.
+   */
+  function experimentalCard() {
+    // Declared with `const` and referenced from its own onChange, exactly as the autoExpand
+    // toggle above is: the handler cannot run before the binding is initialised.
+    const toggle = segmented({
+      options: [{ value: "on", label: "On" }, { value: "off", label: "Off" }],
+      value: showExperimental() ? "on" : "off",
+      ariaLabel: "Show experimental content",
+      onChange: (v) => {
+        // Rebuilds the nav rail through app.js's listener; nothing is re-fetched, because
+        // nothing the server computes depends on this.
+        setShowExperimental(v === "on");
+        // segmented() does not move its own aria-pressed — the caller owns that, so a
+        // control can never show a state that was not accepted. Read back from the flag
+        // rather than echoing `v`, for the same reason the toggle above reads the server's
+        // reply instead of its own click.
+        toggle.set(showExperimental() ? "on" : "off");
+        toast("Settings saved.");
+      },
+    });
+
+    return el("div", { class: "card", style: "margin-top:14px" },
+      el("h3", {}, "Experimental content"),
+      el("div", { class: "field" },
+        el("label", { class: "field-label" }, "Show experimental content"),
+        toggle),
+      el("p", { class: "small muted", style: "margin:10px 0 0" },
+        "Off by default. On, the sidebar gains Labs → Scoring Models — the findings score, " +
+        "the problem cascade and the posture tiers, all three under calibration — and the " +
+        "Help key sheet regains the definitions that are only ever drawn there. Nothing " +
+        "else in this app reads those models either way, so this changes what you can open " +
+        "and never what anything computes. Remembered in this browser only, like the " +
+        "sidebar's collapse; other people opening this workbook are unaffected."),
+    );
   }
 
   /**

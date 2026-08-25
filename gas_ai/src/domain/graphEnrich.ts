@@ -16,6 +16,7 @@ import {
   type IssueSeverityKey,
 } from "./aars";
 import { isOpenGap, isUnresolvedIssue, SEVERITY_ORDER } from "./config";
+import { domainOfTags } from "./domainTag";
 import type { Severity } from "./config";
 import type { EffectiveAccessRow } from "./effectiveAccess";
 import { isRatedExposure, worseExposureLevel } from "./exposureQuery";
@@ -1122,5 +1123,91 @@ export function withMissingGuardrailNodes(doc: GraphDoc): GraphDoc {
     name: "No guardrail",
     edgeType: "PROTECTED_BY",
     negated: true,
+  });
+}
+
+/**
+ * Attach `openIssues` / `openFindings` to every real asset node — the two counts every
+ * surface outside the model workbench now leads with.
+ *
+ * A READ-TIME FOLD, like the risk-topology helpers below and unlike the score: both
+ * populations live in their own tabs and move without `ai_assets` being rewritten, so a
+ * finding that resolves is an edit to `ai_findings` and a persisted copy here would go
+ * stale exactly when someone had fixed something. `syncStore` applies it on every read
+ * path; nothing on the write path sets these.
+ *
+ * PURE, and taking both populations as arguments rather than reaching for a store, so the
+ * one definition of these counts is testable and is the same one the layout and projection
+ * comparators are exercised against.
+ *
+ * Gated by the two predicates every other count in this app routes through —
+ * `isUnresolvedIssue` and `isOpenGap` — so the per-asset numbers and the register totals
+ * cannot disagree. Findings join on `resourceId`, which is why most of them land on no
+ * asset at all; that gap is published as `complianceGapsUnlinked`, not hidden.
+ *
+ * Synthetic nodes are skipped rather than counted as zero. An ISSUE node has no issues of
+ * its own, and saying "0" about it would invite a reader to average it in.
+ */
+export function withOpenCounts(
+  nodes: GNode[],
+  issues: ReadonlyArray<{ assetId?: string; status?: string }>,
+  findings: ReadonlyArray<{ resourceId?: string; result?: string; status?: string; deleted?: boolean }>,
+): GNode[] {
+  const issueCount: Record<string, number> = {};
+  for (const issue of issues) {
+    if (!issue.assetId || !isUnresolvedIssue(issue)) continue;
+    issueCount[issue.assetId] = (issueCount[issue.assetId] ?? 0) + 1;
+  }
+  const findingCount: Record<string, number> = {};
+  for (const finding of findings) {
+    if (!finding.resourceId || !isOpenGap(finding)) continue;
+    findingCount[finding.resourceId] = (findingCount[finding.resourceId] ?? 0) + 1;
+  }
+  return nodes.map((n) => {
+    if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
+    return { ...n, openIssues: issueCount[n.id] ?? 0, openFindings: findingCount[n.id] ?? 0 };
+  });
+}
+
+/**
+ * Attach each node's business domain, read off its `Wiz/Domain` tag.
+ *
+ * A read-time fold for the same reason `withOpenCounts` above is one: the answer moves
+ * without `ai_assets` being rewritten. Here it moves because the tag key is an operator
+ * setting — baking it would mean a landscape kept the old key's answers until the next
+ * daily sync. Already-synced graphs gain domains without a re-sync.
+ *
+ * Synthetic nodes are skipped, exactly as above: an ISSUE node is evidence about an asset
+ * and owns no tags. The grouping layer inherits an asset's domain onto its evidence, which
+ * is the right place for that rule — it is a question about how to draw, not about what is
+ * true of the node.
+ *
+ * Sets `domain` only when there is one. Absent stays absent rather than becoming `""`, so
+ * facets and group keys can treat "untagged" as the missing value it is.
+ *
+ * AND CLEARS ONE THAT NO LONGER RESOLVES, which is not the same statement. This used to
+ * set-if-present and nothing else, on the reasoning that its only input was `rowToAsset`
+ * output and that never carries a `domain`. The Drive snapshot broke that assumption — a
+ * scoped rescore merged already-folded rows into the document it persisted — and because
+ * this fold could not clear, the stale value was permanent: the register read the tab and
+ * reported no domains while the graph read the snapshot and kept grouping by the old ones.
+ * One landscape, two answers, nothing red.
+ *
+ * That bake is fixed at its source in `syncStore.rescoreInventory`. This half is the repair:
+ * a snapshot already written by an older build heals on the next read instead of needing a
+ * full re-sync. It also makes the fold total, which is what its siblings already are —
+ * `withOpenCounts` stamps unconditionally and `withPostureTiers` deletes.
+ */
+export function withDomains(nodes: GNode[], tagKey: string): GNode[] {
+  return nodes.map((n) => {
+    if (n.kind === "ISSUE" || n.kind === "SUMMARY") return n;
+    const domain = domainOfTags(n.tags, tagKey);
+    if (domain) return { ...n, domain };
+    // Untouched when there was nothing to clear, so "absent stays absent" still holds and a
+    // clean read allocates no copies.
+    if (n.domain === undefined) return n;
+    const out = { ...n };
+    delete out.domain;
+    return out;
   });
 }
