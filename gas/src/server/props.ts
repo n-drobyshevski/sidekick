@@ -12,6 +12,10 @@ export const PROP_KEYS = {
   wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
   ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
   archiveFolderId: "ARCHIVE_FOLDER_ID",
+  // The warm schedule setup() last installed. A ClockTrigger exposes no hour, minute or
+  // timezone, so this is the only way a later edit to the schedule can be detected and
+  // reconciled rather than silently ignored on an existing deployment.
+  warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
 } as const;
 
 export const DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";

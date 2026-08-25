@@ -322,6 +322,8 @@
       if (i >= 0) triggers.splice(i, 1);
     },
     newTrigger: (handler) => {
+      const schedule = {};
+      const rec = (k, v) => { schedule[k] = v; return builder; };
       const builder = {
         // The full documented ClockTriggerBuilder surface, not just the methods this codebase
         // happens to call today. The shim previously carried four of them, so adding a trigger
@@ -329,23 +331,30 @@
         // that throw took down the whole google.script.run shim and every page rendered
         // "Couldn't reach the server". Listing the real API rather than accepting any method
         // keeps a genuine typo failing while stopping the shim from lagging behind again.
+        //
+        // The schedule arguments are recorded rather than discarded. Real GAS exposes none of
+        // them back off a Trigger, so this is strictly more than production offers — but the
+        // warm schedule is now a SET of triggers at specific hours, and without this the dev
+        // environment cannot show whether it built the right one.
         timeBased: () => builder,
-        after: () => builder,
-        at: () => builder,
-        atDate: () => builder,
-        atHour: () => builder,
-        everyDays: () => builder,
-        everyHours: () => builder,
-        everyMinutes: () => builder,
-        everyWeeks: () => builder,
-        inTimezone: () => builder,
-        nearMinute: () => builder,
-        onMonthDay: () => builder,
-        onWeekDay: () => builder,
+        after: (ms) => rec("after", ms),
+        at: (date) => rec("at", date),
+        atDate: (y, m, d) => rec("atDate", [y, m, d]),
+        atHour: (h) => rec("atHour", h),
+        everyDays: (n) => rec("everyDays", n),
+        everyHours: (n) => rec("everyHours", n),
+        everyMinutes: (n) => rec("everyMinutes", n),
+        everyWeeks: (n) => rec("everyWeeks", n),
+        inTimezone: (tz) => rec("inTimezone", tz),
+        nearMinute: (m) => rec("nearMinute", m),
+        onMonthDay: (d) => rec("onMonthDay", d),
+        onWeekDay: (d) => rec("onWeekDay", d),
         create: () => {
           const trigger = {
             getHandlerFunction: () => handler,
             getUniqueId: () => `trigger-${++triggerSeq}`,
+            // Dev-only, for inspection from the console.
+            __schedule: { ...schedule },
           };
           triggers.push(trigger);
           if (handler === "trigger_continueScan") {

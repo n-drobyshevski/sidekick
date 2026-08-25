@@ -27,7 +27,9 @@ function trigger_continueScan(e) { Server.jobs.continueJob(e); }
 function trigger_continueBackfill(e) { Server.backfill.continueBackfill(e); }
 function trigger_continuePurge(e) { Server.purge.continuePurge(e); }
 // Re-warms the read-model cache between scans: CacheService caps TTLs at six hours, so a
-// daily-scan tenant would otherwise go cold three or four times between scans.
+// daily-scan tenant would otherwise go cold three or four times between scans. Installed by
+// setup() three times across the working day (warm by 09:00, 13:00 and 17:00 Europe/Paris)
+// rather than round the clock — see setup.ts for why the fires are an hour early.
 function trigger_warmReadModels() { Server.api.warmReadModelsScheduled(); }
 
 // google.script.run API surface — thin delegators so the client can call api_* by name.

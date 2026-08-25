@@ -2323,7 +2323,9 @@ function warmReadModelsInner(budgetMs: number): void {
  * a choice. Tenants scan daily, so DATA_VERSION does not move for ~24h while every entry lapses
  * three or four times inside that window — and each lapse is a multi-second cold load paid by
  * whoever opens the app next. Re-warming on a schedule costs a few minutes of trigger quota a
- * day and means nobody pays that.
+ * day and means nobody pays that. The schedule itself lives in setup.ts, and it covers the
+ * working day rather than the clock: a fire at 01:00 refreshes entries that lapse before anyone
+ * arrives.
  *
  * SKIPPED WHILE A JOB IS IN FLIGHT, and the reason is correctness rather than politeness.
  * `activeJob()` is single-flight across kinds, so one test covers scan, backfill, purge, import
@@ -2333,7 +2335,7 @@ function warmReadModelsInner(budgetMs: number): void {
  * it for the rest of that window.
  *
  * It deliberately does NOT take the script lock. A 60-120s hold would make an operator's "Run
- * scan" fail with LedgerBusyError on its 30s timeout; two fires of a 4-hourly trigger cannot
+ * scan" fail with LedgerBusyError on its 30s timeout; the fires are hours apart so two cannot
  * overlap, and the only real race is warm-vs-afterPersist, which the activeJob check covers.
  */
 export function warmReadModelsScheduled(): void {
