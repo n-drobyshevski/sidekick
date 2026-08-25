@@ -4,7 +4,14 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "lib": ["ES2019"],
-    "types": ["google-apps-script"],
+    // GAS types for src/, Node types for test/ and the build scripts. `node` is here
+    // EXPLICITLY because it used to arrive by accident: vitest 1 re-exported through
+    // vite/dist/node/index.d.ts, which carries `/// <reference types="node" />`, so the whole
+    // program silently got Node globals. Vitest 4 moved deps under a `server` namespace and
+    // severed that chain, which is what surfaced `node:fs` and `Buffer` as errors. The tests
+    // genuinely import node:fs/path/url/zlib and use Buffer + import.meta.url, so the
+    // dependency is real — it was just never declared.
+    "types": ["google-apps-script", "node"],
     "strict": true,
     "noUncheckedIndexedAccess": false,
     "noFallthroughCasesInSwitch": true,

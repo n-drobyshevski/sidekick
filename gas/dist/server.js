@@ -19,8 +19,8 @@ var Server = (() => {
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
   // src/server/index.ts
-  var server_exports = {};
-  __export(server_exports, {
+  var index_exports = {};
+  __export(index_exports, {
     api: () => api_exports,
     backfill: () => backfillJobs_exports,
     doGet: () => doGet,
@@ -8958,6 +8958,7 @@ var Server = (() => {
       }
       baseRows2 = visibleBase(baseRows2);
       const { perSev, overall } = mttrFromLedger(baseRows2);
+      void perSev;
       const generated = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
       const matrix = [
         {
@@ -9263,5 +9264,5 @@ var Server = (() => {
       warm("attribution", () => cachedAttributionData({ severities }));
     }
   }
-  return __toCommonJS(server_exports);
+  return __toCommonJS(index_exports);
 })();
