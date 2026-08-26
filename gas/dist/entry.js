@@ -101,6 +101,8 @@ function api_getExportCsv(p) { return timedApi_("getExportCsv", p); }
 function api_getExportRawUrl(p) { return timedApi_("getExportRawUrl", p); }
 function api_exportMigrationBundle(p) { return timedApi_("exportMigrationBundle", p); }
 function api_getSettings(p) { return timedApi_("getSettings", p); }
+function api_getSettingsImpact(p) { return timedApi_("getSettingsImpact", p); }
+function api_saveSettings(p) { return timedApi_("saveSettings", p); }
 function api_setSeverities(p) { return timedApi_("setSeverities", p); }
 function api_setRetention(p) { return timedApi_("setRetention", p); }
 function api_setAutoCompact(p) { return timedApi_("setAutoCompact", p); }

@@ -231,3 +231,32 @@ export function apiSeverityFilter(severities: unknown): string[] | null {
   if (new Set(sevs).size === SELECTABLE_SEVERITIES.length) return null;
   return sevs.map((s) => API_SEVERITY_VALUES[s]);
 }
+
+/**
+ * Apply several register settings at once, returning the new settings dict — the pure half of
+ * settingsStore.setMany, and the reason the Settings page can commit a whole screen of edits in
+ * one write instead of a sequence of per-field calls that can fail halfway.
+ *
+ * Only the keys present in `patch` are touched, so a field the reader did not edit is not
+ * rewritten with its own value and a concurrent change to it is not silently reverted. Unknown
+ * keys are ignored rather than trusted onto the dict.
+ *
+ * ORDER IS LOAD-BEARING, and it is the whole reason this is a named function rather than a loop.
+ * `withFetchSeverities` re-clamps the display scope to the new scan scope. Applying display
+ * first would clamp it against the OLD scan scope and then widen the scan scope past it, so a
+ * reader who adds MEDIUM to both in one edit would find MEDIUM scanned but not shown.
+ */
+export function applySettingsPatch(settings: Rec, patch: Rec): Rec {
+  let d = settings;
+  if ("fetchSeverities" in patch) d = withFetchSeverities(d, patch["fetchSeverities"]);
+  if ("displaySeverities" in patch) d = withDisplaySeverities(d, patch["displaySeverities"]);
+  if ("showNoFix" in patch) d = withShowNoFix(d, Boolean(patch["showNoFix"]));
+  if ("includeEol" in patch) d = withIncludeEol(d, Boolean(patch["includeEol"]));
+  if ("riskRule" in patch) d = withRiskRule(d, patch["riskRule"]);
+  if ("retentionDays" in patch) {
+    const raw = patch["retentionDays"];
+    d = withRetentionDays(d, raw === null || raw === undefined ? null : Number(raw));
+  }
+  if ("autoCompact" in patch) d = withAutoCompact(d, Boolean(patch["autoCompact"]));
+  return d;
+}

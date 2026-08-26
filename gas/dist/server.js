@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "d713f366b402" : "dev";
+  var BUILD_ID = true ? "15ee597f22f5" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -2014,6 +2014,20 @@ var Server = (() => {
     if (new Set(sevs).size === SELECTABLE_SEVERITIES.length) return null;
     return sevs.map((s) => API_SEVERITY_VALUES[s]);
   }
+  function applySettingsPatch(settings, patch) {
+    let d = settings;
+    if ("fetchSeverities" in patch) d = withFetchSeverities(d, patch["fetchSeverities"]);
+    if ("displaySeverities" in patch) d = withDisplaySeverities(d, patch["displaySeverities"]);
+    if ("showNoFix" in patch) d = withShowNoFix(d, Boolean(patch["showNoFix"]));
+    if ("includeEol" in patch) d = withIncludeEol(d, Boolean(patch["includeEol"]));
+    if ("riskRule" in patch) d = withRiskRule(d, patch["riskRule"]);
+    if ("retentionDays" in patch) {
+      const raw = patch["retentionDays"];
+      d = withRetentionDays(d, raw === null || raw === void 0 ? null : Number(raw));
+    }
+    if ("autoCompact" in patch) d = withAutoCompact(d, Boolean(patch["autoCompact"]));
+    return d;
+  }
 
   // src/server/wizQuery.ts
   var QUERY = "\n    query VulnerabilityFindingsTable($filterBy: VulnerabilityFindingFilters, $first: Int, $after: String, $orderBy: VulnerabilityFindingOrder = {direction: DESC, field: CREATED_AT}, $includeRelatedIssueAnalytics: Boolean = false, $includeRelatedSourceMappedIssueAnalytics: Boolean = false, $includeTotalCount: Boolean = false, $includePostureIssues: Boolean = false, $fetchPrivilegedActionRequests: Boolean = false) {\n      vulnerabilityFindings(\n        filterBy: $filterBy\n        first: $first\n        after: $after\n        orderBy: $orderBy\n      ) {\n        nodes {\n          ...VulnerabilityFindingFragment\n          ...DuplicateFindingBadge\n          transitivity\n          rootComponent {\n            name\n          }\n          isHighProfileThreat\n          vendorSeverity\n          nvdSeverity\n          weightedSeverity\n          hasExploit\n          usedInCodeResult\n          hasCisaKevExploit\n          cisaKevReleaseDate\n          cisaKevDueDate\n          score\n          epssSeverity\n          epssPercentile\n          epssProbability\n          categories\n          hasInitialAccessPotential\n          isClientSide\n          affectedBySettings\n          codeLibraryLanguage\n          exploitabilityValidationStatus\n          cvssv2 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          cvssv3 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          effectiveAvailabilityImpact\n          cnaScore\n          vendorScore\n          relatedIssueAnalytics @include(if: $includeRelatedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          relatedSourceMappedIssueAnalytics @include(if: $includeRelatedSourceMappedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          postureIssues @include(if: $includePostureIssues) {\n            ...PostureIssuePopoverListRecord\n          }\n          privilegedActionRequests @include(if: $fetchPrivilegedActionRequests) {\n            ...PendingUpdateVulnerabilityFindingStatusRequest\n          }\n        }\n        pageInfo {\n          hasNextPage\n          endCursor\n        }\n        totalCount @include(if: $includeTotalCount)\n      }\n    }\n   \n        fragment VulnerabilityFindingFragment on VulnerabilityFinding {\n      id\n      name\n      detailedName\n      description\n      severity\n      status\n      fixedVersion\n      detectionMethod\n      firstDetectedAt\n      firstDetectedAtSource\n      lastDetectedAt\n      resolvedAt\n      validatedInRuntime\n      runtimeValidationResult\n      reachability\n      hasTriggerableRemediation\n      remediationPullRequestAvailable\n      dataSourceName\n      fixDate\n      fixDateBefore\n      publishedDate\n      version\n      versionResolutionPrimarySource {\n        type\n        version\n      }\n      isOperatingSystemEndOfLife\n      recommendedVersion\n      locationPath\n      artifactType {\n        ...SBOMArtifactTypeFragment\n      }\n      projects {\n        id\n        name\n        slug\n        isFolder\n      }\n      ignoreRules {\n        id\n      }\n      note {\n        id\n        text\n      }\n      layerMetadata {\n        id\n        details\n        isBaseLayer\n        layerHash\n      }\n      vulnerableAsset {\n        ... on VulnerableAssetBase {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          externalId\n          providerUniqueId\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachine {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          imageName\n          imageId\n          imageNativeType\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          computeInstanceGroup {\n            id\n            externalId\n            name\n            replicaCount\n            tags\n          }\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetServerless {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainerImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          repository {\n            vertexId\n            name\n          }\n          registry {\n            vertexId\n            name\n          }\n          scanSource\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          graphEntity {\n            ...VulnerabilityContainerImageGraphEntityExecutionContext\n          }\n          nativeType\n          tagReferences\n          imageTags\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainer {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          nativeType\n          isUsedOnPrem\n        }\n        ... on VulnerableAssetRepositoryBranch {\n          id\n          type\n          name\n          cloudPlatform\n          repositoryId\n          repositoryName\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetIde {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetEndpoint {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetPaaSResource {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachineImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetNetworkAddress {\n          subscriptionId\n          subscriptionName\n          subscriptionExternalId\n          tags\n          address\n          addressType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetCommon {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetDevice {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n        }\n      }\n      sourceMappedCodeFindings {\n        id\n        remediationPullRequestAvailable\n      }\n    }\n   \n\n\n        fragment SBOMArtifactTypeFragment on SBOMArtifactType {\n      group\n      codeLibraryLanguage\n      osPackageManager\n      hostedTechnology {\n        id\n        name\n        icon\n      }\n      plugin\n      custom\n      ciComponent\n    }\n   \n\n\n        fragment VulnerabilityFindingOperatingSystemDistribution on Technology {\n      id\n      name\n      icon\n    }\n   \n\n\n        fragment VulnerableAssetExecutionControllerDetails on VulnerableAssetExecutionController {\n      id\n      entityType\n      externalId\n      providerUniqueId\n      name\n      subscriptionExternalId\n      subscriptionId\n      subscriptionName\n      ancestors {\n        id\n        name\n        entityType\n        externalId\n        providerUniqueId\n      }\n    }\n   \n\n\n        fragment VulnerabilityContainerImageGraphEntityExecutionContext on GraphEntity {\n      id\n      providerUniqueId\n      type\n      containerImageExecutionContextAnalyticsV3 {\n        totalResourceCount\n        nativeType {\n          nativeType\n          count\n        }\n      }\n    }\n   \n\n\n        fragment DuplicateFindingBadge on VulnerabilityFinding {\n      id\n      origin\n      duplicateOf {\n        id\n        name\n        origin\n        vulnerableAsset {\n          ... on VulnerableAssetBase {\n            id\n            name\n          }\n        }\n      }\n    }\n   \n\n\n        fragment VulnerabilityFindingRelatedIssueAnalyticsFragment on VulnerabilityFindingRelatedIssueAnalytics {\n      issueCount\n      informationalSeverityCount\n      lowSeverityCount\n      mediumSeverityCount\n      highSeverityCount\n      criticalSeverityCount\n    }\n   \n\n\n        fragment PostureIssuePopoverListRecord on PostureIssue {\n      id\n      name\n      type\n      entity {\n        providerUniqueId\n        id\n        type\n      }\n    }\n   \n\n\n        fragment PendingUpdateVulnerabilityFindingStatusRequest on PrivilegedActionRequest {\n      ...PendingStatusRequestBanner\n      ...PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams\n    }\n   \n\n\n        fragment PendingStatusRequestBanner on PrivilegedActionRequest {\n      id\n      type\n      status\n      createdAt\n      createdBy {\n        id\n        name\n        email\n      }\n      params {\n        ... on PrivilegedActionRequestUpdateIssueStatusParams {\n          issueStatus: status\n        }\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          findingStatus: status\n        }\n        ... on PrivilegedActionRequestCreateIgnoreRuleParams {\n          ignoreRuleName: name\n        }\n      }\n    }\n   \n\n\n        fragment PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams on PrivilegedActionRequest {\n      id\n      params {\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          status\n        }\n      }\n      subject {\n        ... on VulnerabilityFinding {\n          id\n          status\n        }\n      }\n    }\n";
@@ -2359,6 +2373,7 @@ var Server = (() => {
     getRiskCohort: () => getRiskCohort,
     getScanHistory: () => getScanHistory,
     getSettings: () => getSettings,
+    getSettingsImpact: () => getSettingsImpact,
     getStorageStats: () => getStorageStats,
     importAbort: () => importAbort,
     importBegin: () => importBegin,
@@ -2375,6 +2390,7 @@ var Server = (() => {
     saveAccess: () => saveAccess,
     saveAdmins: () => saveAdmins,
     saveDomains: () => saveDomains,
+    saveSettings: () => saveSettings2,
     setAutoCompact: () => setAutoCompact2,
     setIncludeEol: () => setIncludeEol2,
     setRetention: () => setRetention,
@@ -5217,6 +5233,68 @@ var Server = (() => {
     };
   }
 
+  // src/domain/settingsImpact.ts
+  var EPSS_BINS = 100;
+  function tri(v) {
+    if (v === true) return "t";
+    if (v === false) return "f";
+    return "n";
+  }
+  function epssBin(v, bins = EPSS_BINS) {
+    if (v >= 1) return bins;
+    return Math.max(0, Math.min(bins - 1, Math.floor(v * bins + 1e-9)));
+  }
+  function emptyCube(bins = EPSS_BINS) {
+    const cells = {};
+    for (const k of ["t", "f", "n"]) {
+      for (const x of ["t", "f", "n"]) {
+        cells[`${k}${x}`] = { epss: new Array(bins + 1).fill(0), noEpss: 0 };
+      }
+    }
+    return { total: 0, bins, cells };
+  }
+  function buildRiskCube(rows, bins = EPSS_BINS) {
+    const cube = emptyCube(bins);
+    for (const r of rows) {
+      const cell = cube.cells[`${tri(r.has_kev)}${tri(r.has_exploit)}`];
+      if (typeof r.epss === "number" && Number.isFinite(r.epss)) cell.epss[epssBin(r.epss, bins)] += 1;
+      else cell.noEpss += 1;
+      cube.total += 1;
+    }
+    return cube;
+  }
+  function toggleImpact(rows, isNoFix, isEol) {
+    const out = { total: rows.length, noFix: 0, eol: 0, either: 0 };
+    for (const r of rows) {
+      const n = isNoFix(r);
+      const e = isEol(r);
+      if (n) out.noFix += 1;
+      if (e) out.eol += 1;
+      if (n || e) out.either += 1;
+    }
+    return out;
+  }
+  function severityCensus(rows, severityOf2) {
+    var _a;
+    const out = {};
+    for (const r of rows) {
+      const s = severityOf2(r);
+      out[s] = ((_a = out[s]) != null ? _a : 0) + 1;
+    }
+    return out;
+  }
+  function scanAges(scans, now, keepRecent = 2) {
+    const desc = [...scans].reverse();
+    return desc.map((s, i) => {
+      const t = Date.parse(s.ts);
+      return {
+        ageDays: Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 864e5)) : 0,
+        sealed: !!s.sealed,
+        pinned: i < keepRecent
+      };
+    });
+  }
+
   // src/domain/pagePayload.ts
   function execMttrSlice(mttr) {
     var _a, _b;
@@ -6667,6 +6745,9 @@ var Server = (() => {
   }
   function setRetentionAndCompact(days, enabled) {
     saveSettings(withAutoCompact(withRetentionDays(loadSettings(), days), enabled));
+  }
+  function setMany(patch) {
+    saveSettings(applySettingsPatch(loadSettings(), patch));
   }
   function setDomains(items) {
     saveSettings(withDomains(loadSettings(), items));
@@ -9594,6 +9675,59 @@ var Server = (() => {
       domains: getDomains2(),
       riskRule: getRiskRule2()
     }));
+  }
+  function settingsImpactData() {
+    const all = loadBaseRows();
+    const eolKeys = eolVulnKeys();
+    const isEol = (r) => {
+      var _a;
+      return eolKeys.has(String((_a = r["vuln_key"]) != null ? _a : "")) || isEndOfLifeName(r["cve"]);
+    };
+    const isNoFix = (r) => baseRowNoFix(r);
+    const scored = visibleBase(filterSeverities(all, getFetchSeverities2()));
+    return {
+      census: {
+        total: all.length,
+        bySeverity: severityCensus(all, (r) => normalizeSeverity(r["severity"]))
+      },
+      toggles: toggleImpact(all, isNoFix, isEol),
+      risk: {
+        cube: buildRiskCube(all.length ? scored : []),
+        scoredRows: scored.length
+      },
+      scans: scanAges(
+        loadScanRows().map((s) => ({ ts: s.ts, sealed: s.sealed })),
+        Date.now()
+      )
+    };
+  }
+  var cachedSettingsImpactData = () => cached(
+    "settingsImpact1",
+    {
+      fetchSeverities: getFetchSeverities2(),
+      showNoFix: getShowNoFix2(),
+      includeEol: getIncludeEol2()
+    },
+    () => settingsImpactData(),
+    3600
+  );
+  function getSettingsImpact(_p) {
+    return run(() => cachedSettingsImpactData());
+  }
+  function saveSettings2(p) {
+    const patch = p == null ? void 0 : p["patch"];
+    return mutate(() => {
+      setMany(patch != null ? patch : {});
+      return {
+        fetchSeverities: getFetchSeverities2(),
+        displaySeverities: getDisplaySeverities2(),
+        retentionDays: getRetentionDays2(),
+        autoCompact: getAutoCompact2(),
+        showNoFix: getShowNoFix2(),
+        includeEol: getIncludeEol2(),
+        riskRule: getRiskRule2()
+      };
+    });
   }
   function setSeverities(p) {
     const params = p != null ? p : {};

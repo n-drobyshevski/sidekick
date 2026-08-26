@@ -125,6 +125,25 @@ export function setRiskRule(rule: unknown): void {
 export function setRetentionAndCompact(days: number | null, enabled: boolean): void {
   saveSettings(logic.withAutoCompact(logic.withRetentionDays(loadSettings(), days), enabled));
 }
+/**
+ * Apply several register settings in ONE load+save, for the Settings page's single save bar.
+ *
+ * Generalises setRetentionAndCompact for the same reason it exists: a page that batches every
+ * edit into one action must commit them in one write, or a failure halfway leaves the register
+ * in a state the reader never asked for and the toast never mentioned.
+ *
+ * Only the keys present in `patch` are touched — a field the reader did not edit is not
+ * rewritten with its own value, so a concurrent change elsewhere is not silently reverted.
+ * Unknown keys are ignored rather than trusted.
+ *
+ * ORDER IS LOAD-BEARING. `withFetchSeverities` re-clamps the display scope to the new scan
+ * scope, so fetch must be applied before display; the reverse order would clamp the display
+ * list against the OLD scan scope and then quietly widen the scan scope past it.
+ */
+export function setMany(patch: Rec): void {
+  saveSettings(logic.applySettingsPatch(loadSettings(), patch));
+}
+
 export function setDomains(items: unknown): void {
   saveSettings(logic.withDomains(loadSettings(), items));
 }
