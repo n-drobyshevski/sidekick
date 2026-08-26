@@ -6,7 +6,7 @@ import {
   SEVERITY_COLORS,
   SEVERITY_ORDER,
   SELECTABLE_SEVERITIES,
-  RESOLVED_STATUSES,
+  isOpenStatus,
 } from "../domain/config";
 import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, hasDomainInputs, UNASSIGNED } from "../domain/domainRules";
 import { coverage, ruleHealth, supportGroupBreakdown, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
@@ -132,7 +132,10 @@ export function bootstrap(_p?: unknown): ApiResult {
     // (whose own comment admitted as much), `palette.glyphs`/`slaTargets`, and
     // `latestScan.shape`/`severities`. Bump so no stale fat entry survives the persistent
     // dataVersion; a reader that wanted any of them would have been broken already.
-    ...(durablyCached("bootstrapCore6", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
+    // "bootstrapCore6" → "bootstrapCore7": the payload gained `openCounts`. A cached
+    // old-shape entry has none, and the Executive severity tiles read it directly, so they
+    // would render "0" across the board until the next data version.
+    ...(durablyCached("bootstrapCore7", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
     // Live per-request fields: never cached (activeJob changes every poll tick).
     hasCredentials: hasWizCredentials(),
     activeJob: activeJobSummary(),
@@ -148,6 +151,13 @@ function bootstrapCore(): Rec {
   // filtered views. No-op on the default path.
   const records = scan ? visibleFrame(scan.records) : [];
   const counts: Record<string, number> = {};
+  // The same tally restricted to OPEN rows. The Executive page's severity tiles are labelled
+  // "Open vulnerabilities" and were reading `counts`, which is every row in the frame — so a
+  // register with a healthy close rate reported its resolved history as live risk. Tallied in
+  // this pass rather than derived later so it cannot drift from `counts`, and kept as a
+  // separate field rather than narrowing `counts` itself, which the scope switcher's
+  // denominators read and which genuinely means "everything in the register".
+  const openCounts: Record<string, number> = {};
   let unassignedCount = 0;
   // What the header's scope switcher counts over. Tallied in the SAME pass as the severity
   // counts above, and over the same `records`, so the caption's denominator is the population
@@ -169,6 +179,9 @@ function bootstrapCore(): Rec {
   for (const r of records) {
     const sev = String(r["_sev"]);
     counts[sev] = (counts[sev] ?? 0) + 1;
+    if (isOpenStatus(r["status"])) {
+      openCounts[sev] = (openCounts[sev] ?? 0) + 1;
+    }
     // UNASSIGNED IS A REAL BUCKET AND IS COUNTED LIKE ANY OTHER. `domainNames()` appends it to
     // the configured list, so the switcher offers it as a scope; excluding it here would draw
     // that row as "0 findings" over a bucket that is often the largest one in the register.
@@ -240,6 +253,9 @@ function bootstrapCore(): Rec {
         }
       : null,
     counts,
+    // Open-only severity tally over the same frame. `counts` stays register-wide because the
+    // scope switcher's denominators are; anything answering "how much is live risk" reads this.
+    openCounts,
     unassignedCount,
     // THE RESOLVED UNIVERSE, not the rule list. A tag value is a domain a finding can actually
     // land in, so a switcher built from `domainNames(items)` alone would offer only the manual
@@ -1526,7 +1542,7 @@ function riskCohortRows(p: unknown, quadrant: string): Rec[] {
   for (const r of rows) {
     const riskRow = r as unknown as program.RiskRow;
     const cls = program.classifyRisk(riskRow, rule);
-    const open = !RESOLVED_STATUSES.has(String(r["status"] ?? "").toUpperCase());
+    const open = isOpenStatus(r["status"]);
     const cell =
       cls === "unknown"
         ? open ? "unknownOpen" : "unknownRemediated"
@@ -1645,7 +1661,12 @@ function executiveSeverityCounts(p?: unknown): Rec {
   const recs = filterSeverities(
     scopedFrameRecords(domain, supportGroup, []),
     readSeverities(p),
-  );
+  ).filter((r) => isOpenStatus(r["status"]));
+  // OPEN ONLY, matching bootstrap's `openCounts`. The two have to agree: the unscoped view
+  // paints from bootstrap and never repaints from this payload, and that no-op is only a
+  // no-op while both tally the same population (pinned in test/executiveView.test.js).
+  // It also makes the "No open findings in this scope" note true — over the old all-rows
+  // total it could only fire for a scope holding no findings at all, resolved ones included.
   return { flatScan: true, counts: sevCountsOf(recs), total: recs.length };
 }
 
@@ -1656,7 +1677,9 @@ function executiveSeverityCounts(p?: unknown): Rec {
 // `showNoFix` alone — that one is carried for symmetry with its siblings, not because it must be.
 const cachedExecutiveSeverityCounts = (p?: unknown) =>
   cached(
-    "execSevCounts1",
+    // "execSevCounts1" → "execSevCounts2": the tally is open-only now. Same shape, different
+    // population — exactly the kind of change a stale entry serves without any symptom.
+    "execSevCounts2",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),

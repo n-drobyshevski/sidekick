@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "a32ae07a6bbf" : "dev";
+  var BUILD_ID = true ? "a333d663df67" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -1357,6 +1357,9 @@ var Server = (() => {
     INFO: "INFORMATIONAL"
   };
   var RESOLVED_STATUSES = /* @__PURE__ */ new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
+  function isOpenStatus(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
   var DISAPPEARANCE_RESOLUTION = "scan_ts";
   var REMEDIATION_ROLLOUT_ISO = "2026-07-01T00:00:00Z";
   var DEFAULT_RETENTION_DAYS = 180;
@@ -8183,19 +8186,23 @@ var Server = (() => {
       // (whose own comment admitted as much), `palette.glyphs`/`slaTargets`, and
       // `latestScan.shape`/`severities`. Bump so no stale fat entry survives the persistent
       // dataVersion; a reader that wanted any of them would have been broken already.
-      ...durablyCached("bootstrapCore6", { showNoFix: getShowNoFix2() }, bootstrapCore),
+      // "bootstrapCore6" → "bootstrapCore7": the payload gained `openCounts`. A cached
+      // old-shape entry has none, and the Executive severity tiles read it directly, so they
+      // would render "0" across the board until the next data version.
+      ...durablyCached("bootstrapCore7", { showNoFix: getShowNoFix2() }, bootstrapCore),
       // Live per-request fields: never cached (activeJob changes every poll tick).
       hasCredentials: hasWizCredentials(),
       activeJob: activeJobSummary()
     }));
   }
   function bootstrapCore() {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     const scan = currentScan();
     const latest = latestScanRow();
     const showNoFix = getShowNoFix2();
     const records = scan ? visibleFrame(scan.records) : [];
     const counts = {};
+    const openCounts = {};
     let unassignedCount = 0;
     const domainCounts = {};
     const supportGroupCounts = {};
@@ -8205,13 +8212,16 @@ var Server = (() => {
     for (const r of records) {
       const sev2 = String(r["_sev"]);
       counts[sev2] = ((_a = counts[sev2]) != null ? _a : 0) + 1;
-      const dom = String((_b = r["_domain"]) != null ? _b : "");
-      if (dom) domainCounts[dom] = ((_c = domainCounts[dom]) != null ? _c : 0) + 1;
+      if (isOpenStatus(r["status"])) {
+        openCounts[sev2] = ((_b = openCounts[sev2]) != null ? _b : 0) + 1;
+      }
+      const dom = String((_c = r["_domain"]) != null ? _c : "");
+      if (dom) domainCounts[dom] = ((_d = domainCounts[dom]) != null ? _d : 0) + 1;
       if (dom === UNASSIGNED) unassignedCount += 1;
-      const sg = String((_d = r["_supportGroup"]) != null ? _d : "");
-      if (sg) supportGroupCounts[sg] = ((_e = supportGroupCounts[sg]) != null ? _e : 0) + 1;
+      const sg = String((_e = r["_supportGroup"]) != null ? _e : "");
+      if (sg) supportGroupCounts[sg] = ((_f = supportGroupCounts[sg]) != null ? _f : 0) + 1;
       else noSupportGroup += 1;
-      const bd = String((_f = r["_bizDomain"]) != null ? _f : "");
+      const bd = String((_g = r["_bizDomain"]) != null ? _g : "");
       if (bd) seenTags.add(bd);
       else noBizDomain += 1;
     }
@@ -8221,7 +8231,7 @@ var Server = (() => {
     attachBizDomains(baseRows2);
     let notAttributable = 0;
     for (const r of baseRows2) {
-      const bd = String((_g = r["_bizDomain"]) != null ? _g : "");
+      const bd = String((_h = r["_bizDomain"]) != null ? _h : "");
       if (bd) {
         seenTags.add(bd);
         continue;
@@ -8255,6 +8265,9 @@ var Server = (() => {
         total: latest.total
       } : null,
       counts,
+      // Open-only severity tally over the same frame. `counts` stays register-wide because the
+      // scope switcher's denominators are; anything answering "how much is live risk" reads this.
+      openCounts,
       unassignedCount,
       // THE RESOLVED UNIVERSE, not the rule list. A tag value is a domain a finding can actually
       // land in, so a switcher built from `domainNames(items)` alone would offer only the manual
@@ -9274,7 +9287,7 @@ var Server = (() => {
     );
   };
   function riskCohortRows(p, quadrant) {
-    var _a, _b, _c;
+    var _a, _b;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     const rule = getRiskRule2().rule;
@@ -9285,7 +9298,7 @@ var Server = (() => {
     for (const r of rows) {
       const riskRow = r;
       const cls = classifyRisk(riskRow, rule);
-      const open = !RESOLVED_STATUSES.has(String((_c = r["status"]) != null ? _c : "").toUpperCase());
+      const open = isOpenStatus(r["status"]);
       const cell = cls === "unknown" ? open ? "unknownOpen" : "unknownRemediated" : cls === "high" ? open ? "fn" : "tp" : open ? "tn" : "fp";
       if (quadrant && cell !== quadrant) continue;
       out.push({
@@ -9358,13 +9371,15 @@ var Server = (() => {
     const recs = filterSeverities(
       scopedFrameRecords(domain, supportGroup, []),
       readSeverities(p)
-    );
+    ).filter((r) => isOpenStatus(r["status"]));
     return { flatScan: true, counts: sevCountsOf(recs), total: recs.length };
   }
   var cachedExecutiveSeverityCounts = (p) => {
     var _a, _b;
     return cached(
-      "execSevCounts1",
+      // "execSevCounts1" → "execSevCounts2": the tally is open-only now. Same shape, different
+      // population — exactly the kind of change a stale entry serves without any symptom.
+      "execSevCounts2",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
