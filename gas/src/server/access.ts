@@ -155,13 +155,33 @@ function logDenial(op: string, d: AccessDecision): void {
  * {ok:false} envelope the client wrapper already knows how to reject with. `forbidden` joins
  * the existing errorKind vocabulary (sealed / rebuild / busy / error).
  */
-export function denyResult(
-  op: string,
-): { ok: false; error: string; errorKind: "forbidden" } | null {
+export function denyResult(op: string): DenyEnvelope | null {
   const d = check();
   if (d.allowed) return null;
   logDenial(op, d);
-  return { ok: false, error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]!, errorKind: "forbidden" };
+  const env: DenyEnvelope = {
+    ok: false,
+    error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]!,
+    errorKind: "forbidden",
+  };
+  // Carried as its own fields rather than appended to `error`, because `error` is also the
+  // Stackdriver denial line: an address in every log entry is noise the `reason` field already
+  // covers. The client composes the sentence; the server just supplies who and the href.
+  const who = ownerEmail().trim();
+  if (who) {
+    env.contact = who;
+    env.contactUrl = contactMailto(who);
+  }
+  return env;
+}
+
+export interface DenyEnvelope {
+  ok: false;
+  error: string;
+  errorKind: "forbidden";
+  /** The owner's address, for the "contact X" line. Absent if it could not be resolved. */
+  contact?: string;
+  contactUrl?: string;
 }
 
 /** The guard for the editor-run maintenance globals, where a throw is the natural refusal. */
@@ -180,6 +200,17 @@ export function assertAllowed(op: string): void {
  * It names the address it saw — the single most useful fact when the cause is "signed in to
  * the wrong Google account" — and nothing else about the deployment.
  */
+/**
+ * The "ask for access" mailto, built in ONE place because two surfaces render it: the denied
+ * page doGet serves, and the card the SPA shows when access is revoked with a tab already
+ * open. The prefilled subject is the whole point — the request arrives legible rather than as
+ * "hi, can I get access to the thing" — and a subject string maintained twice would drift.
+ */
+export function contactMailto(email: string): string {
+  return "mailto:" + email.trim() +
+    "?subject=" + encodeURIComponent("Access to " + PRODUCT);
+}
+
 export function deniedHtml(
   d: AccessDecision,
   switchUrl?: string | null,
@@ -204,9 +235,7 @@ export function deniedHtml(
   const who = (contact || "").trim();
   const ask = who
     ? "If you think you should have access, contact " +
-      '<a href="mailto:' + escapeHtml(who) +
-      "?subject=" + encodeURIComponent("Access to " + PRODUCT) + '">' +
-      escapeHtml(who) + "</a>."
+      '<a href="' + escapeHtml(contactMailto(who)) + '">' + escapeHtml(who) + "</a>."
     : // No owner address resolved — never render "contact:" with nothing after it.
       "If you think you should have access, ask whoever runs this dashboard to add you.";
 

@@ -51,6 +51,7 @@ var Server = (() => {
     canEditAdmins: () => canEditAdmins,
     canEditUsers: () => canEditUsers,
     check: () => check,
+    contactMailto: () => contactMailto,
     currentAdmins: () => currentAdmins,
     currentUsers: () => currentUsers,
     decide: () => decide,
@@ -249,7 +250,17 @@ var Server = (() => {
     const d = check();
     if (d.allowed) return null;
     logDenial(op, d);
-    return { ok: false, error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"], errorKind: "forbidden" };
+    const env = {
+      ok: false,
+      error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"],
+      errorKind: "forbidden"
+    };
+    const who = ownerEmail().trim();
+    if (who) {
+      env.contact = who;
+      env.contactUrl = contactMailto(who);
+    }
+    return env;
   }
   function assertAllowed(op) {
     const d = check();
@@ -257,10 +268,13 @@ var Server = (() => {
     logDenial(op, d);
     throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
   }
+  function contactMailto(email) {
+    return "mailto:" + email.trim() + "?subject=" + encodeURIComponent("Access to " + PRODUCT);
+  }
   function deniedHtml(d, switchUrl, contact) {
     const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
     const who = (contact || "").trim();
-    const ask = who ? 'If you think you should have access, contact <a href="mailto:' + escapeHtml(who) + "?subject=" + encodeURIComponent("Access to " + PRODUCT) + '">' + escapeHtml(who) + "</a>." : (
+    const ask = who ? 'If you think you should have access, contact <a href="' + escapeHtml(contactMailto(who)) + '">' + escapeHtml(who) + "</a>." : (
       // No owner address resolved — never render "contact:" with nothing after it.
       "If you think you should have access, ask whoever runs this dashboard to add you."
     );
@@ -490,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "99c1c2ed80d7" : "dev";
+  var BUILD_ID = true ? "d713f366b402" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {

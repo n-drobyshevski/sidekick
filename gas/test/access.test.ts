@@ -184,6 +184,43 @@ describe("the guards hand back the shapes their call sites expect", () => {
     expect(denyResult("bootstrap")).toBeNull();
   });
 
+  it("carries the contact as fields, not baked into the message", async () => {
+    // `error` is the Stackdriver denial line as much as it is user-facing text, so the address
+    // rides beside it rather than inside it.
+    const { denyResult } = await load();
+    activeEmail = "stranger@example.com";
+    const denied = denyResult("bootstrap")!;
+    expect(denied.contact).toBe("owner@example.com");
+    expect(denied.contactUrl).toContain("mailto:owner@example.com");
+    expect(denied.error).not.toContain("owner@example.com");
+  });
+
+  it("omits the contact entirely when the owner cannot be resolved", async () => {
+    // Rather than shipping `contact: ""` for the card to render as "contact ."
+    const { denyResult } = await load();
+    activeEmail = "stranger@example.com";
+    ownerAddress = "";
+    const denied = denyResult("bootstrap")!;
+    expect(denied.contact).toBeUndefined();
+    expect(denied.contactUrl).toBeUndefined();
+  });
+
+  it("offers the SAME mailto on the page and in the card", async () => {
+    // Two surfaces, one locked-out person, one href. The prefilled subject is built in one
+    // place precisely so it cannot drift between them; this fails if a second copy appears.
+    const { denyResult, deniedHtml, contactMailto } = await load();
+    activeEmail = "stranger@example.com";
+    const fromCard = denyResult("bootstrap")!.contactUrl!;
+    const html = deniedHtml(
+      { allowed: false, email: "stranger@example.com", reason: "not-listed" },
+      null,
+      "owner@example.com",
+    );
+    expect(fromCard).toBe(contactMailto("owner@example.com"));
+    expect(html).toContain(fromCard.replace(/&/g, "&amp;"));
+    expect(fromCard).toContain("subject=");
+  });
+
   it("assertAllowed throws for a denied caller and returns for an allowed one", async () => {
     const { assertAllowed } = await load();
     activeEmail = "stranger@example.com";
