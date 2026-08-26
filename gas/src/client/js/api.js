@@ -15,8 +15,12 @@ export function call(name, params) {
       .withSuccessHandler((res) => {
         done();
         if (res && res.ok) resolve(res.data);
+        // `contact`/`contactUrl` ride along for the forbidden envelope only (access.ts), so the
+        // no-access card can offer the same "contact X" mailto the denied page does without
+        // the address being baked into the message — which doubles as the Stackdriver line.
         else reject(Object.assign(new Error((res && res.error) || "Unknown server error"),
-          { kind: res && res.errorKind }));
+          { kind: res && res.errorKind, contact: res && res.contact,
+            contactUrl: res && res.contactUrl }));
       })
       .withFailureHandler((err) => {
         done();

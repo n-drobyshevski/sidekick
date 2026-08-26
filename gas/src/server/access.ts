@@ -36,12 +36,14 @@ export interface AccessDecision {
   allowed: boolean;
   /** The address the app actually saw, or "" when the caller could not be identified. */
   email: string;
-  reason: "owner" | "listed" | "anonymous" | "not-listed";
+  reason: "owner" | "admin" | "listed" | "anonymous" | "not-listed";
 }
 
 /**
- * What a denied caller is told. Deliberately says nothing about who IS allowed, who owns the
- * deployment, or what the property is called — a denial should not double as a directory.
+ * What a denied caller is told over RPC, and what the Stackdriver line carries. Says nothing
+ * about who IS allowed or what the property is called — a denial should not double as a
+ * directory. (The denied PAGE additionally names one contact, deliberately; see deniedHtml.
+ * These strings do not, because they are log lines as much as user-facing text.)
  */
 // These are ALSO the Stackdriver denial lines, which is why "not-listed" names the cause
 // rather than restating the verdict. It used to read "You don't have access to this app." —
@@ -76,23 +78,31 @@ export function parseAllowlist(raw: string | null): string[] {
 }
 
 /**
- * The decision, as a pure function of the three inputs, so the table below is unit-testable
+ * The decision, as a pure function of its inputs, so the table below is unit-testable
  * without any GAS global:
  *
  *   active ""/null                      → deny   (anonymous)   — outside the domain, or a
  *                                                                context with no active user
- *   active === owner (both non-empty)   → allow  (owner)       — regardless of the list
- *   active in the list                  → allow  (listed)
- *   otherwise                           → deny   (not-listed)  — including an unset list
+ *   active === owner (both non-empty)   → allow  (owner)       — regardless of either list
+ *   active in the admins list           → allow  (admin)
+ *   active in the users list            → allow  (listed)
+ *   otherwise                           → deny   (not-listed)  — including unset lists
  *
  * Matching is exact after trim + lowercase. An alias or secondary address is a DIFFERENT
  * string and must be listed separately; the denied page names the address it actually saw,
  * which is what makes that diagnosable rather than mysterious.
+ *
+ * ADMINS ARE ALLOWED BY BEING ADMINS, not by also appearing in the users list. An admin who
+ * could not open the app could not reach the Settings panel that makes them one, and holding
+ * their standing in a single list is what stops another admin from demoting them by editing
+ * the users list. `adminsRaw` is optional so every caller predating the tier — and every
+ * deployment with no ALLOWED_ADMINS property — decides exactly as it did before.
  */
 export function decide(
   active: string | null,
   owner: string | null,
   raw: string | null,
+  adminsRaw?: string | null,
 ): AccessDecision {
   const email = (active || "").trim();
   const key = email.toLowerCase();
@@ -103,6 +113,10 @@ export function decide(
   // refused — the one way this whole module could fail open.
   const ownerKey = (owner || "").trim().toLowerCase();
   if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
+
+  if (parseAllowlist(adminsRaw ?? null).indexOf(key) >= 0) {
+    return { allowed: true, email, reason: "admin" };
+  }
 
   return parseAllowlist(raw).indexOf(key) >= 0
     ? { allowed: true, email, reason: "listed" }
@@ -122,6 +136,7 @@ export function check(): AccessDecision {
       Session.getActiveUser().getEmail(),
       Session.getEffectiveUser().getEmail(),
       getProp(PROP_KEYS.allowedUsers),
+      getProp(PROP_KEYS.allowedAdmins),
     );
   }
   return memo;
@@ -140,13 +155,33 @@ function logDenial(op: string, d: AccessDecision): void {
  * {ok:false} envelope the client wrapper already knows how to reject with. `forbidden` joins
  * the existing errorKind vocabulary (sealed / rebuild / busy / error).
  */
-export function denyResult(
-  op: string,
-): { ok: false; error: string; errorKind: "forbidden" } | null {
+export function denyResult(op: string): DenyEnvelope | null {
   const d = check();
   if (d.allowed) return null;
   logDenial(op, d);
-  return { ok: false, error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]!, errorKind: "forbidden" };
+  const env: DenyEnvelope = {
+    ok: false,
+    error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]!,
+    errorKind: "forbidden",
+  };
+  // Carried as its own fields rather than appended to `error`, because `error` is also the
+  // Stackdriver denial line: an address in every log entry is noise the `reason` field already
+  // covers. The client composes the sentence; the server just supplies who and the href.
+  const who = ownerEmail().trim();
+  if (who) {
+    env.contact = who;
+    env.contactUrl = contactMailto(who);
+  }
+  return env;
+}
+
+export interface DenyEnvelope {
+  ok: false;
+  error: string;
+  errorKind: "forbidden";
+  /** The owner's address, for the "contact X" line. Absent if it could not be resolved. */
+  contact?: string;
+  contactUrl?: string;
 }
 
 /** The guard for the editor-run maintenance globals, where a throw is the natural refusal. */
@@ -165,19 +200,50 @@ export function assertAllowed(op: string): void {
  * It names the address it saw — the single most useful fact when the cause is "signed in to
  * the wrong Google account" — and nothing else about the deployment.
  */
-export function deniedHtml(d: AccessDecision, switchUrl?: string | null): string {
+/**
+ * The "ask for access" mailto, built in ONE place because two surfaces render it: the denied
+ * page doGet serves, and the card the SPA shows when access is revoked with a tab already
+ * open. The prefilled subject is the whole point — the request arrives legible rather than as
+ * "hi, can I get access to the thing" — and a subject string maintained twice would drift.
+ */
+export function contactMailto(email: string): string {
+  return "mailto:" + email.trim() +
+    "?subject=" + encodeURIComponent("Access to " + PRODUCT);
+}
+
+export function deniedHtml(
+  d: AccessDecision,
+  switchUrl?: string | null,
+  contact?: string | null,
+): string {
   const detail = d.email
     ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>."
     : "This app can't see which Google account you're signed in as, which happens when the " +
       "account isn't in the same Google Workspace domain as the app.";
+
+  // NAMING THE OWNER HERE IS DELIBERATE, and it reverses what this page originally did.
+  //
+  // The page still discloses no roster and no property name — a denial must not double as a
+  // directory of who DOES have access. The owner's own address is a different question, and
+  // the audience settles it: the deployment's access level is DOMAIN, so Google refuses
+  // everyone outside the Workspace before doGet is ever reached. The only people who can see
+  // this page are colleagues who could have looked the owner up in the directory anyway, and
+  // "ask whoever runs this dashboard" was asking them to go and do exactly that.
+  //
+  // mailto rather than plain text, with the subject filled in, so the request that arrives is
+  // legible instead of "hi, can I get access to the thing".
+  const who = (contact || "").trim();
+  const ask = who
+    ? "If you think you should have access, contact " +
+      '<a href="' + escapeHtml(contactMailto(who)) + '">' + escapeHtml(who) + "</a>."
+    : // No owner address resolved — never render "contact:" with nothing after it.
+      "If you think you should have access, ask whoever runs this dashboard to add you.";
+
   return cardPage({
     title: PRODUCT,
     eyebrow: PRODUCT,
     heading: "You don't have access to this app.",
-    paragraphs: [
-      detail,
-      "If you think you should have access, ask whoever runs this dashboard to add you.",
-    ],
+    paragraphs: [detail, ask],
     actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : "",
   });
 }
@@ -187,7 +253,7 @@ export function deniedPage(): GoogleAppsScript.HTML.HtmlOutput | null {
   const d = check();
   if (d.allowed) return null;
   logDenial("doGet", d);
-  return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl()))
+  return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl(), ownerEmail()))
     .setTitle(PRODUCT)
     .addMetaTag("viewport", "width=device-width, initial-scale=1");
 }
@@ -222,4 +288,49 @@ export function accountChooserUrl(): string | null {
  */
 export function ownerEmail(): string {
   return Session.getEffectiveUser().getEmail() || "";
+}
+
+// ---------------------------------------------------------------- the admin tier
+//
+// WHERE THE TIER STOPS, AND WHY IT STOPS THERE. Admins may edit ALLOWED_USERS; only the owner
+// may edit ALLOWED_ADMINS. If admins could promote admins the tier would self-propagate and
+// collapse back into "anyone who can edit can grant anything" — the delegation would be
+// indistinguishable from handing out ownership. Keeping promotion with the owner is the entire
+// difference between a real second tier and a cosmetic one, and test/accessAdmin.test.ts
+// exists to fail the moment it is blurred.
+//
+// Note what an admin still cannot do: admit anyone outside the Workspace domain (they read as
+// "" and are denied before either list is consulted), lock the owner out (identity, not
+// membership), or demote another admin by editing the users list (admin standing lives in the
+// admins list alone).
+
+/** The deploying account — the only identity that is allowed without appearing in any list. */
+export function isOwner(): boolean {
+  return check().reason === "owner";
+}
+
+/** Owner or admin: may add and remove people from ALLOWED_USERS. */
+export function canEditUsers(): boolean {
+  const r = check().reason;
+  return r === "owner" || r === "admin";
+}
+
+/** Owner only: may add and remove admins. Deliberately narrower than canEditUsers. */
+export function canEditAdmins(): boolean {
+  return isOwner();
+}
+
+/** The current lists, parsed. Callers must have checked they may see them. */
+export function currentUsers(): string[] {
+  return parseAllowlist(getProp(PROP_KEYS.allowedUsers));
+}
+
+export function currentAdmins(): string[] {
+  return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
+}
+
+/** The owner's domain, for the client's "this address can never match" warning. */
+export function ownerDomain(): string {
+  const at = ownerEmail().lastIndexOf("@");
+  return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
 }

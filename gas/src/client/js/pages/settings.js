@@ -9,6 +9,7 @@ import {
   clear, confirmDialog, el, emptyState, fmtDateTime, openSheet, settingRow, settingsPanel,
   statusPill, switchToggle, toast, usageMeter,
 } from "../ui.js";
+import { renderAccessPanel } from "./accessEditor.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 
 export async function renderSettings(main, params, ctx) {
@@ -18,6 +19,14 @@ export async function renderSettings(main, params, ctx) {
     el("p", { class: "page-sub" },
       "Scan scope, display filter, manual groups, and data retention."),
   );
+
+  // ---------------------------------------------------------------------- access
+  // Appended only when the caller may edit it: renderAccessPanel returns null otherwise, and
+  // getAccess() hands a non-editor no roster at all, so this is nothing in the DOM AND nothing
+  // on the wire. Awaited up front so the panel lands in a stable position rather than shifting
+  // the page under whoever is reading it.
+  const accessPanel = await renderAccessPanel();
+  if (accessPanel) main.append(accessPanel);
 
   // ---------------------------------------------- severity scope (scan + display)
   // Scan scope and display filter are one coupled control (display ⊆ fetch), so they live in

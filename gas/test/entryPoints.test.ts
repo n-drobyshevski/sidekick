@@ -13,7 +13,7 @@
 //
 // So the parity is asserted here rather than audited by hand each time.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -77,6 +77,32 @@ describe("every exported api function is reachable from entry.js", () => {
 // The access guard lives in this same untestable layer, and for the same reason: it has to sit
 // where google.script.run actually arrives, which is the top-level globals, not the bundle.
 // So it gets the same treatment — asserted as text, since nothing executes this file.
+describe("every RPC name the client types actually exists", () => {
+  // THE THIRD HALF OF THE SAME TRAP, and the one that bit. entryPoints' other specs pin
+  // api.ts against entry.js, but the CLIENT names the global as a string — call("api_getSettings")
+  // — and nothing checked those strings. A call("getAccess") that should have read
+  // call("api_getAccess") type-checks, unit-tests green, and fails only in a browser, where the
+  // dev shim answers "Unknown RPC" and the whole page renders "This page failed to load".
+  it("matches every call(\"...\") in the client to a global in entry.js", () => {
+    const clientDir = join(root, "src/client/js");
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith(".js")) files.push(p);
+      }
+    };
+    walk(clientDir);
+    const named = new Set<string>();
+    for (const f of files) {
+      for (const m of readFileSync(f, "utf8").matchAll(/\bcall\(\s*"([^"]+)"/g)) named.add(m[1]!);
+    }
+    expect(named.size).toBeGreaterThan(10); // the regex must actually be finding them
+    expect([...named].filter((n) => !globals.has(n))).toEqual([]);
+  });
+});
+
 describe("the access guard covers every untrusted entry point", () => {
   /** The body of a top-level `function name(...) { ... }` in entry.js, braces balanced. */
   function body(name: string): string {
