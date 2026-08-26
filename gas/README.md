@@ -576,6 +576,37 @@ lockout diagnosable rather than mysterious.
 Script Properties) and save. No redeploy, no `setup()` re-run — `access.check()` re-reads the
 property fresh on the next request (it's memoized only within one execution).
 
+### The entry screen
+
+An allowed caller does not land straight in the dashboard. `welcome.gate()`
+(`src/server/welcome.ts`) serves a card first: *"This dashboard will open as
+alex@example.com"*, a **Continue** button, and a **Switch Google account** link.
+
+**It is not a login and must never become one.** Access is `DOMAIN`, and the only level that
+admits an unauthenticated visitor is `ANYONE_ANONYMOUS` — so Google has already signed this
+person in and `access.ts` has already allowed them before the screen renders. There is no
+credential to collect. What the screen is *for* is the Apps Script multiple-accounts trap: a
+browser signed into several Google accounts runs the app as the wrong one, and without this the
+first sign of that is the denial page.
+
+**"Once per working day" is really a sliding six hours, and the ceiling is not ours.**
+`CacheService.put` caps expiry at 21600s (6 hours), so the marker is re-put on every page load.
+A continuous working session therefore costs exactly one **Continue**; an overnight gap expires
+it and the screen returns in the morning. Six *idle* hours mid-day also brings it back. That is
+the honest limit of what the platform offers — there is no longer-lived per-user store here:
+`getUserProperties()` and `getUserCache()` are the OWNER's under "execute as me", shared by
+every visitor, so a flag in either would dismiss the screen for the whole team at once.
+
+The marker is keyed by a hash of the address in the **script** cache, so no address is written
+into a cache key. `?enter=1` on the URL is what Continue carries back; it is a UX marker, not a
+boundary — bookmarking it skips the screen and grants nothing the caller was not already
+allowed.
+
+**The gate fails open in every direction.** No address to key on, no deployment URL to point
+Continue at, or a cache that will not answer, and the caller goes straight to the app. A screen
+that never appears is a shrug; a Continue button pointing nowhere would make the dashboard
+unreachable for everyone at once. `test/welcome.test.ts` pins each of those paths.
+
 ## Scan progress
 
 A running scan shows a live progress card in the sidebar scan zone (phase, findings
@@ -718,6 +749,12 @@ Things node tests cannot cover — verify after the first deployment:
       **not** reappear — the archive rewrite is the only thing preventing it.
 - [ ] Quick refresh after a purge does not re-ingest the purged severities (it rides the
       baseline scan row's narrowed `severities` scope, not `fetch_severities`).
+- [ ] **The entry screen, which no local harness can reach** (`dev/serve.mjs` composes the page
+      in Node and never calls `Server.doGet`, so unit tests on the HTML string are the only
+      coverage before deployment). Three things need a real deployment: **Continue** actually
+      lands on the app rather than dead-ending inside the HtmlService sandbox iframe (this is
+      what `target="_top"` is for); the screen does not reappear on the next page load in the
+      same session; and **Switch Google account** reaches the account picker and comes back.
 - [ ] Timing at production scale: `vuln_ledger` wholesale rewrite and cold
       `api_bootstrap` stay inside the 6-min execution cap (Settings → Storage shows
       the cell budget; lower retention if approaching 6M cells).

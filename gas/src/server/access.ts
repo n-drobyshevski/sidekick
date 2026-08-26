@@ -26,7 +26,11 @@
 // untrusted boundary: google.script.run reaches top-level globals directly, and dev/boot.js
 // dispatches straight into Server.api without passing through entry.js at all.
 
+import { cardPage, escapeHtml, secondaryAction } from "./pageShell";
 import { getProp, PROP_KEYS } from "./props";
+
+/** The one place the product is named on the standalone pages. */
+export const PRODUCT = "Wiz Sidekick OS";
 
 export interface AccessDecision {
   allowed: boolean;
@@ -39,11 +43,16 @@ export interface AccessDecision {
  * What a denied caller is told. Deliberately says nothing about who IS allowed, who owns the
  * deployment, or what the property is called — a denial should not double as a directory.
  */
+// These are ALSO the Stackdriver denial lines, which is why "not-listed" names the cause
+// rather than restating the verdict. It used to read "You don't have access to this app." —
+// word for word the heading the SPA's card renders above it, so a revoked user saw the same
+// sentence twice (and the log line said nothing the `reason` field hadn't). A message that
+// complements the heading fixes both.
 const DENIAL_MESSAGE: Record<string, string> = {
   anonymous:
     "This app can't identify your Google account. It only recognizes accounts signed in to " +
     "the same Google Workspace domain as the app.",
-  "not-listed": "You don't have access to this app.",
+  "not-listed": "Your account isn't on this app's access list.",
 };
 
 /**
@@ -148,56 +157,29 @@ export function assertAllowed(op: string): void {
   throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]!);
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 /**
  * The denied page, as a pure string so its contents can be asserted in a unit test — the
  * doGet path itself is not reachable from either local harness (dev/serve.mjs composes the
  * page in Node and never calls Server.doGet).
  *
- * Deliberately self-contained: a handful of inline rules taken from DESIGN.md rather than the
- * 84KB styles partial, which would ship the whole design system to someone who is being
- * turned away. It names the address it saw — the single most useful fact when the cause is
- * "signed in to the wrong Google account" — and nothing else about the deployment.
+ * It names the address it saw — the single most useful fact when the cause is "signed in to
+ * the wrong Google account" — and nothing else about the deployment.
  */
 export function deniedHtml(d: AccessDecision, switchUrl?: string | null): string {
   const detail = d.email
     ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>."
     : "This app can't see which Google account you're signed in as, which happens when the " +
       "account isn't in the same Google Workspace domain as the app.";
-  const link = switchUrl
-    ? '<p class="alt"><a href="' + escapeHtml(switchUrl) + '">Switch Google account</a></p>'
-    : "";
-  return [
-    "<!DOCTYPE html><html><head><meta charset=\"utf-8\">",
-    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
-    "<title>Wiz Sidekick OS</title><style>",
-    "*{box-sizing:border-box}",
-    "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
-    "background:#f8fafc;color:#0a0a0a;",
-    "font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}",
-    ".card{max-width:32rem;margin:24px;padding:32px;background:#fff;border:1px solid #e2e8f0;",
-    "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
-    ".product{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#64748b;margin:0 0 12px}",
-    "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
-    "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:#334155}",
-    ".alt{margin-top:20px}",
-    "a{color:#2563eb}",
-    "a:focus-visible{outline:2px solid #2563eb;outline-offset:2px;border-radius:4px}",
-    "</style></head><body><main class=\"card\">",
-    "<p class=\"product\">Wiz Sidekick OS</p>",
-    "<h1>You don't have access to this app.</h1>",
-    "<p>" + detail + "</p>",
-    "<p>If you think you should have access, ask whoever runs this dashboard to add you.</p>",
-    link,
-    "</main></body></html>",
-  ].join("");
+  return cardPage({
+    title: PRODUCT,
+    eyebrow: PRODUCT,
+    heading: "You don't have access to this app.",
+    paragraphs: [
+      detail,
+      "If you think you should have access, ask whoever runs this dashboard to add you.",
+    ],
+    actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : "",
+  });
 }
 
 /** The doGet guard: null when the caller may proceed, else the page to serve instead. */
@@ -205,19 +187,32 @@ export function deniedPage(): GoogleAppsScript.HTML.HtmlOutput | null {
   const d = check();
   if (d.allowed) return null;
   logDenial("doGet", d);
-  let switchUrl: string | null = null;
-  try {
-    // Best effort only — the page's job is to explain the denial, and it still does that if
-    // the service URL is unavailable for any reason.
-    switchUrl =
-      "https://accounts.google.com/AccountChooser?continue=" +
-      encodeURIComponent(ScriptApp.getService().getUrl());
-  } catch (_e) {
-    switchUrl = null;
-  }
-  return HtmlService.createHtmlOutput(deniedHtml(d, switchUrl))
-    .setTitle("Wiz Sidekick OS")
+  return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl()))
+    .setTitle(PRODUCT)
     .addMetaTag("viewport", "width=device-width, initial-scale=1");
+}
+
+/**
+ * This deployment's own URL, or null if it cannot be determined.
+ *
+ * Shared with the entry screen, where the stakes are higher than here: the denial page merely
+ * loses its switch-account link, but a Continue button pointing nowhere would strand an
+ * ALLOWED user, so welcome.ts treats null as "skip the gate".
+ */
+export function serviceUrl(): string | null {
+  try {
+    return ScriptApp.getService().getUrl() || null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+/** Google's account picker, pointed back at this deployment. Null when the URL is unknown. */
+export function accountChooserUrl(): string | null {
+  const url = serviceUrl();
+  return url
+    ? "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(url)
+    : null;
 }
 
 /**

@@ -2,10 +2,18 @@
 // GAS requires doGet / trigger handlers / google.script.run targets to be top-level
 // global functions; everything else lives on the bundled `Server` global (server.js).
 
-// Gated by the domain-plus-allowlist check in access.ts: deniedPage() returns the standard
-// denial page for anyone the allowlist rejects, and short-circuits before Server.doGet ever
-// touches the ledger.
-function doGet(e) { return Server.access.deniedPage() || Server.doGet(e); }
+// Two screens can stand in front of the app, and the ORDER between them is load-bearing:
+// deniedPage() short-circuits before Server.doGet ever touches the ledger, and it outranks the
+// entry screen so a rejected caller is never welcomed to an app they cannot open. welcome.gate
+// is a courtesy that fails open in every direction — it can only ever delay an allowed user by
+// one click, never strand one.
+function doGet(e) {
+  var denied = Server.access.deniedPage();
+  if (denied) return denied;
+  var welcome = Server.welcome.gate(e);
+  if (welcome) return welcome;
+  return Server.doGet(e);
+}
 // Gated NOT for the <?!= include('x') ?> scriptlets — those evaluate server-side inside a
 // doGet that has already passed the check — but because this is a top-level global, and
 // google.script.run can call any of those directly. Ungated it is an open

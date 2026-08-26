@@ -112,6 +112,20 @@ describe("the access guard covers every untrusted entry point", () => {
     expect(globals).not.toContain("timedApi");
   });
 
+  it("puts the denial ahead of the entry screen in doGet", () => {
+    // Order, not presence. Reversed, a caller the allowlist rejects would be welcomed by name
+    // to an app they cannot open, and only then turned away — and welcome.gate() would be
+    // keying a session marker for somebody who has no business having one.
+    const b = body("doGet");
+    const denied = b.indexOf("Server.access.");
+    const welcome = b.indexOf("Server.welcome.");
+    const app = b.indexOf("Server.doGet(");
+    expect(denied).toBeGreaterThanOrEqual(0);
+    expect(welcome).toBeGreaterThanOrEqual(0);
+    expect(denied).toBeLessThan(welcome);
+    expect(welcome).toBeLessThan(app);
+  });
+
   it("gates doGet, include and every editor-run maintenance global", () => {
     for (const name of ["doGet", "include", "setup", "wizDiagnostic", "resetStuckJob"]) {
       expect(body(name), `${name} is ungated`).toContain("Server.access.");

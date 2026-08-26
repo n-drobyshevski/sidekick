@@ -29,6 +29,7 @@ var Server = (() => {
     jobs: () => scanJobs_exports,
     purge: () => purgeJobs_exports,
     setup: () => setup,
+    welcome: () => welcome_exports,
     wizDiagnostic: () => wizDiagnostic
   });
 
@@ -44,6 +45,8 @@ var Server = (() => {
   // src/server/access.ts
   var access_exports = {};
   __export(access_exports, {
+    PRODUCT: () => PRODUCT,
+    accountChooserUrl: () => accountChooserUrl,
     assertAllowed: () => assertAllowed,
     check: () => check,
     decide: () => decide,
@@ -51,8 +54,59 @@ var Server = (() => {
     deniedPage: () => deniedPage,
     denyResult: () => denyResult,
     ownerEmail: () => ownerEmail,
-    parseAllowlist: () => parseAllowlist
+    parseAllowlist: () => parseAllowlist,
+    serviceUrl: () => serviceUrl
   });
+
+  // src/server/pageShell.ts
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function primaryAction(href, label) {
+    return '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
+  }
+  function secondaryAction(href, label) {
+    return '<a class="alt" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
+  }
+  function cardPage(spec) {
+    const body = spec.paragraphs.map((p) => "<p>" + p + "</p>").join("");
+    const actions = spec.actions ? '<div class="actions">' + spec.actions + "</div>" : "";
+    return [
+      '<!DOCTYPE html><html><head><meta charset="utf-8">',
+      // Every link on these pages has to break out of the HtmlService sandbox iframe; the app's
+      // own index.html carries the same base tag for the same reason.
+      '<base target="_top">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+      "<title>" + escapeHtml(spec.title) + "</title><style>",
+      "*{box-sizing:border-box}",
+      "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
+      "background:#f8fafc;color:#0a0a0a;",
+      "font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}",
+      ".card{max-width:32rem;margin:24px;padding:32px;background:#fff;border:1px solid #e2e8f0;",
+      "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
+      ".eyebrow{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;",
+      "color:#64748b;margin:0 0 12px}",
+      "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
+      "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:#334155}",
+      ".actions{margin-top:24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}",
+      // Graphite, not the blue accent: DESIGN.md keeps Signal Blue for data, focus and links, and
+      // fills the one committing action with the neutral near-black.
+      ".btn{display:inline-flex;align-items:center;min-height:36px;padding:6px 14px;",
+      "border-radius:8px;background:#0a0a0a;color:#fafafa;font-size:14px;font-weight:500;",
+      "text-decoration:none}",
+      ".btn:hover{background:#27272a}",
+      "a{color:#2563eb}",
+      // Never remove: CLAUDE.md names the focus-ring rules load-bearing, and these pages are
+      // reachable by keyboard only.
+      "a:focus-visible{outline:2px solid #2563eb;outline-offset:2px;border-radius:4px}",
+      '</style></head><body><main class="card">',
+      '<p class="eyebrow">' + escapeHtml(spec.eyebrow) + "</p>",
+      "<h1>" + escapeHtml(spec.heading) + "</h1>",
+      body,
+      actions,
+      "</main></body></html>"
+    ].join("");
+  }
 
   // src/server/props.ts
   var PROP_KEYS = {
@@ -107,9 +161,10 @@ var Server = (() => {
   }
 
   // src/server/access.ts
+  var PRODUCT = "Wiz Sidekick OS";
   var DENIAL_MESSAGE = {
     anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
-    "not-listed": "You don't have access to this app."
+    "not-listed": "Your account isn't on this app's access list."
   };
   function parseAllowlist(raw) {
     if (!raw) return [];
@@ -157,51 +212,355 @@ var Server = (() => {
     logDenial(op, d);
     throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
   }
-  function escapeHtml(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
   function deniedHtml(d, switchUrl) {
     const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
-    const link = switchUrl ? '<p class="alt"><a href="' + escapeHtml(switchUrl) + '">Switch Google account</a></p>' : "";
-    return [
-      '<!DOCTYPE html><html><head><meta charset="utf-8">',
-      '<meta name="viewport" content="width=device-width, initial-scale=1">',
-      "<title>Wiz Sidekick OS</title><style>",
-      "*{box-sizing:border-box}",
-      "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
-      "background:#f8fafc;color:#0a0a0a;",
-      "font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}",
-      ".card{max-width:32rem;margin:24px;padding:32px;background:#fff;border:1px solid #e2e8f0;",
-      "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
-      ".product{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#64748b;margin:0 0 12px}",
-      "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
-      "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:#334155}",
-      ".alt{margin-top:20px}",
-      "a{color:#2563eb}",
-      "a:focus-visible{outline:2px solid #2563eb;outline-offset:2px;border-radius:4px}",
-      '</style></head><body><main class="card">',
-      '<p class="product">Wiz Sidekick OS</p>',
-      "<h1>You don't have access to this app.</h1>",
-      "<p>" + detail + "</p>",
-      "<p>If you think you should have access, ask whoever runs this dashboard to add you.</p>",
-      link,
-      "</main></body></html>"
-    ].join("");
+    return cardPage({
+      title: PRODUCT,
+      eyebrow: PRODUCT,
+      heading: "You don't have access to this app.",
+      paragraphs: [
+        detail,
+        "If you think you should have access, ask whoever runs this dashboard to add you."
+      ],
+      actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : ""
+    });
   }
   function deniedPage() {
     const d = check();
     if (d.allowed) return null;
     logDenial("doGet", d);
-    let switchUrl = null;
+    return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
+  }
+  function serviceUrl() {
     try {
-      switchUrl = "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(ScriptApp.getService().getUrl());
+      return ScriptApp.getService().getUrl() || null;
     } catch (_e) {
-      switchUrl = null;
+      return null;
     }
-    return HtmlService.createHtmlOutput(deniedHtml(d, switchUrl)).setTitle("Wiz Sidekick OS").addMetaTag("viewport", "width=device-width, initial-scale=1");
+  }
+  function accountChooserUrl() {
+    const url = serviceUrl();
+    return url ? "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(url) : null;
   }
   function ownerEmail() {
     return Session.getEffectiveUser().getEmail() || "";
+  }
+
+  // src/server/welcome.ts
+  var welcome_exports = {};
+  __export(welcome_exports, {
+    ENTER_PARAM: () => ENTER_PARAM,
+    ENTRY_TTL_SEC: () => ENTRY_TTL_SEC,
+    gate: () => gate,
+    welcomeHtml: () => welcomeHtml
+  });
+
+  // src/domain/sha1.ts
+  function utf8Bytes(s) {
+    const out = [];
+    for (let i = 0; i < s.length; i++) {
+      let c = s.charCodeAt(i);
+      if (c < 128) {
+        out.push(c);
+      } else if (c < 2048) {
+        out.push(192 | c >> 6, 128 | c & 63);
+      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
+        const c2 = s.charCodeAt(++i);
+        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
+        out.push(
+          240 | cp >> 18,
+          128 | cp >> 12 & 63,
+          128 | cp >> 6 & 63,
+          128 | cp & 63
+        );
+      } else {
+        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
+      }
+    }
+    return out;
+  }
+  function rotl(n, b) {
+    return (n << b | n >>> 32 - b) >>> 0;
+  }
+  function sha1Hex(input) {
+    const bytes = utf8Bytes(input);
+    const bitLen = bytes.length * 8;
+    bytes.push(128);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    const hi = Math.floor(bitLen / 4294967296);
+    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
+    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
+    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
+    const w = new Array(80);
+    for (let block = 0; block < bytes.length; block += 64) {
+      for (let i = 0; i < 16; i++) {
+        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
+      }
+      for (let i = 16; i < 80; i++) {
+        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+      }
+      let a = h0, b = h1, c = h2, d = h3, e = h4;
+      for (let i = 0; i < 80; i++) {
+        let f, k;
+        if (i < 20) {
+          f = b & c | ~b & d;
+          k = 1518500249;
+        } else if (i < 40) {
+          f = b ^ c ^ d;
+          k = 1859775393;
+        } else if (i < 60) {
+          f = b & c | b & d | c & d;
+          k = 2400959708;
+        } else {
+          f = b ^ c ^ d;
+          k = 3395469782;
+        }
+        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
+        e = d;
+        d = c;
+        c = rotl(b, 30);
+        b = a;
+        a = t;
+      }
+      h0 = h0 + a >>> 0;
+      h1 = h1 + b >>> 0;
+      h2 = h2 + c >>> 0;
+      h3 = h3 + d >>> 0;
+      h4 = h4 + e >>> 0;
+    }
+    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
+  }
+
+  // src/domain/util.ts
+  function present(v) {
+    if (v === null || v === void 0) return false;
+    if (typeof v === "number" && Number.isNaN(v)) return false;
+    if (typeof v === "string" && v.trim() === "") return false;
+    return true;
+  }
+  function clean(v) {
+    return present(v) ? v : null;
+  }
+  function pyStr(v) {
+    if (v === true) return "True";
+    if (v === false) return "False";
+    return String(v);
+  }
+  function parseTs(v) {
+    const c = clean(v);
+    if (c === null) return null;
+    if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
+    if (typeof c === "number" && Number.isFinite(c)) return c;
+    let s = String(c).trim();
+    if (!s) return null;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += "Z";
+    const t = Date.parse(s);
+    return Number.isNaN(t) ? null : t;
+  }
+  function toIso(ms) {
+    if (ms === null || !Number.isFinite(ms)) return null;
+    return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
+  }
+  function minIso(...values) {
+    const parsed = values.map(parseTs).filter((t) => t !== null);
+    return parsed.length ? toIso(minNum(parsed)) : null;
+  }
+  function midpointIso(a, b) {
+    var _a;
+    const da = parseTs(a);
+    const db = parseTs(b);
+    if (da === null || db === null) return (_a = toIso(db)) != null ? _a : toIso(da);
+    return toIso(da + (db - da) / 2);
+  }
+  function nowIso(now) {
+    return toIso(now != null ? now : Date.now());
+  }
+  function mean(values) {
+    if (!values.length) return null;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+  }
+  function maxNum(values) {
+    return values.reduce((m, v) => Math.max(m, v), -Infinity);
+  }
+  function minNum(values) {
+    return values.reduce((m, v) => Math.min(m, v), Infinity);
+  }
+  function pushAll(target, items) {
+    for (const item of items) target.push(item);
+  }
+  function quantile(values, q) {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const idx = q * (sorted.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  }
+  function median(values) {
+    return quantile(values, 0.5);
+  }
+
+  // src/domain/domainTag.ts
+  var DEFAULT_DOMAIN_TAG_KEY = "Wiz/Domain";
+  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
+    const want = key.trim().toLowerCase();
+    if (!want || !tags) return null;
+    for (const [k, v] of Object.entries(tags)) {
+      if (String(k).trim().toLowerCase() !== want) continue;
+      if (!present(v)) continue;
+      const value = String(v).trim();
+      if (value) return value;
+    }
+    return null;
+  }
+  function resolveDomainTagKey(configured) {
+    const k = (configured != null ? configured : "").trim();
+    return k || DEFAULT_DOMAIN_TAG_KEY;
+  }
+
+  // src/server/serverCache.ts
+  var VERSION_PROP = "DATA_VERSION";
+  var KEY_PREFIX = "wsk";
+  var BUILD_ID = true ? "782634f1b98b" : "dev";
+  var CHUNK_CHARS = 9e4;
+  var DEFAULT_TTL_SEC = 21600;
+  function dataVersion() {
+    var _a;
+    return (_a = getProp(VERSION_PROP)) != null ? _a : "0";
+  }
+  function domainTagStamp() {
+    return sha1Hex(resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey))).slice(0, 8);
+  }
+  var versionStamp;
+  function stamp() {
+    if (versionStamp === void 0) {
+      versionStamp = `${BUILD_ID}.${dataVersion()}.${domainTagStamp()}`;
+    }
+    return versionStamp;
+  }
+  function bumpDataVersion() {
+    const now = Date.now();
+    const prev = Number(dataVersion());
+    setProp(VERSION_PROP, String(Number.isFinite(prev) && prev >= now ? prev + 1 : now));
+    versionStamp = void 0;
+  }
+  function paramsHash(params) {
+    return sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
+  }
+  function cacheKey(name, params, version) {
+    return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
+  }
+  function currentStamp() {
+    return stamp();
+  }
+  function splitChunks(s, size = CHUNK_CHARS) {
+    const out = [];
+    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
+    return out.length ? out : [""];
+  }
+  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
+    const json = JSON.stringify(value);
+    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
+    const packed = Utilities.base64Encode(gz.getBytes());
+    const chunks = splitChunks(packed, chunkChars);
+    const entries = { [`${key}:m`]: String(chunks.length) };
+    chunks.forEach((c, i) => {
+      entries[`${key}:${i}`] = c;
+    });
+    CacheService.getScriptCache().putAll(entries, ttlSec);
+  }
+  function cacheGetJson(key) {
+    const cache = CacheService.getScriptCache();
+    const meta = cache.get(`${key}:m`);
+    if (!meta) return void 0;
+    const n = Number(meta);
+    if (!Number.isInteger(n) || n < 1) return void 0;
+    const names = [];
+    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
+    const got = cache.getAll(names);
+    let packed = "";
+    for (const name of names) {
+      const chunk = got[name];
+      if (chunk === void 0 || chunk === null) return void 0;
+      packed += chunk;
+    }
+    const bytes = Utilities.base64Decode(packed);
+    const json = Utilities.ungzip(
+      Utilities.newBlob(bytes, "application/x-gzip")
+    ).getDataAsString("UTF-8");
+    return JSON.parse(json);
+  }
+  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC) {
+    let key = null;
+    try {
+      key = cacheKey(name, params, stamp());
+      const hit = cacheGetJson(key);
+      if (hit !== void 0) return hit;
+    } catch (e) {
+      console.warn(`Cache read failed for ${name}: ${e}`);
+      key = null;
+    }
+    const value = compute();
+    if (key) {
+      try {
+        cachePutJson(key, value, ttlSec);
+      } catch (e) {
+        console.warn(`Cache write failed for ${name}: ${e}`);
+      }
+    }
+    return value;
+  }
+
+  // src/server/welcome.ts
+  var ENTRY_TTL_SEC = 21600;
+  var ENTER_PARAM = "enter";
+  function markerKey(email) {
+    return "entered:" + paramsHash(email.trim().toLowerCase());
+  }
+  function markEntered(email) {
+    try {
+      CacheService.getScriptCache().put(markerKey(email), "1", ENTRY_TTL_SEC);
+    } catch (e) {
+      console.warn("entry marker write failed: " + e);
+    }
+  }
+  function hasEntered(email) {
+    try {
+      return CacheService.getScriptCache().get(markerKey(email)) !== null;
+    } catch (e) {
+      console.warn("entry marker read failed: " + e);
+      return true;
+    }
+  }
+  function welcomeHtml(email, continueUrl, switchUrl) {
+    return cardPage({
+      title: PRODUCT,
+      eyebrow: PRODUCT,
+      heading: "You're signed in.",
+      paragraphs: [
+        "This dashboard will open as <strong>" + escapeHtml(email) + "</strong>.",
+        "If that isn't the account you meant to use, switch before you continue \u2014 the register you see depends on which account opens it."
+      ],
+      actions: primaryAction(continueUrl, "Continue") + (switchUrl ? secondaryAction(switchUrl, "Switch Google account") : "")
+    });
+  }
+  function gate(e) {
+    const email = check().email;
+    if (!email) return null;
+    if (e && e.parameter && e.parameter[ENTER_PARAM]) {
+      markEntered(email);
+      return null;
+    }
+    if (hasEntered(email)) {
+      markEntered(email);
+      return null;
+    }
+    const url = serviceUrl();
+    if (!url) return null;
+    const continueUrl = url + (url.indexOf("?") >= 0 ? "&" : "?") + ENTER_PARAM + "=1";
+    return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
   }
 
   // src/server/archiveStore.ts
@@ -1149,77 +1508,6 @@ var Server = (() => {
       for (const row of kept) row.node.children = groupTree(row.recs, rest, perLevelCap);
     }
     return kept.map((row) => row.node);
-  }
-
-  // src/domain/util.ts
-  function present(v) {
-    if (v === null || v === void 0) return false;
-    if (typeof v === "number" && Number.isNaN(v)) return false;
-    if (typeof v === "string" && v.trim() === "") return false;
-    return true;
-  }
-  function clean(v) {
-    return present(v) ? v : null;
-  }
-  function pyStr(v) {
-    if (v === true) return "True";
-    if (v === false) return "False";
-    return String(v);
-  }
-  function parseTs(v) {
-    const c = clean(v);
-    if (c === null) return null;
-    if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
-    if (typeof c === "number" && Number.isFinite(c)) return c;
-    let s = String(c).trim();
-    if (!s) return null;
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += "Z";
-    const t = Date.parse(s);
-    return Number.isNaN(t) ? null : t;
-  }
-  function toIso(ms) {
-    if (ms === null || !Number.isFinite(ms)) return null;
-    return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
-  }
-  function minIso(...values) {
-    const parsed = values.map(parseTs).filter((t) => t !== null);
-    return parsed.length ? toIso(minNum(parsed)) : null;
-  }
-  function midpointIso(a, b) {
-    var _a;
-    const da = parseTs(a);
-    const db = parseTs(b);
-    if (da === null || db === null) return (_a = toIso(db)) != null ? _a : toIso(da);
-    return toIso(da + (db - da) / 2);
-  }
-  function nowIso(now) {
-    return toIso(now != null ? now : Date.now());
-  }
-  function mean(values) {
-    if (!values.length) return null;
-    return values.reduce((a, b) => a + b, 0) / values.length;
-  }
-  function maxNum(values) {
-    return values.reduce((m, v) => Math.max(m, v), -Infinity);
-  }
-  function minNum(values) {
-    return values.reduce((m, v) => Math.min(m, v), Infinity);
-  }
-  function pushAll(target, items) {
-    for (const item of items) target.push(item);
-  }
-  function quantile(values, q) {
-    if (!values.length) return null;
-    const sorted = [...values].sort((a, b) => a - b);
-    const idx = q * (sorted.length - 1);
-    const lo = Math.floor(idx);
-    const hi = Math.ceil(idx);
-    if (lo === hi) return sorted[lo];
-    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
-  }
-  function median(values) {
-    return quantile(values, 0.5);
   }
 
   // src/domain/program.ts
@@ -2292,24 +2580,6 @@ var Server = (() => {
     return Object.values(recordTags(record)).some((v) => present(v));
   }
 
-  // src/domain/domainTag.ts
-  var DEFAULT_DOMAIN_TAG_KEY = "Wiz/Domain";
-  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
-    const want = key.trim().toLowerCase();
-    if (!want || !tags) return null;
-    for (const [k, v] of Object.entries(tags)) {
-      if (String(k).trim().toLowerCase() !== want) continue;
-      if (!present(v)) continue;
-      const value = String(v).trim();
-      if (value) return value;
-    }
-    return null;
-  }
-  function resolveDomainTagKey(configured) {
-    const k = (configured != null ? configured : "").trim();
-    return k || DEFAULT_DOMAIN_TAG_KEY;
-  }
-
   // src/domain/resolveDomain.ts
   var NOT_ATTRIBUTABLE = "Not attributable";
   function resolveDomain(record, compiled, tagKey = DEFAULT_DOMAIN_TAG_KEY) {
@@ -2647,82 +2917,6 @@ var Server = (() => {
     })).sort(
       (a, b) => b.findings - a.findings || a.subscription.localeCompare(b.subscription) || a.extId.localeCompare(b.extId)
     );
-  }
-
-  // src/domain/sha1.ts
-  function utf8Bytes(s) {
-    const out = [];
-    for (let i = 0; i < s.length; i++) {
-      let c = s.charCodeAt(i);
-      if (c < 128) {
-        out.push(c);
-      } else if (c < 2048) {
-        out.push(192 | c >> 6, 128 | c & 63);
-      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
-        const c2 = s.charCodeAt(++i);
-        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
-        out.push(
-          240 | cp >> 18,
-          128 | cp >> 12 & 63,
-          128 | cp >> 6 & 63,
-          128 | cp & 63
-        );
-      } else {
-        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
-      }
-    }
-    return out;
-  }
-  function rotl(n, b) {
-    return (n << b | n >>> 32 - b) >>> 0;
-  }
-  function sha1Hex(input) {
-    const bytes = utf8Bytes(input);
-    const bitLen = bytes.length * 8;
-    bytes.push(128);
-    while (bytes.length % 64 !== 56) bytes.push(0);
-    const hi = Math.floor(bitLen / 4294967296);
-    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
-    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
-    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
-    const w = new Array(80);
-    for (let block = 0; block < bytes.length; block += 64) {
-      for (let i = 0; i < 16; i++) {
-        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
-      }
-      for (let i = 16; i < 80; i++) {
-        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
-      }
-      let a = h0, b = h1, c = h2, d = h3, e = h4;
-      for (let i = 0; i < 80; i++) {
-        let f, k;
-        if (i < 20) {
-          f = b & c | ~b & d;
-          k = 1518500249;
-        } else if (i < 40) {
-          f = b ^ c ^ d;
-          k = 1859775393;
-        } else if (i < 60) {
-          f = b & c | b & d | c & d;
-          k = 2400959708;
-        } else {
-          f = b ^ c ^ d;
-          k = 3395469782;
-        }
-        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
-        e = d;
-        d = c;
-        c = rotl(b, 30);
-        b = a;
-        a = t;
-      }
-      h0 = h0 + a >>> 0;
-      h1 = h1 + b >>> 0;
-      h2 = h2 + c >>> 0;
-      h3 = h3 + d >>> 0;
-      h4 = h4 + e >>> 0;
-    }
-    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
   }
 
   // src/domain/metrics.ts
@@ -5425,99 +5619,6 @@ var Server = (() => {
   }
   function checkpointManifest(floorScanId, floorTs, parts) {
     return { version: CHECKPOINT_VERSION, floor_scan_id: floorScanId, floor_ts: floorTs, parts };
-  }
-
-  // src/server/serverCache.ts
-  var VERSION_PROP = "DATA_VERSION";
-  var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "bbb2e86b17d4" : "dev";
-  var CHUNK_CHARS = 9e4;
-  var DEFAULT_TTL_SEC = 21600;
-  function dataVersion() {
-    var _a;
-    return (_a = getProp(VERSION_PROP)) != null ? _a : "0";
-  }
-  function domainTagStamp() {
-    return sha1Hex(resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey))).slice(0, 8);
-  }
-  var versionStamp;
-  function stamp() {
-    if (versionStamp === void 0) {
-      versionStamp = `${BUILD_ID}.${dataVersion()}.${domainTagStamp()}`;
-    }
-    return versionStamp;
-  }
-  function bumpDataVersion() {
-    const now = Date.now();
-    const prev = Number(dataVersion());
-    setProp(VERSION_PROP, String(Number.isFinite(prev) && prev >= now ? prev + 1 : now));
-    versionStamp = void 0;
-  }
-  function paramsHash(params) {
-    return sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
-  }
-  function cacheKey(name, params, version) {
-    return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
-  }
-  function currentStamp() {
-    return stamp();
-  }
-  function splitChunks(s, size = CHUNK_CHARS) {
-    const out = [];
-    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
-    return out.length ? out : [""];
-  }
-  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
-    const json = JSON.stringify(value);
-    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
-    const packed = Utilities.base64Encode(gz.getBytes());
-    const chunks = splitChunks(packed, chunkChars);
-    const entries = { [`${key}:m`]: String(chunks.length) };
-    chunks.forEach((c, i) => {
-      entries[`${key}:${i}`] = c;
-    });
-    CacheService.getScriptCache().putAll(entries, ttlSec);
-  }
-  function cacheGetJson(key) {
-    const cache = CacheService.getScriptCache();
-    const meta = cache.get(`${key}:m`);
-    if (!meta) return void 0;
-    const n = Number(meta);
-    if (!Number.isInteger(n) || n < 1) return void 0;
-    const names = [];
-    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
-    const got = cache.getAll(names);
-    let packed = "";
-    for (const name of names) {
-      const chunk = got[name];
-      if (chunk === void 0 || chunk === null) return void 0;
-      packed += chunk;
-    }
-    const bytes = Utilities.base64Decode(packed);
-    const json = Utilities.ungzip(
-      Utilities.newBlob(bytes, "application/x-gzip")
-    ).getDataAsString("UTF-8");
-    return JSON.parse(json);
-  }
-  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC) {
-    let key = null;
-    try {
-      key = cacheKey(name, params, stamp());
-      const hit = cacheGetJson(key);
-      if (hit !== void 0) return hit;
-    } catch (e) {
-      console.warn(`Cache read failed for ${name}: ${e}`);
-      key = null;
-    }
-    const value = compute();
-    if (key) {
-      try {
-        cachePutJson(key, value, ttlSec);
-      } catch (e) {
-        console.warn(`Cache write failed for ${name}: ${e}`);
-      }
-    }
-    return value;
   }
 
   // src/server/historyStore.ts

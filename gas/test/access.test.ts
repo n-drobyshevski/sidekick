@@ -222,7 +222,9 @@ describe("the denied page explains without disclosing", () => {
   it("offers the account switcher only when it has a URL to send them to", async () => {
     const { deniedHtml } = await load();
     const d = { allowed: false, email: "stranger@example.com", reason: "not-listed" as const };
-    expect(deniedHtml(d, null)).not.toContain("<a href");
-    expect(deniedHtml(d, "https://accounts.google.com/AccountChooser")).toContain("<a href");
+    // On the label, not the tag: the markup moved into pageShell.ts and may move again, but
+    // "is the switcher offered?" is the thing this spec is actually about.
+    expect(deniedHtml(d, null)).not.toContain("Switch Google account");
+    expect(deniedHtml(d, "https://accounts.google.com/AccountChooser")).toContain("Switch Google account");
   });
 });
