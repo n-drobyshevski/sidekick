@@ -8,6 +8,7 @@
 // never touches secrets: WIZ_API_URL and either WIZ_API_TOKEN (a raw bearer token) or
 // WIZ_CLIENT_ID/WIZ_CLIENT_SECRET (OAuth client-credentials).
 
+import { ownerEmail } from "./access";
 import { ensureFolders } from "./archiveStore";
 import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, setProp } from "./props";
 import { ensureTabs } from "./sheetsDb";
@@ -104,6 +105,23 @@ export function setup(): string {
 
   // Default auth URL (tenant API URL + credentials stay manual).
   if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
+
+  // Allowlist. access.ts fails closed on an unset property (owner only), which is the right
+  // default but an invisible one — seed it to the owner so the guard's actual state shows up
+  // in Project Settings > Script Properties instead of presenting as a mystery lockout for
+  // whoever the owner asks to widen it. Never overwrite an existing value: that's how another
+  // admin's additions to the list would get silently reverted on the next setup() run.
+  if (!getProp(PROP_KEYS.allowedUsers)) {
+    const owner = ownerEmail();
+    if (owner) {
+      setProp(PROP_KEYS.allowedUsers, owner);
+      notes.push(`allowlist: seeded with owner ${owner}`);
+    } else {
+      notes.push("allowlist: not seeded (owner email unavailable)");
+    }
+  } else {
+    notes.push("allowlist: existing (left alone)");
+  }
 
   // Daily sync trigger (deduplicated by handler name).
   const existing = ScriptApp.getProjectTriggers().filter(

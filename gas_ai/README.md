@@ -278,8 +278,56 @@ Then in the Apps Script editor:
    `aarsDiagnostic()` answers the other common question — where the AARS scores are —
    by reporting which columns the assets tab has and how many rows carry a score and
    a severity.
-4. Deploy as a web app. Verify dry-run first (no credentials), then set credentials
-   and press "Sync now"; confirm the tabs populate and the graph renders.
+4. Deploy as a web app — **"Anyone within &lt;your domain&gt;"**, executing **as me**. Both
+   halves are load-bearing; see *Who can open it* below. Verify dry-run first (no
+   credentials), then set credentials and press "Sync now"; confirm the tabs populate and
+   the graph renders.
+
+## Who can open it
+
+The Apps Script deploy dropdown offers only Only-myself / Anyone-with-a-Google-Account /
+Anyone / Anyone-within-&lt;domain&gt;. There is no per-account list, so a named set of people
+can only be expressed in code, on top of that fence — which is what `src/server/access.ts`
+is. Two Script Properties hold it:
+
+| Property | Who it names | Who may change it |
+| --- | --- | --- |
+| `ALLOWED_USERS` | Who may open the app at all. | The owner, or an admin. |
+| `ALLOWED_ADMINS` | Who may edit `ALLOWED_USERS`. | **The owner only.** |
+
+Both are comma-, semicolon- or whitespace-separated addresses; a list pasted one-per-line
+parses the same as one pasted one-per-cell. `setup()` seeds `ALLOWED_USERS` with the
+deploying account and never overwrites an existing value. Settings → Access edits both from
+the UI, and every endpoint behind that panel re-checks server-side.
+
+**It fails closed, and the owner is the exception.** An unset, empty or unparseable property
+admits nobody — except the deploying account, which is allowed by *identity* rather than by
+the list. That exception is the whole lockout story: a typo in the property costs the owner
+nothing, and they are the only one who can fix it.
+
+**The manifest is not optional.** `dist/appsscript.json` pins
+`"webapp": {"access": "DOMAIN", "executeAs": "USER_DEPLOYING"}`, and both halves matter, in
+opposite directions:
+
+- **`access`** anything wider than `DOMAIN` and the guarantee this rests on evaporates.
+  Google only exposes a caller's address to a script in the same Workspace domain, so
+  everyone else reads as `""` and is denied. That is the safe direction, but it also means
+  the allowlist cannot be extended outside the domain by this route at all.
+- **`executeAs`** must stay `USER_DEPLOYING`. Under *execute as the user accessing*, the
+  effective user is the visitor — so `ownerEmail()` returns whoever is looking, the owner
+  check matches them against themselves, and **every same-domain visitor is admitted as the
+  owner**, with the power to edit both lists. The first failure is loud and the second is
+  silent, which is why the second is the one to check after any redeploy.
+
+**Changing this needs a new deployment version.** `clasp push` updates the code; `/exec`
+keeps serving the version it was pinned to. The same applies to the `Session` scope the
+guard introduces — the owner has to re-authorize the project once.
+
+Trigger handlers (`trigger_dailySync`, `trigger_continueSync`, `trigger_warmReadModels`) are
+guarded on *identity*, not on allowed-ness: a scheduled fire has no accessing user and
+passes through untouched, while a caller the allowlist refused is turned away. That is a
+deliberate divergence from the sibling `gas/` tool, which leaves them ungated —
+`dist/entry.js` and `test/entryPoints.test.ts` carry the reasoning.
 
 ## Development
 

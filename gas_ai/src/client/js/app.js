@@ -270,13 +270,32 @@ async function boot() {
   try {
     data = await bootstrap();
   } catch (e) {
-    clear(mainEl).append(
-      el("div", { class: "empty" },
-        el("div", {}, "Couldn't reach the server."),
-        el("div", { class: "small", style: "margin:6px 0 14px" }, String(e.message || e)),
-        el("button", { class: "primary", onclick: () => refresh() }, "Retry"),
-      ),
-    );
+    // A denied user normally never reaches this file at all — doGet's own access.deniedPage()
+    // stops them before the SPA bundle ships. This branch is for the narrower case where
+    // access is REVOKED (removed from ALLOWED_USERS, or the property flipped) while a tab is
+    // already open: the next RPC's forbidden envelope surfaces here as err.kind (api.js), and
+    // "Couldn't reach the server / Retry" would be actively misleading — retrying re-sends the
+    // same identity and can only fail the same way.
+    const card = e && e.kind === "forbidden"
+      ? el("div", { class: "empty" },
+          el("div", {}, "You don't have access to this app."),
+          el("div", { class: "small", style: "margin:6px 0 4px" }, String(e.message || e)),
+          // Same offer as the denied page doGet serves, so the two surfaces a locked-out
+          // person can land on say the same thing. The href is built server-side (access.ts)
+          // so the prefilled subject exists once rather than in both bundles.
+          e.contact
+            ? el("div", { class: "small", style: "margin:0 0 14px" },
+                "If you think you should have access, contact ",
+                el("a", { href: e.contactUrl || ("mailto:" + e.contact) }, e.contact),
+                ".")
+            : null,
+        )
+      : el("div", { class: "empty" },
+          el("div", {}, "Couldn't reach the server."),
+          el("div", { class: "small", style: "margin:6px 0 14px" }, String(e.message || e)),
+          el("button", { class: "primary", onclick: () => refresh() }, "Retry"),
+        );
+    clear(mainEl).append(card);
     renderAppbar(appbar, null);
     renderSidebar(sidebar, null);
     hideBootSplash(); // reveal the error card

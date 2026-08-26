@@ -6,6 +6,7 @@ import { call } from "../api.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
 import { bootstrap, swrCall } from "../store.js";
 import { clientBuild, describeBuild } from "../buildInfo.js";
+import { renderAccessPanel } from "./accessEditor.js";
 import {
   clear, debounce, el, emptyState, segmented, sevBadge, skeleton, statusPill, toast,
 } from "../ui.js";
@@ -31,6 +32,10 @@ export async function renderSettings(main, _params, ctx) {
 
   let settings;
   let boot = null;
+  // See the note at the append site in paint(): built once, re-appended on every repaint.
+  const accessHost = el("div", {});
+  let accessCard = null;
+  let accessPending = false;
   // Closed over by fiveRsCard() below, the same way `boot` is closed over by buildCard().
   let fiveRsState = { scope: null, error: "" };
   try {
@@ -192,6 +197,28 @@ export async function renderSettings(main, _params, ctx) {
     );
 
     host.append(fiveRsCard(s));
+
+    // Access sits above the two app-chrome cards because it configures the PRODUCT — who can
+    // open it — while those two configure this browser's view of it.
+    //
+    // Its own host div, filled once and re-appended on every repaint. Two reasons, and the
+    // second is the one that matters: renderAccessPanel is async and paint() is not, so it
+    // cannot be appended inline; and the panel closes over the roster the user is editing, so
+    // rebuilding it on each repaint would silently discard unsaved additions. `accessCard`
+    // caches the node, and re-appending a node that is already in the DOM moves it rather
+    // than duplicating it.
+    host.append(accessHost);
+    if (accessCard) accessHost.append(accessCard);
+    else if (!accessPending) {
+      accessPending = true;
+      renderAccessPanel().then((card) => {
+        // null is the normal answer for anyone who may not edit the roster — no section at
+        // all, rather than a disabled one. It is also what a failed fetch returns.
+        if (!card) return;
+        accessCard = card;
+        accessHost.append(card);
+      });
+    }
 
     host.append(experimentalCard());
 

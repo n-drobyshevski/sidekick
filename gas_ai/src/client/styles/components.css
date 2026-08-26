@@ -770,3 +770,65 @@
   color: var(--ink);
   border-color: var(--text-3);
 }
+
+/* ------------------------------------------------------------------ Settings → Access
+   The roster editor. Rows rather than a table: each entry is one address plus at most two
+   affordances, and a table would spend three header cells saying so.
+
+   Nothing here carries meaning by colour alone — the "outside <domain>" state is a `.pill
+   warn`, which is a word with a dot in front of it, and the owner's locked row says "Owner ·
+   always has access" rather than merely omitting the remove button. */
+.access-block { display: flex; flex-direction: column; gap: var(--space-2); }
+/* The hairline is the only thing separating People from Admins. They are two answers to two
+   different questions and the note under the second one explains the difference, so a second
+   card would be over-stating a split that lives inside one decision. */
+.access-block--divided {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+}
+.access-block__label {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.access-block__note { margin: 0; color: var(--text-2); }
+.access-list { display: flex; flex-direction: column; gap: var(--space-1); }
+.access-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 30px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--page);
+  font-size: var(--fs-body);
+}
+/* The owner's row. Tinted to the surface rather than outlined differently, so it reads as
+   part of the list that simply cannot be edited, not as a warning about itself. */
+.access-row--locked { background: var(--surface); }
+.access-row__email { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.access-remove {
+  flex: 0 0 auto;
+  min-height: 0;
+  padding: 0 var(--space-1);
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--text-3);
+  line-height: 1;
+  cursor: pointer;
+}
+/* Removing somebody locks them out on their next request, so the control earns the bad ink on
+   approach — the confirm dialog is what actually holds the decision. */
+.access-remove:hover { color: var(--bad); }
+.access-add { display: flex; align-items: center; gap: var(--space-2); }
+.access-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}

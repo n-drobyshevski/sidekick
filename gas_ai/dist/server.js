@@ -22,6 +22,7 @@ var Server = (() => {
   var index_exports = {};
   __export(index_exports, {
     aarsDiagnostic: () => aarsDiagnostic,
+    access: () => access_exports,
     api: () => api_exports,
     doGet: () => doGet,
     include: () => include,
@@ -32,6 +33,7 @@ var Server = (() => {
     registerScopeDiagnostic: () => registerScopeDiagnostic,
     setup: () => setup,
     warm: () => warm_exports,
+    welcome: () => welcome_exports,
     wizDiagnostic: () => wizDiagnostic
   });
 
@@ -42,6 +44,116 @@ var Server = (() => {
   }
   function include(filename) {
     return HtmlService.createHtmlOutputFromFile(filename).getContent();
+  }
+
+  // src/server/access.ts
+  var access_exports = {};
+  __export(access_exports, {
+    PRODUCT: () => PRODUCT,
+    __resetMemosForTest: () => __resetMemosForTest,
+    accountChooserUrl: () => accountChooserUrl,
+    assertAllowed: () => assertAllowed,
+    canEditAdmins: () => canEditAdmins,
+    canEditUsers: () => canEditUsers,
+    check: () => check,
+    contactMailto: () => contactMailto,
+    currentAdmins: () => currentAdmins,
+    currentUsers: () => currentUsers,
+    decide: () => decide,
+    deniedHtml: () => deniedHtml,
+    deniedPage: () => deniedPage,
+    denyResult: () => denyResult,
+    isOwner: () => isOwner,
+    ownerDomain: () => ownerDomain,
+    ownerEmail: () => ownerEmail,
+    parseAllowlist: () => parseAllowlist,
+    serviceUrl: () => serviceUrl
+  });
+
+  // src/server/pageShell.ts
+  var MARK_COMPACT_VIEWBOX = "12.2 8.4 52.7 74";
+  var MARK_COMPACT_RATIO = 52.7 / 74;
+  var MARK_ORBIT = "M47.64 80.58A32.1 32.1 0 0 1 17.83 52.04M19.82 36.92A32.1 32.1 0 0 1 54.21 16.76";
+  var MARK_ORBIT_WIDTH = 2.41;
+  var MARK_NODES = [[17.22, 44.33, 4.41], [45.96, 16.55, 7.56]];
+  var MARK_SHIELD = "M48.56 29.88C52.79 34.78 58.69 37.87 64.33 37.81C64.44 45.48 63.64 48.51 62.11 51.96C61.32 54.62 56.36 61.55 48.56 64.18C40.76 61.55 35.8 54.62 35.01 51.96C33.48 48.51 32.68 45.48 32.79 37.81C38.43 37.87 44.33 34.78 48.56 29.88Z";
+  var MARK_CHECK = "M42.3 48.81 46.19 52.7 54.89 43.99";
+  var MARK_CHECK_WIDTH = 3.04;
+  function brandMarkSvg(height) {
+    const width = Math.round(height * MARK_COMPACT_RATIO * 100) / 100;
+    const nodes = MARK_NODES.map(
+      (n) => '<circle cx="' + n[0] + '" cy="' + n[1] + '" r="' + n[2] + '" fill="#0a0a0a"/>'
+    ).join("");
+    return [
+      '<svg class="brand-mark" viewBox="' + MARK_COMPACT_VIEWBOX + '"',
+      ' width="' + width + '" height="' + height + '" focusable="false" aria-hidden="true">',
+      '<path d="' + MARK_ORBIT + '" fill="none" stroke="#0a0a0a" stroke-width="' + MARK_ORBIT_WIDTH,
+      '" stroke-linecap="round"/>',
+      nodes,
+      '<path d="' + MARK_SHIELD + '" fill="#0a0a0a"/>',
+      '<path d="' + MARK_CHECK + '" fill="none" stroke="#ffffff" stroke-width="' + MARK_CHECK_WIDTH,
+      '" stroke-linecap="round" stroke-linejoin="round"/>',
+      "</svg>"
+    ].join("");
+  }
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function primaryAction(href, label) {
+    return '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
+  }
+  function secondaryAction(href, label) {
+    return '<a class="alt" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
+  }
+  function cardPage(spec) {
+    const body = spec.paragraphs.map((p) => "<p>" + p + "</p>").join("");
+    const actions = spec.actions ? '<div class="actions">' + spec.actions + "</div>" : "";
+    return [
+      '<!DOCTYPE html><html><head><meta charset="utf-8">',
+      // Every link on these pages has to break out of the HtmlService sandbox iframe; the app's
+      // own index.html carries the same base tag for the same reason.
+      '<base target="_top">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+      "<title>" + escapeHtml(spec.title) + "</title><style>",
+      "*{box-sizing:border-box}",
+      // --surface / --ink, and the same --font stack tokens.css:254 carries.
+      "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
+      "background:#f8f8fa;color:#171717;",
+      "font-family:-apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,'Helvetica Neue',sans-serif}",
+      // --page on --hairline at --radius-xl.
+      ".card{max-width:32rem;margin:24px;padding:32px;background:#ffffff;border:1px solid #e6e6e9;",
+      "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
+      ".lockup{display:flex;align-items:center;gap:8px;margin:0 0 16px}",
+      // Mirrors .appbar-name in base.css (600 / --fs-lead 16px / -0.02em / --ink) so the
+      // wordmark is the same object here as in the header, not a near-miss of it.
+      ".lockup span{font-weight:600;font-size:1rem;letter-spacing:-0.02em;color:#171717;",
+      "white-space:nowrap}",
+      ".brand-mark{display:block;flex:0 0 auto}",
+      "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
+      // --text-2, the same alpha the app's prose carries.
+      "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:rgba(0,0,0,.65)}",
+      ".actions{margin-top:24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}",
+      // Graphite, not the accent: DESIGN.md keeps the accent for data, focus and links, and
+      // fills the one committing action with --graphite / --on-graphite.
+      ".btn{display:inline-flex;align-items:center;min-height:36px;padding:6px 14px;",
+      "border-radius:8px;background:#0a0a0a;color:#fafafa;font-size:14px;font-weight:500;",
+      "text-decoration:none}",
+      ".btn:hover{background:#27272a}",
+      // --accent. gas_ai's accent is the crimson, NOT the sibling tool's Signal Blue — these
+      // pages are the product's front door and must read as this product.
+      "a{color:#be123c}",
+      // Never remove: CLAUDE.md names the focus-ring rules load-bearing, and these pages are
+      // reachable by keyboard only.
+      "a:focus-visible{outline:2px solid #be123c;outline-offset:2px;border-radius:4px}",
+      '</style></head><body><main class="card">',
+      // The same lockup as the app header — mark then wordmark — so the door and the room
+      // behind it are recognisably one product.
+      '<div class="lockup">' + brandMarkSvg(22) + "<span>" + escapeHtml(spec.eyebrow) + "</span></div>",
+      "<h1>" + escapeHtml(spec.heading) + "</h1>",
+      body,
+      actions,
+      "</main></body></html>"
+    ].join("");
   }
 
   // src/domain/domainTag.ts
@@ -77,6 +189,14 @@ var Server = (() => {
     wizProjectIdV2: "WIZ_PROJECT_ID_V2",
     ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
     archiveFolderId: "ARCHIVE_FOLDER_ID",
+    // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.
+    // Comma/semicolon/whitespace-separated addresses; see server/access.ts. Unset means nobody —
+    // the guard fails closed, and the owner is allowed by identity rather than by this list.
+    allowedUsers: "ALLOWED_USERS",
+    // Who may EDIT that list. Owner-only to change; see the admin-tier note in access.ts.
+    // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
+    // not by also appearing in ALLOWED_USERS.
+    allowedAdmins: "ALLOWED_ADMINS",
     // Optional comma-separated override of the AI resource-type enum values to
     // query (e.g. "AI_AGENT,AI_MODEL") for tenants whose schema names differ.
     wizAiResourceTypes: "WIZ_AI_RESOURCE_TYPES",
@@ -130,6 +250,386 @@ var Server = (() => {
       getProp(PROP_KEYS.wizClientId),
       getProp(PROP_KEYS.wizClientSecret)
     ) !== null;
+  }
+
+  // src/server/access.ts
+  var PRODUCT = "Wiz SIDEKICK AI";
+  var DENIAL_MESSAGE = {
+    anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
+    "not-listed": "Your account isn't on this app's access list."
+  };
+  function parseAllowlist(raw) {
+    if (!raw) return [];
+    const seen = {};
+    const out = [];
+    for (const part of raw.split(/[,;\s]+/)) {
+      const email = part.trim().toLowerCase();
+      if (!email || seen[email]) continue;
+      seen[email] = true;
+      out.push(email);
+    }
+    return out;
+  }
+  function decide(active, owner, raw, adminsRaw) {
+    const email = (active || "").trim();
+    const key = email.toLowerCase();
+    if (!key) return { allowed: false, email: "", reason: "anonymous" };
+    const ownerKey = (owner || "").trim().toLowerCase();
+    if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
+    if (parseAllowlist(adminsRaw != null ? adminsRaw : null).indexOf(key) >= 0) {
+      return { allowed: true, email, reason: "admin" };
+    }
+    return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
+  }
+  var memo;
+  function check() {
+    if (memo === void 0) {
+      memo = decide(
+        Session.getActiveUser().getEmail(),
+        Session.getEffectiveUser().getEmail(),
+        getProp(PROP_KEYS.allowedUsers),
+        getProp(PROP_KEYS.allowedAdmins)
+      );
+    }
+    return memo;
+  }
+  function __resetMemosForTest() {
+    memo = void 0;
+  }
+  function logDenial(op, d) {
+    console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
+  }
+  function denyResult(op) {
+    const d = check();
+    if (d.allowed) return null;
+    logDenial(op, d);
+    const env = {
+      ok: false,
+      error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"],
+      errorKind: "forbidden"
+    };
+    const who = ownerEmail().trim();
+    if (who) {
+      env.contact = who;
+      env.contactUrl = contactMailto(who);
+    }
+    return env;
+  }
+  function assertAllowed(op) {
+    const d = check();
+    if (d.allowed) return;
+    logDenial(op, d);
+    throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
+  }
+  function contactMailto(email) {
+    return "mailto:" + email.trim() + "?subject=" + encodeURIComponent("Access to " + PRODUCT);
+  }
+  function deniedHtml(d, switchUrl, contact) {
+    const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
+    const who = (contact || "").trim();
+    const ask = who ? 'If you think you should have access, contact <a href="' + escapeHtml(contactMailto(who)) + '">' + escapeHtml(who) + "</a>." : (
+      // No owner address resolved — never render "contact:" with nothing after it.
+      "If you think you should have access, ask whoever runs this dashboard to add you."
+    );
+    return cardPage({
+      title: PRODUCT,
+      eyebrow: PRODUCT,
+      heading: "You don't have access to this app.",
+      paragraphs: [detail, ask],
+      actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : ""
+    });
+  }
+  function deniedPage() {
+    const d = check();
+    if (d.allowed) return null;
+    logDenial("doGet", d);
+    return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl(), ownerEmail())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
+  }
+  function serviceUrl() {
+    try {
+      return ScriptApp.getService().getUrl() || null;
+    } catch (_e) {
+      return null;
+    }
+  }
+  function accountChooserUrl() {
+    const url = serviceUrl();
+    return url ? "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(url) : null;
+  }
+  function ownerEmail() {
+    return Session.getEffectiveUser().getEmail() || "";
+  }
+  function isOwner() {
+    return check().reason === "owner";
+  }
+  function canEditUsers() {
+    const r = check().reason;
+    return r === "owner" || r === "admin";
+  }
+  function canEditAdmins() {
+    return isOwner();
+  }
+  function currentUsers() {
+    return parseAllowlist(getProp(PROP_KEYS.allowedUsers));
+  }
+  function currentAdmins() {
+    return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
+  }
+  function ownerDomain() {
+    const at = ownerEmail().lastIndexOf("@");
+    return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
+  }
+
+  // src/server/welcome.ts
+  var welcome_exports = {};
+  __export(welcome_exports, {
+    ENTER_PARAM: () => ENTER_PARAM,
+    ENTRY_TTL_SEC: () => ENTRY_TTL_SEC,
+    gate: () => gate,
+    welcomeHtml: () => welcomeHtml
+  });
+
+  // src/domain/sha1.ts
+  function utf8Bytes(s) {
+    const out = [];
+    for (let i = 0; i < s.length; i++) {
+      let c = s.charCodeAt(i);
+      if (c < 128) {
+        out.push(c);
+      } else if (c < 2048) {
+        out.push(192 | c >> 6, 128 | c & 63);
+      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
+        const c2 = s.charCodeAt(++i);
+        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
+        out.push(
+          240 | cp >> 18,
+          128 | cp >> 12 & 63,
+          128 | cp >> 6 & 63,
+          128 | cp & 63
+        );
+      } else {
+        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
+      }
+    }
+    return out;
+  }
+  function rotl(n, b) {
+    return (n << b | n >>> 32 - b) >>> 0;
+  }
+  function sha1Hex(input) {
+    const bytes = utf8Bytes(input);
+    const bitLen = bytes.length * 8;
+    bytes.push(128);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    const hi = Math.floor(bitLen / 4294967296);
+    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
+    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
+    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
+    const w = new Array(80);
+    for (let block = 0; block < bytes.length; block += 64) {
+      for (let i = 0; i < 16; i++) {
+        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
+      }
+      for (let i = 16; i < 80; i++) {
+        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+      }
+      let a = h0, b = h1, c = h2, d = h3, e = h4;
+      for (let i = 0; i < 80; i++) {
+        let f, k;
+        if (i < 20) {
+          f = b & c | ~b & d;
+          k = 1518500249;
+        } else if (i < 40) {
+          f = b ^ c ^ d;
+          k = 1859775393;
+        } else if (i < 60) {
+          f = b & c | b & d | c & d;
+          k = 2400959708;
+        } else {
+          f = b ^ c ^ d;
+          k = 3395469782;
+        }
+        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
+        e = d;
+        d = c;
+        c = rotl(b, 30);
+        b = a;
+        a = t;
+      }
+      h0 = h0 + a >>> 0;
+      h1 = h1 + b >>> 0;
+      h2 = h2 + c >>> 0;
+      h3 = h3 + d >>> 0;
+      h4 = h4 + e >>> 0;
+    }
+    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
+  }
+
+  // src/server/buildInfo.ts
+  var BUILD_ID = true ? "3eab975d098a" : "dev";
+  function buildInfo() {
+    return { id: BUILD_ID };
+  }
+
+  // src/server/serverCache.ts
+  var VERSION_PROP = "DATA_VERSION";
+  var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
+  var KEY_PREFIX = `wsk.${BUILD_ID}`;
+  var CHUNK_CHARS = 9e4;
+  var DEFAULT_TTL_SEC = 21600;
+  var dataVersionMemo;
+  var wizDataVersionMemo;
+  var configStampMemo;
+  function __resetMemosForTest2() {
+    dataVersionMemo = void 0;
+    wizDataVersionMemo = void 0;
+    configStampMemo = void 0;
+  }
+  function dataVersion() {
+    var _a5;
+    if (dataVersionMemo === void 0) dataVersionMemo = (_a5 = getProp(VERSION_PROP)) != null ? _a5 : "0";
+    return dataVersionMemo;
+  }
+  function nextVersion(prev) {
+    const now = String(Date.now());
+    const [prevMs, prevN] = String(prev != null ? prev : "").split(".");
+    return prevMs === now ? `${now}.${(Number(prevN) || 0) + 1}` : `${now}.0`;
+  }
+  function bumpDataVersion() {
+    setProp(VERSION_PROP, nextVersion(getProp(VERSION_PROP)));
+    __resetMemosForTest2();
+  }
+  function wizDataVersion() {
+    var _a5;
+    if (wizDataVersionMemo === void 0) wizDataVersionMemo = (_a5 = getProp(WIZ_VERSION_PROP)) != null ? _a5 : "0";
+    return wizDataVersionMemo;
+  }
+  function bumpWizDataVersion() {
+    setProp(WIZ_VERSION_PROP, nextVersion(getProp(WIZ_VERSION_PROP)));
+    __resetMemosForTest2();
+  }
+  function paramsHash(params) {
+    return sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
+  }
+  function cacheKey(name, params, version) {
+    return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
+  }
+  function configStamp() {
+    var _a5;
+    if (configStampMemo === void 0) {
+      configStampMemo = sha1Hex(`${domainTagKey()}\0${(_a5 = getProp(PROP_KEYS.wizProjectIdV2)) != null ? _a5 : ""}`).slice(0, 8);
+    }
+    return configStampMemo;
+  }
+  function currentStamp(version) {
+    return `${KEY_PREFIX}:${version != null ? version : dataVersion()}.${configStamp()}`;
+  }
+  function splitChunks(s, size = CHUNK_CHARS) {
+    const out = [];
+    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
+    return out.length ? out : [""];
+  }
+  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
+    const json = JSON.stringify(value);
+    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
+    const packed = Utilities.base64Encode(gz.getBytes());
+    const chunks = splitChunks(packed, chunkChars);
+    const entries = { [`${key}:m`]: String(chunks.length) };
+    chunks.forEach((c, i) => {
+      entries[`${key}:${i}`] = c;
+    });
+    CacheService.getScriptCache().putAll(entries, ttlSec);
+  }
+  function cacheGetJson(key) {
+    const cache = CacheService.getScriptCache();
+    const meta = cache.get(`${key}:m`);
+    if (!meta) return void 0;
+    const n = Number(meta);
+    if (!Number.isInteger(n) || n < 1) return void 0;
+    const names = [];
+    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
+    const got = cache.getAll(names);
+    let packed = "";
+    for (const name of names) {
+      const chunk = got[name];
+      if (chunk === void 0 || chunk === null) return void 0;
+      packed += chunk;
+    }
+    const bytes = Utilities.base64Decode(packed);
+    const json = Utilities.ungzip(
+      Utilities.newBlob(bytes, "application/x-gzip")
+    ).getDataAsString("UTF-8");
+    return JSON.parse(json);
+  }
+  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
+    let key = null;
+    try {
+      key = cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`);
+      const hit = cacheGetJson(key);
+      if (hit !== void 0) return hit;
+    } catch (e) {
+      console.warn(`Cache read failed for ${name}: ${e}`);
+      key = null;
+    }
+    const value = compute();
+    if (key) {
+      try {
+        cachePutJson(key, value, ttlSec);
+      } catch (e) {
+        console.warn(`Cache write failed for ${name}: ${e}`);
+      }
+    }
+    return value;
+  }
+
+  // src/server/welcome.ts
+  var ENTRY_TTL_SEC = 21600;
+  var ENTER_PARAM = "enter";
+  function markerKey(email) {
+    return "entered:" + paramsHash(email.trim().toLowerCase());
+  }
+  function markEntered(email) {
+    try {
+      CacheService.getScriptCache().put(markerKey(email), "1", ENTRY_TTL_SEC);
+    } catch (e) {
+      console.warn("entry marker write failed: " + e);
+    }
+  }
+  function hasEntered(email) {
+    try {
+      return CacheService.getScriptCache().get(markerKey(email)) !== null;
+    } catch (e) {
+      console.warn("entry marker read failed: " + e);
+      return true;
+    }
+  }
+  function welcomeHtml(email, continueUrl, switchUrl) {
+    return cardPage({
+      title: PRODUCT,
+      eyebrow: PRODUCT,
+      heading: "You're signed in.",
+      paragraphs: [
+        "This dashboard will open as <strong>" + escapeHtml(email) + "</strong>.",
+        "If that isn't the account you meant to use, switch before you continue \u2014 the register you see depends on which account opens it."
+      ],
+      actions: primaryAction(continueUrl, "Continue") + (switchUrl ? secondaryAction(switchUrl, "Switch Google account") : "")
+    });
+  }
+  function gate(e) {
+    const email = check().email;
+    if (!email) return null;
+    if (e && e.parameter && e.parameter[ENTER_PARAM]) {
+      markEntered(email);
+      return null;
+    }
+    if (hasEntered(email)) {
+      markEntered(email);
+      return null;
+    }
+    const url = serviceUrl();
+    if (!url) return null;
+    const continueUrl = url + (url.indexOf("?") >= 0 ? "&" : "?") + ENTER_PARAM + "=1";
+    return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
   }
 
   // src/server/archiveStore.ts
@@ -907,6 +1407,17 @@ var Server = (() => {
     }
     ensureFolders(folderId);
     if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
+    if (!getProp(PROP_KEYS.allowedUsers)) {
+      const owner = ownerEmail();
+      if (owner) {
+        setProp(PROP_KEYS.allowedUsers, owner);
+        notes.push(`allowlist: seeded with owner ${owner}`);
+      } else {
+        notes.push("allowlist: not seeded (owner email unavailable)");
+      }
+    } else {
+      notes.push("allowlist: existing (left alone)");
+    }
     const existing = ScriptApp.getProjectTriggers().filter(
       (t) => t.getHandlerFunction() === DAILY_TRIGGER_HANDLER
     );
@@ -8138,199 +8649,6 @@ var Server = (() => {
     };
   }
 
-  // src/domain/sha1.ts
-  function utf8Bytes(s) {
-    const out = [];
-    for (let i = 0; i < s.length; i++) {
-      let c = s.charCodeAt(i);
-      if (c < 128) {
-        out.push(c);
-      } else if (c < 2048) {
-        out.push(192 | c >> 6, 128 | c & 63);
-      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
-        const c2 = s.charCodeAt(++i);
-        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
-        out.push(
-          240 | cp >> 18,
-          128 | cp >> 12 & 63,
-          128 | cp >> 6 & 63,
-          128 | cp & 63
-        );
-      } else {
-        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
-      }
-    }
-    return out;
-  }
-  function rotl(n, b) {
-    return (n << b | n >>> 32 - b) >>> 0;
-  }
-  function sha1Hex(input) {
-    const bytes = utf8Bytes(input);
-    const bitLen = bytes.length * 8;
-    bytes.push(128);
-    while (bytes.length % 64 !== 56) bytes.push(0);
-    const hi = Math.floor(bitLen / 4294967296);
-    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
-    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
-    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
-    const w = new Array(80);
-    for (let block = 0; block < bytes.length; block += 64) {
-      for (let i = 0; i < 16; i++) {
-        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
-      }
-      for (let i = 16; i < 80; i++) {
-        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
-      }
-      let a = h0, b = h1, c = h2, d = h3, e = h4;
-      for (let i = 0; i < 80; i++) {
-        let f, k;
-        if (i < 20) {
-          f = b & c | ~b & d;
-          k = 1518500249;
-        } else if (i < 40) {
-          f = b ^ c ^ d;
-          k = 1859775393;
-        } else if (i < 60) {
-          f = b & c | b & d | c & d;
-          k = 2400959708;
-        } else {
-          f = b ^ c ^ d;
-          k = 3395469782;
-        }
-        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
-        e = d;
-        d = c;
-        c = rotl(b, 30);
-        b = a;
-        a = t;
-      }
-      h0 = h0 + a >>> 0;
-      h1 = h1 + b >>> 0;
-      h2 = h2 + c >>> 0;
-      h3 = h3 + d >>> 0;
-      h4 = h4 + e >>> 0;
-    }
-    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
-  }
-
-  // src/server/buildInfo.ts
-  var BUILD_ID = true ? "8b3c2ae26b50" : "dev";
-  function buildInfo() {
-    return { id: BUILD_ID };
-  }
-
-  // src/server/serverCache.ts
-  var VERSION_PROP = "DATA_VERSION";
-  var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
-  var KEY_PREFIX = `wsk.${BUILD_ID}`;
-  var CHUNK_CHARS = 9e4;
-  var DEFAULT_TTL_SEC = 21600;
-  var dataVersionMemo;
-  var wizDataVersionMemo;
-  var configStampMemo;
-  function __resetMemosForTest() {
-    dataVersionMemo = void 0;
-    wizDataVersionMemo = void 0;
-    configStampMemo = void 0;
-  }
-  function dataVersion() {
-    var _a5;
-    if (dataVersionMemo === void 0) dataVersionMemo = (_a5 = getProp(VERSION_PROP)) != null ? _a5 : "0";
-    return dataVersionMemo;
-  }
-  function nextVersion(prev) {
-    const now = String(Date.now());
-    const [prevMs, prevN] = String(prev != null ? prev : "").split(".");
-    return prevMs === now ? `${now}.${(Number(prevN) || 0) + 1}` : `${now}.0`;
-  }
-  function bumpDataVersion() {
-    setProp(VERSION_PROP, nextVersion(getProp(VERSION_PROP)));
-    __resetMemosForTest();
-  }
-  function wizDataVersion() {
-    var _a5;
-    if (wizDataVersionMemo === void 0) wizDataVersionMemo = (_a5 = getProp(WIZ_VERSION_PROP)) != null ? _a5 : "0";
-    return wizDataVersionMemo;
-  }
-  function bumpWizDataVersion() {
-    setProp(WIZ_VERSION_PROP, nextVersion(getProp(WIZ_VERSION_PROP)));
-    __resetMemosForTest();
-  }
-  function paramsHash(params) {
-    return sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
-  }
-  function cacheKey(name, params, version) {
-    return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
-  }
-  function configStamp() {
-    var _a5;
-    if (configStampMemo === void 0) {
-      configStampMemo = sha1Hex(`${domainTagKey()}\0${(_a5 = getProp(PROP_KEYS.wizProjectIdV2)) != null ? _a5 : ""}`).slice(0, 8);
-    }
-    return configStampMemo;
-  }
-  function currentStamp(version) {
-    return `${KEY_PREFIX}:${version != null ? version : dataVersion()}.${configStamp()}`;
-  }
-  function splitChunks(s, size = CHUNK_CHARS) {
-    const out = [];
-    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
-    return out.length ? out : [""];
-  }
-  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
-    const json = JSON.stringify(value);
-    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
-    const packed = Utilities.base64Encode(gz.getBytes());
-    const chunks = splitChunks(packed, chunkChars);
-    const entries = { [`${key}:m`]: String(chunks.length) };
-    chunks.forEach((c, i) => {
-      entries[`${key}:${i}`] = c;
-    });
-    CacheService.getScriptCache().putAll(entries, ttlSec);
-  }
-  function cacheGetJson(key) {
-    const cache = CacheService.getScriptCache();
-    const meta = cache.get(`${key}:m`);
-    if (!meta) return void 0;
-    const n = Number(meta);
-    if (!Number.isInteger(n) || n < 1) return void 0;
-    const names = [];
-    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
-    const got = cache.getAll(names);
-    let packed = "";
-    for (const name of names) {
-      const chunk = got[name];
-      if (chunk === void 0 || chunk === null) return void 0;
-      packed += chunk;
-    }
-    const bytes = Utilities.base64Decode(packed);
-    const json = Utilities.ungzip(
-      Utilities.newBlob(bytes, "application/x-gzip")
-    ).getDataAsString("UTF-8");
-    return JSON.parse(json);
-  }
-  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
-    let key = null;
-    try {
-      key = cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`);
-      const hit = cacheGetJson(key);
-      if (hit !== void 0) return hit;
-    } catch (e) {
-      console.warn(`Cache read failed for ${name}: ${e}`);
-      key = null;
-    }
-    const value = compute();
-    if (key) {
-      try {
-        cachePutJson(key, value, ttlSec);
-      } catch (e) {
-        console.warn(`Cache write failed for ${name}: ${e}`);
-      }
-    }
-    return value;
-  }
-
   // src/server/settingsStore.ts
   var settingsMemo;
   function loadSettings() {
@@ -10148,9 +10466,9 @@ var Server = (() => {
     const bands = currentBands();
     const bandKey = `${bands.critical}|${bands.high}|${bands.medium}|${bands.low}`;
     const domainKey = domainTagKey();
-    const memo = derivedAssetsMemo;
-    if (memo && memo.raw === raw && memo.bandKey === bandKey && memo.domainKey === domainKey) {
-      return memo.out;
+    const memo2 = derivedAssetsMemo;
+    if (memo2 && memo2.raw === raw && memo2.bandKey === bandKey && memo2.domainKey === domainKey) {
+      return memo2.out;
     }
     const out = withReadDerivations(raw);
     derivedAssetsMemo = { raw, bandKey, domainKey, out };
@@ -10322,6 +10640,7 @@ var Server = (() => {
     cancelSync: () => cancelSync2,
     expandAsset: () => expandAsset,
     getAarsRule: () => getAarsRule3,
+    getAccess: () => getAccess,
     getActions: () => getActions,
     getAssetDetail: () => getAssetDetail,
     getAssetOptions: () => getAssetOptions,
@@ -10359,6 +10678,8 @@ var Server = (() => {
     resetData: () => resetData2,
     runGraphQuery: () => runGraphQuery,
     runSync: () => runSync,
+    saveAccess: () => saveAccess,
+    saveAdmins: () => saveAdmins,
     scoreAarsSample: () => scoreAarsSample,
     setAarsRule: () => setAarsRule2,
     setPostureRule: () => setPostureRule2,
@@ -15728,6 +16049,62 @@ var Server = (() => {
         domainView: getDomainView2(),
         fiveRsPins: getFiveRsPins2()
       };
+    });
+  }
+  var ACCESS_MAX_BYTES = 8e3;
+  var ACCESS_MAX_ENTRIES = 500;
+  function validateAddresses(raw) {
+    const list2 = parseAllowlist(Array.isArray(raw) ? raw.join("\n") : String(raw != null ? raw : ""));
+    const bad = list2.filter((e) => e.indexOf("@") < 0);
+    if (bad.length) throw new Error(`Not an email address: ${bad.join(", ")}`);
+    if (list2.length > ACCESS_MAX_ENTRIES) {
+      throw new Error(`Too many people (${list2.length}); the limit is ${ACCESS_MAX_ENTRIES}.`);
+    }
+    const bytes = list2.join(",").length;
+    if (bytes > ACCESS_MAX_BYTES) {
+      throw new Error(`That list is too long to store (${bytes} of ${ACCESS_MAX_BYTES} bytes).`);
+    }
+    return list2;
+  }
+  function logAccessChange(what, actor, before, after) {
+    const added = after.filter((e) => before.indexOf(e) < 0);
+    const removed = before.filter((e) => after.indexOf(e) < 0);
+    console.log(JSON.stringify({ access: "changed", what, actor, added, removed }));
+  }
+  function getAccess(_p) {
+    return run(() => {
+      const canUsers = canEditUsers();
+      if (!canUsers) return { canEditUsers: false, canEditAdmins: false };
+      return {
+        canEditUsers: true,
+        canEditAdmins: canEditAdmins(),
+        owner: ownerEmail(),
+        domain: ownerDomain(),
+        users: currentUsers(),
+        admins: currentAdmins()
+      };
+    });
+  }
+  function saveAccess(p) {
+    return run(() => {
+      if (!canEditUsers()) throw new Error("Only the owner or an admin can change access.");
+      const before = currentUsers();
+      const list2 = validateAddresses(p == null ? void 0 : p["users"]);
+      const owner = ownerEmail().trim().toLowerCase();
+      const withOwner = owner && list2.indexOf(owner) < 0 ? [owner].concat(list2) : list2;
+      setProp(PROP_KEYS.allowedUsers, withOwner.join(", "));
+      logAccessChange("users", check().email, before, withOwner);
+      return { users: withOwner };
+    });
+  }
+  function saveAdmins(p) {
+    return run(() => {
+      if (!canEditAdmins()) throw new Error("Only the owner can change admins.");
+      const before = currentAdmins();
+      const list2 = validateAddresses(p == null ? void 0 : p["admins"]);
+      setProp(PROP_KEYS.allowedAdmins, list2.join(", "));
+      logAccessChange("admins", check().email, before, list2);
+      return { admins: list2 };
     });
   }
   var PREVIEW_MOVERS_MAX = 50;
