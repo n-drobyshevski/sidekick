@@ -10,9 +10,10 @@ import { clear, confirmDialog, downloadText, el, statusPill, toast } from "../ui
 
 export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
   let items = JSON.parse(JSON.stringify(boot.settings.domains.items || []));
-  // Snapshot the persisted list so we can show an "unsaved changes" cue and let the parent
-  // Settings page warn before a sibling save reboots the page and discards this draft.
-  const initialJson = JSON.stringify(boot.settings.domains.items || []);
+  // Snapshot of what is persisted, so the editor can show an "unsaved changes" cue. Reassigned
+  // after a successful save: nothing reboots the page any more (see save()), so if this stayed
+  // at the boot value the editor would read as dirty forever the moment you saved once.
+  let initialJson = JSON.stringify(boot.settings.domains.items || []);
   const isDirty = () => JSON.stringify(items) !== initialJson;
   // Subscriptions / support groups seen in the current scan, offered by the pickers.
   const knownSubs = (boot.filterOptions && boot.filterOptions.subscriptions) || [];
@@ -124,8 +125,6 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
   }
 
   async function save() {
-    // Saving domains reloads the page too, so warn about any sibling unsaved edits first.
-    if (hooks.guardOtherDrafts && !(await hooks.guardOtherDrafts())) return;
     saveBtn.disabled = true;
     try {
       const res = await call("api_saveDomains", { items });
@@ -134,7 +133,14 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
         return;
       }
       toast("Manual groups saved.");
-      ctx.refresh();
+      // The list already reflects `items` (renderList() below draws from it directly), so all
+      // that's left is telling the rest of the page/app this draft is no longer dirty. Callers
+      // that still want the old full-page reload (nothing else wires onSaved) get it; Settings
+      // instead hooks in to invalidate caches without tearing down its own or anyone else's draft.
+      initialJson = JSON.stringify(items);
+      renderList();
+      if (hooks.onSaved) hooks.onSaved();
+      else ctx.refresh();
     } catch (e) {
       toast(`Save failed: ${e.message}`, "error");
     } finally {
