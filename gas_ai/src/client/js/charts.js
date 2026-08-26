@@ -46,7 +46,29 @@ import {
   Tooltip,
 } from "chart.js";
 
-import { chartTipHandler } from "./ui/tip.js";
+/**
+ * The app's hover card, INJECTED rather than imported.
+ *
+ * This module is built twice — into the main bundle for the dev harness and the type
+ * checker, and into `dist/js_charts.html` as a standalone bundle fetched on the first route
+ * that draws a chart. `ui/tip.js` reaches helpContent.js, store.js and the popover stack
+ * behind it, so importing it here would pull a large slice of the app into that second
+ * bundle and ship it twice. The loader hands the handler over instead
+ * (`chartsLoader.js` → `setChartTipHandler`), which keeps ONE hover vocabulary in the app
+ * and one copy of it in the bundle.
+ *
+ * Null until it is set: a chart drawn before the handoff shows no card rather than throwing
+ * inside Chart.js's render loop.
+ */
+let tipHandler = null;
+
+export function setChartTipHandler(fn) {
+  tipHandler = typeof fn === "function" ? fn : null;
+}
+
+function chartTipHandler(ctx) {
+  if (tipHandler) tipHandler(ctx);
+}
 
 Chart.register(
   CategoryScale, Filler, Legend,

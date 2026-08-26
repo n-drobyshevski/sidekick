@@ -103,3 +103,4 @@ function api_resetData(p) { return timedApi_("resetData", p); }
 function api_previewPrune(p) { return timedApi_("previewPrune", p); }
 function api_pruneToProject(p) { return timedApi_("pruneToProject", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }
+function api_getChartsBundle(p) { return timedApi_("getChartsBundle", p); }

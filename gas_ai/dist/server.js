@@ -8215,7 +8215,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "9870ab0055aa" : "dev";
+  var BUILD_ID = true ? "8b3c2ae26b50" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -10327,6 +10327,7 @@ var Server = (() => {
     getAssetOptions: () => getAssetOptions,
     getAssets: () => getAssets,
     getAssetsHead: () => getAssetsHead,
+    getChartsBundle: () => getChartsBundle,
     getCombosDigest: () => getCombosDigest,
     getCompliance: () => getCompliance,
     getConfigFindingDetail: () => getConfigFindingDetail,
@@ -16130,6 +16131,16 @@ var Server = (() => {
         }
       }), 3600)
     );
+  }
+  function getChartsBundle(_p) {
+    return run(() => {
+      const html = HtmlService.createHtmlOutputFromFile("js_charts").getContent();
+      const open = html.indexOf(">", html.indexOf("<script"));
+      const close = html.lastIndexOf("<\/script>");
+      const src = open < 0 || close < 0 ? "" : html.slice(open + 1, close).trim();
+      if (!src) throw new Error("js_charts is missing or empty in this deployment");
+      return src;
+    });
   }
 
   // src/server/warm.ts

@@ -3400,3 +3400,38 @@ export function getStorageStats(_p?: unknown): ApiResult {
     }), 3_600),
   );
 }
+
+// -------------------------------------------------------------------- the charts bundle
+
+/**
+ * The Chart.js bundle's source, for the first route in a session that draws a chart.
+ *
+ * NOT AN `include()`. `doGet` cannot know which page the reader is on — routing is
+ * `location.hash`, which never reaches the server, and every navigation after the first
+ * carries no request at all — so a conditional partial could only be right for the first
+ * route of a session. Chart.js is 170,785 of the client bundle's bytes and eight of the ten
+ * routes draw no chart, so it rides this instead. `src/client/js/chartsLoader.js` carries the
+ * whole argument, including the part about executing it that cannot be settled from here.
+ *
+ * NOT CACHED, and for once not on the freshness argument: this is a file inside the
+ * deployment, so it cannot go stale relative to the code asking for it. Caching it would mean
+ * gzipping 171 KB into CacheService chunks to save one `getContent()` against a file the
+ * runtime already has open.
+ *
+ * The `<script>` wrapper is stripped because the caller executes the string. It is there at
+ * all because a GAS project holds HTML files, not .js ones — `include()` and
+ * `createHtmlOutputFromFile` both read HTML — so the build writes the bundle in the only
+ * shape the platform stores. An empty answer would be a deployment missing the file, which is
+ * a deploy fault rather than a runtime one and is reported as an error rather than as an empty
+ * string the client would try to run.
+ */
+export function getChartsBundle(_p?: unknown): ApiResult {
+  return run(() => {
+    const html = HtmlService.createHtmlOutputFromFile("js_charts").getContent();
+    const open = html.indexOf(">", html.indexOf("<script"));
+    const close = html.lastIndexOf("</script>");
+    const src = open < 0 || close < 0 ? "" : html.slice(open + 1, close).trim();
+    if (!src) throw new Error("js_charts is missing or empty in this deployment");
+    return src;
+  });
+}

@@ -114,6 +114,18 @@ const SCRIPTS = {
   "/dev-config.js": devConfigScript,
 };
 
+/**
+ * HtmlService partials, for the shim behind `api.getChartsBundle`.
+ *
+ * In GAS these are files in the script project and `createHtmlOutputFromFile` reads them
+ * straight off the runtime. Here the "server" is a bundle running in the browser, so the
+ * partial has to come back over HTTP — see the HtmlService shim in dev/gas-shims.js. Served
+ * as text/plain because it is HTML being read as data, never parsed as a document.
+ */
+const PARTIALS = {
+  "/_partial/js_charts": () => readFileSync(join(gasRoot, "dist/js_charts.html"), "utf8"),
+};
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -266,6 +278,14 @@ createServer(async (req, res) => {
         "cache-control": "no-store",
       });
       res.end(body);
+      return;
+    }
+    if (PARTIALS[path]) {
+      res.writeHead(200, {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(PARTIALS[path]());
       return;
     }
     if (path === "/favicon.ico") {
