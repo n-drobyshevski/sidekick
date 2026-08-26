@@ -108,6 +108,9 @@ function api_setShowNoFix(p) { return timedApi_("setShowNoFix", p); }
 function api_setIncludeEol(p) { return timedApi_("setIncludeEol", p); }
 function api_setRiskRule(p) { return timedApi_("setRiskRule", p); }
 function api_setRetentionSettings(p) { return timedApi_("setRetentionSettings", p); }
+function api_getAccess(p) { return timedApi_("getAccess", p); }
+function api_saveAccess(p) { return timedApi_("saveAccess", p); }
+function api_saveAdmins(p) { return timedApi_("saveAdmins", p); }
 function api_getDomains(p) { return timedApi_("getDomains", p); }
 function api_saveDomains(p) { return timedApi_("saveDomains", p); }
 function api_previewDomains(p) { return timedApi_("previewDomains", p); }

@@ -48,7 +48,8 @@ import { activeJob, getJob, isStaleJob, isTerminalPhase, type JobRow } from "./j
 import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
 import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
-import { hasWizCredentials } from "./props";
+import * as access from "./access";
+import { hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import * as backfillJobs from "./backfillJobs";
 import * as purgeJobs from "./purgeJobs";
 import * as scanJobs from "./scanJobs";
@@ -2174,6 +2175,96 @@ export function setRetentionSettings(p?: unknown): ApiResult {
       autoCompact: settingsStore.getAutoCompact(),
     };
   });
+}
+
+// ------------------------------------------------------------------------- access
+//
+// The Settings → Access panel. Every one of these RE-CHECKS server-side: the client's
+// canEditUsers decides what to DRAW and is never the authority for what is allowed. A
+// google.script.run caller can invoke these directly from a page console.
+
+/** Serialized ALLOWED_USERS must stay under the ~9KB Script Property ceiling. */
+const ACCESS_MAX_BYTES = 8000;
+const ACCESS_MAX_ENTRIES = 500;
+
+function validateAddresses(raw: unknown): string[] {
+  const list = access.parseAllowlist(Array.isArray(raw) ? raw.join("\n") : String(raw ?? ""));
+  // An entry with no @ can never match a Google account, so it is a typo, not a policy — and
+  // silently keeping it would leave someone convinced they had added a colleague.
+  const bad = list.filter((e) => e.indexOf("@") < 0);
+  if (bad.length) throw new Error(`Not an email address: ${bad.join(", ")}`);
+  if (list.length > ACCESS_MAX_ENTRIES) {
+    throw new Error(`Too many people (${list.length}); the limit is ${ACCESS_MAX_ENTRIES}.`);
+  }
+  // Ahead of the write, so the caller gets a sentence instead of GAS's raw storage-quota
+  // exception with their edit already lost.
+  const bytes = list.join(",").length;
+  if (bytes > ACCESS_MAX_BYTES) {
+    throw new Error(`That list is too long to store (${bytes} of ${ACCESS_MAX_BYTES} bytes).`);
+  }
+  return list;
+}
+
+/** One Stackdriver line per change: a delegated grant power needs a record of who used it. */
+function logAccessChange(what: string, actor: string, before: string[], after: string[]): void {
+  const added = after.filter((e) => before.indexOf(e) < 0);
+  const removed = before.filter((e) => after.indexOf(e) < 0);
+  console.log(JSON.stringify({ access: "changed", what, actor, added, removed }));
+}
+
+/**
+ * What the Access panel needs to draw itself.
+ *
+ * Callable by any allowed caller — the client has to ask whether to render the panel at all —
+ * but the ROSTER is only included for someone who may edit it. "No panel at all" has to mean
+ * nothing on the wire, not just nothing in the DOM.
+ */
+export function getAccess(_p?: unknown): ApiResult {
+  return run(() => {
+    const canUsers = access.canEditUsers();
+    if (!canUsers) return { canEditUsers: false, canEditAdmins: false };
+    return {
+      canEditUsers: true,
+      canEditAdmins: access.canEditAdmins(),
+      owner: access.ownerEmail(),
+      domain: access.ownerDomain(),
+      users: access.currentUsers(),
+      admins: access.currentAdmins(),
+    };
+  }, "getAccess");
+}
+
+/** Add or remove people. Owner or admin. */
+export function saveAccess(p?: unknown): ApiResult {
+  return run(() => {
+    if (!access.canEditUsers()) throw new Error("Only the owner or an admin can change access.");
+    const before = access.currentUsers();
+    const list = validateAddresses((p as Rec)?.["users"]);
+    // The owner is always written in. Redundant with the identity rule that admits them, but it
+    // keeps the property self-documenting for whoever reads it in Project Settings, and matches
+    // what setup() seeds — one rule instead of a branch for "were they in the list before".
+    const owner = access.ownerEmail().trim().toLowerCase();
+    const withOwner = owner && list.indexOf(owner) < 0 ? [owner].concat(list) : list;
+    setProp(PROP_KEYS.allowedUsers, withOwner.join(", "));
+    logAccessChange("users", access.check().email, before, withOwner);
+    return { users: withOwner };
+  }, "saveAccess");
+}
+
+/**
+ * Add or remove admins. OWNER ONLY — this is the line that keeps the tier real. An admin who
+ * could edit this could promote anyone, including making their own standing permanent, and the
+ * delegation would be indistinguishable from handing over ownership.
+ */
+export function saveAdmins(p?: unknown): ApiResult {
+  return run(() => {
+    if (!access.canEditAdmins()) throw new Error("Only the owner can change admins.");
+    const before = access.currentAdmins();
+    const list = validateAddresses((p as Rec)?.["admins"]);
+    setProp(PROP_KEYS.allowedAdmins, list.join(", "));
+    logAccessChange("admins", access.check().email, before, list);
+    return { admins: list };
+  }, "saveAdmins");
 }
 
 export function getDomains(_p?: unknown): ApiResult {

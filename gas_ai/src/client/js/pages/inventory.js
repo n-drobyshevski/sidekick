@@ -20,7 +20,7 @@
 import { bootstrap, buildHash, listJoin, navigate, setParams, swrCall } from "../store.js";
 import { SAVED_VIEW_KEYS, readSavedViews } from "../savedViews.js";
 import { openAssetSheet } from "../detailSheets.js";
-import { trendLine } from "../charts.js";
+import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindIconSvg, kindLabel,
 } from "../icons.js";
@@ -1100,8 +1100,17 @@ export async function renderInventory(main, params) {
     );
 
     if (trend.length >= 2) {
-      requestAnimationFrame(() => {
-        trendLine(canvas, trend.map((pt) => ({ x: pt.at })), {
+      // CHART.JS ARRIVES HERE, not with the page — it is ~19% of what a reader waits for on
+      // every route, and eight of the ten draw nothing. `loadCharts` fetches it once per
+      // session and memoizes; the rAF that used to be the whole deferral now waits on it.
+      //
+      // The rejection branch is the honest half. A deployment whose policy refuses to run
+      // code obtained at runtime keeps this card, its heading, its sync count and its scope
+      // note, and gains one line saying the drawing is missing — not a blank box, and not
+      // silence. See chartsLoader.js.
+      loadCharts().then((charts) => {
+        if (!canvas.isConnected) return;
+        requestAnimationFrame(() => charts.trendLine(canvas, trend.map((pt) => ({ x: pt.at })), {
           yLabel: "count",
           series: present.map((s) => ({
             label: s.label,
@@ -1114,7 +1123,10 @@ export async function renderInventory(main, params) {
               return v === undefined ? null : v;
             }),
           })),
-        });
+        }));
+      }).catch(() => {
+        if (!canvas.isConnected) return;
+        chartUnavailable(canvas);
       });
     }
 

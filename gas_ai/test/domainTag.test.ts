@@ -149,10 +149,20 @@ describe("the domain is read, not stored", () => {
     expect(sync.ok, sync.error).toBe(true);
 
     type Assets = { ok: boolean; data?: { rows?: Array<{ domain?: string | null }> } };
-    const domainsOf = () =>
-      ((server.api.getAssets({}) as Assets).data?.rows ?? [])
+    // Each call models one RPC, and in GAS one RPC is one EXECUTION — which is what makes
+    // the per-execution memos in serverCache safe there and unsafe here. This harness keeps
+    // a single module registry alive across the whole test, so without dropping them the
+    // second read would answer under the stamp the first one memoized. Dropping them IS the
+    // execution boundary; it is not a concession to the memo. What the assertions below
+    // still prove is the thing this file exists for: that the tag key reaches the cache KEY
+    // at all, so a change to it cannot be answered from an entry computed under the old one.
+    const serverCache = await import("../src/server/serverCache");
+    const domainsOf = () => {
+      serverCache.__resetMemosForTest();
+      return ((server.api.getAssets({}) as Assets).data?.rows ?? [])
         .map((r) => r.domain)
         .filter(Boolean) as string[];
+    };
 
     const before = domainsOf();
     expect(before.length, "the dry-run seed must carry Wiz/Domain tags").toBeGreaterThan(0);

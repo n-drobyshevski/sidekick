@@ -24,7 +24,8 @@ function props(): GoogleAppsScript.Properties.Properties {
 
 /** Every step the battery would run, as the Scans panel describes them. */
 function steps(): Rec[] {
-  const res = server.api.getScanQueries({}) as { ok: boolean; data?: { steps: Rec[] } };
+  const res = { ok: true, data: { steps: server.jobs.describeSyncSteps() } } as
+    { ok: boolean; data?: { steps: Rec[] } };
   expect(res.ok).toBe(true);
   return res.data?.steps ?? [];
 }

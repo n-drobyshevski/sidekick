@@ -262,7 +262,16 @@ async function boot() {
     const card = e && e.kind === "forbidden"
       ? el("div", { class: "empty" },
           el("div", {}, "You don't have access to this app."),
-          el("div", { class: "small", style: "margin:6px 0 14px" }, String(e.message || e)),
+          el("div", { class: "small", style: "margin:6px 0 4px" }, String(e.message || e)),
+          // Same offer as the denied page doGet serves, so the two surfaces a locked-out
+          // person can land on say the same thing. The href is built server-side (access.ts)
+          // so the prefilled subject exists once rather than in both bundles.
+          e.contact
+            ? el("div", { class: "small", style: "margin:0 0 14px" },
+                "If you think you should have access, contact ",
+                el("a", { href: e.contactUrl || ("mailto:" + e.contact) }, e.contact),
+                ".")
+            : null,
         )
       : el("div", { class: "empty" },
           el("div", {}, "Couldn't reach the server."),

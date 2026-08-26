@@ -150,14 +150,20 @@ describe("check reads the live configuration once per execution", () => {
     expect(check().allowed).toBe(true);
   });
 
-  it("memoizes, so doGet and its include() scriptlets cost one property read", async () => {
+  it("memoizes, so doGet and its include() scriptlets add no property reads", async () => {
+    // Asserted as "no FURTHER reads", not as a fixed count. The count is an implementation
+    // detail that legitimately moved when the admin tier added a second property; the claim
+    // worth pinning is that repeat calls within one execution are free, which is what doGet
+    // plus its include() scriptlets actually depend on.
     const { check } = await load();
     activeEmail = "listed@example.com";
     props.ALLOWED_USERS = "listed@example.com";
     check();
+    const afterFirst = propReads;
     check();
     check();
-    expect(propReads).toBe(1);
+    expect(propReads).toBe(afterFirst);
+    expect(afterFirst).toBeGreaterThan(0); // it did actually read
   });
 });
 
@@ -176,6 +182,43 @@ describe("the guards hand back the shapes their call sites expect", () => {
     const { denyResult } = await load();
     activeEmail = "owner@example.com";
     expect(denyResult("bootstrap")).toBeNull();
+  });
+
+  it("carries the contact as fields, not baked into the message", async () => {
+    // `error` is the Stackdriver denial line as much as it is user-facing text, so the address
+    // rides beside it rather than inside it.
+    const { denyResult } = await load();
+    activeEmail = "stranger@example.com";
+    const denied = denyResult("bootstrap")!;
+    expect(denied.contact).toBe("owner@example.com");
+    expect(denied.contactUrl).toContain("mailto:owner@example.com");
+    expect(denied.error).not.toContain("owner@example.com");
+  });
+
+  it("omits the contact entirely when the owner cannot be resolved", async () => {
+    // Rather than shipping `contact: ""` for the card to render as "contact ."
+    const { denyResult } = await load();
+    activeEmail = "stranger@example.com";
+    ownerAddress = "";
+    const denied = denyResult("bootstrap")!;
+    expect(denied.contact).toBeUndefined();
+    expect(denied.contactUrl).toBeUndefined();
+  });
+
+  it("offers the SAME mailto on the page and in the card", async () => {
+    // Two surfaces, one locked-out person, one href. The prefilled subject is built in one
+    // place precisely so it cannot drift between them; this fails if a second copy appears.
+    const { denyResult, deniedHtml, contactMailto } = await load();
+    activeEmail = "stranger@example.com";
+    const fromCard = denyResult("bootstrap")!.contactUrl!;
+    const html = deniedHtml(
+      { allowed: false, email: "stranger@example.com", reason: "not-listed" },
+      null,
+      "owner@example.com",
+    );
+    expect(fromCard).toBe(contactMailto("owner@example.com"));
+    expect(html).toContain(fromCard.replace(/&/g, "&amp;"));
+    expect(fromCard).toContain("subject=");
   });
 
   it("assertAllowed throws for a denied caller and returns for an allowed one", async () => {
@@ -203,12 +246,51 @@ describe("the denied page explains without disclosing", () => {
     expect(html).toContain("a&lt;b&gt;&amp;&quot;@x.com");
   });
 
-  it("discloses neither the allowlist, the owner, nor the property name", async () => {
-    // A denial must not double as a directory of who does have access.
+  it("discloses neither the allowlist nor the property name", async () => {
+    // A denial must not double as a directory of who does have access. Note what is NO LONGER
+    // asserted here: the owner's own address. This spec used to forbid it too, and the owner
+    // deliberately reversed that — see the contact specs below for the reasoning. The roster
+    // and the property name are still secrets; one named contact is not.
     const { deniedHtml } = await load();
-    const html = deniedHtml({ allowed: false, email: "stranger@example.com", reason: "not-listed" });
-    expect(html).not.toContain("owner@example.com");
+    const html = deniedHtml(
+      { allowed: false, email: "stranger@example.com", reason: "not-listed" },
+      null,
+      "owner@example.com",
+    );
+    expect(html).not.toContain("listed@example.com");
     expect(html).not.toContain("ALLOWED_USERS");
+    expect(html).not.toContain("ALLOWED_ADMINS");
+  });
+
+  it("names a contact the denied person can actually mail", async () => {
+    // Deliberate disclosure, and the audience is what makes it safe: access is DOMAIN, so
+    // Google refuses everyone outside the Workspace before doGet is reached. The only people
+    // who see this page are colleagues who could look the owner up in the directory — which is
+    // exactly what the previous "ask whoever runs this dashboard" was asking them to go and do.
+    const { deniedHtml } = await load();
+    const html = deniedHtml(
+      { allowed: false, email: "stranger@example.com", reason: "not-listed" },
+      null,
+      "owner@example.com",
+    );
+    expect(html).toContain("owner@example.com");
+    expect(html).toContain("mailto:owner@example.com");
+    expect(html).toContain("subject="); // the request arrives legible, not "hi, can I get access"
+  });
+
+  it("never renders a contact line with nobody in it", async () => {
+    // ownerEmail() should always resolve under execute-as-me, but "contact ." is the kind of
+    // thing that ships when it doesn't.
+    const { deniedHtml } = await load();
+    for (const contact of [undefined, null, "", "   "]) {
+      const html = deniedHtml(
+        { allowed: false, email: "stranger@example.com", reason: "not-listed" },
+        null,
+        contact,
+      );
+      expect(html, JSON.stringify(contact)).not.toContain("mailto:");
+      expect(html).toContain("ask whoever runs this dashboard");
+    }
   });
 
   it("explains the domain requirement when it saw no address at all", async () => {

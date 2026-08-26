@@ -14,6 +14,10 @@ export const PROP_KEYS = {
   // whitespace-separated addresses; see access.ts. UNSET MEANS OWNER-ONLY, not "everyone" —
   // the guard fails closed, and the owner is allowed by identity rather than by this list.
   allowedUsers: "ALLOWED_USERS",
+  // Who may EDIT the list above from Settings → Access, on top of the owner (who always may).
+  // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
+  // and deliberately CANNOT edit this property — see access.ts for why the tier stops here.
+  allowedAdmins: "ALLOWED_ADMINS",
   ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
   archiveFolderId: "ARCHIVE_FOLDER_ID",
   // The warm schedule setup() last installed. A ClockTrigger exposes no hour, minute or

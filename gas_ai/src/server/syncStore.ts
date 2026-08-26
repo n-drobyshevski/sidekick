@@ -54,7 +54,7 @@ import type { Severity } from "../domain/config";
 import { countAarsSeverities, countProjectTotals, encodeProjectTotals } from "../domain/aarsTrend";
 import { inProject, planPrune, type PruneCensus } from "../domain/prunePlan";
 import { nowIso, type Rec } from "../domain/util";
-import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot } from "./archiveStore";
+import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot, trashReadModels } from "./archiveStore";
 import { bumpDataVersion, bumpWizDataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
 import {
@@ -1789,6 +1789,11 @@ export function resetData(): void {
   overwrite(TABS.dataFindings, []);
   overwrite(TABS.syncHistory, []);
   trashGraphSnapshot();
+  // The durable read-model cache too. `commit()` below bumps the version, so every file in
+  // there is already unreachable — but reset should mean reset rather than "unreachable and
+  // still on disk", and nothing else would ever collect them: the sweep only runs inside a
+  // warm, and a warm on an empty ledger would not name them either.
+  trashReadModels();
   commit();
 }
 

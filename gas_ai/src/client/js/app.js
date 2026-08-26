@@ -644,6 +644,13 @@ export async function refresh() {
 }
 
 async function route() {
+  // Every route render takes a ticket, and `routeSeq` is the only thing that says which
+  // render is current. It used to be consulted in exactly ONE place — the `endRouteLoading`
+  // call in the `finally` below — so it gated the loading veil and nothing else, while the
+  // awaited `page.render` beneath it ran to completion whatever the reader did next. Pages
+  // that hold their own request tickets (graph.js, inventory.js) were protected by those;
+  // every other page could resolve an RPC after the next route had already cleared `mainEl`
+  // and append into the live DOM of the page that replaced it. See the two checks below.
   const seq = ++routeSeq;
   const parsed = parseHash();
   // RESOLVE ONCE, then use the resolved key for everything. An unknown path (a stale link, a
@@ -684,8 +691,29 @@ async function route() {
   // not reach on its own. A definition left hanging over the next page would be explaining
   // something that is no longer on screen.
   closeTip();
-  clear(mainEl);
+  // A FRESH <main> PER ROUTE, rather than clearing the one that is there.
+  //
+  // Clearing removed the outgoing page's nodes but left the ELEMENT, and every page is handed
+  // that element to append into. So a render that had not finished — one still awaiting an
+  // RPC — went on appending into the very node the next page was now using. Demonstrated in
+  // the browser under `?slow=1200` by entering Data and leaving before its two RPCs resolve:
+  // Priorities came back 2,106 -> 2,659 characters carrying Data's whole Maintenance section,
+  // "Reset synced data" and "Prune to project" included. A destructive control painted onto a
+  // page that does not own it.
+  //
+  // Replacing the element instead means the outgoing render keeps a reference to a DETACHED
+  // <main>: its late appends still happen and simply land nowhere, which is what a superseded
+  // render's output should do. Nothing else has to change, because no page uses this argument
+  // for anything but `append` — checked across all eleven.
+  //
+  // Replaced rather than wrapped in a container, and that is not cosmetic: `main.full-bleed`
+  // is `display: flex` and `main.full-bleed > .empty` is a direct-child selector, so a wrapper
+  // would break the graph workbench's layout and its empty state. A new element with the same
+  // tag and id keeps every rule, including the `#main` focus target sheet.js restores to.
+  const stale = mainEl;
+  mainEl = el("main", { id: "main" });
   mainEl.classList.toggle("full-bleed", !!page.fullBleed);
+  stale.replaceWith(mainEl);
   // The first render after a boot is covered by the boot splash → page skeleton, so it skips
   // the veil to avoid stacking two loaders; later navigations use it as normal.
   const useOverlay = !firstRoute;
@@ -693,6 +721,10 @@ async function route() {
   try {
     await page.render(mainEl, params, { refresh });
   } catch (e) {
+    // GUARDED, like the paint below it. A rejection from a route the reader has already
+    // left would otherwise replace the page they are now looking at with this message —
+    // the failure is real but it belongs to a render whose DOM was cleared long ago.
+    if (seq !== routeSeq) return;
     mainEl.classList.remove("full-bleed"); // error states get normal padding back
     clear(mainEl).append(
       el("div", { class: "empty" },

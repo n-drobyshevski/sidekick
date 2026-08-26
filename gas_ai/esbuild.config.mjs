@@ -77,21 +77,52 @@ function stripCommentsLikeMiddlebox(code) {
   }
   return out;
 }
-if (clientJs.includes("`")) {
-  throw new Error("middlebox guard: client bundle still contains backticks");
+function guardJs(label, code) {
+  if (code.includes("`")) {
+    throw new Error(`middlebox guard: ${label} still contains backticks`);
+  }
+  const stripped = stripCommentsLikeMiddlebox(code);
+  if (stripped.includes("//")) {
+    const line = stripped.slice(0, stripped.indexOf("//")).split("\n").length;
+    throw new Error(`middlebox guard: bare \`//\` survives comment stripping in ${label} (in a string/regex) near stripped line ${line}`);
+  }
+  try {
+    new Function(stripped);
+  } catch (e) {
+    throw new Error(`middlebox guard: ${label} breaks under comment stripping — ${e.message}`);
+  }
 }
-const strippedClientJs = stripCommentsLikeMiddlebox(clientJs);
-if (strippedClientJs.includes("//")) {
-  const line = strippedClientJs.slice(0, strippedClientJs.indexOf("//")).split("\n").length;
-  throw new Error(`middlebox guard: bare \`//\` survives comment stripping (in a string/regex) near stripped line ${line}`);
-}
-try {
-  new Function(strippedClientJs);
-} catch (e) {
-  throw new Error(`middlebox guard: bundle breaks under comment stripping — ${e.message}`);
-}
+guardJs("client bundle", clientJs);
 
 writeFileSync(join(dist, "js_app.html"), `<script>\n${clientJs}\n</script>\n`);
+
+// --- Charts bundle → its own partial ---------------------------------------------------
+// Chart.js is 170,785 bytes of the client bundle above and no route needs it before it draws
+// a chart, so it is built separately and fetched over google.script.run on the first one that
+// does. See src/client/js/chartsLoader.js for the whole argument, including the part that
+// cannot be verified from here.
+//
+// SAME SETTINGS, SAME GUARD, deliberately. This bundle crosses the same corporate proxies as
+// js_app.html — as an XHR body rather than inside the document, which is a weaker exposure
+// than the one that produced the guard, not a different one — and it is executed from text on
+// arrival, so a rewrite in transit fails exactly the same way. Holding a constraint the main
+// bundle already meets costs nothing. It is written as an HTML partial rather than a .js file
+// because that is the only kind of file a GAS project holds — `include()` and
+// `createHtmlOutputFromFile` both read HTML — and api.getChartsBundle unwraps it.
+const chartsResult = await build({
+  entryPoints: [join(root, "src/client/js/chartsBundle.js")],
+  bundle: true,
+  format: "iife",
+  target: "es2019",
+  define: STAMP_DEFINE,
+  supported: { "template-literal": false },
+  minify: true,
+  write: false,
+  logLevel: "info",
+});
+const chartsJs = chartsResult.outputFiles[0].text;
+guardJs("charts bundle", chartsJs);
+writeFileSync(join(dist, "js_charts.html"), `<script>\n${chartsJs}\n</script>\n`);
 
 // --- Client stylesheet → HtmlService partial -------------------------------------------
 // Bundled (so styles.css can be an @import index over styles/*.css) and minified: this

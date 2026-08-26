@@ -1865,3 +1865,16 @@ dialog.domains-dialog .dialog-preview {
   border-radius: 4px;
   padding: 1px 5px;
 }
+
+/* Settings → Access. The roster rows: one address per line, its remove control at the end,
+   and the owner's row locked because they are admitted by identity rather than by membership. */
+.access-list { display: flex; flex-direction: column; gap: 2px; }
+.access-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: var(--radius-md, 8px);
+}
+.access-row:hover { background: var(--surface-2, #f8fafc); }
+.access-row__email { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* No hover affordance and no remove control — nothing here is actionable. */
+.access-row--locked { background: var(--surface-2, #f8fafc); }
+.access-row--locked:hover { background: var(--surface-2, #f8fafc); }

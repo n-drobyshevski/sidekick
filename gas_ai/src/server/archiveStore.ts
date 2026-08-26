@@ -10,7 +10,10 @@
 import type { GraphDoc } from "../domain/graphTypes";
 import { PROP_KEYS, requireProp } from "./props";
 
-const SUBFOLDERS = ["syncs", "snapshots"] as const;
+// "readmodels" holds the durable second level under the CacheService read-model cache —
+// see readModelStore.ts. Created on demand by `subfolder()` as well as by `ensureFolders`,
+// so a deployment that never re-runs setup() still self-heals on the first write.
+const SUBFOLDERS = ["syncs", "snapshots", "readmodels"] as const;
 export type Subfolder = (typeof SUBFOLDERS)[number];
 
 // Per-execution folder handles. Resolving one is not free — `syncFolder` costs a Script
@@ -96,6 +99,42 @@ export function writeGzJson(
   const existing = folder.getFilesByName(name);
   while (existing.hasNext()) existing.next().setTrashed(true);
   return folder.createFile(blob);
+}
+
+/**
+ * A gzipped JSON file by NAME within a subfolder, or null when there is none.
+ *
+ * By name rather than by id because the durable read-model store addresses its files
+ * deterministically: the name IS the key, so there is no id to remember anywhere.
+ */
+export function readGzJsonNamed(folder: Subfolder, name: string): unknown | null {
+  const it = subfolder(folder).getFilesByName(name);
+  if (!it.hasNext()) return null;
+  return parseGzBlob(it.next().getBlob());
+}
+
+/** Every file name in a subfolder. The input to a sweep. */
+export function listNames(folder: Subfolder): string[] {
+  const out: string[] = [];
+  const it = subfolder(folder).getFiles();
+  while (it.hasNext()) out.push(it.next().getName());
+  return out;
+}
+
+/** Trash every file of this name in a subfolder. Idempotent; silent when there is none. */
+export function trashNamed(folder: Subfolder, name: string): void {
+  const it = subfolder(folder).getFilesByName(name);
+  while (it.hasNext()) it.next().setTrashed(true);
+}
+
+/**
+ * Empty the durable read-model folder.
+ *
+ * Wired into `resetData`: a reset bumps the version, so every entry is already unreachable —
+ * but reset should mean reset rather than "unreachable and still on disk".
+ */
+export function trashReadModels(): void {
+  for (const name of listNames("readmodels")) trashNamed("readmodels", name);
 }
 
 export function readGzJsonFile(fileId: string): unknown | null {
