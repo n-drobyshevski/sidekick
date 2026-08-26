@@ -14,6 +14,14 @@ export const PROP_KEYS = {
   wizProjectIdV2: "WIZ_PROJECT_ID_V2",
   ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
   archiveFolderId: "ARCHIVE_FOLDER_ID",
+  // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.
+  // Comma/semicolon/whitespace-separated addresses; see server/access.ts. Unset means nobody —
+  // the guard fails closed, and the owner is allowed by identity rather than by this list.
+  allowedUsers: "ALLOWED_USERS",
+  // Who may EDIT that list. Owner-only to change; see the admin-tier note in access.ts.
+  // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
+  // not by also appearing in ALLOWED_USERS.
+  allowedAdmins: "ALLOWED_ADMINS",
   // Optional comma-separated override of the AI resource-type enum values to
   // query (e.g. "AI_AGENT,AI_MODEL") for tenants whose schema names differ.
   wizAiResourceTypes: "WIZ_AI_RESOURCE_TYPES",

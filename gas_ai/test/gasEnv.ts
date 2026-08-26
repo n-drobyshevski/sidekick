@@ -123,6 +123,10 @@ async function resetServerMemos(): Promise<void> {
   const mods = await Promise.all([
     // api.ts is absent on purpose — its one memo is identity-keyed on syncStore's, so
     // clearing syncStore below already invalidates it. See the note where it is declared.
+    // The access decision. In real GAS this dies with the request; here the module registry
+    // outlives the test, so without this a caller refused in one test would stay refused in
+    // the next — or, worse, an admitted one would stay admitted after the roster changed.
+    import("../src/server/access"),
     import("../src/server/archiveStore"),
     // The three per-execution memos behind every cache key. In GAS an execution ends with
     // the request; here the module registry outlives the test, so without this a stamp read

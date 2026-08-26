@@ -190,6 +190,57 @@ describe("brandMark()", () => {
   });
 });
 
+describe("the standalone pages carry the mark a THIRD time", () => {
+  // src/server/pageShell.ts draws the denial page and the entry screen, and it is in the
+  // SERVER bundle — it cannot import ui/brandMark.js across that line (tsc's allowJs is off,
+  // and the module reaches document.createElementNS through uiIcons.js, which would put a DOM
+  // module in doGet's graph). So the geometry is copied, and the copy is held here, exactly
+  // as index.html's is above.
+  const SHELL = readFileSync(new URL("../src/server/pageShell.ts", import.meta.url), "utf8");
+
+  it("carries the compact crop's path constants verbatim", () => {
+    // Concatenated across lines in the .ts source the same way the module concatenates them,
+    // so compare on the JS string values rather than on the literal text.
+    const shellPaths = [...SHELL.matchAll(/"((?:M|C)[^"]*)"/g)].map((m) => m[1]);
+    const joined = shellPaths.join("");
+    for (const [name, d] of [["orbit", MARK_ORBIT], ["shield", MARK_SHIELD], ["check", MARK_CHECK]]) {
+      // MARK_SHIELD is itself a three-part concatenation; stripping the quotes and joins from
+      // both sides is what makes the comparison about geometry rather than about formatting.
+      expect(joined.replace(/\s+/g, ""), name).toContain(d.replace(/\s+/g, ""));
+    }
+  });
+
+  it("uses the COMPACT crop, so the 307-dot globe never ships on a two-sentence card", () => {
+    expect(SHELL).toContain(MARK_COMPACT_VIEWBOX);
+    expect(SHELL).not.toContain(MARK_VIEWBOX);
+    // The globe is the expensive half — ~5 KB against ~500 bytes — and the crop leaves it out.
+    expect(SHELL).not.toContain(MARK_DOTS_BLUE.slice(0, 40));
+    expect(SHELL).not.toContain(MARK_DOTS_RED.slice(0, 40));
+  });
+
+  it("carries the same two orbit nodes and the same ratio", () => {
+    const circles = [...SHELL.matchAll(/\[([\d.]+), ([\d.]+), ([\d.]+)\]/g)]
+      .map((m) => [Number(m[1]), Number(m[2]), Number(m[3])]);
+    expect(circles).toEqual(MARK_NODES);
+    expect(SHELL).toContain("52.7 / 74");
+    expect(MARK_COMPACT_RATIO).toBeCloseTo(52.7 / 74, 10);
+  });
+
+  it("keeps the literal hex on the presentation attributes", () => {
+    // Same reason index.html does: these pages ship no stylesheet of their own beyond the
+    // handful of card rules, and the mark must draw with nothing behind it.
+    expect(SHELL).toContain('fill="#0a0a0a"');
+    expect(SHELL).toContain('stroke="#ffffff"');
+  });
+
+  it("holds no bare double slash — the pages are served verbatim, never scanned", () => {
+    // esbuild.config.mjs's middlebox guard covers the client bundle. pageShell.ts is compiled
+    // into the SERVER bundle, which that guard does not scan, so the hazard is checked here.
+    const data = [MARK_ORBIT, MARK_SHIELD, MARK_CHECK];
+    for (const d of data) expect(d).not.toContain("//");
+  });
+});
+
 describe("the shell's call sites", () => {
   it("labels no mark, because every one of them sits beside the name in text", () => {
     // This used to require exactly one: the collapsed rail hid its wordmark, so its mark was

@@ -114,6 +114,26 @@
     }),
   };
 
+  // --------------------------------------------------------------------- Session
+  // dev/boot.js runs setup() at page load (the same throw-takes-down-everything trap the
+  // ScriptApp comment below documents for trigger builders), and setup() now seeds the
+  // allowlist via access.ownerEmail() -> Session.getEffectiveUser(). No shim here means
+  // "Session is not defined" before a single page renders — and test/gasEnv.ts evaluates
+  // this same file, so it would take the whole suite down at boot with it.
+  //
+  // Active and effective user are the same address on purpose: dev has no
+  // domain/impersonation split, just the one person running their own script. That makes
+  // the dev user the OWNER, so access.decide() admits them by identity and every guarded
+  // entry point behaves exactly as it does today.
+  //
+  // ScriptApp.getService() is deliberately NOT shimmed, here or in the sibling gas tool.
+  // access.serviceUrl() wraps it in try/catch for precisely this, so dev degrades to a
+  // denial page with no switch-account link rather than to an exception.
+  window.Session = {
+    getActiveUser: () => ({ getEmail: () => "dev@example.com" }),
+    getEffectiveUser: () => ({ getEmail: () => "dev@example.com" }),
+  };
+
   // ----------------------------------------------------------------- LockService
   window.LockService = {
     getScriptLock: () => ({

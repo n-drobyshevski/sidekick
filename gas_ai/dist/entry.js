@@ -2,54 +2,111 @@
 // GAS requires doGet / trigger handlers / google.script.run targets to be top-level
 // global functions; everything else lives on the bundled `Server` global (server.js).
 
-function doGet(e) { return Server.doGet(e); }
-function include(f) { return Server.include(f); }
+// Two screens can stand in front of the app, and the ORDER between them is load-bearing:
+// deniedPage() short-circuits before Server.doGet ever touches the ledger, and it outranks the
+// entry screen so a rejected caller is never welcomed to an app they cannot open. welcome.gate
+// is a courtesy that fails open in every direction — it can only ever delay an allowed user by
+// one click, never strand one.
+function doGet(e) {
+  var denied = Server.access.deniedPage();
+  if (denied) return denied;
+  var welcome = Server.welcome.gate(e);
+  if (welcome) return welcome;
+  return Server.doGet(e);
+}
+// Gated NOT for the <?!= include('x') ?> scriptlets — those evaluate server-side inside a
+// doGet that has already passed the check — but because this is a top-level global, and
+// google.script.run can call any of those directly. Ungated it is an open
+// createHtmlOutputFromFile(<caller's string>) primitive. The check costs nothing on the
+// scriptlet path: access.check() is memoized for the life of the execution.
+function include(f) { return Server.access.denyResult("include") ? "" : Server.include(f); }
 
 // One-time setup: creates the spreadsheet tabs, Drive folders, and the daily sync
 // trigger, and records their IDs in Script Properties. Run from the GAS editor.
-function setup() { return Server.setup(); }
+// Gated too: an editor run still goes through Session.getActiveUser(), and setup() seeds the
+// allowlist itself, so letting a non-owner run it would hand them a way to add themselves.
+function setup() { Server.access.assertAllowed("setup"); return Server.setup(); }
 
 // Wiz connectivity check — run from the GAS editor to validate credentials; it prints
 // which auth/query step fails (secret-safe) to the execution log. Never used by a sync.
-function wizDiagnostic() { return Server.wizDiagnostic(); }
-function aarsDiagnostic() { return Server.aarsDiagnostic(); }
-function registerScopeDiagnostic() { return Server.registerScopeDiagnostic(); }
+// Gated: it's secret-adjacent (validates the Wiz credential) even though it never prints it.
+// The three below it read the register and hit the live tenant, so they are gated on the same
+// footing — an editor global is still reachable from google.script.run.
+function wizDiagnostic() { Server.access.assertAllowed("wizDiagnostic"); return Server.wizDiagnostic(); }
+function aarsDiagnostic() { Server.access.assertAllowed("aarsDiagnostic"); return Server.aarsDiagnostic(); }
+function registerScopeDiagnostic() {
+  Server.access.assertAllowed("registerScopeDiagnostic");
+  return Server.registerScopeDiagnostic();
+}
 // Probe every step that writes a graph edge and log what each one came back with: rejected
 // (with the tenant's own message), or accepted with a row count and what the normalizer kept.
 // Zero-argument, like the three diagnostics above, BECAUSE the editor's Run control invokes the
 // selected global with no arguments — a probe that takes a step id cannot be run from there.
 // One live Wiz page per step. Nothing is persisted.
-function probeEdgeSteps() { return Server.probeEdgeSteps(); }
+function probeEdgeSteps() { Server.access.assertAllowed("probeEdgeSteps"); return Server.probeEdgeSteps(); }
 
 // Did a change actually improve anything. Run pinPostureBaseline() BEFORE deploying a change,
 // then postureDelta() after re-syncing — pinning afterwards measures the new build against
 // itself and reports no movement, which looks like a result and is not.
-function pinPostureBaseline() { return Server.pinPostureBaseline(); }
-function postureDelta() { return Server.postureDelta(); }
+function pinPostureBaseline() { Server.access.assertAllowed("pinPostureBaseline"); return Server.pinPostureBaseline(); }
+function postureDelta() { Server.access.assertAllowed("postureDelta"); return Server.postureDelta(); }
 
 // One named step, for a caller that can pass an argument: the Scans drill-down's "Probe this
 // step" button (via api_probeSyncStep), or the editor's debugger. NOT runnable from the editor's
 // Run dropdown — `stepId` would arrive undefined and the call would refuse. Use probeEdgeSteps()
 // above for the whole set, or the Scans button for one step.
+//
+// GATED ON ITS OWN, and this is the one a hasty read of the guards would miss: it reaches
+// Server.api.probeSyncStep DIRECTLY rather than through timedApi_ below, so the chokepoint
+// there does not cover it — while being a top-level global makes it every bit as reachable
+// from google.script.run as api_probeSyncStep is.
 function probeSyncStep(stepId) {
+  Server.access.assertAllowed("probeSyncStep");
   var res = Server.api.probeSyncStep({ stepId: stepId });
   console.log(JSON.stringify(res, null, 2));
   return res;
 }
 
 // Trigger handlers (names referenced by ScriptApp.newTrigger calls).
-function trigger_dailySync() { Server.jobs.dailySync(); }
-function trigger_continueSync(e) { Server.jobs.continueJob(e); }
+//
+// GUARDED ON IDENTITY, NOT ON ALLOWED-NESS — and DO NOT "simplify" this to the denyResult
+// form the api_* delegators use. An installable trigger fires with no accessing user at all,
+// so Session.getActiveUser().getEmail() returns "" here and access.ts reads that as
+// "anonymous": a blanket guard would DENY EVERY FIRE, silently killing the daily sync and
+// every continuation hop, in the trigger execution log where nobody is watching for it.
+//
+// That rules out a blanket guard, not every guard. These are top-level globals, so
+// google.script.run reaches them like any api_* delegator — including from the denial page
+// itself, which HtmlService serves with google.script.run injected. Ungated, a same-domain
+// colleague who was JUST REFUSED could open that page's console and call trigger_dailySync()
+// on a loop, running full Wiz syncs on the owner's quota and credentials. Nothing is
+// disclosed (these return nothing) but the resource draw is unbounded.
+//
+// So: an empty `d.email` is a scheduled fire and passes straight through; a caller the
+// allowlist refused is turned away. This is a deliberate divergence from the sibling gas tool
+// (gas/dist/entry.js:43-51), which accepts the residual and documents it — the reasoning above
+// is that comment plus the part it stops short of. test/entryPoints.test.ts pins BOTH halves.
+function triggerAllowed_() {
+  var d = Server.access.check();
+  return !d.email || d.allowed;
+}
+function trigger_dailySync() { if (triggerAllowed_()) Server.jobs.dailySync(); }
+function trigger_continueSync(e) { if (triggerAllowed_()) Server.jobs.continueJob(e); }
 // Re-warms the derived read-models between syncs. CacheService's ceiling is six hours and
 // tenants sync daily, so without this every entry lapses three or four times a day and the
 // next visitor pays the cold load. Deliberately NOT an api_* delegator: it is not callable
 // from the client, and api.ts exporting it would fail the build's entry.js guard.
-function trigger_warmReadModels() { Server.warm.warmReadModelsScheduled(); }
+function trigger_warmReadModels() { if (triggerAllowed_()) Server.warm.warmReadModelsScheduled(); }
 
 // google.script.run API surface — thin delegators so the client can call api_* by name.
 // Each is timed to the execution log ({"api":name,"ms":n} lines) so server cost can be
 // separated from google.script.run round-trip overhead when profiling.
 function timedApi_(name, p) {
+  // Single chokepoint for every api_* delegator below: google.script.run reaches top-level
+  // globals directly, so gating here (rather than in each api_X, or inside api.ts's run())
+  // covers all 52 without touching the parity-checked delegator lines themselves.
+  var denied = Server.access.denyResult(name);
+  if (denied) return denied;
   var t0 = Date.now();
   var res = Server.api[name](p);
   console.log(JSON.stringify({ api: name, ms: Date.now() - t0 }));
@@ -86,6 +143,9 @@ function api_testScanVars(p) { return timedApi_("testScanVars", p); }
 function api_probeSyncStep(p) { return timedApi_("probeSyncStep", p); }
 function api_getSettings(p) { return timedApi_("getSettings", p); }
 function api_setSettings(p) { return timedApi_("setSettings", p); }
+function api_getAccess(p) { return timedApi_("getAccess", p); }
+function api_saveAccess(p) { return timedApi_("saveAccess", p); }
+function api_saveAdmins(p) { return timedApi_("saveAdmins", p); }
 function api_getAarsRule(p) { return timedApi_("getAarsRule", p); }
 function api_setAarsRule(p) { return timedApi_("setAarsRule", p); }
 function api_previewAarsRule(p) { return timedApi_("previewAarsRule", p); }
