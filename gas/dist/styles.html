@@ -1880,4 +1880,192 @@ dialog.domains-dialog .dialog-preview {
 .access-row--locked { background: var(--surface-2, #f8fafc); }
 .access-row--locked:hover { background: var(--surface-2, #f8fafc); }
 
+/* ================================================================ settings page (rebuild) */
+/* Five task tabs + one batched save bar over settingsModel.SETTING_FIELDS, replacing a page of
+   competing per-panel Saves. See src/client/js/pages/settings.js and settingsReadouts.js. */
+
+/* -------------------------------------------------------------- settings: tab strip */
+/* ui.js tabList. The selected tab reads by a 2px accent underline AND weight 600 — never the
+   underline alone — and a dirty tab gets a painted dot (tabList also appends "unsaved changes"
+   to its accessible name, so the cue survives for a screen reader with the tab out of view). */
+.tabstrip {
+  display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--hairline);
+  margin-bottom: 20px;
+}
+.tabstrip__tab {
+  position: relative; background: none; border: none; box-shadow: none;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  padding: 9px 14px; min-height: 38px; font: inherit; font-size: 0.875rem;
+  color: var(--text-2); cursor: pointer; white-space: nowrap; flex: none;
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.tabstrip__tab:hover { background: var(--wash-hover); color: var(--ink); }
+.tabstrip__tab[aria-selected="true"] {
+  color: var(--ink); font-weight: 600;
+  box-shadow: inset 0 -2px 0 0 var(--accent);
+}
+.tabstrip__tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tabstrip__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+
+/* -------------------------------------------------------------- settings: save bar */
+/* ui.js saveBar: one dirty state for the whole page, hidden until there is something to save.
+   Sticky within `main` (main is the scrolling ancestor, not the viewport) so it stays reachable
+   however far a control behind an inactive tab has scrolled. Card whisper only — this is still
+   a card, not a modal — per the no-heavier-shadow rule. */
+.savebar {
+  position: sticky; bottom: 16px; z-index: var(--z-popover);
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 20px; padding: 12px 16px;
+  background: var(--page); border: 1px solid var(--hairline); border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+}
+/* Same trap as .nav-flyout[hidden] above: the display:flex is an author rule and beats the UA's
+   [hidden] { display: none }, so without this the bar sits on screen permanently offering to
+   save nothing. The JS sets .hidden correctly — it was the stylesheet that overrode it. */
+.savebar[hidden] { display: none; }
+.savebar__what { font-size: 13px; color: var(--text-2); }
+.savebar__what strong { color: var(--ink); }
+.savebar__spacer { flex: 1 1 auto; }
+.savebar__tab { font-size: 13px; padding: 0 2px; }
+
+/* -------------------------------------------------------------- settings: why-this-matters */
+/* ui.js disclosure: the long paragraph a panel used to show unconditionally, closed by default.
+   The one-line description above it stays visible either way. */
+details.why { margin: 6px 0 0; }
+details.why > summary {
+  cursor: pointer; list-style: none; display: inline-flex; align-items: center;
+  gap: 5px; font-size: 12px; font-weight: 600; color: var(--text-2);
+  padding: 3px 5px; margin: -3px -5px; border-radius: 4px; user-select: none;
+}
+details.why > summary::-webkit-details-marker { display: none; }
+details.why > summary:hover { color: var(--ink); background: var(--wash-hover); }
+details.why > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.why__caret { display: inline-block; font-size: 10px; transition: transform 0.15s ease; }
+details.why[open] > summary .why__caret { transform: rotate(90deg); }
+.why__body p { margin: 6px 0 0; max-width: 68ch; color: var(--text-2); font-size: 12px; line-height: 1.55; }
+
+/* -------------------------------------------------------------- settings: split bar */
+/* ui.js splitBar: one track split into labelled segments, the caption beneath repeating every
+   figure in words — the bar illustrates, the caption is the record a screen reader gets too. */
+.splitbar-wrap { margin-top: 12px; }
+.splitbar {
+  display: flex; height: 20px; border-radius: var(--radius-sm); overflow: hidden;
+  border: 1px solid var(--hairline); background: rgba(0, 0, 0, 0.04);
+}
+.splitbar__seg { height: 100%; }
+/* Severity segments ride the same --sev-* fill tokens as every other severity mark in the app —
+   never a bespoke hue, so a segment here means what it means everywhere else. */
+.splitbar__seg--CRITICAL { background: var(--sev-critical); }
+.splitbar__seg--HIGH { background: var(--sev-high); }
+.splitbar__seg--MEDIUM { background: var(--sev-medium); }
+.splitbar__seg--LOW { background: var(--sev-low); }
+.splitbar__seg--INFO { background: var(--sev-info); }
+.splitbar__seg--UNKNOWN { background: var(--sev-unknown); }
+.splitbar__seg--in { background: var(--accent); }
+/* Excluded/"not scanned": a hatched neutral rather than a second solid hue, so "not counted"
+   reads as an absence rather than a category competing with the severities beside it. */
+.splitbar__seg--out {
+  background-image: repeating-linear-gradient(135deg, var(--text-3) 0, var(--text-3) 2px, transparent 2px, transparent 6px);
+  background-color: transparent; opacity: 0.6;
+}
+.splitbar__caption { margin: 6px 0 0; }
+
+/* -------------------------------------------------------------- settings: filter grid */
+/* The vendor-fix and end-of-life filters side by side, so neither is a full-bleed card for one
+   switch and a sentence. Same auto-fit idiom as .chart-grid / .kpi-row — collapses to a single
+   column once a card would drop under the 280px floor. */
+.settings-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+
+/* -------------------------------------------------------------- settings: risk breakdown */
+.risk-breakdown { margin: 14px 0 8px; display: flex; flex-direction: column; gap: 6px; }
+.risk-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  font-size: 13px; padding: 2px 0;
+}
+.risk-row__name { color: var(--ink); }
+.risk-row__count { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.risk-row__missing { color: var(--text-2); font-size: 12px; margin-left: 8px; }
+.risk-sentence { margin: 10px 0 0; font-size: 13px; }
+.risk-sentence strong { font-variant-numeric: tabular-nums; }
+.risk-caveat, .risk-empty, .risk-unmeasured { margin: 4px 0 0; }
+
+/* -------------------------------------------------------------- settings: EPSS histogram */
+/* Square-root scaled — EPSS is right-skewed enough that a linear scale flattens everything past
+   ~0.25 to nothing, which is the one thing this chart exists to show is untrue (see the note
+   text rendered beside it, settingsReadouts.js). The range input persists across every redraw
+   (see createRiskReadout's own comment) — only its value and the bars around it are rewritten. */
+.epss-hist-wrap { margin-top: 14px; position: relative; }
+.epss-hist-scroll { overflow-x: auto; }
+.epss-hist {
+  display: flex; align-items: flex-end; gap: 2px; height: 68px; min-width: 320px;
+  position: relative;
+}
+.epss-bar { flex: 1 1 0; min-width: 8px; background: rgba(0, 0, 0, 0.14); border-radius: 2px 2px 0 0; }
+.epss-bar.above { background: var(--accent); }
+.epss-cutline {
+  position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink);
+  pointer-events: none;
+}
+input[type="range"].epss-range { display: block; width: 100%; margin: 8px 0 2px; accent-color: var(--accent); }
+.epss-axis { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.epss-scale-note { margin: 6px 0 0; max-width: 78ch; }
+
+/* -------------------------------------------------------------- settings: retention timeline */
+.retention-timeline-scroll { overflow-x: auto; margin-top: 14px; }
+/* Left-aligned and capped, NOT stretched to fill. A register with seven scans drew seven
+   185px slabs across the card, which reads as a striped placeholder rather than a sequence in
+   time; the timeline's width should say how many scans there are. It still grows to the
+   available room for a long history, and scrolls past it. */
+.retention-timeline {
+  display: flex; gap: 6px; min-width: 340px; align-items: flex-end; height: 48px;
+  justify-content: flex-start;
+}
+.retention-tick {
+  flex: 1 1 0; min-width: 16px; max-width: 44px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+.retention-tick__glyph { font-size: 10px; color: var(--text-3); line-height: 1; }
+.retention-tick__bar {
+  width: 100%; height: 26px; border-radius: 2px;
+  background: rgba(0, 0, 0, 0.1); border: 1px solid transparent;
+}
+/* Sealed: solid neutral. Would-seal: the same hatch as splitbar's "out" segment (excluded once
+   the next pass runs). Pinned: a faint accent wash — the one state that never depends on the
+   window, so it borrows the data/state accent rather than a severity or plain neutral tone.
+   Every state also carries a glyph (see renderRetentionReadout) — never fill alone. */
+.retention-tick.is-sealed .retention-tick__bar { background: var(--text-3); opacity: 0.35; }
+.retention-tick.is-would .retention-tick__bar {
+  background-image: repeating-linear-gradient(135deg, var(--text-3) 0, var(--text-3) 2px, transparent 2px, transparent 6px);
+  opacity: 0.7;
+}
+/* The wash alone is 8% alpha and all but disappears on the card's own tint, which left "pinned"
+   readable only from the legend. The border carries it; the glyph still does the real work. */
+.retention-tick.is-pinned .retention-tick__bar {
+  background: var(--accent-wash); border-color: rgba(37, 99, 235, 0.35);
+}
+
+/* -------------------------------------------------------------- settings: jobs console */
+/* Today History backfill / Domain-tag backfill / Support group refresh consolidate into one
+   table: Job / Last run / Status / action. Each job's full former paragraph lives verbatim in
+   its row's "Why this matters" disclosure rather than sitting open on the page. */
+.job-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+table.data.jobs-table td:last-child { text-align: right; white-space: nowrap; }
+/* The status cell can carry a longer sentence (the domain-tag three-figure line, a failure
+   message) than the table's default nowrap-ellipsis cell allows for. */
+table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px; overflow: visible; }
+
+/* -------------------------------------------------------------- settings: health grid */
+.health-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;
+  margin-bottom: 20px;
+}
+.health-item {
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  background: var(--surface); padding: 14px 16px; box-shadow: var(--shadow-card);
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
+}
+.health-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.health-row { display: flex; align-items: center; gap: 10px; }
+.health-build { margin: 0; }
+
 </style>

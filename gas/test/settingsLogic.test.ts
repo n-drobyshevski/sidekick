@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applySettingsPatch,
   apiSeverityFilter,
   canonicalSeverities,
   getDisplaySeverities,
@@ -150,5 +151,71 @@ describe("risk rule (coverage/efficiency classifier)", () => {
     expect(getRiskRule({ risk_rule: "nope" }).rule.kev).toBe(true);
     expect(getRiskRule({ risk_rule: { version: 4 } }).rule.epss).toBe(true);
     expect(getRiskRule({ risk_rule: { version: 4 } }).version).toBe(4);
+  });
+});
+
+describe("applySettingsPatch (the single save bar's one atomic write)", () => {
+  const base = () => ({
+    fetch_severities: ["CRITICAL", "HIGH"],
+    display_severities: ["CRITICAL"],
+    show_no_fix: true,
+    include_eol: true,
+    retention_days: 180,
+    auto_compact: true,
+  });
+
+  it("touches nothing for an empty patch", () => {
+    expect(applySettingsPatch(base(), {})).toEqual(base());
+  });
+
+  it("leaves fields the reader did not edit alone, rather than rewriting them", () => {
+    const out = applySettingsPatch(base(), { autoCompact: false });
+    expect(out["auto_compact"]).toBe(false);
+    expect(out["retention_days"]).toBe(180);
+    expect(out["fetch_severities"]).toEqual(["CRITICAL", "HIGH"]);
+  });
+
+  it("ignores a key it does not own instead of writing it onto the dict", () => {
+    const out = applySettingsPatch(base(), { nonsense: 1, autoCompact: false });
+    expect("nonsense" in out).toBe(false);
+  });
+
+  // The ordering property this function exists to guarantee. Widening both scopes in ONE edit
+  // has to work: apply display first and it clamps against the OLD scan scope, so MEDIUM ends
+  // up scanned but not shown — a register the reader never asked for.
+  it("widens the scan scope before clamping the display scope against it", () => {
+    const out = applySettingsPatch(base(), {
+      fetchSeverities: ["CRITICAL", "HIGH", "MEDIUM"],
+      displaySeverities: ["CRITICAL", "HIGH", "MEDIUM"],
+    });
+    expect(out["fetch_severities"]).toEqual(["CRITICAL", "HIGH", "MEDIUM"]);
+    expect(out["display_severities"]).toEqual(["CRITICAL", "HIGH", "MEDIUM"]);
+  });
+
+  it("still clamps a display severity the narrowed scan scope no longer pulls", () => {
+    const out = applySettingsPatch(base(), { fetchSeverities: ["CRITICAL"] });
+    expect(out["display_severities"]).toEqual(["CRITICAL"]);
+  });
+
+  it("writes every owned field when the whole page is edited at once", () => {
+    const out = applySettingsPatch(base(), {
+      fetchSeverities: ["CRITICAL", "HIGH", "MEDIUM"],
+      displaySeverities: ["CRITICAL", "MEDIUM"],
+      showNoFix: false,
+      includeEol: false,
+      riskRule: { kev: false, exploit: true, epss: true, epssThreshold: 0.25 },
+      retentionDays: 90,
+      autoCompact: false,
+    });
+    expect(out["show_no_fix"]).toBe(false);
+    expect(out["include_eol"]).toBe(false);
+    expect(out["retention_days"]).toBe(90);
+    expect(out["auto_compact"]).toBe(false);
+    expect(out["display_severities"]).toEqual(["CRITICAL", "MEDIUM"]);
+    expect((out["risk_rule"] as { rule: { epssThreshold: number } }).rule.epssThreshold).toBe(0.25);
+  });
+
+  it("turns sealing off when the retention window is patched to null", () => {
+    expect(applySettingsPatch(base(), { retentionDays: null })["retention_days"]).toBeNull();
   });
 });

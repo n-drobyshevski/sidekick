@@ -497,6 +497,171 @@ export function usageMeter({ used, total, label, state = "", note } = {}) {
 }
 
 /**
+ * A horizontal tablist over in-page panels. One tab stop for the whole strip (roving
+ * tabindex), arrows move and activate, Home/End jump to the ends — the keyboard model
+ * DESIGN.md already specifies for the Record Sheet's section rail, drawn horizontally.
+ *
+ * The selected tab takes a 2px accent underline **plus** weight 600, never a tint alone.
+ * `setDirty` marks a tab whose panel holds unsaved edits: a painted dot AND the words
+ * "unsaved changes" appended to the tab's accessible name, because a tabbed page can hide a
+ * dirty control and a dot alone would say so only to people who can see it.
+ *
+ * `tabs` is `[{ key, label, badge? }]`; `badge` is a node (a pill, usually) shown after the
+ * label. `onSelect(key)` fires on activation, including the initial one, so the caller has a
+ * single place to show the panel and record the tab in the hash.
+ */
+export function tabList({ tabs, active, onSelect, ariaLabel, idPrefix = "tab" }) {
+  const strip = el("div", { class: "tabstrip", role: "tablist", "aria-label": ariaLabel });
+  const byKey = {};
+  let current = null;
+
+  for (const t of tabs) {
+    const dot = el("span", { class: "tabstrip__dot", "aria-hidden": "true", hidden: true });
+    const btn = el("button", {
+      type: "button", class: "tabstrip__tab", role: "tab",
+      id: `${idPrefix}-${t.key}`, "aria-controls": `${idPrefix}-panel-${t.key}`,
+      "aria-selected": "false", tabindex: "-1",
+      onclick: () => select(t.key),
+    }, el("span", { class: "tabstrip__label" }, t.label), t.badge || null, dot);
+    byKey[t.key] = { btn, dot, label: t.label, dirty: false };
+    strip.append(btn);
+  }
+
+  function syncName(key) {
+    const e = byKey[key];
+    e.btn.setAttribute("aria-label", e.dirty ? `${e.label}, unsaved changes` : e.label);
+  }
+
+  function select(key, moveFocus) {
+    if (!byKey[key]) return;
+    current = key;
+    for (const k of Object.keys(byKey)) {
+      const on = k === key;
+      byKey[k].btn.setAttribute("aria-selected", on ? "true" : "false");
+      byKey[k].btn.tabIndex = on ? 0 : -1;
+    }
+    if (moveFocus) byKey[key].btn.focus();
+    if (onSelect) onSelect(key);
+  }
+
+  strip.addEventListener("keydown", (e) => {
+    const keys = tabs.map((t) => t.key);
+    const i = keys.indexOf(current);
+    let next = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = keys[(i + 1) % keys.length];
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = keys[(i - 1 + keys.length) % keys.length];
+    else if (e.key === "Home") next = keys[0];
+    else if (e.key === "End") next = keys[keys.length - 1];
+    if (!next) return;
+    e.preventDefault();
+    select(next, true);
+  });
+
+  for (const k of Object.keys(byKey)) syncName(k);
+  select(active && byKey[active] ? active : tabs[0].key);
+
+  return {
+    node: strip,
+    select: (k) => select(k, false),
+    focusTab: (k) => select(k, true),
+    active: () => current,
+    setDirty(key, on) {
+      const e = byKey[key];
+      if (!e || e.dirty === !!on) return;
+      e.dirty = !!on;
+      e.dot.hidden = !on;
+      syncName(key);
+    },
+  };
+}
+
+/**
+ * The page-level save bar: one dirty state for a whole form, shown only when there is
+ * something to save. It replaces a row of per-panel Save buttons, and with it the
+ * "your other edits will be discarded" dialog that a page full of competing saves needs.
+ *
+ * `update(summary)` takes the output of settingsModel.changeSummary — each entry naming the
+ * tab that owns it — and renders them as links, so a change hidden behind an inactive tab is
+ * both announced and reachable in one click. `onJump(tab)` handles those clicks.
+ */
+export function saveBar({ onSave, onDiscard, onJump, saveLabel = "Save changes" }) {
+  const what = el("span", { class: "savebar__what" });
+  const saveBtn = el("button", { class: "primary", onclick: () => onSave && onSave() }, saveLabel);
+  const discardBtn = el("button", { onclick: () => onDiscard && onDiscard() }, "Discard");
+  const node = el("div", {
+    class: "savebar", role: "region", "aria-label": "Unsaved changes",
+    hidden: true,
+  }, what, el("span", { class: "savebar__spacer" }), discardBtn, saveBtn);
+
+  return {
+    node,
+    setBusy(busy) {
+      saveBtn.disabled = !!busy;
+      discardBtn.disabled = !!busy;
+      saveBtn.textContent = busy ? "Saving…" : saveLabel;
+    },
+    /** `summary` is `[{ label, tab, tabLabel }]`; an empty list hides the bar. */
+    update(countText, summary) {
+      clear(what);
+      if (!summary.length) {
+        node.hidden = true;
+        return;
+      }
+      node.hidden = false;
+      what.append(el("strong", {}, countText), " — ");
+      summary.forEach((c, i) => {
+        if (i) what.append(", ");
+        what.append(c.label + " ");
+        what.append(el("button", {
+          class: "link savebar__tab", type: "button",
+          "aria-label": `${c.label}, on the ${c.tabLabel} tab — go there`,
+          onclick: () => onJump && onJump(c.tab),
+        }, `(${c.tabLabel})`));
+      });
+    },
+  };
+}
+
+/**
+ * A "Why this matters" disclosure. The one-line description stays visible; the paragraph
+ * behind it moves in here, so a reader who already knows is not made to read it again.
+ * The caret rotation is zeroed under prefers-reduced-motion in styles.css.
+ */
+export function disclosure(summaryText, ...children) {
+  return el("details", { class: "why" },
+    el("summary", {},
+      el("span", { class: "why__caret", "aria-hidden": "true" }, "▸"), summaryText),
+    el("div", { class: "why__body" }, ...children));
+}
+
+/**
+ * A proportion bar: one track split into labelled segments, with the figures repeated in
+ * text beneath it. `segments` is `[{ label, value, tone }]`, where `tone` is a class suffix
+ * ("in" | "out" | a severity name). Never the only way to read the numbers — the caption
+ * below carries them in words, because a bar alone fails the non-color rule and is
+ * unreadable to a screen reader.
+ */
+export function splitBar({ segments, caption, ariaLabel }) {
+  const total = segments.reduce((n, s) => n + (s.value || 0), 0);
+  const track = el("div", {
+    class: "splitbar", role: "img",
+    "aria-label": ariaLabel || segments.map((s) => `${s.label} ${s.value}`).join(", "),
+  });
+  for (const s of segments) {
+    if (!s.value) continue;
+    const seg = el("span", {
+      class: `splitbar__seg splitbar__seg--${s.tone || "in"}`,
+      title: `${s.label}: ${s.value.toLocaleString()}`,
+    });
+    seg.style.width = `${(s.value / (total || 1)) * 100}%`;
+    track.append(seg);
+  }
+  return el("div", { class: "splitbar-wrap" },
+    track,
+    caption ? el("p", { class: "splitbar__caption muted small" }, caption) : null);
+}
+
+/**
  * Inline severity-scope filter: a trigger showing the current summary that opens a
  * popover of severity toggle pills. Shared by Overview and MTTR. `scope` is a live array
  * mutated in place so the caller's scopeParam() stays in sync; `onApply` fires (debounced)

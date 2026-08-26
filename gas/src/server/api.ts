@@ -35,6 +35,7 @@ import { nowIso, parseTs, present, type Rec } from "../domain/util";
 import { kmMedianAsOf, kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
 import * as insights from "../domain/insights";
 import * as program from "../domain/program";
+import * as settingsImpact from "../domain/settingsImpact";
 import {
   execGroupSlice, execMttrSlice, historyTrendSlice, mttrGroupTableSlice, mttrGroupTrendSlice,
   jobSummarySlice, mttrPageTrendSlice, oldestOpenSlice, overviewInsightsSlice,
@@ -2184,6 +2185,96 @@ export function getSettings(_p?: unknown): ApiResult {
     domains: settingsStore.getDomains(),
     riskRule: settingsStore.getRiskRule(),
   }));
+}
+
+/**
+ * Everything the Settings page needs to say, beside each control, what that control is
+ * currently doing to the register — in ONE payload, so a page of live readouts costs one round
+ * trip rather than one per card.
+ *
+ * Measured over the UNFILTERED base on purpose. The display filters are hard no-ops when they
+ * are on, so "what would turning this off hide?" cannot be answered from the visible
+ * population, and the bootstrap's severity counts are already narrowed by the display filter,
+ * so they cannot preview a change to it either. Both questions need the population from before
+ * those filters ran.
+ *
+ * The risk half ships as a CUBE rather than a breakdown: the joint distribution of
+ * (has_kev x has_exploit x EPSS bin), which the browser re-aggregates locally so the classifier
+ * card moves as the reader drags the threshold. See src/domain/settingsImpact.ts.
+ */
+function settingsImpactData(): Rec {
+  const all = ledgerStore.loadBaseRows() as unknown as Rec[];
+  const eolKeys = eolVulnKeys();
+  const isEol = (r: Rec) =>
+    eolKeys.has(String(r["vuln_key"] ?? "")) || isEndOfLifeName(r["cve"]);
+  const isNoFix = (r: Rec) => baseRowNoFix(r as unknown as BaseRow);
+
+  // The risk cube is scored over the population the classifier actually reaches: the scan
+  // scope, with both display toggles applied, matching programData's own funnel. Anything
+  // wider would report a figure the Program page will never show.
+  const scored = visibleBase(filterSeverities(all, settingsStore.getFetchSeverities()));
+
+  return {
+    census: {
+      total: all.length,
+      bySeverity: settingsImpact.severityCensus(all, (r) =>
+        normalizeSeverity(r["severity"])),
+    },
+    toggles: settingsImpact.toggleImpact(all, isNoFix, isEol),
+    risk: {
+      cube: settingsImpact.buildRiskCube(all.length ? (scored as unknown as
+        settingsImpact.RiskCubeRow[]) : []),
+      scoredRows: scored.length,
+    },
+    scans: settingsImpact.scanAges(
+      ledgerStore.loadScanRows().map((s) => ({ ts: s.ts, sealed: s.sealed })),
+      Date.now(),
+    ),
+  };
+}
+
+// Keyed on the scan scope (which decides the scored population) but deliberately NOT on the
+// two display toggles: the census and toggle counts are the same whichever way those are set,
+// and keying on them would cache two identical copies. bumpDataVersion covers every settings
+// write anyway. 1h TTL — the scan ages are wall-clock relative.
+const cachedSettingsImpactData = () =>
+  cached(
+    "settingsImpact1",
+    {
+      fetchSeverities: settingsStore.getFetchSeverities(),
+      showNoFix: settingsStore.getShowNoFix(),
+      includeEol: settingsStore.getIncludeEol(),
+    },
+    () => settingsImpactData(),
+    3600,
+  );
+
+export function getSettingsImpact(_p?: unknown): ApiResult {
+  return run(() => cachedSettingsImpactData());
+}
+
+/**
+ * One atomic write for the Settings page's single save bar.
+ *
+ * The page batches every edit into one action, so the commit has to be one write: a sequence of
+ * per-field calls has a window in which the scan scope has landed and the retention window has
+ * not, which is a register state the reader never asked for and no toast would mention. Only
+ * the fields actually edited are sent, and only those are written.
+ */
+export function saveSettings(p?: unknown): ApiResult {
+  const patch = (p as Rec)?.["patch"];
+  return mutate(() => {
+    settingsStore.setMany((patch ?? {}) as Rec);
+    return {
+      fetchSeverities: settingsStore.getFetchSeverities(),
+      displaySeverities: settingsStore.getDisplaySeverities(),
+      retentionDays: settingsStore.getRetentionDays(),
+      autoCompact: settingsStore.getAutoCompact(),
+      showNoFix: settingsStore.getShowNoFix(),
+      includeEol: settingsStore.getIncludeEol(),
+      riskRule: settingsStore.getRiskRule(),
+    };
+  });
 }
 
 export function setSeverities(p?: unknown): ApiResult {
