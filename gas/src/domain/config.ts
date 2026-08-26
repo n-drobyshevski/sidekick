@@ -62,6 +62,21 @@ export const API_SEVERITY_VALUES: Record<string, string> = {
 // API statuses that mean remediated/closed — the MTTR stop-clock.
 export const RESOLVED_STATUSES = new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
 
+/**
+ * Is this finding still open? The polarity is deliberate and load-bearing: anything that is
+ * NOT a recognized resolved status counts as open, including a blank or unfamiliar one. A new
+ * Wiz status the app has never seen should leave a finding in the backlog where someone will
+ * look at it, not silently close it.
+ *
+ * Three domain modules each carry a private copy of this two-line test (insights, remediation,
+ * program), each with its own tests; those are left alone. This export exists so the SERVER
+ * layer has one to reach for instead of open-coding the same `.has(String(...).toUpperCase())`
+ * at every call site — which is how the Executive tiles came to count resolved rows.
+ */
+export function isOpenStatus(status: unknown): boolean {
+  return !RESOLVED_STATUSES.has(String(status ?? "").toUpperCase());
+}
+
 // Disappearance-resolution timestamping: "scan_ts" (conservative; default) or "midpoint".
 export const DISAPPEARANCE_RESOLUTION = "scan_ts";
 

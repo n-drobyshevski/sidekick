@@ -7,8 +7,14 @@
 // The failure mode this guards is not a crash. It is a page that answers for one domain in its
 // hero and for the whole register in its tiles, with nothing on screen saying which is which.
 // That mismatch is precisely why Executive was exempt from the scope switcher until now: the
-// tiles read bootstrap's `counts`, which is register-wide by construction, so scoping the hero
-// alone would have made the page worse rather than narrower.
+// tiles read a bootstrap tally that is register-wide by construction, so scoping the hero alone
+// would have made the page worse rather than narrower.
+//
+// The tiles now read bootstrap's `openCounts` rather than `counts` — same shape, open rows
+// only. They are labelled "Open vulnerabilities" and had been counting resolved history too,
+// so the better a register's close rate, the more it overstated its live risk. The fixtures
+// below are populations, not sources: this file pins which population the view REPORTS, and
+// the open/all filtering itself is server-side (isOpenStatus, test/openStatus.test.ts).
 //
 // The second half guards a quieter one. Only `mttrByDomainData` aliases its `group` column into
 // `domain`; the by-support-group split ships `group` alone. A reader that reaches for `.domain`
@@ -37,8 +43,10 @@ describe("executiveSeverityView — unscoped, bootstrap is the source", () => {
 
   // The landing page must not regress to a skeleton flash for a scoped case it isn't in, so the
   // unscoped repaint has to be a no-op. It is only a no-op because the two tallies agree —
-  // bootstrap counts visibleFrame(scan.records) and scopedFrameRecords("","",[]) returns exactly
-  // that. Pinned here so a later edit to either path cannot introduce a flicker unnoticed.
+  // bootstrap counts the OPEN rows of visibleFrame(scan.records), and scopedFrameRecords("","",[])
+  // returns exactly that frame, filtered the same way. Pinned here so a later edit to either
+  // path cannot introduce a flicker unnoticed; narrowing one population without the other is
+  // precisely how that would happen.
   it("ignores the payload it is handed, so the repaint changes nothing", () => {
     const withPayload = sevView({
       payload: { flatScan: true, counts: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 }, total: 4 },
@@ -140,10 +148,17 @@ describe("executiveByDomainView — when there is no split worth drawing", () =>
 });
 
 describe("executiveByDomainView — ranking", () => {
-  it("sorts by open backlog descending and caps the summary at five", () => {
+  // This used to assert a five-row cap, and the cap was removed on purpose rather than because
+  // the assertion was inconvenient. The claim it encoded — "the exec split is a summary, so
+  // five rows is enough" — is false for the question the section asks: MTTR is not ranked by
+  // open backlog, so the worst-performing domain on the page could sit outside the top five by
+  // volume and never be drawn, with nothing on screen saying rows had been dropped. Ordering is
+  // still by open backlog, so the head of the list is unchanged; the tail is no longer silently
+  // discarded.
+  it("sorts by open backlog descending and lists every group", () => {
     const rows = ["a", "b", "c", "d", "e", "f", "g"].map((n, i) => byDomainRow(n, i));
     const v = dView({ dimension: "domain", rows });
-    expect(v.rows.map((r) => r.name)).toEqual(["g", "f", "e", "d", "c"]);
+    expect(v.rows.map((r) => r.name)).toEqual(["g", "f", "e", "d", "c", "b", "a"]);
   });
 
   it("treats a missing open count as zero rather than dropping the row", () => {
