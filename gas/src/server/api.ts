@@ -2214,17 +2214,26 @@ function settingsImpactData(): Rec {
   // wider would report a figure the Program page will never show.
   const scored = visibleBase(filterSeverities(all, settingsStore.getFetchSeverities()));
 
+  // ONE open/closed test, shared with the rest of the server layer. A private copy at each
+  // call site is exactly how the Executive tiles came to count resolved rows under a label
+  // that said "open" — see isOpenStatus's docstring and test/openStatus.test.ts.
+  const isOpen = (r: Rec) => isOpenStatus(r["status"]);
+
   return {
     census: {
       total: all.length,
-      bySeverity: settingsImpact.severityCensus(all, (r) =>
-        normalizeSeverity(r["severity"])),
+      openTotal: all.filter(isOpen).length,
+      bySeverity: settingsImpact.severityCensus(
+        all, (r) => normalizeSeverity(r["severity"]), isOpen),
     },
-    toggles: settingsImpact.toggleImpact(all, isNoFix, isEol),
+    toggles: settingsImpact.toggleImpact(all, isNoFix, isEol, isOpen),
     risk: {
-      cube: settingsImpact.buildRiskCube(all.length ? (scored as unknown as
-        settingsImpact.RiskCubeRow[]) : []),
+      cube: settingsImpact.buildRiskCube(
+        scored as unknown as settingsImpact.RiskCubeRow[],
+        (r) => isOpen(r as unknown as Rec),
+      ),
       scoredRows: scored.length,
+      openScoredRows: scored.filter(isOpen).length,
     },
     scans: settingsImpact.scanAges(
       ledgerStore.loadScanRows().map((s) => ({ ts: s.ts, sealed: s.sealed })),
@@ -2239,7 +2248,7 @@ function settingsImpactData(): Rec {
 // write anyway. 1h TTL — the scan ages are wall-clock relative.
 const cachedSettingsImpactData = () =>
   cached(
-    "settingsImpact1",
+    "settingsImpact2",
     {
       fetchSeverities: settingsStore.getFetchSeverities(),
       showNoFix: settingsStore.getShowNoFix(),

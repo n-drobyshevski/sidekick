@@ -2066,3 +2066,8 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
 .health-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .health-row { display: flex; align-items: center; gap: 10px; }
 .health-build { margin: 0; }
+
+/* The classifier's clause list gains a header, because its rows are the first place a reader
+   meets the "43 (57 all time)" pair — the sentence that frames it sits below them. */
+.risk-row--head { border-bottom: 1px solid var(--hairline); padding-bottom: 4px; }
+.risk-row__headnote { color: var(--text-3); }

@@ -55,6 +55,34 @@ export function breakdownFromCube(cube, rule) {
   return out;
 }
 
+/**
+ * The same cube with every resolved cell emptied, so an open-only figure comes out of
+ * `breakdownFromCube` rather than a second copy of the same union logic:
+ *
+ *     breakdownFromCube(openSlice(cube), rule)  // open
+ *     breakdownFromCube(cube, rule)             // all time
+ *
+ * A union over enabled clauses cannot be recovered by subtraction, which is why the status
+ * axis is in the cube at all rather than shipped as a pair of totals. Mirrors
+ * settingsImpact.openSlice; test/riskCube.test.js pins the two together.
+ */
+export function openSlice(cube) {
+  if (!cube || !cube.cells) return cube;
+  const cells = {};
+  let total = 0;
+  for (const key of Object.keys(cube.cells)) {
+    const cell = cube.cells[key];
+    if (key[2] === "o") {
+      cells[key] = { epss: cell.epss.slice(), noEpss: cell.noEpss };
+      total += cell.noEpss;
+      for (let i = 0; i < cell.epss.length; i++) total += cell.epss[i];
+    } else {
+      cells[key] = { epss: new Array(cube.bins + 1).fill(0), noEpss: 0 };
+    }
+  }
+  return { total, bins: cube.bins, cells };
+}
+
 /** The display histogram: `buckets` coarse bars plus the never-captured tail. */
 export function epssHistogram(cube, buckets = 20) {
   const out = new Array(buckets).fill(0);
