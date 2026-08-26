@@ -8215,7 +8215,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "9e0824e61f96" : "dev";
+  var BUILD_ID = true ? "0a8dd73cabe5" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -10341,6 +10341,7 @@ var Server = (() => {
     getProblems: () => getProblems,
     getQueryVocabulary: () => getQueryVocabulary,
     getScanQueries: () => getScanQueries,
+    getScanStepDetail: () => getScanStepDetail,
     getSettings: () => getSettings,
     getStorageStats: () => getStorageStats,
     getSyncHistory: () => getSyncHistory,
@@ -15589,8 +15590,6 @@ var Server = (() => {
   }
   function getScanQueries(_p) {
     return run(() => ({
-      steps: describeSyncSteps(),
-      specs: STEP_VAR_SPECS,
       skippedSteps: getSkippedSteps2(),
       // Reported separately from the skips: these steps ran and were answered, we just
       // stopped asking at the page cap, so their rows are a prefix rather than an absence.
@@ -15607,11 +15606,38 @@ var Server = (() => {
       // that as "no reason recorded", never as an empty explanation.
       skipReasons: getSkipReasons2(),
       hasCredentials: hasWizCredentials(),
-      limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
       // Named rather than folded into `variables`: the transport adds these to every request,
       // so showing them as if they were configuration would invite someone to edit them.
       transportVariables: ["first", "after", "quick"]
     }));
+  }
+  function getScanStepDetail(p) {
+    return run(() => {
+      var _a5;
+      const area = String((_a5 = (p != null ? p : {})["area"]) != null ? _a5 : "");
+      const steps = describeSyncSteps().filter((s) => {
+        var _a6;
+        return String((_a6 = s["area"]) != null ? _a6 : "") === area;
+      }).map((s) => {
+        var _a6;
+        const id = String((_a6 = s["id"]) != null ? _a6 : "");
+        const editable = !!s["editable"];
+        return {
+          id,
+          document: s["document"],
+          variables: s["variables"],
+          rootField: s["rootField"],
+          writes: s["writes"],
+          optional: s["optional"],
+          pageSize: s["pageSize"],
+          editable,
+          overridden: s["overridden"],
+          spec: varSpecFor(id),
+          ...editable ? { defaultVariables: s["defaultVariables"] } : {}
+        };
+      });
+      return { area, steps };
+    });
   }
   function setScanVars2(p) {
     return mutate(() => {
@@ -15625,7 +15651,7 @@ var Server = (() => {
       const errors = validateStepVars(stepId, proposed);
       if (errors.length) throw new Error(errors.join(" "));
       setScanVars(stepId, proposed);
-      return { steps: describeSyncSteps() };
+      return { stepId };
     });
   }
   function testScanVars(p) {

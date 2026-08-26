@@ -481,13 +481,43 @@ export async function renderScans(main, params, ctx) {
   }
 
   /**
+   * One area's step definitions, fetched on the click that opens them and remembered for the
+   * life of THIS render.
+   *
+   * The lifetime is the point. `queries` above is read once per render and every skip,
+   * truncation and row count the sheet shows comes from that one snapshot — so re-fetching the
+   * documents on a re-open would not make the sheet fresher, it would make one half of it
+   * newer than the other. The two things that can move the battery both end this render:
+   * `setScanVars` calls `ctx.refresh()`, and a framework selection is a Settings navigation.
+   * A new render gets a new map.
+   *
+   * Rejections are NOT cached — a failed open must be retryable by closing and opening again.
+   */
+  const stepDetail = new Map();
+  function loadSteps(areaId) {
+    let p = stepDetail.get(areaId);
+    if (!p) {
+      p = call("api_getScanStepDetail", { area: areaId })
+        .catch((e) => { stepDetail.delete(areaId); throw e; });
+      stepDetail.set(areaId, p);
+    }
+    return p;
+  }
+
+  /**
    * What the drill-down needs that the page already has. Rebuilt per open so a sheet always
    * describes the payload on screen, and `refresh` re-reads after a variables save.
+   *
+   * `steps` and `specs` used to be here, and they were the whole reason api_getScanQueries
+   * weighed 48,505 bytes: twenty-one step descriptors carrying every GraphQL document in the
+   * battery, plus the variable schema for all of them. NOTHING ON THIS PAGE READ EITHER —
+   * the list is built from `boot`, the asset KPIs and the combos digest, and these two were
+   * assembled here purely to be handed on. The sheet fetches them itself now, for the one
+   * area it is opening.
    */
   function sheetContext() {
     return {
-      steps: (queries && queries.steps) || [],
-      specs: (queries && queries.specs) || [],
+      loadSteps,
       skippedSteps: (queries && queries.skippedSteps) || [],
       truncatedSteps: (queries && queries.truncatedSteps) || [],
       // Left as an EMPTY OBJECT when absent, never defaulted per-step to 0: an id missing

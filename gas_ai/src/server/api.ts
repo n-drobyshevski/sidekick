@@ -131,9 +131,7 @@ import { conditionHolds, conditionState } from "../domain/riskConditions";
 import {
   cleanStepVars,
   isEditableStep,
-  MAX_LIST_VALUES,
-  MAX_VALUE_LEN,
-  STEP_VAR_SPECS,
+  varSpecFor,
   validateStepVars,
 } from "../domain/scanVars";
 import { layoutGraph } from "../domain/graphLayout";
@@ -2571,16 +2569,31 @@ export function getSyncHistory(_p?: unknown): ApiResult {
 // --------------------------------------------------------------------- scan queries
 
 /**
- * Every sync step as data: the document it sends, the variables it sends, where the answer
- * lands, whether the last sync skipped it, and which of its variables can be edited.
+ * What the Wiz Scans PAGE needs: the last sync's per-step outcomes, and the vocabulary for
+ * describing them. No step definitions.
  *
- * Not cached. The whole point is that it describes the battery as configured right now, and
- * a stale answer here is a lie about what the tenant is being asked.
+ * IT USED TO CARRY THE WHOLE BATTERY, and that was 42,794 of its 48,505 bytes — twenty-one
+ * steps, each with the full GraphQL document it sends (24,468 across them), its variables
+ * (6,174) and its defaults (6,174) — plus `specs`, the per-step variable schema (5,505).
+ * None of it is read by the page. `steps` is dereferenced in exactly one place in the whole
+ * client, `scanSheet.js`'s area filter, and `specs` in one, its variable editor; the list
+ * only ever assembled both into the drill-down's context object and passed them along. So
+ * the register shipped every query in the battery on every visit so that a sheet a reader
+ * may never open could show one area's worth.
+ *
+ * Both now come from `getScanStepDetail` on the click that needs them.
+ *
+ * `limits` went with them and did not move to the sibling: the two caps it published are
+ * enforced by `validateStepVars` on the way in, and nothing under `src/client/js/` reads
+ * them or states them — the editor shows neither bound, and an over-long value is refused by
+ * the server with a message. It published a contract nothing consumed.
+ *
+ * Not cached, and neither is its sibling. The whole point is that this describes the battery
+ * as configured right now, and a stale answer here is a lie about what the tenant is being
+ * asked.
  */
 export function getScanQueries(_p?: unknown): ApiResult {
   return run(() => ({
-    steps: syncJobs.describeSyncSteps(),
-    specs: STEP_VAR_SPECS,
     skippedSteps: settingsStore.getSkippedSteps(),
     // Reported separately from the skips: these steps ran and were answered, we just
     // stopped asking at the page cap, so their rows are a prefix rather than an absence.
@@ -2597,11 +2610,67 @@ export function getScanQueries(_p?: unknown): ApiResult {
     // that as "no reason recorded", never as an empty explanation.
     skipReasons: settingsStore.getSkipReasons(),
     hasCredentials: hasWizCredentials(),
-    limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
     // Named rather than folded into `variables`: the transport adds these to every request,
     // so showing them as if they were configuration would invite someone to edit them.
     transportVariables: ["first", "after", "quick"],
   }));
+}
+
+/**
+ * One scan area's steps, in full — the document each sends, the variables it sends, and the
+ * schema for editing them.
+ *
+ * The unit is the AREA because that is the unit the drill-down opens on: `scanSheet.js`
+ * filters the battery by `area.id` and renders a section per step beneath it. Per-step would
+ * mean a round trip per section of one sheet.
+ *
+ * PROJECTED FROM ONE `describeSyncSteps()` PASS, like the page endpoint above. Deriving the
+ * sheet's view of the battery separately from the page's is how the two come to disagree
+ * about what the tenant is being asked, which is the one thing this pair must never do.
+ *
+ * EACH STEP CARRIES ITS OWN RESOLVED SPEC, rather than the client matching against a
+ * catalogue — and that is a bug fix, not a convenience. `varSpecFor` matches a spec whose
+ * `prefix` flag is set as a PREFIX, which is how one entry covers a generated family like
+ * `COMPLIANCE_POSTURE_wf-id-275`; the client matched `spec.stepId === step.id` exactly. So
+ * all four posture steps missed the family spec written for them and fell through to the
+ * generic "no spec" text — precisely the outcome scanVars.ts says the flag exists to
+ * prevent. Resolving it here means the client cannot get it wrong.
+ *
+ * `defaultVariables` rides only on steps that can be edited. It is what the Revert button
+ * restores, and for a step with no editable fields it is a byte-for-byte copy of
+ * `variables` with no reader — 17 of the 21 steps in the battery, 5,502 of its 6,174 bytes.
+ *
+ * `typesResolved` does not ride at all. `describeSyncSteps` computes it (syncJobs.ts:583); no
+ * file under `src/client/js/` dereferences it, and the sheet shows nothing about type
+ * resolution. It has shipped on every visit since it was written and has never been read. A
+ * grep fact, not a judgement, and the same reason `limits` left the page endpoint above.
+ */
+export function getScanStepDetail(p?: unknown): ApiResult {
+  return run(() => {
+    const area = String(((p ?? {}) as Rec)["area"] ?? "");
+    const steps = syncJobs.describeSyncSteps()
+      .filter((s) => String(s["area"] ?? "") === area)
+      .map((s) => {
+        const id = String(s["id"] ?? "");
+        const editable = !!s["editable"];
+        return {
+          id,
+          document: s["document"],
+          variables: s["variables"],
+          rootField: s["rootField"],
+          writes: s["writes"],
+          optional: s["optional"],
+          pageSize: s["pageSize"],
+          editable,
+          overridden: s["overridden"],
+          spec: varSpecFor(id),
+          ...(editable ? { defaultVariables: s["defaultVariables"] } : {}),
+        };
+      });
+    // Echoed so a sheet reopened on another area while this request is in flight cannot
+    // paint one area's queries under another's heading.
+    return { area, steps };
+  });
 }
 
 export function setScanVars(p?: unknown): ApiResult {
@@ -2615,7 +2684,10 @@ export function setScanVars(p?: unknown): ApiResult {
     const errors = validateStepVars(stepId, proposed);
     if (errors.length) throw new Error(errors.join(" "));
     settingsStore.setScanVars(stepId, proposed);
-    return { steps: syncJobs.describeSyncSteps() };
+    // Returns nothing but the id it saved. It used to return the WHOLE battery — every step,
+    // every document, ~42 KB — and the caller discards it: scanSheet.js awaits this purely
+    // for its success or failure and then calls `ctx.refresh()`, which re-reads the page.
+    return { stepId };
   });
 }
 

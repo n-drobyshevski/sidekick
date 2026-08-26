@@ -219,6 +219,13 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
   // Phase P1a: remediation ACTIONS ranked by marginal set-cover over the same union.
   ["getActions", {}],
   ["getSyncHistory", {}],
+  // The Wiz Scans pair. The page half is small and describes the last sync's outcomes; the
+  // sheet half carries the GraphQL documents verbatim, which is the thing most worth pinning
+  // in this whole golden — this module's own header says the document is read from the server
+  // precisely so a hand-typed description cannot drift from it, and a snapshot is what makes
+  // that true of the wire as well. `posture` is the area with the most steps.
+  ["getScanQueries", {}],
+  ["getScanStepDetail", { area: "posture" }],
   ["getSettings", {}],
   ["getAarsRule", {}],
   // Phase 5: the problem tree's rule state, mirroring getAarsRule above. Mutating

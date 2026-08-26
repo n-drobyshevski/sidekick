@@ -80,6 +80,7 @@ function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }
 function api_cancelSync(p) { return timedApi_("cancelSync", p); }
 function api_getSyncHistory(p) { return timedApi_("getSyncHistory", p); }
 function api_getScanQueries(p) { return timedApi_("getScanQueries", p); }
+function api_getScanStepDetail(p) { return timedApi_("getScanStepDetail", p); }
 function api_setScanVars(p) { return timedApi_("setScanVars", p); }
 function api_testScanVars(p) { return timedApi_("testScanVars", p); }
 function api_probeSyncStep(p) { return timedApi_("probeSyncStep", p); }

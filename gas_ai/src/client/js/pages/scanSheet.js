@@ -53,7 +53,6 @@ function writesLabel(writes) {
  */
 export function openAreaSheet(area, ctx) {
   const meta = COVERAGE[area.state];
-  const steps = (ctx.steps || []).filter((s) => s.area === area.id);
   const skipped = new Set(ctx.skippedSteps || []);
   // A different list from the skips, and the difference is whose decision it was: a skip is
   // the tenant refusing the query, a truncation is the sync stopping at the page cap while
@@ -64,16 +63,41 @@ export function openAreaSheet(area, ctx) {
   // renders as "no reason recorded" — an absent reason and an empty one are different claims.
   const skipReasons = ctx.skipReasons || {};
 
+  // THE QUERIES ARRIVE ON THIS CLICK, not with the page. The battery is ~42 KB of GraphQL
+  // documents and variable schemas, and the register behind this sheet reads none of it —
+  // it was fetched on every visit to Wiz Scans so that this panel, which many readers never
+  // open, could show one area's worth. `ctx.loadSteps` memoizes per area for the life of the
+  // page render, so a re-open costs no round trip; see its comment in scans.js for why that
+  // lifetime is the right one.
+  const queryHost = el("div", {});
   openSheet((body) => {
     const sections = [
       sheetSection("What Wiz does here", el("p", { class: "cov-para" }, area.what)),
       reportedSection(area, meta, ctx),
-      provenanceSection(area, steps, ctx),
-      ...steps.map((step) => stepSection(step, skipped, truncated, skipReasons, ctx)),
-      steps.length ? null : noStepSection(area, ctx),
+      queryHost,
       destinationSection(area, ctx),
     ];
     body.append(...sections.filter(Boolean));
+    queryHost.append(el("p", { class: "cov-note", role: "status" }, "Loading the queries…"));
+
+    ctx.loadSteps(area.id).then((detail) => {
+      // The reader can close the sheet, or open another area, while this is in flight.
+      // `isConnected` covers the close; the echoed `area` covers painting one area's
+      // queries under another's heading.
+      if (!queryHost.isConnected || (detail && detail.area !== area.id)) return;
+      const steps = (detail && detail.steps) || [];
+      clear(queryHost).append(...[
+        provenanceSection(area, steps, ctx),
+        ...steps.map((step) => stepSection(step, skipped, truncated, skipReasons, ctx)),
+        steps.length ? null : noStepSection(area, ctx),
+      ].filter(Boolean));
+    }).catch((e) => {
+      if (!queryHost.isConnected) return;
+      // The sheet keeps everything it already had — what the area is, what it reported,
+      // where the answer lands. Only the queries are missing, and it says so.
+      clear(queryHost).append(el("p", { class: "cov-note" },
+        "Couldn't load the queries for this area: " + String((e && e.message) || e)));
+    });
   }, {
     title: area.title,
     subtitle: meta.label + " · " + meta.blurb,
@@ -214,7 +238,14 @@ function stepSection(step, skipped, truncated, skipReasons, ctx) {
       "reads " + (step.pageSize || 100) + " rows per page."),
   );
 
-  const spec = (ctx.specs || []).filter((s) => s.stepId === step.id)[0];
+  // Resolved SERVER-SIDE and carried on the step. This used to be
+  // `ctx.specs.filter((s) => s.stepId === step.id)[0]` — an exact-id match against a
+  // catalogue — while the server's own `varSpecFor` matches a spec flagged `prefix` as a
+  // prefix, which is how one entry covers a generated family. So the four
+  // `COMPLIANCE_POSTURE_wf-id-*` steps never found the family spec written for them and
+  // fell through to the generic lock text below, which is exactly what the flag exists to
+  // prevent. One resolver, on the side that owns the rule.
+  const spec = step.spec || null;
   if (step.editable && spec) kids.push(varsEditor(step, spec, ctx));
   else kids.push(lockedNote(spec), probeOnly(step, ctx));
 

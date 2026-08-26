@@ -41,9 +41,9 @@ let steps: Step[];
 beforeAll(async () => {
   const server = await bootServer();
   server.setup();
-  const res = server.api.getScanQueries({}) as { ok: boolean; data?: { steps: Step[] } };
-  expect(res.ok).toBe(true);
-  steps = res.data!.steps;
+  // The battery itself; the Scans page endpoint no longer carries it (the sheet fetches it
+  // per area), and what these specs are about is the battery, not the transport.
+  steps = server.jobs.describeSyncSteps() as unknown as Step[];
 });
 
 afterAll(() => {

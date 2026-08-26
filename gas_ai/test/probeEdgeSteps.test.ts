@@ -45,7 +45,8 @@ describe("probeEdgeSteps", () => {
     const server = (await bootServer()) as Server;
     server.setup();
 
-    const res = server.api.getScanQueries({}) as { ok: boolean; data?: { steps: Rec[] } };
+    const res = { ok: true, data: { steps: server.jobs.describeSyncSteps() } } as
+      { ok: boolean; data?: { steps: Rec[] } };
     expect(res.ok).toBe(true);
     const ids = edgeStepIds(res.data!.steps);
 
@@ -72,7 +73,8 @@ describe("probeEdgeSteps", () => {
     // failing this test over.
     const server = (await bootServer()) as Server;
     server.setup();
-    const res = server.api.getScanQueries({}) as { ok: boolean; data?: { steps: Rec[] } };
+    const res = { ok: true, data: { steps: server.jobs.describeSyncSteps() } } as
+      { ok: boolean; data?: { steps: Rec[] } };
     const steps = (res.data!.steps ?? []).filter((s) =>
       edgeStepIds(res.data!.steps).includes(String(s["id"])),
     );
