@@ -29,27 +29,12 @@ import {
 } from "../ui.js";
 import {
   CONFIG_SORTS, CONFIG_SORT_DESC, FLAG_LABELS, LINKAGE_LABELS,
-  SEVERITY_ORDER, SEVERITY_RANK, activeConfigFilters, applyConfigFilters, configFacetCounts,
-  configScopeLossView, readConfigParams, sortConfigRows,
+  SEVERITY_ORDER, activeConfigFilters,
+  configPageView, configQueryParams, configScopeLossView, readConfigParams,
 } from "./configView.js";
 
 import { tipAnchor } from "../ui.js";
 const PAGE_SIZE = 50;
-
-/**
- * Worst-first rank. Local rather than ui.js's sevRank, which counts the other way — the
- * two have already been confused once (see the note on assetTable.ts's own sevRank), and
- * a comparator that silently inverts sorts the register best-first with no error.
- */
-function sevRank(sev) {
-  const r = SEVERITY_RANK[sev];
-  return r === undefined ? SEVERITY_RANK.UNKNOWN : r;
-}
-
-const FACET_KEYS = [
-  "severities", "statuses", "clouds", "resourceTypes", "rules", "projects",
-  "linkage", "flags",
-];
 
 const FACET_LABELS = {
   severities: "Severity",
@@ -93,11 +78,48 @@ export async function renderConfigFindings(main, params, ctx) {
   bodyHost.append(skeletonStack(6, { height: "34px" }));
 
   let data;
-  try {
-    data = await swrCall("api_getConfigFindings", {}, (fresh) => {
+  let model;
+
+  /**
+   * Fetch for the CURRENT view state.
+   *
+   * The params ride on every call, including the first, because the page cannot know which
+   * mode it is in until the answer arrives — and a deep link into a filtered, sorted, paged
+   * view has to resolve to those rows on a large tenant. Under CONFIG_CLIENT_ALL_MAX the
+   * server ignores all of them and ships the register whole, so a small tenant still makes
+   * exactly one call and every affordance after it is local; `model.refetches` is what says
+   * which of the two happened.
+   */
+  async function load() {
+    data = await swrCall("api_getConfigFindings", configQueryParams(view, PAGE_SIZE), (fresh) => {
+      // The background revalidation. It repaints on its own, so the caller's paint below is
+      // for the awaited answer only.
       data = fresh;
       paint();
     });
+  }
+
+  /** Act on a filter/sort/page change: a repaint when the browser holds the register. */
+  function apply() {
+    if (model && model.refetches) refetch();
+    else paint();
+  }
+
+  async function refetch() {
+    clear(bodyHost).append(skeletonStack(6, { height: "34px" }));
+    try {
+      await load();
+      paint();
+    } catch (e) {
+      clear(bodyHost).append(errorState("Couldn't load configuration findings.", {
+        detail: e && e.message ? e.message : e,
+        onRetry: () => refetch(),
+      }));
+    }
+  }
+
+  try {
+    await load();
   } catch (e) {
     clear(headHost);
     clear(bodyHost).append(errorState("Couldn't load configuration findings.", {
@@ -136,12 +158,16 @@ export async function renderConfigFindings(main, params, ctx) {
     else list.push(value);
     view.page = 0;
     pushParams();
-    paint();
+    apply();
   }
 
   function paint() {
     if (!data) return;
-    const rows = data.rows || [];
+    // The payload's own `all` discriminator, read at last. Everything below asks `model`
+    // rather than the row array: past CONFIG_CLIENT_ALL_MAX `data.rows` is ONE PAGE, and
+    // counting it is how this page came to label a body of fifty under a header describing
+    // thousands. See configPageView.
+    model = configPageView(data, view, PAGE_SIZE);
     const totals = data.totals || {};
 
     // ------------------------------------------------------------------ the header
@@ -210,9 +236,11 @@ export async function renderConfigFindings(main, params, ctx) {
         ariaLabel: "Register view",
         onChange: (v) => {
           view.mode = v;
+          // `apply`, not `paint`: both views are served by the same payload, but this resets
+          // the page, and on the paged branch page 0 is a different fifty rows.
           view.page = 0;
           pushParams();
-          paint();
+          apply();
         },
       }),
       el("input", {
@@ -225,14 +253,16 @@ export async function renderConfigFindings(main, params, ctx) {
           view.query.q = String(e.target.value || "").trim().toLowerCase();
           view.page = 0;
           pushParams();
-          paint();
+          apply();
         }, 200),
       }),
     ));
 
     // ------------------------------------------------------------------- the facets
-    const filtered = applyConfigFilters(rows, view.query);
-    const counts = configFacetCounts(rows, view.query, FACET_KEYS);
+    // Counted over the WHOLE register in both modes — locally when the browser holds it,
+    // by the server when it does not. A count taken over one page would tell a reader that
+    // narrowing to a cloud leaves four findings when it leaves four hundred.
+    const counts = model.facetCounts;
     // Not a card. A row of filters is chrome, and DESIGN.md is explicit that a card is for
     // content that is genuinely distinct and actionable, not a container to put things in.
     const facetHost = el("div", { class: "config-facets" });
@@ -268,87 +298,39 @@ export async function renderConfigFindings(main, params, ctx) {
             view.query = readConfigParams({});
             view.page = 0;
             pushParams();
-            paint();
+            apply();
           },
         }, "Clear " + plural(applied.length, "filter"))));
     }
 
     // --------------------------------------------------------------------- the body
     clear(bodyHost);
-    if (!rows.length) {
+    // `model.total` is the REGISTER, never the page. On the paged branch `data.rows` is empty
+    // whenever the filter matches nothing on this page, and answering that with "no findings
+    // in the register" would report an empty tenant to someone holding thousands.
+    if (!model.total) {
       bodyHost.append(emptyState(
         "No configuration findings in the register.",
         "The last sync returned none, or the CONFIG_FINDINGS step was skipped by the tenant.",
       ));
       return;
     }
-    if (view.mode === "controls") paintControls(filtered);
-    else paintFindings(filtered);
+    if (view.mode === "controls") paintControls();
+    else paintFindings();
   }
 
   /**
-   * One row per control. The rollup arrives from the server computed over the WHOLE
-   * register, but the filters are client-side, so a filtered view regroups the rows it
-   * still has rather than showing counts the table no longer contains.
+   * One row per control.
+   *
+   * The grouping runs where the rows are. Under CONFIG_CLIENT_ALL_MAX the browser holds the
+   * whole register, so a filtered view regroups what it still has rather than showing counts
+   * the table below no longer contains; past it the server rolls up the FILTERED set and
+   * ships that. `configPageView` picks, and both arrive in one shape — which matters because
+   * the server's own ControlRollup uses `gaps` for failing FINDINGS where this table means
+   * failing RESOURCES. See adoptControlRollups.
    */
-  function paintControls(rows) {
-    const byRule = new Map();
-    for (const row of rows) {
-      const key = row.ruleShortId || row.ruleName || "—";
-      const bucket = byRule.get(key);
-      if (bucket) bucket.push(row);
-      else byRule.set(key, [row]);
-    }
-    const groups = Array.from(byRule, ([ruleShortId, group]) => {
-      // All three are DISTINCT-resource counts, so the table's numbers are commensurable:
-      // gapResources of resources are failing, and unlinkedGapResources of those are not
-      // AI assets. Counting failures in findings against a denominator in resources would
-      // read as a ratio between two different units.
-      const resources = new Set();
-      const gapResources = new Set();
-      const unlinkedGapResources = new Set();
-      // Mirrors ControlRollup.domains in src/domain/configFindings.ts — under
-      // CONFIG_CLIENT_ALL_MAX this loop is the ONLY rollup that runs, so a field added
-      // there and not here is a column that reads empty on every small tenant.
-      const domains = new Set();
-      let worst = "UNKNOWN";
-      let iac = 0;
-      let firstSeenAt = "";
-      const mix = {};
-      for (const r of group) {
-        resources.add(r.resourceId);
-        mix[r.severity] = (mix[r.severity] || 0) + 1;
-        if (sevRank(r.severity) < sevRank(worst)) worst = r.severity;
-        if (r.gap) {
-          gapResources.add(r.resourceId);
-          if (!r.linked) unlinkedGapResources.add(r.resourceId);
-        }
-        if (r.domain) domains.add(r.domain);
-        if (r.iac) iac += 1;
-        if (r.firstSeenAt && (!firstSeenAt || r.firstSeenAt < firstSeenAt)) {
-          firstSeenAt = r.firstSeenAt;
-        }
-      }
-      return {
-        ruleShortId,
-        ruleName: group[0].ruleName || group[0].name || "",
-        severity: worst,
-        findings: group.length,
-        gaps: gapResources.size,
-        resources: resources.size,
-        unlinked: unlinkedGapResources.size,
-        domains: Array.from(domains).sort(),
-        iac,
-        firstSeenAt,
-        mix,
-        rows: group,
-      };
-    }).sort((a, b) =>
-      sevRank(a.severity) - sevRank(b.severity)
-      || b.gaps - a.gaps
-      || b.resources - a.resources
-      || String(a.ruleShortId).localeCompare(String(b.ruleShortId)));
-
+  function paintControls() {
+    const groups = model.controls;
     bodyHost.append(sectionLabel(plural(groups.length, "control") + " with findings"));
     bodyHost.append(dataTable({
       columns: [
@@ -416,20 +398,34 @@ export async function renderConfigFindings(main, params, ctx) {
         view.query.rules = [g.ruleShortId];
         view.page = 0;
         pushParams();
-        paint();
+        apply();
       },
       emptyText: "No controls match these filters.",
     }));
   }
 
-  function paintFindings(rows) {
-    const sorted = sortConfigRows(rows, view.sort, view.descending);
-    const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
-    const page = Math.min(view.page, pageCount - 1);
-    const slice = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  /**
+   * The flat list.
+   *
+   * `model.filtered` is the count the label states and the pager totals, and it is the whole
+   * point of this pass: it is the FILTERED REGISTER in both modes — every matching row when
+   * the browser holds them, the server's own count of matching rows when it does not. It
+   * used to be `sorted.length`, which past CONFIG_CLIENT_ALL_MAX is the length of one page,
+   * so the page said "50 findings" and offered a pager ending at 1 while the header above it
+   * counted thousands.
+   *
+   * `ids` seeds the drill-down's prev/next, and on the paged branch it is honestly one page
+   * long — the sheet steps through the rows the browser has, which is what it has always
+   * done.
+   */
+  function paintFindings() {
+    const sorted = model.sorted;
+    const slice = model.slice;
+    const page = model.page;
+    const pageCount = model.pageCount;
     const ids = sorted.map((r) => r.id);
 
-    bodyHost.append(sectionLabel(plural(sorted.length, "finding")));
+    bodyHost.append(sectionLabel(plural(model.filtered, "finding")));
     const table = dataTable({
       stickyHeader: true,
       columns: [
@@ -483,7 +479,9 @@ export async function renderConfigFindings(main, params, ctx) {
         }
         view.page = 0;
         pushParams();
-        paint();
+        // The sort is the server's on the paged branch — sorting fifty rows inside an order
+        // the other pages do not share is the thing this page used to do.
+        apply();
       },
       rowLabel: (r) => (r.ruleName || r.name) + " on " + (r.resourceName || r.resourceId)
         + ", " + r.severity,
@@ -494,10 +492,10 @@ export async function renderConfigFindings(main, params, ctx) {
       emptyText: "No findings match these filters.",
     });
     bodyHost.append(table);
-    bodyHost.append(pager(page, pageCount, sorted.length, (p) => {
+    bodyHost.append(pager(page, pageCount, model.filtered, (p) => {
       view.page = p;
       pushParams();
-      paint();
+      apply();
     }));
   }
 }
