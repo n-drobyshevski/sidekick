@@ -503,9 +503,23 @@ and the result reports the true zero rather than claiming a reclaim.
      (`serverCache.ts`) so every cached payload is recomputed under the new key rather than
      the knob appearing to do nothing for six hours. A register where nothing carries the
      tag falls back entirely to the manual groups.
+   - `ALLOWED_USERS` *(optional but read fail-closed)* — comma/semicolon/whitespace-separated
+     Google account addresses admitted to the deployed web app, on top of the domain fence
+     below. **Unset means owner-only, not "everyone"** — an empty or unparseable property
+     yields an empty list, and an empty list admits nobody but the deploying owner, who is
+     always allowed regardless of the list (matched by identity, not membership) so a typo or
+     a deleted property can never lock them out. Takes effect on the **next request** — no
+     redeploy, no `setup()` re-run.
    Without credentials the app runs in dry-run mode over sample data.
-6. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain),
-   or `npm run deploy`.
+6. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain), or
+   `npm run deploy`. `ALLOWED_USERS` narrows that domain fence further, in code — see
+   **Access control** below; it does not replace it. **The first deploy after adding it
+   requires re-authorizing the script**: `Session.getActiveUser()` (used to identify the
+   caller) pulls in the `https://www.googleapis.com/auth/userinfo.email` scope, which is new
+   to the authorization set, so Apps Script will prompt for consent again on that deploy.
+   Accept it, then check that the daily scan trigger still fires afterwards — a scope change
+   is the one thing that can quietly suspend an installable trigger with nothing surfacing in
+   the UI to say so.
 
 ## Troubleshooting Wiz connectivity
 
@@ -517,6 +531,81 @@ rejected the client id/secret; `Step 2 FAIL … 401/Unauthorized` = the token is
 `… 404` = `WIZ_API_URL` host/path is wrong. Note: a Wiz GraphQL service account issues a
 **client id + secret** (exchanged for a short-lived token), not a durable bearer token —
 so `WIZ_CLIENT_ID`/`WIZ_CLIENT_SECRET` is the robust configuration.
+
+## Access control
+
+The deployment's own fence — Deploy → access: **Anyone within `<domain>`** — admits every
+account in the Workspace. `ALLOWED_USERS` (`src/server/access.ts`) narrows that to a named
+set, entirely in code, because **Apps Script has no first-party per-account access list**:
+the deploy dropdown only offers Only-myself / Anyone-with-a-Google-Account / Anyone /
+Anyone-within-domain, none of which is "these specific people."
+
+What's gated and what isn't:
+- **`doGet`** calls `access.deniedPage()` first and serves a denial page — naming the address
+  it saw, never the allowlist or who owns the deployment — instead of the app shell, so a
+  denied caller never receives the SPA bundle at all.
+- **Every `google.script.run` endpoint** (`api_*` in `dist/entry.js`) calls
+  `access.denyResult(op)` before doing any work and returns `{ok:false, error, errorKind:
+  "forbidden"}` on denial. The client's `api.js` wrapper surfaces that as `err.kind ===
+  "forbidden"`, which `app.js`'s boot-error branch treats differently from a network failure
+  (no Retry button — see the comment there for why).
+- **Trigger handlers (`trigger_*`) are deliberately ungated, and not because the gate would
+  be harmless there.** An installable trigger fires with no accessing user, so
+  `Session.getActiveUser().getEmail()` returns `""` — which `decide()` reads as `anonymous`
+  and would **deny**. Gating them would silently kill the daily scan and every continuation
+  hop the first time one fired, in the trigger execution log where nobody is watching. They
+  are reachable from a browser only via `google.script.run` from a page `doGet` has already
+  gated, and calling one gives an allowed user nothing the UI's own **Run scan** doesn't.
+
+**Hard limitation: accounts outside the Workspace domain cannot be allowlisted at all**, under
+"execute as me". `Session.getActiveUser().getEmail()` returns `""` for a caller outside the
+same domain (or one not in the same Google Workspace domain as the app), so `decide()` reads
+them as `anonymous` and denies them before the list is even consulted — there is no address
+for the list to contain. The only way to admit such a caller would be redeploying "execute as
+the user accessing", which hands every viewer their own Sheets access to the ledger
+spreadsheet directly instead of going through this app's server logic at all — a strictly
+worse trade for a case this app doesn't need to support.
+
+**Aliases and secondary addresses are distinct strings.** A Workspace account with a
+secondary alias, or a personal Gmail forwarded through group settings, matches `decide()` by
+exact address after trim + lowercase — list the alias too if the person signs in with it.
+The denied page names the address it actually saw, which is what makes a "wrong alias"
+lockout diagnosable rather than mysterious.
+
+**To add or remove someone:** edit the `ALLOWED_USERS` Script Property (Project Settings →
+Script Properties) and save. No redeploy, no `setup()` re-run — `access.check()` re-reads the
+property fresh on the next request (it's memoized only within one execution).
+
+### The entry screen
+
+An allowed caller does not land straight in the dashboard. `welcome.gate()`
+(`src/server/welcome.ts`) serves a card first: *"This dashboard will open as
+alex@example.com"*, a **Continue** button, and a **Switch Google account** link.
+
+**It is not a login and must never become one.** Access is `DOMAIN`, and the only level that
+admits an unauthenticated visitor is `ANYONE_ANONYMOUS` — so Google has already signed this
+person in and `access.ts` has already allowed them before the screen renders. There is no
+credential to collect. What the screen is *for* is the Apps Script multiple-accounts trap: a
+browser signed into several Google accounts runs the app as the wrong one, and without this the
+first sign of that is the denial page.
+
+**"Once per working day" is really a sliding six hours, and the ceiling is not ours.**
+`CacheService.put` caps expiry at 21600s (6 hours), so the marker is re-put on every page load.
+A continuous working session therefore costs exactly one **Continue**; an overnight gap expires
+it and the screen returns in the morning. Six *idle* hours mid-day also brings it back. That is
+the honest limit of what the platform offers — there is no longer-lived per-user store here:
+`getUserProperties()` and `getUserCache()` are the OWNER's under "execute as me", shared by
+every visitor, so a flag in either would dismiss the screen for the whole team at once.
+
+The marker is keyed by a hash of the address in the **script** cache, so no address is written
+into a cache key. `?enter=1` on the URL is what Continue carries back; it is a UX marker, not a
+boundary — bookmarking it skips the screen and grants nothing the caller was not already
+allowed.
+
+**The gate fails open in every direction.** No address to key on, no deployment URL to point
+Continue at, or a cache that will not answer, and the caller goes straight to the app. A screen
+that never appears is a shrug; a Continue button pointing nowhere would make the dashboard
+unreachable for everyone at once. `test/welcome.test.ts` pins each of those paths.
 
 ## Scan progress
 
@@ -597,6 +686,15 @@ requires a deployed web app — see the manual verification checklist below.
 Things node tests cannot cover — verify after the first deployment:
 
 - [ ] `setup()` provisions tabs/folders/trigger idempotently (run it twice).
+- [ ] Access control: sign in at `/exec` as a domain account **not** in `ALLOWED_USERS` and
+      confirm the denied page names that account's own address — and only the denied page,
+      never the app shell (check Network in devtools: no SPA bundle should have loaded).
+      Then, from an **allowed** session's browser console, run
+      `google.script.run.withSuccessHandler(console.log).api_getStorageStats({})` and confirm
+      it resolves with real data; remove that account from `ALLOWED_USERS`, re-run the same
+      call in the same still-open tab, and confirm it now resolves
+      `{ok:false, errorKind:"forbidden"}` instead — proving the RPC guard, not just `doGet`,
+      re-checks on every call rather than only at page load.
 - [ ] OAuth token fetch against the real tenant; a scan lands rows in `scans`,
       `vuln_ledger`, and files under `scans/<id>/` + `obs/`.
 - [ ] Trigger continuation: temporarily set `FIRST_STEP_BUDGET_MS` low, confirm a
@@ -651,6 +749,12 @@ Things node tests cannot cover — verify after the first deployment:
       **not** reappear — the archive rewrite is the only thing preventing it.
 - [ ] Quick refresh after a purge does not re-ingest the purged severities (it rides the
       baseline scan row's narrowed `severities` scope, not `fetch_severities`).
+- [ ] **The entry screen, which no local harness can reach** (`dev/serve.mjs` composes the page
+      in Node and never calls `Server.doGet`, so unit tests on the HTML string are the only
+      coverage before deployment). Three things need a real deployment: **Continue** actually
+      lands on the app rather than dead-ending inside the HtmlService sandbox iframe (this is
+      what `target="_top"` is for); the screen does not reappear on the next page load in the
+      same session; and **Switch Google account** reaches the account picker and comes back.
 - [ ] Timing at production scale: `vuln_ledger` wholesale rewrite and cold
       `api_bootstrap` stay inside the 6-min execution cap (Settings → Storage shows
       the cell budget; lower retention if approaching 6M cells).

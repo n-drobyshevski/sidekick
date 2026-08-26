@@ -10,6 +10,10 @@ export const PROP_KEYS = {
   wizProjectIdV2: "WIZ_PROJECT_ID_V2",
   wizSupportGroupTagKey: "WIZ_SUPPORT_GROUP_TAG_KEY",
   wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
+  // Who may use the web app, on top of the deployment's domain fence. Comma-, semicolon- or
+  // whitespace-separated addresses; see access.ts. UNSET MEANS OWNER-ONLY, not "everyone" —
+  // the guard fails closed, and the owner is allowed by identity rather than by this list.
+  allowedUsers: "ALLOWED_USERS",
   ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
   archiveFolderId: "ARCHIVE_FOLDER_ID",
   // The warm schedule setup() last installed. A ClockTrigger exposes no hour, minute or
