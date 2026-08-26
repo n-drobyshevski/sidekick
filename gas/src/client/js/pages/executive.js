@@ -92,12 +92,19 @@ const PENDING = "\u2026";
 /**
  * What the "Open vulnerabilities" tiles say. Pure so the scoped/unscoped split is testable.
  *
- * UNSCOPED, THE SOURCE STAYS `boot.counts` — deliberately, not by omission. This is the default
+ * OPEN ONLY, ON BOTH PATHS. The tiles are labelled "Open vulnerabilities" and used to count
+ * every row in the frame, resolved history included — so the better a register's close rate,
+ * the more it overstated its live risk. Both sources are now open-only: bootstrap's
+ * `openCounts` and `executiveSeverityCounts`.
+ *
+ * UNSCOPED, THE SOURCE STAYS BOOTSTRAP — deliberately, not by omission. This is the default
  * landing page and it must paint real numbers on the first synchronous pass rather than flash a
- * placeholder while an RPC lands. The two tallies provably agree: bootstrap counts
- * `visibleFrame(scan.records)` and `scopedFrameRecords("", "", [])` returns exactly that, so the
- * repaint when the payload arrives is a no-op. The server still computes and warms the unscoped
- * entry, so the scoped path is not the only one ever exercised.
+ * placeholder while an RPC lands. The two tallies provably agree: bootstrap counts the open rows
+ * of `visibleFrame(scan.records)` and `scopedFrameRecords("", "", [])` returns exactly that
+ * frame, filtered the same way, so the repaint when the payload arrives is a no-op. That
+ * agreement is load-bearing and pinned in test/executiveView.test.js — narrowing one population
+ * without the other reintroduces the flicker this avoids. The server still computes and warms
+ * the unscoped entry, so the scoped path is not the only one ever exercised.
  *
  * A ZERO IS A TILE, BUT AN ALL-ZERO SCOPE IS ALSO A SENTENCE. A scope can hold resolved history
  * and no open findings at all — a domain whose live work has closed, or `Not attributable`,
@@ -134,18 +141,23 @@ export function executiveSeverityView({ order, scope, bootCounts, payload, scope
  * renders a column of blanks.
  *
  * THE ONE-ROW GUARD APPLIES TO BOTH DIMENSIONS HERE, which is a deliberate divergence from
- * mttr.js (it guards only the support-group branch). Two reasons. Under a support-group scope
- * the dimension is still "domain" while `domainNames` stays register-wide, so that gate alone
- * would happily draw a one-row table for a group living in a single domain. And this section is
- * five rows and three columns — a summary calling itself a split — where MTTR's is a drawer of
- * charts and an eight-column table in which one row still carries p90, SLA% and awaiting.
+ * mttr.js (it guards only the support-group branch). Under a support-group scope the dimension
+ * is still "domain" while `domainNames` stays register-wide, so that gate alone would happily
+ * draw a one-row table for a group living in a single domain.
+ *
+ * EVERY GROUP IS LISTED. This used to cap at five and call itself a summary, which quietly made
+ * the section unable to answer the question it poses: a domain outside the top five by open
+ * backlog could carry the worst MTTR on the page and never appear, with nothing on screen
+ * saying rows had been dropped. A silent truncation is worse than a long table. Ordering still
+ * puts the biggest backlog first, so the head of the list reads the same as it always did; the
+ * table scrolls in its own container rather than pushing the page sideways.
  *
  * @param {object|null|undefined} byDomain  the server's `byDomain` slice
- * @param {{domainNames: string[], cap?: number}} args
+ * @param {{domainNames: string[]}} args
  * @returns {{show: boolean, title?: string, columnHeader?: string,
  *            rows?: {name: string, kmMedian: number|null, open: number}[]}}
  */
-export function executiveByDomainView(byDomain, { domainNames, cap = 5 }) {
+export function executiveByDomainView(byDomain, { domainNames }) {
   if (!byDomain || !byDomain.rows || !byDomain.rows.length) return { show: false };
   const isSg = byDomain.dimension === "supportGroup";
   if (!isSg && (domainNames || []).length < 2) return { show: false };
@@ -156,7 +168,6 @@ export function executiveByDomainView(byDomain, { domainNames, cap = 5 }) {
     columnHeader: isSg ? "Support group" : "Domain",
     rows: [...byDomain.rows]
       .sort((a, b) => (b.open ?? 0) - (a.open ?? 0))
-      .slice(0, cap)
       .map((r) => ({ name: r.group ?? r.domain, kmMedian: r.kmMedian, open: r.open ?? 0 })),
   };
 }
@@ -357,7 +368,7 @@ export async function renderExecutive(main, _params, ctx) {
     const view = executiveSeverityView({
       order: boot.palette.order,
       scope: sevScope,
-      bootCounts: boot.counts,
+      bootCounts: boot.openCounts,
       payload: data && data.severityCounts,
       scoped,
     });
@@ -383,8 +394,8 @@ export async function renderExecutive(main, _params, ctx) {
   }
 
   // The per-group remediation split — by domain at the whole-register view, by support group
-  // within a picked domain. A compact table (group · KM median · open) sorted by open backlog
-  // and capped, so the exec view stays a summary; the full breakdown lives on the MTTR page.
+  // within a picked domain. A compact table (group · KM median · open) sorted by open backlog,
+  // listing every group; the deeper per-group charts still live on the MTTR page.
   // Which dimension, and whether there is a split worth drawing at all, is executiveByDomainView.
   function renderByDomain(byDomain) {
     clear(byDomainHost);

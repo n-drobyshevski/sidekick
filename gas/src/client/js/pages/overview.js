@@ -1,10 +1,26 @@
-// OS vulnerabilities — the default page. Insights over the current scan and the
-// durable ledger instead of a findings table (Wiz already has one of those):
-// KPI band, severity breakdown, exploitability summary, risk concentration, aging
-// of open findings, scan-over-scan movement, and a multi-level grouping breakdown.
+// OS vulnerabilities. Insights over the current scan and the durable ledger instead of a
+// findings table (Wiz already has one of those): an "act now" hero, a triage funnel, risk
+// tiers with per-tier sparklines, aging against the SLA clock, scan-over-scan movement, and
+// where the backlog concentrates.
+//
+// EXPLOITABILITY IS THE SPINE, NOT SEVERITY, and that is the whole design.
+//
+// The register is filtered at fetch time, so severity is close to a constant here. Every
+// surface built on it degenerated: the breakdown card was one row, the trend one line, the
+// age bar one colour, the breakdown tree's severity strip a solid block on every row. Four
+// controls carrying zero bits, over a page whose remaining sections were buttons.
+//
+// So the axis is exploit intelligence — which the ledger already carries durably in
+// has_kev / has_exploit / epss, and can therefore trend exactly the way severity did. The
+// classifier is program.riskTier, a refinement of the Program page's classifyRisk rather
+// than a second opinion, so the two pages can never disagree on how much is unclassified.
+//
+// See gas/README.md, "OS vulnerabilities: exploitability is the spine, not severity".
 
 import {
-  destroyChart, groupPalette, groupPie, groupTrendLines, severityTrendLines, stackedAgeBar,
+  TIER_COLORS, TIER_GLYPHS, TIER_LABELS, TIER_ORDER, TIER_TEXT,
+  destroyChart, groupPalette, groupPie, groupTrendLines, sparkline, stackedAgeBar,
+  tierPalette, trendLine,
 } from "../charts.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
@@ -75,6 +91,24 @@ const OLDEST_VIEWS = [
   ["byDomain", "Domains"],
 ];
 
+// Dimensions offered by the on-page concentration lists, in the order they are toggled.
+// A subset of GROUP_DIMENSIONS: the full N-level pivot stays in the Breakdown drawer, and
+// these four are the ones worth answering without a click. Mirrors the `dims` argument
+// api.ts passes to insights.concentration.
+const CONCENTRATION_DIMS = [
+  ["asset", "Assets"],
+  ["cve", "CVEs"],
+  ["supportGroup", "Support groups"],
+  ["os", "Operating system"],
+];
+
+// Keep in sync with SLA_TARGETS in src/domain/config.ts and AGE_BUCKET_EDGES in
+// src/domain/insights.ts (the client bundle can't import the TS domain modules). The SLA
+// edge is only drawn when a single severity is in scope AND its target lands exactly on the
+// first bucket edge — otherwise one line would stand for several different deadlines.
+const SLA_TARGETS_DAYS = { CRITICAL: 7, HIGH: 14, MEDIUM: 30, LOW: 90, INFO: 180 };
+const AGE_BUCKET_FIRST_EDGE = 7;
+
 export async function renderOverview(main, params, ctx) {
   const boot = await bootstrap();
 
@@ -97,6 +131,34 @@ export async function renderOverview(main, params, ctx) {
       el("a", { href: "#/mttr", target: "_self" }, "Remediation performance →"),
     ),
   );
+
+  // When one severity is in scope, a severity breakdown is one row, a severity trend is one
+  // line and a severity-stacked bar is one colour. Say so rather than drawing four controls
+  // that each carry no information. Repainted with the page, not fixed at load, because the
+  // scope filter can narrow to one severity mid-session.
+  const scopeNote = el("p", { class: "section-note" });
+  main.append(scopeNote);
+  function paintScopeNote(insights) {
+    clear(scopeNote);
+    if (sevScope.length === 1) {
+      scopeNote.append(
+        `This register scans ${sevTitle(sevScope[0])} severity only, so severity is not an axis `
+        + "on this page. Findings are ranked by exploit intelligence, exposure and age instead.");
+    }
+    // The severity filter always keeps UNKNOWN alongside the chosen severities (see
+    // filterSeverities), so rows whose severity never normalized are counted in every figure
+    // on this page while matching no severity the reader selected. The old severity card
+    // carried this caveat; nothing else would, and it is exactly the kind of thing "honest
+    // state" means. Optional-chained: a stale pre-fallback cache omits UNKNOWN entirely.
+    const unknown = insights?.sevStats?.UNKNOWN?.total;
+    if (unknown > 0) {
+      if (scopeNote.firstChild) scopeNote.append(" ");
+      scopeNote.append(
+        `${unknown.toLocaleString()} finding${unknown === 1 ? " has" : "s have"} an `
+        + "unrecognized severity — included in every count here regardless of the filter.");
+    }
+  }
+  paintScopeNote(null);
 
   const scopeChips = scopeBar({
     domain: ctx.domain, supportGroup: ctx.supportGroup, onClear: ctx.clearScope,
@@ -127,31 +189,20 @@ export async function renderOverview(main, params, ctx) {
     setParams({ by: groupKeys.join(",") });
   }
 
-  const kpiRow = el("div", { class: "kpi-row" });
-  const sevChartCanvas = el("canvas", { id: "sev-chart" });
-  // Shown in place of the line when there isn't enough scan history to plot a trend.
-  const sevChartMsg = el("p", { class: "chart-empty muted", style: "display:none" });
-  const sevCardHost = el("div", {});
-  // Severity breakdown: a section label over two columns — the per-severity stat card
-  // (left, open count leading) beside the open-per-severity trend line (right).
-  const sevSection = el("div", {},
-    sectionLabel("Severity breakdown"),
-    el("div", { class: "chart-grid", style: "align-items:start" },
-      sevCardHost,
-      el("div", { class: "chart-card" },
-        el("div", { class: "chart-box" }, sevChartCanvas, sevChartMsg),
-        el("p", { class: "chart-caption muted" }, "Open findings by severity, per scan.")),
-    ),
-  );
+  // The hero — one per page, borderless (DESIGN.md). "Act now" is the page's whole argument
+  // in one figure: of everything open, this is what carries both evidence of exploitation and
+  // a way in. It is deliberately allowed to be small.
+  const heroHost = el("div", { class: "hero" });
   const insightsHost = el("div", {}, el("p", { class: "muted" }, "Computing insights…"));
-  main.append(kpiRow, sevSection, insightsHost);
+  main.append(heroHost, insightsHost);
 
-  renderHeadline(null);
+  renderHero(null);
 
   // One batched RPC; revisits paint instantly from the session cache and repaint
   // in the background only when the revalidated payload differs.
   const paint = (data) => {
-    renderHeadline(data);
+    paintScopeNote(data);
+    renderHero(data);
     renderInsights(data);
   };
   // The insights params, in one place. THE DRAWER MUST SEND THESE BYTE-FOR-BYTE: both endpoints
@@ -175,102 +226,48 @@ export async function renderOverview(main, params, ctx) {
     return sevScope.length === boot.palette.selectable.length ? null : [...sevScope];
   }
 
-  /** Scan-summary band (Total / Open / Resolved) + severity breakdown. At the
-   *  whole-chain view counts come from bootstrap so they match the sidebar and survive
-   *  grouped scans; under a manual-group scope they come from the (scoped)
-   *  insights payload instead. Open/Resolved need insights, so they show "…" until it
-   *  loads. */
-  function renderHeadline(insights) {
-    clear(kpiRow);
-    // Any active scope (manual group, VC domain, support group, or severity filter) makes the
-    // headline read the server's scoped counts instead of whole-scan bootstrap counts, so
-    // Total/Open/Resolved and the severity split stay coherent with the sections below.
-    const scoped = ctx.domain || ctx.supportGroup || scopeParam();
-    const filtered = !!(scoped && insights && insights.flatScan);
-    const counts = filtered ? insights.counts : boot.counts;
-    const total = filtered
-      ? insights.total
-      : Object.values(boot.counts).reduce((a, b) => a + b, 0);
-    const open = insights && insights.flatScan ? insights.exploit.open : null;
-    kpiRow.append(
-      kpiCard("Total findings", total.toLocaleString(),
-        `scan ${fmtDate(boot.latestScan.ts)} — ${boot.latestScan.mode}`),
-      kpiCard("Open", open !== null ? open.toLocaleString() : "…", "awaiting remediation"),
-      kpiCard("Resolved", open !== null ? (total - open).toLocaleString() : "…",
-        "closed in this scan"),
-    );
-    requestAnimationFrame(() => {
-      // The line plots open findings per severity across the saved scans. It needs the
-      // insights payload and at least two scans; until then show an honest note rather
-      // than a degenerate one-point line. Severities not enabled in the display setting
-      // are dropped inside severityTrendLines via sevScope.
-      const trend = insights && insights.flatScan ? insights.openTrend : null;
-      if (trend && trend.length >= 2) {
-        sevChartMsg.style.display = "none";
-        sevChartCanvas.style.display = "";
-        severityTrendLines(sevChartCanvas, trend, boot.palette, sevScope);
-      } else {
-        destroyChart(sevChartCanvas);
-        sevChartCanvas.style.display = "none";
-        sevChartMsg.textContent = insights
-          ? "Trend appears after the second scan."
-          : "Computing trend…";
-        sevChartMsg.style.display = "";
-      }
-    });
-    renderSevCard(insights);
-  }
-
-  /** Severity breakdown card: one row per severity CRITICAL–LOW (INFO/UNKNOWN omitted)
-   *  enabled in the display setting, each a color dot + label. The headline number is the
-   *  count of OPEN findings — what the analyst acts on — with resolved + total demoted to
-   *  the sub-line, and a delta chip comparing open against the previous scan's open. All
-   *  three need the insights payload, so the value shows "…" until it loads; the delta
-   *  needs a second scan for a baseline. The open-per-severity series is scoped like the
-   *  rest of the page, so the baseline stays valid under any header scope. */
-  function renderSevCard(insights) {
+  /** The hero: one figure, borderless, no card (DESIGN.md allows exactly one per page).
+   *
+   *  "Act now" is the page's argument compressed to a number — open findings that carry
+   *  BOTH evidence of exploitation (KEV or a public exploit) and a way in (a host reachable
+   *  from outside). It is meant to be small. On a register where every row is Critical, a
+   *  count of everything is not a priority; the intersection is.
+   *
+   *  When the scan predates the exposure fields the intersection is unknowable, so the hero
+   *  falls back to the KEV count and says so rather than printing a confident zero. */
+  function renderHero(insights) {
+    clear(heroHost);
     const loaded = insights && insights.flatScan;
-    const sevStats = loaded ? insights.sevStats : null;
-    // Previous scan's open-per-severity, from the same scoped series that feeds the line.
-    // A severity absent from that scan means zero open then, so default to 0 when a
-    // baseline scan exists — otherwise leave it null so no chip renders.
-    const trend = loaded ? insights.openTrend : null;
-    const prevBySev = trend && trend.length >= 2 ? trend[trend.length - 2].bySev : null;
-    const displaySet = new Set(sevScope);
-    const card = el("div", { class: "stat-card" });
-    for (const sev of ["CRITICAL", "HIGH", "MEDIUM", "LOW"].filter((s) => displaySet.has(s))) {
-      const stat = sevStats && sevStats[sev];
-      const open = stat ? stat.open || 0 : null;
-      const prevOpen = prevBySev ? prevBySev[sev] || 0 : null;
-      card.append(
-        el("div", { class: "stat-card__row" },
-          el("span", { class: "stat-card__name" },
-            el("span", { class: "sev-dot", "aria-hidden": "true",
-              style: `background:${boot.palette.colors[sev]}` }),
-            sevTitle(sev)),
-          el("span", { class: "stat-card__value-group" },
-            el("span", { class: "stat-card__value num" },
-              open !== null ? open.toLocaleString() : "…"),
-            stat
-              ? el("span", { class: "stat-card__sub-value" },
-                `${(stat.resolved || 0).toLocaleString()} resolved · ` +
-                `${(stat.total || 0).toLocaleString()} total`)
-              : null),
-          open !== null ? deltaChip(open, prevOpen) : null,
-        ),
-      );
-    }
-    clear(sevCardHost).append(card);
-    // Data-quality note: findings whose severity never normalized to CRITICAL–LOW/INFO are
-    // still folded into every total on this card and above (SEVERITY_ORDER includes
-    // UNKNOWN) — they just have no row of their own, since the card is deliberately
-    // CRITICAL–LOW only. Optional-chained: sevStats is null until insights load, and a
-    // stale pre-fallback cache simply omits UNKNOWN entirely.
-    if (sevStats?.UNKNOWN?.total > 0) {
-      sevCardHost.append(el("p", { class: "section-note" },
-        `${sevStats.UNKNOWN.total.toLocaleString()} finding(s) have an unrecognized ` +
-        "severity — counted in totals, not shown above."));
-    }
+    const f = loaded ? insights.funnel : null;
+    const exposureKnown = !!(f && f.exposureKnown);
+    const value = !loaded ? null
+      : exposureKnown ? f.exposed : (insights.tiers?.perTier?.kev ?? 0);
+    const source = !loaded
+      ? "…"
+      : exposureKnown
+        ? "On the CISA KEV catalog or with a public exploit, on a host reachable from "
+          + `outside · open findings, scan ${fmtDate(insights.scan.ts)}`
+        : "On the CISA KEV catalog. Internet exposure was not captured in this scan, so the "
+          + "narrower figure can't be computed.";
+    heroHost.append(
+      el("span", { class: "label" }, "Act now"),
+      el("div", { class: "hero-value num" }, value === null ? "…" : value.toLocaleString()),
+      el("p", { class: "hero-src" }, source),
+    );
+    const mini = (v, label, title) => el("div", { title: title || null },
+      el("div", { class: "mini-value num" }, v),
+      el("div", { class: "mini-label" }, label));
+    const past = loaded && insights.pastSla ? insights.pastSla.overall : null;
+    const aw = loaded ? insights.awaiting : null;
+    const median = loaded ? insights.medianOpenAge : null;
+    heroHost.append(el("div", { class: "hero-minis" },
+      mini(loaded ? (f.open || 0).toLocaleString() : "…", "Open"),
+      mini(past ? past.breached.toLocaleString() : "…", "Past SLA",
+        "On the vendor-fix clock, matching the MTTR page — a finding with no patch "
+        + "available yet is not counted as a breach."),
+      mini(aw ? (aw.overall || 0).toLocaleString() : "…", "Awaiting vendor fix"),
+      mini(median === null || median === undefined ? "—" : fmtDays(median), "Median open age"),
+    ));
   }
 
   function renderInsights(insights) {
@@ -290,95 +287,261 @@ export async function renderOverview(main, params, ctx) {
         `last per-finding scan from ${fmtDate(insights.scan.ts)}.`));
     }
 
-    renderExploitability(insights);
+    renderFunnel(insights);
+    renderTiers(insights);
     renderAging(insights);
     renderMovement(insights);
+    renderConcentration(insights);
     // The multi-dimension group explorer (group-by controls + pie + trend + expandable tree)
-    // is the page's heaviest surface — it opens in a drawer so the default scroll stays
-    // focused. The grouping path still persists to the URL (?by=) from inside the sheet.
-    insightsHost.append(sectionLabel("Breakdown"));
-    insightsHost.append(el("p", { class: "small muted", style: "margin:-6px 0 10px" },
-      "Group open findings by any dimension — manual group, asset, CVE, OS … — and drill in."));
+    // stays in a drawer: the concentration lists above answer "where is it piling up" on the
+    // page, and this answers "let me pivot it myself", which is a different, rarer question.
     insightsHost.append(el("button", {
-      type: "button",
+      type: "button", style: "margin-top:12px",
       onclick: () => openSheet((body) => renderBreakdown(body),
         { title: "Breakdown", subtitle: "Group open findings by any dimension and drill in." }),
     }, "Explore breakdown →"));
   }
 
-  // ------------------------------------------------------- exploitability & priority
+  // ------------------------------------------------------------------- triage funnel
 
-  function renderExploitability(insights) {
-    const s = insights.exploit;
-    // The "open-only, signals overlap" caveat moves from an always-on note onto the section
-    // label's hover, matching the MTTR convention.
-    insightsHost.append(el("h2", { class: "section-label" },
-      helpTip("Exploitability & priority",
-        [`Open findings only — ${s.open.toLocaleString()} open in this scan; ` +
-          "one finding can carry several signals."],
-        { className: "help-label" })));
-    const tiles = el("div", { class: "kpi-row" },
-      kpiCard("CISA KEV", s.kev.toLocaleString(), "known exploited in the wild"),
-      kpiCard("Exploit available", s.exploit.toLocaleString(), "public exploit exists"),
-      kpiCard("EPSS ≥ 10%", s.highEpss.toLocaleString(), "predicted exploitation likelihood"),
-      s.exposureKnown
-        ? kpiCard("Internet-exposed", s.internetExposed.toLocaleString(), "reachable from outside")
-        : kpiCard("Internet-exposed", "n/a", "rescan to capture exposure"),
+  /** One rung: a label, a proportional bar, the count, and its share of the step above.
+   *  Bars are drawn as a share of the WIDEST step (open), so the narrowing is visible; the
+   *  "N% of previous" figure is what stays readable when a step drops two orders of
+   *  magnitude, which on this register it does. */
+  function funnelStep({ label, value, prev, open, note, emphasis }) {
+    const pctOpen = open ? Math.round((value / open) * 100) : 0;
+    const width = open ? Math.max(0.6, (value / open) * 100) : 0;
+    const pctPrev = prev === null || prev === undefined || !prev
+      ? null : Math.round((value / prev) * 100);
+    return el("div", { class: "funnel-step" + (emphasis ? " funnel-step--act" : "") },
+      el("div", { class: "funnel-step__head" },
+        el("span", { class: "funnel-step__label" }, label),
+        el("span", { class: "funnel-step__value num" }, value.toLocaleString()),
+        el("span", { class: "funnel-step__pct num muted" }, `${pctOpen}% of open`),
+      ),
+      el("div", { class: "funnel-track" },
+        el("span", { class: "funnel-fill", style: `width:${width}%` })),
+      note || pctPrev !== null
+        ? el("p", { class: "funnel-step__note small muted" },
+          pctPrev !== null ? `${pctPrev}% of the step above` : null,
+          pctPrev !== null && note ? " · " : null,
+          note || null)
+        : null,
     );
-    insightsHost.append(tiles);
-    // Awaiting-vendor-fix line: open findings with no patch available yet, sourced from the
-    // insights payload (awaitingVendorFix over the same scoped base). Sits outside the SLA
-    // clock, and explains the open-count step-up once fix-tracking rolled out. Optional-
-    // chained so a stale pre-rollout cache simply omits it rather than throwing. Hidden
-    // entirely when the vendor-fix filter is off — awaiting stats arrive zeroed then, and the
-    // page-level honesty note already covers it.
+  }
+
+  function renderFunnel(insights) {
+    const f = insights.funnel;
+    insightsHost.append(el("h2", { class: "section-label" },
+      helpTip("Triage funnel",
+        ["Open findings only. Each step is a strict subset of the one above it, so the "
+          + "counts narrow rather than overlapping.",
+         "Exploit intelligence comes from the durable ledger; internet exposure comes from "
+          + "the current scan and cannot be replayed over history."],
+        { className: "help-label" })));
+    const steps = el("div", { class: "funnel" });
+    steps.append(funnelStep({
+      label: "Open", value: f.open, prev: null, open: f.open,
+      note: "in scope for this scan",
+    }));
+    steps.append(funnelStep({
+      label: "Exploit intelligence present", value: f.intel, prev: f.open, open: f.open,
+      note: f.unclassified
+        ? `${f.unclassified.toLocaleString()} unclassified — never captured, not clean`
+        : null,
+    }));
+    steps.append(funnelStep({
+      label: "On CISA KEV, or a public exploit exists",
+      value: f.exploitable, prev: f.intel, open: f.open,
+    }));
+    if (f.exposureKnown) {
+      steps.append(funnelStep({
+        label: "…and reachable from outside",
+        value: f.exposed, prev: f.exploitable, open: f.open,
+      }));
+      steps.append(funnelStep({
+        label: "…and past its SLA",
+        value: f.overdue, prev: f.exposed, open: f.open,
+        note: "on the vendor-fix clock", emphasis: true,
+      }));
+    }
+    insightsHost.append(steps);
+    if (!f.exposureKnown) {
+      insightsHost.append(el("p", { class: "section-note" },
+        "Internet exposure was not captured in this scan, so the funnel stops here — the "
+        + "remaining two steps would read as zero, which is not the same as none. Run a scan "
+        + "to capture exposure."));
+    }
+  }
+
+  // ----------------------------------------------------------------------- risk tiers
+
+  /** The tier card. This is the direct replacement for the old severity breakdown card:
+   *  same shape, same slot, an axis that varies. Tiers are a refinement of the Program
+   *  page's classifier, so the unclassified count here and there always agree. */
+  function renderTiers(insights) {
+    const t = insights.tiers;
+    const trend = insights.tierTrend || [];
+    const prev = trend.length >= 2 ? trend[trend.length - 2].byGroup : null;
+    insightsHost.append(el("div", { class: "section-head" },
+      el("h2", { class: "section-label" },
+        helpTip("Risk tiers",
+          [insights.riskRule ? `High risk is ${insights.riskRule.sentence}.` : "",
+           "A finding takes its strongest signal, so the tiers partition the backlog "
+           + "rather than overlapping."].filter(Boolean),
+          { className: "help-label" })),
+    ));
+    const card = el("div", { class: "stat-card" });
+    for (const tier of TIER_ORDER) {
+      const open = t.perTier[tier] || 0;
+      const share = t.open ? ((open / t.open) * 100).toFixed(1) : "0.0";
+      card.append(el("div", { class: "stat-card__row" },
+        el("span", { class: "stat-card__name" },
+          el("span", {
+            class: "tier-swatch" + (tier === "unknown" ? " tier-swatch--hatch" : ""),
+            "aria-hidden": "true",
+            style: tier === "unknown" ? null : `background:${TIER_COLORS[tier]}`,
+          }),
+          el("span", { style: `color:${TIER_TEXT[tier]}` }, TIER_LABELS[tier]),
+        ),
+        el("span", { class: "stat-card__value-group" },
+          el("span", { class: "stat-card__value num" }, open.toLocaleString()),
+          el("span", { class: "stat-card__sub-value" },
+            tier === "unknown"
+              ? "not captured — not clean"
+              : `${share}% of open`),
+        ),
+        prev ? deltaChip(open, prev[tier] || 0) : null,
+      ));
+    }
+    insightsHost.append(el("div", { class: "chart-grid", style: "align-items:start" },
+      card, tierTrendCard(insights)));
+  }
+
+  /** Small multiples, one frame per tier — NOT one shared axis.
+   *
+   *  The tiers routinely span two orders of magnitude (a dozen KEV rows beside several
+   *  hundred with no known exploit). On a shared scale the small series flattens onto the
+   *  baseline and reads as "nothing here", which is the opposite of what it means. Each tier
+   *  gets its own scale, so shape is comparable even though height is not; the count beside
+   *  the sparkline carries the magnitude the scale deliberately drops. */
+  function tierTrendCard(insights) {
+    const trend = insights.tierTrend || [];
+    const card = el("div", { class: "chart-card" }, el("h3", {}, "Tier trend"));
+    if (trend.length < 2) {
+      card.append(el("p", { class: "muted small" }, "Trend appears after the second scan."));
+      return card;
+    }
+    const grid = el("div", { class: "spark-grid" });
+    for (const tier of TIER_ORDER) {
+      const series = trend.map((p) => p.byGroup[tier] || 0);
+      const canvas = el("canvas", {});
+      grid.append(el("div", { class: "spark" },
+        el("div", { class: "spark__head" },
+          el("span", { class: "spark__glyph", "aria-hidden": "true",
+            style: `color:${TIER_TEXT[tier]}` }, TIER_GLYPHS[tier]),
+          el("span", { class: "spark__label" }, TIER_LABELS[tier])),
+        el("div", { class: "spark__box" }, canvas),
+        el("div", { class: "spark__value num" }, (series[series.length - 1] || 0).toLocaleString()),
+      ));
+      requestAnimationFrame(() => sparkline(canvas, series, {
+        color: TIER_COLORS[tier],
+        desc: `${TIER_LABELS[tier]}: ${series[0]} to ${series[series.length - 1]} open findings `
+          + `across ${series.length} scans.`,
+      }));
+    }
+    card.append(grid);
+    card.append(el("p", { class: "chart-caption muted" },
+      "Tiers are computed from today's signals and applied backwards: has_kev and has_exploit "
+      + "never revert, and EPSS is the peak observed. So this traces the BACKLOG moving "
+      + "between tiers, not intelligence arriving."));
+    return card;
+  }
+
+
+  // ----------------------------------------------------------------------------- aging
+
+  /** Aging, stacked by TIER rather than by severity, with the SLA edge drawn on it.
+   *
+   *  Two changes from what this used to be. The stack now carries information: with one
+   *  severity in scope the old chart was a single-colour "stack" with a legend explaining
+   *  that one colour. And the 7-day Critical SLA lands exactly on the first bucket edge, so
+   *  every bar to the right of the line is a breach — something the chart has implied since
+   *  it was written and never said out loud.
+   *
+   *  The breach count comes from `openPastSla` on the actionable clock, the same figure the
+   *  MTTR page's headline uses, so the two pages cannot print different numbers for one
+   *  fleet. That is also why it can be lower than "everything past bucket one": a finding
+   *  with no vendor fix available has no clock running. */
+  function renderAging(insights) {
+    const aging = insights.agingTier;
+    insightsHost.append(sectionLabel("Aging of open findings"));
+    if (!aging || !aging.totalOpen) {
+      insightsHost.append(emptyState("No open findings in the durable base."));
+      return;
+    }
+    const past = insights.pastSla ? insights.pastSla.overall : null;
+    const canvas = el("canvas", { id: "aging-chart" });
+    // The denominator is open findings whose SLA clock has STARTED, which is smaller than the
+    // open count whenever anything is awaiting a vendor fix — those have no clock to breach.
+    // Naming it in the headline is cheaper than making the reader reconcile two numbers.
+    const headline = past && past.breached
+      ? `${past.breached.toLocaleString()} of ${past.open.toLocaleString()} open findings with a `
+        + "running SLA clock are past it."
+      : "How long open findings have been open";
+    insightsHost.append(el("div", { class: "chart-card" },
+      el("h3", {}, headline),
+      el("div", { class: "small muted", style: "margin-bottom:8px" },
+        `${aging.totalOpen.toLocaleString()} still-open findings, bucketed by age since first `
+        + "seen and split by risk tier."),
+      el("div", { class: "chart-box" }, canvas),
+      el("p", { class: "chart-caption muted" },
+        "SLA is measured on the vendor-fix clock, so a finding still awaiting a patch is not "
+        + "counted as a breach. Rows with no recorded age are omitted from the bars, which is "
+        + "why this total can trail the open count above."),
+    ));
+    requestAnimationFrame(() => {
+      stackedAgeBar(
+        canvas, AGE_LABELS, aging.perTier, tierPalette(),
+        "Open findings by age bucket and risk tier.",
+        // The 7-day Critical SLA coincides with the first bucket edge. Only mark it when the
+        // scope is a single severity whose target actually lands there — with a mixed scope
+        // one edge would stand for several different deadlines and mean nothing.
+        slaEdgeIndex() === null ? {} : { slaEdgeAfter: 0, slaEdgeLabel: slaEdgeLabel() },
+      );
+    });
     const aw = insights.awaiting;
     if (boot.settings.showNoFix !== false && aw && aw.overall > 0) {
       const pct = aw.pctOfOpen !== null && aw.pctOfOpen !== undefined
         ? ` (${aw.pctOfOpen.toFixed(0)}% of open)` : "";
-      insightsHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },
+      insightsHost.append(el("p", { class: "section-note" },
         `${aw.overall.toLocaleString()} open finding${aw.overall === 1 ? "" : "s"}${pct} `
         + "awaiting a vendor fix — no patch is available yet, so they sit outside the SLA "
-        + "clock. Included in the register since fix-tracking rolled out."));
+        + "clock entirely."));
     }
-  }
-
-  // ------------------------------------------------------------------------- aging
-
-  function renderAging(insights) {
-    insightsHost.append(sectionLabel("Aging of open findings"));
-    if (!insights.aging.totalOpen) {
-      insightsHost.append(emptyState("No open findings in the durable base."));
-      return;
-    }
-    const canvas = el("canvas", { id: "aging-chart" });
-    insightsHost.append(el("div", { class: "chart-card" },
-      el("h3", {}, "How long open findings have been open"),
-      el("div", { class: "small muted", style: "margin-bottom:8px" },
-        `${insights.aging.totalOpen.toLocaleString()} still-open findings, bucketed by age since first seen.`),
-      el("div", { class: "chart-box" }, canvas),
-    ));
-    // The histogram above answers "how aged is the backlog?"; the ranked detail — the
-    // longest-open findings and the assets / support groups / domains carrying the 90+ tail —
-    // moves into a drawer to answer "which ones?".
-    //
-    // THE ROWS ARE NO LONGER IN THIS PAYLOAD. They were four ranked views of up to 100 rows
-    // each — 16,434 of the page's 18,064 bytes, 91% of it — shipped on every Overview load so
-    // that a drawer many readers never open could render ten rows of one view. The panel
-    // fetches the view it is showing instead; the button is unconditional now, because there
-    // is no longer a field whose presence could gate it.
     insightsHost.append(el("button", {
       type: "button", style: "margin-top:10px",
-      onclick: () => openSheet(
-        (body) => body.append(renderOldestPanel()),
-        { title: "Oldest open findings",
-          subtitle: "The longest-open findings, and the assets, support groups and manual groups carrying "
-        + "the aged backlog." }),
+      // renderOldestPanel RETURNS its card; openSheet passes the body in and ignores the
+      // return value, so it has to be appended rather than handed over directly.
+      onclick: () => openSheet((body) => body.append(renderOldestPanel()), {
+        title: "Oldest open findings",
+        subtitle: "The longest-open findings, and the assets, support groups and manual groups "
+          + "carrying the 90+ day backlog.",
+      }),
     }, "Oldest open findings →"));
-    requestAnimationFrame(() => {
-      stackedAgeBar(canvas, AGE_LABELS, insights.aging.perSev, boot.palette);
-    });
   }
+
+  /** The SLA edge is only meaningful when one severity is in scope: the buckets are fixed at
+   *  7/30/90 days while the target varies per severity, so a mixed scope would draw one line
+   *  standing for several deadlines. Returns null when it should not be drawn. */
+  function slaEdgeIndex() {
+    return sevScope.length === 1 && SLA_TARGETS_DAYS[sevScope[0]] === AGE_BUCKET_FIRST_EDGE
+      ? 0 : null;
+  }
+  function slaEdgeLabel() {
+    return `${SLA_TARGETS_DAYS[sevScope[0]]}-day ${sevTitle(sevScope[0])} SLA`;
+  }
+
 
   /** Right-column panel for the aging section: a segmented toggle over the oldest-open views
    *  with a ranked table beneath.
@@ -531,6 +694,10 @@ export async function renderOverview(main, params, ctx) {
 
   // ---------------------------------------------------------------------- movement
 
+  /** Movement, promoted out of its drawer. It used to be two numbers and a button, which is
+   *  a lot of vertical space to spend on a link. The four counts are the whole story and they
+   *  fit in one row; the trend beside them answers the question the counts raise, which is
+   *  whether this scan was typical. */
   function renderMovement(insights) {
     const m = insights.movement;
     insightsHost.append(sectionLabel("Scan-over-scan movement"));
@@ -539,35 +706,109 @@ export async function renderOverview(main, params, ctx) {
         "First scan — movement appears once there is a previous scan to compare against."));
       return;
     }
-    // Compact by default: the two trajectory numbers (New vs Newly resolved — are we gaining
-    // or losing ground) inline, with the full New / Newly resolved / Reopened / Persisting
-    // breakdown and the scope caveat one click away in a drawer.
-    const miniStat = (value, label) => el("div", {},
-      el("div", { class: "mini-value num" }, value),
-      el("div", { class: "mini-label" }, label));
-    const renderMovementDetail = (body) => {
-      body.append(el("div", { class: "kpi-row" },
-        kpiCard("New", m.newCount.toLocaleString(), "first seen in the latest scan"),
-        kpiCard("Newly resolved", m.resolvedCount.toLocaleString(), "closed since the previous scan"),
-        kpiCard("Reopened", m.reopenedCount.toLocaleString(), "back after being resolved"),
-        kpiCard("Persisting", m.persisting.toLocaleString(), "open since an earlier scan"),
-      ));
-      if (ctx.domain || ctx.supportGroup) {
-        body.append(el("p", { class: "small muted", style: "margin:12px 0 0" },
-          "New / Resolved / Reopened are scan-wide — scan-over-scan deltas can't be " +
-          "split by the active filter. Persisting reflects the filtered scope."));
-      }
-    };
-    insightsHost.append(el("div",
-      { style: "display:flex; gap:32px; align-items:flex-end; flex-wrap:wrap" },
-      miniStat(m.newCount.toLocaleString(), "New"),
-      miniStat(m.resolvedCount.toLocaleString(), "Newly resolved"),
-      el("button", {
-        type: "button", style: "margin-left:auto",
-        onclick: () => openSheet(renderMovementDetail, { title: "Scan-over-scan movement" }),
-      }, "Movement details →"),
-    ));
+    // Two-up rather than the auto-fit default: this row sits in half the width beside the
+    // trend, where auto-fit lands on three columns and orphans the fourth tile on its own line.
+    const tiles = el("div", { class: "kpi-row kpi-row--2" },
+      kpiCard("New", m.newCount.toLocaleString(), "first seen in the latest scan"),
+      kpiCard("Newly resolved", m.resolvedCount.toLocaleString(), "closed since the previous scan"),
+      kpiCard("Reopened", m.reopenedCount.toLocaleString(), "back after being resolved"),
+      kpiCard("Persisting", m.persisting.toLocaleString(), "open since an earlier scan"),
+    );
+    const canvas = el("canvas", {});
+    const trend = insights.openTrend || [];
+    const card = el("div", { class: "chart-card" }, el("h3", {}, "Open backlog, per scan"));
+    if (trend.length >= 2) {
+      card.append(el("div", { class: "chart-box" }, canvas));
+      card.append(el("p", { class: "chart-caption muted" },
+        "Total open findings at each saved scan."));
+      requestAnimationFrame(() => {
+        // trendLine reads {x, y} on a proportional epoch-day axis — NOT {date, value}.
+        const points = trend.map((p) => ({
+          x: p.date,
+          y: Object.values(p.bySev || {}).reduce((a, b) => a + (b || 0), 0),
+        }));
+        trendLine(canvas, points, { yLabel: "Open findings" });
+      });
+    } else {
+      card.append(el("p", { class: "muted small" }, "Trend appears after the second scan."));
+    }
+    insightsHost.append(el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" },
+      el("div", {}, tiles), card));
+    if (ctx.domain || ctx.supportGroup) {
+      insightsHost.append(el("p", { class: "section-note" },
+        "New / Newly resolved / Reopened are scan-wide — scan-over-scan deltas can't be "
+        + "split by the active filter. Persisting reflects the filtered scope."));
+    }
   }
+
+  // ----------------------------------------------------------------- concentration
+
+  /** Where the backlog piles up, on the page rather than behind a button.
+   *
+   *  Ranked by OPEN findings, which is not the same ordering the breakdown tree uses (that
+   *  ranks by open + resolved, because it reports on the whole scan). A group that closed
+   *  everything must not outrank one that closed nothing on a list captioned "open". */
+  function renderConcentration(insights) {
+    const conc = insights.concentration;
+    if (!conc || !conc.perDim) return;
+    let dim = CONCENTRATION_DIMS.find(([k]) => conc.perDim[k]?.length)?.[0];
+    if (!dim) return;
+    const toggle = el("div", { class: "seg-row", role: "group", "aria-label": "Concentration dimension" });
+    const listHost = el("div", {});
+    const noteHost = el("p", { class: "section-note" });
+
+    function paintList() {
+      const rows = conc.perDim[dim] || [];
+      const more = conc.moreDim ? conc.moreDim[dim] || 0 : 0;
+      const top = rows.length ? rows[0].open : 0;
+      const list = el("div", { class: "rank-list" });
+      for (const row of rows) {
+        const width = top ? Math.max(1, (row.open / top) * 100) : 0;
+        // Blast radius is only interesting when the group ISN'T an asset — grouping by asset
+        // and then reporting "1 asset" on every row is a column of noise.
+        const meta = [];
+        if (dim !== "asset") {
+          meta.push(`${row.assets.toLocaleString()} asset${row.assets === 1 ? "" : "s"}`);
+        }
+        if (row.kev) meta.push(`${row.kev.toLocaleString()} on CISA KEV`);
+        list.append(el("div", { class: "rank-row" },
+          el("div", {},
+            el("div", { class: "rank-row__name" }, row.key),
+            el("div", { class: "mix-strip", "aria-hidden": "true" },
+              el("span", { style: `width:${width}%; background:#6b7280` })),
+            meta.length ? el("div", { class: "small muted" }, meta.join(" · ")) : null,
+          ),
+          el("div", { class: "num rank-row__value" }, row.open.toLocaleString()),
+        ));
+      }
+      clear(listHost).append(rows.length ? list : emptyState("Nothing open in this dimension."));
+      // Never let a truncated list read as a complete one.
+      noteHost.textContent = more
+        ? `Top ${rows.length} by open findings · ${more.toLocaleString()} more not shown.`
+        : `All ${rows.length} ranked by open findings.`;
+    }
+
+    for (const [value, label] of CONCENTRATION_DIMS) {
+      if (!conc.perDim[value]) continue;
+      const btn = el("button", {
+        class: "seg-btn seg-btn--sm", type: "button",
+        "aria-pressed": dim === value ? "true" : "false",
+        onclick: () => {
+          if (dim === value) return;
+          dim = value;
+          toggle.querySelectorAll("button.seg-btn").forEach((b) =>
+            b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
+          paintList();
+        },
+      }, label);
+      toggle.append(btn);
+    }
+    insightsHost.append(el("div", { class: "section-head" },
+      el("h2", { class: "section-label" }, "Where it concentrates"), toggle));
+    insightsHost.append(listHost, noteHost);
+    paintList();
+  }
+
 
   // --------------------------------------------------------------------- breakdown
 

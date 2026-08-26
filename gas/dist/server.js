@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "1fec3df44890" : "dev";
+  var BUILD_ID = true ? "f20ffdb00d8b" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -1345,6 +1345,7 @@ var Server = (() => {
     LOW: 90,
     INFO: 180
   };
+  var EPSS_PRIORITY_THRESHOLD = 0.1;
   var SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s) => s !== "UNKNOWN");
   var DEFAULT_FETCH_SEVERITIES = ["CRITICAL", "HIGH"];
   var DEFAULT_DISPLAY_SEVERITIES = ["CRITICAL", "HIGH"];
@@ -1356,6 +1357,9 @@ var Server = (() => {
     INFO: "INFORMATIONAL"
   };
   var RESOLVED_STATUSES = /* @__PURE__ */ new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
+  function isOpenStatus(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
   var DISAPPEARANCE_RESOLUTION = "scan_ts";
   var REMEDIATION_ROLLOUT_ISO = "2026-07-01T00:00:00Z";
   var DEFAULT_RETENTION_DAYS = 180;
@@ -1388,212 +1392,9 @@ var Server = (() => {
     return counts;
   }
 
-  // src/domain/insights.ts
-  var EPSS_PRIORITY_THRESHOLD = 0.1;
-  var AGE_BUCKET_EDGES = [7, 30, 90];
-  var WIDE_KEY = "vulnerableAsset.hasWideInternetExposure";
-  var LIMITED_KEY = "vulnerableAsset.hasLimitedInternetExposure";
-  function isOpen(status) {
-    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
-  }
-  function sev(r) {
-    const s = r["_sev"];
-    return typeof s === "string" && s ? s : normalizeSeverity(r["severity"]);
-  }
-  function epssOf(r) {
-    const v = r["epssProbability"];
-    const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
-    return Number.isFinite(n) ? n : null;
-  }
-  function severityStats(records) {
-    var _a;
-    const out = {};
-    for (const r of records) {
-      const s = sev(r);
-      const stat = (_a = out[s]) != null ? _a : out[s] = { total: 0, open: 0, resolved: 0 };
-      stat.total += 1;
-      if (isOpen(r["status"])) stat.open += 1;
-      else stat.resolved += 1;
-    }
-    return out;
-  }
-  function exploitSummary(records) {
-    const out = {
-      open: 0,
-      kev: 0,
-      exploit: 0,
-      highEpss: 0,
-      internetExposed: 0,
-      exposureKnown: records.some((r) => WIDE_KEY in r && r[WIDE_KEY] !== void 0)
-    };
-    for (const r of records) {
-      if (!isOpen(r["status"])) continue;
-      out.open += 1;
-      if (r["hasCisaKevExploit"] === true) out.kev += 1;
-      if (r["hasExploit"] === true) out.exploit += 1;
-      const epss = epssOf(r);
-      if (epss !== null && epss >= EPSS_PRIORITY_THRESHOLD) out.highEpss += 1;
-      if (r[WIDE_KEY] === true || r[LIMITED_KEY] === true) out.internetExposed += 1;
-    }
-    return out;
-  }
-  function ageBuckets(rows) {
-    const perSev = {};
-    let totalOpen = 0;
-    for (const row of rows) {
-      if (!isOpen(row.status)) continue;
-      const age = row.age_days;
-      if (typeof age !== "number" || !Number.isFinite(age)) continue;
-      const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
-      const s = normalizeSeverity(row.severity);
-      if (!perSev[s]) perSev[s] = [0, 0, 0, 0];
-      perSev[s][bucket] += 1;
-      totalOpen += 1;
-    }
-    return { perSev, totalOpen };
-  }
-  var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
-  function openAge(row) {
-    if (!isOpen(row.status)) return null;
-    const age = row.age_days;
-    return typeof age === "number" && Number.isFinite(age) ? age : null;
-  }
-  function rankGroups(rows, keyFn, topN, meta) {
-    const groups = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      const age = openAge(row);
-      if (age === null) continue;
-      const raw = keyFn(row);
-      const key = raw && raw.trim() !== "" ? raw : "(none)";
-      let g = groups.get(key);
-      if (!g) groups.set(key, g = { key, agedCount: 0, openCount: 0, oldestDays: 0, ...meta ? meta(row) : {} });
-      g.openCount += 1;
-      if (age > AGED_OPEN_EDGE) g.agedCount += 1;
-      if (age > g.oldestDays) g.oldestDays = age;
-    }
-    return [...groups.values()].sort((a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key)).slice(0, topN);
-  }
-  function oldestOpen(rows, topN = 7) {
-    const findings = rows.map((r) => ({ r, age: openAge(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
-      cve: r.cve,
-      asset: r.asset_name,
-      subscription: r.subscription_name,
-      severity: normalizeSeverity(r.severity),
-      ageDays: age
-    }));
-    return {
-      findings,
-      byAsset: rankGroups(rows, (r) => {
-        var _a;
-        return String((_a = r.asset_name) != null ? _a : "");
-      }, topN, (r) => {
-        var _a, _b;
-        return {
-          subscription: String((_a = r.subscription_name) != null ? _a : ""),
-          domain: String((_b = r._domain) != null ? _b : "")
-        };
-      }),
-      bySupportGroup: rankGroups(rows, (r) => {
-        var _a;
-        return String((_a = r._supportGroup) != null ? _a : "");
-      }, topN),
-      byDomain: rankGroups(rows, (r) => {
-        var _a;
-        return String((_a = r._domain) != null ? _a : "");
-      }, topN)
-    };
-  }
-  function movement(baseRows2, latestFlatScan, scanCount) {
-    if (!latestFlatScan) {
-      return { newCount: 0, resolvedCount: 0, reopenedCount: 0, persisting: 0, hasPrevious: scanCount > 1 };
-    }
-    let persisting = 0;
-    for (const row of baseRows2) {
-      if (!isOpen(row.status)) continue;
-      if (row.last_scan_id === latestFlatScan.scan_id && row.first_scan_id !== latestFlatScan.scan_id) {
-        persisting += 1;
-      }
-    }
-    return {
-      newCount: latestFlatScan.new_count,
-      resolvedCount: latestFlatScan.resolved_count,
-      reopenedCount: latestFlatScan.reopened_count,
-      persisting,
-      hasPrevious: scanCount > 1
-    };
-  }
-  var GROUP_COLUMNS = {
-    domain: "_domain",
-    supportGroup: "_supportGroup",
-    asset: "vulnerableAsset.name",
-    atype: "vulnerableAsset.type",
-    cloud: "vulnerableAsset.cloudPlatform",
-    os: "vulnerableAsset.operatingSystem",
-    subscription: "vulnerableAsset.subscriptionName",
-    cve: "name"
-  };
-  var GROUP_BASE_FIELDS = {
-    domain: "_domain",
-    supportGroup: "_supportGroup",
-    asset: "asset_name",
-    atype: "asset_type",
-    cloud: "cloud",
-    subscription: "subscription_name",
-    cve: "cve"
-  };
-  function groupTree(records, keys, perLevelCap = 20) {
-    if (!keys.length || !records.length) return [];
-    const [key, ...rest] = keys;
-    const column = GROUP_COLUMNS[key];
-    if (!column) return [];
-    const buckets = /* @__PURE__ */ new Map();
-    for (const r of records) {
-      const raw = r[column];
-      const k = raw === null || raw === void 0 || String(raw).trim() === "" ? "(none)" : String(raw);
-      let arr = buckets.get(k);
-      if (!arr) buckets.set(k, arr = []);
-      arr.push(r);
-    }
-    const rows = [...buckets.entries()].map(([k, recs]) => {
-      var _a, _b;
-      const assets = /* @__PURE__ */ new Set();
-      const sevCounts = {};
-      let open = 0;
-      let kev = false;
-      let exploit = false;
-      for (const r of recs) {
-        if (isOpen(r["status"])) open += 1;
-        const s = sev(r);
-        sevCounts[s] = ((_a = sevCounts[s]) != null ? _a : 0) + 1;
-        const a = String((_b = r["vulnerableAsset.name"]) != null ? _b : "");
-        if (a) assets.add(a);
-        if (r["hasCisaKevExploit"] === true) kev = true;
-        if (r["hasExploit"] === true) exploit = true;
-      }
-      const node = {
-        key: k,
-        dim: key,
-        total: recs.length,
-        open,
-        assets: assets.size,
-        sevCounts,
-        kev,
-        exploit,
-        children: []
-      };
-      return { recs, node };
-    });
-    rows.sort((a, b) => b.node.total - a.node.total || a.node.key.localeCompare(b.node.key));
-    const kept = rows.slice(0, perLevelCap);
-    if (rest.length) {
-      for (const row of kept) row.node.children = groupTree(row.recs, rest, perLevelCap);
-    }
-    return kept.map((row) => row.node);
-  }
-
   // src/domain/program.ts
   var DAY_MS = 864e5;
-  function isOpen2(status) {
+  function isOpen(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   var DEFAULT_RISK_RULE = {
@@ -1634,6 +1435,15 @@ var Server = (() => {
     const s = seen(row, rule);
     if (!s.kev || !s.exploit || !s.epss) return "unknown";
     return "low";
+  }
+  var RISK_TIER_ORDER = ["kev", "exploit", "epss", "none", "unknown"];
+  function riskTier(row, rule) {
+    const cls = classifyRisk(row, rule);
+    if (cls !== "high") return cls === "low" ? "none" : "unknown";
+    const fired = firedSignals(row, rule);
+    if (fired.includes("kev")) return "kev";
+    if (fired.includes("exploit")) return "exploit";
+    return "epss";
   }
   var NO_RATE = { point: null, lo: null, hi: null };
   function pct(num, den) {
@@ -1683,7 +1493,7 @@ var Server = (() => {
     return m;
   }
   function tally(m, row, rule) {
-    const open = isOpen2(row.status);
+    const open = isOpen(row.status);
     switch (classifyRisk(row, rule)) {
       case "high":
         if (open) m.fn += 1;
@@ -3018,6 +2828,47 @@ var Server = (() => {
       (a, b) => b.findings - a.findings || a.subscription.localeCompare(b.subscription) || a.extId.localeCompare(b.extId)
     );
   }
+  var LEDGER_NAME_COL = "asset_name";
+  var LEDGER_TYPE_COL = "asset_type";
+  var LEDGER_SUB_COL = "subscription_name";
+  function unassignedLifecycles(rows, compiled, topN = 100) {
+    var _a, _b;
+    const groups = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      if (domainOf(r) !== UNASSIGNED) continue;
+      const asset = String((_a = r[LEDGER_NAME_COL]) != null ? _a : "") || NONE;
+      let g = groups.get(asset);
+      if (!g) groups.set(asset, g = { rep: r, open: 0, resolved: 0, lastSeen: null });
+      if (String((_b = r["status"]) != null ? _b : "").toUpperCase() === "OPEN") g.open += 1;
+      else g.resolved += 1;
+      const seen2 = r["last_seen"];
+      if (present(seen2)) {
+        const s = String(seen2);
+        if (g.lastSeen === null || s > g.lastSeen) g.lastSeen = s;
+      }
+    }
+    const out = [];
+    for (const [asset, g] of groups) {
+      out.push({
+        asset,
+        assetType: flatVal(g.rep, LEDGER_TYPE_COL),
+        subscription: flatVal(g.rep, LEDGER_SUB_COL),
+        supportGroup: flatVal(g.rep, SG_COL),
+        open: g.open,
+        resolved: g.resolved,
+        lastSeen: g.lastSeen,
+        tags: cappedTags(g.rep),
+        // `recordTags` reads the ledger's `tags_json` as happily as a frame's tag columns, so
+        // the near-miss hints work here unchanged — which is what makes this actionable: it
+        // says which rule almost claimed the row, not just that none did.
+        nearMisses: nearMisses(g.rep, compiled)
+      });
+    }
+    out.sort(
+      (a, b) => b.open + b.resolved - (a.open + a.resolved) || a.asset.localeCompare(b.asset)
+    );
+    return out.slice(0, topN);
+  }
 
   // src/domain/metrics.ts
   var DAY_MS2 = 864e5;
@@ -3151,15 +3002,15 @@ var Server = (() => {
   var ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
   var RESOLUTION_BUCKET_EDGES = [1, 7, 30, 90];
   var RESOLUTION_BUCKET_LABELS = ["\u22641d", "2\u20137d", "8\u201330d", "31\u201390d", "90+d"];
-  function isOpen3(status) {
+  function isOpen2(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function resolvedMttr(row) {
     const m = row.mttr_days;
     return typeof m === "number" && Number.isFinite(m) ? m : null;
   }
-  function openAge2(row) {
-    if (!isOpen3(row.status)) return null;
+  function openAge(row) {
+    if (!isOpen2(row.status)) return null;
     const a = row.age_days;
     return typeof a === "number" && Number.isFinite(a) ? a : null;
   }
@@ -3228,7 +3079,7 @@ var Server = (() => {
         events.push(m);
         continue;
       }
-      const c = openAge2(row);
+      const c = openAge(row);
       if (c !== null) censored.push(c);
     }
     const times = events.concat(censored);
@@ -3284,7 +3135,7 @@ var Server = (() => {
     let totalOpen = 0;
     let totalBreached = 0;
     for (const row of rows) {
-      const age = openAge2(row);
+      const age = openAge(row);
       if (age === null) continue;
       const s = normalizeSeverity(row.severity);
       const target = (_a = SLA_TARGETS[s]) != null ? _a : null;
@@ -3315,7 +3166,7 @@ var Server = (() => {
     if (!firstSeenCol) return 0;
     let breached = 0;
     for (const rec of records) {
-      if (!isOpen3(rec["status"])) continue;
+      if (!isOpen2(rec["status"])) continue;
       const first = parseTs(rec[firstSeenCol]);
       if (first === null) continue;
       const s = "severity" in rec ? normalizeSeverity(rec["severity"]) : "UNKNOWN";
@@ -3338,7 +3189,7 @@ var Server = (() => {
     let overall = 0;
     let openTotal = 0;
     for (const row of rows) {
-      if (!isOpen3(row.status)) continue;
+      if (!isOpen2(row.status)) continue;
       openTotal += 1;
       if (!row.awaiting_vendor_fix) continue;
       const s = normalizeSeverity(row.severity);
@@ -3357,7 +3208,7 @@ var Server = (() => {
   }
   function recordNoFix(rec) {
     var _a, _b;
-    if (!isOpen3(rec["status"])) return false;
+    if (!isOpen2(rec["status"])) return false;
     const first = parseTs((_b = (_a = rec["firstDetectedAt"]) != null ? _a : rec["firstSeenAt"]) != null ? _b : rec["createdAt"]);
     if (first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS) return false;
     return !(present(rec["fixedVersion"]) || present(rec["fixDate"]));
@@ -5231,6 +5082,294 @@ var Server = (() => {
         return out;
       })
     };
+  }
+
+  // src/domain/insights.ts
+  var AGE_BUCKET_EDGES = [7, 30, 90];
+  var WIDE_KEY = "vulnerableAsset.hasWideInternetExposure";
+  var LIMITED_KEY = "vulnerableAsset.hasLimitedInternetExposure";
+  function isOpen3(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function sev(r) {
+    const s = r["_sev"];
+    return typeof s === "string" && s ? s : normalizeSeverity(r["severity"]);
+  }
+  function epssOf(r) {
+    const v = r["epssProbability"];
+    const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+    return Number.isFinite(n) ? n : null;
+  }
+  function severityStats(records) {
+    var _a;
+    const out = {};
+    for (const r of records) {
+      const s = sev(r);
+      const stat = (_a = out[s]) != null ? _a : out[s] = { total: 0, open: 0, resolved: 0 };
+      stat.total += 1;
+      if (isOpen3(r["status"])) stat.open += 1;
+      else stat.resolved += 1;
+    }
+    return out;
+  }
+  function exploitSummary(records) {
+    const out = {
+      open: 0,
+      kev: 0,
+      exploit: 0,
+      highEpss: 0,
+      internetExposed: 0,
+      exposureKnown: records.some((r) => WIDE_KEY in r && r[WIDE_KEY] !== void 0)
+    };
+    for (const r of records) {
+      if (!isOpen3(r["status"])) continue;
+      out.open += 1;
+      if (r["hasCisaKevExploit"] === true) out.kev += 1;
+      if (r["hasExploit"] === true) out.exploit += 1;
+      const epss = epssOf(r);
+      if (epss !== null && epss >= EPSS_PRIORITY_THRESHOLD) out.highEpss += 1;
+      if (r[WIDE_KEY] === true || r[LIMITED_KEY] === true) out.internetExposed += 1;
+    }
+    return out;
+  }
+  function ageBuckets(rows) {
+    const { perKey, totalOpen } = ageBucketsBy(rows, (r) => normalizeSeverity(r.severity));
+    return { perSev: perKey, totalOpen };
+  }
+  function ageBucketsBy(rows, keyOf) {
+    const perKey = {};
+    let totalOpen = 0;
+    for (const row of rows) {
+      if (!isOpen3(row.status)) continue;
+      const age = row.age_days;
+      if (typeof age !== "number" || !Number.isFinite(age)) continue;
+      const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+      const k = keyOf(row);
+      if (!perKey[k]) perKey[k] = [0, 0, 0, 0];
+      perKey[k][bucket] += 1;
+      totalOpen += 1;
+    }
+    return { perKey, totalOpen };
+  }
+  var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
+  function openAge2(row) {
+    if (!isOpen3(row.status)) return null;
+    const age = row.age_days;
+    return typeof age === "number" && Number.isFinite(age) ? age : null;
+  }
+  function rankGroups(rows, keyFn, topN, meta) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const age = openAge2(row);
+      if (age === null) continue;
+      const raw = keyFn(row);
+      const key = raw && raw.trim() !== "" ? raw : "(none)";
+      let g = groups.get(key);
+      if (!g) groups.set(key, g = { key, agedCount: 0, openCount: 0, oldestDays: 0, ...meta ? meta(row) : {} });
+      g.openCount += 1;
+      if (age > AGED_OPEN_EDGE) g.agedCount += 1;
+      if (age > g.oldestDays) g.oldestDays = age;
+    }
+    return [...groups.values()].sort((a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key)).slice(0, topN);
+  }
+  function oldestOpen(rows, topN = 7) {
+    const findings = rows.map((r) => ({ r, age: openAge2(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
+      cve: r.cve,
+      asset: r.asset_name,
+      subscription: r.subscription_name,
+      severity: normalizeSeverity(r.severity),
+      ageDays: age
+    }));
+    return {
+      findings,
+      byAsset: rankGroups(rows, (r) => {
+        var _a;
+        return String((_a = r.asset_name) != null ? _a : "");
+      }, topN, (r) => {
+        var _a, _b;
+        return {
+          subscription: String((_a = r.subscription_name) != null ? _a : ""),
+          domain: String((_b = r._domain) != null ? _b : "")
+        };
+      }),
+      bySupportGroup: rankGroups(rows, (r) => {
+        var _a;
+        return String((_a = r._supportGroup) != null ? _a : "");
+      }, topN),
+      byDomain: rankGroups(rows, (r) => {
+        var _a;
+        return String((_a = r._domain) != null ? _a : "");
+      }, topN)
+    };
+  }
+  function movement(baseRows2, latestFlatScan, scanCount) {
+    if (!latestFlatScan) {
+      return { newCount: 0, resolvedCount: 0, reopenedCount: 0, persisting: 0, hasPrevious: scanCount > 1 };
+    }
+    let persisting = 0;
+    for (const row of baseRows2) {
+      if (!isOpen3(row.status)) continue;
+      if (row.last_scan_id === latestFlatScan.scan_id && row.first_scan_id !== latestFlatScan.scan_id) {
+        persisting += 1;
+      }
+    }
+    return {
+      newCount: latestFlatScan.new_count,
+      resolvedCount: latestFlatScan.resolved_count,
+      reopenedCount: latestFlatScan.reopened_count,
+      persisting,
+      hasPrevious: scanCount > 1
+    };
+  }
+  var GROUP_COLUMNS = {
+    domain: "_domain",
+    supportGroup: "_supportGroup",
+    asset: "vulnerableAsset.name",
+    atype: "vulnerableAsset.type",
+    cloud: "vulnerableAsset.cloudPlatform",
+    os: "vulnerableAsset.operatingSystem",
+    subscription: "vulnerableAsset.subscriptionName",
+    cve: "name"
+  };
+  var GROUP_BASE_FIELDS = {
+    domain: "_domain",
+    supportGroup: "_supportGroup",
+    asset: "asset_name",
+    atype: "asset_type",
+    cloud: "cloud",
+    subscription: "subscription_name",
+    cve: "cve"
+  };
+  function groupTree(records, keys, perLevelCap = 20) {
+    if (!keys.length || !records.length) return [];
+    const [key, ...rest] = keys;
+    const column = GROUP_COLUMNS[key];
+    if (!column) return [];
+    const buckets = /* @__PURE__ */ new Map();
+    for (const r of records) {
+      const raw = r[column];
+      const k = raw === null || raw === void 0 || String(raw).trim() === "" ? "(none)" : String(raw);
+      let arr = buckets.get(k);
+      if (!arr) buckets.set(k, arr = []);
+      arr.push(r);
+    }
+    const rows = [...buckets.entries()].map(([k, recs]) => {
+      var _a, _b;
+      const assets = /* @__PURE__ */ new Set();
+      const sevCounts = {};
+      let open = 0;
+      let kev = false;
+      let exploit = false;
+      for (const r of recs) {
+        if (isOpen3(r["status"])) open += 1;
+        const s = sev(r);
+        sevCounts[s] = ((_a = sevCounts[s]) != null ? _a : 0) + 1;
+        const a = String((_b = r["vulnerableAsset.name"]) != null ? _b : "");
+        if (a) assets.add(a);
+        if (r["hasCisaKevExploit"] === true) kev = true;
+        if (r["hasExploit"] === true) exploit = true;
+      }
+      const node = {
+        key: k,
+        dim: key,
+        total: recs.length,
+        open,
+        assets: assets.size,
+        sevCounts,
+        kev,
+        exploit,
+        children: []
+      };
+      return { recs, node };
+    });
+    rows.sort((a, b) => b.node.total - a.node.total || a.node.key.localeCompare(b.node.key));
+    const kept = rows.slice(0, perLevelCap);
+    if (rest.length) {
+      for (const row of kept) row.node.children = groupTree(row.recs, rest, perLevelCap);
+    }
+    return kept.map((row) => row.node);
+  }
+  function riskTierStats(rows, rule) {
+    var _a;
+    const perTier = {};
+    for (const t of RISK_TIER_ORDER) perTier[t] = 0;
+    let open = 0;
+    for (const row of rows) {
+      if (!isOpen3(row.status)) continue;
+      open += 1;
+      perTier[riskTier(row, rule)] += 1;
+    }
+    return { perTier, open, unclassified: (_a = perTier["unknown"]) != null ? _a : 0 };
+  }
+  function triageFunnel(rows, rule, exposedKeys, exposureKnown) {
+    const out = {
+      open: 0,
+      intel: 0,
+      exploitable: 0,
+      exposed: 0,
+      overdue: 0,
+      unclassified: 0,
+      exposureKnown
+    };
+    for (const row of rows) {
+      if (!isOpen3(row.status)) continue;
+      out.open += 1;
+      const tier = riskTier(row, rule);
+      if (tier === "unknown") {
+        out.unclassified += 1;
+        continue;
+      }
+      out.intel += 1;
+      if (tier !== "kev" && tier !== "exploit") continue;
+      out.exploitable += 1;
+      if (!exposureKnown || !exposedKeys.has(row.vuln_key)) continue;
+      out.exposed += 1;
+      const target = SLA_TARGETS[normalizeSeverity(row.severity)];
+      const age = row.actionable_age_days;
+      if (typeof target === "number" && typeof age === "number" && Number.isFinite(age) && age > target) {
+        out.overdue += 1;
+      }
+    }
+    return out;
+  }
+  function concentration(records, dims, topN = 5) {
+    var _a;
+    const perDim = {};
+    const moreDim = {};
+    for (const dim of dims) {
+      const column = GROUP_COLUMNS[dim];
+      if (!column) continue;
+      const buckets = /* @__PURE__ */ new Map();
+      for (const r of records) {
+        if (!isOpen3(r["status"])) continue;
+        const raw = r[column];
+        const k = raw === null || raw === void 0 || String(raw).trim() === "" ? "(none)" : String(raw);
+        let b = buckets.get(k);
+        if (!b) buckets.set(k, b = { open: 0, assets: /* @__PURE__ */ new Set(), kev: 0 });
+        b.open += 1;
+        const a = String((_a = r["vulnerableAsset.name"]) != null ? _a : "");
+        if (a) b.assets.add(a);
+        if (r["hasCisaKevExploit"] === true) b.kev += 1;
+      }
+      const rows = [...buckets.entries()].map(([key, b]) => ({ key, open: b.open, assets: b.assets.size, kev: b.kev })).sort((a, b) => b.open - a.open || a.key.localeCompare(b.key));
+      perDim[dim] = rows.slice(0, topN);
+      moreDim[dim] = Math.max(0, rows.length - topN);
+    }
+    return { perDim, moreDim };
+  }
+  function openAgeMedian(rows) {
+    const ages = [];
+    for (const row of rows) {
+      if (!isOpen3(row.status)) continue;
+      const age = row.age_days;
+      if (typeof age === "number" && Number.isFinite(age)) ages.push(age);
+    }
+    if (!ages.length) return null;
+    ages.sort((a, b) => a - b);
+    const mid = (ages.length - 1) / 2;
+    const lo = Math.floor(mid);
+    const hi = Math.ceil(mid);
+    return lo === hi ? ages[lo] : (ages[lo] + ages[hi]) / 2;
   }
 
   // src/domain/settingsImpact.ts
@@ -8169,19 +8308,26 @@ var Server = (() => {
       // (whose own comment admitted as much), `palette.glyphs`/`slaTargets`, and
       // `latestScan.shape`/`severities`. Bump so no stale fat entry survives the persistent
       // dataVersion; a reader that wanted any of them would have been broken already.
-      ...durablyCached("bootstrapCore6", { showNoFix: getShowNoFix2() }, bootstrapCore),
+      // "bootstrapCore6" → "bootstrapCore7": the payload gained `openCounts`. A cached
+      // old-shape entry has none, and the Executive severity tiles read it directly, so they
+      // would render "0" across the board until the next data version.
+      // "bootstrapCore7" → "bootstrapCore8": `scopeCounts` gained `unassignedBase`. A stale
+      // entry has none, and the switcher would keep printing the frame-only zero that made the
+      // MTTR Unassigned bar look like a bug in the first place.
+      ...durablyCached("bootstrapCore8", { showNoFix: getShowNoFix2() }, bootstrapCore),
       // Live per-request fields: never cached (activeJob changes every poll tick).
       hasCredentials: hasWizCredentials(),
       activeJob: activeJobSummary()
     }));
   }
   function bootstrapCore() {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     const scan = currentScan();
     const latest = latestScanRow();
     const showNoFix = getShowNoFix2();
     const records = scan ? visibleFrame(scan.records) : [];
     const counts = {};
+    const openCounts = {};
     let unassignedCount = 0;
     const domainCounts = {};
     const supportGroupCounts = {};
@@ -8191,13 +8337,16 @@ var Server = (() => {
     for (const r of records) {
       const sev2 = String(r["_sev"]);
       counts[sev2] = ((_a = counts[sev2]) != null ? _a : 0) + 1;
-      const dom = String((_b = r["_domain"]) != null ? _b : "");
-      if (dom) domainCounts[dom] = ((_c = domainCounts[dom]) != null ? _c : 0) + 1;
+      if (isOpenStatus(r["status"])) {
+        openCounts[sev2] = ((_b = openCounts[sev2]) != null ? _b : 0) + 1;
+      }
+      const dom = String((_c = r["_domain"]) != null ? _c : "");
+      if (dom) domainCounts[dom] = ((_d = domainCounts[dom]) != null ? _d : 0) + 1;
       if (dom === UNASSIGNED) unassignedCount += 1;
-      const sg = String((_d = r["_supportGroup"]) != null ? _d : "");
-      if (sg) supportGroupCounts[sg] = ((_e = supportGroupCounts[sg]) != null ? _e : 0) + 1;
+      const sg = String((_e = r["_supportGroup"]) != null ? _e : "");
+      if (sg) supportGroupCounts[sg] = ((_f = supportGroupCounts[sg]) != null ? _f : 0) + 1;
       else noSupportGroup += 1;
-      const bd = String((_f = r["_bizDomain"]) != null ? _f : "");
+      const bd = String((_g = r["_bizDomain"]) != null ? _g : "");
       if (bd) seenTags.add(bd);
       else noBizDomain += 1;
     }
@@ -8206,13 +8355,18 @@ var Server = (() => {
     const baseRows2 = loadBaseRows();
     attachBizDomains(baseRows2);
     let notAttributable = 0;
+    let unassignedBase = 0;
     for (const r of baseRows2) {
-      const bd = String((_g = r["_bizDomain"]) != null ? _g : "");
+      const bd = String((_h = r["_bizDomain"]) != null ? _h : "");
       if (bd) {
         seenTags.add(bd);
         continue;
       }
-      if (!hasDomainInputs(r)) notAttributable += 1;
+      if (!hasDomainInputs(r)) {
+        notAttributable += 1;
+        continue;
+      }
+      if (assignDomain(r, compiled) === UNASSIGNED) unassignedBase += 1;
     }
     return {
       // The deployed code stamp (esbuild-injected source hash; "dev" locally). Surfaced so an
@@ -8241,6 +8395,9 @@ var Server = (() => {
         total: latest.total
       } : null,
       counts,
+      // Open-only severity tally over the same frame. `counts` stays register-wide because the
+      // scope switcher's denominators are; anything answering "how much is live risk" reads this.
+      openCounts,
       unassignedCount,
       // THE RESOLVED UNIVERSE, not the rule list. A tag value is a domain a finding can actually
       // land in, so a switcher built from `domainNames(items)` alone would offer only the manual
@@ -8257,12 +8414,18 @@ var Server = (() => {
         register: records.length,
         domains: domainCounts,
         supportGroups: supportGroupCounts,
+        // FRAME. "How many findings in the current scan did neither mechanism claim."
         unassigned: unassignedCount,
         noSupportGroup,
-        // Both over base rows, and paired on purpose: "412 not attributable" is unreadable
+        // All three over base rows, and paired on purpose: "412 not attributable" is unreadable
         // without the population it is 412 of, and that population is not `register`.
         baseRows: baseRows2.length,
-        notAttributable
+        notAttributable,
+        // LEDGER. The same question as `unassigned` asked over every lifecycle the register
+        // still holds, resolved history included — which is the population the MTTR by-domain
+        // split draws, and therefore the number that has to be non-zero whenever that split
+        // shows an Unassigned bar.
+        unassignedBase
       },
       // Which tag the business domain was read off. Surfaced because the figure beside it is
       // meaningless without it: "82 carry no domain" is a fact about `Wiz/Domain` specifically,
@@ -8352,6 +8515,7 @@ var Server = (() => {
     const recsVisible = filterNoFixFrame(recs, showNoFix);
     const baseVisible = filterNoFixBase(base, showNoFix);
     const latestFlat = latestFlatScanRow();
+    const exploitSummaryScoped = exploitSummary(recsVisible);
     return {
       flatScan: true,
       domain,
@@ -8373,7 +8537,20 @@ var Server = (() => {
         severities,
         { hideNoFix: !showNoFix }
       ),
-      exploit: exploitSummary(recsVisible),
+      exploit: exploitSummaryScoped,
+      // --------------------------------------------------------------- the risk ladder
+      // Severity is a constant in a single-severity register, so exploitability is this
+      // page's spine instead. The classifier is program.riskTier — a REFINEMENT of the
+      // Program page's classifyRisk, never a second opinion, so the two pages can never
+      // print different unclassified counts for one fleet (pinned in test/program.test.ts).
+      ...riskLadder(
+        recsVisible,
+        baseVisible,
+        base,
+        severities,
+        showNoFix,
+        exploitSummaryScoped
+      ),
       // Open findings awaiting a vendor fix (no patch available yet) over the same scoped base
       // rows — sourced here so the Overview can explain the post-rollout open-count step-up.
       // (Naturally zero when the toggle hides them, so the client drops the surface entirely.)
@@ -8392,6 +8569,45 @@ var Server = (() => {
       movement: movement(baseVisible, latestFlat, loadScanRows().length)
     };
   }
+  function riskLadder(recsVisible, baseVisible, base, severities, showNoFix, exposure) {
+    var _a;
+    const rule = getRiskRule2().rule;
+    const tierOf = (r) => riskTier(r, rule);
+    const exposedKeys = /* @__PURE__ */ new Set();
+    if (exposure.exposureKnown) {
+      for (const r of recsVisible) {
+        if (r["vulnerableAsset.hasWideInternetExposure"] === true || r["vulnerableAsset.hasLimitedInternetExposure"] === true) {
+          const k = String((_a = r["_vuln_key"]) != null ? _a : "");
+          if (k) exposedKeys.add(k);
+        }
+      }
+    }
+    const agingTier = ageBucketsBy(
+      baseVisible,
+      tierOf
+    );
+    return {
+      riskRule: { rule, sentence: ruleSentence(rule) },
+      tiers: riskTierStats(baseVisible, rule),
+      funnel: triageFunnel(
+        baseVisible,
+        rule,
+        exposedKeys,
+        exposure.exposureKnown
+      ),
+      tierTrend: openByGroupTrend(
+        loadScanRows(),
+        base,
+        tierOf,
+        RISK_TIER_ORDER,
+        { severities, hideNoFix: !showNoFix, includeOther: false }
+      ),
+      agingTier: { perTier: agingTier.perKey, totalOpen: agingTier.totalOpen },
+      concentration: concentration(recsVisible, ["asset", "cve", "supportGroup", "os"], 5),
+      pastSla: openPastSla(actionableView(baseVisible)),
+      medianOpenAge: openAgeMedian(baseVisible)
+    };
+  }
   var cachedInsightsData = (p) => {
     var _a, _b;
     return cached(
@@ -8400,13 +8616,19 @@ var Server = (() => {
       // all reflect it); key gains showNoFix so on/off states don't share an entry.
       // "insights2" → "insights3": `oldest.*` now carries up to 100 rows (was 7) for the aging
       // panel's prev/next pagination; bump so stale 7-row entries can't survive the deploy.
-      "insights3",
+      // "insights3" → "insights4": the risk-ladder block (tiers, funnel, tierTrend, agingTier,
+      // concentration, pastSla, medianOpenAge). A stale insights3 entry has none of those
+      // fields, and the rebuilt page reads them unconditionally, so it must not be served.
+      // The key gains riskRuleVersion for the same reason it does on the Program page: the
+      // operator can change which signals classify a row, and every tier figure moves with it.
+      "insights4",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
         supportGroups: readStringArray(p, "supportGroups"),
         severities: readSeverities(p),
-        showNoFix: getShowNoFix2()
+        showNoFix: getShowNoFix2(),
+        riskRuleVersion: getRiskRule2().version
       },
       () => insightsData(p),
       3600
@@ -8549,6 +8771,13 @@ var Server = (() => {
       }
     );
   }
+  function unassignedLedgerRows(compiled) {
+    const rows = loadBaseRows();
+    attachSupportGroups(rows);
+    attachBizDomains(rows);
+    for (const r of rows) r["_domain"] = resolveDomainName(r, compiled);
+    return unassignedLifecycles(rows, compiled);
+  }
   function attributionData(p) {
     var _a;
     const scan = currentScan();
@@ -8570,6 +8799,13 @@ var Server = (() => {
       coverage: coverage(recs, resolvedDomainNames(seenTags, domainNames(dom.items))),
       ruleHealth: ruleHealth(recs, compiled),
       unassignedAll: unassignedResources(recs, compiled),
+      // THE LEDGER SIDE, and the reason it is here rather than left implicit: every other figure
+      // on this page is about the current scan, so an operator who has just fixed their tagging
+      // sees zeros everywhere — while the MTTR by-domain split, which reads the ledger, keeps an
+      // Unassigned bar over resolved history no scan can reach. This is the list behind that bar.
+      // Resolved on read exactly as `mttrByDomainData` does it, so the two cannot disagree about
+      // which rows are Unassigned.
+      unassignedLedger: unassignedLedgerRows(compiled),
       // Findings split by resolved support group — the support-group coverage table + the
       // resolved/unresolved headline the page needs to troubleshoot the join.
       supportGroups: supportGroupBreakdown(recs),
@@ -8597,8 +8833,11 @@ var Server = (() => {
     // "attribution4" → "attribution5": `coverage` gained `bySource` and the domain is now
     // resolved tag-first, so both the per-domain rows and the KPIs mean something different. An
     // old-shape entry would render the by-source strip as four blanks and split by rules only.
+    // "attribution5" → "attribution6": payload gained `unassignedLedger`, the base-row list
+    // behind the MTTR by-domain split's Unassigned bar. A stale entry has none and the new
+    // section would render empty over a register that has plenty to show.
     durablyCached(
-      "attribution5",
+      "attribution6",
       { severities: readSeverities(p), showNoFix: getShowNoFix2() },
       () => attributionData(p)
     )
@@ -9201,7 +9440,7 @@ var Server = (() => {
     );
   };
   function riskCohortRows(p, quadrant) {
-    var _a, _b, _c;
+    var _a, _b;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     const rule = getRiskRule2().rule;
@@ -9212,7 +9451,7 @@ var Server = (() => {
     for (const r of rows) {
       const riskRow = r;
       const cls = classifyRisk(riskRow, rule);
-      const open = !RESOLVED_STATUSES.has(String((_c = r["status"]) != null ? _c : "").toUpperCase());
+      const open = isOpenStatus(r["status"]);
       const cell = cls === "unknown" ? open ? "unknownOpen" : "unknownRemediated" : cls === "high" ? open ? "fn" : "tp" : open ? "tn" : "fp";
       if (quadrant && cell !== quadrant) continue;
       out.push({
@@ -9285,13 +9524,15 @@ var Server = (() => {
     const recs = filterSeverities(
       scopedFrameRecords(domain, supportGroup, []),
       readSeverities(p)
-    );
+    ).filter((r) => isOpenStatus(r["status"]));
     return { flatScan: true, counts: sevCountsOf(recs), total: recs.length };
   }
   var cachedExecutiveSeverityCounts = (p) => {
     var _a, _b;
     return cached(
-      "execSevCounts1",
+      // "execSevCounts1" → "execSevCounts2": the tally is open-only now. Same shape, different
+      // population — exactly the kind of change a stale entry serves without any symptom.
+      "execSevCounts2",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),

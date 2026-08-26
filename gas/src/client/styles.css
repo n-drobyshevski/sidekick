@@ -892,6 +892,9 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
   box-shadow: var(--shadow-card);
 }
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 0 0 20px; }
+/* Fixed two-up. For a four-tile row sitting in half the page width beside a chart, where
+   auto-fit lands on three columns and orphans the fourth tile on a line of its own. */
+.kpi-row--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .kpi-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-xl); padding: 14px 16px; box-shadow: var(--shadow-card); }
 .kpi-label { font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); }
 .kpi-value { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin-top: 2px; }
@@ -1285,6 +1288,64 @@ a { color: var(--accent); }
 /* Breakdown severity cell: the proportional strip over its exact per-severity counts. */
 .mix-cell { display: flex; flex-direction: column; gap: 4px; }
 .mix-text { white-space: nowrap; }
+/* Concentration rows carry a name over a proportional bar over a meta line, so the name
+   needs its own weight and the value needs to hold the right edge. */
+.rank-row__name { font-weight: 500; margin-bottom: 5px; }
+.rank-row__value { font-weight: 600; font-size: 15px; flex: none; }
+
+/* ------------------------------------------------------------- risk tiers & funnel */
+/* Tier swatches. One saturated status colour (tier 1) over a monotone neutral ramp — see
+   the note above TIER_COLORS in charts.js for why this is not the severity ramp. The
+   unclassified swatch is HATCHED rather than filled: it is a measurement gap, not a low
+   score, and a flat swatch would read as one more rung on the ladder. */
+.tier-swatch {
+  display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+  margin-right: 8px; flex: none; vertical-align: 0;
+}
+.tier-swatch--hatch {
+  background-image: repeating-linear-gradient(
+    45deg, #9ca3af 0 2px, #e4e4e9 2px 4px);
+  border: 1px solid #9ca3af;
+}
+
+/* The triage funnel: rungs that narrow. The bar is proportional to the widest step so the
+   narrowing is visible at a glance; the "% of the step above" line underneath is what stays
+   legible when a step drops two orders of magnitude, which on a Critical-only register it
+   routinely does. */
+.funnel { display: flex; flex-direction: column; gap: 14px; margin: 4px 0 8px; }
+.funnel-step__head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 5px;
+}
+.funnel-step__label { font-weight: 500; flex: 1 1 auto; min-width: 0; }
+.funnel-step__value { font-size: 16px; font-weight: 600; }
+.funnel-step__pct { font-size: 12px; flex: none; min-width: 84px; text-align: right; }
+.funnel-step__note { margin: 5px 0 0; }
+.funnel-track {
+  height: 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.06); overflow: hidden;
+}
+.funnel-fill { display: block; height: 100%; background: #6b7280; border-radius: 999px; }
+/* The last rung is the one the hero counts, so it takes the page's single saturated mark. */
+.funnel-step--act .funnel-fill { background: var(--sev-critical); }
+.funnel-step--act .funnel-step__value { color: var(--sev-critical-text); }
+
+/* Tier trend small multiples: one frame per tier, each on its own scale. A shared axis
+   would flatten the smallest tier onto the baseline and read as "nothing here", which is
+   the opposite of what a handful of known-exploited findings means. */
+.spark-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 10px;
+}
+.spark {
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  background: var(--page); padding: 8px 10px 6px;
+}
+.spark__head { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
+.spark__glyph { font-size: 11px; line-height: 1; flex: none; }
+.spark__label {
+  font-size: 11px; color: var(--text-2); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.spark__box { position: relative; height: 34px; }
+.spark__value { font-size: 15px; font-weight: 600; }
 
 /* ------------------------------------------------------------------ chart cards */
 .chart-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-xl); padding: 16px; box-shadow: var(--shadow-card); }

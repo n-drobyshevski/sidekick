@@ -6,10 +6,10 @@ import {
   SEVERITY_COLORS,
   SEVERITY_ORDER,
   SELECTABLE_SEVERITIES,
-  RESOLVED_STATUSES,
+  isOpenStatus,
 } from "../domain/config";
-import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, hasDomainInputs, UNASSIGNED } from "../domain/domainRules";
-import { coverage, ruleHealth, supportGroupBreakdown, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
+import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, hasDomainInputs, UNASSIGNED, type CompiledDomain } from "../domain/domainRules";
+import { coverage, ruleHealth, supportGroupBreakdown, unassignedLifecycles, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
 import { mttrFromLedger, vulnKey } from "../domain/lifecycle";
 import type { BaseRow } from "../domain/ledgerCore";
 import { extractNodes } from "../domain/transform";
@@ -133,7 +133,13 @@ export function bootstrap(_p?: unknown): ApiResult {
     // (whose own comment admitted as much), `palette.glyphs`/`slaTargets`, and
     // `latestScan.shape`/`severities`. Bump so no stale fat entry survives the persistent
     // dataVersion; a reader that wanted any of them would have been broken already.
-    ...(durablyCached("bootstrapCore6", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
+    // "bootstrapCore6" → "bootstrapCore7": the payload gained `openCounts`. A cached
+    // old-shape entry has none, and the Executive severity tiles read it directly, so they
+    // would render "0" across the board until the next data version.
+    // "bootstrapCore7" → "bootstrapCore8": `scopeCounts` gained `unassignedBase`. A stale
+    // entry has none, and the switcher would keep printing the frame-only zero that made the
+    // MTTR Unassigned bar look like a bug in the first place.
+    ...(durablyCached("bootstrapCore8", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
     // Live per-request fields: never cached (activeJob changes every poll tick).
     hasCredentials: hasWizCredentials(),
     activeJob: activeJobSummary(),
@@ -149,6 +155,13 @@ function bootstrapCore(): Rec {
   // filtered views. No-op on the default path.
   const records = scan ? visibleFrame(scan.records) : [];
   const counts: Record<string, number> = {};
+  // The same tally restricted to OPEN rows. The Executive page's severity tiles are labelled
+  // "Open vulnerabilities" and were reading `counts`, which is every row in the frame — so a
+  // register with a healthy close rate reported its resolved history as live risk. Tallied in
+  // this pass rather than derived later so it cannot drift from `counts`, and kept as a
+  // separate field rather than narrowing `counts` itself, which the scope switcher's
+  // denominators read and which genuinely means "everything in the register".
+  const openCounts: Record<string, number> = {};
   let unassignedCount = 0;
   // What the header's scope switcher counts over. Tallied in the SAME pass as the severity
   // counts above, and over the same `records`, so the caption's denominator is the population
@@ -170,6 +183,9 @@ function bootstrapCore(): Rec {
   for (const r of records) {
     const sev = String(r["_sev"]);
     counts[sev] = (counts[sev] ?? 0) + 1;
+    if (isOpenStatus(r["status"])) {
+      openCounts[sev] = (openCounts[sev] ?? 0) + 1;
+    }
     // UNASSIGNED IS A REAL BUCKET AND IS COUNTED LIKE ANY OTHER. `domainNames()` appends it to
     // the configured list, so the switcher offers it as a scope; excluding it here would draw
     // that row as "0 findings" over a bucket that is often the largest one in the register.
@@ -204,13 +220,33 @@ function bootstrapCore(): Rec {
   const baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
   bizDomains.attachBizDomains(baseRows);
   let notAttributable = 0;
+  // ...and the ledger's UNASSIGNED tally, which used to fall through this loop uncounted.
+  //
+  // The bug that motivated it: a row with no `Wiz/Domain` tag but WITH attribution inputs
+  // took neither branch below — `bd` is empty so the first does not fire, `hasDomainInputs`
+  // is true so the second does not either — yet `resolveDomainName` calls exactly that row
+  // UNASSIGNED, and the MTTR by-domain split drew it as an Unassigned bar. So the switcher
+  // could report "0 unassigned" while a page showed an Unassigned bar over real rows, and no
+  // figure anywhere in the app contradicted it.
+  //
+  // Frame `unassignedCount` cannot cover this: it counts the CURRENT SCAN, and the population
+  // here is lifecycles whose stored tag snapshot predates a tagging rollout and that Wiz no
+  // longer re-lists, so they are in the ledger and not in the frame. Same argument that put
+  // `notAttributable` in this pass in the first place.
+  //
+  // This is the one place the rule engine has to run — the answer genuinely depends on it,
+  // unlike `notAttributable` above. Bounded to untagged rows with inputs, and strictly less
+  // work than `mttrByDomainData` already does per request (it resolves EVERY base row); this
+  // whole function is memoized per data version.
+  let unassignedBase = 0;
   for (const r of baseRows) {
     const bd = String(r["_bizDomain"] ?? "");
     if (bd) { seenTags.add(bd); continue; }
     // No tag: `missing` is precisely "no attribution input at all", which is what
     // `resolveDomain` tests next. Asked directly rather than through `resolveDomainName` so
     // the rule engine is not run for an answer that cannot depend on it.
-    if (!hasDomainInputs(r)) notAttributable += 1;
+    if (!hasDomainInputs(r)) { notAttributable += 1; continue; }
+    if (assignDomain(r, compiled) === UNASSIGNED) unassignedBase += 1;
   }
   return {
     // The deployed code stamp (esbuild-injected source hash; "dev" locally). Surfaced so an
@@ -241,6 +277,9 @@ function bootstrapCore(): Rec {
         }
       : null,
     counts,
+    // Open-only severity tally over the same frame. `counts` stays register-wide because the
+    // scope switcher's denominators are; anything answering "how much is live risk" reads this.
+    openCounts,
     unassignedCount,
     // THE RESOLVED UNIVERSE, not the rule list. A tag value is a domain a finding can actually
     // land in, so a switcher built from `domainNames(items)` alone would offer only the manual
@@ -257,12 +296,18 @@ function bootstrapCore(): Rec {
       register: records.length,
       domains: domainCounts,
       supportGroups: supportGroupCounts,
+      // FRAME. "How many findings in the current scan did neither mechanism claim."
       unassigned: unassignedCount,
       noSupportGroup,
-      // Both over base rows, and paired on purpose: "412 not attributable" is unreadable
+      // All three over base rows, and paired on purpose: "412 not attributable" is unreadable
       // without the population it is 412 of, and that population is not `register`.
       baseRows: baseRows.length,
       notAttributable,
+      // LEDGER. The same question as `unassigned` asked over every lifecycle the register
+      // still holds, resolved history included — which is the population the MTTR by-domain
+      // split draws, and therefore the number that has to be non-zero whenever that split
+      // shows an Unassigned bar.
+      unassignedBase,
     },
     // Which tag the business domain was read off. Surfaced because the figure beside it is
     // meaningless without it: "82 carry no domain" is a fact about `Wiz/Domain` specifically,
@@ -384,6 +429,9 @@ function insightsData(p?: unknown): Rec {
   const recsVisible = filterNoFixFrame(recs, showNoFix);
   const baseVisible = filterNoFixBase(base as unknown as Rec[], showNoFix) as unknown as typeof base;
   const latestFlat = ledgerStore.latestFlatScanRow();
+  // One pass over the frame, read by both the `exploit` block and the risk ladder's
+  // exposure join below.
+  const exploitSummaryScoped = insights.exploitSummary(recsVisible);
   return {
     flatScan: true,
     domain,
@@ -405,7 +453,16 @@ function insightsData(p?: unknown): Rec {
       severities,
       { hideNoFix: !showNoFix },
     ),
-    exploit: insights.exploitSummary(recsVisible),
+    exploit: exploitSummaryScoped,
+    // --------------------------------------------------------------- the risk ladder
+    // Severity is a constant in a single-severity register, so exploitability is this
+    // page's spine instead. The classifier is program.riskTier — a REFINEMENT of the
+    // Program page's classifyRisk, never a second opinion, so the two pages can never
+    // print different unclassified counts for one fleet (pinned in test/program.test.ts).
+    ...riskLadder(
+      recsVisible, baseVisible as unknown as Rec[], base as unknown as Rec[],
+      severities, showNoFix, exploitSummaryScoped,
+    ),
     // Open findings awaiting a vendor fix (no patch available yet) over the same scoped base
     // rows — sourced here so the Overview can explain the post-rollout open-count step-up.
     // (Naturally zero when the toggle hides them, so the client drops the surface entirely.)
@@ -425,6 +482,77 @@ function insightsData(p?: unknown): Rec {
   };
 }
 
+/**
+ * The Overview page's risk-ladder block: tiers, the triage funnel, the tier trend, aging
+ * stacked by tier, concentration, and the one SLA figure.
+ *
+ * Split out of `insightsData` only for length — it reads the same already-scoped, already-
+ * filtered row sets and adds no queries of its own. Four decisions worth stating:
+ *
+ *  - `pastSla` runs `openPastSla` over `actionableView`, which is the clock the MTTR page's
+ *    headline uses. Calling `api_getMttr` for it would answer over a DIFFERENT population —
+ *    `mttrData` scopes by `scopedBaseRows(domain, supportGroup)` and ignores the
+ *    `supportGroups[]` multi-select this payload honours — and would miss its cache besides
+ *    (namespace `mttr8`, not `insights4`). One pass over rows already in hand instead.
+ *  - The funnel's exposure step joins the FRAME to the ledger on vuln_key, because
+ *    `hasWideInternetExposure` is not a ledger column. When the frame predates those keys,
+ *    `exposureKnown` is false and the client stops the funnel early rather than drawing a
+ *    zero — absent is not none.
+ *  - `tierTrend` reads the UNFILTERED base with the as-of no-fix exclusion, mirroring
+ *    `openTrend` above so the two lines describe the same population.
+ *  - `concentration` ranks by OPEN findings, unlike `groupTree` (which ranks by open +
+ *    resolved because the breakdown tree reports on the whole scan).
+ */
+function riskLadder(
+  recsVisible: Rec[],
+  baseVisible: Rec[],
+  base: Rec[],
+  severities: string[] | null,
+  showNoFix: boolean,
+  // Passed in rather than recomputed: `insightsData` already ran it for the `exploit`
+  // field, and it is a full pass over every frame record.
+  exposure: insights.ExploitSummary,
+): Rec {
+  const rule = settingsStore.getRiskRule().rule;
+  const tierOf = (r: Rec) => program.riskTier(r as unknown as program.RiskRow, rule);
+
+  // Frame -> ledger join for the funnel's exposure step.
+  const exposedKeys = new Set<string>();
+  if (exposure.exposureKnown) {
+    for (const r of recsVisible) {
+      if (r["vulnerableAsset.hasWideInternetExposure"] === true
+        || r["vulnerableAsset.hasLimitedInternetExposure"] === true) {
+        const k = String(r["_vuln_key"] ?? "");
+        if (k) exposedKeys.add(k);
+      }
+    }
+  }
+
+  const agingTier = insights.ageBucketsBy(
+    baseVisible as unknown as Parameters<typeof insights.ageBucketsBy>[0],
+    tierOf as never,
+  );
+
+  return {
+    riskRule: { rule, sentence: program.ruleSentence(rule) },
+    tiers: insights.riskTierStats(baseVisible as never, rule),
+    funnel: insights.triageFunnel(
+      baseVisible as never, rule, exposedKeys, exposure.exposureKnown,
+    ),
+    tierTrend: openByGroupTrend(
+      ledgerStore.loadScanRows() as unknown as Rec[],
+      base,
+      tierOf,
+      program.RISK_TIER_ORDER,
+      { severities, hideNoFix: !showNoFix, includeOther: false },
+    ),
+    agingTier: { perTier: agingTier.perKey, totalOpen: agingTier.totalOpen },
+    concentration: insights.concentration(recsVisible, ["asset", "cve", "supportGroup", "os"], 5),
+    pastSla: openPastSla(actionableView(baseVisible as never)),
+    medianOpenAge: insights.openAgeMedian(baseVisible as never),
+  };
+}
+
 // 1h TTL like the MTTR summary: aging carries wall-clock-relative day counts. Keyed on
 // domain so per-chain payloads don't clobber each other. Extracted so warmReadModels and the
 // getInsights endpoint share one cache entry.
@@ -435,13 +563,19 @@ const cachedInsightsData = (p?: unknown) =>
     // all reflect it); key gains showNoFix so on/off states don't share an entry.
     // "insights2" → "insights3": `oldest.*` now carries up to 100 rows (was 7) for the aging
     // panel's prev/next pagination; bump so stale 7-row entries can't survive the deploy.
-    "insights3",
+    // "insights3" → "insights4": the risk-ladder block (tiers, funnel, tierTrend, agingTier,
+    // concentration, pastSla, medianOpenAge). A stale insights3 entry has none of those
+    // fields, and the rebuilt page reads them unconditionally, so it must not be served.
+    // The key gains riskRuleVersion for the same reason it does on the Program page: the
+    // operator can change which signals classify a row, and every tier figure moves with it.
+    "insights4",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       supportGroups: readStringArray(p, "supportGroups"),
       severities: readSeverities(p),
       showNoFix: settingsStore.getShowNoFix(),
+      riskRuleVersion: settingsStore.getRiskRule().version,
     },
     () => insightsData(p),
     3600,
@@ -602,6 +736,22 @@ export function getGroupTrend(p?: unknown): ApiResult {
  * Deliberately ignores the global Value-Chain / Support-group filters — the page
  * audits the mapping itself, not a filtered view of it.
  */
+/**
+ * Base rows resolving to Unassigned, ready for the explorer.
+ *
+ * Deliberately NOT severity-scoped, unlike everything else on the Attribution page. The
+ * question this answers is "which lifecycles can this register not attribute", and a severity
+ * filter would hide part of the answer while the by-domain split it explains is drawn over
+ * whatever severities that page is scoped to. A gap you cannot see is the thing being fixed.
+ */
+function unassignedLedgerRows(compiled: CompiledDomain[]): Rec[] {
+  const rows = ledgerStore.loadBaseRows() as unknown as Rec[];
+  supportGroups.attachSupportGroups(rows);
+  bizDomains.attachBizDomains(rows);
+  for (const r of rows) r["_domain"] = resolveDomainName(r, compiled);
+  return unassignedLifecycles(rows, compiled) as unknown as Rec[];
+}
+
 function attributionData(p?: unknown): Rec {
   const scan = findings.currentScan();
   if (!scan) return { flatScan: false };
@@ -628,6 +778,13 @@ function attributionData(p?: unknown): Rec {
     coverage: coverage(recs, resolvedDomainNames(seenTags, domainNames(dom.items))),
     ruleHealth: ruleHealth(recs, compiled),
     unassignedAll: unassignedResources(recs, compiled),
+    // THE LEDGER SIDE, and the reason it is here rather than left implicit: every other figure
+    // on this page is about the current scan, so an operator who has just fixed their tagging
+    // sees zeros everywhere — while the MTTR by-domain split, which reads the ledger, keeps an
+    // Unassigned bar over resolved history no scan can reach. This is the list behind that bar.
+    // Resolved on read exactly as `mttrByDomainData` does it, so the two cannot disagree about
+    // which rows are Unassigned.
+    unassignedLedger: unassignedLedgerRows(compiled),
     // Findings split by resolved support group — the support-group coverage table + the
     // resolved/unresolved headline the page needs to troubleshoot the join.
     supportGroups: supportGroupBreakdown(recs),
@@ -662,8 +819,11 @@ const cachedAttributionData = (p?: unknown) =>
   // "attribution4" → "attribution5": `coverage` gained `bySource` and the domain is now
   // resolved tag-first, so both the per-domain rows and the KPIs mean something different. An
   // old-shape entry would render the by-source strip as four blanks and split by rules only.
+  // "attribution5" → "attribution6": payload gained `unassignedLedger`, the base-row list
+  // behind the MTTR by-domain split's Unassigned bar. A stale entry has none and the new
+  // section would render empty over a register that has plenty to show.
   durablyCached(
-    "attribution5",
+    "attribution6",
     { severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix() },
     () => attributionData(p),
   );
@@ -1438,7 +1598,7 @@ function riskCohortRows(p: unknown, quadrant: string): Rec[] {
   for (const r of rows) {
     const riskRow = r as unknown as program.RiskRow;
     const cls = program.classifyRisk(riskRow, rule);
-    const open = !RESOLVED_STATUSES.has(String(r["status"] ?? "").toUpperCase());
+    const open = isOpenStatus(r["status"]);
     const cell =
       cls === "unknown"
         ? open ? "unknownOpen" : "unknownRemediated"
@@ -1557,7 +1717,12 @@ function executiveSeverityCounts(p?: unknown): Rec {
   const recs = filterSeverities(
     scopedFrameRecords(domain, supportGroup, []),
     readSeverities(p),
-  );
+  ).filter((r) => isOpenStatus(r["status"]));
+  // OPEN ONLY, matching bootstrap's `openCounts`. The two have to agree: the unscoped view
+  // paints from bootstrap and never repaints from this payload, and that no-op is only a
+  // no-op while both tally the same population (pinned in test/executiveView.test.js).
+  // It also makes the "No open findings in this scope" note true — over the old all-rows
+  // total it could only fire for a scope holding no findings at all, resolved ones included.
   return { flatScan: true, counts: sevCountsOf(recs), total: recs.length };
 }
 
@@ -1568,7 +1733,9 @@ function executiveSeverityCounts(p?: unknown): Rec {
 // `showNoFix` alone — that one is carried for symmetry with its siblings, not because it must be.
 const cachedExecutiveSeverityCounts = (p?: unknown) =>
   cached(
-    "execSevCounts1",
+    // "execSevCounts1" → "execSevCounts2": the tally is open-only now. Same shape, different
+    // population — exactly the kind of change a stale entry serves without any symptom.
+    "execSevCounts2",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),

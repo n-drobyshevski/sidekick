@@ -15,6 +15,8 @@ import {
   DEFAULT_RISK_RULE,
   firedSignals,
   ruleSensitivity,
+  RISK_TIER_ORDER,
+  riskTier,
   ruleSentence,
   signalBreakdown,
   type RiskRow,
@@ -632,5 +634,77 @@ describe("risk-signal backfill (pure core)", () => {
     expect(countUnknownRisk(st)).toBe(1); // only the episode is left unfilled
     backfillRiskFromRecords(st, scanB, "2026-03-01T00:00:00Z", emptyBackfillResult());
     expect(countUnknownRisk(st)).toBe(0);
+  });
+});
+
+// ------------------------------------------------------------------------- risk tiers
+
+describe("riskTier", () => {
+  const rule = DEFAULT_RISK_RULE;
+  const row = (over: Partial<RiskRow> = {}): RiskRow => ({
+    severity: "CRITICAL",
+    status: "OPEN",
+    has_kev: false,
+    has_exploit: false,
+    epss: 0,
+    ...over,
+  });
+
+  it("splits high risk by which signal fired, worst evidence first", () => {
+    // KEV wins even when a public exploit and a high EPSS also fire — a catalogued
+    // in-the-wild exploitation is the strongest claim available, so it names the tier.
+    expect(riskTier(row({ has_kev: true, has_exploit: true, epss: 0.9 }), rule)).toBe("kev");
+    expect(riskTier(row({ has_exploit: true, epss: 0.9 }), rule)).toBe("exploit");
+    expect(riskTier(row({ epss: 0.9 }), rule)).toBe("epss");
+    expect(riskTier(row(), rule)).toBe("none");
+  });
+
+  it("keeps an unmeasured signal unknown rather than inventing a clean row", () => {
+    // The trap this whole three-valued scheme exists for: null is NOT captured, not false.
+    expect(riskTier(row({ has_kev: null }), rule)).toBe("unknown");
+    expect(riskTier(row({ has_exploit: null }), rule)).toBe("unknown");
+    expect(riskTier(row({ epss: null }), rule)).toBe("unknown");
+    // ...but positive evidence stands on its own, whatever else is missing.
+    expect(riskTier(row({ has_kev: true, has_exploit: null, epss: null }), rule)).toBe("kev");
+  });
+
+  it("epss uses the rule threshold, at-or-above", () => {
+    expect(riskTier(row({ epss: rule.epssThreshold }), rule)).toBe("epss");
+    expect(riskTier(row({ epss: rule.epssThreshold - 0.001 }), rule)).toBe("none");
+  });
+
+  it("decides nothing when the rule enables no signal", () => {
+    const empty: RiskRule = { kev: false, exploit: false, epss: false, epssThreshold: 0.1 };
+    expect(riskTier(row({ has_kev: true }), empty)).toBe("unknown");
+  });
+
+  // THE LOAD-BEARING ONE. The tiers are a refinement of classifyRisk, not a second opinion:
+  // the OS-vulnerabilities page and the Program page both publish an unclassified count over
+  // the same fleet, and if these two ever drift, the reader has no way to tell which is
+  // lying. Pinned as an identity over a population that exercises every branch.
+  it("reconciles with classifyRisk by construction", () => {
+    const rows: RiskRow[] = [
+      row({ has_kev: true }),
+      row({ has_kev: true, has_exploit: true }),
+      row({ has_exploit: true }),
+      row({ epss: 0.42 }),
+      row({ epss: 0.1 }),
+      row(),
+      row({ has_kev: null }),
+      row({ has_exploit: null, epss: null }),
+      row({ status: "RESOLVED", has_exploit: true }),
+    ];
+    const tiers = rows.map((r) => riskTier(r, rule));
+    const classes = rows.map((r) => classifyRisk(r, rule));
+    const count = (xs: string[], v: string) => xs.filter((x) => x === v).length;
+
+    const high = count(tiers, "kev") + count(tiers, "exploit") + count(tiers, "epss");
+    expect(high).toBe(count(classes, "high"));
+    expect(count(tiers, "none")).toBe(count(classes, "low"));
+    expect(count(tiers, "unknown")).toBe(count(classes, "unknown"));
+    // and the tiers partition the population — no row lands in two, none in zero
+    expect(tiers.length).toBe(rows.length);
+    expect(new Set(tiers).size).toBeLessThanOrEqual(RISK_TIER_ORDER.length);
+    for (const t of tiers) expect(RISK_TIER_ORDER).toContain(t);
   });
 });

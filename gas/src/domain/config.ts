@@ -33,6 +33,18 @@ export const SLA_TARGETS: Record<string, number> = {
   INFO: 180,
 };
 
+// EPSS probability at or above this counts as a priority signal. 0.1 is the conventional
+// operational cut (FIRST guidance treats >=0.1 as meaningful exploitation likelihood); 0.5
+// would qualify almost nothing in typical fleets.
+//
+// Lives here, beside SLA_TARGETS, because it is a policy constant two classifiers read:
+// `insights.exploitSummary` and `program.DEFAULT_RISK_RULE`. It used to live in insights.ts,
+// which made program.ts import insights.ts — and that blocked insights.ts from ever importing
+// program.ts back. `insights.riskTierStats` needs exactly that, so the constant moved rather
+// than the classifier being duplicated. insights.ts re-exports it, so every existing import
+// still resolves.
+export const EPSS_PRIORITY_THRESHOLD = 0.1;
+
 // UNKNOWN is a local normalization bucket, never an API value — not user-selectable.
 export const SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s) => s !== "UNKNOWN");
 export const DEFAULT_FETCH_SEVERITIES = ["CRITICAL", "HIGH"];
@@ -49,6 +61,21 @@ export const API_SEVERITY_VALUES: Record<string, string> = {
 
 // API statuses that mean remediated/closed — the MTTR stop-clock.
 export const RESOLVED_STATUSES = new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
+
+/**
+ * Is this finding still open? The polarity is deliberate and load-bearing: anything that is
+ * NOT a recognized resolved status counts as open, including a blank or unfamiliar one. A new
+ * Wiz status the app has never seen should leave a finding in the backlog where someone will
+ * look at it, not silently close it.
+ *
+ * Three domain modules each carry a private copy of this two-line test (insights, remediation,
+ * program), each with its own tests; those are left alone. This export exists so the SERVER
+ * layer has one to reach for instead of open-coding the same `.has(String(...).toUpperCase())`
+ * at every call site — which is how the Executive tiles came to count resolved rows.
+ */
+export function isOpenStatus(status: unknown): boolean {
+  return !RESOLVED_STATUSES.has(String(status ?? "").toUpperCase());
+}
 
 // Disappearance-resolution timestamping: "scan_ts" (conservative; default) or "midpoint".
 export const DISAPPEARANCE_RESOLUTION = "scan_ts";
