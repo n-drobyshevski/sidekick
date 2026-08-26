@@ -33,6 +33,18 @@ export const SLA_TARGETS: Record<string, number> = {
   INFO: 180,
 };
 
+// EPSS probability at or above this counts as a priority signal. 0.1 is the conventional
+// operational cut (FIRST guidance treats >=0.1 as meaningful exploitation likelihood); 0.5
+// would qualify almost nothing in typical fleets.
+//
+// Lives here, beside SLA_TARGETS, because it is a policy constant two classifiers read:
+// `insights.exploitSummary` and `program.DEFAULT_RISK_RULE`. It used to live in insights.ts,
+// which made program.ts import insights.ts — and that blocked insights.ts from ever importing
+// program.ts back. `insights.riskTierStats` needs exactly that, so the constant moved rather
+// than the classifier being duplicated. insights.ts re-exports it, so every existing import
+// still resolves.
+export const EPSS_PRIORITY_THRESHOLD = 0.1;
+
 // UNKNOWN is a local normalization bucket, never an API value — not user-selectable.
 export const SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s) => s !== "UNKNOWN");
 export const DEFAULT_FETCH_SEVERITIES = ["CRITICAL", "HIGH"];

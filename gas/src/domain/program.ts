@@ -34,8 +34,7 @@
 // and drive the published bounds (see `Rate`) whose width IS the size of the doubt.
 // ---------------------------------------------------------------------------------------
 
-import { RESOLVED_STATUSES, SEVERITY_ORDER } from "./config";
-import { EPSS_PRIORITY_THRESHOLD } from "./insights";
+import { EPSS_PRIORITY_THRESHOLD, RESOLVED_STATUSES, SEVERITY_ORDER } from "./config";
 import type { BaseRow } from "./ledgerCore";
 import { normalizeSeverity } from "./severity";
 import { minNum, parseTs } from "./util";
@@ -152,6 +151,53 @@ export function classifyRisk(row: RiskRow, rule: RiskRule): RiskClass {
   const s = seen(row, rule);
   if (!s.kev || !s.exploit || !s.epss) return "unknown";
   return "low";
+}
+
+// ------------------------------------------------------------------------ risk tiers
+
+/**
+ * The OS-vulnerabilities page's spine. `classifyRisk` answers high/low/unknown, which is what
+ * the coverage and efficiency rates need; a triage view needs to know WHICH signal fired,
+ * because "on the CISA KEV catalog" and "EPSS crossed 10%" are not the same day's work.
+ *
+ * So this is a REFINEMENT of `classifyRisk`, never a second opinion — it splits `high` into
+ * its three causes in severity-of-evidence order and passes `low` / `unknown` straight
+ * through. The identity holds by construction and is pinned in test/program.test.ts:
+ *
+ *     kev + exploit + epss === (rows classified "high")
+ *     none                 === (rows classified "low")
+ *     unknown              === (rows classified "unknown")
+ *
+ * That matters because both pages render an unclassified count over the same fleet. Two
+ * classifiers would eventually disagree, and the reader would have no way to tell which one
+ * was lying.
+ */
+export type RiskTier = "kev" | "exploit" | "epss" | "none" | "unknown";
+
+/** Worst evidence first; `unknown` last because it is a measurement gap, not a low score. */
+export const RISK_TIER_ORDER: RiskTier[] = ["kev", "exploit", "epss", "none", "unknown"];
+
+/** Display labels. The tier is named by what is KNOWN, never by a severity word. */
+export const RISK_TIER_LABELS: Record<RiskTier, string> = {
+  kev: "Known exploited",
+  exploit: "Public exploit",
+  epss: "Likely exploited",
+  none: "No known exploit",
+  unknown: "Unclassified",
+};
+
+/**
+ * Which tier a row lands in. A row can fire several clauses at once (a KEV entry usually also
+ * has a public exploit); the tier takes the strongest, so the tiers partition the population
+ * rather than overlapping the way `exploitSummary`'s counts deliberately do.
+ */
+export function riskTier(row: RiskRow, rule: RiskRule): RiskTier {
+  const cls = classifyRisk(row, rule);
+  if (cls !== "high") return cls === "low" ? "none" : "unknown";
+  const fired = firedSignals(row, rule);
+  if (fired.includes("kev")) return "kev";
+  if (fired.includes("exploit")) return "exploit";
+  return "epss";
 }
 
 // ------------------------------------------------------------------ confusion matrix
