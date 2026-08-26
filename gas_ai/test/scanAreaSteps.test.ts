@@ -34,11 +34,13 @@ let steps: Step[];
 beforeAll(async () => {
   const server = await bootServer();
   server.setup();
-  // The steps as the panel receives them — describeSyncSteps through the endpoint rather
-  // than the module, so a step that never reaches the client counts as absent here too.
-  const res = server.api.getScanQueries({}) as { ok: boolean; data?: { steps: Step[] }; error?: string };
-  if (!res.ok) throw new Error(res.error);
-  steps = res.data!.steps;
+  // The battery itself. This used to read `api.getScanQueries().steps`, on the argument that
+  // going through the endpoint meant "a step that never reaches the client counts as absent
+  // here too" — and that argument is now served by the last spec in this file instead, which
+  // asserts the union of `getScanStepDetail` over every area IS the battery. That is the
+  // property the page/sheet split has to preserve, and it is a stronger claim than reading
+  // one endpoint happened to make.
+  steps = server.jobs.describeSyncSteps() as unknown as Step[];
 });
 
 afterAll(() => teardownServer());
@@ -105,5 +107,42 @@ describe("the two compliance areas own their own queries", () => {
       (s) => s.id === "FRAMEWORKS_LIST" || s.id.indexOf("COMPLIANCE_POSTURE_") === 0,
     );
     expect(posture.map((s) => s.id)).toEqual([]);
+  });
+
+  // THE PROPERTY THE PAGE/SHEET SPLIT HAS TO PRESERVE. The Wiz Scans page no longer carries
+  // the battery; each drill-down fetches its own area. So "every step still reaches a reader"
+  // is no longer true by construction of one payload — it is true only if the per-area
+  // endpoint, unioned over the areas the battery names, is the battery. A step whose `area`
+  // is misspelt, or an area the endpoint filters out, would strand it in exactly the way this
+  // file's other specs are about.
+  it("reaches every step through the per-area endpoint the sheet calls", async () => {
+    const server = await bootServer();
+    server.setup();
+    const areas = [...new Set(steps.map((s) => s.area))];
+    const seen: string[] = [];
+    for (const area of areas) {
+      const res = server.api.getScanStepDetail({ area }) as
+        { ok: boolean; data?: { area: string; steps: Array<{ id: string }> } };
+      expect(res.ok).toBe(true);
+      // Echoed, so a sheet cannot paint one area's queries under another's heading.
+      expect(res.data!.area).toBe(area);
+      seen.push(...res.data!.steps.map((s) => s.id));
+    }
+    expect(seen.sort()).toEqual(steps.map((s) => s.id).sort());
+  });
+
+  // The documents are the reason this endpoint exists; a step that arrives without one would
+  // render an empty code block and look like a step that sends nothing.
+  it("carries a document for every step it returns", async () => {
+    const server = await bootServer();
+    server.setup();
+    for (const area of [...new Set(steps.map((s) => s.area))]) {
+      const res = server.api.getScanStepDetail({ area }) as
+        { ok: boolean; data?: { steps: Array<{ id: string; document?: string }> } };
+      for (const step of res.data!.steps) {
+        expect(typeof step.document, step.id + " has no document").toBe("string");
+        expect(step.document!.length, step.id + " has an empty document").toBeGreaterThan(0);
+      }
+    }
   });
 });

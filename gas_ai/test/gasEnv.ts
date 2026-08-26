@@ -82,9 +82,21 @@ export function teardownServer(): void {
 /** `npm run test:exact` sets this. See the comment above. */
 const EXACT = process.env["GAS_TEST_FULL_ISOLATION"] === "1";
 
+/** Service-call tallies the shim keeps. See the `counters` block in dev/gas-shims.js. */
+export interface GasCounters {
+  propGet: number;
+  propSet: number;
+  rangeReads: number;
+  cellsRead: number;
+  /** Per-key read tallies — which property, how many times. */
+  propGetKeys: Record<string, number>;
+}
+
 interface GasFakes {
   snapshot(): unknown;
   restore(snap: unknown): void;
+  counters(): GasCounters;
+  resetCounters(): void;
 }
 
 function fakes(): GasFakes {
@@ -93,12 +105,32 @@ function fakes(): GasFakes {
   return f as GasFakes;
 }
 
+/**
+ * Run `fn` and report what it cost the fake platform.
+ *
+ * This is what lets a spec assert that a read got CHEAPER rather than merely that it still
+ * returns the right answer — the two are independent, and only the second one is usually
+ * tested. Counts service calls, not wall clock, so it does not vary with machine speed.
+ */
+export function measure<T>(fn: () => T): { value: T; counters: GasCounters } {
+  fakes().resetCounters();
+  const value = fn();
+  return { value, counters: fakes().counters() };
+}
+
 /** Every module in `src/server` that memoizes across a call. Nothing else holds state. */
 async function resetServerMemos(): Promise<void> {
   const mods = await Promise.all([
     // api.ts is absent on purpose — its one memo is identity-keyed on syncStore's, so
     // clearing syncStore below already invalidates it. See the note where it is declared.
     import("../src/server/archiveStore"),
+    // The three per-execution memos behind every cache key. In GAS an execution ends with
+    // the request; here the module registry outlives the test, so without this a stamp read
+    // in one test would answer in the next — which is exactly the staleness the memos are
+    // careful to drop on a version bump.
+    // Its warm scope and per-execution breaker; module-level, so the same rule applies.
+    import("../src/server/readModelStore"),
+    import("../src/server/serverCache"),
     import("../src/server/settingsStore"),
     import("../src/server/sheetsDb"),
     import("../src/server/syncStore"),
@@ -172,14 +204,28 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
     "runGraphQuery (agents reaching classified data, with the evidence)",
   ],
   ["getAssets", {}],
+  // The narrow projections Wiz Scans, Help and Settings read. They belong in this sweep for
+  // the reason the meta-guard below exists: a read endpoint outside READ_APIS escapes both
+  // the golden AND verdictIsolation's per-asset-claim check, and a projection is exactly the
+  // shape most likely to carry one through by accident.
+  ["getAssetsHead", {}],
   ["getAssetOptions", {}],
   ["getIssues", {}],
   ["getToxicCombos", {}],
+  ["getCombosDigest", {}],
+  ["getFiveRsScope", {}],
   // Phase 7: the landscape-wide Priorities page — issues ∪ findings, ranked together.
   ["getProblems", {}],
   // Phase P1a: remediation ACTIONS ranked by marginal set-cover over the same union.
   ["getActions", {}],
   ["getSyncHistory", {}],
+  // The Wiz Scans pair. The page half is small and describes the last sync's outcomes; the
+  // sheet half carries the GraphQL documents verbatim, which is the thing most worth pinning
+  // in this whole golden — this module's own header says the document is read from the server
+  // precisely so a hand-typed description cannot drift from it, and a snapshot is what makes
+  // that true of the wire as well. `posture` is the area with the most steps.
+  ["getScanQueries", {}],
+  ["getScanStepDetail", { area: "posture" }],
   ["getSettings", {}],
   ["getAarsRule", {}],
   // Phase 5: the problem tree's rule state, mirroring getAarsRule above. Mutating

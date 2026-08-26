@@ -29,7 +29,7 @@
 
 import { bootstrap, setParams, swrCall } from "../store.js";
 import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets.js";
-import { coverCurve } from "../charts.js";
+import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   absent, clear, dataTable, debounce, el, emptyState, errorState, fmtDate, glossaryTip, heroStat,
   pageHeader, pager, plural, segmented, select, selectField, sevBadge,
@@ -531,8 +531,19 @@ export async function renderProblems(main, params) {
             "Fewer than three actions close the whole board here."),
     );
     // Laid out before Chart.js measures it, or it reads a 0x0 box — the same reason
-    // inventory.js's trend chart defers its draw one frame.
-    if (enough) requestAnimationFrame(() => coverCurve(canvas, curve, { yLabel: "" }));
+    // inventory.js's trend chart defers its draw one frame. The rAF now waits on the bundle
+    // as well: Chart.js is fetched on the first route that draws a chart rather than shipped
+    // with every one, and if this deployment's policy will not run it, the strip keeps its
+    // label and says so. See chartsLoader.js.
+    if (enough) {
+      loadCharts().then((charts) => {
+        if (!canvas.isConnected) return;
+        requestAnimationFrame(() => charts.coverCurve(canvas, curve, { yLabel: "" }));
+      }).catch(() => {
+        if (!canvas.isConnected) return;
+        chartUnavailable(canvas);
+      });
+    }
 
     // The sentence that used to lead here said "N open problems collapse to M actions, the
     // top 10 close K%", and the three tiles beneath it repeated all three of those numbers.

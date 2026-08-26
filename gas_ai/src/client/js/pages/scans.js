@@ -42,10 +42,13 @@ import {
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
 
 import { tipAnchor } from "../ui.js";
-// Only the whole-landscape head of api_getAssets is read (kpis, total) — never `rows`. Past
-// the server's row ceiling the payload downgrades to a single page, but the head still
-// describes the landscape, so a small pageSize keeps this page correct AND cheap at any size.
-const ASSETS_PARAMS = { all: true, pageSize: 25 };
+// This page reads three whole-landscape figures — `kpis`, `total` and `reach` — and never a
+// row. It used to get them from api_getAssets with `{all: true, pageSize: 25}`, and the
+// comment here claimed that "a small pageSize keeps this page correct AND cheap at any
+// size". It had the cost backwards. `all` is not a request parameter at all — the server
+// sets it from the register's own size — and on that branch it ships every row and ignores
+// pageSize, so below the ceiling (the normal case) this page received the entire inventory
+// to read three numbers. api_getAssetsHead projects those three off the same cached model.
 
 export async function renderScans(main, params, ctx) {
   // A sheet left open by the previous render of this route belongs to that render.
@@ -89,8 +92,9 @@ export async function renderScans(main, params, ctx) {
   let anchored = false;
 
   const settled = await Promise.allSettled([
-    swrCall("api_getAssets", ASSETS_PARAMS, (fresh) => { assets = fresh; paint(); }),
-    swrCall("api_getToxicCombos", {}, (fresh) => { combos = fresh; paint(); }),
+    swrCall("api_getAssetsHead", {}, (fresh) => { assets = fresh; paint(); }),
+    // The digest alone; this page draws no group and no per-asset row.
+    swrCall("api_getCombosDigest", {}, (fresh) => { combos = fresh; paint(); }),
     // Not SWR: this describes the battery as configured right now, and the panel states it
     // to the operator as fact. A cached answer is a claim about a query that may have moved.
     call("api_getScanQueries", {}),
@@ -139,7 +143,7 @@ export async function renderScans(main, params, ctx) {
       sectionLabel("The register"),
       register(ranked, diagram),
       el("p", { class: "small muted", style: "margin-top:14px" },
-        "Sync cadence: daily at 05:00 UTC plus on-demand “Sync now”. Every figure above " +
+        "Sync cadence: daily at 05:00 Europe/Paris plus on-demand “Sync now”. Every figure above " +
         "is the one the last sync produced, read through the project view currently set; " +
         "an area with no figure says so rather than carrying a number from somewhere else."),
       reachSection(assets.reach),
@@ -477,13 +481,43 @@ export async function renderScans(main, params, ctx) {
   }
 
   /**
+   * One area's step definitions, fetched on the click that opens them and remembered for the
+   * life of THIS render.
+   *
+   * The lifetime is the point. `queries` above is read once per render and every skip,
+   * truncation and row count the sheet shows comes from that one snapshot — so re-fetching the
+   * documents on a re-open would not make the sheet fresher, it would make one half of it
+   * newer than the other. The two things that can move the battery both end this render:
+   * `setScanVars` calls `ctx.refresh()`, and a framework selection is a Settings navigation.
+   * A new render gets a new map.
+   *
+   * Rejections are NOT cached — a failed open must be retryable by closing and opening again.
+   */
+  const stepDetail = new Map();
+  function loadSteps(areaId) {
+    let p = stepDetail.get(areaId);
+    if (!p) {
+      p = call("api_getScanStepDetail", { area: areaId })
+        .catch((e) => { stepDetail.delete(areaId); throw e; });
+      stepDetail.set(areaId, p);
+    }
+    return p;
+  }
+
+  /**
    * What the drill-down needs that the page already has. Rebuilt per open so a sheet always
    * describes the payload on screen, and `refresh` re-reads after a variables save.
+   *
+   * `steps` and `specs` used to be here, and they were the whole reason api_getScanQueries
+   * weighed 48,505 bytes: twenty-one step descriptors carrying every GraphQL document in the
+   * battery, plus the variable schema for all of them. NOTHING ON THIS PAGE READ EITHER —
+   * the list is built from `boot`, the asset KPIs and the combos digest, and these two were
+   * assembled here purely to be handed on. The sheet fetches them itself now, for the one
+   * area it is opening.
    */
   function sheetContext() {
     return {
-      steps: (queries && queries.steps) || [],
-      specs: (queries && queries.specs) || [],
+      loadSteps,
       skippedSteps: (queries && queries.skippedSteps) || [],
       truncatedSteps: (queries && queries.truncatedSteps) || [],
       // Left as an EMPTY OBJECT when absent, never defaulted per-step to 0: an id missing

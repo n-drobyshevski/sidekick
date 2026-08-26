@@ -112,13 +112,9 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       ],
       "counts": {
         "aarsScored": 0,
-        "aiAssets": 0,
         "byAarsSeverity": {},
-        "bySeverity": {},
         "openIssues": 0,
-        "totalAssets": 0,
       },
-      "dataVersion": "<dataVersion>",
       "derivation": {
         "current": 2,
         "lastSync": 0,
@@ -126,9 +122,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "stale": true,
       },
       "filterOptions": {
-        "clouds": [],
         "domainList": [],
-        "domains": [],
         "kinds": [],
         "projectList": [],
         "projects": [],
@@ -676,12 +670,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "all": true,
       "countDeltas": null,
       "countTrend": [],
-      "dir": "desc",
-      "domainCoverage": {
-        "key": "Wiz/Domain",
-        "tagged": 0,
-        "total": 0,
-      },
       "facets": {
         "clouds": [],
         "domains": [],
@@ -728,7 +716,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       },
       "page": 0,
       "pageCount": 1,
-      "pageSize": 50,
       "reach": {
         "axes": {
           "exploitation": 0,
@@ -805,7 +792,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       },
       "rows": [],
       "severityCounts": {},
-      "sort": "issues",
       "total": 0,
       "trendScope": {
         "domainId": "",
@@ -817,6 +803,329 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
     },
     "ok": true,
   },
+  "getAssetsHead": {
+    "data": {
+      "kpis": {
+        "agenticIdentities": 0,
+        "agents": 0,
+        "aiAssets": 0,
+        "complianceGaps": 0,
+        "complianceGapsUnlinked": 0,
+        "dataFindings": 0,
+        "frameworkPosture": {
+          "averagePosture": null,
+          "averagePostureBand": null,
+          "failingPolicies": 0,
+          "failingSubcategories": 0,
+          "frameworks": 0,
+          "scoredFrameworks": 0,
+        },
+        "guardrailCoveragePct": null,
+        "guardrailUnknownAgents": 0,
+        "highPrivilege": 0,
+        "humanDormant": 0,
+        "humanEffective": 0,
+        "humanIdentities": 0,
+        "humanNoMfa": 0,
+        "humanReachable": 0,
+        "humanReachableAdmin": 0,
+        "internetExposed": 0,
+        "internetUnknown": 0,
+        "internetValidated": 0,
+        "internetViaHost": 0,
+        "issuesAttributed": 0,
+        "issuesUnattributed": 0,
+        "openIssues": 0,
+        "protectedAgents": 0,
+        "sensitiveAccess": 0,
+        "sensitiveDatastores": 0,
+      },
+      "reach": {
+        "axes": {
+          "exploitation": 0,
+          "exposure": 0,
+          "impact": 0,
+          "mission": 0,
+        },
+        "axesPopulation": 0,
+        "edges": {
+          "dead": [
+            "PROTECTED_BY",
+            "RUNS_AS",
+            "ALLOWS_ACCESS_TO",
+            "HAS_FINDING",
+            "USES",
+            "USES_TOOL",
+            "INVOKES_TOOL",
+            "USES_MODEL",
+            "USES_DATASET",
+            "STORED_IN",
+            "HOSTED_ON",
+            "BUILT_FROM",
+            "CAN_INVOKE",
+            "ENFORCES",
+            "BOUND_TO",
+            "PERMITS_ACCESS_ROLE",
+            "SERVES",
+            "PRODUCES",
+            "READS_DATA_FROM",
+            "STORES_DATA_IN",
+          ],
+          "declared": 26,
+          "populated": [],
+          "synthetic": [
+            "HAS_ISSUE",
+            "HAS_SENSITIVE_DATA",
+            "HAS_ACCESS_TO_SENSITIVE_DATA",
+            "EXPOSED_TO_INTERNET",
+            "HAS_EXCESSIVE_PRIVILEGE",
+            "HAS_DATA_FINDING",
+          ],
+        },
+        "impactTagged": {
+          "covered": 0,
+          "total": 0,
+        },
+        "kinds": [],
+        "stages": [
+          {
+            "covered": 0,
+            "key": "register",
+            "label": "In register",
+            "total": 0,
+          },
+          {
+            "covered": 0,
+            "key": "observed",
+            "label": "Observed",
+            "total": 0,
+          },
+          {
+            "covered": 0,
+            "key": "enriched",
+            "label": "Enriched",
+            "total": 0,
+          },
+          {
+            "covered": 0,
+            "key": "decided",
+            "label": "Decided",
+            "total": 0,
+          },
+        ],
+      },
+      "total": 0,
+    },
+    "ok": true,
+  },
+  "getCombosDigest": {
+    "data": {
+      "digest": {
+        "groups": [
+          {
+            "adjustedMix": {},
+            "assetCount": 0,
+            "conditions": {
+              "EXCESSIVE_PRIVILEGE": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+              "INTERNET_EXPOSURE": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+              "MISSING_GUARDRAIL": {
+                "carried": 0,
+                "required": true,
+                "total": 0,
+                "unknown": 0,
+              },
+              "SENSITIVE_DATA": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+            },
+            "count": 0,
+            "dueSoon": 0,
+            "id": "bedrock-no-guardrail",
+            "nativeMix": {},
+            "noDueDate": 0,
+            "pastDue": 0,
+            "reRated": 0,
+          },
+          {
+            "adjustedMix": {},
+            "assetCount": 0,
+            "conditions": {
+              "EXCESSIVE_PRIVILEGE": {
+                "carried": 0,
+                "required": true,
+                "total": 0,
+                "unknown": 0,
+              },
+              "INTERNET_EXPOSURE": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+              "MISSING_GUARDRAIL": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+              "SENSITIVE_DATA": {
+                "carried": 0,
+                "required": true,
+                "total": 0,
+                "unknown": 0,
+              },
+            },
+            "count": 0,
+            "dueSoon": 0,
+            "id": "gcp-managed-privileged",
+            "nativeMix": {},
+            "noDueDate": 0,
+            "pastDue": 0,
+            "reRated": 0,
+          },
+          {
+            "adjustedMix": {},
+            "assetCount": 0,
+            "conditions": {
+              "EXCESSIVE_PRIVILEGE": {
+                "carried": 0,
+                "required": true,
+                "total": 0,
+                "unknown": 0,
+              },
+              "INTERNET_EXPOSURE": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+              "MISSING_GUARDRAIL": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+              "SENSITIVE_DATA": {
+                "carried": 0,
+                "required": true,
+                "total": 0,
+                "unknown": 0,
+              },
+            },
+            "count": 0,
+            "dueSoon": 0,
+            "id": "gcp-hosted-privileged",
+            "nativeMix": {},
+            "noDueDate": 0,
+            "pastDue": 0,
+            "reRated": 0,
+          },
+          {
+            "adjustedMix": {},
+            "assetCount": 0,
+            "conditions": {
+              "EXCESSIVE_PRIVILEGE": {
+                "carried": 0,
+                "required": true,
+                "total": 0,
+                "unknown": 0,
+              },
+              "INTERNET_EXPOSURE": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+              "MISSING_GUARDRAIL": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+              "SENSITIVE_DATA": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+            },
+            "count": 0,
+            "dueSoon": 0,
+            "id": "permissive-exec-identity",
+            "nativeMix": {},
+            "noDueDate": 0,
+            "pastDue": 0,
+            "reRated": 0,
+          },
+          {
+            "adjustedMix": {},
+            "assetCount": 0,
+            "conditions": {
+              "EXCESSIVE_PRIVILEGE": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+              "INTERNET_EXPOSURE": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+              "MISSING_GUARDRAIL": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+              "SENSITIVE_DATA": {
+                "carried": 0,
+                "required": false,
+                "total": 0,
+                "unknown": 0,
+              },
+            },
+            "count": 0,
+            "dueSoon": 0,
+            "id": "other-ai-risk",
+            "nativeMix": {},
+            "noDueDate": 0,
+            "pastDue": 0,
+            "reRated": 0,
+          },
+        ],
+        "totals": {
+          "adjustedMix": {},
+          "assetsAffected": 0,
+          "dueSoon": 0,
+          "inProgress": 0,
+          "nativeMix": {},
+          "noDueDate": 0,
+          "pastDue": 0,
+          "patternsActive": 0,
+          "patternsTotal": 4,
+          "reRated": 0,
+          "totalOpen": 0,
+          "unclassified": 0,
+        },
+      },
+    },
+    "ok": true,
+  },
   "getConfigFindingDetail": {
     "data": null,
     "ok": true,
@@ -824,7 +1133,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getConfigFindings": {
     "data": {
       "all": true,
-      "dir": "desc",
       "facets": {
         "clouds": [],
         "domains": [],
@@ -837,10 +1145,8 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "filtered": 0,
       "page": 0,
       "pageCount": 1,
-      "pageSize": 50,
       "rows": [],
       "scopeLoss": null,
-      "sort": "severity",
       "total": 0,
       "totals": {
         "controls": 0,
@@ -851,6 +1157,18 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "resources": 0,
         "severityMix": {},
         "unlinkedGaps": 0,
+      },
+    },
+    "ok": true,
+  },
+  "getFiveRsScope": {
+    "data": {
+      "fiveRsScope": {
+        "frameworkId": null,
+        "frameworkName": "",
+        "policies": [],
+        "selected": 0,
+        "total": 0,
       },
     },
     "ok": true,
@@ -868,7 +1186,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getIssues": {
     "data": {
       "rows": [],
-      "total": 0,
     },
     "ok": true,
   },
@@ -1106,7 +1423,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "filtered": 0,
       "page": 0,
       "pageCount": 1,
-      "pageSize": 50,
       "rows": [],
       "severityCounts": {
         "CRITICAL": 0,
@@ -1128,6 +1444,28 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "shortcuts": [],
       "stepsFrom": {},
       "valuesFor": {},
+    },
+    "ok": true,
+  },
+  "getScanQueries": {
+    "data": {
+      "hasCredentials": false,
+      "skipReasons": {},
+      "skippedSteps": [],
+      "stepRows": {},
+      "transportVariables": [
+        "first",
+        "after",
+        "quick",
+      ],
+      "truncatedSteps": [],
+    },
+    "ok": true,
+  },
+  "getScanStepDetail": {
+    "data": {
+      "area": "",
+      "steps": [],
     },
     "ok": true,
   },
@@ -1640,22 +1978,14 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
     ],
     "counts": {
       "aarsScored": 30,
-      "aiAssets": 22,
       "byAarsSeverity": {
         "CRITICAL": 2,
         "HIGH": 17,
         "INFO": 8,
         "LOW": 3,
       },
-      "bySeverity": {
-        "HIGH": 27,
-        "LOW": 2,
-        "MEDIUM": 3,
-      },
       "openIssues": 32,
-      "totalAssets": 87,
     },
-    "dataVersion": "<dataVersion>",
     "derivation": {
       "current": 2,
       "lastSync": 2,
@@ -1663,10 +1993,6 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       "stale": false,
     },
     "filterOptions": {
-      "clouds": [
-        "AWS",
-        "GCP",
-      ],
       "domainList": [
         {
           "assets": 3,
@@ -1684,12 +2010,6 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
           "assets": 5,
           "name": "VALUE-CHAIN",
         },
-      ],
-      "domains": [
-        "CROSS",
-        "EXAMPLE DOMAIN",
-        "SAP",
-        "VALUE-CHAIN",
       ],
       "kinds": [
         "ACCESS_KEY",
@@ -1803,7 +2123,7 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       "problem_outcome_json": "{"ACT":0,"ATTEND":7,"TRACK_STAR":15,"TRACK":16}",
       "problem_rule_version": 0,
       "project_totals_json": "{"proj-demo-business-unit":{"aars":{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8},"outcome":{"ACT":0,"ATTEND":7,"TRACK_STAR":12,"TRACK":16},"counts":{"issues":32,"findings":3}},"proj-project-beta":{"aars":{"CRITICAL":1,"HIGH":4,"MEDIUM":0,"LOW":2,"INFO":0},"outcome":{"ACT":0,"ATTEND":0,"TRACK_STAR":7,"TRACK":4},"counts":{"issues":10,"findings":1}},"proj-project-alpha":{"aars":{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8},"outcome":{"ACT":0,"ATTEND":7,"TRACK_STAR":12,"TRACK":16},"counts":{"issues":32,"findings":3}},"proj-project-gamma":{"aars":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":0,"TRACK_STAR":5,"TRACK":0},"counts":{"issues":4,"findings":1}},"proj-cs-demo-platform":{"aars":{"CRITICAL":1,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":3,"TRACK_STAR":0,"TRACK":2},"counts":{"issues":4,"findings":1}},"proj-project-eta":{"aars":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":0,"TRACK_STAR":0,"TRACK":2},"counts":{"issues":2,"findings":0}},"proj-project-delta":{"aars":{"CRITICAL":1,"HIGH":0,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":3,"TRACK_STAR":0,"TRACK":0},"counts":{"issues":2,"findings":1}},"proj-project-epsilon":{"aars":{"CRITICAL":1,"HIGH":0,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":3,"TRACK_STAR":0,"TRACK":0},"counts":{"issues":2,"findings":1}},"proj-project-zeta":{"aars":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":4,"TRACK_STAR":0,"TRACK":0},"counts":{"issues":4,"findings":0}}}",
-      "snapshot_ref": "file-4",
+      "snapshot_ref": "file-5",
       "started_at": "2026-08-13T09:00:00Z",
       "status": "SUCCESS",
       "sync_id": "sync-2026-08-13T090000Z",
@@ -4487,12 +4807,6 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
       },
     ],
-    "dir": "desc",
-    "domainCoverage": {
-      "key": "Wiz/Domain",
-      "tagged": 15,
-      "total": 87,
-    },
     "facets": {
       "clouds": [
         "AWS",
@@ -4585,7 +4899,6 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
     },
     "page": 0,
     "pageCount": 2,
-    "pageSize": 50,
     "reach": {
       "axes": {
         "exploitation": 0.02631578947368418,
@@ -6439,7 +6752,6 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       "HIGH": 19,
       "MEDIUM": 2,
     },
-    "sort": "issues",
     "total": 87,
     "trendScope": {
       "domainId": "",
@@ -6447,6 +6759,480 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       "projectId": "",
       "registerPoints": 1,
       "scoped": false,
+    },
+  },
+  "ok": true,
+}
+`;
+
+exports[`read endpoints > getAssetsHead answers the same shape 1`] = `
+{
+  "data": {
+    "kpis": {
+      "agenticIdentities": 15,
+      "agents": 14,
+      "aiAssets": 22,
+      "complianceGaps": 6,
+      "complianceGapsUnlinked": 3,
+      "dataFindings": 6,
+      "frameworkPosture": {
+        "averagePosture": 94,
+        "averagePostureBand": "strong",
+        "failingPolicies": 5,
+        "failingSubcategories": 9,
+        "frameworks": 4,
+        "scoredFrameworks": 4,
+      },
+      "guardrailCoveragePct": 21,
+      "guardrailUnknownAgents": 0,
+      "highPrivilege": 34,
+      "humanDormant": 1,
+      "humanEffective": 1,
+      "humanIdentities": 3,
+      "humanNoMfa": 1,
+      "humanReachable": 1,
+      "humanReachableAdmin": 1,
+      "internetExposed": 4,
+      "internetUnknown": 0,
+      "internetValidated": 1,
+      "internetViaHost": 1,
+      "issuesAttributed": 24,
+      "issuesUnattributed": 8,
+      "openIssues": 32,
+      "protectedAgents": 3,
+      "sensitiveAccess": 11,
+      "sensitiveDatastores": 5,
+    },
+    "reach": {
+      "axes": {
+        "exploitation": 0.02631578947368418,
+        "exposure": 0.9210526315789473,
+        "impact": 0.9210526315789473,
+        "mission": 0.9473684210526316,
+      },
+      "axesPopulation": 38,
+      "edges": {
+        "dead": [
+          "USES",
+          "USES_TOOL",
+          "USES_DATASET",
+          "STORED_IN",
+          "BOUND_TO",
+          "PERMITS_ACCESS_ROLE",
+        ],
+        "declared": 26,
+        "populated": [
+          "PROTECTED_BY",
+          "RUNS_AS",
+          "ALLOWS_ACCESS_TO",
+          "HAS_FINDING",
+          "INVOKES_TOOL",
+          "USES_MODEL",
+          "HOSTED_ON",
+          "BUILT_FROM",
+          "CAN_INVOKE",
+          "ENFORCES",
+          "SERVES",
+          "PRODUCES",
+          "READS_DATA_FROM",
+          "STORES_DATA_IN",
+        ],
+        "synthetic": [
+          "HAS_ISSUE",
+          "HAS_SENSITIVE_DATA",
+          "HAS_ACCESS_TO_SENSITIVE_DATA",
+          "EXPOSED_TO_INTERNET",
+          "HAS_EXCESSIVE_PRIVILEGE",
+          "HAS_DATA_FINDING",
+        ],
+      },
+      "impactTagged": {
+        "covered": 18,
+        "total": 22,
+      },
+      "kinds": [
+        {
+          "ai": false,
+          "kind": "BUCKET",
+          "signal": 4,
+          "total": 19,
+        },
+        {
+          "ai": true,
+          "kind": "AI_AGENT",
+          "signal": 13,
+          "total": 14,
+        },
+        {
+          "ai": false,
+          "kind": "SERVICE_ACCOUNT",
+          "signal": 13,
+          "total": 14,
+        },
+        {
+          "ai": false,
+          "kind": "USER_ACCOUNT",
+          "signal": 0,
+          "total": 12,
+        },
+        {
+          "ai": false,
+          "kind": "ACCESS_ROLE",
+          "signal": 8,
+          "total": 8,
+        },
+        {
+          "ai": true,
+          "kind": "AI_GUARDRAIL",
+          "signal": 0,
+          "total": 3,
+        },
+        {
+          "ai": true,
+          "kind": "AI_MODEL",
+          "signal": 0,
+          "total": 2,
+        },
+        {
+          "ai": false,
+          "kind": "DATABASE",
+          "signal": 1,
+          "total": 2,
+        },
+        {
+          "ai": false,
+          "kind": "ENDPOINT",
+          "signal": 0,
+          "total": 2,
+        },
+        {
+          "ai": false,
+          "kind": "EXCESSIVE_ACCESS_FINDING",
+          "signal": 0,
+          "total": 2,
+        },
+        {
+          "ai": true,
+          "kind": "MCP_SERVER",
+          "signal": 0,
+          "total": 1,
+        },
+        {
+          "ai": true,
+          "kind": "AI_PIPELINE",
+          "signal": 0,
+          "total": 1,
+        },
+        {
+          "ai": true,
+          "kind": "AI_DATASET",
+          "signal": 1,
+          "total": 1,
+        },
+        {
+          "ai": false,
+          "kind": "VIRTUAL_MACHINE",
+          "signal": 0,
+          "total": 1,
+        },
+        {
+          "ai": false,
+          "kind": "SERVERLESS",
+          "signal": 1,
+          "total": 1,
+        },
+        {
+          "ai": false,
+          "kind": "CONTAINER_IMAGE",
+          "signal": 0,
+          "total": 1,
+        },
+        {
+          "ai": false,
+          "kind": "REPOSITORY",
+          "signal": 0,
+          "total": 1,
+        },
+        {
+          "ai": false,
+          "kind": "LATERAL_MOVEMENT_FINDING",
+          "signal": 0,
+          "total": 1,
+        },
+        {
+          "ai": false,
+          "kind": "ACCESS_KEY",
+          "signal": 1,
+          "total": 1,
+        },
+      ],
+      "stages": [
+        {
+          "covered": 22,
+          "key": "register",
+          "label": "In register",
+          "total": 87,
+        },
+        {
+          "covered": 14,
+          "key": "observed",
+          "label": "Observed",
+          "total": 22,
+        },
+        {
+          "covered": 21,
+          "key": "enriched",
+          "label": "Enriched",
+          "total": 22,
+        },
+        {
+          "covered": 13,
+          "key": "decided",
+          "label": "Decided",
+          "total": 22,
+        },
+      ],
+    },
+    "total": 87,
+  },
+  "ok": true,
+}
+`;
+
+exports[`read endpoints > getCombosDigest answers the same shape 1`] = `
+{
+  "data": {
+    "digest": {
+      "groups": [
+        {
+          "adjustedMix": {
+            "HIGH": 8,
+          },
+          "assetCount": 8,
+          "conditions": {
+            "EXCESSIVE_PRIVILEGE": {
+              "carried": 8,
+              "required": false,
+              "total": 8,
+              "unknown": 0,
+            },
+            "INTERNET_EXPOSURE": {
+              "carried": 0,
+              "required": false,
+              "total": 8,
+              "unknown": 0,
+            },
+            "MISSING_GUARDRAIL": {
+              "carried": 8,
+              "required": true,
+              "total": 8,
+              "unknown": 0,
+            },
+            "SENSITIVE_DATA": {
+              "carried": 8,
+              "required": false,
+              "total": 8,
+              "unknown": 0,
+            },
+          },
+          "count": 8,
+          "dueSoon": 0,
+          "id": "bedrock-no-guardrail",
+          "nativeMix": {
+            "MEDIUM": 8,
+          },
+          "noDueDate": 0,
+          "pastDue": 8,
+          "reRated": 8,
+        },
+        {
+          "adjustedMix": {
+            "HIGH": 13,
+          },
+          "assetCount": 9,
+          "conditions": {
+            "EXCESSIVE_PRIVILEGE": {
+              "carried": 9,
+              "required": true,
+              "total": 9,
+              "unknown": 0,
+            },
+            "INTERNET_EXPOSURE": {
+              "carried": 1,
+              "required": false,
+              "total": 9,
+              "unknown": 0,
+            },
+            "MISSING_GUARDRAIL": {
+              "carried": 9,
+              "required": false,
+              "total": 9,
+              "unknown": 0,
+            },
+            "SENSITIVE_DATA": {
+              "carried": 9,
+              "required": true,
+              "total": 9,
+              "unknown": 0,
+            },
+          },
+          "count": 13,
+          "dueSoon": 0,
+          "id": "gcp-managed-privileged",
+          "nativeMix": {
+            "MEDIUM": 13,
+          },
+          "noDueDate": 0,
+          "pastDue": 13,
+          "reRated": 13,
+        },
+        {
+          "adjustedMix": {
+            "HIGH": 6,
+          },
+          "assetCount": 2,
+          "conditions": {
+            "EXCESSIVE_PRIVILEGE": {
+              "carried": 2,
+              "required": true,
+              "total": 2,
+              "unknown": 0,
+            },
+            "INTERNET_EXPOSURE": {
+              "carried": 2,
+              "required": false,
+              "total": 2,
+              "unknown": 0,
+            },
+            "MISSING_GUARDRAIL": {
+              "carried": 2,
+              "required": false,
+              "total": 2,
+              "unknown": 0,
+            },
+            "SENSITIVE_DATA": {
+              "carried": 2,
+              "required": true,
+              "total": 2,
+              "unknown": 0,
+            },
+          },
+          "count": 6,
+          "dueSoon": 0,
+          "id": "gcp-hosted-privileged",
+          "nativeMix": {
+            "MEDIUM": 6,
+          },
+          "noDueDate": 0,
+          "pastDue": 6,
+          "reRated": 6,
+        },
+        {
+          "adjustedMix": {
+            "MEDIUM": 2,
+          },
+          "assetCount": 2,
+          "conditions": {
+            "EXCESSIVE_PRIVILEGE": {
+              "carried": 2,
+              "required": true,
+              "total": 2,
+              "unknown": 0,
+            },
+            "INTERNET_EXPOSURE": {
+              "carried": 0,
+              "required": false,
+              "total": 2,
+              "unknown": 0,
+            },
+            "MISSING_GUARDRAIL": {
+              "carried": 0,
+              "required": false,
+              "total": 2,
+              "unknown": 0,
+            },
+            "SENSITIVE_DATA": {
+              "carried": 0,
+              "required": false,
+              "total": 2,
+              "unknown": 0,
+            },
+          },
+          "count": 2,
+          "dueSoon": 2,
+          "id": "permissive-exec-identity",
+          "nativeMix": {
+            "LOW": 2,
+          },
+          "noDueDate": 0,
+          "pastDue": 0,
+          "reRated": 2,
+        },
+        {
+          "adjustedMix": {
+            "LOW": 2,
+            "MEDIUM": 1,
+          },
+          "assetCount": 1,
+          "conditions": {
+            "EXCESSIVE_PRIVILEGE": {
+              "carried": 1,
+              "required": false,
+              "total": 1,
+              "unknown": 0,
+            },
+            "INTERNET_EXPOSURE": {
+              "carried": 1,
+              "required": false,
+              "total": 1,
+              "unknown": 0,
+            },
+            "MISSING_GUARDRAIL": {
+              "carried": 1,
+              "required": false,
+              "total": 1,
+              "unknown": 0,
+            },
+            "SENSITIVE_DATA": {
+              "carried": 1,
+              "required": false,
+              "total": 1,
+              "unknown": 0,
+            },
+          },
+          "count": 3,
+          "dueSoon": 0,
+          "id": "other-ai-risk",
+          "nativeMix": {
+            "LOW": 2,
+            "MEDIUM": 1,
+          },
+          "noDueDate": 3,
+          "pastDue": 0,
+          "reRated": 0,
+        },
+      ],
+      "totals": {
+        "adjustedMix": {
+          "HIGH": 27,
+          "LOW": 2,
+          "MEDIUM": 3,
+        },
+        "assetsAffected": 21,
+        "dueSoon": 2,
+        "inProgress": 1,
+        "nativeMix": {
+          "LOW": 4,
+          "MEDIUM": 28,
+        },
+        "noDueDate": 3,
+        "pastDue": 27,
+        "patternsActive": 4,
+        "patternsTotal": 4,
+        "reRated": 29,
+        "totalOpen": 32,
+        "unclassified": 3,
+      },
     },
   },
   "ok": true,
@@ -6514,7 +7300,6 @@ exports[`read endpoints > getConfigFindings answers the same shape 1`] = `
 {
   "data": {
     "all": true,
-    "dir": "desc",
     "facets": {
       "clouds": [
         "AWS",
@@ -6554,7 +7339,6 @@ exports[`read endpoints > getConfigFindings answers the same shape 1`] = `
     "filtered": 7,
     "page": 0,
     "pageCount": 1,
-    "pageSize": 50,
     "rows": [
       {
         "analyzedAt": "2026-07-13T21:52:08Z",
@@ -6757,7 +7541,6 @@ exports[`read endpoints > getConfigFindings answers the same shape 1`] = `
       },
     ],
     "scopeLoss": null,
-    "sort": "severity",
     "total": 7,
     "totals": {
       "controls": 5,
@@ -6771,6 +7554,145 @@ exports[`read endpoints > getConfigFindings answers the same shape 1`] = `
         "MEDIUM": 4,
       },
       "unlinkedGaps": 3,
+    },
+  },
+  "ok": true,
+}
+`;
+
+exports[`read endpoints > getFiveRsScope answers the same shape 1`] = `
+{
+  "data": {
+    "fiveRsScope": {
+      "frameworkId": "wf-id-214",
+      "frameworkName": "5Rs - Wiz for Data Security",
+      "policies": [
+        {
+          "aiFindingCount": 0,
+          "categoryExternalId": "4",
+          "enabled": true,
+          "failCount": 331,
+          "mappedBy": [],
+          "name": "Customer data must not leave its declared residency region",
+          "passCount": 40210,
+          "policyId": "pol-DATA-402",
+          "policyKind": "CLOUD_RULE",
+          "reason": "noAiLink",
+          "selected": false,
+          "severity": "HIGH",
+          "shortId": "DATA-402",
+          "subcategoryExternalId": "4.1",
+          "subcategoryTitle": "Data residency",
+        },
+        {
+          "aiFindingCount": 0,
+          "categoryExternalId": "5",
+          "enabled": true,
+          "failCount": 2210,
+          "mappedBy": [],
+          "name": "Object storage must define a retention policy",
+          "passCount": 98720,
+          "policyId": "pol-DATA-514",
+          "policyKind": "CLOUD_RULE",
+          "reason": "noAiLink",
+          "selected": false,
+          "severity": "MEDIUM",
+          "shortId": "DATA-514",
+          "subcategoryExternalId": "5.1",
+          "subcategoryTitle": "Encryption and retention",
+        },
+        {
+          "aiFindingCount": 0,
+          "categoryExternalId": "3",
+          "enabled": true,
+          "failCount": 1204,
+          "mappedBy": [],
+          "name": "Object storage buckets must carry a data-sensitivity label",
+          "passCount": 62108,
+          "policyId": "pol-DATA-311",
+          "policyKind": "CLOUD_RULE",
+          "reason": "noAiLink",
+          "selected": false,
+          "severity": "MEDIUM",
+          "shortId": "DATA-311",
+          "subcategoryExternalId": "3.1",
+          "subcategoryTitle": "Unlabelled sensitive data",
+        },
+        {
+          "aiFindingCount": 0,
+          "categoryExternalId": "3",
+          "enabled": true,
+          "failCount": 486,
+          "mappedBy": [],
+          "name": "Managed databases must declare a classification tag",
+          "passCount": 26304,
+          "policyId": "pol-DATA-318",
+          "policyKind": "CLOUD_RULE",
+          "reason": "noAiLink",
+          "selected": false,
+          "severity": "LOW",
+          "shortId": "DATA-318",
+          "subcategoryExternalId": "3.1",
+          "subcategoryTitle": "Unlabelled sensitive data",
+        },
+        {
+          "aiFindingCount": 1,
+          "categoryExternalId": "2",
+          "enabled": true,
+          "failCount": 1,
+          "mappedBy": [],
+          "name": "Training bucket must not allow public write",
+          "passCount": 30,
+          "policyId": "pol-SUB-047",
+          "policyKind": "CLOUD_RULE",
+          "reason": "linkedFindings",
+          "selected": true,
+          "severity": "CRITICAL",
+          "shortId": "SUB-047",
+          "subcategoryExternalId": "2.1",
+          "subcategoryTitle": "Public data exposure",
+        },
+        {
+          "aiFindingCount": 0,
+          "categoryExternalId": "2",
+          "enabled": true,
+          "failCount": 18,
+          "mappedBy": [
+            "OWASP Top 10 For Agentic Applications 2026",
+          ],
+          "name": "Bedrock service roles must prevent confused-deputy access",
+          "passCount": 1718,
+          "policyId": "pol-IAM-236",
+          "policyKind": "CLOUD_RULE",
+          "reason": "crossMapped",
+          "selected": true,
+          "severity": "HIGH",
+          "shortId": "IAM-236",
+          "subcategoryExternalId": "2.1",
+          "subcategoryTitle": "Public data exposure",
+        },
+        {
+          "aiFindingCount": 1,
+          "categoryExternalId": "5",
+          "enabled": true,
+          "failCount": 2,
+          "mappedBy": [
+            "OWASP Top 10 For Agentic Applications 2026",
+          ],
+          "name": "Vertex AI Metadata Store must use a customer-managed key",
+          "passCount": 21,
+          "policyId": "pol-SUB-082",
+          "policyKind": "CLOUD_RULE",
+          "reason": "crossMapped",
+          "selected": true,
+          "severity": "MEDIUM",
+          "shortId": "SUB-082",
+          "subcategoryExternalId": "5.1",
+          "subcategoryTitle": "Encryption and retention",
+        },
+      ],
+      "selected": 3,
+      "total": 7,
     },
   },
   "ok": true,
@@ -10355,7 +11277,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "parentId": "agent-h-chatbot",
       },
     ],
-    "syncedAt": "2026-08-13T09:00:00Z",
   },
   "ok": true,
 }
@@ -10456,11 +11377,8 @@ exports[`read endpoints > getIssues answers the same shape 1`] = `
       {
         "account": "aws-account-prod-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "role-finance-admin-01",
         "assetName": "AWSReservedSSO_FinanceAdmin_01",
-        "assignee": undefined,
         "attributedAssetIds": [],
         "attributionHop": "none",
         "businessImpact": "MBI",
@@ -10497,16 +11415,9 @@ Ignored until: Feb 1, 2026",
         "projects": [
           "PROJECT-ALPHA",
         ],
-        "region": undefined,
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-2742",
         "ruleName": "Allow model invoke without Guardrail for user or role",
         "status": "OPEN",
-        "subscriptionId": undefined,
         "updatedAt": "2026-08-13T10:29:28Z",
       },
       {
@@ -10541,8 +11452,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-002",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
@@ -10550,16 +11459,9 @@ Ignored until: Feb 1, 2026",
         "projects": [
           "PROJECT-ALPHA",
         ],
-        "region": undefined,
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-2742",
         "ruleName": "Allow model invoke without Guardrail for user or role",
         "status": "IN_PROGRESS",
-        "subscriptionId": undefined,
         "ticketUrls": [
           "https://example.slack.com/archives/C0AGUF82MM1/p1775622232097139",
         ],
@@ -10568,11 +11470,8 @@ Ignored until: Feb 1, 2026",
       {
         "account": "aws-account-prod-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "role-finance-admin-03",
         "assetName": "AWSReservedSSO_FinanceAdmin_03",
-        "assignee": undefined,
         "attributedAssetIds": [],
         "attributionHop": "none",
         "businessImpact": "MBI",
@@ -10597,8 +11496,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-003",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
@@ -10606,26 +11503,16 @@ Ignored until: Feb 1, 2026",
         "projects": [
           "PROJECT-ALPHA",
         ],
-        "region": undefined,
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-2742",
         "ruleName": "Allow model invoke without Guardrail for user or role",
         "status": "OPEN",
-        "subscriptionId": undefined,
         "updatedAt": "2026-08-13T10:29:28Z",
       },
       {
         "account": "aws-account-prod-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "role-finance-admin-04",
         "assetName": "AWSReservedSSO_FinanceAdmin_04",
-        "assignee": undefined,
         "attributedAssetIds": [],
         "attributionHop": "none",
         "businessImpact": "MBI",
@@ -10650,8 +11537,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-004",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
@@ -10659,26 +11544,16 @@ Ignored until: Feb 1, 2026",
         "projects": [
           "PROJECT-ALPHA",
         ],
-        "region": undefined,
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-2742",
         "ruleName": "Allow model invoke without Guardrail for user or role",
         "status": "OPEN",
-        "subscriptionId": undefined,
         "updatedAt": "2026-08-13T10:29:28Z",
       },
       {
         "account": "aws-account-prod-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "role-finance-admin-05",
         "assetName": "AWSReservedSSO_FinanceAdmin_05",
-        "assignee": undefined,
         "attributedAssetIds": [],
         "attributionHop": "none",
         "businessImpact": "MBI",
@@ -10703,8 +11578,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-005",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
@@ -10712,26 +11585,16 @@ Ignored until: Feb 1, 2026",
         "projects": [
           "PROJECT-ALPHA",
         ],
-        "region": undefined,
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-2742",
         "ruleName": "Allow model invoke without Guardrail for user or role",
         "status": "OPEN",
-        "subscriptionId": undefined,
         "updatedAt": "2026-08-13T10:29:28Z",
       },
       {
         "account": "aws-account-prod-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "role-finance-admin-06",
         "assetName": "AWSReservedSSO_FinanceAdmin_06",
-        "assignee": undefined,
         "attributedAssetIds": [],
         "attributionHop": "none",
         "businessImpact": "MBI",
@@ -10756,8 +11619,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-006",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
@@ -10765,26 +11626,16 @@ Ignored until: Feb 1, 2026",
         "projects": [
           "PROJECT-ALPHA",
         ],
-        "region": undefined,
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-2742",
         "ruleName": "Allow model invoke without Guardrail for user or role",
         "status": "OPEN",
-        "subscriptionId": undefined,
         "updatedAt": "2026-08-13T10:29:28Z",
       },
       {
         "account": "aws-account-prod-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "role-finance-admin-07",
         "assetName": "AWSReservedSSO_FinanceAdmin_07",
-        "assignee": undefined,
         "attributedAssetIds": [],
         "attributionHop": "none",
         "businessImpact": "MBI",
@@ -10809,8 +11660,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-007",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
@@ -10818,26 +11667,16 @@ Ignored until: Feb 1, 2026",
         "projects": [
           "PROJECT-ALPHA",
         ],
-        "region": undefined,
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-2742",
         "ruleName": "Allow model invoke without Guardrail for user or role",
         "status": "OPEN",
-        "subscriptionId": undefined,
         "updatedAt": "2026-08-13T10:29:28Z",
       },
       {
         "account": "aws-account-prod-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "role-finance-admin-08",
         "assetName": "AWSReservedSSO_FinanceAdmin_08",
-        "assignee": undefined,
         "attributedAssetIds": [],
         "attributionHop": "none",
         "businessImpact": "MBI",
@@ -10862,8 +11701,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-008",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
@@ -10871,35 +11708,23 @@ Ignored until: Feb 1, 2026",
         "projects": [
           "PROJECT-ALPHA",
         ],
-        "region": undefined,
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-2742",
         "ruleName": "Allow model invoke without Guardrail for user or role",
         "status": "OPEN",
-        "subscriptionId": undefined,
         "updatedAt": "2026-08-13T10:29:28Z",
       },
       {
         "account": "gcp-account-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-a",
         "assetName": "Agent-A",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-a",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Restrict",
@@ -10917,8 +11742,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-009",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Prompt injection reaches PII and credentials; 5Rs gap confirms data is not restricted.",
         "nativeSeverity": "MEDIUM",
@@ -10928,34 +11751,23 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-b",
         "assetName": "Agent-B",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-b",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Restrict",
@@ -10973,8 +11785,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-010",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Over-privileged IAM on a customer-facing managed agent.",
         "nativeSeverity": "MEDIUM",
@@ -10984,34 +11794,23 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-autogen",
         "assetName": "AGENT_AUTOGEN_DO_NOT_DELETE",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-autogen",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Reduce",
@@ -11029,8 +11828,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-011",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Auto-generated agent — likely forgotten, still over-privileged.",
         "nativeSeverity": "MEDIUM",
@@ -11040,34 +11837,23 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-autogen",
         "assetName": "AGENT_AUTOGEN_DO_NOT_DELETE",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-autogen",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Reduce",
@@ -11085,8 +11871,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-012",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Auto-generated agent — likely forgotten, still over-privileged.",
         "nativeSeverity": "MEDIUM",
@@ -11096,34 +11880,23 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-autogen",
         "assetName": "AGENT_AUTOGEN_DO_NOT_DELETE",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-autogen",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Reduce",
@@ -11141,8 +11914,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-013",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Auto-generated agent — likely forgotten, still over-privileged.",
         "nativeSeverity": "MEDIUM",
@@ -11152,34 +11923,23 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-01",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-autogen",
         "assetName": "AGENT_AUTOGEN_DO_NOT_DELETE",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-autogen",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Reduce",
@@ -11197,8 +11957,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-014",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Auto-generated agent — likely forgotten, still over-privileged.",
         "nativeSeverity": "MEDIUM",
@@ -11208,34 +11966,23 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-02",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-d-test",
         "assetName": "dev-agent-D-test",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-d-test",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Reconfigure",
@@ -11253,8 +12000,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-015",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Dev/test agent with prod-level IAM — violates least privilege.",
         "nativeSeverity": "MEDIUM",
@@ -11264,34 +12009,23 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west3",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-02",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-d",
         "assetName": "dev-agent-D",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-d",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Reconfigure",
@@ -11309,8 +12043,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-016",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Dev agent with excessive IAM — training-data exposure risk.",
         "nativeSeverity": "MEDIUM",
@@ -11320,34 +12052,23 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west3",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-03",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-e",
         "assetName": "Agent-E",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-e",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Restrict",
@@ -11365,8 +12086,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-017",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Innovation agent with sensitive data access and no guardrail.",
         "nativeSeverity": "MEDIUM",
@@ -11376,34 +12095,22 @@ Ignored until: Feb 1, 2026",
           "PROJECT-GAMMA",
         ],
         "region": "us-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
-        "account": undefined,
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-f",
         "assetName": "agent-F",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-f",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Restrict",
@@ -11421,8 +12128,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-018",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Pricing agent with financial data access — high business impact.",
         "nativeSeverity": "MEDIUM",
@@ -11431,34 +12136,22 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west4",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
-        "account": undefined,
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-f-preprod",
         "assetName": "agent-F-preprod",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-f-preprod",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Reconfigure",
@@ -11476,8 +12169,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-019",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Pre-prod pricing agent — same risk as prod.",
         "nativeSeverity": "MEDIUM",
@@ -11486,34 +12177,22 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west4",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
-        "account": undefined,
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-g",
         "assetName": "Agent-G",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-g",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Restrict",
@@ -11531,8 +12210,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-020",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Business-partner data agent — PII and partner-data exposure risk.",
         "nativeSeverity": "MEDIUM",
@@ -11542,34 +12219,22 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ETA",
         ],
         "region": "europe-west4",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
-        "account": undefined,
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-g",
         "assetName": "Agent-G",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-g",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-managed-privileged",
         "createdAt": "2026-05-20T11:40:00Z",
         "dueAt": "2026-07-19T11:40:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Restrict",
@@ -11587,8 +12252,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-021",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Business-partner data agent — PII and partner-data exposure risk.",
         "nativeSeverity": "MEDIUM",
@@ -11598,34 +12261,23 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ETA",
         ],
         "region": "europe-west4",
-        "remediation": undefined,
-        "resolutionReason": undefined,
         "resolutionRecommendation": "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime.",
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3217",
         "ruleName": "Managed AI Agent with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-04",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-i",
         "assetName": "agent-I",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-i",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-hosted-privileged",
         "createdAt": "2026-06-03T07:25:00Z",
         "dueAt": "2026-07-03T07:25:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Restrict",
@@ -11641,8 +12293,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-022",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Inactive agents still holding sensitive data access — lateral-movement risk via compromised compute.",
         "nativeSeverity": "MEDIUM",
@@ -11652,34 +12302,22 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ZETA",
         ],
         "region": "europe-west4",
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3230",
         "ruleName": "AI Agent hosted on VM/serverless with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-04",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-i",
         "assetName": "agent-I",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-i",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-hosted-privileged",
         "createdAt": "2026-06-03T07:25:00Z",
         "dueAt": "2026-07-03T07:25:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Restrict",
@@ -11695,8 +12333,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-023",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Inactive agents still holding sensitive data access — lateral-movement risk via compromised compute.",
         "nativeSeverity": "MEDIUM",
@@ -11706,34 +12342,22 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ZETA",
         ],
         "region": "europe-west4",
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3230",
         "ruleName": "AI Agent hosted on VM/serverless with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-04",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-i",
         "assetName": "agent-I",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-i",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-hosted-privileged",
         "createdAt": "2026-06-03T07:25:00Z",
         "dueAt": "2026-07-03T07:25:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Restrict",
@@ -11749,8 +12373,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-024",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Inactive agents still holding sensitive data access — lateral-movement risk via compromised compute.",
         "nativeSeverity": "MEDIUM",
@@ -11760,34 +12382,22 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ZETA",
         ],
         "region": "europe-west4",
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3230",
         "ruleName": "AI Agent hosted on VM/serverless with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-04",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-i",
         "assetName": "agent-I",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-i",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-hosted-privileged",
         "createdAt": "2026-06-03T07:25:00Z",
         "dueAt": "2026-07-03T07:25:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Restrict",
@@ -11803,8 +12413,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-025",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Inactive agents still holding sensitive data access — lateral-movement risk via compromised compute.",
         "nativeSeverity": "MEDIUM",
@@ -11814,34 +12422,22 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ZETA",
         ],
         "region": "europe-west4",
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3230",
         "ruleName": "AI Agent hosted on VM/serverless with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-05",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-h-chatbot",
         "assetName": "agent-H-chatbot",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-h-chatbot",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-hosted-privileged",
         "createdAt": "2026-06-03T07:25:00Z",
         "dueAt": "2026-07-03T07:25:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Restrict",
@@ -11857,8 +12453,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-026",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Chatbot agent on serverless with excessive IAM — user-facing attack surface.",
         "nativeSeverity": "MEDIUM",
@@ -11869,34 +12463,22 @@ Ignored until: Feb 1, 2026",
           "PROJECT-EPSILON",
         ],
         "region": "europe-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3230",
         "ruleName": "AI Agent hosted on VM/serverless with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-05",
         "adjustedSeverity": "HIGH",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-h-chatbot",
         "assetName": "agent-H-chatbot",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-h-chatbot",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "gcp-hosted-privileged",
         "createdAt": "2026-06-03T07:25:00Z",
         "dueAt": "2026-07-03T07:25:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Restrict",
@@ -11912,8 +12494,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-027",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Chatbot agent on serverless with excessive IAM — user-facing attack surface.",
         "nativeSeverity": "MEDIUM",
@@ -11924,34 +12504,22 @@ Ignored until: Feb 1, 2026",
           "PROJECT-EPSILON",
         ],
         "region": "europe-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3230",
         "ruleName": "AI Agent hosted on VM/serverless with high privileges or sensitive data access",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-07",
         "adjustedSeverity": "MEDIUM",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-j",
         "assetName": "agent-J",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-j",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "permissive-exec-identity",
         "createdAt": "2026-06-10T15:02:00Z",
         "dueAt": "2026-08-18T15:02:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Reconfigure",
@@ -11961,8 +12529,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-028",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Latent privileges — a compromised agent inherits every permission of its execution identity.",
         "nativeSeverity": "LOW",
@@ -11972,34 +12538,22 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3123",
         "ruleName": "AI resource using overly permissive execution identity",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-07",
         "adjustedSeverity": "MEDIUM",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-k",
         "assetName": "agent-K",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-k",
         ],
         "attributionHop": "direct",
-        "businessImpact": undefined,
         "comboGroup": "permissive-exec-identity",
         "createdAt": "2026-06-10T15:02:00Z",
         "dueAt": "2026-08-18T15:02:00Z",
-        "entityStatus": undefined,
         "frameworks": {
           "fiveRs": [
             "Reconfigure",
@@ -12009,8 +12563,6 @@ Ignored until: Feb 1, 2026",
           ],
         },
         "id": "iss-029",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "TOXIC_COMBINATION",
         "justification": "Latent privileges — a compromised agent inherits every permission of its execution identity.",
         "nativeSeverity": "LOW",
@@ -12020,25 +12572,15 @@ Ignored until: Feb 1, 2026",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-3123",
         "ruleName": "AI resource using overly permissive execution identity",
         "status": "OPEN",
-        "subscriptionId": undefined,
-        "updatedAt": undefined,
       },
       {
         "account": "gcp-account-03",
         "adjustedSeverity": "LOW",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-e",
         "assetName": "Agent-E",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-e",
         ],
@@ -12046,15 +12588,12 @@ Ignored until: Feb 1, 2026",
         "businessImpact": "MBI",
         "comboGroup": "other-ai-risk",
         "createdAt": "2026-07-02T08:15:00Z",
-        "dueAt": undefined,
         "entityStatus": "Active",
         "environments": [
           "PRODUCTION",
         ],
         "frameworks": {},
         "id": "iss-030",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "CLOUD_CONFIGURATION",
         "justification": "Model invocations are not logged, so misuse leaves no trail to investigate.",
         "nativeSeverity": "LOW",
@@ -12064,25 +12603,16 @@ Ignored until: Feb 1, 2026",
           "PROJECT-GAMMA",
         ],
         "region": "us-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-4101",
         "ruleName": "AI model endpoint without request logging",
         "status": "OPEN",
-        "subscriptionId": undefined,
         "updatedAt": "2026-08-13T10:30:01Z",
       },
       {
         "account": "gcp-account-03",
         "adjustedSeverity": "MEDIUM",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-e",
         "assetName": "Agent-E",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-e",
         ],
@@ -12090,15 +12620,12 @@ Ignored until: Feb 1, 2026",
         "businessImpact": "MBI",
         "comboGroup": "other-ai-risk",
         "createdAt": "2026-07-02T08:15:00Z",
-        "dueAt": undefined,
         "entityStatus": "Active",
         "environments": [
           "PRODUCTION",
         ],
         "frameworks": {},
         "id": "iss-031",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "CLOUD_CONFIGURATION",
         "justification": "Training data is readable to anyone who reaches the bucket.",
         "nativeSeverity": "MEDIUM",
@@ -12108,25 +12635,16 @@ Ignored until: Feb 1, 2026",
           "PROJECT-GAMMA",
         ],
         "region": "us-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-4102",
         "ruleName": "AI training dataset stored without encryption at rest",
         "status": "OPEN",
-        "subscriptionId": undefined,
         "updatedAt": "2026-08-13T10:30:01Z",
       },
       {
         "account": "gcp-account-03",
         "adjustedSeverity": "LOW",
-        "aiRecommendedSeverity": undefined,
-        "aiVerdict": undefined,
         "assetId": "agent-e",
         "assetName": "Agent-E",
-        "assignee": undefined,
         "attributedAssetIds": [
           "agent-e",
         ],
@@ -12134,15 +12652,12 @@ Ignored until: Feb 1, 2026",
         "businessImpact": "MBI",
         "comboGroup": "other-ai-risk",
         "createdAt": "2026-07-02T08:15:00Z",
-        "dueAt": undefined,
         "entityStatus": "Active",
         "environments": [
           "PRODUCTION",
         ],
         "frameworks": {},
         "id": "iss-032",
-        "ignoreExpiredAt": undefined,
-        "ignoreNote": undefined,
         "issueType": "CLOUD_CONFIGURATION",
         "justification": "A long-lived static key on an AI workload widens the window for credential theft.",
         "nativeSeverity": "LOW",
@@ -12152,19 +12667,12 @@ Ignored until: Feb 1, 2026",
           "PROJECT-GAMMA",
         ],
         "region": "us-west1",
-        "remediation": undefined,
-        "resolutionReason": undefined,
-        "resolutionRecommendation": undefined,
-        "resolvedAt": undefined,
-        "resolvedBy": undefined,
         "ruleId": "wc-id-4103",
         "ruleName": "AI service account key older than 90 days",
         "status": "OPEN",
-        "subscriptionId": undefined,
         "updatedAt": "2026-08-13T10:30:01Z",
       },
     ],
-    "total": 32,
   },
   "ok": true,
 }
@@ -12411,7 +12919,6 @@ exports[`read endpoints > getProblems answers the same shape 1`] = `
     "filtered": 38,
     "page": 0,
     "pageCount": 1,
-    "pageSize": 50,
     "rows": [
       {
         "assetId": "role-finance-admin-01",
@@ -13939,745 +14446,6 @@ exports[`read endpoints > getQueryVocabulary (values for AI Agent) answers the s
         },
       ],
     },
-    "kinds": [
-      {
-        "count": 14,
-        "kind": "AI_AGENT",
-      },
-      {
-        "count": 2,
-        "kind": "AI_MODEL",
-      },
-      {
-        "count": 3,
-        "kind": "AI_GUARDRAIL",
-      },
-      {
-        "count": 1,
-        "kind": "AI_PIPELINE",
-      },
-      {
-        "count": 1,
-        "kind": "AI_DATASET",
-      },
-      {
-        "count": 1,
-        "kind": "MCP_SERVER",
-      },
-      {
-        "count": 14,
-        "kind": "SERVICE_ACCOUNT",
-      },
-      {
-        "count": 12,
-        "kind": "USER_ACCOUNT",
-      },
-      {
-        "count": 8,
-        "kind": "ACCESS_ROLE",
-      },
-      {
-        "count": 1,
-        "kind": "ACCESS_KEY",
-      },
-      {
-        "count": 19,
-        "kind": "BUCKET",
-      },
-      {
-        "count": 2,
-        "kind": "DATABASE",
-      },
-      {
-        "count": 1,
-        "kind": "VIRTUAL_MACHINE",
-      },
-      {
-        "count": 1,
-        "kind": "SERVERLESS",
-      },
-      {
-        "count": 1,
-        "kind": "CONTAINER_IMAGE",
-      },
-      {
-        "count": 1,
-        "kind": "REPOSITORY",
-      },
-      {
-        "count": 2,
-        "kind": "EXCESSIVE_ACCESS_FINDING",
-      },
-      {
-        "count": 1,
-        "kind": "LATERAL_MOVEMENT_FINDING",
-      },
-      {
-        "count": 1,
-        "kind": "IDENTITY_ACCESS_FINDING",
-      },
-      {
-        "count": 32,
-        "kind": "ISSUE",
-      },
-      {
-        "count": 10,
-        "kind": "SENSITIVE_DATA",
-      },
-      {
-        "count": 4,
-        "kind": "INTERNET_EXPOSURE",
-      },
-      {
-        "count": 32,
-        "kind": "EXCESSIVE_PRIVILEGE",
-      },
-      {
-        "count": 19,
-        "kind": "MISSING_GUARDRAIL",
-      },
-      {
-        "count": 3,
-        "kind": "DATA_FINDING",
-      },
-      {
-        "count": 2,
-        "kind": "ENDPOINT",
-      },
-    ],
-    "shortcuts": [
-      {
-        "blurb": "Reads the asset's own guardrail flag, which is what the canvas draws its MISSING_GUARDRAIL stub from — so the two always agree.
-
-Deliberately not the “NOT protected by a guardrail” traversal, which answers a wider question: it counts every asset with no guardrail relationship in the graph, including ones Wiz reports as protected without naming the guardrail. Add a NOT on a PROTECTED_BY step if that wider question is the one you want.",
-        "filters": [
-          {
-            "key": "guardrail",
-            "path": [],
-            "values": [
-              "missing",
-            ],
-          },
-        ],
-        "helpId": "missing-guardrail",
-        "id": "no-guardrail",
-        "kinds": [
-          "AI_AGENT",
-          "AI_MODEL",
-          "AI_GUARDRAIL",
-          "AI_PIPELINE",
-          "AI_DATASET",
-          "MCP_SERVER",
-        ],
-        "label": "Has no guardrail",
-        "phrase": "Wiz reports the guardrail missing",
-        "steps": [],
-      },
-      {
-        "blurb": "Reads the identity's own privilege flag rather than walking to the EXCESSIVE_PRIVILEGE stub, which is suppressed wherever a real access finding exists — walking to it would quietly answer with the leftovers. Admin privilege is the stronger claim and has its own field.",
-        "filters": [
-          {
-            "key": "highPriv",
-            "path": [
-              0,
-            ],
-            "values": [
-              "true",
-            ],
-          },
-        ],
-        "helpId": "excessive-privilege",
-        "id": "runs-as-privileged",
-        "kinds": [
-          "AI_AGENT",
-        ],
-        "label": "Runs as a privileged identity",
-        "phrase": "its service account holds high privileges",
-        "steps": [
-          {
-            "edge": "RUNS_AS",
-            "node": {
-              "kind": "SERVICE_ACCOUNT",
-            },
-          },
-        ],
-      },
-      {
-        "blurb": "An identity nobody has used in ninety days, still able to act on the asset's behalf. The dormancy is a field Wiz reports, not something derived here.",
-        "filters": [
-          {
-            "key": "inactive",
-            "path": [
-              0,
-            ],
-            "values": [
-              "true",
-            ],
-          },
-        ],
-        "helpId": "agentic-identity",
-        "id": "runs-as-dormant",
-        "kinds": [
-          "AI_AGENT",
-        ],
-        "label": "Runs as a dormant identity",
-        "phrase": "its service account has been idle 90 days",
-        "steps": [
-          {
-            "edge": "RUNS_AS",
-            "node": {
-              "kind": "SERVICE_ACCOUNT",
-            },
-          },
-        ],
-      },
-      {
-        "blurb": "The real path — asset to identity to bucket — with the identity hidden, so the table reads asset beside data. Deliberately NOT the SENSITIVE_DATA stub, which graphEnrich suppresses exactly where this chain exists: walking to the stub would return only the assets whose path could not be traced.",
-        "helpId": "sensitive-data",
-        "id": "reaches-classified",
-        "kinds": [
-          "AI_AGENT",
-        ],
-        "label": "Reaches classified data",
-        "phrase": "through its identity, to a bucket",
-        "steps": [
-          {
-            "edge": "RUNS_AS",
-            "node": {
-              "kind": "SERVICE_ACCOUNT",
-              "show": false,
-              "steps": [
-                {
-                  "edge": "ALLOWS_ACCESS_TO",
-                  "node": {
-                    "kind": "BUCKET",
-                  },
-                },
-              ],
-            },
-          },
-        ],
-      },
-      {
-        "blurb": "Assets carrying an internet exposure node. Exposure is inherited from the compute underneath, so this is the topology answer rather than a flag read off the asset.",
-        "helpId": "internet-exposure",
-        "id": "internet-reachable",
-        "kinds": [
-          "AI_AGENT",
-        ],
-        "label": "Reachable from the internet",
-        "phrase": "an exposure path reaches it",
-        "steps": [
-          {
-            "edge": "EXPOSED_TO_INTERNET",
-            "node": {
-              "kind": "INTERNET_EXPOSURE",
-            },
-          },
-        ],
-      },
-      {
-        "blurb": "Human access read backwards: the accounts that ALLOW_ACCESS_TO this asset, narrowed to the ones nobody has signed into in ninety days. Standing access that no longer has a person behind it.",
-        "filters": [
-          {
-            "key": "inactive",
-            "path": [
-              0,
-            ],
-            "values": [
-              "true",
-            ],
-          },
-        ],
-        "id": "dormant-human-access",
-        "kinds": [
-          "AI_AGENT",
-        ],
-        "label": "A dormant person can reach it",
-        "phrase": "a human account, idle 90 days, still has access",
-        "steps": [
-          {
-            "edge": "ALLOWS_ACCESS_TO",
-            "node": {
-              "kind": "USER_ACCOUNT",
-            },
-            "reverse": true,
-          },
-        ],
-      },
-    ],
-    "stepsFrom": {
-      "ACCESS_KEY": [
-        {
-          "count": 1,
-          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
-          "kind": "SENSITIVE_DATA",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "RUNS_AS",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-      "ACCESS_ROLE": [
-        {
-          "count": 8,
-          "edge": "CAN_INVOKE",
-          "kind": "AI_MODEL",
-          "reverse": false,
-        },
-        {
-          "count": 8,
-          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
-          "kind": "SENSITIVE_DATA",
-          "reverse": false,
-        },
-        {
-          "count": 8,
-          "edge": "HAS_EXCESSIVE_PRIVILEGE",
-          "kind": "EXCESSIVE_PRIVILEGE",
-          "reverse": false,
-        },
-        {
-          "count": 8,
-          "edge": "HAS_ISSUE",
-          "kind": "ISSUE",
-          "reverse": false,
-        },
-      ],
-      "AI_AGENT": [
-        {
-          "count": 24,
-          "edge": "HAS_ISSUE",
-          "kind": "ISSUE",
-          "reverse": false,
-        },
-        {
-          "count": 14,
-          "edge": "RUNS_AS",
-          "kind": "SERVICE_ACCOUNT",
-          "reverse": false,
-        },
-        {
-          "count": 13,
-          "edge": "HAS_EXCESSIVE_PRIVILEGE",
-          "kind": "EXCESSIVE_PRIVILEGE",
-          "reverse": false,
-        },
-        {
-          "count": 12,
-          "edge": "ALLOWS_ACCESS_TO",
-          "kind": "USER_ACCOUNT",
-          "reverse": true,
-        },
-        {
-          "count": 3,
-          "edge": "EXPOSED_TO_INTERNET",
-          "kind": "INTERNET_EXPOSURE",
-          "reverse": false,
-        },
-        {
-          "count": 2,
-          "edge": "INVOKES_TOOL",
-          "kind": "MCP_SERVER",
-          "reverse": false,
-        },
-        {
-          "count": 2,
-          "edge": "USES_MODEL",
-          "kind": "AI_MODEL",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "BUILT_FROM",
-          "kind": "CONTAINER_IMAGE",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "HAS_FINDING",
-          "kind": "IDENTITY_ACCESS_FINDING",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "HOSTED_ON",
-          "kind": "SERVERLESS",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "HOSTED_ON",
-          "kind": "VIRTUAL_MACHINE",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "PROTECTED_BY",
-          "kind": "AI_GUARDRAIL",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "READS_DATA_FROM",
-          "kind": "AI_DATASET",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "RUNS_AS",
-          "kind": "ACCESS_KEY",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "SERVES",
-          "kind": "ENDPOINT",
-          "reverse": false,
-        },
-      ],
-      "AI_DATASET": [
-        {
-          "count": 1,
-          "edge": "HAS_SENSITIVE_DATA",
-          "kind": "SENSITIVE_DATA",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "STORES_DATA_IN",
-          "kind": "BUCKET",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "READS_DATA_FROM",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "READS_DATA_FROM",
-          "kind": "AI_PIPELINE",
-          "reverse": true,
-        },
-      ],
-      "AI_GUARDRAIL": [
-        {
-          "count": 1,
-          "edge": "ENFORCES",
-          "kind": "AI_MODEL",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "PROTECTED_BY",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-      "AI_MODEL": [
-        {
-          "count": 8,
-          "edge": "CAN_INVOKE",
-          "kind": "ACCESS_ROLE",
-          "reverse": true,
-        },
-        {
-          "count": 2,
-          "edge": "USES_MODEL",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "ENFORCES",
-          "kind": "AI_GUARDRAIL",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "PRODUCES",
-          "kind": "AI_PIPELINE",
-          "reverse": true,
-        },
-      ],
-      "AI_PIPELINE": [
-        {
-          "count": 1,
-          "edge": "PRODUCES",
-          "kind": "AI_MODEL",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "READS_DATA_FROM",
-          "kind": "AI_DATASET",
-          "reverse": false,
-        },
-      ],
-      "BUCKET": [
-        {
-          "count": 24,
-          "edge": "ALLOWS_ACCESS_TO",
-          "kind": "SERVICE_ACCOUNT",
-          "reverse": true,
-        },
-        {
-          "count": 2,
-          "edge": "HAS_DATA_FINDING",
-          "kind": "DATA_FINDING",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "STORES_DATA_IN",
-          "kind": "AI_DATASET",
-          "reverse": true,
-        },
-      ],
-      "CONTAINER_IMAGE": [
-        {
-          "count": 1,
-          "edge": "BUILT_FROM",
-          "kind": "REPOSITORY",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "BUILT_FROM",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-      "DATABASE": [
-        {
-          "count": 8,
-          "edge": "ALLOWS_ACCESS_TO",
-          "kind": "SERVICE_ACCOUNT",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "HAS_DATA_FINDING",
-          "kind": "DATA_FINDING",
-          "reverse": false,
-        },
-      ],
-      "DATA_FINDING": [
-        {
-          "count": 2,
-          "edge": "HAS_DATA_FINDING",
-          "kind": "BUCKET",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "HAS_DATA_FINDING",
-          "kind": "DATABASE",
-          "reverse": true,
-        },
-      ],
-      "ENDPOINT": [
-        {
-          "count": 1,
-          "edge": "SERVES",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "SERVES",
-          "kind": "SERVERLESS",
-          "reverse": true,
-        },
-      ],
-      "EXCESSIVE_ACCESS_FINDING": [
-        {
-          "count": 2,
-          "edge": "HAS_FINDING",
-          "kind": "SERVICE_ACCOUNT",
-          "reverse": true,
-        },
-      ],
-      "EXCESSIVE_PRIVILEGE": [
-        {
-          "count": 13,
-          "edge": "HAS_EXCESSIVE_PRIVILEGE",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 11,
-          "edge": "HAS_EXCESSIVE_PRIVILEGE",
-          "kind": "SERVICE_ACCOUNT",
-          "reverse": true,
-        },
-        {
-          "count": 8,
-          "edge": "HAS_EXCESSIVE_PRIVILEGE",
-          "kind": "ACCESS_ROLE",
-          "reverse": true,
-        },
-      ],
-      "IDENTITY_ACCESS_FINDING": [
-        {
-          "count": 1,
-          "edge": "HAS_FINDING",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-      "INTERNET_EXPOSURE": [
-        {
-          "count": 3,
-          "edge": "EXPOSED_TO_INTERNET",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "EXPOSED_TO_INTERNET",
-          "kind": "SERVERLESS",
-          "reverse": true,
-        },
-      ],
-      "ISSUE": [
-        {
-          "count": 24,
-          "edge": "HAS_ISSUE",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 8,
-          "edge": "HAS_ISSUE",
-          "kind": "ACCESS_ROLE",
-          "reverse": true,
-        },
-      ],
-      "LATERAL_MOVEMENT_FINDING": [
-        {
-          "count": 1,
-          "edge": "HAS_FINDING",
-          "kind": "SERVICE_ACCOUNT",
-          "reverse": true,
-        },
-      ],
-      "MCP_SERVER": [
-        {
-          "count": 2,
-          "edge": "INVOKES_TOOL",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-      "REPOSITORY": [
-        {
-          "count": 1,
-          "edge": "BUILT_FROM",
-          "kind": "CONTAINER_IMAGE",
-          "reverse": true,
-        },
-      ],
-      "SENSITIVE_DATA": [
-        {
-          "count": 8,
-          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
-          "kind": "ACCESS_ROLE",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
-          "kind": "ACCESS_KEY",
-          "reverse": true,
-        },
-        {
-          "count": 1,
-          "edge": "HAS_SENSITIVE_DATA",
-          "kind": "AI_DATASET",
-          "reverse": true,
-        },
-      ],
-      "SERVERLESS": [
-        {
-          "count": 1,
-          "edge": "EXPOSED_TO_INTERNET",
-          "kind": "INTERNET_EXPOSURE",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "SERVES",
-          "kind": "ENDPOINT",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "HOSTED_ON",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-      "SERVICE_ACCOUNT": [
-        {
-          "count": 24,
-          "edge": "ALLOWS_ACCESS_TO",
-          "kind": "BUCKET",
-          "reverse": false,
-        },
-        {
-          "count": 14,
-          "edge": "RUNS_AS",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-        {
-          "count": 11,
-          "edge": "HAS_EXCESSIVE_PRIVILEGE",
-          "kind": "EXCESSIVE_PRIVILEGE",
-          "reverse": false,
-        },
-        {
-          "count": 8,
-          "edge": "ALLOWS_ACCESS_TO",
-          "kind": "DATABASE",
-          "reverse": false,
-        },
-        {
-          "count": 2,
-          "edge": "HAS_FINDING",
-          "kind": "EXCESSIVE_ACCESS_FINDING",
-          "reverse": false,
-        },
-        {
-          "count": 1,
-          "edge": "HAS_FINDING",
-          "kind": "LATERAL_MOVEMENT_FINDING",
-          "reverse": false,
-        },
-      ],
-      "USER_ACCOUNT": [
-        {
-          "count": 12,
-          "edge": "ALLOWS_ACCESS_TO",
-          "kind": "AI_AGENT",
-          "reverse": false,
-        },
-      ],
-      "VIRTUAL_MACHINE": [
-        {
-          "count": 1,
-          "edge": "HOSTED_ON",
-          "kind": "AI_AGENT",
-          "reverse": true,
-        },
-      ],
-    },
     "valuesFor": {
       "AI_AGENT": [
         {
@@ -14925,6 +14693,471 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
 }
 `;
 
+exports[`read endpoints > getScanQueries answers the same shape 1`] = `
+{
+  "data": {
+    "hasCredentials": false,
+    "skipReasons": {},
+    "skippedSteps": [],
+    "stepRows": {},
+    "transportVariables": [
+      "first",
+      "after",
+      "quick",
+    ],
+    "truncatedSteps": [],
+  },
+  "ok": true,
+}
+`;
+
+exports[`read endpoints > getScanStepDetail answers the same shape 1`] = `
+{
+  "data": {
+    "area": "posture",
+    "steps": [
+      {
+        "document": "query SidekickAiSecurityFrameworks($first: Int, $after: String, $filterBy: SecurityFrameworkFilters) {
+  securityFrameworks(first: $first, after: $after, filterBy: $filterBy) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      name
+      description
+      builtin
+      enabled
+      policyTypes
+    }
+  }
+}
+",
+        "editable": false,
+        "id": "FRAMEWORKS_LIST",
+        "optional": true,
+        "overridden": [],
+        "pageSize": 500,
+        "rootField": "securityFrameworks",
+        "spec": {
+          "fields": [],
+          "locked": "This step's only filter picks whether disabled frameworks appear in the Settings picker. It does not decide what posture is collected — the framework selection does — so there is nothing here worth tuning per tenant.",
+          "stepId": "FRAMEWORKS_LIST",
+        },
+        "variables": {
+          "filterBy": {
+            "enabled": true,
+          },
+        },
+        "writes": [
+          "ai_frameworks",
+        ],
+      },
+      {
+        "document": "query SidekickAiCompliancePosture($id: ID!, $analyticsSelection: SecurityFrameworkComplianceAnalyticsSelection, $orderBy: SecurityFrameworkSelectionOrder) {
+  securityFramework(id: $id) {
+    id
+    name
+    description
+    builtin
+    enabled
+    complianceAnalytics(selection: $analyticsSelection, orderBy: $orderBy) {
+      passSubCategoryCount
+      failSubCategoryCount
+      averageCompliancePosture
+      emptyPostureReason
+      categoryAnalytics {
+        category { id name description externalId }
+        passCount
+        failCount
+        passSubCategoryCount
+        failSubCategoryCount
+        averageCompliancePosture
+        emptyPostureReason
+        subCategoryAnalytics {
+          passCount
+          failCount
+          compliancePosture
+          emptyPostureReason
+          subCategory {
+            id
+            title
+            description
+            externalId
+            assessmentScope
+            mappingRationale
+            tags { key value }
+          }
+          policyAnalytics {
+            failCount
+            passCount
+            rejectedCount
+            assessedCount
+            noResourceToAsses
+            control {
+              id
+              name
+              description
+              enabled
+              builtin
+              severity
+              scopeQuery
+            }
+            cloudConfigurationRule {
+              id
+              name
+              description
+              shortId
+              enabled
+              builtin
+              severity
+              targetNativeType
+              subjectEntityType
+              hasAutoRemediation
+              cloudProvider
+            }
+            hostConfigurationRule {
+              id
+              name
+              shortName
+              description
+              enabled
+              builtin
+              severity
+            }
+          }
+        }
+      }
+    }
+  }
+}
+",
+        "editable": false,
+        "id": "COMPLIANCE_POSTURE_wf-id-275",
+        "optional": true,
+        "overridden": [],
+        "pageSize": 100,
+        "rootField": "securityFramework",
+        "spec": {
+          "fields": [],
+          "locked": "This step takes no editable variable: its \`id\` is not a filter — it selects WHICH framework is fetched, so editing it here would make a step whose name says one framework report another. Choose frameworks in Settings instead.",
+          "prefix": true,
+          "stepId": "COMPLIANCE_POSTURE_",
+        },
+        "variables": {
+          "analyticsSelection": {},
+          "id": "wf-id-275",
+        },
+        "writes": [
+          "ai_framework_posture",
+          "ai_framework_policies",
+        ],
+      },
+      {
+        "document": "query SidekickAiCompliancePosture($id: ID!, $analyticsSelection: SecurityFrameworkComplianceAnalyticsSelection, $orderBy: SecurityFrameworkSelectionOrder) {
+  securityFramework(id: $id) {
+    id
+    name
+    description
+    builtin
+    enabled
+    complianceAnalytics(selection: $analyticsSelection, orderBy: $orderBy) {
+      passSubCategoryCount
+      failSubCategoryCount
+      averageCompliancePosture
+      emptyPostureReason
+      categoryAnalytics {
+        category { id name description externalId }
+        passCount
+        failCount
+        passSubCategoryCount
+        failSubCategoryCount
+        averageCompliancePosture
+        emptyPostureReason
+        subCategoryAnalytics {
+          passCount
+          failCount
+          compliancePosture
+          emptyPostureReason
+          subCategory {
+            id
+            title
+            description
+            externalId
+            assessmentScope
+            mappingRationale
+            tags { key value }
+          }
+          policyAnalytics {
+            failCount
+            passCount
+            rejectedCount
+            assessedCount
+            noResourceToAsses
+            control {
+              id
+              name
+              description
+              enabled
+              builtin
+              severity
+              scopeQuery
+            }
+            cloudConfigurationRule {
+              id
+              name
+              description
+              shortId
+              enabled
+              builtin
+              severity
+              targetNativeType
+              subjectEntityType
+              hasAutoRemediation
+              cloudProvider
+            }
+            hostConfigurationRule {
+              id
+              name
+              shortName
+              description
+              enabled
+              builtin
+              severity
+            }
+          }
+        }
+      }
+    }
+  }
+}
+",
+        "editable": false,
+        "id": "COMPLIANCE_POSTURE_wf-id-201",
+        "optional": true,
+        "overridden": [],
+        "pageSize": 100,
+        "rootField": "securityFramework",
+        "spec": {
+          "fields": [],
+          "locked": "This step takes no editable variable: its \`id\` is not a filter — it selects WHICH framework is fetched, so editing it here would make a step whose name says one framework report another. Choose frameworks in Settings instead.",
+          "prefix": true,
+          "stepId": "COMPLIANCE_POSTURE_",
+        },
+        "variables": {
+          "analyticsSelection": {},
+          "id": "wf-id-201",
+        },
+        "writes": [
+          "ai_framework_posture",
+          "ai_framework_policies",
+        ],
+      },
+      {
+        "document": "query SidekickAiCompliancePosture($id: ID!, $analyticsSelection: SecurityFrameworkComplianceAnalyticsSelection, $orderBy: SecurityFrameworkSelectionOrder) {
+  securityFramework(id: $id) {
+    id
+    name
+    description
+    builtin
+    enabled
+    complianceAnalytics(selection: $analyticsSelection, orderBy: $orderBy) {
+      passSubCategoryCount
+      failSubCategoryCount
+      averageCompliancePosture
+      emptyPostureReason
+      categoryAnalytics {
+        category { id name description externalId }
+        passCount
+        failCount
+        passSubCategoryCount
+        failSubCategoryCount
+        averageCompliancePosture
+        emptyPostureReason
+        subCategoryAnalytics {
+          passCount
+          failCount
+          compliancePosture
+          emptyPostureReason
+          subCategory {
+            id
+            title
+            description
+            externalId
+            assessmentScope
+            mappingRationale
+            tags { key value }
+          }
+          policyAnalytics {
+            failCount
+            passCount
+            rejectedCount
+            assessedCount
+            noResourceToAsses
+            control {
+              id
+              name
+              description
+              enabled
+              builtin
+              severity
+              scopeQuery
+            }
+            cloudConfigurationRule {
+              id
+              name
+              description
+              shortId
+              enabled
+              builtin
+              severity
+              targetNativeType
+              subjectEntityType
+              hasAutoRemediation
+              cloudProvider
+            }
+            hostConfigurationRule {
+              id
+              name
+              shortName
+              description
+              enabled
+              builtin
+              severity
+            }
+          }
+        }
+      }
+    }
+  }
+}
+",
+        "editable": false,
+        "id": "COMPLIANCE_POSTURE_wf-id-214",
+        "optional": true,
+        "overridden": [],
+        "pageSize": 100,
+        "rootField": "securityFramework",
+        "spec": {
+          "fields": [],
+          "locked": "This step takes no editable variable: its \`id\` is not a filter — it selects WHICH framework is fetched, so editing it here would make a step whose name says one framework report another. Choose frameworks in Settings instead.",
+          "prefix": true,
+          "stepId": "COMPLIANCE_POSTURE_",
+        },
+        "variables": {
+          "analyticsSelection": {},
+          "id": "wf-id-214",
+        },
+        "writes": [
+          "ai_framework_posture",
+          "ai_framework_policies",
+        ],
+      },
+      {
+        "document": "query SidekickAiCompliancePosture($id: ID!, $analyticsSelection: SecurityFrameworkComplianceAnalyticsSelection, $orderBy: SecurityFrameworkSelectionOrder) {
+  securityFramework(id: $id) {
+    id
+    name
+    description
+    builtin
+    enabled
+    complianceAnalytics(selection: $analyticsSelection, orderBy: $orderBy) {
+      passSubCategoryCount
+      failSubCategoryCount
+      averageCompliancePosture
+      emptyPostureReason
+      categoryAnalytics {
+        category { id name description externalId }
+        passCount
+        failCount
+        passSubCategoryCount
+        failSubCategoryCount
+        averageCompliancePosture
+        emptyPostureReason
+        subCategoryAnalytics {
+          passCount
+          failCount
+          compliancePosture
+          emptyPostureReason
+          subCategory {
+            id
+            title
+            description
+            externalId
+            assessmentScope
+            mappingRationale
+            tags { key value }
+          }
+          policyAnalytics {
+            failCount
+            passCount
+            rejectedCount
+            assessedCount
+            noResourceToAsses
+            control {
+              id
+              name
+              description
+              enabled
+              builtin
+              severity
+              scopeQuery
+            }
+            cloudConfigurationRule {
+              id
+              name
+              description
+              shortId
+              enabled
+              builtin
+              severity
+              targetNativeType
+              subjectEntityType
+              hasAutoRemediation
+              cloudProvider
+            }
+            hostConfigurationRule {
+              id
+              name
+              shortName
+              description
+              enabled
+              builtin
+              severity
+            }
+          }
+        }
+      }
+    }
+  }
+}
+",
+        "editable": false,
+        "id": "COMPLIANCE_POSTURE_wf-id-106",
+        "optional": true,
+        "overridden": [],
+        "pageSize": 100,
+        "rootField": "securityFramework",
+        "spec": {
+          "fields": [],
+          "locked": "This step takes no editable variable: its \`id\` is not a filter — it selects WHICH framework is fetched, so editing it here would make a step whose name says one framework report another. Choose frameworks in Settings instead.",
+          "prefix": true,
+          "stepId": "COMPLIANCE_POSTURE_",
+        },
+        "variables": {
+          "analyticsSelection": {},
+          "id": "wf-id-106",
+        },
+        "writes": [
+          "ai_framework_posture",
+          "ai_framework_policies",
+        ],
+      },
+    ],
+  },
+  "ok": true,
+}
+`;
+
 exports[`read endpoints > getSettings answers the same shape 1`] = `
 {
   "data": {
@@ -14946,7 +15179,7 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 97035,
+    "archiveBytes": 276242,
     "cellCount": 40600,
     "rows": {
       "assets": 87,
@@ -14982,7 +15215,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "problem_outcome_json": "{"ACT":0,"ATTEND":7,"TRACK_STAR":15,"TRACK":16}",
         "problem_rule_version": 0,
         "project_totals_json": "{"proj-demo-business-unit":{"aars":{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8},"outcome":{"ACT":0,"ATTEND":7,"TRACK_STAR":12,"TRACK":16},"counts":{"issues":32,"findings":3}},"proj-project-beta":{"aars":{"CRITICAL":1,"HIGH":4,"MEDIUM":0,"LOW":2,"INFO":0},"outcome":{"ACT":0,"ATTEND":0,"TRACK_STAR":7,"TRACK":4},"counts":{"issues":10,"findings":1}},"proj-project-alpha":{"aars":{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8},"outcome":{"ACT":0,"ATTEND":7,"TRACK_STAR":12,"TRACK":16},"counts":{"issues":32,"findings":3}},"proj-project-gamma":{"aars":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":0,"TRACK_STAR":5,"TRACK":0},"counts":{"issues":4,"findings":1}},"proj-cs-demo-platform":{"aars":{"CRITICAL":1,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":3,"TRACK_STAR":0,"TRACK":2},"counts":{"issues":4,"findings":1}},"proj-project-eta":{"aars":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":0,"TRACK_STAR":0,"TRACK":2},"counts":{"issues":2,"findings":0}},"proj-project-delta":{"aars":{"CRITICAL":1,"HIGH":0,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":3,"TRACK_STAR":0,"TRACK":0},"counts":{"issues":2,"findings":1}},"proj-project-epsilon":{"aars":{"CRITICAL":1,"HIGH":0,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":3,"TRACK_STAR":0,"TRACK":0},"counts":{"issues":2,"findings":1}},"proj-project-zeta":{"aars":{"CRITICAL":0,"HIGH":1,"MEDIUM":0,"LOW":0,"INFO":0},"outcome":{"ACT":0,"ATTEND":4,"TRACK_STAR":0,"TRACK":0},"counts":{"issues":4,"findings":0}}}",
-        "snapshot_ref": "file-4",
+        "snapshot_ref": "file-5",
         "started_at": "2026-08-13T09:00:00Z",
         "status": "SUCCESS",
         "sync_id": "sync-2026-08-13T090000Z",
@@ -18211,7 +18444,6 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
       },
     ],
     "summaries": [],
-    "syncedAt": "2026-08-13T09:00:00Z",
     "total": 14,
     "truncated": false,
   },
@@ -20504,7 +20736,6 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
       },
     ],
     "summaries": [],
-    "syncedAt": "2026-08-13T09:00:00Z",
     "total": 11,
     "truncated": false,
   },
@@ -21803,7 +22034,6 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
       },
     ],
     "summaries": [],
-    "syncedAt": "2026-08-13T09:00:00Z",
     "total": 14,
     "truncated": false,
   },

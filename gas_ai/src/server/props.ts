@@ -27,6 +27,10 @@ export const PROP_KEYS = {
   // this only needs setting by a tenant that spells the key differently rather than
   // merely differently-cased. Mirrors WIZ_SUPPORT_GROUP_TAG_KEY in the OS-vulns tool.
   wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
+  // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
+  // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
+  // from one an older deployment left behind. Written by setup(), read by setup().
+  warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
 } as const;
 
 export const DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";

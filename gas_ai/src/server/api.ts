@@ -131,9 +131,7 @@ import { conditionHolds, conditionState } from "../domain/riskConditions";
 import {
   cleanStepVars,
   isEditableStep,
-  MAX_LIST_VALUES,
-  MAX_VALUE_LEN,
-  STEP_VAR_SPECS,
+  varSpecFor,
   validateStepVars,
 } from "../domain/scanVars";
 import { layoutGraph } from "../domain/graphLayout";
@@ -176,7 +174,10 @@ import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { buildInfo } from "./buildInfo";
 import { domainTagKey, hasWizCredentials, projectScope } from "./props";
 import { domainCoverage, domainOfTags } from "../domain/domainTag";
-import { cached, dataVersion, wizDataVersion } from "./serverCache";
+import { cached, wizDataVersion } from "./serverCache";
+// The Drive-backed second level, for the time-invariant read-models only. See that
+// module's header for which are eligible and why the other two are not.
+import { durablyCached } from "./readModelStore";
 import {
   AGENT_EXPANSION,
   decodeExpansion,
@@ -364,8 +365,7 @@ function openIssues(): IssueRow[] {
 
 export function bootstrap(_p?: unknown): ApiResult {
   return run(() => ({
-    ...(cached("bootstrapCore", null, bootstrapCore) as Rec),
-    dataVersion: dataVersion(),
+    ...(durablyCached("bootstrapCore", null, bootstrapCore) as Rec),
     hasCredentials: hasWizCredentials(),
     // Outside the cached core on purpose: a cached build stamp would be the one thing
     // guaranteed to lie after a deploy.
@@ -461,11 +461,18 @@ function bootstrapCore(): Rec {
       remedy: "sync",
     },
     latestSync: latest,
+    // This block is dereferenced in exactly ONE place in the client — helpContent's
+    // "severity" lexicon entry — and it reads `openIssues` alone. `aiAssets`, `totalAssets`
+    // and `bySeverity` had no reader anywhere and are gone.
+    //
+    // THE TWO BELOW HAVE NO CLIENT READER EITHER, AND STAY, which is the one place a grep
+    // is the wrong test. test/verdictIsolation.test.ts asserts both, and that file's whole
+    // argument is the distinction between an AGGREGATE, which bootstrap may publish, and a
+    // per-asset CLAIM, which nothing outside the workbench may. Removing them would not be
+    // trimming an unread field; it would be retracting a stated contract, and it would take
+    // editing the test that exists precisely so it cannot be re-recorded.
     counts: {
-      aiAssets: assets.filter((a) => AI_ASSET_KINDS.includes(a.kind)).length,
-      totalAssets: assets.length,
       openIssues: issues.length,
-      bySeverity,
       // A DISTRIBUTION, kept: this is the shape of the score across the landscape, which is
       // a legitimate thing to publish and is what the workbench's band rail draws. It is
       // not a per-asset claim, and there is no longer any per-asset claim to be — the
@@ -583,15 +590,20 @@ function filterOptions(assets: GNode[], register: GNode[]): Rec {
     if (conditionHolds(a, "EXCESSIVE_PRIVILEGE")) kinds.add("EXCESSIVE_PRIVILEGE");
     if (conditionHolds(a, "MISSING_GUARDRAIL")) kinds.add("MISSING_GUARDRAIL");
   }
+  // FOUR KEYS, NOT SIX. The flat `clouds` and `domains` facets used to ship here and had no
+  // reader: every cloud/domain filter in the client is built from `getAssets.facets`, which
+  // is scoped to the rows in view and is the only one that can shrink as an analyst narrows.
+  // A register-wide copy on bootstrap could only ever disagree with the pills on screen.
+  //
+  // The four that stay all have exactly one reader each: `kinds` (helpContent's kind list),
+  // `projects` (scanContent), and `projectList` / `domainList` (the scope switcher, plus
+  // `projectList` again in the prune panel).
   return {
     kinds: [...kinds].sort(),
-    clouds: [...clouds].sort(),
     projects: [...projects].sort(),
-    domains: [...domains].sort(),
-    // Beside the flat `domains` above and NOT replacing it, for the reason `projectList` is
-    // beside `projects`: that one is a facet over the assets IN VIEW, this one is the
-    // switcher's catalogue over the whole register, answering "how much would I see if I
-    // picked this" rather than "what can I still narrow to".
+    // The switcher's catalogue over the whole register, answering "how much would I see if
+    // I picked this" rather than "what can I still narrow to" — which is why it survives the
+    // removal of the flat `domains` facet above rather than going with it.
     domainList: domainCatalogue(register),
     // Keyed by ID, and deliberately BESIDE `projects` rather than replacing it. Every facet
     // filter on every page matches project names, and there is no reason to migrate them
@@ -611,7 +623,7 @@ export function getGraph(p?: unknown): ApiResult {
     // the CacheService fetch — no Sheets or Drive I/O at all. Seed resolution
     // and settings defaults live INSIDE the compute; they only change when the
     // data version bumps, and the version is part of the key.
-    return cached("getGraph", graphCacheParams(params), () => {
+    return durablyCached("getGraph", graphCacheParams(params), () => {
       const doc = viewGraphDoc();
       if (!doc) return { empty: true };
       const options = resolveGraphParams(params, {
@@ -641,7 +653,6 @@ export function getGraph(p?: unknown): ApiResult {
           groupBy: view.groupBy,
           sort: view.sort,
         },
-        syncedAt: doc.syncedAt,
       };
     });
   });
@@ -670,15 +681,20 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
     ? (raw as QueryKind)
     : null;
   return run(() =>
-    cached("queryVocabulary", { kind }, () => {
+    durablyCached("queryVocabulary", { kind }, () => {
       const doc = viewGraphDoc();
       if (!doc) {
         return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
       }
       const vocab = queryVocabulary(doc);
       if (!kind) return vocab;
+      // NO `...vocab` HERE. The per-kind response used to spread the whole base vocabulary —
+      // `kinds`, `stepsFrom` and `shortcuts` — into every per-kind answer, and the only reader
+      // of this branch takes two keys off it: graph.js's `loadFields` reads `fieldsFor[k]` and
+      // `valuesFor[k]` and nothing else. The base vocabulary IS read, but only off the BARE
+      // call (`{}`), which the page prefetches once per session and hands to the palette; so
+      // spreading it here re-shipped a whole second copy on every kind the reader clicks.
       return {
-        ...vocab,
         // ANY gets them too, over every node in the graph. `fieldsForKind("ANY")` already keeps
         // only the kind-agnostic fields, so the union is never one of things that cannot
         // co-occur — it is "which clouds does this landscape use", which is the question.
@@ -745,7 +761,6 @@ export function runGraphQuery(p?: unknown): ApiResult {
         counts: projection.counts,
         layout: layoutGraph(projection, view),
         options: { maxNodes, layout: view.mode, groupBy: view.groupBy, sort: view.sort },
-        syncedAt: doc.syncedAt,
       };
     }) as Rec;
     return retired.length ? { ...answer, retiredFilters: retired } : answer;
@@ -1071,17 +1086,6 @@ interface AssetsModel {
     projects: string[];
     domains: string[];
   };
-  /**
-   * How much of the landscape carries the domain tag at all.
-   *
-   * The Domain facet lists only values that exist, so an empty one is ambiguous between
-   * "nobody tagged anything" and "we never successfully asked" — AI_ASSET_PROPERTIES is
-   * optional and swallows an HTTP 400, and it is the only route by which an AI asset's
-   * properties bag arrives. A count beside the facet is what keeps the page from
-   * publishing the second case as the first. An aggregate over the whole set, so it is a
-   * count of what Wiz said and never a claim about any one asset.
-   */
-  domainCoverage: { key: string; tagged: number; total: number };
 }
 
 /**
@@ -1305,8 +1309,31 @@ function assetsModel(): AssetsModel {
       projects: [...projects].sort(),
       domains: [...domains].sort(),
     },
-    domainCoverage: domainCoverage(assets, domainTagKey()),
   };
+}
+
+/**
+ * The whole-landscape HEAD of the inventory: the KPI band, the row total, and the reach
+ * summary. No rows, no facets, no trend.
+ *
+ * Wiz Scans and Help read exactly these three fields and never `rows`, and both were
+ * calling `getAssets({all: true, pageSize: 25})` to get them. That request is more
+ * misleading than it looks: `all` IS NOT A REQUEST PARAMETER — `resolveAssetQuery` never
+ * reads `params["all"]` and `AssetTableQuery` has no such field. The server decides it
+ * alone, from `model.rows.length <= CLIENT_ALL_MAX`, and on that branch it returns
+ * `rows: model.rows` and ignores `pageSize` entirely. So the `pageSize: 25` those pages
+ * sent did nothing below 1,500 assets, which is the normal case, and both received every
+ * row in the register with every per-severity breakdown to read three head fields:
+ * 29,247 bytes for 2,675, of which `rows` alone was 25,623.
+ *
+ * Projected off the same cached `assetsModel2` entry the full endpoint uses, so Inventory
+ * and these two still share one computation.
+ */
+export function getAssetsHead(_p?: unknown): ApiResult {
+  return run(() => {
+    const model = durablyCached("assetsModel2", null, assetsModel) as AssetsModel;
+    return { total: model.rows.length, kpis: model.kpis, reach: model.reach };
+  });
 }
 
 export function getAssets(p?: unknown): ApiResult {
@@ -1317,7 +1344,11 @@ export function getAssets(p?: unknown): ApiResult {
     // and filter combination; only the filter/sort/slice below runs per request. The
     // cache name deliberately differs from the pre-pagination "getAssets" entry, so a
     // still-warm cache can't answer a paginating client with the old payload shape.
-    const model = cached("assetsModel", null, assetsModel) as AssetsModel;
+    // "assetsModel2", bumped because the CACHED SHAPE changed: `domainCoverage` was
+    // computed into this model and read by nothing but the payload line below, and both are
+    // gone. A still-warm "assetsModel" entry would answer with the old shape. The bump is
+    // for the shape alone — nothing about how the surviving fields are derived moved.
+    const model = durablyCached("assetsModel2", null, assetsModel) as AssetsModel;
     const head = {
       total: model.rows.length,
       kpis: model.kpis,
@@ -1327,10 +1358,6 @@ export function getAssets(p?: unknown): ApiResult {
       countDeltas: countDeltas(model.countTrend, model.kpis),
       reach: model.reach,
       facets: model.facets,
-      domainCoverage: model.domainCoverage,
-      pageSize: query.pageSize,
-      sort: query.sort,
-      dir: query.dir,
     };
 
     // Small inventory: ship it whole and let the browser filter, sort and page with no
@@ -1424,7 +1451,7 @@ function postureFailCount(kpis: Rec): number | null {
  */
 export function getAssetOptions(_p?: unknown): ApiResult {
   return run(() =>
-    cached("assetOptions", null, () => ({
+    durablyCached("assetOptions", null, () => ({
       rows: [...viewAssets()]
         .sort((a, b) =>
           Number(b.openIssues ?? 0) - Number(a.openIssues ?? 0)
@@ -1682,15 +1709,21 @@ export function getConfigFindings(p?: unknown): ApiResult {
     );
     const page = Math.max(0, Number(params["page"]) || 0);
 
-    const model = cached("configModel", null, configModel) as ReturnType<typeof configModel>;
+    const model = durablyCached("configModel", null, configModel) as ReturnType<typeof configModel>;
+    // `pageSize`, `sort` and `dir` used to be echoed back here and had no reader: the client
+    // holds its own copy of all three in `query`. THE REST OF THIS PAYLOAD IS DELIBERATELY
+    // LEFT ALONE even though config.js dereferences only `rows`, `totals` and `scopeLoss`,
+    // because the unread remainder is covering a real defect rather than being slack. The
+    // page never reads `all`, and builds its own pager and control rollup from the rows it
+    // holds — so past CONFIG_CLIENT_ALL_MAX, where the server switches to returning ONE page,
+    // it would render that page as if it were the whole register, under header totals that
+    // describe all of it. Trimming the paged branch would harden that into the wire. The
+    // discriminator is the thing to fix, and it is not this commit's.
     const head = {
       total: model.rows.length,
       totals: model.totals,
       facets: model.facets,
       scopeLoss: model.scopeLoss,
-      pageSize,
-      sort,
-      dir,
     };
 
     // The all path deliberately ships NO control rollup. Filtering happens in the browser
@@ -1908,8 +1941,13 @@ function scopedPosture(
 }
 
 /**
- * The Compliance page: every synced framework as a tree, plus the catalogue for the
- * Settings picker.
+ * The Compliance page: every synced framework as a tree.
+ *
+ * It used to ship the framework `catalogue` too, "for the Settings picker". There is no
+ * Settings picker: `api_setSelectedFrameworks` has no caller anywhere in the client, and
+ * nothing reads `catalogue`. What the catalogue is genuinely FOR still ships — `coverage`
+ * is `coverageSummary(trees, merged)`, the collected-of-catalogued count the Overview
+ * draws — so the aggregate survives and only the array behind it stopped travelling.
  *
  * Shipped whole rather than paged. The payload is bounded by the FRAMEWORK, not by the
  * landscape — ten categories of ten subcategories is the shape of a published Top-10 list,
@@ -1917,17 +1955,25 @@ function scopedPosture(
  * configuration register's can, and the two-mode all/paged machinery those need would be
  * complexity bought for nothing here.
  */
-export function getCompliance(p?: unknown): ApiResult {
-  return run(() => {
-    const params = (p ?? {}) as Rec;
-    const requested = String(params["frameworkId"] ?? "");
+/**
+ * The Compliance read-model, cached once and shared by every endpoint that needs any part
+ * of it. Both `getCompliance` and `getFiveRsScope` resolve THIS entry rather than computing
+ * their own — a second, leaner derivation would cost the shared warm result and make two
+ * pages each pay for one.
+ */
+function cachedComplianceModel(): Rec {
     // `projectView` is in the KEY as well as read inside, for the reason expandAsset's
     // `projectId` is: it is a live input this closure branches on, so a view change has to
     // reach the cache. `saveSettings` bumps DATA_VERSION and would evict it anyway today —
     // this stops that from being load-bearing.
     const projectView = settingsStore.getProjectView();
     const domainView = settingsStore.getDomainView();
-    return cached("getCompliance", { frameworkId: requested, projectView, domainView }, () => {
+    // `frameworkId` is NOT in this key any more, and that is a consequence of the trim
+    // rather than an oversight. It only ever selected the `requested` echo, which had no
+    // reader — neither client caller even sends the param, and the page opens on a linked
+    // framework from its own hash. With the echo gone the response does not vary by it, so
+    // keeping it in the key would fragment one entry into N identical copies.
+    return cached("getCompliance", { projectView, domainView }, () => {
       const storedPosture = syncStore.loadPosture();
       const catalogue = syncStore.loadFrameworks();
       const selected = settingsStore.getSelectedFrameworks(() => catalogue);
@@ -1987,7 +2033,6 @@ export function getCompliance(p?: unknown): ApiResult {
       return {
         trees,
         kpis: complianceKpis(posture, policies),
-        catalogue: merged,
         selected,
         // The Overview's four bands. Computed here rather than in the browser because the
         // client bundle cannot import the domain layer at all — every client-side copy of
@@ -2021,15 +2066,28 @@ export function getCompliance(p?: unknown): ApiResult {
         // hero rather than as a footnote, the discipline `registerWideNote` already keeps:
         // a footnote is read after the reader has decided.
         postureScope,
-        // Named so the page can open on a framework it was linked to rather than guessing.
-        // Null when the requested id has no stored posture, which the page reports as such
-        // instead of silently falling back to a different framework's numbers.
-        requested: requested && trees.some((t) => t.frameworkId === requested)
-          ? requested
-          : null,
       };
-    });
-  });
+  }) as Rec;
+}
+
+export function getCompliance(_p?: unknown): ApiResult {
+  return run(() => cachedComplianceModel());
+}
+
+/**
+ * `fiveRsScope` alone, for the Settings page's 5Rs card.
+ *
+ * Settings used to fetch the WHOLE compliance payload to read this one field — 22,215 bytes
+ * for 2,812 — and with `call` rather than `swrCall`, so it neither read nor populated the
+ * session cache and a Compliance -> Settings visit paid for the trees twice.
+ *
+ * PROJECTED FROM THE CACHED MODEL, never recomputed. A narrower derivation here would be a
+ * second entry: Compliance would warm one and Settings the other, and neither would help
+ * the other. This way Settings is a projection of whatever Compliance already warmed, and
+ * warming it from Settings first does the same for Compliance.
+ */
+export function getFiveRsScope(_p?: unknown): ApiResult {
+  return run(() => ({ fiveRsScope: cachedComplianceModel()["fiveRsScope"] ?? null }));
 }
 
 /** Save which frameworks the sync collects posture for. */
@@ -2147,10 +2205,10 @@ export function getIssues(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
     const group = String(params["group"] ?? "");
-    return cached("getIssues", { group }, () => {
+    return durablyCached("getIssues", { group }, () => {
       let rows = viewIssues();
       if (group) rows = rows.filter((i) => i.comboGroup === group);
-      return { rows: rows.map((r) => publicRow(r as unknown as Rec)), total: rows.length };
+      return { rows: rows.map((r) => publicRow(r as unknown as Rec)) };
     });
   });
 }
@@ -2178,9 +2236,12 @@ export function getIssueDetail(p?: unknown): ApiResult {
   });
 }
 
-export function getToxicCombos(_p?: unknown): ApiResult {
-  return run(() =>
-    cached("getToxicCombos", null, () => {
+/**
+ * The toxic-combination read-model, cached once and shared. `getToxicCombos` and
+ * `getCombosDigest` resolve THIS entry; neither recomputes a leaner one.
+ */
+function cachedCombos(): Rec {
+  return cached("getToxicCombos", null, () => {
       const issues = openIssues();
       const assetRows = viewAssets();
       const assets = new Map(assetRows.map((a) => [a.id, a]));
@@ -2231,8 +2292,36 @@ export function getToxicCombos(_p?: unknown): ApiResult {
         })),
         totalOpen: issues.length,
       };
-    }),
-  );
+  }) as Rec;
+}
+
+export function getToxicCombos(_p?: unknown): ApiResult {
+  return run(() => cachedCombos());
+}
+
+/**
+ * The digest alone, for the two pages that only ever read it.
+ *
+ * Wiz Scans and Help each pulled the whole combos payload — 7,791 bytes here — to render
+ * `digest` (2,579), discarding every group and its nested per-asset array. `groups` is the
+ * half that grows with the estate: one entry per pattern, each carrying every asset in it.
+ *
+ * THIS SPLITS AN SWR KEY, and the cost of that turned out to be smaller than expected —
+ * worth writing down, because the obvious reasoning is wrong. Scans, Help and Toxic
+ * Combinations all passed `{}` before, so the three shared one session cache entry, and the
+ * natural conclusion is that a reader arriving at the second of them paid no round trip.
+ * Measured off the client's own `[rpc]` line, the round-trip count on combos -> scans,
+ * scans -> combos, scans -> help and help -> scans is IDENTICAL before and after this split.
+ *
+ * The reason is `swrCall` itself (store.js): on a settled hit it returns the cached value
+ * AND calls `fetchFresh()`, every time. A shared key was never saving the call — it was
+ * saving the WAIT, by letting the second page paint from cache while the refetch ran behind
+ * it. That property survives for the pair that actually shares: Scans and Help still hold
+ * one key between them. What the Combinations page loses is only the instant first paint it
+ * used to prime for them, and vice versa.
+ */
+export function getCombosDigest(_p?: unknown): ApiResult {
+  return run(() => ({ digest: cachedCombos()["digest"] ?? null }));
 }
 
 // -------------------------------------------------------------------------- problems
@@ -2378,13 +2467,12 @@ export function getProblems(p?: unknown): ApiResult {
     );
     const page = Math.max(0, Number(params["page"]) || 0);
 
-    const model = cached("problemsModel", null, problemsModel) as ProblemsModel;
+    const model = durablyCached("problemsModel", null, problemsModel) as ProblemsModel;
     const head = {
       // The union invariant's left-hand side — every unresolved issue and every open
       // finding, regardless of the outcome filter or the mode below.
       total: model.rows.length,
       severityCounts: model.severityCounts,
-      pageSize,
     };
 
     if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
@@ -2441,7 +2529,7 @@ export function getActions(p?: unknown): ApiResult {
     const limitParam = Number(params["limit"]);
     const limit = Number.isFinite(limitParam) && limitParam >= 0 ? Math.floor(limitParam) : undefined;
 
-    const model = cached("problemsModel", null, problemsModel) as ProblemsModel;
+    const model = durablyCached("problemsModel", null, problemsModel) as ProblemsModel;
     const fullyRanked = withAutoRemediation(
       rankActionsByCover(model.rows),
       syncStore.loadFrameworkPolicies(),
@@ -2473,7 +2561,7 @@ export function cancelSync(p?: unknown): ApiResult {
 }
 
 export function getSyncHistory(_p?: unknown): ApiResult {
-  return run(() => cached("getSyncHistory", null, () => ({
+  return run(() => durablyCached("getSyncHistory", null, () => ({
     rows: syncStore.syncHistory().reverse(),
   })));
 }
@@ -2481,16 +2569,31 @@ export function getSyncHistory(_p?: unknown): ApiResult {
 // --------------------------------------------------------------------- scan queries
 
 /**
- * Every sync step as data: the document it sends, the variables it sends, where the answer
- * lands, whether the last sync skipped it, and which of its variables can be edited.
+ * What the Wiz Scans PAGE needs: the last sync's per-step outcomes, and the vocabulary for
+ * describing them. No step definitions.
  *
- * Not cached. The whole point is that it describes the battery as configured right now, and
- * a stale answer here is a lie about what the tenant is being asked.
+ * IT USED TO CARRY THE WHOLE BATTERY, and that was 42,794 of its 48,505 bytes — twenty-one
+ * steps, each with the full GraphQL document it sends (24,468 across them), its variables
+ * (6,174) and its defaults (6,174) — plus `specs`, the per-step variable schema (5,505).
+ * None of it is read by the page. `steps` is dereferenced in exactly one place in the whole
+ * client, `scanSheet.js`'s area filter, and `specs` in one, its variable editor; the list
+ * only ever assembled both into the drill-down's context object and passed them along. So
+ * the register shipped every query in the battery on every visit so that a sheet a reader
+ * may never open could show one area's worth.
+ *
+ * Both now come from `getScanStepDetail` on the click that needs them.
+ *
+ * `limits` went with them and did not move to the sibling: the two caps it published are
+ * enforced by `validateStepVars` on the way in, and nothing under `src/client/js/` reads
+ * them or states them — the editor shows neither bound, and an over-long value is refused by
+ * the server with a message. It published a contract nothing consumed.
+ *
+ * Not cached, and neither is its sibling. The whole point is that this describes the battery
+ * as configured right now, and a stale answer here is a lie about what the tenant is being
+ * asked.
  */
 export function getScanQueries(_p?: unknown): ApiResult {
   return run(() => ({
-    steps: syncJobs.describeSyncSteps(),
-    specs: STEP_VAR_SPECS,
     skippedSteps: settingsStore.getSkippedSteps(),
     // Reported separately from the skips: these steps ran and were answered, we just
     // stopped asking at the page cap, so their rows are a prefix rather than an absence.
@@ -2507,11 +2610,67 @@ export function getScanQueries(_p?: unknown): ApiResult {
     // that as "no reason recorded", never as an empty explanation.
     skipReasons: settingsStore.getSkipReasons(),
     hasCredentials: hasWizCredentials(),
-    limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
     // Named rather than folded into `variables`: the transport adds these to every request,
     // so showing them as if they were configuration would invite someone to edit them.
     transportVariables: ["first", "after", "quick"],
   }));
+}
+
+/**
+ * One scan area's steps, in full — the document each sends, the variables it sends, and the
+ * schema for editing them.
+ *
+ * The unit is the AREA because that is the unit the drill-down opens on: `scanSheet.js`
+ * filters the battery by `area.id` and renders a section per step beneath it. Per-step would
+ * mean a round trip per section of one sheet.
+ *
+ * PROJECTED FROM ONE `describeSyncSteps()` PASS, like the page endpoint above. Deriving the
+ * sheet's view of the battery separately from the page's is how the two come to disagree
+ * about what the tenant is being asked, which is the one thing this pair must never do.
+ *
+ * EACH STEP CARRIES ITS OWN RESOLVED SPEC, rather than the client matching against a
+ * catalogue — and that is a bug fix, not a convenience. `varSpecFor` matches a spec whose
+ * `prefix` flag is set as a PREFIX, which is how one entry covers a generated family like
+ * `COMPLIANCE_POSTURE_wf-id-275`; the client matched `spec.stepId === step.id` exactly. So
+ * all four posture steps missed the family spec written for them and fell through to the
+ * generic "no spec" text — precisely the outcome scanVars.ts says the flag exists to
+ * prevent. Resolving it here means the client cannot get it wrong.
+ *
+ * `defaultVariables` rides only on steps that can be edited. It is what the Revert button
+ * restores, and for a step with no editable fields it is a byte-for-byte copy of
+ * `variables` with no reader — 17 of the 21 steps in the battery, 5,502 of its 6,174 bytes.
+ *
+ * `typesResolved` does not ride at all. `describeSyncSteps` computes it (syncJobs.ts:583); no
+ * file under `src/client/js/` dereferences it, and the sheet shows nothing about type
+ * resolution. It has shipped on every visit since it was written and has never been read. A
+ * grep fact, not a judgement, and the same reason `limits` left the page endpoint above.
+ */
+export function getScanStepDetail(p?: unknown): ApiResult {
+  return run(() => {
+    const area = String(((p ?? {}) as Rec)["area"] ?? "");
+    const steps = syncJobs.describeSyncSteps()
+      .filter((s) => String(s["area"] ?? "") === area)
+      .map((s) => {
+        const id = String(s["id"] ?? "");
+        const editable = !!s["editable"];
+        return {
+          id,
+          document: s["document"],
+          variables: s["variables"],
+          rootField: s["rootField"],
+          writes: s["writes"],
+          optional: s["optional"],
+          pageSize: s["pageSize"],
+          editable,
+          overridden: s["overridden"],
+          spec: varSpecFor(id),
+          ...(editable ? { defaultVariables: s["defaultVariables"] } : {}),
+        };
+      });
+    // Echoed so a sheet reopened on another area while this request is in flight cannot
+    // paint one area's queries under another's heading.
+    return { area, steps };
+  });
 }
 
 export function setScanVars(p?: unknown): ApiResult {
@@ -2525,7 +2684,10 @@ export function setScanVars(p?: unknown): ApiResult {
     const errors = validateStepVars(stepId, proposed);
     if (errors.length) throw new Error(errors.join(" "));
     settingsStore.setScanVars(stepId, proposed);
-    return { steps: syncJobs.describeSyncSteps() };
+    // Returns nothing but the id it saved. It used to return the WHOLE battery — every step,
+    // every document, ~42 KB — and the caller discards it: scanSheet.js awaits this purely
+    // for its success or failure and then calls `ctx.refresh()`, which re-reads the page.
+    return { stepId };
   });
 }
 
@@ -3225,7 +3387,7 @@ export function pruneToProject(p?: unknown): ApiResult {
 
 export function getStorageStats(_p?: unknown): ApiResult {
   return run(() =>
-    cached("getStorageStats", null, () => ({
+    durablyCached("getStorageStats", null, () => ({
       cellCount: cellCount(),
       archiveBytes: archiveBytes(),
       rows: {
@@ -3237,4 +3399,39 @@ export function getStorageStats(_p?: unknown): ApiResult {
       },
     }), 3_600),
   );
+}
+
+// -------------------------------------------------------------------- the charts bundle
+
+/**
+ * The Chart.js bundle's source, for the first route in a session that draws a chart.
+ *
+ * NOT AN `include()`. `doGet` cannot know which page the reader is on — routing is
+ * `location.hash`, which never reaches the server, and every navigation after the first
+ * carries no request at all — so a conditional partial could only be right for the first
+ * route of a session. Chart.js is 170,785 of the client bundle's bytes and eight of the ten
+ * routes draw no chart, so it rides this instead. `src/client/js/chartsLoader.js` carries the
+ * whole argument, including the part about executing it that cannot be settled from here.
+ *
+ * NOT CACHED, and for once not on the freshness argument: this is a file inside the
+ * deployment, so it cannot go stale relative to the code asking for it. Caching it would mean
+ * gzipping 171 KB into CacheService chunks to save one `getContent()` against a file the
+ * runtime already has open.
+ *
+ * The `<script>` wrapper is stripped because the caller executes the string. It is there at
+ * all because a GAS project holds HTML files, not .js ones — `include()` and
+ * `createHtmlOutputFromFile` both read HTML — so the build writes the bundle in the only
+ * shape the platform stores. An empty answer would be a deployment missing the file, which is
+ * a deploy fault rather than a runtime one and is reported as an error rather than as an empty
+ * string the client would try to run.
+ */
+export function getChartsBundle(_p?: unknown): ApiResult {
+  return run(() => {
+    const html = HtmlService.createHtmlOutputFromFile("js_charts").getContent();
+    const open = html.indexOf(">", html.indexOf("<script"));
+    const close = html.lastIndexOf("</script>");
+    const src = open < 0 || close < 0 ? "" : html.slice(open + 1, close).trim();
+    if (!src) throw new Error("js_charts is missing or empty in this deployment");
+    return src;
+  });
 }

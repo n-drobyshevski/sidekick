@@ -86,21 +86,37 @@ describe("getCompliance after a dry-run sync", () => {
     expect(tree.stateCounts.scored).toBeGreaterThan(0);
   });
 
-  it("ships the catalogue with this app's selection folded in", () => {
+  // This used to read "ships the catalogue with this app's selection folded in", and
+  // asserted the 5-row `catalogue` array itself. The claim it encoded was that the CIS
+  // framework exists in the tenant but is not collected, "so the picker can show something
+  // that is off" — and that picker does not exist: `api_setSelectedFrameworks` has no
+  // caller anywhere in src/client/js, and nothing reads `catalogue`. The array stopped
+  // travelling; the FACT it carried did not, because `coverage` is computed from it. So the
+  // same 5-and-4 is asserted here on the aggregate that still ships.
+  it("counts the catalogue against what this app collects, with selection folded in", () => {
     const data = compliance();
-    // Five frameworks exist in the seed tenant; the CIS one is deliberately not collected,
-    // so the picker can show something that is off.
-    expect(data.catalogue).toHaveLength(5);
-    const cis = data.catalogue.find((f: any) => f.id === "wf-id-042");
-    expect(cis.selected).toBe(false);
-    expect(data.catalogue.filter((f: any) => f.selected)).toHaveLength(4);
+    // Five frameworks exist in the seed tenant; the CIS one is deliberately not collected.
+    expect(data.coverage.catalogued).toBe(5);
+    expect(data.coverage.collected).toBe(4);
+    // And the selection really is this app's rather than Wiz's — `selected` is resolved
+    // from settings, which is the half the raw catalogue cannot supply.
+    expect(data.selected).toHaveLength(4);
+    expect(data.selected).not.toContain("wf-id-042");
   });
 
-  it("reports a requested framework only when it actually has posture", () => {
-    expect(compliance({ frameworkId: "wf-id-214" }).requested).toBe("wf-id-214");
-    // Never silently falls back to a different framework's numbers.
-    expect(compliance({ frameworkId: "wf-id-042" }).requested).toBeNull();
-    expect(compliance({ frameworkId: "nope" }).requested).toBeNull();
+  // This used to be "reports a requested framework only when it actually has posture", and
+  // asserted a `requested` echo. Two measurements retired it: nothing in src/client/js reads
+  // the field, and neither call site sends `frameworkId` at all — both pass `{}` — so in
+  // production it was always null. The behaviour it protected (never silently answer with a
+  // different framework's numbers) is real and still holds, but the page gets there from its
+  // own hash param, not from the payload. What is worth pinning now is the consequence:
+  // since the response no longer varies by `frameworkId`, that param is out of the cache key
+  // and must not fragment one entry into N identical ones.
+  it("answers identically whatever frameworkId is passed, so the key need not carry it", () => {
+    const base = JSON.stringify(compliance());
+    expect(JSON.stringify(compliance({ frameworkId: "wf-id-214" }))).toBe(base);
+    expect(JSON.stringify(compliance({ frameworkId: "wf-id-042" }))).toBe(base);
+    expect(JSON.stringify(compliance({ frameworkId: "nope" }))).toBe(base);
   });
 
   it("computes the landscape KPI the Wiz Scans area reads", () => {

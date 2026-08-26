@@ -5,7 +5,7 @@
 
 import { nowIso, type Rec } from "../domain/util";
 import { deleteProp, getProp, setProp } from "./props";
-import { appendRows, readAll, updateWhere, TABS } from "./sheetsDb";
+import { appendRows, readAll, readTail, updateWhere, TABS } from "./sheetsDb";
 
 // Fast-path flag: set while a job is in flight, cleared on any terminal
 // transition. Lets activeJob() answer "no active job" (the overwhelmingly
@@ -69,8 +69,8 @@ export function updateJob(jobId: string, patch: Partial<JobRow>, now?: number): 
   if (patch.phase && TERMINAL.includes(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
 }
 
-export function listJobs(): JobRow[] {
-  return readAll(TABS.jobs).map((r) => ({
+function rowToJob(r: Rec): JobRow {
+  return {
     job_id: String(r["job_id"] ?? ""),
     kind: (r["kind"] ?? "sync") as JobKind,
     phase: (r["phase"] ?? "FAILED") as JobPhase,
@@ -85,16 +85,56 @@ export function listJobs(): JobRow[] {
     error: normError(r["error"]),
     started_at: String(r["started_at"] ?? ""),
     updated_at: String(r["updated_at"] ?? ""),
-  }));
+  };
 }
 
+export function listJobs(): JobRow[] {
+  return readAll(TABS.jobs).map(rowToJob);
+}
+
+/**
+ * How many rows back the progress poll looks before falling back to the whole tab.
+ *
+ * Jobs are single-flight and appended, so the job anyone is polling is the LAST row —
+ * 25 is slack, not a guess about how far back a live job can be.
+ */
+const JOB_TAIL_ROWS = 25;
+
+/**
+ * One job by id: recent rows first, the whole tab only if that misses.
+ *
+ * The poll behind this runs every three seconds for the length of a sync, and the `jobs`
+ * tab gains a row per sync and is never trimmed — so a full read got steadily more
+ * expensive for the life of the deployment while always answering about a row appended
+ * moments earlier.
+ *
+ * THE FULL-READ FALLBACK IS NOT OPTIONAL. Without it, a job older than the window reads as
+ * null — and `app.js` treats a null job as "this job is gone, stop watching, clear the
+ * card", so a progress card would silently vanish mid-sync on a long-lived deployment.
+ * Worst case here is exactly the old cost, never a wrong answer.
+ */
 export function getJob(jobId: string): JobRow | null {
-  return listJobs().find((j) => j.job_id === jobId) ?? null;
+  const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
+  return recent.find((j) => j.job_id === jobId)
+    ?? listJobs().find((j) => j.job_id === jobId)
+    ?? null;
 }
 
 const TERMINAL: JobPhase[] = ["DONE", "FAILED", "CANCELLED"];
 
-/** The single in-flight job, or null (jobs are single-flight). */
+/**
+ * The single in-flight job, or null (jobs are single-flight).
+ *
+ * THIS ONE KEEPS THE FULL READ, and it is not an oversight that `getJob` was spared. It is
+ * the single-flight guard `startSync`, the daily trigger and `continueJob` all rest on, and
+ * a miss here is not a slow card — line 2 below reads "no non-terminal row" as "the flag is
+ * stale" and DELETES it. So a tail read that scrolled past a wedged job would not merely
+ * fail to find it: it would destroy the one record that a job was still running, let a
+ * second sync launch alongside the first, and leave `locks.recoverIfNeeded` nothing to reap.
+ * Transient corruption made permanent, to save a read that the fast path below already
+ * skips entirely in the common case — every bootstrap asks this, and almost every answer is
+ * "no job" for one Properties read and no Sheets access at all.
+ */
 export function activeJob(): JobRow | null {
   if (!getProp(ACTIVE_JOB_PROP)) return null; // fast path: no Sheets read
   const job = listJobs().find((j) => !TERMINAL.includes(j.phase)) ?? null;

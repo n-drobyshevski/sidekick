@@ -40,7 +40,9 @@ import { resolveHygieneRules } from "../domain/identityHygiene";
 import { changedPaths, effectiveStepVars, isEditableStep } from "../domain/scanVars";
 import { nowIso, type Rec } from "../domain/util";
 import { readGzJsonFile, syncFolder, writeGzJson, writeSyncPage } from "./archiveStore";
-import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "./jobsStore";
+import {
+  activeJob, createJob, getJob, newJobId, updateJob, type JobPhase, type JobRow,
+} from "./jobsStore";
 import { withScriptLock } from "./locks";
 import { getProp, hasWizCredentials, projectScope, setProp, deleteProp } from "./props";
 import {
@@ -51,6 +53,9 @@ import {
 import * as settingsStore from "./settingsStore";
 import { appendRows, dataRowCount, TABS } from "./sheetsDb";
 import { loadConfigRules, loadFrameworks, parseJson, persistSync } from "./syncStore";
+// Namespace import to keep the module graph acyclic: warm.ts imports api.ts, which imports
+// the store layer this file also uses.
+import * as warm from "./warm";
 import {
   fetchCloudResourcesPage,
   fetchConnectionPage,
@@ -481,8 +486,10 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
     // `tags { key value }` array — only in the properties bag — so for an AI ASSET this step
     // is the sole route by which a domain arrives. A tenant that rejects `graphEntity` on
     // this root gets domains on its substrate (the traversals read their own bags) and none
-    // on its agents, which is why getAssets publishes `domainCoverage` rather than letting an
-    // empty Domain facet read as "nobody tagged anything".
+    // on its agents, which is why `bootstrap.scope.domainCoverage` publishes a count rather
+    // than letting an empty Domain facet read as "nobody tagged anything". (It named
+    // getAssets until that endpoint's duplicate copy was removed as unread — the argument
+    // is unchanged, but only the bootstrap one ever had a reader.)
     {
       id: "AI_ASSET_PROPERTIES",
       area: "aispm",
@@ -714,6 +721,33 @@ export function testStepVariables(stepId: string, vars: Rec | null): Rec {
 }
 
 /** Entry point for the Sync button and the daily trigger (caller holds the lock). */
+/**
+ * Warm the derived read-models at the tail of a sync.
+ *
+ * A sync invalidates every cached entry by bumping the version, so the very next reader pays
+ * a full cold load unless something refills them — and that reader is usually the operator
+ * who just pressed Sync now.
+ *
+ * CALLED FROM BOTH SYNC PATHS, and it has to be. `dryRunSync` persists the seed and returns
+ * without ever entering `runBattery`, so a warm placed only at the end of the live walk fires
+ * for live tenants and never in dry-run — which is also the only mode the dev harness and the
+ * test suite exercise, so it would look like it worked and do nothing. Measured before this
+ * was split out: a dry-run sync logged no warm at all, and the bootstrap after it still read
+ * 5,846 cells off the ledger.
+ *
+ * Best-effort and never fatal: a sync that succeeded must not report failure because an
+ * optimization threw. `warmReadModels` directly rather than `warmReadModelsScheduled`,
+ * because that one refuses while `activeJob()` returns a job — and on the live path this
+ * execution IS the job, so the guarded entry point would skip itself.
+ */
+function warmAfterSync(): void {
+  try {
+    warm.warmReadModels();
+  } catch (e) {
+    console.warn(`Cache warm after sync failed: ${e}`);
+  }
+}
+
 export function startSync(): StartResult {
   const existing = activeJob();
   if (existing) {
@@ -780,6 +814,7 @@ function dryRunSync(): StartResult {
   // sync that never called Wiz at all.
   settingsStore.setSkippedSteps([]);
   settingsStore.setTruncatedSteps([]);
+  warmAfterSync();
   return {
     jobId: null,
     message: `Dry-run sync complete: ${doc.nodes.length} nodes, ` +
@@ -1169,6 +1204,8 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
     if (opts.lockHeld) persist();
     else withScriptLock(persist);
     updateJob(job.job_id, { phase: "DONE" });
+    // After the phase update, so the version is final and `activeJob()` is already clear.
+    warmAfterSync();
   } catch (e) {
     // The step index and id go in with the message. A failed sync used to record only what
     // went wrong, never where — so a two-hour run that died on one step reported a Wiz error
@@ -1214,6 +1251,49 @@ export function clearCancelFlag(): void {
   deleteProp(CANCEL_PROP);
 }
 
-export function jobStatus(jobId: string): JobRow | null {
-  return getJob(jobId);
+/**
+ * The subset of a JobRow the progress card and its drawer actually read.
+ *
+ * Nine of the row's fourteen fields. Enumerated as a type rather than produced by deleting
+ * keys, so growing `JobRow` cannot silently grow what the browser receives.
+ */
+export interface JobStatus {
+  job_id: string;
+  phase: JobPhase;
+  step_index: number;
+  page: number;
+  nodes_so_far: number;
+  total_count: number;
+  error: string | null;
+  started_at: string;
+  updated_at: string;
+}
+
+/**
+ * One job's progress, projected.
+ *
+ * It used to return the whole `JobRow`, and three of the five fields nothing reads had no
+ * business crossing the wire at all: `cursor` is the Wiz `endCursor` for a production
+ * security tenant, `part_refs_json` is a JSON array of Drive file ids for the raw pages, and
+ * `params_json` is the sync's parameter blob. Those are internal storage addresses and a
+ * tenant pagination handle, and the poll shipped them every three seconds for the length of
+ * every sync. `sync_id` and `kind` simply have no reader.
+ *
+ * Projected at the endpoint rather than narrowed at source: `JobRow` is the durable row and
+ * the walker needs every column of it. This is a transport concern, so it belongs here.
+ */
+export function jobStatus(jobId: string): JobStatus | null {
+  const j = getJob(jobId);
+  if (!j) return null;
+  return {
+    job_id: j.job_id,
+    phase: j.phase,
+    step_index: j.step_index,
+    page: j.page,
+    nodes_so_far: j.nodes_so_far,
+    total_count: j.total_count,
+    error: j.error,
+    started_at: j.started_at,
+    updated_at: j.updated_at,
+  };
 }

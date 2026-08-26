@@ -14,6 +14,22 @@
 (function () {
   "use strict";
 
+  // -------------------------------------------------------------------- counters
+  //
+  // Service-call counters, so a claim about cost can be MEASURED rather than asserted.
+  // Both of these count something the real platform charges for and the fakes do not:
+  // a PropertiesService read is a ~10-50ms round trip in GAS and free here, and a
+  // getValues() over a whole tab is the single most expensive thing this app does.
+  //
+  // Deliberately NOT part of snapshot()/restore(): they describe what the code just
+  // DID, not what the world currently holds, so restoring a grid must not rewind them.
+  // Reset explicitly instead.
+  const counters = { propGet: 0, propSet: 0, rangeReads: 0, cellsRead: 0 };
+  // Per-key tallies too, because "how many Properties reads" is rarely the question — the
+  // question is which key was read how often, and a memo is only interesting for the ones it
+  // covers. Reset alongside the totals.
+  let propGetKeys = Object.create(null);
+
   // ------------------------------------------------------------------------ Blob
   class FakeBlob {
     constructor(data, contentType, name) {
@@ -86,8 +102,12 @@
   const props = new Map();
   window.PropertiesService = {
     getScriptProperties: () => ({
-      getProperty: (k) => (props.has(k) ? props.get(k) : null),
-      setProperty: (k, v) => { props.set(k, String(v)); },
+      getProperty: (k) => {
+        counters.propGet++;
+        propGetKeys[k] = (propGetKeys[k] || 0) + 1;
+        return props.has(k) ? props.get(k) : null;
+      },
+      setProperty: (k, v) => { counters.propSet++; props.set(k, String(v)); },
       deleteProperty: (k) => { props.delete(k); },
       getProperties: () => Object.fromEntries(props),
       getKeys: () => [...props.keys()],
@@ -230,6 +250,8 @@
       return this;
     }
     getValues() {
+      counters.rangeReads++;
+      counters.cellsRead += this._nr * this._nc;
       this._sh._ensure(this._r + this._nr - 1, this._c + this._nc - 1);
       const out = [];
       for (let i = 0; i < this._nr; i++) {
@@ -333,6 +355,28 @@
     },
   };
 
+  // ------------------------------------------------------------------- HtmlService
+  //
+  // Only `createHtmlOutputFromFile().getContent()`, and only enough of it for
+  // `api.getChartsBundle`, which reads `dist/js_charts.html` — the Chart.js bundle the client
+  // fetches on the first route that draws a chart. `doGet` and `include` are not exercised
+  // here at all: dev/serve.mjs composes index.html itself.
+  //
+  // SYNCHRONOUS, because the shim stands in for a GAS API that is synchronous and the server
+  // bundle calls it inside a `run()` with no await anywhere in the chain. A sync XHR on the
+  // main thread is a thing to wince at; it is 171 KB from localhost, it happens once per
+  // session, and the alternative is making the whole server surface async for a dev harness.
+  window.HtmlService = {
+    createHtmlOutputFromFile(name) {
+      const req = new XMLHttpRequest();
+      req.open("GET", "/_partial/" + name, false);
+      req.send(null);
+      if (req.status !== 200) throw new Error("No HTML file " + name);
+      const content = req.responseText;
+      return { getContent: () => content };
+    },
+  };
+
   // ------------------------------------------------------------------- ScriptApp
   const triggers = [];
   let triggerSeq = 0;
@@ -342,16 +386,41 @@
       const i = triggers.indexOf(t);
       if (i >= 0) triggers.splice(i, 1);
     },
+    // THE FULL DOCUMENTED ClockTriggerBuilder SURFACE, not just the methods this codebase
+    // happens to call today. It carried four of them, so adding a trigger that used
+    // `nearMinute()` or `inTimezone()` would throw HERE — and because dev/boot.js runs
+    // setup() during boot, that throw takes down the whole google.script.run shim and every
+    // page renders "Couldn't reach the server". Listing the real API rather than accepting
+    // any method keeps a genuine typo failing while stopping the shim lagging behind again.
+    //
+    // THE SCHEDULE ARGUMENTS ARE RECORDED RATHER THAN DISCARDED, which is strictly more than
+    // production offers: a real GAS Trigger exposes its handler function and NOTHING else —
+    // no hour, no minute, no timezone. But the warm is a SET of triggers at specific hours,
+    // and without this the dev environment cannot show whether setup() built the right one.
+    // It is also what makes test/setup.test.ts able to pin the builder chain at all.
     newTrigger: (handler) => {
+      const schedule = {};
+      const rec = (k, v) => { schedule[k] = v; return builder; };
       const builder = {
         timeBased: () => builder,
-        everyDays: () => builder,
-        atHour: () => builder,
-        after: () => builder,
+        after: (ms) => rec("after", ms),
+        at: (date) => rec("at", date),
+        atDate: (y, m, d) => rec("atDate", [y, m, d]),
+        atHour: (h) => rec("atHour", h),
+        everyDays: (n) => rec("everyDays", n),
+        everyHours: (n) => rec("everyHours", n),
+        everyMinutes: (n) => rec("everyMinutes", n),
+        everyWeeks: (n) => rec("everyWeeks", n),
+        inTimezone: (tz) => rec("inTimezone", tz),
+        nearMinute: (m) => rec("nearMinute", m),
+        onMonthDay: (d) => rec("onMonthDay", d),
+        onWeekDay: (d) => rec("onWeekDay", d),
         create: () => {
           const trigger = {
             getHandlerFunction: () => handler,
             getUniqueId: () => `trigger-${++triggerSeq}`,
+            // Not part of the real Trigger API — see the note above.
+            __schedule: schedule,
           };
           triggers.push(trigger);
           // Both names on purpose: gas_ai spills a long live sync onto trigger_continueSync
@@ -448,6 +517,13 @@
   };
 
   window.__gasFakes = {
+    /** Service calls made since the last resetCounters(). See `counters` above. */
+    counters() { return { ...counters, propGetKeys: { ...propGetKeys } }; },
+    resetCounters() {
+      for (const k of Object.keys(counters)) counters[k] = 0;
+      propGetKeys = Object.create(null);
+    },
+
     snapshot() {
       return {
         props: new Map(props),

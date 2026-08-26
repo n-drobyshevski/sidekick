@@ -237,3 +237,206 @@ export function configScopeLossView(loss, scope) {
     text: `${lead} ${why}${orphans} Clearing the scope brings them back.`,
   };
 }
+
+// --------------------------------------------------------------- the two register modes
+
+/**
+ * One control's findings, as the by-control table reads them.
+ *
+ * `gaps` and `unlinked` are DISTINCT-RESOURCE counts, and that is the one thing about this
+ * shape worth stating twice: the server's own ControlRollup carries `gaps` as a count of
+ * failing FINDINGS and puts the resource counts under `gapResources` /
+ * `unlinkedGapResources`. Two fields named `gaps`, two different units. `adoptControlRollups`
+ * below is the only place the two vocabularies meet.
+ *
+ * @typedef {{
+ *   ruleShortId: string, ruleName: string, severity: string, findings: number,
+ *   gaps: number, resources: number, unlinked: number, domains: string[], iac: number,
+ *   firstSeenAt: string,
+ * }} ControlGroup
+ */
+
+/** Worst first, then the widest blast radius, then by id so the order is stable. */
+function byControlSeverity(a, b) {
+  return sevRank(a.severity) - sevRank(b.severity)
+    || b.gaps - a.gaps
+    || b.resources - a.resources
+    || String(a.ruleShortId).localeCompare(String(b.ruleShortId));
+}
+
+/**
+ * Group held rows into controls — the ALL-mode rollup.
+ *
+ * Under CONFIG_CLIENT_ALL_MAX this is the only rollup that runs: the server ships every row
+ * and never sees the filter change, so a filtered view has to regroup what the browser still
+ * holds rather than show counts the table below no longer contains. Mirrors
+ * `rollupByControl` in src/domain/configFindings.ts, which does the same job over the
+ * filtered set for a register too large to ship whole — `test/configRollupMirror.test.js`
+ * requires the two to agree.
+ *
+ * @param {object[]} rows
+ * @returns {ControlGroup[]}
+ */
+export function rollupControls(rows) {
+  const byRule = new Map();
+  for (const row of rows) {
+    const key = row.ruleShortId || row.ruleName || "—";
+    const bucket = byRule.get(key);
+    if (bucket) bucket.push(row);
+    else byRule.set(key, [row]);
+  }
+  return Array.from(byRule, ([ruleShortId, group]) => {
+    const resources = new Set();
+    const gapResources = new Set();
+    const unlinkedGapResources = new Set();
+    const domains = new Set();
+    let worst = "UNKNOWN";
+    let iac = 0;
+    let firstSeenAt = "";
+    for (const r of group) {
+      resources.add(r.resourceId);
+      if (sevRank(r.severity) < sevRank(worst)) worst = r.severity;
+      if (r.gap) {
+        gapResources.add(r.resourceId);
+        if (!r.linked) unlinkedGapResources.add(r.resourceId);
+      }
+      if (r.domain) domains.add(r.domain);
+      if (r.iac) iac += 1;
+      // Earliest wins: the control has been failing since its oldest finding appeared.
+      if (r.firstSeenAt && (!firstSeenAt || r.firstSeenAt < firstSeenAt)) firstSeenAt = r.firstSeenAt;
+    }
+    return {
+      ruleShortId,
+      ruleName: group[0].ruleName || group[0].name || "",
+      severity: worst,
+      findings: group.length,
+      gaps: gapResources.size,
+      resources: resources.size,
+      unlinked: unlinkedGapResources.size,
+      domains: Array.from(domains).sort(),
+      iac,
+      firstSeenAt,
+    };
+  }).sort(byControlSeverity);
+}
+
+/**
+ * The server's ControlRollup list, in the shape above.
+ *
+ * RE-SORTED, not just renamed. `rollupByControl` orders by failing FINDINGS where this table
+ * orders by failing RESOURCES, so two controls that trade places under the two counts would
+ * otherwise sit in a different order depending only on how big the tenant is.
+ *
+ * @param {object[]} controls
+ * @returns {ControlGroup[]}
+ */
+export function adoptControlRollups(controls) {
+  return (controls || []).map((c) => ({
+    ruleShortId: c.ruleShortId,
+    ruleName: c.ruleName || "",
+    severity: c.severity,
+    findings: c.findings,
+    gaps: c.gapResources,
+    resources: c.resources,
+    unlinked: c.unlinkedGapResources,
+    domains: (c.domains || []).slice(),
+    iac: c.iac,
+    firstSeenAt: c.firstSeenAt || "",
+  })).sort(byControlSeverity);
+}
+
+/**
+ * What the page is actually holding, resolved from the payload's own `all` discriminator.
+ *
+ * THE PAGE USED TO IGNORE `all` ENTIRELY. `getConfigFindings` ships the whole register under
+ * CONFIG_CLIENT_ALL_MAX and ONE page of rows past it, saying which it did in `all` — and
+ * config.js built its view from the rows it happened to hold either way. Past the ceiling
+ * that meant a body labelled with the page's row count, a pager that ended at the page, and
+ * client-side filters, facets and sorts that silently applied to fifty rows, all underneath a
+ * header whose totals describe thousands. Nothing on screen said the list was partial. That is
+ * a wrong answer rather than a slow one, and it is the reason this function exists.
+ *
+ * Everything the paged branch needs is already on the wire — the server filters, sorts and
+ * pages, rolls the controls up over the FILTERED set, and counts the facets over the whole
+ * register. This reads it rather than recomputing a page's worth.
+ *
+ * @param {object|null} data the getConfigFindings payload
+ * @param {{query: object, sort: string, descending: boolean, page: number}} view
+ * @param {number} pageSize
+ */
+export function configPageView(data, view, pageSize) {
+  const d = data || {};
+  const rows = d.rows || [];
+  // `all !== false` rather than `all === true`: a payload from a deployment that predates the
+  // field must read as the whole register, which is what it was.
+  const paged = d.all === false;
+
+  if (!paged) {
+    const filtered = applyConfigFilters(rows, view.query);
+    const sorted = sortConfigRows(filtered, view.sort, view.descending);
+    const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+    const page = Math.min(Math.max(0, view.page), pageCount - 1);
+    return {
+      paged: false,
+      total: rows.length,
+      filtered: sorted.length,
+      // The by-control table groups the FILTERED rows; the by-finding table pages them.
+      controls: rollupControls(filtered),
+      sorted,
+      slice: sorted.slice(page * pageSize, (page + 1) * pageSize),
+      page,
+      pageCount,
+      facetCounts: configFacetCounts(rows, view.query, CONFIG_FACET_KEYS),
+      // Every affordance is local, so acting on one is a repaint.
+      refetches: false,
+    };
+  }
+
+  return {
+    paged: true,
+    // The register, not the page — this is what the header's own totals describe.
+    total: d.total || 0,
+    filtered: d.filtered || 0,
+    controls: adoptControlRollups(d.controls),
+    // Already filtered, sorted and cut server-side. Re-sorting here would reorder fifty rows
+    // inside an order the other pages do not share.
+    sorted: rows,
+    slice: rows,
+    page: d.page || 0,
+    pageCount: Math.max(1, d.pageCount || 1),
+    // Counted over the whole register by the server, so a facet still says how many rows it
+    // would bring back rather than how many are on this page.
+    facetCounts: d.facetCounts || {},
+    // A filter, a sort or a page is a question about rows the browser does not hold.
+    refetches: true,
+  };
+}
+
+/** The facet keys the page offers, in the order it draws them. */
+export const CONFIG_FACET_KEYS = [
+  "severities", "statuses", "clouds", "resourceTypes", "rules", "projects",
+  "domains", "linkage", "flags",
+];
+
+/**
+ * The RPC params for one view state — the same names `resolveConfigQuery` reads.
+ *
+ * EMPTY VALUES ARE OMITTED, and that is not tidiness: `swrCall` keys its cache on
+ * `name + JSON.stringify(params)`, so a payload that is identical in every way would sit
+ * under a different key depending on whether an unset filter arrived as `""` or as nothing.
+ * The unfiltered first load must key the same on every visit.
+ */
+export function configQueryParams(view, pageSize) {
+  const q = view.query;
+  const out = {};
+  if (q.q) out.q = q.q;
+  for (const key of ["severities", "statuses", "clouds", "resourceTypes", "rules",
+    "projects", "domains", "linkage", "flags"]) {
+    if ((q[key] || []).length) out[key] = q[key].join(",");
+  }
+  if (view.sort !== "severity") out.sort = view.sort;
+  if (view.descending !== CONFIG_SORT_DESC[view.sort]) out.dir = view.descending ? "desc" : "asc";
+  if (view.page) out.page = view.page;
+  if (pageSize) out.pageSize = pageSize;
+  return out;
+}

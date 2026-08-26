@@ -40,6 +40,11 @@ function probeSyncStep(stepId) {
 // Trigger handlers (names referenced by ScriptApp.newTrigger calls).
 function trigger_dailySync() { Server.jobs.dailySync(); }
 function trigger_continueSync(e) { Server.jobs.continueJob(e); }
+// Re-warms the derived read-models between syncs. CacheService's ceiling is six hours and
+// tenants sync daily, so without this every entry lapses three or four times a day and the
+// next visitor pays the cold load. Deliberately NOT an api_* delegator: it is not callable
+// from the client, and api.ts exporting it would fail the build's entry.js guard.
+function trigger_warmReadModels() { Server.warm.warmReadModelsScheduled(); }
 
 // google.script.run API surface — thin delegators so the client can call api_* by name.
 // Each is timed to the execution log ({"api":name,"ms":n} lines) so server cost can be
@@ -55,16 +60,19 @@ function api_getGraph(p) { return timedApi_("getGraph", p); }
 function api_getQueryVocabulary(p) { return timedApi_("getQueryVocabulary", p); }
 function api_runGraphQuery(p) { return timedApi_("runGraphQuery", p); }
 function api_getAssets(p) { return timedApi_("getAssets", p); }
+function api_getAssetsHead(p) { return timedApi_("getAssetsHead", p); }
 function api_getAssetOptions(p) { return timedApi_("getAssetOptions", p); }
 function api_getAssetDetail(p) { return timedApi_("getAssetDetail", p); }
 function api_expandAsset(p) { return timedApi_("expandAsset", p); }
 function api_getConfigFindings(p) { return timedApi_("getConfigFindings", p); }
 function api_getConfigFindingDetail(p) { return timedApi_("getConfigFindingDetail", p); }
 function api_getCompliance(p) { return timedApi_("getCompliance", p); }
+function api_getFiveRsScope(p) { return timedApi_("getFiveRsScope", p); }
 function api_setSelectedFrameworks(p) { return timedApi_("setSelectedFrameworks", p); }
 function api_getIssues(p) { return timedApi_("getIssues", p); }
 function api_getIssueDetail(p) { return timedApi_("getIssueDetail", p); }
 function api_getToxicCombos(p) { return timedApi_("getToxicCombos", p); }
+function api_getCombosDigest(p) { return timedApi_("getCombosDigest", p); }
 function api_getProblems(p) { return timedApi_("getProblems", p); }
 function api_getActions(p) { return timedApi_("getActions", p); }
 function api_runSync(p) { return timedApi_("runSync", p); }
@@ -72,6 +80,7 @@ function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }
 function api_cancelSync(p) { return timedApi_("cancelSync", p); }
 function api_getSyncHistory(p) { return timedApi_("getSyncHistory", p); }
 function api_getScanQueries(p) { return timedApi_("getScanQueries", p); }
+function api_getScanStepDetail(p) { return timedApi_("getScanStepDetail", p); }
 function api_setScanVars(p) { return timedApi_("setScanVars", p); }
 function api_testScanVars(p) { return timedApi_("testScanVars", p); }
 function api_probeSyncStep(p) { return timedApi_("probeSyncStep", p); }
@@ -94,3 +103,4 @@ function api_resetData(p) { return timedApi_("resetData", p); }
 function api_previewPrune(p) { return timedApi_("previewPrune", p); }
 function api_pruneToProject(p) { return timedApi_("pruneToProject", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }
+function api_getChartsBundle(p) { return timedApi_("getChartsBundle", p); }

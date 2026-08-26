@@ -51,12 +51,18 @@ import {
 // not, so the live page hands it a way to clear itself and takes it back on teardown.
 let clearLexFilter = null;
 
-// Byte-identical to the constants pages/scans.js, pages/inventory.js and pages/combos.js
-// call with, so swrCall's key is shared: arriving here from any of them costs no round
-// trip at all. Only the HEAD of the assets payload is read (kpis), never `rows`, so a
-// small pageSize keeps this correct AND cheap at any landscape size.
-const ASSETS_PARAMS = { all: true, pageSize: 25 };
-const COMBOS_PARAMS = {};
+// This page reads `kpis` off the assets payload and `digest` off the combos one, and
+// nothing else. Both calls are the same ones pages/scans.js makes with the same (empty)
+// params, so swrCall's key is shared with it.
+//
+// WHAT THAT SHARING BUYS IS THE WAIT, NOT THE CALL, and the comment here used to say
+// otherwise: "arriving here from any of them costs no round trip at all". Two things were
+// wrong with it. It named pages/inventory.js and pages/combos.js as sharers — inventory
+// sends thirteen keys and a different pageSize, and `rpcKey` is a JSON.stringify, so it
+// could never have collided, and combos.js does not call the assets endpoint at all. And
+// even for the page that does share, `swrCall` re-fetches on every settled hit; the cached
+// value is what paints, while the round trip happens behind it. Counted off the [rpc] line,
+// arriving here from Wiz Scans costs the same two calls either way — it just paints at once.
 
 // The five questions, one per page, phrased as the question rather than the feature. Four of
 // them for a reader with experimental content off — see hiddenRoutes().
@@ -148,11 +154,11 @@ export async function renderHelp(main, params, _ctx) {
   paint();
 
   const reads = await Promise.allSettled([
-    swrCall("api_getAssets", ASSETS_PARAMS, (fresh) => {
+    swrCall("api_getAssetsHead", {}, (fresh) => {
       kpis = fresh.kpis || null;
       paint();
     }),
-    swrCall("api_getToxicCombos", COMBOS_PARAMS, (fresh) => {
+    swrCall("api_getCombosDigest", {}, (fresh) => {
       digest = (fresh && fresh.digest) || null;
       paint();
     }),

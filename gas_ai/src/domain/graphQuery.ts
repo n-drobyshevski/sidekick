@@ -183,7 +183,7 @@ export const DEFAULT_QUERY: QueryNode = { kind: "AI_AGENT" };
 // Three different ceilings, because they stop three different things going wrong.
 
 /**
- * Rows shipped to the client. `getAssets` ships up to CLIENT_ALL_MAX = 3000 and pages past it;
+ * Rows shipped to the client. `getAssets` ships up to CLIENT_ALL_MAX = 1500 and pages past it;
  * this is the same bargain at a lower number, because a path row is wider than an asset row.
  * `total` stays exact past the cap, so the count never lies about what matched.
  */
