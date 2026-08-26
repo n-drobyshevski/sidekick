@@ -40,8 +40,10 @@ export interface AccessDecision {
 }
 
 /**
- * What a denied caller is told. Deliberately says nothing about who IS allowed, who owns the
- * deployment, or what the property is called — a denial should not double as a directory.
+ * What a denied caller is told over RPC, and what the Stackdriver line carries. Says nothing
+ * about who IS allowed or what the property is called — a denial should not double as a
+ * directory. (The denied PAGE additionally names one contact, deliberately; see deniedHtml.
+ * These strings do not, because they are log lines as much as user-facing text.)
  */
 // These are ALSO the Stackdriver denial lines, which is why "not-listed" names the cause
 // rather than restating the verdict. It used to read "You don't have access to this app." —
@@ -178,19 +180,41 @@ export function assertAllowed(op: string): void {
  * It names the address it saw — the single most useful fact when the cause is "signed in to
  * the wrong Google account" — and nothing else about the deployment.
  */
-export function deniedHtml(d: AccessDecision, switchUrl?: string | null): string {
+export function deniedHtml(
+  d: AccessDecision,
+  switchUrl?: string | null,
+  contact?: string | null,
+): string {
   const detail = d.email
     ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>."
     : "This app can't see which Google account you're signed in as, which happens when the " +
       "account isn't in the same Google Workspace domain as the app.";
+
+  // NAMING THE OWNER HERE IS DELIBERATE, and it reverses what this page originally did.
+  //
+  // The page still discloses no roster and no property name — a denial must not double as a
+  // directory of who DOES have access. The owner's own address is a different question, and
+  // the audience settles it: the deployment's access level is DOMAIN, so Google refuses
+  // everyone outside the Workspace before doGet is ever reached. The only people who can see
+  // this page are colleagues who could have looked the owner up in the directory anyway, and
+  // "ask whoever runs this dashboard" was asking them to go and do exactly that.
+  //
+  // mailto rather than plain text, with the subject filled in, so the request that arrives is
+  // legible instead of "hi, can I get access to the thing".
+  const who = (contact || "").trim();
+  const ask = who
+    ? "If you think you should have access, contact " +
+      '<a href="mailto:' + escapeHtml(who) +
+      "?subject=" + encodeURIComponent("Access to " + PRODUCT) + '">' +
+      escapeHtml(who) + "</a>."
+    : // No owner address resolved — never render "contact:" with nothing after it.
+      "If you think you should have access, ask whoever runs this dashboard to add you.";
+
   return cardPage({
     title: PRODUCT,
     eyebrow: PRODUCT,
     heading: "You don't have access to this app.",
-    paragraphs: [
-      detail,
-      "If you think you should have access, ask whoever runs this dashboard to add you.",
-    ],
+    paragraphs: [detail, ask],
     actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : "",
   });
 }
@@ -200,7 +224,7 @@ export function deniedPage(): GoogleAppsScript.HTML.HtmlOutput | null {
   const d = check();
   if (d.allowed) return null;
   logDenial("doGet", d);
-  return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl()))
+  return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl(), ownerEmail()))
     .setTitle(PRODUCT)
     .addMetaTag("viewport", "width=device-width, initial-scale=1");
 }

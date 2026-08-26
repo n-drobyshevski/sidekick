@@ -257,16 +257,18 @@ var Server = (() => {
     logDenial(op, d);
     throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
   }
-  function deniedHtml(d, switchUrl) {
+  function deniedHtml(d, switchUrl, contact) {
     const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
+    const who = (contact || "").trim();
+    const ask = who ? 'If you think you should have access, contact <a href="mailto:' + escapeHtml(who) + "?subject=" + encodeURIComponent("Access to " + PRODUCT) + '">' + escapeHtml(who) + "</a>." : (
+      // No owner address resolved — never render "contact:" with nothing after it.
+      "If you think you should have access, ask whoever runs this dashboard to add you."
+    );
     return cardPage({
       title: PRODUCT,
       eyebrow: PRODUCT,
       heading: "You don't have access to this app.",
-      paragraphs: [
-        detail,
-        "If you think you should have access, ask whoever runs this dashboard to add you."
-      ],
+      paragraphs: [detail, ask],
       actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : ""
     });
   }
@@ -274,7 +276,7 @@ var Server = (() => {
     const d = check();
     if (d.allowed) return null;
     logDenial("doGet", d);
-    return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
+    return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl(), ownerEmail())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
   }
   function serviceUrl() {
     try {
@@ -488,7 +490,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "8156f78fbdc6" : "dev";
+  var BUILD_ID = true ? "99c1c2ed80d7" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
