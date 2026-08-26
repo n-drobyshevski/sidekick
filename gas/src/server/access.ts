@@ -36,7 +36,7 @@ export interface AccessDecision {
   allowed: boolean;
   /** The address the app actually saw, or "" when the caller could not be identified. */
   email: string;
-  reason: "owner" | "listed" | "anonymous" | "not-listed";
+  reason: "owner" | "admin" | "listed" | "anonymous" | "not-listed";
 }
 
 /**
@@ -76,23 +76,31 @@ export function parseAllowlist(raw: string | null): string[] {
 }
 
 /**
- * The decision, as a pure function of the three inputs, so the table below is unit-testable
+ * The decision, as a pure function of its inputs, so the table below is unit-testable
  * without any GAS global:
  *
  *   active ""/null                      → deny   (anonymous)   — outside the domain, or a
  *                                                                context with no active user
- *   active === owner (both non-empty)   → allow  (owner)       — regardless of the list
- *   active in the list                  → allow  (listed)
- *   otherwise                           → deny   (not-listed)  — including an unset list
+ *   active === owner (both non-empty)   → allow  (owner)       — regardless of either list
+ *   active in the admins list           → allow  (admin)
+ *   active in the users list            → allow  (listed)
+ *   otherwise                           → deny   (not-listed)  — including unset lists
  *
  * Matching is exact after trim + lowercase. An alias or secondary address is a DIFFERENT
  * string and must be listed separately; the denied page names the address it actually saw,
  * which is what makes that diagnosable rather than mysterious.
+ *
+ * ADMINS ARE ALLOWED BY BEING ADMINS, not by also appearing in the users list. An admin who
+ * could not open the app could not reach the Settings panel that makes them one, and holding
+ * their standing in a single list is what stops another admin from demoting them by editing
+ * the users list. `adminsRaw` is optional so every caller predating the tier — and every
+ * deployment with no ALLOWED_ADMINS property — decides exactly as it did before.
  */
 export function decide(
   active: string | null,
   owner: string | null,
   raw: string | null,
+  adminsRaw?: string | null,
 ): AccessDecision {
   const email = (active || "").trim();
   const key = email.toLowerCase();
@@ -103,6 +111,10 @@ export function decide(
   // refused — the one way this whole module could fail open.
   const ownerKey = (owner || "").trim().toLowerCase();
   if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
+
+  if (parseAllowlist(adminsRaw ?? null).indexOf(key) >= 0) {
+    return { allowed: true, email, reason: "admin" };
+  }
 
   return parseAllowlist(raw).indexOf(key) >= 0
     ? { allowed: true, email, reason: "listed" }
@@ -122,6 +134,7 @@ export function check(): AccessDecision {
       Session.getActiveUser().getEmail(),
       Session.getEffectiveUser().getEmail(),
       getProp(PROP_KEYS.allowedUsers),
+      getProp(PROP_KEYS.allowedAdmins),
     );
   }
   return memo;
@@ -222,4 +235,49 @@ export function accountChooserUrl(): string | null {
  */
 export function ownerEmail(): string {
   return Session.getEffectiveUser().getEmail() || "";
+}
+
+// ---------------------------------------------------------------- the admin tier
+//
+// WHERE THE TIER STOPS, AND WHY IT STOPS THERE. Admins may edit ALLOWED_USERS; only the owner
+// may edit ALLOWED_ADMINS. If admins could promote admins the tier would self-propagate and
+// collapse back into "anyone who can edit can grant anything" — the delegation would be
+// indistinguishable from handing out ownership. Keeping promotion with the owner is the entire
+// difference between a real second tier and a cosmetic one, and test/accessAdmin.test.ts
+// exists to fail the moment it is blurred.
+//
+// Note what an admin still cannot do: admit anyone outside the Workspace domain (they read as
+// "" and are denied before either list is consulted), lock the owner out (identity, not
+// membership), or demote another admin by editing the users list (admin standing lives in the
+// admins list alone).
+
+/** The deploying account — the only identity that is allowed without appearing in any list. */
+export function isOwner(): boolean {
+  return check().reason === "owner";
+}
+
+/** Owner or admin: may add and remove people from ALLOWED_USERS. */
+export function canEditUsers(): boolean {
+  const r = check().reason;
+  return r === "owner" || r === "admin";
+}
+
+/** Owner only: may add and remove admins. Deliberately narrower than canEditUsers. */
+export function canEditAdmins(): boolean {
+  return isOwner();
+}
+
+/** The current lists, parsed. Callers must have checked they may see them. */
+export function currentUsers(): string[] {
+  return parseAllowlist(getProp(PROP_KEYS.allowedUsers));
+}
+
+export function currentAdmins(): string[] {
+  return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
+}
+
+/** The owner's domain, for the client's "this address can never match" warning. */
+export function ownerDomain(): string {
+  const at = ownerEmail().lastIndexOf("@");
+  return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
 }

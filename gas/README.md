@@ -511,6 +511,10 @@ and the result reports the true zero rather than claiming a reclaim.
      a deleted property can never lock them out. Takes effect on the **next request** — no
      redeploy, no `setup()` re-run.
    Without credentials the app runs in dry-run mode over sample data.
+   - `ALLOWED_ADMINS` *(optional)* — addresses allowed to edit `ALLOWED_USERS` from
+     **Settings → Access**, on top of the owner, who always may. Same format, and **unset
+     means owner-only**, like its sibling. Being an admin also admits you to the app.
+     Admins deliberately **cannot** edit this property — see **Access control** below.
 6. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain), or
    `npm run deploy`. `ALLOWED_USERS` narrows that domain fence further, in code — see
    **Access control** below; it does not replace it. **The first deploy after adding it
@@ -572,9 +576,37 @@ exact address after trim + lowercase — list the alias too if the person signs 
 The denied page names the address it actually saw, which is what makes a "wrong alias"
 lockout diagnosable rather than mysterious.
 
-**To add or remove someone:** edit the `ALLOWED_USERS` Script Property (Project Settings →
-Script Properties) and save. No redeploy, no `setup()` re-run — `access.check()` re-reads the
-property fresh on the next request (it's memoized only within one execution).
+### Two tiers, and where the second one stops
+
+| | Opens the app | Edits `ALLOWED_USERS` | Edits `ALLOWED_ADMINS` |
+| --- | --- | --- | --- |
+| **Owner** (the deploying account) | always, by identity | yes | yes |
+| **Admin** (in `ALLOWED_ADMINS`) | yes | yes | **no** — sees it, cannot change it |
+| **Listed** (in `ALLOWED_USERS`) | yes | no — gets no Access panel at all | no |
+
+**Admins cannot promote admins, and that is the whole design.** If they could, the tier would
+self-propagate — an admin could make their own standing permanent or hand it to anyone — and
+delegating day-to-day additions would be indistinguishable from handing over ownership. Keeping
+promotion with the owner is the difference between a real second tier and a cosmetic one, which
+is why `test/accessAdmin.test.ts` exists and why one spec in it matters more than the rest.
+
+What an admin still cannot do: admit anyone outside the Workspace domain (they read as `""` and
+are refused before either list is consulted), lock the owner out (identity, not membership), or
+demote another admin by editing the people list — admin standing lives in `ALLOWED_ADMINS`
+alone.
+
+**To add or remove someone:** use **Settings → Access** if you are the owner or an admin, or
+edit the `ALLOWED_USERS` Script Property directly (Project Settings → Script Properties). Either
+way there is no redeploy and no `setup()` re-run — `access.check()` re-reads the property fresh
+on the next request (it's memoized only within one execution), so a removal takes effect on that
+person's very next request.
+
+The panel is **not** the boundary: `google.script.run` reaches `api_saveAccess` and
+`api_saveAdmins` directly from any allowed caller's console, so both re-check server-side and
+`getAccess()` hands a non-editor no roster at all — "no panel" means nothing on the wire, not
+just nothing in the DOM. Every successful change writes one Stackdriver line naming the actor
+and the addresses added and removed; a delegated grant power with no record of who used it is
+what makes a feature like this regrettable later.
 
 ### The entry screen
 
@@ -749,6 +781,10 @@ Things node tests cannot cover — verify after the first deployment:
       **not** reappear — the archive rewrite is the only thing preventing it.
 - [ ] Quick refresh after a purge does not re-ingest the purged severities (it rides the
       baseline scan row's narrowed `severities` scope, not `fetch_severities`).
+- [ ] **Settings → Access, as an admin rather than as you.** The dev harness covers the tiers,
+      but confirm on the deployment that an admin sees the People list editable and the Admins
+      list read-only, that their save works, and that a removed person is refused on their next
+      request rather than at their next sign-in.
 - [ ] **The entry screen, which no local harness can reach** (`dev/serve.mjs` composes the page
       in Node and never calls `Server.doGet`, so unit tests on the HTML string are the only
       coverage before deployment). Three things need a real deployment: **Continue** actually

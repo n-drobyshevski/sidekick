@@ -150,14 +150,20 @@ describe("check reads the live configuration once per execution", () => {
     expect(check().allowed).toBe(true);
   });
 
-  it("memoizes, so doGet and its include() scriptlets cost one property read", async () => {
+  it("memoizes, so doGet and its include() scriptlets add no property reads", async () => {
+    // Asserted as "no FURTHER reads", not as a fixed count. The count is an implementation
+    // detail that legitimately moved when the admin tier added a second property; the claim
+    // worth pinning is that repeat calls within one execution are free, which is what doGet
+    // plus its include() scriptlets actually depend on.
     const { check } = await load();
     activeEmail = "listed@example.com";
     props.ALLOWED_USERS = "listed@example.com";
     check();
+    const afterFirst = propReads;
     check();
     check();
-    expect(propReads).toBe(1);
+    expect(propReads).toBe(afterFirst);
+    expect(afterFirst).toBeGreaterThan(0); // it did actually read
   });
 });
 

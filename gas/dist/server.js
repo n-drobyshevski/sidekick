@@ -48,11 +48,17 @@ var Server = (() => {
     PRODUCT: () => PRODUCT,
     accountChooserUrl: () => accountChooserUrl,
     assertAllowed: () => assertAllowed,
+    canEditAdmins: () => canEditAdmins,
+    canEditUsers: () => canEditUsers,
     check: () => check,
+    currentAdmins: () => currentAdmins,
+    currentUsers: () => currentUsers,
     decide: () => decide,
     deniedHtml: () => deniedHtml,
     deniedPage: () => deniedPage,
     denyResult: () => denyResult,
+    isOwner: () => isOwner,
+    ownerDomain: () => ownerDomain,
     ownerEmail: () => ownerEmail,
     parseAllowlist: () => parseAllowlist,
     serviceUrl: () => serviceUrl
@@ -153,6 +159,10 @@ var Server = (() => {
     // whitespace-separated addresses; see access.ts. UNSET MEANS OWNER-ONLY, not "everyone" —
     // the guard fails closed, and the owner is allowed by identity rather than by this list.
     allowedUsers: "ALLOWED_USERS",
+    // Who may EDIT the list above from Settings → Access, on top of the owner (who always may).
+    // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
+    // and deliberately CANNOT edit this property — see access.ts for why the tier stops here.
+    allowedAdmins: "ALLOWED_ADMINS",
     ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
     archiveFolderId: "ARCHIVE_FOLDER_ID",
     // The warm schedule setup() last installed. A ClockTrigger exposes no hour, minute or
@@ -209,12 +219,15 @@ var Server = (() => {
     }
     return out;
   }
-  function decide(active, owner, raw) {
+  function decide(active, owner, raw, adminsRaw) {
     const email = (active || "").trim();
     const key = email.toLowerCase();
     if (!key) return { allowed: false, email: "", reason: "anonymous" };
     const ownerKey = (owner || "").trim().toLowerCase();
     if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
+    if (parseAllowlist(adminsRaw != null ? adminsRaw : null).indexOf(key) >= 0) {
+      return { allowed: true, email, reason: "admin" };
+    }
     return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
   }
   var memo;
@@ -223,7 +236,8 @@ var Server = (() => {
       memo = decide(
         Session.getActiveUser().getEmail(),
         Session.getEffectiveUser().getEmail(),
-        getProp(PROP_KEYS.allowedUsers)
+        getProp(PROP_KEYS.allowedUsers),
+        getProp(PROP_KEYS.allowedAdmins)
       );
     }
     return memo;
@@ -275,6 +289,26 @@ var Server = (() => {
   }
   function ownerEmail() {
     return Session.getEffectiveUser().getEmail() || "";
+  }
+  function isOwner() {
+    return check().reason === "owner";
+  }
+  function canEditUsers() {
+    const r = check().reason;
+    return r === "owner" || r === "admin";
+  }
+  function canEditAdmins() {
+    return isOwner();
+  }
+  function currentUsers() {
+    return parseAllowlist(getProp(PROP_KEYS.allowedUsers));
+  }
+  function currentAdmins() {
+    return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
+  }
+  function ownerDomain() {
+    const at = ownerEmail().lastIndexOf("@");
+    return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
   }
 
   // src/server/welcome.ts
@@ -454,7 +488,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "6c199e1849dc" : "dev";
+  var BUILD_ID = true ? "8156f78fbdc6" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -2285,6 +2319,7 @@ var Server = (() => {
     compact: () => compact,
     deleteScans: () => deleteScans2,
     exportMigrationBundle: () => exportMigrationBundle,
+    getAccess: () => getAccess,
     getAttribution: () => getAttribution,
     getDomains: () => getDomains3,
     getExecutivePage: () => getExecutivePage,
@@ -2321,6 +2356,8 @@ var Server = (() => {
     refreshSupportGroups: () => refreshSupportGroups2,
     resetLedger: () => resetLedger2,
     runScan: () => runScan,
+    saveAccess: () => saveAccess,
+    saveAdmins: () => saveAdmins,
     saveDomains: () => saveDomains,
     setAutoCompact: () => setAutoCompact2,
     setIncludeEol: () => setIncludeEol2,
@@ -9597,6 +9634,62 @@ var Server = (() => {
         autoCompact: getAutoCompact2()
       };
     });
+  }
+  var ACCESS_MAX_BYTES = 8e3;
+  var ACCESS_MAX_ENTRIES = 500;
+  function validateAddresses(raw) {
+    const list = parseAllowlist(Array.isArray(raw) ? raw.join("\n") : String(raw != null ? raw : ""));
+    const bad = list.filter((e) => e.indexOf("@") < 0);
+    if (bad.length) throw new Error(`Not an email address: ${bad.join(", ")}`);
+    if (list.length > ACCESS_MAX_ENTRIES) {
+      throw new Error(`Too many people (${list.length}); the limit is ${ACCESS_MAX_ENTRIES}.`);
+    }
+    const bytes = list.join(",").length;
+    if (bytes > ACCESS_MAX_BYTES) {
+      throw new Error(`That list is too long to store (${bytes} of ${ACCESS_MAX_BYTES} bytes).`);
+    }
+    return list;
+  }
+  function logAccessChange(what, actor, before, after) {
+    const added = after.filter((e) => before.indexOf(e) < 0);
+    const removed = before.filter((e) => after.indexOf(e) < 0);
+    console.log(JSON.stringify({ access: "changed", what, actor, added, removed }));
+  }
+  function getAccess(_p) {
+    return run(() => {
+      const canUsers = canEditUsers();
+      if (!canUsers) return { canEditUsers: false, canEditAdmins: false };
+      return {
+        canEditUsers: true,
+        canEditAdmins: canEditAdmins(),
+        owner: ownerEmail(),
+        domain: ownerDomain(),
+        users: currentUsers(),
+        admins: currentAdmins()
+      };
+    }, "getAccess");
+  }
+  function saveAccess(p) {
+    return run(() => {
+      if (!canEditUsers()) throw new Error("Only the owner or an admin can change access.");
+      const before = currentUsers();
+      const list = validateAddresses(p == null ? void 0 : p["users"]);
+      const owner = ownerEmail().trim().toLowerCase();
+      const withOwner = owner && list.indexOf(owner) < 0 ? [owner].concat(list) : list;
+      setProp(PROP_KEYS.allowedUsers, withOwner.join(", "));
+      logAccessChange("users", check().email, before, withOwner);
+      return { users: withOwner };
+    }, "saveAccess");
+  }
+  function saveAdmins(p) {
+    return run(() => {
+      if (!canEditAdmins()) throw new Error("Only the owner can change admins.");
+      const before = currentAdmins();
+      const list = validateAddresses(p == null ? void 0 : p["admins"]);
+      setProp(PROP_KEYS.allowedAdmins, list.join(", "));
+      logAccessChange("admins", check().email, before, list);
+      return { admins: list };
+    }, "saveAdmins");
   }
   function getDomains3(_p) {
     return run(() => getDomains2());
