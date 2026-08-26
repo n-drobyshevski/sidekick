@@ -263,7 +263,7 @@ export function severityBar(canvas, counts, palette, onClickSeverity) {
  * buckets mean something else, e.g. time-to-resolve). Severity is color + legend label +
  * tooltip title — never color alone.
  */
-export function stackedAgeBar(canvas, labels, perSev, palette, desc) {
+export function stackedAgeBar(canvas, labels, perSev, palette, desc, opts2 = {}) {
   destroyExisting(canvas);
   describe(canvas, desc || "Open findings by age bucket and severity.");
   const opts = baseOptions("findings");
@@ -271,6 +271,13 @@ export function stackedAgeBar(canvas, labels, perSev, palette, desc) {
   opts.scales.y.stacked = true;
   opts.scales.x.grid = { display: false };
   opts.plugins.legend = { display: true, labels: { font: FONT, color: INK2, boxWidth: 12 } };
+  const plugins = [];
+  // `slaEdgeAfter` marks the boundary between the in-SLA bucket and the breaches to its
+  // right. On a single-severity register every bucket past the first IS a breach, which the
+  // old severity-stacked chart implied and never said.
+  if (typeof opts2.slaEdgeAfter === "number") {
+    plugins.push(slaEdgeLine(opts2.slaEdgeAfter, opts2.slaEdgeLabel || "SLA"));
+  }
   return new Chart(canvas, {
     type: "bar",
     data: {
@@ -278,14 +285,177 @@ export function stackedAgeBar(canvas, labels, perSev, palette, desc) {
       datasets: palette.order
         .filter((s) => perSev[s])
         .map((s) => ({
-          label: s,
+          label: palette.labels ? palette.labels[s] || s : s,
           data: perSev[s],
-          backgroundColor: palette.colors[s],
+          backgroundColor: palette.fills ? palette.fills(canvas, s) : palette.colors[s],
           borderRadius: 3,
           barThickness: 36,
         })),
     },
     options: opts,
+    plugins,
+  });
+}
+
+// ------------------------------------------------------------------------- risk tiers
+
+/**
+ * The tier ramp, and why it is not the severity ramp.
+ *
+ * Reusing --sev-* here was the obvious move and it fails a colour check: #d97706 (medium)
+ * against #ea580c (high) separate by ΔE 6.7 for NORMAL vision and 1.6 under deuteranopia,
+ * so two adjacent tiers would be indistinguishable to everyone, not just to colourblind
+ * readers. Tiers are also ordinal rather than categorical, which wants a ramp, not a set of
+ * identity hues.
+ *
+ * So: one status colour and a monotone neutral ramp. Tier 1 is the only saturated mark,
+ * which is the argument as much as the palette — KEV is rare (a fraction of a percent of
+ * open findings tenant-wide) and that rarity is exactly what makes it the day's work. It
+ * also keeps the page clear of the "wall of red and orange cells" DESIGN.md rejects.
+ *
+ * `unknown` is HATCHED, never a flat fill: it is a measurement gap, not a low score, and a
+ * solid swatch would read as another rung on the ladder.
+ */
+export const TIER_ORDER = ["kev", "exploit", "epss", "none", "unknown"];
+
+export const TIER_COLORS = {
+  kev: "#b91c1c",
+  exploit: "#3f4654",
+  epss: "#6b7280",
+  none: "#9ca3af",
+  unknown: "#9ca3af",
+};
+
+/** Text ink per tier — darkened where the fill would not clear 4.5:1 as type. */
+export const TIER_TEXT = {
+  kev: "#b91c1c",
+  exploit: "#3f4654",
+  epss: "#57606f",
+  none: "#57606f",
+  unknown: "#57606f",
+};
+
+export const TIER_LABELS = {
+  kev: "Known exploited",
+  exploit: "Public exploit",
+  epss: "Likely exploited",
+  none: "No known exploit",
+  unknown: "Unclassified",
+};
+
+/** The non-colour signal. Meaning never rides on hue alone (DESIGN.md, WCAG 1.4.1). */
+export const TIER_GLYPHS = {
+  kev: "●",
+  exploit: "◐",
+  epss: "○",
+  none: "—",
+  unknown: "▨",
+};
+
+/** Diagonal hatch, so the unclassified tier reads as "not measured" in a stacked bar too. */
+function hatchPattern(canvas, color) {
+  const ctx = canvas.getContext && canvas.getContext("2d");
+  if (!ctx || !ctx.createPattern) return color;
+  const tile = document.createElement("canvas");
+  tile.width = 6;
+  tile.height = 6;
+  const t = tile.getContext("2d");
+  if (!t) return color;
+  t.fillStyle = "#e4e4e9";
+  t.fillRect(0, 0, 6, 6);
+  t.strokeStyle = color;
+  t.lineWidth = 2;
+  t.beginPath();
+  t.moveTo(0, 6);
+  t.lineTo(6, 0);
+  t.moveTo(-2, 2);
+  t.lineTo(2, -2);
+  t.moveTo(4, 8);
+  t.lineTo(8, 4);
+  t.stroke();
+  return ctx.createPattern(tile, "repeat") || color;
+}
+
+/** Palette in the shape `stackedAgeBar` / `severityTrendLines` already consume. */
+export function tierPalette() {
+  return {
+    order: TIER_ORDER,
+    colors: TIER_COLORS,
+    labels: TIER_LABELS,
+    fills: (canvas, tier) =>
+      tier === "unknown" ? hatchPattern(canvas, TIER_COLORS.unknown) : TIER_COLORS[tier],
+  };
+}
+
+/** Vertical hairline drawn between two categories, labelled above the plot. */
+function slaEdgeLine(afterIndex, label) {
+  return {
+    id: "slaEdge",
+    afterDatasetsDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      const x = scales.x;
+      if (!x || afterIndex < 0 || afterIndex >= x.ticks.length - 1) return;
+      const px = (x.getPixelForTick(afterIndex) + x.getPixelForTick(afterIndex + 1)) / 2;
+      ctx.save();
+      ctx.strokeStyle = "#a16207";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(px, chartArea.top);
+      ctx.lineTo(px, chartArea.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#a16207";
+      ctx.font = "600 10px " + FONT.family;
+      ctx.textAlign = "left";
+      ctx.fillText(label, px + 5, chartArea.top + 10);
+      ctx.restore();
+    },
+  };
+}
+
+/**
+ * A sparkline: one series, its own y-scale, no axes, an emphasised endpoint.
+ *
+ * Small multiples rather than one shared axis is the point. The tiers span orders of
+ * magnitude — a dozen KEV rows beside several hundred with no known exploit — and on a
+ * shared scale the small series flattens onto the baseline and reads as "nothing here",
+ * which is the opposite of true. Each tier gets its own frame and its own scale, so shape
+ * is comparable across tiers even though height is not; the count beside it carries the
+ * magnitude that the scale deliberately does not.
+ */
+export function sparkline(canvas, values, { color, desc } = {}) {
+  destroyExisting(canvas);
+  describe(canvas, desc || "Trend sparkline.");
+  const ink = color || "#6b7280";
+  return new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: values.map((_, i) => i),
+      datasets: [{
+        data: values,
+        borderColor: ink,
+        borderWidth: 2,
+        tension: 0.25,
+        fill: false,
+        pointRadius: values.map((_, i) => (i === values.length - 1 ? 3 : 0)),
+        pointBackgroundColor: ink,
+        pointBorderWidth: 0,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: reducedMotion ? false : { duration: 300 },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { display: false },
+        // NOT beginAtZero: these read as shape, and pinning to zero would flatten a tier
+        // whose whole range sits well above it.
+        y: { display: false, grace: "12%" },
+      },
+      layout: { padding: { top: 4, bottom: 4, left: 2, right: 4 } },
+    },
   });
 }
 

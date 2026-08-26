@@ -382,6 +382,9 @@ function insightsData(p?: unknown): Rec {
   const recsVisible = filterNoFixFrame(recs, showNoFix);
   const baseVisible = filterNoFixBase(base as unknown as Rec[], showNoFix) as unknown as typeof base;
   const latestFlat = ledgerStore.latestFlatScanRow();
+  // One pass over the frame, read by both the `exploit` block and the risk ladder's
+  // exposure join below.
+  const exploitSummaryScoped = insights.exploitSummary(recsVisible);
   return {
     flatScan: true,
     domain,
@@ -403,7 +406,16 @@ function insightsData(p?: unknown): Rec {
       severities,
       { hideNoFix: !showNoFix },
     ),
-    exploit: insights.exploitSummary(recsVisible),
+    exploit: exploitSummaryScoped,
+    // --------------------------------------------------------------- the risk ladder
+    // Severity is a constant in a single-severity register, so exploitability is this
+    // page's spine instead. The classifier is program.riskTier — a REFINEMENT of the
+    // Program page's classifyRisk, never a second opinion, so the two pages can never
+    // print different unclassified counts for one fleet (pinned in test/program.test.ts).
+    ...riskLadder(
+      recsVisible, baseVisible as unknown as Rec[], base as unknown as Rec[],
+      severities, showNoFix, exploitSummaryScoped,
+    ),
     // Open findings awaiting a vendor fix (no patch available yet) over the same scoped base
     // rows — sourced here so the Overview can explain the post-rollout open-count step-up.
     // (Naturally zero when the toggle hides them, so the client drops the surface entirely.)
@@ -423,6 +435,77 @@ function insightsData(p?: unknown): Rec {
   };
 }
 
+/**
+ * The Overview page's risk-ladder block: tiers, the triage funnel, the tier trend, aging
+ * stacked by tier, concentration, and the one SLA figure.
+ *
+ * Split out of `insightsData` only for length — it reads the same already-scoped, already-
+ * filtered row sets and adds no queries of its own. Four decisions worth stating:
+ *
+ *  - `pastSla` runs `openPastSla` over `actionableView`, which is the clock the MTTR page's
+ *    headline uses. Calling `api_getMttr` for it would answer over a DIFFERENT population —
+ *    `mttrData` scopes by `scopedBaseRows(domain, supportGroup)` and ignores the
+ *    `supportGroups[]` multi-select this payload honours — and would miss its cache besides
+ *    (namespace `mttr8`, not `insights4`). One pass over rows already in hand instead.
+ *  - The funnel's exposure step joins the FRAME to the ledger on vuln_key, because
+ *    `hasWideInternetExposure` is not a ledger column. When the frame predates those keys,
+ *    `exposureKnown` is false and the client stops the funnel early rather than drawing a
+ *    zero — absent is not none.
+ *  - `tierTrend` reads the UNFILTERED base with the as-of no-fix exclusion, mirroring
+ *    `openTrend` above so the two lines describe the same population.
+ *  - `concentration` ranks by OPEN findings, unlike `groupTree` (which ranks by open +
+ *    resolved because the breakdown tree reports on the whole scan).
+ */
+function riskLadder(
+  recsVisible: Rec[],
+  baseVisible: Rec[],
+  base: Rec[],
+  severities: string[] | null,
+  showNoFix: boolean,
+  // Passed in rather than recomputed: `insightsData` already ran it for the `exploit`
+  // field, and it is a full pass over every frame record.
+  exposure: insights.ExploitSummary,
+): Rec {
+  const rule = settingsStore.getRiskRule().rule;
+  const tierOf = (r: Rec) => program.riskTier(r as unknown as program.RiskRow, rule);
+
+  // Frame -> ledger join for the funnel's exposure step.
+  const exposedKeys = new Set<string>();
+  if (exposure.exposureKnown) {
+    for (const r of recsVisible) {
+      if (r["vulnerableAsset.hasWideInternetExposure"] === true
+        || r["vulnerableAsset.hasLimitedInternetExposure"] === true) {
+        const k = String(r["_vuln_key"] ?? "");
+        if (k) exposedKeys.add(k);
+      }
+    }
+  }
+
+  const agingTier = insights.ageBucketsBy(
+    baseVisible as unknown as Parameters<typeof insights.ageBucketsBy>[0],
+    tierOf as never,
+  );
+
+  return {
+    riskRule: { rule, sentence: program.ruleSentence(rule) },
+    tiers: insights.riskTierStats(baseVisible as never, rule),
+    funnel: insights.triageFunnel(
+      baseVisible as never, rule, exposedKeys, exposure.exposureKnown,
+    ),
+    tierTrend: openByGroupTrend(
+      ledgerStore.loadScanRows() as unknown as Rec[],
+      base,
+      tierOf,
+      program.RISK_TIER_ORDER,
+      { severities, hideNoFix: !showNoFix, includeOther: false },
+    ),
+    agingTier: { perTier: agingTier.perKey, totalOpen: agingTier.totalOpen },
+    concentration: insights.concentration(recsVisible, ["asset", "cve", "supportGroup", "os"], 5),
+    pastSla: openPastSla(actionableView(baseVisible as never)),
+    medianOpenAge: insights.openAgeMedian(baseVisible as never),
+  };
+}
+
 // 1h TTL like the MTTR summary: aging carries wall-clock-relative day counts. Keyed on
 // domain so per-chain payloads don't clobber each other. Extracted so warmReadModels and the
 // getInsights endpoint share one cache entry.
@@ -433,13 +516,19 @@ const cachedInsightsData = (p?: unknown) =>
     // all reflect it); key gains showNoFix so on/off states don't share an entry.
     // "insights2" → "insights3": `oldest.*` now carries up to 100 rows (was 7) for the aging
     // panel's prev/next pagination; bump so stale 7-row entries can't survive the deploy.
-    "insights3",
+    // "insights3" → "insights4": the risk-ladder block (tiers, funnel, tierTrend, agingTier,
+    // concentration, pastSla, medianOpenAge). A stale insights3 entry has none of those
+    // fields, and the rebuilt page reads them unconditionally, so it must not be served.
+    // The key gains riskRuleVersion for the same reason it does on the Program page: the
+    // operator can change which signals classify a row, and every tier figure moves with it.
+    "insights4",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       supportGroups: readStringArray(p, "supportGroups"),
       severities: readSeverities(p),
       showNoFix: settingsStore.getShowNoFix(),
+      riskRuleVersion: settingsStore.getRiskRule().version,
     },
     () => insightsData(p),
     3600,

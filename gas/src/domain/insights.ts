@@ -7,15 +7,15 @@
 // normalized by findings.currentScan) or ledger base rows (durable lifecycle with
 // age_days). Each function documents which source it expects and why.
 
-import { RESOLVED_STATUSES } from "./config";
+import { EPSS_PRIORITY_THRESHOLD, RESOLVED_STATUSES, SLA_TARGETS } from "./config";
 import type { BaseRow, ScanRow } from "./ledgerCore";
+import { type RiskRow, type RiskRule, RISK_TIER_ORDER, riskTier } from "./program";
 import { normalizeSeverity } from "./severity";
 import type { Rec } from "./util";
 
-// EPSS probability at or above this counts as a priority signal. 0.1 is the
-// conventional operational cut (FIRST guidance treats >=0.1 as meaningful
-// exploitation likelihood); 0.5 would qualify almost nothing in typical fleets.
-export const EPSS_PRIORITY_THRESHOLD = 0.1;
+// Re-exported from config so the many existing `from "./insights"` importers keep resolving;
+// see the note beside the definition for why it moved.
+export { EPSS_PRIORITY_THRESHOLD };
 
 export const AGE_BUCKET_EDGES = [7, 30, 90] as const;
 export const AGE_BUCKET_LABELS = ["0-7d", "8-30d", "31-90d", "90+d"] as const;
@@ -104,19 +104,31 @@ export interface AgeBuckets {
  * are skipped.
  */
 export function ageBuckets(rows: Pick<BaseRow, "severity" | "status" | "age_days">[]): AgeBuckets {
-  const perSev: Record<string, [number, number, number, number]> = {};
+  const { perKey, totalOpen } = ageBucketsBy(rows, (r) => normalizeSeverity(r.severity));
+  return { perSev: perKey, totalOpen };
+}
+
+/** The same four buckets over an arbitrary key, so the histogram can stack by risk tier
+ *  instead of by severity — which is the whole point on a register that scans one severity.
+ *  `ageBuckets` is this function with the key fixed to severity; both skip rows with no
+ *  finite age, so `totalOpen` here can be lower than the open count shown elsewhere. */
+export function ageBucketsBy<T extends { status: string; age_days: number | null }>(
+  rows: T[],
+  keyOf: (row: T) => string,
+): { perKey: Record<string, [number, number, number, number]>; totalOpen: number } {
+  const perKey: Record<string, [number, number, number, number]> = {};
   let totalOpen = 0;
   for (const row of rows) {
     if (!isOpen(row.status)) continue;
     const age = row.age_days;
     if (typeof age !== "number" || !Number.isFinite(age)) continue;
     const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
-    const s = normalizeSeverity(row.severity);
-    if (!perSev[s]) perSev[s] = [0, 0, 0, 0];
-    perSev[s][bucket] += 1;
+    const k = keyOf(row);
+    if (!perKey[k]) perKey[k] = [0, 0, 0, 0];
+    perKey[k][bucket] += 1;
     totalOpen += 1;
   }
-  return { perSev, totalOpen };
+  return { perKey, totalOpen };
 }
 
 // Open findings older than this many days are the "aged" backlog the grouped
@@ -355,4 +367,180 @@ export function groupTree(records: Rec[], keys: string[], perLevelCap = 20): Gro
     for (const row of kept) row.node.children = groupTree(row.recs, rest, perLevelCap);
   }
   return kept.map((row) => row.node);
+}
+
+// =========================================================== risk-ladder aggregations
+// The OS-vulnerabilities page's spine. Everything below reads the DURABLE ledger rows
+// (has_kev / has_exploit / epss are LedgerRow columns, so tiers survive compaction and can
+// be replayed across scan history) except where a function documents a frame join — internet
+// exposure lives only on the current-scan frame and cannot trend.
+
+/** Open findings per tier, plus the honesty number that has to travel with them. */
+export interface RiskTierStats {
+  perTier: Record<string, number>;
+  open: number;
+  /** Open rows whose tier is `unknown`. Published beside every tier figure: a null on
+   *  has_kev / has_exploit / epss means NOT CAPTURED, and rendering that as a clean zero is
+   *  the exact mistake `program.classifyRisk`'s three-valued verdict exists to prevent. */
+  unclassified: number;
+}
+
+type TierRow = RiskRow & { status: string };
+
+/** Open-only tier counts over ledger base rows. Resolved rows are excluded because the page
+ *  ranks what is still outstanding; `movement` covers what closed. */
+export function riskTierStats(rows: TierRow[], rule: RiskRule): RiskTierStats {
+  const perTier: Record<string, number> = {};
+  for (const t of RISK_TIER_ORDER) perTier[t] = 0;
+  let open = 0;
+  for (const row of rows) {
+    if (!isOpen(row.status)) continue;
+    open += 1;
+    perTier[riskTier(row, rule)] += 1;
+  }
+  return { perTier, open, unclassified: perTier["unknown"] ?? 0 };
+}
+
+/**
+ * The triage funnel: five nested populations, each a strict subset of the one above it.
+ *
+ *   open        -> every open finding in scope
+ *   intel       -> ...whose exploit signals were actually captured (tier !== unknown)
+ *   exploitable -> ...on the KEV catalog or with a public exploit
+ *   exposed     -> ...on a host reachable from outside
+ *   overdue     -> ...and already past its severity SLA
+ *
+ * Nesting is what makes the shape readable when the counts span orders of magnitude: each
+ * step states its share of the step above, so a tier holding fourteen rows out of twelve
+ * hundred is legible rather than invisible.
+ *
+ * Two joins worth naming. Exposure is a frame property (`vulnerableAsset.has*InternetExposure`
+ * is not a ledger column), so callers pass the set of exposed `vuln_key`s from the current
+ * scan; when the frame predates those keys, `exposureKnown` is false and the last two steps
+ * are NOT rendered as zero — absent is not none. And "overdue" runs on the ACTIONABLE clock
+ * (`actionable_age_days`), the same clock the MTTR page's headline uses, so a finding still
+ * awaiting a vendor fix is never counted as a breach nobody could have prevented.
+ */
+export interface TriageFunnel {
+  open: number;
+  intel: number;
+  exploitable: number;
+  exposed: number;
+  overdue: number;
+  unclassified: number;
+  exposureKnown: boolean;
+}
+
+type FunnelRow = RiskRow & {
+  status: string;
+  vuln_key: string;
+  actionable_age_days: number | null;
+};
+
+export function triageFunnel(
+  rows: FunnelRow[],
+  rule: RiskRule,
+  exposedKeys: Set<string>,
+  exposureKnown: boolean,
+): TriageFunnel {
+  const out: TriageFunnel = {
+    open: 0, intel: 0, exploitable: 0, exposed: 0, overdue: 0,
+    unclassified: 0, exposureKnown,
+  };
+  for (const row of rows) {
+    if (!isOpen(row.status)) continue;
+    out.open += 1;
+    const tier = riskTier(row, rule);
+    if (tier === "unknown") {
+      out.unclassified += 1;
+      continue;
+    }
+    out.intel += 1;
+    if (tier !== "kev" && tier !== "exploit") continue;
+    out.exploitable += 1;
+    if (!exposureKnown || !exposedKeys.has(row.vuln_key)) continue;
+    out.exposed += 1;
+    const target = SLA_TARGETS[normalizeSeverity(row.severity)];
+    const age = row.actionable_age_days;
+    // Strict `>`, matching remediation.openPastSla — a finding on its due date is in SLA.
+    if (typeof target === "number" && typeof age === "number" && Number.isFinite(age) && age > target) {
+      out.overdue += 1;
+    }
+  }
+  return out;
+}
+
+/** One row of a concentration list: a group value and the open findings sitting under it. */
+export interface ConcentrationRow {
+  key: string;
+  open: number;
+  assets: number; // distinct assets carrying those open findings
+  kev: number; // how many of them are on the KEV catalog
+}
+
+export interface Concentration {
+  /** dimension -> top rows, ranked by OPEN findings. */
+  perDim: Record<string, ConcentrationRow[]>;
+  /** dimension -> groups that exist but did not make the cut. Rendered as "N more", because
+   *  a truncated list that says nothing reads as a complete one. */
+  moreDim: Record<string, number>;
+}
+
+/**
+ * Top-N groups per dimension, over current-scan frame records.
+ *
+ * Deliberately NOT `groupTree`: that ranks by `total` (open + resolved) because the breakdown
+ * tree reports on the whole scan, and reusing its ordering for a list captioned "by open
+ * findings" would put a group that closed everything above one that closed nothing. This
+ * counts and ranks open rows only.
+ */
+export function concentration(records: Rec[], dims: string[], topN = 5): Concentration {
+  const perDim: Record<string, ConcentrationRow[]> = {};
+  const moreDim: Record<string, number> = {};
+  for (const dim of dims) {
+    const column = GROUP_COLUMNS[dim];
+    if (!column) continue;
+    const buckets = new Map<string, { open: number; assets: Set<string>; kev: number }>();
+    for (const r of records) {
+      if (!isOpen(r["status"])) continue;
+      const raw = r[column];
+      const k = raw === null || raw === undefined || String(raw).trim() === ""
+        ? "(none)" : String(raw);
+      let b = buckets.get(k);
+      if (!b) buckets.set(k, (b = { open: 0, assets: new Set(), kev: 0 }));
+      b.open += 1;
+      const a = String(r["vulnerableAsset.name"] ?? "");
+      if (a) b.assets.add(a);
+      if (r["hasCisaKevExploit"] === true) b.kev += 1;
+    }
+    const rows = [...buckets.entries()]
+      .map(([key, b]) => ({ key, open: b.open, assets: b.assets.size, kev: b.kev }))
+      .sort((a, b) => b.open - a.open || a.key.localeCompare(b.key));
+    perDim[dim] = rows.slice(0, topN);
+    moreDim[dim] = Math.max(0, rows.length - topN);
+  }
+  return { perDim, moreDim };
+}
+
+/**
+ * Median age of the open backlog, in days — the hero's "how stale is this pile" mini-stat.
+ *
+ * Median rather than mean because remediation ages are heavily right-skewed: a handful of
+ * year-old stragglers drag a mean somewhere no actual finding sits. Interpolates the midpoint
+ * on an even count, matching the percentile convention the MTTR page already uses. Rows with
+ * no finite age are skipped, so this reports on the rows it could actually measure.
+ */
+export function openAgeMedian(rows: Pick<BaseRow, "status" | "age_days">[]): number | null {
+  const ages: number[] = [];
+  for (const row of rows) {
+    if (!isOpen(row.status)) continue;
+    const age = row.age_days;
+    if (typeof age === "number" && Number.isFinite(age)) ages.push(age);
+  }
+  if (!ages.length) return null;
+  ages.sort((a, b) => a - b);
+  const mid = (ages.length - 1) / 2;
+  const lo = Math.floor(mid);
+  const hi = Math.ceil(mid);
+  return lo === hi ? ages[lo] : (ages[lo] + ages[hi]) / 2;
 }

@@ -5,12 +5,18 @@ import {
   GROUP_BASE_FIELDS,
   GROUP_COLUMNS,
   ageBuckets,
+  ageBucketsBy,
+  concentration,
   exploitSummary,
   groupTree,
   movement,
   oldestOpen,
+  openAgeMedian,
+  riskTierStats,
   severityStats,
+  triageFunnel,
 } from "../src/domain/insights";
+import { DEFAULT_RISK_RULE } from "../src/domain/program";
 import type { Rec } from "../src/domain/util";
 
 const WIDE = "vulnerableAsset.hasWideInternetExposure";
@@ -254,3 +260,200 @@ describe("groupTree", () => {
   });
 });
 
+
+// ==================================================== risk-ladder aggregations (Option A)
+
+const RULE = DEFAULT_RISK_RULE;
+
+function tierRow(over: Record<string, unknown> = {}) {
+  return {
+    vuln_key: "k1",
+    severity: "CRITICAL",
+    status: "OPEN",
+    has_kev: false,
+    has_exploit: false,
+    epss: 0,
+    age_days: 10,
+    actionable_age_days: 10,
+    ...over,
+  } as never;
+}
+
+describe("riskTierStats", () => {
+  it("counts open rows per tier and publishes the unclassified count", () => {
+    const stats = riskTierStats(
+      [
+        tierRow({ has_kev: true }),
+        tierRow({ has_exploit: true }),
+        tierRow({ epss: 0.5 }),
+        tierRow(),
+        tierRow(),
+        tierRow({ has_kev: null }),
+        tierRow({ status: "RESOLVED", has_kev: true }),
+      ],
+      RULE,
+    );
+    expect(stats.perTier).toEqual({ kev: 1, exploit: 1, epss: 1, none: 2, unknown: 1 });
+    expect(stats.open).toBe(6); // the RESOLVED row is excluded
+    expect(stats.unclassified).toBe(1);
+    // every open row lands in exactly one tier
+    const summed = Object.values(stats.perTier).reduce((a, b) => a + b, 0);
+    expect(summed).toBe(stats.open);
+  });
+
+  it("reports every tier key even when a tier is empty", () => {
+    const stats = riskTierStats([tierRow()], RULE);
+    expect(Object.keys(stats.perTier).sort()).toEqual(
+      ["epss", "exploit", "kev", "none", "unknown"],
+    );
+  });
+});
+
+describe("triageFunnel", () => {
+  it("nests each step strictly inside the one above it", () => {
+    const rows = [
+      tierRow({ vuln_key: "a", has_kev: true, actionable_age_days: 40 }), // exposed + overdue
+      tierRow({ vuln_key: "b", has_exploit: true, actionable_age_days: 2 }), // exposed, in SLA
+      tierRow({ vuln_key: "c", has_exploit: true }), // exploitable, not exposed
+      tierRow({ vuln_key: "d", epss: 0.9 }), // intel, not exploitable
+      tierRow({ vuln_key: "e" }), // intel only
+      tierRow({ vuln_key: "f", has_kev: null }), // unclassified
+      tierRow({ vuln_key: "g", status: "RESOLVED", has_kev: true }), // excluded
+    ];
+    const f = triageFunnel(rows, RULE, new Set(["a", "b"]), true);
+    expect(f.open).toBe(6);
+    expect(f.intel).toBe(5);
+    expect(f.unclassified).toBe(1);
+    expect(f.exploitable).toBe(3);
+    expect(f.exposed).toBe(2); // "c" is exploitable but not in the exposed set
+    expect(f.overdue).toBe(1); // only "a" is past the 7-day CRITICAL SLA
+    // monotonically narrowing, which is what makes the shape readable
+    expect(f.open).toBeGreaterThanOrEqual(f.intel);
+    expect(f.intel).toBeGreaterThanOrEqual(f.exploitable);
+    expect(f.exploitable).toBeGreaterThanOrEqual(f.exposed);
+    expect(f.exposed).toBeGreaterThanOrEqual(f.overdue);
+  });
+
+  it("stops at exploitable when exposure was never captured", () => {
+    // A frame predating the exposure keys must not render as "nothing is exposed".
+    const rows = [tierRow({ vuln_key: "a", has_kev: true, actionable_age_days: 40 })];
+    const f = triageFunnel(rows, RULE, new Set(), false);
+    expect(f.exploitable).toBe(1);
+    expect(f.exposed).toBe(0);
+    expect(f.overdue).toBe(0);
+    expect(f.exposureKnown).toBe(false);
+  });
+
+  it("counts overdue on the actionable clock, strictly past the target", () => {
+    const at = triageFunnel(
+      [tierRow({ vuln_key: "a", has_kev: true, actionable_age_days: 7 })], RULE, new Set(["a"]), true);
+    const past = triageFunnel(
+      [tierRow({ vuln_key: "a", has_kev: true, actionable_age_days: 7.5 })], RULE, new Set(["a"]), true);
+    expect(at.overdue).toBe(0); // on the due date is still in SLA
+    expect(past.overdue).toBe(1);
+    // a finding with no actionable clock yet (awaiting a vendor fix) is never a breach
+    const awaiting = triageFunnel(
+      [tierRow({ vuln_key: "a", has_kev: true, actionable_age_days: null })], RULE, new Set(["a"]), true);
+    expect(awaiting.exposed).toBe(1);
+    expect(awaiting.overdue).toBe(0);
+  });
+});
+
+describe("ageBucketsBy", () => {
+  const row = (over: Record<string, unknown> = {}) =>
+    ({ status: "OPEN", age_days: 3, severity: "CRITICAL", ...over }) as never;
+
+  it("buckets on an arbitrary key", () => {
+    const { perKey, totalOpen } = ageBucketsBy(
+      [
+        row({ age_days: 3, severity: "CRITICAL" }),
+        row({ age_days: 20, severity: "CRITICAL" }),
+        row({ age_days: 200, severity: "HIGH" }),
+      ],
+      (r: { severity: string }) => r.severity,
+    );
+    expect(perKey.CRITICAL).toEqual([1, 1, 0, 0]);
+    expect(perKey.HIGH).toEqual([0, 0, 0, 1]);
+    expect(totalOpen).toBe(3);
+  });
+
+  it("agrees with ageBuckets when keyed by severity", () => {
+    const rows = [row({ age_days: 1 }), row({ age_days: 45 }), row({ age_days: 400 })];
+    expect(ageBucketsBy(rows, (r: { severity: string }) => r.severity).perKey)
+      .toEqual(ageBuckets(rows).perSev);
+  });
+
+  it("skips rows with no finite age, so totalOpen can trail the open count", () => {
+    const { totalOpen } = ageBucketsBy(
+      [row(), row({ age_days: null }), row({ age_days: Number.NaN }), row({ status: "RESOLVED" })],
+      () => "k",
+    );
+    expect(totalOpen).toBe(1);
+  });
+});
+
+describe("concentration", () => {
+  const r = (over: Rec = {}) => rec({ status: "OPEN", [ASSET]: "host-a", ...over });
+
+  it("ranks by OPEN findings, not by total", () => {
+    // `groupTree` ranks by open+resolved; a list captioned "by open findings" must not
+    // inherit that ordering, or a group that closed everything outranks one that closed none.
+    const c = concentration(
+      [
+        r({ [ASSET]: "busy-but-closed", status: "RESOLVED" }),
+        r({ [ASSET]: "busy-but-closed", status: "RESOLVED" }),
+        r({ [ASSET]: "busy-but-closed", status: "RESOLVED" }),
+        r({ [ASSET]: "still-open" }),
+        r({ [ASSET]: "still-open" }),
+      ],
+      ["asset"],
+    );
+    expect(c.perDim.asset.map((x) => x.key)).toEqual(["still-open"]);
+    expect(c.perDim.asset[0].open).toBe(2);
+  });
+
+  it("counts distinct assets and KEV findings per group", () => {
+    const c = concentration(
+      [
+        r({ name: "CVE-1", [ASSET]: "h1", hasCisaKevExploit: true }),
+        r({ name: "CVE-1", [ASSET]: "h2" }),
+        r({ name: "CVE-1", [ASSET]: "h2" }),
+      ],
+      ["cve"],
+    );
+    expect(c.perDim.cve[0]).toEqual({ key: "CVE-1", open: 3, assets: 2, kev: 1 });
+  });
+
+  it("reports how many groups were dropped rather than truncating silently", () => {
+    const records = ["a", "b", "c", "d", "e", "f", "g"].map((k) => r({ [ASSET]: k }));
+    const c = concentration(records, ["asset"], 5);
+    expect(c.perDim.asset).toHaveLength(5);
+    expect(c.moreDim.asset).toBe(2);
+  });
+
+  it("folds blank group values into (none) and ignores unknown dimensions", () => {
+    const c = concentration([r({ [ASSET]: "" }), r({ [ASSET]: "  " })], ["asset", "nope"]);
+    expect(c.perDim.asset[0].key).toBe("(none)");
+    expect(c.perDim.nope).toBeUndefined();
+  });
+});
+
+describe("openAgeMedian", () => {
+  const row = (age: number | null, status = "OPEN") =>
+    ({ status, age_days: age }) as never;
+
+  it("interpolates the midpoint and ignores resolved / ageless rows", () => {
+    expect(openAgeMedian([row(1), row(3), row(9)])).toBe(3);
+    expect(openAgeMedian([row(2), row(4)])).toBe(3);
+    expect(openAgeMedian([row(2), row(4), row(1000, "RESOLVED"), row(null)])).toBe(3);
+    expect(openAgeMedian([])).toBeNull();
+    expect(openAgeMedian([row(null)])).toBeNull();
+  });
+
+  it("resists the right skew a mean would follow", () => {
+    // Nine fresh findings and one year-old straggler: the median stays where the backlog
+    // actually is, which is the whole reason this is not a mean.
+    const rows = [...Array(9)].map(() => row(2)).concat([row(400)]);
+    expect(openAgeMedian(rows)).toBe(2);
+  });
+});

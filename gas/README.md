@@ -1,7 +1,7 @@
 # Wiz Sidekick OS — Google Apps Script rebuild
 
 A full rebuild of the Streamlit Wiz vulnerability dashboard as a Google Apps Script
-web app: OS-level CVEs on host workloads, severity breakdowns, and MTTR / SLA
+web app: OS-level CVEs on host workloads, exploitability triage, and MTTR / SLA
 remediation analytics over a persistent scan history — with **Google Sheets** as the
 durable ledger and **Drive** for raw scan archives. MTTR is estimated with
 **Kaplan–Meier** survival analysis (see [MTTR methodology](#mttr-methodology)) so
@@ -259,6 +259,76 @@ The MTTR page's primary numbers come from a **Kaplan–Meier** survival estimate
 - The old **fast-lane exclusion** method (drop resolved findings with `mttr_days` under a
   configurable window) and its `fast_lane_days` setting have been **removed** — KM
   subsumes the de-biasing it was reaching for.
+
+## OS vulnerabilities: exploitability is the spine, not severity
+
+The page reads insights over the current scan and the durable ledger rather than a findings
+table — Wiz already has one of those. What it does **not** do is organise itself around
+severity, and that is deliberate.
+
+**Severity is a constant here.** The register is filtered at fetch time
+(`DEFAULT_FETCH_SEVERITIES`, and this tenant narrows it further), so a severity breakdown
+card is one row, a per-severity trend is one line, a severity-stacked age bar is one colour,
+and the breakdown tree's severity strip is a solid block on every row. Four controls, zero
+bits. The page said "how many" over and over and never said "which ones".
+
+So the spine is **exploitability**, which the ledger already carries — `has_kev`,
+`has_exploit` and `epss` are `LedgerRow` columns (see *Sticky signals*), so tiers survive
+compaction and replay across scan history exactly the way severity did.
+
+| Section | Reads |
+| --- | --- |
+| **Hero — "Act now"** | open findings that are KEV-or-public-exploit **and** internet-exposed. Falls back to the KEV count, and says so, when the scan predates the exposure fields |
+| **Triage funnel** | five nested populations: open → exploit intelligence present → KEV or public exploit → …and reachable from outside → …and past SLA |
+| **Risk tiers** | `insights.riskTierStats`, beside per-tier sparklines |
+| **Aging** | `insights.ageBucketsBy` keyed by tier, with the SLA edge drawn on the chart |
+| **Movement** | the four scan-over-scan counts plus the open-backlog trend, on the page rather than behind a button |
+| **Where it concentrates** | `insights.concentration` — top groups per dimension, ranked by **open** findings |
+
+### The tier classifier is a refinement, never a second opinion
+
+`program.riskTier` splits `classifyRisk`'s `high` verdict into the three causes that produced
+it and passes `low` / `unknown` straight through. The identity is pinned in
+`test/program.test.ts`:
+
+```
+kev + exploit + epss === rows classified "high"
+none                 === rows classified "low"
+unknown              === rows classified "unknown"
+```
+
+That matters because this page and **Program performance** both publish an unclassified
+count over the same fleet. Two independent classifiers would eventually disagree, and a
+reader would have no way to tell which one was lying. `unknown` is a first-class tier for the
+same reason it is a first-class verdict there — see *Unclassified findings are not "low risk"*.
+
+### Three things the page has to keep saying out loud
+
+- **The tier trend is retroactive.** `has_kev` / `has_exploit` are sticky-monotone and `epss`
+  is the peak observed, so tiers computed today are applied backwards over history: a finding
+  that entered the KEV catalog last week is drawn as tier 1 for every prior scan, and the
+  unclassified tier only ever shrinks. The series traces the **backlog** moving between tiers,
+  not intelligence arriving. `risk_observed_at` is a single earliest-witness stamp across all
+  three signals and cannot reconstruct per-signal as-of tiers.
+- **Exposure is current-scan only.** `hasWideInternetExposure` is not a ledger column, so the
+  funnel joins the frame to the ledger on `vuln_key`. When the frame predates those keys the
+  funnel stops after the exploitable step rather than drawing two zeros — absent is not none.
+- **One SLA number per fleet.** The page runs `openPastSla` over `actionableView`, the
+  vendor-fix clock the MTTR page's headline uses, so a finding with no patch available is
+  never counted as a breach nobody could have prevented. Its denominator is therefore open
+  findings whose clock has *started*, which is smaller than the open count whenever anything
+  is awaiting a fix — the headline names that rather than leaving two numbers to reconcile.
+
+### Why the tiers are not the severity palette
+
+Reusing `--sev-*` for tiers was tested and rejected on measurement, not taste: `#d97706`
+against `#ea580c` separate by ΔE **6.7** for *normal* vision and **1.6** under deuteranopia,
+so two adjacent tiers would be indistinguishable to everyone. Tiers are also ordinal rather
+than categorical, which wants a ramp. So: one status colour and a monotone neutral ramp, with
+tier 1 as the page's only saturated mark — which is the argument as much as the palette, since
+KEV is rare and that rarity is exactly what makes it the day's work. It also keeps the page
+clear of the wall of red DESIGN.md rejects. The unclassified tier is **hatched**, never
+filled: a measurement gap is not a low score.
 
 ## Program performance (coverage, efficiency, capacity)
 
