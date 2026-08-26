@@ -8,8 +8,8 @@ import {
   SELECTABLE_SEVERITIES,
   isOpenStatus,
 } from "../domain/config";
-import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, hasDomainInputs, UNASSIGNED } from "../domain/domainRules";
-import { coverage, ruleHealth, supportGroupBreakdown, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
+import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, hasDomainInputs, UNASSIGNED, type CompiledDomain } from "../domain/domainRules";
+import { coverage, ruleHealth, supportGroupBreakdown, unassignedLifecycles, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
 import { mttrFromLedger, vulnKey } from "../domain/lifecycle";
 import type { BaseRow } from "../domain/ledgerCore";
 import { extractNodes } from "../domain/transform";
@@ -135,7 +135,10 @@ export function bootstrap(_p?: unknown): ApiResult {
     // "bootstrapCore6" → "bootstrapCore7": the payload gained `openCounts`. A cached
     // old-shape entry has none, and the Executive severity tiles read it directly, so they
     // would render "0" across the board until the next data version.
-    ...(durablyCached("bootstrapCore7", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
+    // "bootstrapCore7" → "bootstrapCore8": `scopeCounts` gained `unassignedBase`. A stale
+    // entry has none, and the switcher would keep printing the frame-only zero that made the
+    // MTTR Unassigned bar look like a bug in the first place.
+    ...(durablyCached("bootstrapCore8", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
     // Live per-request fields: never cached (activeJob changes every poll tick).
     hasCredentials: hasWizCredentials(),
     activeJob: activeJobSummary(),
@@ -216,13 +219,33 @@ function bootstrapCore(): Rec {
   const baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
   bizDomains.attachBizDomains(baseRows);
   let notAttributable = 0;
+  // ...and the ledger's UNASSIGNED tally, which used to fall through this loop uncounted.
+  //
+  // The bug that motivated it: a row with no `Wiz/Domain` tag but WITH attribution inputs
+  // took neither branch below — `bd` is empty so the first does not fire, `hasDomainInputs`
+  // is true so the second does not either — yet `resolveDomainName` calls exactly that row
+  // UNASSIGNED, and the MTTR by-domain split drew it as an Unassigned bar. So the switcher
+  // could report "0 unassigned" while a page showed an Unassigned bar over real rows, and no
+  // figure anywhere in the app contradicted it.
+  //
+  // Frame `unassignedCount` cannot cover this: it counts the CURRENT SCAN, and the population
+  // here is lifecycles whose stored tag snapshot predates a tagging rollout and that Wiz no
+  // longer re-lists, so they are in the ledger and not in the frame. Same argument that put
+  // `notAttributable` in this pass in the first place.
+  //
+  // This is the one place the rule engine has to run — the answer genuinely depends on it,
+  // unlike `notAttributable` above. Bounded to untagged rows with inputs, and strictly less
+  // work than `mttrByDomainData` already does per request (it resolves EVERY base row); this
+  // whole function is memoized per data version.
+  let unassignedBase = 0;
   for (const r of baseRows) {
     const bd = String(r["_bizDomain"] ?? "");
     if (bd) { seenTags.add(bd); continue; }
     // No tag: `missing` is precisely "no attribution input at all", which is what
     // `resolveDomain` tests next. Asked directly rather than through `resolveDomainName` so
     // the rule engine is not run for an answer that cannot depend on it.
-    if (!hasDomainInputs(r)) notAttributable += 1;
+    if (!hasDomainInputs(r)) { notAttributable += 1; continue; }
+    if (assignDomain(r, compiled) === UNASSIGNED) unassignedBase += 1;
   }
   return {
     // The deployed code stamp (esbuild-injected source hash; "dev" locally). Surfaced so an
@@ -272,12 +295,18 @@ function bootstrapCore(): Rec {
       register: records.length,
       domains: domainCounts,
       supportGroups: supportGroupCounts,
+      // FRAME. "How many findings in the current scan did neither mechanism claim."
       unassigned: unassignedCount,
       noSupportGroup,
-      // Both over base rows, and paired on purpose: "412 not attributable" is unreadable
+      // All three over base rows, and paired on purpose: "412 not attributable" is unreadable
       // without the population it is 412 of, and that population is not `register`.
       baseRows: baseRows.length,
       notAttributable,
+      // LEDGER. The same question as `unassigned` asked over every lifecycle the register
+      // still holds, resolved history included — which is the population the MTTR by-domain
+      // split draws, and therefore the number that has to be non-zero whenever that split
+      // shows an Unassigned bar.
+      unassignedBase,
     },
     // Which tag the business domain was read off. Surfaced because the figure beside it is
     // meaningless without it: "82 carry no domain" is a fact about `Wiz/Domain` specifically,
@@ -706,6 +735,22 @@ export function getGroupTrend(p?: unknown): ApiResult {
  * Deliberately ignores the global Value-Chain / Support-group filters — the page
  * audits the mapping itself, not a filtered view of it.
  */
+/**
+ * Base rows resolving to Unassigned, ready for the explorer.
+ *
+ * Deliberately NOT severity-scoped, unlike everything else on the Attribution page. The
+ * question this answers is "which lifecycles can this register not attribute", and a severity
+ * filter would hide part of the answer while the by-domain split it explains is drawn over
+ * whatever severities that page is scoped to. A gap you cannot see is the thing being fixed.
+ */
+function unassignedLedgerRows(compiled: CompiledDomain[]): Rec[] {
+  const rows = ledgerStore.loadBaseRows() as unknown as Rec[];
+  supportGroups.attachSupportGroups(rows);
+  bizDomains.attachBizDomains(rows);
+  for (const r of rows) r["_domain"] = resolveDomainName(r, compiled);
+  return unassignedLifecycles(rows, compiled) as unknown as Rec[];
+}
+
 function attributionData(p?: unknown): Rec {
   const scan = findings.currentScan();
   if (!scan) return { flatScan: false };
@@ -732,6 +777,13 @@ function attributionData(p?: unknown): Rec {
     coverage: coverage(recs, resolvedDomainNames(seenTags, domainNames(dom.items))),
     ruleHealth: ruleHealth(recs, compiled),
     unassignedAll: unassignedResources(recs, compiled),
+    // THE LEDGER SIDE, and the reason it is here rather than left implicit: every other figure
+    // on this page is about the current scan, so an operator who has just fixed their tagging
+    // sees zeros everywhere — while the MTTR by-domain split, which reads the ledger, keeps an
+    // Unassigned bar over resolved history no scan can reach. This is the list behind that bar.
+    // Resolved on read exactly as `mttrByDomainData` does it, so the two cannot disagree about
+    // which rows are Unassigned.
+    unassignedLedger: unassignedLedgerRows(compiled),
     // Findings split by resolved support group — the support-group coverage table + the
     // resolved/unresolved headline the page needs to troubleshoot the join.
     supportGroups: supportGroupBreakdown(recs),
@@ -766,8 +818,11 @@ const cachedAttributionData = (p?: unknown) =>
   // "attribution4" → "attribution5": `coverage` gained `bySource` and the domain is now
   // resolved tag-first, so both the per-domain rows and the KPIs mean something different. An
   // old-shape entry would render the by-source strip as four blanks and split by rules only.
+  // "attribution5" → "attribution6": payload gained `unassignedLedger`, the base-row list
+  // behind the MTTR by-domain split's Unassigned bar. A stale entry has none and the new
+  // section would render empty over a register that has plenty to show.
   durablyCached(
-    "attribution5",
+    "attribution6",
     { severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix() },
     () => attributionData(p),
   );

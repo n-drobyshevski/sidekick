@@ -105,7 +105,7 @@ const SCOPE_KIND_ICON = {
  * against BASE ROWS: no open finding can land there, so a hint drawn from the frame would read
  * "0 findings" over a bucket that may hold thousands of resolved lifecycles.
  */
-export function domainScopeOptions(names, counts, notAttributable) {
+export function domainScopeOptions(names, counts, notAttributable, unassignedBase) {
   return (names || []).map((name) => {
     if (name === NOT_ATTRIBUTABLE) {
       return {
@@ -122,8 +122,15 @@ export function domainScopeOptions(names, counts, notAttributable) {
       // Declared in words rather than by glyph: the two kinds mean different things — a domain
       // owns the resource, a support group runs the subscription — and that is a meaning, so it
       // does not travel by mark alone.
-      hint: (name === UNASSIGNED ? "No domain · " : "Domain · ")
-        + findingCount((counts && counts[name]) || 0),
+      // `Unassigned` is the second bucket whose frame count can understate it. The frame is
+      // the current scan; a lifecycle whose tag snapshot predates a tagging rollout and that
+      // Wiz no longer re-lists lives in the ledger only — and the MTTR by-domain split, which
+      // reads the ledger, will draw it. So when the frame says none and the ledger does not,
+      // the hint says so rather than offering a scope that looks empty and is not.
+      hint: name === UNASSIGNED && !((counts && counts[UNASSIGNED]) || 0) && unassignedBase
+        ? `No domain · none open · ${nf.format(unassignedBase)} in history`
+        : (name === UNASSIGNED ? "No domain · " : "Domain · ")
+          + findingCount((counts && counts[name]) || 0),
       group: "Domains",
       icon: name === UNASSIGNED ? "noTag" : "tag",
     };
@@ -158,6 +165,9 @@ export function scopeSwitchView(data, active) {
   const register = counts ? counts.register : 0;
   // Over BASE ROWS, not the frame — see `domainScopeOptions`.
   const notAttributable = (counts && counts.notAttributable) || 0;
+  // Likewise. Zero on a register whose ledger holds no unclaimed lifecycles; non-zero exactly
+  // when the MTTR by-domain split has an Unassigned bar to draw.
+  const unassignedBase = (counts && counts.unassignedBase) || 0;
 
   // `domainNames` arrives RESOLVED: tag values the register carries, then the manual groups in
   // priority order, then the two tails. The one row dropped here is `Not attributable` when
@@ -185,7 +195,7 @@ export function scopeSwitchView(data, active) {
   if (!counts || !register || (!domains.length && !groups.length)) return hidden;
 
   const options = [
-    ...domainScopeOptions(domains, counts.domains, notAttributable),
+    ...domainScopeOptions(domains, counts.domains, notAttributable, unassignedBase),
     ...supportScopeOptions(groups, counts.supportGroups),
   ];
 
@@ -233,8 +243,17 @@ export function scopeSwitchView(data, active) {
     // The second figure would be the first one again — these ARE the unassigned findings. It
     // is dropped rather than restated: a caption that says the same number twice reads as a
     // bug, and invites the reader to look for the difference between them.
+    //
+    // The ledger figure is the exception, and only when it disagrees. `shown` counts the
+    // current scan; the by-domain MTTR split counts every lifecycle the register holds. An
+    // operator who has just fixed their tagging sees the frame go to zero while the split
+    // keeps an Unassigned bar over resolved history Wiz no longer re-lists — and with only
+    // the frame number on the control, nothing on screen explains the difference.
     caption = `${nf.format(shown)} of ${nf.format(register)} findings · `
       + "claimed by no tag and no rule";
+    if (unassignedBase > shown) {
+      caption += ` · ${nf.format(unassignedBase)} across all history`;
+    }
   } else if (domain) {
     caption = `${nf.format(shown)} of ${nf.format(register)} findings · `
       + `${nf.format(counts.unassigned || 0)} unassigned`;
@@ -245,6 +264,13 @@ export function scopeSwitchView(data, active) {
     caption = `${findingCount(register)} in the register`;
     if (notAttributable > 0) {
       caption += ` · ${nf.format(notAttributable)} resolved with no attribution input`;
+    }
+    // The other half of the same story. Named up front for the same reason `Not attributable`
+    // is: a reader should not meet this bucket for the first time inside an MTTR breakdown
+    // with no idea where it came from. Only when the ledger holds MORE than the live frame —
+    // otherwise the scoped caption already carries it and repeating it here says nothing.
+    if (unassignedBase > (counts.unassigned || 0)) {
+      caption += ` · ${nf.format(unassignedBase)} claimed by no tag or rule, including history`;
     }
   }
 

@@ -561,3 +561,94 @@ export function untaggedSubscriptions(records: Rec[]): UntaggedSubscription[] {
         a.extId.localeCompare(b.extId),
     );
 }
+
+// --- unassignedLifecycles ------------------------------------------------------
+//
+// Everything above reads the CURRENT SCAN. This one reads the durable ledger, and it exists
+// because the two disagree in a way that looked like a bug: an operator who fixes their
+// tagging watches the frame go to zero while the MTTR by-domain split keeps an Unassigned bar.
+// Both are right. The split counts every lifecycle the register holds, and a lifecycle whose
+// stored tag snapshot predates the rollout — and which Wiz no longer re-lists, so no scan can
+// refresh it — stays unclaimed forever with nothing on screen naming it.
+//
+// LEDGER COLUMNS, NOT FRAME COLUMNS. A base row spells its identity `asset_name` /
+// `subscription_name`, not `vulnerableAsset.*`, so none of the readers above can be reused —
+// they would return "(none)" for every field and the explorer would list rows it could not
+// name. That is why this is a separate function rather than a second caller of
+// `unassignedResources`.
+
+const LEDGER_NAME_COL = "asset_name";
+const LEDGER_TYPE_COL = "asset_type";
+const LEDGER_SUB_COL = "subscription_name";
+
+export interface UnassignedLifecycle {
+  asset: string;
+  assetType: string | null;
+  subscription: string | null;
+  supportGroup: string | null;
+  open: number;
+  resolved: number;
+  /** Latest `last_seen` across the group — how stale this attribution gap actually is. */
+  lastSeen: string | null;
+  /** The tag bag as stored. The point of showing it: the reader can see for themselves that
+   *  the domain tag is absent from the snapshot rather than being told so. */
+  tags: Record<string, string>;
+  nearMisses: NearMiss[];
+}
+
+/**
+ * Ledger rows resolving to Unassigned, grouped by asset.
+ *
+ * Expects `_domain` already resolved onto each row (the server does that before calling, the
+ * same way `mttrByDomainData` does) so this and the by-domain split cannot disagree about
+ * which rows are Unassigned — the whole point being to explain that split, not to offer a
+ * second opinion on it.
+ *
+ * Sorted by total lifecycles desc, then by asset, and capped: this is a diagnostic for
+ * deciding whether the tail is worth chasing, not a register.
+ */
+export function unassignedLifecycles(
+  rows: Rec[],
+  compiled: CompiledDomain[],
+  topN = 100,
+): UnassignedLifecycle[] {
+  const groups = new Map<
+    string,
+    { rep: Rec; open: number; resolved: number; lastSeen: string | null }
+  >();
+  for (const r of rows) {
+    if (domainOf(r) !== UNASSIGNED) continue;
+    const asset = String(r[LEDGER_NAME_COL] ?? "") || NONE;
+    let g = groups.get(asset);
+    if (!g) groups.set(asset, (g = { rep: r, open: 0, resolved: 0, lastSeen: null }));
+    // Same open test the rest of the app uses, read off the durable status column.
+    if (String(r["status"] ?? "").toUpperCase() === "OPEN") g.open += 1;
+    else g.resolved += 1;
+    const seen = r["last_seen"];
+    if (present(seen)) {
+      const s = String(seen);
+      if (g.lastSeen === null || s > g.lastSeen) g.lastSeen = s;
+    }
+  }
+  const out: UnassignedLifecycle[] = [];
+  for (const [asset, g] of groups) {
+    out.push({
+      asset,
+      assetType: flatVal(g.rep, LEDGER_TYPE_COL),
+      subscription: flatVal(g.rep, LEDGER_SUB_COL),
+      supportGroup: flatVal(g.rep, SG_COL),
+      open: g.open,
+      resolved: g.resolved,
+      lastSeen: g.lastSeen,
+      tags: cappedTags(g.rep),
+      // `recordTags` reads the ledger's `tags_json` as happily as a frame's tag columns, so
+      // the near-miss hints work here unchanged — which is what makes this actionable: it
+      // says which rule almost claimed the row, not just that none did.
+      nearMisses: nearMisses(g.rep, compiled),
+    });
+  }
+  out.sort(
+    (a, b) => (b.open + b.resolved) - (a.open + a.resolved) || a.asset.localeCompare(b.asset),
+  );
+  return out.slice(0, topN);
+}
