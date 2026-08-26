@@ -20,11 +20,16 @@ import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   MARK_CHECK, MARK_COMPACT_RATIO, MARK_COMPACT_VIEWBOX, MARK_DOTS_BLUE, MARK_DOTS_RED,
-  MARK_NODES, MARK_ORBIT, MARK_SHIELD, MARK_VIEWBOX, brandMark,
+  MARK_CHECK_WIDTH, MARK_NODES, MARK_ORBIT, MARK_ORBIT_WIDTH, MARK_SHIELD, MARK_VIEWBOX, brandMark,
 } from "../src/client/js/brandMark.js";
+
+// MARK_COMPACT_RATIO is exported as a computed number; both files author it as the same
+// division, so the pin is on the halves rather than on a float that would read as a magic one.
+const [MARK_COMPACT_RATIO_NUM, MARK_COMPACT_RATIO_DEN] = [52.7, 74];
 
 const INDEX = readFileSync(new URL("../src/client/index.html", import.meta.url), "utf8");
 const APP = readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8");
+const SHELL = readFileSync(new URL("../src/server/pageShell.ts", import.meta.url), "utf8");
 
 /**
  * A four-method stand-in for `document`, because vitest runs in node here and this repo has
@@ -186,6 +191,55 @@ describe("brandMark()", () => {
 
   it("is never focusable — it is a picture, not a control", () => {
     expect(brandMark(96).getAttribute("focusable")).toBe("false");
+  });
+});
+
+describe("the standalone pages carry the same mark", () => {
+  // A THIRD copy, and pinned for the same reason as index.html's second one. The denial page
+  // and the entry screen are rendered by the SERVER bundle, which cannot reach a client module:
+  // tsc has allowJs off, and brandMark.js pulls in uiIcons.js, whose svgEl calls
+  // document.createElementNS — a DOM module in the server graph is one refactor away from
+  // evaluating `document` inside doGet.
+  //
+  // Only the compact crop is duplicated, so only the compact crop is pinned. If any of these
+  // fails, src/server/pageShell.ts has drifted from the artwork and the door no longer matches
+  // the room behind it.
+  it("carries the compact crop's geometry verbatim", () => {
+    for (const [name, value] of [
+      ["MARK_COMPACT_VIEWBOX", MARK_COMPACT_VIEWBOX],
+      ["MARK_ORBIT", MARK_ORBIT],
+      ["MARK_SHIELD", MARK_SHIELD],
+      ["MARK_CHECK", MARK_CHECK],
+    ]) {
+      // The shell wraps long path data across string concatenations exactly as the module
+      // does, so compare with the concatenation syntax stripped out of both.
+      const flat = SHELL.replace(/"\s*\+\s*\n\s*"/g, "");
+      expect(flat, `${name} has drifted`).toContain(value);
+    }
+  });
+
+  it("carries the same stroke widths and node circles", () => {
+    expect(SHELL).toContain(String(MARK_ORBIT_WIDTH));
+    expect(SHELL).toContain(String(MARK_CHECK_WIDTH));
+    for (const [cx, cy, r] of MARK_NODES) {
+      expect(SHELL).toContain(`[${cx}, ${cy}, ${r}]`);
+    }
+  });
+
+  it("uses the compact ratio, not a hand-typed aspect", () => {
+    expect(SHELL).toContain(`${MARK_COMPACT_RATIO_NUM} / ${MARK_COMPACT_RATIO_DEN}`);
+  });
+
+  it("leaves the globe out, as the compact crop is defined to", () => {
+    // The dots are the one part that must NOT appear: 307 of them inside a 22px glyph read as
+    // grey noise, which is why the compact crop exists at all.
+    expect(SHELL).not.toContain(MARK_DOTS_BLUE.slice(0, 40));
+    expect(SHELL).not.toContain(MARK_DOTS_RED.slice(0, 40));
+  });
+
+  it("keeps the mark decorative beside the wordmark", () => {
+    expect(SHELL).toContain('aria-hidden="true"');
+    expect(SHELL).not.toMatch(/aria-label/);
   });
 });
 

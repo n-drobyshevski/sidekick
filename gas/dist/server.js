@@ -59,6 +59,31 @@ var Server = (() => {
   });
 
   // src/server/pageShell.ts
+  var MARK_COMPACT_VIEWBOX = "12.2 8.4 52.7 74";
+  var MARK_COMPACT_RATIO = 52.7 / 74;
+  var MARK_ORBIT = "M47.64 80.58A32.1 32.1 0 0 1 17.83 52.04M19.82 36.92A32.1 32.1 0 0 1 54.21 16.76";
+  var MARK_ORBIT_WIDTH = 2.41;
+  var MARK_NODES = [[17.22, 44.33, 4.41], [45.96, 16.55, 7.56]];
+  var MARK_SHIELD = "M48.56 29.88C52.79 34.78 58.69 37.87 64.33 37.81C64.44 45.48 63.64 48.51 62.11 51.96C61.32 54.62 56.36 61.55 48.56 64.18C40.76 61.55 35.8 54.62 35.01 51.96C33.48 48.51 32.68 45.48 32.79 37.81C38.43 37.87 44.33 34.78 48.56 29.88Z";
+  var MARK_CHECK = "M42.3 48.81 46.19 52.7 54.89 43.99";
+  var MARK_CHECK_WIDTH = 3.04;
+  function brandMarkSvg(height) {
+    const width = Math.round(height * MARK_COMPACT_RATIO * 100) / 100;
+    const nodes = MARK_NODES.map(
+      (n) => '<circle cx="' + n[0] + '" cy="' + n[1] + '" r="' + n[2] + '" fill="#0a0a0a"/>'
+    ).join("");
+    return [
+      '<svg class="brand-mark" viewBox="' + MARK_COMPACT_VIEWBOX + '"',
+      ' width="' + width + '" height="' + height + '" focusable="false" aria-hidden="true">',
+      '<path d="' + MARK_ORBIT + '" fill="none" stroke="#0a0a0a" stroke-width="' + MARK_ORBIT_WIDTH,
+      '" stroke-linecap="round"/>',
+      nodes,
+      '<path d="' + MARK_SHIELD + '" fill="#0a0a0a"/>',
+      '<path d="' + MARK_CHECK + '" fill="none" stroke="#ffffff" stroke-width="' + MARK_CHECK_WIDTH,
+      '" stroke-linecap="round" stroke-linejoin="round"/>',
+      "</svg>"
+    ].join("");
+  }
   function escapeHtml(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
@@ -84,8 +109,12 @@ var Server = (() => {
       "font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}",
       ".card{max-width:32rem;margin:24px;padding:32px;background:#fff;border:1px solid #e2e8f0;",
       "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
-      ".eyebrow{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;",
-      "color:#64748b;margin:0 0 12px}",
+      ".lockup{display:flex;align-items:center;gap:8px;margin:0 0 16px}",
+      // Mirrors .appbar-name in styles.css (600 / 1rem / -0.02em) so the wordmark is the same
+      // object here as in the header, not a near-miss of it.
+      ".lockup span{font-weight:600;font-size:1rem;letter-spacing:-0.02em;color:#0a0a0a;",
+      "white-space:nowrap}",
+      ".brand-mark{display:block;flex:0 0 auto}",
       "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
       "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:#334155}",
       ".actions{margin-top:24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}",
@@ -100,7 +129,9 @@ var Server = (() => {
       // reachable by keyboard only.
       "a:focus-visible{outline:2px solid #2563eb;outline-offset:2px;border-radius:4px}",
       '</style></head><body><main class="card">',
-      '<p class="eyebrow">' + escapeHtml(spec.eyebrow) + "</p>",
+      // The same lockup as the app header — mark then wordmark — so the door and the room
+      // behind it are recognisably one product.
+      '<div class="lockup">' + brandMarkSvg(22) + "<span>" + escapeHtml(spec.eyebrow) + "</span></div>",
       "<h1>" + escapeHtml(spec.heading) + "</h1>",
       body,
       actions,
@@ -423,7 +454,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "782634f1b98b" : "dev";
+  var BUILD_ID = true ? "6c199e1849dc" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
