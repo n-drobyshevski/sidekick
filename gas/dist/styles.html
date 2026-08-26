@@ -997,8 +997,20 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
    term itself (not a separate "i" glyph or link) — cursor:help is the only affordance,
    matching .hero-metric's minimalism at inline/row scale instead of the 2rem hero. */
 .help-label { cursor: help; }
+/* FIXED AT REST, NOT ONLY ONCE REVEALED — and that is a layout fix, not a positioning one.
+   ui.js place() already pins the bubble with `position: fixed` on hover/focus, and its comment
+   says why: "an opacity-0 fixed bubble can't affect layout". True — but the bubble was
+   `absolute` until the first reveal, and an absolutely-positioned descendant DOES contribute to
+   its scroll container's scrollable overflow. Inside a `.table-wrap` (whose `overflow-x: auto`
+   makes it a scroll container on BOTH axes, per the CSS Overflow computed-value rule) an
+   at-rest bubble hanging below a short table's header gave that table a vertical scroll range
+   of the overhang — measured at 65px on MTTR and 85px on Program performance, on tables that
+   fit their box perfectly. Fixed from the start, it contributes nothing and the range is 0.
+
+   The parked coordinates are arbitrary: place() overwrites left/top before every reveal, and
+   both reveal paths (:hover and :focus-within) fire it via onmouseenter / onfocusin. */
 .helptip-bubble {
-  position: absolute; left: 0; top: calc(100% + 8px); z-index: var(--z-popover);
+  position: fixed; left: 0; top: 0; z-index: var(--z-popover);
   width: max-content; max-width: 268px; padding: 10px;
   display: flex; flex-direction: column; gap: 5px;
   background: var(--page); color: var(--ink);
