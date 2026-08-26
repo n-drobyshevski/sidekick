@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "f20ffdb00d8b" : "dev";
+  var BUILD_ID = true ? "b61341b6e2cc" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -5387,38 +5387,52 @@ var Server = (() => {
     const cells = {};
     for (const k of ["t", "f", "n"]) {
       for (const x of ["t", "f", "n"]) {
-        cells[`${k}${x}`] = { epss: new Array(bins + 1).fill(0), noEpss: 0 };
+        for (const s of ["o", "r"]) {
+          cells[`${k}${x}${s}`] = { epss: new Array(bins + 1).fill(0), noEpss: 0 };
+        }
       }
     }
     return { total: 0, bins, cells };
   }
-  function buildRiskCube(rows, bins = EPSS_BINS) {
+  function buildRiskCube(rows, isOpen4, bins = EPSS_BINS) {
     const cube = emptyCube(bins);
     for (const r of rows) {
-      const cell = cube.cells[`${tri(r.has_kev)}${tri(r.has_exploit)}`];
+      const key = `${tri(r.has_kev)}${tri(r.has_exploit)}${isOpen4(r) ? "o" : "r"}`;
+      const cell = cube.cells[key];
       if (typeof r.epss === "number" && Number.isFinite(r.epss)) cell.epss[epssBin(r.epss, bins)] += 1;
       else cell.noEpss += 1;
       cube.total += 1;
     }
     return cube;
   }
-  function toggleImpact(rows, isNoFix, isEol) {
-    const out = { total: rows.length, noFix: 0, eol: 0, either: 0 };
+  function toggleImpact(rows, isNoFix, isEol, isOpen4) {
+    const out = {
+      total: rows.length,
+      openTotal: 0,
+      noFix: 0,
+      eol: 0,
+      eolOpen: 0,
+      either: 0
+    };
     for (const r of rows) {
       const n = isNoFix(r);
       const e = isEol(r);
+      const o = isOpen4(r);
+      if (o) out.openTotal += 1;
       if (n) out.noFix += 1;
       if (e) out.eol += 1;
+      if (e && o) out.eolOpen += 1;
       if (n || e) out.either += 1;
     }
     return out;
   }
-  function severityCensus(rows, severityOf2) {
-    var _a;
-    const out = {};
+  function severityCensus(rows, severityOf2, isOpen4) {
+    var _a, _b;
+    const out = { all: {}, open: {} };
     for (const r of rows) {
       const s = severityOf2(r);
-      out[s] = ((_a = out[s]) != null ? _a : 0) + 1;
+      out.all[s] = ((_a = out.all[s]) != null ? _a : 0) + 1;
+      if (isOpen4(r)) out.open[s] = ((_b = out.open[s]) != null ? _b : 0) + 1;
     }
     return out;
   }
@@ -9926,15 +9940,25 @@ var Server = (() => {
     };
     const isNoFix = (r) => baseRowNoFix(r);
     const scored = visibleBase(filterSeverities(all, getFetchSeverities2()));
+    const isOpen4 = (r) => isOpenStatus(r["status"]);
     return {
       census: {
         total: all.length,
-        bySeverity: severityCensus(all, (r) => normalizeSeverity(r["severity"]))
+        openTotal: all.filter(isOpen4).length,
+        bySeverity: severityCensus(
+          all,
+          (r) => normalizeSeverity(r["severity"]),
+          isOpen4
+        )
       },
-      toggles: toggleImpact(all, isNoFix, isEol),
+      toggles: toggleImpact(all, isNoFix, isEol, isOpen4),
       risk: {
-        cube: buildRiskCube(all.length ? scored : []),
-        scoredRows: scored.length
+        cube: buildRiskCube(
+          scored,
+          (r) => isOpen4(r)
+        ),
+        scoredRows: scored.length,
+        openScoredRows: scored.filter(isOpen4).length
       },
       scans: scanAges(
         loadScanRows().map((s) => ({ ts: s.ts, sealed: s.sealed })),
@@ -9943,7 +9967,7 @@ var Server = (() => {
     };
   }
   var cachedSettingsImpactData = () => cached(
-    "settingsImpact1",
+    "settingsImpact2",
     {
       fetchSeverities: getFetchSeverities2(),
       showNoFix: getShowNoFix2(),

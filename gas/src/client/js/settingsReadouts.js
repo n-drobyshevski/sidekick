@@ -13,7 +13,9 @@
 // rewrites attributes/text/children around it, never the input itself. See its comment below.
 
 import { clear, el, splitBar } from "./ui.js";
-import { breakdownFromCube, epssHistogram, ruleIsEmpty, ruleSentence } from "./riskCube.js";
+import {
+  breakdownFromCube, epssHistogram, openSlice, ruleIsEmpty, ruleSentence,
+} from "./riskCube.js";
 
 function fmt(n) {
   return (n || 0).toLocaleString();
@@ -24,6 +26,22 @@ function pct(n, total) {
 }
 
 /**
+ * "43 (57 all time)" — the open figure first, the whole-register one behind it.
+ *
+ * The register holds resolved lifecycles as well as open ones, and every figure on this page
+ * was counting both while labelling itself "open". What a reader is deciding about is the
+ * open backlog, so that number leads.
+ *
+ * THE SUPPRESSION IS THE POINT of putting this in one place. When the two are equal the second
+ * is dropped entirely, because a line that prints the same number twice reads as a bug and
+ * sends the reader looking for a difference that is not there. scopeSwitch.js reached the same
+ * conclusion for the same reason and guards its own second figure on `unassignedBase > shown`.
+ */
+export function openAndTotal(open, total, unit = "all time") {
+  return open === total ? fmt(open) : `${fmt(open)} (${fmt(total)} ${unit})`;
+}
+
+/**
  * Severity scope readout: a splitBar over `census.bySeverity`, one segment per severity in the
  * draft's scan scope (the `--sev-*` fill tokens, same as everywhere else severity appears) plus
  * a single "Not scanned" segment for the rest. The caption repeats every severity's count in
@@ -31,32 +49,49 @@ function pct(n, total) {
  * read the numbers.
  */
 export function severityScopeReadout(census, draft, selectable) {
-  const bySev = (census && census.bySeverity) || {};
+  // The bar is drawn over OPEN findings: choosing a scan scope is a decision about the backlog
+  // you are going to work, and a segment sized by resolved history would misstate it. The
+  // all-time figure rides along in the caption where it differs.
+  const byOpen = (census && census.bySeverity && census.bySeverity.open) || {};
+  const byAll = (census && census.bySeverity && census.bySeverity.all) || {};
+  const openTotal = (census && census.openTotal) || 0;
   const total = (census && census.total) || 0;
   const segments = [];
   const parts = [];
   let inScope = 0;
   for (const sev of selectable) {
-    const n = bySev[sev] || 0;
+    const n = byOpen[sev] || 0;
     if (draft.fetchSeverities.includes(sev)) {
       inScope += n;
       segments.push({ label: sev, value: n, tone: sev });
-      parts.push(`${sev} ${fmt(n)}`);
+      parts.push(`${sev} ${openAndTotal(n, byAll[sev] || 0)}`);
     } else {
-      parts.push(`${sev} ${fmt(n)} (not scanned)`);
+      // A comma, not a second parenthetical: "MEDIUM 26 (33 all time) (not scanned)" stacks two
+      // bracketed asides on one item and stops scanning cleanly. The list separator is `·`, so
+      // a comma inside an item is unambiguous.
+      parts.push(`${sev} ${openAndTotal(n, byAll[sev] || 0)}, not scanned`);
     }
   }
-  segments.push({ label: "Not scanned", value: Math.max(0, total - inScope), tone: "out" });
+  segments.push({ label: "Not scanned", value: Math.max(0, openTotal - inScope), tone: "out" });
   return splitBar({
     segments,
-    caption: `${parts.join(" · ")} — ${fmt(inScope)} of ${fmt(total)} findings scanned.`,
-    ariaLabel: `${fmt(inScope)} of ${fmt(total)} findings are in the scan scope`,
+    caption: `${parts.join(" · ")} — ${fmt(inScope)} of ${fmt(openTotal)} open findings scanned`
+      + `${total > openTotal ? `, ${fmt(total)} in the register all time` : ""}.`,
+    ariaLabel: `${fmt(inScope)} of ${fmt(openTotal)} open findings are in the scan scope`,
   });
 }
 
-/** "N of M open findings (X%) <phrase>." — the shared shape for the vendor-fix / EOL headline. */
-export function toggleHeadline(count, total, phrase) {
-  return `${fmt(count)} of ${fmt(total)} open findings (${pct(count, total)}) ${phrase}.`;
+/**
+ * "N of M open findings (X%) <phrase>." — the shared shape for the vendor-fix / EOL headline.
+ *
+ * `total` must be the OPEN population. It used to be every row in the register, which made the
+ * percentage arithmetically wrong rather than merely mislabelled: `baseRowNoFix` is
+ * `awaiting_vendor_fix`, which ledgerCore sets to `open && no fix available`, so the numerator
+ * was already open-only. An open numerator over an all-rows denominator, printed as a percent,
+ * under a label saying "open findings".
+ */
+export function toggleHeadline(count, openTotal, phrase) {
+  return `${fmt(count)} of ${fmt(openTotal)} open findings (${pct(count, openTotal)}) ${phrase}.`;
 }
 
 /**
@@ -72,19 +107,20 @@ export function toggleReadoutBar(count, total, includedLabel, excludedLabel) {
       { label: includedLabel, value: included, tone: "in" },
       { label: excludedLabel, value: count, tone: "out" },
     ],
-    caption: `${includedLabel} ${fmt(included)} · ${excludedLabel} ${fmt(count)} — ${fmt(total)} total.`,
-    ariaLabel: `${fmt(count)} of ${fmt(total)} ${excludedLabel.toLowerCase()}`,
+    caption: `${includedLabel} ${fmt(included)} · ${excludedLabel} ${fmt(count)} `
+      + `— ${fmt(total)} open.`,
+    ariaLabel: `${fmt(count)} of ${fmt(total)} open findings, ${excludedLabel.toLowerCase()}`,
   });
 }
 
 /** The one line that actually changes with the switch. */
 export function toggleReadoutNote(count, total, on) {
   return on
-    ? `All ${fmt(total)} counted.`
+    ? `All ${fmt(total)} open findings counted.`
     : `${fmt(count)} findings hidden from every chart, table, KPI and export.`;
 }
 
-function riskRow(name, count, missing) {
+function riskRow(name, open, missing) {
   return el(
     "div",
     { class: "risk-row" },
@@ -92,8 +128,14 @@ function riskRow(name, count, missing) {
     el(
       "span",
       {},
-      el("span", { class: "risk-row__count num" }, `${fmt(count)} fired`),
-      missing ? el("span", { class: "risk-row__missing" }, `${fmt(missing)} never measured`) : null,
+      // No "fired" suffix: the column header says "Fired on open (all time)" once, and
+      // repeating it on every row is noise under a heading that already carries it.
+      el("span", { class: "risk-row__count num" },
+        openAndTotal(open.count, open.countAll)),
+      open.missing || missing
+        ? el("span", { class: "risk-row__missing" },
+          `${openAndTotal(open.missing, open.missingAll)} never measured`)
+        : null,
     ),
   );
 }
@@ -110,7 +152,16 @@ function riskRow(name, count, missing) {
  * is delivering pointer events to would no longer be attached to the document.
  */
 export function createRiskReadout() {
-  const rowsHost = el("div", { class: "risk-breakdown" });
+  // The clause rows sit ABOVE the summary sentence, so they are where a reader meets these
+  // figures first — and "1 (6 all time)" is not self-describing on its own. One header line
+  // says what the pair is, rather than repeating "open" on every row.
+  const rowsHead = el(
+    "div",
+    { class: "risk-row risk-row--head" },
+    el("span", { class: "risk-row__name label" }, "Clause"),
+    el("span", { class: "risk-row__headnote label" }, "Fired on open (all time)"),
+  );
+  const rowsHost = el("div", { class: "risk-breakdown" }, rowsHead);
   const sentenceEl = el("p", { class: "risk-sentence" });
   const emptyEl = el(
     "p",
@@ -156,18 +207,26 @@ export function createRiskReadout() {
 
   function update(cube, rule, { onThresholdChange } = {}) {
     onThreshold = onThresholdChange || null;
-    const breakdown = breakdownFromCube(cube, rule);
+    // Two passes of the SAME function over two populations, rather than one pass and a
+    // subtraction: every figure here is a union over the enabled clauses, and unions do not
+    // subtract. openSlice is what makes the open pass possible from a single payload.
+    const all = breakdownFromCube(cube, rule);
+    const openCube = openSlice(cube);
+    const open = breakdownFromCube(openCube, rule);
+    const openTotal = openCube.total;
     const empty = ruleIsEmpty(rule);
 
+    const clause = (k) => ({
+      count: open[k], countAll: all[k],
+      missing: open[`${k}Missing`], missingAll: all[`${k}Missing`],
+    });
+
     clear(rowsHost);
-    if (rule.kev) rowsHost.append(riskRow("CISA KEV", breakdown.kev, breakdown.kevMissing));
-    if (rule.exploit) {
-      rowsHost.append(riskRow("Public exploit", breakdown.exploit, breakdown.exploitMissing));
-    }
+    rowsHost.append(rowsHead);
+    if (rule.kev) rowsHost.append(riskRow("CISA KEV", clause("kev")));
+    if (rule.exploit) rowsHost.append(riskRow("Public exploit", clause("exploit")));
     if (rule.epss) {
-      rowsHost.append(
-        riskRow(`EPSS ≥ ${rule.epssThreshold.toFixed(2)}`, breakdown.epss, breakdown.epssMissing),
-      );
+      rowsHost.append(riskRow(`EPSS ≥ ${rule.epssThreshold.toFixed(2)}`, clause("epss")));
     }
 
     emptyEl.hidden = !empty;
@@ -177,15 +236,28 @@ export function createRiskReadout() {
       clear(sentenceEl);
       sentenceEl.append(
         `${ruleSentence(rule)} → `,
-        el("strong", { class: "num" }, fmt(breakdown.anyOf)),
-        ` of ${fmt(cube.total)} findings in scan scope are high risk (${pct(breakdown.anyOf, cube.total)}).`,
+        el("strong", { class: "num" }, fmt(open.anyOf)),
+        ` of ${fmt(openTotal)} open findings in scan scope are high risk `
+        + `(${pct(open.anyOf, openTotal)}).`,
       );
+      // Only when it adds something. If nothing in scope is resolved the two sentences are the
+      // same sentence, and printing it twice invites the reader to hunt for a difference.
+      if (cube.total > openTotal) {
+        sentenceEl.append(
+          el("span", { class: "muted" },
+            ` ${fmt(all.anyOf)} of ${fmt(cube.total)} including resolved.`),
+        );
+      }
     }
 
     range.value = String(rule.epssThreshold);
     cutLabel.textContent = `${rule.epssThreshold.toFixed(2)} (current cut)`;
 
-    const hist = epssHistogram(cube, 20);
+    // Drawn over the OPEN population, because that is what the rest of this card now reports.
+    // A histogram of every row the register ever held, under a headline about open findings,
+    // would be two different questions sharing one axis.
+    const hist = epssHistogram(openCube, 20);
+    const histAll = epssHistogram(cube, 20);
     clear(histBars);
     const max = Math.max(...hist.buckets, 1);
     const scale = (n) => (max ? (Math.sqrt(n) / Math.sqrt(max)) * 100 : 0);
@@ -202,7 +274,8 @@ export function createRiskReadout() {
     cutline.style.left = `${rule.epssThreshold * 100}%`;
 
     unmeasuredEl.textContent =
-      `${fmt(hist.unmeasured)} findings have no EPSS score and are never flagged by this clause.`;
+      `${openAndTotal(hist.unmeasured, histAll.unmeasured)} findings have no EPSS score `
+      + "and are never flagged by this clause.";
   }
 
   return { node, update };

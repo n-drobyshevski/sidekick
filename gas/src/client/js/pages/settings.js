@@ -738,19 +738,19 @@ export async function renderSettings(main, params, ctx) {
     clear(scopeReadoutHost);
     scopeReadoutHost.append(severityScopeReadout(impact.census, draft, boot.palette.selectable));
 
-    vfHeadline.textContent = toggleHeadline(impact.toggles.noFix, impact.toggles.total,
+    vfHeadline.textContent = toggleHeadline(impact.toggles.noFix, impact.toggles.openTotal,
       "have no vendor fix available");
     clear(vfBarHost);
-    vfBarHost.append(toggleReadoutBar(impact.toggles.noFix, impact.toggles.total,
+    vfBarHost.append(toggleReadoutBar(impact.toggles.noFix, impact.toggles.openTotal,
       "Has a vendor fix", "No vendor fix"));
-    vfNote.textContent = toggleReadoutNote(impact.toggles.noFix, impact.toggles.total, draft.showNoFix);
+    vfNote.textContent = toggleReadoutNote(impact.toggles.noFix, impact.toggles.openTotal, draft.showNoFix);
 
-    eolHeadline.textContent = toggleHeadline(impact.toggles.eol, impact.toggles.total,
+    eolHeadline.textContent = toggleHeadline(impact.toggles.eolOpen, impact.toggles.openTotal,
       "are on an end-of-life operating system");
     clear(eolBarHost);
-    eolBarHost.append(toggleReadoutBar(impact.toggles.eol, impact.toggles.total,
+    eolBarHost.append(toggleReadoutBar(impact.toggles.eolOpen, impact.toggles.openTotal,
       "Supported OS", "End-of-life OS"));
-    eolNote.textContent = toggleReadoutNote(impact.toggles.eol, impact.toggles.total, draft.includeEol);
+    eolNote.textContent = toggleReadoutNote(impact.toggles.eolOpen, impact.toggles.openTotal, draft.includeEol);
 
     riskReadout.update(impact.risk.cube, draft.riskRule, { onThresholdChange: setEpssThreshold });
 

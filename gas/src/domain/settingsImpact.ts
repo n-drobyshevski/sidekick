@@ -49,7 +49,15 @@ export interface RiskCell {
 export interface RiskCube {
   total: number;
   bins: number;
-  /** Keyed `${kev}${exploit}` over Tri x Tri — nine cells, all present, most usually zero. */
+  /**
+   * Keyed `${kev}${exploit}${status}` over Tri x Tri x (o|r) — eighteen cells, all present,
+   * most usually zero.
+   *
+   * The status axis is why the page can say "43 open (57 all time)" for a clause and keep both
+   * figures live as the threshold moves. It could not be recovered after the fact: the counts
+   * are unions over enabled clauses, so an open-only figure has to be re-derived from an
+   * open-only population, not subtracted from a total.
+   */
   cells: Record<string, RiskCell>;
 }
 
@@ -84,21 +92,60 @@ export function emptyCube(bins = EPSS_BINS): RiskCube {
   const cells: Record<string, RiskCell> = {};
   for (const k of ["t", "f", "n"] as Tri[]) {
     for (const x of ["t", "f", "n"] as Tri[]) {
-      cells[`${k}${x}`] = { epss: new Array(bins + 1).fill(0), noEpss: 0 };
+      for (const s of ["o", "r"]) {
+        cells[`${k}${x}${s}`] = { epss: new Array(bins + 1).fill(0), noEpss: 0 };
+      }
     }
   }
   return { total: 0, bins, cells };
 }
 
-export function buildRiskCube(rows: RiskCubeRow[], bins = EPSS_BINS): RiskCube {
+/**
+ * `isOpen` is supplied by the caller rather than read here, so this module never has to know
+ * what a status string looks like. The server passes `config.isOpenStatus`, which is the one
+ * open/closed test the server layer is meant to share — a private copy is how the Executive
+ * tiles came to count resolved rows (see its docstring and test/openStatus.test.ts).
+ */
+export function buildRiskCube<T extends RiskCubeRow>(
+  rows: T[],
+  isOpen: (row: T) => boolean,
+  bins = EPSS_BINS,
+): RiskCube {
   const cube = emptyCube(bins);
   for (const r of rows) {
-    const cell = cube.cells[`${tri(r.has_kev)}${tri(r.has_exploit)}`]!;
+    const key = `${tri(r.has_kev)}${tri(r.has_exploit)}${isOpen(r) ? "o" : "r"}`;
+    const cell = cube.cells[key]!;
     if (typeof r.epss === "number" && Number.isFinite(r.epss)) cell.epss[epssBin(r.epss, bins)]! += 1;
     else cell.noEpss += 1;
     cube.total += 1;
   }
   return cube;
+}
+
+/**
+ * The same cube with every resolved cell emptied — so the open figures come out of
+ * `breakdownFromCube` rather than a second implementation of the same union logic:
+ *
+ *     breakdownFromCube(openSlice(cube), rule)  // open
+ *     breakdownFromCube(cube, rule)             // all time
+ *
+ * Keeping the cell keys unchanged (rather than collapsing them to two characters) is what lets
+ * `breakdownFromCube` stay untouched: it reads key[0] and key[1] and never looks at the status
+ * character. The parity chain against program.signalBreakdown therefore keeps pinning both
+ * figures at once.
+ */
+export function openSlice(cube: RiskCube): RiskCube {
+  const cells: Record<string, RiskCell> = {};
+  let total = 0;
+  for (const [key, cell] of Object.entries(cube.cells)) {
+    if (key[2] === "o") {
+      cells[key] = { epss: [...cell.epss], noEpss: cell.noEpss };
+      total += cell.noEpss + cell.epss.reduce((a, b) => a + b, 0);
+    } else {
+      cells[key] = { epss: new Array(cube.bins + 1).fill(0), noEpss: 0 };
+    }
+  }
+  return { total, bins: cube.bins, cells };
 }
 
 /**
@@ -173,22 +220,40 @@ export function epssHistogram(cube: RiskCube, buckets = 20): { buckets: number[]
  */
 export interface ToggleImpact {
   total: number;
+  /** The open subset of `total` — the denominator the vendor-fix figure actually belongs over. */
+  openTotal: number;
   noFix: number;
   eol: number;
+  eolOpen: number;
   either: number;
 }
 
+/**
+ * `noFix` needs no open/all split and deliberately does not get one: `awaiting_vendor_fix` is
+ * set to `open && no fix available` in ledgerCore, so the count is open-only by construction.
+ * What it needed was the matching DENOMINATOR — it was being printed as a percentage of every
+ * row in the register, resolved included, under a label reading "open findings".
+ *
+ * `eol` does need the split: its predicate matches on the finding's name and key, which a
+ * resolved row carries just as happily as an open one.
+ */
 export function toggleImpact<T>(
   rows: T[],
   isNoFix: (r: T) => boolean,
   isEol: (r: T) => boolean,
+  isOpen: (r: T) => boolean,
 ): ToggleImpact {
-  const out: ToggleImpact = { total: rows.length, noFix: 0, eol: 0, either: 0 };
+  const out: ToggleImpact = {
+    total: rows.length, openTotal: 0, noFix: 0, eol: 0, eolOpen: 0, either: 0,
+  };
   for (const r of rows) {
     const n = isNoFix(r);
     const e = isEol(r);
+    const o = isOpen(r);
+    if (o) out.openTotal += 1;
     if (n) out.noFix += 1;
     if (e) out.eol += 1;
+    if (e && o) out.eolOpen += 1;
     if (n || e) out.either += 1;
   }
   return out;
@@ -200,11 +265,23 @@ export function toggleImpact<T>(
  * MEDIUM back show me?" — previewing a change to a filter needs the population from before
  * that filter ran.
  */
-export function severityCensus<T>(rows: T[], severityOf: (r: T) => string): Record<string, number> {
-  const out: Record<string, number> = {};
+export interface SeverityCensus {
+  /** Every row the register holds, per severity. */
+  all: Record<string, number>;
+  /** The open subset, per severity. */
+  open: Record<string, number>;
+}
+
+export function severityCensus<T>(
+  rows: T[],
+  severityOf: (r: T) => string,
+  isOpen: (r: T) => boolean,
+): SeverityCensus {
+  const out: SeverityCensus = { all: {}, open: {} };
   for (const r of rows) {
     const s = severityOf(r);
-    out[s] = (out[s] ?? 0) + 1;
+    out.all[s] = (out.all[s] ?? 0) + 1;
+    if (isOpen(r)) out.open[s] = (out.open[s] ?? 0) + 1;
   }
   return out;
 }

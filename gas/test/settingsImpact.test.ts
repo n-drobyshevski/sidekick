@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   breakdownFromCube,
   buildRiskCube,
+  openSlice,
   emptyCube,
   epssBin,
   EPSS_BINS,
@@ -17,6 +18,7 @@ import {
   wouldSeal,
 } from "../src/domain/settingsImpact";
 import { signalBreakdown, type RiskRow, type RiskRule } from "../src/domain/program";
+import { isOpenStatus } from "../src/domain/config";
 
 /** A deterministic population with every tri-state combination represented. */
 function population(n = 600): RiskRow[] {
@@ -36,6 +38,9 @@ function population(n = 600): RiskRow[] {
   return rows;
 }
 
+/** The one open/closed test the server layer shares — not a private copy. */
+const isOpen = (r: RiskRow) => isOpenStatus(r.status);
+
 const RULES: RiskRule[] = [
   { kev: true, exploit: true, epss: true, epssThreshold: 0.1 },
   { kev: true, exploit: true, epss: true, epssThreshold: 0 },
@@ -48,7 +53,7 @@ const RULES: RiskRule[] = [
 
 describe("the cube reproduces signalBreakdown", () => {
   const rows = population();
-  const cube = buildRiskCube(rows);
+  const cube = buildRiskCube(rows, isOpen);
 
   it("counts every row exactly once", () => {
     expect(cube.total).toBe(rows.length);
@@ -78,7 +83,7 @@ describe("the cube reproduces signalBreakdown", () => {
     const rows2: RiskRow[] = [
       { severity: "HIGH", status: "open", has_kev: null, has_exploit: null, epss: null },
     ];
-    const b = breakdownFromCube(buildRiskCube(rows2), RULES[0]!);
+    const b = breakdownFromCube(buildRiskCube(rows2, isOpen), RULES[0]!);
     expect(b).toEqual(signalBreakdown(rows2, RULES[0]!));
     expect(b.anyOf).toBe(0);
     expect(b).toMatchObject({ kevMissing: 1, exploitMissing: 1, epssMissing: 1 });
@@ -89,8 +94,64 @@ describe("the cube reproduces signalBreakdown", () => {
       { severity: "HIGH", status: "open", has_kev: null, has_exploit: null, epss: null },
     ];
     const off: RiskRule = { kev: false, exploit: false, epss: false, epssThreshold: 0.1 };
-    expect(breakdownFromCube(buildRiskCube(rows2), off))
+    expect(breakdownFromCube(buildRiskCube(rows2, isOpen), off))
       .toMatchObject({ kevMissing: 0, exploitMissing: 0, epssMissing: 0, anyOf: 0 });
+  });
+});
+
+describe("openSlice", () => {
+  const rows = population();
+  const cube = buildRiskCube(rows, isOpen);
+  const openRows = rows.filter(isOpen);
+
+  it("has open rows to slice — a population that is entirely open would prove nothing", () => {
+    expect(openRows.length).toBeGreaterThan(0);
+    expect(openRows.length).toBeLessThan(rows.length);
+  });
+
+  it("keeps exactly the open rows", () => {
+    expect(openSlice(cube).total).toBe(openRows.length);
+  });
+
+  /**
+   * THE point of the status axis. The open figure the page prints has to equal counting the
+   * open rows directly — not a subtraction, which cannot work: every count here is a UNION over
+   * enabled clauses, and unions do not subtract. This is the same parity the full cube already
+   * holds against signalBreakdown, asserted one level down.
+   */
+  for (const rule of RULES) {
+    it(`open figures match signalBreakdown over open rows — ${JSON.stringify(rule)}`, () => {
+      expect(breakdownFromCube(openSlice(cube), rule))
+        .toEqual(signalBreakdown(openRows, rule));
+    });
+  }
+
+  it("matches at every 0.01 threshold too", () => {
+    for (let i = 0; i <= 100; i++) {
+      const rule: RiskRule = { kev: true, exploit: true, epss: true, epssThreshold: i / 100 };
+      expect(breakdownFromCube(openSlice(cube), rule), `threshold ${i / 100}`)
+        .toEqual(signalBreakdown(openRows, rule));
+    }
+  });
+
+  it("never reports more than the full cube", () => {
+    for (const rule of RULES) {
+      const open = breakdownFromCube(openSlice(cube), rule);
+      const all = breakdownFromCube(cube, rule);
+      for (const k of Object.keys(all) as (keyof typeof all)[]) {
+        expect(open[k], `${k} on ${JSON.stringify(rule)}`).toBeLessThanOrEqual(all[k]);
+      }
+    }
+  });
+
+  it("is idempotent — slicing a slice changes nothing", () => {
+    expect(openSlice(openSlice(cube))).toEqual(openSlice(cube));
+  });
+
+  it("leaves the source cube untouched", () => {
+    const before = JSON.stringify(cube);
+    openSlice(cube);
+    expect(JSON.stringify(cube)).toBe(before);
   });
 });
 
@@ -114,7 +175,7 @@ describe("epssBin", () => {
 });
 
 describe("epssHistogram", () => {
-  const cube = buildRiskCube(population());
+  const cube = buildRiskCube(population(), isOpen);
   it("preserves the total across the coarser buckets", () => {
     const h = epssHistogram(cube, 20);
     expect(h.buckets.reduce((a, b) => a + b, 0) + h.unmeasured).toBe(cube.total);
@@ -123,7 +184,7 @@ describe("epssHistogram", () => {
     const only: RiskRow[] = [
       { severity: "HIGH", status: "open", has_kev: false, has_exploit: false, epss: null },
     ];
-    const h = epssHistogram(buildRiskCube(only), 20);
+    const h = epssHistogram(buildRiskCube(only, isOpen), 20);
     expect(h.unmeasured).toBe(1);
     expect(h.buckets.every((b) => b === 0)).toBe(true);
   });
@@ -136,13 +197,14 @@ describe("epssHistogram", () => {
 
 describe("toggleImpact", () => {
   const rows = [
-    { n: true, e: false }, { n: true, e: true }, { n: false, e: true },
-    { n: false, e: false }, { n: false, e: false },
+    { n: true, e: false, o: true }, { n: true, e: true, o: true },
+    { n: false, e: true, o: false }, { n: false, e: false, o: true },
+    { n: false, e: false, o: false },
   ];
-  const got = toggleImpact(rows, (r) => r.n, (r) => r.e);
+  const got = toggleImpact(rows, (r) => r.n, (r) => r.e, (r) => r.o);
 
   it("counts each toggle's own population", () => {
-    expect(got).toMatchObject({ total: 5, noFix: 2, eol: 2 });
+    expect(got).toMatchObject({ total: 5, openTotal: 3, noFix: 2, eol: 2, eolOpen: 1 });
   });
 
   // The whole reason `either` is reported rather than left to the page to add up.
@@ -154,11 +216,14 @@ describe("toggleImpact", () => {
 
 describe("severityCensus", () => {
   it("counts the unfiltered population, so a filter change can be previewed", () => {
-    const rows = [{ s: "HIGH" }, { s: "HIGH" }, { s: "LOW" }];
-    expect(severityCensus(rows, (r) => r.s)).toEqual({ HIGH: 2, LOW: 1 });
+    const rows = [
+      { s: "HIGH", o: true }, { s: "HIGH", o: false }, { s: "LOW", o: true },
+    ];
+    expect(severityCensus(rows, (r) => r.s, (r) => r.o))
+      .toEqual({ all: { HIGH: 2, LOW: 1 }, open: { HIGH: 1, LOW: 1 } });
   });
   it("is empty for no rows rather than throwing", () => {
-    expect(severityCensus([], () => "HIGH")).toEqual({});
+    expect(severityCensus([], () => "HIGH", () => true)).toEqual({ all: {}, open: {} });
   });
 });
 

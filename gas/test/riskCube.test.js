@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import {
   breakdownFromCube as jsBreakdown,
+  openSlice as jsOpenSlice,
   epssHistogram as jsHistogram,
   ruleIsEmpty,
   ruleSentence as jsSentence,
@@ -15,10 +16,12 @@ import {
 import {
   breakdownFromCube as tsBreakdown,
   buildRiskCube,
+  openSlice as tsOpenSlice,
   emptyCube,
   epssHistogram as tsHistogram,
 } from "../src/domain/settingsImpact";
 import { ruleSentence as tsSentence, signalBreakdown } from "../src/domain/program";
+import { isOpenStatus } from "../src/domain/config";
 
 function population(n = 500, seed = 987) {
   let s = seed;
@@ -28,7 +31,8 @@ function population(n = 500, seed = 987) {
     const u = rnd();
     rows.push({
       severity: "HIGH",
-      status: "open",
+      // A mix, so the open slice is a real subset rather than the whole cube.
+      status: i % 5 === 0 ? "RESOLVED" : "OPEN",
       has_kev: u < 0.12 ? true : u < 0.8 ? false : null,
       has_exploit: rnd() < 0.25 ? true : rnd() < 0.88 ? false : null,
       // Include the exact endpoints; they are where the binning used to be wrong.
@@ -39,7 +43,8 @@ function population(n = 500, seed = 987) {
 }
 
 const rows = population();
-const cube = buildRiskCube(rows);
+const isOpen = (r) => isOpenStatus(r.status);
+const cube = buildRiskCube(rows, isOpen);
 
 const RULES = [
   { kev: true, exploit: true, epss: true, epssThreshold: 0.1 },
@@ -95,7 +100,35 @@ describe("degenerate inputs", () => {
   it("handles an empty cube", () => {
     const empty = emptyCube();
     expect(jsBreakdown(empty, RULES[0]).anyOf).toBe(0);
+    expect(jsOpenSlice(empty).total).toBe(0);
     expect(jsHistogram(empty, 20).unmeasured).toBe(0);
+  });
+});
+
+describe("openSlice agrees across the two implementations", () => {
+  const openRows = rows.filter(isOpen);
+
+  it("slices a real subset, so the comparison is worth making", () => {
+    expect(openRows.length).toBeGreaterThan(0);
+    expect(openRows.length).toBeLessThan(rows.length);
+  });
+
+  it("produces an identical cube in JS and TS", () => {
+    expect(jsOpenSlice(cube)).toEqual(tsOpenSlice(cube));
+  });
+
+  // The transitive guarantee: the OPEN figure the browser prints beside a clause equals
+  // counting the open rows directly with the domain layer's own classifier.
+  it("matches signalBreakdown over open rows, from the browser's reader", () => {
+    for (const rule of RULES) {
+      const { total: _t, ...shared } = jsBreakdown(jsOpenSlice(cube), rule);
+      expect(shared, JSON.stringify(rule)).toEqual(signalBreakdown(openRows, rule));
+    }
+  });
+
+  it("survives a payload that never arrived", () => {
+    expect(jsOpenSlice(undefined)).toBeUndefined();
+    expect(jsOpenSlice(null)).toBeNull();
   });
 });
 
