@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "a333d663df67" : "dev";
+  var BUILD_ID = true ? "112dc1297685" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -2811,6 +2811,47 @@ var Server = (() => {
     })).sort(
       (a, b) => b.findings - a.findings || a.subscription.localeCompare(b.subscription) || a.extId.localeCompare(b.extId)
     );
+  }
+  var LEDGER_NAME_COL = "asset_name";
+  var LEDGER_TYPE_COL = "asset_type";
+  var LEDGER_SUB_COL = "subscription_name";
+  function unassignedLifecycles(rows, compiled, topN = 100) {
+    var _a, _b;
+    const groups = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      if (domainOf(r) !== UNASSIGNED) continue;
+      const asset = String((_a = r[LEDGER_NAME_COL]) != null ? _a : "") || NONE;
+      let g = groups.get(asset);
+      if (!g) groups.set(asset, g = { rep: r, open: 0, resolved: 0, lastSeen: null });
+      if (String((_b = r["status"]) != null ? _b : "").toUpperCase() === "OPEN") g.open += 1;
+      else g.resolved += 1;
+      const seen2 = r["last_seen"];
+      if (present(seen2)) {
+        const s = String(seen2);
+        if (g.lastSeen === null || s > g.lastSeen) g.lastSeen = s;
+      }
+    }
+    const out = [];
+    for (const [asset, g] of groups) {
+      out.push({
+        asset,
+        assetType: flatVal(g.rep, LEDGER_TYPE_COL),
+        subscription: flatVal(g.rep, LEDGER_SUB_COL),
+        supportGroup: flatVal(g.rep, SG_COL),
+        open: g.open,
+        resolved: g.resolved,
+        lastSeen: g.lastSeen,
+        tags: cappedTags(g.rep),
+        // `recordTags` reads the ledger's `tags_json` as happily as a frame's tag columns, so
+        // the near-miss hints work here unchanged — which is what makes this actionable: it
+        // says which rule almost claimed the row, not just that none did.
+        nearMisses: nearMisses(g.rep, compiled)
+      });
+    }
+    out.sort(
+      (a, b) => b.open + b.resolved - (a.open + a.resolved) || a.asset.localeCompare(b.asset)
+    );
+    return out.slice(0, topN);
   }
 
   // src/domain/metrics.ts
@@ -8189,7 +8230,10 @@ var Server = (() => {
       // "bootstrapCore6" → "bootstrapCore7": the payload gained `openCounts`. A cached
       // old-shape entry has none, and the Executive severity tiles read it directly, so they
       // would render "0" across the board until the next data version.
-      ...durablyCached("bootstrapCore7", { showNoFix: getShowNoFix2() }, bootstrapCore),
+      // "bootstrapCore7" → "bootstrapCore8": `scopeCounts` gained `unassignedBase`. A stale
+      // entry has none, and the switcher would keep printing the frame-only zero that made the
+      // MTTR Unassigned bar look like a bug in the first place.
+      ...durablyCached("bootstrapCore8", { showNoFix: getShowNoFix2() }, bootstrapCore),
       // Live per-request fields: never cached (activeJob changes every poll tick).
       hasCredentials: hasWizCredentials(),
       activeJob: activeJobSummary()
@@ -8230,13 +8274,18 @@ var Server = (() => {
     const baseRows2 = loadBaseRows();
     attachBizDomains(baseRows2);
     let notAttributable = 0;
+    let unassignedBase = 0;
     for (const r of baseRows2) {
       const bd = String((_h = r["_bizDomain"]) != null ? _h : "");
       if (bd) {
         seenTags.add(bd);
         continue;
       }
-      if (!hasDomainInputs(r)) notAttributable += 1;
+      if (!hasDomainInputs(r)) {
+        notAttributable += 1;
+        continue;
+      }
+      if (assignDomain(r, compiled) === UNASSIGNED) unassignedBase += 1;
     }
     return {
       // The deployed code stamp (esbuild-injected source hash; "dev" locally). Surfaced so an
@@ -8284,12 +8333,18 @@ var Server = (() => {
         register: records.length,
         domains: domainCounts,
         supportGroups: supportGroupCounts,
+        // FRAME. "How many findings in the current scan did neither mechanism claim."
         unassigned: unassignedCount,
         noSupportGroup,
-        // Both over base rows, and paired on purpose: "412 not attributable" is unreadable
+        // All three over base rows, and paired on purpose: "412 not attributable" is unreadable
         // without the population it is 412 of, and that population is not `register`.
         baseRows: baseRows2.length,
-        notAttributable
+        notAttributable,
+        // LEDGER. The same question as `unassigned` asked over every lifecycle the register
+        // still holds, resolved history included — which is the population the MTTR by-domain
+        // split draws, and therefore the number that has to be non-zero whenever that split
+        // shows an Unassigned bar.
+        unassignedBase
       },
       // Which tag the business domain was read off. Surfaced because the figure beside it is
       // meaningless without it: "82 carry no domain" is a fact about `Wiz/Domain` specifically,
@@ -8635,6 +8690,13 @@ var Server = (() => {
       }
     );
   }
+  function unassignedLedgerRows(compiled) {
+    const rows = loadBaseRows();
+    attachSupportGroups(rows);
+    attachBizDomains(rows);
+    for (const r of rows) r["_domain"] = resolveDomainName(r, compiled);
+    return unassignedLifecycles(rows, compiled);
+  }
   function attributionData(p) {
     var _a;
     const scan = currentScan();
@@ -8656,6 +8718,13 @@ var Server = (() => {
       coverage: coverage(recs, resolvedDomainNames(seenTags, domainNames(dom.items))),
       ruleHealth: ruleHealth(recs, compiled),
       unassignedAll: unassignedResources(recs, compiled),
+      // THE LEDGER SIDE, and the reason it is here rather than left implicit: every other figure
+      // on this page is about the current scan, so an operator who has just fixed their tagging
+      // sees zeros everywhere — while the MTTR by-domain split, which reads the ledger, keeps an
+      // Unassigned bar over resolved history no scan can reach. This is the list behind that bar.
+      // Resolved on read exactly as `mttrByDomainData` does it, so the two cannot disagree about
+      // which rows are Unassigned.
+      unassignedLedger: unassignedLedgerRows(compiled),
       // Findings split by resolved support group — the support-group coverage table + the
       // resolved/unresolved headline the page needs to troubleshoot the join.
       supportGroups: supportGroupBreakdown(recs),
@@ -8683,8 +8752,11 @@ var Server = (() => {
     // "attribution4" → "attribution5": `coverage` gained `bySource` and the domain is now
     // resolved tag-first, so both the per-domain rows and the KPIs mean something different. An
     // old-shape entry would render the by-source strip as four blanks and split by rules only.
+    // "attribution5" → "attribution6": payload gained `unassignedLedger`, the base-row list
+    // behind the MTTR by-domain split's Unassigned bar. A stale entry has none and the new
+    // section would render empty over a register that has plenty to show.
     durablyCached(
-      "attribution5",
+      "attribution6",
       { severities: readSeverities(p), showNoFix: getShowNoFix2() },
       () => attributionData(p)
     )

@@ -151,17 +151,30 @@ export async function renderAttribution(main, params, ctx) {
     renderCoverageTable(coverage);
     renderSupportGroupCoverage(supportGroups, sgMap);
 
-    // Nothing to troubleshoot: every finding is attributed and every subscription with
-    // findings carries a support group. Replace the three diagnostic sections (unassigned
-    // resources, rule health, untagged subscriptions) with a single celebratory state.
-    const allClear = (coverage.unassignedFindings || 0) === 0 &&
+    // THE LEDGER LIST IS CHECKED BEFORE THE ALL-CLEAR, and that ordering is the whole point.
+    // Every figure above is about the current scan, so an operator who has just fixed their
+    // tagging lands squarely in the branch below — and used to be told "Everything is
+    // attributed" by a page that had never looked at the ledger, while the MTTR by-domain
+    // split drew an Unassigned bar over resolved history. The celebration is only honest when
+    // BOTH populations are clean.
+    const ledgerRows = data.unassignedLedger || [];
+    const frameClear = (coverage.unassignedFindings || 0) === 0 &&
       (coverage.supportGroupUnresolved || 0) === 0;
-    if (allClear) {
+    if (frameClear && !ledgerRows.length) {
       bodyHost.append(emptyState(
         "Everything is attributed.",
         "Every finding maps to a manual group and every subscription with findings carries a " +
-        "support group. Nothing to troubleshoot.",
+        "support group, in this scan and across the ledger. Nothing to troubleshoot.",
       ));
+      return;
+    }
+    // Live attribution is complete and the history is not — the reported case. The frame-side
+    // diagnostics have nothing to say, so they are skipped and only the ledger list is drawn.
+    if (frameClear) {
+      bodyHost.append(el("p", { class: "section-note" },
+        "Every finding in the current scan is attributed. The lifecycles below are not, and "
+        + "they are the ones the MTTR by-domain split draws as Unassigned."));
+      renderUnassignedLedger(ledgerRows);
       return;
     }
 
@@ -176,6 +189,64 @@ export async function renderAttribution(main, params, ctx) {
     renderUnassigned(unassigned, editor);
     renderRuleHealth(ruleHealthRows, editor);
     renderUntagged(untagged, sgMap);
+    renderUnassignedLedger(ledgerRows);
+  }
+
+  // ------------------------------------------------- unassigned lifecycles (ledger)
+
+  /** The base rows behind the MTTR by-domain split's Unassigned bar.
+   *
+   *  Separate from `renderUnassigned` above because it answers a different question over a
+   *  different population: that one lists live RESOURCES a rule could still be written for,
+   *  this one lists LIFECYCLES — mostly resolved, mostly unreachable — whose stored tag
+   *  snapshot predates whatever fixed the live estate. `Last seen` is the column that decides
+   *  whether a row is worth chasing: a recent one will heal on the next scan, an old one will
+   *  not, because Wiz no longer re-lists it for any scan to refresh. */
+  function renderUnassignedLedger(rows) {
+    if (!rows || !rows.length) return;
+    const body = el("tbody", {});
+    for (const r of rows) {
+      const nm = (r.nearMisses || [])[0];
+      const tagEntries = Object.entries(r.tags || {});
+      body.append(el("tr", {},
+        el("td", {},
+          el("div", {}, r.asset),
+          nm
+            ? el("div", { class: "small muted" },
+              "almost matches ", el("em", {}, nm.domain), ` — rule ${nm.ruleIndex + 1}`,
+              (nm.failedTypes && nm.failedTypes.length)
+                ? `, failing: ${nm.failedTypes.join(", ")}` : "")
+            : null,
+        ),
+        el("td", { class: "muted" }, r.subscription || "—"),
+        el("td", { class: "muted" }, r.supportGroup || "—"),
+        el("td", { class: "num" }, (r.open || 0).toLocaleString()),
+        el("td", { class: "num" }, (r.resolved || 0).toLocaleString()),
+        el("td", { class: "muted" }, r.lastSeen ? fmtDate(r.lastSeen) : "—"),
+        el("td", { class: "small muted" },
+          tagEntries.length ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ") : "no tags"),
+      ));
+    }
+    bodyHost.append(settingsPanel({
+      title: "Unassigned lifecycles (ledger)",
+      description:
+        "Findings the register still holds that no tag and no rule claims — the rows behind "
+        + "the MTTR by-domain split's Unassigned bar. Mostly resolved history: the tag bag "
+        + "stored on a lifecycle is a snapshot from when it was last seen, so fixing tagging "
+        + "today cannot reach one Wiz no longer re-lists. A recent Last seen will heal on the "
+        + "next scan; an old one will not.",
+      body: el("div", { class: "table-wrap" },
+        el("table", { class: "data" },
+          el("thead", {}, el("tr", {},
+            el("th", { scope: "col" }, "Asset"),
+            el("th", { scope: "col" }, "Subscription"),
+            el("th", { scope: "col" }, "Support group"),
+            el("th", { scope: "col" }, "Open"),
+            el("th", { scope: "col" }, "Resolved"),
+            el("th", { scope: "col" }, "Last seen"),
+            el("th", { scope: "col" }, "Stored tags"))),
+          body)),
+    }));
   }
 
   // ------------------------------------------------------------------ KPI band

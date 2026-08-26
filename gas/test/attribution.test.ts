@@ -4,6 +4,7 @@ import {
   ruleHealth,
   supportGroupBreakdown,
   traceRecord,
+  unassignedLifecycles,
   unassignedResources,
   untaggedSubscriptions,
 } from "../src/domain/attribution";
@@ -368,5 +369,103 @@ describe("supportGroupBreakdown", () => {
     expect(b.rows).toHaveLength(1);
     expect(b.unresolvedFindings).toBe(0);
     expect(b.rows[0].unresolved).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------- unassignedLifecycles
+//
+// The ledger-side sibling of unassignedResources, and it exists because of a report that read
+// like a bug: "I recovered domain attribution, the scope picker shows 0 unattributed, but the
+// MTTR breakdown still has an Unassigned bar." The frame was clean and the ledger was not.
+//
+// THE TRAP THIS PINS is the column shapes. A base row spells its identity `asset_name` /
+// `subscription_name`; the frame spells it `vulnerableAsset.*`. Reusing the frame readers here
+// compiles, runs, and returns a table of real counts beside a column of "(none)" — which reads
+// as missing data rather than as a bug in the accessor.
+
+const ledgerRow = (over: Rec = {}): Rec => ({
+  asset_name: "web-prod-01",
+  asset_type: "VIRTUAL_MACHINE",
+  subscription_name: "prod-account",
+  status: "RESOLVED",
+  last_seen: "2026-03-01T00:00:00Z",
+  tags_json: JSON.stringify({ env: "prod" }),
+  _domain: "Unassigned",
+  _supportGroup: "CS-CORE",
+  ...over,
+});
+
+describe("unassignedLifecycles", () => {
+  const compiled = compileDomains([]);
+
+  it("reads LEDGER columns, not the frame's", () => {
+    const [row] = unassignedLifecycles([ledgerRow()], compiled);
+    expect(row.asset).toBe("web-prod-01");
+    expect(row.assetType).toBe("VIRTUAL_MACHINE");
+    expect(row.subscription).toBe("prod-account");
+    expect(row.supportGroup).toBe("CS-CORE");
+  });
+
+  it("splits open from resolved, which is what says whether the gap is live", () => {
+    const rows = unassignedLifecycles([
+      ledgerRow({ status: "OPEN" }),
+      ledgerRow({ status: "RESOLVED" }),
+      ledgerRow({ status: "RESOLVED" }),
+    ], compiled);
+    expect(rows[0].open).toBe(1);
+    expect(rows[0].resolved).toBe(2);
+  });
+
+  it("carries the latest last_seen, so a reader can see how stale the gap is", () => {
+    const rows = unassignedLifecycles([
+      ledgerRow({ last_seen: "2026-01-01T00:00:00Z" }),
+      ledgerRow({ last_seen: "2026-05-05T00:00:00Z" }),
+      ledgerRow({ last_seen: null }),
+    ], compiled);
+    expect(rows[0].lastSeen).toBe("2026-05-05T00:00:00Z");
+  });
+
+  it("shows the stored tag bag, so the missing domain tag is visible rather than asserted", () => {
+    const [row] = unassignedLifecycles([ledgerRow()], compiled);
+    expect(row.tags).toEqual({ env: "prod" });
+    expect(row.tags["Wiz/Domain"]).toBeUndefined();
+  });
+
+  it("takes the resolved _domain as given, never re-deciding it", () => {
+    // It exists to EXPLAIN the by-domain split, so a second opinion on which rows are
+    // Unassigned would defeat the purpose — the two would disagree and neither would be
+    // checkable against the other.
+    const rows = unassignedLifecycles([
+      ledgerRow({ _domain: "SAP" }),
+      ledgerRow({ _domain: "Not attributable" }),
+      ledgerRow({ _domain: "Unassigned", asset_name: "only-this-one" }),
+    ], compiled);
+    expect(rows.map((r) => r.asset)).toEqual(["only-this-one"]);
+  });
+
+  it("still offers near-miss hints, read off tags_json", () => {
+    const withRule = compileDomains([
+      { name: "Prod", rules: [{ conditions: [
+        { type: "tag", key: "env", value: "prod" },   // matches, off tags_json
+        { type: "subscription", values: ["nope"] },   // does not
+      ] }] },
+    ]);
+    const [row] = unassignedLifecycles([ledgerRow()], withRule);
+    expect(row.nearMisses.length).toBeGreaterThan(0);
+    expect(row.nearMisses[0].domain).toBe("Prod");
+  });
+
+  it("groups by asset, ranks by total lifecycles, and caps", () => {
+    const rows = unassignedLifecycles([
+      ledgerRow({ asset_name: "a" }),
+      ledgerRow({ asset_name: "b" }), ledgerRow({ asset_name: "b" }),
+      ledgerRow({ asset_name: "c" }),
+    ], compiled, 2);
+    expect(rows.map((r) => r.asset)).toEqual(["b", "a"]);
+  });
+
+  it("names a row that lost its asset rather than dropping it", () => {
+    const [row] = unassignedLifecycles([ledgerRow({ asset_name: null })], compiled);
+    expect(row.asset).toBe("(none)");
   });
 });

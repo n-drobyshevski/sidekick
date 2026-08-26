@@ -363,3 +363,62 @@ describe("the row builders", () => {
     expect(labels).toEqual(["CROSS", "SAP"]);
   });
 });
+
+// ---------------------------------------------------------- the ledger's Unassigned
+//
+// THE BUG THIS PINS, in the words of the operator who hit it: "I recovered domain attribution
+// and the scope picker shows 0 unattributed findings, but the MTTR breakdown still has an
+// Unassigned bar." Both were telling the truth about different populations. The switcher
+// counted the CURRENT SCAN, where the fix had landed; the by-domain split counts every
+// lifecycle the register holds, including resolved history whose stored tag snapshot predates
+// the rollout and which Wiz no longer re-lists. Nothing on screen reconciled the two.
+//
+// The frame count is left alone — it answers a real question — and the ledger figure now
+// travels beside it, exactly as `notAttributable` already did for the other tail.
+
+const withBase = (unassigned, unassignedBase) =>
+  boot({ scopeCounts: { ...boot().scopeCounts, unassigned, domains: {
+    ...boot().scopeCounts.domains, Unassigned: unassigned,
+  }, unassignedBase } });
+
+describe("scopeSwitchView — Unassigned over the ledger, not just the frame", () => {
+  it("says so on the unscoped caption when history holds more than the frame", () => {
+    const v = scopeSwitchView(withBase(0, 37), {});
+    expect(v.caption).toContain("37 claimed by no tag or rule, including history");
+  });
+
+  it("stays quiet when the ledger agrees with the frame", () => {
+    // Repeating the frame number in different words is not information; it reads as a bug and
+    // sends the reader looking for a difference that is not there.
+    const v = scopeSwitchView(withBase(27, 27), {});
+    expect(v.caption).not.toContain("including history");
+  });
+
+  it("stays quiet when nothing is unassigned anywhere", () => {
+    expect(scopeSwitchView(withBase(0, 0), {}).caption).not.toContain("including history");
+  });
+
+  it("offers the scope honestly instead of advertising an empty one", () => {
+    // The exact reported case: the frame is clean, the ledger is not. A hint reading
+    // "No domain · 0 findings" over a bucket the MTTR page draws a bar for is the lie.
+    const v = scopeSwitchView(withBase(0, 37), {});
+    const opt = v.options.find((o) => o.value === "Unassigned");
+    expect(opt.hint).toBe("No domain · none open · 37 in history");
+  });
+
+  it("keeps the plain hint once the frame carries some too", () => {
+    const v = scopeSwitchView(withBase(27, 37), {});
+    expect(v.options.find((o) => o.value === "Unassigned").hint).toBe("No domain · 27 findings");
+  });
+
+  it("carries the ledger figure into the scoped caption", () => {
+    const v = scopeSwitchView(withBase(0, 37), { domain: "Unassigned" });
+    expect(v.caption).toContain("claimed by no tag and no rule");
+    expect(v.caption).toContain("37 across all history");
+  });
+
+  it("does not restate the figure when the scope and the ledger agree", () => {
+    const v = scopeSwitchView(withBase(27, 27), { domain: "Unassigned" });
+    expect(v.caption).not.toContain("across all history");
+  });
+});
