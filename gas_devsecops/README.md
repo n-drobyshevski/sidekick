@@ -51,7 +51,15 @@ Because their remediation clocks differ in kind. SCA cannot be fixed before a fi
 exists, so its clock splits into "waiting for a vendor" and "actionable". SAST has no
 vendor — and **no resolution date** either, so its death date comes from the finding
 disappearing between scans rather than from the API, and the page says which end is
-measured and which is estimated. A secret leaves the register when the string leaves HEAD,
+measured and which is estimated.
+
+That question — whether SAST can carry an MTTR at all, or only an age — was open across
+three probe passes and is now settled: it is a **genuine MTTR**. `createdAt` gives a real
+birth date, and the ledger dates the death by disappearance with no guard on how the
+resolution was learned (`brick/devsecops/ledger.py`, pinned by
+`test_mttr_is_measured_from_the_ledgers_own_dates`). The one caveat is that the death side is
+observation-bounded — the scan that noticed overstates by up to one scan interval — so a
+ledger started today reads near-zero until disappearances accrue. A secret leaves the register when the string leaves HEAD,
 which is not the same as the credential being dead. One merged register would have to lie
 about at least two of them, and the clock is the product.
 

@@ -284,9 +284,33 @@ const BASE: Record<string, Record<string, unknown>> = {
     // the 72 resolved rows closes inside a day: median 5.15d, p90 56.1d, max 300d. The
     // artifact is a cloud-stage phenomenon. PROBE_FINDINGS.md §3.
     codeToCloudPipelineStage: ["CODE"],
-    status: { equals: ["OPEN", "RESOLVED"] },
+    status: ["OPEN", "RESOLVED"],
   },
 };
+
+/**
+ * Apply OBJECT_FILTERS to every list-valued key of a base scope.
+ *
+ * BASE IS WRITTEN IN ONE CONVENTION — plain lists — and the shape table decides what goes on
+ * the wire. Without this pass a literal in BASE bypasses the table completely, which is
+ * exactly how `codeToCloudPipelineStage` shipped as `["CODE"]` while OBJECT_FILTERS said it
+ * was an object: adding the key to the table changed nothing, because the value never went
+ * through `listFilter`. A shape table that only covers SOME of the filter is worse than none,
+ * because it reads as though it covers all of it.
+ *
+ * Non-array values pass through untouched, which is what leaves SAST's nested
+ * `resource: { isDefaultBranch: { equals: true } }` alone — it is a nested filter object, not
+ * a list needing a convention.
+ */
+function shapeBase(scope: Scope, base: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(base)) {
+    out[key] = Array.isArray(value)
+      ? listFilter(scope, key, value as readonly string[])
+      : value;
+  }
+  return out;
+}
 
 /**
  * Whether to ask for resolved SAST findings. FALSE — and the reason changed on 2026-08-27.
@@ -337,17 +361,31 @@ export const SAST_FETCH_RESOLVED = false;
  * which works today. The schema type names above are the evidence; check them before
  * changing a line here.
  */
-const OBJECT_FILTERS: Record<Scope, readonly string[]> = {
-  sca: [],
+export const OBJECT_FILTERS: Record<Scope, readonly string[]> = {
+  // VulnerabilityFindingFilters takes every LIST bare — severity, status,
+  // codeToCloudPipelineStage — and wraps only the project restriction.
+  //   projectIdV2  VulnerabilityFindingProjectFilter  { equals: [...] }
+  sca: ["projectIdV2"],
   sast: ["severity", "status"],
   // SecretInstanceFilters MIXES BOTH CONVENTIONS INTERNALLY, which is the §4 trap at finer
-  // grain: status, validationStatus and severity are object filters, while projectId in the
-  // very same type is a bare [String!]. One field's shape says nothing about the next one's.
-  //   status            SecretInstanceStatusFilter            { equals: [...] }
-  //   validationStatus  SecretInstanceValidationStatusFilter  { equals: [...] }
-  //   severity          SecretInstanceSeverityFilter          { equals: [...] }
-  //   projectId         [String!]                             a bare list
-  secrets: ["severity", "status", "validationStatus"],
+  // grain. One field's shape says nothing about the next one's, IN THE SAME TYPE:
+  //   status                    SecretInstanceStatusFilter                    { equals: [...] }
+  //   validationStatus          SecretInstanceValidationStatusFilter          { equals: [...] }
+  //   severity                  SecretInstanceSeverityFilter                  { equals: [...] }
+  //   codeToCloudPipelineStage  SecretInstanceCodeToCloudPipelineStageFilter  { equals: [...] }
+  //   projectId                 [String!]                                     a bare list
+  //
+  // codeToCloudPipelineStage was the one key here ever sent on INFERENCE rather than on
+  // reading — shaped after SCA, which spells the same field name
+  // [VulnerabilityCodeToCloudPipelineStage!], a bare list. The inference did not hold, and
+  // the register fetched zero rows until it was corrected. Schema print and live response
+  // agree; with only this key fixed the query returns 691 rows (PROBE_FINDINGS.md §8.1).
+  //
+  // THAT IS THE THIRD TIME one field name has carried two kinds across filter types in this
+  // codebase — after `severity` in §4 and the commitHash / initialCommitHash split in §7.3.
+  // Copy these from `--schema`, which prints a ready-made OBJECT_FILTERS entry per type.
+  // Never carry one across.
+  secrets: ["severity", "status", "validationStatus", "codeToCloudPipelineStage"],
 };
 
 /** A list-valued filter, shaped the way THIS scope's filter type wants it. */
@@ -380,10 +418,11 @@ export function buildFilter(scope: Scope, opts: FilterOptions = {}): Record<stri
   if (QUERIES[scope] == null) {
     throw new Error(`no query document for scope "${scope}" — see wizQueries.ts`);
   }
-  const filterBy: Record<string, unknown> = JSON.parse(JSON.stringify(BASE[scope] ?? {}));
+  const filterBy = shapeBase(scope, JSON.parse(JSON.stringify(BASE[scope] ?? {})));
 
   // Carries the same shape hazard as severity, and was dormant only while
-  // SAST_FETCH_RESOLVED was false — a mine under a future flag flip. Shaped now.
+  // SAST_FETCH_RESOLVED was false — a mine under a future flag flip. Shaped through the
+  // same table BASE goes through, so there is one answer per key rather than two.
   if (scope === "sast" && SAST_FETCH_RESOLVED) {
     filterBy.status = listFilter(scope, "status", ["OPEN", "RESOLVED"]);
   }
@@ -395,10 +434,12 @@ export function buildFilter(scope: Scope, opts: FilterOptions = {}): Record<stri
     // The two filter types spell the project restriction differently, and the tenant's own
     // exported reference scripts are the evidence for each: sast_request.py passes a bare
     // `projectId: [...]`, sca_request.py passes `projectIdV2: {equals: [...]}`.
-    // SAST and secrets both take a bare projectId list; only SCA spells it projectIdV2
-    // with an equals wrapper. Verified per type rather than assumed across them.
-    if (scope === "sca") filterBy.projectIdV2 = { equals: [opts.projectId] };
-    else filterBy.projectId = [opts.projectId];
+    // SAST and secrets spell it `projectId`, SCA spells it `projectIdV2`. The SHAPE each
+    // wants comes from the same table every other list-valued key goes through, rather than
+    // being written inline here — an inline literal is exactly how codeToCloudPipelineStage
+    // bypassed the table and shipped refused.
+    const key = scope === "sca" ? "projectIdV2" : "projectId";
+    filterBy[key] = listFilter(scope, key, [opts.projectId]);
   }
 
   return filterBy;

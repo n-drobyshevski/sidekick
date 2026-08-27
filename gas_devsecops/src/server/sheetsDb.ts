@@ -67,6 +67,26 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // rotated_at then means "the credential was observed dead at this time" and is set from
     // validated_at only where validation_state is INVALID. removed_at is the other axis
     // entirely: the string left HEAD. PROBE_FINDINGS.md §3.
+    //
+    // IDENTITY IS (secretDataId, path), not secretDataId alone. Measured on one 500-row
+    // page of the CODE register: 500 distinct ids collapse to 131 distinct secretDataId —
+    // 3.82 rows per secret, and one credential appearing under 158 rows across 8 paths. So
+    // secretDataId names the CREDENTIAL and the pair names one OCCURRENCE of it. Remediation
+    // is per occurrence (each one has to be removed); rotation is per credential, grouped
+    // across them. Keying on secretDataId alone would silently collapse eight files into
+    // one row and lose the locations.
+    //
+    // DO NOT ADD isDefaultBranch TO THE SECRETS FILTER TO DEDUPLICATE. There is real
+    // duplication — 18 of 176 (secretDataId, path) pairs appear under both REPOSITORY and
+    // REPOSITORY_BRANCH, about 10% — and the obvious fix is wrong. Measured (§8.6):
+    //     app filter, as shipped                691
+    //     + isDefaultBranch {equals:true}       245
+    //     + isDefaultBranch {equals:false}        0
+    // 245 + 0 != 691. The missing 446 are REPOSITORY-level entities where the flag is
+    // ABSENT rather than false — a repository is not a branch, so the predicate does not
+    // apply to it. Copying SCA's {equals:true} would cut the register by 65% while reading
+    // as deduplication: absent collapsed to false, which is the failure the AI register
+    // already has a name for. The 10% that IS duplicated wants dedup on the pair above.
     "secret_kind", "rotated_at", "removed_at", "validation_state", "validated_at",
     "owner_project", "owner_path", "tags_json",
   ],

@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_PAGES, PAGE_SIZE, QUERIES, Q_SAST, Q_SCA, Q_SECRETS, SAST_FETCH_RESOLVED,
   buildFilter, buildVariables, severityFilter,
+  OBJECT_FILTERS as OBJECT_FILTERS_FOR_TEST,
 } from "../src/server/wizQueries";
 import { SCOPES } from "../src/domain/config";
 import { TABS, TAB_HEADERS } from "../src/server/sheetsDb";
@@ -233,7 +234,8 @@ describe("the secrets filter", () => {
   it("narrows to CODE, which is what makes the clock trustworthy", () => {
     // 394,927 -> 1,933. And unscoped, secrets close 0.25s-63s after first sight — the
     // instant-close artifact. On CODE, not one of the 72 resolved rows closes inside a day.
-    expect(f().codeToCloudPipelineStage).toEqual(["CODE"]);
+    // The OBJECT shape, not a list — see the dedicated test below for why that mattered.
+    expect(f().codeToCloudPipelineStage).toEqual({ equals: ["CODE"] });
   });
 
   it("shapes status, validationStatus and severity as OBJECTS", () => {
@@ -250,16 +252,57 @@ describe("the secrets filter", () => {
     expect(Array.isArray(f().status)).toBe(false);
   });
 
-  it("sends codeToCloudPipelineStage as a bare list — THE ONE UNVERIFIED SHAPE", () => {
-    // Every other shape here was printed by the probe. This one was not: §7.3 only covered
-    // the three keys the probe had hardcoded. A bare list matches how SCA sends the same
-    // field name, which is the best available evidence and still an inference.
+  it("sends codeToCloudPipelineStage as an OBJECT, like the rest of its own type", () => {
+    // THIS TEST PINNED THE DEFECT. It asserted a bare list, and the claim it encoded was
+    // "shaped after SCA's same-named field" — an inference, made because §7.3 printed only
+    // the three keys the probe had hardcoded and this one went unprinted.
     //
-    // It is safe to ship BECAUSE THE FAILURE IS LOUD: the probe sends this exact query, so
-    // a wrong shape returns HTTP 400 VALIDATION_INVALID_TYPE_VARIABLE on the next run
-    // rather than quietly fetching zero rows. That is precisely how the SAST defect would
-    // have been caught on day one. If it does fail, the fix is one line in OBJECT_FILTERS.
-    expect(Array.isArray(f().codeToCloudPipelineStage)).toBe(true);
+    // Two independent readings falsified it (PROBE_FINDINGS.md §8.1). The schema:
+    //   SecretInstanceFilters.codeToCloudPipelineStage
+    //     SecretInstanceCodeToCloudPipelineStageFilter -> OBJECT { equals: [...] }
+    // and the tenant, which refused the shipped shape with HTTP 400
+    // VALIDATION_INVALID_TYPE_VARIABLE. With only this key corrected the same document
+    // returns 200 and 691 rows.
+    //
+    // The design worked: the register failed LOUDLY on the next probe run instead of
+    // quietly fetching zero rows, which is what the SAST defect did for a whole pass.
+    expect(f().codeToCloudPipelineStage).toEqual({ equals: ["CODE"] });
+  });
+});
+
+describe("no filter value can bypass the shape table", () => {
+  // The one-key fix did NOT work on its own, and that is the more useful finding. BASE
+  // wrote codeToCloudPipelineStage as a literal ["CODE"], so it never passed through
+  // listFilter: adding the key to OBJECT_FILTERS changed nothing at all. A shape table
+  // covering only part of the filter is worse than no table, because it reads as covering
+  // all of it. shapeBase now routes every list-valued BASE key through the same lookup.
+  // The table governs LIST-valued keys only — which convention a list of enum values takes.
+  // A boolean filter like `isDefaultBranch: {equals: true}` is a different thing: its
+  // `equals` holds a scalar, not a list, and it has no bare-list alternative to choose
+  // between. The first version of this test conflated the two and flagged
+  // sca.isDefaultBranch, which was the test being wrong rather than the filter.
+  const listShaped = (v) => Array.isArray(v)
+    || (v !== null && typeof v === "object" && Array.isArray(v.equals));
+
+  it("shapes every list-valued key according to its own scope's table", () => {
+    for (const scope of SCOPES) {
+      const filter = buildFilter(scope, { severities: SEV, projectId: PROJECT });
+      for (const [key, value] of Object.entries(filter)) {
+        if (!listShaped(value)) continue;
+        const wrapped = !Array.isArray(value);
+        expect(
+          OBJECT_FILTERS_FOR_TEST[scope].includes(key),
+          wrapped
+            ? `${scope}.${key} is sent wrapped but the table does not list it`
+            : `${scope}.${key} is sent bare but the table says it is an object filter`,
+        ).toBe(wrapped);
+      }
+    }
+  });
+
+  it("leaves boolean filters alone — they are not a list convention", () => {
+    expect(buildFilter("sca", {}).isDefaultBranch).toEqual({ equals: true });
+    expect(buildFilter("sast", {}).resource).toEqual({ isDefaultBranch: { equals: true } });
   });
 });
 

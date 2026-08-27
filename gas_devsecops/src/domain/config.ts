@@ -90,20 +90,40 @@ export const SLA_TARGETS: Record<string, number> = {
 export const SCOPES = ["sca", "sast", "secrets"] as const;
 export type Scope = (typeof SCOPES)[number];
 
+/**
+ * The severities a sync requests by default, PER SCOPE — because one list cannot serve
+ * three registers that mean different things by the word.
+ *
+ * `sca` and `sast` keep CRITICAL/HIGH, which is brick/devsecops's default and is not a claim
+ * about what matters: it is what keeps a first sync inside one execution budget on an estate
+ * where a single repository carries ~6,900 SCA findings.
+ *
+ * SECRETS IS DIFFERENT, and inheriting the vulnerability default there was a real defect.
+ * Measured on the CODE population (PROBE_FINDINGS.md §8.3): CRITICAL/HIGH deletes
+ * PASSWORD 209 -> 0 and CERTIFICATE 160 -> 0 — every one of them sits below HIGH. A secrets
+ * register containing no passwords is answering a different question from the one it claims
+ * to. Volume was never the reason here either: the whole CODE population is ~1,958 rows,
+ * an eighth of SCA.
+ *
+ * PROVISIONAL, and here is what would falsify it. §8.3 established only that those 369 rows
+ * sit BELOW HIGH — not that they sit AT MEDIUM. If they are LOW, this default still yields a
+ * register with no passwords in it, which is the exact failure it was chosen to fix. The
+ * probe now prints a type x severity crosstab over the CODE population; one run settles it,
+ * and if the answer is LOW then this list has to reach further down or drop the filter.
+ */
+export const DEFAULT_FETCH_SEVERITIES: Record<Scope, readonly string[]> = {
+  sca: ["CRITICAL", "HIGH"],
+  sast: ["CRITICAL", "HIGH"],
+  secrets: ["CRITICAL", "HIGH", "MEDIUM"],
+};
+
 export const SCOPE_LABELS: Record<Scope, string> = {
   sca: "Dependencies",
   sast: "Code",
   secrets: "Secrets",
 };
 
-/**
- * The severities a sync requests by default.
- *
- * Not a claim about what matters — it is what keeps a first sync inside one execution budget
- * on an estate where a single repository carries ~6,900 SCA findings. Same default as
- * brick/devsecops/config.py.
- */
-export const DEFAULT_FETCH_SEVERITIES = ["CRITICAL", "HIGH"] as const;
+
 
 /** Statuses that mean "not open". Mirrors brick/devsecops/config.py RESOLVED_STATUSES. */
 export const RESOLVED_STATUSES = new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);

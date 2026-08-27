@@ -248,7 +248,7 @@ if (DRY_RUN) {
       continue;
     }
     const vars = app.buildVariables(scope, {
-      severities: app.DEFAULT_FETCH_SEVERITIES, projectId: PROJECT_ID, first: FIRST,
+      severities: app.DEFAULT_FETCH_SEVERITIES[scope], projectId: PROJECT_ID, first: FIRST,
     });
     console.log("  variables: " + JSON.stringify(vars, null, 2).replace(/\n/g, "\n  "));
     console.log(`  document:  ${doc.split("\n")[0]} … (${doc.split("\n").length} lines)\n`);
@@ -384,11 +384,21 @@ for (const scope of SCOPES) {
   const doc = app.QUERIES[scope];
   if (!doc) { console.log(`\n--- ${scope} ---\n  no document yet (see --roots above)`); continue; }
   const vars = app.buildVariables(scope, {
-    severities: app.DEFAULT_FETCH_SEVERITIES, projectId: PROJECT_ID, first: FIRST,
+    severities: app.DEFAULT_FETCH_SEVERITIES[scope], projectId: PROJECT_ID, first: FIRST,
   });
   const r = await post(doc, vars);
   console.log(`\n--- ${scope} ---`);
-  if (!r.ok) { console.log(`  REFUSED: ${(r.errors?.join(" | ") ?? r.error).slice(0, 400)}`); continue; }
+  if (!r.ok) {
+    const why = (r.errors?.join(" | ") ?? r.error ?? "").slice(0, 400);
+    console.log(`  REFUSED: ${why}`);
+    // RECORDED, NOT JUST PRINTED. A refusal used to `continue` without touching the report,
+    // so probe-report.json simply had no key for the scope — indistinguishable from a scope
+    // nobody asked about. That is how the SAST refusal in §4 would have been missed by
+    // anyone reading the file instead of the console, and the report is the artifact that
+    // gets pasted between sessions.
+    report.findings[scope] = { refused: true, error: why, variables: vars };
+    continue;
+  }
   const conn = r.data.sastFindings ?? r.data.vulnerabilityFindings ?? {};
   const nodes = conn.nodes ?? [];
   console.log(`  ${nodes.length} node(s)${conn.totalCount != null ? `, totalCount ${conn.totalCount}` : ""}`
@@ -407,6 +417,51 @@ for (const scope of SCOPES) {
     count: nodes.length, totalCount: conn.totalCount ?? null,
     partialErrors: r.errors, sample: nodes[0] ?? null,
   };
+}
+
+// ---- the secrets severity floor: which severities the categories actually sit at
+//
+// DEFAULT_FETCH_SEVERITIES.secrets reaches to MEDIUM on the strength of §8.3, which
+// established only that PASSWORD and CERTIFICATE sit BELOW HIGH — not that they sit AT
+// MEDIUM. If they are LOW, the default is still wrong and the register still has no
+// passwords in it. One crosstab settles it.
+if (SCOPES.includes("secrets") && app.QUERIES.secrets) {
+  console.log("=== secrets: type x severity on the CODE population ===");
+  const seen = {};
+  let cursor = null;
+  let pages = 0;
+  // Four pages of 500 is enough to characterise a ~1,958-row register without pretending
+  // to be a sync. It is a probe, not an ingest.
+  while (pages < 4) {
+    const r = await post(app.QUERIES.secrets, app.buildVariables("secrets", {
+      severities: [], projectId: PROJECT_ID, first: 500, after: cursor,
+    }));
+    if (!r.ok) { console.log(`  refused: ${(r.errors?.[0] ?? r.error ?? "").slice(0, 160)}`); break; }
+    const conn = r.data.secretInstances ?? {};
+    for (const n of conn.nodes ?? []) {
+      const k = `${n.type ?? "?"}`;
+      seen[k] = seen[k] ?? {};
+      const s = n.severity ?? "?";
+      seen[k][s] = (seen[k][s] ?? 0) + 1;
+    }
+    pages += 1;
+    if (!conn.pageInfo?.hasNextPage) break;
+    cursor = conn.pageInfo.endCursor;
+  }
+  const sevs = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL", "?"];
+  const names = Object.keys(seen).sort();
+  if (names.length) {
+    console.log("  " + "type".padEnd(24) + sevs.map((s) => s.slice(0, 5).padStart(7)).join(""));
+    for (const n of names) {
+      console.log("  " + n.padEnd(24) + sevs.map((s) => String(seen[n][s] ?? 0).padStart(7)).join(""));
+    }
+    const belowHigh = names.filter((n) => !(seen[n].CRITICAL || seen[n].HIGH));
+    console.log(`\n  categories with NOTHING at CRITICAL/HIGH: ${belowHigh.join(", ") || "(none)"}`);
+    console.log(`  DEFAULT_FETCH_SEVERITIES.secrets is currently [${app.DEFAULT_FETCH_SEVERITIES.secrets.join(", ")}]`);
+    console.log("  If a category above has rows ONLY at LOW or INFORMATIONAL, that default is still too high.");
+    report.findings.secretsTypeSeverity = seen;
+  }
+  console.log();
 }
 
 console.log();

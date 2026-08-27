@@ -97,13 +97,25 @@ already implements the pipeline and is the behavioural spec (same relationship `
   (`brick/devsecops/ledger.py`, pinned by `test_mttr_is_measured_from_the_ledgers_own_dates`).
   Caveat for the port: `brick`'s own `ingest.py:206` claims `silver_sast` already reads the
   column; it does not — `metrics.py:371` hard-codes `null_ts`.
-- **The two finding-filter types disagree about `severity`, and a shared helper is how that
-  bites.** `VulnerabilityFindingFilters.severity` is `[VulnerabilitySeverity!]`, a bare list.
-  `SASTFindingFilters.severity` is `SASTSeverityFilter`, an object taking `{equals:[...]}` —
-  and `status` likewise. Sending SCA's shape to SAST is refused with HTTP 400
-  `VALIDATION_INVALID_TYPE_VARIABLE`, which fetches zero rows while looking like an empty
-  register. It shipped once, with a test pinning the broken shape. `OBJECT_FILTERS` in
-  `wizQueries.ts` now holds the asymmetry as data; do NOT collapse it to one convention.
+- **The same field name carries DIFFERENT KINDS across filter types, and it has now cost the
+  register twice.** `VulnerabilityFindingFilters.severity` is `[VulnerabilitySeverity!]`, a
+  bare list; `SASTFindingFilters.severity` is `SASTSeverityFilter`, an object taking
+  `{equals:[...]}`. Same for `codeToCloudPipelineStage`: a bare list on SCA, a
+  `SecretInstanceCodeToCloudPipelineStageFilter` on secrets. And `vcsDetails` spells the
+  commit `commitHash` on SAST but `initialCommitHash` on secrets. Each mismatch is refused
+  with HTTP 400 `VALIDATION_INVALID_TYPE_VARIABLE`, which fetches zero rows while looking
+  like an empty register — SAST shipped that way for a whole pass, secrets for one.
+  `OBJECT_FILTERS` in `wizQueries.ts` holds the asymmetry as data and `shapeBase` routes
+  EVERY list-valued key through it, because a table covering only part of the filter is
+  worse than none: `codeToCloudPipelineStage` sat in `BASE` as a literal and bypassed the
+  table entirely, so adding it to the table changed nothing. `npm run probe -- --schema`
+  prints a ready-made `OBJECT_FILTERS entry:` per filter type — copy it, never infer it.
+- **Severity defaults are per scope, and `secrets` is not `CRITICAL, HIGH`.** That default is
+  inherited from the vulnerability registers, where it is a volume control. On secrets it
+  deletes `PASSWORD` 209→0 and `CERTIFICATE` 160→0 — every one sits below HIGH — giving a
+  secrets register with no passwords in it. `DEFAULT_FETCH_SEVERITIES` is a
+  `Record<Scope, string[]>`; secrets reaches to MEDIUM, provisionally, until the probe's
+  type × severity crosstab confirms those rows are not LOW.
 - **The second clock is captured but not yet computed.** `fix_date` / `fix_observed_at` are
   on every ledger row; nothing derives `fix_available_at`, `mttr_actionable_days` or
   `awaiting_vendor_fix`. Reference: `gas/src/domain/ledgerCore.ts::baseRows`.
