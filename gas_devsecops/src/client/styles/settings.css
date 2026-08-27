@@ -1,0 +1,171 @@
+/* ------------------------------------------------------------------ settings form */
+/* The vocabulary in js/ui/settings.js: a panel, a labelled row, a switch, a tab strip and one
+   save bar for the page. Ported from the OS-vulnerabilities tool and re-expressed on this
+   tree's scales — that stylesheet predates the spacing and type ramp and carries its spacing
+   as literal px, which would read as off-system here.
+
+   Every transition below is zeroed by the global prefers-reduced-motion rule in overrides.css
+   (`* { transition-duration: 0.01ms !important }`), so none of them needs its own alternative. */
+
+/* The panel joins the shared card surface in components.css (.card, .kpi-card, .chart-card,
+   .asset-card, .settings-panel) rather than restating the four declarations a fifth time, so
+   only its own padding and rhythm live here. One topic per panel, action in the footer. */
+.settings-panel {
+  padding: var(--space-4) var(--space-5);
+  margin: 0 0 var(--space-4);
+}
+.settings-panel__title {
+  font-size: var(--fs-lead);
+  font-weight: var(--fw-semibold);
+  margin: 0;
+}
+.settings-panel__desc { margin: var(--space-1) 0 0; max-width: var(--measure); }
+/* The source had 14px here and 12px for the no-description case. Both land on --space-3, so
+   the second rule would now be a no-op and is dropped rather than kept as decoration. */
+.settings-panel__body { margin-top: var(--space-3); }
+.settings-panel__foot {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  margin-top: var(--space-4); padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+}
+
+/* A bold label over a muted description on the left, the control on the right. Rows within one
+   panel body are separated by a hairline, echoing the stat list. */
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-4); flex-wrap: wrap; padding: var(--space-3) 0;
+}
+.setting-row + .setting-row { border-top: 1px solid var(--hairline); }
+.settings-panel__body > .setting-row:first-child { padding-top: 0; }
+.settings-panel__body > .setting-row:last-child { padding-bottom: 0; }
+.setting-row__label {
+  display: flex; flex-direction: column; gap: var(--space-half); min-width: 0;
+}
+.setting-row__title {
+  font-size: var(--fs-body); font-weight: var(--fw-semibold); color: var(--ink);
+}
+/* Narrower than the panel description (--measure) on purpose: a row's copy sits beside a
+   control rather than across the panel, so it wraps sooner. */
+.setting-row__desc { max-width: 64ch; }
+.setting-row__control { flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-2); }
+
+/* The on/off switch. The real checkbox overlays the track (opacity 0, still focusable and
+   clickable); the track + thumb are the painted control. The pixel geometry is a component
+   dimension rather than page rhythm, so it stays literal — snapping a 20px track onto the
+   spacing ramp would only make the thumb inset arbitrary. */
+.switch {
+  position: relative; display: inline-block; flex: none;
+  width: 36px; height: 20px; cursor: pointer;
+}
+.switch__input {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  margin: 0; opacity: 0; cursor: pointer;
+}
+.switch__track {
+  position: absolute; inset: 0; border-radius: var(--radius-pill);
+  /* Deliberately NOT --track-bg: that is the progress-track wash at half this weight, and a
+     switch is a control the reader operates rather than a readout they scan. At 0.07 the off
+     state reads as an absence instead of an affordance. */
+  background: rgba(0, 0, 0, 0.16); border: 1px solid transparent;
+  transition: background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+}
+.switch__thumb {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--page); box-shadow: var(--shadow-button);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.switch__input:checked + .switch__track {
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
+}
+.switch__input:checked + .switch__track .switch__thumb { transform: translateX(16px); }
+.switch__input:focus-visible + .switch__track {
+  outline: 2px solid var(--accent-text); outline-offset: 2px;
+}
+.switch__input:disabled { cursor: not-allowed; }
+.switch__input:disabled + .switch__track { opacity: 0.5; }
+.switch:has(.switch__input:disabled) { cursor: not-allowed; }
+
+/* The tab strip. The selected tab reads by a 2px accent underline AND weight — never the
+   underline alone — which is this app's navigation rule, the same recipe .nav-link.active
+   uses rotated a quarter turn. It differs from .segmented on purpose: that is a control and
+   takes a neutral inset, because there an accent inset would read as the decorative
+   side-stripe the system forbids. A dirty tab also gets a painted dot, and tabList appends
+   "unsaved changes" to its accessible name so the cue survives for a reader who cannot see it. */
+.tabstrip {
+  display: flex; gap: var(--space-half); overflow-x: auto;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: var(--space-5);
+}
+.tabstrip__tab {
+  position: relative; background: none; border: none; box-shadow: none;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  padding: var(--space-2) var(--space-3); min-height: 38px;
+  font: inherit; font-size: var(--fs-body);
+  color: var(--text-2); cursor: pointer; white-space: nowrap; flex: none;
+  display: inline-flex; align-items: center; gap: var(--space-1);
+}
+.tabstrip__tab:hover { background: var(--wash-hover); color: var(--ink); }
+.tabstrip__tab[aria-selected="true"] {
+  color: var(--ink); font-weight: var(--fw-semibold);
+  box-shadow: inset 0 -2px 0 0 var(--accent), inset 0 -3px 0 0 var(--accent-edge);
+}
+.tabstrip__tab:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.tabstrip__dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none;
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
+}
+
+/* One dirty state for the whole page, hidden until there is something to save. Sticky within
+   `main`, which is the scrollport here (base.css), so it stays reachable however far a control
+   behind an inactive tab has scrolled; below 800px main goes `overflow: visible` and the bar
+   sticks to the viewport instead, which is the right phone behaviour.
+
+   z-index is --z-canvas-panel and NOT --z-popover. --z-popover (52) is reserved in this tree
+   for surfaces that open from INSIDE a sheet and must outrank it; the save bar is page content
+   and has to sit below --z-scrim (40) so a record sheet still covers it.
+
+   Card whisper only — this is still a card, not a modal. */
+.savebar {
+  position: sticky; bottom: var(--space-4); z-index: var(--z-canvas-panel);
+  display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+  margin-top: var(--space-5); padding: var(--space-3) var(--space-4);
+  background: var(--page); border: 1px solid var(--hairline);
+  border-radius: var(--radius-xl); box-shadow: var(--shadow-card);
+}
+/* The display:flex above is an author rule and beats the UA's [hidden] { display: none }, so
+   without this the bar sits on screen permanently offering to save nothing. */
+.savebar[hidden] { display: none; }
+.savebar__what { font-size: var(--fs-label); color: var(--text-2); }
+.savebar__what strong { color: var(--ink); }
+.savebar__spacer { flex: 1 1 auto; }
+.savebar__tab { font-size: var(--fs-label); padding: 0 var(--space-half); }
+
+/* The "why this matters" disclosure: the long paragraph a panel used to show unconditionally,
+   closed by default. The one-line description above it stays visible either way. */
+details.why { margin: var(--space-1) 0 0; }
+details.why > summary {
+  cursor: pointer; list-style: none; display: inline-flex; align-items: center;
+  gap: var(--space-1); font-size: var(--fs-label); font-weight: var(--fw-semibold);
+  color: var(--text-2);
+  padding: var(--space-half) var(--space-1); margin: calc(var(--space-half) * -1) calc(var(--space-1) * -1);
+  border-radius: var(--radius-xs); user-select: none;
+}
+details.why > summary::-webkit-details-marker { display: none; }
+details.why > summary:hover { color: var(--ink); background: var(--wash-hover); }
+details.why > summary:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.why__caret {
+  display: inline-block; font-size: var(--fs-micro);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+details.why[open] > summary .why__caret { transform: rotate(90deg); }
+.why__body p {
+  margin: var(--space-1) 0 0; max-width: 68ch;
+  color: var(--text-2); font-size: var(--fs-label); line-height: 1.55;
+}
+
+/* A tab panel is a plain region: the strip above it already carries the boundary, so it takes
+   no surface of its own. Only the focus ring matters, because the panel is tabbable (tabindex
+   0) so a keyboard reader landing past the strip has somewhere to be. */
+.settings-tabpanel:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 4px; }

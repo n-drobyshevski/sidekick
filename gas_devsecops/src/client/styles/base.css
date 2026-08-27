@@ -1,0 +1,739 @@
+/* --------------------------------------------------------------------- the reset */
+/* THE `hidden` GUARD, ONCE, FOR EVERYTHING.
+ *
+ * The UA stylesheet's `[hidden] { display: none }` is a bare attribute selector with no
+ * class, so ANY author rule that sets `display` beats it — `.workbench-controls { display:
+ * flex }` is enough. The element then keeps its `hidden` attribute, reports `el.hidden ===
+ * true`, is correctly removed from the accessibility tree, and goes on rendering in full.
+ * It is a nasty one precisely because the JS looks right and a check that reads `el.hidden`
+ * agrees with it; only the computed `display` tells the truth.
+ *
+ * This codebase found that out eight separate times and patched it eight separate ways
+ * (`.filter-chips`, `.gq-panel`, `.gs-updating-bar`, `.graph-rail`, `.graph-rail button`,
+ * `.rail-cap`, `.sheet-pane`, `.facet-group`), each with its own comment explaining the
+ * same mechanism, and the ninth still got through: the AARS Rules toolbar rendered all
+ * three tabs' Save/Revert clusters at once, because `.workbench-controls` sets `display:
+ * flex` and nothing re-stated the guard for it.
+ *
+ * So it is stated here once instead. `!important` is the point rather than a shortcut —
+ * without it this is just a tenth rule losing to the next `display` a component declares.
+ * Nothing in this app ever wants a `hidden` element painted; `hidden` means hidden, and an
+ * element that needs to be present-but-not-displayed has `.sr-only` for that. */
+[hidden] { display: none !important; }
+
+/* The present-but-not-displayed utility the guard above points at, defined here because the
+   comment above already calls it the app-wide answer and it was living in sheet.css.
+   There used to be TWO of these: this one, and a weaker `.visually-hidden` in aars.css that
+   omitted `clip-path: inset(50%)`, `margin: -1px`, `padding: 0` and `border: 0` — the
+   belt-and-braces half of the recipe, without which the element can still leak a visible
+   1px box in some engines. aars.js's twelve uses moved onto this one. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  border: 0;
+}
+
+/* ------------------------------------------------------------------ shell / nav */
+/* Fixed viewport-height shell, in two rows: the app header across the top, and beneath it
+   the rail (which fills what is left, pinning the sync zone to its bottom) beside a content
+   pane that scrolls on its own.
+   .app-body, not #app, is the positioning context for the route overlay — the overlay veils
+   the content while a page refetches, and the header above it stays live. */
+#app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.app-body { flex: 1; min-height: 0; display: flex; position: relative; }
+
+/* The app header: what register you are reading, and whose product it is. Deliberately just
+   those two things — the reference screen's search box, notification icons and avatar have
+   nothing behind them here, and the sync controls stay in the rail where they have always
+   been. */
+.appbar {
+  flex: 0 0 var(--appbar-h);
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: 0 var(--space-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+  z-index: var(--z-appbar);
+}
+.appbar-name {
+  font-weight: 600; font-size: var(--fs-lead); letter-spacing: -0.02em; color: var(--ink);
+  white-space: nowrap;
+}
+/* The rule between the product and the scope it is showing — two different kinds of fact,
+   and without it the project name reads as part of the wordmark. */
+.appbar-sep { width: 1px; height: 20px; flex: 0 0 auto; background: var(--hairline); }
+
+.sidebar {
+  width: var(--rail-icon-w);
+  flex: 0 0 var(--rail-icon-w);
+  height: 100%;
+  overflow-y: auto;
+  background: var(--surface);
+  border-right: 1px solid var(--hairline);
+  padding: var(--space-2) var(--space-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+}
+/* The product mark. Its paint is on the presentation attributes too (ui/brandMark.js), so
+   it draws correctly with no stylesheet at all — which is the case index.html's first
+   paint is closest to. These rules exist so the three colours stay retintable from one
+   place, not because the mark needs them. */
+.brand-mark { display: block; flex: none; }
+.brand-mark .mark-map { stroke: var(--mark-map-blue); }
+.brand-mark .mark-map--warm { stroke: var(--mark-map-red); }
+.brand-mark .mark-ink { stroke: var(--mark-ink); }
+.brand-mark .mark-ink-fill { fill: var(--mark-ink); }
+.brand-mark .mark-knockout { stroke: var(--page); }
+/* Project scope switcher — in the app header, beside the wordmark, because it scopes every
+   page rather than any one of them. A row, not a column: the caption reads as a subtitle to
+   the trigger when it is under it, and as the trigger's denominator when it is beside it,
+   and the second is what it is. */
+.scope-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.scope-combo { width: clamp(180px, 22vw, 280px); flex: 0 1 auto; }
+/* 13px/500 — one step down from the wordmark it sits beside. It names the register every
+   page is showing, so it must not read as an afterthought; equally it is not the product's
+   name, so it stops short of that weight. */
+.scope-switch .combobox-trigger { min-height: 32px; font-size: var(--fs-body); font-weight: 500; }
+.scope-combo-icon { display: inline-flex; flex: 0 0 auto; color: var(--text-3); }
+/* SCOPED: a project is narrowing the register, and every figure on every page is counted
+   over it. The trigger is the only thing on screen that is true on all of them, so it is
+   where the state belongs. Unscoped it is the plain field above — "showing everything" is
+   the resting state, and a control that were always lit would report nothing. */
+.scope-combo.scoped .combobox-trigger {
+  background: var(--accent-wash);
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.scope-combo.scoped .combobox-trigger:hover { background: var(--accent-wash-hover); }
+.scope-combo.scoped .scope-combo-icon,
+.scope-combo.scoped .combobox-caret { color: var(--accent-text); }
+.scope-caption {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+/* A stored scope naming a project the register no longer holds. Amber, and the caption
+   already says so in words — the colour is the second signal, never the only one. */
+.scope-caption.stale { color: var(--warn); }
+/* On a phone the caption is down to "87…", which is worse than absent: a denominator you can
+   only half-read tells you nothing, and the trigger beside it still names the scope. */
+@media (max-width: 560px) { .scope-caption { display: none; } }
+
+/* A lane heading. An <h2> since the rail's grouping is real structure — margin: 0 because
+   nothing else in this stylesheet resets a bare h2 and the UA's 0.83em would land here. The
+   type is DESIGN.md's one sanctioned uppercase slot, unchanged. */
+.nav-group {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  margin: 0;
+}
+/* The chrome tail's separator, drawn by both shapes of the nav: above the three chrome items
+   on the icon rail, and above the same three links in the stacked list below 800px.
+   Decorative in the strict sense — what it marks is a change of kind the reader can see
+   (three pages that name themselves), so nothing here is the only carrier of anything. */
+.nav-rule {
+  height: 1px;
+  flex: 0 0 auto;
+  background: var(--hairline);
+  margin: var(--space-2) var(--space-2) var(--space-1);
+}
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--ink);
+  font-size: var(--fs-body);
+  text-decoration: none;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.nav-link:hover { background: var(--wash-hover); }
+/* Active nav reads by position + weight, not a ~2.5% tint alone: a 2px accent rail anchors
+   "you are here". Inset shadow keeps color rationing intact (accent = focus/identity). */
+.nav-link.active {
+  background: rgba(0, 0, 0, 0.07);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--accent), inset 3px 0 0 var(--accent-edge);
+}
+.nav-link:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- the two-tier rail */
+
+/* A rail item is a box holding two controls: the link that navigates, and — where the item
+   has a panel — the caret that discloses it. The box is what the pointer hovers, so either
+   one opens the panel and the link keeps its whole width as a target. */
+.rail-item { position: relative; display: block; }
+/* The rail's own link: the mark over its name, because at 76px there is no room beside it and
+   a name is what stops an icon rail being a rebus. */
+.rail-link {
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: var(--space-2) var(--space-half);
+  text-align: center;
+}
+.rail-link .nav-label {
+  font-size: var(--fs-micro);
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+  color: var(--text-2);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* `.current` is the lane holding the page you are on; `.active` is the link that IS that page.
+   They look the same on the rail on purpose — the rail answers "whereabouts", and the panel
+   beside it answers "which one" — and they are two classes rather than one because only the
+   second may ever carry aria-current. */
+.rail-item.current > .rail-link,
+.rail-link.active {
+  background: rgba(0, 0, 0, 0.07);
+  box-shadow: inset 2px 0 0 var(--accent), inset 3px 0 0 var(--accent-edge);
+}
+.rail-item.current > .rail-link .nav-label,
+.rail-link.active .nav-label { color: var(--ink); font-weight: 600; }
+.rail-item.current > .rail-link .nav-icon,
+.rail-link.active .nav-icon { color: var(--ink); }
+/* An item whose panel is showing. This is the only mark the rail draws for "there is more
+   here" now that the caret is gone — and it is drawn at the moment the panel is on screen
+   beside it, which is the moment it means anything. */
+.rail-item.open > .rail-link { background: var(--wash-hover); }
+
+/* --------------------------------------------------------------------- the nav panel */
+
+/* The second tier: a full-height column, so it has no placement problem to solve. Unpinned it
+   floats over the content pane with the one real shadow this system allows an overlay;
+   pinned it joins the flex row and `main` shrinks beside it, at which point it is a surface
+   like the rail and drops the shadow for a hairline. */
+.nav-flyout {
+  position: absolute;
+  left: var(--rail-icon-w); top: 0; bottom: 0;
+  width: var(--nav-flyout-w);
+  z-index: var(--z-nav-flyout);
+  display: flex;
+  flex-direction: column;
+  background: var(--page);
+  border-right: 1px solid var(--hairline);
+  box-shadow: var(--shadow-flyout);
+  opacity: 0;
+  transform: translateX(-6px);
+  transition: opacity var(--dur-quick) ease, transform var(--dur-quick) ease;
+}
+/* display:flex above would otherwise beat the UA's [hidden] rule and leave a closed panel on
+   screen at opacity 0, eating every click along the left edge of the page. */
+.nav-flyout[hidden] { display: none; }
+.nav-flyout.open { opacity: 1; transform: none; }
+.nav-flyout.pinned {
+  position: relative;
+  left: auto; top: auto; bottom: auto;
+  flex: 0 0 var(--nav-flyout-w);
+  opacity: 1;
+  transform: none;
+  box-shadow: none;
+}
+.nav-flyout-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-2) var(--space-2) var(--space-3);
+  flex: 0 0 auto;
+}
+.nav-flyout-title {
+  font-size: var(--fs-lead); font-weight: 600; letter-spacing: -0.01em;
+  color: var(--ink); margin: 0;
+}
+.nav-flyout-pin {
+  margin-left: auto; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  border: 1px solid transparent; border-radius: var(--radius-md);
+  background: none; color: var(--text-2); cursor: pointer;
+}
+.nav-flyout-pin:hover { background: var(--wash-hover); border-color: var(--hairline); }
+.nav-flyout-pin:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.nav-flyout-pin[aria-pressed="true"] { color: var(--ink); border-color: var(--hairline); }
+.nav-flyout-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: var(--space-half);
+  padding: 0 var(--space-2) var(--space-3);
+}
+/* The panel's own group headings reuse the rail's, because they are the same kind of label in
+   the same nav — DESIGN.md's one sanctioned uppercase slot, spent once. */
+.nav-flyout-body .nav-group { padding: var(--space-3) var(--space-2) var(--space-1); }
+/* A row with no mark of its own keeps the slot, so its name starts where every other name
+   does. A saved view carries the mark of the page it replays into; a framework has no mark to
+   carry, and inventing one would say it is a kind of thing this app draws. */
+.nav-icon-blank { visibility: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-flyout { transition: none; transform: none; }
+}
+
+.sidebar .scan-zone {
+  margin-top: auto;
+  border-top: 1px solid var(--hairline);
+  padding-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.scan-caption { font-size: var(--fs-label); color: var(--text-3); }
+.scan-buttons { display: flex; gap: var(--space-2); }
+
+/* The mark on a nav row, at the one size every one of them draws: rail item, panel row and
+   stacked-list link alike. */
+.nav-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; flex: 0 0 18px; color: var(--text-2);
+}
+.nav-icon svg { width: 18px; height: 18px; display: block; }
+.nav-link.active .nav-icon { color: var(--ink); }
+.sidebar .scan-buttons button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); }
+.sidebar .scan-buttons .primary .nav-icon { color: inherit; width: 16px; height: 16px; flex-basis: 16px; }
+.sidebar .scan-buttons .primary .nav-icon svg { width: 16px; height: 16px; }
+.rail-status-dot { display: none; width: 9px; height: 9px; border-radius: 50%; align-self: center; }
+.rail-status-dot.ok { background: var(--ok); }
+.rail-status-dot.neutral { background: var(--text-3); }
+
+/* The rail proper — everything here used to be the .collapsed variant of a rail that could
+   also be 232px wide. It cannot any more: the second tier is a panel beside the rail, not a
+   wider rail, so this IS the rail above 800px. Below that the nav is a stacked list where
+   every one of these would be wrong, which is what the media query is holding back. */
+@media (min-width: 801px) {
+  .sidebar .scan-caption,
+  .sidebar .btn-label,
+  .sidebar .scan-buttons button:not(.primary) { display: none; }
+  .sidebar .scan-buttons { justify-content: center; }
+  .sidebar .scan-buttons .primary { padding: var(--space-2); }
+  .sidebar .rail-status-dot { display: block; }
+  /* Loading panel in the icon rail: drop the full card chrome and its text/bar/buttons,
+     leaving the compact ring indicator centered — the card's phase, counts and controls
+     are too wide for the rail, so they collapse to the ring (status) + its Details button. */
+  .sidebar .scan-progress {
+    padding: var(--space-1) 0; gap: 0; align-items: center;
+    background: transparent; border: none; box-shadow: none;
+  }
+  .sidebar .scan-progress-bar-slot,
+  .sidebar .scan-progress-counts,
+  .sidebar .scan-progress-actions { display: none; }
+  /* The phase line is the card's aria-live announcement target — visually hide it rather
+     than display:none it, so screen readers still hear phase transitions in the icon rail. */
+  .sidebar .scan-progress-head {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  }
+  .sidebar .scan-progress-mini { display: inline-flex; }
+}
+
+/* Sync progress card (persistent, non-modal; lives in the sync zone while a job runs) */
+.scan-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--page);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+.scan-progress-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.scan-progress-phase { font-size: var(--fs-label); font-weight: 600; color: var(--ink); }
+.scan-progress-elapsed { font-size: var(--fs-label); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.scan-progress-counts { font-size: var(--fs-label); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.scan-progress.failed .scan-progress-counts { color: var(--bad); }
+/* A run with no progress for minutes: flag it amber on the always-visible card, not only
+   behind the details drawer, so a likely-dead sync is legible at a glance. */
+.scan-progress.stuck { border-color: rgba(161, 98, 7, 0.4); }
+.scan-progress.stuck .scan-progress-phase,
+.scan-progress.stuck .scan-progress-counts { color: var(--warn); }
+.scan-progress-actions { display: flex; gap: var(--space-3); }
+
+/* Compact icon-rail indicator: a ring (spinner / arc / filled) with a centered glyph or
+   percent. Hidden by default; the rail block above reveals it, and the stacked list below
+   800px keeps the full card instead. The
+   ring is a masked conic-gradient donut so a single element carries both the track and
+   the coloured arc; --ring is re-tinted per run state, matching the progress-bar colours. */
+.scan-progress-mini {
+  display: none; position: relative; align-items: center; justify-content: center;
+  width: 100%; padding: var(--space-half) 0; border: none; background: none; cursor: pointer;
+}
+.scan-progress-mini:disabled { cursor: default; }
+.scan-progress-mini:focus-visible {
+  outline: 2px solid var(--accent-text); outline-offset: 3px; border-radius: var(--radius-md);
+}
+.scan-spinner {
+  --ring: var(--accent-text);
+  --track: rgba(0, 0, 0, 0.10);
+  width: 28px; height: 28px; border-radius: 50%;
+  /* Terminal states show a full ring; a running sync with no percent yet spins a 25% arc. */
+  background: conic-gradient(var(--ring) 0 100%, var(--track) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3.5px), #000 calc(100% - 3.5px));
+          mask: radial-gradient(farthest-side, transparent calc(100% - 3.5px), #000 calc(100% - 3.5px));
+}
+.scan-progress.running .scan-spinner {
+  background: conic-gradient(var(--ring) 0 25%, var(--track) 0);
+  animation: scan-spin 0.9s linear infinite;
+}
+/* A known percent freezes the spin into a static arc filled to that share. */
+.scan-progress.running .scan-spinner.is-determinate {
+  background: conic-gradient(var(--ring) calc(var(--scan-pct, 0) * 1%), var(--track) 0);
+  animation: none;
+}
+.scan-progress.done .scan-spinner { --ring: var(--ok); }
+.scan-progress.failed .scan-spinner { --ring: var(--bad); }
+.scan-progress.cancelled .scan-spinner { --ring: var(--text-3); }
+.scan-progress.stuck .scan-spinner { --ring: var(--warn); }
+.scan-progress-mini-pct {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: var(--fs-micro); font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.scan-progress.done .scan-progress-mini-pct { color: var(--ok); font-size: var(--fs-label); }
+.scan-progress.failed .scan-progress-mini-pct { color: var(--bad); font-size: var(--fs-label); }
+.scan-progress.stuck .scan-progress-mini-pct { color: var(--warn); font-size: var(--fs-label); }
+@keyframes scan-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  /* No spin: a calm 40% arc still reads as "working" without motion. */
+  .scan-progress.running .scan-spinner {
+    animation: none; background: conic-gradient(var(--ring) 0 40%, var(--track) 0);
+  }
+}
+.linklike {
+  background: none; border: none; padding: 0; font-size: var(--fs-label); font-weight: 600;
+  color: var(--accent-text); cursor: pointer;
+}
+.linklike.danger { color: var(--bad); }
+.linklike:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; border-radius: var(--radius-xs); }
+
+/* Track/fill progress bar. Fill is the brand accent — a state color, not severity. */
+.progress-track {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+}
+.progress-fill {
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
+  transition: width 300ms ease-out;
+}
+.progress-track.done .progress-fill { background: var(--ok); }
+.progress-track.failed .progress-fill { background: var(--bad); }
+.progress-track.cancelled .progress-fill { background: var(--text-3); }
+/* Indeterminate: a travelling band. Under reduced motion the band is replaced by a
+   calm static striped fill so "working" still reads without animation. */
+.progress-track.indeterminate .progress-fill {
+  width: 40%;
+  animation: progress-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes progress-indeterminate {
+  0% { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-track.indeterminate .progress-fill {
+    width: 100%;
+    margin-left: 0;
+    background: repeating-linear-gradient(
+      45deg, var(--accent), var(--accent) 8px,
+      var(--accent-text) 8px, var(--accent-text) 16px);
+  }
+}
+
+/* Details drawer: phase stepper + fact grid */
+.scan-steps { display: flex; gap: var(--space-3); margin: var(--space-1) 0 var(--space-4); }
+.scan-step { display: flex; align-items: center; gap: var(--space-1); font-size: var(--fs-body); color: var(--text-3); }
+.scan-step.done { color: var(--ok); }
+.scan-step.active { color: var(--accent-text); font-weight: 600; }
+.scan-step-dot { font-size: var(--fs-label); }
+.scan-detail-grid {
+  display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-4);
+  margin-top: var(--space-4); font-size: var(--fs-body);
+}
+.scan-detail-grid dt { color: var(--text-3); }
+.scan-detail-grid dd { margin: 0; font-variant-numeric: tabular-nums; }
+.scan-detail-error {
+  margin-top: var(--space-4); padding: var(--space-2) var(--space-3); font-size: var(--fs-label);
+  color: var(--bad); background: rgba(185, 28, 28, 0.06);
+  border-radius: var(--radius-md);
+}
+
+/* The content pane fills whatever the rail leaves. It used to stop at 1200px, which
+   on a wide monitor left a third of the viewport empty AND clipped the inventory
+   table's right-hand columns — dead space and lost data at the same time. Line length
+   is governed where it belongs instead: on the prose itself (--measure), so the
+   layout grids (.kpi-row, .scan-cards) and the tables get the room they can use. */
+main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-6) var(--space-7);
+  /* THIS PANE IS A SCROLLPORT WITH TOP PADDING, and a sticky table heading has to know by how
+     much. Overflow clips at the padding box, so scrolled rows are visible in the padding strip
+     above the content box — where a heading pinned at `top: 0` would leave them showing above
+     it. Declared here, beside the padding it cancels, so the two cannot drift apart; the rule
+     that reads it is `.table-wrap--sticky table.data th` in tables.css, and a scrollport that
+     never sets this simply gets 0. */
+  --sticky-inset: var(--space-6);
+}
+
+/* Full-bleed routes (the graph workbench): the page owns the whole content pane. */
+main.full-bleed {
+  padding: 0;
+  max-width: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+main.full-bleed > .empty { margin: var(--space-6) var(--space-6); }
+
+/* Route-reload overlay: a translucent veil + indeterminate top bar over the content
+   pane while the active page refetches. The rail and the app header stay clear and
+   interactive — the rail because it sits outside this box, the header because it outranks
+   it (--z-appbar). */
+.route-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: var(--rail-w);
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) ease-out, visibility 0s linear var(--dur-fast);
+}
+.route-overlay.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto; /* absorb clicks on stale content while it reloads */
+  transition: opacity var(--dur-fast) ease-out;
+}
+.route-overlay-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.06);
+}
+.route-overlay-fill {
+  width: 40%;
+  height: 100%;
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
+  animation: progress-indeterminate 1.2s ease-in-out infinite;
+}
+.route-overlay-label {
+  margin-top: 84px;
+  align-self: flex-start;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--page);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  box-shadow: var(--shadow-card);
+}
+.route-overlay-label:empty { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .route-overlay-fill {
+    width: 100%;
+    animation: none;
+    background: repeating-linear-gradient(
+      45deg, var(--accent), var(--accent) 8px,
+      var(--accent-text) 8px, var(--accent-text) 16px);
+  }
+  .route-overlay { transition: none; }
+}
+
+/* Boot splash: full-viewport branded veil painted by index.html on first load and recreated
+   by bootSplash() on refresh(), faded out once the page skeleton has laid out. Sits above the
+   route overlay (20) and sheets (41), below toasts (60). */
+.boot-splash {
+  position: fixed; inset: 0; z-index: 55;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--page); opacity: 1; transition: opacity var(--dur-base) ease-out;
+}
+.boot-splash.hiding { opacity: 0; }
+.boot-splash-inner {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-4);
+  padding: var(--space-5); width: min(280px, 80vw);
+}
+/* Mark above the name, not beside it: at 72px the globe is the point of the splash, and a
+   row would push the pair past the 280px column. */
+.boot-brand {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-3); font-weight: 600;
+  font-size: var(--fs-display-sm); letter-spacing: -0.02em; color: var(--ink);
+}
+.boot-splash-bar { width: 100%; }
+.boot-splash-note { margin: 0; font-size: var(--fs-label); color: var(--text-2); }
+@media (prefers-reduced-motion: reduce) { .boot-splash { transition: none; } }
+
+/* Skeleton placeholders: calm opacity pulse only — NO diagonal shimmer sweep (the SaaS tell
+   DESIGN.md forbids). Reduced motion → a static hairline block. Blocks are aria-hidden. */
+.skeleton {
+  background: color-mix(in srgb, var(--ink) 7%, var(--surface));
+  border-radius: var(--radius-md); animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+@keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+.skeleton--line { height: 12px; border-radius: 4px; }
+.skeleton--title { height: 30px; border-radius: var(--radius-sm); }
+.skeleton--stat { height: 18px; border-radius: 5px; }
+.skeleton--pill { height: 30px; border-radius: var(--radius-pill); }
+.skeleton--chart { position: absolute; inset: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none; background: color-mix(in srgb, var(--ink) 5%, var(--surface));
+    border: 1px solid var(--hairline);
+  }
+}
+
+@media (max-width: 800px) {
+  #app { height: auto; min-height: 100vh; overflow: visible; }
+  .app-body { flex-direction: column; min-height: 0; overflow: visible; }
+  /* The header follows the page down rather than scrolling off it: the scope switcher is
+     the one control that answers "what am I even looking at", and at this width the page
+     below it is long. Sticky rather than fixed so it still takes part in the flow. */
+  .appbar { position: sticky; top: 0; }
+  .sidebar {
+    width: auto;
+    flex: none;
+    height: auto;
+    overflow: visible;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    border-right: none;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .sidebar { padding: var(--space-3); }
+  /* No panel down here at all. The nav is a stacked list at this width — there is nothing to
+     fly out from and nowhere to put it, and a pinned panel left over from a wider window
+     would land as a 280px block across the top of the page. */
+  .nav-flyout, .nav-flyout.pinned { display: none; }
+  .sidebar .scan-zone { margin-top: 0; border-top: none; padding-top: 0; }
+  /* The rail turns into a ROW here, but `.nav-link` is width:100%, so the links go on
+     stacking one per line and the lanes read exactly as they do in the open rail — words,
+     each on its own line. The tail's rule is the one thing that does not survive the switch:
+     an empty div in a row container shrink-to-fits to nothing, so it needs a line of its
+     own, and takes it with zero side margins rather than a width the margins then overflow. */
+  .sidebar .nav-rule { flex: 0 0 100%; margin: var(--space-2) 0; }
+  /* The top bar must stay above the full-width route overlay so nav + sync controls remain
+     visible and clickable during a reload (desktop clears the rail via left:var(--rail-w)). */
+  .sidebar { position: relative; z-index: 45; }
+  main { height: auto; overflow: visible; padding: var(--space-4) var(--space-4) var(--space-6); }
+  .route-overlay { position: fixed; left: 0; }
+  /* Full-bleed workbench degrades to a tall block inside the scrolling page. */
+  main.full-bleed { display: block; overflow: visible; height: auto; padding: 0; }
+  .workbench { height: auto; }
+  /* No room to dock beside a 70vh canvas inside a scrolling page — the filter panel is
+     hosted as a modal sheet at this width, so the split is just the canvas. */
+  .workbench-split { display: block; }
+  .workbench-body { height: min(70vh, 640px); }
+  .workbench-table { position: static; height: auto; max-height: 70vh; }
+  .workbench-controls { margin-left: 0; width: 100%; }
+  .workbench-search input[type="search"] { width: 100%; }
+  .workbench-search { flex: 1 1 100%; }
+}
+
+/* ------------------------------------------------------------------- typography */
+h1 { font-size: var(--fs-display); font-weight: 600; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 var(--space-1); }
+.page-sub { color: var(--text-2); margin: 0 0 var(--space-5); max-width: var(--measure); }
+/* The explanatory notes under a card's controls (settings, scans) are running text. */
+p.small.muted { max-width: var(--measure); }
+/* THE SECTION SEPARATOR, and the single biggest lever on the missing layout tier. 28px above
+   a section heading is not separation, it is the same beat as the 24px inside the block above
+   it, so sections ran together into one column of evenly-spaced rows. 32 above and 12 below
+   makes the label belong to what FOLLOWS it rather than float between two neighbours, which
+   is the whole job of a section heading. */
+h2.section-label { font-size: var(--fs-lead); font-weight: 600; margin: var(--space-6) 0 var(--space-3); }
+h3 { font-size: var(--fs-lead); font-weight: 600; margin: 0 0 var(--space-2); }
+.label {
+  font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.num, .kpi-value, td.num, .hero-value, .mini-value { font-variant-numeric: tabular-nums; }
+.muted { color: var(--text-2); }
+.small { font-size: var(--fs-label); }
+
+/* ---------------------------------------------------------------------- buttons */
+button, .btn {
+  font-family: inherit;
+  font-size: var(--fs-body);
+  border-radius: var(--radius-md);
+  min-height: 36px;
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-button);
+}
+button:hover, .btn:hover { background: #f1f1f4; border-color: #d9d9de; }
+button:focus-visible, .btn:focus-visible, a:focus-visible, input:focus-visible,
+select:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+/* Primary buttons are graphite, as root DESIGN.md specifies. gas_ai fills this with its
+   accent; that divergence cannot survive a yellow one — white on #ffcb13 is 1.52:1, and
+   near-black on it (11.78:1) would make the primary action look like a highlighter. The
+   accent stays an accent. */
+button.primary {
+  background: var(--graphite);
+  color: var(--on-graphite);
+  border: none;
+}
+button.primary:hover { background: var(--graphite-hover); }
+button.danger { color: var(--bad); border-color: rgba(185, 28, 28, 0.35); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.link {
+  background: none; border: none; box-shadow: none; color: var(--accent-text);
+  padding: var(--space-half) var(--space-1); min-height: 0;
+}
+
+/* ----------------------------------------------------------------------- inputs */
+input[type="text"], input[type="search"], input[type="number"], select {
+  font-family: inherit;
+  font-size: var(--fs-body);
+  background: var(--page);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  min-height: 36px;
+  padding: var(--space-1) var(--space-2);
+}
+label.field-label { display: block; font-size: var(--fs-label); color: var(--text-2); margin-bottom: var(--space-1); }
+
+input[type="range"] { accent-color: var(--accent-text); }
+
+/* Invalid input state — border + focus ring pair the color with the field position, and
+   .field-error carries the plain-language reason in text (never color alone). */
+input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] {
+  border-color: var(--bad);
+}
+input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visible {
+  outline-color: var(--bad);
+}
+.field-error { color: var(--bad); font-size: var(--fs-label); margin-top: var(--space-1); }

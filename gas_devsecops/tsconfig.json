@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2019"],
+    // "node" is here because `test/` genuinely uses node:fs, node:path and node:vm — the
+    // GAS shims are read off disk and evaluated. It used to arrive by accident: vitest 1.6's
+    // type entry carried a `/// <reference types="node" />`, so the whole program got node
+    // globals whether it asked or not. vitest 4's types are leaner and dropped it, which
+    // turned `npm run typecheck` red. Declaring it restores exactly the previous program,
+    // and makes the dependency something you can see.
+    "types": ["google-apps-script", "node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+
+    // Repeat typechecks over ~74k lines should not re-read what did not change. The build
+    // info goes under node_modules/ so it is gitignored by the same rule that ignores the
+    // dependency tree, and `npm ci` discards it along with everything else there.
+    "incremental": true,
+    "tsBuildInfoFile": "node_modules/.cache/tsconfig.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

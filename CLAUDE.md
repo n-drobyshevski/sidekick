@@ -10,6 +10,10 @@ scan history, and — in the GAS rebuild — Prioritization-to-Prediction progra
 (remediation coverage, efficiency, capacity). Entry point is `app.py` (`st.navigation` / `st.Page`); pages live in
 `wiz_dashboard/ui/pages/`, shared logic in `wiz_dashboard/{config,data,domain,models}`.
 
+`gas_devsecops/` is a fourth register over the same design system: MTTR and remediation
+analytics for SAST / SCA / secrets findings in source repositories, with `brick/devsecops/`
+as its behavioural spec.
+
 `gas/` holds a full Google Apps Script rebuild of the same product (Google Sheets ledger +
 Drive archives + HtmlService SPA). The Python `wiz_dashboard/domain/` layer is its behavioral
 spec: `gas/test/export_*.py` generate golden fixtures by running this code, and the TypeScript
@@ -71,6 +75,44 @@ because they are in this file.
 - **Commit locally; do not push or open a PR** unless asked. Message style is
   `<area>: <lowercase phrase stating the substance>` — the body explains the defect and the
   measurement that justifies the fix.
+
+## gas_devsecops — the code register
+
+A fourth register: MTTR and remediation analytics for **SAST, SCA and secrets** findings.
+`gas_devsecops/` is the SPA; the domain layer is a Phase 2 port of `brick/devsecops/`, which
+already implements the pipeline and is the behavioural spec (same relationship `gas/` has to
+`wiz_dashboard/domain/`). Chassis forked from `gas_ai/`, analytics to be ported from `gas/`.
+
+- **The clock is the product, and a clock has to say where it started.** Every figure states
+  what it measured from and what it did with the rows it could not measure. Open findings
+  stay in as right-censored observations; where the curve never reaches half, publish the
+  lower bound, not a number.
+- **SAST has no timestamps in this tenant** — none at all. `brick/devsecops` sets
+  `SAST_FETCH_RESOLVED = False` because a resolved SAST finding would be born and closed in
+  the same instant, giving a real `mttr_days == 0.0` that drags the median to the floor, and
+  a test pins it. "No MTTR yet" is actionable; "MTTR is 0 days" is a lie. Do not turn it on
+  without a timestamp field to date from.
+- **The second clock is captured but not yet computed.** `fix_date` / `fix_observed_at` are
+  on every ledger row; nothing derives `fix_available_at`, `mttr_actionable_days` or
+  `awaiting_vendor_fix`. Reference: `gas/src/domain/ledgerCore.ts::baseRows`.
+- **Three scopes, one ledger, and `scope` is part of the key.** The same CVE arriving through
+  a dependency and through a host image is two findings with two clocks.
+- **Removed is not rotated.** A secret leaving the register means the string left HEAD. The
+  credential is live until `rotated_at` says otherwise.
+- **The accent is split and the split is load-bearing.** `--accent: #ffcb13` is 1.52:1 on
+  white and 1.30:1 on the meter track — it is a FILL token and nothing else. Every accent
+  fill carries `--accent-edge: rgba(0,0,0,.40)`, which lifts it to 3.49:1. Links, focus
+  rings, accent ink and chart series all take `--accent-text: #7c4a0a` (7.39:1). The primary
+  button stays graphite `#0a0a0a` — do NOT copy gas_ai's accent-filled button, white on this
+  accent is 1.52:1. `test/tokens.test.js` holds all four.
+- **The severity palette is byte-identical across all four surfaces.** A severity means the
+  same thing everywhere; the brand deliberately does not.
+- **`PAGES` in `app.js` is the only IA list**, and a labelled lane must hold two pages —
+  `navModel` collapses a lane of one on the rail, but `renderStackedNav` below 800px draws
+  the heading unconditionally, so a one-page lane restates its own link. `navGroups.test.js`
+  caught exactly that during the fork.
+- **The `{ok,data}` envelope lives in `api.ts`, not `dist/entry.js`.** `dev/boot.js`
+  dispatches straight into `Server.api` and never runs the delegators.
 
 ## gas_ai — scoring conventions
 
