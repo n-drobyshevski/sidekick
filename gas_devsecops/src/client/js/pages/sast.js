@@ -3,18 +3,17 @@ import { renderStub } from "./_stub.js";
 /** First-party code: a weakness class at a file and a line. */
 export function renderSast(host) {
   renderStub(host, {
-    lane: "Реестры",
-    title: "Код",
-    lede: "Слабые места в собственном коде: класс уязвимости, файл и строка.",
+    lane: "Registers",
+    title: "Code",
+    lede: "Weaknesses in our own source: the class, the file, and the line.",
     sections: [
-      "Реестр: правило и CWE, путь к файлу и строка, язык, источник сканера.",
-      "Попадание в CWE Top-25 — с учётом того, что часть классов доходит до списка только через родителя.",
-      "Воронка разбора: сколько строк вообще дошло до решения.",
-      "Разрез по репозиториям и по командам-владельцам.",
+      "The register: rule and CWE, file path and line, language, scanner of origin.",
+      "CWE Top-25 hit rate — allowing for the classes that only reach the list through a parent.",
+      "The triage funnel: how many findings reached a decision at all.",
+      "Breakdown by repository and by owning team.",
     ],
-    note: "У находок SAST в этом тенанте НЕТ ни одной отметки времени — ни обнаружения, ни "
-      + "закрытия. Поэтому MTTR здесь датируется наблюдением, и страница обязана сказать это "
-      + "на себе: «пока нет MTTR» — состояние, с которым можно работать, а «MTTR = 0 дней» — "
-      + "уверенная ложь.",
+    note: "SAST findings in this tenant carry NO timestamps — not detection, not resolution. "
+      + "So MTTR here is dated from observation, and this page has to say so on its face: "
+      + "\"no MTTR yet\" is a state you can act on; \"MTTR is 0 days\" is a confident lie.",
   });
 }

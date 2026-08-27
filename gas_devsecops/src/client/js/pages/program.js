@@ -3,14 +3,14 @@ import { renderStub } from "./_stub.js";
 /** Did the effort land where it mattered, and can it keep up. */
 export function renderProgram(host) {
   renderStub(host, {
-    lane: "Программа",
-    title: "Эффективность программы",
-    lede: "Попадает ли работа по устранению в то, что действительно важно, и успеваем ли мы за притоком.",
+    lane: "Program",
+    title: "Coverage & efficiency",
+    lede: "Whether remediation effort lands on what matters, and whether it keeps up with arrivals.",
     sections: [
-      "Полнота и точность (coverage / efficiency) — всегда парой и всегда с шириной сомнения: границы считаются по крайним переразметкам неклассифицированных строк.",
-      "Матрица ошибок с неклассифицированными строками ОТДЕЛЬНО от четырёх квадрантов.",
-      "Пропускная способность по месяцам: открыто на начало, пришло, закрыто, вердикт с мёртвой зоной ±2%.",
-      "Чувствительность правила: развёртка по непустым подмножествам сигналов.",
+      "Coverage and efficiency — always published as a pair, and always with the width of their doubt: the bounds come from the extreme relabellings of the unclassified rows.",
+      "The confusion matrix, with unclassified rows held OUTSIDE the four quadrants rather than folded into them.",
+      "Monthly capacity: open at start, arrived, closed, and a verdict with a ±2% dead band.",
+      "Rule sensitivity: a sweep across every non-empty subset of the risk signals.",
     ],
   });
 }

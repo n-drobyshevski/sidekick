@@ -3,16 +3,16 @@ import { renderStub } from "./_stub.js";
 /** Credentials in the repository — a lifecycle of its own. */
 export function renderSecrets(host) {
   renderStub(host, {
-    lane: "Реестры",
-    title: "Секреты",
-    lede: "Учётные данные в коде: убрать — это ещё не починить.",
+    lane: "Registers",
+    title: "Secrets",
+    lede: "Credentials committed to source: removing one is not the same as fixing it.",
     sections: [
-      "Реестр: тип секрета, репозиторий, путь, коммит, когда впервые увиден.",
-      "Два состояния вместо одного: удалён из кода и ротирован. Первое не влечёт второго.",
-      "Окно экспозиции: от первого коммита до ротации, а не до удаления.",
-      "Что осталось в истории git после удаления из HEAD.",
+      "The register: secret kind, repository, path, commit, first seen.",
+      "Two states rather than one: removed from code, and rotated. The first does not imply the second.",
+      "Exposure window: from the first commit to rotation — not to removal.",
+      "What is still readable in git history after the string left HEAD.",
     ],
-    note: "Единственный из трёх реестров, где статус RESOLVED от Wiz не означает, что риск "
-      + "снят: секрет остаётся действующим, пока его не ротировали.",
+    note: "The only one of the three registers where a RESOLVED status from Wiz does not mean "
+      + "the risk is gone: a committed secret stays live until it is rotated.",
   });
 }

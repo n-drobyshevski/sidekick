@@ -34,16 +34,16 @@ Three lanes and a chrome tail. The IA lives in exactly one place — `PAGES` in
 
 | Route | Title | Lane | The one question |
 |---|---|---|---|
-| `executive` | Сводка | Программа | How fast is code risk closing, how much is open, where is it going? |
-| `mttr` | MTTR и SLA | Программа | How long does a finding live once you stop discarding what is still open? |
-| `program` | Эффективность | Программа | Did the effort land on what mattered, and can it keep up? |
-| `sca` | Зависимости | Реестры | Which third-party CVEs are open, and is there anything to upgrade to? |
-| `sast` | Код | Реестры | Which weaknesses are in our own code, and where? |
-| `secrets` | Секреты | Реестры | Which credentials are in the repository, and are they dead yet? |
-| `repos` | Репозитории | Данные | Where does the backlog sit, which repos are footholds, who owns them? |
-| `history` | История сканов | Данные | What was actually measured, when? |
-| `data` | Данные | Данные | What is stored, what can be exported, what can be reset? |
-| `settings` | Настройки | — | Register, SLA windows, access, system. |
+| `executive` | Executive | Program | How fast is code risk closing, how much is open, where is it going? |
+| `mttr` | MTTR & SLA | Program | How long does a finding live once you stop discarding what is still open? |
+| `program` | Coverage & efficiency | Program | Did the effort land on what mattered, and can it keep up? |
+| `sca` | Dependencies | Registers | Which third-party CVEs are open, and is there anything to upgrade to? |
+| `sast` | Code | Registers | Which weaknesses are in our own code, and where? |
+| `secrets` | Secrets | Registers | Which credentials are in the repository, and are they dead yet? |
+| `repos` | Repositories | Data | Where does the backlog sit, which repos are footholds, who owns them? |
+| `history` | Scan history | Data | What was actually measured, when? |
+| `data` | Storage | Data | What is stored, what can be exported, what can be reset? |
+| `settings` | Settings | — | Register, SLA windows, access, system. |
 
 ### Why SAST, SCA and secrets are three pages
 

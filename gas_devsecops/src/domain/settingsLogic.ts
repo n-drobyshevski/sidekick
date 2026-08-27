@@ -70,10 +70,10 @@ export function cleanSettings(raw: Rec | null | undefined): Settings {
 /** Stage two: what a human got wrong, in words. Never repairs — that is stage one's job. */
 export function validateSettings(s: Settings): string[] {
   const errs: string[] = [];
-  if (!s.scopes.length) errs.push("Выберите хотя бы один реестр для сбора.");
+  if (!s.scopes.length) errs.push("Choose at least one register to collect.");
   for (const [sev, days] of Object.entries(s.slaTargets)) {
     if (!Number.isFinite(days) || days <= 0) {
-      errs.push(`Срок SLA для «${sev}» должен быть положительным числом дней.`);
+      errs.push(`The SLA target for ${sev} must be a positive number of days.`);
     }
   }
   return errs;

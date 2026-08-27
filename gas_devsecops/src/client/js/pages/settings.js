@@ -3,14 +3,14 @@ import { renderStub } from "./_stub.js";
 /** Four task tabs over one save bar. */
 export function renderSettings(host) {
   renderStub(host, {
-    lane: "Настройки",
-    title: "Настройки",
-    lede: "Параметры реестра, сроков, доступа и системы — в четырёх вкладках над одной панелью сохранения.",
+    lane: "Settings",
+    title: "Settings",
+    lede: "Register, deadlines, access and system — four tabs over a single save bar.",
     sections: [
-      "Реестр: какие области собирать (sca, sast, secrets), какие критичности запрашивать, идентификатор проекта Wiz.",
-      "Сроки: цели SLA по критичности.",
-      "Доступ: два уровня — владелец назначает администраторов, администраторы ведут список пользователей.",
-      "Система: учётные данные, расписание, диагностика развёртывания.",
+      "Register: which scopes to collect (sca, sast, secrets), which severities to request, the Wiz project id.",
+      "Deadlines: SLA targets by severity.",
+      "Access: two tiers — the owner appoints admins, admins maintain the user list.",
+      "System: credentials, schedule, deployment diagnostic.",
     ],
   });
 }

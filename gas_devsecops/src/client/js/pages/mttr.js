@@ -3,17 +3,17 @@ import { renderStub } from "./_stub.js";
 /** Time-to-remediate, and the honest qualifiers around it. */
 export function renderMttr(host) {
   renderStub(host, {
-    lane: "Программа",
-    title: "MTTR и SLA",
-    lede: "Сколько живёт находка, если перестать выбрасывать всё, что ещё открыто.",
+    lane: "Program",
+    title: "MTTR & SLA",
+    lede: "How long a finding actually lives, once you stop discarding everything still open.",
     sections: [
-      "Кривая выживания Каплана—Мейера: события — закрытые находки, открытые входят как цензурированные справа.",
-      "Медиана и RMST с пометкой усечения; когда кривая не опускается до половины, публикуется нижняя граница, а не выдуманное число.",
-      "SLA по критичности: доля в срок, просрочка, возраст открытых по p50 и p90.",
-      "Распределение времени закрытия по корзинам.",
-      "Две шкалы для SCA: время с обнаружения и время с момента, когда исправление стало доступно.",
+      "The Kaplan–Meier survival curve: closed findings are events, open findings enter as right-censored observations.",
+      "Median and RMST, flagged when truncated. Where the curve never falls to half, a lower bound is published rather than an invented number.",
+      "SLA by severity: share met, overdue count, and the age of what is still open at p50 and p90.",
+      "Time-to-close distribution, in buckets.",
+      "Two clocks for SCA: time since detection, and time since a fix became available.",
     ],
-    note: "Вторая шкала — то, чего нет ни в одном из трёх существующих реестров: fix_date и "
-      + "fix_observed_at пишутся в ledger, но никто их пока не читает.",
+    note: "The second clock is the gap none of the three existing surfaces fills. fix_date and "
+      + "fix_observed_at are written to the ledger; nothing reads them yet.",
   });
 }

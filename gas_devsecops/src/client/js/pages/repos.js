@@ -3,17 +3,18 @@ import { renderStub } from "./_stub.js";
 /** The estate: repositories as the asset, and who owns them. */
 export function renderRepos(host) {
   renderStub(host, {
-    lane: "Данные",
-    title: "Репозитории",
-    lede: "Где лежит долг, где стоит опора для атаки и кто за это отвечает.",
+    lane: "Data",
+    title: "Repositories",
+    lede: "Where the backlog sits, which repositories offer a foothold, and who owns them.",
     sections: [
-      "Профиль репозитория: плотность находок по перцентилям, а не средним — распределение слишком скошено для среднего.",
-      "Доля репозиториев, где есть хотя бы одна находка высокого риска.",
-      "Период полураспада по репозиторию — та же оценка Каплана—Мейера, сгруппированная по активу.",
-      "Пропускная способность по репозиторию: кто отстаёт, кто держится, кто выигрывает.",
-      "Атрибуция владельца: покрытие иерархии проектов, и что осталось без владельца.",
+      "Repository profile: finding density by percentile rather than by mean — the distribution is far too skewed for a mean to describe it.",
+      "The foothold rate: the share of repositories carrying at least one high-risk finding.",
+      "Half-life per repository — the same Kaplan–Meier estimator, grouped by asset instead of by severity.",
+      "Capacity per repository: which are falling behind, which are holding, which are gaining.",
+      "Ownership attribution: coverage of the project hierarchy, and what is left unowned.",
     ],
-    note: "Для кода subscriptionName всегда пуст, так что второго измерения атрибуции нет — "
-      + "владельца несёт иерархия projects[] из sastFindings, папка и лист.",
+    note: "For a code register subscriptionName is always null, so there is no second "
+      + "attribution dimension — ownership comes from the projects[] folder/leaf hierarchy "
+      + "on sastFindings.",
   });
 }

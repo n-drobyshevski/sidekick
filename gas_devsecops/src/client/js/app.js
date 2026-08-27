@@ -42,16 +42,16 @@ import {
 //
 // THREE LANES AND A TAIL. Every page here is a security page, so "Security" as a heading
 // would distinguish nothing. What a reader actually chooses between is: how the programme
-// is doing (Программа), what is actually in the register (Реестры), and what has been
-// stored about it (Данные). The tail — `group: null` — is chrome, separated by a rule and
+// is doing (Program), what is actually in the register (Registers), and what has been
+// stored about it (Data). The tail — `group: null` — is chrome, separated by a rule and
 // never labelled.
 //
-// The first draft had four lanes, with Сводка alone under Обзор. navModel collapses a lane
-// of one to that page on the rail, so it looked fine there — but renderStackedNav below
-// 800px draws the heading unconditionally, which would have put the word "Обзор" directly
-// above a single link reading "Сводка". navGroups.test.js caught it. Сводка belongs with
-// MTTR and Эффективность anyway: all three are programme-level reads over the whole
-// population, and the registers below are that population.
+// The first draft had four lanes, with Executive alone under an "Overview" heading.
+// navModel collapses a lane of one to that page on the rail, so it looked fine there — but
+// renderStackedNav below 800px draws the heading unconditionally, which would have put the
+// word "Overview" directly above a single link reading "Executive". navGroups.test.js
+// caught it. Executive belongs with the other two anyway: all three are programme-level
+// reads over the whole population, and the registers below ARE that population.
 //
 // Two rules renderSidebar depends on, both held by test/navGroups.test.js:
 //   * A LABELLED LANE EARNS ITS HEADING BY HOLDING TWO PAGES. A lane left holding one
@@ -74,30 +74,34 @@ import {
 const PAGES = {
   // The front door, and DEFAULT_ROUTE in store.js names it. A leader opens the app wanting
   // one number; an analyst passes straight through to a register.
-  executive: { title: "Сводка", group: "Программа", render: renderExecutive },
+  executive: { title: "Executive", group: "Program", render: renderExecutive },
 
   // The product. Everything else on the rail exists to make these two legible and to let a
   // reader check them.
-  mttr: { title: "MTTR и SLA", group: "Программа", render: renderMttr },
-  program: { title: "Эффективность", group: "Программа", render: renderProgram },
+  mttr: { title: "MTTR & SLA", group: "Program", render: renderMttr },
+  // "Coverage & efficiency", not "Program performance": it sits in a lane already called
+  // Program, and the pair of figures IS the page — they are never published apart.
+  program: { title: "Coverage & efficiency", group: "Program", render: renderProgram },
 
   // The three registers. Ordered by how much of the backlog they carry in this tenant —
   // one repository alone holds 6,894 SCA findings against 11,406 SAST findings across all
   // of them — and by which one a reader can actually act on soonest.
-  sca: { title: "Зависимости", group: "Реестры", render: renderSca },
-  sast: { title: "Код", group: "Реестры", render: renderSast },
-  secrets: { title: "Секреты", group: "Реестры", render: renderSecrets },
+  sca: { title: "Dependencies", group: "Registers", render: renderSca },
+  sast: { title: "Code", group: "Registers", render: renderSast },
+  secrets: { title: "Secrets", group: "Registers", render: renderSecrets },
 
   // The estate and the record. `repos` is one page rather than gas/'s Attribution plus
   // brick/'s Estate: for a code register subscriptionName is always null, so there is no
   // second attribution dimension to separate out — ownership IS the repository, through the
   // projects[] hierarchy.
-  repos: { title: "Репозитории", group: "Данные", render: renderRepos },
-  history: { title: "История сканов", group: "Данные", render: renderHistory },
-  data: { title: "Данные", group: "Данные", render: renderData },
+  repos: { title: "Repositories", group: "Data", render: renderRepos },
+  history: { title: "Scan history", group: "Data", render: renderHistory },
+  // "Storage", not "Data": the lane is already called Data, and gas/ shipping a Data page
+  // inside a Data lane is a repetition worth not inheriting.
+  data: { title: "Storage", group: "Data", render: renderData },
 
   // The tail: chrome, not a lane. A rule separates it and nothing labels it.
-  settings: { title: "Настройки", group: null, render: renderSettings },
+  settings: { title: "Settings", group: null, render: renderSettings },
 };
 
 // Nav icons (ROUTE_ICONS, LANE_ICONS) live in routeIcons.js — see that module for why.
@@ -433,15 +437,15 @@ function renderSidebar(sidebar, data) {
   // button and the job card come back with the battery in Phase 2.
   const zone = el("div", { class: "scan-zone" });
   zone.append(
-    el("div", { class: "scan-caption" }, statusPill("neutral", "Сбор не подключён")),
+    el("div", { class: "scan-caption" }, statusPill("neutral", "Collection not wired")),
     tipAnchor(el("span", {
       class: "rail-status-dot neutral",
       "aria-hidden": "true",
-    }), "Сбор не подключён — второй этап"),
+    }), "Collection not wired — Phase 2"),
     el("div", { class: "scan-caption" },
       data && data.latestScan
-        ? `Последний скан ${fmtDateTime(data.latestScan.finished_at)}`
-        : "Сканов пока нет."),
+        ? `Last scan ${fmtDateTime(data.latestScan.finished_at)}`
+        : "No scans yet."),
   );
   sidebar.append(zone);
   // The rail is rebuilt wholesale on every refresh() and on every experimental-flag change,

@@ -26,7 +26,7 @@ export function renderStub(host, spec) {
   host.append(pageHeader({ hero: heroStat(spec.lane, spec.title, spec.lede) }));
 
   const card = el("section", { class: "card stub" });
-  card.append(el("h2", { class: "section-label" }, "Что будет на этой странице"));
+  card.append(el("h2", { class: "section-label" }, "What this page will answer"));
 
   const list = el("ul", { class: "stub-list" });
   for (const line of spec.sections) list.append(el("li", {}, line));
@@ -39,7 +39,7 @@ export function renderStub(host, spec) {
   card.append(el(
     "p",
     { class: "stub-status" },
-    "Данные не подключены: слой домена переносится из brick/devsecops на втором этапе.",
+    "No data connected — the domain layer ports from brick/devsecops in Phase 2.",
   ));
   host.append(card);
 }

@@ -3,15 +3,15 @@ import { renderStub } from "./_stub.js";
 /** What was actually measured, when. */
 export function renderHistory(host) {
   renderStub(host, {
-    lane: "Данные",
-    title: "История сканов",
-    lede: "Что и когда было измерено на самом деле, и как реестр двигался между измерениями.",
+    lane: "Data",
+    title: "Scan history",
+    lede: "What was actually measured and when, and how the register moved between measurements.",
     sections: [
-      "Журнал сканов: идентификатор, время, охваченные критичности, счётчики нового, закрытого и переоткрытого.",
-      "Тренд устранения по сохранённым сканам.",
-      "Первая запись журнала задаёт окно наблюдения — по нему помечаются реконструированные месяцы.",
+      "The scan log: id, timestamp, severities covered, and counts of new, resolved and reopened.",
+      "Remediation trend across the saved scans.",
+      "The first row dates the observation window, which is what lets capacity flag reconstructed months.",
     ],
-    note: "Журнал сканов несущий: он же защищает от повторного прогона одного скана и не даёт "
-      + "закрыть по исчезновению критичность, которая в этот раз просто не запрашивалась.",
+    note: "The scan log is load-bearing: it makes a re-run of one scan a no-op, and it stops a "
+      + "severity that simply was not requested from being resolved by disappearance.",
   });
 }

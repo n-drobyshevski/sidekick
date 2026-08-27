@@ -89,9 +89,9 @@ export const SCOPES = ["sca", "sast", "secrets"] as const;
 export type Scope = (typeof SCOPES)[number];
 
 export const SCOPE_LABELS: Record<Scope, string> = {
-  sca: "Зависимости",
-  sast: "Код",
-  secrets: "Секреты",
+  sca: "Dependencies",
+  sast: "Code",
+  secrets: "Secrets",
 };
 
 /** Statuses that mean "not open". Mirrors brick/devsecops/config.py RESOLVED_STATUSES. */
