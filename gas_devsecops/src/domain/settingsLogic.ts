@@ -13,8 +13,14 @@ import type { Rec } from "./util";
 export interface Settings {
   /** Which registers the sync battery collects. At least one, always. */
   scopes: Scope[];
-  /** Which severities to request from the API. Empty means all. */
-  fetchSeverities: string[];
+  /**
+   * Which severities to request from the API, PER SCOPE. Empty means all.
+   *
+   * Per-scope rather than one list, for the same reason the defaults are: an operator
+   * narrowing SCA to CRITICAL/HIGH must not silently delete every PASSWORD and CERTIFICATE
+   * from the secrets register, which is what a shared list does.
+   */
+  fetchSeverities: Record<Scope, string[]>;
   /** Remediation windows, in days, by severity. */
   slaTargets: Record<string, number>;
   /** Show routes flagged experimental in the nav. */
@@ -23,7 +29,11 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   scopes: [...SCOPES],
-  fetchSeverities: [...DEFAULT_FETCH_SEVERITIES],
+  fetchSeverities: {
+    sca: [...DEFAULT_FETCH_SEVERITIES.sca],
+    sast: [...DEFAULT_FETCH_SEVERITIES.sast],
+    secrets: [...DEFAULT_FETCH_SEVERITIES.secrets],
+  },
   slaTargets: { ...SLA_TARGETS },
   showExperimental: false,
 };
@@ -36,6 +46,37 @@ function asList(v: unknown, allowed: readonly string[]): string[] | null {
     if (allowed.includes(s as never)) seen.add(s);
   }
   return [...seen];
+}
+
+/**
+ * Coerce the stored fetchSeverities into the per-scope record, MIGRATING THE OLD SHAPE.
+ *
+ * This setting used to be one flat array applied to every scope, and the settings tab of any
+ * existing deployment still holds it that way. A migration that dropped it would silently
+ * reset an operator's choice on the next save; one that threw would take the app down over a
+ * settings row. So a stored array is read as "this was your answer for every scope" and
+ * spread across all three — which is exactly what it meant when it was written.
+ *
+ * A scope missing from a stored record falls back to ITS OWN default rather than to another
+ * scope's, since that is the whole point of the record. An explicitly empty list is a real
+ * answer — "every severity" — and survives.
+ */
+function cleanFetchSeverities(raw: unknown): Record<Scope, string[]> {
+  const out = {} as Record<Scope, string[]>;
+
+  if (Array.isArray(raw)) {
+    const shared = asList(raw, SEVERITY_ORDER) ?? [];
+    for (const scope of SCOPES) {
+      out[scope] = shared.length ? [...shared] : [...DEFAULT_FETCH_SEVERITIES[scope]];
+    }
+    return out;
+  }
+
+  const rec = (raw ?? {}) as Record<string, unknown>;
+  for (const scope of SCOPES) {
+    out[scope] = asList(rec[scope], SEVERITY_ORDER) ?? [...DEFAULT_FETCH_SEVERITIES[scope]];
+  }
+  return out;
 }
 
 /**
@@ -60,7 +101,7 @@ export function cleanSettings(raw: Rec | null | undefined): Settings {
     // An empty list would collect nothing while looking configured, so it falls back
     // rather than persisting a register that can never fill.
     scopes: scopes.length ? scopes : [...SCOPES],
-    fetchSeverities: asList(r.fetchSeverities, SEVERITY_ORDER) ?? [...DEFAULT_SETTINGS.fetchSeverities],
+    fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
     slaTargets: sla,
     showExperimental: r.showExperimental === true,
   };
@@ -70,6 +111,11 @@ export function cleanSettings(raw: Rec | null | undefined): Settings {
 export function validateSettings(s: Settings): string[] {
   const errs: string[] = [];
   if (!s.scopes.length) errs.push("Choose at least one register to collect.");
+  for (const scope of s.scopes) {
+    if (!Array.isArray(s.fetchSeverities?.[scope])) {
+      errs.push(`No severity selection stored for the ${scope} register.`);
+    }
+  }
   for (const [sev, days] of Object.entries(s.slaTargets)) {
     if (!Number.isFinite(days) || days <= 0) {
       errs.push(`The SLA target for ${sev} must be a positive number of days.`);

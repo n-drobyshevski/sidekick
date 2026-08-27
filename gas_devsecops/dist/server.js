@@ -416,7 +416,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7b8ff23d75fe" : "dev";
+  var BUILD_ID = true ? "05fdb5a5eea3" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -599,6 +599,26 @@ var Server = (() => {
       // rotated_at then means "the credential was observed dead at this time" and is set from
       // validated_at only where validation_state is INVALID. removed_at is the other axis
       // entirely: the string left HEAD. PROBE_FINDINGS.md §3.
+      //
+      // IDENTITY IS (secretDataId, path), not secretDataId alone. Measured on one 500-row
+      // page of the CODE register: 500 distinct ids collapse to 131 distinct secretDataId —
+      // 3.82 rows per secret, and one credential appearing under 158 rows across 8 paths. So
+      // secretDataId names the CREDENTIAL and the pair names one OCCURRENCE of it. Remediation
+      // is per occurrence (each one has to be removed); rotation is per credential, grouped
+      // across them. Keying on secretDataId alone would silently collapse eight files into
+      // one row and lose the locations.
+      //
+      // DO NOT ADD isDefaultBranch TO THE SECRETS FILTER TO DEDUPLICATE. There is real
+      // duplication — 18 of 176 (secretDataId, path) pairs appear under both REPOSITORY and
+      // REPOSITORY_BRANCH, about 10% — and the obvious fix is wrong. Measured (§8.6):
+      //     app filter, as shipped                691
+      //     + isDefaultBranch {equals:true}       245
+      //     + isDefaultBranch {equals:false}        0
+      // 245 + 0 != 691. The missing 446 are REPOSITORY-level entities where the flag is
+      // ABSENT rather than false — a repository is not a branch, so the predicate does not
+      // apply to it. Copying SCA's {equals:true} would cut the register by 65% while reading
+      // as deduplication: absent collapsed to false, which is the failure the AI register
+      // already has a name for. The 10% that IS duplicated wants dedup on the pair above.
       "secret_kind",
       "rotated_at",
       "removed_at",
@@ -882,12 +902,20 @@ var Server = (() => {
     INFO: 180
   };
   var SCOPES = ["sca", "sast", "secrets"];
-  var DEFAULT_FETCH_SEVERITIES = ["CRITICAL", "HIGH"];
+  var DEFAULT_FETCH_SEVERITIES = {
+    sca: ["CRITICAL", "HIGH"],
+    sast: ["CRITICAL", "HIGH"],
+    secrets: ["CRITICAL", "HIGH", "MEDIUM"]
+  };
 
   // src/domain/settingsLogic.ts
   var DEFAULT_SETTINGS = {
     scopes: [...SCOPES],
-    fetchSeverities: [...DEFAULT_FETCH_SEVERITIES],
+    fetchSeverities: {
+      sca: [...DEFAULT_FETCH_SEVERITIES.sca],
+      sast: [...DEFAULT_FETCH_SEVERITIES.sast],
+      secrets: [...DEFAULT_FETCH_SEVERITIES.secrets]
+    },
     slaTargets: { ...SLA_TARGETS },
     showExperimental: false
   };
@@ -900,8 +928,23 @@ var Server = (() => {
     }
     return [...seen];
   }
+  function cleanFetchSeverities(raw) {
+    var _a, _b;
+    const out = {};
+    if (Array.isArray(raw)) {
+      const shared = (_a = asList(raw, SEVERITY_ORDER)) != null ? _a : [];
+      for (const scope of SCOPES) {
+        out[scope] = shared.length ? [...shared] : [...DEFAULT_FETCH_SEVERITIES[scope]];
+      }
+      return out;
+    }
+    const rec = raw != null ? raw : {};
+    for (const scope of SCOPES) {
+      out[scope] = (_b = asList(rec[scope], SEVERITY_ORDER)) != null ? _b : [...DEFAULT_FETCH_SEVERITIES[scope]];
+    }
+    return out;
+  }
   function cleanSettings(raw) {
-    var _a;
     const r = raw || {};
     const scopes = (Array.isArray(r.scopes) ? r.scopes : []).map((x) => String(x).trim().toLowerCase()).filter((x) => SCOPES.includes(x));
     const sla = { ...SLA_TARGETS };
@@ -914,7 +957,7 @@ var Server = (() => {
       // An empty list would collect nothing while looking configured, so it falls back
       // rather than persisting a register that can never fill.
       scopes: scopes.length ? scopes : [...SCOPES],
-      fetchSeverities: (_a = asList(r.fetchSeverities, SEVERITY_ORDER)) != null ? _a : [...DEFAULT_SETTINGS.fetchSeverities],
+      fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
       slaTargets: sla,
       showExperimental: r.showExperimental === true
     };
@@ -985,7 +1028,9 @@ var Server = (() => {
     const s = loadSettings();
     ok("Scopes collected", s.scopes.join(", ") || "(none)");
     ok("Scopes available", SCOPES.join(", "));
-    ok("Severities requested", s.fetchSeverities.join(", ") || "(all)");
+    for (const scope of SCOPES) {
+      ok(`Severities requested (${scope})`, s.fetchSeverities[scope].join(", ") || "(all)");
+    }
     out.push("");
     out.push("Sync battery: not installed. This build ships the interface base and the page");
     out.push("composition; collection is Phase 2 (see README.md).");

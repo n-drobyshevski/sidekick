@@ -51,7 +51,12 @@ export function deploymentDiagnostic(): string {
   const s = loadSettings();
   ok("Scopes collected", s.scopes.join(", ") || "(none)");
   ok("Scopes available", SCOPES.join(", "));
-  ok("Severities requested", s.fetchSeverities.join(", ") || "(all)");
+  // Per scope, because the three registers no longer share one answer — and because a
+  // diagnostic printing one list would hide exactly the defect that made this per-scope:
+  // CRITICAL/HIGH on secrets deletes every PASSWORD and CERTIFICATE in the estate.
+  for (const scope of SCOPES) {
+    ok(`Severities requested (${scope})`, s.fetchSeverities[scope].join(", ") || "(all)");
+  }
 
   out.push("");
   out.push("Sync battery: not installed. This build ships the interface base and the page");
