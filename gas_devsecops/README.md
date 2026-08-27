@@ -74,10 +74,50 @@ by identity rather than by membership.
 
 ```
 npm run dev        # http://localhost:8787 — rebuilds and re-boots on every page load
+npm run probe      # read-only probe against the tenant (see below)
 npm run check      # typecheck + vitest + build
 npm run test:exact # the same suite under full module isolation
 npm run which-build <stamp>   # which commits produced a deployed build id
 ```
+
+### The probe
+
+`npm run probe` answers "will the battery work here, and what does this tenant actually
+offer" **without writing anything anywhere** — no sheet, no Drive file, no Wiz object. It
+sends the app's own queries: `src/server/wizQueries.ts` is bundled and imported by
+`probe.mjs`, which is why that file may never touch an Apps Script global. A probe that
+quietly diverged from the battery would be worse than no probe.
+
+```
+npm run probe -- --dry-run     print exactly what would be sent; send nothing (no credentials needed)
+npm run probe -- --roots       which query roots exist — this is how the secrets register gets found
+npm run probe -- --schema      does SASTFinding expose a timestamp?
+npm run probe -- --scope=sast  one register instead of all
+npm run probe -- --first=25    rows per sample page (default 3)
+npm run probe -- --report      also write probe-report.json (git-ignored)
+```
+
+Credentials go in `.env.local` or `dev/.env.local` (both git-ignored; `dev/` wins per key):
+
+```
+WIZ_API_URL=https://api.<dc>.app.wiz.io/graphql
+WIZ_API_TOKEN=...          # or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET
+WIZ_PROJECT_ID_V2=...      # optional; scopes every query
+```
+
+**The two questions it exists to answer.**
+
+1. *Does `SASTFinding` expose a selectable timestamp?* The pagination cursor in the captured
+   response base64-decodes to `{"Field":"finding_severityOrder","Value":"4_2026-07-02T…Z"}`,
+   so a server-side date demonstrably exists — the documented selection set just does not
+   offer one. If it turns out to be selectable, SAST gets a real remediation clock and
+   `SAST_FETCH_RESOLVED` can be turned on. If not, the current design stands. The probe
+   introspects the type, and falls back to probing candidate field names one at a time and
+   reading the refusal when introspection is closed.
+2. *What is the secrets root called, and does it distinguish removed from rotated?* There is
+   no capture of a secret finding anywhere in this repository, so `Q_SECRETS` is `null`
+   rather than a guess — a plausible document would typecheck, ship, and then measure the
+   wrong population.
 
 `npm run dev` runs the **real server bundle** in the browser against in-memory fakes for
 SpreadsheetApp, DriveApp, Properties, Lock and Cache (`dev/gas-shims.js`), so no Google

@@ -416,7 +416,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "f7569652ae49" : "dev";
+  var BUILD_ID = true ? "248cee7e8fc2" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -863,14 +863,12 @@ var Server = (() => {
     INFO: 180
   };
   var SCOPES = ["sca", "sast", "secrets"];
+  var DEFAULT_FETCH_SEVERITIES = ["CRITICAL", "HIGH"];
 
   // src/domain/settingsLogic.ts
   var DEFAULT_SETTINGS = {
     scopes: [...SCOPES],
-    // CRITICAL and HIGH by default, matching brick/devsecops. Not a policy claim about what
-    // matters — it is what keeps a first sync inside one execution budget on an estate where
-    // a single repository carries ~6,900 SCA findings.
-    fetchSeverities: ["CRITICAL", "HIGH"],
+    fetchSeverities: [...DEFAULT_FETCH_SEVERITIES],
     slaTargets: { ...SLA_TARGETS },
     showExperimental: false
   };

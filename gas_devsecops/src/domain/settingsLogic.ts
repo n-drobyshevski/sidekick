@@ -5,7 +5,9 @@
 // Phase 2 because the Settings page reads them today, and a page that offers a control
 // with nothing behind it is the thing this product does not do.
 
-import { SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "./config";
+import {
+  DEFAULT_FETCH_SEVERITIES, SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope,
+} from "./config";
 import type { Rec } from "./util";
 
 export interface Settings {
@@ -21,10 +23,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   scopes: [...SCOPES],
-  // CRITICAL and HIGH by default, matching brick/devsecops. Not a policy claim about what
-  // matters — it is what keeps a first sync inside one execution budget on an estate where
-  // a single repository carries ~6,900 SCA findings.
-  fetchSeverities: ["CRITICAL", "HIGH"],
+  fetchSeverities: [...DEFAULT_FETCH_SEVERITIES],
   slaTargets: { ...SLA_TARGETS },
   showExperimental: false,
 };
