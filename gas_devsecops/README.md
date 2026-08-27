@@ -10,22 +10,45 @@ bright-yellow brand (`#ffcb13`) instead of Signal Blue or crimson — the severi
 deliberately identical across all three, so a severity means the same thing wherever you
 read it.
 
-## Status: Phase 1 — the interface base
+## Status: Phase 2 — the ledger core, and one page reading it
 
 **What is real:** the shell, the navigation, all ten routes, access control, the settings
-store, the ledger schema, the build and the dev harness. `npm run check` is green.
+store, the ledger schema, the build and the dev harness — and now the ledger itself. Three
+normalizers (`src/domain/normalize.ts`, `src/domain/secretsLedger.ts`), a cross-scan
+reconciler with per-scope disappearance (`src/domain/reconcile.ts`), the derived clocks
+(`src/domain/ledgerCore.ts`), censoring-aware remediation statistics
+(`src/domain/remediation.ts`), Sheet persistence (`src/server/ledgerStore.ts`) and a scan
+runner (`src/server/sync.ts`). **MTTR & SLA is wired to real numbers.** `npm run check` is
+green.
 
-**What is not:** the sync battery and the domain layer. Every page renders its composition —
-the questions it will answer — and says plainly that no data is connected. That is
-deliberate: a page drawing a plausible empty chart would be claiming a pipeline that does
-not exist.
+**What is not: the live fetch.** `sync.ts`'s source is pluggable and only the sample source
+exists. The live one REFUSES when called rather than returning an empty page — an empty page
+would write a scan row claiming it covered the scope, and the next scan's disappearance pass
+would resolve the whole register against it. A missing feature must not be able to look like
+a remediation event.
+
+The other nine pages still render their composition — the questions they will answer — and
+say plainly that no data is connected. A page drawing a plausible empty chart would be
+claiming a pipeline that does not exist.
+
+**The design that carried the risk.** Neither source register does three scopes in one
+ledger: `gas/` has one, and `brick/devsecops`'s reconcile takes a `scope` but only stamps it,
+because its caller hands it a prior already filtered down. Here the prior is one tab holding
+all three, and every row of the other two is absent from any given scan by construction — so
+a disappearance pass that did not filter by scope would resolve 19,949 findings as
+remediated in one sync. `reconcile` filters the prior itself rather than trusting a calling
+convention, and a mutation check in the suite confirms that removing the guard does exactly
+that.
 
 **Where the domain comes from.** Not greenfield.
-[`../brick/devsecops/`](../brick/devsecops/) already implements this product as a tested
-Spark pipeline: real captured Wiz queries for both scopes, a cross-scan lifecycle
-reconciler, Kaplan–Meier with censoring and RMST, the P2P coverage/efficiency/capacity
-family, and ~6,400 lines of tests. Phase 2 ports that to TypeScript against golden fixtures
-exported from the Python — the same relationship `gas/` has to `wiz_dashboard/domain/`.
+[`../brick/devsecops/`](../brick/devsecops/) implements this product as a tested Spark
+pipeline: real captured Wiz queries, a cross-scan lifecycle reconciler, Kaplan–Meier with
+censoring and RMST, the P2P coverage/efficiency/capacity family, and ~6,400 lines of tests.
+`test/reconcile.test.js` replays the behaviours its `test_ledger.py` names. The statistics
+are ported from `gas/src/domain/remediation.ts` — with one correction the port found by
+measuring: its KM quantile compares survival to the threshold exactly, and a running product
+that mathematically lands on it can land one ULP above, so the p90 came back 10 where the
+arithmetic says 9.
 
 ## Pages
 
@@ -192,7 +215,10 @@ for the value itself. `test/wizQueries.test.js` holds it.
 
 `npm run dev` runs the **real server bundle** in the browser against in-memory fakes for
 SpreadsheetApp, DriveApp, Properties, Lock and Cache (`dev/gas-shims.js`), so no Google
-account is needed. It seeds nothing in Phase 1.
+account is needed. It SEEDS: three scans across three scopes, replayed through the
+real normalizers, the real reconcile and the real Sheet writes, so the MTTR page opens
+with numbers that came from a ledger which actually accumulated. `?noseed` leaves the
+store empty, which is how the empty state gets exercised.
 
 ### Constraints worth knowing
 

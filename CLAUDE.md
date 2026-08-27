@@ -116,9 +116,47 @@ already implements the pipeline and is the behavioural spec (same relationship `
   secrets register with no passwords in it. `DEFAULT_FETCH_SEVERITIES` is a
   `Record<Scope, string[]>`; secrets reaches to MEDIUM, provisionally, until the probe's
   type × severity crosstab confirms those rows are not LOW.
-- **The second clock is captured but not yet computed.** `fix_date` / `fix_observed_at` are
-  on every ledger row; nothing derives `fix_available_at`, `mttr_actionable_days` or
-  `awaiting_vendor_fix`. Reference: `gas/src/domain/ledgerCore.ts::baseRows`.
+- **The second clock is computed, and `awaiting_vendor_fix` is SCOPE-GUARDED.**
+  `baseRows` (`src/domain/ledgerCore.ts`) derives `fix_available_at`,
+  `mttr_actionable_days` and `awaiting_vendor_fix` from the `fix_date` / `fix_observed_at`
+  the schema has been capturing since day one. The guard is the load-bearing part: "open
+  with no fix available" is true of every SAST finding and every secret, neither of which
+  has a vendor, so without it 2,085 rows sit awaiting a vendor forever — out of every
+  actionable clock, in every exposure count, and the two halves of the page disagree in a
+  way that reads as broken arithmetic rather than a category error.
+- **Three scopes in one ledger, and DISAPPEARANCE IS THE DANGEROUS PART.** Neither source
+  does this: `gas/` has one register, and `brick/devsecops`'s reconcile takes a `scope` but
+  only stamps it — its caller hands it a prior already filtered down. Here the prior is one
+  tab holding 17,991 SCA rows, 127 SAST and 1,958 secrets, and every row of the other two
+  scopes is absent from any given scan BY CONSTRUCTION. So `reconcile` takes `scope`,
+  filters the prior ITSELF rather than trusting a calling convention, and refuses an
+  observation carrying the wrong one; every scan helper is scoped too, so the first SAST
+  scan resolves nothing by absence with fifty SCA scans behind it. The mutation check is
+  worth keeping: drop that one `continue` and 19,949 findings resolve as remediated.
+- **SCA and SAST ADOPT the Wiz id; secrets DERIVES — and the filter is why.** Both are
+  gated to `isDefaultBranch {equals: true}`, so one entity per finding reaches the
+  register. Secrets could not use that gate (`245 + 0 != 691`, §8.6, because a
+  REPOSITORY-level entity has the flag ABSENT rather than false), which is exactly why it
+  has 187 twins. Broaden either filter and the assumption breaks with it.
+- **A missing feature must not be able to look like a remediation event.** `sync.ts`'s live
+  source REFUSES when called rather than returning an empty page — an empty page would
+  write a scan row claiming it covered the scope, and the next scan's disappearance pass
+  would resolve the whole register against it. Same family as the probe's false zero.
+- **`BASE.sca` carries `hasFix: true`, so a WITHDRAWN fix reads as a remediation.** The
+  finding leaves the filtered population, and leaving the population is what
+  disappearance-resolution means. Nothing in the ledger distinguishes it from a real fix.
+  Recorded in `sync.ts`, not fixed: dropping `hasFix` is a population change and belongs in
+  its own measured round. `gas/`'s `REMEDIATION_ROLLOUT_ISO` exists to date exactly this.
+- **A reopen RE-DERIVES `first_seen` from the API rather than keeping the stored value**,
+  inherited from `gas/`. If Wiz does not reset `firstDetectedAt` on a re-detection, a
+  reopened episode's MTTR is inflated by the whole first episode. Five probe passes have
+  never observed a reopen — none ran two scans — so the behaviour is held still and pinned,
+  with the open question in the test.
+- **Kaplan-Meier's crossing comparison needed a float tolerance, and `gas/` still lacks
+  it.** `S(t)` is a running product, so a curve that mathematically lands on the threshold
+  can land one ULP above: on ten events at times 1..10, `S(9)` is `0.10000000000000002`
+  and the p90 reported 10 instead of 9. Benign in direction, not in kind — the answer
+  depends on accumulation order. `CROSSING_EPSILON` in `src/domain/remediation.ts`.
 - **Three scopes, one ledger, and `scope` is part of the key.** The same CVE arriving through
   a dependency and through a host image is two findings with two clocks.
 - **Removed is not rotated.** A secret leaving the register means the string left HEAD. The
