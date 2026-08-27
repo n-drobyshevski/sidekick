@@ -39,9 +39,24 @@ export const MAX_PAGES = 1000;
  * SAST rows at all (they would be born and closed in the same instant, giving a real
  * mttr_days == 0.0 that drags the median to the floor).
  *
- * The pagination cursor proves a server-side timestamp EXISTS: it base64-decodes to
- * {"Field":"finding_severityOrder","Value":"4_2026-07-02T23:39:17.79412Z"}. Whether it is
- * selectable is the open question probe.mjs --schema exists to answer.
+ * THE THREE TIMESTAMPS, and why each is here (PROBE_FINDINGS.md §2, 2026-08-27):
+ *
+ *   createdAt              DateTime! — THE BIRTH DATE, and the whole reason SAST has a
+ *                          clock. Filterable (SASTFindingFilters.createdAt) and sortable
+ *                          (SASTFindingOrderField = CREATED_AT, SEVERITY). There is no
+ *                          resolution date to pair it with; the ledger supplies that by
+ *                          disappearance, which is what makes this a real MTTR rather
+ *                          than an age metric.
+ *   updatedAt              DateTime! — a lossy proxy for activity, NOT a resolution date.
+ *                          It moves on any rescan and the sampled rows show it doing so.
+ *                          Carried for staleness reporting only.
+ *   firstDetectedAtSource  DateTime — the scanner's own first-detection date. Null on
+ *                          every row sampled here, but a row that carries one should win,
+ *                          since it predates our own observation.
+ *
+ * NOTE THE COMMENT STYLE. Nothing explanatory goes inside the document string: GraphQL
+ * comments are `#`, not `//`, so a JS-style comment in here is a syntax error the server
+ * rejects — and even a valid `#` comment ships over the wire on every page of every sync.
  *
  * `projects` and `vcsDetails.commitHash` are selected here but NOT in brick's version:
  * projects[] carries the folder/leaf team hierarchy that is this register's only ownership
@@ -65,6 +80,9 @@ export const Q_SAST = `query DevSecOpsSastFindings(
       codeLibraryLanguage
       origin
       resolutionReason
+      createdAt
+      updatedAt
+      firstDetectedAtSource
       resource { id name type }
       weaknesses { id name }
       projects { id name isFolder slug }
@@ -127,6 +145,7 @@ export const Q_SCA = `query DevSecOpsVulnerabilityFindings(
       }
       artifactType { codeLibraryLanguage }
     }
+    totalCount
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -155,9 +174,20 @@ export const QUERIES: Record<Scope, string | null> = {
 export interface FilterOptions {
   severities?: readonly string[];
   projectId?: string | null;
-  /** Incremental sync: only rows touched since this ISO instant. */
-  updatedAfter?: string | null;
 }
+
+// AN INCREMENTAL-SYNC FILTER USED TO LIVE HERE, and it was removed rather than left.
+//
+// `updatedAfter` mapped to `filterBy.updatedAt = { after: iso }` for every scope, and that
+// shape was never checked against either schema — exactly the unverified assumption that
+// cost the register its entire SAST population (see OBJECT_FILTERS below). Nothing called
+// it, so shipping a second untested filter shape immediately after fixing the first would
+// have been the wrong trade.
+//
+// What is known: SASTFindingFilters.createdAt is SASTDateTimeFilter, and
+// SecretInstanceFilters carries firstSeenAt / lastUpdatedAt / resolvedAt as CommonDateFilter
+// (before / after / inLast / beforeLast). The SCA equivalent is unverified. Re-add this with
+// the schema in hand when the sync battery needs it, per scope, through OBJECT_FILTERS.
 
 /** Wiz spells the lowest severity INFORMATIONAL; everything else matches. */
 export const API_SEVERITY: Record<string, string> = {
@@ -192,17 +222,65 @@ const BASE: Record<string, Record<string, unknown>> = {
 };
 
 /**
- * Whether to ask for resolved SAST findings. FALSE, and this is the single most load-bearing
- * decision in the register.
+ * Whether to ask for resolved SAST findings. FALSE — and the reason changed on 2026-08-27.
  *
- * Because Q_SAST selects no timestamps, a finding that is already resolved when we first
- * see it is born and closed in the same instant: first_seen = now, resolved_at = now, so
- * mttr_days is exactly 0.0. Every historical resolved finding would drag the half-life to
- * zero. "No MTTR yet" is a state a reader can act on; "MTTR is 0 days" is a confident lie.
+ * THE OLD REASON IS DEAD. It said "Q_SAST selects no timestamps", which the live tenant
+ * falsified: `SASTFinding` exposes `createdAt: DateTime!`, filterable and sortable, and
+ * Q_SAST now selects it. See PROBE_FINDINGS.md §2.
  *
- * Flip this ONLY once probe.mjs finds a selectable timestamp to date them from.
+ * TWO NEW REASONS REPLACE IT, and both still point the same way:
+ *
+ *   1. There is no `resolvedAt` on `SASTFinding`. Forty-three fields, none of them a
+ *      resolution date. Turning this on would buy a real START and leave the END missing.
+ *      `updatedAt` is a lossy proxy — it moves on any rescan, and the sampled rows show it
+ *      doing exactly that.
+ *   2. `status: RESOLVED` returns totalCount 0 in this project scope. There is nothing to
+ *      fetch even if there were somewhere to put it.
+ *
+ * NONE OF WHICH COSTS US THE CLOCK, and that is the part worth stating. The ledger dates a
+ * resolution by DISAPPEARANCE when the API will not: `first_seen` prefers the API's
+ * `createdAt` over the observation date, `resolved_at` becomes the scan that noticed the
+ * absence, and `mttr_days` is the subtraction of the two with no guard on how the
+ * resolution was learned (brick/devsecops/ledger.py, pinned by
+ * test_mttr_is_measured_from_the_ledgers_own_dates). So SAST gets a genuine MTTR from
+ * `createdAt` + disappearance — not merely an age metric — once two scans exist.
+ *
+ * Flip this ONLY if a resolution date appears on the type.
  */
 export const SAST_FETCH_RESOLVED = false;
+
+/**
+ * WHICH FILTER KEYS THIS SCOPE'S FILTER TYPE TAKES AS AN OBJECT rather than a bare list.
+ *
+ * The two filter types genuinely disagree, and this table exists so that disagreement is
+ * DATA a reader can check against the schema rather than a branch buried in buildFilter:
+ *
+ *   VulnerabilityFindingFilters.severity   [VulnerabilitySeverity!]   a bare list
+ *   SASTFindingFilters.severity            SASTSeverityFilter         { equals: [...] }
+ *   SASTFindingFilters.status              SASTStatusFilter           { equals: [...] }
+ *
+ * This asymmetry cost the register its whole SAST population once. buildFilter applied the
+ * SCA convention to both scopes, so every SAST sync was refused with HTTP 400
+ * VALIDATION_INVALID_TYPE_VARIABLE and fetched zero rows — and a test pinned the broken
+ * shape, because it was generalised from reference vectors that were only ever correct
+ * about SCA. PROBE_FINDINGS.md §4 has the refusal and the proof that correcting the shape
+ * alone returns 200.
+ *
+ * DO NOT "TIDY" THIS INTO ONE CONVENTION. Applying SAST's object form to SCA breaks SCA,
+ * which works today. The schema type names above are the evidence; check them before
+ * changing a line here.
+ */
+const OBJECT_FILTERS: Record<Scope, readonly string[]> = {
+  sca: [],
+  sast: ["severity", "status"],
+  // Unknown until the probe introspects SecretInstanceFilters — see Q_SECRETS.
+  secrets: [],
+};
+
+/** A list-valued filter, shaped the way THIS scope's filter type wants it. */
+function listFilter(scope: Scope, key: string, values: readonly string[]): unknown {
+  return OBJECT_FILTERS[scope].includes(key) ? { equals: [...values] } : [...values];
+}
 
 /** Translate the register's severity vocabulary into the API's. */
 export function severityFilter(severities: readonly string[]): string[] {
@@ -228,10 +306,14 @@ export function buildFilter(scope: Scope, opts: FilterOptions = {}): Record<stri
   }
   const filterBy: Record<string, unknown> = JSON.parse(JSON.stringify(BASE[scope] ?? {}));
 
-  if (scope === "sast" && SAST_FETCH_RESOLVED) filterBy.status = ["OPEN", "RESOLVED"];
+  // Carries the same shape hazard as severity, and was dormant only while
+  // SAST_FETCH_RESOLVED was false — a mine under a future flag flip. Shaped now.
+  if (scope === "sast" && SAST_FETCH_RESOLVED) {
+    filterBy.status = listFilter(scope, "status", ["OPEN", "RESOLVED"]);
+  }
 
   const sev = severityFilter(opts.severities ?? []);
-  if (sev.length) filterBy.severity = sev;
+  if (sev.length) filterBy.severity = listFilter(scope, "severity", sev);
 
   if (opts.projectId) {
     // The two filter types spell the project restriction differently, and the tenant's own
@@ -240,8 +322,6 @@ export function buildFilter(scope: Scope, opts: FilterOptions = {}): Record<stri
     if (scope === "sast") filterBy.projectId = [opts.projectId];
     else filterBy.projectIdV2 = { equals: [opts.projectId] };
   }
-
-  if (opts.updatedAfter) filterBy.updatedAt = { after: opts.updatedAfter };
 
   return filterBy;
 }

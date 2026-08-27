@@ -18,7 +18,7 @@ interchangeable:
 | Scope | The finding | Fixed by | Why its clock differs |
 |---|---|---|---|
 | `sca` | a CVE in a third-party package at a version | upgrading the dependency | cannot be fixed at all until a fixed version exists, so the wait for a vendor has to be separated from the wait for the team |
-| `sast` | a weakness class at a file and line in first-party code | changing the code | no vendor, so no second clock — but this tenant returns **no timestamps at all**, so the clock starts at observation |
+| `sast` | a weakness class at a file and line in first-party code | changing the code | no vendor, so no second clock — and no `resolvedAt` either, so the death date comes from the finding disappearing between scans rather than from the API |
 | `secrets` | a credential committed to a repository | rotating it | leaving the register means the string is out of HEAD; the credential stays live until it is rotated |
 
 That table is the reason the three are three pages rather than one list under a filter.
@@ -36,11 +36,13 @@ page publishes a lower bound rather than a number.
 
 The corollaries are specific and each one was a decision:
 
-- **Never a zero that means "unknown".** SAST findings arrive with no dates. Requesting the
-  resolved ones would make each of them open and close in the same instant — a real
-  `mttr_days == 0.0` that would drag the median to the floor. So they are not requested,
-  and the page says its MTTR is dated from observation. *"No MTTR yet"* is a state a reader
-  can act on; *"MTTR is 0 days"* is a confident lie.
+- **Never a zero that means "unknown".** SAST findings carry a birth date (`createdAt`) but
+  no resolution date, and the tenant returns no resolved SAST rows at all. Requesting them
+  anyway would make each one open and close in the same instant — a real `mttr_days == 0.0`
+  that would drag the median to the floor. So they are not requested. The clock is not lost:
+  a finding that stops being returned is dated closed at the scan that noticed, which is an
+  observation-bounded estimate and says so. *"No MTTR yet"* is a state a reader can act on;
+  *"MTTR is 0 days"* is a confident lie.
 - **Waiting for a vendor is not remediation time.** An SCA finding with no published fix is
   reported as awaiting a fix, not as a slow team.
 - **Removed is not rotated.** A secret leaving the register is one event; the credential

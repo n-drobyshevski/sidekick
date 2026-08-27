@@ -49,8 +49,9 @@ Three lanes and a chrome tail. The IA lives in exactly one place — `PAGES` in
 
 Because their remediation clocks differ in kind. SCA cannot be fixed before a fixed version
 exists, so its clock splits into "waiting for a vendor" and "actionable". SAST has no
-vendor — but in this tenant it also has **no timestamps at all**, so its clock starts at
-observation and the page says so. A secret leaves the register when the string leaves HEAD,
+vendor — and **no resolution date** either, so its death date comes from the finding
+disappearing between scans rather than from the API, and the page says which end is
+measured and which is estimated. A secret leaves the register when the string leaves HEAD,
 which is not the same as the credential being dead. One merged register would have to lie
 about at least two of them, and the clock is the product.
 

@@ -45,12 +45,35 @@ function loadEnv() {
   for (const p of [join(HERE, ".env.local"), join(HERE, "dev/.env.local")]) {
     if (!existsSync(p)) continue;
     for (const line of readFileSync(p, "utf8").split(/\r?\n/)) {
-      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+      const m = line.match(/^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)$/);
       if (!m) continue;
-      const v = m[2].replace(/^["']|["']$/g, "");
-      if (v) process.env[m[1]] = v;
+      process.env[m[1]] = envValue(m[2]);
     }
   }
+}
+
+/**
+ * One .env value: quoted verbatim, unquoted stripped of a trailing `# comment`.
+ *
+ * THIS COST AN HOUR ONCE. The greedy `(.*)` this replaces swallowed the comment, so
+ *
+ *     WIZ_PROJECT_ID_V2=1dfea0cf-…   # VALUE-CHAIN, pre-filled
+ *
+ * produced a 101-character project ID — the UUID plus the words after it. Every query was
+ * then scoped to a project that does not exist, and the tenant answered each one with a
+ * cheerful empty page. An empty register and a parse bug look identical from the outside,
+ * which is exactly why this is worth 12 lines.
+ */
+function envValue(raw) {
+  const s = raw.trim();
+  const q = s[0];
+  if (q === '"' || q === "'") {
+    const end = s.indexOf(q, 1);
+    // A quoted value keeps everything between the quotes, `#` included — some secrets have
+    // one, and stripping there would corrupt a credential rather than a comment.
+    return end > 0 ? s.slice(1, end) : s.slice(1);
+  }
+  return s.replace(/\s+#.*$/, "").trim();
 }
 loadEnv();
 
@@ -94,6 +117,36 @@ await build({
 });
 const app = await import(pathToFileURL(outfile).href);
 const cleanup = () => rmSync(dir, { recursive: true, force: true });
+
+/**
+ * The ONE way this process ends.
+ *
+ * Every mode used to exit on its own line, and `--roots --report` exited before reaching
+ * the writeFileSync at the bottom — so the flag was accepted, no report appeared, and
+ * nothing said why. A single exit means no flag combination can skip the write.
+ *
+ * The report MERGES into any existing file rather than replacing it, because the natural
+ * way to use this is several narrow runs in a row (`--roots`, then `--schema`, then a
+ * sample), and a later run clobbering an earlier run's answers is how a finding gets lost
+ * between two terminal scrollbacks.
+ */
+function finish(code) {
+  if (REPORT) {
+    const at = join(HERE, "probe-report.json");
+    let prior = {};
+    if (existsSync(at)) {
+      try { prior = JSON.parse(readFileSync(at, "utf8")); } catch { prior = {}; }
+    }
+    const merged = {
+      ...prior, ...report,
+      findings: { ...(prior.findings ?? {}), ...report.findings },
+    };
+    writeFileSync(at, JSON.stringify(merged, null, 2));
+    console.log(`\nprobe-report.json written (git-ignored), ${Object.keys(merged.findings).length} finding key(s).`);
+  }
+  cleanup();
+  process.exit(code);
+}
 
 const SCOPES = ONLY_SCOPE ? [ONLY_SCOPE] : app.SCOPES;
 const report = { at: null, api: API_URL ?? null, project: PROJECT_ID, findings: {} };
@@ -175,8 +228,16 @@ async function typeFields(name) {
   };
 }
 
-/** Anything whose name or type smells like a point in time. */
-const TEMPORAL = /(^|[a-z])(at|date|time|timestamp|seen|detected|resolved|created|updated|opened|closed|first|last)([A-Z]|$)/;
+/**
+ * Anything whose name or type smells like a point in time.
+ *
+ * CASE-INSENSITIVE, and that is the fix rather than the style. Without the `i` this is
+ * anchored to camelCase and silently never matches a SCREAMING_SNAKE enum value, so the
+ * probe printed "Sortable fields naming a time: (none)" while the report it wrote in the
+ * same breath recorded ["CREATED_AT", "SEVERITY"]. The stored data was right and the line
+ * a human reads was wrong, which is the worse way round.
+ */
+const TEMPORAL = /(^|[a-z_])(at|date|time|timestamp|seen|detected|resolved|created|updated|opened|closed|first|last)([A-Z_]|$)/i;
 function temporal(fields) {
   return fields.filter((f) =>
     TEMPORAL.test(f.name) || /date|time/i.test(f.type));
@@ -200,8 +261,7 @@ if (DRY_RUN) {
     console.log(`  document:  ${doc.split("\n")[0]} … (${doc.split("\n").length} lines)\n`);
   }
   console.log(`SAST_FETCH_RESOLVED = ${app.SAST_FETCH_RESOLVED}`);
-  cleanup();
-  process.exit(0);
+  finish(0);
 }
 
 /* ============================================================== LIVE =========== */
@@ -233,7 +293,7 @@ if (ROOTS_ONLY || !SCHEMA_ONLY) {
       : "\n  No secret-shaped root in this tenant's Query type.");
   }
   console.log();
-  if (ROOTS_ONLY) { cleanup(); process.exit(0); }
+  if (ROOTS_ONLY) finish(0);
 }
 
 // ---- 2. THE QUESTION: does a SAST finding carry a timestamp?
@@ -293,11 +353,37 @@ if (order && !order.error && (order.enumValues?.length || order.inputFields?.len
 }
 console.log();
 
-if (SCHEMA_ONLY) {
-  if (REPORT) writeFileSync(join(HERE, "probe-report.json"), JSON.stringify(report, null, 2));
-  cleanup();
-  process.exit(0);
+// ---- 2b. the secrets node and filter types, so Q_SECRETS can be WRITTEN rather than guessed
+//
+// The root, both clocks and most of the filter are already known (PROBE_FINDINGS.md §3).
+// What is not known is the node's IDENTITY fields — which secret, in which file, at which
+// commit — and the SHAPE of the status / validationStatus filters. That second one is not
+// a detail: assuming a filter shape is exactly what made every SAST sync fetch zero rows.
+console.log("=== the secrets register's types ===");
+for (const name of ["SecretInstance", "SecretInstanceFilters"]) {
+  const shape = await typeFields(name);
+  if (!shape || shape.error) {
+    console.log(`  ${name}: unavailable (${shape?.error ?? "no __type"})`);
+    continue;
+  }
+  const fields = shape.fields.length ? shape.fields : shape.inputFields;
+  console.log(`\n  --- ${name} (${shape.kind}, ${fields.length} fields) ---`);
+  for (const f of fields) console.log(`    ${f.name.padEnd(30)} ${f.type}`);
+  report.findings[name] = fields;
+
+  if (name === "SecretInstanceFilters") {
+    // The two that decide whether buildFilter sends a list or an object.
+    for (const key of ["status", "validationStatus", "severity"]) {
+      const f = fields.find((x) => x.name === key);
+      if (!f) continue;
+      const isList = /^\[/.test(f.type);
+      console.log(`\n    ${key}: ${f.type} -> send as ${isList ? "a bare LIST" : "an OBJECT { equals: [...] }"}`);
+    }
+  }
 }
+console.log();
+
+if (SCHEMA_ONLY) finish(0);
 
 // ---- 3. the app's own queries, one small page each
 console.log("=== the battery's own queries, one page each ===");
@@ -330,9 +416,5 @@ for (const scope of SCOPES) {
   };
 }
 
-if (REPORT) {
-  writeFileSync(join(HERE, "probe-report.json"), JSON.stringify(report, null, 2));
-  console.log("\nprobe-report.json written (git-ignored).");
-}
 console.log();
-cleanup();
+finish(0);
