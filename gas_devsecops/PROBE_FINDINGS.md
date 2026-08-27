@@ -2,7 +2,7 @@
 
 **Tenant** `api.eu15.app.wiz.io` · **project scope** `1dfea0cf-834f-5522-b797-bee5aaf09251`
 (VALUE-CHAIN) · **measured** 2026-08-27 at `0f9c549`, **re-measured the same day** at
-`28c74f9` (§7), `83d6b1e` (§8) and `24f541a` (§9) · branch
+`28c74f9` (§7), `83d6b1e` (§8), `24f541a` (§9) and `6ed0177` (§10) · branch
 `claude/wiz-sidekick-decsecops-x75ex3`
 
 The register's two open questions are the ones [README.md](README.md) names under *The two
@@ -741,3 +741,195 @@ establish stability, and the ledger depends on it.
 - **UUID stability across scans** (§9.5), inferred from the version nibble and not measured.
 - **No live PARTIAL in four passes**, and now a refusal mechanism that has never fired
   either. Both tolerances remain unexercised outside the fixture.
+
+---
+
+# 10. Fifth pass — the fixes verified, and the ledger key falsified
+
+**Re-measured** 2026-08-27 at `6ed0177` (PR #247), tenant `api.eu15.app.wiz.io`, project
+scope `1dfea0cf-834f-5522-b797-bee5aaf09251` (VALUE-CHAIN). `npm run check` green: 97 tests
+across 6 files, typecheck clean, build stamp `d84d83761d62`. Read-only throughout.
+
+**§1–§9 are untouched dated records.** Where this pass contradicts one, it says so here.
+
+## 10.1 The four counts
+
+| Scope | count | totalCount | root resolved from | vs §9 |
+|---|---|---|---|---|
+| `sca` | 3 | **17,991** | `vulnerabilityFindings` | unchanged |
+| `sast` | 3 | **127** | `sastFindings` | unchanged |
+| `secrets` | 3 | **1,958** | `secretInstances` | **843 → 1,958** |
+
+Every scope now prints the root it read — `3 node(s) from secretInstances` — and **every
+scope carries a real `totalCount` in `probe-report.json`**. No `null` beside a nonzero count
+anywhere, so the finding this pass was asked to watch for did not occur.
+
+## 10.2 The false zero is gone, and the fix generalises
+
+§9.1's zero came from a hardcoded chain that omitted `secretInstances`. `resolveConnection()`
+now reads the root off the response by looking for `nodes` / `pageInfo`. Exercised in
+isolation against ten shapes:
+
+```
+  ok      root=secretInstances       totalCount=1958   the §9.1 regression
+  ok      root=sastFindings          totalCount=127
+  ok      root=vulnerabilityFindings totalCount=17991
+  ok      root=brandNewFindings      totalCount=5      a 4th scope nobody added
+  ok      root=someConn                                pageInfo only, no nodes
+  DEFECT  keys=[]                                      empty data
+  DEFECT  keys=[]                                      null data
+  DEFECT  keys=[someScalar]                            scalar root
+  DEFECT  keys=[secretInstances]                       null connection
+  DEFECT  keys=[secretInstances]                       object without nodes/pageInfo
+
+  5 resolved, 5 reported as DEFECT — none silently returned a zero.
+```
+
+The last two matter most: a `secretInstances` key whose value is `null` or shapeless is
+reported as a defect rather than counted as zero, and that is the shape the next regression
+would take. A fourth scope resolves with no edit, so the omission behind §9.1 cannot recur.
+
+## 10.3 The gate is off, and the register is the whole CODE population
+
+`DEFAULT_FETCH_SEVERITIES.secrets` is `[]` and the filter carries **no `severity` key at
+all** — confirmed in `--dry-run`, and it is the only difference from §9's block:
+
+```
+  secrets: pass4 vs pass5
+  <       "severity": { "equals": [ "CRITICAL", "HIGH", "MEDIUM" ] },
+```
+
+**1,958 is the entire CODE population**, and the crosstab sums to exactly the register:
+
+```
+type                      CRITI   HIGH  MEDIU    LOW  INFOR
+CERTIFICATE                   0      0      0      0    160
+CLOUD_KEY                     0    171      0     39      0
+DB_CONNECTION_STRING          0     28      0     41     17
+GIT_CREDENTIAL                0      8      0      0      2
+PASSWORD                      0      0    107     17     84
+PRIVATE_KEY                   0    156      0      0      0
+SAAS_API_KEY                  0    328     45    641    114
+```
+
+691 (CRITICAL+HIGH) + 152 (MEDIUM) + 738 (LOW) + 377 (INFORMATIONAL) = **1,958**. The two
+categories §9.2 found excluded are now fully in: **`CERTIFICATE` 160 of 160**, all of them
+INFORMATIONAL, and **`PASSWORD` 208 of 208**. The register holds every certificate and every
+password in the estate for the first time.
+
+## 10.4 The other two registers did not move
+
+The `--dry-run` variables blocks were diffed against §9.4's rather than compared by eye:
+
+```
+=== sca : §9.4 vs pass5 ===   IDENTICAL
+=== sast : §9.4 vs pass5 ===  IDENTICAL
+```
+
+`shapeBase` touched neither. SAST holds at **127**; SCA at **17,991**, byte-identical to
+§9.4 — the daily drift of §7.1 / §8.5 / §9.4 did not recur within this interval.
+`partialErrors: []` on all three; **no live PARTIAL in five passes.**
+
+## 10.5 The refusal guard fires — first time in five passes
+
+§9.3 recorded that the refusal mechanism had never fired. It has now been triggered
+deliberately, with a bad bearer token and no code change:
+
+```
+--- sast ---
+  REFUSED: HTTP 401: {"data":null,"errors":[{"message":"Unauthorized",...}]}
+```
+
+and the report entry:
+
+```json
+"sast": { "refused": true,
+          "error": "HTTP 401: …UNAUTHORIZED…",
+          "variables": { "filterBy": { … } } }
+```
+
+`count` and `totalCount` are **absent** rather than zero, so a refusal cannot be misread as
+an empty register. The guard is no longer a guess. The `noConnection` DEFECT path is verified
+at the function level (§10.2) but **not end-to-end** — it needs a response that parses and
+carries no connection, which this tenant does not produce for the app's own documents.
+
+## 10.6 `externalId` is unique but it is the WRONG key — this contradicts §9.5
+
+§9.5 recommended `externalId` on the evidence that it is unique across the register. It is
+still unique. **It is unique for the wrong reason**, and keying on it would silently double
+the ledger.
+
+With the gate off, the repo/branch collision is far larger than §9.5's gated sample showed —
+**187 `(secretDataId, path, lineNumber)` keys span both resource types**, not 56:
+
+```
+rows 1,958      REPOSITORY 1,359 · REPOSITORY_BRANCH 599
+twin keys spanning both resource types: 187
+identical externalId across the twin:   0   different: 187
+repo/branch names in a prefix relation (X and X/branch): 173 of 187
+```
+
+`externalId` **differs for every one of the 187**, because Wiz builds it from the resource:
+
+```
+REPOSITORY         github.com##dktunited/prodcom-jdbc-kafka-connect##resources/…/kconnect-updated.txt##…
+REPOSITORY_BRANCH  github.com##dktunited/prodcom-jdbc-kafka-connect##main##/resources/…/kconnect-updated.txt##…
+```
+
+The branch form inserts the branch segment. So `externalId` is unique *because* it preserves
+the duplicate, and a ledger keyed on it records one secret, in one file, at one line, as two
+findings with two clocks.
+
+## 10.7 And the two clocks genuinely disagree
+
+This is the part that matters for MTTR, and it is new:
+
+```
+which twin carries the EARLIER firstSeenAt:  REPOSITORY 52 · REPOSITORY_BRANCH 135 · same 0
+age gap between twins (days): median 19.9   min 0.0   max 285.3
+  gaps over 30 days: 83 of 187
+```
+
+The same credential, same file, same line, carries birth dates a **median of 20 days** and up
+to **285 days** apart depending on which entity it was indexed against. Neither type is
+reliably older — the branch twin is earlier in 135 of 187 cases and the repository twin in
+the other 52 — so the register cannot simply prefer one resource type.
+
+**What this implies for the ledger.** Dedupe on `(secretDataId, path, lineNumber)` and take
+the **earliest** `firstSeenAt` across the twins, which is the clock convention the OS ledger
+already uses. Keying on `externalId`, or preferring `REPOSITORY` because it is the majority
+(1,359 of 1,958), would misdate 135 secrets by a median of three weeks.
+
+## 10.8 `id` / `secretDataId` stability: strong indirect evidence, still not a controlled test
+
+§9.6 flagged this as inferred from a version-5 nibble. Re-fetching the exact rows §9 sampled:
+**`id` and `secretDataId` are both unchanged.** But `lastUpdatedAt` on those rows reads
+`2026-08-27T00:19`, earlier than §9's own observation, so **no rescan intervened** — this is
+not the two-scan test the question asks for.
+
+The stronger evidence is incidental: branch-scoped twins carry `firstSeenAt 2025-11-14` with
+`lastSeenAt 2026-08-23` under a single `id` — one identity spanning nine months of scans. If
+ids were minted per scan, a row could not hold that pair. Combined with the v5 nibble this is
+persuasive, but it is still inference from the tenant's own bookkeeping rather than a
+controlled before-and-after. **The ledger depends on it.**
+
+## 10.9 A probe flag that silently does nothing
+
+`--roots --crosstab --report` runs **only** the roots section: `ROOTS_ONLY` short-circuits
+before the scope loop and the crosstab, exiting with a one-key report and no warning that two
+of the three requested flags were ignored. The scopes and crosstab in this pass came from a
+second run, `--crosstab --report`. Minor, but the same family as §9.1 — a flag combination
+that produces a plausible-looking result while quietly not doing the work.
+
+## 10.10 What is still open after the fifth pass
+
+- **The ledger key** — `(secretDataId, path, lineNumber)` with the earliest `firstSeenAt`,
+  per §10.6 / §10.7. Not `externalId`; §9.5's recommendation should be read as superseded.
+- **The severity gate is off, and that is a decision to confirm rather than a fix to verify.**
+  The register is now 1,958 rows including 641 LOW `SAAS_API_KEY`. If that is too noisy, the
+  gate should be `validationStatus` or `confidence` — not severity, which grades a detection
+  rather than whether a credential is live.
+- **`noConnection` end-to-end**, unverifiable against this tenant (§10.5).
+- **UUID stability under a controlled rescan** (§10.8).
+- **`--roots` silently swallowing other flags** (§10.9).
+- **No live PARTIAL in five passes.** The tolerance remains unexercised outside the fixture.

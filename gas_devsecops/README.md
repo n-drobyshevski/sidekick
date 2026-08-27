@@ -157,6 +157,14 @@ Two defaults are unsettled: the severity gate excludes every `CERTIFICATE` and h
 `PASSWORD` rows in the estate (§9.2), and the ledger key `(secretDataId, path)` collides
 2.27:1 — `externalId` is unique across the whole register (§9.5).
 
+**Both are resolved as of §10.** `resolveConnection()` reads the root off the response, so a
+zero has to prove it looked; the severity gate is off and the register is the whole CODE
+population, **1,958 rows** including every `CERTIFICATE` and `PASSWORD`. One correction:
+§9.5's recommendation of `externalId` as the ledger key is **superseded** — it is unique
+because it *preserves* the repo/branch duplicate, and the two twins carry `firstSeenAt`
+a median of 20 days apart. Key on `(secretDataId, path, lineNumber)` with the earliest
+`firstSeenAt` (§10.6, §10.7).
+
 ### What the probe and the register will not select
 
 `Q_SECRETS` deliberately omits `snippet` (the matched text) and `validationDetails`. The
