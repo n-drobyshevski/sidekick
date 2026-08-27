@@ -197,6 +197,7 @@ describe("migration bundle export — compacted history", () => {
       superseded_by_scan: null, tags_json: JSON.stringify({ "Wiz/Domain": "SAP" }),
       fix_date: "2026-05-10T00:00:00Z",
       fix_observed_at: "2026-05-12T00:00:00Z", has_kev: true, has_exploit: null,
+      published_date: null,
       epss: 0.9, risk_observed_at: "2026-05-02T00:00:00Z",
     });
     const bundle = buildMigrationBundle(state, [], { exportedAt: EXPORTED_AT });

@@ -65,6 +65,7 @@ describe("episodeEligible", () => {
     resolution_src: "api", reopened_count: 0, first_scan_id: null, last_scan_id: null,
     subscription_name: null, subscription_ext_id: null, tags_json: null,
     fix_date: null, fix_observed_at: null, ...emptyRiskSignals(),
+    published_date: null,
   };
   const floor = Date.parse("2026-03-01T00:00:00Z");
   it("resolved before the floor -> eligible", () => {
@@ -84,12 +85,22 @@ describe("toEpisodeRow carries vendor-fix fields", () => {
     resolution_src: "api", reopened_count: 0, first_scan_id: null, last_scan_id: null,
     subscription_name: null, subscription_ext_id: null, tags_json: null,
     fix_date: "2026-07-10T00:00:00Z", fix_observed_at: "2026-07-08T00:00:00Z",
+    published_date: "2026-06-01T00:00:00Z",
     ...emptyRiskSignals(),
   };
   it("preserves fix_date and fix_observed_at through episode conversion", () => {
     const ep = toEpisodeRow(live, "cmp-1");
     expect(ep.fix_date).toBe("2026-07-10T00:00:00Z");
     expect(ep.fix_observed_at).toBe("2026-07-08T00:00:00Z");
+  });
+  // Same argument one tier over: compaction seals RESOLVED rows, and a resolved row that
+  // got its fix is exactly the disclosure clock's event population. Drop the column here
+  // and the metric thins out silently as the retention floor advances.
+  it("preserves published_date through episode conversion", () => {
+    expect(toEpisodeRow(live, "cmp-1").published_date).toBe("2026-06-01T00:00:00Z");
+  });
+  it("a live row that never carried a publication date seals as null, not as a guess", () => {
+    expect(toEpisodeRow({ ...live, published_date: null }, "cmp-1").published_date).toBeNull();
   });
 });
 

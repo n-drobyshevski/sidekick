@@ -477,7 +477,7 @@ describe("recordNoFix ↔ baseRow.awaiting_vendor_fix agreement", () => {
     first_seen: null, last_seen: null, status: "OPEN", resolved_at: null,
     resolution_src: null, reopened_count: 0, first_scan_id: null, last_scan_id: null,
     subscription_name: null, subscription_ext_id: null, tags_json: null,
-    fix_date: null, fix_observed_at: null, ...emptyRiskSignals(),
+    fix_date: null, fix_observed_at: null, published_date: null, ...emptyRiskSignals(),
     ...over,
   });
 

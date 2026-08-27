@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "33737538ddb5" : "dev";
+  var BUILD_ID = true ? "0cc6096ac418" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -3303,6 +3303,7 @@ var Server = (() => {
     "tags_json",
     "fix_date",
     "fix_observed_at",
+    "published_date",
     "has_kev",
     "has_exploit",
     "epss",
@@ -3361,6 +3362,9 @@ var Server = (() => {
       last_scan_id: scanId,
       fix_date: fixDate,
       fix_observed_at: fixObservedAt,
+      // Left null here and filled by seedPublished() after the branch, which — like the risk
+      // merge below it — runs identically for new, reopened and persisting rows.
+      published_date: null,
       // Left empty here and filled by mergeRiskSignals() after the branch, which runs for new,
       // reopened, and persisting rows alike (the merge is identical in all three).
       ...emptyRiskSignals()
@@ -3413,6 +3417,12 @@ var Server = (() => {
     if (row.risk_observed_at == null || scanTsIso < row.risk_observed_at) {
       row.risk_observed_at = scanTsIso;
     }
+  }
+  function seedPublished(row, rec) {
+    if (row.published_date != null) return;
+    if (!present(rec["publishedDate"])) return;
+    const iso = toIso(parseTs(rec["publishedDate"]));
+    if (iso !== null) row.published_date = iso;
   }
   function reconcile(currentRecords, existingLedger, scanId, scanTs, prevScanId, options = {}) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
@@ -3472,6 +3482,7 @@ var Server = (() => {
         seedFix(row);
       }
       mergeRiskSignals(row, rec, scanTsIso);
+      seedPublished(row, rec);
       row.severity = sev2;
       row.cve = (_k = clean(rec["name"])) != null ? _k : null;
       row.asset_id = field(rec, "vulnerableAsset.id") || row.asset_id;
@@ -3726,6 +3737,7 @@ var Server = (() => {
           tags_json: (_a = e.tags_json) != null ? _a : null,
           fix_date: e.fix_date,
           fix_observed_at: e.fix_observed_at,
+          published_date: e.published_date,
           has_kev: e.has_kev,
           has_exploit: e.has_exploit,
           epss: e.epss,
@@ -4358,7 +4370,7 @@ var Server = (() => {
     return episodes;
   }
   function toEpisodeRow(live, compactionId) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g;
     return {
       vuln_key: live.vuln_key,
       cve: live.cve,
@@ -4371,15 +4383,16 @@ var Server = (() => {
       superseded_by_scan: null,
       fix_date: live.fix_date,
       fix_observed_at: live.fix_observed_at,
+      published_date: (_b = live.published_date) != null ? _b : null,
       // Exploit intelligence survives compaction — a sealed episode is still a remediated
       // lifecycle that coverage/efficiency must be able to classify.
-      has_kev: (_b = live.has_kev) != null ? _b : null,
-      has_exploit: (_c = live.has_exploit) != null ? _c : null,
-      epss: (_d = live.epss) != null ? _d : null,
-      risk_observed_at: (_e = live.risk_observed_at) != null ? _e : null,
+      has_kev: (_c = live.has_kev) != null ? _c : null,
+      has_exploit: (_d = live.has_exploit) != null ? _d : null,
+      epss: (_e = live.epss) != null ? _e : null,
+      risk_observed_at: (_f = live.risk_observed_at) != null ? _f : null,
       // And the tag bag, for the same reason one tier over: a sealed episode is still a
       // remediated lifecycle that the by-domain split has to be able to attribute.
-      tags_json: (_f = live.tags_json) != null ? _f : null
+      tags_json: (_g = live.tags_json) != null ? _g : null
     };
   }
   function deleteScansCore(state, scanIds, readPayload, checkpoint, now) {
@@ -4849,6 +4862,7 @@ var Server = (() => {
       tags_json: str(r["tags_json"]),
       fix_date: str(r["fix_date"]),
       fix_observed_at: str(r["fix_observed_at"]),
+      published_date: str(r["published_date"]),
       // Not str(): these are tri-state (boolean | null) and numeric. A bundle exported before
       // the risk columns existed simply lacks the keys, and they must stay null — "not
       // captured", never a fabricated false/0. See reconcile.coerceRiskSignals.
@@ -4869,6 +4883,7 @@ var Server = (() => {
       superseded_by_scan: str(r["superseded_by_scan"]),
       fix_date: str(r["fix_date"]),
       fix_observed_at: str(r["fix_observed_at"]),
+      published_date: str(r["published_date"]),
       // Null on every legacy bundle — the Python exporter never had the column, and its
       // `resolved_episodes` table never had one to export. Correct at import, and no longer
       // permanent: these episodes arrive as Not attributable, then recover their bag from the
@@ -6104,7 +6119,7 @@ var Server = (() => {
     };
   }
   function rowToLedger(r) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u;
     return {
       vuln_key: String((_a = r["vuln_key"]) != null ? _a : ""),
       cve: (_b = r["cve"]) != null ? _b : null,
@@ -6126,6 +6141,7 @@ var Server = (() => {
       tags_json: (_r = r["tags_json"]) != null ? _r : null,
       fix_date: (_s = r["fix_date"]) != null ? _s : null,
       fix_observed_at: (_t = r["fix_observed_at"]) != null ? _t : null,
+      published_date: (_u = r["published_date"]) != null ? _u : null,
       ...coerceRiskSignals(r)
     };
   }
@@ -6163,7 +6179,7 @@ var Server = (() => {
       state.ledger[row.vuln_key] = row;
     }
     state.episodes = readAll(TABS.episodes).map((r) => {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
       return {
         vuln_key: String((_a = r["vuln_key"]) != null ? _a : ""),
         cve: (_b = r["cve"]) != null ? _b : null,
@@ -6176,10 +6192,11 @@ var Server = (() => {
         superseded_by_scan: (_i = r["superseded_by_scan"]) != null ? _i : null,
         fix_date: (_j = r["fix_date"]) != null ? _j : null,
         fix_observed_at: (_k = r["fix_observed_at"]) != null ? _k : null,
+        published_date: (_l = r["published_date"]) != null ? _l : null,
         // Null on every episode sealed before this column existed — the backfill job
         // (backfillTags) recovers those from the Drive checkpoints; until it runs they read as
         // Not attributable, which is the honest answer rather than a guess.
-        tags_json: (_l = r["tags_json"]) != null ? _l : null,
+        tags_json: (_m = r["tags_json"]) != null ? _m : null,
         ...coerceRiskSignals(r)
       };
     });

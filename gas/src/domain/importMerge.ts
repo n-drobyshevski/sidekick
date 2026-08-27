@@ -170,6 +170,7 @@ export function coerceLedger(r: Rec): LedgerRow {
     tags_json: str(r["tags_json"]),
     fix_date: str(r["fix_date"]),
     fix_observed_at: str(r["fix_observed_at"]),
+    published_date: str(r["published_date"]),
     // Not str(): these are tri-state (boolean | null) and numeric. A bundle exported before
     // the risk columns existed simply lacks the keys, and they must stay null — "not
     // captured", never a fabricated false/0. See reconcile.coerceRiskSignals.
@@ -190,6 +191,7 @@ export function coerceEpisode(r: Rec): EpisodeRow {
     superseded_by_scan: str(r["superseded_by_scan"]),
     fix_date: str(r["fix_date"]),
     fix_observed_at: str(r["fix_observed_at"]),
+    published_date: str(r["published_date"]),
     // Null on every legacy bundle — the Python exporter never had the column, and its
     // `resolved_episodes` table never had one to export. Correct at import, and no longer
     // permanent: these episodes arrive as Not attributable, then recover their bag from the

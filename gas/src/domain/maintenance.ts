@@ -147,6 +147,7 @@ export function toEpisodeRow(live: LedgerRow, compactionId: string): EpisodeRow 
     superseded_by_scan: null,
     fix_date: live.fix_date,
     fix_observed_at: live.fix_observed_at,
+    published_date: live.published_date ?? null,
     // Exploit intelligence survives compaction — a sealed episode is still a remediated
     // lifecycle that coverage/efficiency must be able to classify.
     has_kev: live.has_kev ?? null,

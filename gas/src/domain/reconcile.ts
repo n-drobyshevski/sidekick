@@ -38,6 +38,12 @@ export type LedgerRow = {
   // fixDate) was first seen for this episode. Both sticky first-wins; see reconcile().
   fix_date: string | null;
   fix_observed_at: string | null;
+  // CVE publication date (disclosure-latency clock), the upstream `publishedDate`. Captured
+  // for the same reason as the two above and NOT read by the from-detection clocks: once a
+  // finding disappears from the API the node is gone, so a date nobody wrote down is lost
+  // for good. Unlike fix_date it is a fact about the CVE rather than about this episode, so
+  // it is sticky first-wins and — deliberately — survives a reopen untouched.
+  published_date: string | null;
   // Exploit-intelligence capture (remediation coverage / efficiency). The Wiz node carries
   // these, but only the *current scan frame* does — a finding resolved by disappearance is
   // gone from the frame entirely, so measuring "was what we remediated actually high-risk?"
@@ -58,7 +64,7 @@ export const LEDGER_COLUMNS: (keyof LedgerRow)[] = [
   "first_seen", "last_seen", "status", "resolved_at", "resolution_src",
   "reopened_count", "first_scan_id", "last_scan_id",
   "subscription_name", "subscription_ext_id", "tags_json",
-  "fix_date", "fix_observed_at",
+  "fix_date", "fix_observed_at", "published_date",
   "has_kev", "has_exploit", "epss", "risk_observed_at",
 ];
 
@@ -148,6 +154,9 @@ function makeRow(
     last_scan_id: scanId,
     fix_date: fixDate,
     fix_observed_at: fixObservedAt,
+    // Left null here and filled by seedPublished() after the branch, which — like the risk
+    // merge below it — runs identically for new, reopened and persisting rows.
+    published_date: null,
     // Left empty here and filled by mergeRiskSignals() after the branch, which runs for new,
     // reopened, and persisting rows alike (the merge is identical in all three).
     ...emptyRiskSignals(),
@@ -261,6 +270,27 @@ export function mergeRiskSignals(row: RiskSignalFields, rec: Rec, scanTsIso: str
   }
 }
 
+/**
+ * Seed `published_date` off one observation — the upstream `publishedDate`, normalized to
+ * ISO. Sticky FIRST-wins and never cleared: a CVE's publication date cannot change, so the
+ * first parseable value is the answer and every later observation is a no-op.
+ *
+ * It sits beside `mergeRiskSignals` rather than inside `seedFix` on purpose. `seedFix` has
+ * to run per-branch *around* the reopen reset because the vendor-fix clock is per-episode;
+ * publication is a property of the vulnerability, so a reopen has nothing to say about it
+ * and one call after the branch is correct. Unparseable input leaves the field alone rather
+ * than writing a guess — the disclosure-latency clock reads a null origin as UNMEASURED,
+ * never as zero.
+ */
+export function seedPublished(row: Pick<LedgerRow, "published_date">, rec: Rec): void {
+  // `== null` (not `=== null`) also catches undefined on rows read back from a sheet
+  // written before this column existed.
+  if (row.published_date != null) return;
+  if (!present(rec["publishedDate"])) return;
+  const iso = toIso(parseTs(rec["publishedDate"]));
+  if (iso !== null) row.published_date = iso;
+}
+
 export interface ReconcileOptions {
   disappearanceMode?: "scan_ts" | "midpoint";
   prevScanTs?: string | null;
@@ -359,6 +389,10 @@ export function reconcile(
     // monotone and idempotent (unlike seedFix, which has to run per-branch around the reopen
     // reset). See mergeRiskSignals for why this is sticky rather than latest-wins.
     mergeRiskSignals(row, rec, scanTsIso);
+    // CVE publication date, on the same all-three-branches footing and for the same reason:
+    // the date a CVE was published cannot change, so first-wins is idempotent, and a reopen
+    // has nothing to say about it (which is exactly where it parts company with seedFix).
+    seedPublished(row, rec);
 
     // Latest observation wins for display attributes.
     row.severity = sev;
