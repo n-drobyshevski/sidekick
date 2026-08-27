@@ -35,6 +35,7 @@
 //   claimRail.js how much of a closed space one cascade row claims, on a shared axis
 //   rowReorder.js the cascade grip: drag as the shortcut, the row's arrows as the control
 //   diagList.js  the "is this rule quietly failing" read-out, shared by all three cascades
+//   settings.js  the settings form: panel, labelled row, switch, tab strip, one save bar
 
 export { appendAll, clear, downloadText, el, motionOk } from "./ui/dom.js";
 export { registerWideNote, scopeNote, trendScopeNote, trendScopeView } from "./ui/projectScope.js";
@@ -82,3 +83,6 @@ export { latticeSection } from "./ui/latticeSection.js";
 export { claimRail, claimOffsets } from "./ui/claimRail.js";
 export { rowDrag, ruleGrip } from "./ui/rowReorder.js";
 export { diagRow, diagWarn, paintUnknownRates } from "./ui/diagList.js";
+export {
+  disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList,
+} from "./ui/settings.js";

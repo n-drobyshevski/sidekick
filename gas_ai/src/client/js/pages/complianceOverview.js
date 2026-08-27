@@ -468,7 +468,7 @@ function renderRail(host, data, actions) {
         (scopedDerived
           ? "The percentage above is derived here, over the active rules in scope. "
           : `The percentage above is Wiz's own and still covers all ${scoped.total}. `),
-        el("a", { href: "#/settings", target: "_self" }, "Choose which rules →"))
+        el("a", { href: "#/settings?tab=compliance", target: "_self" }, "Choose which rules →"))
     : null;
 
   host.append(el("div", { class: "comp-ov-section" },

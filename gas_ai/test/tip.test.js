@@ -178,10 +178,17 @@ describe("glossaryTipLines", () => {
 });
 
 // --------------------------------------------------------------------------- anti-rot
-// The migration off `title=` only holds if it cannot quietly come back. el() throws on the
-// attribute, which catches the el(tag, {title}) form on the first render in the dev harness;
-// this catches the two paths that go around el() entirely. Same idiom as icons.test.js: read
-// the tree, not a hand-kept list of files.
+// The migration off `title=` only holds if it cannot quietly come back. Three checks, and the
+// third exists because the first two were not enough. Same idiom as icons.test.js: read the
+// tree, not a hand-kept list of files.
+//
+// THE GAP THIS USED TO HAVE, and it shipped a real bug through. The header said el() "catches
+// the el(tag, {title}) form on the first render in the dev harness" — but a throw only fires
+// on a path that actually RUNS, and accessEditor.js's personRow() runs only for a person
+// besides the owner. No seed and no spec had a second user, so `title: "Remove " + email` sat
+// there while renderAccessPanel() rejected on every real workbook and the roster silently
+// vanished from Settings. Runtime enforcement is not coverage. The literal form is scanned
+// statically now, like the other two.
 
 function clientJsFiles(dir) {
   const out = [];
@@ -220,6 +227,39 @@ describe("the native tooltip stays gone", () => {
       }
     }
     expect(hits, "use tip() from ui/tip.js instead").toEqual([]);
+  });
+
+  // The el(tag, { ... }) attrs literal: the form el() throws on, checked here WITHOUT having to
+  // execute the call. Brace-matching from the opening `{` of the second argument rather than a
+  // regex, so a nested object in the attrs (a style map, an inline handler body) cannot end the
+  // scan early or drag an unrelated `title:` in from the children that follow.
+  it("never passes title in an el() attribute literal", () => {
+    const hits = [];
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      for (const m of src.matchAll(/\bel\(\s*(?:"[^"]*"|'[^']*'|`[^`]*`|\w+)\s*,\s*\{/g)) {
+        let i = m.index + m[0].length - 1; // at the opening brace
+        let depth = 0;
+        let end = -1;
+        for (; i < src.length; i++) {
+          const c = src[i];
+          if (c === "{") depth++;
+          else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
+        }
+        if (end === -1) continue;
+        const attrs = src.slice(m.index + m[0].length - 1, end + 1);
+        // Depth-1 keys only: a `title:` inside a nested literal belongs to that object, not to
+        // the attribute set el() iterates.
+        let d = 0;
+        for (const km of attrs.matchAll(/[{}]|\btitle\s*:/g)) {
+          if (km[0] === "{") d++;
+          else if (km[0] === "}") d--;
+          else if (d === 1) hits.push(f + ": " + attrs.slice(0, 60).replace(/\s+/g, " "));
+        }
+      }
+    }
+    expect(hits, "el() throws on this at runtime, but only on a path that runs — use tip()")
+      .toEqual([]);
   });
 
   it("keeps el() refusing the attribute, which is what catches the common form", () => {

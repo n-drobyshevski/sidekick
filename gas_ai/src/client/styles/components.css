@@ -1,8 +1,8 @@
 /* ------------------------------------------------------------------------ cards */
 /* The raised-surface recipe. Every card in the app is this plus its own padding and
-   layout; .asset-card (inventory.css) and .chart-card (tables.css) join here rather than
-   restating the four declarations a third and fourth time. */
-.card, .kpi-card, .chart-card, .asset-card {
+   layout; .asset-card (inventory.css), .chart-card (tables.css) and .settings-panel
+   (settings.css) join here rather than restating the four declarations four more times. */
+.card, .kpi-card, .chart-card, .asset-card, .settings-panel {
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-xl);
@@ -826,9 +826,3 @@
    approach — the confirm dialog is what actually holds the decision. */
 .access-remove:hover { color: var(--bad); }
 .access-add { display: flex; align-items: center; gap: var(--space-2); }
-.access-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-}
