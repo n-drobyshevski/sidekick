@@ -67,3 +67,37 @@ export function temporalType(type) {
 export function temporalFields(fields) {
   return (fields ?? []).filter((f) => temporalName(f.name) || temporalType(f.type));
 }
+
+/**
+ * The connection out of a GraphQL response, found rather than guessed.
+ *
+ * THIS REPLACED A HARDCODED ROOT CHAIN, and the bug it fixes is the worst kind this probe
+ * can produce. The chain read
+ *
+ *     r.data.sastFindings ?? r.data.vulnerabilityFindings ?? {}
+ *
+ * and `secretInstances` was never added to it, so an 843-row register fell through to `{}`
+ * and printed "0 node(s)". Not an error — a COUNT OF ZERO, which is exactly what a
+ * legitimately empty register looks like, written into probe-report.json as
+ * `{count: 0, totalCount: null}` with nothing beside it to notice.
+ *
+ * That is a harder failure to catch than a refusal, and the distinction is worth keeping:
+ * the refusal path announces itself and was guarded first; this one is silent and was not.
+ * A zero has to prove it looked.
+ *
+ * A GraphQL response carries exactly one root key per document, so read it. Adding a fourth
+ * scope can no longer reintroduce this — there is nothing to keep in step.
+ *
+ * @returns {{ok: true, root: string, conn: object} | {ok: false, keys: string[]}}
+ */
+export function resolveConnection(data) {
+  const keys = Object.keys(data ?? {});
+  // A connection is what carries nodes/pageInfo. Anything else in the response is not one,
+  // and falling back to the first key regardless is how a guess becomes a zero.
+  const root = keys.find((k) => {
+    const v = data[k];
+    return v !== null && typeof v === "object" && ("nodes" in v || "pageInfo" in v);
+  });
+  if (!root) return { ok: false, keys };
+  return { ok: true, root, conn: data[root] };
+}

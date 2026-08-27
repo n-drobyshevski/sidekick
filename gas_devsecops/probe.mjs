@@ -22,7 +22,9 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { envValue, temporalFields, temporalName, temporalType } from "./probeHelpers.mjs";
+import {
+  envValue, resolveConnection, temporalFields, temporalName, temporalType,
+} from "./probeHelpers.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -399,9 +401,20 @@ for (const scope of SCOPES) {
     report.findings[scope] = { refused: true, error: why, variables: vars };
     continue;
   }
-  const conn = r.data.sastFindings ?? r.data.vulnerabilityFindings ?? {};
+  const found = resolveConnection(r.data);
+  if (!found.ok) {
+    // NOT a count of zero. A response that parsed but carries no connection is a defect in
+    // this probe or in the document, and recording it as "0 rows" would be a confident lie
+    // about the register — which is precisely what the old hardcoded root chain did.
+    const why = `no connection in the response; root keys: [${found.keys.join(", ")}]`;
+    console.log(`  DEFECT: ${why}`);
+    report.findings[scope] = { noConnection: true, error: why, keys: found.keys, variables: vars };
+    continue;
+  }
+  const conn = found.conn;
   const nodes = conn.nodes ?? [];
-  console.log(`  ${nodes.length} node(s)${conn.totalCount != null ? `, totalCount ${conn.totalCount}` : ""}`
+  console.log(`  ${nodes.length} node(s) from ${found.root}`
+    + `${conn.totalCount != null ? `, totalCount ${conn.totalCount}` : ""}`
     + `, hasNextPage ${conn.pageInfo?.hasNextPage}`);
   if (r.partial) {
     console.log(`  PARTIAL: ${r.errors.length} error(s) alongside good data — e.g. ${r.errors[0].slice(0, 120)}`);
@@ -437,7 +450,7 @@ if (SCOPES.includes("secrets") && app.QUERIES.secrets) {
       severities: [], projectId: PROJECT_ID, first: 500, after: cursor,
     }));
     if (!r.ok) { console.log(`  refused: ${(r.errors?.[0] ?? r.error ?? "").slice(0, 160)}`); break; }
-    const conn = r.data.secretInstances ?? {};
+    const conn = resolveConnection(r.data).conn ?? {};
     for (const n of conn.nodes ?? []) {
       const k = `${n.type ?? "?"}`;
       seen[k] = seen[k] ?? {};

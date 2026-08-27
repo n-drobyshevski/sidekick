@@ -18,13 +18,25 @@ describe("the per-scope severity defaults", () => {
     expect(DEFAULT_FETCH_SEVERITIES.sast).toEqual(["CRITICAL", "HIGH"]);
   });
 
-  it("reaches to MEDIUM on secrets, because the estate's passwords sit below HIGH", () => {
-    // PROVISIONAL. §8.3 established those 369 rows are below HIGH, not that they are AT
-    // MEDIUM. If the crosstab says LOW, this list is still wrong and the register still has
-    // no passwords in it — which is the failure this default exists to fix.
-    expect(DEFAULT_FETCH_SEVERITIES.secrets).toEqual(["CRITICAL", "HIGH", "MEDIUM"]);
-    expect(DEFAULT_FETCH_SEVERITIES.secrets.length)
-      .toBeGreaterThan(DEFAULT_FETCH_SEVERITIES.sca.length);
+  it("puts NO severity gate on secrets", () => {
+    // This test pinned ["CRITICAL","HIGH","MEDIUM"] and the claim it encoded was "MEDIUM
+    // reaches the categories that sit below HIGH". §8.3 had established those rows were
+    // below HIGH; it had not established they were AT MEDIUM, and the crosstab in §9.2
+    // showed they are not: CERTIFICATE is 160/160 INFORMATIONAL, so MEDIUM captured 0 of
+    // it, and PASSWORD splits 107 MEDIUM / 17 LOW / 84 INFORMATIONAL, so it captured half.
+    // The register sat at 843 of 1,958 rows with one category missing entirely.
+    //
+    // Walking the floor down a step at a time kept failing because severity is the wrong
+    // gate: it grades a DETECTION (641 SAAS_API_KEY rows are LOW), not whether a credential
+    // is live. An empty list sends no severity key at all.
+    expect(DEFAULT_FETCH_SEVERITIES.secrets).toEqual([]);
+  });
+
+  it("keeps the empty list through a clean, rather than treating it as missing", () => {
+    // The whole fix depends on this: cleanFetchSeverities must read [] as the real answer
+    // "every severity" and not fall back to a default.
+    expect(cleanSettings({}).fetchSeverities.secrets).toEqual([]);
+    expect(cleanSettings({ fetchSeverities: { secrets: [] } }).fetchSeverities.secrets).toEqual([]);
   });
 
   it("has an entry for every scope", () => {
@@ -49,10 +61,15 @@ describe("migrating the old flat fetchSeverities", () => {
   });
 
   it("falls back per scope when a stored record is partial", () => {
-    // The point of the record: a missing scope takes ITS OWN default, not another's.
+    // The point of the record: a missing scope takes ITS OWN default, not another's — so
+    // this asserts against the default rather than a literal, which is what let the last
+    // version of it go stale the moment the secrets default changed.
     const s = cleanSettings({ fetchSeverities: { sca: ["CRITICAL"] } });
     expect(s.fetchSeverities.sca).toEqual(["CRITICAL"]);
-    expect(s.fetchSeverities.secrets).toEqual(["CRITICAL", "HIGH", "MEDIUM"]);
+    expect(s.fetchSeverities.secrets).toEqual([...DEFAULT_FETCH_SEVERITIES.secrets]);
+    expect(s.fetchSeverities.sast).toEqual([...DEFAULT_FETCH_SEVERITIES.sast]);
+    // and the two really are different answers, which is why the record exists
+    expect(s.fetchSeverities.secrets).not.toEqual(s.fetchSeverities.sast);
   });
 
   it("keeps an explicitly empty list, which means every severity", () => {

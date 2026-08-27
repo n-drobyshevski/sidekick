@@ -6,7 +6,9 @@
 // module scope. Extracting them was the fix; these are the vectors.
 
 import { describe, expect, it } from "vitest";
-import { envValue, temporalFields, temporalName, temporalType } from "../probeHelpers.mjs";
+import {
+  envValue, resolveConnection, temporalFields, temporalName, temporalType,
+} from "../probeHelpers.mjs";
 
 describe("envValue", () => {
   it("drops a trailing comment from an unquoted value", () => {
@@ -99,5 +101,58 @@ describe("temporalFields", () => {
 
   it("tolerates a missing field list rather than throwing mid-probe", () => {
     expect(temporalFields(undefined)).toEqual([]);
+  });
+});
+
+describe("resolveConnection", () => {
+  // The bug this replaced: a hardcoded root chain that never learned about secretInstances,
+  // so an 843-row register printed "0 node(s)" and wrote {count: 0} into the report with no
+  // error beside it. A zero that has not proved it looked is indistinguishable from a true
+  // zero, which makes it worse than a refusal — a refusal at least announces itself.
+  const page = (nodes, totalCount) => ({ nodes, totalCount, pageInfo: { hasNextPage: false } });
+
+  it("finds the connection whatever the root is called", () => {
+    for (const root of ["sastFindings", "vulnerabilityFindings", "secretInstances"]) {
+      const got = resolveConnection({ [root]: page([{ id: "a" }], 843) });
+      expect(got.ok, `${root} not resolved`).toBe(true);
+      expect(got.root).toBe(root);
+      expect(got.conn.totalCount).toBe(843);
+    }
+  });
+
+  it("resolves a root it has never heard of, which is the whole point", () => {
+    // A fourth scope must not be able to reintroduce the bug by being forgotten.
+    const got = resolveConnection({ iacFindings: page([{ id: "x" }], 7) });
+    expect(got.ok).toBe(true);
+    expect(got.root).toBe("iacFindings");
+  });
+
+  it("REFUSES rather than returning an empty connection", () => {
+    // The failure that matters: not ok, so the caller records a defect instead of a count.
+    for (const data of [null, undefined, {}, { __typename: "Query" }, { count: 5 }]) {
+      const got = resolveConnection(data);
+      expect(got.ok, `${JSON.stringify(data)} should not resolve`).toBe(false);
+      expect(Array.isArray(got.keys)).toBe(true);
+    }
+  });
+
+  it("reports the root keys it did see, so the miss is diagnosable", () => {
+    const got = resolveConnection({ someOtherThing: { total: 3 } });
+    expect(got.ok).toBe(false);
+    expect(got.keys).toEqual(["someOtherThing"]);
+  });
+
+  it("does not mistake a non-connection sibling for the connection", () => {
+    // A response carrying both must pick the one with nodes, not the first key.
+    const got = resolveConnection({ meta: { version: 2 }, secretInstances: page([{ id: "a" }], 1) });
+    expect(got.root).toBe("secretInstances");
+  });
+
+  it("accepts a connection that legitimately has zero rows", () => {
+    // The point is not "never report zero" — it is that a zero must come from a real
+    // connection rather than from a lookup that missed.
+    const got = resolveConnection({ secretInstances: page([], 0) });
+    expect(got.ok).toBe(true);
+    expect(got.conn.nodes).toEqual([]);
   });
 });
