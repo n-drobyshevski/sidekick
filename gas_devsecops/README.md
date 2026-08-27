@@ -134,6 +134,14 @@ three timestamps come back populated (PROBE_FINDINGS.md §7). `Q_SECRETS` is now
 §7.3 has the identity fields and the filter shapes, including the trap that
 `SecretInstanceVcsDetails` spells the commit `initialCommitHash`, not `commitHash`.
 
+**`Q_SECRETS` has now been sent (§8), and one filter key is still wrong.**
+`SecretInstanceFilters.codeToCloudPipelineStage` is an OBJECT `{equals:[...]}`, not the bare
+list SCA uses for the same field name, so `secretInstances` is refused with
+`VALIDATION_INVALID_TYPE_VARIABLE` until `"codeToCloudPipelineStage"` joins
+`OBJECT_FILTERS.secrets`. With that one key corrected the query returns 691 rows and the
+document itself is sound. `--schema` now prints the send-shape for **every** field of all
+three filter types, which is what makes this class of defect visible before it ships.
+
 ### What the probe and the register will not select
 
 `Q_SECRETS` deliberately omits `snippet` (the matched text) and `validationDetails`. The
