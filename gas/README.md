@@ -256,6 +256,45 @@ The MTTR page's primary numbers come from a **Kaplan–Meier** survival estimate
   fix re-enters the open/KM series at the point its fix landed. The **actionable-clock**
   KM (`kmActionable`) is unchanged either way — awaiting rows already carry null actionable
   fields and never entered it. The toggle is a persisted global setting (`show_no_fix`).
+- **Latency — the wait for a fix to *exist*.** Every clock above measures the wait to
+  *deploy* a fix. `latencyView` (`src/domain/remediation.ts`) measures the wait for one to
+  exist, and it is the complement of the actionable clock: that one starts where this one
+  ends, so **exposure = latency + actionable time** and each half has an owner. Two origins,
+  both estimated by the same `kaplanMeier` over the projection:
+  - `"detection"` — `first_seen → fix_available_at`. How long *we* waited after finding it.
+  - `"disclosure"` — `published_date → fix_available_at`. The vendor's own release latency.
+
+  Findings still awaiting a fix are the **censored** population here rather than an excluded
+  one, which is the whole point: dropping them would leave only the vulnerabilities that got
+  fixed and measure how fast the fixed ones were fixed. Note what is *not* done — those rows
+  are never censored inside the from-detection MTTR clock, because there the censoring would
+  be caused by the very thing preventing the event (informative censoring), which biases the
+  median down exactly as the no-fix backlog grows. This is a third clock, not an adjustment.
+
+  Four derivations carry the honesty, each pinned by a test:
+  - **Legacy pre-rollout rows are unmeasured, not zero.** `baseRows` sets their
+    `fix_available_at` to `first_seen` because the old `hasFix`-only ingestion guaranteed a
+    fix existed — assumed, never observed.
+  - **A fix predating detection is a zero-length wait**, clamped, not a negative duration.
+  - **A finding that closed before any fix appeared** is censored at its resolution and
+    counted apart as `closedBeforeFix`. It is a competing risk, and `resolution_src` only
+    knows `api` from `disappeared` — never "patched" from "decommissioned" — so a
+    cause-specific model is not available and the counter is the honest stand-in.
+  - **A reopened row is unmeasured on the disclosure clock only.** The reopen resets the fix
+    clock and `first_seen` together, so the detection pair stays coherent; publication does
+    not reset, so pairing this episode's fix against the original publication would measure a
+    wait that never happened.
+
+  `LatencySegments` ships beside the estimate (`events` / `censored` / `closedBeforeFix` /
+  `zeroAtOrigin` / `unmeasured` / `total`) because `kaplanMeier` silently drops a row that is
+  neither event nor censored, and a reader cannot otherwise tell a small register from a
+  badly-measured one. The curve does **not** ship — nothing plots it, and that is the mistake
+  `kmActionable` was deleted for.
+
+  **The show-no-fix toggle does not apply to it.** Those rows are exactly the censored
+  population, so `api.ts` computes latency from the base *before* that filter and the page
+  says so in its help tip. The EOL toggle still applies: it removes findings that will never
+  get a fix by decision rather than by delay, which is a scope the operator chose.
 - The old **fast-lane exclusion** method (drop resolved findings with `mttr_days` under a
   configurable window) and its `fast_lane_days` setting have been **removed** — KM
   subsumes the de-biasing it was reaching for.

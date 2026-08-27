@@ -417,6 +417,7 @@ describe("latencyView / latencySegments", () => {
   type LatRow = Parameters<typeof latencyView>[0][number] & {
     mttr_days: number | null;
     age_days: number | null;
+    awaiting_vendor_fix: boolean;
   };
   const lat = (over: Partial<LatRow>): LatRow => ({
     severity: "HIGH",
@@ -426,6 +427,9 @@ describe("latencyView / latencySegments", () => {
     fix_available_at: null,
     resolved_at: null,
     reopened_count: 0,
+    // Not read by the latency clocks (they key off isOpen/fix_available_at); carried so the
+    // same rows can be run through baseRowNoFix, the show-no-fix toggle's own predicate.
+    awaiting_vendor_fix: false,
     // Carried so the SAME objects also feed the from-detection clock, which is what makes
     // the differential test below a comparison rather than two unrelated numbers.
     mttr_days: null,
@@ -565,6 +569,34 @@ describe("latencyView / latencySegments", () => {
   // as that test on purpose — many rows, FEW distinct event times — because kmCurve is
   // O(distinct times x observations): 200k rows with 200k distinct times is quadratic and
   // would time out for a reason that has nothing to do with what is being guarded.
+  // Why api.ts computes latency over a population the show-no-fix toggle has NOT narrowed.
+  // baseRowNoFix is that toggle's predicate, and the rows it removes are exactly this
+  // metric's censored population — so routing latency through visibleBase() would leave only
+  // the findings that got a fix and report how fast the fixed ones were fixed. If someone
+  // later "fixes the inconsistency" by filtering here, this test is what stops them.
+  it("the show-no-fix filter would delete the entire censored population", () => {
+    const rows = [
+      lat({ fix_available_at: "2026-07-03T00:00:00Z", awaiting_vendor_fix: false }), // event at 2
+      lat({ awaiting_vendor_fix: true }), // awaiting -> censored at 31
+      lat({ awaiting_vendor_fix: true }), // awaiting -> censored at 31
+      lat({ awaiting_vendor_fix: true }), // awaiting -> censored at 31
+    ];
+    const full = latencySegments(rows, "detection", NOW);
+    expect(full).toMatchObject({ events: 1, censored: 3 });
+    // S(2) = 1 - 1/4 = 0.75, so the honest answer is "no median yet, > 31 d".
+    const km = kaplanMeier(latencyView(rows, "detection", NOW));
+    expect(km.median).toBeNull();
+    expect(km.medianLowerBound).toBe(31);
+
+    // Now apply the toggle's own predicate, as visibleBase would.
+    const narrowed = rows.filter((r) => !baseRowNoFix(r));
+    expect(latencySegments(narrowed, "detection", NOW)).toMatchObject({ events: 1, censored: 0 });
+    // Every censored observation is gone, so the curve falls straight to zero on its single
+    // event and the metric reports a 2-day vendor wait against a register that has been
+    // waiting at least a month. That is the bias, in one number.
+    expect(kmMedian(latencyView(narrowed, "detection", NOW))).toBe(2);
+  });
+
   it("register-sized population survives the projection and the estimator", () => {
     const N = 200_000;
     const base = Date.parse("2026-07-01T00:00:00Z");

@@ -155,6 +155,53 @@ function fmtAwaiting(a) {
   return `${a.overall.toLocaleString()}${pct}`;
 }
 
+// The wait for a vendor fix to EXIST, as the hero's second source line. Reads the same
+// {median, medianLowerBound} shape fmtKmMedian does (the server ships the KM summary without
+// its curve — no chart plots these), so the "> X d" heavy-censoring rendering is shared.
+//
+// Renders NOTHING rather than a dash when the payload predates the clocks (a stale cache) or
+// when nothing in the population could be measured at all: a row whose fix availability was
+// never observed is unmeasured, and a page that printed "0 d" for it would be inventing the
+// one number this whole metric exists to stop inventing.
+function latencyClause(l) {
+  if (!l || !l.segments) return null; // stale pre-latency cache
+  if (!l.events && !l.censored) return null; // nothing measured — say nothing, not zero
+  return fmtKmMedian(l);
+}
+
+// Both clocks on one line, with the segment split in the help tip. Null when neither clock
+// has anything to say.
+function latencyLine(vendor, disclosure) {
+  const v = latencyClause(vendor);
+  const d = latencyClause(disclosure);
+  if (!v && !d) return null;
+  const parts = [];
+  if (v) parts.push(`${v} from our first detection`);
+  if (d) parts.push(`${d} from CVE publication`);
+  const seg = (vendor && vendor.segments) || (disclosure && disclosure.segments) || {};
+  const detail = [
+    "Kaplan\u2013Meier median wait for a vendor fix to become available. Findings still " +
+      "awaiting one are censored, not dropped \u2014 excluding them would leave only the " +
+      "vulnerabilities that got fixed and measure how fast the fixed ones were fixed.",
+    "This is the vendor's half of the exposure. Our half is the actionable clock, which " +
+      "starts where this one ends: exposure = this wait + time to deploy.",
+    `Population: ${(seg.events || 0).toLocaleString()} with a fix observed, ` +
+      `${(seg.censored || 0).toLocaleString()} still awaiting one, ` +
+      `${(seg.closedBeforeFix || 0).toLocaleString()} closed before any fix appeared, ` +
+      `${(seg.unmeasured || 0).toLocaleString()} unmeasured.`,
+    "Unmeasured means the origin or the availability date was never captured \u2014 a " +
+      "legacy row predating broadened ingestion, or a CVE with no publication date on " +
+      "record. Those are excluded rather than counted as a zero-length wait.",
+    "Measured over every finding in scope, including ones the \"show findings without a " +
+      "vendor fix\" setting hides elsewhere on this page: they are exactly this metric's " +
+      "censored population, so hiding them here would bias it toward zero.",
+  ];
+  return helpTip(
+    [el("div", { class: "hero-src" }, `Wait for a vendor fix \u2014 ${parts.join(" \u00b7 ")}`)],
+    detail,
+  );
+}
+
 // Kaplan-Meier median formatter: the exact day count, "> X d" when the curve never drops to
 // 50% within the observed window (heavy censoring — the true median is at least that far
 // out), or "—" when there's no KM result at all (a stale pre-KM cached payload). `km` is a
@@ -941,6 +988,7 @@ export async function renderMttr(main, _params, ctx) {
             ? ` · ${unclassified.toLocaleString()} unclassified severity`
             : "") +
           awaitingClause),
+        latencyLine(rem?.vendorLatency, rem?.disclosureLatency),
         minis,
       ),
     );

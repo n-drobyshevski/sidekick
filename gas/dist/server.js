@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "0b54d3aadc8a" : "dev";
+  var BUILD_ID = true ? "eb4769df0282" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -3202,6 +3202,68 @@ var Server = (() => {
       openTotal,
       pctOfOpen: openTotal ? overall / openTotal * 100 : null
     };
+  }
+  function latencyObservation(row, origin, nowMs) {
+    var _a;
+    const first = parseTs(row.first_seen);
+    if (first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS) return null;
+    const originMs = origin === "detection" ? first : parseTs(row.published_date);
+    if (originMs === null) return null;
+    if (origin === "disclosure" && Number((_a = row.reopened_count) != null ? _a : 0) > 0) return null;
+    const fixAvail = parseTs(row.fix_available_at);
+    if (fixAvail !== null) {
+      const raw = fixAvail - originMs;
+      return { t: Math.max(0, raw) / DAY_MS3, event: true, closedBeforeFix: false };
+    }
+    const resolved = parseTs(row.resolved_at);
+    if (resolved !== null) {
+      return { t: Math.max(0, resolved - originMs) / DAY_MS3, event: false, closedBeforeFix: true };
+    }
+    if (isOpen2(row.status)) {
+      return { t: Math.max(0, nowMs - originMs) / DAY_MS3, event: false, closedBeforeFix: false };
+    }
+    return null;
+  }
+  function latencyView(rows, origin, now) {
+    const nowMs = now != null ? now : Date.now();
+    const out = [];
+    for (const row of rows) {
+      const obs = latencyObservation(row, origin, nowMs);
+      if (obs === null) continue;
+      out.push({
+        severity: row.severity,
+        status: obs.event ? "RESOLVED" : "OPEN",
+        mttr_days: obs.event ? obs.t : null,
+        age_days: obs.event ? null : obs.t
+      });
+    }
+    return out;
+  }
+  function latencySegments(rows, origin, now) {
+    const nowMs = now != null ? now : Date.now();
+    const seg = {
+      events: 0,
+      censored: 0,
+      closedBeforeFix: 0,
+      zeroAtOrigin: 0,
+      unmeasured: 0,
+      total: 0
+    };
+    for (const row of rows) {
+      seg.total += 1;
+      const obs = latencyObservation(row, origin, nowMs);
+      if (obs === null) {
+        seg.unmeasured += 1;
+      } else if (obs.event) {
+        seg.events += 1;
+        if (obs.t === 0) seg.zeroAtOrigin += 1;
+      } else if (obs.closedBeforeFix) {
+        seg.closedBeforeFix += 1;
+      } else {
+        seg.censored += 1;
+      }
+    }
+    return seg;
   }
   function baseRowNoFix(row) {
     return row.awaiting_vendor_fix === true;
@@ -8965,12 +9027,28 @@ var Server = (() => {
     }
     return rows;
   }
+  function latencySummary(rows, origin) {
+    const now = Date.now();
+    const km = kaplanMeier(latencyView(rows, origin, now));
+    return {
+      median: km.median,
+      medianLowerBound: km.medianLowerBound,
+      mean: km.mean,
+      meanTruncated: km.meanTruncated,
+      restrictionTime: km.restrictionTime,
+      events: km.events,
+      censored: km.censored,
+      total: km.total,
+      segments: latencySegments(rows, origin, now)
+    };
+  }
   function mttrData(p) {
     var _a, _b, _c;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     let rows = scopedBaseRows(domain, supportGroup);
     rows = filterSeverities(rows, readSeverities(p));
+    const latencyRows = filterEolBase(rows, getIncludeEol2());
     rows = visibleBase(rows);
     const { perSev, overall } = mttrFromLedger(rows);
     const { slaPct, oldestDays } = overallSlaOldest(perSev);
@@ -9013,7 +9091,14 @@ var Server = (() => {
       // per-severity table); only its survival estimate never was. Removing it is compute as
       // well as transfer.
       openPastSlaActionable: openPastSla(actionableView(remRows)),
-      awaiting: awaitingVendorFix(remRows)
+      awaiting: awaitingVendorFix(remRows),
+      // The other half of the exposure decomposition. `awaiting` counts the findings with no
+      // patch; these two measure how long that wait runs — from our first sight of the finding
+      // (vendorLatency, which pairs additively with the actionable clock) and from the CVE's
+      // publication (disclosureLatency, the vendor's own release latency). Computed over
+      // `latencyRows`, NOT `remRows`: see the note where latencyRows is built.
+      vendorLatency: latencySummary(latencyRows, "detection"),
+      disclosureLatency: latencySummary(latencyRows, "disclosure")
     };
     return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation };
   }
@@ -9219,7 +9304,11 @@ var Server = (() => {
       // "mttr6" → "mttr7": remediation gained the censoring-aware KM p90 — `kmP90` (overall, for
       // the KPI band) and `kmP90PerSev` (per-severity table) — replacing the naive `pctiles` p90
       // at those call sites; bump so no stale entry lacks them.
-      "mttr8",
+      // "mttr8" → "mttr9": remediation gained `vendorLatency` / `disclosureLatency` — the two
+      // latency clocks and their segment counts. Note they are computed over a DIFFERENT
+      // population from everything else in the block (the show-no-fix filter is not applied to
+      // them), so a stale entry is not merely missing keys; bump so none survives.
+      "mttr9",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),

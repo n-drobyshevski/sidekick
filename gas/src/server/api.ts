@@ -22,12 +22,15 @@ import {
   isEndOfLifeName,
   kaplanMeier,
   kmQuantileFromCurve,
+  latencySegments,
+  latencyView,
   mttrPercentiles,
   openPastSla,
   recordEol,
   recordNoFix,
   resolutionBuckets,
 } from "../domain/remediation";
+import type { LatencyOrigin } from "../domain/remediation";
 import { validateBundle } from "../domain/importMerge";
 import { buildMigrationBundle, bundleCounts } from "../domain/exportBundle";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
@@ -957,11 +960,48 @@ function scopedBaseRows(domain: string, supportGroup: string): Rec[] {
   return rows;
 }
 
+/**
+ * One latency clock's shippable summary: the KM stats WITHOUT the curve, plus the segment
+ * counts that say how much of the population was measured at all.
+ *
+ * The curve's omission is deliberate, not an oversight. `kmActionable` — a second complete
+ * KMResult, curve included — used to ship on every MTTR and Executive load with no reader
+ * anywhere, and was removed for it (see the note in the remediation block below). Two more
+ * curves with no chart to draw them would re-make that mistake twice over. Add the curve
+ * back the day something plots it.
+ *
+ * One `now` for both calls so the segment counts and the estimator's own event/censored
+ * split are computed against the same instant, which is what makes their agreement an
+ * invariant rather than a near-certainty.
+ */
+function latencySummary(rows: BaseRow[], origin: LatencyOrigin): Rec {
+  const now = Date.now();
+  const km = kaplanMeier(latencyView(rows, origin, now));
+  return {
+    median: km.median,
+    medianLowerBound: km.medianLowerBound,
+    mean: km.mean,
+    meanTruncated: km.meanTruncated,
+    restrictionTime: km.restrictionTime,
+    events: km.events,
+    censored: km.censored,
+    total: km.total,
+    segments: latencySegments(rows, origin, now),
+  };
+}
+
 function mttrData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
   let rows = scopedBaseRows(domain, supportGroup);
   rows = filterSeverities(rows, readSeverities(p));
+  // The latency clocks measure the wait for a fix to EXIST, so their censored population is
+  // EXACTLY the rows the show-no-fix toggle hides. Honoring the toggle would leave only the
+  // findings that got a fix and report how fast the fixed ones were fixed — the survivorship
+  // bias the estimator exists to remove — so latency reads the base before that filter and
+  // says so in the UI. The EOL toggle still applies: it removes findings that will never get
+  // a fix by decision rather than by delay, which is a scope the operator chose.
+  const latencyRows = filterEolBase(rows, settingsStore.getIncludeEol()) as unknown as BaseRow[];
   // Global show-no-fix toggle: drop awaiting-vendor-fix rows so the whole remediation block
   // (percentiles, buckets, KM, open-past-SLA, awaiting) measures only the fixable population.
   // No-op on the default path.
@@ -1024,6 +1064,13 @@ function mttrData(p?: unknown): Rec {
     // well as transfer.
     openPastSlaActionable: openPastSla(actionableView(remRows)),
     awaiting: awaitingVendorFix(remRows),
+    // The other half of the exposure decomposition. `awaiting` counts the findings with no
+    // patch; these two measure how long that wait runs — from our first sight of the finding
+    // (vendorLatency, which pairs additively with the actionable clock) and from the CVE's
+    // publication (disclosureLatency, the vendor's own release latency). Computed over
+    // `latencyRows`, NOT `remRows`: see the note where latencyRows is built.
+    vendorLatency: latencySummary(latencyRows, "detection"),
+    disclosureLatency: latencySummary(latencyRows, "disclosure"),
   };
   return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation };
 }
@@ -1293,7 +1340,11 @@ const cachedMttrData = (p?: unknown) =>
     // "mttr6" → "mttr7": remediation gained the censoring-aware KM p90 — `kmP90` (overall, for
     // the KPI band) and `kmP90PerSev` (per-severity table) — replacing the naive `pctiles` p90
     // at those call sites; bump so no stale entry lacks them.
-    "mttr8",
+    // "mttr8" → "mttr9": remediation gained `vendorLatency` / `disclosureLatency` — the two
+    // latency clocks and their segment counts. Note they are computed over a DIFFERENT
+    // population from everything else in the block (the show-no-fix filter is not applied to
+    // them), so a stale entry is not merely missing keys; bump so none survives.
+    "mttr9",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
