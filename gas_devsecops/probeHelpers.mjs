@@ -101,3 +101,46 @@ export function resolveConnection(data) {
   if (!root) return { ok: false, keys };
   return { ok: true, root, conn: data[root] };
 }
+
+/* ------------------------------------------------------------------- the flag table */
+
+/** Boolean flags the probe accepts. */
+export const PROBE_FLAGS = ["--dry-run", "--schema", "--roots", "--report"];
+
+/** `--name=value` options the probe accepts. */
+export const PROBE_OPTIONS = ["--first", "--scope"];
+
+/**
+ * Arguments the probe does not recognise.
+ *
+ * PROBE_FINDINGS.md §10.9: a pass was run as `--roots --crosstab --report` and produced a
+ * one-key report with no crosstab in it. Two things were wrong and only one was obvious.
+ * `--roots` short-circuits (see rootsSkips below) — but `--crosstab` WAS NEVER A FLAG AT
+ * ALL. `has()` only ever asks about names it already knows, so an argument nobody
+ * implemented is indistinguishable from one that ran and found nothing.
+ *
+ * That is the same family as the false zero above: a run that looks like it measured
+ * something. So an unknown argument is REFUSED rather than ignored — the probe's answers
+ * get pasted into a findings document, and "the flag did nothing" has to be visible at the
+ * moment it does nothing, not inferred from a missing section weeks later.
+ */
+export function unknownArgs(args) {
+  return args.filter((a) => {
+    if (PROBE_FLAGS.includes(a)) return false;
+    const eq = a.indexOf("=");
+    if (eq > 0 && PROBE_OPTIONS.includes(a.slice(0, eq))) return false;
+    return true;
+  });
+}
+
+/**
+ * The sections `--roots` will not reach, given the other flags passed.
+ *
+ * `--roots` is introspection-only and exits before the scope loop. That is intended; doing
+ * it in silence is not. Returns the human names of what the run is skipping, so the
+ * short-circuit says so on its way out.
+ */
+export function rootsSkips(args) {
+  const skips = ["the timestamp probe", "the scope loop", "the secrets crosstab"];
+  return args.includes("--schema") ? ["the schema dump", ...skips] : skips;
+}

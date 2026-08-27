@@ -416,7 +416,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "d84d83761d62" : "dev";
+  var BUILD_ID = true ? "c3fc5854797c" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -600,38 +600,59 @@ var Server = (() => {
       // validated_at only where validation_state is INVALID. removed_at is the other axis
       // entirely: the string left HEAD. PROBE_FINDINGS.md §3.
       //
-      // IDENTITY IS `external_id`. An earlier revision of this comment said the pair
-      // (secretDataId, path), on the strength of one page showing 3.82 rows per credential.
-      // Measured over BOTH pages — the whole 843-row register — that pair collides 2.27:1,
-      // with a single pair covering 49 rows (PROBE_FINDINGS.md §9.5):
+      // IDENTITY IS `(secretDataId, path, lineNumber)`, hashed — src/domain/secretsLedger.ts.
+      //
+      // TWO EARLIER REVISIONS OF THIS COMMENT WERE WRONG, in opposite directions, and the
+      // sequence is the point. The first said the pair (secretDataId, path), on one page
+      // showing 3.82 rows per credential. Measured over both pages of the 843-row gated
+      // register, that pair collides 2.27:1 with a single pair covering 49 rows (§9.5):
       //
       //     key                                page 1   page 2
       //     id                                   1.00     1.00
       //     secretDataId                         4.39     2.09
-      //     (secretDataId, path)                 2.27     1.37   <- not an identity
+      //     (secretDataId, path)                 2.27     1.37   <- merges distinct findings
       //     (secretDataId, path, line)           1.32     1.06
       //     (secretDataId, path, line, resource) 1.00     1.00
       //     externalId                           1.00     1.00
       //
-      // A ledger keyed on the pair would merge distinct findings. Two candidates are unique
-      // across the whole register; `externalId` is Wiz's own composite and the one that reads:
-      //     github.com##<repo>##<path>##<contentHash>##<lineIndex>
+      // So the second revision took `externalId`, because it is unique. IT IS UNIQUE FOR THE
+      // WRONG REASON (§10.6). With the severity gate off — the whole 1,958-row CODE
+      // population rather than 843 — the register splits REPOSITORY 1,359 / REPOSITORY_BRANCH
+      // 599, and 187 (secretDataId, path, lineNumber) keys span BOTH. All 187 carry two
+      // different externalIds, because Wiz splices the branch segment into its composite:
+      //
+      //     REPOSITORY         github.com##<org>/<repo>##<path>##<hash>##<line>
+      //     REPOSITORY_BRANCH  github.com##<org>/<repo>##<branch>##<path>##<hash>##<line>
+      //
+      // `externalId` is unique BECAUSE IT PRESERVES THE DUPLICATE. A ledger keyed on it
+      // records one secret, in one file, at one line, as two findings with two clocks — and
+      // §10.7 measured those clocks genuinely disagreeing: median 19.9 days apart, max 285.3,
+      // 83 of 187 over 30 days, with the branch twin earlier in 135 cases and the repository
+      // twin in the other 52. Neither type is reliably older, so the register cannot prefer
+      // one. It keys on the triple, folds the twins, and takes the EARLIEST first_seen.
+      //
+      // THE KEY IS DERIVED, NEVER ADOPTED, which inverts the OS ledger's first rule.
+      // gas/src/domain/lifecycle.ts::vulnKey prefers the Wiz `id` because there it is stable
+      // per FINDING. Here `id` and `externalId` are both stable per ROW, and the row is not
+      // the finding — so adopting either is the same mistake one level down.
       //
       // secretDataId still names the CREDENTIAL and is what rotation groups by — one decision
       // per credential across however many occurrences it has. It is just not the row key.
       //
       // THREE CAVEATS, none resolved, all of which the ledger depends on:
-      //   * A LINE MOVE LOOKS LIKE A NEW FINDING. externalId encodes lineIndex, and so does
-      //     the four-part tuple — there is no line-stable unique key among the candidates.
-      //     Reformatting a file would close one finding and open another, and the MTTR clock
-      //     would believe it.
+      //   * A LINE MOVE LOOKS LIKE A NEW FINDING. The triple encodes the line, and so does
+      //     every unique candidate above — there is no line-stable unique key. Reformatting a
+      //     file would close one finding and open another, and the MTTR clock would believe
+      //     it.
       //   * UUID STABILITY IS INFERRED, NOT MEASURED. id and secretDataId carry a version-5
       //     nibble, i.e. name-based UUIDs derived from content, which WOULD make them stable
-      //     across scans. That is read off the nibble; one day of observation cannot
-      //     establish it, and a key that is not stable across scans resolves every row on
-      //     every sync.
-      //   * The repo/branch duplicate below is 66% of the residual collision — 56 of 85
-      //     colliding keys span both REPOSITORY and REPOSITORY_BRANCH.
+      //     across scans. §10.8 re-fetched §9's exact rows and found both unchanged — but
+      //     lastUpdatedAt showed no rescan had intervened, so that is not the two-scan test.
+      //     The strongest evidence is incidental: branch twins carry firstSeenAt 2025-11-14
+      //     with lastSeenAt 2026-08-23 under a SINGLE id, one identity spanning nine months
+      //     of scans. Persuasive, still not controlled, and the ledger depends on it.
+      //   * THE FOLD DISCARDS A MEASUREMENT, so the row records what it discarded:
+      //     twin_count, twin_first_seen_spread_days and source_external_ids below.
       //
       // DO NOT ADD isDefaultBranch TO THE SECRETS FILTER TO DEDUPLICATE. There is real
       // duplication — 18 of 176 (secretDataId, path) pairs appear under both REPOSITORY and
@@ -645,12 +666,20 @@ var Server = (() => {
       // as deduplication: absent collapsed to false, which is the failure the AI register
       // already has a name for. The duplication is real and wants deduplication on the
       // resource entity, after the rows are keyed — not a filter that drops two-thirds of the
-      // register on the way in.
+      // register on the way in. That is now what happens: secretsLedger.collapseTwins folds
+      // them once they are keyed, and the filter still asks for the whole population.
       "secret_kind",
+      "confidence",
       "rotated_at",
       "removed_at",
       "validation_state",
       "validated_at",
+      // The twin fold, made auditable. Collapsing 187 pairs to the earliest first_seen is
+      // the right call (§10.7) and it throws a number away; a 285-day disagreement has to
+      // be visible in the row rather than only in the module that folded it.
+      "twin_count",
+      "twin_first_seen_spread_days",
+      "source_external_ids",
       "owner_project",
       "owner_path",
       "tags_json"

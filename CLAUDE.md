@@ -130,12 +130,29 @@ already implements the pipeline and is the behavioural spec (same relationship `
   silent, and guarding the failure that announces itself is not the same as guarding the one
   that does not. `resolveConnection` now finds the root in the response and REFUSES rather
   than returning an empty connection.
-- **The secrets ledger key is `externalId`, not `(secretDataId, path)`.** That pair collides
-  2.27:1 over the full register (one pair covering 49 rows); `externalId` and
-  `(secretDataId, path, lineNumber, resource.id)` are the only unique candidates.
-  `secretDataId` names the credential and is what rotation groups by — not the row key. Both
-  unique candidates encode the line, so a line move reads as a new finding, and UUID
-  stability across scans is inferred from a version-5 nibble rather than measured.
+- **The secrets ledger key is DERIVED, never adopted, and this entry has now been wrong
+  twice.** It first said `(secretDataId, path)`, which collides 2.27:1 with one pair covering
+  49 rows. It then said `externalId`, because that is unique across the register — and
+  §10.6, on the ungated 1,958-row population, showed it is unique BECAUSE IT PRESERVES THE
+  REPO/BRANCH DUPLICATE: 187 keys span both `REPOSITORY` and `REPOSITORY_BRANCH`, and all
+  187 carry two different `externalId`s, because Wiz splices the branch segment into its
+  composite. The clocks on those twins genuinely disagree — median 19.9 days apart, max
+  285.3, branch earlier in 135 and repository earlier in 52 — so neither type can be
+  preferred. Key on `(secretDataId, path, lineNumber)`, fold the twins, take the earliest
+  `firstSeenAt`, and write the discarded gap into the row (`twin_first_seen_spread_days`).
+  The generalisation, which inverts the OS ledger's first rule: `vulnKey` prefers the Wiz
+  `id` because THERE it is stable per finding; here every Wiz identifier is stable per ROW,
+  and the row is not the finding. Uniqueness is not identity. `secretDataId` names the
+  credential and is what rotation groups by — not the row key. The key still encodes the
+  line, so a line move reads as a new finding, and UUID stability across scans is still
+  inferred from a version-5 nibble (§10.8 strengthened it — one `id` spanning nine months of
+  scans — without making it a controlled test).
+- **A flag that does nothing produces a run that looks like it measured something.**
+  `--roots --crosstab --report` returned a one-key report with no crosstab and no warning:
+  `--roots` short-circuits, and `--crosstab` was never a flag at all — `has()` only asks
+  about names it already knows. The probe now REFUSES an unrecognised argument and the
+  `--roots` exit names the sections it skipped. Same family as the false zero above: the
+  output has to say what it did not do.
 - **The accent is split and the split is load-bearing.** `--accent: #ffcb13` is 1.52:1 on
   white and 1.30:1 on the meter track — it is a FILL token and nothing else. Every accent
   fill carries `--accent-edge: rgba(0,0,0,.40)`, which lifts it to 3.49:1. Links, focus
