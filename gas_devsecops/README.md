@@ -150,6 +150,13 @@ list SCA uses for the same field name, so `secretInstances` is refused with
 document itself is sound. `--schema` now prints the send-shape for **every** field of all
 three filter types, which is what makes this class of defect visible before it ships.
 
+**That key landed, and the register now returns 843 rows (§9)** — but the probe still
+prints `0 node(s)` for it, because `probe.mjs:402` omits `secretInstances` from the
+connection chain and falls through to `{}`. Do not read that zero as an empty register.
+Two defaults are unsettled: the severity gate excludes every `CERTIFICATE` and half the
+`PASSWORD` rows in the estate (§9.2), and the ledger key `(secretDataId, path)` collides
+2.27:1 — `externalId` is unique across the whole register (§9.5).
+
 ### What the probe and the register will not select
 
 `Q_SECRETS` deliberately omits `snippet` (the matched text) and `validationDetails`. The
