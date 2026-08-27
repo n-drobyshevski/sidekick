@@ -23,7 +23,8 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  envValue, resolveConnection, temporalFields, temporalName, temporalType,
+  PROBE_FLAGS, PROBE_OPTIONS, envValue, resolveConnection, rootsSkips,
+  temporalFields, temporalName, temporalType, unknownArgs,
 } from "./probeHelpers.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -40,6 +41,20 @@ const ROOTS_ONLY = has("--roots");
 const REPORT = has("--report");
 const FIRST = Number(val("--first", "3"));
 const ONLY_SCOPE = val("--scope", null);
+
+// An argument nobody implemented is refused, not ignored (§10.9, and see unknownArgs).
+const unknown = unknownArgs(args);
+if (unknown.length) {
+  console.error(
+    `\nUnknown argument(s): ${unknown.join(", ")}\n\n` +
+    `  flags:   ${PROBE_FLAGS.join("  ")}\n` +
+    `  options: ${PROBE_OPTIONS.map((o) => `${o}=…`).join("  ")}\n\n` +
+    "  Nothing ran. A flag that silently does nothing produces a run that looks like it\n" +
+    "  measured something — which is how `--roots --crosstab --report` came back with no\n" +
+    "  crosstab in it and said nothing about why.\n",
+  );
+  process.exit(2);
+}
 
 /* ------------------------------------------------------------------ credentials */
 // Two accepted locations because both are the obvious one, and looking in only one while
@@ -288,7 +303,11 @@ if (ROOTS_ONLY || !SCHEMA_ONLY) {
       : "\n  No secret-shaped root in this tenant's Query type.");
   }
   console.log();
-  if (ROOTS_ONLY) finish(0);
+  if (ROOTS_ONLY) {
+    // Exiting here is intended; doing it in silence is what §10.9 recorded.
+    console.log(`--roots: stopping after the roots section. NOT run: ${rootsSkips(args).join(", ")}.`);
+    finish(0);
+  }
 }
 
 // ---- 2. THE QUESTION: does a SAST finding carry a timestamp?
@@ -443,22 +462,47 @@ if (SCOPES.includes("secrets") && app.QUERIES.secrets) {
   const seen = {};
   let cursor = null;
   let pages = 0;
+  let rows = 0;
+  let total = null;
+  // A crosstab is read as a POPULATION, and §10.3 concluded "1,958 is the entire CODE
+  // population" precisely because the cells summed to totalCount. That conclusion is only
+  // available when the table is complete, so the table has to say whether it is: a refusal,
+  // a defect or the page cap all end this loop, and all three used to look like the end of
+  // the register.
+  let stoppedBecause = "pageCap";
   // Four pages of 500 is enough to characterise a ~1,958-row register without pretending
   // to be a sync. It is a probe, not an ingest.
   while (pages < 4) {
     const r = await post(app.QUERIES.secrets, app.buildVariables("secrets", {
       severities: [], projectId: PROJECT_ID, first: 500, after: cursor,
     }));
-    if (!r.ok) { console.log(`  refused: ${(r.errors?.[0] ?? r.error ?? "").slice(0, 160)}`); break; }
-    const conn = resolveConnection(r.data).conn ?? {};
+    if (!r.ok) {
+      console.log(`  refused: ${(r.errors?.[0] ?? r.error ?? "").slice(0, 160)}`);
+      stoppedBecause = "refused";
+      break;
+    }
+    // The same guard the scope loop uses, for the same reason. `.conn ?? {}` was written
+    // here, which reintroduced §9.1 one call site down: a response that parses but carries
+    // no connection would contribute zero rows to the crosstab with no error beside it, and
+    // the crosstab is exactly the output that gets read as a population count.
+    const found = resolveConnection(r.data);
+    if (!found.ok) {
+      console.log(`  DEFECT: no connection in the response; root keys: [${found.keys.join(", ")}]`);
+      report.findings.secretsCrosstabError = `no connection; root keys: [${found.keys.join(", ")}]`;
+      stoppedBecause = "noConnection";
+      break;
+    }
+    const conn = found.conn;
+    total = conn.totalCount ?? total;
     for (const n of conn.nodes ?? []) {
+      rows += 1;
       const k = `${n.type ?? "?"}`;
       seen[k] = seen[k] ?? {};
       const s = n.severity ?? "?";
       seen[k][s] = (seen[k][s] ?? 0) + 1;
     }
     pages += 1;
-    if (!conn.pageInfo?.hasNextPage) break;
+    if (!conn.pageInfo?.hasNextPage) { stoppedBecause = "exhausted"; break; }
     cursor = conn.pageInfo.endCursor;
   }
   const sevs = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL", "?"];
@@ -472,7 +516,16 @@ if (SCOPES.includes("secrets") && app.QUERIES.secrets) {
     console.log(`\n  categories with NOTHING at CRITICAL/HIGH: ${belowHigh.join(", ") || "(none)"}`);
     console.log(`  DEFAULT_FETCH_SEVERITIES.secrets is currently [${app.DEFAULT_FETCH_SEVERITIES.secrets.join(", ")}]`);
     console.log("  If a category above has rows ONLY at LOW or INFORMATIONAL, that default is still too high.");
+    const complete = stoppedBecause === "exhausted" && (total === null || rows === total);
+    console.log(`\n  ${rows} row(s) counted over ${pages} page(s)`
+      + `${total === null ? "" : ` of totalCount ${total}`}`
+      + ` — ${complete ? "COMPLETE" : `PARTIAL, stopped: ${stoppedBecause}`}`);
+    if (!complete) {
+      console.log("  Do NOT read the table above as the population. It is what was counted,");
+      console.log("  not what exists.");
+    }
     report.findings.secretsTypeSeverity = seen;
+    report.findings.secretsCrosstabCoverage = { rows, pages, totalCount: total, complete, stoppedBecause };
   }
   console.log();
 }

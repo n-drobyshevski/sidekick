@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  envValue, resolveConnection, temporalFields, temporalName, temporalType,
+  PROBE_FLAGS, PROBE_OPTIONS, envValue, resolveConnection, rootsSkips, temporalFields, temporalName, temporalType, unknownArgs,
 } from "../probeHelpers.mjs";
 
 describe("envValue", () => {
@@ -154,5 +154,39 @@ describe("resolveConnection", () => {
     const got = resolveConnection({ secretInstances: page([], 0) });
     expect(got.ok).toBe(true);
     expect(got.conn.nodes).toEqual([]);
+  });
+});
+
+describe("the flag table", () => {
+  // PROBE_FINDINGS.md §10.9: `--roots --crosstab --report` produced a one-key report with
+  // no crosstab in it and said nothing. `--crosstab` was never a flag — an argument nobody
+  // implemented was indistinguishable from one that ran and found nothing.
+
+  it("refuses an argument nobody implemented", () => {
+    expect(unknownArgs(["--roots", "--crosstab", "--report"])).toEqual(["--crosstab"]);
+  });
+
+  it("accepts every flag and option the probe documents", () => {
+    // Drift guard: a flag added to probe.mjs and not to the table would be refused, which
+    // is a loud failure — but a flag REMOVED from probe.mjs and left in the table would be
+    // accepted and do nothing, which is the defect this whole helper exists to prevent.
+    expect(unknownArgs([...PROBE_FLAGS, ...PROBE_OPTIONS.map((o) => `${o}=x`)])).toEqual([]);
+  });
+
+  it("does not accept an option's name without its value", () => {
+    // `--scope` alone reads as ONLY_SCOPE null, i.e. all scopes — the opposite of what
+    // someone typing it meant.
+    expect(unknownArgs(["--scope"])).toEqual(["--scope"]);
+  });
+
+  it("does not accept an unknown --name=value", () => {
+    expect(unknownArgs(["--pages=4"])).toEqual(["--pages=4"]);
+  });
+
+  it("names what --roots is skipping", () => {
+    // Exiting early is intended. Doing it silently is what §10.9 recorded.
+    expect(rootsSkips(["--roots"])).toContain("the scope loop");
+    expect(rootsSkips(["--roots"])).toContain("the secrets crosstab");
+    expect(rootsSkips(["--roots", "--schema"])).toContain("the schema dump");
   });
 });

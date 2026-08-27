@@ -165,6 +165,21 @@ because it *preserves* the repo/branch duplicate, and the two twins carry `first
 a median of 20 days apart. Key on `(secretDataId, path, lineNumber)` with the earliest
 `firstSeenAt` (§10.6, §10.7).
 
+**That key is now implemented.** `src/domain/secretsLedger.ts` is the secrets normalizer: it
+derives the key from the triple, folds the twins, and resolves every field they can disagree
+about rather than taking whichever row the API returned first — earliest `first_seen`, latest
+`last_seen`, OPEN beating RESOLVED, the worse severity, and `VALID` beating `INVALID` beating
+`UNKNOWN` on the rotation axis. Because the fold *discards* a measurement, each row records
+what it discarded: `twin_count`, `twin_first_seen_spread_days` and `source_external_ids`.
+`test/secretsLedger.test.js` pins each rule to the section that measured it, and pins the
+`externalId` key producing two findings where the ledger key produces one.
+
+§10.9's probe defect is fixed in the same pass, along with one of the same family it did not
+name: an unrecognised argument is now **refused** rather than ignored (`--crosstab` was never
+a flag), `--roots` names the sections its short-circuit skipped, and the crosstab states
+whether it counted the whole population or stopped early — a table read as a population has
+to say that it is one.
+
 ### What the probe and the register will not select
 
 `Q_SECRETS` deliberately omits `snippet` (the matched text) and `validationDetails`. The
