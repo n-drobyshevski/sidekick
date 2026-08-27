@@ -155,6 +155,18 @@ export function nowIso(now?: number): string {
   return toIso(now ?? Date.now())!;
 }
 
+/**
+ * Max of a numeric list WITHOUT spreading it into function arguments.
+ *
+ * `Math.max(...arr)` turns every element into a call argument, so it overflows the stack
+ * once the array is large — fatal on findings-scale inputs like a Kaplan-Meier risk set,
+ * which holds one entry per finding and would carry ~20,000 of them here. Same failure the
+ * comment on `minIso` records. Returns -Infinity for an empty list; callers guard `.length`.
+ */
+export function maxNum(values: number[]): number {
+  return values.reduce((m, v) => Math.max(m, v), -Infinity);
+}
+
 /** Arithmetic mean, or null for an empty list. */
 export function mean(values: number[]): number | null {
   if (!values.length) return null;
