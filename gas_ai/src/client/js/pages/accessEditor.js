@@ -10,7 +10,7 @@
 // stops there rather than letting admins make admins.
 
 import { call } from "../api.js";
-import { clear, confirmDialog, el, statusPill, toast } from "../ui.js";
+import { clear, confirmDialog, el, settingsPanel, statusPill, toast } from "../ui.js";
 
 /**
  * The Access card, or **null** when the caller may not edit it — settings.js appends only
@@ -165,27 +165,31 @@ export async function renderAccessPanel() {
   drawUsers();
   drawAdmins();
 
-  // settings.js's own idiom — a `.card` with an <h3>, not a shared settingsPanel(): this app
-  // has no such helper, and inventing one for a single caller would be the larger change.
-  return el("div", { class: "card", style: "margin-top:14px" },
-    el("h3", {}, "Access"),
-    el("p", { class: "small", style: "color:var(--text-2); margin:0 0 14px" },
-      "Who can open this dashboard. Everyone here must be signed in to " +
-      (domain ? domain : "this Workspace domain") +
-      " — Google accounts outside it can't be recognised and are always refused."),
-    el("div", { class: "access-block" },
-      el("span", { class: "access-block__label" }, "People"),
-      usersHost),
-    el("div", { class: "access-block access-block--divided" },
-      el("span", { class: "access-block__label" }, "Admins"),
-      el("p", { class: "small access-block__note" },
-        info.canEditAdmins
-          ? "Admins can add and remove people. Only you, as the owner, can change who is an " +
-            "admin — so an admin can't promote anyone, including themselves."
-          : "You can add and remove people. Only the owner can change who is an admin."),
-      adminsHost),
-    el("div", { class: "access-actions" },
-      el("button", { class: "primary", onclick: save }, "Save access"),
-      dirtyHost),
-  );
+  // A settingsPanel() now that there is one — the note this used to carry, that the app had no
+  // such helper and inventing one for a single caller would be the larger change, is answered:
+  // ui/settings.js has it and the whole Settings page is built from it.
+  //
+  // The Save button stays. This roster writes Script Properties through its own endpoints and
+  // its own validation, so it is a second FORM rather than a knob the page's save bar withheld —
+  // which is exactly the split the page header describes.
+  return settingsPanel({
+    title: "Access",
+    description: "Who can open this dashboard. Everyone here must be signed in to "
+      + (domain ? domain : "this Workspace domain")
+      + " — Google accounts outside it can't be recognised and are always refused.",
+    body: [
+      el("div", { class: "access-block" },
+        el("span", { class: "access-block__label" }, "People"),
+        usersHost),
+      el("div", { class: "access-block access-block--divided" },
+        el("span", { class: "access-block__label" }, "Admins"),
+        el("p", { class: "small access-block__note" },
+          info.canEditAdmins
+            ? "Admins can add and remove people. Only you, as the owner, can change who is an "
+              + "admin — so an admin can't promote anyone, including themselves."
+            : "You can add and remove people. Only the owner can change who is an admin."),
+        adminsHost),
+    ],
+    footer: [el("button", { class: "primary", onclick: save }, "Save access"), dirtyHost],
+  });
 }

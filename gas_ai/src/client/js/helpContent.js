@@ -247,7 +247,7 @@ export const ENTRIES = [
         value: "depth " + n(s.defaultDepth) + " · " + n(s.maxNodes),
         unit: "nodes per view",
         route: "settings",
-        params: {},
+        params: { tab: "graph" },
       };
     },
   },
@@ -884,7 +884,7 @@ export const ENTRIES = [
       "from your landscape are not the same kind of thing.",
     drawnOn: ["settings", "data"],
     mark: () => statusPill("neutral", "Dry-run"),
-    link: { label: "Check the connection", route: "settings", params: {} },
+    link: { label: "Check the connection", route: "settings", params: { tab: "system" } },
   },
   {
     id: "sync",
