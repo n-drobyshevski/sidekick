@@ -2,7 +2,7 @@
 
 **Tenant** `api.eu15.app.wiz.io` · **project scope** `1dfea0cf-834f-5522-b797-bee5aaf09251`
 (VALUE-CHAIN) · **measured** 2026-08-27 at `0f9c549`, **re-measured the same day** at
-`28c74f9` (§7) · branch `claude/wiz-sidekick-decsecops-x75ex3`
+`28c74f9` (§7) and again at `83d6b1e` (§8) · branch `claude/wiz-sidekick-decsecops-x75ex3`
 
 The register's two open questions are the ones [README.md](README.md) names under *The two
 questions it exists to answer*. Both are now answered, and a third thing turned up that
@@ -397,12 +397,182 @@ one regex with `i` cannot.
 
 ## 7.5 What is still open after the second pass
 
-- **`Q_SECRETS`.** Every schema fact it needs is now in §3 and §7.3. Ship the rotation clock
-  as measured / unmeasured — 0.38% coverage — and key it on `secretDataId` only after
-  confirming that field against data.
-- **The SAST age-vs-MTTR decision** from §6, untouched by this pass.
-- **The `TEMPORAL` regex**, §7.4. Low stakes, but it currently prints a false answer to the
-  question this document exists to answer.
+- ~~**`Q_SECRETS`.**~~ Written in `83d6b1e`; §8.1 and §8.2 are the first time it was sent.
+- **The SAST age-vs-MTTR decision** from §6, untouched by this pass. **Still open.**
+- ~~**The `TEMPORAL` regex**, §7.4.~~ Fixed in `83d6b1e`, verified in §8.4.
 - **No PARTIAL response has ever been reproduced live** across two passes, though the
   captured `brick/devsecops/sast_response.json` contains one. The tolerance stays; it is
-  simply still unexercised outside the fixture.
+  simply still unexercised outside the fixture. **Still true after three passes.**
+
+---
+
+# 8. Third pass — the first time `Q_SECRETS` was ever sent
+
+**Re-measured** 2026-08-27, same tenant and project scope, at `83d6b1e`. Three runs:
+`--dry-run` (three scopes now), `--schema --report`, `--first=5 --report`. Read-only.
+
+## 8.1 The one inferred shape was wrong, and the schema says so out loud
+
+`SecretInstanceFilters.codeToCloudPipelineStage` was the single field `buildFilter` sent on
+inference rather than on reading — §7.3 printed only the three keys the probe had hardcoded,
+so it was shaped after SCA's same-named field. **The inference does not hold:**
+
+```
+codeToCloudPipelineStage   SecretInstanceCodeToCloudPipelineStageFilter -> OBJECT { equals: [...] }
+```
+
+```
+--- secrets ---
+  REFUSED: HTTP 400: {"data":null,"errors":[{"message":"invalid type for variable: 'filterBy'",
+           "extensions":{"code":"VALIDATION_INVALID_TYPE_VARIABLE","name":"filterBy"}}]}
+```
+
+Both readings agree. SCA spells the same field `[VulnerabilityCodeToCloudPipelineStage!]`, a
+bare list; the secrets type wraps it in a filter. **Same field name, different kind, for the
+third time in this document** — after `severity` in §4 and the `commitHash` /
+`initialCommitHash` split in §7.3. The rule that keeps surviving contact: a field's shape in
+one filter type predicts nothing about the same name in another.
+
+The fix is one entry in `OBJECT_FILTERS.secrets`. That it is *sufficient* was verified rather
+than assumed — the app's own bundled `Q_SECRETS` with only that key corrected:
+
+```
+as shipped : ["CODE"]              -> HTTP 400
+corrected  : {"equals":["CODE"]}   -> HTTP 200, totalCount 691
+```
+
+Nothing else in the document or the filter is wrong. `--schema` now also prints a ready-made
+`OBJECT_FILTERS entry:` line per filter type, so the value is copied from the schema rather
+than retyped from a reading of it.
+
+## 8.2 The population is sound, and the narrowing still applies
+
+```
+app filter (CODE + sev CRITICAL/HIGH + OPEN/RESOLVED)  691
+CODE + status OPEN/RESOLVED, NO severity              1958
+CODE only (the §3 baseline)                           1960
+```
+
+**1,960 against §3's 1,933 is 1.4% drift.** The drop to 691 is the severity filter, not lost
+narrowing — worth stating because a register that fell from ~1,900 to ~700 for the wrong
+reason would look identical from the outside.
+
+`snippet` and `validationDetails` appear nowhere: not in the selection, not anywhere in the
+raw payload. Both were checked directly rather than inferred from the document.
+
+```
+--- row 1 ---
+  name/type      Aiven Service Password / SAAS_API_KEY   severity HIGH confidence High
+  path:line      /resources/json/prod/eu/kconnect-updated.txt:6
+  initialCommit  04182c373862053a7808541abf3e5e6947c8b17a
+  REMOVED clock  status=OPEN  resolvedAt=null
+  ROTATED clock  validationStatus=UNKNOWN  lastValidatedAt=null
+  resource       dktunited/prodcom-jdbc-kafka-connect (REPOSITORY)
+  id=d8e667c9-0d1c-5c36-a084-be66318ffd1d  secretDataId=0dd42a12-52f3-50e1-9b3f-c3053ca9d45d
+
+--- row 2 ---
+  name/type      Aiven Service Password / SAAS_API_KEY   severity HIGH confidence High
+  path:line      /resources/json/prod/eu/kconnect-updated.txt:5
+  initialCommit  04182c373862053a7808541abf3e5e6947c8b17a
+  id=9cfe9b0d-d96e-5f38-80c2-d048387ac228  secretDataId=0dd42a12-52f3-50e1-9b3f-c3053ca9d45d
+```
+
+`ALWAYS NULL in this sample: resolvedAt, lastValidatedAt` — expected, since all five rows are
+`OPEN` / `UNKNOWN`. §3 established both populate on rows that have them.
+
+## 8.3 Two facts moved from unconfirmed to measured
+
+**`secretDataId` is the dedup key.** One 500-row page of the CODE register:
+
+```
+rows 500   distinct id 500   distinct secretDataId 131     -> 3.82 rows per distinct secret
+secretDataId values covering >1 row: 77
+max rows under one secretDataId: 158   (8 distinct paths, 2 repo entities)
+```
+
+The two rows in §8.2 are one credential at lines 5 and 6 of one file. Key the ledger on
+`secretDataId`; §7.3's caution is discharged.
+
+**`PUBLIC_KEY` is zero here, so that worry is discharged too** — but the same table shows a
+different one:
+
+```
+type                    CODE      share    app-filter
+SAAS_API_KEY            1128    57.6%       328
+CLOUD_KEY                210    10.7%       171
+PASSWORD                 209    10.7%         0
+CERTIFICATE              160     8.2%         0
+PRIVATE_KEY              156     8.0%       156
+DB_CONNECTION_STRING      87     4.4%        28
+GIT_CREDENTIAL            10     0.5%         8
+PUBLIC_KEY                 0     0.0%         0
+SSH_AUTHORIZED_KEY         0     0.0%         0
+PRESIGNED_URL              0     0.0%         0
+```
+
+**The severity filter silently deletes two entire categories.** `PASSWORD` 209 → 0 and
+`CERTIFICATE` 160 → 0: every one of them sits below HIGH. `DEFAULT_FETCH_SEVERITIES =
+CRITICAL, HIGH` is inherited from the vulnerability registers, where it is a reasonable
+default. On secrets it produces a secrets register containing no passwords. That should be a
+decision this register makes, not one it inherits.
+
+## 8.4 The regex fix holds in both halves
+
+```
+SASTFinding exposes 43 fields. Temporal-looking ones:
+  createdAt              DateTime!
+  updatedAt              DateTime!
+  firstDetectedAtSource  DateTime
+  rejectionExpiredAt     DateTime
+
+Sortable fields naming a time: CREATED_AT
+```
+
+Four fields, not §7.4's thirteen; `filePath` and `status` absent; and the order-enum line
+still names `CREATED_AT`. Both halves at once, which is what §7.4 said one regex with `i`
+could not do.
+
+## 8.5 The asymmetry is now printed rather than discovered
+
+```
+SASTFindingFilters.severity            SASTSeverityFilter           -> OBJECT { equals: [...] }
+VulnerabilityFindingFilters.severity   [VulnerabilitySeverity!]     -> bare LIST
+SecretInstanceFilters.severity         SecretInstanceSeverityFilter -> OBJECT { equals: [...] }
+```
+
+Three registers, one field name, two kinds — on one screen. This output existing is the
+reason §4's defect cannot recur quietly. SAST holds at **totalCount 127**; **SCA has not
+drifted at all: 18,053, identical to §7.1**. `partialErrors: []` on both.
+
+## 8.6 A duplicate the register has, and the fix that would make it worse
+
+`BASE.secrets` carries no `isDefaultBranch`, while SCA and SAST both do. There is real
+duplication — **18 of 176 `(secretDataId, path)` pairs appear under both `REPOSITORY` and
+`REPOSITORY_BRANCH`**, roughly 10% of the page.
+
+The obvious fix is wrong:
+
+```
+app filter, as shipped (no isDefaultBranch)    691
+app filter + isDefaultBranch {equals:true}     245
+app filter + isDefaultBranch {equals:false}      0
+```
+
+**245 + 0 ≠ 691.** The missing 446 rows are `REPOSITORY`-level entities whose flag is neither
+true nor false but *absent* — a repository is not a branch, so the predicate does not apply
+to it. Copying SCA's `isDefaultBranch: {equals: true}` would cut the register by 65% and read
+as deduplication while actually being *absent collapsed to false*, the same failure the AI
+register learned as **absent is never zero**. The 10% that is genuinely duplicated wants
+deduplication on `(secretDataId, path)`, not a branch filter.
+
+## 8.7 What is still open after the third pass
+
+- **One entry in `OBJECT_FILTERS.secrets`** — `"codeToCloudPipelineStage"`. Until then the
+  secrets register fetches zero rows, exactly as SAST did in §4.
+- **Whether `DEFAULT_FETCH_SEVERITIES` is right for secrets** (§8.3). Today it excludes every
+  `PASSWORD` and `CERTIFICATE` in the estate.
+- **The repo/branch duplicate** (§8.6) — dedup on `(secretDataId, path)`, not `isDefaultBranch`.
+- **The SAST age-vs-MTTR decision**, open since §6 and untouched by all three passes.
+- **A refused scope writes no entry to `probe-report.json`.** There is no `secrets` key in
+  this pass's report; the refusal exists only in console output, which is how §4's SAST
+  failure would have been missed by anyone reading the file alone.
