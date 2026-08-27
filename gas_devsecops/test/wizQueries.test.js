@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  MAX_PAGES, PAGE_SIZE, QUERIES, Q_SAST, Q_SCA, SAST_FETCH_RESOLVED,
+  MAX_PAGES, PAGE_SIZE, QUERIES, Q_SAST, Q_SCA, Q_SECRETS, SAST_FETCH_RESOLVED,
   buildFilter, buildVariables, severityFilter,
 } from "../src/server/wizQueries";
 import { SCOPES } from "../src/domain/config";
@@ -182,6 +182,87 @@ describe("the documents are valid GraphQL, and lean", () => {
   });
 });
 
+describe("Q_SECRETS", () => {
+  it("asks secretInstances, the root the tenant actually has", () => {
+    expect(Q_SECRETS).toContain("secretInstances(");
+    expect(Q_SECRETS).toContain("$filterBy: SecretInstanceFilters");
+  });
+
+  it("spells the commit initialCommitHash, not commitHash", () => {
+    // SASTFindingVcsDetails has commitHash; SecretInstanceVcsDetails has only
+    // initialCommitHash. Copying SAST's selection fails the WHOLE document, the same way a
+    // wrong union member would — so this is a document-level trap, not a missing field.
+    expect(Q_SECRETS).toContain("initialCommitHash");
+    expect(Q_SECRETS).not.toMatch(/[^l]commitHash/);
+  });
+
+  it("SELECTS NEITHER snippet NOR validationDetails", () => {
+    // A security decision, not an oversight. The durable store is a Google Sheet plus Drive
+    // archives readable by everyone on the allowlist and exportable to CSV by any of them —
+    // a far wider audience than the repository the secret sits in. 1,859 of the 1,933
+    // CODE-scoped rows are OPEN, so most of that text is live credential material. A
+    // secrets tool that copies secrets into a spreadsheet has made the exposure worse.
+    expect(Q_SECRETS, "snippet carries the matched secret text").not.toContain("snippet");
+    expect(Q_SECRETS, "validationDetails is undocumented and may carry the credential")
+      .not.toContain("validationDetails");
+  });
+
+  it("carries both clocks, because removal is not rotation", () => {
+    for (const f of ["status", "resolvedAt", "validationStatus", "lastValidatedAt"]) {
+      expect(Q_SECRETS, `Q_SECRETS omits ${f}`).toContain(f);
+    }
+  });
+
+  it("carries the secret TYPE, since PUBLIC_KEY is in the enum", () => {
+    // SecretDetectionRuleType includes PUBLIC_KEY alongside SAAS_API_KEY and PRIVATE_KEY.
+    // Not every row is a live credential; a rotation metric counting them all measures the
+    // wrong population, so the register needs the type to exclude rather than average.
+    expect(Q_SECRETS).toContain("type");
+  });
+
+  it("carries secretDataId, the probable dedup key", () => {
+    // Distinct from id and externalId. Selected so it can be confirmed against data — the
+    // ledger key must not depend on it before that.
+    expect(Q_SECRETS).toContain("secretDataId");
+  });
+});
+
+describe("the secrets filter", () => {
+  const f = () => buildFilter("secrets", { severities: SEV, projectId: PROJECT });
+
+  it("narrows to CODE, which is what makes the clock trustworthy", () => {
+    // 394,927 -> 1,933. And unscoped, secrets close 0.25s-63s after first sight — the
+    // instant-close artifact. On CODE, not one of the 72 resolved rows closes inside a day.
+    expect(f().codeToCloudPipelineStage).toEqual(["CODE"]);
+  });
+
+  it("shapes status, validationStatus and severity as OBJECTS", () => {
+    expect(f().status).toEqual({ equals: ["OPEN", "RESOLVED"] });
+    expect(f().severity).toEqual({ equals: SEV });
+  });
+
+  it("shapes projectId as a BARE LIST in the same filter type", () => {
+    // SecretInstanceFilters mixes both conventions internally. This assertion sits beside
+    // the one above on purpose: they are the same type disagreeing with itself, which is
+    // the §4 trap at finer grain. Infer nothing from one field to the next.
+    expect(f().projectId).toEqual([PROJECT]);
+    expect(Array.isArray(f().projectId)).toBe(true);
+    expect(Array.isArray(f().status)).toBe(false);
+  });
+
+  it("sends codeToCloudPipelineStage as a bare list — THE ONE UNVERIFIED SHAPE", () => {
+    // Every other shape here was printed by the probe. This one was not: §7.3 only covered
+    // the three keys the probe had hardcoded. A bare list matches how SCA sends the same
+    // field name, which is the best available evidence and still an inference.
+    //
+    // It is safe to ship BECAUSE THE FAILURE IS LOUD: the probe sends this exact query, so
+    // a wrong shape returns HTTP 400 VALIDATION_INVALID_TYPE_VARIABLE on the next run
+    // rather than quietly fetching zero rows. That is precisely how the SAST defect would
+    // have been caught on day one. If it does fail, the fix is one line in OBJECT_FILTERS.
+    expect(Array.isArray(f().codeToCloudPipelineStage)).toBe(true);
+  });
+});
+
 describe("the secrets ledger keeps rotation as a tri-state", () => {
   it("carries a validation state beside the rotation date", () => {
     // `rotated_at IS NULL` is ambiguous between "still live" and "never checked", and in
@@ -201,15 +282,23 @@ describe("the secrets ledger keeps rotation as a tri-state", () => {
 });
 
 describe("scope coverage", () => {
-  it("has an entry for every scope, and secrets is honestly null", () => {
+  it("has a document for every scope", () => {
     expect(Object.keys(QUERIES).sort()).toEqual([...SCOPES].sort());
-    // Absent rather than guessed: a plausible document would typecheck, ship, and then
-    // measure the wrong population. probe.mjs --roots finds the real root.
-    expect(QUERIES.secrets).toBeNull();
+    // Q_SECRETS was null until 2026-08-27, and the claim that test encoded was "we do not
+    // know this schema" — true then, and the right thing to assert rather than shipping a
+    // plausible document that would typecheck and measure the wrong population. The probe
+    // answered it: the root, the identity fields and the filter shapes are all in
+    // PROBE_FINDINGS.md §3 and §7.3, so the query is now written FROM the schema.
+    for (const scope of SCOPES) {
+      expect(QUERIES[scope], `${scope} has no document`).toBeTruthy();
+    }
   });
 
-  it("refuses to build variables for a scope with no document", () => {
-    expect(() => buildVariables("secrets")).toThrow(/no query document/);
+  it("still refuses to build variables for a scope with no document", () => {
+    // The guard outlives the case that motivated it: a fourth scope added without a query
+    // must fail loudly at the call rather than send `undefined` and read as an empty
+    // register. Asserted against a scope that does not exist, since all three now have one.
+    expect(() => buildVariables("iac")).toThrow(/no query document/);
   });
 
   it("pages at a size the estate needs", () => {
