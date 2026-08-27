@@ -59,7 +59,12 @@ export async function renderAccessPanel() {
         ? statusPill("warn", "outside " + domain)
         : null,
       onRemove
-        ? el("button", { class: "access-remove", type: "button", title: "Remove " + email,
+        // NO `title`. el() throws on it (ui/dom.js) and this row passed one for every person
+        // besides the owner, so renderAccessPanel() rejected the moment a workbook had a second
+        // user and the whole panel silently vanished — the roster was unreachable for anyone who
+        // actually had people to manage. The aria-label beside it was always the accessible
+        // name; the title was the native tooltip the ban exists to remove.
+        ? el("button", { class: "access-remove", type: "button",
             "aria-label": "Remove " + email, onclick: onRemove }, "✕")
         : null);
   }

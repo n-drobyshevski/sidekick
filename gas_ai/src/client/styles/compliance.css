@@ -515,12 +515,14 @@
   .scope-rail-note { display: none; }
 }
 
-/* ------------------------------------------------------- the Settings scope card itself */
-/* One block per subcategory, each holding its own rules — the grouping the settings card
+/* ------------------------------------------------------ the Settings scope panel itself */
+/* One block per subcategory, each holding its own rules — the grouping the settings panel
    asks for so a reader can act on "this subcategory" rather than scrolling a flat list of
    however many policies the 5Rs has. Hairlines between groups, no card-in-card nesting:
-   this already lives inside one `.card`, and a second surface per group would be the
-   Whisper-Or-Lift violation DESIGN.md warns against. */
+   this already lives inside one `.settings-panel`, which joins the same raised-surface
+   recipe as `.card` (components.css), and a second surface per group would be the
+   Whisper-Or-Lift violation DESIGN.md warns against. Nothing below is scoped to that
+   ancestor, so the blocks read the same wherever they are hosted. */
 .scope-groups { display: flex; flex-direction: column; }
 .scope-group { padding: var(--space-3) 0; border-top: 1px solid var(--hairline); }
 .scope-group:first-child { padding-top: 0; border-top: none; }
