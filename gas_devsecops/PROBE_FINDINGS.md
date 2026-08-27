@@ -2,7 +2,8 @@
 
 **Tenant** `api.eu15.app.wiz.io` · **project scope** `1dfea0cf-834f-5522-b797-bee5aaf09251`
 (VALUE-CHAIN) · **measured** 2026-08-27 at `0f9c549`, **re-measured the same day** at
-`28c74f9` (§7) and again at `83d6b1e` (§8) · branch `claude/wiz-sidekick-decsecops-x75ex3`
+`28c74f9` (§7), `83d6b1e` (§8) and `24f541a` (§9) · branch
+`claude/wiz-sidekick-decsecops-x75ex3`
 
 The register's two open questions are the ones [README.md](README.md) names under *The two
 questions it exists to answer*. Both are now answered, and a third thing turned up that
@@ -567,12 +568,176 @@ deduplication on `(secretDataId, path)`, not a branch filter.
 
 ## 8.7 What is still open after the third pass
 
-- **One entry in `OBJECT_FILTERS.secrets`** — `"codeToCloudPipelineStage"`. Until then the
-  secrets register fetches zero rows, exactly as SAST did in §4.
-- **Whether `DEFAULT_FETCH_SEVERITIES` is right for secrets** (§8.3). Today it excludes every
-  `PASSWORD` and `CERTIFICATE` in the estate.
-- **The repo/branch duplicate** (§8.6) — dedup on `(secretDataId, path)`, not `isDefaultBranch`.
-- **The SAST age-vs-MTTR decision**, open since §6 and untouched by all three passes.
-- **A refused scope writes no entry to `probe-report.json`.** There is no `secrets` key in
-  this pass's report; the refusal exists only in console output, which is how §4's SAST
-  failure would have been missed by anyone reading the file alone.
+- ~~**One entry in `OBJECT_FILTERS.secrets`**~~ — done in `24f541a`; the register returns
+  rows for the first time in §9.1.
+- **Whether `DEFAULT_FETCH_SEVERITIES` is right for secrets** (§8.3). **Settled in §9.2, and
+  the answer is no** — the provisional MEDIUM is still too high.
+- **The repo/branch duplicate** (§8.6). **Still open**, and §9.5 measures how much of the
+  identity collision it accounts for.
+- **The SAST age-vs-MTTR decision**, open since §6. **Settled outside this document** — see
+  the README: it is a genuine MTTR, observation-bounded on the death side.
+- ~~**A refused scope writes no entry to `probe-report.json`.**~~ Closed in `24f541a`; §9.3
+  reports that the mechanism has still never fired, and §9.1 the case it does not cover.
+
+---
+
+# 9. Fourth pass — the register returns rows, and the probe says it does not
+
+**Re-measured** 2026-08-27, same tenant and project scope, at `24f541a`. Three runs:
+`--dry-run`, `--first=5 --report` (now also paging a type × severity crosstab), and
+`--schema --report`. Read-only.
+
+## 9.1 The secrets register works. The probe reports it as empty
+
+The shapes are right — `--dry-run` prints `{"equals":["CODE"]}` for secrets and a bare
+`["CODE"]` for SCA. But the live run prints:
+
+```
+--- secrets ---
+  0 node(s), hasNextPage undefined
+```
+
+**That zero is a defect in the probe, not in the register.** `probe.mjs:402`:
+
+```js
+const conn = r.data.sastFindings ?? r.data.vulnerabilityFindings ?? {};
+```
+
+`secretInstances` is absent from the chain, so `conn` falls through to `{}` and every field
+reads empty. Line 440 has the correct `r.data.secretInstances ?? {}`, which is why the
+crosstab in the very same run returned real numbers.
+
+Sending the app's own `Q_SECRETS` with its own `buildVariables`, unmodified:
+
+```
+severities requested: ["CRITICAL","HIGH","MEDIUM"]
+HTTP 200  errors: (none)
+5 node(s), totalCount 843, hasNextPage true
+```
+
+**843, not 691.** Both diagnostic branches are excluded: the severity default *is* reaching
+the query, and the shape fix *did* take. §9.2's crosstab confirms it arithmetically —
+CRITICAL+HIGH sums to exactly 691 and +MEDIUM to exactly 843.
+
+**This is a worse failure than the refusal hole `24f541a` closed.** A refusal now records
+`{refused: true, error, variables}`. This records:
+
+```json
+"secrets": { "count": 0, "totalCount": null, "sample": null }
+```
+
+No error, no flag, nothing to notice — a confident false zero on the *success* path, which
+reads exactly like a register that is legitimately empty. The refusal fix guarded the branch
+that announces itself and left the one that does not.
+
+## 9.2 The provisional MEDIUM is still too high — settled
+
+```
+type                      CRITI   HIGH  MEDIU    LOW  INFOR
+CERTIFICATE                   0      0      0      0    160
+CLOUD_KEY                     0    171      0     39      0
+DB_CONNECTION_STRING          0     28      0     41     17
+GIT_CREDENTIAL                0      8      0      0      2
+PASSWORD                      0      0    107     17     84
+PRIVATE_KEY                   0    156      0      0      0
+SAAS_API_KEY                  0    328     45    641    114
+
+categories with NOTHING at CRITICAL/HIGH: CERTIFICATE, PASSWORD
+```
+
+§8.3 established that `PASSWORD` and `CERTIFICATE` sit *below* HIGH. It did not establish
+that they sit *at* MEDIUM, and they do not:
+
+- **`CERTIFICATE`: all 160 rows are INFORMATIONAL.** Not one is MEDIUM. The default captures
+  **0 of 160** — the category is still entirely absent from the register.
+- **`PASSWORD`: 107 MEDIUM, 17 LOW, 84 INFORMATIONAL.** The default captures **107 of 208,
+  51%** — half the passwords in the estate are still excluded.
+
+So the guess was half-right on one category and wrong on the other, and the register still
+contains no certificates and half its passwords. What the gate costs:
+
+```
+CRITICAL+HIGH        691
++MEDIUM              843   <- today's default
+LOW 738 + INFORMATIONAL 377 = 1,115 excluded
+CODE population    1,958   -> the register captures 43%
+```
+
+**The deeper problem is that severity is the wrong gate for this register.** It is Wiz's
+judgement about a *detection* — 641 `SAAS_API_KEY` rows sit at LOW — not about whether a
+credential is live. The secrets page asks "which credentials are in the repository, and are
+they dead yet"; `validationStatus` and `confidence` speak to that and severity does not.
+Dropping the severity filter entirely takes the register to 1,958, and the honest version of
+this default is probably no severity gate at all.
+
+## 9.3 The refusal mechanism is in, and has still never fired
+
+**Nothing was refused this run** — all three scopes returned HTTP 200, so no
+`{refused, error, variables}` key was written. That is correct behaviour rather than a gap,
+but it means the mechanism added in `24f541a` is **still untested against a live refusal**.
+§9.1 is precisely the case it does not cover.
+
+## 9.4 SAST and SCA: shapes byte-identical, one count drifted
+
+The `--dry-run` blocks were diffed against §8's rather than compared by eye:
+
+```
+=== sca : pass3 vs pass4 ===   IDENTICAL
+=== sast : pass3 vs pass4 ===  IDENTICAL
+```
+
+`shapeBase` touched neither. **SAST holds at `totalCount 127`.** SCA reads **17,991 against
+§8's 18,053** — 62 fewer, 0.34% in a day, the same drift already recorded in §7.1 and §8.5.
+`partialErrors: []` on both; **no PARTIAL has been reproduced live in four passes.**
+
+## 9.5 The ledger key does not survive a second page
+
+`snippet` and `validationDetails` appear nowhere — checked against the raw response text,
+not merely the parsed keys.
+
+The identity reading does not hold. Two independent pages (500 + 343 = 843, the whole
+register):
+
+```
+                                  page 1              page 2
+id (the API's own)            1.00 rows/key       1.00 rows/key
+secretDataId                  4.39                2.09
+(secretDataId, path)          2.27                1.37     <- the ledger key as built
+(secretDataId, path, line)    1.32                1.06
+(sdId, path, line, resource)  1.00                1.00
+externalId                    1.00                1.00
+```
+
+**`(secretDataId, path)` collides 2.27:1 on page 1**, with one pair covering 49 rows. It
+improves on `secretDataId` alone (4.39) but it is not an identity, and a ledger keyed on it
+would merge distinct findings. Two causes, measured:
+
+```
+residual on (secretDataId, path, line): 85 colliding keys
+  of those, 56 span BOTH REPOSITORY and REPOSITORY_BRANCH
+  => the repo/branch duplicate (§8.6) explains 66% of the residual
+```
+
+The remainder is one secret on several lines of a single file. So the pair conflates three
+different things at once: distinct lines, and the repo/branch double-count.
+
+Two candidates are unique across the entire register: **`externalId`** and
+`(secretDataId, path, lineNumber, resource.id)`. `externalId` is Wiz's own composite —
+`github.com##<repo>##<path>##<contentHash>##<lineIndex>` — and is the natural ledger key.
+
+One inference, flagged as unverified: `id` and `secretDataId` both carry a version-5 nibble,
+i.e. name-based UUIDs derived from content, which *would* make them stable across scans.
+That is read off the UUID version, not measured — a single day of observation cannot
+establish stability, and the ledger depends on it.
+
+## 9.6 What is still open after the fourth pass
+
+- **`secretInstances` into `probe.mjs:402`.** One line. Until then a working register reports
+  as empty, and `probe-report.json` records a false zero with no error beside it.
+- **The severity gate on secrets** (§9.2). MEDIUM is not the fix; the question is whether
+  this register should gate on severity at all.
+- **The ledger key** (§9.5) — `externalId`, or the four-part tuple. Not the pair.
+- **The repo/branch duplicate** (§8.6), which §9.5 shows is two-thirds of the key collision.
+- **UUID stability across scans** (§9.5), inferred from the version nibble and not measured.
+- **No live PARTIAL in four passes**, and now a refusal mechanism that has never fired
+  either. Both tolerances remain unexercised outside the fixture.
