@@ -123,6 +123,19 @@ already implements the pipeline and is the behavioural spec (same relationship `
   a dependency and through a host image is two findings with two clocks.
 - **Removed is not rotated.** A secret leaving the register means the string left HEAD. The
   credential is live until `rotated_at` says otherwise.
+- **A zero has to prove it looked.** The probe read its GraphQL connection off a hardcoded
+  root chain that never learned `secretInstances`, so an 843-row register printed `0 node(s)`
+  and wrote `{count: 0}` to the report with no error beside it — indistinguishable from a
+  register that is genuinely empty. The refusal path had already been guarded; this one is
+  silent, and guarding the failure that announces itself is not the same as guarding the one
+  that does not. `resolveConnection` now finds the root in the response and REFUSES rather
+  than returning an empty connection.
+- **The secrets ledger key is `externalId`, not `(secretDataId, path)`.** That pair collides
+  2.27:1 over the full register (one pair covering 49 rows); `externalId` and
+  `(secretDataId, path, lineNumber, resource.id)` are the only unique candidates.
+  `secretDataId` names the credential and is what rotation groups by — not the row key. Both
+  unique candidates encode the line, so a line move reads as a new finding, and UUID
+  stability across scans is inferred from a version-5 nibble rather than measured.
 - **The accent is split and the split is load-bearing.** `--accent: #ffcb13` is 1.52:1 on
   white and 1.30:1 on the meter track — it is a FILL token and nothing else. Every accent
   fill carries `--accent-edge: rgba(0,0,0,.40)`, which lifts it to 3.49:1. Links, focus

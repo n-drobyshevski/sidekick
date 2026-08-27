@@ -98,23 +98,37 @@ export type Scope = (typeof SCOPES)[number];
  * about what matters: it is what keeps a first sync inside one execution budget on an estate
  * where a single repository carries ~6,900 SCA findings.
  *
- * SECRETS IS DIFFERENT, and inheriting the vulnerability default there was a real defect.
- * Measured on the CODE population (PROBE_FINDINGS.md §8.3): CRITICAL/HIGH deletes
- * PASSWORD 209 -> 0 and CERTIFICATE 160 -> 0 — every one of them sits below HIGH. A secrets
- * register containing no passwords is answering a different question from the one it claims
- * to. Volume was never the reason here either: the whole CODE population is ~1,958 rows,
- * an eighth of SCA.
+ * SECRETS TAKES NO SEVERITY GATE AT ALL, and that is the settled answer after two wrong
+ * ones. The first inherited CRITICAL/HIGH from the vulnerability registers. The second
+ * reached to MEDIUM on the strength of "PASSWORD and CERTIFICATE sit below HIGH" — true,
+ * and not the same as "they sit at MEDIUM". Measured (PROBE_FINDINGS.md §9.2), on the CODE
+ * population:
  *
- * PROVISIONAL, and here is what would falsify it. §8.3 established only that those 369 rows
- * sit BELOW HIGH — not that they sit AT MEDIUM. If they are LOW, this default still yields a
- * register with no passwords in it, which is the exact failure it was chosen to fix. The
- * probe now prints a type x severity crosstab over the CODE population; one run settles it,
- * and if the answer is LOW then this list has to reach further down or drop the filter.
+ *     type                    CRIT   HIGH    MED    LOW   INFO
+ *     CERTIFICATE                0      0      0      0    160
+ *     PASSWORD                   0      0    107     17     84
+ *     SAAS_API_KEY               0    328     45    641    114
+ *     CLOUD_KEY                  0    171      0     39      0
+ *     PRIVATE_KEY                0    156      0      0      0
+ *     DB_CONNECTION_STRING       0     28      0     41     17
+ *     GIT_CREDENTIAL             0      8      0      0      2
+ *
+ * MEDIUM captured 0 of 160 certificates and 107 of 208 passwords, leaving the register at
+ * 843 of 1,958 rows — 43%, with one category absent entirely and another halved.
+ *
+ * SEVERITY IS THE WRONG GATE HERE, which is why walking the floor down kept failing. It
+ * grades a DETECTION — 641 SAAS_API_KEY rows sit at LOW — not whether a credential is live.
+ * This register asks "which credentials are in the repository, and are they dead yet";
+ * `validationStatus` and `confidence` speak to that and severity does not. An empty list
+ * sends no severity key at all, which is what buildFilter does with one.
+ *
+ * Volume was never the reason for a gate here either: the whole CODE population is ~1,958
+ * rows, an eighth of SCA.
  */
 export const DEFAULT_FETCH_SEVERITIES: Record<Scope, readonly string[]> = {
   sca: ["CRITICAL", "HIGH"],
   sast: ["CRITICAL", "HIGH"],
-  secrets: ["CRITICAL", "HIGH", "MEDIUM"],
+  secrets: [],
 };
 
 export const SCOPE_LABELS: Record<Scope, string> = {

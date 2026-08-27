@@ -416,7 +416,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "05fdb5a5eea3" : "dev";
+  var BUILD_ID = true ? "d84d83761d62" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -600,13 +600,38 @@ var Server = (() => {
       // validated_at only where validation_state is INVALID. removed_at is the other axis
       // entirely: the string left HEAD. PROBE_FINDINGS.md §3.
       //
-      // IDENTITY IS (secretDataId, path), not secretDataId alone. Measured on one 500-row
-      // page of the CODE register: 500 distinct ids collapse to 131 distinct secretDataId —
-      // 3.82 rows per secret, and one credential appearing under 158 rows across 8 paths. So
-      // secretDataId names the CREDENTIAL and the pair names one OCCURRENCE of it. Remediation
-      // is per occurrence (each one has to be removed); rotation is per credential, grouped
-      // across them. Keying on secretDataId alone would silently collapse eight files into
-      // one row and lose the locations.
+      // IDENTITY IS `external_id`. An earlier revision of this comment said the pair
+      // (secretDataId, path), on the strength of one page showing 3.82 rows per credential.
+      // Measured over BOTH pages — the whole 843-row register — that pair collides 2.27:1,
+      // with a single pair covering 49 rows (PROBE_FINDINGS.md §9.5):
+      //
+      //     key                                page 1   page 2
+      //     id                                   1.00     1.00
+      //     secretDataId                         4.39     2.09
+      //     (secretDataId, path)                 2.27     1.37   <- not an identity
+      //     (secretDataId, path, line)           1.32     1.06
+      //     (secretDataId, path, line, resource) 1.00     1.00
+      //     externalId                           1.00     1.00
+      //
+      // A ledger keyed on the pair would merge distinct findings. Two candidates are unique
+      // across the whole register; `externalId` is Wiz's own composite and the one that reads:
+      //     github.com##<repo>##<path>##<contentHash>##<lineIndex>
+      //
+      // secretDataId still names the CREDENTIAL and is what rotation groups by — one decision
+      // per credential across however many occurrences it has. It is just not the row key.
+      //
+      // THREE CAVEATS, none resolved, all of which the ledger depends on:
+      //   * A LINE MOVE LOOKS LIKE A NEW FINDING. externalId encodes lineIndex, and so does
+      //     the four-part tuple — there is no line-stable unique key among the candidates.
+      //     Reformatting a file would close one finding and open another, and the MTTR clock
+      //     would believe it.
+      //   * UUID STABILITY IS INFERRED, NOT MEASURED. id and secretDataId carry a version-5
+      //     nibble, i.e. name-based UUIDs derived from content, which WOULD make them stable
+      //     across scans. That is read off the nibble; one day of observation cannot
+      //     establish it, and a key that is not stable across scans resolves every row on
+      //     every sync.
+      //   * The repo/branch duplicate below is 66% of the residual collision — 56 of 85
+      //     colliding keys span both REPOSITORY and REPOSITORY_BRANCH.
       //
       // DO NOT ADD isDefaultBranch TO THE SECRETS FILTER TO DEDUPLICATE. There is real
       // duplication — 18 of 176 (secretDataId, path) pairs appear under both REPOSITORY and
@@ -618,7 +643,9 @@ var Server = (() => {
       // ABSENT rather than false — a repository is not a branch, so the predicate does not
       // apply to it. Copying SCA's {equals:true} would cut the register by 65% while reading
       // as deduplication: absent collapsed to false, which is the failure the AI register
-      // already has a name for. The 10% that IS duplicated wants dedup on the pair above.
+      // already has a name for. The duplication is real and wants deduplication on the
+      // resource entity, after the rows are keyed — not a filter that drops two-thirds of the
+      // register on the way in.
       "secret_kind",
       "rotated_at",
       "removed_at",
@@ -905,7 +932,7 @@ var Server = (() => {
   var DEFAULT_FETCH_SEVERITIES = {
     sca: ["CRITICAL", "HIGH"],
     sast: ["CRITICAL", "HIGH"],
-    secrets: ["CRITICAL", "HIGH", "MEDIUM"]
+    secrets: []
   };
 
   // src/domain/settingsLogic.ts
