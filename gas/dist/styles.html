@@ -397,8 +397,7 @@ html, body {
 /* Popover: portaled to <body> and positioned `fixed`. It opens DOWNWARD and flips above only
    when there is no room below (ui.js position()) — it grew upward unconditionally while its
    only two callers were filters at the bottom of the rail. Card-surface recipe matching
-   .sev-filter-menu / .helptip-bubble, but with --shadow-sheet since it floats fully detached
-   from any panel. */
+   .helptip-bubble, but with --shadow-sheet since it floats fully detached from any panel. */
 .combobox-pop {
   position: fixed; z-index: var(--z-popover);
   display: flex; flex-direction: column; gap: 6px;
@@ -987,8 +986,8 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
 
 /* Help explainer (how a headline metric is calculated). The wrapped metric itself is the
    hover/focus target — no separate glyph; the bubble is the neutral popover recipe (white /
-   hairline / --shadow-card, like .sev-filter-menu). Revealed on hover/focus-within; the
-   bubble stays in the DOM (opacity only) so aria-describedby text is announced. See ui.js
+   hairline / --shadow-card). Revealed on hover/focus-within; the bubble stays in the DOM
+   (opacity only) so aria-describedby text is announced. See ui.js
    helpTip(). */
 .helptip { position: relative; }
 /* Metric variant: shrink-to-content so only the metric area is the hover zone, not the row. */
@@ -1118,7 +1117,7 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
   font-size: 12px; background: rgba(0, 0, 0, 0.06); color: var(--text-2);
 }
 
-/* --------------------------------------------------------------------- severity pills (filter) */
+/* ------------------------------------------------------------------------- severity pills */
 .pill-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .sev-pill {
   border-radius: 999px; padding: 3px 12px; min-height: 0;
@@ -1135,31 +1134,8 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
 /* A leading check makes on/off legible without relying on the ~14% color tint alone. */
 .sev-pill[aria-pressed="true"]::before { content: "✓"; margin-right: 4px; font-weight: 700; }
 
-/* ------------------------------------------------- page header row + inline severity filter */
-.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.page-head h1 { margin: 0; }
-
-.sev-filter { position: relative; }
-.sev-filter-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  min-height: 30px; padding: 4px 10px;
-  font-size: 0.8125rem; font-weight: 500;
-  background: var(--surface); color: var(--ink);
-  border: 1px solid var(--hairline); border-radius: var(--radius-md); box-shadow: none;
-}
-.sev-filter-btn:hover { background: var(--page); }
-.sev-filter-caret { font-size: 0.7rem; color: var(--text-3); }
-.sev-filter-label { font-weight: 500; }
-.sev-filter-menu {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-popover);
-  min-width: 208px; padding: 10px;
-  background: var(--page); border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
-}
-.sev-filter-caption { display: block; margin: 0 0 8px; }
-/* A locked pill: the sole remaining severity (filter floor) or a display severity outside
-   the scan scope. Greyed only when it's also unselected, so the locked-selected floor pill
-   keeps its pressed look. */
+/* A locked pill: a display severity outside the scan scope (Settings). Greyed only when
+   it's also unselected, so a locked-selected pill keeps its pressed look. */
 .sev-pill[aria-disabled="true"] { cursor: not-allowed; }
 .sev-pill[aria-disabled="true"][aria-pressed="false"] { opacity: 0.5; }
 
@@ -1201,9 +1177,9 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
   color: var(--ink);
   font-weight: 600;
 }
-/* Compact variant for inline section-level controls (same scale as .sev-filter-btn). */
+/* Compact variant for inline section-level controls: body-small type, tighter box. */
 .seg-btn--sm { min-height: 26px; padding: 2px 10px; font-size: 0.8125rem; }
-/* Section label + inline control on one row — the .page-head pattern at h2 scale.
+/* Section label + inline control on one row, title left and control right.
    The wrapper owns the section-label's vertical rhythm; the h2 margin resets to 0. */
 .section-head {
   display: flex; align-items: baseline; justify-content: space-between;

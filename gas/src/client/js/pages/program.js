@@ -14,7 +14,7 @@ import { call } from "../api.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
   clear, downloadText, el, emptyState, fmtDate, helpTip, openSheet, pager, scopeBar,
-  sectionLabel, sevBadge, severityScopeFilter, skeleton, statusPill, toast,
+  sectionLabel, sevBadge, skeleton, statusPill, toast,
 } from "../ui.js";
 
 // Matrix cells, in reading order. `key` matches the server's `matrix_cell` / cohort quadrant
@@ -113,12 +113,7 @@ export async function renderProgram(main, _params, ctx) {
   const dataPromise = swrCall("api_getProgramPage", params, (fresh) => paint && paint(fresh));
 
   main.append(
-    el("div", { class: "page-head" },
-      el("h1", {}, "Program performance"),
-      severityScopeFilter({
-        selectable: boot.palette.selectable, scope: sevScope,
-        onApply: () => ctx.refresh(), ariaContext: "program performance",
-      })),
+    el("h1", {}, "Program performance"),
     el("p", { class: "page-sub" },
       "Whether remediation effort lands on the findings that matter. Coverage is how much " +
       "of the high-risk population got fixed; efficiency is how much of the fixing was " +
