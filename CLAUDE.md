@@ -199,6 +199,27 @@ already implements the pipeline and is the behavioural spec (same relationship `
   accent is 1.52:1. `test/tokens.test.js` holds all four.
 - **The severity palette is byte-identical across all four surfaces.** A severity means the
   same thing everywhere; the brand deliberately does not.
+- **A DEATH DATE IS NOT ALWAYS A MEASUREMENT, and the row has to say which.** Where
+  `resolution_src` is `disappeared` the date is the scan that first stopped seeing the
+  finding — an upper bound whose error is the scan interval. "Gone by 12 Aug" and "Resolved
+  12 Aug" are the same pixel width, so the provenance rides in the WORD
+  (`pages/registerModel.js`). It applies to all three registers, not only SAST: SAST is
+  where it is always true, but qualifying only SAST implies the other two dates are exact.
+- **An unmeasured register is not a register of zeroes.** A hero of `0` over three stat
+  cards of `0` states four facts about a population nobody has looked at. Every page checks
+  "has this ever been scanned" before it checks "how many" — but a filter that matches
+  nothing keeps its figures, because there the zero IS a measurement.
+- **A portaled sheet outlives the page that opened it.** `app.js` closed the tip on every
+  route change and never the sheet, so a filter drawer's SCRIM sat over the next page
+  swallowing clicks with nothing on screen explaining why. Neither sibling app calls
+  `closeActiveSheet()` either; neither had a page that opened one.
+- **Severity sorts by MEANING, so ascending is worst-first.** The comparator ranks against
+  `SEVERITY_ORDER`, where CRITICAL is 0. A register defaulting to descending opens on LOW.
+- **A scan records the gate it APPLIED, not the one the settings hold now** (`runScan`'s
+  `severities` override). The two differ across a settings change, and stamping today's gate
+  on a replay of older scans makes the disappearance guard believe a severity was covered by
+  a scan that never looked at it. The dev fixture models exactly that: scan 1 wide, scans 2-3
+  narrow — which is also the only shape that leaves the guard something to protect.
 - **`PAGES` in `app.js` is the only IA list**, and a labelled lane must hold two pages —
   `navModel` collapses a lane of one on the rail, but `renderStackedNav` below 800px draws
   the heading unconditionally, so a one-page lane restates its own link. `navGroups.test.js`

@@ -10,7 +10,7 @@ bright-yellow brand (`#ffcb13`) instead of Signal Blue or crimson — the severi
 deliberately identical across all three, so a severity means the same thing wherever you
 read it.
 
-## Status: Phase 2 — the ledger core, and one page reading it
+## Status: Phase 2 — the ledger core, and four pages reading it
 
 **What is real:** the shell, the navigation, all ten routes, access control, the settings
 store, the ledger schema, the build and the dev harness — and now the ledger itself. Three
@@ -18,8 +18,8 @@ normalizers (`src/domain/normalize.ts`, `src/domain/secretsLedger.ts`), a cross-
 reconciler with per-scope disappearance (`src/domain/reconcile.ts`), the derived clocks
 (`src/domain/ledgerCore.ts`), censoring-aware remediation statistics
 (`src/domain/remediation.ts`), Sheet persistence (`src/server/ledgerStore.ts`) and a scan
-runner (`src/server/sync.ts`). **MTTR & SLA is wired to real numbers.** `npm run check` is
-green.
+runner (`src/server/sync.ts`). **Executive, MTTR & SLA, and the three registers are wired to real
+numbers** — six of the ten routes. `npm run check` is green.
 
 **What is not: the live fetch.** `sync.ts`'s source is pluggable and only the sample source
 exists. The live one REFUSES when called rather than returning an empty page — an empty page
@@ -27,9 +27,21 @@ would write a scan row claiming it covered the scope, and the next scan's disapp
 would resolve the whole register against it. A missing feature must not be able to look like
 a remediation event.
 
-The other nine pages still render their composition — the questions they will answer — and
-say plainly that no data is connected. A page drawing a plausible empty chart would be
-claiming a pipeline that does not exist.
+Four routes still render their composition — Coverage & efficiency (which needs the P2P
+domain port), Repositories, Scan history, Storage and Settings — and say plainly that no data
+is connected. A page drawing a plausible empty chart would be claiming a pipeline that does
+not exist.
+
+**The registers page server-side**, because SCA is 17,991 rows and the reader looks at fifty.
+`src/server/registers.ts` caches the full filtered set and slices it per request: `page` and
+`pageSize` are deliberately not in the cache key, while anything selecting which rows exist
+is. The rule is the sibling's, and its reason is the same — without it every Next click
+re-runs the whole pass to throw all but one page away.
+
+**A resolved finding's death date is not always a measurement**, and the registers say so per
+row rather than in a footnote. Where `resolution_src` is `disappeared` the date is the scan
+that first stopped seeing the finding — an upper bound whose error is the scan interval. On
+SAST that is *every* closed row; on SCA and secrets it is most of them.
 
 **The design that carried the risk.** Neither source register does three scopes in one
 ledger: `gas/` has one, and `brick/devsecops`'s reconcile takes a `scope` but only stamps it,
