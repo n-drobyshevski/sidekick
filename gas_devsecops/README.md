@@ -119,6 +119,13 @@ WIZ_PROJECT_ID_V2=...      # optional; scopes every query
    rather than a guess — a plausible document would typecheck, ship, and then measure the
    wrong population.
 
+**Both are answered as of 2026-08-27** — see [PROBE_FINDINGS.md](PROBE_FINDINGS.md).
+Briefly: `SASTFinding` *does* expose `createdAt`, but no `resolvedAt` and no resolved rows,
+so `SAST_FETCH_RESOLVED` stays `false` for a new reason; the secrets root is
+`secretInstances` and it *does* separate removed (`resolvedAt`) from rotated
+(`validationStatus`). The same run found the SAST query refused by this tenant with
+`VALIDATION_INVALID_TYPE_VARIABLE` — `filterBy.severity` is an object filter, not a list.
+
 `npm run dev` runs the **real server bundle** in the browser against in-memory fakes for
 SpreadsheetApp, DriveApp, Properties, Lock and Cache (`dev/gas-shims.js`), so no Google
 account is needed. It seeds nothing in Phase 1.
