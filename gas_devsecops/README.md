@@ -127,6 +127,11 @@ so `SAST_FETCH_RESOLVED` stays `false` for a new reason; the secrets root is
 (`validationStatus`). The same run found the SAST query refused by this tenant with
 `VALIDATION_INVALID_TYPE_VARIABLE` — `filterBy.severity` is an object filter, not a list.
 
+That defect is **fixed in `28c74f9` and verified** — SAST returns `totalCount 127`, and the
+three timestamps come back populated (PROBE_FINDINGS.md §7). `Q_SECRETS` is now unblocked:
+§7.3 has the identity fields and the filter shapes, including the trap that
+`SecretInstanceVcsDetails` spells the commit `initialCommitHash`, not `commitHash`.
+
 `npm run dev` runs the **real server bundle** in the browser against in-memory fakes for
 SpreadsheetApp, DriveApp, Properties, Lock and Cache (`dev/gas-shims.js`), so no Google
 account is needed. It seeds nothing in Phase 1.

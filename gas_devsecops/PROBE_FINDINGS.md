@@ -1,11 +1,18 @@
 # The probe against the live tenant — what it found, and what it changes
 
 **Tenant** `api.eu15.app.wiz.io` · **project scope** `1dfea0cf-834f-5522-b797-bee5aaf09251`
-(VALUE-CHAIN) · **measured** 2026-08-27 · branch `claude/wiz-sidekick-decsecops-x75ex3`
+(VALUE-CHAIN) · **measured** 2026-08-27 at `0f9c549`, **re-measured the same day** at
+`28c74f9` (§7) · branch `claude/wiz-sidekick-decsecops-x75ex3`
 
 The register's two open questions are the ones [README.md](README.md) names under *The two
 questions it exists to answer*. Both are now answered, and a third thing turned up that
 nobody asked about: **the SAST query does not currently run against this tenant at all.**
+
+**§1–§6 are the first pass and are left standing as the dated record that justified the
+fix.** §7 is the second pass, after `28c74f9` acted on them: the SAST defect in §4 is
+confirmed fixed, the probe traps in §5 are confirmed fixed (one with a regression), and the
+secrets schema is taken the last step needed to write `Q_SECRETS`. Where the two passes
+disagree, §7 wins.
 
 > **Read the numbers as of the date above.** They are a dated observation of a production
 > tenant, not an invariant, and no test can pin them. Where a claim *could* be held by a
@@ -142,6 +149,9 @@ the difference, so that narrowing is load-bearing rather than tidy.
 
 ## 4. The two existing queries: SCA works, **SAST is refused**
 
+> **Fixed in `28c74f9`; verified in §7.1.** SAST now returns HTTP 200 with `totalCount 127`.
+> The diagnosis below is kept because it is the measurement that justified the fix.
+
 ```
 --- sca ---
   5 node(s), hasNextPage true
@@ -217,6 +227,9 @@ SAST). Per the working-discipline rule, that test may be edited — the claim it
 
 ## 5. Three traps in the probe itself
 
+> **All three fixed in `28c74f9`; verified in §7.4.** The order-enum fix overshot and is
+> now over-broad in the other direction — see §7.4 before trusting the printed field list.
+
 None of these affect the findings above; all three cost time to find.
 
 - **`.env.local` swallows inline comments.** The parser at `probe.mjs:48` uses a greedy
@@ -235,11 +248,161 @@ None of these affect the findings above; all three cost time to find.
 
 ---
 
-## 6. What this leaves open
+## 6. What the first pass left open
 
-- Fix the SAST filter shape, SAST-only, and re-run `--scope=sast`. Until then the SAST
-  register measures nothing — the battery would fetch zero rows on every sync.
+- ~~Fix the SAST filter shape, SAST-only, and re-run `--scope=sast`.~~ **Done** in
+  `28c74f9`, verified in §7.1.
 - Decide whether `createdAt` alone earns a SAST *age* register even with no resolution
-  date. The tenant supports it; §2 argues it cannot support an MTTR.
+  date. The tenant supports it; §2 argues it cannot support an MTTR. **Still open.**
 - `Q_SECRETS` can now be written against a known root, node type and filter type. The
   rotation clock should ship as measured / unmeasured, per §3 — 0.38% coverage today.
+  **Still open**, and §7.3 supplies the last schema facts it was missing.
+
+---
+
+# 7. Second pass — after the fix
+
+**Re-measured** 2026-08-27, same tenant and project scope, at `28c74f9`. Four runs:
+`--dry-run`, `--scope=sast --first=5 --report`, `--schema --report`, `--first=5 --report`.
+Read-only as before; the report now **merges across runs** rather than overwriting, and
+ended with 8 finding keys spanning all three `--report` runs.
+
+## 7.1 The SAST defect is fixed, and the count is the predicted one
+
+`--dry-run` prints the two shapes the schema asks for — an object for SAST, a bare list for
+SCA, which is the asymmetry `OBJECT_FILTERS` now encodes:
+
+```
+--- sast ---                      --- sca ---
+"severity": {"equals": [          "severity": ["CRITICAL","HIGH"]
+  "CRITICAL","HIGH"]}
+```
+
+Live, against the tenant:
+
+```
+--- sast ---
+  5 node(s), totalCount 127, hasNextPage true
+```
+
+**127, matching the corrected-filter measurement in §4 exactly.** No
+`VALIDATION_INVALID_TYPE_VARIABLE`, no `errors` array, and `partialErrors: []` — still no
+PARTIAL reproduced on this tenant, so the tolerance in `post()` remains untested by live
+traffic and should stay.
+
+**One number did move, and it is not SAST.** SCA reads **18,053**, against 18,106 in §4 —
+53 fewer in about a day. `Q_SCA` now selects `totalCount` itself, so this is the probe's
+own figure rather than the side query §4 had to run. A live register drifting by 0.3%
+overnight is the expected behaviour, not a filter problem; it is recorded here so the next
+reader does not mistake drift for a defect.
+
+## 7.2 The three SAST timestamps come back populated
+
+```
+--- row 1 ---
+  name        Unsafe XML Processing with XMLInputFactory in Java
+  status      OPEN   severity HIGH
+  createdAt             2025-11-04T16:42:15.835767Z
+  updatedAt             2026-08-25T15:41:15.285598Z
+  firstDetectedAtSource null
+  filePath    tattoo/src/…/BoFlowReceiveExpeditionFromEWM.java:133
+  commitHash  62e2d52bec055ad0e1bd9305da16e621f9c6a2df
+
+--- row 2 ---
+  name        Disabling XML External Entity Attacks in Java
+  status      OPEN   severity HIGH
+  createdAt             2025-11-04T17:04:09.795784Z
+  updatedAt             2026-08-26T20:23:44.312088Z
+  firstDetectedAtSource null
+  filePath    src/main/java/…/Gs1Utils.java:33
+  commitHash  5c1b88ba34071ab4d4815596551124c6f0d0a31f
+
+populated across the page: createdAt 5/5, updatedAt 5/5, firstDetectedAtSource 0/5
+```
+
+`ALWAYS NULL in this sample: originalSeverity, resolutionReason, firstDetectedAtSource` —
+nothing surprising in it. `resolutionReason` is null because every row is OPEN, and
+`firstDetectedAtSource` was 0/5 in §2 as well, so the comment in `wizQueries.ts` calling it
+null-on-every-row still holds.
+
+**The nine-month spread is the finding.** Birth dates in Nov 2025, `updatedAt` in Aug 2026.
+That is `updatedAt` tracking rescans, exactly as the comment claims and precisely why it
+cannot stand in for a resolution date.
+
+## 7.3 The secrets schema, taken the last step
+
+**The filter shapes**, printed by the probe rather than inferred:
+
+```
+status:           SecretInstanceStatusFilter           -> send as an OBJECT { equals: [...] }
+validationStatus: SecretInstanceValidationStatusFilter -> send as an OBJECT { equals: [...] }
+severity:         SecretInstanceSeverityFilter         -> send as an OBJECT { equals: [...] }
+```
+
+**But `projectId` in the same filter type is a bare `[String!]`.** `SecretInstanceFilters`
+mixes both conventions internally, so one field's shape says nothing about the next one's.
+That is the §4 trap restated at finer grain: infer nothing, print it.
+
+**Identity** — the clocks were already known from §3; this is what was missing:
+
+| Question | Field | Type |
+|---|---|---|
+| Which secret | `id` / `externalId` / `secretDataId` | `ID!` / `String!` / `String!` |
+| | `name`, `type`, `confidence`, `rule`, `snippet` | `SecretDetectionRuleType!`, `SecretInstanceConfidence`, … |
+| Where in the file | `path`, `lineNumber`, `startOffset`, `endOffset` | `String!`, `Int`, `Int`, `Int` |
+| Which commit | `vcsDetails` → **`initialCommitHash`** | `SecretInstanceVcsDetails` → `String` |
+| Which repository | `resource` → `id`/`name`/`type`/`externalId`/`nativeType`/`cloudPlatform` | `SecretInstanceResource!` |
+| Which scope | `projects`, `codeToCloudPipelineStage`, `origin`, `scanType` | `[Project!]`, … |
+
+Three things `Q_SECRETS` must not get wrong:
+
+- **The commit field is `initialCommitHash`, not `commitHash`.** SAST's
+  `SASTFindingVcsDetails` has `commitHash`; `SecretInstanceVcsDetails` has only
+  `initialCommitHash` and `ciWorkflowRun`. Copying SAST's `vcsDetails { commitHash }` fails
+  the **whole document**, the same way a wrong union member would. The semantics are also
+  better here — it is the commit that *introduced* the secret, which is what dates it
+  against history.
+- **`secretDataId` is distinct from both `id` and `externalId`** and looks like the dedup
+  key — what should collapse the same credential in five files into one rotation decision.
+  Confirm it against data before the ledger key depends on it.
+- **`SecretDetectionRuleType`** = `SAAS_API_KEY, PRIVATE_KEY, PUBLIC_KEY, PASSWORD,
+  CERTIFICATE, CLOUD_KEY, SSH_AUTHORIZED_KEY, DB_CONNECTION_STRING, GIT_CREDENTIAL,
+  PRESIGNED_URL`. `PUBLIC_KEY` is in there: not every row in this register is a live
+  credential, and a rotation metric that counts them is measuring the wrong population.
+
+## 7.4 The probe traps: all three fixed, one overshot
+
+The comment-swallowing parser and the silent `--roots --report` are fixed. The order-enum
+line is fixed too — it now reads `Sortable fields naming a time: CREATED_AT` where §5 had it
+printing `(none)`.
+
+**The same change regressed the field list directly above it.** "Temporal-looking ones" now
+reports **13 of 43 fields**, including `relatedIssues`, `organization`, `filePath`, `status`,
+`remediationInstructions` and `originToolData` — none of which are timestamps. The cause is
+the `i` flag at `probe.mjs:240`:
+
+```js
+const TEMPORAL = /(^|[a-z_])(at|date|time|…)([A-Z_]|$)/i;
+```
+
+`i` makes `[a-z_]` and `[A-Z_]` each match *any* letter, which destroys the camelCase
+boundary the pattern depended on: `filePath` matches as `P`+`at`+`h`, `status` as
+`st`+`at`+`us`. It buys `CREATED_AT` at the cost of the anchoring.
+
+Cosmetic for the stored data — `sastFields` and `sastOrderFields` are intact and §2's answer
+is unaffected — but `sastTimestamps` now carries 13 entries instead of 4, and the printed
+list is what a reader takes as "the timestamps SAST has". It currently claims `filePath` is
+one. A case-sensitive alternation with a separate SCREAMING_SNAKE branch gets both cases;
+one regex with `i` cannot.
+
+## 7.5 What is still open after the second pass
+
+- **`Q_SECRETS`.** Every schema fact it needs is now in §3 and §7.3. Ship the rotation clock
+  as measured / unmeasured — 0.38% coverage — and key it on `secretDataId` only after
+  confirming that field against data.
+- **The SAST age-vs-MTTR decision** from §6, untouched by this pass.
+- **The `TEMPORAL` regex**, §7.4. Low stakes, but it currently prints a false answer to the
+  question this document exists to answer.
+- **No PARTIAL response has ever been reproduced live** across two passes, though the
+  captured `brick/devsecops/sast_response.json` contains one. The tolerance stays; it is
+  simply still unexercised outside the fixture.
