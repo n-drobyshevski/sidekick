@@ -326,8 +326,8 @@ var Server = (() => {
     return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
   }
   function ownerDomain() {
-    const at = ownerEmail().lastIndexOf("@");
-    return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
+    const at2 = ownerEmail().lastIndexOf("@");
+    return at2 >= 0 ? ownerEmail().slice(at2 + 1).toLowerCase() : "";
   }
 
   // src/server/welcome.ts
@@ -416,7 +416,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "c3fc5854797c" : "dev";
+  var BUILD_ID = true ? "970979badd6c" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -493,6 +493,16 @@ var Server = (() => {
   }
 
   // src/domain/util.ts
+  function pushInto(map, key, ...values) {
+    const bucket = map.get(key);
+    if (bucket) bucket.push(...values);
+    else map.set(key, [...values]);
+  }
+  function groupBy(xs, key) {
+    const out = /* @__PURE__ */ new Map();
+    for (const x of xs) pushInto(out, key(x), x);
+    return out;
+  }
   function present(v) {
     if (v === null || v === void 0) return false;
     if (typeof v === "number" && Number.isNaN(v)) return false;
@@ -518,8 +528,42 @@ var Server = (() => {
     if (ms === null || !Number.isFinite(ms)) return null;
     return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
   }
+  function minIso(...values) {
+    let min = null;
+    for (const v of values) {
+      const t = parseTs(v);
+      if (t !== null && (min === null || t < min)) min = t;
+    }
+    return min === null ? null : toIso(min);
+  }
+  function midpointIso(a, b) {
+    var _a;
+    const da = parseTs(a);
+    const db = parseTs(b);
+    if (da === null || db === null) return (_a = toIso(db)) != null ? _a : toIso(da);
+    return toIso(da + (db - da) / 2);
+  }
   function nowIso(now) {
     return toIso(now != null ? now : Date.now());
+  }
+  function maxNum(values) {
+    return values.reduce((m, v) => Math.max(m, v), -Infinity);
+  }
+  function mean(values) {
+    if (!values.length) return null;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+  }
+  function quantile(values, q) {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const idx = q * (sorted.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  }
+  function median(values) {
+    return quantile(values, 0.5);
   }
 
   // src/server/sheetsDb.ts
@@ -876,6 +920,11 @@ var Server = (() => {
     if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, headers.length).clearContent();
     writeGrid(sh, headers, 2, rows);
   }
+  function appendRows(tab, rows) {
+    if (!rows.length) return;
+    const sh = sheet(tab);
+    writeGrid(sh, ensureHeaders(sh, tab), sh.getLastRow() + 1, rows);
+  }
   function dataRowCount(tab) {
     return Math.max(0, sheet(tab).getLastRow() - 1);
   }
@@ -963,6 +1012,11 @@ var Server = (() => {
     sast: ["CRITICAL", "HIGH"],
     secrets: []
   };
+  var RESOLVED_STATUSES = /* @__PURE__ */ new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
+  var STATUS_OPEN = "OPEN";
+  var STATUS_RESOLVED = "RESOLVED";
+  var RESOLUTION_API = "api";
+  var RESOLUTION_DISAPPEARED = "disappeared";
 
   // src/domain/settingsLogic.ts
   var DEFAULT_SETTINGS = {
@@ -1098,9 +1152,939 @@ var Server = (() => {
   __export(api_exports, {
     bootstrap: () => bootstrap,
     getChartsBundle: () => getChartsBundle,
+    getMttr: () => getMttr,
     getSettings: () => getSettings,
-    putSettings: () => putSettings
+    putSettings: () => putSettings,
+    runSampleSync: () => runSampleSync
   });
+
+  // src/domain/ledgerCore.ts
+  var DAY_MS = 864e5;
+  function parseSeverities(value) {
+    const s = String(value != null ? value : "").trim();
+    if (!s || s === "*") return null;
+    return s.split(",").map((v) => v.trim().toUpperCase()).filter(Boolean);
+  }
+  function scansAsc(scans, scope) {
+    return scans.filter((r) => r.scope === scope).sort((a, b) => {
+      var _a, _b;
+      const ta = (_a = parseTs(a.ts)) != null ? _a : 0;
+      const tb = (_b = parseTs(b.ts)) != null ? _b : 0;
+      if (ta !== tb) return ta - tb;
+      return a.scan_id < b.scan_id ? -1 : a.scan_id > b.scan_id ? 1 : 0;
+    });
+  }
+  function latestScan(scans, scope) {
+    const asc = scansAsc(scans, scope);
+    return asc.length ? asc[asc.length - 1] : null;
+  }
+  function prevScanIdBySeverity(scans, scope) {
+    const remaining = new Set(SEVERITY_ORDER);
+    const mapping = {};
+    for (const r of scansAsc(scans, scope).reverse()) {
+      const covered = parseSeverities(r.severities);
+      const hit = covered === null ? [...remaining] : [...remaining].filter((s) => covered.includes(s));
+      for (const sev of hit) mapping[sev] = r.scan_id;
+      for (const sev of hit) remaining.delete(sev);
+      if (!remaining.size) break;
+    }
+    return Object.keys(mapping).length ? mapping : null;
+  }
+  function existingScanDeltas(scans, scanId) {
+    var _a, _b, _c;
+    const row = scans.find((r) => r.scan_id === scanId);
+    if (!row) return null;
+    return {
+      new_count: Number((_a = row.new_count) != null ? _a : 0),
+      resolved_count: Number((_b = row.resolved_count) != null ? _b : 0),
+      reopened_count: Number((_c = row.reopened_count) != null ? _c : 0)
+    };
+  }
+  var HAS_VENDOR_FIX = /* @__PURE__ */ new Set(["sca"]);
+  function baseRows(rows, now) {
+    const nowMs = now != null ? now : Date.now();
+    return rows.map((row) => {
+      var _a, _b;
+      const first = parseTs(row.first_seen);
+      const resolved = parseTs(row.resolved_at);
+      const open = row.status === "OPEN";
+      const vendor = HAS_VENDOR_FIX.has(row.scope);
+      const fixAvailableAt = vendor ? (_b = (_a = row.fix_date) != null ? _a : row.fix_observed_at) != null ? _b : null : null;
+      const fixAvailMs = parseTs(fixAvailableAt);
+      const actionableMs = fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
+      return {
+        ...row,
+        mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS : null,
+        age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS : null,
+        fix_available_at: fixAvailableAt,
+        actionable_from: actionableMs === null ? null : toIso(actionableMs),
+        mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS : null,
+        actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS : null,
+        awaiting_vendor_fix: open && vendor && fixAvailableAt === null
+      };
+    });
+  }
+
+  // src/domain/severity.ts
+  function normalizeSeverity(sev) {
+    if (typeof sev !== "string") return "UNKNOWN";
+    const s = sev.toUpperCase().trim();
+    if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
+    return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
+  }
+
+  // src/domain/remediation.ts
+  var RESOLUTION_BUCKET_EDGES = [1, 7, 30, 90];
+  var RESOLUTION_BUCKET_LABELS = ["\u22641d", "2\u20137d", "8\u201330d", "31\u201390d", "90+d"];
+  function isOpen(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function resolvedMttr(row) {
+    const m = row.mttr_days;
+    return typeof m === "number" && Number.isFinite(m) ? m : null;
+  }
+  function openAge(row) {
+    if (!isOpen(row.status)) return null;
+    const a = row.age_days;
+    return typeof a === "number" && Number.isFinite(a) ? a : null;
+  }
+  function mttrPercentiles(rows) {
+    var _a;
+    const bySev = {};
+    const all = [];
+    for (const row of rows) {
+      const m = resolvedMttr(row);
+      if (m === null) continue;
+      const s = normalizeSeverity(row.severity);
+      ((_a = bySev[s]) != null ? _a : bySev[s] = []).push(m);
+      all.push(m);
+    }
+    const perSev = {};
+    for (const s of SEVERITY_ORDER) {
+      const vals = bySev[s];
+      if (!vals) continue;
+      perSev[s] = { p50: quantile(vals, 0.5), p90: quantile(vals, 0.9), count: vals.length };
+    }
+    return {
+      perSev,
+      overall: { p50: quantile(all, 0.5), p90: quantile(all, 0.9), count: all.length }
+    };
+  }
+  function resolutionBuckets(rows) {
+    const perSev = {};
+    let total = 0;
+    for (const row of rows) {
+      const m = resolvedMttr(row);
+      if (m === null) continue;
+      const bucket = m <= RESOLUTION_BUCKET_EDGES[0] ? 0 : m <= RESOLUTION_BUCKET_EDGES[1] ? 1 : m <= RESOLUTION_BUCKET_EDGES[2] ? 2 : m <= RESOLUTION_BUCKET_EDGES[3] ? 3 : 4;
+      const s = normalizeSeverity(row.severity);
+      if (!perSev[s]) perSev[s] = [0, 0, 0, 0, 0];
+      perSev[s][bucket] += 1;
+      total += 1;
+    }
+    return { perSev, labels: RESOLUTION_BUCKET_LABELS, total };
+  }
+  function kmCurve(events, times) {
+    const curve = [];
+    let s = 1;
+    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
+      const atRisk = times.filter((x) => x >= t).length;
+      if (atRisk === 0) continue;
+      const d = events.filter((x) => x === t).length;
+      s *= 1 - d / atRisk;
+      curve.push({ t, s, atRisk, events: d });
+    }
+    return curve;
+  }
+  var CROSSING_EPSILON = 1e-9;
+  function kmQuantileFromCurve(curve, q) {
+    const threshold = 1 - q + CROSSING_EPSILON;
+    for (const p of curve) if (p.s <= threshold) return p.t;
+    return null;
+  }
+  function kmMedianFromCurve(curve) {
+    return kmQuantileFromCurve(curve, 0.5);
+  }
+  function kaplanMeier(rows) {
+    const events = [];
+    const censored = [];
+    for (const row of rows) {
+      const m = resolvedMttr(row);
+      if (m !== null) {
+        events.push(m);
+        continue;
+      }
+      const c = openAge(row);
+      if (c !== null) censored.push(c);
+    }
+    const times = events.concat(censored);
+    const total = events.length + censored.length;
+    const restrictionTime = times.length ? maxNum(times) : null;
+    const naiveMean = mean(events);
+    const naiveMedian = median(events);
+    if (!events.length) {
+      return {
+        curve: [],
+        median: null,
+        medianLowerBound: restrictionTime,
+        mean: null,
+        restrictionTime,
+        meanTruncated: false,
+        naiveMean,
+        naiveMedian,
+        events: 0,
+        censored: censored.length,
+        total
+      };
+    }
+    const curve = kmCurve(events, times);
+    const med = kmMedianFromCurve(curve);
+    const tau = restrictionTime;
+    let rmst = 0;
+    let prevT = 0;
+    let prevS = 1;
+    for (const p of curve) {
+      rmst += prevS * (p.t - prevT);
+      prevT = p.t;
+      prevS = p.s;
+    }
+    rmst += prevS * (tau - prevT);
+    return {
+      curve,
+      median: med,
+      medianLowerBound: med === null ? restrictionTime : null,
+      mean: rmst,
+      restrictionTime,
+      meanTruncated: prevS > 0,
+      naiveMean,
+      naiveMedian,
+      events: events.length,
+      censored: censored.length,
+      total
+    };
+  }
+  function openPastSla(rows) {
+    var _a, _b;
+    const perSev = {};
+    let totalOpen = 0;
+    let totalBreached = 0;
+    for (const row of rows) {
+      const age = openAge(row);
+      if (age === null) continue;
+      const s = normalizeSeverity(row.severity);
+      const target = (_a = SLA_TARGETS[s]) != null ? _a : null;
+      const stat = (_b = perSev[s]) != null ? _b : perSev[s] = { open: 0, breached: 0, pct: null, target };
+      stat.open += 1;
+      totalOpen += 1;
+      if (target !== null && age > target) {
+        stat.breached += 1;
+        totalBreached += 1;
+      }
+    }
+    for (const stat of Object.values(perSev)) {
+      stat.pct = stat.open ? stat.breached / stat.open * 100 : null;
+    }
+    return {
+      perSev,
+      overall: {
+        open: totalOpen,
+        breached: totalBreached,
+        pct: totalOpen ? totalBreached / totalOpen * 100 : null
+      }
+    };
+  }
+  function openAgePercentiles(rows) {
+    var _a;
+    const bySev = {};
+    const all = [];
+    for (const row of rows) {
+      const a = openAge(row);
+      if (a === null) continue;
+      const s = normalizeSeverity(row.severity);
+      ((_a = bySev[s]) != null ? _a : bySev[s] = []).push(a);
+      all.push(a);
+    }
+    const perSev = {};
+    for (const s of SEVERITY_ORDER) {
+      const vals = bySev[s];
+      if (!vals) continue;
+      perSev[s] = { p50: quantile(vals, 0.5), p90: quantile(vals, 0.9), count: vals.length };
+    }
+    return {
+      perSev,
+      overall: { p50: quantile(all, 0.5), p90: quantile(all, 0.9), count: all.length }
+    };
+  }
+  function awaitingVendorFix(rows) {
+    let count = 0;
+    let openWithVendor = 0;
+    for (const row of rows) {
+      if (row.scope !== "sca" || !isOpen(row.status)) continue;
+      openWithVendor += 1;
+      if (row.awaiting_vendor_fix) count += 1;
+    }
+    return { count, openWithVendor, pct: openWithVendor ? count / openWithVendor * 100 : null };
+  }
+
+  // src/domain/observation.ts
+  var LEDGER_COLUMNS = [
+    "finding_key",
+    "scope",
+    "identifier",
+    "component",
+    "severity",
+    "repo_id",
+    "repo_name",
+    "branch",
+    "platform",
+    "first_seen",
+    "last_seen",
+    "status",
+    "resolved_at",
+    "resolution_src",
+    "reopened_count",
+    "first_scan_id",
+    "last_scan_id",
+    "fix_date",
+    "fix_observed_at",
+    "fixed_version",
+    "has_kev",
+    "has_exploit",
+    "epss",
+    "risk_observed_at",
+    "cwe",
+    "language",
+    "file_path",
+    "start_line",
+    "origin",
+    "secret_kind",
+    "confidence",
+    "rotated_at",
+    "removed_at",
+    "validation_state",
+    "validated_at",
+    "twin_count",
+    "twin_first_seen_spread_days",
+    "source_external_ids",
+    "owner_project",
+    "owner_path",
+    "tags_json"
+  ];
+  function emptyObservation(scope, findingKey) {
+    return {
+      finding_key: findingKey,
+      scope,
+      identifier: null,
+      component: null,
+      severity: "UNKNOWN",
+      repo_id: null,
+      repo_name: null,
+      branch: null,
+      platform: null,
+      first_seen: null,
+      resolved_at: null,
+      is_open: true,
+      fix_date: null,
+      fixed_version: null,
+      has_kev: null,
+      has_exploit: null,
+      epss: null,
+      cwe: null,
+      language: null,
+      file_path: null,
+      start_line: null,
+      origin: null,
+      secret_kind: null,
+      confidence: null,
+      validation_state: null,
+      validated_at: null,
+      rotated_at: null,
+      removed_at: null,
+      twin_count: null,
+      twin_first_seen_spread_days: null,
+      source_external_ids: null,
+      owner_project: null,
+      owner_path: null,
+      tags_json: null
+    };
+  }
+
+  // src/server/ledgerStore.ts
+  function str(v) {
+    const c = clean(v);
+    return c === null ? null : String(c);
+  }
+  function num(v) {
+    const c = clean(v);
+    if (c === null) return null;
+    const n = Number(c);
+    return Number.isFinite(n) ? n : null;
+  }
+  function triBool(v) {
+    if (typeof v === "boolean") return v;
+    if (typeof v === "string") {
+      const s = v.trim().toUpperCase();
+      if (s === "TRUE") return true;
+      if (s === "FALSE") return false;
+    }
+    return null;
+  }
+  function validation(v) {
+    const s = str(v);
+    return s === "VALID" || s === "INVALID" || s === "ERROR" || s === "UNKNOWN" ? s : null;
+  }
+  function rowFromSheet(r) {
+    var _a, _b, _c, _d;
+    return {
+      finding_key: String((_a = r["finding_key"]) != null ? _a : ""),
+      scope: (_b = str(r["scope"])) != null ? _b : "sca",
+      identifier: str(r["identifier"]),
+      component: str(r["component"]),
+      severity: (_c = str(r["severity"])) != null ? _c : "UNKNOWN",
+      repo_id: str(r["repo_id"]),
+      repo_name: str(r["repo_name"]),
+      branch: str(r["branch"]),
+      platform: str(r["platform"]),
+      first_seen: str(r["first_seen"]),
+      last_seen: str(r["last_seen"]),
+      status: str(r["status"]) === STATUS_RESOLVED ? STATUS_RESOLVED : STATUS_OPEN,
+      resolved_at: str(r["resolved_at"]),
+      resolution_src: str(r["resolution_src"]),
+      reopened_count: (_d = num(r["reopened_count"])) != null ? _d : 0,
+      first_scan_id: str(r["first_scan_id"]),
+      last_scan_id: str(r["last_scan_id"]),
+      fix_date: str(r["fix_date"]),
+      fix_observed_at: str(r["fix_observed_at"]),
+      fixed_version: str(r["fixed_version"]),
+      has_kev: triBool(r["has_kev"]),
+      has_exploit: triBool(r["has_exploit"]),
+      epss: num(r["epss"]),
+      risk_observed_at: str(r["risk_observed_at"]),
+      cwe: str(r["cwe"]),
+      language: str(r["language"]),
+      file_path: str(r["file_path"]),
+      start_line: num(r["start_line"]),
+      origin: str(r["origin"]),
+      secret_kind: str(r["secret_kind"]),
+      confidence: str(r["confidence"]),
+      rotated_at: str(r["rotated_at"]),
+      removed_at: str(r["removed_at"]),
+      validation_state: validation(r["validation_state"]),
+      validated_at: str(r["validated_at"]),
+      twin_count: num(r["twin_count"]),
+      twin_first_seen_spread_days: num(r["twin_first_seen_spread_days"]),
+      source_external_ids: str(r["source_external_ids"]),
+      owner_project: str(r["owner_project"]),
+      owner_path: str(r["owner_path"]),
+      tags_json: str(r["tags_json"])
+    };
+  }
+  function rowToSheet(row) {
+    var _a;
+    const out = {};
+    for (const col of LEDGER_COLUMNS) out[col] = (_a = row[col]) != null ? _a : null;
+    return out;
+  }
+  function readLedger() {
+    const out = {};
+    for (const r of readAll(TABS.ledger)) {
+      const row = rowFromSheet(r);
+      if (row.finding_key) out[row.finding_key] = row;
+    }
+    return out;
+  }
+  function writeLedger(ledger) {
+    overwrite(TABS.ledger, Object.values(ledger).map(rowToSheet));
+  }
+  function readScans() {
+    return readAll(TABS.scans).map((r) => {
+      var _a, _b, _c, _d, _e, _f, _g;
+      return {
+        scan_id: String((_a = r["scan_id"]) != null ? _a : ""),
+        ts: String((_b = r["ts"]) != null ? _b : ""),
+        scope: String((_c = r["scope"]) != null ? _c : ""),
+        severities: String((_d = r["severities"]) != null ? _d : ""),
+        new_count: Number((_e = r["new_count"]) != null ? _e : 0),
+        resolved_count: Number((_f = r["resolved_count"]) != null ? _f : 0),
+        reopened_count: Number((_g = r["reopened_count"]) != null ? _g : 0)
+      };
+    });
+  }
+  function appendScan(row) {
+    appendRows(TABS.scans, [{
+      scan_id: row.scan_id,
+      ts: row.ts,
+      scope: row.scope,
+      mode: row.mode,
+      severities: row.severities === null || !row.severities.length ? "" : row.severities.join(","),
+      total: row.total,
+      new_count: row.new_count,
+      resolved_count: row.resolved_count,
+      reopened_count: row.reopened_count,
+      raw_ref: null,
+      sealed: false
+    }]);
+  }
+
+  // src/server/sampleData.ts
+  var SAMPLE_SCANS = [];
+
+  // src/domain/normalize.ts
+  function str2(v) {
+    const c = clean(v);
+    return c === null ? null : String(c);
+  }
+  function at(rec, path) {
+    let cur = rec;
+    for (const part of path.split(".")) {
+      if (cur === null || typeof cur !== "object") return null;
+      cur = cur[part];
+    }
+    return clean(cur);
+  }
+  function adoptedKey(scope, rec, basis) {
+    const id = str2(rec["id"]);
+    if (id !== null && id.trim()) return `${scope}:id:${id.trim()}`;
+    return `${scope}:h:${sha1Hex(basis.map((v) => v != null ? v : "").join("|")).slice(0, 16)}`;
+  }
+  function triBool2(v) {
+    return typeof v === "boolean" ? v : null;
+  }
+  function triNum(v) {
+    const c = clean(v);
+    if (c === null) return null;
+    const n = Number(c);
+    return Number.isFinite(n) ? n : null;
+  }
+  function ownerProject(rec) {
+    var _a, _b;
+    const projects = Array.isArray(rec["projects"]) ? rec["projects"] : [];
+    return (_b = (_a = projects.find((p) => p && p["isFolder"] !== true)) != null ? _a : projects[0]) != null ? _b : null;
+  }
+  function normalizeSca(node) {
+    var _a;
+    const cve = str2(node["name"]);
+    const component = str2(node["detailedName"]);
+    const assetId = str2(at(node, "vulnerableAsset.id"));
+    const assetName = str2(at(node, "vulnerableAsset.name"));
+    const status = String((_a = str2(node["status"])) != null ? _a : "").toUpperCase();
+    const resolvedAt = str2(node["resolvedAt"]);
+    return {
+      ...emptyObservation("sca", adoptedKey("sca", node, [
+        cve,
+        assetId != null ? assetId : assetName,
+        str2(at(node, "vulnerableAsset.type")),
+        component
+      ])),
+      identifier: cve,
+      component,
+      severity: normalizeSeverity(node["severity"]),
+      repo_id: assetId,
+      repo_name: assetName,
+      // A VulnerableAssetRepositoryBranch IS the branch, so its name is the branch identity.
+      // The union member that carries no branch leaves this null rather than guessing.
+      branch: str2(at(node, "vulnerableAsset.type")) === "REPOSITORY_BRANCH" ? assetName : null,
+      platform: str2(at(node, "vulnerableAsset.cloudPlatform")),
+      language: str2(at(node, "artifactType.codeLibraryLanguage")),
+      first_seen: toIso(parseTs(node["firstDetectedAt"])),
+      resolved_at: toIso(parseTs(resolvedAt)),
+      is_open: !(present(resolvedAt) || RESOLVED_STATUSES.has(status)),
+      fix_date: toIso(parseTs(node["fixDate"])),
+      fixed_version: str2(node["fixedVersion"]),
+      has_kev: triBool2(node["hasCisaKevExploit"]),
+      has_exploit: triBool2(node["hasExploit"]),
+      epss: triNum(node["epssProbability"]),
+      owner_project: str2(at(node, "vulnerableAsset.subscriptionName")),
+      owner_path: str2(at(node, "vulnerableAsset.subscriptionExternalId"))
+    };
+  }
+  function normalizeSast(node) {
+    var _a;
+    const rule = str2(node["name"]);
+    const filePath = str2(node["filePath"]);
+    const line = clean(node["startLine"]);
+    const weaknesses = Array.isArray(node["weaknesses"]) ? node["weaknesses"] : [];
+    const owner = ownerProject(node);
+    const resource = (_a = node["resource"]) != null ? _a : null;
+    return {
+      ...emptyObservation("sast", adoptedKey("sast", node, [
+        rule,
+        str2(at(node, "resource.id")),
+        filePath,
+        line === null ? null : String(line)
+      ])),
+      identifier: rule,
+      component: filePath === null ? null : line === null ? filePath : `${filePath}:${String(line)}`,
+      severity: normalizeSeverity(node["severity"]),
+      repo_id: resource === null ? null : str2(resource["id"]),
+      repo_name: resource === null ? null : str2(resource["name"]),
+      platform: resource === null ? null : str2(resource["type"]),
+      // The CWE the rule maps to. Wiz can return several; the first is the primary one, and
+      // the ledger has one column — a joined list would break every group-by that reads it.
+      cwe: weaknesses.length ? str2(weaknesses[0]["name"]) : null,
+      language: str2(node["codeLibraryLanguage"]),
+      file_path: filePath,
+      start_line: typeof line === "number" ? line : line === null ? null : Number(line),
+      origin: str2(at(node, "vcsDetails.commitHash")),
+      // §2: createdAt is the birth date. firstDetectedAtSource is Wiz's own re-derivation and
+      // can post-date it, so the earlier of the two would be wrong to take blindly — createdAt
+      // is the one the filter sorts on and the one the register dates from.
+      first_seen: toIso(parseTs(node["createdAt"])),
+      resolved_at: null,
+      is_open: true,
+      owner_project: owner === null ? null : str2(owner["name"]),
+      owner_path: owner === null ? null : str2(owner["slug"])
+    };
+  }
+  var NORMALIZERS = {
+    sca: normalizeSca,
+    sast: normalizeSast
+  };
+
+  // src/domain/reconcile.ts
+  function makeRow(obs, firstSeen, scanId, scanTsIso) {
+    const { is_open: _isOpen, ...rest } = obs;
+    return {
+      ...rest,
+      first_seen: firstSeen,
+      last_seen: scanTsIso,
+      status: STATUS_OPEN,
+      resolved_at: null,
+      resolution_src: null,
+      reopened_count: 0,
+      first_scan_id: scanId,
+      last_scan_id: scanId,
+      fix_observed_at: present(obs.fixed_version) || present(obs.fix_date) ? scanTsIso : null,
+      risk_observed_at: null
+    };
+  }
+  function mergeRiskSignals(row, obs, scanTsIso) {
+    if (obs.has_kev !== null && (row.has_kev == null || obs.has_kev)) row.has_kev = obs.has_kev;
+    if (obs.has_exploit !== null && (row.has_exploit == null || obs.has_exploit)) {
+      row.has_exploit = obs.has_exploit;
+    }
+    if (obs.epss !== null && (row.epss == null || obs.epss > row.epss)) row.epss = obs.epss;
+    const witnessed = obs.has_kev !== null || obs.has_exploit !== null || obs.epss !== null;
+    if (!witnessed) return;
+    if (row.risk_observed_at == null || scanTsIso < row.risk_observed_at) {
+      row.risk_observed_at = scanTsIso;
+    }
+  }
+  function reconcile(observations, existingLedger, scope, scanId, scanTs, prevScanId, options = {}) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A;
+    const {
+      disappearanceMode = "scan_ts",
+      prevScanTs = null,
+      scannedSeverities = null,
+      prevScanIdBySeverity: prevScanIdBySeverity2 = null
+    } = options;
+    const updated = {};
+    for (const [key, row] of Object.entries(existingLedger)) updated[key] = { ...row };
+    const seen = /* @__PURE__ */ new Set();
+    let newCount = 0;
+    let resolvedCount = 0;
+    let reopenedCount = 0;
+    const scanTsIso = (_a = toIso(parseTs(scanTs))) != null ? _a : String(scanTs);
+    for (const obs of observations) {
+      if (obs.scope !== scope) {
+        throw new Error(`reconcile(${scope}): observation ${obs.finding_key} carries scope ${obs.scope}`);
+      }
+      const key = obs.finding_key;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const apiSaysResolved = !obs.is_open;
+      const fixSignal = present(obs.fixed_version) || present(obs.fix_date);
+      const seedFix = (r) => {
+        if (r.fix_date == null && obs.fix_date !== null) r.fix_date = obs.fix_date;
+        if (r.fix_observed_at == null && fixSignal) r.fix_observed_at = scanTsIso;
+      };
+      let row = updated[key];
+      if (row === void 0) {
+        row = makeRow(obs, (_b = minIso(obs.first_seen, scanTsIso)) != null ? _b : scanTsIso, scanId, scanTsIso);
+        updated[key] = row;
+        newCount += 1;
+      } else if (row.status === STATUS_RESOLVED && !apiSaysResolved) {
+        row.status = STATUS_OPEN;
+        row.resolved_at = null;
+        row.resolution_src = null;
+        row.reopened_count = Number((_c = row.reopened_count) != null ? _c : 0) + 1;
+        row.first_seen = (_d = minIso(obs.first_seen, scanTsIso)) != null ? _d : scanTsIso;
+        row.last_seen = scanTsIso;
+        row.last_scan_id = scanId;
+        row.fix_date = null;
+        row.fix_observed_at = null;
+        seedFix(row);
+        reopenedCount += 1;
+      } else {
+        if (row.status === STATUS_OPEN) {
+          row.first_seen = (_e = minIso(row.first_seen, obs.first_seen)) != null ? _e : row.first_seen;
+        }
+        row.last_seen = scanTsIso;
+        row.last_scan_id = scanId;
+        seedFix(row);
+      }
+      mergeRiskSignals(row, obs, scanTsIso);
+      row.severity = obs.severity;
+      row.identifier = (_f = obs.identifier) != null ? _f : row.identifier;
+      row.component = (_g = obs.component) != null ? _g : row.component;
+      row.repo_id = (_h = obs.repo_id) != null ? _h : row.repo_id;
+      row.repo_name = (_i = obs.repo_name) != null ? _i : row.repo_name;
+      row.branch = (_j = obs.branch) != null ? _j : row.branch;
+      row.platform = (_k = obs.platform) != null ? _k : row.platform;
+      row.cwe = (_l = obs.cwe) != null ? _l : row.cwe;
+      row.language = (_m = obs.language) != null ? _m : row.language;
+      row.file_path = (_n = obs.file_path) != null ? _n : row.file_path;
+      row.start_line = (_o = obs.start_line) != null ? _o : row.start_line;
+      row.origin = (_p = obs.origin) != null ? _p : row.origin;
+      row.secret_kind = (_q = obs.secret_kind) != null ? _q : row.secret_kind;
+      row.confidence = (_r = obs.confidence) != null ? _r : row.confidence;
+      row.owner_project = (_s = obs.owner_project) != null ? _s : row.owner_project;
+      row.owner_path = (_t = obs.owner_path) != null ? _t : row.owner_path;
+      row.tags_json = (_u = obs.tags_json) != null ? _u : row.tags_json;
+      row.fixed_version = (_v = obs.fixed_version) != null ? _v : row.fixed_version;
+      row.twin_count = (_w = obs.twin_count) != null ? _w : row.twin_count;
+      row.twin_first_seen_spread_days = (_x = obs.twin_first_seen_spread_days) != null ? _x : row.twin_first_seen_spread_days;
+      row.source_external_ids = (_y = obs.source_external_ids) != null ? _y : row.source_external_ids;
+      if (obs.validation_state !== null && obs.validation_state !== "UNKNOWN") {
+        row.validation_state = obs.validation_state;
+        row.validated_at = obs.validated_at;
+        row.rotated_at = obs.rotated_at;
+      } else if (row.validation_state == null && obs.validation_state !== null) {
+        row.validation_state = obs.validation_state;
+        row.validated_at = obs.validated_at;
+      }
+      if (apiSaysResolved && row.status === STATUS_OPEN) {
+        row.status = STATUS_RESOLVED;
+        row.resolved_at = present(obs.resolved_at) ? obs.resolved_at : scanTsIso;
+        row.resolution_src = RESOLUTION_API;
+        resolvedCount += 1;
+      }
+    }
+    if (prevScanId !== null) {
+      const covered = scannedSeverities !== null ? new Set(scannedSeverities) : null;
+      for (const [key, row] of Object.entries(updated)) {
+        if (row.scope !== scope) continue;
+        if (seen.has(key) || row.status === STATUS_RESOLVED) continue;
+        if (covered !== null && (row.severity === null || !covered.has(row.severity))) {
+          continue;
+        }
+        const expectedPrev = (_A = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[(_z = row.severity) != null ? _z : ""]) != null ? _A : prevScanId;
+        if (row.last_scan_id !== expectedPrev) continue;
+        row.resolved_at = disappearanceMode === "midpoint" && prevScanTs ? midpointIso(prevScanTs, scanTsIso) : scanTsIso;
+        row.status = STATUS_RESOLVED;
+        row.resolution_src = RESOLUTION_DISAPPEARED;
+        if (row.scope === "secrets") row.removed_at = row.resolved_at;
+        resolvedCount += 1;
+      }
+    }
+    return {
+      ledger: updated,
+      deltas: { new_count: newCount, resolved_count: resolvedCount, reopened_count: reopenedCount }
+    };
+  }
+
+  // src/domain/secretsLedger.ts
+  var DAY_MS2 = 864e5;
+  var VALIDATION_RANK = {
+    VALID: 0,
+    INVALID: 1,
+    ERROR: 2,
+    UNKNOWN: 3
+  };
+  function normalizeValidation(v) {
+    const s = typeof v === "string" ? v.toUpperCase().trim() : "";
+    return s === "VALID" || s === "INVALID" || s === "ERROR" ? s : "UNKNOWN";
+  }
+  function str3(v) {
+    const c = clean(v);
+    return c === null ? null : String(c);
+  }
+  function secretsFindingKey(node) {
+    var _a, _b;
+    const line = clean(node["lineNumber"]);
+    const basis = [
+      (_a = str3(node["secretDataId"])) != null ? _a : "",
+      (_b = str3(node["path"])) != null ? _b : "",
+      line === null ? "" : String(line)
+    ].join("|");
+    return `secrets:h:${sha1Hex(basis).slice(0, 16)}`;
+  }
+  function severityRank(sev) {
+    const i = SEVERITY_ORDER.indexOf(sev);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function resourceType(node) {
+    const res = node["resource"];
+    return res && typeof res === "object" ? str3(res["type"]) : null;
+  }
+  function resourceField(node, field) {
+    const res = node["resource"];
+    return res && typeof res === "object" ? str3(res[field]) : null;
+  }
+  function isOpen2(node) {
+    const s = str3(node["status"]);
+    return s === null ? true : !RESOLVED_STATUSES.has(s.toUpperCase());
+  }
+  function collapseTwins(nodes) {
+    var _a, _b, _c, _d, _e, _f;
+    const groups = groupBy(nodes, secretsFindingKey);
+    const observations = [];
+    let twinned = 0;
+    let keyedWithoutLine = 0;
+    for (const rows of groups.values()) {
+      if (rows.length > 1) twinned += 1;
+      if (clean(rows[0]["lineNumber"]) === null) keyedWithoutLine += rows.length;
+      const births = rows.map((r) => parseTs(r["firstSeenAt"])).filter((t) => t !== null);
+      const firstMs = births.length ? Math.min(...births) : null;
+      const spreadDays = births.length > 1 ? (Math.max(...births) - Math.min(...births)) / DAY_MS2 : 0;
+      const anyOpen = rows.some(isOpen2);
+      const resolvedTs = rows.map((r) => parseTs(r["resolvedAt"])).filter((t) => t !== null);
+      const resolvedMs = !anyOpen && resolvedTs.length === rows.length ? Math.max(...resolvedTs) : null;
+      let severity = "UNKNOWN";
+      for (const r of rows) {
+        const s = normalizeSeverity(r["severity"]);
+        if (severityRank(s) < severityRank(severity)) severity = s;
+      }
+      let best = rows[0];
+      let bestState = normalizeValidation(best["validationStatus"]);
+      for (const r of rows.slice(1)) {
+        const state = normalizeValidation(r["validationStatus"]);
+        if (VALIDATION_RANK[state] < VALIDATION_RANK[bestState]) {
+          best = r;
+          bestState = state;
+        }
+      }
+      const validatedAt = toIso(parseTs(best["lastValidatedAt"]));
+      const repoRow = (_a = rows.find((r) => resourceType(r) === "REPOSITORY")) != null ? _a : rows[0];
+      const branchRow = (_b = rows.find((r) => resourceType(r) === "REPOSITORY_BRANCH")) != null ? _b : null;
+      const repoName = resourceField(repoRow, "name");
+      const branchName = branchRow === null ? null : resourceField(branchRow, "name");
+      const branch = branchName !== null && repoName !== null && branchName.startsWith(`${repoName}/`) ? branchName.slice(repoName.length + 1) : branchName;
+      const projects = Array.isArray(rows[0]["projects"]) ? rows[0]["projects"] : [];
+      const owner = (_d = (_c = projects.find((p) => p && p["isFolder"] !== true)) != null ? _c : projects[0]) != null ? _d : null;
+      const path = str3(repoRow["path"]);
+      const line = clean(repoRow["lineNumber"]);
+      observations.push({
+        ...emptyObservation("secrets", secretsFindingKey(repoRow)),
+        identifier: str3(repoRow["secretDataId"]),
+        component: path === null ? null : line === null ? path : `${path}:${String(line)}`,
+        severity,
+        secret_kind: str3(repoRow["type"]),
+        confidence: str3(repoRow["confidence"]),
+        repo_id: resourceField(repoRow, "id"),
+        repo_name: repoName,
+        branch,
+        platform: resourceField(repoRow, "cloudPlatform"),
+        file_path: path,
+        start_line: typeof line === "number" ? line : line === null ? null : Number(line),
+        origin: str3(
+          (_f = (_e = repoRow["vcsDetails"]) == null ? void 0 : _e["initialCommitHash"]) != null ? _f : null
+        ),
+        first_seen: toIso(firstMs),
+        // `is_open`, not a status: an observation reports what the API said, and only a
+        // sequence of scans can turn that into a lifecycle. Reconcile owns the status column.
+        is_open: anyOpen,
+        resolved_at: toIso(resolvedMs),
+        validation_state: bestState,
+        validated_at: validatedAt,
+        // ONLY on INVALID. rotated_at means "observed dead at this time"; setting it from a
+        // VALID or an UNKNOWN check would publish an unmeasured credential as rotated, which
+        // on a register that is 99.6% UNKNOWN is the absent-is-never-zero failure at scale.
+        rotated_at: bestState === "INVALID" ? validatedAt : null,
+        // removed_at stays null (emptyObservation's default): the string leaving HEAD is a
+        // DISAPPEARANCE, visible only by comparing two scans. The normalizer sees one.
+        owner_project: owner === null ? null : str3(owner["name"]),
+        owner_path: owner === null ? null : str3(owner["slug"]),
+        twin_count: rows.length,
+        twin_first_seen_spread_days: spreadDays,
+        source_external_ids: JSON.stringify(
+          rows.map((r) => str3(r["externalId"])).filter((v) => v !== null)
+        )
+      });
+    }
+    return {
+      observations,
+      nodes: nodes.length,
+      findings: observations.length,
+      twinned,
+      keyed_without_line: keyedWithoutLine
+    };
+  }
+
+  // src/server/sync.ts
+  function observationsFor(scope, nodes) {
+    if (scope === "secrets") {
+      const folded = collapseTwins(nodes);
+      return { observations: folded.observations, keyedWithoutLine: folded.keyed_without_line };
+    }
+    const normalize = NORMALIZERS[scope];
+    return { observations: nodes.map((n) => normalize(n)) };
+  }
+  function sampleSource(dataset) {
+    return { mode: "sample", nodes: (scope) => {
+      var _a;
+      return (_a = dataset[scope]) != null ? _a : [];
+    } };
+  }
+  function runScan(scope, source, opts) {
+    var _a, _b, _c, _d, _e;
+    const ts = (_a = opts.ts) != null ? _a : nowIso();
+    const scans = readScans();
+    const already = existingScanDeltas(scans, opts.scanId);
+    if (already) {
+      return {
+        scan_id: opts.scanId,
+        scope,
+        ts,
+        mode: source.mode,
+        nodes: 0,
+        findings: 0,
+        deltas: already,
+        alreadyRecorded: true
+      };
+    }
+    const nodes = source.nodes(scope);
+    const { observations, keyedWithoutLine } = observationsFor(scope, nodes);
+    const settings = loadSettings();
+    const requested = (_c = (_b = settings.fetchSeverities) == null ? void 0 : _b[scope]) != null ? _c : DEFAULT_FETCH_SEVERITIES[scope];
+    const scannedSeverities = requested && requested.length ? [...requested] : null;
+    const prev = latestScan(scans, scope);
+    const prevBySev = prevScanIdBySeverity(scans, scope);
+    const result = reconcile(
+      observations,
+      readLedger(),
+      scope,
+      opts.scanId,
+      ts,
+      (_d = prev == null ? void 0 : prev.scan_id) != null ? _d : null,
+      {
+        scannedSeverities,
+        prevScanIdBySeverity: prevBySev,
+        prevScanTs: (_e = prev == null ? void 0 : prev.ts) != null ? _e : null
+      }
+    );
+    writeLedger(result.ledger);
+    appendScan({
+      scan_id: opts.scanId,
+      ts,
+      scope,
+      mode: source.mode,
+      severities: scannedSeverities,
+      total: observations.length,
+      ...result.deltas
+    });
+    return {
+      scan_id: opts.scanId,
+      scope,
+      ts,
+      mode: source.mode,
+      nodes: nodes.length,
+      findings: observations.length,
+      deltas: result.deltas,
+      alreadyRecorded: false,
+      ...keyedWithoutLine === void 0 ? {} : { keyed_without_line: keyedWithoutLine }
+    };
+  }
 
   // src/server/jobsStore.ts
   var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
@@ -1228,6 +2212,51 @@ var Server = (() => {
   }
   function getChartsBundle(_p) {
     return run(() => HtmlService.createHtmlOutputFromFile("js_charts").getContent());
+  }
+  function runSampleSync(_p) {
+    return mutate(() => {
+      if (!SAMPLE_SCANS.length) {
+        throw new Error(
+          "No sample dataset in this bundle. The deployed bundle ships none on purpose \u2014 a register must show what its tenant has. Run `npm run dev`, which aliases the dev dataset in."
+        );
+      }
+      const scans = [];
+      for (const s of SAMPLE_SCANS) {
+        for (const scope of SCOPES) {
+          scans.push(runScan(scope, sampleSource(s.nodes), { scanId: `${s.id}-${scope}`, ts: s.ts }));
+        }
+      }
+      return { scans, seeded: true };
+    });
+  }
+  function getMttr(p) {
+    return run(() => {
+      var _a;
+      const wanted = (p == null ? void 0 : p.scope) && SCOPES.includes(p.scope) ? p.scope : null;
+      const all = Object.values(readLedger());
+      const rows = baseRows(wanted === null ? all : all.filter((r) => r.scope === wanted));
+      const byScope = {};
+      for (const r of rows) byScope[r.scope] = ((_a = byScope[r.scope]) != null ? _a : 0) + 1;
+      const open = rows.filter((r) => r.status === "OPEN").length;
+      const scans = readScans();
+      const lastScanByScope = {};
+      for (const scope of SCOPES) {
+        const forScope = scans.filter((s) => s.scope === scope);
+        const last = forScope.length ? forScope[forScope.length - 1] : null;
+        lastScanByScope[scope] = last ? { scan_id: last.scan_id, ts: last.ts } : null;
+      }
+      return {
+        scope: wanted,
+        km: kaplanMeier(rows),
+        percentiles: mttrPercentiles(rows),
+        openAge: openAgePercentiles(rows),
+        buckets: resolutionBuckets(rows),
+        sla: openPastSla(rows),
+        vendor: awaitingVendorFix(rows),
+        population: { total: rows.length, open, resolved: rows.length - open, byScope },
+        lastScanByScope
+      };
+    });
   }
   return __toCommonJS(index_exports);
 })();

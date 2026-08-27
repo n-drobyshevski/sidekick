@@ -60,6 +60,8 @@ function api_bootstrap(p) { return timedApi_("bootstrap", p); }
 function api_getSettings(p) { return timedApi_("getSettings", p); }
 function api_putSettings(p) { return timedApi_("putSettings", p); }
 function api_getChartsBundle(p) { return timedApi_("getChartsBundle", p); }
+function api_runSampleSync(p) { return timedApi_("runSampleSync", p); }
+function api_getMttr(p) { return timedApi_("getMttr", p); }
 
 /* ------------------------------------------------------- editor-run, not RPC */
 /* Gated: these run as whoever opened the editor, which is not necessarily the owner. */

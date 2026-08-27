@@ -146,12 +146,18 @@ describe("the clock, when the twins disagree", () => {
     expect(r.twinned).toBe(0);
   });
 
-  it("takes the LATEST last_seen", () => {
-    const r = collapseTwins([
+  it("does not carry the API's own lastSeenAt at all", () => {
+    // This test pinned "the fold takes the LATEST last_seen", and the claim was true. It is
+    // now unreachable, for a reason rather than for convenience: the ledger's `last_seen`
+    // column means "the last SCAN that observed this row", which only reconcile can know.
+    // A Wiz sighting date is a different measurement with no column to live in, and an
+    // observation carrying one under that name would make every freshness caption a claim
+    // about the wrong clock. The fold rule survives where it is testable — on first_seen.
+    const o = collapseTwins([
       node({ lastSeenAt: "2026-08-01T00:00:00Z" }),
       branchTwin({ lastSeenAt: "2026-08-23T00:00:00Z" }),
-    ]);
-    expect(r.observations[0].last_seen).toBe("2026-08-23T00:00:00Z");
+    ]).observations[0];
+    expect(o).not.toHaveProperty("last_seen");
   });
 });
 
@@ -164,7 +170,7 @@ describe("status, when the twins disagree", () => {
       node({ status: "RESOLVED", resolvedAt: "2026-06-01T00:00:00Z" }),
       branchTwin({ status: "OPEN" }),
     ]);
-    expect(r.observations[0].status).toBe("OPEN");
+    expect(r.observations[0].is_open).toBe(true);
     expect(r.observations[0].resolved_at).toBeNull();
   });
 
@@ -173,7 +179,7 @@ describe("status, when the twins disagree", () => {
       node({ status: "RESOLVED", resolvedAt: "2026-06-01T00:00:00Z" }),
       branchTwin({ status: "RESOLVED", resolvedAt: "2026-07-15T00:00:00Z" }),
     ]);
-    expect(r.observations[0].status).toBe("RESOLVED");
+    expect(r.observations[0].is_open).toBe(false);
     expect(r.observations[0].resolved_at).toBe("2026-07-15T00:00:00Z");
   });
 
@@ -271,13 +277,25 @@ describe("the asset columns", () => {
 });
 
 describe("every observation column has a home in the ledger tab", () => {
-  it("names only headers the schema declares", async () => {
+  it("names only headers the schema declares, plus the one lifecycle input", async () => {
     // A column the normalizer emits and the tab does not declare is dropped silently by the
     // header-mapped writer — the value would just never appear.
-    const { TABS, TAB_HEADERS } = await import("../src/server/sheetsDb");
-    const headers = new Set(TAB_HEADERS[TABS.ledger]);
+    //
+    // `is_open` is the documented exception and the only one: it is what the API SAID, which
+    // reconcile turns into the `status` column after comparing scans. An observation that
+    // wrote `status` directly would be claiming a lifecycle from a single sighting.
+    const { LEDGER_COLUMNS } = await import("../src/domain/observation");
+    const allowed = new Set([...LEDGER_COLUMNS, "is_open"]);
     const o = collapseTwins([node(), branchTwin()]).observations[0];
-    const missing = Object.keys(o).filter((k) => !headers.has(k));
-    expect(missing).toEqual([]);
+    expect(Object.keys(o).filter((k) => !allowed.has(k))).toEqual([]);
+  });
+
+  it("keeps LEDGER_COLUMNS byte-identical to the tab it describes", async () => {
+    // observation.ts cannot import sheetsDb — it must stay free of Apps Script, the same
+    // rule wizQueries.ts follows — so the column list is written twice. This is what stops
+    // the copies drifting.
+    const { LEDGER_COLUMNS } = await import("../src/domain/observation");
+    const { TABS, TAB_HEADERS } = await import("../src/server/sheetsDb");
+    expect([...LEDGER_COLUMNS]).toEqual(TAB_HEADERS[TABS.ledger]);
   });
 });

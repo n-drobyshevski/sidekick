@@ -5,11 +5,20 @@
 // production-only: a new endpoint ships, the client calls it, and google.script.run reports
 // only that the function does not exist.
 //
-// Phase 1 is deliberately small. The client needs a bootstrap payload and the lazy chart
-// bundle; everything else arrives with the sync battery. Adding an endpoint that returns
-// invented figures would be the one thing this product does not do.
+// Still deliberately small. The ledger core is in and the MTTR page reads it, so two
+// endpoints joined the surface. The live sync did NOT: `sync.ts`'s live source refuses
+// rather than returning an empty page, and no RPC pretends otherwise. Adding an endpoint
+// that returns invented figures would be the one thing this product does not do.
 
-import { SCOPES, SEVERITY_ORDER, SLA_TARGETS } from "../domain/config";
+import { SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "../domain/config";
+import { baseRows } from "../domain/ledgerCore";
+import {
+  awaitingVendorFix, kaplanMeier, mttrPercentiles, openAgePercentiles, openPastSla,
+  resolutionBuckets,
+} from "../domain/remediation";
+import { readLedger, readScans } from "./ledgerStore";
+import { SAMPLE_SCANS } from "./sampleData";
+import { runScan, sampleSource } from "./sync";
 import { BUILD_ID } from "./buildInfo";
 import { hasWizCredentials } from "./props";
 import { loadSettings, saveSettings } from "./settingsStore";
@@ -113,4 +122,93 @@ export function putSettings(p: { settings?: unknown }): ApiResult<ReturnType<typ
  */
 export function getChartsBundle(_p?: unknown): ApiResult<string> {
   return run(() => HtmlService.createHtmlOutputFromFile("js_charts").getContent());
+}
+
+
+/* ------------------------------------------------------------------- the ledger */
+
+/**
+ * Replay the sample dataset into the ledger.
+ *
+ * THE SAMPLE SOURCE ONLY, and the endpoint says so in its name rather than taking a `mode`
+ * flag that could be pointed at a tenant by accident. The live paged fetch is not built; its
+ * source refuses when called, so there is nothing here that could quietly run half of it.
+ *
+ * Re-running is a no-op: `runScan` finds each scan_id already in the log and returns its
+ * stored deltas without rewriting anything. That is what makes the dev harness safe to
+ * refresh, and it is the same property a real sync needs after a partial failure.
+ */
+export function runSampleSync(_p?: unknown): ApiResult<{ scans: unknown[]; seeded: boolean }> {
+  return mutate(() => {
+    if (!SAMPLE_SCANS.length) {
+      throw new Error(
+        "No sample dataset in this bundle. The deployed bundle ships none on purpose — a "
+        + "register must show what its tenant has. Run `npm run dev`, which aliases the "
+        + "dev dataset in.",
+      );
+    }
+    const scans: unknown[] = [];
+    for (const s of SAMPLE_SCANS) {
+      for (const scope of SCOPES) {
+        scans.push(runScan(scope, sampleSource(s.nodes), { scanId: `${s.id}-${scope}`, ts: s.ts }));
+      }
+    }
+    return { scans, seeded: true };
+  });
+}
+
+export interface MttrPayload {
+  /** Which scopes the figures cover. `null` scope means all three together. */
+  scope: string | null;
+  km: ReturnType<typeof kaplanMeier>;
+  percentiles: ReturnType<typeof mttrPercentiles>;
+  openAge: ReturnType<typeof openAgePercentiles>;
+  buckets: ReturnType<typeof resolutionBuckets>;
+  sla: ReturnType<typeof openPastSla>;
+  vendor: ReturnType<typeof awaitingVendorFix>;
+  /** The denominators every figure on the page has to name. */
+  population: { total: number; open: number; resolved: number; byScope: Record<string, number> };
+  /** The scan that last covered each scope — the freshness caption, per register. */
+  lastScanByScope: Record<string, { scan_id: string; ts: string } | null>;
+}
+
+/**
+ * The MTTR & SLA page's whole payload, in one round trip.
+ *
+ * `scope` narrows to one register; omitted, the figures cover all three. Both are honest
+ * answers to different questions — "how fast do we fix dependencies" and "how fast do we fix
+ * anything" — and the page names which it is showing.
+ */
+export function getMttr(p?: { scope?: string }): ApiResult<MttrPayload> {
+  return run(() => {
+    const wanted = p?.scope && (SCOPES as readonly string[]).includes(p.scope)
+      ? (p.scope as Scope)
+      : null;
+    const all = Object.values(readLedger());
+    const rows = baseRows(wanted === null ? all : all.filter((r) => r.scope === wanted));
+
+    const byScope: Record<string, number> = {};
+    for (const r of rows) byScope[r.scope] = (byScope[r.scope] ?? 0) + 1;
+    const open = rows.filter((r) => r.status === "OPEN").length;
+
+    const scans = readScans();
+    const lastScanByScope: Record<string, { scan_id: string; ts: string } | null> = {};
+    for (const scope of SCOPES) {
+      const forScope = scans.filter((s) => s.scope === scope);
+      const last = forScope.length ? forScope[forScope.length - 1]! : null;
+      lastScanByScope[scope] = last ? { scan_id: last.scan_id, ts: last.ts } : null;
+    }
+
+    return {
+      scope: wanted,
+      km: kaplanMeier(rows),
+      percentiles: mttrPercentiles(rows),
+      openAge: openAgePercentiles(rows),
+      buckets: resolutionBuckets(rows),
+      sla: openPastSla(rows),
+      vendor: awaitingVendorFix(rows),
+      population: { total: rows.length, open, resolved: rows.length - open, byScope },
+      lastScanByScope,
+    };
+  });
 }

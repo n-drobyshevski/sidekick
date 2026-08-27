@@ -34,17 +34,13 @@
 // earliest and — because collapsing to the earliest DISCARDS a measurement — it writes the
 // gap it discarded into the row. The clock has to say where it started.
 
-import {
-  RESOLVED_STATUSES, SEVERITY_ORDER, STATUS_OPEN, STATUS_RESOLVED,
-} from "./config";
+import { RESOLVED_STATUSES, SEVERITY_ORDER } from "./config";
+import { emptyObservation, type LedgerObservation, type ValidationState } from "./observation";
 import { normalizeSeverity } from "./severity";
 import { sha1Hex } from "./sha1";
 import { clean, groupBy, parseTs, toIso, type Rec } from "./util";
 
 const DAY_MS = 86_400_000;
-
-/** Wiz's `SecretInstanceValidationStatus`. Four states, and only two of them are measured. */
-export type ValidationState = "VALID" | "INVALID" | "ERROR" | "UNKNOWN";
 
 /**
  * Precedence when twins disagree about whether the credential is live.
@@ -63,48 +59,14 @@ export function normalizeValidation(v: unknown): ValidationState {
   return s === "VALID" || s === "INVALID" || s === "ERROR" ? s : "UNKNOWN";
 }
 
-/** One ledger observation: the fields a scan can assert about a finding, before reconcile. */
-export interface SecretObservation {
-  finding_key: string;
-  scope: "secrets";
-  /** The credential — `secretDataId`. Rotation groups by this, across every occurrence. */
-  identifier: string | null;
-  /** Where it sits, as one readable string: `path:line`. */
-  component: string | null;
-  severity: string;
-  secret_kind: string | null;
-  confidence: string | null;
-  repo_id: string | null;
-  repo_name: string | null;
-  branch: string | null;
-  platform: string | null;
-  file_path: string | null;
-  start_line: number | null;
-  origin: string | null;
-  first_seen: string | null;
-  last_seen: string | null;
-  status: string;
-  resolved_at: string | null;
-  validation_state: ValidationState;
-  validated_at: string | null;
-  rotated_at: string | null;
-  removed_at: string | null;
-  owner_project: string | null;
-  owner_path: string | null;
-  /** How many API rows folded into this one. 1 for a finding with no twin. */
-  twin_count: number;
-  /**
-   * The `firstSeenAt` disagreement the collapse discarded, in days. 0 when the twins agree
-   * or there is only one row. §10.7 measured a median of 19.9 and a max of 285.3 — a number
-   * that large has to be visible in the row, not only in the module that threw it away.
-   */
-  twin_first_seen_spread_days: number;
-  /** JSON array of the collapsed `externalId`s, so the fold is auditable back to Wiz. */
-  source_external_ids: string;
-}
+// The observation type these fold into is LedgerObservation (src/domain/observation.ts) —
+// one shape for all three registers, because reconcile must not know which scope it is
+// merging. `SecretObservation` was this module's own interface until SCA and SAST needed the
+// same one; the fields are unchanged, they are just nullable now so a scope without them can
+// say so.
 
 export interface CollapseResult {
-  observations: SecretObservation[];
+  observations: LedgerObservation[];
   /** Input rows read. */
   nodes: number;
   /** Findings out. `nodes - findings` is how many rows the twin fold removed. */
@@ -178,7 +140,7 @@ function isOpen(node: Rec): boolean {
  */
 export function collapseTwins(nodes: readonly Rec[]): CollapseResult {
   const groups = groupBy(nodes, secretsFindingKey);
-  const observations: SecretObservation[] = [];
+  const observations: LedgerObservation[] = [];
   let twinned = 0;
   let keyedWithoutLine = 0;
 
@@ -190,8 +152,10 @@ export function collapseTwins(nodes: readonly Rec[]): CollapseResult {
     const births = rows.map((r) => parseTs(r["firstSeenAt"])).filter((t): t is number => t !== null);
     const firstMs = births.length ? Math.min(...births) : null;
     const spreadDays = births.length > 1 ? (Math.max(...births) - Math.min(...births)) / DAY_MS : 0;
-    const sightings = rows.map((r) => parseTs(r["lastSeenAt"])).filter((t): t is number => t !== null);
-    const lastMs = sightings.length ? Math.max(...sightings) : null;
+    // The API's own `lastSeenAt` is NOT carried. The ledger's `last_seen` column means "the
+    // last SCAN that observed this row", which only reconcile can know; a Wiz sighting date
+    // is a different measurement with no column to live in, and putting it under that name
+    // would make every freshness caption a claim about the wrong clock.
 
     // --- status. OPEN wins if ANY twin is open.
     // brick/devsecops/ledger.py::observed, on the same problem: "a duplicate should not be
@@ -245,8 +209,7 @@ export function collapseTwins(nodes: readonly Rec[]): CollapseResult {
     const line = clean(repoRow["lineNumber"]);
 
     observations.push({
-      finding_key: secretsFindingKey(repoRow),
-      scope: "secrets",
+      ...emptyObservation("secrets", secretsFindingKey(repoRow)),
       identifier: str(repoRow["secretDataId"]),
       component: path === null ? null : line === null ? path : `${path}:${String(line)}`,
       severity,
@@ -262,8 +225,9 @@ export function collapseTwins(nodes: readonly Rec[]): CollapseResult {
         (repoRow["vcsDetails"] as Rec | undefined)?.["initialCommitHash"] ?? null,
       ),
       first_seen: toIso(firstMs),
-      last_seen: toIso(lastMs),
-      status: anyOpen ? STATUS_OPEN : STATUS_RESOLVED,
+      // `is_open`, not a status: an observation reports what the API said, and only a
+      // sequence of scans can turn that into a lifecycle. Reconcile owns the status column.
+      is_open: anyOpen,
       resolved_at: toIso(resolvedMs),
       validation_state: bestState,
       validated_at: validatedAt,
@@ -271,9 +235,8 @@ export function collapseTwins(nodes: readonly Rec[]): CollapseResult {
       // VALID or an UNKNOWN check would publish an unmeasured credential as rotated, which
       // on a register that is 99.6% UNKNOWN is the absent-is-never-zero failure at scale.
       rotated_at: bestState === "INVALID" ? validatedAt : null,
-      // The string leaving HEAD is a DISAPPEARANCE, and a disappearance is visible only by
-      // comparing two scans. The normalizer sees one, so it never sets this — reconcile does.
-      removed_at: null,
+      // removed_at stays null (emptyObservation's default): the string leaving HEAD is a
+      // DISAPPEARANCE, visible only by comparing two scans. The normalizer sees one.
       owner_project: owner === null ? null : str(owner["name"]),
       owner_path: owner === null ? null : str(owner["slug"]),
       twin_count: rows.length,

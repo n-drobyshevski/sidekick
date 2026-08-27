@@ -37,11 +37,31 @@
 
   console.log("[dev] " + Server.setup().split("\n").join("\n[dev] "));
 
-  // NO SEED IN PHASE 1. This harness used to run one sync here so the pages opened with
-  // data in them; there is no sync battery yet, and calling a delegator that does not exist
-  // throws into the console on every load. The seed comes back with the battery — at which
-  // point ?noseed becomes meaningful again.
-  console.log("[dev] Phase 1 — no sync battery; pages render their composition stubs.");
+  // THE SEED IS BACK, and ?noseed means something again.
+  //
+  // It replays the dev dataset (dev/sampleData.dev.ts) through the real pipeline — the same
+  // normalizers, the same reconcile, the same Sheet writes the deployed bundle would make,
+  // against gas-shims' in-memory fakes. Nothing about the path is a dev shortcut; only the
+  // SOURCE of the rows differs, and the live source refuses rather than returning an empty
+  // page (src/server/sync.ts), so there is no way to half-run a sync that does not exist.
+  //
+  // Three scans, three scopes, so the ledger has actually accumulated: a single snapshot
+  // would leave every row OPEN and the MTTR page with nothing to measure.
+  if (query.has("noseed")) {
+    console.log("[dev] ?noseed — empty ledger, for testing empty states");
+  } else {
+    const seeded = Server.api.runSampleSync({});
+    if (seeded && seeded.ok) {
+      const rows = seeded.data.scans;
+      const totals = rows.reduce((a, s) => ({
+        n: a.n + s.deltas.new_count,
+        r: a.r + s.deltas.resolved_count,
+      }), { n: 0, r: 0 });
+      console.log(`[dev] seeded ${rows.length} scans — ${totals.n} new, ${totals.r} resolved`);
+    } else {
+      console.warn("[dev] seed failed:", seeded && seeded.error);
+    }
+  }
 
   // Optional artificial RPC latency (?slow=<ms>) so loading states — the route-reload
   // overlay, sync progress card, etc. — are exercisable locally.

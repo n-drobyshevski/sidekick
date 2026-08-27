@@ -826,3 +826,11 @@
    approach — the confirm dialog is what actually holds the decision. */
 .access-remove:hover { color: var(--bad); }
 .access-add { display: flex; align-items: center; gap: var(--space-2); }
+
+/* The MTTR headline's qualifier: "> 479 d" is a lower bound, not a median, and the reader
+   who misses that has been told something untrue. It sits with the number rather than as a
+   footnote, and carries the accent's INK token — never the fill, which is 1.52:1 on white. */
+.page-hero-sub .hero-qualifier {
+  color: var(--accent-text);
+  font-weight: 600;
+}
