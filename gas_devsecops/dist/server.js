@@ -416,11 +416,13 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "970979badd6c" : "dev";
+  var BUILD_ID = true ? "36e8a15593ca" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = `wsk.${BUILD_ID}`;
+  var CHUNK_CHARS = 9e4;
+  var DEFAULT_TTL_SEC = 21600;
   var dataVersionMemo;
   var wizDataVersionMemo;
   var configStampMemo;
@@ -428,6 +430,11 @@ var Server = (() => {
     dataVersionMemo = void 0;
     wizDataVersionMemo = void 0;
     configStampMemo = void 0;
+  }
+  function dataVersion() {
+    var _a;
+    if (dataVersionMemo === void 0) dataVersionMemo = (_a = getProp(VERSION_PROP)) != null ? _a : "0";
+    return dataVersionMemo;
   }
   function nextVersion(prev) {
     const now = String(Date.now());
@@ -440,6 +447,76 @@ var Server = (() => {
   }
   function paramsHash(params) {
     return sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
+  }
+  function cacheKey(name, params, version) {
+    return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
+  }
+  function configStamp() {
+    var _a;
+    if (configStampMemo === void 0) {
+      configStampMemo = sha1Hex(`${(_a = getProp(PROP_KEYS.wizProjectIdV2)) != null ? _a : ""}`).slice(0, 8);
+    }
+    return configStampMemo;
+  }
+  function currentStamp(version) {
+    return `${KEY_PREFIX}:${version != null ? version : dataVersion()}.${configStamp()}`;
+  }
+  function splitChunks(s, size = CHUNK_CHARS) {
+    const out = [];
+    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
+    return out.length ? out : [""];
+  }
+  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
+    const json = JSON.stringify(value);
+    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
+    const packed = Utilities.base64Encode(gz.getBytes());
+    const chunks = splitChunks(packed, chunkChars);
+    const entries = { [`${key}:m`]: String(chunks.length) };
+    chunks.forEach((c, i) => {
+      entries[`${key}:${i}`] = c;
+    });
+    CacheService.getScriptCache().putAll(entries, ttlSec);
+  }
+  function cacheGetJson(key) {
+    const cache = CacheService.getScriptCache();
+    const meta = cache.get(`${key}:m`);
+    if (!meta) return void 0;
+    const n = Number(meta);
+    if (!Number.isInteger(n) || n < 1) return void 0;
+    const names = [];
+    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
+    const got = cache.getAll(names);
+    let packed = "";
+    for (const name of names) {
+      const chunk = got[name];
+      if (chunk === void 0 || chunk === null) return void 0;
+      packed += chunk;
+    }
+    const bytes = Utilities.base64Decode(packed);
+    const json = Utilities.ungzip(
+      Utilities.newBlob(bytes, "application/x-gzip")
+    ).getDataAsString("UTF-8");
+    return JSON.parse(json);
+  }
+  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
+    let key = null;
+    try {
+      key = cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`);
+      const hit = cacheGetJson(key);
+      if (hit !== void 0) return hit;
+    } catch (e) {
+      console.warn(`Cache read failed for ${name}: ${e}`);
+      key = null;
+    }
+    const value = compute();
+    if (key) {
+      try {
+        cachePutJson(key, value, ttlSec);
+      } catch (e) {
+        console.warn(`Cache write failed for ${name}: ${e}`);
+      }
+    }
+    return value;
   }
 
   // src/server/welcome.ts
@@ -493,6 +570,9 @@ var Server = (() => {
   }
 
   // src/domain/util.ts
+  function cmp(a, b) {
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
   function pushInto(map, key, ...values) {
     const bucket = map.get(key);
     if (bucket) bucket.push(...values);
@@ -1152,7 +1232,9 @@ var Server = (() => {
   __export(api_exports, {
     bootstrap: () => bootstrap,
     getChartsBundle: () => getChartsBundle,
+    getExecutive: () => getExecutive,
     getMttr: () => getMttr,
+    getRegister: () => getRegister,
     getSettings: () => getSettings,
     putSettings: () => putSettings,
     runSampleSync: () => runSampleSync
@@ -1598,15 +1680,16 @@ var Server = (() => {
   }
   function readScans() {
     return readAll(TABS.scans).map((r) => {
-      var _a, _b, _c, _d, _e, _f, _g;
+      var _a, _b, _c, _d, _e, _f, _g, _h;
       return {
         scan_id: String((_a = r["scan_id"]) != null ? _a : ""),
         ts: String((_b = r["ts"]) != null ? _b : ""),
         scope: String((_c = r["scope"]) != null ? _c : ""),
-        severities: String((_d = r["severities"]) != null ? _d : ""),
-        new_count: Number((_e = r["new_count"]) != null ? _e : 0),
-        resolved_count: Number((_f = r["resolved_count"]) != null ? _f : 0),
-        reopened_count: Number((_g = r["reopened_count"]) != null ? _g : 0)
+        mode: String((_d = r["mode"]) != null ? _d : ""),
+        severities: String((_e = r["severities"]) != null ? _e : ""),
+        new_count: Number((_f = r["new_count"]) != null ? _f : 0),
+        resolved_count: Number((_g = r["resolved_count"]) != null ? _g : 0),
+        reopened_count: Number((_h = r["reopened_count"]) != null ? _h : 0)
       };
     });
   }
@@ -2045,8 +2128,7 @@ var Server = (() => {
     }
     const nodes = source.nodes(scope);
     const { observations, keyedWithoutLine } = observationsFor(scope, nodes);
-    const settings = loadSettings();
-    const requested = (_c = (_b = settings.fetchSeverities) == null ? void 0 : _b[scope]) != null ? _c : DEFAULT_FETCH_SEVERITIES[scope];
+    const requested = opts.severities !== void 0 ? opts.severities : (_c = (_b = loadSettings().fetchSeverities) == null ? void 0 : _b[scope]) != null ? _c : DEFAULT_FETCH_SEVERITIES[scope];
     const scannedSeverities = requested && requested.length ? [...requested] : null;
     const prev = latestScan(scans, scope);
     const prevBySev = prevScanIdBySeverity(scans, scope);
@@ -2083,6 +2165,189 @@ var Server = (() => {
       deltas: result.deltas,
       alreadyRecorded: false,
       ...keyedWithoutLine === void 0 ? {} : { keyed_without_line: keyedWithoutLine }
+    };
+  }
+
+  // src/server/archiveStore.ts
+  var rootFolderMemo;
+  var subfolderMemo = /* @__PURE__ */ new Map();
+  function rootFolder() {
+    if (!rootFolderMemo) {
+      rootFolderMemo = DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
+    }
+    return rootFolderMemo;
+  }
+  function childFolder(parent, name) {
+    const it = parent.getFoldersByName(name);
+    return it.hasNext() ? it.next() : parent.createFolder(name);
+  }
+  function subfolder(name) {
+    const hit = subfolderMemo.get(name);
+    if (hit) return hit;
+    const folder = childFolder(rootFolder(), name);
+    subfolderMemo.set(name, folder);
+    return folder;
+  }
+  function writeGzJson(folder, name, payload) {
+    const json = JSON.stringify(payload);
+    const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
+    const existing = folder.getFilesByName(name);
+    while (existing.hasNext()) existing.next().setTrashed(true);
+    return folder.createFile(blob);
+  }
+  function readGzJsonNamed(folder, name) {
+    const it = subfolder(folder).getFilesByName(name);
+    if (!it.hasNext()) return null;
+    return parseGzBlob(it.next().getBlob());
+  }
+  function parseGzBlob(blob) {
+    try {
+      const bytes = blob.getBytes();
+      const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
+      const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
+      return JSON.parse(text);
+    } catch (e) {
+      console.warn(`Failed to parse archive blob: ${e}`);
+      return null;
+    }
+  }
+
+  // src/server/readModelStore.ts
+  var FOLDER = "readmodels";
+  var ENVELOPE_V = 1;
+  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+  var warming = false;
+  var touched = null;
+  var disabled = false;
+  function readModelFileName(name, params) {
+    return `rm-${name}-${paramsHash(params)}.json.gz`;
+  }
+  function l2Read(name, params, version) {
+    if (disabled) return { hit: false, why: "absent" };
+    try {
+      const raw = readGzJsonNamed(FOLDER, readModelFileName(name, params));
+      if (!raw || typeof raw !== "object") return { hit: false, why: "absent" };
+      const env = raw;
+      if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
+      if (env.stamp !== currentStamp(version)) return { hit: false, why: "stale" };
+      if (typeof env.writtenAtMs !== "number") return { hit: false, why: "stale" };
+      if (Date.now() - env.writtenAtMs > MAX_AGE_MS) return { hit: false, why: "stale" };
+      return { hit: true, value: env.value };
+    } catch (e) {
+      disabled = true;
+      console.warn(`Durable read-model read failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+      return { hit: false, why: "absent" };
+    }
+  }
+  function l2Write(name, params, version, value) {
+    if (disabled) return;
+    try {
+      const env = {
+        v: ENVELOPE_V,
+        stamp: currentStamp(version),
+        name,
+        hash: paramsHash(params),
+        writtenAtMs: Date.now(),
+        value
+      };
+      writeGzJson(subfolder(FOLDER), readModelFileName(name, params), env);
+    } catch (e) {
+      disabled = true;
+      console.warn(`Durable read-model write failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+    }
+  }
+  function durablyCached(name, params, compute, ttlSec, version) {
+    if (warming && touched) touched.add(readModelFileName(name, params));
+    return cached(name, params, () => {
+      const hit = l2Read(name, params, version);
+      if (hit.hit) return hit.value;
+      const value = compute();
+      if (warming) l2Write(name, params, version, value);
+      return value;
+    }, ttlSec, version);
+  }
+
+  // src/server/registers.ts
+  function tally(into, key) {
+    var _a;
+    const k = key === null || key === void 0 || key === "" ? "(none)" : key;
+    into[k] = ((_a = into[k]) != null ? _a : 0) + 1;
+  }
+  function facetsFor(rows) {
+    var _a;
+    const facets = { severity: {}, repo: {}, status: {}, validation: {} };
+    for (const r of rows) {
+      tally(facets.severity, normalizeSeverity(r.severity));
+      tally(facets.repo, r.repo_name);
+      tally(facets.status, r.status);
+      if (r.scope === "secrets") tally(facets.validation, (_a = r.validation_state) != null ? _a : "UNKNOWN");
+    }
+    return facets;
+  }
+  function matches(row, q) {
+    var _a, _b;
+    if (q.severities && q.severities.length && !q.severities.includes(normalizeSeverity(row.severity))) return false;
+    if (q.repo && ((_a = row.repo_name) != null ? _a : "(none)") !== q.repo) return false;
+    if (q.status === "open" && row.status !== "OPEN") return false;
+    if (q.status === "resolved" && row.status !== "RESOLVED") return false;
+    if (q.validation && ((_b = row.validation_state) != null ? _b : "UNKNOWN") !== q.validation) return false;
+    if (q.awaitingVendor && !row.awaiting_vendor_fix) return false;
+    return true;
+  }
+  var SEV_RANK = {};
+  SEVERITY_ORDER.forEach((s, i) => {
+    SEV_RANK[s] = i;
+  });
+  function sortRows(rows, sort) {
+    if (!sort) return rows;
+    const desc = sort.startsWith("-");
+    const key = desc ? sort.slice(1) : sort;
+    const value = (r) => {
+      var _a;
+      return key === "severity" ? (_a = SEV_RANK[normalizeSeverity(r.severity)]) != null ? _a : 99 : r[key];
+    };
+    const out = [...rows].sort((a, b) => {
+      const va = value(a);
+      const vb = value(b);
+      if (va === null || va === void 0) return vb === null || vb === void 0 ? 0 : 1;
+      if (vb === null || vb === void 0) return -1;
+      return cmp(va, vb);
+    });
+    return desc ? out.reverse() : out;
+  }
+  function scopeRows(scope) {
+    return baseRows(Object.values(readLedger()).filter((r) => r.scope === scope));
+  }
+  function registerPage(q, page, pageSize, sort) {
+    const all = durablyCached(`register-rows-1`, { scope: q.scope }, () => scopeRows(q.scope), 3600);
+    const facets = durablyCached(`register-facets-1`, { scope: q.scope }, () => facetsFor(all), 3600);
+    const filtered = sortRows(all.filter((r) => matches(r, q)), sort);
+    const size = Math.min(500, Math.max(1, pageSize));
+    const pageCount = Math.max(1, Math.ceil(filtered.length / size));
+    const at2 = Math.min(Math.max(0, page), pageCount - 1);
+    let open = 0;
+    let disappeared = 0;
+    let awaiting = 0;
+    for (const r of filtered) {
+      if (r.status === "OPEN") open += 1;
+      else if (r.resolution_src === "disappeared") disappeared += 1;
+      if (r.awaiting_vendor_fix) awaiting += 1;
+    }
+    return {
+      scope: q.scope,
+      total: filtered.length,
+      scopeTotal: all.length,
+      page: at2,
+      pageCount,
+      pageSize: size,
+      rows: filtered.slice(at2 * size, (at2 + 1) * size),
+      facets,
+      summary: {
+        open,
+        resolved: filtered.length - open,
+        disappeared,
+        awaitingVendor: awaiting
+      }
     };
   }
 
@@ -2215,6 +2480,7 @@ var Server = (() => {
   }
   function runSampleSync(_p) {
     return mutate(() => {
+      var _a, _b;
       if (!SAMPLE_SCANS.length) {
         throw new Error(
           "No sample dataset in this bundle. The deployed bundle ships none on purpose \u2014 a register must show what its tenant has. Run `npm run dev`, which aliases the dev dataset in."
@@ -2223,7 +2489,12 @@ var Server = (() => {
       const scans = [];
       for (const s of SAMPLE_SCANS) {
         for (const scope of SCOPES) {
-          scans.push(runScan(scope, sampleSource(s.nodes), { scanId: `${s.id}-${scope}`, ts: s.ts }));
+          scans.push(runScan(scope, sampleSource(s.nodes), {
+            scanId: `${s.id}-${scope}`,
+            ts: s.ts,
+            // The gate THIS scan applied, not the one the settings hold now.
+            severities: (_b = (_a = s.gates) == null ? void 0 : _a[scope]) != null ? _b : null
+          }));
         }
       }
       return { scans, seeded: true };
@@ -2255,6 +2526,84 @@ var Server = (() => {
         vendor: awaitingVendorFix(rows),
         population: { total: rows.length, open, resolved: rows.length - open, byScope },
         lastScanByScope
+      };
+    });
+  }
+  function readList(v) {
+    if (Array.isArray(v)) return v.map((x) => String(x).toUpperCase()).filter(Boolean);
+    const s = String(v != null ? v : "").trim();
+    if (!s) return null;
+    return s.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
+  }
+  function getRegister(p) {
+    return run(() => {
+      var _a, _b, _c;
+      const params = p != null ? p : {};
+      const scope = String((_a = params["scope"]) != null ? _a : "");
+      if (!SCOPES.includes(scope)) {
+        throw new Error(`Unknown register scope "${scope}" \u2014 expected one of ${SCOPES.join(", ")}.`);
+      }
+      const q = {
+        scope,
+        severities: readList(params["severities"]),
+        repo: params["repo"] || null,
+        status: params["status"] || null,
+        validation: params["validation"] || null,
+        awaitingVendor: params["awaitingVendor"] === true || params["awaitingVendor"] === "1"
+      };
+      return registerPage(
+        q,
+        Math.max(0, Number((_b = params["page"]) != null ? _b : 0)),
+        Number((_c = params["pageSize"]) != null ? _c : 50),
+        params["sort"] || null
+      );
+    });
+  }
+  function getExecutive(_p) {
+    return run(() => {
+      var _a, _b, _c;
+      const rows = baseRows(Object.values(readLedger()));
+      const scans = readScans();
+      const openBySeverity = {};
+      const totals = {};
+      for (const scope of SCOPES) {
+        openBySeverity[scope] = {};
+        totals[scope] = { open: 0, resolved: 0, total: 0 };
+      }
+      for (const r of rows) {
+        const t = (_a = totals[r.scope]) != null ? _a : totals[r.scope] = { open: 0, resolved: 0, total: 0 };
+        t.total += 1;
+        if (r.status === "OPEN") {
+          t.open += 1;
+          const bucket = (_b = openBySeverity[r.scope]) != null ? _b : openBySeverity[r.scope] = {};
+          bucket[r.severity] = ((_c = bucket[r.severity]) != null ? _c : 0) + 1;
+        } else {
+          t.resolved += 1;
+        }
+      }
+      const lastScan = {};
+      const movement = {};
+      for (const scope of SCOPES) {
+        const mine = scans.filter((s) => s.scope === scope);
+        const last = mine.length ? mine[mine.length - 1] : null;
+        lastScan[scope] = last ? { scan_id: last.scan_id, ts: last.ts, severities: last.severities } : null;
+        movement[scope] = last ? {
+          new_count: last.new_count,
+          resolved_count: last.resolved_count,
+          reopened_count: last.reopened_count
+        } : null;
+      }
+      return {
+        km: kaplanMeier(rows),
+        openBySeverity,
+        totals,
+        lastScan,
+        movement,
+        everScanned: scans.length > 0,
+        // From the scans tab's own `mode` column, not a scan_id prefix: a naming
+        // convention is something a later caller forgets, and a page claiming real data
+        // over sample rows is the worst lie this product could tell.
+        sampleOnly: scans.length > 0 && scans.every((s) => s.mode !== "live")
       };
     });
   }

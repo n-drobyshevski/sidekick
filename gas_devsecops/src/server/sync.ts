@@ -108,7 +108,20 @@ export function sampleSource(dataset: Record<string, readonly Rec[]>): SyncSourc
 export function runScan(
   scope: Scope,
   source: SyncSource,
-  opts: { scanId: string; ts?: string },
+  opts: {
+    scanId: string;
+    ts?: string;
+    /**
+     * The severity gate THIS scan applied, overriding the current setting.
+     *
+     * A scan records what it actually covered, not what the settings happen to say now — and
+     * the two genuinely differ, because the gate is a per-scope setting a user can change
+     * between scans. Without the override a replay of older scans would stamp today's gate on
+     * all of them, and the disappearance guard would then believe a severity was covered by a
+     * scan that never looked at it. `null` means no gate; omitted means "read the setting".
+     */
+    severities?: readonly string[] | null;
+  },
 ): SyncResult {
   const ts = opts.ts ?? nowIso();
   const scans = readScans();
@@ -126,8 +139,9 @@ export function runScan(
 
   // The severity gate this scan actually applied — recorded so a later scan knows which rows
   // it was entitled to resolve by absence. Secrets' empty list becomes null: no gate at all.
-  const settings = loadSettings();
-  const requested = settings.fetchSeverities?.[scope] ?? DEFAULT_FETCH_SEVERITIES[scope];
+  const requested = opts.severities !== undefined
+    ? opts.severities
+    : loadSettings().fetchSeverities?.[scope] ?? DEFAULT_FETCH_SEVERITIES[scope];
   const scannedSeverities = requested && requested.length ? [...requested] : null;
 
   // Per SCOPE, all three of them. The first SAST scan has no predecessor even if SCA has

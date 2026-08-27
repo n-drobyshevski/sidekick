@@ -1,19 +1,12 @@
-import { renderStub } from "./_stub.js";
+// Dependencies — a configuration, not an implementation.
+//
+// The page is register.js and the claims are registerModel.js. This file names which of the
+// three this route is, and nothing else: three copies of a register would drift, and the
+// honesty rules are exactly the part that must not.
 
-/** Third-party dependencies: a CVE in a package at a version. */
+import { renderRegister } from "./register.js";
+import { REGISTERS } from "./registerModel.js";
+
 export function renderSca(host) {
-  renderStub(host, {
-    lane: "Registers",
-    title: "Dependencies",
-    lede: "Known vulnerabilities in third-party packages — and whether there is anything to upgrade to.",
-    sections: [
-      "The register: CVE, package and version, fixed version, ecosystem.",
-      "Fix availability: how many rows are waiting on a vendor rather than on a team.",
-      "Exploitation signals — KEV, known exploit, EPSS — in three states: measured, unmeasured, not applicable.",
-      "Breakdown by language and by repository.",
-    ],
-    note: "Absent is never zero: in roughly one sample row in eight, hasExploit, "
-      + "hasCisaKevExploit and epssProbability arrive as null, and collapsing that to false "
-      + "is what makes an unassessed finding look clean.",
-  });
+  renderRegister(host, REGISTERS.sca);
 }

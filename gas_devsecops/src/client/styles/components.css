@@ -834,3 +834,74 @@
   color: var(--accent-text);
   font-weight: 600;
 }
+
+/* ------------------------------------------------------------ the register pages */
+
+/* The caveat block: the one thing a generic table would get wrong about this register.
+   Given weight deliberately — it is not a footnote, it is the reading instruction. */
+.register-caveat {
+  margin: 0;
+  color: var(--text-2);
+  border-left: 3px solid var(--accent-text);
+  padding-left: 12px;
+  max-width: 78ch;
+}
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.facet-group { margin-bottom: 20px; }
+.facet-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+.facet-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 5px 10px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.facet-item:hover { border-color: var(--border-strong); }
+/* Selected state carries a MARK as well as a tint: the accent fill is 1.52:1 on white and
+   cannot be the only thing saying "on" (DESIGN.md, and tokens.css on the split accent). */
+.facet-item.is-on {
+  border-color: var(--accent-text);
+  box-shadow: inset 3px 0 0 var(--accent-text);
+  font-weight: 600;
+}
+.facet-count { color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------------- the front door */
+
+.exec-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+/* A whole register summary that is also the link into it — the question a summary raises is
+   always "which ones", and the answer is one route away. */
+.exec-scope {
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+}
+.exec-scope:hover { border-color: var(--border-strong); }
+
+.exec-scope-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.exec-scope-head .kpi-value { font-size: 28px; }
+
+.exec-sev-split { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 6px; }
+.exec-sev-item { display: inline-flex; align-items: center; gap: 5px; }
+.exec-sev-item .num { font-variant-numeric: tabular-nums; }

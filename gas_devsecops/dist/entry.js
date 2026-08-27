@@ -62,6 +62,8 @@ function api_putSettings(p) { return timedApi_("putSettings", p); }
 function api_getChartsBundle(p) { return timedApi_("getChartsBundle", p); }
 function api_runSampleSync(p) { return timedApi_("runSampleSync", p); }
 function api_getMttr(p) { return timedApi_("getMttr", p); }
+function api_getRegister(p) { return timedApi_("getRegister", p); }
+function api_getExecutive(p) { return timedApi_("getExecutive", p); }
 
 /* ------------------------------------------------------- editor-run, not RPC */
 /* Gated: these run as whoever opened the editor, which is not necessarily the owner. */

@@ -19,6 +19,7 @@ import {
 import { readLedger, readScans } from "./ledgerStore";
 import { SAMPLE_SCANS } from "./sampleData";
 import { runScan, sampleSource } from "./sync";
+import { registerPage, type RegisterQuery } from "./registers";
 import { BUILD_ID } from "./buildInfo";
 import { hasWizCredentials } from "./props";
 import { loadSettings, saveSettings } from "./settingsStore";
@@ -150,7 +151,12 @@ export function runSampleSync(_p?: unknown): ApiResult<{ scans: unknown[]; seede
     const scans: unknown[] = [];
     for (const s of SAMPLE_SCANS) {
       for (const scope of SCOPES) {
-        scans.push(runScan(scope, sampleSource(s.nodes), { scanId: `${s.id}-${scope}`, ts: s.ts }));
+        scans.push(runScan(scope, sampleSource(s.nodes), {
+          scanId: `${s.id}-${scope}`,
+          ts: s.ts,
+          // The gate THIS scan applied, not the one the settings hold now.
+          severities: s.gates?.[scope] ?? null,
+        }));
       }
     }
     return { scans, seeded: true };
@@ -209,6 +215,132 @@ export function getMttr(p?: { scope?: string }): ApiResult<MttrPayload> {
       vendor: awaitingVendorFix(rows),
       population: { total: rows.length, open, resolved: rows.length - open, byScope },
       lastScanByScope,
+    };
+  });
+}
+
+
+/* ------------------------------------------------------------- the register pages */
+
+/** Read a list param that may arrive as an array or a comma string (the URL hash form). */
+function readList(v: unknown): string[] | null {
+  if (Array.isArray(v)) return v.map((x) => String(x).toUpperCase()).filter(Boolean);
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  return s.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
+}
+
+/**
+ * One page of one register.
+ *
+ * `page` and `pageSize` reach `registerPage` but never reach a cache key — see the rule at
+ * the top of registers.ts. An unknown scope is REFUSED rather than defaulted: defaulting
+ * would answer a question nobody asked with a register they were not looking at.
+ */
+export function getRegister(p?: Record<string, unknown>): ApiResult<ReturnType<typeof registerPage>> {
+  return run(() => {
+    const params = p ?? {};
+    const scope = String(params["scope"] ?? "");
+    if (!(SCOPES as readonly string[]).includes(scope)) {
+      throw new Error(`Unknown register scope "${scope}" — expected one of ${SCOPES.join(", ")}.`);
+    }
+    const q: RegisterQuery = {
+      scope: scope as Scope,
+      severities: readList(params["severities"]),
+      repo: (params["repo"] as string) || null,
+      status: (params["status"] as string) || null,
+      validation: (params["validation"] as string) || null,
+      awaitingVendor: params["awaitingVendor"] === true || params["awaitingVendor"] === "1",
+    };
+    return registerPage(
+      q,
+      Math.max(0, Number(params["page"] ?? 0)),
+      Number(params["pageSize"] ?? 50),
+      (params["sort"] as string) || null,
+    );
+  });
+}
+
+export interface ExecutivePayload {
+  km: ReturnType<typeof kaplanMeier>;
+  /** Open counts, severity x scope. The row a leader reads across. */
+  openBySeverity: Record<string, Record<string, number>>;
+  totals: Record<string, { open: number; resolved: number; total: number }>;
+  /** The last scan of each register, and what it changed. */
+  lastScan: Record<string, { scan_id: string; ts: string; severities: string } | null>;
+  /** Movement since the previous scan of each register. */
+  movement: Record<string, { new_count: number; resolved_count: number; reopened_count: number } | null>;
+  /**
+   * Whether anything has ever been synced, and by what route. The page needs this to tell
+   * "the register is empty" from "the register has not been measured".
+   */
+  everScanned: boolean;
+  /** True while the only rows present came from the bundled sample rather than a tenant. */
+  sampleOnly: boolean;
+}
+
+/**
+ * The front door's whole payload.
+ *
+ * NO RUN-SCAN CONTROL IS OFFERED, and that is deliberate rather than an omission. The stub
+ * promised one; the live Wiz fetch does not exist yet, and a button that does nothing is
+ * worse than no button — it makes a reader believe the number in front of them is one
+ * refresh away from being current. The payload says what fed the register instead.
+ */
+export function getExecutive(_p?: unknown): ApiResult<ExecutivePayload> {
+  return run(() => {
+    const rows = baseRows(Object.values(readLedger()));
+    const scans = readScans();
+
+    const openBySeverity: Record<string, Record<string, number>> = {};
+    const totals: Record<string, { open: number; resolved: number; total: number }> = {};
+    for (const scope of SCOPES) {
+      openBySeverity[scope] = {};
+      totals[scope] = { open: 0, resolved: 0, total: 0 };
+    }
+    for (const r of rows) {
+      const t = totals[r.scope] ?? (totals[r.scope] = { open: 0, resolved: 0, total: 0 });
+      t.total += 1;
+      if (r.status === "OPEN") {
+        t.open += 1;
+        const bucket = openBySeverity[r.scope] ?? (openBySeverity[r.scope] = {});
+        bucket[r.severity] = (bucket[r.severity] ?? 0) + 1;
+      } else {
+        t.resolved += 1;
+      }
+    }
+
+    const lastScan: ExecutivePayload["lastScan"] = {};
+    const movement: ExecutivePayload["movement"] = {};
+    for (const scope of SCOPES) {
+      const mine = scans.filter((s) => s.scope === scope);
+      const last = mine.length ? mine[mine.length - 1]! : null;
+      lastScan[scope] = last
+        ? { scan_id: last.scan_id, ts: last.ts, severities: last.severities }
+        : null;
+      // The deltas are already stored per scan, so movement is a read rather than a second
+      // pass over the ledger — and it is the SCAN's own account of what it changed, which is
+      // the only thing that can be right after a compaction.
+      movement[scope] = last
+        ? {
+            new_count: last.new_count,
+            resolved_count: last.resolved_count,
+            reopened_count: last.reopened_count,
+          }
+        : null;
+    }
+
+    return {
+      km: kaplanMeier(rows),
+      openBySeverity,
+      totals,
+      lastScan,
+      movement,
+      everScanned: scans.length > 0,
+      // From the scans tab's own `mode` column, not a scan_id prefix: a naming
+      // convention is something a later caller forgets, and a page claiming real data
+      // over sample rows is the worst lie this product could tell.
+      sampleOnly: scans.length > 0 && scans.every((s) => s.mode !== "live"),
     };
   });
 }
