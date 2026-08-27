@@ -1,0 +1,22 @@
+/* Wiz Sidekick DevSecOps — the DESIGN.md visual system ("The Audit Ledger") with the
+   bright-yellow brand. Light theme only; neutral field; saturated colour rationed to
+   severity and state. Two-token severity rule: --sev-* fills for marks/dots,
+   --sev-*-text for any coloured label. The severity palette is IDENTICAL to the
+   OS-vulns tool and to gas_ai; the yellow accent (#ffcb13) appears only on identity
+   surfaces (brand, nav, fills) and NEVER as a severity, never as text, and never
+   without --accent-edge under it. See styles/tokens.css for why. */
+
+/* This file is an index. The rules live in styles/, split by what they dress; esbuild
+   inlines them back into one <style> partial at build time (esbuild.config.mjs).
+
+   Order is the cascade — these are contiguous slices and must stay in this sequence.
+   tokens first, overrides (reduced motion, phone layout) last. */
+
+@import "./styles/tokens.css";
+@import "./styles/base.css";
+@import "./styles/components.css";
+@import "./styles/tables.css";
+@import "./styles/sheet.css";
+@import "./styles/feedback.css";
+@import "./styles/settings.css";
+@import "./styles/overrides.css";

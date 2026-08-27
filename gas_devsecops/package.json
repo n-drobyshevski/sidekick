@@ -1,0 +1,31 @@
+{
+  "name": "wiz-sidekick-devsecops-gas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wiz Sidekick DevSecOps — SAST / SCA / secrets remediation analytics as a Google Apps Script web app",
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "which-build": "node whichBuild.mjs",
+    "dev": "node dev/serve.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:exact": "GAS_TEST_FULL_ISOLATION=1 vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "check:exact": "npm run typecheck && npm run test:exact && npm run build",
+    "push": "npm run check:exact && clasp push",
+    "deploy": "npm run push && clasp deploy"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.4.0",
+    "@types/google-apps-script": "^2.0.12",
+    "@types/node": "^22.20.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "chart.js": "4.5.1"
+  }
+}
