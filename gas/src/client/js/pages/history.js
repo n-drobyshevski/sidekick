@@ -8,7 +8,7 @@ import { openResolvedLines, trendLine } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
   clear, confirmDialog, el, emptyState, fmtDays, fmtDateTime,
-  kpiCard, pager, sectionLabel, severityScopeFilter, statusPill, toast,
+  kpiCard, pager, sectionLabel, statusPill, toast,
 } from "../ui.js";
 
 const PAGE_SIZE = 25;
@@ -60,10 +60,9 @@ export async function renderHistory(main, _params, ctx) {
   let page = 0;
   let anySample = false;
 
-  // Page-local, non-persisted severity scope for the trend charts, opening on the app-wide
-  // display setting like Overview and MTTR — so the two trends here read the same severities
-  // the rest of the app does. Resets to the display setting on each visit. It scopes only the
-  // charts; the KPI band and saved-scans table stay the raw ledger (see ariaContext below).
+  // Severity scope for the trend charts: the app-wide display setting, so the two trends
+  // here read the same severities the rest of the app does. It scopes only the charts; the
+  // KPI band and saved-scans table stay the raw ledger, which is all-severity by design.
   const sevScope = boot.settings.displaySeverities?.length
     ? [...boot.settings.displaySeverities]
     : [...boot.palette.selectable];
@@ -80,12 +79,7 @@ export async function renderHistory(main, _params, ctx) {
   });
 
   main.append(
-    el("div", { class: "page-head" },
-      el("h1", {}, "Scan History"),
-      severityScopeFilter({
-        selectable: boot.palette.selectable, scope: sevScope,
-        onApply: () => loadTrends(), ariaContext: "the remediation trends",
-      })),
+    el("h1", {}, "Scan History"),
     el("p", { class: "page-sub" },
       "Every saved scan retained in the durable ledger, with remediation trends."),
   );
@@ -98,14 +92,15 @@ export async function renderHistory(main, _params, ctx) {
     freshLine, kpiRow, sectionLabel("Saved scans"), scansHost,
     sectionLabel("Remediation trends"),
     el("p", { class: "section-note" },
-      "Open vs resolved and the Kaplan–Meier MTTR median, scoped to the severity filter above."),
+      "Open vs resolved and the Kaplan–Meier MTTR median, scoped to the display "
+      + "severities set in Settings."),
     chartsHost,
   );
 
   // Trend charts: the remediation-trend reconstruction (the heavier per-point KM slice) that
   // fills the charts when it resolves — it never blocks the table. Both charts read
-  // api_getMttrTrend scoped to the page's severity filter, so re-applying the filter re-fetches
-  // and repaints them. A placeholder stands in until the first reconstruction resolves.
+  // api_getMttrTrend scoped to the display severities. A placeholder stands in until the
+  // first reconstruction resolves.
   chartsHost.append(el("p", { class: "muted", style: "grid-column:1/-1" }, "Computing trends…"));
   function loadTrends() {
     swrCall("api_getMttrTrend", { severities: scopeParam() }, paintTrends)

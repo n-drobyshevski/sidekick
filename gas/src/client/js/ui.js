@@ -661,125 +661,6 @@ export function splitBar({ segments, caption, ariaLabel }) {
     caption ? el("p", { class: "splitbar__caption muted small" }, caption) : null);
 }
 
-/**
- * Inline severity-scope filter: a trigger showing the current summary that opens a
- * popover of severity toggle pills. Shared by Overview and MTTR. `scope` is a live array
- * mutated in place so the caller's scopeParam() stays in sync; `onApply` fires (debounced)
- * whenever the selection changes, and is flushed on close so the label and the data never
- * disagree for more than a beat. `selectable` is palette.selectable.
- */
-export function severityScopeFilter({ selectable, scope, onApply, ariaContext = "this page" }) {
-  const nice = (s) => s[0] + s.slice(1).toLowerCase();
-  function summary() {
-    if (scope.length === selectable.length) return "All severities";
-    const chosen = selectable.filter((s) => scope.includes(s));
-    return chosen.length <= 2 ? chosen.map(nice).join(", ") : `${chosen.length} severities`;
-  }
-
-  const wrap = el("div", { class: "sev-filter" });
-  const label = el("span", { class: "sev-filter-label" }, summary());
-  const btn = el("button", {
-    type: "button", class: "sev-filter-btn",
-    "aria-expanded": "false",
-    "aria-label": `Severities included in ${ariaContext}`,
-    onclick: (e) => { e.stopPropagation(); open ? close() : openMenu(); },
-  }, label, el("span", { class: "sev-filter-caret", "aria-hidden": "true" }, "▾"));
-
-  const pills = el("div", { class: "pill-row" });
-  const pillFor = {};
-  for (const sev of selectable) {
-    const pill = el("button", {
-      type: "button", class: `sev-pill sev-${sev}`,
-      "aria-pressed": scope.includes(sev) ? "true" : "false",
-      onclick: () => toggle(sev),
-    }, sev);
-    pillFor[sev] = pill;
-    pills.append(pill);
-  }
-  const menu = el(
-    "div",
-    { class: "sev-filter-menu", role: "group", "aria-label": `Severities included in ${ariaContext}` },
-    el("span", { class: "sev-filter-caption label" }, "Include severities"),
-    pills,
-  );
-  menu.hidden = true;
-  wrap.append(btn, menu);
-
-  function syncPills() {
-    const lastOne = scope.length === 1;
-    for (const sev of selectable) {
-      const on = scope.includes(sev);
-      const p = pillFor[sev];
-      p.setAttribute("aria-pressed", on ? "true" : "false");
-      // Visibly lock the sole remaining severity so the "keep at least one" floor reads
-      // rather than a click that silently does nothing.
-      if (on && lastOne) {
-        p.setAttribute("aria-disabled", "true");
-        p.title = "At least one severity must stay selected";
-      } else {
-        p.removeAttribute("aria-disabled");
-        p.removeAttribute("title");
-      }
-    }
-    label.textContent = summary();
-  }
-  syncPills();
-
-  let applied = scope.join(",");
-  let applyTimer = null;
-  function doApply() {
-    applied = scope.join(",");
-    if (onApply) onApply();
-  }
-  function scheduleApply() {
-    clearTimeout(applyTimer);
-    applyTimer = setTimeout(doApply, 300);
-  }
-
-  function toggle(sev) {
-    const i = scope.indexOf(sev);
-    if (i >= 0) {
-      if (scope.length === 1) return; // floor: keep at least one severity selected
-      scope.splice(i, 1);
-    } else {
-      scope.push(sev);
-    }
-    syncPills();
-    scheduleApply();
-  }
-
-  let open = false;
-  function openMenu() {
-    open = true;
-    menu.hidden = false;
-    btn.setAttribute("aria-expanded", "true");
-    document.addEventListener("click", onDocClick, true);
-    document.addEventListener("keydown", onKey, true);
-    wrap.addEventListener("focusout", onFocusOut);
-    // Land keyboard focus inside the popover instead of leaving it on the trigger.
-    const firstOn = selectable.find((s) => scope.includes(s)) || selectable[0];
-    const target = pillFor[firstOn] || pills.firstChild;
-    if (target) target.focus();
-  }
-  function close() {
-    open = false;
-    menu.hidden = true;
-    btn.setAttribute("aria-expanded", "false");
-    document.removeEventListener("click", onDocClick, true);
-    document.removeEventListener("keydown", onKey, true);
-    wrap.removeEventListener("focusout", onFocusOut);
-    clearTimeout(applyTimer);
-    if (scope.join(",") !== applied) doApply(); // flush any pending change on close
-  }
-  function onDocClick(e) { if (!wrap.contains(e.target)) close(); }
-  function onKey(e) { if (e.key === "Escape") { close(); btn.focus(); } }
-  // Tabbing past the last pill (or focus leaving the widget) closes it — a non-modal inline
-  // popover should release focus, not trap it. relatedTarget null (focus lost to a non-
-  // focusable target) is also "outside" and closes, matching outside-click.
-  function onFocusOut(e) { if (!wrap.contains(e.relatedTarget)) close(); }
-  return wrap;
-}
-
 let _comboboxSeq = 0;
 
 /**
@@ -807,10 +688,9 @@ function comboNormalize(list) {
 }
 
 /**
- * Reusable searchable combobox: a trigger `<button>` (same open/close/dismiss mechanics
- * as severityScopeFilter — capture-phase document click to close on outside click,
- * document keydown for Escape, focusout when focus leaves the widget) plus a listbox
- * popover.
+ * Reusable searchable combobox: a trigger `<button>` plus a listbox popover. Dismiss is
+ * the app's inline-popover recipe — capture-phase document click to close on outside
+ * click, document keydown for Escape, focusout when focus leaves the widget.
  *
  * The popover is portaled to `document.body` (not appended inside the wrapper) because a
  * trigger can sit inside a scrolling region that would clip it, and is positioned `fixed`.
@@ -1118,8 +998,8 @@ let _helpTipSeq = 0;
  * `.helptip`); the wrapper is focusable so keyboard users get it too (inheriting the app's
  * focus ring) and is `aria-describedby` the bubble, which stays in the DOM (opacity-hidden)
  * so screen readers announce the text. Escape blurs to dismiss. Meaning is text, never colour
- * — the surface is the neutral popover recipe (white / hairline / --shadow-card), matching
- * `.sev-filter-menu`. `className` adds a layout variant (e.g. `hero-metric`) next to the base
+ * — the surface is the neutral popover recipe (white / hairline / --shadow-card).
+ * `className` adds a layout variant (e.g. `hero-metric`) next to the base
  * `.helptip`; `label` optionally sets an aria-label (omit to let the wrapped content read).
  */
 export function helpTip(content, lines, { label, className } = {}) {

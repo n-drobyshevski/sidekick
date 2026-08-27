@@ -9,7 +9,7 @@ import { bootstrap, swrCall } from "../store.js";
 import { mttrPaintPlan } from "./mttrPaintPlan.js";
 import {
   changeChip, clear, el, emptyState, fmtDays, helpTip, openSheet, scopeBar,
-  sectionLabel, sevBadge, severityScopeFilter, skeleton,
+  sectionLabel, sevBadge, skeleton,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -263,21 +263,15 @@ function renderMttrSkeleton({ heroHost, chartsHost, survivalHost, slaHost }) {
 export async function renderMttr(main, _params, ctx) {
   const boot = await bootstrap();
 
-  // Which severities feed every metric on this page. Defaults to the app-wide display
-  // setting ("which severities every page shows") so MTTR opens scoped like Overview,
-  // falling back to all selectable if that setting is somehow empty. Page-local and
-  // non-persisted: resets to the display setting on each visit.
+  // Which severities feed every metric on this page: the app-wide display setting
+  // ("which severities every page shows"), falling back to all selectable if that setting
+  // is somehow empty. Read-only here — the setting is the only place it changes.
   const sevScope = boot.settings.displaySeverities?.length
     ? [...boot.settings.displaySeverities]
     : [...boot.palette.selectable];
 
   main.append(
-    el("div", { class: "page-head" },
-      el("h1", {}, "MTTR & SLA"),
-      severityScopeFilter({
-        selectable: boot.palette.selectable, scope: sevScope,
-        onApply: () => load(), ariaContext: "MTTR",
-      })),
+    el("h1", {}, "MTTR & SLA"),
     el("p", { class: "page-sub" },
       "How fast risk gets closed — measured over observed lifecycles. " +
       "The SLA clock starts once a vendor fix is available."),
@@ -319,7 +313,7 @@ export async function renderMttr(main, _params, ctx) {
   // clock above; a stale value from an earlier layout degrades to "impact".
   let byDomainLens = loadPref("mttrByDomainLens", ["impact", "median"], "impact");
 
-  // Bumped by every load(); a callback whose seq is stale belongs to a superseded scope.
+  // Bumped by every load(); a callback whose seq is stale belongs to a superseded load.
   // DECLARED ABOVE THE FIRST `await load()` DELIBERATELY: `load` is a hoisted function
   // declaration but this is not a hoisted binding, so declaring it after that call put
   // `++loadSeq` in the temporal dead zone and the page died on boot with "Cannot access
@@ -374,9 +368,10 @@ export async function renderMttr(main, _params, ctx) {
     // wrong — swrCall re-fires per RPC on revalidation, so an await pins the charts to the
     // first summary forever.
     //
-    // `seq` guards re-entrancy: the severity filter's onApply calls load() again on a 300ms
-    // debounce, and without this an older load's callbacks can paint the previous scope's
-    // numbers over the new skeleton.
+    // `seq` guards re-entrancy: nothing calls load() twice today (the severity scope is
+    // fixed for the visit), but every callback below is async and unordered, so the guard
+    // stays — without it an older load's callbacks would paint stale numbers over a newer
+    // skeleton the moment anything re-enters.
     const seq = ++loadSeq;
     let mttr = null;
     let pageData = null;

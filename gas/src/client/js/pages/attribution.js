@@ -17,7 +17,7 @@ import { bootstrap, setParams, swrCall } from "../store.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 import {
   clear, el, emptyState, fmtDate, helpTip, kpiCard, pager, settingsPanel,
-  severityScopeFilter, statusPill,
+  statusPill,
 } from "../ui.js";
 
 // The engine's placeholder domain for findings that matched no rule (domainRules.UNASSIGNED).
@@ -61,9 +61,8 @@ const STATUS_PILL = {
 export async function renderAttribution(main, params, ctx) {
   const boot = await bootstrap();
 
-  // Page-local, non-persisted severity scope — opens on the app-wide display setting like
-  // Overview, resets on each visit. scopeParam() shares the default cache entry when nothing
-  // is filtered out.
+  // Severity scope — the app-wide display setting, as on Overview. scopeParam() shares the
+  // default cache entry when nothing is filtered out.
   const sevScope = boot.settings.displaySeverities?.length
     ? [...boot.settings.displaySeverities]
     : [...boot.palette.selectable];
@@ -73,12 +72,7 @@ export async function renderAttribution(main, params, ctx) {
   let page = Math.max(0, parseInt(params.page || "", 10) || 0);
 
   main.append(
-    el("div", { class: "page-head" },
-      el("h1", {}, "Attribution"),
-      severityScopeFilter({
-        selectable: boot.palette.selectable, scope: sevScope,
-        onApply: () => { page = 0; setParams({}); load(); }, ariaContext: "Attribution",
-      })),
+    el("h1", {}, "Attribution"),
     el("p", { class: "page-sub" },
       "How every finding maps onto the manual groups and support groups, across the whole " +
       "register. The header scope switcher is deliberately not " +

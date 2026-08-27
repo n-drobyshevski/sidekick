@@ -25,7 +25,7 @@ import {
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
   clear, el, emptyState, fmtDate, helpTip, kpiCard, nvdUrl, openSheet, pager,
-  scopeBar, sectionLabel, severityScopeFilter, skeleton,
+  scopeBar, sectionLabel, skeleton,
 } from "../ui.js";
 
 // Rows per page in the "Oldest open findings" panel's prev/next pagination. The server ships
@@ -112,20 +112,15 @@ const AGE_BUCKET_FIRST_EDGE = 7;
 export async function renderOverview(main, params, ctx) {
   const boot = await bootstrap();
 
-  // Which severities scope every section on this page. Defaults to the app-wide display
-  // setting so Overview opens scoped like MTTR; falls back to all selectable if empty.
-  // Page-local and non-persisted: resets to the display setting on each visit.
+  // Which severities scope every section on this page: the app-wide display setting,
+  // falling back to all selectable if it is empty. Read-only here — the setting is the
+  // only place it changes, so every page reads the same scope.
   const sevScope = boot.settings.displaySeverities?.length
     ? [...boot.settings.displaySeverities]
     : [...boot.palette.selectable];
 
   main.append(
-    el("div", { class: "page-head" },
-      el("h1", {}, "OS vulnerabilities"),
-      severityScopeFilter({
-        selectable: boot.palette.selectable, scope: sevScope,
-        onApply: () => loadInsights(), ariaContext: "OS vulnerabilities",
-      })),
+    el("h1", {}, "OS vulnerabilities"),
     el("p", { class: "page-sub" },
       "What's exploitable, where risk concentrates, and what to fix next. ",
       el("a", { href: "#/mttr", target: "_self" }, "Remediation performance →"),
@@ -145,9 +140,9 @@ export async function renderOverview(main, params, ctx) {
         `This register scans ${sevTitle(sevScope[0])} severity only, so severity is not an axis `
         + "on this page. Findings are ranked by exploit intelligence, exposure and age instead.");
     }
-    // The severity filter always keeps UNKNOWN alongside the chosen severities (see
+    // The severity scope always keeps UNKNOWN alongside the chosen severities (see
     // filterSeverities), so rows whose severity never normalized are counted in every figure
-    // on this page while matching no severity the reader selected. The old severity card
+    // on this page while matching no severity the register displays. The old severity card
     // carried this caveat; nothing else would, and it is exactly the kind of thing "honest
     // state" means. Optional-chained: a stale pre-fallback cache omits UNKNOWN entirely.
     const unknown = insights?.sevStats?.UNKNOWN?.total;
@@ -155,7 +150,7 @@ export async function renderOverview(main, params, ctx) {
       if (scopeNote.firstChild) scopeNote.append(" ");
       scopeNote.append(
         `${unknown.toLocaleString()} finding${unknown === 1 ? " has" : "s have"} an `
-        + "unrecognized severity — included in every count here regardless of the filter.");
+        + "unrecognized severity — included in every count here regardless of severity scope.");
     }
   }
   paintScopeNote(null);
