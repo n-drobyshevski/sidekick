@@ -87,11 +87,23 @@ already implements the pipeline and is the behavioural spec (same relationship `
   what it measured from and what it did with the rows it could not measure. Open findings
   stay in as right-censored observations; where the curve never reaches half, publish the
   lower bound, not a number.
-- **SAST has no timestamps in this tenant** — none at all. `brick/devsecops` sets
-  `SAST_FETCH_RESOLVED = False` because a resolved SAST finding would be born and closed in
-  the same instant, giving a real `mttr_days == 0.0` that drags the median to the floor, and
-  a test pins it. "No MTTR yet" is actionable; "MTTR is 0 days" is a lie. Do not turn it on
-  without a timestamp field to date from.
+- **SAST has a birth date and no death date, and that is enough.** This entry used to read
+  "no timestamps in this tenant — none at all"; the live probe falsified it on 2026-08-27.
+  `SASTFinding` exposes `createdAt: DateTime!`, filterable and sortable, and `Q_SAST` selects
+  it. There is still no `resolvedAt` on the type and `status: RESOLVED` returns 0, so
+  `SAST_FETCH_RESOLVED` stays `false` — for those two reasons, not the old one. The clock
+  survives anyway: the ledger prefers the API birth date and dates the death by
+  DISAPPEARANCE, so SAST gets a genuine MTTR rather than an age metric once two scans exist
+  (`brick/devsecops/ledger.py`, pinned by `test_mttr_is_measured_from_the_ledgers_own_dates`).
+  Caveat for the port: `brick`'s own `ingest.py:206` claims `silver_sast` already reads the
+  column; it does not — `metrics.py:371` hard-codes `null_ts`.
+- **The two finding-filter types disagree about `severity`, and a shared helper is how that
+  bites.** `VulnerabilityFindingFilters.severity` is `[VulnerabilitySeverity!]`, a bare list.
+  `SASTFindingFilters.severity` is `SASTSeverityFilter`, an object taking `{equals:[...]}` —
+  and `status` likewise. Sending SCA's shape to SAST is refused with HTTP 400
+  `VALIDATION_INVALID_TYPE_VARIABLE`, which fetches zero rows while looking like an empty
+  register. It shipped once, with a test pinning the broken shape. `OBJECT_FILTERS` in
+  `wizQueries.ts` now holds the asymmetry as data; do NOT collapse it to one convention.
 - **The second clock is captured but not yet computed.** `fix_date` / `fix_observed_at` are
   on every ledger row; nothing derives `fix_available_at`, `mttr_actionable_days` or
   `awaiting_vendor_fix`. Reference: `gas/src/domain/ledgerCore.ts::baseRows`.

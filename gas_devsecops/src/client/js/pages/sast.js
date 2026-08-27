@@ -12,8 +12,10 @@ export function renderSast(host) {
       "The triage funnel: how many findings reached a decision at all.",
       "Breakdown by repository and by owning team.",
     ],
-    note: "SAST findings in this tenant carry NO timestamps — not detection, not resolution. "
-      + "So MTTR here is dated from observation, and this page has to say so on its face: "
-      + "\"no MTTR yet\" is a state you can act on; \"MTTR is 0 days\" is a confident lie.",
+    note: "SAST findings carry a creation date but no resolution date, and this tenant "
+      + "returns no resolved SAST findings at all. So the clock starts when the finding was "
+      + "created and stops at the scan that first stopped seeing it — a real measurement on "
+      + "one end and an estimate bounded by the scan interval on the other. The page states "
+      + "which is which rather than averaging them into one confident number.",
   });
 }

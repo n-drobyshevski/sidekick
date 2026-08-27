@@ -50,7 +50,24 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // SAST-shaped columns; null for an SCA row and vice versa. One ledger, three scopes.
     "cwe", "language", "file_path", "start_line", "origin",
     // Secrets carry their own lifecycle: removal from HEAD is not rotation.
-    "secret_kind", "rotated_at", "removed_at",
+    //
+    // FOUR COLUMNS, NOT TWO, and the extra pair is not optional. `rotated_at IS NULL`
+    // cannot tell a credential that is still live from one nobody has ever checked, and in
+    // this tenant 393,443 of 394,927 secret instances have validationStatus UNKNOWN —
+    // 99.6% never checked. Publishing that null as "not rotated" would be the absent-is-
+    // never-zero failure at scale, so the state travels in its own column:
+    //
+    //   validation_state  UNKNOWN | VALID | INVALID | ERROR, from SecretInstanceValidationStatus.
+    //                     VALID means the credential still works — a live secret, measured.
+    //                     INVALID means it does not — dead, and the evidence for rotation.
+    //                     UNKNOWN / ERROR mean unmeasured, which is neither.
+    //   validated_at      when that check was last made (lastValidatedAt), so a stale VALID
+    //                     can be told from a fresh one.
+    //
+    // rotated_at then means "the credential was observed dead at this time" and is set from
+    // validated_at only where validation_state is INVALID. removed_at is the other axis
+    // entirely: the string left HEAD. PROBE_FINDINGS.md §3.
+    "secret_kind", "rotated_at", "removed_at", "validation_state", "validated_at",
     "owner_project", "owner_path", "tags_json",
   ],
   [TABS.episodes]: [

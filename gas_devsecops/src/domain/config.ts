@@ -76,8 +76,10 @@ export const SLA_TARGETS: Record<string, number> = {
  *            exists, so its clock has to be split into "waiting for a vendor" and
  *            "actionable" or it measures the ecosystem instead of the team.
  *   sast     A weakness class at a file and line in first-party code. No vendor, so no
- *            second clock — but in this tenant the API returns NO timestamps at all, so
- *            its clock starts at observation and the page has to say so.
+ *            second clock — and no resolution date either: the type carries `createdAt`
+ *            but nothing to close it with, so the death date comes from the finding
+ *            disappearing between scans. One end measured, one end estimated, and the
+ *            page has to say which is which.
  *   secrets  A credential in the repository. Leaving the register means the string is out
  *            of HEAD; it does NOT mean the credential is dead. Removal and rotation are
  *            two dates because they are two events.

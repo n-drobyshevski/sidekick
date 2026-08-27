@@ -49,8 +49,9 @@ Three lanes and a chrome tail. The IA lives in exactly one place — `PAGES` in
 
 Because their remediation clocks differ in kind. SCA cannot be fixed before a fixed version
 exists, so its clock splits into "waiting for a vendor" and "actionable". SAST has no
-vendor — but in this tenant it also has **no timestamps at all**, so its clock starts at
-observation and the page says so. A secret leaves the register when the string leaves HEAD,
+vendor — and **no resolution date** either, so its death date comes from the finding
+disappearing between scans rather than from the API, and the page says which end is
+measured and which is estimated. A secret leaves the register when the string leaves HEAD,
 which is not the same as the credential being dead. One merged register would have to lie
 about at least two of them, and the clock is the product.
 
@@ -118,6 +119,13 @@ WIZ_PROJECT_ID_V2=...      # optional; scopes every query
    no capture of a secret finding anywhere in this repository, so `Q_SECRETS` is `null`
    rather than a guess — a plausible document would typecheck, ship, and then measure the
    wrong population.
+
+**Both are answered as of 2026-08-27** — see [PROBE_FINDINGS.md](PROBE_FINDINGS.md).
+Briefly: `SASTFinding` *does* expose `createdAt`, but no `resolvedAt` and no resolved rows,
+so `SAST_FETCH_RESOLVED` stays `false` for a new reason; the secrets root is
+`secretInstances` and it *does* separate removed (`resolvedAt`) from rotated
+(`validationStatus`). The same run found the SAST query refused by this tenant with
+`VALIDATION_INVALID_TYPE_VARIABLE` — `filterBy.severity` is an object filter, not a list.
 
 `npm run dev` runs the **real server bundle** in the browser against in-memory fakes for
 SpreadsheetApp, DriveApp, Properties, Lock and Cache (`dev/gas-shims.js`), so no Google
