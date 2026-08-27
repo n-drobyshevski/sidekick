@@ -135,6 +135,7 @@ describe("reconcile fix-field capture", () => {
         resolution_src: "api", reopened_count: 0, first_scan_id: "s1", last_scan_id: "s1",
         subscription_name: null, subscription_ext_id: null, tags_json: null,
         fix_date: "2026-02-20T00:00:00Z", fix_observed_at: "2026-03-05T00:00:00Z",
+        published_date: null,
         ...emptyRiskSignals(),
       },
     };
@@ -155,6 +156,90 @@ describe("reconcile fix-field capture", () => {
     const r2 = reopenWithFix.ledger["id:vf-1"];
     expect(r2.fix_date).toBe("2026-03-30T00:00:00Z");
     expect(r2.fix_observed_at).toBe("2026-04-02T00:00:00Z");
+  });
+});
+
+// CVE publication capture (disclosure-latency clock). Sticky first-wins like the vendor-fix
+// fields above, but a fact about the CVE rather than about the episode — so, unlike them, it
+// deliberately survives a reopen. That single difference is the whole reason it is seeded
+// after the branch beside mergeRiskSignals rather than inside seedFix, and it gets its own
+// case below.
+describe("reconcile published-date capture", () => {
+  const rec = (over: Record<string, unknown>) => ({
+    id: "vf-1",
+    name: "CVE-2026-1",
+    severity: "HIGH",
+    status: "OPEN",
+    firstDetectedAt: "2026-03-01T00:00:00Z",
+    ...over,
+  });
+  const run = (
+    records: Record<string, unknown>[],
+    ledger: Record<string, LedgerRow>,
+    scanId: string,
+  ) => reconcile(records, ledger, scanId, scanId, null);
+
+  it("captures publishedDate, normalized to ISO", () => {
+    const { ledger } = run([rec({ publishedDate: "2026-01-15" })], {}, "2026-03-05T00:00:00Z");
+    expect(ledger["id:vf-1"].published_date).toBe("2026-01-15T00:00:00Z");
+  });
+
+  it("a record without publishedDate leaves it null — unmeasured, never zero", () => {
+    const { ledger } = run([rec({})], {}, "2026-03-05T00:00:00Z");
+    expect(ledger["id:vf-1"].published_date).toBeNull();
+  });
+
+  it("unparseable input is left alone rather than written as a guess", () => {
+    const { ledger } = run([rec({ publishedDate: "not a date" })], {}, "2026-03-05T00:00:00Z");
+    expect(ledger["id:vf-1"].published_date).toBeNull();
+  });
+
+  it("sticky first-wins: a later scan reporting a different date never overwrites", () => {
+    const s1 = run([rec({ publishedDate: "2026-01-15T00:00:00Z" })], {}, "2026-03-05T00:00:00Z");
+    const s2 = run(
+      [rec({ publishedDate: "2026-02-20T00:00:00Z" })],
+      s1.ledger,
+      "2026-03-10T00:00:00Z",
+    );
+    expect(s2.ledger["id:vf-1"].published_date).toBe("2026-01-15T00:00:00Z");
+  });
+
+  it("a late publishedDate still seeds a row first seen without one", () => {
+    const s1 = run([rec({})], {}, "2026-03-05T00:00:00Z");
+    expect(s1.ledger["id:vf-1"].published_date).toBeNull();
+    const s2 = run(
+      [rec({ publishedDate: "2026-01-15T00:00:00Z" })],
+      s1.ledger,
+      "2026-03-10T00:00:00Z",
+    );
+    expect(s2.ledger["id:vf-1"].published_date).toBe("2026-01-15T00:00:00Z");
+  });
+
+  it("survives a reopen, where the vendor-fix clock resets", () => {
+    // The same resolved row the fix-capture suite reopens above, but carrying a publication
+    // date. A reopen starts a new episode — new first_seen, cleared fix clock — yet the CVE
+    // was published exactly once, so that date must come through untouched.
+    const resolved: Record<string, LedgerRow> = {
+      "id:vf-1": {
+        vuln_key: "id:vf-1", cve: "CVE-2026-1", severity: "HIGH", asset_id: null,
+        asset_name: null, asset_type: null, cloud: null, first_seen: "2026-03-01T00:00:00Z",
+        last_seen: "2026-03-05T00:00:00Z", status: "RESOLVED", resolved_at: "2026-03-05T00:00:00Z",
+        resolution_src: "api", reopened_count: 0, first_scan_id: "s1", last_scan_id: "s1",
+        subscription_name: null, subscription_ext_id: null, tags_json: null,
+        fix_date: "2026-02-20T00:00:00Z", fix_observed_at: "2026-03-05T00:00:00Z",
+        published_date: "2026-01-15T00:00:00Z",
+        ...emptyRiskSignals(),
+      },
+    };
+    const reopened = run(
+      [rec({ status: "OPEN", fixedVersion: null, fixDate: null })],
+      resolved,
+      "2026-04-01T00:00:00Z",
+    );
+    const r = reopened.ledger["id:vf-1"];
+    expect(r.reopened_count).toBe(1);
+    expect(r.fix_date).toBeNull(); // per-episode: cleared
+    expect(r.published_date).toBe("2026-01-15T00:00:00Z"); // per-CVE: kept
   });
 });
 
@@ -247,6 +332,7 @@ describe("reconcile risk-signal capture", () => {
         resolution_src: "api", reopened_count: 0, first_scan_id: "s1", last_scan_id: "s1",
         subscription_name: null, subscription_ext_id: null, tags_json: null,
         fix_date: "2026-02-20T00:00:00Z", fix_observed_at: "2026-03-05T00:00:00Z",
+        published_date: null,
         has_kev: true, has_exploit: true, epss: 0.7,
         risk_observed_at: "2026-03-01T00:00:00Z",
       },

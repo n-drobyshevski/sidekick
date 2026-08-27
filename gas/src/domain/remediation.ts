@@ -428,6 +428,175 @@ export function awaitingVendorFix(
   };
 }
 
+// --------------------------------------------------------------------- latency clocks
+
+/**
+ * Which end of the wait a latency clock starts from.
+ *
+ *   "detection"  — first_seen. How long WE waited for a fix after finding it, so it pairs
+ *                  additively with the actionable clock: exposure = latency + actionable.
+ *   "disclosure" — published_date. The vendor's release latency from CVE publication, which
+ *                  is the figure the literature means by "vendor latency" but does NOT
+ *                  decompose against our clocks (its origin predates our register).
+ */
+export type LatencyOrigin = "detection" | "disclosure";
+
+/**
+ * How a latency population divides up. Reported beside the estimate rather than inferred
+ * from it, because `kaplanMeier` silently drops a row that is neither event nor censored
+ * and a reader cannot tell a small register from a badly-measured one otherwise.
+ *
+ * `events + censored + closedBeforeFix + unmeasured === total`, and two containments:
+ * `zeroAtOrigin ⊆ events`, while `censored + closedBeforeFix === KMResult.censored`.
+ */
+export interface LatencySegments {
+  /** A vendor fix became available and we observed when. */
+  events: number;
+  /** Still open with no fix — censored at now. The population the metric exists for. */
+  censored: number;
+  /**
+   * Resolved without a fix ever being observed — the host went away, the finding was
+   * ignored, or Wiz simply stopped returning it. Censored at its resolution, because
+   * that is when we stopped being able to observe a fix. It is a competing risk and not
+   * a fix, so it is counted apart: `resolution_src` only distinguishes `api` from
+   * `disappeared`, never "patched" from "decommissioned", so a cause-specific model is
+   * not available and this counter is the honest substitute.
+   */
+  closedBeforeFix: number;
+  /** Events at t=0 — the fix already existed at the origin. Subset of `events`. */
+  zeroAtOrigin: number;
+  /**
+   * Origin or availability never captured, so the row is outside the estimate entirely:
+   * a null origin, or a legacy pre-rollout row whose fix availability was ASSUMED by the
+   * old hasFix-only ingestion rather than observed. Absent is never zero.
+   */
+  unmeasured: number;
+  /** Every row considered, measured or not. */
+  total: number;
+}
+
+/** A base row projected onto just the columns the latency clocks read. */
+type LatencyRow = Pick<
+  BaseRow,
+  "severity" | "status" | "first_seen" | "published_date" | "fix_available_at"
+  | "resolved_at" | "reopened_count"
+>;
+
+/** One row's classification: null when it contributes to no clock. */
+function latencyObservation(
+  row: LatencyRow,
+  origin: LatencyOrigin,
+  nowMs: number,
+): { t: number; event: boolean; closedBeforeFix: boolean } | null {
+  const first = parseTs(row.first_seen);
+  // Legacy rows are excluded from BOTH origins. ledgerCore.baseRows sets their
+  // fix_available_at to first_seen because the old hasFix-only filter guaranteed a fix
+  // existed — availability assumed, never observed. Letting them through would pile a
+  // spike of fabricated zeros at t=0 and drag every quantile down with it.
+  if (first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS) return null;
+
+  const originMs = origin === "detection" ? first : parseTs(row.published_date);
+  if (originMs === null) return null;
+
+  // Disclosure only: a reopen resets the fix clock (per-episode) but not the publication
+  // date (per-CVE), so pairing this episode's fix against the original publication measures
+  // a wait that never happened. The detection clock is unaffected — first_seen resets too,
+  // so both ends move together and the pair stays coherent.
+  if (origin === "disclosure" && Number(row.reopened_count ?? 0) > 0) return null;
+
+  const fixAvail = parseTs(row.fix_available_at);
+  if (fixAvail !== null) {
+    const raw = fixAvail - originMs;
+    // Wiz's upstream fixDate routinely predates our first sight of the finding, and a CVE
+    // can be published with its fix already shipped. Both are a real zero-length wait, not
+    // a negative one — clamp rather than let a negative duration into the risk set.
+    return { t: Math.max(0, raw) / DAY_MS, event: true, closedBeforeFix: false };
+  }
+
+  const resolved = parseTs(row.resolved_at);
+  if (resolved !== null) {
+    return { t: Math.max(0, resolved - originMs) / DAY_MS, event: false, closedBeforeFix: true };
+  }
+  // Open with no fix yet: censored at now. Tested on isOpen() rather than on
+  // `awaiting_vendor_fix`, which ledgerCore derives with a strict `status === "OPEN"` and
+  // would therefore miss a REOPENED row that isOpen() counts.
+  if (isOpen(row.status)) {
+    return { t: Math.max(0, nowMs - originMs) / DAY_MS, event: false, closedBeforeFix: false };
+  }
+  return null;
+}
+
+/**
+ * Re-project base rows onto the RemediationRow shape using a *latency* clock: the wait for
+ * a vendor fix to exist, rather than the wait to deploy one. Feed the result to
+ * `kaplanMeier` and it measures that wait with no change to its body — the same trick
+ * `actionableView` plays, and for the same reason: one estimator means the numbers cannot
+ * drift apart.
+ *
+ * This is the complement of every other clock here. The actionable clock starts where a fix
+ * becomes available; this one ends there. Rows still awaiting a fix are the CENSORED
+ * population rather than an excluded one, which is the whole point — dropping them would
+ * leave only the vulnerabilities that got fixed and measure how fast the fixed ones were
+ * fixed, which is the survivorship bias the KM estimator exists to avoid.
+ *
+ * Note the projected `status`: an event carries "RESOLVED" and a censored row "OPEN",
+ * because `openAge` gates on `isOpen(status)` while `resolvedMttr` does not. A finding that
+ * closed before any fix appeared is therefore projected as "OPEN" even though it is
+ * resolved — it is censored, not an event, and the projection has to say so in the only
+ * vocabulary the estimator reads.
+ */
+export function latencyView(
+  rows: LatencyRow[],
+  origin: LatencyOrigin,
+  now?: number,
+): RemediationRow[] {
+  const nowMs = now ?? Date.now();
+  const out: RemediationRow[] = [];
+  for (const row of rows) {
+    const obs = latencyObservation(row, origin, nowMs);
+    if (obs === null) continue;
+    out.push({
+      severity: row.severity,
+      status: obs.event ? "RESOLVED" : "OPEN",
+      mttr_days: obs.event ? obs.t : null,
+      age_days: obs.event ? null : obs.t,
+    });
+  }
+  return out;
+}
+
+/**
+ * The segment counts behind a `latencyView` population, classified by the same predicate in
+ * the same order — split out rather than reimplemented so the counters and the curve cannot
+ * disagree about which rows were measured (`kmCurve` / `kaplanMeier` are split for exactly
+ * this reason).
+ */
+export function latencySegments(
+  rows: LatencyRow[],
+  origin: LatencyOrigin,
+  now?: number,
+): LatencySegments {
+  const nowMs = now ?? Date.now();
+  const seg: LatencySegments = {
+    events: 0, censored: 0, closedBeforeFix: 0, zeroAtOrigin: 0, unmeasured: 0, total: 0,
+  };
+  for (const row of rows) {
+    seg.total += 1;
+    const obs = latencyObservation(row, origin, nowMs);
+    if (obs === null) {
+      seg.unmeasured += 1;
+    } else if (obs.event) {
+      seg.events += 1;
+      if (obs.t === 0) seg.zeroAtOrigin += 1;
+    } else if (obs.closedBeforeFix) {
+      seg.closedBeforeFix += 1;
+    } else {
+      seg.censored += 1;
+    }
+  }
+  return seg;
+}
+
 /**
  * "No fix" predicate over a durable base row — an OPEN finding with no vendor fix available
  * yet (exactly `awaiting_vendor_fix`, set in ledgerCore.baseRows). Resolved rows carry

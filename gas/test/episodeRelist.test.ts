@@ -38,6 +38,7 @@ function episode(vuln_key: string, tags_json: string | null = null): EpisodeRow 
     superseded_by_scan: null,
     fix_date: null,
     fix_observed_at: null,
+    published_date: null,
     tags_json,
     ...emptyRiskSignals(),
   };

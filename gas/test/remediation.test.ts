@@ -9,6 +9,8 @@ import {
   kmMedian,
   kmMedianFromCurve,
   kmQuantileFromCurve,
+  latencySegments,
+  latencyView,
   mttrPercentiles,
   openPastSla,
   openPastSlaFromRecords,
@@ -402,6 +404,213 @@ describe("kmMedian naive vs actionable strata", () => {
   });
 });
 
+// ------------------------------------------------------------------ latency clocks
+//
+// The complement of every other clock in this file: the wait for a fix to EXIST, with rows
+// still awaiting one as the censored population rather than an excluded one. Timestamps are
+// real ISO strings (not pre-baked day counts) because the derivation is what is under test —
+// the rollout boundary, the negative-latency clamp, and the origin swap all live in it.
+//
+// REMEDIATION_ROLLOUT_ISO is 2026-07-01, so every measured row is first seen on or after it.
+describe("latencyView / latencySegments", () => {
+  const NOW = Date.parse("2026-08-01T00:00:00Z"); // 31 days after 2026-07-01
+  type LatRow = Parameters<typeof latencyView>[0][number] & {
+    mttr_days: number | null;
+    age_days: number | null;
+    awaiting_vendor_fix: boolean;
+  };
+  const lat = (over: Partial<LatRow>): LatRow => ({
+    severity: "HIGH",
+    status: "OPEN",
+    first_seen: "2026-07-01T00:00:00Z",
+    published_date: null,
+    fix_available_at: null,
+    resolved_at: null,
+    reopened_count: 0,
+    // Not read by the latency clocks (they key off isOpen/fix_available_at); carried so the
+    // same rows can be run through baseRowNoFix, the show-no-fix toggle's own predicate.
+    awaiting_vendor_fix: false,
+    // Carried so the SAME objects also feed the from-detection clock, which is what makes
+    // the differential test below a comparison rather than two unrelated numbers.
+    mttr_days: null,
+    age_days: null,
+    ...over,
+  });
+
+  // Four findings whose two clocks disagree on purpose: the fix landed early and the team
+  // was slow (A, D) or the fix landed late and the team was fast (C). Latencies 2/4/6/8,
+  // from-detection mttrs 20/10/8/30.
+  const fourClocks = (): LatRow[] => [
+    lat({ fix_available_at: "2026-07-03T00:00:00Z", resolved_at: "2026-07-21T00:00:00Z", status: "RESOLVED", mttr_days: 20 }),
+    lat({ fix_available_at: "2026-07-05T00:00:00Z", resolved_at: "2026-07-11T00:00:00Z", status: "RESOLVED", mttr_days: 10 }),
+    lat({ fix_available_at: "2026-07-07T00:00:00Z", resolved_at: "2026-07-09T00:00:00Z", status: "RESOLVED", mttr_days: 8 }),
+    lat({ fix_available_at: "2026-07-09T00:00:00Z", resolved_at: "2026-07-31T00:00:00Z", status: "RESOLVED", mttr_days: 30 }),
+  ];
+
+  it("measures the wait for a fix to exist, not the wait to deploy one", () => {
+    // Latency events 2,4,6,8: S(2)=3/4=.75, S(4)=.75*(2/3)=.5 -> crosses at 4.
+    // From-detection events 8,10,20,30: S(8)=.75, S(10)=.5 -> crosses at 10.
+    // Same four rows, same estimator, two different questions.
+    const rows = fourClocks();
+    expect(kmMedian(latencyView(rows, "detection", NOW))).toBe(4);
+    expect(kmMedian(rows)).toBe(10);
+  });
+
+  it("a legacy pre-rollout row is unmeasured, not a zero", () => {
+    // baseRows sets fix_available_at = first_seen for these, because the old hasFix-only
+    // ingestion guaranteed a fix existed. That is an assumption, not an observation, and
+    // counting it as a zero-day wait would drag every quantile down.
+    const rows = [
+      lat({ first_seen: "2026-06-15T00:00:00Z", fix_available_at: "2026-06-15T00:00:00Z" }),
+    ];
+    expect(latencyView(rows, "detection", NOW)).toEqual([]);
+    const seg = latencySegments(rows, "detection", NOW);
+    expect(seg).toMatchObject({ total: 1, unmeasured: 1, events: 0, censored: 0 });
+  });
+
+  it("a fix that predates detection is a zero-length wait, not a negative one", () => {
+    // Wiz's upstream fixDate routinely predates our first sight of the finding.
+    const rows = [
+      lat({ first_seen: "2026-07-10T00:00:00Z", fix_available_at: "2026-07-02T00:00:00Z" }),
+    ];
+    expect(latencyView(rows, "detection", NOW)).toEqual([
+      { severity: "HIGH", status: "RESOLVED", mttr_days: 0, age_days: null },
+    ]);
+    expect(latencySegments(rows, "detection", NOW)).toMatchObject({ events: 1, zeroAtOrigin: 1 });
+  });
+
+  it("a finding still awaiting a fix is censored at now, never dropped", () => {
+    const rows = [lat({})]; // open, no fix, first seen 07-01; NOW is 08-01
+    expect(latencyView(rows, "detection", NOW)).toEqual([
+      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 31 },
+    ]);
+    expect(latencySegments(rows, "detection", NOW)).toMatchObject({ censored: 1, events: 0 });
+  });
+
+  it("a finding that closed before any fix appeared is censored at its resolution", () => {
+    // The competing risk: the host went away, or Wiz stopped returning it. We stopped being
+    // able to observe a fix at that moment, so that is where the observation ends — and it
+    // is counted apart from a genuine still-awaiting row.
+    const rows = [
+      lat({ status: "RESOLVED", resolved_at: "2026-07-11T00:00:00Z", mttr_days: 10 }),
+    ];
+    expect(latencyView(rows, "detection", NOW)).toEqual([
+      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 10 },
+    ]);
+    expect(latencySegments(rows, "detection", NOW)).toMatchObject({
+      closedBeforeFix: 1, censored: 0, events: 0,
+    });
+  });
+
+  it("reports '> N d' rather than inventing a median when most are still awaiting", () => {
+    const rows = [
+      lat({ fix_available_at: "2026-07-06T00:00:00Z" }), // event at 5
+      lat({ first_seen: "2026-06-22T00:00:00Z" }), // pre-rollout -> unmeasured
+      lat({}), lat({}), lat({}), // censored at 31
+    ];
+    const km = kaplanMeier(latencyView(rows, "detection", NOW));
+    expect(km.events).toBe(1);
+    expect(km.censored).toBe(3);
+    expect(km.median).toBeNull(); // S(5) = 1 - 1/4 = 0.75, never reaches 0.5
+    expect(km.medianLowerBound).toBe(31);
+  });
+
+  it("the disclosure origin measures the vendor's wait, not ours", () => {
+    // Published 06-01, we found it 07-01, the fix landed 07-11. The vendor took 40 days;
+    // we waited 10 of them. Same row, same estimator, two origins.
+    const rows = [
+      lat({ published_date: "2026-06-01T00:00:00Z", fix_available_at: "2026-07-11T00:00:00Z" }),
+    ];
+    expect(kmMedian(latencyView(rows, "detection", NOW))).toBe(10);
+    expect(kmMedian(latencyView(rows, "disclosure", NOW))).toBe(40);
+  });
+
+  it("a row with no publication date is unmeasured on the disclosure clock only", () => {
+    const rows = [lat({ fix_available_at: "2026-07-11T00:00:00Z" })];
+    expect(latencySegments(rows, "detection", NOW)).toMatchObject({ events: 1, unmeasured: 0 });
+    expect(latencySegments(rows, "disclosure", NOW)).toMatchObject({ events: 0, unmeasured: 1 });
+  });
+
+  it("a reopened row is unmeasured on the disclosure clock only", () => {
+    // A reopen resets the fix clock (per-episode) and first_seen with it, so the detection
+    // pair stays coherent. Publication does not reset (per-CVE), so pairing THIS episode's
+    // fix against the original publication would measure a wait that never happened.
+    const rows = [
+      lat({
+        published_date: "2026-06-01T00:00:00Z",
+        fix_available_at: "2026-07-11T00:00:00Z",
+        reopened_count: 1,
+      }),
+    ];
+    expect(latencySegments(rows, "detection", NOW)).toMatchObject({ events: 1, unmeasured: 0 });
+    expect(latencySegments(rows, "disclosure", NOW)).toMatchObject({ events: 0, unmeasured: 1 });
+  });
+
+  it("segments account for every row, and agree with the estimator's own counts", () => {
+    const rows = [
+      ...fourClocks(), // 4 events
+      lat({}), lat({}), // 2 censored (open, awaiting)
+      lat({ status: "RESOLVED", resolved_at: "2026-07-11T00:00:00Z" }), // 1 closed-before-fix
+      lat({ first_seen: "2026-06-15T00:00:00Z" }), // 1 unmeasured (pre-rollout)
+    ];
+    const seg = latencySegments(rows, "detection", NOW);
+    expect(seg).toEqual({
+      events: 4, censored: 2, closedBeforeFix: 1, zeroAtOrigin: 0, unmeasured: 1, total: 8,
+    });
+    // Nothing falls between the two: every row is in exactly one bucket...
+    expect(seg.events + seg.censored + seg.closedBeforeFix + seg.unmeasured).toBe(seg.total);
+    // ...and the estimator's own split matches, with closed-before-fix riding as censored.
+    const km = kaplanMeier(latencyView(rows, "detection", NOW));
+    expect(km.events).toBe(seg.events);
+    expect(km.censored).toBe(seg.censored + seg.closedBeforeFix);
+  });
+
+  // The sibling of the Math.max(...times) regression above, on the latency path. Same shape
+  // as that test on purpose — many rows, FEW distinct event times — because kmCurve is
+  // O(distinct times x observations): 200k rows with 200k distinct times is quadratic and
+  // would time out for a reason that has nothing to do with what is being guarded.
+  // Why api.ts computes latency over a population the show-no-fix toggle has NOT narrowed.
+  // baseRowNoFix is that toggle's predicate, and the rows it removes are exactly this
+  // metric's censored population — so routing latency through visibleBase() would leave only
+  // the findings that got a fix and report how fast the fixed ones were fixed. If someone
+  // later "fixes the inconsistency" by filtering here, this test is what stops them.
+  it("the show-no-fix filter would delete the entire censored population", () => {
+    const rows = [
+      lat({ fix_available_at: "2026-07-03T00:00:00Z", awaiting_vendor_fix: false }), // event at 2
+      lat({ awaiting_vendor_fix: true }), // awaiting -> censored at 31
+      lat({ awaiting_vendor_fix: true }), // awaiting -> censored at 31
+      lat({ awaiting_vendor_fix: true }), // awaiting -> censored at 31
+    ];
+    const full = latencySegments(rows, "detection", NOW);
+    expect(full).toMatchObject({ events: 1, censored: 3 });
+    // S(2) = 1 - 1/4 = 0.75, so the honest answer is "no median yet, > 31 d".
+    const km = kaplanMeier(latencyView(rows, "detection", NOW));
+    expect(km.median).toBeNull();
+    expect(km.medianLowerBound).toBe(31);
+
+    // Now apply the toggle's own predicate, as visibleBase would.
+    const narrowed = rows.filter((r) => !baseRowNoFix(r));
+    expect(latencySegments(narrowed, "detection", NOW)).toMatchObject({ events: 1, censored: 0 });
+    // Every censored observation is gone, so the curve falls straight to zero on its single
+    // event and the metric reports a 2-day vendor wait against a register that has been
+    // waiting at least a month. That is the bias, in one number.
+    expect(kmMedian(latencyView(narrowed, "detection", NOW))).toBe(2);
+  });
+
+  it("register-sized population survives the projection and the estimator", () => {
+    const N = 200_000;
+    const base = Date.parse("2026-07-01T00:00:00Z");
+    // 500 distinct fix dates, precomputed: toISOString() per row would dominate the test.
+    const fixes = Array.from({ length: 500 }, (_, i) => new Date(base + (i + 1) * 86_400_000).toISOString());
+    const rows: LatRow[] = [];
+    for (let i = 0; i < N; i++) rows.push(lat({ fix_available_at: fixes[i % 500] }));
+    const km = kaplanMeier(latencyView(rows, "detection", NOW));
+    expect(km.total).toBe(N);
+    expect(km.events).toBe(N);
+    expect(km.restrictionTime).toBe(500); // the largest latency, in days
+  }, 30_000);
+});
+
 describe("awaitingVendorFix", () => {
   it("counts awaiting rows per sev + overall; pctOfOpen is their share of all open", () => {
     const rows = [
@@ -477,7 +686,7 @@ describe("recordNoFix ↔ baseRow.awaiting_vendor_fix agreement", () => {
     first_seen: null, last_seen: null, status: "OPEN", resolved_at: null,
     resolution_src: null, reopened_count: 0, first_scan_id: null, last_scan_id: null,
     subscription_name: null, subscription_ext_id: null, tags_json: null,
-    fix_date: null, fix_observed_at: null, ...emptyRiskSignals(),
+    fix_date: null, fix_observed_at: null, published_date: null, ...emptyRiskSignals(),
     ...over,
   });
 

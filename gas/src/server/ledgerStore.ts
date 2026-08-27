@@ -126,6 +126,7 @@ function rowToLedger(r: Rec): LedgerRow {
     tags_json: (r["tags_json"] as string | null) ?? null,
     fix_date: (r["fix_date"] as string | null) ?? null,
     fix_observed_at: (r["fix_observed_at"] as string | null) ?? null,
+    published_date: (r["published_date"] as string | null) ?? null,
     ...coerceRiskSignals(r),
   };
 }
@@ -192,6 +193,7 @@ export function loadState(useSnapshot = true): LedgerState {
     superseded_by_scan: (r["superseded_by_scan"] as string | null) ?? null,
     fix_date: (r["fix_date"] as string | null) ?? null,
     fix_observed_at: (r["fix_observed_at"] as string | null) ?? null,
+    published_date: (r["published_date"] as string | null) ?? null,
     // Null on every episode sealed before this column existed — the backfill job
     // (backfillTags) recovers those from the Drive checkpoints; until it runs they read as
     // Not attributable, which is the honest answer rather than a guess.

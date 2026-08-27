@@ -30,6 +30,7 @@ function episode(vuln_key: string, tags_json: string | null = null): EpisodeRow 
     compaction_id: "cmp-1",
     fix_date: null,
     fix_observed_at: null,
+    published_date: null,
     tags_json,
     ...emptyRiskSignals(),
   };
@@ -43,6 +44,7 @@ function ledgerRow(vuln_key: string, tags_json: string | null): LedgerRow {
     resolved_at: "2026-02-01T00:00:00Z", resolution_src: "api", reopened_count: 0,
     first_scan_id: null, last_scan_id: null, subscription_name: null,
     subscription_ext_id: null, tags_json, fix_date: null, fix_observed_at: null,
+    published_date: null,
     ...emptyRiskSignals(),
   };
 }

@@ -16,10 +16,10 @@
 // exploit-intelligence columns:
 //
 //   * ledger rows carry all of reconcile.LEDGER_COLUMNS, not the legacy 18. fix_date,
-//     fix_observed_at, has_kev, has_exploit, epss and risk_observed_at cannot be
-//     recovered from anywhere else once a finding stops being returned by the API, so
-//     an export that dropped them would be lossy in exactly the fields that matter for
-//     coverage and efficiency.
+//     fix_observed_at, published_date, has_kev, has_exploit, epss and risk_observed_at
+//     cannot be recovered from anywhere else once a finding stops being returned by the
+//     API, so an export that dropped them would be lossy in exactly the fields that matter
+//     for coverage, efficiency and the two latency clocks.
 //   * episode rows carry all of EpisodeRow for the same reason — `tags_json` included, or
 //     an export/import round-trip would re-lose the domain attribution compaction was just
 //     taught to keep.

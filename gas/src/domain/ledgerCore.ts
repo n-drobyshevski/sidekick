@@ -42,6 +42,10 @@ export interface EpisodeRow {
   // Carried through compaction so a sealed episode keeps its actionable-clock inputs.
   fix_date: string | null;
   fix_observed_at: string | null;
+  // And its disclosure-latency origin, for the same reason: compaction seals RESOLVED rows,
+  // and a resolved row that got its fix is exactly the disclosure clock's event population.
+  // Dropping the column here would make the metric thin out as the retention floor advances.
+  published_date: string | null;
   // Likewise for the exploit-intelligence inputs behind coverage / efficiency. Not optional:
   // compaction converts RESOLVED ledger rows into episodes, and resolved high-risk rows are
   // exactly the coverage numerator — dropping the flag here would make compaction silently
@@ -374,6 +378,7 @@ export function baseRows(state: LedgerState, now?: number): BaseRow[] {
         tags_json: e.tags_json ?? null,
         fix_date: e.fix_date,
         fix_observed_at: e.fix_observed_at,
+        published_date: e.published_date,
         has_kev: e.has_kev,
         has_exploit: e.has_exploit,
         epss: e.epss,

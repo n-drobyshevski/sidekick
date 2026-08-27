@@ -507,6 +507,7 @@ describe("compaction preserves coverage & efficiency", () => {
       resolution_src: "api", reopened_count: 0, first_scan_id: null, last_scan_id: null,
       subscription_name: null, subscription_ext_id: null, tags_json: null,
       fix_date: null, fix_observed_at: null,
+      published_date: null,
       has_kev: true, has_exploit: false, epss: 0.44,
       risk_observed_at: "2026-01-01T00:00:00Z",
     };
@@ -547,6 +548,7 @@ describe("risk-signal backfill (pure core)", () => {
     resolution_src: null, reopened_count: 0, first_scan_id: null, last_scan_id: null,
     subscription_name: null, subscription_ext_id: null, tags_json: null,
     fix_date: null, fix_observed_at: null,
+    published_date: null,
     has_kev: null, has_exploit: null, epss: null, risk_observed_at: null,
     ...over,
   });
@@ -561,6 +563,7 @@ describe("risk-signal backfill (pure core)", () => {
       first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-02-01T00:00:00Z",
       resolution_src: "api", reopened_count: 0, compaction_id: "cmp", superseded_by_scan: null,
       tags_json: null, fix_date: null, fix_observed_at: null,
+      published_date: null,
       has_kev: null, has_exploit: null, epss: null, risk_observed_at: null,
     });
     return st;
