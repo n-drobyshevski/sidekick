@@ -115,10 +115,12 @@ WIZ_PROJECT_ID_V2=...      # optional; scopes every query
    `SAST_FETCH_RESOLVED` can be turned on. If not, the current design stands. The probe
    introspects the type, and falls back to probing candidate field names one at a time and
    reading the refusal when introspection is closed.
-2. *What is the secrets root called, and does it distinguish removed from rotated?* There is
-   no capture of a secret finding anywhere in this repository, so `Q_SECRETS` is `null`
+2. *What is the secrets root called, and does it distinguish removed from rotated?* There was
+   no capture of a secret finding anywhere in this repository, so `Q_SECRETS` was `null`
    rather than a guess — a plausible document would typecheck, ship, and then measure the
-   wrong population.
+   wrong population. **Answered, and the query is now written from the schema:** the root is
+   `secretInstances`, and removal (`status`/`resolvedAt`) and rotation
+   (`validationStatus`/`lastValidatedAt`) are independent axes on the node type.
 
 **Both are answered as of 2026-08-27** — see [PROBE_FINDINGS.md](PROBE_FINDINGS.md).
 Briefly: `SASTFinding` *does* expose `createdAt`, but no `resolvedAt` and no resolved rows,
@@ -131,6 +133,16 @@ That defect is **fixed in `28c74f9` and verified** — SAST returns `totalCount 
 three timestamps come back populated (PROBE_FINDINGS.md §7). `Q_SECRETS` is now unblocked:
 §7.3 has the identity fields and the filter shapes, including the trap that
 `SecretInstanceVcsDetails` spells the commit `initialCommitHash`, not `commitHash`.
+
+### What the probe and the register will not select
+
+`Q_SECRETS` deliberately omits `snippet` (the matched text) and `validationDetails`. The
+durable store is a Google Sheet plus gzipped Drive archives, readable by everyone on the
+allowlist and exportable to CSV by any of them — a wider audience than the repository the
+secret sits in, and 1,859 of the 1,933 CODE-scoped instances are OPEN. A secrets tool that
+copies live credentials into a spreadsheet has made the exposure worse. The register answers
+*which secret, where, how old, is it dead* from type, path, line and commit; triage opens Wiz
+for the value itself. `test/wizQueries.test.js` holds it.
 
 `npm run dev` runs the **real server bundle** in the browser against in-memory fakes for
 SpreadsheetApp, DriveApp, Properties, Lock and Cache (`dev/gas-shims.js`), so no Google

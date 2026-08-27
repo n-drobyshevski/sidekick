@@ -151,17 +151,72 @@ export const Q_SCA = `query DevSecOpsVulnerabilityFindings(
 }`;
 
 /**
- * Secrets: NOT YET WRITTEN, and deliberately absent rather than guessed.
+ * Secrets: a credential committed to a repository.
  *
- * There is no capture of a secret finding anywhere in this repository, so the root name, the
- * filter type and — most importantly — whether the API distinguishes REMOVED from ROTATED
- * are all unknown. `probe.mjs --roots` introspects the Query type for candidate roots so the
- * question can be answered from the tenant rather than from a vendor doc.
+ * Written from the schema, not from a vendor doc — PROBE_FINDINGS.md §3 and §7.3 are the
+ * evidence for every field below, and three of them are traps worth stating:
  *
- * Writing a plausible document here would be the worst outcome: it would typecheck, ship,
- * and then measure the wrong population.
+ *   1. THE COMMIT FIELD IS `initialCommitHash`, NOT `commitHash`. SASTFindingVcsDetails has
+ *      `commitHash`; SecretInstanceVcsDetails has only `initialCommitHash` and
+ *      `ciWorkflowRun`. Copying SAST's selection fails the WHOLE document, the same way a
+ *      wrong union member would. The semantics are better here anyway — it is the commit
+ *      that INTRODUCED the secret, which is what dates it against history.
+ *   2. `secretDataId` is distinct from both `id` and `externalId`, and looks like the dedup
+ *      key — what should collapse one credential appearing in five files into one rotation
+ *      decision. Selected, but the ledger key must NOT depend on it until it is confirmed
+ *      against data.
+ *   3. `type` is a SecretDetectionRuleType, and that enum includes PUBLIC_KEY alongside
+ *      SAAS_API_KEY, PRIVATE_KEY, PASSWORD, CLOUD_KEY and the rest. Not every row here is a
+ *      live credential, so a rotation metric that counts them all measures the wrong
+ *      population. Carried so the register can exclude rather than average.
+ *
+ * WHAT IS DELIBERATELY NOT SELECTED, and this is a security decision rather than an
+ * oversight: `snippet` (the matched text) and `validationDetails`. This register's durable
+ * store is a Google Sheet plus gzipped Drive archives, readable by everyone on the
+ * allowlist and exportable to CSV by any of them — a far wider audience than the repository
+ * the secret is in. 1,859 of the 1,933 CODE-scoped instances are OPEN, so most of that text
+ * is live credential material. A secrets tool that copies secrets into a spreadsheet has
+ * made the exposure worse, not better. The register answers "which secret, where, how old,
+ * is it dead" from type, path, line and commit; triage opens Wiz for the value itself.
+ *
+ * TWO CLOCKS, and they are independent axes rather than one lifecycle:
+ *   status / resolvedAt              the string left HEAD
+ *   validationStatus / lastValidatedAt   the credential stopped working
+ * Removal does not imply rotation. See the ledger's validation_state column for why the
+ * second one ships as measured / unmeasured.
  */
-export const Q_SECRETS: string | null = null;
+export const Q_SECRETS = `query DevSecOpsSecretInstances(
+  $filterBy: SecretInstanceFilters
+  $first: Int
+  $after: String
+) {
+  secretInstances(filterBy: $filterBy, first: $first, after: $after) {
+    nodes {
+      id
+      externalId
+      secretDataId
+      name
+      type
+      confidence
+      severity
+      path
+      lineNumber
+      status
+      resolvedAt
+      validationStatus
+      lastValidatedAt
+      firstSeenAt
+      lastSeenAt
+      lastUpdatedAt
+      codeToCloudPipelineStage
+      vcsDetails { initialCommitHash }
+      resource { id name type externalId nativeType cloudPlatform }
+      projects { id name isFolder slug }
+    }
+    totalCount
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
 
 export const QUERIES: Record<Scope, string | null> = {
   sast: Q_SAST,
@@ -219,6 +274,18 @@ const BASE: Record<string, Record<string, unknown>> = {
     // Deliberately NOT status: ["OPEN","RESOLVED"]. See SAST_FETCH_RESOLVED below.
     resource: { isDefaultBranch: { equals: true } },
   },
+  secrets: {
+    // THE NARROWING IS THE MEASUREMENT, not tidiness. Unscoped, this register is 394,927
+    // rows and most of them are cloud/runtime rather than code; CODE narrows it to 1,933.
+    //
+    // It also decides whether the secrets clock is trustworthy at all. Sampled across every
+    // stage, secrets close 0.25s-63s after first being seen — the born-and-closed-in-the-
+    // same-instant artifact that keeps SAST_FETCH_RESOLVED off. Scoped to CODE, NOT ONE of
+    // the 72 resolved rows closes inside a day: median 5.15d, p90 56.1d, max 300d. The
+    // artifact is a cloud-stage phenomenon. PROBE_FINDINGS.md §3.
+    codeToCloudPipelineStage: ["CODE"],
+    status: { equals: ["OPEN", "RESOLVED"] },
+  },
 };
 
 /**
@@ -273,8 +340,14 @@ export const SAST_FETCH_RESOLVED = false;
 const OBJECT_FILTERS: Record<Scope, readonly string[]> = {
   sca: [],
   sast: ["severity", "status"],
-  // Unknown until the probe introspects SecretInstanceFilters — see Q_SECRETS.
-  secrets: [],
+  // SecretInstanceFilters MIXES BOTH CONVENTIONS INTERNALLY, which is the §4 trap at finer
+  // grain: status, validationStatus and severity are object filters, while projectId in the
+  // very same type is a bare [String!]. One field's shape says nothing about the next one's.
+  //   status            SecretInstanceStatusFilter            { equals: [...] }
+  //   validationStatus  SecretInstanceValidationStatusFilter  { equals: [...] }
+  //   severity          SecretInstanceSeverityFilter          { equals: [...] }
+  //   projectId         [String!]                             a bare list
+  secrets: ["severity", "status", "validationStatus"],
 };
 
 /** A list-valued filter, shaped the way THIS scope's filter type wants it. */
@@ -300,8 +373,11 @@ export function severityFilter(severities: readonly string[]): string[] {
  * plausible-looking number about the wrong thing.
  */
 export function buildFilter(scope: Scope, opts: FilterOptions = {}): Record<string, unknown> {
-  const q = QUERIES[scope];
-  if (q === null) {
+  // `== null` catches BOTH a scope declared without a document and a scope that does not
+  // exist at all. The strict `=== null` this replaces let an unknown scope through with
+  // `undefined`, which would have built a filter, sent it, and read as an empty register —
+  // the same silent-zero-rows failure the SAST shape bug produced.
+  if (QUERIES[scope] == null) {
     throw new Error(`no query document for scope "${scope}" — see wizQueries.ts`);
   }
   const filterBy: Record<string, unknown> = JSON.parse(JSON.stringify(BASE[scope] ?? {}));
@@ -319,8 +395,10 @@ export function buildFilter(scope: Scope, opts: FilterOptions = {}): Record<stri
     // The two filter types spell the project restriction differently, and the tenant's own
     // exported reference scripts are the evidence for each: sast_request.py passes a bare
     // `projectId: [...]`, sca_request.py passes `projectIdV2: {equals: [...]}`.
-    if (scope === "sast") filterBy.projectId = [opts.projectId];
-    else filterBy.projectIdV2 = { equals: [opts.projectId] };
+    // SAST and secrets both take a bare projectId list; only SCA spells it projectIdV2
+    // with an equals wrapper. Verified per type rather than assumed across them.
+    if (scope === "sca") filterBy.projectIdV2 = { equals: [opts.projectId] };
+    else filterBy.projectId = [opts.projectId];
   }
 
   return filterBy;

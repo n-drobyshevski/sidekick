@@ -22,6 +22,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { envValue, temporalFields, temporalName, temporalType } from "./probeHelpers.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -52,29 +53,6 @@ function loadEnv() {
   }
 }
 
-/**
- * One .env value: quoted verbatim, unquoted stripped of a trailing `# comment`.
- *
- * THIS COST AN HOUR ONCE. The greedy `(.*)` this replaces swallowed the comment, so
- *
- *     WIZ_PROJECT_ID_V2=1dfea0cf-…   # VALUE-CHAIN, pre-filled
- *
- * produced a 101-character project ID — the UUID plus the words after it. Every query was
- * then scoped to a project that does not exist, and the tenant answered each one with a
- * cheerful empty page. An empty register and a parse bug look identical from the outside,
- * which is exactly why this is worth 12 lines.
- */
-function envValue(raw) {
-  const s = raw.trim();
-  const q = s[0];
-  if (q === '"' || q === "'") {
-    const end = s.indexOf(q, 1);
-    // A quoted value keeps everything between the quotes, `#` included — some secrets have
-    // one, and stripping there would corrupt a credential rather than a comment.
-    return end > 0 ? s.slice(1, end) : s.slice(1);
-  }
-  return s.replace(/\s+#.*$/, "").trim();
-}
 loadEnv();
 
 const API_URL = process.env.WIZ_API_URL;
@@ -206,6 +184,35 @@ function renderType(t) {
   return t.name || t.kind || "?";
 }
 
+/**
+ * How EVERY field of a filter type must be sent — a bare list or an object filter.
+ *
+ * Every field, not a handful named in advance. The first version printed the three keys I
+ * happened to guess at, which is the wrong shape of answer to a question whose whole lesson
+ * is that you cannot generalise: SecretInstanceFilters sends `status`, `validationStatus`
+ * and `severity` as objects while `projectId` IN THE SAME TYPE is a bare [String!]. Naming
+ * the keys in advance is how `codeToCloudPipelineStage` went unprinted and had to be
+ * inferred. Print them all; inference is what broke SAST.
+ */
+function printFilterShapes(fields) {
+  const rows = fields.map((f) => {
+    const list = /^\[/.test(f.type);
+    const scalar = /^(String|Int|Float|Boolean|ID)!?$/.test(f.type);
+    return {
+      name: f.name,
+      type: f.type,
+      how: list ? "bare LIST" : scalar ? "scalar" : "OBJECT { equals: [...] }",
+    };
+  });
+  const w = Math.max(...rows.map((r) => r.name.length), 4);
+  console.log("\n    how each field must be SENT:");
+  for (const r of rows) {
+    console.log(`      ${r.name.padEnd(w)}  ${r.type.padEnd(38)} -> ${r.how}`);
+  }
+  const objects = rows.filter((r) => r.how.startsWith("OBJECT")).map((r) => r.name);
+  console.log(`\n      OBJECT_FILTERS entry: [${objects.map((n) => `"${n}"`).join(", ")}]`);
+}
+
 /** Output fields of an object type, or null when introspection is closed. */
 async function typeFields(name) {
   const q = `query SidekickTypeProbe {
@@ -228,20 +235,6 @@ async function typeFields(name) {
   };
 }
 
-/**
- * Anything whose name or type smells like a point in time.
- *
- * CASE-INSENSITIVE, and that is the fix rather than the style. Without the `i` this is
- * anchored to camelCase and silently never matches a SCREAMING_SNAKE enum value, so the
- * probe printed "Sortable fields naming a time: (none)" while the report it wrote in the
- * same breath recorded ["CREATED_AT", "SEVERITY"]. The stored data was right and the line
- * a human reads was wrong, which is the worse way round.
- */
-const TEMPORAL = /(^|[a-z_])(at|date|time|timestamp|seen|detected|resolved|created|updated|opened|closed|first|last)([A-Z_]|$)/i;
-function temporal(fields) {
-  return fields.filter((f) =>
-    TEMPORAL.test(f.name) || /date|time/i.test(f.type));
-}
 
 /* ============================================================== DRY RUN ========= */
 if (DRY_RUN) {
@@ -331,7 +324,7 @@ if (!sastType || sastType.error) {
     ? `\n  ANSWER: ${found.length} selectable timestamp field(s). SAST can have a real clock.`
     : "\n  ANSWER: none selectable. SAST stays dated from observation; keep SAST_FETCH_RESOLVED false.");
 } else {
-  const t = temporal(sastType.fields);
+  const t = temporalFields(sastType.fields);
   console.log(`  SASTFinding exposes ${sastType.fields.length} fields. Temporal-looking ones:`);
   if (t.length) for (const f of t) console.log(`    ${f.name.padEnd(22)} ${f.type}`);
   else console.log("    (none)");
@@ -347,7 +340,7 @@ if (!sastType || sastType.error) {
 const order = await typeFields("SASTFindingOrderField") ?? await typeFields("SASTFindingOrder");
 if (order && !order.error && (order.enumValues?.length || order.inputFields?.length)) {
   const names = order.enumValues.length ? order.enumValues : order.inputFields.map((f) => f.name);
-  const dated = names.filter((n) => TEMPORAL.test(n) || /DATE|TIME/i.test(n));
+  const dated = names.filter((n) => temporalName(n) || temporalType(n));
   console.log(`\n  Sortable fields naming a time: ${dated.length ? dated.join(", ") : "(none)"}`);
   report.findings.sastOrderFields = names;
 }
@@ -359,8 +352,16 @@ console.log();
 // What is not known is the node's IDENTITY fields — which secret, in which file, at which
 // commit — and the SHAPE of the status / validationStatus filters. That second one is not
 // a detail: assuming a filter shape is exactly what made every SAST sync fetch zero rows.
-console.log("=== the secrets register's types ===");
-for (const name of ["SecretInstance", "SecretInstanceFilters"]) {
+// ALL THREE FILTER TYPES, not just the new one. printFilterShapes would have caught the
+// SAST defect on day one — SASTFindingFilters.severity printed as an OBJECT next to
+// VulnerabilityFindingFilters.severity printed as a bare LIST is the whole finding, visible
+// in two adjacent lines. Introspecting only the type currently being written is how that
+// stayed invisible through a full pass.
+console.log("=== every filter type, and how each field must be sent ===");
+for (const name of [
+  "SASTFindingFilters", "VulnerabilityFindingFilters",
+  "SecretInstance", "SecretInstanceFilters",
+]) {
   const shape = await typeFields(name);
   if (!shape || shape.error) {
     console.log(`  ${name}: unavailable (${shape?.error ?? "no __type"})`);
@@ -371,15 +372,7 @@ for (const name of ["SecretInstance", "SecretInstanceFilters"]) {
   for (const f of fields) console.log(`    ${f.name.padEnd(30)} ${f.type}`);
   report.findings[name] = fields;
 
-  if (name === "SecretInstanceFilters") {
-    // The two that decide whether buildFilter sends a list or an object.
-    for (const key of ["status", "validationStatus", "severity"]) {
-      const f = fields.find((x) => x.name === key);
-      if (!f) continue;
-      const isList = /^\[/.test(f.type);
-      console.log(`\n    ${key}: ${f.type} -> send as ${isList ? "a bare LIST" : "an OBJECT { equals: [...] }"}`);
-    }
-  }
+  if (name.endsWith("Filters")) printFilterShapes(fields);
 }
 console.log();
 
