@@ -94,6 +94,15 @@ export const SCOPE_LABELS: Record<Scope, string> = {
   secrets: "Secrets",
 };
 
+/**
+ * The severities a sync requests by default.
+ *
+ * Not a claim about what matters — it is what keeps a first sync inside one execution budget
+ * on an estate where a single repository carries ~6,900 SCA findings. Same default as
+ * brick/devsecops/config.py.
+ */
+export const DEFAULT_FETCH_SEVERITIES = ["CRITICAL", "HIGH"] as const;
+
 /** Statuses that mean "not open". Mirrors brick/devsecops/config.py RESOLVED_STATUSES. */
 export const RESOLVED_STATUSES = new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
 
