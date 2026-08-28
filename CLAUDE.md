@@ -241,6 +241,21 @@ already implements the pipeline and is the behavioural spec (same relationship `
   it for every other file in that worker. The classifier in `vitest.config.ts` detects
   `vi.stubGlobal` / `vi.mock` from the source, for the same reason it detects the other two: a
   hand-written list rots, and the failure does not look like a config mistake.
+- **Settings is `gas_ai`'s shape: tabs over ONE batched save bar**, and what stays OUT of the
+  bar is the design. The access roster writes Script Properties through its own endpoints, so
+  it keeps its own Save; the experimental toggle writes localStorage and saves on change; the
+  System tab is read-only, because credentials and project scope decide WHICH POPULATION every
+  register measures. Two forms with one save model each is fine; two models inside one form is
+  not. `settingsModel.js` is the DOM-free half and duplicates NO constants — the shared SLA
+  windows arrive via `api_bootstrap`, because a client-side copy is a second place for the four
+  sidekicks' byte-identical windows to drift, invisibly.
+- **`setSettings` is a PATCH, not a whole-object write.** With four tabs behind one bar,
+  sending everything makes two readers saving different tabs a minute apart have the second
+  silently revert the first.
+- **A settings key nothing reads is worse than no key.** `showExperimental` sat in the stored
+  Settings while the rail, the router and the help sheet all read `experimental.js`
+  (localStorage). It was written on every save and consulted by nobody, until it was removed —
+  the failure it invites is the next reader wiring a control to it.
 - **`PAGES` in `app.js` is the only IA list**, and a labelled lane must hold two pages —
   `navModel` collapses a lane of one on the rail, but `renderStackedNav` below 800px draws
   the heading unconditionally, so a one-page lane restates its own link. `navGroups.test.js`

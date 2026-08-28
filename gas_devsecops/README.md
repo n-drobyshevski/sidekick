@@ -19,8 +19,11 @@ reconciler with per-scope disappearance (`src/domain/reconcile.ts`), the derived
 (`src/domain/ledgerCore.ts`), censoring-aware remediation statistics
 (`src/domain/remediation.ts`), Sheet persistence (`src/server/ledgerStore.ts`) and a scan
 runner (`src/server/sync.ts`). **Executive, MTTR & SLA, and the three registers are wired to real
-numbers** — six of the ten routes. **Settings → Access is real too**: the allowlist and the
-admin tier are editable in the app rather than by hand in Script Properties.
+numbers** — six of the ten routes. **Settings is real too** — four task tabs (Register / Deadlines / Access / System) over one
+batched save bar, in `gas_ai/`'s shape: the allowlist and admin tier are editable in the app
+rather than by hand in Script Properties, the severity gate and SLA windows are knobs, and the
+System tab stays read-only because credentials and project scope decide which population every
+register measures.
 `npm run check` is green.
 
 **What is not: the live fetch.** `sync.ts`'s source is pluggable and only the sample source
@@ -31,7 +34,7 @@ a remediation event.
 
 Four routes still render their composition — Coverage & efficiency (which needs the P2P
 domain port), Repositories, Scan history and Storage — and say plainly that no data is
-connected. Settings has one real section and names the three it does not have. A page drawing a plausible empty chart would be claiming a pipeline that does
+connected. A page drawing a plausible empty chart would be claiming a pipeline that does
 not exist.
 
 **The registers page server-side**, because SCA is 17,991 rows and the reader looks at fifty.
