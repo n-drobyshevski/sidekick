@@ -434,7 +434,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "31c7b85afe47" : "dev";
+  var BUILD_ID = true ? "fc2bfeac2e64" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -2402,6 +2402,10 @@ var Server = (() => {
     const s = v == null ? "" : String(v).trim();
     return s === "" || s === "null" || s === "undefined" ? null : s;
   }
+  function normText(v) {
+    const s = v == null ? "" : String(v);
+    return s === "" || s === "null" || s === "undefined" ? null : s;
+  }
   function updateJob(jobId, patch, now) {
     updateWhere(TABS.jobs, "job_id", jobId, {
       ...patch,
@@ -2410,22 +2414,23 @@ var Server = (() => {
     if (patch.phase && TERMINAL.includes(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
   }
   function rowToJob(r) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     return {
       job_id: String((_a = r["job_id"]) != null ? _a : ""),
-      kind: (_b = r["kind"]) != null ? _b : "sync",
+      kind: (_b = r["kind"]) != null ? _b : "scan",
       phase: (_c = r["phase"]) != null ? _c : "FAILED",
-      sync_id: (_d = r["sync_id"]) != null ? _d : null,
-      step_index: Number((_e = r["step_index"]) != null ? _e : 0),
-      cursor: (_f = r["cursor"]) != null ? _f : null,
-      page: Number((_g = r["page"]) != null ? _g : 0),
-      nodes_so_far: Number((_h = r["nodes_so_far"]) != null ? _h : 0),
-      total_count: Number((_i = r["total_count"]) != null ? _i : 0),
-      part_refs_json: (_j = r["part_refs_json"]) != null ? _j : null,
-      params_json: (_k = r["params_json"]) != null ? _k : null,
+      scan_id: normText(r["scan_id"]),
+      scope: normText(r["scope"]),
+      cursor: normText(r["cursor"]),
+      page: Number((_d = r["page"]) != null ? _d : 0),
+      findings_so_far: Number((_e = r["findings_so_far"]) != null ? _e : 0),
+      page_size: Number((_f = r["page_size"]) != null ? _f : 0),
+      total_count: Number((_g = r["total_count"]) != null ? _g : 0),
+      params_json: normText(r["params_json"]),
+      journal_ref: normText(r["journal_ref"]),
       error: normError(r["error"]),
-      started_at: String((_l = r["started_at"]) != null ? _l : ""),
-      updated_at: String((_m = r["updated_at"]) != null ? _m : "")
+      started_at: String((_h = r["started_at"]) != null ? _h : ""),
+      updated_at: String((_i = r["updated_at"]) != null ? _i : "")
     };
   }
   function listJobs() {
@@ -2439,6 +2444,7 @@ var Server = (() => {
     if (!job) deleteProp(ACTIVE_JOB_PROP);
     return job;
   }
+  var STALE_JOB_MS = 30 * 6e4;
 
   // src/server/locks.ts
   var LedgerBusyError = class extends Error {
