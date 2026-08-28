@@ -42,6 +42,8 @@ var Server = (() => {
   // src/server/access.ts
   var access_exports = {};
   __export(access_exports, {
+    ACCESS_MAX_BYTES: () => ACCESS_MAX_BYTES,
+    ACCESS_MAX_ENTRIES: () => ACCESS_MAX_ENTRIES,
     PRODUCT: () => PRODUCT,
     __resetMemosForTest: () => __resetMemosForTest,
     accountChooserUrl: () => accountChooserUrl,
@@ -60,7 +62,8 @@ var Server = (() => {
     ownerDomain: () => ownerDomain,
     ownerEmail: () => ownerEmail,
     parseAllowlist: () => parseAllowlist,
-    serviceUrl: () => serviceUrl
+    serviceUrl: () => serviceUrl,
+    validateAddresses: () => validateAddresses
   });
 
   // src/server/pageShell.ts
@@ -219,6 +222,21 @@ var Server = (() => {
       out.push(email);
     }
     return out;
+  }
+  var ACCESS_MAX_BYTES = 8e3;
+  var ACCESS_MAX_ENTRIES = 500;
+  function validateAddresses(raw) {
+    const list = parseAllowlist(Array.isArray(raw) ? raw.join("\n") : String(raw != null ? raw : ""));
+    const bad = list.filter((e) => e.indexOf("@") < 0);
+    if (bad.length) throw new Error(`Not an email address: ${bad.join(", ")}`);
+    if (list.length > ACCESS_MAX_ENTRIES) {
+      throw new Error(`Too many people (${list.length}); the limit is ${ACCESS_MAX_ENTRIES}.`);
+    }
+    const bytes = list.join(",").length;
+    if (bytes > ACCESS_MAX_BYTES) {
+      throw new Error(`That list is too long to store (${bytes} of ${ACCESS_MAX_BYTES} bytes).`);
+    }
+    return list;
   }
   function decide(active, owner, raw, adminsRaw) {
     const email = (active || "").trim();
@@ -416,7 +434,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "36e8a15593ca" : "dev";
+  var BUILD_ID = true ? "31bf03eaf7f5" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -1231,13 +1249,16 @@ var Server = (() => {
   var api_exports = {};
   __export(api_exports, {
     bootstrap: () => bootstrap,
+    getAccess: () => getAccess,
     getChartsBundle: () => getChartsBundle,
     getExecutive: () => getExecutive,
     getMttr: () => getMttr,
     getRegister: () => getRegister,
     getSettings: () => getSettings,
     putSettings: () => putSettings,
-    runSampleSync: () => runSampleSync
+    runSampleSync: () => runSampleSync,
+    saveAccess: () => saveAccess,
+    saveAdmins: () => saveAdmins
   });
 
   // src/domain/ledgerCore.ts
@@ -2605,6 +2626,46 @@ var Server = (() => {
         // over sample rows is the worst lie this product could tell.
         sampleOnly: scans.length > 0 && scans.every((s) => s.mode !== "live")
       };
+    });
+  }
+  function logAccessChange(what, actor, before, after) {
+    const added = after.filter((e) => before.indexOf(e) < 0);
+    const removed = before.filter((e) => after.indexOf(e) < 0);
+    console.log(JSON.stringify({ access: "changed", what, actor, added, removed }));
+  }
+  function getAccess(_p) {
+    return run(() => {
+      if (!canEditUsers()) return { canEditUsers: false, canEditAdmins: false };
+      return {
+        canEditUsers: true,
+        canEditAdmins: canEditAdmins(),
+        owner: ownerEmail(),
+        domain: ownerDomain(),
+        users: currentUsers(),
+        admins: currentAdmins()
+      };
+    });
+  }
+  function saveAccess(p) {
+    return run(() => {
+      if (!canEditUsers()) throw new Error("Only the owner or an admin can change access.");
+      const before = currentUsers();
+      const list = validateAddresses(p == null ? void 0 : p.users);
+      const owner = ownerEmail().trim().toLowerCase();
+      const withOwner = owner && list.indexOf(owner) < 0 ? [owner].concat(list) : list;
+      setProp(PROP_KEYS.allowedUsers, withOwner.join(", "));
+      logAccessChange("users", check().email, before, withOwner);
+      return { users: withOwner };
+    });
+  }
+  function saveAdmins(p) {
+    return run(() => {
+      if (!canEditAdmins()) throw new Error("Only the owner can change admins.");
+      const before = currentAdmins();
+      const list = validateAddresses(p == null ? void 0 : p.admins);
+      setProp(PROP_KEYS.allowedAdmins, list.join(", "));
+      logAccessChange("admins", check().email, before, list);
+      return { admins: list };
     });
   }
   return __toCommonJS(index_exports);

@@ -21,10 +21,10 @@ import { SAMPLE_SCANS } from "./sampleData";
 import { runScan, sampleSource } from "./sync";
 import { registerPage, type RegisterQuery } from "./registers";
 import { BUILD_ID } from "./buildInfo";
-import { hasWizCredentials } from "./props";
+import { hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import { loadSettings, saveSettings } from "./settingsStore";
 import { readAll, TABS } from "./sheetsDb";
-import { canEditUsers } from "./access";
+import * as access from "./access";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 
 /**
@@ -98,7 +98,7 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
     severityOrder: SEVERITY_ORDER,
     slaTargets: SLA_TARGETS,
     latestScan: latest,
-    canEditAccess: canEditUsers(),
+    canEditAccess: access.canEditUsers(),
     settings: loadSettings(),
   };
   });
@@ -342,5 +342,84 @@ export function getExecutive(_p?: unknown): ApiResult<ExecutivePayload> {
       // over sample rows is the worst lie this product could tell.
       sampleOnly: scans.length > 0 && scans.every((s) => s.mode !== "live"),
     };
+  });
+}
+
+
+/* ------------------------------------------------------------------ who may open this */
+
+/**
+ * One Stackdriver line per change.
+ *
+ * A DELEGATED GRANT POWER NEEDS A RECORD OF WHO USED IT. The owner can hand an admin the
+ * ability to admit people; without this, the only trace of an admission is the property's
+ * current value, which says who has access and nothing about who let them in or when.
+ */
+function logAccessChange(what: string, actor: string, before: string[], after: string[]): void {
+  const added = after.filter((e) => before.indexOf(e) < 0);
+  const removed = before.filter((e) => after.indexOf(e) < 0);
+  console.log(JSON.stringify({ access: "changed", what, actor, added, removed }));
+}
+
+/**
+ * What the Access panel needs to draw itself.
+ *
+ * Callable by any allowed caller — the client has to ask whether to render the panel at all —
+ * but THE ROSTER IS ONLY INCLUDED FOR SOMEONE WHO MAY EDIT IT. "No panel at all" has to mean
+ * nothing on the wire, not just nothing in the DOM: a payload the client chose not to draw is
+ * still a payload sitting in the browser's network log.
+ */
+export function getAccess(_p?: unknown): ApiResult<Record<string, unknown>> {
+  return run(() => {
+    if (!access.canEditUsers()) return { canEditUsers: false, canEditAdmins: false };
+    return {
+      canEditUsers: true,
+      canEditAdmins: access.canEditAdmins(),
+      owner: access.ownerEmail(),
+      domain: access.ownerDomain(),
+      users: access.currentUsers(),
+      admins: access.currentAdmins(),
+    };
+  });
+}
+
+/**
+ * Add or remove people. Owner or admin.
+ *
+ * THE PANEL IS NOT THE BOUNDARY — this re-checks, because `google.script.run` reaches
+ * `api_saveAccess` directly from any allowed caller's browser console. Whatever the client
+ * decided to draw has no bearing here.
+ */
+export function saveAccess(p?: { users?: unknown }): ApiResult<{ users: string[] }> {
+  return run(() => {
+    if (!access.canEditUsers()) throw new Error("Only the owner or an admin can change access.");
+    const before = access.currentUsers();
+    const list = access.validateAddresses(p?.users);
+    // The owner is always written in. Redundant with the identity rule that admits them, but
+    // it keeps the property self-documenting for whoever reads it in Project Settings, and it
+    // matches what setup() seeds — one rule instead of a branch for "were they there before".
+    const owner = access.ownerEmail().trim().toLowerCase();
+    const withOwner = owner && list.indexOf(owner) < 0 ? [owner].concat(list) : list;
+    setProp(PROP_KEYS.allowedUsers, withOwner.join(", "));
+    logAccessChange("users", access.check().email, before, withOwner);
+    return { users: withOwner };
+  });
+}
+
+/**
+ * Add or remove admins. OWNER ONLY — and this line is what keeps the tier real.
+ *
+ * An admin who could edit this could promote anyone, including making their own standing
+ * permanent, and the delegation would be indistinguishable from handing over ownership. The
+ * whole difference between a real second tier and a cosmetic one is this check.
+ */
+export function saveAdmins(p?: { admins?: unknown }): ApiResult<{ admins: string[] }> {
+  return run(() => {
+    if (!access.canEditAdmins()) throw new Error("Only the owner can change admins.");
+    const before = access.currentAdmins();
+    const list = access.validateAddresses(p?.admins);
+    setProp(PROP_KEYS.allowedAdmins, list.join(", "));
+    logAccessChange("admins", access.check().email, before, list);
+    return { admins: list };
   });
 }

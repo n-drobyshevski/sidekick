@@ -15,7 +15,15 @@ const TEST_DIR = "test";
  *
  *   - anything importing `test/gasEnv.ts`, whose `bootServer()` calls `vi.resetModules()`
  *     and aliases `window` to `globalThis` before evaluating the GAS shims;
- *   - anything calling `vi.resetModules()` directly.
+ *   - anything calling `vi.resetModules()` directly;
+ *   - anything calling `vi.stubGlobal()` or `vi.mock()`.
+ *
+ * The third arrived with the Access panel's tests, which stub `Session` and
+ * `PropertiesService` at module scope to drive the authorization table. In a SHARED registry
+ * that installs those globals for every other file in the worker — a leak in the same family
+ * as the reset, and one that would surface as an unrelated file mysteriously seeing a signed-in
+ * user. Detected from the source for the same reason as the other two: a hand-written list
+ * rots silently, and the failure does not look like a config mistake.
  *
  * A shared registry plus `resetModules()` is precisely the hazard `isolate` exists for: one
  * file's reset would pull the rug from under the next file's already-bound imports.
@@ -25,7 +33,10 @@ function statefulFiles(): string[] {
     .filter((f) => /\.test\.[cm]?[jt]sx?$/.test(f))
     .filter((f) => {
       const src = readFileSync(join(HERE, TEST_DIR, f), "utf8");
-      return src.includes("gasEnv") || src.includes("vi.resetModules");
+      return src.includes("gasEnv")
+        || src.includes("vi.resetModules")
+        || src.includes("vi.stubGlobal")
+        || src.includes("vi.mock");
     })
     .sort()
     .map((f) => `${TEST_DIR}/${f}`);
