@@ -253,6 +253,19 @@ already implements the pipeline and is the behavioural spec (same relationship `
   succeeds, and `testConnection` drops the cached token first: a cached one outlives a revoked
   client secret by up to six hours, which is exactly the claim it exists to stop the app
   making.
+- **Scope INFERENCE is not a substitute for declaring, and three wrong answers came out of
+  assuming it was.** `appsscript.json` declared no `oauthScopes`, on the reasoning that Apps
+  Script infers them and both siblings get away with it. The register added `UrlFetchApp`; the
+  editor run then failed with "not authorized to call UrlFetchApp.fetch — required permissions
+  .../script.external_request" and NO CONSENT PROMPT EVER APPEARED, in the editor or the web
+  app, with the call sitting literally in `dist/server.js`. The sibling argument was wrong in
+  one specific way worth keeping: `gas/` and `gas_ai/` called `UrlFetchApp` from their FIRST
+  push, so their first consent already covered it — neither has ever WIDENED an
+  already-authorized project, which is the only thing this one did. Declaring the scopes makes
+  the requirement a fact about the manifest, and a manifest change is what makes Apps Script
+  re-ask. `test/manifestScopes.test.js` holds it in both directions: a service the built
+  bundle calls with no scope fails, and a scope nothing calls fails too — a scope list is a
+  consent screen, and an unused entry is permission granted for nothing.
 - **A poller's first paint must not wait for its first interval.** Pressing Run scan produced
   no visible change for three seconds — on the one control whose whole job is to say something
   is now happening. Only the browser found it, and only with the continuation trigger frozen:

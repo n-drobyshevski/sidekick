@@ -131,26 +131,30 @@ about at least two of them, and the clock is the product.
    Script Properties are non-empty, and the button is what turns that into a token exchange
    the tenant actually accepted.
 
-   **A deployment made before this round cannot reach Wiz until it is re-authorized**, and
-   the symptom names a scope rather than a remedy: *"not authorized to call
-   UrlFetchApp.fetch — required permissions: …/script.external_request"*, in the script
-   owner's locale. The bundle now makes outbound requests and creates triggers, which widens
-   the scopes Apps Script infers, and **a `clasp push` does not re-prompt** — it changes the
-   code the editor runs, while the `/exec` URL keeps serving the version it was pinned to. In
-   order:
+   **A deployment made before the collection round cannot reach Wiz until the project is
+   re-authorized**, and the symptom names a scope rather than a remedy: *"not authorized to
+   call UrlFetchApp.fetch — required permissions: …/script.external_request"*, in the script
+   owner's locale.
 
-   1. In the editor, run **`wizDiagnostic()`** and **read the Execution log** — that is where
-      both diagnostics print. It names which step failed, which is the whole point: the three
-      failures look identical from the app and have different remedies.
+   `dist/appsscript.json` declares `oauthScopes` explicitly for exactly this reason. Both
+   sibling projects rely on Apps Script inferring them and get away with it — but they called
+   `UrlFetchApp` from their first push, so their first consent already covered it. This is the
+   only one of the three that ever WIDENED an already-authorized project, and inference did
+   not ask: the call is present in `dist/server.js`, the editor run failed with that message,
+   and no consent prompt appeared anywhere. Declaring the scope makes the requirement a fact
+   about the manifest, and a manifest change is what makes Apps Script re-ask.
+   `test/manifestScopes.test.js` keeps the list honest in both directions — it fails if a
+   service the bundle calls has no scope, and if a scope is declared that nothing calls.
 
-      **A consent prompt appears only if you do not already hold the scope.** Apps Script asks
-      when the running user is missing something the project needs, so an owner who already
-      granted it sees nothing — that is a successful run, not a failed one. What tells you
-      whether the outbound call worked is the log, not the prompt. (`deploymentDiagnostic()`
-      makes no network call at all, so it can never provoke the prompt; it prints to the same
-      log, and also into Settings → System.)
-   2. **Deploy → Manage deployments → Edit → New version.**
-   3. Check the daily scan trigger still fires. A scope change is the one thing that can
+   In order:
+
+   1. `npm run push`, so the new manifest reaches the project.
+   2. In the editor, run **`wizDiagnostic()`** and **accept the consent prompt**. Read the
+      **Execution log** — that is where both diagnostics print, and it names which step
+      failed.
+   3. **Deploy → Manage deployments → Edit → New version.** `clasp push` changes the code the
+      editor runs; the `/exec` URL keeps serving the version it was pinned to.
+   4. Check the daily scan trigger still fires. A scope change is the one thing that can
       suspend an installable trigger with nothing in the UI to say so.
 6. Run `deploymentDiagnostic()` if anything looks wrong; it reports every check at once
    rather than stopping at the first failure. `wizDiagnostic()` is its network-touching
