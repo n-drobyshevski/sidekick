@@ -172,7 +172,7 @@ export function renderScanCard(host, job, opts = {}) {
       class: `scan-step ${s.status}`,
       role: "listitem",
       "aria-label": s.label ? `${s.label} — ${s.status}` : `Register ${s.index + 1} — ${s.status}`,
-    }, el("span", { class: "scan-step-dot", "aria-hidden": "true" }), s.label || ""));
+    }, el("span", { class: "scan-step-dot", "aria-hidden": "true" }), el("span", { class: "scan-step-label" }, s.label || "")));
   }
 
   host.querySelector(".scan-progress-counts").textContent =
@@ -244,7 +244,7 @@ export function openScanDetails(job, opts = {}) {
         class: `scan-step ${s.status}`,
         role: "listitem",
         "aria-label": `${s.label || `Register ${s.index + 1}`} — ${s.status}`,
-      }, el("span", { class: "scan-step-dot", "aria-hidden": "true" }), s.label || ""))),
+      }, el("span", { class: "scan-step-dot", "aria-hidden": "true" }), el("span", { class: "scan-step-label" }, s.label || "")))),
       el("dl", { class: "scan-detail-grid" },
         el("dt", {}, "Status"), el("dd", {}, v.phaseLabel),
         el("dt", {}, "Register"), el("dd", {}, v.scopeLabel || "—"),
