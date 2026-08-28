@@ -27,7 +27,7 @@ import {
   settingsDraft, settingsPatch, SETTINGS_TABS, validateDraft,
 } from "../settingsModel.js";
 import { renderAccessPanel } from "./accessEditor.js";
-import { clear, el } from "../ui.js";
+import { clear, el, fmtDateTime } from "../ui.js";
 import { heroStat, pageHeader, statusPill, togglePills } from "../ui/controls.js";
 import { confirmDialog, emptyState, skeletonStack, toast } from "../ui/feedback.js";
 import {
@@ -228,6 +228,59 @@ export async function renderSettings(host, params) {
     },
   });
 
+/**
+ * The credential row's control: what is stored, whether the tenant has ever accepted it, and
+ * a way to find out.
+ *
+ * The verification is a real token exchange plus one page of one row (`api_testWizConnection`
+ * -> `wizClient.testConnection`), and it drops the cached token first — a cached one outlives
+ * a revoked client secret by up to six hours, so a test that accepted it would keep reporting
+ * success after the credentials stopped working.
+ */
+function credentialControl(boot) {
+  const wrap = el("div", { class: "settings-inline" });
+  const paint = (state) => {
+    clear(wrap);
+    if (!boot || !boot.hasCredentials) {
+      wrap.append(statusPill("warn", "Not set — the register has no tenant to collect from"));
+      return;
+    }
+    if (state && state.ok) {
+      wrap.append(statusPill("ok", `Verified ${fmtDateTime(state.at)}`));
+    } else if (state && state.error) {
+      wrap.append(statusPill("bad", "Refused"), el("span", { class: "muted small" }, state.error));
+    } else if (boot.wizVerifiedAt) {
+      wrap.append(statusPill("ok", `Last verified ${fmtDateTime(boot.wizVerifiedAt)}`));
+    } else {
+      // Stored, never exercised. Neutral rather than green: nothing is wrong, and nothing
+      // has been confirmed either.
+      wrap.append(statusPill("neutral", "Stored, never verified"));
+    }
+    const btn = el("button", {
+      class: "linklike",
+      onclick: async () => {
+        btn.disabled = true;
+        paint({ pending: true });
+        try {
+          const res = await call("api_testWizConnection", {});
+          paint({ ok: true, at: res.at });
+          toast(res.rows === null
+            ? "The tenant answered."
+            : `The tenant answered — ${res.rows.toLocaleString()} findings in scope.`);
+          // The stored timestamp moved, so the next reader of this page sees it too.
+          invalidateBootstrap();
+        } catch (e) {
+          paint({ error: String(e.message || e).slice(0, 200) });
+        }
+      },
+    }, state && state.pending ? "Testing…" : "Test connection");
+    if (state && state.pending) btn.disabled = true;
+    wrap.append(btn);
+  };
+  paint(null);
+  return wrap;
+}
+
   const systemPanel = settingsPanel({
     title: "This deployment",
     description: "What the app is wired to. Read-only here — see below for why.",
@@ -235,9 +288,13 @@ export async function renderSettings(host, params) {
       settingRow({
         label: "Wiz credentials",
         description: "Set as Script Properties, never through the app.",
-        control: boot && boot.hasCredentials
-          ? statusPill("ok", "Present")
-          : statusPill("warn", "Absent — the register runs on sample data"),
+        // PRESENT AND VERIFIED ARE DIFFERENT FACTS, and this row used to state only the
+        // first while looking like the second. `hasCredentials` is three non-empty Script
+        // Properties — no exchange, no call, nothing the tenant has ever agreed to — and a
+        // green pill on a row labelled "Wiz credentials" invites the stronger reading with
+        // nothing beside it to correct that. Meanwhile the rail said "collection not wired".
+        // Two surfaces, one deployment, two stories.
+        control: credentialControl(boot),
       }),
       settingRow({
         label: "Project scope",

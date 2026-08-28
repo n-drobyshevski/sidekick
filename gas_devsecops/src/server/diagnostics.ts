@@ -7,6 +7,7 @@
 
 import { SCOPES } from "../domain/config";
 import { getProp, hasWizCredentials, PROP_KEYS } from "./props";
+import { activeJob, isStaleJob } from "./jobsStore";
 import { BUILD_ID } from "./buildInfo";
 import { cellCount, dataRowCount, ledgerSpreadsheet, SCHEMA_VERSION, TABS } from "./sheetsDb";
 import { loadSettings } from "./settingsStore";
@@ -59,7 +60,28 @@ export function deploymentDiagnostic(): string {
   }
 
   out.push("");
-  out.push("Sync battery: not installed. This build ships the interface base and the page");
-  out.push("composition; collection is Phase 2 (see README.md).");
+  const daily = ScriptApp.getProjectTriggers()
+    .filter((t) => t.getHandlerFunction() === "trigger_dailyScan").length;
+  if (daily) ok("Daily scan trigger", `installed (${daily})`);
+  else bad("Daily scan trigger", "not installed — run setup()");
+
+  const job = activeJob();
+  if (job) {
+    ok("Scan in flight", `${job.job_id} — ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
+    out.push(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
+    if (isStaleJob(job)) {
+      bad("  heartbeat", "silent for over 30 minutes — run resetStuckJob() from the editor");
+    }
+  } else {
+    ok("Scan in flight", "none");
+  }
+
+  // Deliberately says what "present" is worth. Three non-empty Script Properties is not a
+  // working integration, and this diagnostic is read by someone trying to find out why one
+  // is not working.
+  const verified = getProp(PROP_KEYS.wizVerifiedAt);
+  if (verified) ok("Credentials last verified", verified);
+  else bad("Credentials last verified", "never — the tenant has not accepted them yet");
+
   return out.join("\n");
 }

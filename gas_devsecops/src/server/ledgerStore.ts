@@ -159,6 +159,14 @@ export function appendScan(row: {
   new_count: number;
   resolved_count: number;
   reopened_count: number;
+  /**
+   * The Drive folder holding the raw pages this scan was reconciled from, when there is one.
+   *
+   * A sample scan has none. A live one does, and recording it is what lets a later question
+   * about a figure be answered from what the tenant actually returned rather than from the
+   * ledger's own account of it.
+   */
+  raw_ref?: string | null;
 }): void {
   appendRows(TABS.scans, [{
     scan_id: row.scan_id,
@@ -170,7 +178,7 @@ export function appendScan(row: {
     new_count: row.new_count,
     resolved_count: row.resolved_count,
     reopened_count: row.reopened_count,
-    raw_ref: null,
+    raw_ref: row.raw_ref ?? null,
     sealed: false,
   }]);
 }

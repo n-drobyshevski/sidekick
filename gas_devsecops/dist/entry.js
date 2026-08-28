@@ -69,6 +69,10 @@ function api_saveAccess(p) { return timedApi_("saveAccess", p); }
 function api_saveAdmins(p) { return timedApi_("saveAdmins", p); }
 function api_setSettings(p) { return timedApi_("setSettings", p); }
 function api_getDiagnostic(p) { return timedApi_("getDiagnostic", p); }
+function api_runScan(p) { return timedApi_("runScan", p); }
+function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }
+function api_cancelScan(p) { return timedApi_("cancelScan", p); }
+function api_testWizConnection(p) { return timedApi_("testWizConnection", p); }
 
 /* ------------------------------------------------------- editor-run, not RPC */
 /* Gated: these run as whoever opened the editor, which is not necessarily the owner. */
@@ -84,6 +88,34 @@ function deploymentDiagnostic() {
 }
 
 /* ----------------------------------------------------------------- triggers */
-/* None yet. When the sync battery lands its continuation handlers go here and they must
-   stay UNGATED: an installable trigger runs with no active user, so an access check would
-   deny every firing silently. */
+
+/**
+ * The scan battery's handlers. UNGATED, and that is required rather than an oversight.
+ *
+ * An installable trigger runs with NO ACTIVE USER — `Session.getActiveUser().getEmail()`
+ * returns "" — so an access check here would deny every firing, silently, in a log nobody
+ * reads. A multi-hop scan would stop dead at its first budget expiry and look exactly like a
+ * hang. `test/entryPoints.test.js` asserts these carry no `denyResult`, because the
+ * "helpful" refactor that makes them match the api_ delegators is the failure.
+ *
+ * Nothing is exposed by making them reachable: neither takes a caller-supplied argument that
+ * selects work, and both refuse to do anything unless a job row already exists.
+ */
+function trigger_continueScan(e) {
+  return Server.jobs.continueJob(e);
+}
+
+function trigger_dailyScan(e) {
+  return Server.jobs.dailyScan(e);
+}
+
+/* ------------------------------------------------------- editor-run, not RPC */
+
+/**
+ * Last resort when a job is wedged: jobs are single-flight, so one non-terminal row with no
+ * live execution behind it blocks every future scan and the daily trigger with it.
+ */
+function resetStuckJob() {
+  Server.access.assertAllowed("resetStuckJob");
+  return Server.jobs.resetStuckJob();
+}

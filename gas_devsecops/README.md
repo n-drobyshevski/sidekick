@@ -10,7 +10,7 @@ bright-yellow brand (`#ffcb13`) instead of Signal Blue or crimson — the severi
 deliberately identical across all three, so a severity means the same thing wherever you
 read it.
 
-## Status: Phase 2 — the ledger core, four pages reading it, and access editable
+## Status: Phase 2 — collecting. The battery runs, six routes read what it writes.
 
 **What is real:** the shell, the navigation, all ten routes, access control, the settings
 store, the ledger schema, the build and the dev harness — and now the ledger itself. Three
@@ -26,11 +26,25 @@ System tab stays read-only because credentials and project scope decide which po
 register measures.
 `npm run check` is green.
 
-**What is not: the live fetch.** `sync.ts`'s source is pluggable and only the sample source
-exists. The live one REFUSES when called rather than returning an empty page — an empty page
-would write a scan row claiming it covered the scope, and the next scan's disappearance pass
-would resolve the whole register against it. A missing feature must not be able to look like
-a remediation event.
+**The sync battery collects.** `src/server/wizClient.ts` is the transport — the only file in
+`src/` that touches the network, so `wizQueries.ts` stays importable under plain Node and
+`probe.mjs` keeps being evidence about this battery rather than about an approximation of it.
+`src/server/scanJobs.ts` walks each collected register across executions: pages spill to Drive
+as they arrive, the cursor checkpoints to the jobs tab, and a one-shot `trigger_continueScan`
+resumes where the budget expired.
+
+**The one rule everything else follows: the `scans` row is the COMMIT RECORD and it lands
+last.** A scan that dies mid-walk appends no row, so it never becomes a `prevScanId`, so the
+next scan still measures against the last complete scan of that scope. That is the shape of
+the thing rather than a check — and it matters here more than in either sibling, because
+`reconcile` resolves by ABSENCE, so a partial population is indistinguishable from a
+remediated one. Two mutation tests price it on the dev fixture's 94 SCA findings: commit the
+in-flight step on the failure path and a scan row appears reading `total: 32`; let the archive
+reader skip a page it cannot read and 47 findings close as fixes with `resolved_count: 47` and
+no error anywhere.
+
+`liveSource()` still refuses, and still earns its place: what it forbids is not the Wiz call
+but an unbudgeted, unresumable fetch inside the one function that also commits.
 
 Four routes still render their composition — Coverage & efficiency (which needs the P2P
 domain port), Repositories, Scan history and Storage — and say plainly that no data is
@@ -110,9 +124,16 @@ about at least two of them, and the clock is the product.
    `scriptId` belongs to whoever deploys, not to the repo).
 3. `npm run push`
 4. In the Apps Script editor, run `setup()` once. It creates the ledger spreadsheet and the
-   Drive archive folder, ensures every tab and header, and seeds `ALLOWED_USERS` with the
-   owner. It installs **no triggers** — there is no sync battery to schedule yet.
-5. Set `WIZ_API_TOKEN`, or `WIZ_CLIENT_ID` + `WIZ_CLIENT_SECRET`, in Project Settings.
+   Drive archive folder, ensures every tab and header, seeds `ALLOWED_USERS` with the owner,
+   and installs the daily scan trigger (03:00, deduplicated by handler name).
+5. Set `WIZ_API_TOKEN`, or `WIZ_CLIENT_ID` + `WIZ_CLIENT_SECRET`, in Project Settings. Then
+   open Settings → System and press **Test connection**: `hasCredentials` only means three
+   Script Properties are non-empty, and the button is what turns that into a token exchange
+   the tenant actually accepted.
+
+   **The first push after this round will ask for authorization again.** The bundle now calls
+   `UrlFetchApp` and creates `ScriptApp` triggers, which widens the scopes Apps Script infers.
+   That is a one-time consent, not a fault.
 6. Run `deploymentDiagnostic()` if anything looks wrong; it reports every check at once
    rather than stopping at the first failure.
 

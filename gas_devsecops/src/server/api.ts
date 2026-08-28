@@ -18,9 +18,12 @@ import {
 } from "../domain/remediation";
 import { readLedger, readScans } from "./ledgerStore";
 import { SAMPLE_SCANS } from "./sampleData";
-import { runScan, sampleSource } from "./sync";
+// Aliased: `runScan` is also the name of the RPC below, which starts a whole BATTERY of
+// scans rather than one scope. Two different jobs, and the shadowing would be silent.
+import { runScan as runOneScan, sampleSource } from "./sync";
 import { registerPage, type RegisterQuery } from "./registers";
 import { BUILD_ID } from "./buildInfo";
+import { nowIso } from "../domain/util";
 import { getProp, hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import { loadSettings, saveSettings } from "./settingsStore";
 import { validateSettings, withSettings } from "../domain/settingsLogic";
@@ -28,6 +31,8 @@ import { deploymentDiagnostic } from "./diagnostics";
 import { readAll, TABS } from "./sheetsDb";
 import * as access from "./access";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
+import * as scanJobs from "./scanJobs";
+import * as wizClient from "./wizClient";
 
 /**
  * THE ENVELOPE, and it lives here rather than in dist/entry.js.
@@ -70,6 +75,18 @@ export interface Bootstrap {
   severityOrder: readonly string[];
   slaTargets: Record<string, number>;
   latestScan: { scan_id: string; finished_at: string; total: number } | null;
+  /**
+   * When each scope was last scanned — THREE CLOCKS, not one.
+   *
+   * `latestScan` above is a max over the whole scans tab, so it reads "fresh" when SCA ran an
+   * hour ago and secrets has never run at all. The rail dot takes the WORST over the scopes
+   * Settings collects, because a register nobody has looked at is the fact worth surfacing.
+   */
+  lastScanByScope: Record<string, string | null>;
+  /** Credentials the tenant has actually accepted, and when. Null = never verified. */
+  wizVerifiedAt: string | null;
+  /** The scan in flight, so a reload mid-scan picks the progress card back up. */
+  activeJob: scanJobs.JobStatus | null;
   canEditAccess: boolean;
   settings: ReturnType<typeof loadSettings>;
 }
@@ -82,9 +99,15 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
   return run(() => {
   const scans = readAll(TABS.scans);
   let latest: Bootstrap["latestScan"] = null;
+  const byScope: Record<string, string | null> = {};
+  for (const scope of SCOPES) byScope[scope] = null;
   for (const row of scans) {
     const ts = String(row.ts ?? "");
     if (!ts) continue;
+    const scope = String(row.scope ?? "");
+    if (scope in byScope && (byScope[scope] === null || ts > byScope[scope]!)) {
+      byScope[scope] = ts;
+    }
     if (!latest || ts > latest.finished_at) {
       latest = {
         scan_id: String(row.scan_id ?? ""),
@@ -105,6 +128,9 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
     severityOrder: SEVERITY_ORDER,
     slaTargets: SLA_TARGETS,
     latestScan: latest,
+    lastScanByScope: byScope,
+    wizVerifiedAt: getProp(PROP_KEYS.wizVerifiedAt),
+    activeJob: scanJobs.jobStatus(),
     canEditAccess: access.canEditUsers(),
     settings: loadSettings(),
   };
@@ -158,7 +184,7 @@ export function runSampleSync(_p?: unknown): ApiResult<{ scans: unknown[]; seede
     const scans: unknown[] = [];
     for (const s of SAMPLE_SCANS) {
       for (const scope of SCOPES) {
-        scans.push(runScan(scope, sampleSource(s.nodes), {
+        scans.push(runOneScan(scope, sampleSource(s.nodes), {
           scanId: `${s.id}-${scope}`,
           ts: s.ts,
           // The gate THIS scan applied, not the one the settings hold now.
@@ -469,4 +495,51 @@ export function getDiagnostic(_p?: unknown): ApiResult<{ text: string; project: 
     // settings page.
     project: getProp(PROP_KEYS.wizProjectIdV2),
   }));
+}
+
+/* ------------------------------------------------------------------- the battery */
+
+/**
+ * Start a live scan of every collected register.
+ *
+ * Returns as soon as the first hop's budget is spent — the walk continues on its own
+ * continuation triggers — so the client gets a job id to poll rather than a blocked RPC.
+ */
+export function runScan(_p?: unknown): ApiResult<scanJobs.StartResult> {
+  // Not `mutate`: `startScan` takes the lock itself and holds it for the whole first hop,
+  // and wrapping it would take the same lock twice.
+  return run(() => scanJobs.startScan());
+}
+
+/**
+ * The progress of one job, or of whatever is running.
+ *
+ * NARROWED on purpose (see `jobStatus`): the cursor is a production tenant's pagination
+ * handle and `params_json` carries the severity gate and the project id. This is polled every
+ * three seconds for the length of a scan.
+ */
+export function getJobStatus(p?: { jobId?: string }): ApiResult<scanJobs.JobStatus | null> {
+  return run(() => scanJobs.jobStatus(p?.jobId ? String(p.jobId) : undefined));
+}
+
+/** Ask a running scan to stop, or reap it if nothing is actually running. */
+export function cancelScan(p?: { jobId?: string }): ApiResult<scanJobs.CancelResult> {
+  return run(() => scanJobs.cancelScan(String(p?.jobId ?? "")));
+}
+
+/**
+ * Does the tenant answer, with the credentials this deployment holds?
+ *
+ * The endpoint behind the Settings tab's "Test connection". `hasCredentials` is three
+ * truthiness tests over Script Properties and has never meant more than that; this is one
+ * token exchange and one page of one row, which is the difference between a stored string and
+ * a working integration.
+ */
+export function testWizConnection(_p?: unknown): ApiResult<{ ok: true; rows: number | null; at: string }> {
+  return run(() => {
+    const res = wizClient.testConnection();
+    const at = nowIso();
+    setProp(PROP_KEYS.wizVerifiedAt, at);
+    return { ...res, at };
+  });
 }

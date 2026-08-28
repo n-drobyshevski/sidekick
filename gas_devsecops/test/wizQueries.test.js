@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  MAX_PAGES, PAGE_SIZE, QUERIES, Q_SAST, Q_SCA, Q_SECRETS, SAST_FETCH_RESOLVED,
+  MAX_PAGES, PAGE_SIZE, QUERIES, Q_SAST, Q_SCA, Q_SECRETS, ROOT_FIELDS, SAST_FETCH_RESOLVED,
   buildFilter, buildVariables, severityFilter,
   OBJECT_FILTERS as OBJECT_FILTERS_FOR_TEST,
 } from "../src/server/wizQueries";
@@ -348,5 +348,42 @@ describe("scope coverage", () => {
     expect(buildVariables("sca").first).toBe(PAGE_SIZE);
     expect(PAGE_SIZE).toBeGreaterThanOrEqual(100);
     expect(MAX_PAGES).toBeGreaterThan(0);
+  });
+});
+
+describe("the root each document answers under", () => {
+  it("names the connection the document actually selects", () => {
+    // ROOT_FIELDS is what `wizClient` checks a response against, so a wrong entry here would
+    // reject every page of a working scope — or, worse, accept another scope's population.
+    // Asserted against the document text so the pair cannot drift.
+    for (const scope of SCOPES) {
+      const doc = QUERIES[scope];
+      expect(doc).toContain(`${ROOT_FIELDS[scope]}(filterBy:`);
+    }
+  });
+
+  it("gives every scope its own root", () => {
+    const roots = SCOPES.map((s) => ROOT_FIELDS[s]);
+    expect(new Set(roots).size).toBe(roots.length);
+  });
+});
+
+describe("this file stays transport-free", () => {
+  it("reaches for no Apps Script global", async () => {
+    // Its own header states the rule and the reason: `probe.mjs` bundles and imports this
+    // file under plain Node so a read-only probe sends THE APP'S OWN QUERIES. The moment it
+    // touches a GAS global the probe stops being evidence about the battery — it becomes
+    // evidence about a hand-written approximation that happens to live nearby.
+    const fs = await import("node:fs");
+    const src = fs.readFileSync(
+      new URL("../src/server/wizQueries.ts", import.meta.url), "utf8",
+    );
+    // Comments stripped first, and not for tidiness: the file's own header NAMES
+    // `UrlFetchApp` and `PropertiesService` while explaining why it must not use them, so a
+    // raw match would fail on the very prose that states the rule.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    const banned = /\b(UrlFetchApp|PropertiesService|CacheService|DriveApp|SpreadsheetApp|ScriptApp|LockService|Utilities)\b/;
+    expect(code).not.toMatch(banned);
+    expect(code).not.toMatch(/from "\.\/(props|wizClient|archiveStore|sheetsDb)"/);
   });
 });

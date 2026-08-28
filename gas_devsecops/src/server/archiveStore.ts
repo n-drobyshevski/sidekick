@@ -185,8 +185,27 @@ export function writeSyncPage(
   return writeGzJson(syncFolder(syncId), name, payload).getId();
 }
 
-/** All raw pages of one battery step, in page order (missing/unreadable pages skipped). */
-export function readSyncStepPages(syncId: string, stepIndex: number): unknown[] {
+/**
+ * All raw pages of one step, in page order — or a REFUSAL.
+ *
+ * THIS USED TO SKIP A PAGE IT COULD NOT READ, silently, and that is the most dangerous thing
+ * this module could do on this register. The pages are a scope's whole population, and what
+ * happens next is `reconcile`, which resolves by DISAPPEARANCE: every finding that was in the
+ * missing page is absent from the observation set, so it would be written back as remediated,
+ * dated to this scan, and counted as a fix. One unreadable file is 500 false remediations that
+ * look exactly like real ones.
+ *
+ * It is also the guard on the secrets fold. `collapseTwins` pairs twins that can land on
+ * different pages; a dropped page orphans half of every pair it held, and the survivor keeps
+ * its own clock as though it had never had a partner.
+ *
+ * So `expectedPages` — what the job's checkpoint says was written — is compared against what
+ * is on disk, and an unreadable page throws rather than being passed over. Both failures leave
+ * the step uncommitted, which is the only outcome that cannot be mistaken for a measurement.
+ */
+export function readSyncStepPages(
+  syncId: string, stepIndex: number, expectedPages: number,
+): unknown[] {
   const prefix = `step-${stepIndex}-page-`;
   const pages: Array<{ name: string; payload: unknown }> = [];
   const files = syncFolder(syncId).getFiles();
@@ -195,10 +214,56 @@ export function readSyncStepPages(syncId: string, stepIndex: number): unknown[] 
     const name = f.getName();
     if (!name.startsWith(prefix)) continue;
     const payload = parseGzBlob(f.getBlob());
-    if (payload !== null) pages.push({ name, payload });
+    if (payload === null) {
+      throw new Error(
+        `Archive page ${name} of sync ${syncId} could not be read. Refusing to reconcile a `
+        + "scope against a population that is missing a page — every finding in it would "
+        + "resolve as remediated.",
+      );
+    }
+    pages.push({ name, payload });
   }
   pages.sort((a, b) => (a.name < b.name ? -1 : 1));
+  if (pages.length !== expectedPages) {
+    throw new Error(
+      `Sync ${syncId} step ${stepIndex} recorded ${expectedPages} page(s) but ${pages.length} `
+      + "are on disk. Refusing to reconcile against an incomplete population.",
+    );
+  }
   return pages.map((p) => p.payload);
+}
+
+/** How many pages of one step are on disk. For reconciling a checkpoint against Drive. */
+export function syncStepPageCount(syncId: string, stepIndex: number): number {
+  const prefix = `step-${stepIndex}-page-`;
+  let n = 0;
+  const files = syncFolder(syncId).getFiles();
+  while (files.hasNext()) {
+    if (files.next().getName().startsWith(prefix)) n += 1;
+  }
+  return n;
+}
+
+/**
+ * Trash one step's pages, leaving its committed siblings alone.
+ *
+ * Per STEP rather than per sync, because a job's earlier scopes may already have committed
+ * `scans` rows that name this archive as their `raw_ref`. Trashing the whole folder to clean
+ * up an abandoned third step would take the evidence for the first two with it.
+ */
+export function trashSyncStepPages(syncId: string, stepIndex: number): void {
+  const prefix = `step-${stepIndex}-page-`;
+  try {
+    const files = syncFolder(syncId).getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      if (f.getName().startsWith(prefix)) f.setTrashed(true);
+    }
+  } catch (e) {
+    // Best-effort: nothing was committed for this step, so leftover pages cost storage and
+    // nothing else. The next attempt writes by deterministic name and replaces them.
+    console.warn(`Couldn't trash step ${stepIndex} of sync ${syncId}: ${e}`);
+  }
 }
 
 /** Trash a sync's raw archive folder (best-effort; used by resetData). */

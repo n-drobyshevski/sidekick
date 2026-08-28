@@ -25,6 +25,15 @@ export const PROP_KEYS = {
   // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
   // from one an older deployment left behind. Written by setup(), read by setup().
   warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
+  /**
+   * When a real token exchange plus a real query last succeeded.
+   *
+   * Separate from the credentials themselves because they answer different questions.
+   * `hasWizCredentials()` says three strings are non-empty; this says the tenant accepted
+   * them, once, at a time you can read. A Settings page that showed only the first was
+   * inviting the stronger reading with nothing to support it.
+   */
+  wizVerifiedAt: "WIZ_VERIFIED_AT",
 } as const;
 
 export const DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";

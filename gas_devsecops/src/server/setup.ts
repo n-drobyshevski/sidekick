@@ -2,11 +2,14 @@
 // after a schema addition, because ensureTabs appends newly declared headers to tabs that
 // predate them.
 //
-// PHASE 1 INSTALLS NO TRIGGERS. gas_ai schedules a daily sync and three read-model warms;
-// both need a sync battery, and a ClockTrigger pointing at a handler that does not exist
-// fails silently once a day forever. They come back with the battery.
+// THE DAILY SCAN TRIGGER LANDS HERE, and it could not land before the battery did: a
+// ClockTrigger pointing at a handler that does not exist fails silently once a day forever.
+// `trigger_dailyScan` is a real global in dist/entry.js now, and `test/entryPoints.test.js`
+// holds it there. The read-model warms gas_ai also schedules are still not installed —
+// nothing warms a read model here yet.
 
-import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, setProp } from "./props";
+import { DEFAULT_WIZ_AUTH_URL, getProp, hasWizCredentials, PROP_KEYS, setProp } from "./props";
+import { DAILY_HANDLER } from "./scanJobs";
 import { ensureTabs } from "./sheetsDb";
 
 export function setup(): string {
@@ -52,6 +55,25 @@ export function setup(): string {
     }
   }
 
-  notes.push("Triggers: none installed (no sync battery yet — Phase 2)");
+  // The daily scan. Deduplicated by handler name, because setup() is re-run after every
+  // schema addition and a second ClockTrigger would mean two scans racing for one lock.
+  //
+  // Installed even without credentials: `dailyScan` checks for them itself and returns
+  // quietly, which is the difference between an installation that does nothing once a day
+  // and one that logs a failure once a day. What must NOT happen is the reverse — a
+  // ClockTrigger pointing at a handler that does not exist fails silently forever, which is
+  // why this arrived with the battery rather than before it.
+  const existing = ScriptApp.getProjectTriggers()
+    .filter((t) => t.getHandlerFunction() === DAILY_HANDLER);
+  if (existing.length) {
+    notes.push(`Triggers: daily scan already installed (${existing.length})`);
+  } else {
+    ScriptApp.newTrigger(DAILY_HANDLER).timeBased().everyDays(1).atHour(3).create();
+    notes.push("Triggers: installed the daily scan (03:00, project timezone)");
+  }
+  if (!hasWizCredentials()) {
+    notes.push("  note: no Wiz credentials are set, so it will return without scanning.");
+  }
+
   return notes.join("\n");
 }
