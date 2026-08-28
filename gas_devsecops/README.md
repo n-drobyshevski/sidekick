@@ -131,11 +131,24 @@ about at least two of them, and the clock is the product.
    Script Properties are non-empty, and the button is what turns that into a token exchange
    the tenant actually accepted.
 
-   **The first push after this round will ask for authorization again.** The bundle now calls
-   `UrlFetchApp` and creates `ScriptApp` triggers, which widens the scopes Apps Script infers.
-   That is a one-time consent, not a fault.
+   **A deployment made before this round cannot reach Wiz until it is re-authorized**, and
+   the symptom names a scope rather than a remedy: *"not authorized to call
+   UrlFetchApp.fetch — required permissions: …/script.external_request"*, in the script
+   owner's locale. The bundle now makes outbound requests and creates triggers, which widens
+   the scopes Apps Script infers, and **a `clasp push` does not re-prompt** — it changes the
+   code the editor runs, while the `/exec` URL keeps serving the version it was pinned to. In
+   order:
+
+   1. In the editor, run **`wizDiagnostic()`** and accept the consent prompt. Running code
+      that needs the scope is what asks for it; `deploymentDiagnostic()` makes no network
+      call and so authorizes nothing.
+   2. **Deploy → Manage deployments → Edit → New version.**
+   3. Check the daily scan trigger still fires. A scope change is the one thing that can
+      suspend an installable trigger with nothing in the UI to say so.
 6. Run `deploymentDiagnostic()` if anything looks wrong; it reports every check at once
-   rather than stopping at the first failure.
+   rather than stopping at the first failure. `wizDiagnostic()` is its network-touching
+   sibling: it does the real token exchange and one query, and names which of the two failed
+   — they look identical from the app and have different remedies.
 
 Access fails **closed**: an unset `ALLOWED_USERS` means owner-only, and the owner is allowed
 by identity rather than by membership.

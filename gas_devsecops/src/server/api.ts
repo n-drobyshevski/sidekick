@@ -33,6 +33,7 @@ import * as access from "./access";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import * as scanJobs from "./scanJobs";
 import * as wizClient from "./wizClient";
+import { WizNotAuthorizedError } from "./wizClient";
 
 /**
  * THE ENVELOPE, and it lives here rather than in dist/entry.js.
@@ -53,7 +54,12 @@ function run<T>(fn: () => T): ApiResult<T> {
   try {
     return { ok: true, data: fn() };
   } catch (e) {
-    const kind = e instanceof LedgerBusyError ? "busy" : "error";
+    // The KIND travels separately from the message on purpose. A client that had to
+    // recognise "this deployment is not authorized" by reading the text would be matching a
+    // sentence the platform localises — the report that prompted this arrived in French.
+    const kind = e instanceof LedgerBusyError ? "busy"
+      : e instanceof WizNotAuthorizedError ? "not-authorized"
+        : "error";
     return { ok: false, error: String(e instanceof Error ? e.message : e), errorKind: kind };
   }
 }

@@ -85,7 +85,7 @@ describe("the trigger handlers", () => {
 
 describe("editor-run entry points", () => {
   it("are gated — the editor runs as whoever opened it", () => {
-    for (const name of ["setup", "deploymentDiagnostic", "resetStuckJob"]) {
+    for (const name of ["setup", "deploymentDiagnostic", "wizDiagnostic", "resetStuckJob"]) {
       expect(ENTRY).toMatch(
         new RegExp(`function ${name}\\(\\)[\\s\\S]{0,120}assertAllowed\\("${name}"\\)`),
       );

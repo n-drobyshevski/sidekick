@@ -33,7 +33,15 @@ vi.stubGlobal("CacheService", {
   }),
 });
 vi.stubGlobal("Utilities", { sleep: (ms) => { slept.ms.push(ms); } });
-vi.stubGlobal("UrlFetchApp", {
+/**
+ * The scripted transport, RE-INSTALLED IN beforeEach rather than stubbed once.
+ *
+ * `vi.stubGlobal` inside a test outlives that test, so the authorization block below — which
+ * replaces UrlFetchApp with one that throws — silently broke the first spec to run after it.
+ * Measured: "leaves a rejected token reported as a credentials problem" failed against a
+ * global still throwing the French refusal from three tests earlier.
+ */
+const httpStub = {
   fetch: (url, params) => {
     http.calls.push({ url, params });
     const reply = http.replies.shift();
@@ -43,7 +51,8 @@ vi.stubGlobal("UrlFetchApp", {
       getContentText: () => (typeof reply.body === "string" ? reply.body : JSON.stringify(reply.body)),
     };
   },
-});
+};
+vi.stubGlobal("UrlFetchApp", httpStub);
 
 const load = () => import("../src/server/wizClient");
 
@@ -72,6 +81,7 @@ beforeEach(() => {
   props.WIZ_API_URL = "https://api.test.app.wiz.io/graphql";
   props.WIZ_CLIENT_ID = "cid";
   props.WIZ_CLIENT_SECRET = "csecret";
+  vi.stubGlobal("UrlFetchApp", httpStub);
   vi.resetModules();
 });
 
@@ -297,5 +307,74 @@ describe("testConnection turns 'present' into 'measured'", () => {
     testConnection();
     const gql = http.calls.find((c) => c.url.includes("graphql"));
     expect(JSON.parse(gql.params.payload).variables.first).toBe(1);
+  });
+});
+
+describe("Apps Script itself refusing the call", () => {
+  // The failure that shipped and reached an operator: the deployment's authorization predates
+  // the bundle ever calling UrlFetchApp, so the platform throws BEFORE any request is made —
+  // through none of the branches above — and its sentence names a scope URL and no remedy.
+  //
+  // THE TWO LANGUAGES ARE THE POINT OF THIS BLOCK. The message is localised, and the report
+  // that prompted it arrived in French: an English-only match would pass every test in this
+  // file and fail for the person who hit it. This repo has already paid for that once —
+  // sheetsDb.ts deliberately does not test for "exceeds the maximum" for the same reason,
+  // against the same tenant. Only the scope URL is locale-independent.
+  const FRENCH = "Vous n'êtes pas autorisé à appeler UrlFetchApp.fetch. Autorisations "
+    + "requises : https://www.googleapis.com/auth/script.external_request";
+  const ENGLISH = "You do not have permission to call UrlFetchApp.fetch. Required "
+    + "permissions: https://www.googleapis.com/auth/script.external_request";
+
+  const throwOnFetch = (message) => {
+    vi.stubGlobal("UrlFetchApp", { fetch: () => { throw new Error(message); } });
+  };
+
+  it("recognises the refusal in French", async () => {
+    throwOnFetch(FRENCH);
+    const { fetchPage, WizNotAuthorizedError } = await load();
+    expect(() => fetchPage("sast")).toThrow(WizNotAuthorizedError);
+  });
+
+  it("recognises it in English too", async () => {
+    throwOnFetch(ENGLISH);
+    const { fetchPage, WizNotAuthorizedError } = await load();
+    expect(() => fetchPage("sast")).toThrow(WizNotAuthorizedError);
+  });
+
+  it("carries the remedy, not the scope URL", async () => {
+    // What the operator can act on. The middle step is the one that is skipped: pushing code
+    // does not change what the /exec URL serves.
+    throwOnFetch(FRENCH);
+    const { fetchPage } = await load();
+    expect(() => fetchPage("sast")).toThrow(/wizDiagnostic\(\)/);
+    expect(() => fetchPage("sast")).toThrow(/New version/);
+  });
+
+  it("catches it at the TOKEN call too, not only the query", async () => {
+    // getToken is the first thing to touch the network, so in OAuth mode it is where the
+    // refusal actually lands — the query branch would never be reached.
+    throwOnFetch(FRENCH);
+    const { getToken, WizNotAuthorizedError } = await load();
+    expect(() => getToken()).toThrow(WizNotAuthorizedError);
+  });
+
+  it("does NOT claim an ordinary failure is an authorization problem", async () => {
+    // The guard only fires on the scope URL. A network blip or a bad URL must keep its own
+    // message, or every transport failure would send the reader to redeploy the web app.
+    throwOnFetch("DNS lookup failed for api.test.app.wiz.io");
+    const { fetchPage, WizNotAuthorizedError } = await load();
+    expect(() => fetchPage("sast")).toThrow(/DNS lookup failed/);
+    expect(() => fetchPage("sast")).not.toThrow(WizNotAuthorizedError);
+  });
+
+  it("leaves a rejected token reported as a credentials problem", async () => {
+    // The other side of the same line: an HTTP 401 is the tenant refusing the secret, and it
+    // must not be dressed up as a deployment scope issue.
+    const { fetchPage, WizAuthError, WizNotAuthorizedError } = await load();
+    props.WIZ_API_TOKEN = "stale";
+    http.replies.push({ code: 401, body: { m: "expired" } });
+    expect(() => fetchPage("sast")).toThrow(WizAuthError);
+    http.replies.push({ code: 401, body: { m: "expired" } });
+    expect(() => fetchPage("sast")).not.toThrow(WizNotAuthorizedError);
   });
 });
