@@ -22,6 +22,10 @@ export interface ScanRow {
   scan_id: string;
   ts: string;
   scope: string;
+  /** What fed this scan: "sample" or "live". The only honest answer to "is this real data".
+   *  Read from the tab rather than inferred from a scan_id convention, because a convention
+   *  is a thing a later caller can forget while the column cannot be. */
+  mode: string;
   /** Which severities this scan requested — "" or "*" means it covered all of them. */
   severities: string;
   new_count: number;

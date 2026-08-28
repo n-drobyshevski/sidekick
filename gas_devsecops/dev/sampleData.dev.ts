@@ -171,6 +171,13 @@ const COUNTS = {
   secrets: [36, 33, 30],
 };
 
+/** A gated scan cannot hand back a row its gate excludes. */
+function gated(nodes: Rec[], scanIdx: number, scope: string): Rec[] {
+  const gate = GATES[scanIdx]![scope];
+  if (!gate) return nodes;
+  return nodes.filter((n) => gate.includes(String(n["severity"])));
+}
+
 function nodesFor(scanIdx: number): SampleScan {
   const sca: Rec[] = [];
   for (let i = 0; i < COUNTS.sca[scanIdx]!; i++) sca.push(scaNode(i, scanIdx));
@@ -204,8 +211,40 @@ function nodesFor(scanIdx: number): SampleScan {
     if (i % 3 === 0) secrets.push(secretNode(i, scanIdx, true));
   }
 
-  return { sca, sast, secrets };
+  return {
+    sca: gated(sca, scanIdx, "sca"),
+    sast: gated(sast, scanIdx, "sast"),
+    secrets: gated(secrets, scanIdx, "secrets"),
+  };
 }
 
-export const SAMPLE_SCANS: readonly { id: string; ts: string; nodes: SampleScan }[] =
-  SCAN_TS.map((ts, i) => ({ id: `sample-${i + 1}`, ts: iso(ts), nodes: nodesFor(i) }));
+/**
+ * The severity gate each scan applied, per scope.
+ *
+ * THE FIRST SCAN IS WIDE AND THE LATER TWO ARE NARROW, which is what a settings change looks
+ * like and is the only shape that makes this fixture coherent. The register's SCA and SAST
+ * default is CRITICAL/HIGH — so a scan stamped with that gate cannot have returned MEDIUM and
+ * LOW rows, and one that did would put the ledger and its own scan log in contradiction.
+ *
+ * Modelling the change rather than deleting the rows is the better fixture in both
+ * directions: the MEDIUM and LOW rows are legitimately in the ledger (a wider scan put them
+ * there), and they then exercise the disappearance guard exactly as it will be exercised in
+ * production — absent from every later scan, and correctly never resolved for it.
+ */
+const GATES: readonly Record<string, readonly string[] | null>[] = [
+  { sca: null, sast: null, secrets: null },
+  { sca: ["CRITICAL", "HIGH"], sast: ["CRITICAL", "HIGH"], secrets: null },
+  { sca: ["CRITICAL", "HIGH"], sast: ["CRITICAL", "HIGH"], secrets: null },
+];
+
+export const SAMPLE_SCANS: readonly {
+  id: string;
+  ts: string;
+  nodes: SampleScan;
+  gates: Record<string, readonly string[] | null>;
+}[] = SCAN_TS.map((ts, i) => ({
+  id: `sample-${i + 1}`,
+  ts: iso(ts),
+  nodes: nodesFor(i),
+  gates: GATES[i]!,
+}));

@@ -134,6 +134,7 @@ export function readScans(): ScanRow[] {
     scan_id: String(r["scan_id"] ?? ""),
     ts: String(r["ts"] ?? ""),
     scope: String(r["scope"] ?? ""),
+    mode: String(r["mode"] ?? ""),
     severities: String(r["severities"] ?? ""),
     new_count: Number(r["new_count"] ?? 0),
     resolved_count: Number(r["resolved_count"] ?? 0),

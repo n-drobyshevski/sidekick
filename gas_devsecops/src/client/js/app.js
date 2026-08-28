@@ -17,7 +17,8 @@ import {
 } from "./store.js";
 import { onExperimentalChange, showExperimental } from "./experimental.js";
 import {
-  clear, closeTip, el, fmtDateTime, progressBar, runPageTeardown, statusPill, tipAnchor,
+  clear, closeActiveSheet, closeTip, el, fmtDateTime, progressBar, runPageTeardown,
+  statusPill, tipAnchor,
 } from "./ui.js";
 import { brandMark } from "./ui/brandMark.js";
 import { toast } from "./ui.js";
@@ -530,6 +531,13 @@ async function route() {
   // not reach on its own. A definition left hanging over the next page would be explaining
   // something that is no longer on screen.
   closeTip();
+  // THE SHEET IS THE OTHER ONE, and it went unnoticed until a page finally opened one. It is
+  // portaled to <body> too, so a filter drawer or a drill-down left open survives the route
+  // change — and its SCRIM survives with it, sitting over the next page and swallowing every
+  // click. Measured in the browser: opening Dependencies' filter drawer and navigating to
+  // Secrets left the new page unclickable, with nothing on screen explaining why. Neither
+  // sibling app calls this either; neither had a page that opened a sheet.
+  closeActiveSheet();
   // A FRESH <main> PER ROUTE, rather than clearing the one that is there.
   //
   // Clearing removed the outgoing page's nodes but left the ELEMENT, and every page is handed

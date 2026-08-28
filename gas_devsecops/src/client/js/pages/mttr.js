@@ -19,7 +19,7 @@
 // it cannot yet verify. A page whose whole subject is honest measurement should not open on
 // a chart that might not draw.
 
-import { call } from "../api.js";
+import { swrCall } from "../store.js";
 import { el, clear } from "../ui.js";
 import { heroStat, kpiCard, pageHeader, statusPill } from "../ui/controls.js";
 import { dataTable } from "../ui/data.js";
@@ -284,8 +284,11 @@ export function renderMttr(host) {
   }));
   host.append(el("section", { class: "card" }, skeletonStack(4)));
 
-  call("api_getMttr", {})
-    .then((data) => {
+  // swrCall, not a bare call: the cached payload paints immediately and the fresh one
+  // repaints over it, so navigating back to this page does not blank it while an RPC runs.
+  // Every page in both sibling apps reads this way; this one did not, and was the odd one.
+  const paint = (data) => {
+    if (!data) return;
       if (!data.population.total) {
         clear(host);
         host.append(pageHeader({
@@ -300,14 +303,17 @@ export function renderMttr(host) {
             + "the same answer.",
           ),
           el("p", { class: "stub-note" },
-            statusPill("info", "Dev", null),
+            statusPill("neutral", "Dev"),
             " Run the sample sync from the dev console: "
             + "await google.script.run.api_runSampleSync({})"),
         ));
         return;
       }
-      render(host, data);
-    })
+    render(host, data);
+  };
+
+  swrCall("api_getMttr", {}, paint)
+    .then(paint)
     .catch((err) => {
       clear(host);
       host.append(errorState(String(err && err.message ? err.message : err)));

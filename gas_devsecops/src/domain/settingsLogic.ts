@@ -23,9 +23,16 @@ export interface Settings {
   fetchSeverities: Record<Scope, string[]>;
   /** Remediation windows, in days, by severity. */
   slaTargets: Record<string, number>;
-  /** Show routes flagged experimental in the nav. */
-  showExperimental: boolean;
 }
+
+// `showExperimental` USED TO LIVE HERE and was removed rather than wired up: nothing read it.
+// The rail, the router and the help sheet all consult `showExperimental()` in
+// src/client/js/experimental.js, which is localStorage — and that module's own header says why
+// ("LOCAL, not a settings-tab key. This is chrome, not data: it changes what one reader can
+// open and never what anything computes"). The chassis fork brought both, so the stored field
+// was written to the sheet on every save and consulted by nobody. A settings key that decides
+// nothing is worse than no key: the next reader wires a control to it and the control does
+// nothing.
 
 export const DEFAULT_SETTINGS: Settings = {
   scopes: [...SCOPES],
@@ -35,7 +42,6 @@ export const DEFAULT_SETTINGS: Settings = {
     secrets: [...DEFAULT_FETCH_SEVERITIES.secrets],
   },
   slaTargets: { ...SLA_TARGETS },
-  showExperimental: false,
 };
 
 function asList(v: unknown, allowed: readonly string[]): string[] | null {
@@ -103,7 +109,6 @@ export function cleanSettings(raw: Rec | null | undefined): Settings {
     scopes: scopes.length ? scopes : [...SCOPES],
     fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
     slaTargets: sla,
-    showExperimental: r.showExperimental === true,
   };
 }
 

@@ -16,8 +16,6 @@ import { rowFromSheet, rowToSheet } from "../src/server/ledgerStore";
 import { liveSource, observationsFor, sampleSource } from "../src/server/sync";
 import { SAMPLE_SCANS } from "../dev/sampleData.dev";
 
-const GATE = { sca: ["CRITICAL", "HIGH"], sast: ["CRITICAL", "HIGH"], secrets: null };
-
 /** Replay the dev dataset through the real pipeline, without any storage. */
 function replay() {
   let ledger = {};
@@ -28,7 +26,10 @@ function replay() {
       const { observations } = observationsFor(scope, s.nodes[scope]);
       const r = reconcile(
         observations, ledger, scope, `${s.id}-${scope}`, s.ts, prev?.scan_id ?? null,
-        { scannedSeverities: GATE[scope], prevScanTs: prev?.ts ?? null },
+        // The gate THIS scan applied, from the dataset rather than a constant here: scan 1
+        // is wide and scans 2-3 are narrow, which is what a settings change looks like and
+        // is what puts MEDIUM/LOW rows in the ledger for the guard to protect.
+        { scannedSeverities: s.gates[scope], prevScanTs: prev?.ts ?? null },
       );
       ledger = r.ledger;
       scanLog.push({ scan_id: `${s.id}-${scope}`, ts: s.ts, scope, deltas: r.deltas });
@@ -48,6 +49,35 @@ describe("the sample dataset drives a real ledger", () => {
     expect(firstScanDeltas.every((s) => s.deltas.resolved_count === 0)).toBe(true);
     const later = scanLog.filter((s) => !s.scan_id.startsWith("sample-1"));
     expect(later.some((s) => s.deltas.resolved_count > 0)).toBe(true);
+  });
+
+  it("never hands back a row its own gate excludes", () => {
+    // The fixture defect this pins: SCA showed MEDIUM and LOW rows while its scan log said
+    // it covered CRITICAL,HIGH — the ledger and its own account of how it was built in
+    // contradiction. Caught by looking at the Executive page, not by a test, which is why
+    // there is one now.
+    for (const s of SAMPLE_SCANS) {
+      for (const scope of ["sca", "sast", "secrets"]) {
+        const gate = s.gates[scope];
+        if (!gate) continue;
+        const outside = s.nodes[scope].filter((n) => !gate.includes(n.severity));
+        expect(outside.map((n) => n.severity)).toEqual([]);
+      }
+    }
+  });
+
+  it("models a WIDENED first scan, so the guard has something to protect", () => {
+    // Deleting the out-of-gate rows would have made the fixture coherent and the
+    // disappearance guard untestable — nothing would ever be out of scope. A wide first scan
+    // followed by a narrowed one is both coherent AND the real production shape.
+    expect(SAMPLE_SCANS[0].gates.sca).toBeNull();
+    expect(SAMPLE_SCANS[1].gates.sca).toEqual(["CRITICAL", "HIGH"]);
+
+    const { rows } = replay();
+    const outOfGate = rows.filter(
+      (r) => r.scope === "sca" && !["CRITICAL", "HIGH"].includes(r.severity));
+    expect(outOfGate.length).toBeGreaterThan(0);      // they are in the ledger...
+    expect(outOfGate.every((r) => r.status === "OPEN")).toBe(true); // ...and never resolved
   });
 
   it("carries all three registers", () => {

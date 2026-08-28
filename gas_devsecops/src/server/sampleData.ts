@@ -14,5 +14,10 @@ import type { Rec } from "../domain/util";
 /** Raw API nodes per scope, in the shape each scope's query returns. */
 export type SampleScan = Record<string, readonly Rec[]>;
 
-/** Scans in order. Empty in the deployed bundle. */
-export const SAMPLE_SCANS: readonly { id: string; ts: string; nodes: SampleScan }[] = [];
+/** Scans in order, each carrying the severity gate it applied. Empty in the deployed bundle. */
+export const SAMPLE_SCANS: readonly {
+  id: string;
+  ts: string;
+  nodes: SampleScan;
+  gates: Record<string, readonly string[] | null>;
+}[] = [];

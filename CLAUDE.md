@@ -199,6 +199,63 @@ already implements the pipeline and is the behavioural spec (same relationship `
   accent is 1.52:1. `test/tokens.test.js` holds all four.
 - **The severity palette is byte-identical across all four surfaces.** A severity means the
   same thing everywhere; the brand deliberately does not.
+- **A DEATH DATE IS NOT ALWAYS A MEASUREMENT, and the row has to say which.** Where
+  `resolution_src` is `disappeared` the date is the scan that first stopped seeing the
+  finding — an upper bound whose error is the scan interval. "Gone by 12 Aug" and "Resolved
+  12 Aug" are the same pixel width, so the provenance rides in the WORD
+  (`pages/registerModel.js`). It applies to all three registers, not only SAST: SAST is
+  where it is always true, but qualifying only SAST implies the other two dates are exact.
+- **An unmeasured register is not a register of zeroes.** A hero of `0` over three stat
+  cards of `0` states four facts about a population nobody has looked at. Every page checks
+  "has this ever been scanned" before it checks "how many" — but a filter that matches
+  nothing keeps its figures, because there the zero IS a measurement.
+- **A portaled sheet outlives the page that opened it.** `app.js` closed the tip on every
+  route change and never the sheet, so a filter drawer's SCRIM sat over the next page
+  swallowing clicks with nothing on screen explaining why. Neither sibling app calls
+  `closeActiveSheet()` either; neither had a page that opened one.
+- **Severity sorts by MEANING, so ascending is worst-first.** The comparator ranks against
+  `SEVERITY_ORDER`, where CRITICAL is 0. A register defaulting to descending opens on LOW.
+- **A scan records the gate it APPLIED, not the one the settings hold now** (`runScan`'s
+  `severities` override). The two differ across a settings change, and stamping today's gate
+  on a replay of older scans makes the disappearance guard believe a severity was covered by
+  a scan that never looked at it. The dev fixture models exactly that: scan 1 wide, scans 2-3
+  narrow — which is also the only shape that leaves the guard something to protect.
+- **The Access panel is not the boundary, and the tier is one `canEditAdmins()` call.**
+  `google.script.run` reaches `api_saveAccess` from any allowed caller's console, so every
+  endpoint re-checks; `getAccess` withholds the ROSTER from a non-editor rather than letting
+  the client decline to draw it. `saveAdmins` is owner-only because an admin who could edit it
+  could promote themselves permanently. `test/accessAdmin.test.ts` — which `access.ts` cited
+  for a whole fork before anyone ported it — fails the moment that blurs.
+- **A removal confirmation has to compare against the DISK, not against page load.** `gas/`
+  computes it from the `getAccess` payload the page opened with and never refreshes it, so the
+  first removal in a visit is confirmed and every one after it is silent. Fixed here; the
+  baseline moves on every save.
+- **Copying a page from `gas/` has two traps this chassis adds.** `el()` THROWS on `title`
+  (the native-tooltip ban), and the fork already renamed the access CSS — `.access-remove`,
+  `.access-add`, `.access-block__label` against `gas/`'s `.cond-remove`, `.sub-add`,
+  `.scope-block`. The first fails loudly; the second renders an unstyled panel in silence.
+  Check before assuming a class is missing: `button.link` looks absent to a `^\.link` grep and
+  is defined in `base.css`, so "renamed" is a claim to verify rather than a default.
+- **A test that stubs a global belongs in the ISOLATED vitest project.** The pure project runs
+  `isolate: false` on a shared worker, so a module-scope `vi.stubGlobal("Session", …)` installs
+  it for every other file in that worker. The classifier in `vitest.config.ts` detects
+  `vi.stubGlobal` / `vi.mock` from the source, for the same reason it detects the other two: a
+  hand-written list rots, and the failure does not look like a config mistake.
+- **Settings is `gas_ai`'s shape: tabs over ONE batched save bar**, and what stays OUT of the
+  bar is the design. The access roster writes Script Properties through its own endpoints, so
+  it keeps its own Save; the experimental toggle writes localStorage and saves on change; the
+  System tab is read-only, because credentials and project scope decide WHICH POPULATION every
+  register measures. Two forms with one save model each is fine; two models inside one form is
+  not. `settingsModel.js` is the DOM-free half and duplicates NO constants — the shared SLA
+  windows arrive via `api_bootstrap`, because a client-side copy is a second place for the four
+  sidekicks' byte-identical windows to drift, invisibly.
+- **`setSettings` is a PATCH, not a whole-object write.** With four tabs behind one bar,
+  sending everything makes two readers saving different tabs a minute apart have the second
+  silently revert the first.
+- **A settings key nothing reads is worse than no key.** `showExperimental` sat in the stored
+  Settings while the rail, the router and the help sheet all read `experimental.js`
+  (localStorage). It was written on every save and consulted by nobody, until it was removed —
+  the failure it invites is the next reader wiring a control to it.
 - **`PAGES` in `app.js` is the only IA list**, and a labelled lane must hold two pages —
   `navModel` collapses a lane of one on the rail, but `renderStackedNav` below 800px draws
   the heading unconditionally, so a one-page lane restates its own link. `navGroups.test.js`
