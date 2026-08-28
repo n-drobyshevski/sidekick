@@ -72,10 +72,12 @@ function guardAuthorization<T>(fn: () => T): T {
     throw new WizNotAuthorizedError(
       "This deployment is not authorized to make outbound requests, so it cannot reach Wiz. "
       + "The credentials are not the problem. Fix it in this order: (1) open the Apps Script "
-      + "editor and run wizDiagnostic() — accepting its consent prompt is what grants the "
-      + "scope; (2) Deploy > Manage deployments > Edit > New version, because pushing code "
-      + "does not change what the web app URL serves; (3) check the daily scan trigger still "
-      + "fires, since a scope change can suspend an installable trigger silently.",
+      + "editor, run wizDiagnostic() and READ THE EXECUTION LOG — it names which step fails, "
+      + "and a consent prompt appears only if you do not already hold the scope, so no prompt "
+      + "is a normal run rather than a failed one; (2) Deploy > Manage deployments > Edit > "
+      + "New version, because pushing code does not change what the web app URL serves; "
+      + "(3) check the daily scan trigger still fires, since a scope change can suspend an "
+      + "installable trigger silently.",
     );
   }
 }
