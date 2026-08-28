@@ -457,8 +457,12 @@ describe("what the progress poll may see", () => {
 
     const status = jobStatus();
     expect(status).not.toBeNull();
+    // An ALLOWLIST, not a sample, so a field added to JobStatus has to be argued for rather
+    // than arriving. It has already done that once: `scopes` failed this spec when it was
+    // added, and is here because the stepper cannot name a register without it and because
+    // it is the same list `api_bootstrap` already ships from Settings.
     expect(Object.keys(status).sort()).toEqual([
-      "error", "findings_so_far", "job_id", "page", "phase", "scope", "stale",
+      "error", "findings_so_far", "job_id", "page", "phase", "scope", "scopes", "stale",
       "started_at", "step", "steps_total", "total_count", "updated_at",
     ]);
     expect(JSON.stringify(status)).not.toContain("sca:");

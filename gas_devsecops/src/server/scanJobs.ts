@@ -473,6 +473,17 @@ export interface JobStatus {
   job_id: string;
   phase: string;
   scope: string | null;
+  /**
+   * Every register this job covers, in order.
+   *
+   * Shipped as NAMES rather than just a count, because the card's stepper is the answer to
+   * "which registers are already safe if this fails" — and a stepper reading "Register 2"
+   * answers nothing. Measured in the browser: with only `steps_total` the card drew
+   * "Dependencies — active, Register 2 — waiting, Register 3 — waiting".
+   *
+   * Safe to expose: it is the same scope list `api_bootstrap` already ships from Settings.
+   */
+  scopes: string[];
   step: number;
   steps_total: number;
   page: number;
@@ -502,6 +513,7 @@ export function jobStatus(jobId?: string): JobStatus | null {
     job_id: job.job_id,
     phase: job.phase,
     scope: job.scope,
+    scopes: params.scopes.slice(),
     step: step < 0 ? 0 : step,
     steps_total: params.scopes.length,
     page: job.page,

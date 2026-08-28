@@ -6,9 +6,11 @@
 // never to offer. The scan controls stay in the rail, where the last-scan caption can afford
 // its words.
 //
-// PHASE 1. The shell, the nav and the ten routes are real; the pages are stubs and there is
-// no sync battery yet, so the scan zone states that rather than offering a button that would
-// fail. See README.md.
+// THE SCAN ZONE IS A MEASUREMENT NOW. It used to draw a hardcoded grey dot reading
+// "Collection not wired — Phase 2" and no button, which was honest while there was no
+// battery and became a second surface disagreeing with Settings once there was. The state
+// comes from `railStatus()` — credentials, per-scope freshness and the job in flight — and
+// the button starts a real scan. See README.md.
 
 import { call } from "./api.js";
 import {
@@ -20,6 +22,8 @@ import {
   clear, closeActiveSheet, closeTip, el, fmtDateTime, progressBar, runPageTeardown,
   statusPill, tipAnchor,
 } from "./ui.js";
+import { railStatus, withLabels } from "./railStatus.js";
+import { openScanDetails, renderScanCard } from "./scanProgress.js";
 import { brandMark } from "./ui/brandMark.js";
 import { toast } from "./ui.js";
 import { renderExecutive } from "./pages/executive.js";
@@ -107,6 +111,11 @@ const PAGES = {
 
 // Nav icons (ROUTE_ICONS, LANE_ICONS) live in routeIcons.js — see that module for why.
 
+// The Run scan button's mark: an arrow travelling into a store, not a "play" triangle. What
+// the button does is fetch a population and put it somewhere, and a play glyph would promise
+// something that starts and runs rather than something that collects and commits.
+const RUN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v10.5"/><path d="M8.2 10.3L12 14.1l3.8-3.8"/><path d="M4.5 15.5v3a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3"/></svg>';
+
 // A span carrying an inline SVG (el() builds HTML nodes, so SVG goes in via innerHTML).
 function iconSpan(svg, cls) {
   const s = el("span", { class: cls || "nav-icon", "aria-hidden": "true" });
@@ -150,6 +159,17 @@ const ROUTE_LOADING_DELAY_MS = 120;
 // The first page render after each boot is covered by the boot splash → page skeleton, so it
 // skips the route-overlay veil; every subsequent navigation uses the veil as normal.
 let firstRoute = true;
+
+// The scan battery's client state. `lastJob` exists so the Details handler reads the CURRENT
+// job at click time rather than the one captured when the handler was built — the poller has
+// almost certainly moved on by then.
+let jobPoller = null;
+let scanCardHost = null;
+let scanButtonsRow = null;
+let stoppingJobId = null;
+let stoppingSince = 0;
+let lastJob = null;
+let scanDetails = null;
 
 function beginRouteLoading() {
   clearTimeout(routeLoadingTimer);
@@ -429,26 +449,62 @@ function renderSidebar(sidebar, data) {
   if (narrowNav()) renderStackedNav(sidebar);
   else renderRail(sidebar, currentRailItems());
 
-  // THE SCAN ZONE, stated honestly for Phase 1.
-  //
-  // The shell keeps the zone — it is where the register's freshness lives, and moving it
-  // later would move the one caption a reader checks first. What it does NOT keep is a
-  // "Run scan" button, because there is no sync battery behind it yet and a button that
-  // fails on click is worse than no button (PRODUCT.md, principle 5: honest state). The
-  // button and the job card come back with the battery in Phase 2.
+  // The scan zone. Its state is derived, never asserted — see railStatus.js for why that
+  // sentence needed writing down.
+  const status = railStatus({
+    hasCredentials: data ? data.hasCredentials : false,
+    lastScanByScope: withLabels(data && data.lastScanByScope, data && data.scopeLabels),
+    scopes: (data && data.settings && data.settings.scopes) || [],
+    job: data ? data.activeJob : null,
+  });
+
   const zone = el("div", { class: "scan-zone" });
+  scanCardHost = el("div", {});
+
+  // NO DRY-RUN BEHIND THIS BUTTON. Without credentials it refuses rather than quietly
+  // running the sample source: pressing "Run scan" and getting invented figures back under a
+  // real-looking scan row is worse than a disabled control that says why.
+  const runnable = Boolean(data && data.hasCredentials);
+  const runBtn = el("button", {
+    class: "primary",
+    disabled: runnable ? null : true,
+    onclick: runnable ? () => startScan(runBtn) : null,
+  }, iconSpan(RUN_ICON), el("span", { class: "btn-label" }, "Run scan"));
+  scanButtonsRow = runnable
+    ? el("div", { class: "scan-buttons" }, runBtn)
+    : el("div", { class: "scan-buttons" }, tipAnchor(
+      el("span", { class: "tip-disabled-wrap" }, runBtn),
+      "No Wiz credentials are set, so there is nothing to scan.",
+    ));
+
   zone.append(
-    el("div", { class: "scan-caption" }, statusPill("neutral", "Collection not wired")),
+    scanCardHost,
+    scanButtonsRow,
+    // The status sentence, and the dot that is its glance version. The sentence comes FIRST
+    // in the DOM and is only visually hidden in the rail (base.css), so it is in the
+    // accessibility tree at every width — above 800px it is the only status a screen reader
+    // or a keyboard user can reach, because the dot is nine pixels of colour.
+    el("div", { class: "scan-caption" }, statusPill(
+      status.state === "warn" ? "warn" : status.state === "bad" ? "bad"
+        : status.state === "ok" ? "ok" : "neutral",
+      status.label,
+    )),
     tipAnchor(el("span", {
-      class: "rail-status-dot neutral",
+      class: `rail-status-dot ${status.state}`,
       "aria-hidden": "true",
-    }), "Collection not wired — Phase 2"),
-    el("div", { class: "scan-caption" },
-      data && data.latestScan
-        ? `Last scan ${fmtDateTime(data.latestScan.finished_at)}`
-        : "No scans yet."),
+      tabindex: "0",
+    }), [status.label, status.detail].filter(Boolean).join(" — ")),
+    ...(status.detail ? [el("div", { class: "scan-caption" }, status.detail)] : []),
   );
   sidebar.append(zone);
+
+  // A reload in the middle of a scan picks the card back up: the job rides in the bootstrap
+  // payload, so there is nothing to reconstruct from the URL and no window where the scan is
+  // running with nothing on screen saying so.
+  if (data && data.activeJob) {
+    paintCard(data.activeJob);
+    watchJob(data.activeJob.job_id);
+  }
   // The rail is rebuilt wholesale on every refresh() and on every experimental-flag change,
   // so the panel's marks on it — which item is open, which lane holds the current page — have
   // to be re-stamped onto the new nodes each time. The panel's own state survives in
@@ -473,9 +529,120 @@ function navContext() {
   return { savedViews: [] };
 }
 
-// The sync battery's client half — `startSync`, the job poller, the progress card and the
-// details drawer — was removed with the scan button above rather than left calling RPCs
-// that do not exist. gas_ai/src/client/js/syncProgress.js is the reference to port from.
+/* --------------------------------------------------------------- the scan battery */
+
+/**
+ * How long an optimistic "Stopping…" is allowed to stand.
+ *
+ * It used to be permanent in the sibling: it hid the Stop button and cleared only on a
+ * CANCELLED the server might never produce, so a job that died between hops left the reader
+ * with no Stop and no Run. Expiring it puts the action back.
+ */
+const STOPPING_GRACE_MS = 45_000;
+
+async function startScan(btn) {
+  btn.disabled = true;
+  try {
+    const res = await call("api_runScan", {});
+    toast(res.message);
+    if (res.jobId) { stoppingJobId = null; watchJob(res.jobId); }
+    else await refresh();
+  } catch (e) {
+    toast(String(e.message || e), "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function paintCard(job) {
+  lastJob = job;
+  if (stoppingJobId === job.job_id && Date.now() - stoppingSince > STOPPING_GRACE_MS) {
+    stoppingJobId = null;
+  }
+  const view = renderScanCard(scanCardHost, job, {
+    scopeLabels: (bootstrapCached() || {}).scopeLabels || {},
+    onDetails: () => {
+      // `lastJob` at CLICK time, not the job captured when the handler was made: the poller
+      // has almost certainly moved on, and opening the drawer on a job from three seconds
+      // ago shows a stale page that then jumps on the next tick.
+      scanDetails = openScanDetails(lastJob, {
+        // The same labels the card uses. Without them the drawer's Register row printed the
+        // raw scope key ("sca") beside a card that said "Dependencies".
+        scopeLabels: (bootstrapCached() || {}).scopeLabels || {},
+        onStop: () => requestStop(lastJob.job_id),
+      });
+    },
+    onStop: stoppingJobId === job.job_id ? null : () => requestStop(job.job_id),
+  });
+  if (scanDetails) scanDetails.update(job);
+  // The run button comes back when the job has gone quiet. Hiding it unconditionally — which
+  // is what the sibling does — takes away the only way out of a wedged job, while the card
+  // itself advises "stop it, then run a new scan".
+  if (scanButtonsRow) scanButtonsRow.style.display = view && view.stale ? "" : "none";
+}
+
+function stopWatch() {
+  if (jobPoller) clearInterval(jobPoller);
+  jobPoller = null;
+}
+
+/**
+ * Watch a job until it reaches a terminal phase.
+ *
+ * THE FIRST POLL IS IMMEDIATE, and that is a fix rather than a detail. Written as a plain
+ * `setInterval`, the card's first frame lands three seconds after the click — so pressing
+ * Run scan produced no visible change at all, on the one control in the app whose whole job
+ * is to say that something is now happening. Caught in the browser with the continuation
+ * trigger frozen, which is the only way to hold a scan still long enough to look at it.
+ */
+function watchJob(jobId) {
+  stopWatch();
+  const tick = async () => {
+    try {
+      const job = await call("api_getJobStatus", { jobId });
+      if (!job) { stopWatch(); clear(scanCardHost); return; }
+      if (job.phase === "DONE") {
+        stopWatch();
+        if (scanDetails) scanDetails.update(job);
+        toast("Scan complete.");
+        await refresh();
+      } else if (job.phase === "CANCELLED") {
+        stopWatch();
+        stoppingJobId = null;
+        if (scanDetails) scanDetails.update(job);
+        toast("Scan stopped.");
+        await refresh();
+      } else if (job.phase === "FAILED") {
+        // The card STAYS UP on a failure, holding the error where it happened. A refresh
+        // here would clear it and leave a toast as the only account of what went wrong.
+        stopWatch();
+        paintCard(job);
+        if (scanButtonsRow) scanButtonsRow.style.display = "";
+        toast(job.error || "Scan failed.", "error");
+      } else {
+        paintCard(job);
+      }
+    } catch {
+      // A poll that fails is not a scan that failed — the next tick asks again.
+    }
+  };
+  tick();
+  jobPoller = setInterval(tick, 3000);
+}
+
+async function requestStop(jobId) {
+  stoppingJobId = jobId;
+  stoppingSince = Date.now();
+  if (lastJob && lastJob.job_id === jobId) paintCard(lastJob);
+  try {
+    const res = await call("api_cancelScan", { jobId });
+    if (res.stopped) { stoppingJobId = null; stopWatch(); await refresh(); }
+    toast(res.message || "Stopping the scan…");
+  } catch (e) {
+    stoppingJobId = null;
+    toast(String(e.message || e), "error");
+  }
+}
 
 export async function refresh() {
   invalidateBootstrap();

@@ -448,7 +448,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "47e312e0704b" : "dev";
+  var BUILD_ID = true ? "1dd85ef0b342" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -604,6 +604,166 @@ var Server = (() => {
     if (!url) return null;
     const continueUrl = url + (url.indexOf("?") >= 0 ? "&" : "?") + ENTER_PARAM + "=1";
     return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
+  }
+
+  // src/server/scanJobs.ts
+  var scanJobs_exports = {};
+  __export(scanJobs_exports, {
+    CONTINUE_HANDLER: () => CONTINUE_HANDLER,
+    DAILY_HANDLER: () => DAILY_HANDLER,
+    cancelScan: () => cancelScan,
+    clearContinuationTriggers: () => clearContinuationTriggers,
+    continueJob: () => continueJob,
+    dailyScan: () => dailyScan,
+    jobStatus: () => jobStatus,
+    resetStuckJob: () => resetStuckJob,
+    startScan: () => startScan
+  });
+
+  // src/domain/config.ts
+  var SEVERITY_ORDER = [
+    "CRITICAL",
+    "HIGH",
+    "MEDIUM",
+    "LOW",
+    "INFO",
+    "UNKNOWN"
+  ];
+  var SLA_TARGETS = {
+    CRITICAL: 7,
+    HIGH: 14,
+    MEDIUM: 30,
+    LOW: 90,
+    INFO: 180
+  };
+  var SCOPES = ["sca", "sast", "secrets"];
+  var DEFAULT_FETCH_SEVERITIES = {
+    sca: ["CRITICAL", "HIGH"],
+    sast: ["CRITICAL", "HIGH"],
+    secrets: []
+  };
+  var SCOPE_LABELS = {
+    sca: "Dependencies",
+    sast: "Code",
+    secrets: "Secrets"
+  };
+  var RESOLVED_STATUSES = /* @__PURE__ */ new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
+  var STATUS_OPEN = "OPEN";
+  var STATUS_RESOLVED = "RESOLVED";
+  var RESOLUTION_API = "api";
+  var RESOLUTION_DISAPPEARED = "disappeared";
+
+  // src/server/archiveStore.ts
+  var rootFolderMemo;
+  var subfolderMemo = /* @__PURE__ */ new Map();
+  var syncFolderMemo = /* @__PURE__ */ new Map();
+  function rootFolder() {
+    if (!rootFolderMemo) {
+      rootFolderMemo = DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
+    }
+    return rootFolderMemo;
+  }
+  function childFolder(parent, name) {
+    const it = parent.getFoldersByName(name);
+    return it.hasNext() ? it.next() : parent.createFolder(name);
+  }
+  function subfolder(name) {
+    const hit = subfolderMemo.get(name);
+    if (hit) return hit;
+    const folder = childFolder(rootFolder(), name);
+    subfolderMemo.set(name, folder);
+    return folder;
+  }
+  function safeName(id) {
+    return id.replace(/[^0-9A-Za-z._-]/g, "") || "sync";
+  }
+  function writeGzJson(folder, name, payload) {
+    const json = JSON.stringify(payload);
+    const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
+    const existing = folder.getFilesByName(name);
+    while (existing.hasNext()) existing.next().setTrashed(true);
+    return folder.createFile(blob);
+  }
+  function readGzJsonNamed(folder, name) {
+    const it = subfolder(folder).getFilesByName(name);
+    if (!it.hasNext()) return null;
+    return parseGzBlob(it.next().getBlob());
+  }
+  function readGzJsonFile(fileId) {
+    try {
+      const file = DriveApp.getFileById(fileId);
+      return parseGzBlob(file.getBlob());
+    } catch (e) {
+      console.warn(`Unreadable Drive file ${fileId}: ${e}`);
+      return null;
+    }
+  }
+  function parseGzBlob(blob) {
+    try {
+      const bytes = blob.getBytes();
+      const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
+      const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
+      return JSON.parse(text);
+    } catch (e) {
+      console.warn(`Failed to parse archive blob: ${e}`);
+      return null;
+    }
+  }
+  function syncFolder(syncId) {
+    const key = safeName(syncId);
+    const hit = syncFolderMemo.get(key);
+    if (hit) return hit;
+    const folder = childFolder(subfolder("syncs"), key);
+    syncFolderMemo.set(key, folder);
+    return folder;
+  }
+  function writeSyncPage(syncId, stepIndex, pageNumber, payload) {
+    const name = `step-${stepIndex}-page-${String(pageNumber).padStart(4, "0")}.json.gz`;
+    return writeGzJson(syncFolder(syncId), name, payload).getId();
+  }
+  function readSyncStepPages(syncId, stepIndex, expectedPages) {
+    const prefix = `step-${stepIndex}-page-`;
+    const pages = [];
+    const files = syncFolder(syncId).getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      const name = f.getName();
+      if (!name.startsWith(prefix)) continue;
+      const payload = parseGzBlob(f.getBlob());
+      if (payload === null) {
+        throw new Error(
+          `Archive page ${name} of sync ${syncId} could not be read. Refusing to reconcile a scope against a population that is missing a page \u2014 every finding in it would resolve as remediated.`
+        );
+      }
+      pages.push({ name, payload });
+    }
+    pages.sort((a, b) => a.name < b.name ? -1 : 1);
+    if (pages.length !== expectedPages) {
+      throw new Error(
+        `Sync ${syncId} step ${stepIndex} recorded ${expectedPages} page(s) but ${pages.length} are on disk. Refusing to reconcile against an incomplete population.`
+      );
+    }
+    return pages.map((p) => p.payload);
+  }
+  function trashSyncStepPages(syncId, stepIndex) {
+    const prefix = `step-${stepIndex}-page-`;
+    try {
+      const files = syncFolder(syncId).getFiles();
+      while (files.hasNext()) {
+        const f = files.next();
+        if (f.getName().startsWith(prefix)) f.setTrashed(true);
+      }
+    } catch (e) {
+      console.warn(`Couldn't trash step ${stepIndex} of sync ${syncId}: ${e}`);
+    }
+  }
+  function trashFile(fileId) {
+    if (!fileId) return;
+    try {
+      DriveApp.getFileById(fileId).setTrashed(true);
+    } catch (e) {
+      console.warn(`Couldn't trash file ${fileId}: ${e}`);
+    }
   }
 
   // src/domain/util.ts
@@ -1081,509 +1241,77 @@ var Server = (() => {
     return ledgerSpreadsheet().getSheets().reduce((acc, sh) => acc + sh.getMaxRows() * sh.getMaxColumns(), 0);
   }
 
-  // src/server/setup.ts
-  function setup() {
-    const notes = [];
-    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
-    let ss;
-    if (ssId) {
-      ss = SpreadsheetApp.openById(ssId);
-      notes.push(`Ledger: reusing ${ssId}`);
-    } else {
-      ss = SpreadsheetApp.create("Wiz Sidekick DevSecOps \u2014 ledger");
-      ssId = ss.getId();
-      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
-      notes.push(`Ledger: created ${ssId}`);
-    }
-    ensureTabs(ss);
-    notes.push("Tabs: ensured (headers appended where missing)");
-    let folderId = getProp(PROP_KEYS.archiveFolderId);
-    if (!folderId) {
-      folderId = DriveApp.createFolder("Wiz Sidekick DevSecOps \u2014 archive").getId();
-      setProp(PROP_KEYS.archiveFolderId, folderId);
-      notes.push(`Archive: created ${folderId}`);
-    } else {
-      notes.push(`Archive: reusing ${folderId}`);
-    }
-    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
-    if (!getProp(PROP_KEYS.allowedUsers)) {
-      const owner = Session.getEffectiveUser().getEmail();
-      if (owner) {
-        setProp(PROP_KEYS.allowedUsers, owner);
-        notes.push(`Access: seeded ALLOWED_USERS with ${owner}`);
-      }
-    }
-    notes.push("Triggers: none installed (no sync battery yet \u2014 Phase 2)");
-    return notes.join("\n");
+  // src/server/jobsStore.ts
+  var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
+  function normError(v) {
+    const s = v == null ? "" : String(v).trim();
+    return s === "" || s === "null" || s === "undefined" ? null : s;
   }
-
-  // src/domain/config.ts
-  var SEVERITY_ORDER = [
-    "CRITICAL",
-    "HIGH",
-    "MEDIUM",
-    "LOW",
-    "INFO",
-    "UNKNOWN"
-  ];
-  var SLA_TARGETS = {
-    CRITICAL: 7,
-    HIGH: 14,
-    MEDIUM: 30,
-    LOW: 90,
-    INFO: 180
-  };
-  var SCOPES = ["sca", "sast", "secrets"];
-  var DEFAULT_FETCH_SEVERITIES = {
-    sca: ["CRITICAL", "HIGH"],
-    sast: ["CRITICAL", "HIGH"],
-    secrets: []
-  };
-  var SCOPE_LABELS = {
-    sca: "Dependencies",
-    sast: "Code",
-    secrets: "Secrets"
-  };
-  var RESOLVED_STATUSES = /* @__PURE__ */ new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
-  var STATUS_OPEN = "OPEN";
-  var STATUS_RESOLVED = "RESOLVED";
-  var RESOLUTION_API = "api";
-  var RESOLUTION_DISAPPEARED = "disappeared";
-
-  // src/domain/settingsLogic.ts
-  var DEFAULT_SETTINGS = {
-    scopes: [...SCOPES],
-    fetchSeverities: {
-      sca: [...DEFAULT_FETCH_SEVERITIES.sca],
-      sast: [...DEFAULT_FETCH_SEVERITIES.sast],
-      secrets: [...DEFAULT_FETCH_SEVERITIES.secrets]
-    },
-    slaTargets: { ...SLA_TARGETS }
-  };
-  function asList(v, allowed) {
-    if (!Array.isArray(v)) return null;
-    const seen = /* @__PURE__ */ new Set();
-    for (const x of v) {
-      const s = String(x).trim().toUpperCase();
-      if (allowed.includes(s)) seen.add(s);
-    }
-    return [...seen];
+  function normText(v) {
+    const s = v == null ? "" : String(v);
+    return s === "" || s === "null" || s === "undefined" ? null : s;
   }
-  function cleanFetchSeverities(raw) {
-    var _a, _b;
-    const out = {};
-    if (Array.isArray(raw)) {
-      const shared = (_a = asList(raw, SEVERITY_ORDER)) != null ? _a : [];
-      for (const scope of SCOPES) {
-        out[scope] = shared.length ? [...shared] : [...DEFAULT_FETCH_SEVERITIES[scope]];
-      }
-      return out;
-    }
-    const rec = raw != null ? raw : {};
-    for (const scope of SCOPES) {
-      out[scope] = (_b = asList(rec[scope], SEVERITY_ORDER)) != null ? _b : [...DEFAULT_FETCH_SEVERITIES[scope]];
-    }
-    return out;
+  function newJobId(kind, now) {
+    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
   }
-  function cleanSettings(raw) {
-    const r = raw || {};
-    const scopes = (Array.isArray(r.scopes) ? r.scopes : []).map((x) => String(x).trim().toLowerCase()).filter((x) => SCOPES.includes(x));
-    const sla = { ...SLA_TARGETS };
-    const rawSla = r.slaTargets || {};
-    for (const sev of SEVERITY_ORDER) {
-      const v = Number(rawSla[sev]);
-      if (Number.isFinite(v) && v > 0) sla[sev] = Math.floor(v);
-    }
-    return {
-      // An empty list would collect nothing while looking configured, so it falls back
-      // rather than persisting a register that can never fill.
-      scopes: scopes.length ? scopes : [...SCOPES],
-      fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
-      slaTargets: sla
-    };
+  function createJob(row, now) {
+    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
+    appendRows(TABS.jobs, [full]);
+    setProp(ACTIVE_JOB_PROP, full.job_id);
+    return full;
   }
-  function validateSettings(s) {
-    var _a;
-    const errs = [];
-    if (!s.scopes.length) errs.push("Choose at least one register to collect.");
-    for (const scope of s.scopes) {
-      if (!Array.isArray((_a = s.fetchSeverities) == null ? void 0 : _a[scope])) {
-        errs.push(`No severity selection stored for the ${scope} register.`);
-      }
-    }
-    for (const [sev, days] of Object.entries(s.slaTargets)) {
-      if (!Number.isFinite(days) || days <= 0) {
-        errs.push(`The SLA target for ${sev} must be a positive number of days.`);
-      }
-    }
-    return errs;
-  }
-  function withSettings(current, patch) {
-    return cleanSettings({ ...current, ...patch });
-  }
-
-  // src/server/settingsStore.ts
-  var settingsMemo;
-  function loadSettings() {
-    var _a, _b;
-    if (settingsMemo) return settingsMemo;
-    const raw = {};
-    for (const row of readAll(TABS.settings)) {
-      const key = String((_a = row.key) != null ? _a : "");
-      if (!key) continue;
-      try {
-        raw[key] = JSON.parse(String((_b = row.value_json) != null ? _b : "null"));
-      } catch {
-        raw[key] = null;
-      }
-    }
-    settingsMemo = cleanSettings(raw);
-    return settingsMemo;
-  }
-  function saveSettings(next) {
-    const cleaned = cleanSettings(next);
-    const rows = Object.entries(cleaned).map(([key, value]) => ({
-      key,
-      value_json: JSON.stringify(value)
-    }));
-    overwrite(TABS.settings, rows);
-    settingsMemo = cleaned;
-    bumpDataVersion();
-    return cleaned;
-  }
-
-  // src/server/diagnostics.ts
-  function deploymentDiagnostic() {
-    const out = [];
-    const ok = (label, value) => out.push(`  OK    ${label}: ${value}`);
-    const bad = (label, value) => out.push(`  FAIL  ${label}: ${value}`);
-    out.push(`Wiz Sidekick DevSecOps \u2014 deployment diagnostic`);
-    out.push(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
-    out.push("");
-    const ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
-    if (ssId) {
-      try {
-        const ss = ledgerSpreadsheet();
-        ok("Ledger spreadsheet", `${ss.getName()} (${ssId})`);
-        for (const tab of Object.values(TABS)) {
-          const rows = dataRowCount(tab);
-          out.push(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
-        }
-        ok("Cells used", String(cellCount()));
-      } catch (e) {
-        bad("Ledger spreadsheet", `${ssId} exists as a property but could not be opened: ${e}`);
-      }
-    } else {
-      bad("Ledger spreadsheet", "not created \u2014 run setup()");
-    }
-    const folderId = getProp(PROP_KEYS.archiveFolderId);
-    if (folderId) ok("Archive folder", folderId);
-    else bad("Archive folder", "not created \u2014 run setup()");
-    if (hasWizCredentials()) ok("Wiz credentials", "present");
-    else bad("Wiz credentials", "absent \u2014 set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET");
-    const users = getProp(PROP_KEYS.allowedUsers);
-    if (users) ok("Allowlist", `${users.split(/[,;\s]+/).filter(Boolean).length} address(es)`);
-    else bad("Allowlist", "empty \u2014 the app is owner-only until ALLOWED_USERS is set");
-    const s = loadSettings();
-    ok("Scopes collected", s.scopes.join(", ") || "(none)");
-    ok("Scopes available", SCOPES.join(", "));
-    for (const scope of SCOPES) {
-      ok(`Severities requested (${scope})`, s.fetchSeverities[scope].join(", ") || "(all)");
-    }
-    out.push("");
-    out.push("Sync battery: not installed. This build ships the interface base and the page");
-    out.push("composition; collection is Phase 2 (see README.md).");
-    return out.join("\n");
-  }
-
-  // src/server/api.ts
-  var api_exports = {};
-  __export(api_exports, {
-    bootstrap: () => bootstrap,
-    cancelScan: () => cancelScan2,
-    getAccess: () => getAccess,
-    getChartsBundle: () => getChartsBundle,
-    getDiagnostic: () => getDiagnostic,
-    getExecutive: () => getExecutive,
-    getJobStatus: () => getJobStatus,
-    getMttr: () => getMttr,
-    getRegister: () => getRegister,
-    getSettings: () => getSettings,
-    putSettings: () => putSettings,
-    runSampleSync: () => runSampleSync,
-    runScan: () => runScan2,
-    saveAccess: () => saveAccess,
-    saveAdmins: () => saveAdmins,
-    setSettings: () => setSettings,
-    testWizConnection: () => testWizConnection
-  });
-
-  // src/domain/ledgerCore.ts
-  var DAY_MS = 864e5;
-  function parseSeverities(value) {
-    const s = String(value != null ? value : "").trim();
-    if (!s || s === "*") return null;
-    return s.split(",").map((v) => v.trim().toUpperCase()).filter(Boolean);
-  }
-  function scansAsc(scans, scope) {
-    return scans.filter((r) => r.scope === scope).sort((a, b) => {
-      var _a, _b;
-      const ta = (_a = parseTs(a.ts)) != null ? _a : 0;
-      const tb = (_b = parseTs(b.ts)) != null ? _b : 0;
-      if (ta !== tb) return ta - tb;
-      return a.scan_id < b.scan_id ? -1 : a.scan_id > b.scan_id ? 1 : 0;
+  function updateJob(jobId, patch, now) {
+    updateWhere(TABS.jobs, "job_id", jobId, {
+      ...patch,
+      updated_at: nowIso(now)
     });
+    if (patch.phase && TERMINAL.includes(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
   }
-  function latestScan(scans, scope) {
-    const asc = scansAsc(scans, scope);
-    return asc.length ? asc[asc.length - 1] : null;
-  }
-  function prevScanIdBySeverity(scans, scope) {
-    const remaining = new Set(SEVERITY_ORDER);
-    const mapping = {};
-    for (const r of scansAsc(scans, scope).reverse()) {
-      const covered = parseSeverities(r.severities);
-      const hit = covered === null ? [...remaining] : [...remaining].filter((s) => covered.includes(s));
-      for (const sev of hit) mapping[sev] = r.scan_id;
-      for (const sev of hit) remaining.delete(sev);
-      if (!remaining.size) break;
-    }
-    return Object.keys(mapping).length ? mapping : null;
-  }
-  function existingScanDeltas(scans, scanId) {
-    var _a, _b, _c;
-    const row = scans.find((r) => r.scan_id === scanId);
-    if (!row) return null;
+  function rowToJob(r) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     return {
-      new_count: Number((_a = row.new_count) != null ? _a : 0),
-      resolved_count: Number((_b = row.resolved_count) != null ? _b : 0),
-      reopened_count: Number((_c = row.reopened_count) != null ? _c : 0)
+      job_id: String((_a = r["job_id"]) != null ? _a : ""),
+      kind: (_b = r["kind"]) != null ? _b : "scan",
+      phase: (_c = r["phase"]) != null ? _c : "FAILED",
+      scan_id: normText(r["scan_id"]),
+      scope: normText(r["scope"]),
+      cursor: normText(r["cursor"]),
+      page: Number((_d = r["page"]) != null ? _d : 0),
+      findings_so_far: Number((_e = r["findings_so_far"]) != null ? _e : 0),
+      page_size: Number((_f = r["page_size"]) != null ? _f : 0),
+      total_count: Number((_g = r["total_count"]) != null ? _g : 0),
+      params_json: normText(r["params_json"]),
+      journal_ref: normText(r["journal_ref"]),
+      error: normError(r["error"]),
+      started_at: String((_h = r["started_at"]) != null ? _h : ""),
+      updated_at: String((_i = r["updated_at"]) != null ? _i : "")
     };
   }
-  var HAS_VENDOR_FIX = /* @__PURE__ */ new Set(["sca"]);
-  function baseRows(rows, now) {
-    const nowMs = now != null ? now : Date.now();
-    return rows.map((row) => {
-      var _a, _b;
-      const first = parseTs(row.first_seen);
-      const resolved = parseTs(row.resolved_at);
-      const open = row.status === "OPEN";
-      const vendor = HAS_VENDOR_FIX.has(row.scope);
-      const fixAvailableAt = vendor ? (_b = (_a = row.fix_date) != null ? _a : row.fix_observed_at) != null ? _b : null : null;
-      const fixAvailMs = parseTs(fixAvailableAt);
-      const actionableMs = fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
-      return {
-        ...row,
-        mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS : null,
-        age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS : null,
-        fix_available_at: fixAvailableAt,
-        actionable_from: actionableMs === null ? null : toIso(actionableMs),
-        mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS : null,
-        actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS : null,
-        awaiting_vendor_fix: open && vendor && fixAvailableAt === null
-      };
-    });
+  function listJobs() {
+    return readAll(TABS.jobs).map(rowToJob);
   }
-
-  // src/domain/severity.ts
-  function normalizeSeverity(sev) {
-    if (typeof sev !== "string") return "UNKNOWN";
-    const s = sev.toUpperCase().trim();
-    if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
-    return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
-  }
-
-  // src/domain/remediation.ts
-  var RESOLUTION_BUCKET_EDGES = [1, 7, 30, 90];
-  var RESOLUTION_BUCKET_LABELS = ["\u22641d", "2\u20137d", "8\u201330d", "31\u201390d", "90+d"];
-  function isOpen(status) {
-    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
-  }
-  function resolvedMttr(row) {
-    const m = row.mttr_days;
-    return typeof m === "number" && Number.isFinite(m) ? m : null;
-  }
-  function openAge(row) {
-    if (!isOpen(row.status)) return null;
-    const a = row.age_days;
-    return typeof a === "number" && Number.isFinite(a) ? a : null;
-  }
-  function mttrPercentiles(rows) {
-    var _a;
-    const bySev = {};
-    const all = [];
-    for (const row of rows) {
-      const m = resolvedMttr(row);
-      if (m === null) continue;
-      const s = normalizeSeverity(row.severity);
-      ((_a = bySev[s]) != null ? _a : bySev[s] = []).push(m);
-      all.push(m);
-    }
-    const perSev = {};
-    for (const s of SEVERITY_ORDER) {
-      const vals = bySev[s];
-      if (!vals) continue;
-      perSev[s] = { p50: quantile(vals, 0.5), p90: quantile(vals, 0.9), count: vals.length };
-    }
-    return {
-      perSev,
-      overall: { p50: quantile(all, 0.5), p90: quantile(all, 0.9), count: all.length }
-    };
-  }
-  function resolutionBuckets(rows) {
-    const perSev = {};
-    let total = 0;
-    for (const row of rows) {
-      const m = resolvedMttr(row);
-      if (m === null) continue;
-      const bucket = m <= RESOLUTION_BUCKET_EDGES[0] ? 0 : m <= RESOLUTION_BUCKET_EDGES[1] ? 1 : m <= RESOLUTION_BUCKET_EDGES[2] ? 2 : m <= RESOLUTION_BUCKET_EDGES[3] ? 3 : 4;
-      const s = normalizeSeverity(row.severity);
-      if (!perSev[s]) perSev[s] = [0, 0, 0, 0, 0];
-      perSev[s][bucket] += 1;
-      total += 1;
-    }
-    return { perSev, labels: RESOLUTION_BUCKET_LABELS, total };
-  }
-  function kmCurve(events, times) {
-    const curve = [];
-    let s = 1;
-    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
-      const atRisk = times.filter((x) => x >= t).length;
-      if (atRisk === 0) continue;
-      const d = events.filter((x) => x === t).length;
-      s *= 1 - d / atRisk;
-      curve.push({ t, s, atRisk, events: d });
-    }
-    return curve;
-  }
-  var CROSSING_EPSILON = 1e-9;
-  function kmQuantileFromCurve(curve, q) {
-    const threshold = 1 - q + CROSSING_EPSILON;
-    for (const p of curve) if (p.s <= threshold) return p.t;
-    return null;
-  }
-  function kmMedianFromCurve(curve) {
-    return kmQuantileFromCurve(curve, 0.5);
-  }
-  function kaplanMeier(rows) {
-    const events = [];
-    const censored = [];
-    for (const row of rows) {
-      const m = resolvedMttr(row);
-      if (m !== null) {
-        events.push(m);
-        continue;
-      }
-      const c = openAge(row);
-      if (c !== null) censored.push(c);
-    }
-    const times = events.concat(censored);
-    const total = events.length + censored.length;
-    const restrictionTime = times.length ? maxNum(times) : null;
-    const naiveMean = mean(events);
-    const naiveMedian = median(events);
-    if (!events.length) {
-      return {
-        curve: [],
-        median: null,
-        medianLowerBound: restrictionTime,
-        mean: null,
-        restrictionTime,
-        meanTruncated: false,
-        naiveMean,
-        naiveMedian,
-        events: 0,
-        censored: censored.length,
-        total
-      };
-    }
-    const curve = kmCurve(events, times);
-    const med = kmMedianFromCurve(curve);
-    const tau = restrictionTime;
-    let rmst = 0;
-    let prevT = 0;
-    let prevS = 1;
-    for (const p of curve) {
-      rmst += prevS * (p.t - prevT);
-      prevT = p.t;
-      prevS = p.s;
-    }
-    rmst += prevS * (tau - prevT);
-    return {
-      curve,
-      median: med,
-      medianLowerBound: med === null ? restrictionTime : null,
-      mean: rmst,
-      restrictionTime,
-      meanTruncated: prevS > 0,
-      naiveMean,
-      naiveMedian,
-      events: events.length,
-      censored: censored.length,
-      total
-    };
-  }
-  function openPastSla(rows) {
+  var JOB_TAIL_ROWS = 25;
+  function getJob(jobId) {
     var _a, _b;
-    const perSev = {};
-    let totalOpen = 0;
-    let totalBreached = 0;
-    for (const row of rows) {
-      const age = openAge(row);
-      if (age === null) continue;
-      const s = normalizeSeverity(row.severity);
-      const target = (_a = SLA_TARGETS[s]) != null ? _a : null;
-      const stat = (_b = perSev[s]) != null ? _b : perSev[s] = { open: 0, breached: 0, pct: null, target };
-      stat.open += 1;
-      totalOpen += 1;
-      if (target !== null && age > target) {
-        stat.breached += 1;
-        totalBreached += 1;
-      }
-    }
-    for (const stat of Object.values(perSev)) {
-      stat.pct = stat.open ? stat.breached / stat.open * 100 : null;
-    }
-    return {
-      perSev,
-      overall: {
-        open: totalOpen,
-        breached: totalBreached,
-        pct: totalOpen ? totalBreached / totalOpen * 100 : null
-      }
-    };
+    const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
+    return (_b = (_a = recent.find((j) => j.job_id === jobId)) != null ? _a : listJobs().find((j) => j.job_id === jobId)) != null ? _b : null;
   }
-  function openAgePercentiles(rows) {
+  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
+  function isTerminalPhase(phase) {
+    return TERMINAL.includes(phase);
+  }
+  function activeJob() {
     var _a;
-    const bySev = {};
-    const all = [];
-    for (const row of rows) {
-      const a = openAge(row);
-      if (a === null) continue;
-      const s = normalizeSeverity(row.severity);
-      ((_a = bySev[s]) != null ? _a : bySev[s] = []).push(a);
-      all.push(a);
-    }
-    const perSev = {};
-    for (const s of SEVERITY_ORDER) {
-      const vals = bySev[s];
-      if (!vals) continue;
-      perSev[s] = { p50: quantile(vals, 0.5), p90: quantile(vals, 0.9), count: vals.length };
-    }
-    return {
-      perSev,
-      overall: { p50: quantile(all, 0.5), p90: quantile(all, 0.9), count: all.length }
-    };
+    if (!getProp(ACTIVE_JOB_PROP)) return null;
+    const job = (_a = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a : null;
+    if (!job) deleteProp(ACTIVE_JOB_PROP);
+    return job;
   }
-  function awaitingVendorFix(rows) {
-    let count = 0;
-    let openWithVendor = 0;
-    for (const row of rows) {
-      if (row.scope !== "sca" || !isOpen(row.status)) continue;
-      openWithVendor += 1;
-      if (row.awaiting_vendor_fix) count += 1;
-    }
-    return { count, openWithVendor, pct: openWithVendor ? count / openWithVendor * 100 : null };
+  var STALE_JOB_MS = 30 * 6e4;
+  function isStaleJob(job, now) {
+    const updated = Date.parse(job.updated_at);
+    if (!Number.isFinite(updated)) return false;
+    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
   }
 
   // src/domain/observation.ts
@@ -1788,8 +1516,234 @@ var Server = (() => {
     }]);
   }
 
-  // src/server/sampleData.ts
-  var SAMPLE_SCANS = [];
+  // src/server/locks.ts
+  var LedgerBusyError = class extends Error {
+  };
+  var DEAD_JOB_MS = 30 * 60 * 1e3;
+  function withScriptLock(fn, timeoutMs = 3e4) {
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(timeoutMs)) {
+      throw new LedgerBusyError(
+        "The data store is busy (a scan is writing). Try again shortly."
+      );
+    }
+    try {
+      return fn();
+    } finally {
+      lock.releaseLock();
+    }
+  }
+  function recoverIfNeeded(now) {
+    const job = activeJob();
+    if (!job) return;
+    const updated = parseTs(job.updated_at);
+    const ageMs = updated === null ? Infinity : (now != null ? now : Date.now()) - updated;
+    if (job.phase === "PERSISTING") {
+      const committed = job.scan_id !== null && readScans().some((s) => s.scan_id === job.scan_id);
+      if (committed) {
+        updateJob(job.job_id, { phase: "DONE", journal_ref: null });
+        if (job.journal_ref) trashFile(job.journal_ref);
+        return;
+      }
+      const restored = job.journal_ref ? restoreLedger(job.journal_ref) : false;
+      updateJob(job.job_id, {
+        phase: "FAILED",
+        journal_ref: null,
+        error: restored ? "Recovered: the execution died mid-write; the ledger was restored from its journal and no scan was recorded." : "The execution died mid-write and no journal was found. The ledger may be incomplete \u2014 run a fresh scan before trusting its figures."
+      });
+      return;
+    }
+    if (ageMs > DEAD_JOB_MS) {
+      updateJob(job.job_id, {
+        phase: "FAILED",
+        error: "Recovered: the job stalled with no progress. Nothing was written \u2014 the last committed scan stands."
+      });
+    }
+  }
+  function restoreLedger(journalRef) {
+    const doc = readGzJsonFile(journalRef);
+    if (!doc || typeof doc !== "object") return false;
+    writeLedger(doc);
+    trashFile(journalRef);
+    return true;
+  }
+
+  // src/domain/settingsLogic.ts
+  var DEFAULT_SETTINGS = {
+    scopes: [...SCOPES],
+    fetchSeverities: {
+      sca: [...DEFAULT_FETCH_SEVERITIES.sca],
+      sast: [...DEFAULT_FETCH_SEVERITIES.sast],
+      secrets: [...DEFAULT_FETCH_SEVERITIES.secrets]
+    },
+    slaTargets: { ...SLA_TARGETS }
+  };
+  function asList(v, allowed) {
+    if (!Array.isArray(v)) return null;
+    const seen = /* @__PURE__ */ new Set();
+    for (const x of v) {
+      const s = String(x).trim().toUpperCase();
+      if (allowed.includes(s)) seen.add(s);
+    }
+    return [...seen];
+  }
+  function cleanFetchSeverities(raw) {
+    var _a, _b;
+    const out = {};
+    if (Array.isArray(raw)) {
+      const shared = (_a = asList(raw, SEVERITY_ORDER)) != null ? _a : [];
+      for (const scope of SCOPES) {
+        out[scope] = shared.length ? [...shared] : [...DEFAULT_FETCH_SEVERITIES[scope]];
+      }
+      return out;
+    }
+    const rec = raw != null ? raw : {};
+    for (const scope of SCOPES) {
+      out[scope] = (_b = asList(rec[scope], SEVERITY_ORDER)) != null ? _b : [...DEFAULT_FETCH_SEVERITIES[scope]];
+    }
+    return out;
+  }
+  function cleanSettings(raw) {
+    const r = raw || {};
+    const scopes = (Array.isArray(r.scopes) ? r.scopes : []).map((x) => String(x).trim().toLowerCase()).filter((x) => SCOPES.includes(x));
+    const sla = { ...SLA_TARGETS };
+    const rawSla = r.slaTargets || {};
+    for (const sev of SEVERITY_ORDER) {
+      const v = Number(rawSla[sev]);
+      if (Number.isFinite(v) && v > 0) sla[sev] = Math.floor(v);
+    }
+    return {
+      // An empty list would collect nothing while looking configured, so it falls back
+      // rather than persisting a register that can never fill.
+      scopes: scopes.length ? scopes : [...SCOPES],
+      fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
+      slaTargets: sla
+    };
+  }
+  function validateSettings(s) {
+    var _a;
+    const errs = [];
+    if (!s.scopes.length) errs.push("Choose at least one register to collect.");
+    for (const scope of s.scopes) {
+      if (!Array.isArray((_a = s.fetchSeverities) == null ? void 0 : _a[scope])) {
+        errs.push(`No severity selection stored for the ${scope} register.`);
+      }
+    }
+    for (const [sev, days] of Object.entries(s.slaTargets)) {
+      if (!Number.isFinite(days) || days <= 0) {
+        errs.push(`The SLA target for ${sev} must be a positive number of days.`);
+      }
+    }
+    return errs;
+  }
+  function withSettings(current, patch) {
+    return cleanSettings({ ...current, ...patch });
+  }
+
+  // src/server/settingsStore.ts
+  var settingsMemo;
+  function loadSettings() {
+    var _a, _b;
+    if (settingsMemo) return settingsMemo;
+    const raw = {};
+    for (const row of readAll(TABS.settings)) {
+      const key = String((_a = row.key) != null ? _a : "");
+      if (!key) continue;
+      try {
+        raw[key] = JSON.parse(String((_b = row.value_json) != null ? _b : "null"));
+      } catch {
+        raw[key] = null;
+      }
+    }
+    settingsMemo = cleanSettings(raw);
+    return settingsMemo;
+  }
+  function saveSettings(next) {
+    const cleaned = cleanSettings(next);
+    const rows = Object.entries(cleaned).map(([key, value]) => ({
+      key,
+      value_json: JSON.stringify(value)
+    }));
+    overwrite(TABS.settings, rows);
+    settingsMemo = cleaned;
+    bumpDataVersion();
+    return cleaned;
+  }
+
+  // src/domain/ledgerCore.ts
+  var DAY_MS = 864e5;
+  function parseSeverities(value) {
+    const s = String(value != null ? value : "").trim();
+    if (!s || s === "*") return null;
+    return s.split(",").map((v) => v.trim().toUpperCase()).filter(Boolean);
+  }
+  function scansAsc(scans, scope) {
+    return scans.filter((r) => r.scope === scope).sort((a, b) => {
+      var _a, _b;
+      const ta = (_a = parseTs(a.ts)) != null ? _a : 0;
+      const tb = (_b = parseTs(b.ts)) != null ? _b : 0;
+      if (ta !== tb) return ta - tb;
+      return a.scan_id < b.scan_id ? -1 : a.scan_id > b.scan_id ? 1 : 0;
+    });
+  }
+  function latestScan(scans, scope) {
+    const asc = scansAsc(scans, scope);
+    return asc.length ? asc[asc.length - 1] : null;
+  }
+  function prevScanIdBySeverity(scans, scope) {
+    const remaining = new Set(SEVERITY_ORDER);
+    const mapping = {};
+    for (const r of scansAsc(scans, scope).reverse()) {
+      const covered = parseSeverities(r.severities);
+      const hit = covered === null ? [...remaining] : [...remaining].filter((s) => covered.includes(s));
+      for (const sev of hit) mapping[sev] = r.scan_id;
+      for (const sev of hit) remaining.delete(sev);
+      if (!remaining.size) break;
+    }
+    return Object.keys(mapping).length ? mapping : null;
+  }
+  function existingScanDeltas(scans, scanId) {
+    var _a, _b, _c;
+    const row = scans.find((r) => r.scan_id === scanId);
+    if (!row) return null;
+    return {
+      new_count: Number((_a = row.new_count) != null ? _a : 0),
+      resolved_count: Number((_b = row.resolved_count) != null ? _b : 0),
+      reopened_count: Number((_c = row.reopened_count) != null ? _c : 0)
+    };
+  }
+  var HAS_VENDOR_FIX = /* @__PURE__ */ new Set(["sca"]);
+  function baseRows(rows, now) {
+    const nowMs = now != null ? now : Date.now();
+    return rows.map((row) => {
+      var _a, _b;
+      const first = parseTs(row.first_seen);
+      const resolved = parseTs(row.resolved_at);
+      const open = row.status === "OPEN";
+      const vendor = HAS_VENDOR_FIX.has(row.scope);
+      const fixAvailableAt = vendor ? (_b = (_a = row.fix_date) != null ? _a : row.fix_observed_at) != null ? _b : null : null;
+      const fixAvailMs = parseTs(fixAvailableAt);
+      const actionableMs = fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
+      return {
+        ...row,
+        mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS : null,
+        age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS : null,
+        fix_available_at: fixAvailableAt,
+        actionable_from: actionableMs === null ? null : toIso(actionableMs),
+        mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS : null,
+        actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS : null,
+        awaiting_vendor_fix: open && vendor && fixAvailableAt === null
+      };
+    });
+  }
+
+  // src/domain/severity.ts
+  function normalizeSeverity(sev) {
+    if (typeof sev !== "string") return "UNKNOWN";
+    const s = sev.toUpperCase().trim();
+    if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
+    return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
+  }
 
   // src/domain/normalize.ts
   function str2(v) {
@@ -2083,7 +2037,7 @@ var Server = (() => {
     const res = node["resource"];
     return res && typeof res === "object" ? str3(res[field]) : null;
   }
-  function isOpen2(node) {
+  function isOpen(node) {
     const s = str3(node["status"]);
     return s === null ? true : !RESOLVED_STATUSES.has(s.toUpperCase());
   }
@@ -2099,7 +2053,7 @@ var Server = (() => {
       const births = rows.map((r) => parseTs(r["firstSeenAt"])).filter((t) => t !== null);
       const firstMs = births.length ? Math.min(...births) : null;
       const spreadDays = births.length > 1 ? (Math.max(...births) - Math.min(...births)) / DAY_MS2 : 0;
-      const anyOpen = rows.some(isOpen2);
+      const anyOpen = rows.some(isOpen);
       const resolvedTs = rows.map((r) => parseTs(r["resolvedAt"])).filter((t) => t !== null);
       const resolvedMs = !anyOpen && resolvedTs.length === rows.length ? Math.max(...resolvedTs) : null;
       let severity = "UNKNOWN";
@@ -2171,119 +2125,6 @@ var Server = (() => {
       twinned,
       keyed_without_line: keyedWithoutLine
     };
-  }
-
-  // src/server/archiveStore.ts
-  var rootFolderMemo;
-  var subfolderMemo = /* @__PURE__ */ new Map();
-  var syncFolderMemo = /* @__PURE__ */ new Map();
-  function rootFolder() {
-    if (!rootFolderMemo) {
-      rootFolderMemo = DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
-    }
-    return rootFolderMemo;
-  }
-  function childFolder(parent, name) {
-    const it = parent.getFoldersByName(name);
-    return it.hasNext() ? it.next() : parent.createFolder(name);
-  }
-  function subfolder(name) {
-    const hit = subfolderMemo.get(name);
-    if (hit) return hit;
-    const folder = childFolder(rootFolder(), name);
-    subfolderMemo.set(name, folder);
-    return folder;
-  }
-  function safeName(id) {
-    return id.replace(/[^0-9A-Za-z._-]/g, "") || "sync";
-  }
-  function writeGzJson(folder, name, payload) {
-    const json = JSON.stringify(payload);
-    const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
-    const existing = folder.getFilesByName(name);
-    while (existing.hasNext()) existing.next().setTrashed(true);
-    return folder.createFile(blob);
-  }
-  function readGzJsonNamed(folder, name) {
-    const it = subfolder(folder).getFilesByName(name);
-    if (!it.hasNext()) return null;
-    return parseGzBlob(it.next().getBlob());
-  }
-  function readGzJsonFile(fileId) {
-    try {
-      const file = DriveApp.getFileById(fileId);
-      return parseGzBlob(file.getBlob());
-    } catch (e) {
-      console.warn(`Unreadable Drive file ${fileId}: ${e}`);
-      return null;
-    }
-  }
-  function parseGzBlob(blob) {
-    try {
-      const bytes = blob.getBytes();
-      const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
-      const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
-      return JSON.parse(text);
-    } catch (e) {
-      console.warn(`Failed to parse archive blob: ${e}`);
-      return null;
-    }
-  }
-  function syncFolder(syncId) {
-    const key = safeName(syncId);
-    const hit = syncFolderMemo.get(key);
-    if (hit) return hit;
-    const folder = childFolder(subfolder("syncs"), key);
-    syncFolderMemo.set(key, folder);
-    return folder;
-  }
-  function writeSyncPage(syncId, stepIndex, pageNumber, payload) {
-    const name = `step-${stepIndex}-page-${String(pageNumber).padStart(4, "0")}.json.gz`;
-    return writeGzJson(syncFolder(syncId), name, payload).getId();
-  }
-  function readSyncStepPages(syncId, stepIndex, expectedPages) {
-    const prefix = `step-${stepIndex}-page-`;
-    const pages = [];
-    const files = syncFolder(syncId).getFiles();
-    while (files.hasNext()) {
-      const f = files.next();
-      const name = f.getName();
-      if (!name.startsWith(prefix)) continue;
-      const payload = parseGzBlob(f.getBlob());
-      if (payload === null) {
-        throw new Error(
-          `Archive page ${name} of sync ${syncId} could not be read. Refusing to reconcile a scope against a population that is missing a page \u2014 every finding in it would resolve as remediated.`
-        );
-      }
-      pages.push({ name, payload });
-    }
-    pages.sort((a, b) => a.name < b.name ? -1 : 1);
-    if (pages.length !== expectedPages) {
-      throw new Error(
-        `Sync ${syncId} step ${stepIndex} recorded ${expectedPages} page(s) but ${pages.length} are on disk. Refusing to reconcile against an incomplete population.`
-      );
-    }
-    return pages.map((p) => p.payload);
-  }
-  function trashSyncStepPages(syncId, stepIndex) {
-    const prefix = `step-${stepIndex}-page-`;
-    try {
-      const files = syncFolder(syncId).getFiles();
-      while (files.hasNext()) {
-        const f = files.next();
-        if (f.getName().startsWith(prefix)) f.setTrashed(true);
-      }
-    } catch (e) {
-      console.warn(`Couldn't trash step ${stepIndex} of sync ${syncId}: ${e}`);
-    }
-  }
-  function trashFile(fileId) {
-    if (!fileId) return;
-    try {
-      DriveApp.getFileById(fileId).setTrashed(true);
-    } catch (e) {
-      console.warn(`Couldn't trash file ${fileId}: ${e}`);
-    }
   }
 
   // src/server/sync.ts
@@ -2379,284 +2220,6 @@ var Server = (() => {
       ...keyedWithoutLine === void 0 ? {} : { keyed_without_line: keyedWithoutLine }
     };
   }
-
-  // src/server/readModelStore.ts
-  var FOLDER = "readmodels";
-  var ENVELOPE_V = 1;
-  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
-  var warming = false;
-  var touched = null;
-  var disabled = false;
-  function readModelFileName(name, params) {
-    return `rm-${name}-${paramsHash(params)}.json.gz`;
-  }
-  function l2Read(name, params, version) {
-    if (disabled) return { hit: false, why: "absent" };
-    try {
-      const raw = readGzJsonNamed(FOLDER, readModelFileName(name, params));
-      if (!raw || typeof raw !== "object") return { hit: false, why: "absent" };
-      const env = raw;
-      if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
-      if (env.stamp !== currentStamp(version)) return { hit: false, why: "stale" };
-      if (typeof env.writtenAtMs !== "number") return { hit: false, why: "stale" };
-      if (Date.now() - env.writtenAtMs > MAX_AGE_MS) return { hit: false, why: "stale" };
-      return { hit: true, value: env.value };
-    } catch (e) {
-      disabled = true;
-      console.warn(`Durable read-model read failed (${name}) \u2014 L2 disabled for this run: ${e}`);
-      return { hit: false, why: "absent" };
-    }
-  }
-  function l2Write(name, params, version, value) {
-    if (disabled) return;
-    try {
-      const env = {
-        v: ENVELOPE_V,
-        stamp: currentStamp(version),
-        name,
-        hash: paramsHash(params),
-        writtenAtMs: Date.now(),
-        value
-      };
-      writeGzJson(subfolder(FOLDER), readModelFileName(name, params), env);
-    } catch (e) {
-      disabled = true;
-      console.warn(`Durable read-model write failed (${name}) \u2014 L2 disabled for this run: ${e}`);
-    }
-  }
-  function durablyCached(name, params, compute, ttlSec, version) {
-    if (warming && touched) touched.add(readModelFileName(name, params));
-    return cached(name, params, () => {
-      const hit = l2Read(name, params, version);
-      if (hit.hit) return hit.value;
-      const value = compute();
-      if (warming) l2Write(name, params, version, value);
-      return value;
-    }, ttlSec, version);
-  }
-
-  // src/server/registers.ts
-  function tally(into, key) {
-    var _a;
-    const k = key === null || key === void 0 || key === "" ? "(none)" : key;
-    into[k] = ((_a = into[k]) != null ? _a : 0) + 1;
-  }
-  function facetsFor(rows) {
-    var _a;
-    const facets = { severity: {}, repo: {}, status: {}, validation: {} };
-    for (const r of rows) {
-      tally(facets.severity, normalizeSeverity(r.severity));
-      tally(facets.repo, r.repo_name);
-      tally(facets.status, r.status);
-      if (r.scope === "secrets") tally(facets.validation, (_a = r.validation_state) != null ? _a : "UNKNOWN");
-    }
-    return facets;
-  }
-  function matches(row, q) {
-    var _a, _b;
-    if (q.severities && q.severities.length && !q.severities.includes(normalizeSeverity(row.severity))) return false;
-    if (q.repo && ((_a = row.repo_name) != null ? _a : "(none)") !== q.repo) return false;
-    if (q.status === "open" && row.status !== "OPEN") return false;
-    if (q.status === "resolved" && row.status !== "RESOLVED") return false;
-    if (q.validation && ((_b = row.validation_state) != null ? _b : "UNKNOWN") !== q.validation) return false;
-    if (q.awaitingVendor && !row.awaiting_vendor_fix) return false;
-    return true;
-  }
-  var SEV_RANK = {};
-  SEVERITY_ORDER.forEach((s, i) => {
-    SEV_RANK[s] = i;
-  });
-  function sortRows(rows, sort) {
-    if (!sort) return rows;
-    const desc = sort.startsWith("-");
-    const key = desc ? sort.slice(1) : sort;
-    const value = (r) => {
-      var _a;
-      return key === "severity" ? (_a = SEV_RANK[normalizeSeverity(r.severity)]) != null ? _a : 99 : r[key];
-    };
-    const out = [...rows].sort((a, b) => {
-      const va = value(a);
-      const vb = value(b);
-      if (va === null || va === void 0) return vb === null || vb === void 0 ? 0 : 1;
-      if (vb === null || vb === void 0) return -1;
-      return cmp(va, vb);
-    });
-    return desc ? out.reverse() : out;
-  }
-  function scopeRows(scope) {
-    return baseRows(Object.values(readLedger()).filter((r) => r.scope === scope));
-  }
-  function registerPage(q, page, pageSize, sort) {
-    const all = durablyCached(`register-rows-1`, { scope: q.scope }, () => scopeRows(q.scope), 3600);
-    const facets = durablyCached(`register-facets-1`, { scope: q.scope }, () => facetsFor(all), 3600);
-    const filtered = sortRows(all.filter((r) => matches(r, q)), sort);
-    const size = Math.min(500, Math.max(1, pageSize));
-    const pageCount = Math.max(1, Math.ceil(filtered.length / size));
-    const at2 = Math.min(Math.max(0, page), pageCount - 1);
-    let open = 0;
-    let disappeared = 0;
-    let awaiting = 0;
-    for (const r of filtered) {
-      if (r.status === "OPEN") open += 1;
-      else if (r.resolution_src === "disappeared") disappeared += 1;
-      if (r.awaiting_vendor_fix) awaiting += 1;
-    }
-    return {
-      scope: q.scope,
-      total: filtered.length,
-      scopeTotal: all.length,
-      page: at2,
-      pageCount,
-      pageSize: size,
-      rows: filtered.slice(at2 * size, (at2 + 1) * size),
-      facets,
-      summary: {
-        open,
-        resolved: filtered.length - open,
-        disappeared,
-        awaitingVendor: awaiting
-      }
-    };
-  }
-
-  // src/server/jobsStore.ts
-  var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
-  function normError(v) {
-    const s = v == null ? "" : String(v).trim();
-    return s === "" || s === "null" || s === "undefined" ? null : s;
-  }
-  function normText(v) {
-    const s = v == null ? "" : String(v);
-    return s === "" || s === "null" || s === "undefined" ? null : s;
-  }
-  function newJobId(kind, now) {
-    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
-  }
-  function createJob(row, now) {
-    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
-    appendRows(TABS.jobs, [full]);
-    setProp(ACTIVE_JOB_PROP, full.job_id);
-    return full;
-  }
-  function updateJob(jobId, patch, now) {
-    updateWhere(TABS.jobs, "job_id", jobId, {
-      ...patch,
-      updated_at: nowIso(now)
-    });
-    if (patch.phase && TERMINAL.includes(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
-  }
-  function rowToJob(r) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
-    return {
-      job_id: String((_a = r["job_id"]) != null ? _a : ""),
-      kind: (_b = r["kind"]) != null ? _b : "scan",
-      phase: (_c = r["phase"]) != null ? _c : "FAILED",
-      scan_id: normText(r["scan_id"]),
-      scope: normText(r["scope"]),
-      cursor: normText(r["cursor"]),
-      page: Number((_d = r["page"]) != null ? _d : 0),
-      findings_so_far: Number((_e = r["findings_so_far"]) != null ? _e : 0),
-      page_size: Number((_f = r["page_size"]) != null ? _f : 0),
-      total_count: Number((_g = r["total_count"]) != null ? _g : 0),
-      params_json: normText(r["params_json"]),
-      journal_ref: normText(r["journal_ref"]),
-      error: normError(r["error"]),
-      started_at: String((_h = r["started_at"]) != null ? _h : ""),
-      updated_at: String((_i = r["updated_at"]) != null ? _i : "")
-    };
-  }
-  function listJobs() {
-    return readAll(TABS.jobs).map(rowToJob);
-  }
-  var JOB_TAIL_ROWS = 25;
-  function getJob(jobId) {
-    var _a, _b;
-    const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
-    return (_b = (_a = recent.find((j) => j.job_id === jobId)) != null ? _a : listJobs().find((j) => j.job_id === jobId)) != null ? _b : null;
-  }
-  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
-  function isTerminalPhase(phase) {
-    return TERMINAL.includes(phase);
-  }
-  function activeJob() {
-    var _a;
-    if (!getProp(ACTIVE_JOB_PROP)) return null;
-    const job = (_a = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a : null;
-    if (!job) deleteProp(ACTIVE_JOB_PROP);
-    return job;
-  }
-  var STALE_JOB_MS = 30 * 6e4;
-  function isStaleJob(job, now) {
-    const updated = Date.parse(job.updated_at);
-    if (!Number.isFinite(updated)) return false;
-    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
-  }
-
-  // src/server/locks.ts
-  var LedgerBusyError = class extends Error {
-  };
-  var DEAD_JOB_MS = 30 * 60 * 1e3;
-  function withScriptLock(fn, timeoutMs = 3e4) {
-    const lock = LockService.getScriptLock();
-    if (!lock.tryLock(timeoutMs)) {
-      throw new LedgerBusyError(
-        "The data store is busy (a scan is writing). Try again shortly."
-      );
-    }
-    try {
-      return fn();
-    } finally {
-      lock.releaseLock();
-    }
-  }
-  function recoverIfNeeded(now) {
-    const job = activeJob();
-    if (!job) return;
-    const updated = parseTs(job.updated_at);
-    const ageMs = updated === null ? Infinity : (now != null ? now : Date.now()) - updated;
-    if (job.phase === "PERSISTING") {
-      const committed = job.scan_id !== null && readScans().some((s) => s.scan_id === job.scan_id);
-      if (committed) {
-        updateJob(job.job_id, { phase: "DONE", journal_ref: null });
-        if (job.journal_ref) trashFile(job.journal_ref);
-        return;
-      }
-      const restored = job.journal_ref ? restoreLedger(job.journal_ref) : false;
-      updateJob(job.job_id, {
-        phase: "FAILED",
-        journal_ref: null,
-        error: restored ? "Recovered: the execution died mid-write; the ledger was restored from its journal and no scan was recorded." : "The execution died mid-write and no journal was found. The ledger may be incomplete \u2014 run a fresh scan before trusting its figures."
-      });
-      return;
-    }
-    if (ageMs > DEAD_JOB_MS) {
-      updateJob(job.job_id, {
-        phase: "FAILED",
-        error: "Recovered: the job stalled with no progress. Nothing was written \u2014 the last committed scan stands."
-      });
-    }
-  }
-  function restoreLedger(journalRef) {
-    const doc = readGzJsonFile(journalRef);
-    if (!doc || typeof doc !== "object") return false;
-    writeLedger(doc);
-    trashFile(journalRef);
-    return true;
-  }
-
-  // src/server/scanJobs.ts
-  var scanJobs_exports = {};
-  __export(scanJobs_exports, {
-    CONTINUE_HANDLER: () => CONTINUE_HANDLER,
-    DAILY_HANDLER: () => DAILY_HANDLER,
-    cancelScan: () => cancelScan,
-    clearContinuationTriggers: () => clearContinuationTriggers,
-    continueJob: () => continueJob,
-    dailyScan: () => dailyScan,
-    jobStatus: () => jobStatus,
-    resetStuckJob: () => resetStuckJob,
-    startScan: () => startScan
-  });
 
   // src/server/wizQueries.ts
   var PAGE_SIZE = 500;
@@ -3329,6 +2892,7 @@ var Server = (() => {
       job_id: job.job_id,
       phase: job.phase,
       scope: job.scope,
+      scopes: params.scopes.slice(),
       step: step < 0 ? 0 : step,
       steps_total: params.scopes.length,
       page: job.page,
@@ -3360,6 +2924,466 @@ var Server = (() => {
     return `Reset ${job.job_id} (was ${job.phase}).`;
   }
 
+  // src/server/setup.ts
+  function setup() {
+    const notes = [];
+    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
+    let ss;
+    if (ssId) {
+      ss = SpreadsheetApp.openById(ssId);
+      notes.push(`Ledger: reusing ${ssId}`);
+    } else {
+      ss = SpreadsheetApp.create("Wiz Sidekick DevSecOps \u2014 ledger");
+      ssId = ss.getId();
+      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
+      notes.push(`Ledger: created ${ssId}`);
+    }
+    ensureTabs(ss);
+    notes.push("Tabs: ensured (headers appended where missing)");
+    let folderId = getProp(PROP_KEYS.archiveFolderId);
+    if (!folderId) {
+      folderId = DriveApp.createFolder("Wiz Sidekick DevSecOps \u2014 archive").getId();
+      setProp(PROP_KEYS.archiveFolderId, folderId);
+      notes.push(`Archive: created ${folderId}`);
+    } else {
+      notes.push(`Archive: reusing ${folderId}`);
+    }
+    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
+    if (!getProp(PROP_KEYS.allowedUsers)) {
+      const owner = Session.getEffectiveUser().getEmail();
+      if (owner) {
+        setProp(PROP_KEYS.allowedUsers, owner);
+        notes.push(`Access: seeded ALLOWED_USERS with ${owner}`);
+      }
+    }
+    const existing = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === DAILY_HANDLER);
+    if (existing.length) {
+      notes.push(`Triggers: daily scan already installed (${existing.length})`);
+    } else {
+      ScriptApp.newTrigger(DAILY_HANDLER).timeBased().everyDays(1).atHour(3).create();
+      notes.push("Triggers: installed the daily scan (03:00, project timezone)");
+    }
+    if (!hasWizCredentials()) {
+      notes.push("  note: no Wiz credentials are set, so it will return without scanning.");
+    }
+    return notes.join("\n");
+  }
+
+  // src/server/diagnostics.ts
+  function deploymentDiagnostic() {
+    const out = [];
+    const ok = (label, value) => out.push(`  OK    ${label}: ${value}`);
+    const bad = (label, value) => out.push(`  FAIL  ${label}: ${value}`);
+    out.push(`Wiz Sidekick DevSecOps \u2014 deployment diagnostic`);
+    out.push(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
+    out.push("");
+    const ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
+    if (ssId) {
+      try {
+        const ss = ledgerSpreadsheet();
+        ok("Ledger spreadsheet", `${ss.getName()} (${ssId})`);
+        for (const tab of Object.values(TABS)) {
+          const rows = dataRowCount(tab);
+          out.push(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
+        }
+        ok("Cells used", String(cellCount()));
+      } catch (e) {
+        bad("Ledger spreadsheet", `${ssId} exists as a property but could not be opened: ${e}`);
+      }
+    } else {
+      bad("Ledger spreadsheet", "not created \u2014 run setup()");
+    }
+    const folderId = getProp(PROP_KEYS.archiveFolderId);
+    if (folderId) ok("Archive folder", folderId);
+    else bad("Archive folder", "not created \u2014 run setup()");
+    if (hasWizCredentials()) ok("Wiz credentials", "present");
+    else bad("Wiz credentials", "absent \u2014 set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET");
+    const users = getProp(PROP_KEYS.allowedUsers);
+    if (users) ok("Allowlist", `${users.split(/[,;\s]+/).filter(Boolean).length} address(es)`);
+    else bad("Allowlist", "empty \u2014 the app is owner-only until ALLOWED_USERS is set");
+    const s = loadSettings();
+    ok("Scopes collected", s.scopes.join(", ") || "(none)");
+    ok("Scopes available", SCOPES.join(", "));
+    for (const scope of SCOPES) {
+      ok(`Severities requested (${scope})`, s.fetchSeverities[scope].join(", ") || "(all)");
+    }
+    out.push("");
+    const daily = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === "trigger_dailyScan").length;
+    if (daily) ok("Daily scan trigger", `installed (${daily})`);
+    else bad("Daily scan trigger", "not installed \u2014 run setup()");
+    const job = activeJob();
+    if (job) {
+      ok("Scan in flight", `${job.job_id} \u2014 ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
+      out.push(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
+      if (isStaleJob(job)) {
+        bad("  heartbeat", "silent for over 30 minutes \u2014 run resetStuckJob() from the editor");
+      }
+    } else {
+      ok("Scan in flight", "none");
+    }
+    const verified = getProp(PROP_KEYS.wizVerifiedAt);
+    if (verified) ok("Credentials last verified", verified);
+    else bad("Credentials last verified", "never \u2014 the tenant has not accepted them yet");
+    return out.join("\n");
+  }
+
+  // src/server/api.ts
+  var api_exports = {};
+  __export(api_exports, {
+    bootstrap: () => bootstrap,
+    cancelScan: () => cancelScan2,
+    getAccess: () => getAccess,
+    getChartsBundle: () => getChartsBundle,
+    getDiagnostic: () => getDiagnostic,
+    getExecutive: () => getExecutive,
+    getJobStatus: () => getJobStatus,
+    getMttr: () => getMttr,
+    getRegister: () => getRegister,
+    getSettings: () => getSettings,
+    putSettings: () => putSettings,
+    runSampleSync: () => runSampleSync,
+    runScan: () => runScan2,
+    saveAccess: () => saveAccess,
+    saveAdmins: () => saveAdmins,
+    setSettings: () => setSettings,
+    testWizConnection: () => testWizConnection
+  });
+
+  // src/domain/remediation.ts
+  var RESOLUTION_BUCKET_EDGES = [1, 7, 30, 90];
+  var RESOLUTION_BUCKET_LABELS = ["\u22641d", "2\u20137d", "8\u201330d", "31\u201390d", "90+d"];
+  function isOpen2(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function resolvedMttr(row) {
+    const m = row.mttr_days;
+    return typeof m === "number" && Number.isFinite(m) ? m : null;
+  }
+  function openAge(row) {
+    if (!isOpen2(row.status)) return null;
+    const a = row.age_days;
+    return typeof a === "number" && Number.isFinite(a) ? a : null;
+  }
+  function mttrPercentiles(rows) {
+    var _a;
+    const bySev = {};
+    const all = [];
+    for (const row of rows) {
+      const m = resolvedMttr(row);
+      if (m === null) continue;
+      const s = normalizeSeverity(row.severity);
+      ((_a = bySev[s]) != null ? _a : bySev[s] = []).push(m);
+      all.push(m);
+    }
+    const perSev = {};
+    for (const s of SEVERITY_ORDER) {
+      const vals = bySev[s];
+      if (!vals) continue;
+      perSev[s] = { p50: quantile(vals, 0.5), p90: quantile(vals, 0.9), count: vals.length };
+    }
+    return {
+      perSev,
+      overall: { p50: quantile(all, 0.5), p90: quantile(all, 0.9), count: all.length }
+    };
+  }
+  function resolutionBuckets(rows) {
+    const perSev = {};
+    let total = 0;
+    for (const row of rows) {
+      const m = resolvedMttr(row);
+      if (m === null) continue;
+      const bucket = m <= RESOLUTION_BUCKET_EDGES[0] ? 0 : m <= RESOLUTION_BUCKET_EDGES[1] ? 1 : m <= RESOLUTION_BUCKET_EDGES[2] ? 2 : m <= RESOLUTION_BUCKET_EDGES[3] ? 3 : 4;
+      const s = normalizeSeverity(row.severity);
+      if (!perSev[s]) perSev[s] = [0, 0, 0, 0, 0];
+      perSev[s][bucket] += 1;
+      total += 1;
+    }
+    return { perSev, labels: RESOLUTION_BUCKET_LABELS, total };
+  }
+  function kmCurve(events, times) {
+    const curve = [];
+    let s = 1;
+    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
+      const atRisk = times.filter((x) => x >= t).length;
+      if (atRisk === 0) continue;
+      const d = events.filter((x) => x === t).length;
+      s *= 1 - d / atRisk;
+      curve.push({ t, s, atRisk, events: d });
+    }
+    return curve;
+  }
+  var CROSSING_EPSILON = 1e-9;
+  function kmQuantileFromCurve(curve, q) {
+    const threshold = 1 - q + CROSSING_EPSILON;
+    for (const p of curve) if (p.s <= threshold) return p.t;
+    return null;
+  }
+  function kmMedianFromCurve(curve) {
+    return kmQuantileFromCurve(curve, 0.5);
+  }
+  function kaplanMeier(rows) {
+    const events = [];
+    const censored = [];
+    for (const row of rows) {
+      const m = resolvedMttr(row);
+      if (m !== null) {
+        events.push(m);
+        continue;
+      }
+      const c = openAge(row);
+      if (c !== null) censored.push(c);
+    }
+    const times = events.concat(censored);
+    const total = events.length + censored.length;
+    const restrictionTime = times.length ? maxNum(times) : null;
+    const naiveMean = mean(events);
+    const naiveMedian = median(events);
+    if (!events.length) {
+      return {
+        curve: [],
+        median: null,
+        medianLowerBound: restrictionTime,
+        mean: null,
+        restrictionTime,
+        meanTruncated: false,
+        naiveMean,
+        naiveMedian,
+        events: 0,
+        censored: censored.length,
+        total
+      };
+    }
+    const curve = kmCurve(events, times);
+    const med = kmMedianFromCurve(curve);
+    const tau = restrictionTime;
+    let rmst = 0;
+    let prevT = 0;
+    let prevS = 1;
+    for (const p of curve) {
+      rmst += prevS * (p.t - prevT);
+      prevT = p.t;
+      prevS = p.s;
+    }
+    rmst += prevS * (tau - prevT);
+    return {
+      curve,
+      median: med,
+      medianLowerBound: med === null ? restrictionTime : null,
+      mean: rmst,
+      restrictionTime,
+      meanTruncated: prevS > 0,
+      naiveMean,
+      naiveMedian,
+      events: events.length,
+      censored: censored.length,
+      total
+    };
+  }
+  function openPastSla(rows) {
+    var _a, _b;
+    const perSev = {};
+    let totalOpen = 0;
+    let totalBreached = 0;
+    for (const row of rows) {
+      const age = openAge(row);
+      if (age === null) continue;
+      const s = normalizeSeverity(row.severity);
+      const target = (_a = SLA_TARGETS[s]) != null ? _a : null;
+      const stat = (_b = perSev[s]) != null ? _b : perSev[s] = { open: 0, breached: 0, pct: null, target };
+      stat.open += 1;
+      totalOpen += 1;
+      if (target !== null && age > target) {
+        stat.breached += 1;
+        totalBreached += 1;
+      }
+    }
+    for (const stat of Object.values(perSev)) {
+      stat.pct = stat.open ? stat.breached / stat.open * 100 : null;
+    }
+    return {
+      perSev,
+      overall: {
+        open: totalOpen,
+        breached: totalBreached,
+        pct: totalOpen ? totalBreached / totalOpen * 100 : null
+      }
+    };
+  }
+  function openAgePercentiles(rows) {
+    var _a;
+    const bySev = {};
+    const all = [];
+    for (const row of rows) {
+      const a = openAge(row);
+      if (a === null) continue;
+      const s = normalizeSeverity(row.severity);
+      ((_a = bySev[s]) != null ? _a : bySev[s] = []).push(a);
+      all.push(a);
+    }
+    const perSev = {};
+    for (const s of SEVERITY_ORDER) {
+      const vals = bySev[s];
+      if (!vals) continue;
+      perSev[s] = { p50: quantile(vals, 0.5), p90: quantile(vals, 0.9), count: vals.length };
+    }
+    return {
+      perSev,
+      overall: { p50: quantile(all, 0.5), p90: quantile(all, 0.9), count: all.length }
+    };
+  }
+  function awaitingVendorFix(rows) {
+    let count = 0;
+    let openWithVendor = 0;
+    for (const row of rows) {
+      if (row.scope !== "sca" || !isOpen2(row.status)) continue;
+      openWithVendor += 1;
+      if (row.awaiting_vendor_fix) count += 1;
+    }
+    return { count, openWithVendor, pct: openWithVendor ? count / openWithVendor * 100 : null };
+  }
+
+  // src/server/sampleData.ts
+  var SAMPLE_SCANS = [];
+
+  // src/server/readModelStore.ts
+  var FOLDER = "readmodels";
+  var ENVELOPE_V = 1;
+  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+  var warming = false;
+  var touched = null;
+  var disabled = false;
+  function readModelFileName(name, params) {
+    return `rm-${name}-${paramsHash(params)}.json.gz`;
+  }
+  function l2Read(name, params, version) {
+    if (disabled) return { hit: false, why: "absent" };
+    try {
+      const raw = readGzJsonNamed(FOLDER, readModelFileName(name, params));
+      if (!raw || typeof raw !== "object") return { hit: false, why: "absent" };
+      const env = raw;
+      if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
+      if (env.stamp !== currentStamp(version)) return { hit: false, why: "stale" };
+      if (typeof env.writtenAtMs !== "number") return { hit: false, why: "stale" };
+      if (Date.now() - env.writtenAtMs > MAX_AGE_MS) return { hit: false, why: "stale" };
+      return { hit: true, value: env.value };
+    } catch (e) {
+      disabled = true;
+      console.warn(`Durable read-model read failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+      return { hit: false, why: "absent" };
+    }
+  }
+  function l2Write(name, params, version, value) {
+    if (disabled) return;
+    try {
+      const env = {
+        v: ENVELOPE_V,
+        stamp: currentStamp(version),
+        name,
+        hash: paramsHash(params),
+        writtenAtMs: Date.now(),
+        value
+      };
+      writeGzJson(subfolder(FOLDER), readModelFileName(name, params), env);
+    } catch (e) {
+      disabled = true;
+      console.warn(`Durable read-model write failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+    }
+  }
+  function durablyCached(name, params, compute, ttlSec, version) {
+    if (warming && touched) touched.add(readModelFileName(name, params));
+    return cached(name, params, () => {
+      const hit = l2Read(name, params, version);
+      if (hit.hit) return hit.value;
+      const value = compute();
+      if (warming) l2Write(name, params, version, value);
+      return value;
+    }, ttlSec, version);
+  }
+
+  // src/server/registers.ts
+  function tally(into, key) {
+    var _a;
+    const k = key === null || key === void 0 || key === "" ? "(none)" : key;
+    into[k] = ((_a = into[k]) != null ? _a : 0) + 1;
+  }
+  function facetsFor(rows) {
+    var _a;
+    const facets = { severity: {}, repo: {}, status: {}, validation: {} };
+    for (const r of rows) {
+      tally(facets.severity, normalizeSeverity(r.severity));
+      tally(facets.repo, r.repo_name);
+      tally(facets.status, r.status);
+      if (r.scope === "secrets") tally(facets.validation, (_a = r.validation_state) != null ? _a : "UNKNOWN");
+    }
+    return facets;
+  }
+  function matches(row, q) {
+    var _a, _b;
+    if (q.severities && q.severities.length && !q.severities.includes(normalizeSeverity(row.severity))) return false;
+    if (q.repo && ((_a = row.repo_name) != null ? _a : "(none)") !== q.repo) return false;
+    if (q.status === "open" && row.status !== "OPEN") return false;
+    if (q.status === "resolved" && row.status !== "RESOLVED") return false;
+    if (q.validation && ((_b = row.validation_state) != null ? _b : "UNKNOWN") !== q.validation) return false;
+    if (q.awaitingVendor && !row.awaiting_vendor_fix) return false;
+    return true;
+  }
+  var SEV_RANK = {};
+  SEVERITY_ORDER.forEach((s, i) => {
+    SEV_RANK[s] = i;
+  });
+  function sortRows(rows, sort) {
+    if (!sort) return rows;
+    const desc = sort.startsWith("-");
+    const key = desc ? sort.slice(1) : sort;
+    const value = (r) => {
+      var _a;
+      return key === "severity" ? (_a = SEV_RANK[normalizeSeverity(r.severity)]) != null ? _a : 99 : r[key];
+    };
+    const out = [...rows].sort((a, b) => {
+      const va = value(a);
+      const vb = value(b);
+      if (va === null || va === void 0) return vb === null || vb === void 0 ? 0 : 1;
+      if (vb === null || vb === void 0) return -1;
+      return cmp(va, vb);
+    });
+    return desc ? out.reverse() : out;
+  }
+  function scopeRows(scope) {
+    return baseRows(Object.values(readLedger()).filter((r) => r.scope === scope));
+  }
+  function registerPage(q, page, pageSize, sort) {
+    const all = durablyCached(`register-rows-1`, { scope: q.scope }, () => scopeRows(q.scope), 3600);
+    const facets = durablyCached(`register-facets-1`, { scope: q.scope }, () => facetsFor(all), 3600);
+    const filtered = sortRows(all.filter((r) => matches(r, q)), sort);
+    const size = Math.min(500, Math.max(1, pageSize));
+    const pageCount = Math.max(1, Math.ceil(filtered.length / size));
+    const at2 = Math.min(Math.max(0, page), pageCount - 1);
+    let open = 0;
+    let disappeared = 0;
+    let awaiting = 0;
+    for (const r of filtered) {
+      if (r.status === "OPEN") open += 1;
+      else if (r.resolution_src === "disappeared") disappeared += 1;
+      if (r.awaiting_vendor_fix) awaiting += 1;
+    }
+    return {
+      scope: q.scope,
+      total: filtered.length,
+      scopeTotal: all.length,
+      page: at2,
+      pageCount,
+      pageSize: size,
+      rows: filtered.slice(at2 * size, (at2 + 1) * size),
+      facets,
+      summary: {
+        open,
+        resolved: filtered.length - open,
+        disappeared,
+        awaitingVendor: awaiting
+      }
+    };
+  }
+
   // src/server/api.ts
   function run(fn) {
     try {
@@ -3377,17 +3401,23 @@ var Server = (() => {
   }
   function bootstrap(_p) {
     return run(() => {
-      var _a, _b, _c;
+      var _a, _b, _c, _d;
       const scans = readAll(TABS.scans);
       let latest = null;
+      const byScope = {};
+      for (const scope of SCOPES) byScope[scope] = null;
       for (const row of scans) {
         const ts = String((_a = row.ts) != null ? _a : "");
         if (!ts) continue;
+        const scope = String((_b = row.scope) != null ? _b : "");
+        if (scope in byScope && (byScope[scope] === null || ts > byScope[scope])) {
+          byScope[scope] = ts;
+        }
         if (!latest || ts > latest.finished_at) {
           latest = {
-            scan_id: String((_b = row.scan_id) != null ? _b : ""),
+            scan_id: String((_c = row.scan_id) != null ? _c : ""),
             finished_at: ts,
-            total: Number((_c = row.total) != null ? _c : 0)
+            total: Number((_d = row.total) != null ? _d : 0)
           };
         }
       }
@@ -3403,6 +3433,9 @@ var Server = (() => {
         severityOrder: SEVERITY_ORDER,
         slaTargets: SLA_TARGETS,
         latestScan: latest,
+        lastScanByScope: byScope,
+        wizVerifiedAt: getProp(PROP_KEYS.wizVerifiedAt),
+        activeJob: jobStatus(),
         canEditAccess: canEditUsers(),
         settings: loadSettings()
       };

@@ -310,13 +310,37 @@
 .rail-status-dot { display: none; width: 9px; height: 9px; border-radius: 50%; align-self: center; }
 .rail-status-dot.ok { background: var(--ok); }
 .rail-status-dot.neutral { background: var(--text-3); }
+.rail-status-dot.warn { background: var(--warn); }
+.rail-status-dot.bad { background: var(--bad); }
+/* A scan in flight. The ring is the mini spinner's job; here the dot just breathes, and the
+   reduced-motion branch below stops it dead rather than removing the state — the colour and
+   the caption still say what is happening. */
+.rail-status-dot.scanning { background: var(--accent-text); animation: rail-dot-pulse 1.6s ease-in-out infinite; }
+@keyframes rail-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) {
+  .rail-status-dot.scanning { animation: none; }
+}
+/* It is nine pixels of colour and, above 800px, the ONLY status on screen — so it takes
+   focus and carries its sentence in a tip. Severity never rides on colour alone here either:
+   the caption beside it (visually hidden in the rail) is the same sentence in words. */
+.rail-status-dot:focus-visible {
+  outline: 2px solid var(--accent-text); outline-offset: 3px;
+}
 
 /* The rail proper — everything here used to be the .collapsed variant of a rail that could
    also be 232px wide. It cannot any more: the second tier is a panel beside the rail, not a
    wider rail, so this IS the rail above 800px. Below that the nav is a stacked list where
    every one of these would be wrong, which is what the media query is holding back. */
 @media (min-width: 801px) {
-  .sidebar .scan-caption,
+  /* THE CAPTION IS HIDDEN FROM SIGHT, NOT FROM THE ACCESSIBILITY TREE. It used to be
+     `display: none` here, which meant that above 800px — the default layout — the entire
+     scan status was a nine-pixel dot and a hover tip: nothing a screen reader could reach
+     and nothing a keyboard could. The same clip-path idiom eleven lines below already made
+     this argument for the progress card's phase line; the caption had simply been missed. */
+  .sidebar .scan-caption {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  }
   .sidebar .btn-label,
   .sidebar .scan-buttons button:not(.primary) { display: none; }
   .sidebar .scan-buttons { justify-content: center; }

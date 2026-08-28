@@ -75,6 +75,18 @@ export interface Bootstrap {
   severityOrder: readonly string[];
   slaTargets: Record<string, number>;
   latestScan: { scan_id: string; finished_at: string; total: number } | null;
+  /**
+   * When each scope was last scanned — THREE CLOCKS, not one.
+   *
+   * `latestScan` above is a max over the whole scans tab, so it reads "fresh" when SCA ran an
+   * hour ago and secrets has never run at all. The rail dot takes the WORST over the scopes
+   * Settings collects, because a register nobody has looked at is the fact worth surfacing.
+   */
+  lastScanByScope: Record<string, string | null>;
+  /** Credentials the tenant has actually accepted, and when. Null = never verified. */
+  wizVerifiedAt: string | null;
+  /** The scan in flight, so a reload mid-scan picks the progress card back up. */
+  activeJob: scanJobs.JobStatus | null;
   canEditAccess: boolean;
   settings: ReturnType<typeof loadSettings>;
 }
@@ -87,9 +99,15 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
   return run(() => {
   const scans = readAll(TABS.scans);
   let latest: Bootstrap["latestScan"] = null;
+  const byScope: Record<string, string | null> = {};
+  for (const scope of SCOPES) byScope[scope] = null;
   for (const row of scans) {
     const ts = String(row.ts ?? "");
     if (!ts) continue;
+    const scope = String(row.scope ?? "");
+    if (scope in byScope && (byScope[scope] === null || ts > byScope[scope]!)) {
+      byScope[scope] = ts;
+    }
     if (!latest || ts > latest.finished_at) {
       latest = {
         scan_id: String(row.scan_id ?? ""),
@@ -110,6 +128,9 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
     severityOrder: SEVERITY_ORDER,
     slaTargets: SLA_TARGETS,
     latestScan: latest,
+    lastScanByScope: byScope,
+    wizVerifiedAt: getProp(PROP_KEYS.wizVerifiedAt),
+    activeJob: scanJobs.jobStatus(),
     canEditAccess: access.canEditUsers(),
     settings: loadSettings(),
   };
