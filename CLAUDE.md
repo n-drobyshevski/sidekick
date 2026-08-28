@@ -220,6 +220,25 @@ already implements the pipeline and is the behavioural spec (same relationship `
   on a replay of older scans makes the disappearance guard believe a severity was covered by
   a scan that never looked at it. The dev fixture models exactly that: scan 1 wide, scans 2-3
   narrow — which is also the only shape that leaves the guard something to protect.
+- **The Access panel is not the boundary, and the tier is one `canEditAdmins()` call.**
+  `google.script.run` reaches `api_saveAccess` from any allowed caller's console, so every
+  endpoint re-checks; `getAccess` withholds the ROSTER from a non-editor rather than letting
+  the client decline to draw it. `saveAdmins` is owner-only because an admin who could edit it
+  could promote themselves permanently. `test/accessAdmin.test.ts` — which `access.ts` cited
+  for a whole fork before anyone ported it — fails the moment that blurs.
+- **A removal confirmation has to compare against the DISK, not against page load.** `gas/`
+  computes it from the `getAccess` payload the page opened with and never refreshes it, so the
+  first removal in a visit is confirmed and every one after it is silent. Fixed here; the
+  baseline moves on every save.
+- **Copying a page from `gas/` has two traps this chassis adds.** `el()` THROWS on `title`
+  (the native-tooltip ban), and the fork already renamed the CSS — `.access-remove`,
+  `.access-add`, `.access-block__label` against `gas/`'s `.cond-remove`, `.sub-add`,
+  `.scope-block`. The first fails loudly; the second renders an unstyled panel in silence.
+- **A test that stubs a global belongs in the ISOLATED vitest project.** The pure project runs
+  `isolate: false` on a shared worker, so a module-scope `vi.stubGlobal("Session", …)` installs
+  it for every other file in that worker. The classifier in `vitest.config.ts` detects
+  `vi.stubGlobal` / `vi.mock` from the source, for the same reason it detects the other two: a
+  hand-written list rots, and the failure does not look like a config mistake.
 - **`PAGES` in `app.js` is the only IA list**, and a labelled lane must hold two pages —
   `navModel` collapses a lane of one on the rail, but `renderStackedNav` below 800px draws
   the heading unconditionally, so a one-page lane restates its own link. `navGroups.test.js`

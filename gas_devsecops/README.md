@@ -10,7 +10,7 @@ bright-yellow brand (`#ffcb13`) instead of Signal Blue or crimson — the severi
 deliberately identical across all three, so a severity means the same thing wherever you
 read it.
 
-## Status: Phase 2 — the ledger core, and four pages reading it
+## Status: Phase 2 — the ledger core, four pages reading it, and access editable
 
 **What is real:** the shell, the navigation, all ten routes, access control, the settings
 store, the ledger schema, the build and the dev harness — and now the ledger itself. Three
@@ -19,7 +19,9 @@ reconciler with per-scope disappearance (`src/domain/reconcile.ts`), the derived
 (`src/domain/ledgerCore.ts`), censoring-aware remediation statistics
 (`src/domain/remediation.ts`), Sheet persistence (`src/server/ledgerStore.ts`) and a scan
 runner (`src/server/sync.ts`). **Executive, MTTR & SLA, and the three registers are wired to real
-numbers** — six of the ten routes. `npm run check` is green.
+numbers** — six of the ten routes. **Settings → Access is real too**: the allowlist and the
+admin tier are editable in the app rather than by hand in Script Properties.
+`npm run check` is green.
 
 **What is not: the live fetch.** `sync.ts`'s source is pluggable and only the sample source
 exists. The live one REFUSES when called rather than returning an empty page — an empty page
@@ -28,8 +30,8 @@ would resolve the whole register against it. A missing feature must not be able 
 a remediation event.
 
 Four routes still render their composition — Coverage & efficiency (which needs the P2P
-domain port), Repositories, Scan history, Storage and Settings — and say plainly that no data
-is connected. A page drawing a plausible empty chart would be claiming a pipeline that does
+domain port), Repositories, Scan history and Storage — and say plainly that no data is
+connected. Settings has one real section and names the three it does not have. A page drawing a plausible empty chart would be claiming a pipeline that does
 not exist.
 
 **The registers page server-side**, because SCA is 17,991 rows and the reader looks at fifty.
