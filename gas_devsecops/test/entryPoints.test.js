@@ -48,7 +48,7 @@ describe("the web-app entry", () => {
   });
 
   it("exposes every global entry.js reaches for on the Server namespace", () => {
-    for (const name of ["doGet", "include", "access", "welcome", "setup", "api"]) {
+    for (const name of ["doGet", "include", "access", "welcome", "setup", "api", "jobs"]) {
       expect(INDEX, `Server.${name} is not exported`).toMatch(
         new RegExp(`export (\\* as ${name}|\\{[^}]*\\b${name}\\b)`),
       );
@@ -56,9 +56,36 @@ describe("the web-app entry", () => {
   });
 });
 
+describe("the trigger handlers", () => {
+  const triggers = [...ENTRY.matchAll(/^function (trigger_\w+)\(/gm)].map((m) => m[1]);
+
+  it("exist as top-level globals", () => {
+    // A ClockTrigger pointing at a handler that does not exist fails silently, once a day,
+    // forever. The battery's continuation handler fails silently once per HOP.
+    expect(triggers.sort()).toEqual(["trigger_continueScan", "trigger_dailyScan"]);
+  });
+
+  it("are UNGATED, and this is the spec that stops a tidying refactor", () => {
+    // An installable trigger runs with no active user, so `Session.getActiveUser().getEmail()`
+    // is "" and any access check denies every firing — a multi-hop scan would stop dead at
+    // its first budget expiry and look exactly like a hang. Making these match the api_
+    // delegators is the obvious-looking change that breaks collection.
+    for (const name of triggers) {
+      const body = ENTRY.slice(ENTRY.indexOf(`function ${name}(`));
+      const end = body.indexOf("\n}");
+      expect(body.slice(0, end), `${name} must not check access`).not.toContain("denyResult");
+      expect(body.slice(0, end), `${name} must not check access`).not.toContain("assertAllowed");
+    }
+  });
+
+  it("are not RPC endpoints", () => {
+    for (const name of triggers) expect(delegated).not.toContain(name.replace("trigger_", ""));
+  });
+});
+
 describe("editor-run entry points", () => {
   it("are gated — the editor runs as whoever opened it", () => {
-    for (const name of ["setup", "deploymentDiagnostic"]) {
+    for (const name of ["setup", "deploymentDiagnostic", "resetStuckJob"]) {
       expect(ENTRY).toMatch(
         new RegExp(`function ${name}\\(\\)[\\s\\S]{0,120}assertAllowed\\("${name}"\\)`),
       );

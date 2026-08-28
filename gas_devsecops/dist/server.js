@@ -26,6 +26,7 @@ var Server = (() => {
     deploymentDiagnostic: () => deploymentDiagnostic,
     doGet: () => doGet,
     include: () => include,
+    jobs: () => scanJobs_exports,
     setup: () => setup,
     welcome: () => welcome_exports
   });
@@ -173,7 +174,16 @@ var Server = (() => {
     // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
     // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
     // from one an older deployment left behind. Written by setup(), read by setup().
-    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE"
+    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
+    /**
+     * When a real token exchange plus a real query last succeeded.
+     *
+     * Separate from the credentials themselves because they answer different questions.
+     * `hasWizCredentials()` says three strings are non-empty; this says the tenant accepted
+     * them, once, at a time you can read. A Settings page that showed only the first was
+     * inviting the stronger reading with nothing to support it.
+     */
+    wizVerifiedAt: "WIZ_VERIFIED_AT"
   };
   var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
   function getProp(key) {
@@ -191,6 +201,10 @@ var Server = (() => {
   }
   function deleteProp(key) {
     PropertiesService.getScriptProperties().deleteProperty(key);
+  }
+  function projectScope() {
+    const id = getProp(PROP_KEYS.wizProjectIdV2);
+    return id && id.trim() ? [id.trim()] : null;
   }
   function resolveWizAuthMode(token, clientId, clientSecret) {
     if (token && token.trim()) return "token";
@@ -434,10 +448,11 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "5badd723c18c" : "dev";
+  var BUILD_ID = true ? "47e312e0704b" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
+  var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
   var KEY_PREFIX = `wsk.${BUILD_ID}`;
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -461,6 +476,10 @@ var Server = (() => {
   }
   function bumpDataVersion() {
     setProp(VERSION_PROP, nextVersion(getProp(VERSION_PROP)));
+    __resetMemosForTest2();
+  }
+  function bumpWizDataVersion() {
+    setProp(WIZ_VERSION_PROP, nextVersion(getProp(WIZ_VERSION_PROP)));
     __resetMemosForTest2();
   }
   function paramsHash(params) {
@@ -985,6 +1004,16 @@ var Server = (() => {
     const values = readGrid(sh, tab, lastRow, lastCol);
     return mapRows(values[0].map(String), values.slice(1));
   }
+  function readTail(tab, n) {
+    const sh = sheet(tab);
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    if (lastRow < 2 || lastCol < 1) return [];
+    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    const first = Math.max(2, lastRow - Math.max(1, n) + 1);
+    const values = sh.getRange(first, 1, lastRow - first + 1, lastCol).getValues();
+    return mapRows(headers, values);
+  }
   function ensureHeaders(sh, tab) {
     var _a, _b;
     const width = Math.max(sh.getLastColumn(), 1);
@@ -1271,18 +1300,22 @@ var Server = (() => {
   var api_exports = {};
   __export(api_exports, {
     bootstrap: () => bootstrap,
+    cancelScan: () => cancelScan2,
     getAccess: () => getAccess,
     getChartsBundle: () => getChartsBundle,
     getDiagnostic: () => getDiagnostic,
     getExecutive: () => getExecutive,
+    getJobStatus: () => getJobStatus,
     getMttr: () => getMttr,
     getRegister: () => getRegister,
     getSettings: () => getSettings,
     putSettings: () => putSettings,
     runSampleSync: () => runSampleSync,
+    runScan: () => runScan2,
     saveAccess: () => saveAccess,
     saveAdmins: () => saveAdmins,
-    setSettings: () => setSettings
+    setSettings: () => setSettings,
+    testWizConnection: () => testWizConnection
   });
 
   // src/domain/ledgerCore.ts
@@ -1739,6 +1772,7 @@ var Server = (() => {
     });
   }
   function appendScan(row) {
+    var _a;
     appendRows(TABS.scans, [{
       scan_id: row.scan_id,
       ts: row.ts,
@@ -1749,7 +1783,7 @@ var Server = (() => {
       new_count: row.new_count,
       resolved_count: row.resolved_count,
       reopened_count: row.reopened_count,
-      raw_ref: null,
+      raw_ref: (_a = row.raw_ref) != null ? _a : null,
       sealed: false
     }]);
   }
@@ -2139,6 +2173,119 @@ var Server = (() => {
     };
   }
 
+  // src/server/archiveStore.ts
+  var rootFolderMemo;
+  var subfolderMemo = /* @__PURE__ */ new Map();
+  var syncFolderMemo = /* @__PURE__ */ new Map();
+  function rootFolder() {
+    if (!rootFolderMemo) {
+      rootFolderMemo = DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
+    }
+    return rootFolderMemo;
+  }
+  function childFolder(parent, name) {
+    const it = parent.getFoldersByName(name);
+    return it.hasNext() ? it.next() : parent.createFolder(name);
+  }
+  function subfolder(name) {
+    const hit = subfolderMemo.get(name);
+    if (hit) return hit;
+    const folder = childFolder(rootFolder(), name);
+    subfolderMemo.set(name, folder);
+    return folder;
+  }
+  function safeName(id) {
+    return id.replace(/[^0-9A-Za-z._-]/g, "") || "sync";
+  }
+  function writeGzJson(folder, name, payload) {
+    const json = JSON.stringify(payload);
+    const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
+    const existing = folder.getFilesByName(name);
+    while (existing.hasNext()) existing.next().setTrashed(true);
+    return folder.createFile(blob);
+  }
+  function readGzJsonNamed(folder, name) {
+    const it = subfolder(folder).getFilesByName(name);
+    if (!it.hasNext()) return null;
+    return parseGzBlob(it.next().getBlob());
+  }
+  function readGzJsonFile(fileId) {
+    try {
+      const file = DriveApp.getFileById(fileId);
+      return parseGzBlob(file.getBlob());
+    } catch (e) {
+      console.warn(`Unreadable Drive file ${fileId}: ${e}`);
+      return null;
+    }
+  }
+  function parseGzBlob(blob) {
+    try {
+      const bytes = blob.getBytes();
+      const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
+      const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
+      return JSON.parse(text);
+    } catch (e) {
+      console.warn(`Failed to parse archive blob: ${e}`);
+      return null;
+    }
+  }
+  function syncFolder(syncId) {
+    const key = safeName(syncId);
+    const hit = syncFolderMemo.get(key);
+    if (hit) return hit;
+    const folder = childFolder(subfolder("syncs"), key);
+    syncFolderMemo.set(key, folder);
+    return folder;
+  }
+  function writeSyncPage(syncId, stepIndex, pageNumber, payload) {
+    const name = `step-${stepIndex}-page-${String(pageNumber).padStart(4, "0")}.json.gz`;
+    return writeGzJson(syncFolder(syncId), name, payload).getId();
+  }
+  function readSyncStepPages(syncId, stepIndex, expectedPages) {
+    const prefix = `step-${stepIndex}-page-`;
+    const pages = [];
+    const files = syncFolder(syncId).getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      const name = f.getName();
+      if (!name.startsWith(prefix)) continue;
+      const payload = parseGzBlob(f.getBlob());
+      if (payload === null) {
+        throw new Error(
+          `Archive page ${name} of sync ${syncId} could not be read. Refusing to reconcile a scope against a population that is missing a page \u2014 every finding in it would resolve as remediated.`
+        );
+      }
+      pages.push({ name, payload });
+    }
+    pages.sort((a, b) => a.name < b.name ? -1 : 1);
+    if (pages.length !== expectedPages) {
+      throw new Error(
+        `Sync ${syncId} step ${stepIndex} recorded ${expectedPages} page(s) but ${pages.length} are on disk. Refusing to reconcile against an incomplete population.`
+      );
+    }
+    return pages.map((p) => p.payload);
+  }
+  function trashSyncStepPages(syncId, stepIndex) {
+    const prefix = `step-${stepIndex}-page-`;
+    try {
+      const files = syncFolder(syncId).getFiles();
+      while (files.hasNext()) {
+        const f = files.next();
+        if (f.getName().startsWith(prefix)) f.setTrashed(true);
+      }
+    } catch (e) {
+      console.warn(`Couldn't trash step ${stepIndex} of sync ${syncId}: ${e}`);
+    }
+  }
+  function trashFile(fileId) {
+    if (!fileId) return;
+    try {
+      DriveApp.getFileById(fileId).setTrashed(true);
+    } catch (e) {
+      console.warn(`Couldn't trash file ${fileId}: ${e}`);
+    }
+  }
+
   // src/server/sync.ts
   function observationsFor(scope, nodes) {
     if (scope === "secrets") {
@@ -2148,6 +2295,25 @@ var Server = (() => {
     const normalize = NORMALIZERS[scope];
     return { observations: nodes.map((n) => normalize(n)) };
   }
+  function stagedSource(syncId, stepIndex, expectedPages) {
+    return {
+      mode: "live",
+      nodes(_scope) {
+        const pages = readSyncStepPages(syncId, stepIndex, expectedPages);
+        const out = [];
+        for (const page of pages) {
+          const nodes = (page != null ? page : {})["nodes"];
+          if (!Array.isArray(nodes)) {
+            throw new Error(
+              `Archive page of sync ${syncId} step ${stepIndex} carried no nodes array.`
+            );
+          }
+          for (const n of nodes) out.push(n);
+        }
+        return out;
+      }
+    };
+  }
   function sampleSource(dataset) {
     return { mode: "sample", nodes: (scope) => {
       var _a;
@@ -2155,7 +2321,7 @@ var Server = (() => {
     } };
   }
   function runScan(scope, source, opts) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     const ts = (_a = opts.ts) != null ? _a : nowIso();
     const scans = readScans();
     const already = existingScanDeltas(scans, opts.scanId);
@@ -2198,6 +2364,7 @@ var Server = (() => {
       mode: source.mode,
       severities: scannedSeverities,
       total: observations.length,
+      raw_ref: (_f = opts.rawRef) != null ? _f : null,
       ...result.deltas
     });
     return {
@@ -2211,50 +2378,6 @@ var Server = (() => {
       alreadyRecorded: false,
       ...keyedWithoutLine === void 0 ? {} : { keyed_without_line: keyedWithoutLine }
     };
-  }
-
-  // src/server/archiveStore.ts
-  var rootFolderMemo;
-  var subfolderMemo = /* @__PURE__ */ new Map();
-  function rootFolder() {
-    if (!rootFolderMemo) {
-      rootFolderMemo = DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
-    }
-    return rootFolderMemo;
-  }
-  function childFolder(parent, name) {
-    const it = parent.getFoldersByName(name);
-    return it.hasNext() ? it.next() : parent.createFolder(name);
-  }
-  function subfolder(name) {
-    const hit = subfolderMemo.get(name);
-    if (hit) return hit;
-    const folder = childFolder(rootFolder(), name);
-    subfolderMemo.set(name, folder);
-    return folder;
-  }
-  function writeGzJson(folder, name, payload) {
-    const json = JSON.stringify(payload);
-    const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
-    const existing = folder.getFilesByName(name);
-    while (existing.hasNext()) existing.next().setTrashed(true);
-    return folder.createFile(blob);
-  }
-  function readGzJsonNamed(folder, name) {
-    const it = subfolder(folder).getFilesByName(name);
-    if (!it.hasNext()) return null;
-    return parseGzBlob(it.next().getBlob());
-  }
-  function parseGzBlob(blob) {
-    try {
-      const bytes = blob.getBytes();
-      const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
-      const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
-      return JSON.parse(text);
-    } catch (e) {
-      console.warn(`Failed to parse archive blob: ${e}`);
-      return null;
-    }
   }
 
   // src/server/readModelStore.ts
@@ -2406,6 +2529,15 @@ var Server = (() => {
     const s = v == null ? "" : String(v);
     return s === "" || s === "null" || s === "undefined" ? null : s;
   }
+  function newJobId(kind, now) {
+    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
+  }
+  function createJob(row, now) {
+    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
+    appendRows(TABS.jobs, [full]);
+    setProp(ACTIVE_JOB_PROP, full.job_id);
+    return full;
+  }
   function updateJob(jobId, patch, now) {
     updateWhere(TABS.jobs, "job_id", jobId, {
       ...patch,
@@ -2436,7 +2568,16 @@ var Server = (() => {
   function listJobs() {
     return readAll(TABS.jobs).map(rowToJob);
   }
+  var JOB_TAIL_ROWS = 25;
+  function getJob(jobId) {
+    var _a, _b;
+    const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
+    return (_b = (_a = recent.find((j) => j.job_id === jobId)) != null ? _a : listJobs().find((j) => j.job_id === jobId)) != null ? _b : null;
+  }
   var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
+  function isTerminalPhase(phase) {
+    return TERMINAL.includes(phase);
+  }
   function activeJob() {
     var _a;
     if (!getProp(ACTIVE_JOB_PROP)) return null;
@@ -2445,6 +2586,11 @@ var Server = (() => {
     return job;
   }
   var STALE_JOB_MS = 30 * 6e4;
+  function isStaleJob(job, now) {
+    const updated = Date.parse(job.updated_at);
+    if (!Number.isFinite(updated)) return false;
+    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
+  }
 
   // src/server/locks.ts
   var LedgerBusyError = class extends Error {
@@ -2454,7 +2600,7 @@ var Server = (() => {
     const lock = LockService.getScriptLock();
     if (!lock.tryLock(timeoutMs)) {
       throw new LedgerBusyError(
-        "The data store is busy (a sync is writing). Try again shortly."
+        "The data store is busy (a scan is writing). Try again shortly."
       );
     }
     try {
@@ -2468,12 +2614,750 @@ var Server = (() => {
     if (!job) return;
     const updated = parseTs(job.updated_at);
     const ageMs = updated === null ? Infinity : (now != null ? now : Date.now()) - updated;
-    if (job.phase === "PERSISTING" || ageMs > DEAD_JOB_MS) {
+    if (job.phase === "PERSISTING") {
+      const committed = job.scan_id !== null && readScans().some((s) => s.scan_id === job.scan_id);
+      if (committed) {
+        updateJob(job.job_id, { phase: "DONE", journal_ref: null });
+        if (job.journal_ref) trashFile(job.journal_ref);
+        return;
+      }
+      const restored = job.journal_ref ? restoreLedger(job.journal_ref) : false;
       updateJob(job.job_id, {
         phase: "FAILED",
-        error: "Recovered: execution died mid-sync; the last committed snapshot is unchanged."
+        journal_ref: null,
+        error: restored ? "Recovered: the execution died mid-write; the ledger was restored from its journal and no scan was recorded." : "The execution died mid-write and no journal was found. The ledger may be incomplete \u2014 run a fresh scan before trusting its figures."
+      });
+      return;
+    }
+    if (ageMs > DEAD_JOB_MS) {
+      updateJob(job.job_id, {
+        phase: "FAILED",
+        error: "Recovered: the job stalled with no progress. Nothing was written \u2014 the last committed scan stands."
       });
     }
+  }
+  function restoreLedger(journalRef) {
+    const doc = readGzJsonFile(journalRef);
+    if (!doc || typeof doc !== "object") return false;
+    writeLedger(doc);
+    trashFile(journalRef);
+    return true;
+  }
+
+  // src/server/scanJobs.ts
+  var scanJobs_exports = {};
+  __export(scanJobs_exports, {
+    CONTINUE_HANDLER: () => CONTINUE_HANDLER,
+    DAILY_HANDLER: () => DAILY_HANDLER,
+    cancelScan: () => cancelScan,
+    clearContinuationTriggers: () => clearContinuationTriggers,
+    continueJob: () => continueJob,
+    dailyScan: () => dailyScan,
+    jobStatus: () => jobStatus,
+    resetStuckJob: () => resetStuckJob,
+    startScan: () => startScan
+  });
+
+  // src/server/wizQueries.ts
+  var PAGE_SIZE = 500;
+  var PAGE_SIZE_FALLBACK = 250;
+  var MAX_PAGES = 1e3;
+  var Q_SAST = `query DevSecOpsSastFindings(
+  $filterBy: SASTFindingFilters
+  $first: Int
+  $after: String
+) {
+  sastFindings(filterBy: $filterBy, first: $first, after: $after) {
+    nodes {
+      id
+      name
+      status
+      severity
+      originalSeverity
+      filePath
+      startLine
+      codeLibraryLanguage
+      origin
+      resolutionReason
+      createdAt
+      updatedAt
+      firstDetectedAtSource
+      resource { id name type }
+      weaknesses { id name }
+      projects { id name isFolder slug }
+      vcsDetails { commitHash }
+      aiAnalysis { verdict }
+    }
+    totalCount
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
+  var Q_SCA = `query DevSecOpsVulnerabilityFindings(
+  $filterBy: VulnerabilityFindingFilters
+  $first: Int
+  $after: String
+) {
+  vulnerabilityFindings(filterBy: $filterBy, first: $first, after: $after) {
+    nodes {
+      id
+      name
+      detailedName
+      severity
+      status
+      firstDetectedAt
+      lastDetectedAt
+      resolvedAt
+      fixDate
+      fixedVersion
+      hasExploit
+      hasCisaKevExploit
+      epssProbability
+      vulnerableAsset {
+        ... on VulnerableAssetBase {
+          id
+          type
+          name
+          cloudPlatform
+          subscriptionName
+          subscriptionExternalId
+        }
+        ... on VulnerableAssetRepositoryBranch {
+          id
+          type
+          name
+          cloudPlatform
+        }
+      }
+      artifactType { codeLibraryLanguage }
+    }
+    totalCount
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
+  var Q_SECRETS = `query DevSecOpsSecretInstances(
+  $filterBy: SecretInstanceFilters
+  $first: Int
+  $after: String
+) {
+  secretInstances(filterBy: $filterBy, first: $first, after: $after) {
+    nodes {
+      id
+      externalId
+      secretDataId
+      name
+      type
+      confidence
+      severity
+      path
+      lineNumber
+      status
+      resolvedAt
+      validationStatus
+      lastValidatedAt
+      firstSeenAt
+      lastSeenAt
+      lastUpdatedAt
+      codeToCloudPipelineStage
+      vcsDetails { initialCommitHash }
+      resource { id name type externalId nativeType cloudPlatform }
+      projects { id name isFolder slug }
+    }
+    totalCount
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
+  var QUERIES = {
+    sast: Q_SAST,
+    sca: Q_SCA,
+    secrets: Q_SECRETS
+  };
+  var ROOT_FIELDS = {
+    sast: "sastFindings",
+    sca: "vulnerabilityFindings",
+    secrets: "secretInstances"
+  };
+  var API_SEVERITY = {
+    CRITICAL: "CRITICAL",
+    HIGH: "HIGH",
+    MEDIUM: "MEDIUM",
+    LOW: "LOW",
+    INFO: "INFORMATIONAL"
+  };
+  var BASE = {
+    sca: {
+      status: ["OPEN", "RESOLVED"],
+      hasFix: true,
+      codeToCloudPipelineStage: ["CODE"],
+      isDefaultBranch: { equals: true }
+    },
+    sast: {
+      // Deliberately NOT status: ["OPEN","RESOLVED"]. See SAST_FETCH_RESOLVED below.
+      resource: { isDefaultBranch: { equals: true } }
+    },
+    secrets: {
+      // THE NARROWING IS THE MEASUREMENT, not tidiness. Unscoped, this register is 394,927
+      // rows and most of them are cloud/runtime rather than code; CODE narrows it to 1,933.
+      //
+      // It also decides whether the secrets clock is trustworthy at all. Sampled across every
+      // stage, secrets close 0.25s-63s after first being seen — the born-and-closed-in-the-
+      // same-instant artifact that keeps SAST_FETCH_RESOLVED off. Scoped to CODE, NOT ONE of
+      // the 72 resolved rows closes inside a day: median 5.15d, p90 56.1d, max 300d. The
+      // artifact is a cloud-stage phenomenon. PROBE_FINDINGS.md §3.
+      codeToCloudPipelineStage: ["CODE"],
+      status: ["OPEN", "RESOLVED"]
+    }
+  };
+  function shapeBase(scope, base) {
+    const out = {};
+    for (const [key, value] of Object.entries(base)) {
+      out[key] = Array.isArray(value) ? listFilter(scope, key, value) : value;
+    }
+    return out;
+  }
+  var SAST_FETCH_RESOLVED = false;
+  var OBJECT_FILTERS = {
+    // VulnerabilityFindingFilters takes every LIST bare — severity, status,
+    // codeToCloudPipelineStage — and wraps only the project restriction.
+    //   projectIdV2  VulnerabilityFindingProjectFilter  { equals: [...] }
+    sca: ["projectIdV2"],
+    sast: ["severity", "status"],
+    // SecretInstanceFilters MIXES BOTH CONVENTIONS INTERNALLY, which is the §4 trap at finer
+    // grain. One field's shape says nothing about the next one's, IN THE SAME TYPE:
+    //   status                    SecretInstanceStatusFilter                    { equals: [...] }
+    //   validationStatus          SecretInstanceValidationStatusFilter          { equals: [...] }
+    //   severity                  SecretInstanceSeverityFilter                  { equals: [...] }
+    //   codeToCloudPipelineStage  SecretInstanceCodeToCloudPipelineStageFilter  { equals: [...] }
+    //   projectId                 [String!]                                     a bare list
+    //
+    // codeToCloudPipelineStage was the one key here ever sent on INFERENCE rather than on
+    // reading — shaped after SCA, which spells the same field name
+    // [VulnerabilityCodeToCloudPipelineStage!], a bare list. The inference did not hold, and
+    // the register fetched zero rows until it was corrected. Schema print and live response
+    // agree; with only this key fixed the query returns 691 rows (PROBE_FINDINGS.md §8.1).
+    //
+    // THAT IS THE THIRD TIME one field name has carried two kinds across filter types in this
+    // codebase — after `severity` in §4 and the commitHash / initialCommitHash split in §7.3.
+    // Copy these from `--schema`, which prints a ready-made OBJECT_FILTERS entry per type.
+    // Never carry one across.
+    secrets: ["severity", "status", "validationStatus", "codeToCloudPipelineStage"]
+  };
+  function listFilter(scope, key, values) {
+    return OBJECT_FILTERS[scope].includes(key) ? { equals: [...values] } : [...values];
+  }
+  function severityFilter(severities) {
+    const out = [];
+    for (const s of severities) {
+      const api = API_SEVERITY[String(s).trim().toUpperCase()];
+      if (api && !out.includes(api)) out.push(api);
+    }
+    return out;
+  }
+  function buildFilter(scope, opts = {}) {
+    var _a, _b;
+    if (QUERIES[scope] == null) {
+      throw new Error(`no query document for scope "${scope}" \u2014 see wizQueries.ts`);
+    }
+    const filterBy = shapeBase(scope, JSON.parse(JSON.stringify((_a = BASE[scope]) != null ? _a : {})));
+    if (scope === "sast" && SAST_FETCH_RESOLVED) {
+      filterBy.status = listFilter(scope, "status", ["OPEN", "RESOLVED"]);
+    }
+    const sev = severityFilter((_b = opts.severities) != null ? _b : []);
+    if (sev.length) filterBy.severity = listFilter(scope, "severity", sev);
+    if (opts.projectId) {
+      const key = scope === "sca" ? "projectIdV2" : "projectId";
+      filterBy[key] = listFilter(scope, key, [opts.projectId]);
+    }
+    return filterBy;
+  }
+  function buildVariables(scope, opts = {}) {
+    var _a, _b;
+    return {
+      filterBy: buildFilter(scope, opts),
+      first: (_a = opts.first) != null ? _a : PAGE_SIZE,
+      after: (_b = opts.after) != null ? _b : null
+    };
+  }
+
+  // src/server/wizClient.ts
+  var WizError = class extends Error {
+  };
+  var WizAuthError = class extends WizError {
+  };
+  var WizRefusedError = class extends WizError {
+  };
+  var TOKEN_CACHE_KEY = "wiz_token";
+  var ATTEMPTS = 4;
+  function getToken(forceRefresh = false) {
+    var _a, _b;
+    const staticToken = getProp(PROP_KEYS.wizApiToken);
+    if (staticToken && staticToken.trim()) return staticToken.trim();
+    const cache = CacheService.getScriptCache();
+    if (!forceRefresh) {
+      const cached2 = cache.get(TOKEN_CACHE_KEY);
+      if (cached2) return cached2;
+    }
+    const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
+    const response = UrlFetchApp.fetch(authUrl, {
+      method: "post",
+      contentType: "application/x-www-form-urlencoded",
+      payload: {
+        grant_type: "client_credentials",
+        audience: "wiz-api",
+        client_id: requireProp(PROP_KEYS.wizClientId),
+        client_secret: requireProp(PROP_KEYS.wizClientSecret)
+      },
+      muteHttpExceptions: true
+    });
+    const code = response.getResponseCode();
+    if (code !== 200) {
+      throw new WizAuthError(
+        `Wiz token request failed (HTTP ${code}): ${response.getContentText().slice(0, 400)}`
+      );
+    }
+    let body;
+    try {
+      body = JSON.parse(response.getContentText());
+    } catch {
+      throw new WizAuthError("Wiz token response was not JSON.");
+    }
+    const token = body["access_token"];
+    if (typeof token !== "string" || !token) {
+      throw new WizAuthError("Wiz token response carried no access_token.");
+    }
+    const expiresIn = Number((_b = body["expires_in"]) != null ? _b : 3600);
+    const ttl = Math.max(60, Math.min(Math.trunc(expiresIn) - 300, 21600));
+    cache.put(TOKEN_CACHE_KEY, token, ttl);
+    return token;
+  }
+  function forgetToken() {
+    try {
+      CacheService.getScriptCache().remove(TOKEN_CACHE_KEY);
+    } catch {
+    }
+  }
+  function resolveConnection(data) {
+    const rec = data != null ? data : {};
+    for (const key of Object.keys(rec)) {
+      const v = rec[key];
+      if (v !== null && typeof v === "object" && ("nodes" in v || "pageInfo" in v)) {
+        return { root: key, conn: v };
+      }
+    }
+    return null;
+  }
+  function post(query, variables, first, expectedRoot) {
+    var _a, _b, _c, _d;
+    const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
+    let token = getToken();
+    let lastTransient = "";
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+      const response = UrlFetchApp.fetch(apiUrl, {
+        method: "post",
+        contentType: "application/json",
+        headers: { Authorization: `Bearer ${token}` },
+        payload: JSON.stringify({ query, variables }),
+        muteHttpExceptions: true
+      });
+      const code = response.getResponseCode();
+      if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
+        token = getToken(true);
+        continue;
+      }
+      if (code === 429 || code >= 500) {
+        lastTransient = `HTTP ${code}`;
+        Utilities.sleep(1e3 * Math.pow(2, attempt));
+        continue;
+      }
+      if (code !== 200) {
+        const hint = code === 401 && getProp(PROP_KEYS.wizApiToken) ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID and WIZ_CLIENT_SECRET so the token can be re-minted automatically." : "";
+        const Cls = code === 401 || code === 403 ? WizAuthError : WizRefusedError;
+        throw new Cls(
+          `Wiz query failed (HTTP ${code})${hint}: ${response.getContentText().slice(0, 400)}`
+        );
+      }
+      let body;
+      try {
+        body = JSON.parse(response.getContentText());
+      } catch {
+        throw new WizError(
+          `Wiz returned a 200 that was not JSON: ${response.getContentText().slice(0, 300)}`
+        );
+      }
+      const errors = ((_a = body["errors"]) != null ? _a : []).map((e) => {
+        var _a2;
+        return String((_a2 = e["message"]) != null ? _a2 : e);
+      });
+      const found = resolveConnection(body["data"]);
+      if (!found) {
+        throw new WizError(
+          `Wiz response carried no connection${errors.length ? `: ${errors.join("; ").slice(0, 400)}` : "."}`
+        );
+      }
+      if (found.root !== expectedRoot) {
+        throw new WizError(
+          `Wiz answered under \`${found.root}\` where \`${expectedRoot}\` was asked for.`
+        );
+      }
+      const conn = found.conn;
+      const pageInfo = (_b = conn["pageInfo"]) != null ? _b : {};
+      const rawTotal = conn["totalCount"];
+      return {
+        nodes: (_c = conn["nodes"]) != null ? _c : [],
+        hasNextPage: Boolean(pageInfo["hasNextPage"]),
+        endCursor: (_d = pageInfo["endCursor"]) != null ? _d : null,
+        totalCount: typeof rawTotal === "number" ? rawTotal : null,
+        pageSize: first,
+        partialErrors: errors
+      };
+    }
+    throw new WizError(`Wiz query failed after ${ATTEMPTS} attempts (${lastTransient}).`);
+  }
+  function fetchPage(scope, opts = {}) {
+    var _a;
+    const query = QUERIES[scope];
+    if (!query) throw new WizError(`No query is defined for scope ${scope}.`);
+    const first = (_a = opts.first) != null ? _a : PAGE_SIZE;
+    const vars = (size) => {
+      var _a2;
+      return buildVariables(scope, {
+        severities: opts.severities,
+        projectId: opts.projectId,
+        after: (_a2 = opts.cursor) != null ? _a2 : null,
+        first: size
+      });
+    };
+    const root = ROOT_FIELDS[scope];
+    try {
+      return post(query, vars(first), first, root);
+    } catch (e) {
+      if (!(e instanceof WizRefusedError) || first <= PAGE_SIZE_FALLBACK) throw e;
+      return post(query, vars(PAGE_SIZE_FALLBACK), PAGE_SIZE_FALLBACK, root);
+    }
+  }
+  function testConnection(scope = "sast") {
+    forgetToken();
+    const page = fetchPage(scope, { first: 1 });
+    return { ok: true, rows: page.totalCount };
+  }
+
+  // src/server/scanJobs.ts
+  var FIRST_STEP_BUDGET_MS = 45e3;
+  var BUDGET_MS = 27e4;
+  var EXECUTION_MS = 3e5;
+  var COMMIT_RESERVE_MS = 12e4;
+  var CONTINUE_DELAY_MS = 3e4;
+  var CONTINUE_RETRY_MS = 9e4;
+  var CHECKPOINT_MS = 8e3;
+  var CONTINUE_HANDLER = "trigger_continueScan";
+  var DAILY_HANDLER = "trigger_dailyScan";
+  var CANCEL_PROP = "CANCEL_SCAN_JOB_ID";
+  var ScanCancelled = class extends Error {
+  };
+  var TruncatedStep = class extends Error {
+  };
+  function cancelRequested(jobId) {
+    return getProp(CANCEL_PROP) === jobId;
+  }
+  function clearCancel() {
+    deleteProp(CANCEL_PROP);
+  }
+  function jobParams(job) {
+    var _a, _b, _c, _d;
+    const raw = JSON.parse((_a = job.params_json) != null ? _a : "{}");
+    return {
+      scopes: (_b = raw.scopes) != null ? _b : [],
+      severities: (_c = raw.severities) != null ? _c : {},
+      projectId: (_d = raw.projectId) != null ? _d : null
+    };
+  }
+  function clearContinuationTriggers() {
+    for (const t of ScriptApp.getProjectTriggers()) {
+      if (t.getHandlerFunction() === CONTINUE_HANDLER) ScriptApp.deleteTrigger(t);
+    }
+  }
+  function scheduleContinuation(delayMs = CONTINUE_DELAY_MS) {
+    ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(delayMs).create();
+  }
+  function stepIndexOf(params, scope) {
+    const i = params.scopes.indexOf(scope != null ? scope : "");
+    if (i < 0) {
+      throw new Error(
+        `Job is on scope ${scope != null ? scope : "(none)"}, which is not in the list it started with (${params.scopes.join(", ") || "empty"}). Refusing to guess which step this is.`
+      );
+    }
+    return i;
+  }
+  function abandonStep(job, phase, error) {
+    try {
+      const params = jobParams(job);
+      if (job.scope) trashSyncStepPages(job.job_id, stepIndexOf(params, job.scope));
+    } catch {
+    }
+    updateJob(job.job_id, { phase, error });
+    clearCancel();
+    clearContinuationTriggers();
+  }
+  function fetchStep(job, params, deadline) {
+    var _a;
+    const scope = job.scope;
+    const stepIndex = stepIndexOf(params, scope);
+    let cursor = job.cursor;
+    let page = job.page;
+    let findings = job.findings_so_far;
+    let total = job.total_count;
+    let pageSize = job.page_size || PAGE_SIZE;
+    let lastCheckpoint = 0;
+    const checkpoint = () => {
+      updateJob(job.job_id, {
+        cursor,
+        page,
+        findings_so_far: findings,
+        total_count: total,
+        page_size: pageSize
+      });
+      lastCheckpoint = Date.now();
+    };
+    for (; ; ) {
+      if (cancelRequested(job.job_id)) throw new ScanCancelled();
+      if (Date.now() >= deadline) {
+        checkpoint();
+        scheduleContinuation();
+        return "yielded";
+      }
+      const result = fetchPage(scope, {
+        severities: (_a = params.severities[scope]) != null ? _a : void 0,
+        projectId: params.projectId,
+        cursor,
+        first: pageSize
+      });
+      writeSyncPage(job.job_id, stepIndex, page + 1, { nodes: result.nodes });
+      page += 1;
+      findings += result.nodes.length;
+      pageSize = result.pageSize;
+      if (result.totalCount !== null) total = result.totalCount;
+      if (page === 1 || Date.now() - lastCheckpoint >= CHECKPOINT_MS) checkpoint();
+      if (!result.hasNextPage) break;
+      if (page >= MAX_PAGES) {
+        throw new TruncatedStep(
+          `${scope} still had pages after ${MAX_PAGES}. Refusing to record a partial walk as a scan: every finding past the cut would resolve as remediated.`
+        );
+      }
+      if (!result.endCursor) {
+        throw new Error(
+          `${scope} reported another page but gave no cursor to reach it. Refusing to loop.`
+        );
+      }
+      cursor = result.endCursor;
+    }
+    checkpoint();
+    return "complete";
+  }
+  function commitStep(job, params) {
+    var _a;
+    const scope = job.scope;
+    const stepIndex = stepIndexOf(params, scope);
+    const scanId = `${job.job_id}-${scope}`;
+    updateJob(job.job_id, { phase: "RECONCILING", scan_id: scanId });
+    const source = stagedSource(job.job_id, stepIndex, job.page);
+    const journalId = writeGzJson(
+      syncFolder(job.job_id),
+      `step-${stepIndex}-ledger-before.json.gz`,
+      readLedger()
+    ).getId();
+    updateJob(job.job_id, { phase: "PERSISTING", journal_ref: journalId });
+    runScan(scope, source, {
+      scanId,
+      // FROZEN AT JOB START, never re-read. Settings can move mid-walk, and a hop that read
+      // them fresh would stamp today's gate on pages fetched under yesterday's — which makes
+      // the disappearance guard believe a severity was covered by a scan that never asked for
+      // it. The gate a scan records has to be the gate it applied.
+      severities: (_a = params.severities[scope]) != null ? _a : null,
+      rawRef: syncFolder(job.job_id).getId()
+    });
+    trashFile(journalId);
+    updateJob(job.job_id, { journal_ref: null });
+    bumpWizDataVersion();
+  }
+  function runBattery(job, budgetMs) {
+    var _a;
+    const started = Date.now();
+    const fetchDeadline = started + budgetMs;
+    const executionEnd = started + EXECUTION_MS;
+    const params = jobParams(job);
+    let cur = job;
+    try {
+      for (; ; ) {
+        if (cancelRequested(cur.job_id)) throw new ScanCancelled();
+        if (cur.phase === "FETCHING") {
+          if (fetchStep(cur, params, fetchDeadline) === "yielded") return;
+          cur = { ...cur, phase: "RECONCILING", ...(_a = getJob(cur.job_id)) != null ? _a : {} };
+        }
+        if (Date.now() + COMMIT_RESERVE_MS > executionEnd) {
+          updateJob(cur.job_id, { phase: "RECONCILING" });
+          scheduleContinuation();
+          return;
+        }
+        commitStep(cur, params);
+        const next = params.scopes[stepIndexOf(params, cur.scope) + 1];
+        if (!next) {
+          updateJob(cur.job_id, { phase: "DONE", error: null });
+          clearCancel();
+          clearContinuationTriggers();
+          return;
+        }
+        updateJob(cur.job_id, {
+          phase: "FETCHING",
+          scope: next,
+          scan_id: null,
+          cursor: null,
+          page: 0,
+          findings_so_far: 0,
+          total_count: 0,
+          page_size: 0
+        });
+        cur = getJob(cur.job_id);
+      }
+    } catch (e) {
+      if (e instanceof ScanCancelled) {
+        abandonStep(cur, "CANCELLED", null);
+        return;
+      }
+      const scope = cur.scope ? `[${cur.scope}] ` : "";
+      abandonStep(cur, "FAILED", `${scope}${String(e).slice(0, 900)}`);
+      throw e;
+    }
+  }
+  function startScan() {
+    return withScriptLock(() => {
+      var _a, _b;
+      recoverIfNeeded();
+      const active = activeJob();
+      if (active) {
+        if (!isStaleJob(active)) {
+          return { jobId: active.job_id, message: "A scan is already in progress." };
+        }
+        clearContinuationTriggers();
+        updateJob(active.job_id, {
+          phase: "FAILED",
+          error: "Reclaimed: the job stalled with no progress."
+        });
+      }
+      if (!hasWizCredentials()) {
+        throw new Error(
+          "No Wiz credentials are set, so there is nothing to scan. Set WIZ_API_URL and either WIZ_API_TOKEN or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET in Script Properties."
+        );
+      }
+      const settings = loadSettings();
+      const scopes = SCOPES.filter((s) => settings.scopes.indexOf(s) >= 0);
+      if (!scopes.length) {
+        throw new Error("Settings collects no register, so a scan has nothing to walk.");
+      }
+      const severities = {};
+      for (const s of scopes) {
+        const gate2 = (_b = (_a = settings.fetchSeverities) == null ? void 0 : _a[s]) != null ? _b : [];
+        severities[s] = gate2.length ? [...gate2] : null;
+      }
+      const project = projectScope();
+      clearCancel();
+      const job = createJob({
+        job_id: newJobId("scan"),
+        kind: "scan",
+        phase: "FETCHING",
+        scan_id: null,
+        scope: scopes[0],
+        cursor: null,
+        page: 0,
+        findings_so_far: 0,
+        page_size: 0,
+        total_count: 0,
+        params_json: JSON.stringify({
+          scopes,
+          severities,
+          projectId: project ? project[0] : null
+        }),
+        journal_ref: null,
+        error: null
+      });
+      runBattery(job, FIRST_STEP_BUDGET_MS);
+      return { jobId: job.job_id, message: "Scan started." };
+    });
+  }
+  function continueJob(_e) {
+    try {
+      withScriptLock(() => {
+        clearContinuationTriggers();
+        const job = activeJob();
+        if (!job || job.kind !== "scan") return;
+        if (cancelRequested(job.job_id)) {
+          abandonStep(job, "CANCELLED", null);
+          return;
+        }
+        runBattery(job, BUDGET_MS);
+      }, 12e4);
+    } catch (e) {
+      if (e instanceof LedgerBusyError) scheduleContinuation(CONTINUE_RETRY_MS);
+      throw e;
+    }
+  }
+  function cancelScan(jobId) {
+    const job = getJob(jobId);
+    if (!job || isTerminalPhase(job.phase)) {
+      return { jobId, message: "That scan has already finished.", stopped: true };
+    }
+    setProp(CANCEL_PROP, jobId);
+    const lock = LockService.getScriptLock();
+    if (lock.tryLock(1e4)) {
+      try {
+        const fresh = getJob(jobId);
+        if (fresh && !isTerminalPhase(fresh.phase)) {
+          abandonStep(fresh, "CANCELLED", null);
+          return { jobId, message: "Scan stopped.", stopped: true };
+        }
+      } finally {
+        lock.releaseLock();
+      }
+      return { jobId, message: "Scan stopped.", stopped: true };
+    }
+    return { jobId, message: "Stopping after the current page\u2026", stopped: false };
+  }
+  function jobStatus(jobId) {
+    const job = jobId ? getJob(jobId) : activeJob();
+    if (!job) return null;
+    const params = jobParams(job);
+    const step = job.scope ? params.scopes.indexOf(job.scope) : -1;
+    return {
+      job_id: job.job_id,
+      phase: job.phase,
+      scope: job.scope,
+      step: step < 0 ? 0 : step,
+      steps_total: params.scopes.length,
+      page: job.page,
+      findings_so_far: job.findings_so_far,
+      total_count: job.total_count,
+      error: job.error,
+      started_at: job.started_at,
+      updated_at: job.updated_at,
+      stale: !isTerminalPhase(job.phase) && isStaleJob(job)
+    };
+  }
+  function dailyScan(_e) {
+    if (!hasWizCredentials()) return;
+    try {
+      startScan();
+    } catch (e) {
+      console.error(`Daily scan could not start: ${e}`);
+    }
+  }
+  function resetStuckJob() {
+    const job = activeJob();
+    if (!job) return "No active job.";
+    clearContinuationTriggers();
+    clearCancel();
+    updateJob(job.job_id, {
+      phase: "FAILED",
+      error: "Reset by an operator from the Apps Script editor."
+    });
+    return `Reset ${job.job_id} (was ${job.phase}).`;
   }
 
   // src/server/api.ts
@@ -2719,6 +3603,26 @@ var Server = (() => {
       // settings page.
       project: getProp(PROP_KEYS.wizProjectIdV2)
     }));
+  }
+  function runScan2(_p) {
+    return run(() => startScan());
+  }
+  function getJobStatus(p) {
+    return run(() => jobStatus((p == null ? void 0 : p.jobId) ? String(p.jobId) : void 0));
+  }
+  function cancelScan2(p) {
+    return run(() => {
+      var _a;
+      return cancelScan(String((_a = p == null ? void 0 : p.jobId) != null ? _a : ""));
+    });
+  }
+  function testWizConnection(_p) {
+    return run(() => {
+      const res = testConnection();
+      const at2 = nowIso();
+      setProp(PROP_KEYS.wizVerifiedAt, at2);
+      return { ...res, at: at2 };
+    });
   }
   return __toCommonJS(index_exports);
 })();

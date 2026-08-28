@@ -202,10 +202,22 @@ describe("the sources", () => {
   });
 
   it("the live source REFUSES rather than returning nothing", () => {
-    // An empty page here would write a scan row claiming it covered the scope, and the next
-    // scan's disappearance pass would resolve the whole register against it. A missing
-    // feature must not be able to look like a remediation event.
-    expect(() => liveSource().nodes("sca")).toThrow(/not implemented/);
+    // The refusal stands; its REASON changed, and the old assertion had gone stale.
+    //
+    // It used to read /not implemented/, and that was true while there was no battery: an
+    // empty page here would have written a scan row claiming it covered the scope, and the
+    // next scan's disappearance pass would have resolved the whole register against it.
+    // The battery exists now, so "not implemented" is simply false — but what this guard
+    // actually forbids was never the Wiz call. It is an UNBUDGETED, UNRESUMABLE fetch inside
+    // the one function that also commits: a scope is tens of pages against a six-minute
+    // execution, so a source paging from here gets killed partway and hands `reconcile` a
+    // partial population, which is read as remediation. `scanJobs` pages across executions
+    // and hands `runScan` the finished set through `stagedSource`.
+    //
+    // So the claim is narrowed rather than dropped, and pinned to the part that is still
+    // load-bearing: it throws, and the message points at the battery.
+    expect(() => liveSource().nodes("sca")).toThrow(/does not run inside runScan/);
+    expect(() => liveSource().nodes("sca")).toThrow(/scanJobs/);
   });
 
   it("routes secrets through the fold and the others through a map", () => {

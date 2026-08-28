@@ -29,6 +29,7 @@ import type { LedgerObservation } from "../domain/observation";
 import { reconcile, type Deltas } from "../domain/reconcile";
 import { collapseTwins } from "../domain/secretsLedger";
 import { nowIso, type Rec } from "../domain/util";
+import { readSyncStepPages } from "./archiveStore";
 import { appendScan, readLedger, readScans, writeLedger } from "./ledgerStore";
 import { loadSettings } from "./settingsStore";
 
@@ -68,29 +69,73 @@ export function observationsFor(
   return { observations: nodes.map((n) => normalize(n)) };
 }
 
-/** Where a scan's rows come from. Only `sample` is implemented. */
+/** Where a scan's rows come from. */
 export interface SyncSource {
   mode: SyncMode;
   nodes(scope: Scope): readonly Rec[];
 }
 
 /**
- * The live paged Wiz fetch — NOT YET BUILT, and it says so instead of returning nothing.
+ * A fetch performed inline, here, inside runScan — WHICH IS STILL NOT ALLOWED.
  *
- * An empty result here would write a scan row claiming it covered the scope, and the next
- * scan's disappearance pass would then resolve the entire register against it. The refusal
- * is not defensive politeness; it is what stops a missing feature from looking like a
- * remediation event.
+ * This used to say "not yet built". The battery is built now, and this refusal is kept
+ * anyway, because what it forbids was never the Wiz call itself: it is an UNBUDGETED,
+ * UNRESUMABLE fetch inside the one function that also commits. A scope is tens of pages and a
+ * GAS execution is six minutes, so a source that paged from here would be killed partway and
+ * hand `reconcile` a partial population — which is read as remediation. `scanJobs.ts` pages
+ * across executions, stages every page to Drive, and only then calls `runScan` with
+ * `stagedSource`, by which point the whole population is in hand.
+ *
+ * Kept as a live guard rather than deleted: it is one throw standing between a later caller's
+ * reasonable-looking shortcut and a register that resolves itself.
  */
 export function liveSource(): SyncSource {
   return {
     mode: "live",
     nodes(scope) {
       throw new Error(
-        `The live Wiz fetch is not implemented (scope ${scope}). Use the sample source. `
-        + "Returning an empty page here would record a scan that covered nothing, and the "
-        + "next scan would resolve the whole register against it.",
+        `The live Wiz fetch does not run inside runScan (scope ${scope}). Use the battery — `
+        + "scanJobs stages every page to Drive across executions and hands the whole "
+        + "population to stagedSource. Paging from here would be killed by the execution "
+        + "limit partway through, and the next scan would resolve the remainder as fixed.",
       );
+    },
+  };
+}
+
+/**
+ * The rows a completed fetch left in Drive.
+ *
+ * The seam that lets the battery reuse `runScan` whole — the scan-log idempotence gate, the
+ * severity override, the per-scope predecessor, `appendScan` — instead of growing a second
+ * commit path beside it.
+ *
+ * IT HANDS OVER EVERY PAGE AT ONCE, and that is required rather than convenient: `runScan`
+ * calls `observationsFor` on the whole node list, and for secrets that is `collapseTwins`,
+ * which pairs twins that can land on different pages. A per-page source would fold each page
+ * against itself and orphan every pair that straddled a boundary.
+ *
+ * `expectedPages` is passed straight through to the archive reader, which REFUSES if the disk
+ * disagrees with it. That check is what makes "the whole population" true rather than hoped.
+ */
+export function stagedSource(
+  syncId: string, stepIndex: number, expectedPages: number,
+): SyncSource {
+  return {
+    mode: "live",
+    nodes(_scope) {
+      const pages = readSyncStepPages(syncId, stepIndex, expectedPages);
+      const out: Rec[] = [];
+      for (const page of pages) {
+        const nodes = ((page ?? {}) as Rec)["nodes"];
+        if (!Array.isArray(nodes)) {
+          throw new Error(
+            `Archive page of sync ${syncId} step ${stepIndex} carried no nodes array.`,
+          );
+        }
+        for (const n of nodes as Rec[]) out.push(n);
+      }
+      return out;
     },
   };
 }
@@ -121,6 +166,8 @@ export function runScan(
      * scan that never looked at it. `null` means no gate; omitted means "read the setting".
      */
     severities?: readonly string[] | null;
+    /** The Drive folder the raw pages were staged in, recorded on the scan row. */
+    rawRef?: string | null;
   },
 ): SyncResult {
   const ts = opts.ts ?? nowIso();
@@ -164,6 +211,7 @@ export function runScan(
     scan_id: opts.scanId, ts, scope, mode: source.mode,
     severities: scannedSeverities,
     total: observations.length,
+    raw_ref: opts.rawRef ?? null,
     ...result.deltas,
   });
 
