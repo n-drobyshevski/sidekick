@@ -139,9 +139,16 @@ about at least two of them, and the clock is the product.
    code the editor runs, while the `/exec` URL keeps serving the version it was pinned to. In
    order:
 
-   1. In the editor, run **`wizDiagnostic()`** and accept the consent prompt. Running code
-      that needs the scope is what asks for it; `deploymentDiagnostic()` makes no network
-      call and so authorizes nothing.
+   1. In the editor, run **`wizDiagnostic()`** and **read the Execution log** — that is where
+      both diagnostics print. It names which step failed, which is the whole point: the three
+      failures look identical from the app and have different remedies.
+
+      **A consent prompt appears only if you do not already hold the scope.** Apps Script asks
+      when the running user is missing something the project needs, so an owner who already
+      granted it sees nothing — that is a successful run, not a failed one. What tells you
+      whether the outbound call worked is the log, not the prompt. (`deploymentDiagnostic()`
+      makes no network call at all, so it can never provoke the prompt; it prints to the same
+      log, and also into Settings → System.)
    2. **Deploy → Manage deployments → Edit → New version.**
    3. Check the daily scan trigger still fires. A scope change is the one thing that can
       suspend an installable trigger with nothing in the UI to say so.

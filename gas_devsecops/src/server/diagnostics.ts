@@ -14,14 +14,44 @@ import { loadSettings } from "./settingsStore";
 import { fetchPage, forgetToken, getToken, WizNotAuthorizedError } from "./wizClient";
 import { setProp } from "./props";
 
-export function deploymentDiagnostic(): string {
-  const out: string[] = [];
-  const ok = (label: string, value: string) => out.push(`  OK    ${label}: ${value}`);
-  const bad = (label: string, value: string) => out.push(`  FAIL  ${label}: ${value}`);
+/**
+ * A report that reaches its reader.
+ *
+ * BOTH ENDS ARE REQUIRED, and shipping only one is the defect this exists to prevent. The
+ * Apps Script editor does NOT display a function's return value — the Execution log shows
+ * logged output and nothing else. So a diagnostic that only returns its report prints
+ * absolutely nothing when run the way its own README says to run it: the work happens, the
+ * report is built, the operator sees a blank log and no error. Reported from a real editor
+ * run as "nothing, no error, no status message and just finished".
+ *
+ * The return value is not optional either: `api_getDiagnostic` renders
+ * `deploymentDiagnostic()`'s string in Settings > System. Two readers, one text.
+ *
+ * `console.log` rather than `Logger.log` because everything else here already logs through
+ * console (`entry.js`'s timedApi_, `access.logDenial`), and mixing the two would put half of
+ * an operator's output somewhere else.
+ */
+function reporter() {
+  const lines: string[] = [];
+  return {
+    line(m: string): void {
+      console.log(m);
+      lines.push(m);
+    },
+    text(): string {
+      return lines.join("\n");
+    },
+  };
+}
 
-  out.push(`Wiz Sidekick DevSecOps — deployment diagnostic`);
-  out.push(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
-  out.push("");
+export function deploymentDiagnostic(): string {
+  const r = reporter();
+  const ok = (label: string, value: string) => r.line(`  OK    ${label}: ${value}`);
+  const bad = (label: string, value: string) => r.line(`  FAIL  ${label}: ${value}`);
+
+  r.line(`Wiz Sidekick DevSecOps — deployment diagnostic`);
+  r.line(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
+  r.line("");
 
   const ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
   if (ssId) {
@@ -30,7 +60,7 @@ export function deploymentDiagnostic(): string {
       ok("Ledger spreadsheet", `${ss.getName()} (${ssId})`);
       for (const tab of Object.values(TABS)) {
         const rows = dataRowCount(tab);
-        out.push(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
+        r.line(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
       }
       ok("Cells used", String(cellCount()));
     } catch (e) {
@@ -61,7 +91,7 @@ export function deploymentDiagnostic(): string {
     ok(`Severities requested (${scope})`, s.fetchSeverities[scope].join(", ") || "(all)");
   }
 
-  out.push("");
+  r.line("");
   const daily = ScriptApp.getProjectTriggers()
     .filter((t) => t.getHandlerFunction() === "trigger_dailyScan").length;
   if (daily) ok("Daily scan trigger", `installed (${daily})`);
@@ -70,7 +100,7 @@ export function deploymentDiagnostic(): string {
   const job = activeJob();
   if (job) {
     ok("Scan in flight", `${job.job_id} — ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
-    out.push(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
+    r.line(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
     if (isStaleJob(job)) {
       bad("  heartbeat", "silent for over 30 minutes — run resetStuckJob() from the editor");
     }
@@ -85,7 +115,7 @@ export function deploymentDiagnostic(): string {
   if (verified) ok("Credentials last verified", verified);
   else bad("Credentials last verified", "never — the tenant has not accepted them yet");
 
-  return out.join("\n");
+  return r.text();
 }
 
 /** Show enough of a secret to recognise it and not enough to use it. */
@@ -111,12 +141,12 @@ function redact(v: string | null): string {
  * Secrets are redacted. Nothing here writes to the ledger.
  */
 export function wizDiagnostic(): string {
-  const out: string[] = [];
-  const say = (label: string, value: string) => out.push(`  ${label}: ${value}`);
+  const r = reporter();
+  const say = (label: string, value: string) => r.line(`  ${label}: ${value}`);
 
-  out.push("Wiz connectivity diagnostic");
-  out.push(`Build ${BUILD_ID}`);
-  out.push("");
+  r.line("Wiz connectivity diagnostic");
+  r.line(`Build ${BUILD_ID}`);
+  r.line("");
 
   const mode = resolveWizAuthMode(
     getProp(PROP_KEYS.wizApiToken),
@@ -130,12 +160,12 @@ export function wizDiagnostic(): string {
   say("Client secret", redact(getProp(PROP_KEYS.wizClientSecret)));
   say("Static token", redact(getProp(PROP_KEYS.wizApiToken)));
   say("Project scope", (projectScope() ?? []).join(", ") || "(all projects)");
-  out.push("");
+  r.line("");
 
   if (!hasWizCredentials()) {
-    out.push("STOP: no usable credentials, so there is nothing to test. Set WIZ_API_URL and");
-    out.push("either WIZ_API_TOKEN or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET in Project Settings.");
-    return out.join("\n");
+    r.line("STOP: no usable credentials, so there is nothing to test. Set WIZ_API_URL and");
+    r.line("either WIZ_API_TOKEN or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET in Project Settings.");
+    return r.text();
   }
 
   // Step 1 — the token. Cache dropped first, so this is a real exchange rather than a
@@ -144,34 +174,34 @@ export function wizDiagnostic(): string {
   forgetToken();
   try {
     const token = getToken(true);
-    out.push(`  Step 1 OK    token acquired (${token.length} chars)`);
+    r.line(`  Step 1 OK    token acquired (${token.length} chars)`);
   } catch (e) {
-    out.push(`  Step 1 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
-    out.push("");
-    out.push(e instanceof WizNotAuthorizedError
+    r.line(`  Step 1 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
+    r.line("");
+    r.line(e instanceof WizNotAuthorizedError
       ? "This is the deployment's authorization, NOT the credentials. Accept the consent\n"
         + "prompt this run should have shown you, then deploy a NEW VERSION of the web app —\n"
         + "pushing code does not change what the /exec URL serves."
       : "The token endpoint refused these credentials. Check WIZ_CLIENT_ID and\n"
         + "WIZ_CLIENT_SECRET, and that WIZ_AUTH_URL matches your tenant's region.");
-    return out.join("\n");
+    return r.text();
   }
 
   // Step 2 — one row, through the app's own query for that scope.
   try {
     const page = fetchPage("sast", { first: 1 });
-    out.push(`  Step 2 OK    query answered — ${page.totalCount ?? "?"} finding(s) in scope`);
+    r.line(`  Step 2 OK    query answered — ${page.totalCount ?? "?"} finding(s) in scope`);
     if (page.partialErrors.length) {
-      out.push(`               with partial errors: ${page.partialErrors.join("; ").slice(0, 300)}`);
+      r.line(`               with partial errors: ${page.partialErrors.join("; ").slice(0, 300)}`);
     }
     setProp(PROP_KEYS.wizVerifiedAt, new Date().toISOString());
-    out.push("");
-    out.push("Connectivity is fine. Settings > System will now read 'Verified'.");
+    r.line("");
+    r.line("Connectivity is fine. Settings > System will now read 'Verified'.");
   } catch (e) {
-    out.push(`  Step 2 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
-    out.push("");
-    out.push("The token was accepted but the query was not. A 401 here means the service");
-    out.push("account cannot read this data; a 404 means WIZ_API_URL's host or path is wrong.");
+    r.line(`  Step 2 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
+    r.line("");
+    r.line("The token was accepted but the query was not. A 401 here means the service");
+    r.line("account cannot read this data; a 404 means WIZ_API_URL's host or path is wrong.");
   }
-  return out.join("\n");
+  return r.text();
 }

@@ -35,6 +35,9 @@ vi.stubGlobal("CacheService", {
   }),
 });
 vi.stubGlobal("Utilities", { sleep: () => {} });
+// deploymentDiagnostic reports whether the daily scan trigger is installed, so it reaches for
+// ScriptApp even though nothing on the Wiz path does.
+vi.stubGlobal("ScriptApp", { getProjectTriggers: () => [] });
 vi.stubGlobal("UrlFetchApp", {
   fetch: (url) => {
     if (http.throwWith) throw new Error(http.throwWith);
@@ -157,5 +160,63 @@ describe("what it prints about the secrets", () => {
     const { wizDiagnostic } = await load();
     http.replies.push(TOKEN_OK, PAGE_OK);
     expect(wizDiagnostic()).toContain("Static token: (unset)");
+  });
+});
+
+describe("the report reaches the operator", () => {
+  // THE DEFECT THIS BLOCK EXISTS FOR, and it is invisible by construction: the function does
+  // all of its work correctly, returns a full report, and the operator sees an empty log.
+  //
+  // The Apps Script editor does not display a function's return value — the Execution log
+  // shows logged output and nothing else. So a diagnostic that only returns its report prints
+  // nothing at all when run the way its own README tells you to run it. Reported from a real
+  // editor run as "nothing, no error, no status message and just finished", and it cost three
+  // exchanges of guessing at what the report would have said.
+  //
+  // The sibling that works does `console.log(m)` as it builds (gas/src/server/diagnostics.ts),
+  // which is why ITS README can say "read the Execution log". Ours logged nothing:
+  // `grep -c 'console\.log\|Logger\.log'` over the whole file returned 0.
+
+  const loggedLines = (spy) => spy.mock.calls.map((c) => String(c[0])).join("\n").split("\n");
+
+  it("logs every line wizDiagnostic returns, not just some of them", async () => {
+    // Set equality rather than "logged at least once": a partial log is the same defect
+    // wearing a smaller hat, and the log is not a summary of the report — it IS the report.
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { wizDiagnostic } = await load();
+      http.replies.push(TOKEN_OK, PAGE_OK);
+      const returned = wizDiagnostic().split("\n");
+      expect(loggedLines(spy)).toEqual(returned);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("logs the failure path too", async () => {
+    // The path an operator is most likely to be on when they run this at all.
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { wizDiagnostic } = await load();
+      http.replies.push({ code: 401, body: { error: "invalid_client" } });
+      const returned = wizDiagnostic().split("\n");
+      expect(loggedLines(spy)).toEqual(returned);
+      expect(loggedLines(spy).join("\n")).toContain("Step 1 FAIL");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("logs deploymentDiagnostic as well, which had the same hole", async () => {
+    // It has a second reader — Settings > System renders its returned string — so the return
+    // value stays. Both outputs are the same text.
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { deploymentDiagnostic } = await load();
+      const returned = deploymentDiagnostic().split("\n");
+      expect(loggedLines(spy)).toEqual(returned);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

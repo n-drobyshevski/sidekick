@@ -449,7 +449,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "19043ee67853" : "dev";
+  var BUILD_ID = true ? "cc8c8b94c45a" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -2460,7 +2460,7 @@ var Server = (() => {
       const message = String((_a = e == null ? void 0 : e.message) != null ? _a : e);
       if (message.indexOf(EXTERNAL_REQUEST_SCOPE) < 0) throw e;
       throw new WizNotAuthorizedError(
-        "This deployment is not authorized to make outbound requests, so it cannot reach Wiz. The credentials are not the problem. Fix it in this order: (1) open the Apps Script editor and run wizDiagnostic() \u2014 accepting its consent prompt is what grants the scope; (2) Deploy > Manage deployments > Edit > New version, because pushing code does not change what the web app URL serves; (3) check the daily scan trigger still fires, since a scope change can suspend an installable trigger silently."
+        "This deployment is not authorized to make outbound requests, so it cannot reach Wiz. The credentials are not the problem. Fix it in this order: (1) open the Apps Script editor, run wizDiagnostic() and READ THE EXECUTION LOG \u2014 it names which step fails, and a consent prompt appears only if you do not already hold the scope, so no prompt is a normal run rather than a failed one; (2) Deploy > Manage deployments > Edit > New version, because pushing code does not change what the web app URL serves; (3) check the daily scan trigger still fires, since a scope change can suspend an installable trigger silently."
       );
     }
   }
@@ -2986,13 +2986,25 @@ var Server = (() => {
   }
 
   // src/server/diagnostics.ts
+  function reporter() {
+    const lines = [];
+    return {
+      line(m) {
+        console.log(m);
+        lines.push(m);
+      },
+      text() {
+        return lines.join("\n");
+      }
+    };
+  }
   function deploymentDiagnostic() {
-    const out = [];
-    const ok = (label, value) => out.push(`  OK    ${label}: ${value}`);
-    const bad = (label, value) => out.push(`  FAIL  ${label}: ${value}`);
-    out.push(`Wiz Sidekick DevSecOps \u2014 deployment diagnostic`);
-    out.push(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
-    out.push("");
+    const r = reporter();
+    const ok = (label, value) => r.line(`  OK    ${label}: ${value}`);
+    const bad = (label, value) => r.line(`  FAIL  ${label}: ${value}`);
+    r.line(`Wiz Sidekick DevSecOps \u2014 deployment diagnostic`);
+    r.line(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
+    r.line("");
     const ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
     if (ssId) {
       try {
@@ -3000,7 +3012,7 @@ var Server = (() => {
         ok("Ledger spreadsheet", `${ss.getName()} (${ssId})`);
         for (const tab of Object.values(TABS)) {
           const rows = dataRowCount(tab);
-          out.push(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
+          r.line(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
         }
         ok("Cells used", String(cellCount()));
       } catch (e) {
@@ -3023,14 +3035,14 @@ var Server = (() => {
     for (const scope of SCOPES) {
       ok(`Severities requested (${scope})`, s.fetchSeverities[scope].join(", ") || "(all)");
     }
-    out.push("");
+    r.line("");
     const daily = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === "trigger_dailyScan").length;
     if (daily) ok("Daily scan trigger", `installed (${daily})`);
     else bad("Daily scan trigger", "not installed \u2014 run setup()");
     const job = activeJob();
     if (job) {
       ok("Scan in flight", `${job.job_id} \u2014 ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
-      out.push(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
+      r.line(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
       if (isStaleJob(job)) {
         bad("  heartbeat", "silent for over 30 minutes \u2014 run resetStuckJob() from the editor");
       }
@@ -3040,7 +3052,7 @@ var Server = (() => {
     const verified = getProp(PROP_KEYS.wizVerifiedAt);
     if (verified) ok("Credentials last verified", verified);
     else bad("Credentials last verified", "never \u2014 the tenant has not accepted them yet");
-    return out.join("\n");
+    return r.text();
   }
   function redact(v) {
     if (!v) return "(unset)";
@@ -3049,11 +3061,11 @@ var Server = (() => {
   }
   function wizDiagnostic() {
     var _a, _b, _c, _d;
-    const out = [];
-    const say = (label, value) => out.push(`  ${label}: ${value}`);
-    out.push("Wiz connectivity diagnostic");
-    out.push(`Build ${BUILD_ID}`);
-    out.push("");
+    const r = reporter();
+    const say = (label, value) => r.line(`  ${label}: ${value}`);
+    r.line("Wiz connectivity diagnostic");
+    r.line(`Build ${BUILD_ID}`);
+    r.line("");
     const mode = resolveWizAuthMode(
       getProp(PROP_KEYS.wizApiToken),
       getProp(PROP_KEYS.wizClientId),
@@ -3066,38 +3078,38 @@ var Server = (() => {
     say("Client secret", redact(getProp(PROP_KEYS.wizClientSecret)));
     say("Static token", redact(getProp(PROP_KEYS.wizApiToken)));
     say("Project scope", ((_c = projectScope()) != null ? _c : []).join(", ") || "(all projects)");
-    out.push("");
+    r.line("");
     if (!hasWizCredentials()) {
-      out.push("STOP: no usable credentials, so there is nothing to test. Set WIZ_API_URL and");
-      out.push("either WIZ_API_TOKEN or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET in Project Settings.");
-      return out.join("\n");
+      r.line("STOP: no usable credentials, so there is nothing to test. Set WIZ_API_URL and");
+      r.line("either WIZ_API_TOKEN or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET in Project Settings.");
+      return r.text();
     }
     forgetToken();
     try {
       const token = getToken(true);
-      out.push(`  Step 1 OK    token acquired (${token.length} chars)`);
+      r.line(`  Step 1 OK    token acquired (${token.length} chars)`);
     } catch (e) {
-      out.push(`  Step 1 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
-      out.push("");
-      out.push(e instanceof WizNotAuthorizedError ? "This is the deployment's authorization, NOT the credentials. Accept the consent\nprompt this run should have shown you, then deploy a NEW VERSION of the web app \u2014\npushing code does not change what the /exec URL serves." : "The token endpoint refused these credentials. Check WIZ_CLIENT_ID and\nWIZ_CLIENT_SECRET, and that WIZ_AUTH_URL matches your tenant's region.");
-      return out.join("\n");
+      r.line(`  Step 1 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
+      r.line("");
+      r.line(e instanceof WizNotAuthorizedError ? "This is the deployment's authorization, NOT the credentials. Accept the consent\nprompt this run should have shown you, then deploy a NEW VERSION of the web app \u2014\npushing code does not change what the /exec URL serves." : "The token endpoint refused these credentials. Check WIZ_CLIENT_ID and\nWIZ_CLIENT_SECRET, and that WIZ_AUTH_URL matches your tenant's region.");
+      return r.text();
     }
     try {
       const page = fetchPage("sast", { first: 1 });
-      out.push(`  Step 2 OK    query answered \u2014 ${(_d = page.totalCount) != null ? _d : "?"} finding(s) in scope`);
+      r.line(`  Step 2 OK    query answered \u2014 ${(_d = page.totalCount) != null ? _d : "?"} finding(s) in scope`);
       if (page.partialErrors.length) {
-        out.push(`               with partial errors: ${page.partialErrors.join("; ").slice(0, 300)}`);
+        r.line(`               with partial errors: ${page.partialErrors.join("; ").slice(0, 300)}`);
       }
       setProp(PROP_KEYS.wizVerifiedAt, (/* @__PURE__ */ new Date()).toISOString());
-      out.push("");
-      out.push("Connectivity is fine. Settings > System will now read 'Verified'.");
+      r.line("");
+      r.line("Connectivity is fine. Settings > System will now read 'Verified'.");
     } catch (e) {
-      out.push(`  Step 2 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
-      out.push("");
-      out.push("The token was accepted but the query was not. A 401 here means the service");
-      out.push("account cannot read this data; a 404 means WIZ_API_URL's host or path is wrong.");
+      r.line(`  Step 2 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
+      r.line("");
+      r.line("The token was accepted but the query was not. A 401 here means the service");
+      r.line("account cannot read this data; a 404 means WIZ_API_URL's host or path is wrong.");
     }
-    return out.join("\n");
+    return r.text();
   }
 
   // src/server/api.ts
