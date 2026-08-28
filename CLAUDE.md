@@ -191,6 +191,73 @@ already implements the pipeline and is the behavioural spec (same relationship `
   about names it already knows. The probe now REFUSES an unrecognised argument and the
   `--roots` exit names the sections it skipped. Same family as the false zero above: the
   output has to say what it did not do.
+- **The `scans` row is the COMMIT RECORD and it lands LAST — that is the battery's whole
+  design.** A scan that dies mid-walk appends no row, so it never becomes a `prevScanId`, so
+  the next scan still measures against the last COMPLETE scan of that scope. Not a check
+  anywhere; the shape of the thing. It matters more here than in either sibling because
+  `reconcile` resolves by ABSENCE, so a partial population is indistinguishable from a
+  remediated one — the failure is not an error, it is a remediation programme that never
+  happened. Priced on the dev fixture's 94 SCA findings: commit the in-flight step on the
+  failure path and a scan row appears reading `total: 32` (62 findings never enter the ledger,
+  so the next scan meets them as NEW with their real age gone); let `readSyncStepPages` skip a
+  page it cannot read — the behaviour shipped until now — and the next scan commits with
+  `resolved_count: 47`. The two guards are INDEPENDENT, which is how the first mutation was
+  found to be defeated by the second rather than by the rule it was aimed at.
+- **A budget is a choice; an execution limit is not, and confusing them made the battery
+  unable to commit.** `COMMIT_RESERVE_MS` was measured against the hop's own yield point
+  rather than the platform's ceiling, so `now + 120s > now + 45s` held on the first page of
+  every scan and `startScan` always deferred to a trigger. Every spec expecting a committed
+  row failed at once, which is the only reason it was found before deployment.
+- **A store's row shape and its tab headers were forked from different siblings, and nothing
+  failed.** `writeGrid` projects a row onto the DECLARED headers and discards the rest, so
+  `jobsStore`'s `sync_id` / `step_index` / `nodes_so_far` / `part_refs_json` were dropped on
+  write and read back as defaults. A resumed hop would have restarted from page 0 with a null
+  cursor, every hop, forever — a polite infinite re-fetch. No test covered `jobsStore` at all.
+  The round-trip test now asserts WHOLE-ROW equality: a first attempt compared the fixture's
+  keys against the headers and passed against the broken shape, because types do not exist at
+  runtime.
+- **`wizQueries.ts` must stay transport-free, and a text assertion holds it.** `probe.mjs`
+  bundles and imports it under plain Node so a read-only probe sends THE APP'S OWN QUERIES;
+  the moment it reaches for a GAS global the probe stops being evidence about the battery.
+  The check strips comments first — the file's own header names `UrlFetchApp` and
+  `PropertiesService` while explaining why it must not use them.
+- **`resolveConnection` catches a missing connection; only `ROOT_FIELDS` catches the WRONG
+  one.** Rows that arrive, parse and carry a `pageInfo` are still another scope's population.
+  Naming the expected root per scope turns that into a refusal — and caught a wrong fixture
+  in the transport's own test the day it was added: sca answers under `vulnerabilityFindings`,
+  not `scaFindings`.
+- **The page-size fallback is narrower than the sibling's.** `gas/` retries at 250 on any
+  throw; here only a `WizRefusedError` (a 4xx that is not about credentials) qualifies,
+  because that is the only failure a smaller ask can fix. Measured: three specs failed against
+  the broad form, each because the fallback swallowed the error the spec was about and spent a
+  second round of calls doing it. A rejected token is never retried smaller — that reports a
+  credentials problem as a data problem.
+- **Trigger handlers in `dist/entry.js` are UNGATED, and a test says so.** An installable
+  trigger runs with no active user, so `Session.getActiveUser().getEmail()` is `""` and any
+  access check denies every firing silently — a multi-hop scan stops dead at its first budget
+  expiry and looks exactly like a hang. Making them match the `api_` delegators is the
+  obvious-looking refactor that breaks collection.
+- **A status dot that is the ONLY readout has to carry words.** The rail dot was a hardcoded
+  literal reading no field, while Settings showed a green pill for the same deployment — two
+  surfaces, one fact, two stories. And above 800px `display:none` on the caption left nine
+  pixels of `aria-hidden` colour with its explanation in a hover tip on a `<span>`. It is
+  derived now (`railStatus.js`), the caption is visually hidden rather than removed, and the
+  dot takes focus. `never scanned` beats `stale` in the precedence: two registers scanned an
+  hour ago and one never looked at is not a fresh register.
+- **`bootstrap.latestScan` is a max over the whole scans tab, so it lies about three
+  registers.** It reports "fresh" whenever ANY scope ran. `lastScanByScope` ships all three
+  and the rail takes the worst over the scopes Settings collects.
+- **"Present" is not "connected", and a green pill said the second while meaning the first.**
+  `hasWizCredentials()` is three non-empty Script Properties — no exchange, no call. The
+  Settings row now reads "Stored, never verified" until a real token exchange plus one page
+  succeeds, and `testConnection` drops the cached token first: a cached one outlives a revoked
+  client secret by up to six hours, which is exactly the claim it exists to stop the app
+  making.
+- **A poller's first paint must not wait for its first interval.** Pressing Run scan produced
+  no visible change for three seconds — on the one control whose whole job is to say something
+  is now happening. Only the browser found it, and only with the continuation trigger frozen:
+  in the dev harness just the FAKE clock expires, so 45 pages complete inside a few hundred
+  milliseconds of real time and the card never gets a frame.
 - **The accent is split and the split is load-bearing.** `--accent: #ffcb13` is 1.52:1 on
   white and 1.30:1 on the meter track — it is a FILL token and nothing else. Every accent
   fill carries `--accent-edge: rgba(0,0,0,.40)`, which lifts it to 3.49:1. Links, focus
