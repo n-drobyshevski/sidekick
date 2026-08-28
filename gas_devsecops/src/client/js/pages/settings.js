@@ -258,9 +258,11 @@ function credentialControl(boot) {
           "This deployment may not make outbound requests, so it cannot reach Wiz. "
           + "The credentials are not the problem."),
         el("ol", { class: "settings-remedy" },
-          el("li", {}, "In the Apps Script editor, run wizDiagnostic() and read the "
-            + "Execution log — it names which step fails. A consent prompt appears only if "
-            + "you do not already hold the scope, so no prompt is a normal run."),
+          el("li", {}, "Push the current build. Its appsscript.json declares "
+            + "script.external_request, and a manifest change is what makes Apps Script ask "
+            + "for consent — inference alone did not."),
+          el("li", {}, "In the Apps Script editor, run wizDiagnostic() and ACCEPT the "
+            + "prompt. Read the Execution log: it names which step fails."),
           el("li", {}, "Deploy \u2192 Manage deployments \u2192 Edit \u2192 New version. "
             + "Pushing code does not change what the web app URL serves."),
           el("li", {}, "Check the daily scan trigger still fires: a scope change can "

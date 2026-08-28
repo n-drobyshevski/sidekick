@@ -449,7 +449,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "cc8c8b94c45a" : "dev";
+  var BUILD_ID = true ? "57fcaaf7f592" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -2460,7 +2460,7 @@ var Server = (() => {
       const message = String((_a = e == null ? void 0 : e.message) != null ? _a : e);
       if (message.indexOf(EXTERNAL_REQUEST_SCOPE) < 0) throw e;
       throw new WizNotAuthorizedError(
-        "This deployment is not authorized to make outbound requests, so it cannot reach Wiz. The credentials are not the problem. Fix it in this order: (1) open the Apps Script editor, run wizDiagnostic() and READ THE EXECUTION LOG \u2014 it names which step fails, and a consent prompt appears only if you do not already hold the scope, so no prompt is a normal run rather than a failed one; (2) Deploy > Manage deployments > Edit > New version, because pushing code does not change what the web app URL serves; (3) check the daily scan trigger still fires, since a scope change can suspend an installable trigger silently."
+        "This deployment is not authorized to make outbound requests, so it cannot reach Wiz. The credentials are not the problem. Push the current build first \u2014 its appsscript.json declares script.external_request, and a manifest change is what makes Apps Script ask for consent. Then: (1) run wizDiagnostic() in the editor and ACCEPT the prompt; (2) Deploy > Manage deployments > Edit > New version, because pushing code does not change what the web app URL serves; (3) check the daily scan trigger still fires, since a scope change can suspend an installable trigger silently."
       );
     }
   }

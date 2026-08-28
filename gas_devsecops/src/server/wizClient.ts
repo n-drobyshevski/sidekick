@@ -58,10 +58,12 @@ const EXTERNAL_REQUEST_SCOPE = "script.external_request";
 /**
  * Re-raise a platform authorization refusal with the sequence that fixes it.
  *
- * The remedy is specific and not guessable from the platform's message: a `clasp push` does
- * NOT re-prompt, and the deployment keeps serving the version it was pinned to — so an
- * operator who pushes and retries sees exactly the same refusal and has no reason to suspect
- * the deployment rather than the credentials.
+ * The remedy is specific and not guessable from the platform's message, and it took three
+ * wrong answers to find: inference did NOT ask for this scope even with the call present in
+ * the bundle, and no consent prompt appeared in the editor or the web app. What makes Apps
+ * Script ask is the MANIFEST declaring the scope — see `dist/appsscript.json` and
+ * `test/manifestScopes.test.js`. After that a push, an editor run, and a new deployment
+ * version, in that order.
  */
 function guardAuthorization<T>(fn: () => T): T {
   try {
@@ -71,13 +73,13 @@ function guardAuthorization<T>(fn: () => T): T {
     if (message.indexOf(EXTERNAL_REQUEST_SCOPE) < 0) throw e;
     throw new WizNotAuthorizedError(
       "This deployment is not authorized to make outbound requests, so it cannot reach Wiz. "
-      + "The credentials are not the problem. Fix it in this order: (1) open the Apps Script "
-      + "editor, run wizDiagnostic() and READ THE EXECUTION LOG — it names which step fails, "
-      + "and a consent prompt appears only if you do not already hold the scope, so no prompt "
-      + "is a normal run rather than a failed one; (2) Deploy > Manage deployments > Edit > "
-      + "New version, because pushing code does not change what the web app URL serves; "
-      + "(3) check the daily scan trigger still fires, since a scope change can suspend an "
-      + "installable trigger silently.",
+      + "The credentials are not the problem. Push the current build first — its "
+      + "appsscript.json declares script.external_request, and a manifest change is what "
+      + "makes Apps Script ask for consent. Then: (1) run wizDiagnostic() in the editor and "
+      + "ACCEPT the prompt; (2) Deploy > Manage deployments > Edit > New version, because "
+      + "pushing code does not change what the web app URL serves; (3) check the daily scan "
+      + "trigger still fires, since a scope change can suspend an installable trigger "
+      + "silently.",
     );
   }
 }
