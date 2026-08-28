@@ -33,6 +33,53 @@ export class WizAuthError extends WizError {}
  */
 export class WizRefusedError extends WizError {}
 
+/**
+ * Apps Script itself refused the call — the project is not authorized for outbound HTTP.
+ *
+ * Nothing to do with Wiz. `UrlFetchApp.fetch` throws this BEFORE any request is made, so it
+ * arrives through none of the branches below, and the platform's own sentence names a scope
+ * URL and no remedy. Its own class so the UI can answer with the sequence that fixes it.
+ */
+export class WizNotAuthorizedError extends WizError {}
+
+/**
+ * The scope Apps Script names when the project may not reach the network.
+ *
+ * MATCHED ON THE URL, NEVER ON THE MESSAGE TEXT, and that is the whole point of this
+ * constant. The platform localises the sentence — the report that prompted this arrived as
+ * "Vous n'êtes pas autorisé à appeler UrlFetchApp.fetch" — so an English match would pass
+ * every test here and fail for the operator who hit it. This repo has already paid for that
+ * lesson once: `sheetsDb.ts` deliberately does not test for "exceeds the maximum" because the
+ * reporting tenant got that error in French too. The scope URL is the one token in the
+ * message that is the same in every locale.
+ */
+const EXTERNAL_REQUEST_SCOPE = "script.external_request";
+
+/**
+ * Re-raise a platform authorization refusal with the sequence that fixes it.
+ *
+ * The remedy is specific and not guessable from the platform's message: a `clasp push` does
+ * NOT re-prompt, and the deployment keeps serving the version it was pinned to — so an
+ * operator who pushes and retries sees exactly the same refusal and has no reason to suspect
+ * the deployment rather than the credentials.
+ */
+function guardAuthorization<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    const message = String((e as Error)?.message ?? e);
+    if (message.indexOf(EXTERNAL_REQUEST_SCOPE) < 0) throw e;
+    throw new WizNotAuthorizedError(
+      "This deployment is not authorized to make outbound requests, so it cannot reach Wiz. "
+      + "The credentials are not the problem. Fix it in this order: (1) open the Apps Script "
+      + "editor and run wizDiagnostic() — accepting its consent prompt is what grants the "
+      + "scope; (2) Deploy > Manage deployments > Edit > New version, because pushing code "
+      + "does not change what the web app URL serves; (3) check the daily scan trigger still "
+      + "fires, since a scope change can suspend an installable trigger silently.",
+    );
+  }
+}
+
 const TOKEN_CACHE_KEY = "wiz_token";
 
 /** How many times one page is attempted before the walk gives up. */
@@ -61,7 +108,7 @@ export function getToken(forceRefresh = false): string {
     if (cached) return cached;
   }
   const authUrl = getProp(PROP_KEYS.wizAuthUrl) ?? DEFAULT_WIZ_AUTH_URL;
-  const response = UrlFetchApp.fetch(authUrl, {
+  const response = guardAuthorization(() => UrlFetchApp.fetch(authUrl, {
     method: "post",
     contentType: "application/x-www-form-urlencoded",
     payload: {
@@ -71,7 +118,7 @@ export function getToken(forceRefresh = false): string {
       client_secret: requireProp(PROP_KEYS.wizClientSecret),
     },
     muteHttpExceptions: true,
-  });
+  }));
   const code = response.getResponseCode();
   if (code !== 200) {
     throw new WizAuthError(
@@ -154,13 +201,13 @@ function post(query: string, variables: Rec, first: number, expectedRoot: string
   let lastTransient = "";
 
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-    const response = UrlFetchApp.fetch(apiUrl, {
+    const response = guardAuthorization(() => UrlFetchApp.fetch(apiUrl, {
       method: "post",
       contentType: "application/json",
       headers: { Authorization: `Bearer ${token}` },
       payload: JSON.stringify({ query, variables }),
       muteHttpExceptions: true,
-    });
+    }));
     const code = response.getResponseCode();
 
     // One refresh, first attempt only, and only when there is something to refresh: a static

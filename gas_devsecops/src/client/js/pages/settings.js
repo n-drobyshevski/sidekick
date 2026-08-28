@@ -247,6 +247,24 @@ function credentialControl(boot) {
     }
     if (state && state.ok) {
       wrap.append(statusPill("ok", `Verified ${fmtDateTime(state.at)}`));
+    } else if (state && state.notAuthorized) {
+      // A DIFFERENT FAILURE WITH A DIFFERENT REMEDY, and it is not about Wiz at all: Apps
+      // Script refused the outbound call before one was made. The platform's own sentence
+      // names a scope URL and nothing a reader can act on — and arrives in the script
+      // owner's locale, so it is not even reliably readable here. Print the steps instead.
+      wrap.append(
+        statusPill("bad", "Not authorized"),
+        el("span", { class: "muted small" },
+          "This deployment may not make outbound requests, so it cannot reach Wiz. "
+          + "The credentials are not the problem."),
+        el("ol", { class: "settings-remedy" },
+          el("li", {}, "In the Apps Script editor, run wizDiagnostic() and accept the "
+            + "consent prompt — running code that needs the scope is what asks for it."),
+          el("li", {}, "Deploy \u2192 Manage deployments \u2192 Edit \u2192 New version. "
+            + "Pushing code does not change what the web app URL serves."),
+          el("li", {}, "Check the daily scan trigger still fires: a scope change can "
+            + "suspend an installable trigger silently.")),
+      );
     } else if (state && state.error) {
       wrap.append(statusPill("bad", "Refused"), el("span", { class: "muted small" }, state.error));
     } else if (boot.wizVerifiedAt) {
@@ -270,7 +288,10 @@ function credentialControl(boot) {
           // The stored timestamp moved, so the next reader of this page sees it too.
           invalidateBootstrap();
         } catch (e) {
-          paint({ error: String(e.message || e).slice(0, 200) });
+          // `errorKind` is set server-side; the message is the platform's and may be in any
+          // language, so the branch must not key on reading it.
+          if (e.kind === "not-authorized") paint({ notAuthorized: true });
+          else paint({ error: String(e.message || e).slice(0, 200) });
         }
       },
     }, state && state.pending ? "Testing…" : "Test connection");

@@ -87,6 +87,18 @@ function deploymentDiagnostic() {
   return Server.deploymentDiagnostic();
 }
 
+/**
+ * The one to run when Wiz cannot be reached — and the one that ASKS FOR THE SCOPE.
+ *
+ * Apps Script grants a permission when code needing it actually runs, so a diagnostic that
+ * only reads Script Properties authorizes nothing. This makes the real calls, which is what
+ * puts the consent screen in front of the operator; `deploymentDiagnostic()` never can.
+ */
+function wizDiagnostic() {
+  Server.access.assertAllowed("wizDiagnostic");
+  return Server.wizDiagnostic();
+}
+
 /* ----------------------------------------------------------------- triggers */
 
 /**

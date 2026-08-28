@@ -207,3 +207,37 @@ details.why[open] > summary .why__caret { transform: rotate(90deg); }
   color: var(--text-2);
   overflow-wrap: anywhere;
 }
+
+/* A settings row's control when it is more than one thing: a state pill, a sentence, and
+   sometimes an action. Wraps, because the credential row's failure state is three steps
+   long and a nowrap control would push the row off its own panel. */
+.settings-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+/* The sentence beside the pill wraps with it rather than widening the row. */
+.settings-inline > .muted { max-width: 62ch; }
+
+/* The remedy for a failure the reader has to act on OUTSIDE the app — today, only the
+   deployment-authorization one. Numbered because the steps are ordered and the middle one is
+   the one everybody skips: pushing code does not change what the web app serves.
+
+   THE MEASURE IS CAPPED, and not only for readability. `.setting-row__control` is
+   `flex: 0 0 auto`, so it sizes to its content — three sentences of prose sized the control
+   column to 1662px inside a 1210px row and the whole row scrolled sideways. Caught in the
+   browser. A cap here fixes it without touching a class every other settings row uses. */
+.settings-remedy {
+  flex-basis: 100%;
+  max-width: 62ch;
+  min-width: 0;
+  margin: var(--space-1) 0 0;
+  padding-left: 1.25rem;
+  font-size: var(--fs-small);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.settings-remedy li + li { margin-top: var(--space-1); }

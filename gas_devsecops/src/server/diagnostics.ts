@@ -6,11 +6,13 @@
 // failure.
 
 import { SCOPES } from "../domain/config";
-import { getProp, hasWizCredentials, PROP_KEYS } from "./props";
+import { getProp, hasWizCredentials, PROP_KEYS, projectScope, resolveWizAuthMode } from "./props";
 import { activeJob, isStaleJob } from "./jobsStore";
 import { BUILD_ID } from "./buildInfo";
 import { cellCount, dataRowCount, ledgerSpreadsheet, SCHEMA_VERSION, TABS } from "./sheetsDb";
 import { loadSettings } from "./settingsStore";
+import { fetchPage, forgetToken, getToken, WizNotAuthorizedError } from "./wizClient";
+import { setProp } from "./props";
 
 export function deploymentDiagnostic(): string {
   const out: string[] = [];
@@ -83,5 +85,93 @@ export function deploymentDiagnostic(): string {
   if (verified) ok("Credentials last verified", verified);
   else bad("Credentials last verified", "never — the tenant has not accepted them yet");
 
+  return out.join("\n");
+}
+
+/** Show enough of a secret to recognise it and not enough to use it. */
+function redact(v: string | null): string {
+  if (!v) return "(unset)";
+  const t = v.trim();
+  return t.length <= 8 ? "(set)" : `${t.slice(0, 4)}…${t.slice(-2)} (${t.length} chars)`;
+}
+
+/**
+ * Exercise the real Wiz path, from the Apps Script editor, and name the step that fails.
+ *
+ * TWO JOBS, and the second is the one that gets an operator unstuck. It diagnoses — but
+ * RUNNING IT FROM THE EDITOR IS ALSO WHAT PROVOKES THE CONSENT PROMPT. `deploymentDiagnostic()`
+ * cannot do that, because it makes no network call: Apps Script asks for a scope when code
+ * that needs it actually runs, so a diagnostic that only reads Script Properties authorizes
+ * nothing and leaves "not authorized to call UrlFetchApp.fetch" with no way out but guesswork.
+ *
+ * The step numbering is the sibling's (`gas/`'s `wizDiagnostic`) and it earns its keep: the
+ * three failures look identical from the app — "Test connection: Refused" — and have three
+ * completely different remedies.
+ *
+ * Secrets are redacted. Nothing here writes to the ledger.
+ */
+export function wizDiagnostic(): string {
+  const out: string[] = [];
+  const say = (label: string, value: string) => out.push(`  ${label}: ${value}`);
+
+  out.push("Wiz connectivity diagnostic");
+  out.push(`Build ${BUILD_ID}`);
+  out.push("");
+
+  const mode = resolveWizAuthMode(
+    getProp(PROP_KEYS.wizApiToken),
+    getProp(PROP_KEYS.wizClientId),
+    getProp(PROP_KEYS.wizClientSecret),
+  );
+  say("Auth mode", mode ?? "NONE — set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET");
+  say("API url", getProp(PROP_KEYS.wizApiUrl) ?? "(unset)");
+  say("Auth url", getProp(PROP_KEYS.wizAuthUrl) ?? "(unset)");
+  say("Client id", redact(getProp(PROP_KEYS.wizClientId)));
+  say("Client secret", redact(getProp(PROP_KEYS.wizClientSecret)));
+  say("Static token", redact(getProp(PROP_KEYS.wizApiToken)));
+  say("Project scope", (projectScope() ?? []).join(", ") || "(all projects)");
+  out.push("");
+
+  if (!hasWizCredentials()) {
+    out.push("STOP: no usable credentials, so there is nothing to test. Set WIZ_API_URL and");
+    out.push("either WIZ_API_TOKEN or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET in Project Settings.");
+    return out.join("\n");
+  }
+
+  // Step 1 — the token. Cache dropped first, so this is a real exchange rather than a
+  // six-hour-old answer: a cached token outlives a revoked client secret, which is exactly
+  // the reassurance this function must not give.
+  forgetToken();
+  try {
+    const token = getToken(true);
+    out.push(`  Step 1 OK    token acquired (${token.length} chars)`);
+  } catch (e) {
+    out.push(`  Step 1 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
+    out.push("");
+    out.push(e instanceof WizNotAuthorizedError
+      ? "This is the deployment's authorization, NOT the credentials. Accept the consent\n"
+        + "prompt this run should have shown you, then deploy a NEW VERSION of the web app —\n"
+        + "pushing code does not change what the /exec URL serves."
+      : "The token endpoint refused these credentials. Check WIZ_CLIENT_ID and\n"
+        + "WIZ_CLIENT_SECRET, and that WIZ_AUTH_URL matches your tenant's region.");
+    return out.join("\n");
+  }
+
+  // Step 2 — one row, through the app's own query for that scope.
+  try {
+    const page = fetchPage("sast", { first: 1 });
+    out.push(`  Step 2 OK    query answered — ${page.totalCount ?? "?"} finding(s) in scope`);
+    if (page.partialErrors.length) {
+      out.push(`               with partial errors: ${page.partialErrors.join("; ").slice(0, 300)}`);
+    }
+    setProp(PROP_KEYS.wizVerifiedAt, new Date().toISOString());
+    out.push("");
+    out.push("Connectivity is fine. Settings > System will now read 'Verified'.");
+  } catch (e) {
+    out.push(`  Step 2 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
+    out.push("");
+    out.push("The token was accepted but the query was not. A 401 here means the service");
+    out.push("account cannot read this data; a 404 means WIZ_API_URL's host or path is wrong.");
+  }
   return out.join("\n");
 }

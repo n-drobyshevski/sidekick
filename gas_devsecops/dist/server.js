@@ -28,7 +28,8 @@ var Server = (() => {
     include: () => include,
     jobs: () => scanJobs_exports,
     setup: () => setup,
-    welcome: () => welcome_exports
+    welcome: () => welcome_exports,
+    wizDiagnostic: () => wizDiagnostic
   });
 
   // src/server/main.ts
@@ -448,7 +449,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "1dd85ef0b342" : "dev";
+  var BUILD_ID = true ? "19043ee67853" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -2448,6 +2449,21 @@ var Server = (() => {
   };
   var WizRefusedError = class extends WizError {
   };
+  var WizNotAuthorizedError = class extends WizError {
+  };
+  var EXTERNAL_REQUEST_SCOPE = "script.external_request";
+  function guardAuthorization(fn) {
+    var _a;
+    try {
+      return fn();
+    } catch (e) {
+      const message = String((_a = e == null ? void 0 : e.message) != null ? _a : e);
+      if (message.indexOf(EXTERNAL_REQUEST_SCOPE) < 0) throw e;
+      throw new WizNotAuthorizedError(
+        "This deployment is not authorized to make outbound requests, so it cannot reach Wiz. The credentials are not the problem. Fix it in this order: (1) open the Apps Script editor and run wizDiagnostic() \u2014 accepting its consent prompt is what grants the scope; (2) Deploy > Manage deployments > Edit > New version, because pushing code does not change what the web app URL serves; (3) check the daily scan trigger still fires, since a scope change can suspend an installable trigger silently."
+      );
+    }
+  }
   var TOKEN_CACHE_KEY = "wiz_token";
   var ATTEMPTS = 4;
   function getToken(forceRefresh = false) {
@@ -2460,7 +2476,7 @@ var Server = (() => {
       if (cached2) return cached2;
     }
     const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
-    const response = UrlFetchApp.fetch(authUrl, {
+    const response = guardAuthorization(() => UrlFetchApp.fetch(authUrl, {
       method: "post",
       contentType: "application/x-www-form-urlencoded",
       payload: {
@@ -2470,7 +2486,7 @@ var Server = (() => {
         client_secret: requireProp(PROP_KEYS.wizClientSecret)
       },
       muteHttpExceptions: true
-    });
+    }));
     const code = response.getResponseCode();
     if (code !== 200) {
       throw new WizAuthError(
@@ -2514,13 +2530,13 @@ var Server = (() => {
     let token = getToken();
     let lastTransient = "";
     for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-      const response = UrlFetchApp.fetch(apiUrl, {
+      const response = guardAuthorization(() => UrlFetchApp.fetch(apiUrl, {
         method: "post",
         contentType: "application/json",
         headers: { Authorization: `Bearer ${token}` },
         payload: JSON.stringify({ query, variables }),
         muteHttpExceptions: true
-      });
+      }));
       const code = response.getResponseCode();
       if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
         token = getToken(true);
@@ -3026,6 +3042,63 @@ var Server = (() => {
     else bad("Credentials last verified", "never \u2014 the tenant has not accepted them yet");
     return out.join("\n");
   }
+  function redact(v) {
+    if (!v) return "(unset)";
+    const t = v.trim();
+    return t.length <= 8 ? "(set)" : `${t.slice(0, 4)}\u2026${t.slice(-2)} (${t.length} chars)`;
+  }
+  function wizDiagnostic() {
+    var _a, _b, _c, _d;
+    const out = [];
+    const say = (label, value) => out.push(`  ${label}: ${value}`);
+    out.push("Wiz connectivity diagnostic");
+    out.push(`Build ${BUILD_ID}`);
+    out.push("");
+    const mode = resolveWizAuthMode(
+      getProp(PROP_KEYS.wizApiToken),
+      getProp(PROP_KEYS.wizClientId),
+      getProp(PROP_KEYS.wizClientSecret)
+    );
+    say("Auth mode", mode != null ? mode : "NONE \u2014 set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET");
+    say("API url", (_a = getProp(PROP_KEYS.wizApiUrl)) != null ? _a : "(unset)");
+    say("Auth url", (_b = getProp(PROP_KEYS.wizAuthUrl)) != null ? _b : "(unset)");
+    say("Client id", redact(getProp(PROP_KEYS.wizClientId)));
+    say("Client secret", redact(getProp(PROP_KEYS.wizClientSecret)));
+    say("Static token", redact(getProp(PROP_KEYS.wizApiToken)));
+    say("Project scope", ((_c = projectScope()) != null ? _c : []).join(", ") || "(all projects)");
+    out.push("");
+    if (!hasWizCredentials()) {
+      out.push("STOP: no usable credentials, so there is nothing to test. Set WIZ_API_URL and");
+      out.push("either WIZ_API_TOKEN or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET in Project Settings.");
+      return out.join("\n");
+    }
+    forgetToken();
+    try {
+      const token = getToken(true);
+      out.push(`  Step 1 OK    token acquired (${token.length} chars)`);
+    } catch (e) {
+      out.push(`  Step 1 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
+      out.push("");
+      out.push(e instanceof WizNotAuthorizedError ? "This is the deployment's authorization, NOT the credentials. Accept the consent\nprompt this run should have shown you, then deploy a NEW VERSION of the web app \u2014\npushing code does not change what the /exec URL serves." : "The token endpoint refused these credentials. Check WIZ_CLIENT_ID and\nWIZ_CLIENT_SECRET, and that WIZ_AUTH_URL matches your tenant's region.");
+      return out.join("\n");
+    }
+    try {
+      const page = fetchPage("sast", { first: 1 });
+      out.push(`  Step 2 OK    query answered \u2014 ${(_d = page.totalCount) != null ? _d : "?"} finding(s) in scope`);
+      if (page.partialErrors.length) {
+        out.push(`               with partial errors: ${page.partialErrors.join("; ").slice(0, 300)}`);
+      }
+      setProp(PROP_KEYS.wizVerifiedAt, (/* @__PURE__ */ new Date()).toISOString());
+      out.push("");
+      out.push("Connectivity is fine. Settings > System will now read 'Verified'.");
+    } catch (e) {
+      out.push(`  Step 2 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
+      out.push("");
+      out.push("The token was accepted but the query was not. A 401 here means the service");
+      out.push("account cannot read this data; a 404 means WIZ_API_URL's host or path is wrong.");
+    }
+    return out.join("\n");
+  }
 
   // src/server/api.ts
   var api_exports = {};
@@ -3389,7 +3462,7 @@ var Server = (() => {
     try {
       return { ok: true, data: fn() };
     } catch (e) {
-      const kind = e instanceof LedgerBusyError ? "busy" : "error";
+      const kind = e instanceof LedgerBusyError ? "busy" : e instanceof WizNotAuthorizedError ? "not-authorized" : "error";
       return { ok: false, error: String(e instanceof Error ? e.message : e), errorKind: kind };
     }
   }
