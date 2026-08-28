@@ -169,3 +169,41 @@ details.why[open] > summary .why__caret { transform: rotate(90deg); }
    no surface of its own. Only the focus ring matters, because the panel is tabbable (tabindex
    0) so a keyboard reader landing past the strip has somewhere to be. */
 .settings-tabpanel:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 4px; }
+
+/* ------------------------------------------------------ the Register tab's severity gates */
+
+/* One severity row per scope, because the gate is per scope. Dimmed — not hidden — when its
+   register is switched off: the selection is still there and comes back with the register, so
+   removing it would lose an answer the reader already gave. */
+.sev-scope { display: flex; flex-direction: column; gap: var(--space-1); align-items: flex-end; }
+.sev-scope.is-off { opacity: 0.55; }
+.sev-scope.is-off .pill-row { pointer-events: none; }
+.sev-scope .muted.small { margin: 0; text-align: right; max-width: 44ch; }
+
+/* The register pills carry no severity tint — they are three names, not a scale — so they take
+   the neutral chip treatment and the pressed state is a border plus weight, never colour
+   alone. Same recipe as .facet-item on the register pages. */
+.scope-pill {
+  border: 1px solid var(--hairline);
+  background: var(--page);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.scope-pill:hover { border-color: var(--border-strong); }
+.scope-pill[aria-pressed="true"] {
+  border-color: var(--accent-text);
+  box-shadow: inset 3px 0 0 var(--accent-text);
+  font-weight: 600;
+}
+
+/* An identifier quoted inside a settings row — a project id, a build stamp. Monospace so a
+   hash reads as a hash, at the row's own size rather than a code block's. */
+.code-inline {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--fs-small);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}

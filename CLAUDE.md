@@ -231,9 +231,11 @@ already implements the pipeline and is the behavioural spec (same relationship `
   first removal in a visit is confirmed and every one after it is silent. Fixed here; the
   baseline moves on every save.
 - **Copying a page from `gas/` has two traps this chassis adds.** `el()` THROWS on `title`
-  (the native-tooltip ban), and the fork already renamed the CSS — `.access-remove`,
+  (the native-tooltip ban), and the fork already renamed the access CSS — `.access-remove`,
   `.access-add`, `.access-block__label` against `gas/`'s `.cond-remove`, `.sub-add`,
   `.scope-block`. The first fails loudly; the second renders an unstyled panel in silence.
+  Check before assuming a class is missing: `button.link` looks absent to a `^\.link` grep and
+  is defined in `base.css`, so "renamed" is a claim to verify rather than a default.
 - **A test that stubs a global belongs in the ISOLATED vitest project.** The pure project runs
   `isolate: false` on a shared worker, so a module-scope `vi.stubGlobal("Session", …)` installs
   it for every other file in that worker. The classifier in `vitest.config.ts` detects

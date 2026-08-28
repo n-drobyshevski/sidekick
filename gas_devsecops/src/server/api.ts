@@ -10,7 +10,7 @@
 // rather than returning an empty page, and no RPC pretends otherwise. Adding an endpoint
 // that returns invented figures would be the one thing this product does not do.
 
-import { SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "../domain/config";
+import { SCOPES, SCOPE_LABELS, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "../domain/config";
 import { baseRows } from "../domain/ledgerCore";
 import {
   awaitingVendorFix, kaplanMeier, mttrPercentiles, openAgePercentiles, openPastSla,
@@ -21,8 +21,10 @@ import { SAMPLE_SCANS } from "./sampleData";
 import { runScan, sampleSource } from "./sync";
 import { registerPage, type RegisterQuery } from "./registers";
 import { BUILD_ID } from "./buildInfo";
-import { hasWizCredentials, PROP_KEYS, setProp } from "./props";
+import { getProp, hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import { loadSettings, saveSettings } from "./settingsStore";
+import { validateSettings, withSettings } from "../domain/settingsLogic";
+import { deploymentDiagnostic } from "./diagnostics";
 import { readAll, TABS } from "./sheetsDb";
 import * as access from "./access";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
@@ -64,6 +66,7 @@ export interface Bootstrap {
   buildId: string;
   hasCredentials: boolean;
   scopes: readonly string[];
+  scopeLabels: Record<string, string>;
   severityOrder: readonly string[];
   slaTargets: Record<string, number>;
   latestScan: { scan_id: string; finished_at: string; total: number } | null;
@@ -95,6 +98,10 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
     buildId: BUILD_ID,
     hasCredentials: hasWizCredentials(),
     scopes: SCOPES,
+    // Shipped so the Settings page can label a scope without a second copy of the mapping —
+    // and so its divergence warning can compare against the SHARED windows rather than a
+    // client-side duplicate of them, which is the copy that would drift invisibly.
+    scopeLabels: SCOPE_LABELS,
     severityOrder: SEVERITY_ORDER,
     slaTargets: SLA_TARGETS,
     latestScan: latest,
@@ -422,4 +429,44 @@ export function saveAdmins(p?: { admins?: unknown }): ApiResult<{ admins: string
     logAccessChange("admins", access.check().email, before, list);
     return { admins: list };
   });
+}
+
+
+/**
+ * Save only the fields that moved.
+ *
+ * A PATCH rather than the whole object, which is `putSettings`'s shape and the reason this
+ * exists beside it. The page batches edits across four tabs behind one save bar, and sending
+ * the whole settings object would make every save a write of every key — so two readers saving
+ * different tabs a minute apart would have the second silently revert the first's field to
+ * whatever their page loaded with. `withSettings` merges over CURRENT, read at save time.
+ *
+ * Returns the cleaned result so the page can re-seed its draft from what was actually stored
+ * rather than from what it sent — the two differ wherever `cleanSettings` normalizes.
+ */
+export function setSettings(p?: Record<string, unknown>): ApiResult<ReturnType<typeof loadSettings>> {
+  return mutate(() => {
+    const next = withSettings(loadSettings(), (p ?? {}) as never);
+    const errors = validateSettings(next);
+    if (errors.length) throw new Error(errors.join(" "));
+    return saveSettings(next);
+  });
+}
+
+/**
+ * The System tab's read-only half: what this deployment is wired to.
+ *
+ * The diagnostic is a STRING built by diagnostics.ts and printed verbatim. It is the same text
+ * an operator gets from the Apps Script editor, deliberately: a settings page that paraphrased
+ * it would be a second thing to keep in step with the checks themselves.
+ */
+export function getDiagnostic(_p?: unknown): ApiResult<{ text: string; project: string | null }> {
+  return run(() => ({
+    text: deploymentDiagnostic(),
+    // Read-only here. Changing the project scope changes WHICH POPULATION every register
+    // measures, and a ledger built under one scope is not comparable with one built under
+    // another — so it stays a Script Property, set deliberately, rather than a text box on a
+    // settings page.
+    project: getProp(PROP_KEYS.wizProjectIdV2),
+  }));
 }

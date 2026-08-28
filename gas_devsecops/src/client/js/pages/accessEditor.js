@@ -96,7 +96,7 @@ export async function renderAccessPanel() {
       if (e.key === "Enter") { e.preventDefault(); commit(); }
     });
     return el("div", { class: "access-add" }, input,
-      el("button", { class: "linklike", type: "button", onclick: commit }, "Add"));
+      el("button", { class: "link", type: "button", onclick: commit }, "Add"));
   }
 
   function drawUsers() {

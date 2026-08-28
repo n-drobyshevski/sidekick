@@ -434,7 +434,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "31bf03eaf7f5" : "dev";
+  var BUILD_ID = true ? "31c7b85afe47" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -1110,6 +1110,11 @@ var Server = (() => {
     sast: ["CRITICAL", "HIGH"],
     secrets: []
   };
+  var SCOPE_LABELS = {
+    sca: "Dependencies",
+    sast: "Code",
+    secrets: "Secrets"
+  };
   var RESOLVED_STATUSES = /* @__PURE__ */ new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
   var STATUS_OPEN = "OPEN";
   var STATUS_RESOLVED = "RESOLVED";
@@ -1124,8 +1129,7 @@ var Server = (() => {
       sast: [...DEFAULT_FETCH_SEVERITIES.sast],
       secrets: [...DEFAULT_FETCH_SEVERITIES.secrets]
     },
-    slaTargets: { ...SLA_TARGETS },
-    showExperimental: false
+    slaTargets: { ...SLA_TARGETS }
   };
   function asList(v, allowed) {
     if (!Array.isArray(v)) return null;
@@ -1166,9 +1170,27 @@ var Server = (() => {
       // rather than persisting a register that can never fill.
       scopes: scopes.length ? scopes : [...SCOPES],
       fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
-      slaTargets: sla,
-      showExperimental: r.showExperimental === true
+      slaTargets: sla
     };
+  }
+  function validateSettings(s) {
+    var _a;
+    const errs = [];
+    if (!s.scopes.length) errs.push("Choose at least one register to collect.");
+    for (const scope of s.scopes) {
+      if (!Array.isArray((_a = s.fetchSeverities) == null ? void 0 : _a[scope])) {
+        errs.push(`No severity selection stored for the ${scope} register.`);
+      }
+    }
+    for (const [sev, days] of Object.entries(s.slaTargets)) {
+      if (!Number.isFinite(days) || days <= 0) {
+        errs.push(`The SLA target for ${sev} must be a positive number of days.`);
+      }
+    }
+    return errs;
+  }
+  function withSettings(current, patch) {
+    return cleanSettings({ ...current, ...patch });
   }
 
   // src/server/settingsStore.ts
@@ -1251,6 +1273,7 @@ var Server = (() => {
     bootstrap: () => bootstrap,
     getAccess: () => getAccess,
     getChartsBundle: () => getChartsBundle,
+    getDiagnostic: () => getDiagnostic,
     getExecutive: () => getExecutive,
     getMttr: () => getMttr,
     getRegister: () => getRegister,
@@ -1258,7 +1281,8 @@ var Server = (() => {
     putSettings: () => putSettings,
     runSampleSync: () => runSampleSync,
     saveAccess: () => saveAccess,
-    saveAdmins: () => saveAdmins
+    saveAdmins: () => saveAdmins,
+    setSettings: () => setSettings
   });
 
   // src/domain/ledgerCore.ts
@@ -2482,6 +2506,10 @@ var Server = (() => {
         buildId: BUILD_ID,
         hasCredentials: hasWizCredentials(),
         scopes: SCOPES,
+        // Shipped so the Settings page can label a scope without a second copy of the mapping —
+        // and so its divergence warning can compare against the SHARED windows rather than a
+        // client-side duplicate of them, which is the copy that would drift invisibly.
+        scopeLabels: SCOPE_LABELS,
         severityOrder: SEVERITY_ORDER,
         slaTargets: SLA_TARGETS,
         latestScan: latest,
@@ -2667,6 +2695,24 @@ var Server = (() => {
       logAccessChange("admins", check().email, before, list);
       return { admins: list };
     });
+  }
+  function setSettings(p) {
+    return mutate(() => {
+      const next = withSettings(loadSettings(), p != null ? p : {});
+      const errors = validateSettings(next);
+      if (errors.length) throw new Error(errors.join(" "));
+      return saveSettings(next);
+    });
+  }
+  function getDiagnostic(_p) {
+    return run(() => ({
+      text: deploymentDiagnostic(),
+      // Read-only here. Changing the project scope changes WHICH POPULATION every register
+      // measures, and a ledger built under one scope is not comparable with one built under
+      // another — so it stays a Script Property, set deliberately, rather than a text box on a
+      // settings page.
+      project: getProp(PROP_KEYS.wizProjectIdV2)
+    }));
   }
   return __toCommonJS(index_exports);
 })();
