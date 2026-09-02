@@ -170,11 +170,13 @@ export const DERIVATION_VERSION = 1;
 /**
  * The high-risk classifier for CVE-bearing findings (sca): an any-of over the exploit
  * signals Wiz attaches. Mirrors gas/src/domain/program.ts's `RiskRule` / `DEFAULT_RISK_RULE`
- * (camelCase field names kept for consistency with that file, which this constant will be
- * unified with once program.ts is ported here) — itself the TS shape of brick's `RiskRule`
- * dataclass, brick/devsecops/config.py:279-312. Not in the D1 brief's explicit list, but
- * `ruleForScope`'s sca branch has nothing else to return; porting it here rather than
- * inventing a placeholder keeps the eventual program.ts port a pure move, not a rename.
+ * — itself the TS shape of brick's `RiskRule` dataclass, brick/devsecops/config.py:279-312.
+ *
+ * THIS IS THE ONLY DEFINITION IN THE TREE. gas/ declares `RiskRule` inside its program.ts;
+ * here it stays in config.ts, because `ruleForScope` below has to live beside the scope
+ * table and the settings layer reads its default from here. `src/domain/program.ts` imports
+ * both — it does not redeclare them, and a second declaration is the defect this note
+ * exists to prevent (two shapes that agree today and drift on the first field added).
  */
 export interface RiskRule {
   kev: boolean; // listed in the CISA KEV catalog
