@@ -10,6 +10,14 @@ import {
 } from "./config";
 import type { Rec } from "./util";
 
+/**
+ * THE PROJECT SCOPE IS NOT IN HERE, AND MUST NOT BE ADDED. It is `WIZ_PROJECT_ID_V2`, an
+ * operator Script Property (props.projectScope) already folded into `serverCache.configStamp`
+ * so that changing it invalidates every derived read model. Putting a `wizProjectId` here too
+ * would give one value two homes, and the failure that produces is not a conflict anyone sees
+ * — it is a cache stamped from one home while the query is built from the other, which reads
+ * as a register that will not refresh.
+ */
 export interface Settings {
   /** Which registers the sync battery collects. At least one, always. */
   scopes: Scope[];

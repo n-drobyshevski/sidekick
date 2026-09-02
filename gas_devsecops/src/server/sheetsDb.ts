@@ -37,18 +37,30 @@ export const TAB_HEADERS: Record<string, string[]> = {
   //   sticky-first-wins      fix_date / fix_observed_at, reset only by a reopen
   //   monotone, never reset  has_kev / has_exploit (null -> false -> true), epss keeps the peak
   [TABS.ledger]: [
+    // ALL THREE SCOPES. `identifier` is the register-facing name of the thing found, and it
+    // is a different field per scope — SCA's CVE, SAST's weakness, and for secrets the
+    // CREDENTIAL id: identifier <- secretDataId. `component` is what it was found in.
     "finding_key", "scope", "identifier", "component", "severity",
+    // All three: the asset dimension. Latest-wins.
     "repo_id", "repo_name", "branch", "platform",
+    // All three: the lifecycle the whole product measures.
     "first_seen", "last_seen", "status", "resolved_at", "resolution_src",
     "reopened_count", "first_scan_id", "last_scan_id",
-    // The second clock's inputs. Written from day one even though nothing derives
-    // fix_available_at yet — capturing them later would leave a hole no backfill can close.
+    // SCA ONLY — the second clock's inputs; SAST and secrets have no vendor to wait on.
+    // Written from day one even though nothing derives fix_available_at yet — capturing them
+    // later would leave a hole no backfill can close.
     "fix_date", "fix_observed_at", "fixed_version",
-    // Tri-state forever: Wiz returns null for a signal it never evaluated, and collapsing
-    // that to false is what makes an unassessed finding look clean.
+    // SCA ONLY. Tri-state forever: Wiz returns null for a signal it never evaluated, and
+    // collapsing that to false is what makes an unassessed finding look clean.
     "has_kev", "has_exploit", "epss", "risk_observed_at",
-    // SAST-shaped columns; null for an SCA row and vice versa. One ledger, three scopes.
-    "cwe", "language", "file_path", "start_line", "origin",
+    // SAST fills cwe / ai_verdict / language / origin. SAST AND SECRETS SHARE THE LOCATION
+    // PAIR: file_path <- filePath on SAST and <- path on secrets, start_line <- startLine and
+    // <- lineNumber. That is not a convenience — lineNumber is part of the secrets row key
+    // (above), so the column it lands in has to be the one the key is read back from.
+    // ai_verdict <- aiAnalysis.verdict, which Q_SAST already selects and nothing stored:
+    // it is the register's only signal about whether a weakness is real, and dropping it on
+    // the floor for a phase would leave a column of nulls no backfill can date.
+    "cwe", "ai_verdict", "language", "file_path", "start_line", "origin",
     // Secrets carry their own lifecycle: removal from HEAD is not rotation.
     //
     // FOUR COLUMNS, NOT TWO, and the extra pair is not optional. `rotated_at IS NULL`
@@ -68,38 +80,46 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // validated_at only where validation_state is INVALID. removed_at is the other axis
     // entirely: the string left HEAD. PROBE_FINDINGS.md §3.
     //
-    // IDENTITY IS `external_id`. An earlier revision of this comment said the pair
-    // (secretDataId, path), on the strength of one page showing 3.82 rows per credential.
-    // Measured over BOTH pages — the whole 843-row register — that pair collides 2.27:1,
-    // with a single pair covering 49 rows (PROBE_FINDINGS.md §9.5):
+    // IDENTITY IS `(secretDataId, path, lineNumber)`, AND THE CLOCK IS THE EARLIEST
+    // `firstSeenAt` ACROSS THE TWINS. Two earlier revisions of this comment were wrong in
+    // opposite directions. The first said the pair (secretDataId, path) — which collides
+    // 2.27:1. The second said `externalId`, on the evidence that it is unique across the
+    // register. It still is. It is unique FOR THE WRONG REASON, and keying on it would
+    // silently double the ledger (PROBE_FINDINGS.md §10.6 / §10.7, measured with the
+    // severity gate off, over all 1,958 rows rather than §9.5's gated 843):
     //
-    //     key                                page 1   page 2
-    //     id                                   1.00     1.00
-    //     secretDataId                         4.39     2.09
-    //     (secretDataId, path)                 2.27     1.37   <- not an identity
-    //     (secretDataId, path, line)           1.32     1.06
-    //     (secretDataId, path, line, resource) 1.00     1.00
-    //     externalId                           1.00     1.00
+    //     rows 1,958            REPOSITORY 1,359 · REPOSITORY_BRANCH 599
+    //     (secretDataId, path, lineNumber) keys spanning BOTH resource types:  187
+    //     identical externalId across the twin:  0          different:  187
     //
-    // A ledger keyed on the pair would merge distinct findings. Two candidates are unique
-    // across the whole register; `externalId` is Wiz's own composite and the one that reads:
-    //     github.com##<repo>##<path>##<contentHash>##<lineIndex>
+    // Wiz builds `externalId` from the resource, and the branch form inserts a branch segment:
+    //     REPOSITORY         github.com##<repo>##<path>##<contentHash>##<lineIndex>
+    //     REPOSITORY_BRANCH  github.com##<repo>##main##<path>##<contentHash>##<lineIndex>
+    // So it does not resolve the duplicate, it PRESERVES it — one credential, in one file, at
+    // one line, recorded as two findings with two clocks.
+    //
+    // AND THE TWO CLOCKS DISAGREE, which is why the tie-break is written down rather than
+    // left to whichever row arrives first. Across the 187 twins the earlier `firstSeenAt`
+    // belongs to the BRANCH row 135 times and to the REPOSITORY row 52 times — never the same
+    // instant — median gap 19.9 days, max 285.3, and 83 of 187 over 30 days. So there is no
+    // resource type to prefer: taking REPOSITORY because it is the majority (1,359 of 1,958)
+    // would misdate 135 secrets by a median of three weeks. Dedupe on the triple, take the
+    // earliest birth date — the clock convention the OS ledger already uses.
     //
     // secretDataId still names the CREDENTIAL and is what rotation groups by — one decision
     // per credential across however many occurrences it has. It is just not the row key.
     //
-    // THREE CAVEATS, none resolved, all of which the ledger depends on:
-    //   * A LINE MOVE LOOKS LIKE A NEW FINDING. externalId encodes lineIndex, and so does
-    //     the four-part tuple — there is no line-stable unique key among the candidates.
-    //     Reformatting a file would close one finding and open another, and the MTTR clock
-    //     would believe it.
+    // TWO CAVEATS, neither resolved, both of which the ledger depends on:
+    //   * A LINE MOVE LOOKS LIKE A NEW FINDING. This key encodes lineNumber, and so does
+    //     every other unique candidate — `externalId` and (secretDataId, path, lineNumber,
+    //     resource.id) — so there is no line-stable identity on offer. Reformatting a file
+    //     closes one finding and opens another, and the MTTR clock believes it.
     //   * UUID STABILITY IS INFERRED, NOT MEASURED. id and secretDataId carry a version-5
     //     nibble, i.e. name-based UUIDs derived from content, which WOULD make them stable
-    //     across scans. That is read off the nibble; one day of observation cannot
-    //     establish it, and a key that is not stable across scans resolves every row on
+    //     across scans. Re-fetching the sampled rows found both unchanged, but `lastUpdatedAt`
+    //     shows no rescan intervened (§10.8), so it is still not the two-scan test the
+    //     question asks for. A key that is not stable across scans resolves every row on
     //     every sync.
-    //   * The repo/branch duplicate below is 66% of the residual collision — 56 of 85
-    //     colliding keys span both REPOSITORY and REPOSITORY_BRANCH.
     //
     // DO NOT ADD isDefaultBranch TO THE SECRETS FILTER TO DEDUPLICATE. There is real
     // duplication — 18 of 176 (secretDataId, path) pairs appear under both REPOSITORY and
@@ -114,7 +134,15 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // already has a name for. The duplication is real and wants deduplication on the
     // resource entity, after the rows are keyed — not a filter that drops two-thirds of the
     // register on the way in.
+    //
+    // SECRETS ONLY. `confidence` <- SecretInstance.confidence, selected by Q_SECRETS and
+    // until now dropped: with the severity gate off (config.ts) it is one of the two axes
+    // that replaces severity as this register's volume control — severity grades a
+    // detection, `validation_state` says whether the credential is dead, and `confidence`
+    // says how sure the detector is that it is a credential at all.
     "secret_kind", "rotated_at", "removed_at", "validation_state", "validated_at",
+    "confidence",
+    // All three: ownership, from projects[].
     "owner_project", "owner_path", "tags_json",
   ],
   [TABS.episodes]: [
@@ -125,8 +153,14 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "cwe", "language", "owner_project",
   ],
   [TABS.scans]: [
+    // `raw_ref` addresses the scan's archived pages; `obs_ref` addresses its OBSERVATION SET
+    // — the finding_keys this scan actually saw. Two refs because they answer two questions,
+    // and the second is the one resolve-by-disappearance rests on: a key absent from the
+    // latest scan's observations is resolved, and without the set persisted the only way to
+    // recompute that is to re-read every raw page. Both are Drive ids: internal storage
+    // addresses, never client-facing.
     "scan_id", "ts", "scope", "mode", "severities", "total",
-    "new_count", "resolved_count", "reopened_count", "raw_ref", "sealed",
+    "new_count", "resolved_count", "reopened_count", "raw_ref", "obs_ref", "sealed",
   ],
   [TABS.repos]: [
     "repo_id", "repo_name", "branch", "platform", "default_branch",
@@ -145,7 +179,23 @@ export const TAB_HEADERS: Record<string, string[]> = {
   [TABS.meta]: ["version"],
 };
 
-export const SCHEMA_VERSION = 1;
+/**
+ * The declared shape of the tabs above, bumped when a column is added or renamed.
+ *
+ * 2 — `confidence` and `ai_verdict` on the ledger, both already selected by the queries
+ * (Q_SECRETS, Q_SAST) and thrown away on the way to the sheet; `obs_ref` on `scans`, which
+ * nothing produced yet and which resolve-by-disappearance cannot work without.
+ *
+ * A BUMP IS NOT A MIGRATION AND DOES NOT COST A DEPLOYED SHEET ANYTHING. Every write path
+ * here goes through `ensureHeaders`, which APPENDS the columns row 1 is missing, on the end,
+ * leaving existing column order and existing data untouched; reads and writes map by header
+ * NAME, so the columns a sheet already has keep working and the new ones start filling on
+ * the next sync. Nothing is cleared, reordered or backfilled — a column added today is null
+ * for every row written before it, which is the honest record of when the register started
+ * measuring it. A RENAME is the case that does destroy data (the old column stops being
+ * written and the new one starts empty), so rename by adding and migrating, never in place.
+ */
+export const SCHEMA_VERSION = 2;
 
 let spreadsheetCache: GoogleAppsScript.Spreadsheet.Spreadsheet | null = null;
 
@@ -495,7 +545,7 @@ export function updateWhere(tab: string, keyColumn: string, keyValue: unknown, p
   const headers = ensureHeaders(sh, tab);
   const lastRow = sh.getLastRow();
   const lastCol = headers.length;
-  // Through readGrid like readAll, not because `jobs` and `sync_history` are large today
+  // Through readGrid like readAll, not because `jobs` and `scans` are large today
   // but because this is the same whole-tab range asked the same way: leaving one of the two
   // call sites on a single unbounded read is how the fix comes undone the first time a tab
   // this touches grows.

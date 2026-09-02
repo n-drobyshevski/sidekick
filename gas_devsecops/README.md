@@ -10,15 +10,16 @@ bright-yellow brand (`#ffcb13`) instead of Signal Blue or crimson — the severi
 deliberately identical across all three, so a severity means the same thing wherever you
 read it.
 
-## Status: Phase 1 — the interface base
+## Status: Phase 2 — domain port and sync battery in progress
 
 **What is real:** the shell, the navigation, all ten routes, access control, the settings
-store, the ledger schema, the build and the dev harness. `npm run check` is green.
+store, the ledger schema (v2), the query layer, the job state machine, the build and the dev
+harness. `npm run check` is green.
 
-**What is not:** the sync battery and the domain layer. Every page renders its composition —
-the questions it will answer — and says plainly that no data is connected. That is
-deliberate: a page drawing a plausible empty chart would be claiming a pipeline that does
-not exist.
+**What is not:** the sync battery and the domain layer — both under way. Every page renders
+its composition — the questions it will answer — and says plainly that no data is connected.
+That is deliberate: a page drawing a plausible empty chart would be claiming a pipeline that
+does not exist.
 
 **Where the domain comes from.** Not greenfield.
 [`../brick/devsecops/`](../brick/devsecops/) already implements this product as a tested

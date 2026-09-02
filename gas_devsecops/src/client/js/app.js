@@ -444,7 +444,9 @@ function renderSidebar(sidebar, data) {
     }), "Collection not wired — Phase 2"),
     el("div", { class: "scan-caption" },
       data && data.latestScan
-        ? `Last scan ${fmtDateTime(data.latestScan.finished_at)}`
+        // `ts`, not `finished_at`: the field is named for the `scans` column it is read from,
+        // and the old name existed on neither side of the wire.
+        ? `Last scan ${fmtDateTime(data.latestScan.ts)}`
         : "No scans yet."),
   );
   sidebar.append(zone);

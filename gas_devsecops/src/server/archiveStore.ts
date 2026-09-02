@@ -1,16 +1,11 @@
-// Drive storage for Wiz Sidekick DevSecOps: raw sync page archives and the graph snapshot
-// fast path. Trimmed from the OS-vulns archiveStore — there is no append-only ledger
-// here, so no journals, checkpoints, or import staging. Each sync wholesale-replaces
-// the graph; the snapshot is the fast-read copy of the persisted SnapshotDoc.
+// Drive storage for Wiz Sidekick DevSecOps: raw sync page archives and the durable read-model
+// level. Trimmed from the OS-vulns archiveStore — no import staging here.
 //
 // Layout under the ARCHIVE_FOLDER_ID root:
 //   syncs/<sync_id>/step-N-page-0001.json.gz   raw pages per battery step
-//   snapshots/graph-snapshot.json.gz           fast-read SnapshotDoc, rewritten per sync
+//   snapshots/                                 reserved; see the ledger-snapshot note below
+//   readmodels/                                the durable L2 under the CacheService cache
 
-// The gzipped snapshot this store round-trips. Structurally opaque here on purpose: the
-// archive's job is bytes in Drive, and pinning it to the ledger's shape would make every
-// ledger column change a change to the archive layer too.
-export type SnapshotDoc = Record<string, unknown>;
 import { PROP_KEYS, requireProp } from "./props";
 
 // "readmodels" holds the durable second level under the CacheService read-model cache —
@@ -222,28 +217,18 @@ export function trashFile(fileId: string | null): void {
   }
 }
 
-// ------------------------------------------------------------------ graph snapshot
-const SNAPSHOT_NAME = "graph-snapshot.json.gz";
-
-/** Rewrite the fast-read copy of the graph (called after every sync persist). */
-export function writeSnapshot(doc: SnapshotDoc): string {
-  return writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, doc).getId();
-}
-
-/** The fast-read graph copy, or null (missing/unreadable → fall back to the tabs). */
-export function readSnapshot(): SnapshotDoc | null {
-  const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
-  if (!files.hasNext()) return null;
-  const parsed = parseGzBlob(files.next().getBlob());
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const doc = parsed as SnapshotDoc;
-  return Array.isArray(doc.nodes) && Array.isArray(doc.edges) ? doc : null;
-}
-
-export function trashSnapshot(): void {
-  const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
-  while (files.hasNext()) files.next().setTrashed(true);
-}
+// ------------------------------------------------------------------ ledger snapshot
+//
+// THE SNAPSHOT FAST PATH IS NOT WRITTEN YET, AND THE `snapshots/` FOLDER IS RESERVED FOR IT.
+// What stood here was carried over from gas_ai unedited: writeSnapshot / readSnapshot over a
+// `SnapshotDoc` whose validity test was `Array.isArray(doc.nodes) && Array.isArray(doc.edges)`
+// — an asset GRAPH, which this register does not have and will never produce. It typechecked,
+// it had no caller, and the only way it could ever have run is by someone reaching for a
+// working fast path and getting one that rejects every document this product can write.
+// Deleted rather than adapted: `writeLedgerSnapshot` / `readLedgerSnapshot`, typed against the
+// ledger state, arrive with `ledgerStore` in Phase 2 and their validity test has to be written
+// against what the ledger actually holds. `trashSnapshot` went with them — it named the same
+// graph-snapshot file, so keeping it would have left a reset clearing a file nothing writes.
 
 /** Total archive bytes (storage-stats surface). */
 export function archiveBytes(): number {

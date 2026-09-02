@@ -56,7 +56,27 @@ export interface Bootstrap {
   scopes: readonly string[];
   severityOrder: readonly string[];
   slaTargets: Record<string, number>;
-  latestScan: { scan_id: string; finished_at: string; total: number } | null;
+  /**
+   * The freshness caption's row, NAMED FOR THE COLUMNS IT COMES FROM.
+   *
+   * `ts` used to be published as `finished_at` — a field named for a column the `scans` tab
+   * does not have, which is the shape of mistake that only shows up in production: the
+   * server built it from `row.ts` and the client read `latestScan.finished_at`, so the day a
+   * scan row existed the caption would have read "Last scan undefined". Nothing in Phase 1
+   * writes a scan row, so nothing could catch it.
+   *
+   * `scope` and `severities` ride along because the caption is a claim about coverage, not
+   * just about time: a sync that requested CRITICAL/HIGH on SCA has not looked at a MEDIUM,
+   * and a reader told only when it ran cannot tell that from a sync that looked at
+   * everything. `severities` is the scans tab's own serialized text.
+   */
+  latestScan: {
+    scan_id: string;
+    ts: string;
+    scope: string | null;
+    severities: string | null;
+    total: number;
+  } | null;
   canEditAccess: boolean;
   settings: ReturnType<typeof loadSettings>;
 }
@@ -72,10 +92,12 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
   for (const row of scans) {
     const ts = String(row.ts ?? "");
     if (!ts) continue;
-    if (!latest || ts > latest.finished_at) {
+    if (!latest || ts > latest.ts) {
       latest = {
         scan_id: String(row.scan_id ?? ""),
-        finished_at: ts,
+        ts,
+        scope: row.scope == null ? null : String(row.scope),
+        severities: row.severities == null ? null : String(row.severities),
         total: Number(row.total ?? 0),
       };
     }

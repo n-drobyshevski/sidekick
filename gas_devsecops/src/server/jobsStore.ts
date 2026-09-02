@@ -1,9 +1,29 @@
-// The `jobs` tab: durable state machine rows for sync jobs. The job row doubles as
-// the UI progress API. Unlike the OS-vulns scan job (one cursor over one query), a
-// sync walks a battery of queries — step_index tracks which query is in flight and
-// part_refs_json accumulates the Drive file ids of the per-step raw pages.
+// The `jobs` tab: durable state machine rows for sync jobs, and the crash-journal pointer
+// `locks.recoverIfNeeded()` rolls back from. The job row doubles as the UI progress API.
+//
+// THE ROW AND THE TAB HAVE TO NAME THE SAME COLUMNS, and until this revision they did not.
+// `JobRow` carried `sync_id`, `step_index`, `nodes_so_far` and `part_refs_json`; the tab
+// (sheetsDb.TAB_HEADERS[TABS.jobs]) has never had a column for any of them. Writes map by
+// header NAME, so all four were dropped on every append and every checkpoint — silently, and
+// with the write reporting success. A resumed sync would have read back step 0 with no rows
+// fetched, which is not a crash but a rewind. `JOB_COLUMNS` below is now the tab's column
+// list as data, the type is checked against it at compile time, and `jobsStore.test.ts`
+// checks it against TAB_HEADERS at run time, because the two files can still drift.
+//
+// The four dropped fields map onto columns that already existed:
+//   sync_id        -> scan_id          the same id; the scans tab spells it scan_id.
+//   step_index     -> scope            the battery's step IS a scope, and naming it that
+//                                      means a resumed job says which register it is on.
+//   nodes_so_far   -> findings_so_far
+//   part_refs_json -> (nothing)        raw pages are addressed by deterministic NAME inside
+//                                      the sync's Drive folder (archiveStore.writeSyncPage /
+//                                      readSyncStepPages), so the folder is the index and a
+//                                      list of file ids on the job row was a second copy of
+//                                      it that could go stale.
+// `journal_ref` is not one of them: it is the rollback pointer described in locks.ts.
 
-import { nowIso, type Rec } from "../domain/util";
+import { nowIso, parseTs, type Rec } from "../domain/util";
+import type { Scope } from "../domain/config";
 import { deleteProp, getProp, setProp } from "./props";
 import { appendRows, readAll, readTail, updateWhere, TABS } from "./sheetsDb";
 
@@ -23,24 +43,57 @@ export type JobPhase =
   | "FAILED"
   | "CANCELLED";
 
+/**
+ * The `jobs` tab's columns, in tab order, AS DATA.
+ *
+ * Exported so a test can hold this file and `sheetsDb.TAB_HEADERS[TABS.jobs]` together. A
+ * type alone cannot do that: `JobRow` is erased before anything runs, and the failure it
+ * would have to catch — a field with no column — happens at run time, inside a write that
+ * reports success. The type assertion below covers the other half of the same question.
+ */
+export const JOB_COLUMNS = [
+  "job_id", "kind", "phase", "scan_id", "scope", "cursor", "page",
+  "findings_so_far", "page_size", "total_count", "params_json", "journal_ref",
+  "error", "started_at", "updated_at",
+] as const;
+
+export type JobColumn = (typeof JOB_COLUMNS)[number];
+
 export interface JobRow {
   job_id: string;
   kind: JobKind;
   phase: JobPhase;
-  sync_id: string | null;
-  step_index: number;
+  scan_id: string | null;
+  /** Which register the battery is on. Null before the first step is chosen. */
+  scope: Scope | null;
   cursor: string | null;
   page: number;
-  nodes_so_far: number;
-  // Total rows the tenant reports for the CURRENT step's query (fetched on its page 0).
+  findings_so_far: number;
+  page_size: number;
+  // Total rows the tenant reports for the CURRENT scope's query (fetched on its page 0).
   // 0 = unknown → the progress UI falls back to an indeterminate bar.
   total_count: number;
-  part_refs_json: string | null;
   params_json: string | null;
+  /** Drive id of the pre-rewrite journal. See locks.ts for what it is rolled back from. */
+  journal_ref: string | null;
   error: string | null;
   started_at: string;
   updated_at: string;
 }
+
+/**
+ * Compile-time proof that `JobRow` and `JOB_COLUMNS` name the SAME SET, both ways round.
+ *
+ * A field with no column is dropped on write; a column with no field is never written. Both
+ * are silent, so neither is allowed to compile. The tuple wrappers stop `Exclude` from
+ * distributing and turning "no extras" into a union that accidentally passes.
+ */
+type Expect<T extends true> = T;
+type _JobRowMatchesColumns = Expect<
+  [Exclude<keyof JobRow, JobColumn>, Exclude<JobColumn, keyof JobRow>] extends [never, never]
+    ? true
+    : false
+>;
 
 /** Normalize a persisted error cell: real messages survive; "", "null", "undefined" → null. */
 function normError(v: unknown): string | null {
@@ -55,6 +108,9 @@ export function newJobId(kind: JobKind, now?: number): string {
 }
 
 export function createJob(row: Omit<JobRow, "started_at" | "updated_at">, now?: number): JobRow {
+  // No ensureTab() call, unlike gas/'s copy of this function: `appendRows` and `updateWhere`
+  // in sheetsDb both route through `ensureHeaders` already, so a tab that predates a column
+  // receives it on the write rather than dropping the value. The guard is in the engine here.
   const full: JobRow = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
   appendRows(TABS.jobs, [full as unknown as Rec]);
   setProp(ACTIVE_JOB_PROP, full.job_id);
@@ -66,7 +122,7 @@ export function updateJob(jobId: string, patch: Partial<JobRow>, now?: number): 
     ...patch,
     updated_at: nowIso(now),
   } as Rec);
-  if (patch.phase && TERMINAL.includes(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
+  if (patch.phase && isTerminalPhase(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
 }
 
 function rowToJob(r: Rec): JobRow {
@@ -74,14 +130,15 @@ function rowToJob(r: Rec): JobRow {
     job_id: String(r["job_id"] ?? ""),
     kind: (r["kind"] ?? "sync") as JobKind,
     phase: (r["phase"] ?? "FAILED") as JobPhase,
-    sync_id: (r["sync_id"] as string | null) ?? null,
-    step_index: Number(r["step_index"] ?? 0),
+    scan_id: (r["scan_id"] as string | null) ?? null,
+    scope: (r["scope"] as Scope | null) ?? null,
     cursor: (r["cursor"] as string | null) ?? null,
     page: Number(r["page"] ?? 0),
-    nodes_so_far: Number(r["nodes_so_far"] ?? 0),
+    findings_so_far: Number(r["findings_so_far"] ?? 0),
+    page_size: Number(r["page_size"] ?? 0),
     total_count: Number(r["total_count"] ?? 0),
-    part_refs_json: (r["part_refs_json"] as string | null) ?? null,
     params_json: (r["params_json"] as string | null) ?? null,
+    journal_ref: (r["journal_ref"] as string | null) ?? null,
     error: normError(r["error"]),
     started_at: String(r["started_at"] ?? ""),
     updated_at: String(r["updated_at"] ?? ""),
@@ -122,6 +179,79 @@ export function getJob(jobId: string): JobRow | null {
 
 const TERMINAL: JobPhase[] = ["DONE", "FAILED", "CANCELLED"];
 
+/** Whether a phase is an end state — the single definition activeJob() and Stop both read. */
+export function isTerminalPhase(phase: JobPhase): boolean {
+  return TERMINAL.includes(phase);
+}
+
+/** No progress for this long with no live continuation = the job died mid-flight. */
+export const STALE_JOB_MS = 30 * 60_000;
+
+/**
+ * Whether a job has gone quiet long enough to be presumed dead. One definition, so "stale"
+ * means one thing across every kind this register ever grows: `activeJob()` is single-flight
+ * ACROSS kinds, so a job nobody reclaims blocks everything else — including the daily sync.
+ * A job with no parseable timestamp is treated as LIVE (it was only just written), because
+ * reclaiming on a guess destroys the record that a job was running at all.
+ */
+export function isStaleJob(job: JobRow, now?: number): boolean {
+  const updated = parseTs(job.updated_at);
+  if (updated === null) return false;
+  return (now ?? Date.now()) - updated >= STALE_JOB_MS;
+}
+
+/**
+ * Delete every one-shot trigger for a given handler. Each job kind owns its own handler
+ * names, so cleanup must be told which — clearing one kind's continuation while reclaiming
+ * another's would orphan the second's only wake-up.
+ */
+export function clearTriggers(handlerName: string): void {
+  for (const t of ScriptApp.getProjectTriggers()) {
+    if (t.getHandlerFunction() === handlerName) ScriptApp.deleteTrigger(t);
+  }
+}
+
+/** The continuation handler owned by each job kind — the one that resumes the next hop. */
+export const CONTINUE_HANDLERS: Partial<Record<JobKind, string>> = {
+  sync: "trigger_continueSync",
+};
+
+/**
+ * The WATCHDOG handler owned by each job kind, and it is a second trigger rather than a
+ * second use of the first. The continuation wakes the next hop; the watchdog is armed BEFORE
+ * the wholesale rewrite and exists to notice that the execution never came back. Reclaiming
+ * a job clears both, because a watchdog left armed on a job already marked FAILED wakes up
+ * to find nothing to finish and nothing to roll back.
+ */
+export const WATCHDOG_HANDLERS: Partial<Record<JobKind, string>> = {
+  sync: "trigger_watchdogSync",
+};
+
+/**
+ * Mark a stale job failed so a fresh one can start, clearing the triggers belonging to ITS
+ * kind. Returns false (and touches nothing) when the job is still live. Callers must hold the
+ * script lock: inside it no hop can be executing, so a stale job is definitively dead and any
+ * trigger still listed is dead with it.
+ */
+export function reclaimIfStale(job: JobRow, now?: number): boolean {
+  if (!isStaleJob(job, now)) return false;
+  for (const handler of [CONTINUE_HANDLERS[job.kind], WATCHDOG_HANDLERS[job.kind]]) {
+    if (handler) clearTriggers(handler);
+  }
+  updateJob(job.job_id, {
+    phase: "FAILED",
+    error: "Reclaimed: the job stalled with no progress.",
+  });
+  return true;
+}
+
+/** Most recent job of a kind, by started_at — used to show a finished sync's report. */
+export function lastJobOfKind(kind: JobKind): JobRow | null {
+  const rows = listJobs().filter((j) => j.kind === kind);
+  if (!rows.length) return null;
+  return rows.reduce((a, b) => (a.started_at >= b.started_at ? a : b));
+}
+
 /**
  * The single in-flight job, or null (jobs are single-flight).
  *
@@ -137,7 +267,7 @@ const TERMINAL: JobPhase[] = ["DONE", "FAILED", "CANCELLED"];
  */
 export function activeJob(): JobRow | null {
   if (!getProp(ACTIVE_JOB_PROP)) return null; // fast path: no Sheets read
-  const job = listJobs().find((j) => !TERMINAL.includes(j.phase)) ?? null;
+  const job = listJobs().find((j) => !isTerminalPhase(j.phase)) ?? null;
   if (!job) deleteProp(ACTIVE_JOB_PROP); // stale flag (crash mid-transition) — self-heal
   return job;
 }

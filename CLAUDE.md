@@ -110,12 +110,17 @@ already implements the pipeline and is the behavioural spec (same relationship `
   worse than none: `codeToCloudPipelineStage` sat in `BASE` as a literal and bypassed the
   table entirely, so adding it to the table changed nothing. `npm run probe -- --schema`
   prints a ready-made `OBJECT_FILTERS entry:` per filter type — copy it, never infer it.
-- **Severity defaults are per scope, and `secrets` is not `CRITICAL, HIGH`.** That default is
-  inherited from the vulnerability registers, where it is a volume control. On secrets it
-  deletes `PASSWORD` 209→0 and `CERTIFICATE` 160→0 — every one sits below HIGH — giving a
-  secrets register with no passwords in it. `DEFAULT_FETCH_SEVERITIES` is a
-  `Record<Scope, string[]>`; secrets reaches to MEDIUM, provisionally, until the probe's
-  type × severity crosstab confirms those rows are not LOW.
+- **Severity defaults are per scope, and on `secrets` the gate is OFF.**
+  `DEFAULT_FETCH_SEVERITIES.secrets = []`, and empty means all — `severityFilter([])` is `[]`
+  and `buildFilter` then omits the `severity` key entirely. Two earlier answers were wrong in
+  the same direction: `CRITICAL, HIGH` inherited from the vulnerability registers (where it is
+  a volume control), then MEDIUM, on "PASSWORD and CERTIFICATE sit below HIGH" — true, and not
+  the same as "they sit at MEDIUM". With the gate off the register is the whole CODE
+  population, 1,958 rows = 691 CRIT+HIGH + 152 MED + 738 LOW + 377 INFO, and `CERTIFICATE`
+  160/160 and `PASSWORD` 208/208 are finally in. Severity grades a DETECTION, not whether a
+  credential is live — 641 `SAAS_API_KEY` rows are LOW — so the secrets pages segment by
+  `validation_state` and `confidence` and never by severity. Volume was never the reason
+  either: 1,958 rows is an eighth of SCA. `test/severityScope.test.js` pins the chain.
 - **The second clock is captured but not yet computed.** `fix_date` / `fix_observed_at` are
   on every ledger row; nothing derives `fix_available_at`, `mttr_actionable_days` or
   `awaiting_vendor_fix`. Reference: `gas/src/domain/ledgerCore.ts::baseRows`.
@@ -130,12 +135,19 @@ already implements the pipeline and is the behavioural spec (same relationship `
   silent, and guarding the failure that announces itself is not the same as guarding the one
   that does not. `resolveConnection` now finds the root in the response and REFUSES rather
   than returning an empty connection.
-- **The secrets ledger key is `externalId`, not `(secretDataId, path)`.** That pair collides
-  2.27:1 over the full register (one pair covering 49 rows); `externalId` and
-  `(secretDataId, path, lineNumber, resource.id)` are the only unique candidates.
-  `secretDataId` names the credential and is what rotation groups by — not the row key. Both
-  unique candidates encode the line, so a line move reads as a new finding, and UUID
-  stability across scans is inferred from a version-5 nibble rather than measured.
+- **The secrets ledger key is `(secretDataId, path, lineNumber)` with the EARLIEST
+  `firstSeenAt`, and `externalId` is unique for the wrong reason.** This entry recommended
+  `externalId` on the evidence that it is unique; it still is, and keying on it would double
+  the ledger. 187 keys span both `REPOSITORY` and `REPOSITORY_BRANCH`, and `externalId`
+  differs on all 187 — Wiz builds it from the resource and the branch form inserts a branch
+  segment — so it preserves the twin instead of resolving it. The two clocks disagree: the
+  branch twin carries the earlier birth date in 135 of 187, the repo twin in 52, median gap
+  19.9 d, max 285.3 d. So there is no resource type to prefer; keying on `externalId`, or
+  taking `REPOSITORY` because it is the majority, records one secret twice and misdates 135
+  of them by a median of three weeks. `secretDataId` names the credential and is what
+  rotation groups by — not the row key. Every unique candidate encodes the line, so a line
+  move still reads as a new finding, and UUID stability across scans is still inferred from a
+  version-5 nibble rather than measured.
 - **The accent is split and the split is load-bearing.** `--accent: #ffcb13` is 1.52:1 on
   white and 1.30:1 on the meter track — it is a FILL token and nothing else. Every accent
   fill carries `--accent-edge: rgba(0,0,0,.40)`, which lifts it to 3.49:1. Links, focus

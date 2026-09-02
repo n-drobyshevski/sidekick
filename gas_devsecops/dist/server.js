@@ -416,7 +416,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "d84d83761d62" : "dev";
+  var BUILD_ID = true ? "94a8cec3e004" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -547,15 +547,20 @@ var Server = (() => {
     //   sticky-first-wins      fix_date / fix_observed_at, reset only by a reopen
     //   monotone, never reset  has_kev / has_exploit (null -> false -> true), epss keeps the peak
     [TABS.ledger]: [
+      // ALL THREE SCOPES. `identifier` is the register-facing name of the thing found, and it
+      // is a different field per scope — SCA's CVE, SAST's weakness, and for secrets the
+      // CREDENTIAL id: identifier <- secretDataId. `component` is what it was found in.
       "finding_key",
       "scope",
       "identifier",
       "component",
       "severity",
+      // All three: the asset dimension. Latest-wins.
       "repo_id",
       "repo_name",
       "branch",
       "platform",
+      // All three: the lifecycle the whole product measures.
       "first_seen",
       "last_seen",
       "status",
@@ -564,19 +569,27 @@ var Server = (() => {
       "reopened_count",
       "first_scan_id",
       "last_scan_id",
-      // The second clock's inputs. Written from day one even though nothing derives
-      // fix_available_at yet — capturing them later would leave a hole no backfill can close.
+      // SCA ONLY — the second clock's inputs; SAST and secrets have no vendor to wait on.
+      // Written from day one even though nothing derives fix_available_at yet — capturing them
+      // later would leave a hole no backfill can close.
       "fix_date",
       "fix_observed_at",
       "fixed_version",
-      // Tri-state forever: Wiz returns null for a signal it never evaluated, and collapsing
-      // that to false is what makes an unassessed finding look clean.
+      // SCA ONLY. Tri-state forever: Wiz returns null for a signal it never evaluated, and
+      // collapsing that to false is what makes an unassessed finding look clean.
       "has_kev",
       "has_exploit",
       "epss",
       "risk_observed_at",
-      // SAST-shaped columns; null for an SCA row and vice versa. One ledger, three scopes.
+      // SAST fills cwe / ai_verdict / language / origin. SAST AND SECRETS SHARE THE LOCATION
+      // PAIR: file_path <- filePath on SAST and <- path on secrets, start_line <- startLine and
+      // <- lineNumber. That is not a convenience — lineNumber is part of the secrets row key
+      // (above), so the column it lands in has to be the one the key is read back from.
+      // ai_verdict <- aiAnalysis.verdict, which Q_SAST already selects and nothing stored:
+      // it is the register's only signal about whether a weakness is real, and dropping it on
+      // the floor for a phase would leave a column of nulls no backfill can date.
       "cwe",
+      "ai_verdict",
       "language",
       "file_path",
       "start_line",
@@ -600,38 +613,46 @@ var Server = (() => {
       // validated_at only where validation_state is INVALID. removed_at is the other axis
       // entirely: the string left HEAD. PROBE_FINDINGS.md §3.
       //
-      // IDENTITY IS `external_id`. An earlier revision of this comment said the pair
-      // (secretDataId, path), on the strength of one page showing 3.82 rows per credential.
-      // Measured over BOTH pages — the whole 843-row register — that pair collides 2.27:1,
-      // with a single pair covering 49 rows (PROBE_FINDINGS.md §9.5):
+      // IDENTITY IS `(secretDataId, path, lineNumber)`, AND THE CLOCK IS THE EARLIEST
+      // `firstSeenAt` ACROSS THE TWINS. Two earlier revisions of this comment were wrong in
+      // opposite directions. The first said the pair (secretDataId, path) — which collides
+      // 2.27:1. The second said `externalId`, on the evidence that it is unique across the
+      // register. It still is. It is unique FOR THE WRONG REASON, and keying on it would
+      // silently double the ledger (PROBE_FINDINGS.md §10.6 / §10.7, measured with the
+      // severity gate off, over all 1,958 rows rather than §9.5's gated 843):
       //
-      //     key                                page 1   page 2
-      //     id                                   1.00     1.00
-      //     secretDataId                         4.39     2.09
-      //     (secretDataId, path)                 2.27     1.37   <- not an identity
-      //     (secretDataId, path, line)           1.32     1.06
-      //     (secretDataId, path, line, resource) 1.00     1.00
-      //     externalId                           1.00     1.00
+      //     rows 1,958            REPOSITORY 1,359 · REPOSITORY_BRANCH 599
+      //     (secretDataId, path, lineNumber) keys spanning BOTH resource types:  187
+      //     identical externalId across the twin:  0          different:  187
       //
-      // A ledger keyed on the pair would merge distinct findings. Two candidates are unique
-      // across the whole register; `externalId` is Wiz's own composite and the one that reads:
-      //     github.com##<repo>##<path>##<contentHash>##<lineIndex>
+      // Wiz builds `externalId` from the resource, and the branch form inserts a branch segment:
+      //     REPOSITORY         github.com##<repo>##<path>##<contentHash>##<lineIndex>
+      //     REPOSITORY_BRANCH  github.com##<repo>##main##<path>##<contentHash>##<lineIndex>
+      // So it does not resolve the duplicate, it PRESERVES it — one credential, in one file, at
+      // one line, recorded as two findings with two clocks.
+      //
+      // AND THE TWO CLOCKS DISAGREE, which is why the tie-break is written down rather than
+      // left to whichever row arrives first. Across the 187 twins the earlier `firstSeenAt`
+      // belongs to the BRANCH row 135 times and to the REPOSITORY row 52 times — never the same
+      // instant — median gap 19.9 days, max 285.3, and 83 of 187 over 30 days. So there is no
+      // resource type to prefer: taking REPOSITORY because it is the majority (1,359 of 1,958)
+      // would misdate 135 secrets by a median of three weeks. Dedupe on the triple, take the
+      // earliest birth date — the clock convention the OS ledger already uses.
       //
       // secretDataId still names the CREDENTIAL and is what rotation groups by — one decision
       // per credential across however many occurrences it has. It is just not the row key.
       //
-      // THREE CAVEATS, none resolved, all of which the ledger depends on:
-      //   * A LINE MOVE LOOKS LIKE A NEW FINDING. externalId encodes lineIndex, and so does
-      //     the four-part tuple — there is no line-stable unique key among the candidates.
-      //     Reformatting a file would close one finding and open another, and the MTTR clock
-      //     would believe it.
+      // TWO CAVEATS, neither resolved, both of which the ledger depends on:
+      //   * A LINE MOVE LOOKS LIKE A NEW FINDING. This key encodes lineNumber, and so does
+      //     every other unique candidate — `externalId` and (secretDataId, path, lineNumber,
+      //     resource.id) — so there is no line-stable identity on offer. Reformatting a file
+      //     closes one finding and opens another, and the MTTR clock believes it.
       //   * UUID STABILITY IS INFERRED, NOT MEASURED. id and secretDataId carry a version-5
       //     nibble, i.e. name-based UUIDs derived from content, which WOULD make them stable
-      //     across scans. That is read off the nibble; one day of observation cannot
-      //     establish it, and a key that is not stable across scans resolves every row on
+      //     across scans. Re-fetching the sampled rows found both unchanged, but `lastUpdatedAt`
+      //     shows no rescan intervened (§10.8), so it is still not the two-scan test the
+      //     question asks for. A key that is not stable across scans resolves every row on
       //     every sync.
-      //   * The repo/branch duplicate below is 66% of the residual collision — 56 of 85
-      //     colliding keys span both REPOSITORY and REPOSITORY_BRANCH.
       //
       // DO NOT ADD isDefaultBranch TO THE SECRETS FILTER TO DEDUPLICATE. There is real
       // duplication — 18 of 176 (secretDataId, path) pairs appear under both REPOSITORY and
@@ -646,11 +667,19 @@ var Server = (() => {
       // already has a name for. The duplication is real and wants deduplication on the
       // resource entity, after the rows are keyed — not a filter that drops two-thirds of the
       // register on the way in.
+      //
+      // SECRETS ONLY. `confidence` <- SecretInstance.confidence, selected by Q_SECRETS and
+      // until now dropped: with the severity gate off (config.ts) it is one of the two axes
+      // that replaces severity as this register's volume control — severity grades a
+      // detection, `validation_state` says whether the credential is dead, and `confidence`
+      // says how sure the detector is that it is a credential at all.
       "secret_kind",
       "rotated_at",
       "removed_at",
       "validation_state",
       "validated_at",
+      "confidence",
+      // All three: ownership, from projects[].
       "owner_project",
       "owner_path",
       "tags_json"
@@ -677,6 +706,12 @@ var Server = (() => {
       "owner_project"
     ],
     [TABS.scans]: [
+      // `raw_ref` addresses the scan's archived pages; `obs_ref` addresses its OBSERVATION SET
+      // — the finding_keys this scan actually saw. Two refs because they answer two questions,
+      // and the second is the one resolve-by-disappearance rests on: a key absent from the
+      // latest scan's observations is resolved, and without the set persisted the only way to
+      // recompute that is to re-read every raw page. Both are Drive ids: internal storage
+      // addresses, never client-facing.
       "scan_id",
       "ts",
       "scope",
@@ -687,6 +722,7 @@ var Server = (() => {
       "resolved_count",
       "reopened_count",
       "raw_ref",
+      "obs_ref",
       "sealed"
     ],
     [TABS.repos]: [
@@ -731,7 +767,7 @@ var Server = (() => {
     ],
     [TABS.meta]: ["version"]
   };
-  var SCHEMA_VERSION = 1;
+  var SCHEMA_VERSION = 2;
   var spreadsheetCache = null;
   function ledgerSpreadsheet() {
     if (spreadsheetCache === null) {
@@ -1084,35 +1120,40 @@ var Server = (() => {
       ...patch,
       updated_at: nowIso(now)
     });
-    if (patch.phase && TERMINAL.includes(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
+    if (patch.phase && isTerminalPhase(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
   }
   function rowToJob(r) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     return {
       job_id: String((_a = r["job_id"]) != null ? _a : ""),
       kind: (_b = r["kind"]) != null ? _b : "sync",
       phase: (_c = r["phase"]) != null ? _c : "FAILED",
-      sync_id: (_d = r["sync_id"]) != null ? _d : null,
-      step_index: Number((_e = r["step_index"]) != null ? _e : 0),
+      scan_id: (_d = r["scan_id"]) != null ? _d : null,
+      scope: (_e = r["scope"]) != null ? _e : null,
       cursor: (_f = r["cursor"]) != null ? _f : null,
       page: Number((_g = r["page"]) != null ? _g : 0),
-      nodes_so_far: Number((_h = r["nodes_so_far"]) != null ? _h : 0),
-      total_count: Number((_i = r["total_count"]) != null ? _i : 0),
-      part_refs_json: (_j = r["part_refs_json"]) != null ? _j : null,
+      findings_so_far: Number((_h = r["findings_so_far"]) != null ? _h : 0),
+      page_size: Number((_i = r["page_size"]) != null ? _i : 0),
+      total_count: Number((_j = r["total_count"]) != null ? _j : 0),
       params_json: (_k = r["params_json"]) != null ? _k : null,
+      journal_ref: (_l = r["journal_ref"]) != null ? _l : null,
       error: normError(r["error"]),
-      started_at: String((_l = r["started_at"]) != null ? _l : ""),
-      updated_at: String((_m = r["updated_at"]) != null ? _m : "")
+      started_at: String((_m = r["started_at"]) != null ? _m : ""),
+      updated_at: String((_n = r["updated_at"]) != null ? _n : "")
     };
   }
   function listJobs() {
     return readAll(TABS.jobs).map(rowToJob);
   }
   var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
+  function isTerminalPhase(phase) {
+    return TERMINAL.includes(phase);
+  }
+  var STALE_JOB_MS = 30 * 6e4;
   function activeJob() {
     var _a;
     if (!getProp(ACTIVE_JOB_PROP)) return null;
-    const job = (_a = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a : null;
+    const job = (_a = listJobs().find((j) => !isTerminalPhase(j.phase))) != null ? _a : null;
     if (!job) deleteProp(ACTIVE_JOB_PROP);
     return job;
   }
@@ -1170,10 +1211,12 @@ var Server = (() => {
       for (const row of scans) {
         const ts = String((_a = row.ts) != null ? _a : "");
         if (!ts) continue;
-        if (!latest || ts > latest.finished_at) {
+        if (!latest || ts > latest.ts) {
           latest = {
             scan_id: String((_b = row.scan_id) != null ? _b : ""),
-            finished_at: ts,
+            ts,
+            scope: row.scope == null ? null : String(row.scope),
+            severities: row.severities == null ? null : String(row.severities),
             total: Number((_c = row.total) != null ? _c : 0)
           };
         }

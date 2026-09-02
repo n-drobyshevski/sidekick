@@ -103,6 +103,7 @@ export function wizDataVersion(): string {
   return wizDataVersionMemo;
 }
 
+/** No caller yet: `ledgerStore`'s commit — the final `scans` append — is the one, in Phase 2. */
 export function bumpWizDataVersion(): void {
   setProp(WIZ_VERSION_PROP, nextVersion(getProp(WIZ_VERSION_PROP)));
   __resetMemosForTest();
