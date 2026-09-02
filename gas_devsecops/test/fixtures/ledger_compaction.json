@@ -1,0 +1,570 @@
+{
+ "now": "2026-07-01T00:00:00Z",
+ "retention_days": 30,
+ "scans": {
+  "s1": {
+   "id": "2026-01-01T06:00:00Z",
+   "records": [
+    {
+     "id": "A",
+     "name": "CVE-A",
+     "severity": "CRITICAL",
+     "status": "OPEN",
+     "vulnerableAsset": {
+      "id": "vm-a",
+      "name": "vm-a-name",
+      "type": "VIRTUAL_MACHINE",
+      "cloudPlatform": "AWS"
+     },
+     "firstDetectedAt": "2025-12-20T00:00:00Z"
+    },
+    {
+     "id": "B",
+     "name": "CVE-B",
+     "severity": "HIGH",
+     "status": "RESOLVED",
+     "vulnerableAsset": {
+      "id": "vm-b",
+      "name": "vm-b-name",
+      "type": "VIRTUAL_MACHINE",
+      "cloudPlatform": "AWS"
+     },
+     "firstDetectedAt": "2025-12-01T00:00:00Z",
+     "resolvedAt": "2025-12-30T12:00:00Z"
+    }
+   ]
+  },
+  "s2": {
+   "id": "2026-01-08T06:00:00Z",
+   "records": [
+    {
+     "id": "A",
+     "name": "CVE-A",
+     "severity": "CRITICAL",
+     "status": "OPEN",
+     "vulnerableAsset": {
+      "id": "vm-a",
+      "name": "vm-a-name",
+      "type": "VIRTUAL_MACHINE",
+      "cloudPlatform": "AWS"
+     },
+     "firstDetectedAt": "2025-12-20T00:00:00Z"
+    },
+    {
+     "id": "C",
+     "name": "CVE-C",
+     "severity": "HIGH",
+     "status": "OPEN",
+     "vulnerableAsset": {
+      "id": "vm-c",
+      "name": "vm-c-name",
+      "type": "VIRTUAL_MACHINE",
+      "cloudPlatform": "AWS"
+     }
+    },
+    {
+     "id": "D",
+     "name": "CVE-D",
+     "severity": "MEDIUM",
+     "status": "OPEN",
+     "vulnerableAsset": {
+      "id": "vm-d",
+      "name": "vm-d-name",
+      "type": "VIRTUAL_MACHINE",
+      "cloudPlatform": "AWS"
+     },
+     "firstDetectedAt": "2026-01-02T00:00:00Z",
+     "resolvedAt": "2026-01-05T00:00:00Z"
+    }
+   ]
+  },
+  "s3": {
+   "id": "2026-06-01T06:00:00Z",
+   "records": [
+    {
+     "id": "A",
+     "name": "CVE-A",
+     "severity": "CRITICAL",
+     "status": "RESOLVED",
+     "vulnerableAsset": {
+      "id": "vm-a",
+      "name": "vm-a-name",
+      "type": "VIRTUAL_MACHINE",
+      "cloudPlatform": "AWS"
+     },
+     "firstDetectedAt": "2025-12-20T00:00:00Z",
+     "resolvedAt": "2026-05-28T00:00:00Z"
+    },
+    {
+     "id": "C",
+     "name": "CVE-C",
+     "severity": "HIGH",
+     "status": "OPEN",
+     "vulnerableAsset": {
+      "id": "vm-c",
+      "name": "vm-c-name",
+      "type": "VIRTUAL_MACHINE",
+      "cloudPlatform": "AWS"
+     }
+    }
+   ]
+  },
+  "s4": {
+   "id": "2026-06-15T06:00:00Z",
+   "records": [
+    {
+     "id": "C",
+     "name": "CVE-C",
+     "severity": "HIGH",
+     "status": "OPEN",
+     "vulnerableAsset": {
+      "id": "vm-c",
+      "name": "vm-c-name",
+      "type": "VIRTUAL_MACHINE",
+      "cloudPlatform": "AWS"
+     }
+    },
+    {
+     "id": "E",
+     "name": "CVE-E",
+     "severity": "CRITICAL",
+     "status": "OPEN",
+     "vulnerableAsset": {
+      "id": "vm-e",
+      "name": "vm-e-name",
+      "type": "VIRTUAL_MACHINE",
+      "cloudPlatform": "AWS"
+     }
+    }
+   ]
+  }
+ },
+ "expected": {
+  "dry_run": {
+   "no_op": false,
+   "dry_run": true,
+   "scans_sealed": 2,
+   "episodes_created": 2,
+   "observations_pruned": 5,
+   "archive_bytes_freed": 615,
+   "db_bytes_freed": 0,
+   "floor_scan_id": "2026-01-08T06:00:00Z",
+   "floor_ts": "2026-01-08T06:00:00Z"
+  },
+  "real": {
+   "no_op": false,
+   "dry_run": false,
+   "scans_sealed": 2,
+   "episodes_created": 2,
+   "observations_pruned": 5,
+   "floor_scan_id": "2026-01-08T06:00:00Z",
+   "floor_ts": "2026-01-08T06:00:00Z"
+  },
+  "after_compact": {
+   "scans": [
+    {
+     "scan_id": "2026-01-01T06:00:00Z",
+     "ts": "2026-01-01T06:00:00Z",
+     "mode": "live",
+     "shape": "flat",
+     "total": 2,
+     "new_count": 2,
+     "resolved_count": 1,
+     "reopened_count": 0,
+     "severities": null,
+     "sealed": 1
+    },
+    {
+     "scan_id": "2026-01-08T06:00:00Z",
+     "ts": "2026-01-08T06:00:00Z",
+     "mode": "live",
+     "shape": "flat",
+     "total": 3,
+     "new_count": 2,
+     "resolved_count": 1,
+     "reopened_count": 0,
+     "severities": null,
+     "sealed": 1
+    },
+    {
+     "scan_id": "2026-06-01T06:00:00Z",
+     "ts": "2026-06-01T06:00:00Z",
+     "mode": "live",
+     "shape": "flat",
+     "total": 2,
+     "new_count": 0,
+     "resolved_count": 1,
+     "reopened_count": 0,
+     "severities": null,
+     "sealed": 0
+    },
+    {
+     "scan_id": "2026-06-15T06:00:00Z",
+     "ts": "2026-06-15T06:00:00Z",
+     "mode": "live",
+     "shape": "flat",
+     "total": 2,
+     "new_count": 1,
+     "resolved_count": 0,
+     "reopened_count": 0,
+     "severities": null,
+     "sealed": 0
+    }
+   ],
+   "ledger": {
+    "id:A": {
+     "vuln_key": "id:A",
+     "cve": "CVE-A",
+     "severity": "CRITICAL",
+     "asset_id": "vm-a",
+     "asset_name": "vm-a-name",
+     "asset_type": "VIRTUAL_MACHINE",
+     "cloud": "AWS",
+     "first_seen": "2025-12-20T00:00:00Z",
+     "last_seen": "2026-06-01T06:00:00Z",
+     "status": "RESOLVED",
+     "resolved_at": "2026-05-28T00:00:00Z",
+     "resolution_src": "api",
+     "reopened_count": 0,
+     "first_scan_id": "2026-01-01T06:00:00Z",
+     "last_scan_id": "2026-06-01T06:00:00Z",
+     "subscription_name": null,
+     "subscription_ext_id": null,
+     "tags_json": null
+    },
+    "id:C": {
+     "vuln_key": "id:C",
+     "cve": "CVE-C",
+     "severity": "HIGH",
+     "asset_id": "vm-c",
+     "asset_name": "vm-c-name",
+     "asset_type": "VIRTUAL_MACHINE",
+     "cloud": "AWS",
+     "first_seen": "2026-01-08T06:00:00Z",
+     "last_seen": "2026-06-15T06:00:00Z",
+     "status": "OPEN",
+     "resolved_at": null,
+     "resolution_src": null,
+     "reopened_count": 0,
+     "first_scan_id": "2026-01-08T06:00:00Z",
+     "last_scan_id": "2026-06-15T06:00:00Z",
+     "subscription_name": null,
+     "subscription_ext_id": null,
+     "tags_json": null
+    },
+    "id:E": {
+     "vuln_key": "id:E",
+     "cve": "CVE-E",
+     "severity": "CRITICAL",
+     "asset_id": "vm-e",
+     "asset_name": "vm-e-name",
+     "asset_type": "VIRTUAL_MACHINE",
+     "cloud": "AWS",
+     "first_seen": "2026-06-15T06:00:00Z",
+     "last_seen": "2026-06-15T06:00:00Z",
+     "status": "OPEN",
+     "resolved_at": null,
+     "resolution_src": null,
+     "reopened_count": 0,
+     "first_scan_id": "2026-06-15T06:00:00Z",
+     "last_scan_id": "2026-06-15T06:00:00Z",
+     "subscription_name": null,
+     "subscription_ext_id": null,
+     "tags_json": null
+    }
+   },
+   "observations": [
+    {
+     "scan_id": "2026-06-01T06:00:00Z",
+     "vuln_key": "id:A",
+     "present": 1,
+     "severity": "CRITICAL",
+     "status": "RESOLVED"
+    },
+    {
+     "scan_id": "2026-06-01T06:00:00Z",
+     "vuln_key": "id:C",
+     "present": 1,
+     "severity": "HIGH",
+     "status": "OPEN"
+    },
+    {
+     "scan_id": "2026-06-15T06:00:00Z",
+     "vuln_key": "id:C",
+     "present": 1,
+     "severity": "HIGH",
+     "status": "OPEN"
+    },
+    {
+     "scan_id": "2026-06-15T06:00:00Z",
+     "vuln_key": "id:E",
+     "present": 1,
+     "severity": "CRITICAL",
+     "status": "OPEN"
+    }
+   ],
+   "episodes": [
+    {
+     "vuln_key": "id:B",
+     "cve": "CVE-B",
+     "severity": "HIGH",
+     "first_seen": "2025-12-01T00:00:00Z",
+     "resolved_at": "2025-12-30T12:00:00Z",
+     "resolution_src": "api",
+     "reopened_count": 0,
+     "superseded_by_scan": null
+    },
+    {
+     "vuln_key": "id:D",
+     "cve": "CVE-D",
+     "severity": "MEDIUM",
+     "first_seen": "2026-01-02T00:00:00Z",
+     "resolved_at": "2026-01-05T00:00:00Z",
+     "resolution_src": "api",
+     "reopened_count": 0,
+     "superseded_by_scan": null
+    }
+   ]
+  },
+  "checkpoint": {
+   "version": 1,
+   "floor_scan_id": "2026-01-08T06:00:00Z",
+   "floor_ts": "2026-01-08T06:00:00Z",
+   "ledger": [
+    {
+     "vuln_key": "id:A",
+     "cve": "CVE-A",
+     "severity": "CRITICAL",
+     "asset_id": "vm-a",
+     "asset_name": "vm-a-name",
+     "asset_type": "VIRTUAL_MACHINE",
+     "cloud": "AWS",
+     "first_seen": "2025-12-20T00:00:00Z",
+     "last_seen": "2026-01-08T06:00:00Z",
+     "status": "OPEN",
+     "resolved_at": null,
+     "resolution_src": null,
+     "reopened_count": 0,
+     "first_scan_id": "2026-01-01T06:00:00Z",
+     "last_scan_id": "2026-01-08T06:00:00Z",
+     "subscription_name": null,
+     "subscription_ext_id": null,
+     "tags_json": null
+    },
+    {
+     "vuln_key": "id:B",
+     "cve": "CVE-B",
+     "severity": "HIGH",
+     "asset_id": "vm-b",
+     "asset_name": "vm-b-name",
+     "asset_type": "VIRTUAL_MACHINE",
+     "cloud": "AWS",
+     "first_seen": "2025-12-01T00:00:00Z",
+     "last_seen": "2026-01-01T06:00:00Z",
+     "status": "RESOLVED",
+     "resolved_at": "2025-12-30T12:00:00Z",
+     "resolution_src": "api",
+     "reopened_count": 0,
+     "first_scan_id": "2026-01-01T06:00:00Z",
+     "last_scan_id": "2026-01-01T06:00:00Z",
+     "subscription_name": null,
+     "subscription_ext_id": null,
+     "tags_json": null
+    },
+    {
+     "vuln_key": "id:C",
+     "cve": "CVE-C",
+     "severity": "HIGH",
+     "asset_id": "vm-c",
+     "asset_name": "vm-c-name",
+     "asset_type": "VIRTUAL_MACHINE",
+     "cloud": "AWS",
+     "first_seen": "2026-01-08T06:00:00Z",
+     "last_seen": "2026-01-08T06:00:00Z",
+     "status": "OPEN",
+     "resolved_at": null,
+     "resolution_src": null,
+     "reopened_count": 0,
+     "first_scan_id": "2026-01-08T06:00:00Z",
+     "last_scan_id": "2026-01-08T06:00:00Z",
+     "subscription_name": null,
+     "subscription_ext_id": null,
+     "tags_json": null
+    },
+    {
+     "vuln_key": "id:D",
+     "cve": "CVE-D",
+     "severity": "MEDIUM",
+     "asset_id": "vm-d",
+     "asset_name": "vm-d-name",
+     "asset_type": "VIRTUAL_MACHINE",
+     "cloud": "AWS",
+     "first_seen": "2026-01-02T00:00:00Z",
+     "last_seen": "2026-01-08T06:00:00Z",
+     "status": "RESOLVED",
+     "resolved_at": "2026-01-05T00:00:00Z",
+     "resolution_src": "api",
+     "reopened_count": 0,
+     "first_scan_id": "2026-01-08T06:00:00Z",
+     "last_scan_id": "2026-01-08T06:00:00Z",
+     "subscription_name": null,
+     "subscription_ext_id": null,
+     "tags_json": null
+    }
+   ]
+  },
+  "sealed_delete_error": "Cannot delete sealed scan(s) 2026-01-01T06:00:00Z: they are part of the compacted baseline (their raw archives were pruned), so their effects can no longer be un-replayed.",
+  "delete_s3_result": {
+   "deleted": 1,
+   "scans": 3,
+   "tracked": 5
+  },
+  "after_delete_s3": {
+   "scans": [
+    {
+     "scan_id": "2026-01-01T06:00:00Z",
+     "ts": "2026-01-01T06:00:00Z",
+     "mode": "live",
+     "shape": "flat",
+     "total": 2,
+     "new_count": 2,
+     "resolved_count": 1,
+     "reopened_count": 0,
+     "severities": null,
+     "sealed": 1
+    },
+    {
+     "scan_id": "2026-01-08T06:00:00Z",
+     "ts": "2026-01-08T06:00:00Z",
+     "mode": "live",
+     "shape": "flat",
+     "total": 3,
+     "new_count": 2,
+     "resolved_count": 1,
+     "reopened_count": 0,
+     "severities": null,
+     "sealed": 1
+    },
+    {
+     "scan_id": "2026-06-15T06:00:00Z",
+     "ts": "2026-06-15T06:00:00Z",
+     "mode": "live",
+     "shape": "flat",
+     "total": 2,
+     "new_count": 1,
+     "resolved_count": 1,
+     "reopened_count": 0,
+     "severities": null,
+     "sealed": 0
+    }
+   ],
+   "ledger": {
+    "id:A": {
+     "vuln_key": "id:A",
+     "cve": "CVE-A",
+     "severity": "CRITICAL",
+     "asset_id": "vm-a",
+     "asset_name": "vm-a-name",
+     "asset_type": "VIRTUAL_MACHINE",
+     "cloud": "AWS",
+     "first_seen": "2025-12-20T00:00:00Z",
+     "last_seen": "2026-01-08T06:00:00Z",
+     "status": "RESOLVED",
+     "resolved_at": "2026-06-15T06:00:00Z",
+     "resolution_src": "disappeared",
+     "reopened_count": 0,
+     "first_scan_id": "2026-01-01T06:00:00Z",
+     "last_scan_id": "2026-01-08T06:00:00Z",
+     "subscription_name": null,
+     "subscription_ext_id": null,
+     "tags_json": null
+    },
+    "id:C": {
+     "vuln_key": "id:C",
+     "cve": "CVE-C",
+     "severity": "HIGH",
+     "asset_id": "vm-c",
+     "asset_name": "vm-c-name",
+     "asset_type": "VIRTUAL_MACHINE",
+     "cloud": "AWS",
+     "first_seen": "2026-01-08T06:00:00Z",
+     "last_seen": "2026-06-15T06:00:00Z",
+     "status": "OPEN",
+     "resolved_at": null,
+     "resolution_src": null,
+     "reopened_count": 0,
+     "first_scan_id": "2026-01-08T06:00:00Z",
+     "last_scan_id": "2026-06-15T06:00:00Z",
+     "subscription_name": null,
+     "subscription_ext_id": null,
+     "tags_json": null
+    },
+    "id:E": {
+     "vuln_key": "id:E",
+     "cve": "CVE-E",
+     "severity": "CRITICAL",
+     "asset_id": "vm-e",
+     "asset_name": "vm-e-name",
+     "asset_type": "VIRTUAL_MACHINE",
+     "cloud": "AWS",
+     "first_seen": "2026-06-15T06:00:00Z",
+     "last_seen": "2026-06-15T06:00:00Z",
+     "status": "OPEN",
+     "resolved_at": null,
+     "resolution_src": null,
+     "reopened_count": 0,
+     "first_scan_id": "2026-06-15T06:00:00Z",
+     "last_scan_id": "2026-06-15T06:00:00Z",
+     "subscription_name": null,
+     "subscription_ext_id": null,
+     "tags_json": null
+    }
+   },
+   "observations": [
+    {
+     "scan_id": "2026-06-15T06:00:00Z",
+     "vuln_key": "id:A",
+     "present": 0,
+     "severity": "CRITICAL",
+     "status": "RESOLVED"
+    },
+    {
+     "scan_id": "2026-06-15T06:00:00Z",
+     "vuln_key": "id:C",
+     "present": 1,
+     "severity": "HIGH",
+     "status": "OPEN"
+    },
+    {
+     "scan_id": "2026-06-15T06:00:00Z",
+     "vuln_key": "id:E",
+     "present": 1,
+     "severity": "CRITICAL",
+     "status": "OPEN"
+    }
+   ],
+   "episodes": [
+    {
+     "vuln_key": "id:B",
+     "cve": "CVE-B",
+     "severity": "HIGH",
+     "first_seen": "2025-12-01T00:00:00Z",
+     "resolved_at": "2025-12-30T12:00:00Z",
+     "resolution_src": "api",
+     "reopened_count": 0,
+     "superseded_by_scan": null
+    },
+    {
+     "vuln_key": "id:D",
+     "cve": "CVE-D",
+     "severity": "MEDIUM",
+     "first_seen": "2026-01-02T00:00:00Z",
+     "resolved_at": "2026-01-05T00:00:00Z",
+     "resolution_src": "api",
+     "reopened_count": 0,
+     "superseded_by_scan": null
+    }
+   ]
+  }
+ }
+}

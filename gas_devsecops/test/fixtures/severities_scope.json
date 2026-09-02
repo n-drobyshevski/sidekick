@@ -1,0 +1,92 @@
+{
+ "serialize": [
+  {
+   "input": [
+    "CRITICAL",
+    "HIGH"
+   ],
+   "expected": "[\"CRITICAL\", \"HIGH\"]"
+  },
+  {
+   "input": [
+    "HIGH",
+    "CRITICAL"
+   ],
+   "expected": "[\"CRITICAL\", \"HIGH\"]"
+  },
+  {
+   "input": [
+    "CRITICAL",
+    "HIGH",
+    "MEDIUM",
+    "LOW",
+    "INFO"
+   ],
+   "expected": null
+  },
+  {
+   "input": [
+    "INFORMATIONAL"
+   ],
+   "expected": "[\"INFO\"]"
+  },
+  {
+   "input": [
+    "bogus",
+    "HIGH"
+   ],
+   "expected": "[\"HIGH\"]"
+  },
+  {
+   "input": [],
+   "expected": null
+  },
+  {
+   "input": null,
+   "expected": null
+  }
+ ],
+ "parse": [
+  {
+   "input": "[\"CRITICAL\",\"HIGH\"]",
+   "expected": [
+    "CRITICAL",
+    "HIGH"
+   ]
+  },
+  {
+   "input": "[\"HIGH\"]",
+   "expected": [
+    "HIGH"
+   ]
+  },
+  {
+   "input": "[\"bogus\"]",
+   "expected": [
+    "UNKNOWN"
+   ]
+  },
+  {
+   "input": "not-json",
+   "expected": null
+  },
+  {
+   "input": "",
+   "expected": null
+  },
+  {
+   "input": null,
+   "expected": null
+  },
+  {
+   "input": "{\"a\":1}",
+   "expected": null
+  },
+  {
+   "input": "[\"INFORMATIONAL\"]",
+   "expected": [
+    "INFO"
+   ]
+  }
+ ]
+}
