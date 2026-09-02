@@ -48,8 +48,9 @@
 // to be able to ask for just its rows. Defaults to all rows, matching gas/'s original behaviour
 // exactly when the argument is omitted.
 
-import { EPSS_PRIORITY_THRESHOLD, RESOLVED_STATUSES, SLA_TARGETS, type RiskRule, type Scope } from "./config";
+import { EPSS_PRIORITY_THRESHOLD, RESOLVED_STATUSES, SLA_TARGETS, type Scope } from "./config";
 import type { BaseRow, ScanRow } from "./ledgerTypes";
+import { RISK_TIER_ORDER, riskTier, type AnyRiskRule, type RiskRow } from "./program";
 import { normalizeSeverity } from "./severity";
 import type { Rec } from "./util";
 
@@ -66,84 +67,33 @@ function byScope<T extends { scope: Scope }>(rows: T[], scope?: Scope): T[] {
   return scope ? rows.filter((r) => r.scope === scope) : rows;
 }
 
-// =========================================================== risk-tier classification (local)
+// =========================================================== risk-tier classification (import)
 //
-// DELIBERATE DUPLICATE of gas/src/domain/program.ts's risk-tier classification (RiskRow,
-// RiskTier, RISK_TIER_ORDER, ruleIsEmpty, firedSignals, classifyRisk, riskTier) — program.ts
-// has not been ported to gas_devsecops yet (a concurrent D9-sibling package another agent owns;
-// out of bounds for this package per its brief). riskTierStats and triageFunnel below ARE in
-// D9's explicit scope, and both need this classification, so it is copied here rather than left
-// unported. It reuses config.ts's `RiskRule` (already present there, byte-identical shape to
-// gas/program.ts's), so only the tier logic itself is duplicated, not the rule type.
+// RiskRow, RISK_TIER_ORDER and riskTier now come from program.ts, which owns the real
+// classification (this file used to carry a DELIBERATE DUPLICATE while program.ts had not
+// landed in this package yet — see git history for the block this replaced). program.ts's
+// version is a strict superset: its RiskRow adds `scope`, `cwe`, `ai_verdict`; its RiskTier
+// adds three SAST tiers (`cwe | aiVerdict | critical`) alongside the five gas/ ones; and its
+// `AnyRiskRule` covers both `RiskRule` (sca) and `SastRiskRule` (sast) so one call can rate
+// both kinds of row.
 //
-// WHEN program.ts IS PORTED TO THIS PACKAGE, replace this block with an import and delete the
-// local copy — do not let both live on independently. (Same pattern D1's lifecycle.ts used for
-// metrics.summarize(), and the same instruction: this is the D9 package's own reported finding.)
+// TWO CONSEQUENCES for riskTierStats and triageFunnel below, both load-bearing:
 //
-// Classification is unchanged from gas/: it reads has_kev / has_exploit / epss, which
-// ledgerTypes.ts marks SCA ONLY. A sast/secrets row structurally carries all three as null, so
-// it is never misclassified "low" here — every enabled signal on it reads unseen, and
-// classifyRisk's step 2 puts it in `unknown` rather than manufacturing a negative from missing
-// data. That is the correct answer today (no sast/secrets risk rule exists yet to say
-// otherwise), not a gap this file introduces.
-
-export type RiskRow = Pick<BaseRow, "severity" | "status" | "has_kev" | "has_exploit" | "epss">;
-
-export type RiskTier = "kev" | "exploit" | "epss" | "none" | "unknown";
-
-/** Worst evidence first; `unknown` last because it is a measurement gap, not a low score. */
-export const RISK_TIER_ORDER: RiskTier[] = ["kev", "exploit", "epss", "none", "unknown"];
-
-/** True when the rule enables no signal at all — nothing is decidable, so everything is unknown. */
-function ruleIsEmpty(rule: RiskRule): boolean {
-  return !rule.kev && !rule.exploit && !rule.epss;
-}
-
-/** Whether an enabled signal was actually observed on this row (null = never captured). */
-function seen(row: RiskRow, rule: RiskRule): { kev: boolean; exploit: boolean; epss: boolean } {
-  return {
-    kev: !rule.kev || row.has_kev != null,
-    exploit: !rule.exploit || row.has_exploit != null,
-    epss: !rule.epss || (typeof row.epss === "number" && Number.isFinite(row.epss)),
-  };
-}
-
-/** Which enabled clauses fired. Empty for `low` and `unknown` rows. */
-function firedSignals(row: RiskRow, rule: RiskRule): ("kev" | "exploit" | "epss")[] {
-  const out: ("kev" | "exploit" | "epss")[] = [];
-  if (rule.kev && row.has_kev === true) out.push("kev");
-  if (rule.exploit && row.has_exploit === true) out.push("exploit");
-  if (
-    rule.epss &&
-    typeof row.epss === "number" &&
-    Number.isFinite(row.epss) &&
-    row.epss >= rule.epssThreshold
-  ) {
-    out.push("epss");
-  }
-  return out;
-}
-
-type RiskClass = "high" | "low" | "unknown";
-
-/** Three-valued classification — see gas/program.ts's classifyRisk for the full reasoning. */
-function classifyRisk(row: RiskRow, rule: RiskRule): RiskClass {
-  if (ruleIsEmpty(rule)) return "unknown";
-  if (firedSignals(row, rule).length) return "high";
-  const s = seen(row, rule);
-  if (!s.kev || !s.exploit || !s.epss) return "unknown";
-  return "low";
-}
-
-/** Which tier a row lands in — a REFINEMENT of classifyRisk, never a second opinion. */
-export function riskTier(row: RiskRow, rule: RiskRule): RiskTier {
-  const cls = classifyRisk(row, rule);
-  if (cls !== "high") return cls === "low" ? "none" : "unknown";
-  const fired = firedSignals(row, rule);
-  if (fired.includes("kev")) return "kev";
-  if (fired.includes("exploit")) return "exploit";
-  return "epss";
-}
+//   1. `rule` is now OPTIONAL (`AnyRiskRule | undefined`), because program.ts's classifyRisk
+//      resolves a per-scope default (`config.ruleForScope`) whenever it is omitted — sca rows
+//      get DEFAULT_RISK_RULE, sast rows get DEFAULT_SAST_RISK_RULE. That is what "a mixed
+//      sca+sast ledger stays classifiable" means in practice: a single call over both kinds of
+//      row, with no rule argument, rates each row under its OWN scope's rule rather than
+//      forcing one shape onto both. Passing an explicit `rule` still forces that one rule over
+//      every row handed to it (unchanged from before), for a caller that already knows its
+//      population is single-scope and has its own settings-driven rule.
+//   2. `ruleForScope("secrets")` is null (config.ts: no exploit intelligence exists for a
+//      hardcoded string), and program.ts's `resolveRule` THROWS on a secrets row for that
+//      reason — the throw is keyed off the ROW's own scope, not off whether the caller passed
+//      an explicit rule, so passing one buys nothing. Both functions below filter
+//      `scope === "secrets"` out BEFORE calling `riskTier` and report the count as
+//      `excludedSecrets`, so a register that legitimately mixes all three scopes still
+//      classifies its sca/sast rows instead of crashing on the first secrets row it meets.
 
 // ============================================================================ severity stats
 
@@ -441,27 +391,36 @@ export interface RiskTierStats {
   perTier: Record<string, number>;
   open: number;
   /** Open rows whose tier is `unknown`. Published beside every tier figure: a null on
-   *  has_kev / has_exploit / epss means NOT CAPTURED (structurally, for sast/secrets — see the
+   *  has_kev / has_exploit / epss means NOT CAPTURED (structurally, for sast — see the
    *  risk-tier section above), and rendering that as a clean zero is the exact mistake the
    *  three-valued verdict exists to prevent. */
   unclassified: number;
+  /** Open secrets rows, filtered out before classification (program.riskTier throws on one —
+   *  see the risk-tier section above) rather than folded into `unknown`: unknown means "the
+   *  signal was never captured", not "there is no signal to capture at all". */
+  excludedSecrets: number;
 }
 
-type TierRow = RiskRow & { status: string; scope: Scope };
+type TierRow = RiskRow & { status: string };
 
 /** Open-only tier counts. Resolved rows are excluded because the page ranks what is still
  *  outstanding; `movement` covers what closed. */
-export function riskTierStats(rowsIn: TierRow[], rule: RiskRule, scope?: Scope): RiskTierStats {
+export function riskTierStats(rowsIn: TierRow[], rule?: AnyRiskRule, scope?: Scope): RiskTierStats {
   const rows = byScope(rowsIn, scope);
   const perTier: Record<string, number> = {};
   for (const t of RISK_TIER_ORDER) perTier[t] = 0;
   let open = 0;
+  let excludedSecrets = 0;
   for (const row of rows) {
     if (!isOpen(row.status)) continue;
+    if (row.scope === "secrets") {
+      excludedSecrets += 1;
+      continue;
+    }
     open += 1;
     perTier[riskTier(row, rule)] += 1;
   }
-  return { perTier, open, unclassified: perTier["unknown"] ?? 0 };
+  return { perTier, open, unclassified: perTier["unknown"] ?? 0, excludedSecrets };
 }
 
 /**
@@ -479,6 +438,11 @@ export function riskTierStats(rowsIn: TierRow[], rule: RiskRule, scope?: Scope):
  * steps are NOT rendered as zero. And "overdue" runs on the ACTIONABLE clock
  * (`actionable_age_days`), so a finding still awaiting a vendor fix is never counted as a
  * breach nobody could have prevented.
+ *
+ * SECRETS ARE OUT OF SCOPE FOR THIS FUNNEL, not silently zeroed: `ruleForScope("secrets")` is
+ * null (config.ts), so program.riskTier throws on a secrets row. Excluded before it ever
+ * reaches classification and reported separately as `excludedSecrets` — see the risk-tier
+ * import note above `severityStats`.
  */
 export interface TriageFunnel {
   open: number;
@@ -488,18 +452,18 @@ export interface TriageFunnel {
   overdue: number;
   unclassified: number;
   exposureKnown: boolean;
+  excludedSecrets: number;
 }
 
 type FunnelRow = RiskRow & {
   status: string;
   finding_key: string;
   actionable_age_days: number | null;
-  scope: Scope;
 };
 
 export function triageFunnel(
   rowsIn: FunnelRow[],
-  rule: RiskRule,
+  rule: AnyRiskRule | undefined,
   exposedKeys: Set<string>,
   exposureKnown: boolean,
   scope?: Scope,
@@ -507,10 +471,14 @@ export function triageFunnel(
   const rows = byScope(rowsIn, scope);
   const out: TriageFunnel = {
     open: 0, intel: 0, exploitable: 0, exposed: 0, overdue: 0,
-    unclassified: 0, exposureKnown,
+    unclassified: 0, exposureKnown, excludedSecrets: 0,
   };
   for (const row of rows) {
     if (!isOpen(row.status)) continue;
+    if (row.scope === "secrets") {
+      out.excludedSecrets += 1;
+      continue;
+    }
     out.open += 1;
     const tier = riskTier(row, rule);
     if (tier === "unknown") {

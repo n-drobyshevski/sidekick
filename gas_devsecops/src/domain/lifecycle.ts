@@ -31,10 +31,23 @@ import { clean, parseTs, pyStr, type Rec } from "./util";
  * "<scope>:h:<16-hex>" for secrets. See the module header for why secrets hashes
  * (secretDataId, path, lineNumber) rather than trusting node.id/externalId, and why sca/sast
  * have no hash fallback the way gas/'s vulnKey does.
+ *
+ * THROWS rather than keying on an empty identity when the field the scope keys on is missing
+ * or blank: `gas/test/fixtures/reconcile.json`'s `first_scan` carries one sca record with no
+ * `id` (D2's finding), and the old fallback keyed it as the EMPTY identity "sca:id:" — a second
+ * id-less node in the same scan would silently collide into the same ledger row. sca/sast
+ * nodes always carry a Wiz-assigned `id` (Q_SCA / Q_SAST both select it, module header), so a
+ * missing one means the caller handed this an incomplete or malformed node, and a thrown error
+ * that names the scope is the honest failure — never a key that can quietly double as another
+ * finding's. The error message names only the scope, never the node's own fields: a secrets
+ * node can carry a live credential, and an error is not a safe place to echo one.
  */
 export function findingKey(scope: Scope, node: Rec): string {
   if (scope === "secrets") {
-    const secretDataId = pyStr(clean(node["secretDataId"]) ?? "");
+    const secretDataId = pyStr(clean(node["secretDataId"]) ?? "").trim();
+    if (!secretDataId) {
+      throw new Error(`findingKey: scope "secrets" node has no secretDataId`);
+    }
     const path = pyStr(clean(node["path"]) ?? "");
     const lineNumber = pyStr(clean(node["lineNumber"]) ?? "");
     const basis = `${secretDataId}|${path}|${lineNumber}`;
@@ -42,6 +55,9 @@ export function findingKey(scope: Scope, node: Rec): string {
   }
   const rawId = node["id"];
   const id = typeof rawId === "string" ? rawId.trim() : pyStr(clean(rawId) ?? "");
+  if (!id) {
+    throw new Error(`findingKey: scope "${scope}" node has no id`);
+  }
   return `${scope}:id:${id}`;
 }
 

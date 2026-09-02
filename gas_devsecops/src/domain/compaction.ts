@@ -17,17 +17,10 @@
 // MIN_UNSEALED_FLAT_SCANS as the protected set; here every row already qualifies, so that
 // filter step is simply omitted rather than kept as a no-op.
 
-import { MIN_UNSEALED_FLAT_SCANS, SEVERITY_ORDER } from "./config";
+import { MIN_UNSEALED_FLAT_SCANS, SELECTABLE_SEVERITIES, SEVERITY_ORDER } from "./config";
 import type { LedgerRow } from "./ledgerTypes";
 import { normalizeSeverity } from "./severity";
 import { parseTs, type Rec } from "./util";
-
-// TODO(config.ts): SELECTABLE_SEVERITIES is missing from gas_devsecops/src/domain/config.ts —
-// gas/src/domain/config.ts:49 defines it as `SEVERITY_ORDER.filter(s => s !== "UNKNOWN")`.
-// Per the D9 brief ("if you need a config.ts constant that is missing, define it locally with
-// a TODO naming the constant, and report it"), it is defined locally below instead of editing
-// config.ts (another agent is concurrently unifying RiskRule there). Reported in the D9 summary.
-const SELECTABLE_SEVERITIES: readonly string[] = SEVERITY_ORDER.filter((s) => s !== "UNKNOWN");
 
 /**
  * Canonical JSON for a scan's severity scope; null means "all severities".
@@ -39,7 +32,12 @@ export function serializeSeverities(sevs: Iterable<unknown> | null | undefined):
   for (const s of sevs) {
     if (typeof s === "string") {
       const n = normalizeSeverity(s);
-      if (SELECTABLE_SEVERITIES.includes(n)) vals.add(n);
+      // Cast, not a config.ts change: SELECTABLE_SEVERITIES is byte-identical to gas/'s
+      // definition (SEVERITY_ORDER.filter(s => s !== "UNKNOWN")), whose inferred type narrows
+      // to exclude "UNKNOWN" — leaving `n` (normalizeSeverity's return, plain `string`) not
+      // assignable to `.includes`'s parameter. gas/'s compaction.ts casts at this exact call
+      // site rather than widening the exported constant; mirrored here for the same reason.
+      if ((SELECTABLE_SEVERITIES as string[]).includes(n)) vals.add(n);
     }
   }
   if (!vals.size || vals.size === SELECTABLE_SEVERITIES.length) return null;

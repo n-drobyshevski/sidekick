@@ -47,6 +47,58 @@ describe("findingKey — scope is part of the prefix (rule 1)", () => {
   });
 });
 
+// D9b task 3: a missing/blank id used to key as the EMPTY identity "sca:id:" (or "sast:id:"),
+// so two id-less nodes in the same scan would silently collide into one ledger row —
+// gas/test/fixtures/reconcile.json's `first_scan` carries exactly one such record (D2's
+// finding; see test/reconcile.test.ts). findingKey now refuses instead of manufacturing that
+// shared empty key.
+describe("findingKey — refuses a node with no id (sca/sast)", () => {
+  it("throws, naming the scope, when id is absent", () => {
+    expect(() => findingKey("sca", {})).toThrow(/sca/);
+    expect(() => findingKey("sast", {})).toThrow(/sast/);
+  });
+
+  it("throws on a blank or whitespace-only id, not just a missing one", () => {
+    expect(() => findingKey("sca", { id: "" })).toThrow();
+    expect(() => findingKey("sca", { id: "   " })).toThrow();
+    expect(() => findingKey("sca", { id: null })).toThrow();
+  });
+
+  it("a present, non-blank id still keys normally (no regression)", () => {
+    expect(findingKey("sca", { id: "sca-1" })).toBe("sca:id:sca-1");
+    expect(findingKey("sast", { id: "sast-1" })).toBe("sast:id:sast-1");
+  });
+});
+
+describe("findingKey — refuses a secrets node with no secretDataId", () => {
+  const shared = { path: "src/config/secrets.yml", lineNumber: 42 };
+
+  it("throws, naming the scope, when secretDataId is absent or blank", () => {
+    expect(() => findingKey("secrets", { ...shared })).toThrow(/secrets/);
+    expect(() => findingKey("secrets", { ...shared, secretDataId: "" })).toThrow(/secrets/);
+    expect(() => findingKey("secrets", { ...shared, secretDataId: "   " })).toThrow(/secrets/);
+  });
+
+  it("the thrown message never echoes the node's own fields (a secret may be live in them)", () => {
+    const node = { ...shared, secretDataId: "" };
+    let caught: Error | null = null;
+    try {
+      findingKey("secrets", node);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).not.toBeNull();
+    expect(caught!.message).not.toContain(shared.path);
+    expect(caught!.message).not.toContain(String(shared.lineNumber));
+  });
+
+  it("a present secretDataId still keys normally (no regression)", () => {
+    expect(findingKey("secrets", { ...shared, secretDataId: "secret-data-abc" })).toMatch(
+      /^secrets:h:[0-9a-f]{16}$/,
+    );
+  });
+});
+
 describe("findingKey — secrets identity is (secretDataId, path, lineNumber)", () => {
   const shared = {
     secretDataId: "secret-data-abc",

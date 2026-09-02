@@ -416,7 +416,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "c60f15c485b2" : "dev";
+  var BUILD_ID = true ? "a575aa2c6cea" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -957,6 +957,7 @@ var Server = (() => {
     "INFO",
     "UNKNOWN"
   ];
+  var SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s) => s !== "UNKNOWN");
   var SLA_TARGETS = {
     CRITICAL: 7,
     HIGH: 14,

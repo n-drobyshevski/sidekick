@@ -115,18 +115,40 @@ describe("reconcile.json rename shim — the mapping itself", () => {
  * gas/'s vulnKey falls back to a content hash ("h:<16 hex>") when a node carries no `id`.
  * findingKey deliberately does NOT port that fallback — src/domain/lifecycle.ts states the
  * reason: sca and sast nodes always carry a Wiz-assigned id, since Q_SCA and Q_SAST both
- * select it. The fixture's `first_scan` has exactly ONE id-less record, and under this port
- * it keys as findingKey("sca", record) — an empty identity — rather than as a hash.
+ * select it. The fixture's `first_scan` has exactly ONE id-less record.
  *
- * That is a FINDING about the fixture rather than about the port: the shim maps the one "h:"
- * key onto the one key the port actually produces, and the test below asserts the record is
- * unique so the collapse cannot silently merge two findings into one row.
+ * D9b task 3 (see test/lifecycle.test.ts's "refuses a node with no id" suite): findingKey now
+ * THROWS on a missing/blank id rather than keying it as the EMPTY identity "sca:id:" — the
+ * old behaviour here, which this file used to shim onto with `HASH_FALLBACK_KEY = "sca:id:"`.
+ * That was a FINDING about the fixture, not a safe fallback to keep: a second id-less node in
+ * the same scan would have collided into the same "sca:id:" ledger row, silently merging two
+ * distinct findings. So rather than route this one record through findingKey's now-removed
+ * empty-identity path, the shim gives it a SYNTHETIC id — deterministic, derived from the
+ * fixture's own "h:<hash>" fallback key (gas/'s vulnKey content hash for this record, computed
+ * from its OTHER fields and therefore stable regardless of what id it carries) — before
+ * reconcile ever sees it, and maps the fixture's "h:<hash>" key onto that same synthetic
+ * "sca:id:fixture-<hash>" identity everywhere the shim rewrites a key.
  */
 const { scenarios } = fixture("reconcile");
 const idLessRecords = scenarios
   .flatMap((sc: any) => sc.input.records)
   .filter((r: any) => !String(r.id ?? "").trim());
-const HASH_FALLBACK_KEY = findingKey("sca", idLessRecords[0] ?? {});
+
+const FIXTURE_HASH_KEYS = new Set<string>();
+for (const sc of scenarios) {
+  for (const k of Object.keys(sc.expected.ledger)) if (k.startsWith("h:")) FIXTURE_HASH_KEYS.add(k);
+  for (const k of Object.keys(sc.input.ledger)) if (k.startsWith("h:")) FIXTURE_HASH_KEYS.add(k);
+}
+const [ONLY_HASH_KEY] = [...FIXTURE_HASH_KEYS];
+// "fixture-<hash>" per the D9b brief's own example (id: "fixture-b9db6107009435fc") — derived
+// from the fixture's one observed "h:" key rather than hardcoded, so this still fails loudly
+// (a mismatched idLessRecords.length below) if a future fixture regeneration changes the shape.
+const SYNTHETIC_ID = "fixture-" + String(ONLY_HASH_KEY ?? "").slice("h:".length);
+// Mutates the shared fixture record in place, once, at module load — before any scenario's
+// reconcile() call can reach it. findingKey("sca", record) would otherwise throw on this
+// record's blank id (see the block comment above).
+if (idLessRecords.length === 1) (idLessRecords[0] as Record<string, unknown>).id = SYNTHETIC_ID;
+const HASH_FALLBACK_KEY = findingKey("sca", { id: SYNTHETIC_ID });
 
 const renameKey = (k: string): string => (k.startsWith("h:") ? HASH_FALLBACK_KEY : `sca:${k}`);
 
@@ -156,15 +178,20 @@ function shimObservations(obs: any[]): unknown[] {
 }
 
 describe("reconcile (reconcile.json parity, scope sca)", () => {
-  it("the fixture carries exactly one id-less record, so the hash-fallback collapse is unambiguous", () => {
+  // FALSIFIED CLAIM, from before D9b task 3: "the hash-fallback collapse is unambiguous" —
+  // that asserted `HASH_FALLBACK_KEY === "sca:id:"`, i.e. that it was SAFE for findingKey to
+  // key an id-less node as the empty identity, because the fixture happens to carry only one
+  // such record. It is not safe in general (a second id-less node in the same scan would have
+  // collided into that same row), which is exactly why findingKey now throws instead. This
+  // fixture's one id-less record no longer reaches that path at all: the shim above gives it a
+  // synthetic id before reconcile ever sees it, so what this test can honestly pin is that the
+  // synthetic id is exactly what it claims to be — derived from the fixture's own "h:" key.
+  it("the fixture's one id-less record is given a synthetic id derived from its own fixture hash", () => {
     expect(idLessRecords.length).toBe(1);
-    expect(HASH_FALLBACK_KEY).toBe("sca:id:");
-    const hashKeys = new Set<string>();
-    for (const sc of scenarios) {
-      for (const k of Object.keys(sc.expected.ledger)) if (k.startsWith("h:")) hashKeys.add(k);
-      for (const k of Object.keys(sc.input.ledger)) if (k.startsWith("h:")) hashKeys.add(k);
-    }
-    expect([...hashKeys]).toEqual(["h:b9db6107009435fc"]);
+    expect((idLessRecords[0] as Record<string, unknown>).id).toBe(SYNTHETIC_ID);
+    expect(SYNTHETIC_ID).toBe("fixture-b9db6107009435fc");
+    expect(HASH_FALLBACK_KEY).toBe("sca:id:fixture-b9db6107009435fc");
+    expect([...FIXTURE_HASH_KEYS]).toEqual(["h:b9db6107009435fc"]);
   });
 
   for (const sc of scenarios) {

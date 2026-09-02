@@ -301,7 +301,12 @@ describe("riskTierStats", () => {
       ],
       RULE,
     );
-    expect(stats.perTier).toEqual({ kev: 1, exploit: 1, epss: 1, none: 2, unknown: 1 });
+    // perTier carries every tier program.ts's RISK_TIER_ORDER knows about (three more than the
+    // old locally-duplicated RiskTier: cwe/aiVerdict/critical, the SAST tiers), all zero here
+    // since every row in this population is scope "sca".
+    expect(stats.perTier).toEqual({
+      kev: 1, exploit: 1, epss: 1, cwe: 0, aiVerdict: 0, critical: 0, none: 2, unknown: 1,
+    });
     expect(stats.open).toBe(6); // the RESOLVED row is excluded
     expect(stats.unclassified).toBe(1);
     const summed = Object.values(stats.perTier).reduce((a, b) => a + b, 0);
@@ -310,18 +315,47 @@ describe("riskTierStats", () => {
 
   it("reports every tier key even when a tier is empty", () => {
     const stats = riskTierStats([tierRow()], RULE);
+    // Program.ts's RISK_TIER_ORDER has eight tiers (the five gas/ ones plus the three SAST
+    // ones: cwe/aiVerdict/critical), not the five the old locally-duplicated RiskTier knew.
     expect(Object.keys(stats.perTier).sort()).toEqual(
-      ["epss", "exploit", "kev", "none", "unknown"],
+      ["aiVerdict", "critical", "cwe", "epss", "exploit", "kev", "none", "unknown"],
     );
   });
 
-  it("a sast/secrets row (structurally null signals) always lands in unknown", () => {
-    const stats = riskTierStats(
-      [tierRow({ scope: "sast", has_kev: null, has_exploit: null, epss: null })],
-      RULE,
-    );
-    expect(stats.perTier.unknown).toBe(1);
-    expect(stats.unclassified).toBe(1);
+  // FALSIFIED CLAIM, from the pre-D9b duplicate: "a sast row with no matching signal classifies
+  // unknown, because no sast risk rule exists". That was true only because insights.ts's local
+  // duplicate had no SastRiskRule to classify a sast row with at all — every sast row read
+  // has_kev/has_exploit/epss (SCA-only columns, ledgerTypes.ts), found them structurally null,
+  // and landed in unknown regardless of its actual weakness class. program.ts's real
+  // classifyRisk resolves DEFAULT_SAST_RISK_RULE for a sast row (config.ruleForScope) whenever
+  // no rule is passed explicitly, so a sast row with a real Top-25 CWE now classifies HIGH.
+  it("a sast row with a Top-25 CWE classifies high under DEFAULT_SAST_RISK_RULE", () => {
+    const stats = riskTierStats([
+      tierRow({
+        scope: "sast", severity: "HIGH", cwe: "CWE-79", ai_verdict: null,
+        has_kev: null, has_exploit: null, epss: null,
+      }),
+    ]);
+    expect(stats.perTier.cwe).toBe(1);
+    expect(stats.perTier.critical).toBe(0); // severity HIGH, not CRITICAL — only cwe fires
+    expect(stats.perTier.unknown).toBe(0);
+    expect(stats.unclassified).toBe(0);
+  });
+
+  // A secrets row is EXCLUDED before classification, never thrown into it: config.ruleForScope
+  // returns null for "secrets" (no exploit intelligence exists for a hardcoded string), and
+  // program.classifyRisk/riskTier throw on that — see insights.ts's risk-tier import note. If
+  // riskTierStats let one reach riskTier(), this test would throw instead of asserting.
+  it("a secrets row is excluded from classification and counted, not thrown", () => {
+    const stats = riskTierStats([
+      tierRow({ scope: "secrets" }),
+      tierRow({ scope: "sca", has_kev: true }),
+    ]);
+    expect(stats.excludedSecrets).toBe(1);
+    expect(stats.open).toBe(1); // the secrets row never joins `open`
+    expect(stats.perTier.kev).toBe(1);
+    const summed = Object.values(stats.perTier).reduce((a, b) => a + b, 0);
+    expect(summed).toBe(stats.open); // excludedSecrets stays outside the tier partition
   });
 
   it("scope filter narrows the population before classification", () => {
@@ -386,6 +420,40 @@ describe("triageFunnel", () => {
     const scaOnly = triageFunnel(rows, RULE, new Set(["a", "b"]), true, "sca");
     expect(scaOnly.open).toBe(1);
     expect(scaOnly.exploitable).toBe(1);
+  });
+
+  // No `rule` argument: each row resolves its OWN scope's default (config.ruleForScope) —
+  // the sca row under DEFAULT_RISK_RULE, the sast row under DEFAULT_SAST_RISK_RULE — so one
+  // call over a mixed sca+sast population classifies both kinds of row correctly instead of
+  // forcing one rule shape onto rows it was never written for.
+  it("a mixed sca+sast ledger stays classifiable with no rule argument", () => {
+    const rows = [
+      tierRow({ finding_key: "a", scope: "sca", has_kev: true }),
+      tierRow({
+        finding_key: "b", scope: "sast", severity: "HIGH", cwe: "CWE-79", ai_verdict: null,
+        has_kev: null, has_exploit: null, epss: null,
+      }),
+    ];
+    const f = triageFunnel(rows, undefined, new Set(["a", "b"]), true);
+    expect(f.open).toBe(2);
+    expect(f.unclassified).toBe(0);
+    expect(f.intel).toBe(2);
+    // Only the sca row's tier (kev/exploit) counts toward "exploitable" — the sast row's cwe
+    // tier is real evidence (intel), just not the KEV/public-exploit kind this funnel narrows to.
+    expect(f.exploitable).toBe(1);
+  });
+
+  // A secrets row is excluded before classification, never thrown into it — see riskTierStats's
+  // identical test above and insights.ts's risk-tier import note for why.
+  it("a secrets row is excluded from the funnel and counted, not thrown", () => {
+    const rows = [
+      tierRow({ finding_key: "a", scope: "secrets" }),
+      tierRow({ finding_key: "b", scope: "sca", has_kev: true, actionable_age_days: 40 }),
+    ];
+    const f = triageFunnel(rows, RULE, new Set(["b"]), true);
+    expect(f.excludedSecrets).toBe(1);
+    expect(f.open).toBe(1);
+    expect(f.exploitable).toBe(1);
   });
 });
 

@@ -11,6 +11,9 @@ export const SEVERITY_ORDER = [
 ] as const;
 export type Severity = (typeof SEVERITY_ORDER)[number];
 
+// UNKNOWN is a local normalization bucket, never an API value — not user-selectable.
+export const SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s) => s !== "UNKNOWN");
+
 /** Graphical marks — dots, bars, chart series. Tuned to >= 3:1 on white. */
 export const SEVERITY_COLORS: Record<string, string> = {
   CRITICAL: "#dc2626",
