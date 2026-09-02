@@ -150,6 +150,13 @@ export type RiskSignalFields = Pick<
 >;
 
 export interface ReconcileOptions {
+  /**
+   * REQUIRED, and not defaultable. It selects the node projection (SCA's `vulnerableAsset`
+   * union vs SAST's and secrets' plain `resource`, `filePath` vs `path`, …), it prefixes
+   * every finding_key, and it is stamped on every row — see the `scope` column above. A
+   * default would silently file one register's findings under another's identity namespace.
+   */
+  scope: Scope;
   disappearanceMode?: "scan_ts" | "midpoint";
   prevScanTs?: string | null;
   scannedSeverities?: string[] | null;
