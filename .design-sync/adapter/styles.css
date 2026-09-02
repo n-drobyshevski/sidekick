@@ -1,0 +1,76 @@
+/* The Wiz Sidekick shared core — "The Audit Ledger" visual system.
+ *
+ * WHY THIS FILE EXISTS, AND WHY IT IS THIN. gas_ai and gas_devsecops were diffed file by
+ * file: the severity palette, base, components, tables, sheet, feedback and settings layers
+ * are one system, and the ONLY axis on which the two registers disagree is the brand accent.
+ * tokens.css differs by 37 lines and every one of them is the accent triplet; base.css
+ * differs by 50 and every one is `var(--accent)` vs `var(--accent-text)` or an added
+ * --accent-edge shadow.
+ *
+ * So the structural base is imported from the register unchanged — nothing here forks it —
+ * and the brand rides on top as a swappable token block.
+ *
+ * Order is the cascade. These are contiguous slices and must stay in this sequence:
+ * tokens first, overrides (reduced motion, phone layout) last. */
+
+@import "../../gas_devsecops/src/client/styles/tokens.css";
+@import "../../gas_devsecops/src/client/styles/base.css";
+@import "../../gas_devsecops/src/client/styles/components.css";
+@import "../../gas_devsecops/src/client/styles/tables.css";
+@import "../../gas_devsecops/src/client/styles/sheet.css";
+@import "../../gas_devsecops/src/client/styles/feedback.css";
+@import "../../gas_devsecops/src/client/styles/settings.css";
+
+/* Six shared-core components (AxisBar, PointRail, FilterChipRow, TokenList, SelectField,
+   RuleGrip) are byte-identical modules in both registers whose RULES exist only in gas_ai —
+   the devsecops fork took the JS and not the CSS, because no devsecops page draws them.
+   Without this they ship as unstyled text. See extract-extras.mjs. */
+@import "./shared-extras.css";
+@import "../../gas_devsecops/src/client/styles/overrides.css";
+
+/* ------------------------------------------------------------------ the brand
+ *
+ * THE ACCENT IS SPLIT AND THE SPLIT IS LOAD-BEARING. Three tokens, three jobs:
+ *
+ *   --accent       identity FILLS only — the mark, the rail's active bar, a meter fill, a
+ *                  switch track. Never text. Never a focus ring. Never a chart series.
+ *   --accent-edge  MANDATORY under every one of those fills.
+ *   --accent-text  everything the accent carries as INK: links, focus rings, the active
+ *                  option, a chart series.
+ *
+ * The default is the DevSecOps yellow, inherited from the import above. It is a real yellow
+ * — far enough from the Medium severity fill and from --warn that nothing here is ever
+ * mistaken for a severity — and it pays for that separation by failing every contrast floor
+ * on its own: #ffcb13 measures 1.52:1 on white. That is why it is a fill token and nothing
+ * else, and why --accent-edge sits under every fill (rgba(0,0,0,.40) over #ffcb13 resolves
+ * to #997a0b).
+ *
+ * The primary button stays graphite in both brands. Do NOT fill it with the accent: white on
+ * #ffcb13 is 1.52:1. */
+
+/* The AI register's crimson. It needs no edge: #be123c measures 6.29:1 on white, so it can
+ * carry ink directly — which is exactly what gas_ai does. Setting --accent-edge to
+ * transparent turns the edge shadows above into no-ops, reproducing gas_ai's rendering
+ * rather than approximating it. */
+[data-brand="ai"] {
+  --accent: #be123c;
+  --accent-hover: #9f1239;
+  --accent-text: #be123c;
+  --accent-edge: transparent;
+  --accent-wash: rgba(190, 18, 60, 0.08);
+  --accent-wash-hover: rgba(190, 18, 60, 0.13);
+}
+
+/* ------------------------------------------------------- adapter-only surface
+ * Raised by the React adapter when a factory throws, so a broken preview says what broke
+ * instead of rendering blank. Nothing in the register emits this class. */
+.ds-adapter-error {
+  margin: 0;
+  padding: var(--sp-3, 12px);
+  border: 1px solid var(--sev-critical, #b42318);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface, #fff);
+  color: var(--sev-critical-text, #912018);
+  font: 12px/1.5 var(--font-mono, ui-monospace, monospace);
+  white-space: pre-wrap;
+}
