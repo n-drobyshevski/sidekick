@@ -1,48 +1,81 @@
-// Drive storage for Wiz Sidekick DevSecOps: raw sync page archives and the durable read-model
-// level. Trimmed from the OS-vulns archiveStore — no import staging here.
+// Drive storage: raw scan page archives, per-scan observations, the ledger snapshot fast
+// path, pre-rewrite journal backups, and the durable read-model second level.
 //
-// Layout under the ARCHIVE_FOLDER_ID root:
-//   syncs/<sync_id>/step-N-page-0001.json.gz   raw pages per battery step
-//   snapshots/                                 reserved; see the ledger-snapshot note below
-//   readmodels/                                the durable L2 under the CacheService cache
+// One sync mints a syncId; scanId = "<syncId>-<scope>" with scope in sca | sast | secrets, so
+// a three-scope sync writes three scan folders. Layout under the ARCHIVE_FOLDER_ID root:
+//   scans/<scanId>/page-NNNN.json.gz    raw API pages, zero-padded 4 digits
+//   scans/<scanId>/slim.json.gz         slimmed records for reconcile
+//   scans/<scanId>/pageruns.json.gz     per-page timing/count log
+//   obs/<scanId>.json.gz                observation set: the finding_keys this scan saw
+//   snapshots/ledger-snapshot.json.gz   typed LedgerState fast path, rewritten every write —
+//                                       ONE file, latest wins (see the note below)
+//   backups/backup-<jobId>.json.gz      pre-rewrite journal — locks.ts's rollback contract
+//   readmodels/                         durable L2 under CacheService — see readModelStore.ts,
+//                                       whose contract this file leaves untouched
+//   checkpoints/                        RESERVED for compaction; create-on-demand only (no
+//                                       typed API — nothing compacts yet)
+//   history/<YYYY-MM-DD>.json.gz        one ledger-stats snapshot per UTC day — historyStore.ts
 
 import { PROP_KEYS, requireProp } from "./props";
 
+// `LedgerState` is D1's type (src/domain/ledgerTypes.ts): scans and episodes are arrays,
+// `ledger` is keyed by finding_key. This module only relies on that outer shape — it never
+// reads a row — which is exactly what `looksLikeLedgerState` below checks on the way in.
+import type { LedgerState } from "../domain/ledgerTypes";
+export type { LedgerState };
+
+/** Structural check for `readLedgerSnapshot`/`readBackup`: arrays for scans/episodes, a
+ *  keyed object (not an array) for ledger. Not a type predicate — `LedgerState` carries no
+ *  index signature, so it cannot narrow a `Record<string, unknown>` — callers cast after. */
+function looksLikeLedgerState(v: Record<string, unknown>): boolean {
+  return (
+    Array.isArray(v["scans"]) &&
+    Array.isArray(v["episodes"]) &&
+    typeof v["ledger"] === "object" &&
+    v["ledger"] !== null &&
+    !Array.isArray(v["ledger"])
+  );
+}
+
 // "readmodels" holds the durable second level under the CacheService read-model cache —
-// see readModelStore.ts. Created on demand by `subfolder()` as well as by `ensureFolders`,
-// so a deployment that never re-runs setup() still self-heals on the first write.
-const SUBFOLDERS = ["syncs", "snapshots", "readmodels"] as const;
+// see readModelStore.ts, which imports `subfolder`/`readGzJsonNamed`/`listNames`/`trashNamed`/
+// `writeGzJson` by name; their signatures below are unchanged from what it already relies on.
+const SUBFOLDERS = [
+  "scans",
+  "obs",
+  "snapshots",
+  "backups",
+  "readmodels",
+  "checkpoints",
+  "history",
+] as const;
 export type Subfolder = (typeof SUBFOLDERS)[number];
 
-// Per-execution folder handles. Resolving one is not free — `syncFolder` costs a Script
-// Property read, a getFolderById and two getFoldersByName — and `writeSyncPage` called it
-// once PER PAGE, so a catalogue-refresh run spent ~150 Drive operations rediscovering a
-// folder it had just written to. The memo lasts exactly one execution, which is the right
-// lifetime: a resume hop is a fresh registry and re-resolves, so a folder moved or recreated
-// between hops is picked up.
+// Per-execution folder handles. Resolving one is not free — costs a Script Property read, a
+// getFolderById and two getFoldersByName — and a scan write touches its folder once per page,
+// so memoizing keeps a multi-page fetch from rediscovering the same folder on every call. The
+// memo lasts exactly one execution: in GAS it dies with the request; under vitest
+// `__resetMemosForTest()` (called by `test/gasEnv.ts`, or by hand until that lands) clears it
+// so a shared module registry does not leak a folder handle from one test into the next.
 let rootFolderMemo: GoogleAppsScript.Drive.Folder | undefined;
 const subfolderMemo = new Map<string, GoogleAppsScript.Drive.Folder>();
-const syncFolderMemo = new Map<string, GoogleAppsScript.Drive.Folder>();
+const scanFolderMemo = new Map<string, GoogleAppsScript.Drive.Folder>();
 
 /**
  * Drop this module's per-execution memos.
  *
  * Test-only. In GAS these memos die with the execution, so nothing in production ever needs
- * to clear them; under vitest the module registry outlives a test, and `test/gasEnv.ts`
- * calls this so a shared server can be reset without re-importing the whole graph. See the
- * comment on `resetToSynced` there.
+ * to clear them; under vitest the module registry outlives a test.
  */
 export function __resetMemosForTest(): void {
-  // `forgetFolders` already owns the list; a second copy here would be one to keep in step.
   forgetFolders();
 }
-
 
 /** Drop the memos — for `ensureFolders`, which may have just created what they cached. */
 function forgetFolders(): void {
   rootFolderMemo = undefined;
   subfolderMemo.clear();
-  syncFolderMemo.clear();
+  scanFolderMemo.clear();
 }
 
 function rootFolder(): GoogleAppsScript.Drive.Folder {
@@ -82,7 +115,7 @@ export function ensureFolders(rootId?: string): string {
 }
 
 function safeName(id: string): string {
-  return id.replace(/[^0-9A-Za-z._-]/g, "") || "sync";
+  return id.replace(/[^0-9A-Za-z._-]/g, "") || "scan";
 }
 
 // ---------------------------------------------------------------- gzip JSON files
@@ -93,22 +126,48 @@ export function writeGzJson(
 ): GoogleAppsScript.Drive.File {
   const json = JSON.stringify(payload);
   const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
-  // Replace any existing file of the same name (idempotent writes by deterministic name).
+  // Replace any existing file of the same name first — a re-run must not leave two files
+  // sharing one name; the name IS the key everywhere this store is read.
   const existing = folder.getFilesByName(name);
   while (existing.hasNext()) existing.next().setTrashed(true);
   return folder.createFile(blob);
 }
 
+function parseGzBlob(blob: GoogleAppsScript.Base.Blob, name: string): unknown {
+  const bytes = blob.getBytes();
+  const isGzip = bytes.length > 2 && (bytes[0] & 0xff) === 0x1f && (bytes[1] & 0xff) === 0x8b;
+  const text = isGzip
+    ? Utilities.ungzip(blob).getDataAsString("UTF-8")
+    : blob.getDataAsString("UTF-8");
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    // Absence is a null; corruption is not — a byte-mangled archive file must not be
+    // indistinguishable from one that was never written, so this throws rather than warning
+    // and returning null the way the old sync-page reader used to.
+    throw new Error(`Unparseable archive file ${name}: ${e}`);
+  }
+}
+
+/**
+ * A gzipped JSON file by NAME within a Drive folder, or `null` when there is none.
+ * Throws — naming the file — when the content cannot be parsed as JSON.
+ */
+export function readGzJson(folder: GoogleAppsScript.Drive.Folder, name: string): unknown | null {
+  const it = folder.getFilesByName(name);
+  if (!it.hasNext()) return null;
+  return parseGzBlob(it.next().getBlob(), name);
+}
+
 /**
  * A gzipped JSON file by NAME within a subfolder, or null when there is none.
  *
- * By name rather than by id because the durable read-model store addresses its files
- * deterministically: the name IS the key, so there is no id to remember anywhere.
+ * By subfolder name rather than a Folder handle because the durable read-model store
+ * addresses its files this way: the name IS the key, so there is no folder handle to thread
+ * through it.
  */
 export function readGzJsonNamed(folder: Subfolder, name: string): unknown | null {
-  const it = subfolder(folder).getFilesByName(name);
-  if (!it.hasNext()) return null;
-  return parseGzBlob(it.next().getBlob());
+  return readGzJson(subfolder(folder), name);
 }
 
 /** Every file name in a subfolder. The input to a sweep. */
@@ -128,119 +187,183 @@ export function trashNamed(folder: Subfolder, name: string): void {
 /**
  * Empty the durable read-model folder.
  *
- * Wired into `resetData`: a reset bumps the version, so every entry is already unreachable —
- * but reset should mean reset rather than "unreachable and still on disk".
+ * For a future `resetData`: a reset bumps the version, so every entry is already
+ * unreachable — but reset should mean reset rather than "unreachable and still on disk".
  */
 export function trashReadModels(): void {
   for (const name of listNames("readmodels")) trashNamed("readmodels", name);
 }
 
-export function readGzJsonFile(fileId: string): unknown | null {
-  try {
-    const file = DriveApp.getFileById(fileId);
-    return parseGzBlob(file.getBlob());
-  } catch (e) {
-    console.warn(`Unreadable Drive file ${fileId}: ${e}`);
-    return null;
-  }
+// ------------------------------------------------------------------- raw scan pages
+function pageFileName(pageIndex: number): string {
+  return `page-${String(pageIndex).padStart(4, "0")}.json.gz`;
 }
 
-function parseGzBlob(blob: GoogleAppsScript.Base.Blob): unknown | null {
-  try {
-    const bytes = blob.getBytes();
-    const isGzip = bytes.length > 2 && (bytes[0] & 0xff) === 0x1f && (bytes[1] & 0xff) === 0x8b;
-    const text = isGzip
-      ? Utilities.ungzip(blob).getDataAsString("UTF-8")
-      : blob.getDataAsString("UTF-8");
-    return JSON.parse(text);
-  } catch (e) {
-    console.warn(`Failed to parse archive blob: ${e}`);
-    return null;
-  }
-}
+const PAGE_NAME_RE = /^page-\d{4}\.json\.gz$/;
 
-// ------------------------------------------------------------------- raw sync pages
-/** The Drive folder holding one sync's raw page files (created on demand). */
-export function syncFolder(syncId: string): GoogleAppsScript.Drive.Folder {
-  const key = safeName(syncId);
-  const hit = syncFolderMemo.get(key);
+/**
+ * The Drive folder holding one scan's files — pages, slim records, page runs — created on
+ * demand. The returned handle carries a Drive folder id: NEVER forward that id to a client
+ * payload, it is an internal storage address and the client already has `scanId`.
+ */
+export function scanFolder(scanId: string): GoogleAppsScript.Drive.Folder {
+  const key = safeName(scanId);
+  const hit = scanFolderMemo.get(key);
   if (hit) return hit;
-  const folder = childFolder(subfolder("syncs"), key);
-  syncFolderMemo.set(key, folder);
+  const folder = childFolder(subfolder("scans"), key);
+  scanFolderMemo.set(key, folder);
   return folder;
 }
 
-export function writeSyncPage(
-  syncId: string,
-  stepIndex: number,
-  pageNumber: number,
-  payload: unknown,
-): string {
-  const name = `step-${stepIndex}-page-${String(pageNumber).padStart(4, "0")}.json.gz`;
-  return writeGzJson(syncFolder(syncId), name, payload).getId();
+/** Writes one raw API page. Returns the Drive file id — an internal storage address, never
+ *  forward it to a client payload; pages are addressed by (scanId, pageIndex), not by id. */
+export function writeScanPage(scanId: string, pageIndex: number, payload: unknown): string {
+  return writeGzJson(scanFolder(scanId), pageFileName(pageIndex), payload).getId();
 }
 
-/** All raw pages of one battery step, in page order (missing/unreadable pages skipped). */
-export function readSyncStepPages(syncId: string, stepIndex: number): unknown[] {
-  const prefix = `step-${stepIndex}-page-`;
+/**
+ * Every raw page of a scan, in page-index order.
+ *
+ * Sorted explicitly BY NAME rather than trusted to Drive's own iteration order, which is not
+ * guaranteed to be creation order — `page-0002` must always precede `page-0010` regardless of
+ * the order the fetch happened to write them in (a retried page, a resumed job).
+ */
+export function readScanPages(scanId: string): unknown[] {
   const pages: Array<{ name: string; payload: unknown }> = [];
-  const files = syncFolder(syncId).getFiles();
+  const files = scanFolder(scanId).getFiles();
   while (files.hasNext()) {
     const f = files.next();
     const name = f.getName();
-    if (!name.startsWith(prefix)) continue;
-    const payload = parseGzBlob(f.getBlob());
-    if (payload !== null) pages.push({ name, payload });
+    if (!PAGE_NAME_RE.test(name)) continue;
+    pages.push({ name, payload: parseGzBlob(f.getBlob(), name) });
   }
-  pages.sort((a, b) => (a.name < b.name ? -1 : 1));
+  pages.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return pages.map((p) => p.payload);
 }
 
-/** Trash a sync's raw archive folder (best-effort; used by resetData). */
-export function trashSyncArchive(syncId: string): void {
+const SLIM_NAME = "slim.json.gz";
+
+/** Writes the slimmed records used for reconcile. Returns the Drive file id — an internal
+ *  storage address, never forward it to a client payload; slim records are addressed by
+ *  scanId alone. */
+export function writeSlim(scanId: string, records: unknown[]): string {
+  return writeGzJson(scanFolder(scanId), SLIM_NAME, records).getId();
+}
+
+export function readSlim(scanId: string): unknown[] | null {
+  const parsed = readGzJson(scanFolder(scanId), SLIM_NAME);
+  return Array.isArray(parsed) ? parsed : null;
+}
+
+const PAGE_RUNS_NAME = "pageruns.json.gz";
+
+/** [pageIndex, recordCount] per fetched page — the per-page timing/count log. */
+export function writePageRuns(scanId: string, runs: Array<[number, number]>): void {
+  writeGzJson(scanFolder(scanId), PAGE_RUNS_NAME, runs);
+}
+
+export function readPageRuns(scanId: string): Array<[number, number]> | null {
+  const parsed = readGzJson(scanFolder(scanId), PAGE_RUNS_NAME);
+  return Array.isArray(parsed) ? (parsed as Array<[number, number]>) : null;
+}
+
+// -------------------------------------------------------------------- observations
+function obsFileName(scanId: string): string {
+  return `${safeName(scanId)}.json.gz`;
+}
+
+/** Writes the observation set: the finding_keys this scan saw. Returns the Drive file id — an
+ *  internal storage address, never forward it to a client payload; the set is addressed by
+ *  scanId alone. */
+export function writeObservations(scanId: string, keys: string[]): string {
+  return writeGzJson(subfolder("obs"), obsFileName(scanId), keys).getId();
+}
+
+export function readObservations(scanId: string): string[] {
+  const parsed = readGzJson(subfolder("obs"), obsFileName(scanId));
+  return Array.isArray(parsed) ? (parsed as string[]) : [];
+}
+
+/** Trash a scan wholesale: its page/slim/pageruns folder AND its observation-set file. */
+export function trashScan(scanId: string): void {
   try {
-    syncFolder(syncId).setTrashed(true);
+    scanFolder(scanId).setTrashed(true);
   } catch (e) {
-    console.warn(`Couldn't trash sync archive ${syncId}: ${e}`);
+    console.warn(`Couldn't trash scan ${scanId}: ${e}`);
   } finally {
-    // Never hand back a handle to a folder this execution just trashed.
-    syncFolderMemo.delete(safeName(syncId));
+    // Never hand back a memoized handle to a folder this execution just trashed.
+    scanFolderMemo.delete(safeName(scanId));
   }
+  trashNamed("obs", obsFileName(scanId));
 }
 
-export function trashFile(fileId: string | null): void {
-  if (!fileId) return;
-  try {
-    DriveApp.getFileById(fileId).setTrashed(true);
-  } catch (e) {
-    console.warn(`Couldn't trash file ${fileId}: ${e}`);
-  }
+// ----------------------------------------------------------------- ledger snapshot
+const SNAPSHOT_NAME = "ledger-snapshot.json.gz";
+
+export interface LedgerSnapshot {
+  version: number;
+  scans: LedgerState["scans"];
+  ledger: LedgerState["ledger"];
+  episodes: LedgerState["episodes"];
 }
 
-// ------------------------------------------------------------------ ledger snapshot
-//
-// THE SNAPSHOT FAST PATH IS NOT WRITTEN YET, AND THE `snapshots/` FOLDER IS RESERVED FOR IT.
-// What stood here was carried over from gas_ai unedited: writeSnapshot / readSnapshot over a
-// `SnapshotDoc` whose validity test was `Array.isArray(doc.nodes) && Array.isArray(doc.edges)`
-// — an asset GRAPH, which this register does not have and will never produce. It typechecked,
-// it had no caller, and the only way it could ever have run is by someone reaching for a
-// working fast path and getting one that rejects every document this product can write.
-// Deleted rather than adapted: `writeLedgerSnapshot` / `readLedgerSnapshot`, typed against the
-// ledger state, arrive with `ledgerStore` in Phase 2 and their validity test has to be written
-// against what the ledger actually holds. `trashSnapshot` went with them — it named the same
-// graph-snapshot file, so keeping it would have left a reset clearing a file nothing writes.
+/** Rewrite the fast-read copy of the ledger (called after every ledger state write). One
+ *  file, latest wins — this is a cache of the tabs, not a history of them. */
+export function writeLedgerSnapshot(state: LedgerState): void {
+  const snap: LedgerSnapshot = {
+    version: 1,
+    scans: state.scans,
+    ledger: state.ledger,
+    episodes: state.episodes,
+  };
+  writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
+}
 
-/** Total archive bytes (storage-stats surface). */
-export function archiveBytes(): number {
+/** The fast-read ledger copy, or null (missing/unreadable shape -> fall back to the tabs). */
+export function readLedgerSnapshot(): LedgerSnapshot | null {
+  const parsed = readGzJson(subfolder("snapshots"), SNAPSHOT_NAME);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  return looksLikeLedgerState(obj) ? (obj as unknown as LedgerSnapshot) : null;
+}
+
+// ------------------------------------------------------------------------ journals
+function backupFileName(jobId: string): string {
+  return `backup-${safeName(jobId)}.json.gz`;
+}
+
+/** Writes the pre-rewrite journal a crashed job rolls back from (see locks.ts). Returns the
+ *  Drive file id — an internal storage address, never forward it to a client payload; a
+ *  backup is addressed by jobId alone, so the id need not be remembered anywhere. */
+export function writeBackup(jobId: string, state: LedgerState): string {
+  return writeGzJson(subfolder("backups"), backupFileName(jobId), state).getId();
+}
+
+export function readBackup(jobId: string): LedgerState | null {
+  const parsed = readGzJson(subfolder("backups"), backupFileName(jobId));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  return looksLikeLedgerState(obj) ? (obj as unknown as LedgerState) : null;
+}
+
+/** Drop a committed journal. Idempotent; silent when there is none. */
+export function trashBackup(jobId: string): void {
+  trashNamed("backups", backupFileName(jobId));
+}
+
+// -------------------------------------------------------------------- archive bytes
+/** Total archive bytes, by top-level folder (storage-stats page). */
+export function archiveBytes(): Record<Subfolder, number> {
+  const out = {} as Record<Subfolder, number>;
+  for (const name of SUBFOLDERS) out[name] = folderBytes(subfolder(name));
+  return out;
+}
+
+function folderBytes(folder: GoogleAppsScript.Drive.Folder): number {
   let total = 0;
-  for (const name of SUBFOLDERS) {
-    const walk = (folder: GoogleAppsScript.Drive.Folder): void => {
-      const files = folder.getFiles();
-      while (files.hasNext()) total += files.next().getSize();
-      const folders = folder.getFolders();
-      while (folders.hasNext()) walk(folders.next());
-    };
-    walk(subfolder(name));
-  }
+  const files = folder.getFiles();
+  while (files.hasNext()) total += files.next().getSize();
+  const folders = folder.getFolders();
+  while (folders.hasNext()) total += folderBytes(folders.next());
   return total;
 }
