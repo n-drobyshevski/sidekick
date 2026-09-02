@@ -160,7 +160,9 @@ export const EPSS_PRIORITY_THRESHOLD = 0.1;
  * a derivation reads has to move this, or a persisted result is silently reused across the
  * change and the knob appears to do nothing.
  */
-export const DERIVATION_VERSION = 1;
+// 1 -> 2: ledgerCore.baseRows' fix clock is now per scope (fix_available_at = first_seen for
+// sast and secrets, since neither waits on a vendor), which changes every derived row.
+export const DERIVATION_VERSION = 2;
 
 // --------------------------------------------------------------------------------------- //
 //  Risk classification — Prioritization to Prediction (P2P). brick/devsecops/config.py is
