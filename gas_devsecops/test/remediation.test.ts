@@ -1,27 +1,51 @@
-// D4 — Kaplan–Meier. Port of the KM-relevant sections of gas/test/remediation.test.ts
+// D4 (Kaplan–Meier) ported the KM-relevant sections of gas/test/remediation.test.ts
 // (describe blocks: kmMedian, kaplanMeier, kmQuantileFromCurve — ~186 of gas/'s 785 lines),
-// plus a new brick-fixture parity suite the gas/ file has no equivalent of (brick/devsecops
-// is a second, independently-implemented oracle — see test/fixtures/brick/km.json).
+// plus a brick-fixture parity suite gas/'s file has no equivalent of (brick/devsecops is a
+// second, independently-implemented oracle — see test/fixtures/brick/km.json).
 //
-// Dropped from gas/'s file, and why: everything outside the KM engine (mttrPercentiles,
-// resolutionBuckets, openPastSla/openPastSlaFromRecords, actionableView, awaitingVendorFix,
-// the latency clocks, baseRowNoFix/recordNoFix) is out of scope for this package — remediation.ts
-// here ports ONLY kmCurve/kmQuantileFromCurve/kmMedianFromCurve/kaplanMeier/kmMedian (see that
-// file's header). Within the KM-relevant material, the ONE deliberate drop is EOL: the
-// "isEndOfLifeName / recordEol" describe block and the "EOL findings excluded from the MTTR
-// KPI" describe block (which drives kaplanMeier directly) are both gone — a code register has
-// no host OS to be end-of-life, so isEndOfLifeName/recordEol don't exist here to test.
+// D4b ports the rest: mttrPercentiles, resolutionBuckets, openPastSla/openPastSlaFromRecords,
+// actionableView, awaitingVendorFix, the latency clocks, and baseRowNoFix/recordNoFix — see
+// src/domain/remediation.ts's header for the full DIVERGENCE list this drags in (no
+// REMEDIATION_ROLLOUT_ISO / ROLLOUT_MS / published_date; scope-gated awaiting/no-fix
+// predicates; opts.scope filters). Two describe blocks stay dropped on purpose:
+//   - "isEndOfLifeName / recordEol" and "EOL findings excluded from the MTTR KPI" — a code
+//     register has no host OS to be end-of-life, so those predicates don't exist here.
+//   - "recordNoFix ↔ baseRow.awaiting_vendor_fix agreement" — gas/'s version built its ledger
+//     row via ledgerCore.baseRows(emptyState()), a derivation this package doesn't own (no
+//     ledgerCore.ts in this tree; the equivalent lives in lifecycle.ts, owned by a concurrent
+//     package). Ported below as a hand-built-row equivalent instead of reaching into that
+//     module mid-edit — see "recordNoFix vs baseRowNoFix agreement".
+//   - the "disclosure" latency-origin tests ("the disclosure origin measures the vendor's
+//     wait...", "a row with no publication date is unmeasured on the disclosure clock only",
+//     "a reopened row is unmeasured on the disclosure clock only") — this register's ledger
+//     has no published_date column, so that clock has no data source (see LatencyOrigin's
+//     DIVERGENCE note in remediation.ts).
+//   - "a legacy pre-rollout row is unmeasured, not a zero" — no rollout boundary exists here;
+//     replaced below with the boundary that DOES exist (no first_seen captured at all).
 
 import { describe, expect, it } from "vitest";
 import {
+  actionableView,
+  awaitingVendorFix,
+  baseRowNoFix,
   kaplanMeier,
   kmMedian,
   kmMedianFromCurve,
   kmQuantileFromCurve,
+  latencySegments,
+  latencyView,
+  mttrPercentiles,
+  openPastSla,
+  openPastSlaFromRecords,
+  recordNoFix,
+  resolutionBuckets,
+  RESOLUTION_BUCKET_LABELS,
   type KMPoint,
   type RemediationRow,
 } from "../src/domain/remediation";
-import { OVERALL } from "../src/domain/config";
+import { OVERALL, type Scope } from "../src/domain/config";
+import type { BaseRow } from "../src/domain/ledgerTypes";
+import { quantile, type Rec } from "../src/domain/util";
 import { brickFixture, expectParity } from "./helpers";
 
 // Ledger-base projections: a resolved row carries a finite mttr_days; an open row
@@ -37,6 +61,45 @@ const open = (age_days: number | null, severity = "HIGH", status = "OPEN") => ({
   status,
   mttr_days: null,
   age_days,
+});
+
+// Base-row projections carrying the actionable-clock fields the D4b functions read (a superset
+// of RemediationRow, so they also drop straight into openPastSla/kmMedian for the naive view).
+// A resolved row has an mttr on both clocks; an open row has an age on both. An awaiting row is
+// OPEN with null actionable fields — outside every clock, still in the open count. `scope`
+// defaults to "sca" because the actionable/awaiting-vendor-fix machinery is a vendor-fix
+// concept that only means something there (D4b rule 3) — override it to exercise the
+// sast/secrets guard.
+const bRes = (
+  mttr_days: number | null,
+  mttr_actionable_days: number | null,
+  severity = "HIGH",
+  scope: Scope = "sca",
+) => ({
+  scope,
+  severity,
+  status: "RESOLVED",
+  mttr_days,
+  age_days: null,
+  mttr_actionable_days,
+  actionable_age_days: null,
+  awaiting_vendor_fix: false,
+});
+const bOpen = (
+  age_days: number | null,
+  actionable_age_days: number | null,
+  awaiting_vendor_fix = false,
+  severity = "HIGH",
+  scope: Scope = "sca",
+) => ({
+  scope,
+  severity,
+  status: "OPEN",
+  mttr_days: null,
+  age_days,
+  mttr_actionable_days: null,
+  actionable_age_days,
+  awaiting_vendor_fix,
 });
 
 describe("kmMedian", () => {
@@ -323,4 +386,540 @@ describe("kaplanMeier against the brick/devsecops PySpark oracle (test/fixtures/
       }
     });
   }
+});
+
+// ------------------------------------------------------------------- D4b: everything else
+
+describe("mttrPercentiles", () => {
+  it("p50 / p90 match quantile over resolved mttr_days, per sev + overall", () => {
+    const rows = [res(1), res(2), res(3), res(4)];
+    const { perSev, overall } = mttrPercentiles(rows);
+    expect(perSev.HIGH).toEqual({
+      p50: quantile([1, 2, 3, 4], 0.5), // 2.5
+      p90: quantile([1, 2, 3, 4], 0.9), // 3.7
+      count: 4,
+    });
+    expect(overall).toEqual({ p50: quantile([1, 2, 3, 4], 0.5), p90: quantile([1, 2, 3, 4], 0.9), count: 4 });
+  });
+
+  it("excludes open / null-mttr rows; empty sample -> nulls and count 0", () => {
+    const { perSev, overall } = mttrPercentiles([res(5, "CRITICAL"), open(40, "CRITICAL"), res(null, "LOW")]);
+    expect(perSev.CRITICAL).toEqual({ p50: 5, p90: 5, count: 1 });
+    expect(perSev.LOW).toBeUndefined();
+    expect(overall.count).toBe(1);
+    expect(mttrPercentiles([])).toEqual({ perSev: {}, overall: { p50: null, p90: null, count: 0 } });
+  });
+
+  it("opts.scope narrows the population before computing (D4b rule 4)", () => {
+    const rows = [
+      { ...res(2, "HIGH"), scope: "sca" as const },
+      { ...res(2, "HIGH"), scope: "sca" as const },
+      { ...res(100, "HIGH"), scope: "sast" as const }, // would drag the sca percentile way up
+    ];
+    const scaOnly = mttrPercentiles(rows, { scope: "sca" });
+    expect(scaOnly.perSev.HIGH).toEqual({ p50: 2, p90: 2, count: 2 });
+    const all = mttrPercentiles(rows);
+    expect(all.perSev.HIGH.count).toBe(3);
+  });
+});
+
+describe("resolutionBuckets", () => {
+  it("buckets at <= edges 1/7/30/90 (inclusive-low); 90.0001 -> 90+d", () => {
+    const { perSev, total, labels } = resolutionBuckets([
+      res(0.5), res(1), // bucket 0 (<= 1)
+      res(1.01), res(7), // bucket 1 (<= 7)
+      res(7.01), res(30), // bucket 2 (<= 30)
+      res(30.01), res(90), // bucket 3 (<= 90)
+      res(90.0001), res(400), // bucket 4 (90+)
+    ]);
+    expect(perSev.HIGH).toEqual([2, 2, 2, 2, 2]);
+    expect(total).toBe(10);
+    expect(labels).toBe(RESOLUTION_BUCKET_LABELS);
+    expect(labels).toHaveLength(5);
+  });
+
+  it("per-sev counts sum to total; open / null-mttr rows excluded", () => {
+    const { perSev, total } = resolutionBuckets([
+      res(2, "CRITICAL"), // bucket 1 (<= 7)
+      res(50, "LOW"), // bucket 3 (<= 90)
+      open(5, "HIGH"), // open — excluded
+      res(null, "MEDIUM"), // null mttr — excluded
+    ]);
+    expect(perSev.CRITICAL).toEqual([0, 1, 0, 0, 0]);
+    expect(perSev.LOW).toEqual([0, 0, 0, 1, 0]);
+    expect(perSev.HIGH).toBeUndefined();
+    expect(perSev.MEDIUM).toBeUndefined();
+    expect(total).toBe(2);
+    const summed = Object.values(perSev)
+      .flat()
+      .reduce((a, b) => a + b, 0);
+    expect(summed).toBe(total);
+  });
+
+  it("opts.scope narrows the population before bucketing (D4b rule 4)", () => {
+    const rows = [
+      { ...res(0.5, "HIGH"), scope: "sca" as const },
+      { ...res(400, "HIGH"), scope: "sast" as const },
+    ];
+    const scaOnly = resolutionBuckets(rows, { scope: "sca" });
+    expect(scaOnly.total).toBe(1);
+    expect(scaOnly.perSev.HIGH).toEqual([1, 0, 0, 0, 0]);
+  });
+});
+
+describe("openPastSla", () => {
+  it("strict > boundary: age exactly == target is NOT breached", () => {
+    // CRITICAL target = 7. age 7 -> in SLA; age 7.01 -> breached.
+    const out = openPastSla([open(7, "CRITICAL"), open(7.01, "CRITICAL")]);
+    expect(out.perSev.CRITICAL).toEqual({ open: 2, breached: 1, pct: 50, target: 7 });
+  });
+
+  it("no-target severity (UNKNOWN) never breaches; target is null", () => {
+    // "WEIRD" normalizes to UNKNOWN, which has no SLA target.
+    const out = openPastSla([open(999, "UNKNOWN"), open(999, "WEIRD")]);
+    expect(out.perSev.UNKNOWN).toEqual({ open: 2, breached: 0, pct: 0, target: null });
+    expect(out.overall).toEqual({ open: 2, breached: 0, pct: 0 });
+  });
+
+  it("resolved and null-age rows are ignored; overall pct null when open === 0", () => {
+    const out = openPastSla([res(999, "CRITICAL"), open(null, "CRITICAL"), res(5, "HIGH")]);
+    expect(out.overall).toEqual({ open: 0, breached: 0, pct: null });
+    expect(out.perSev).toEqual({});
+  });
+
+  it("overall sums breached / open across severities", () => {
+    const out = openPastSla([
+      open(10, "CRITICAL"), // 10 > 7 -> breached
+      open(3, "CRITICAL"), // 3 <= 7 -> in SLA
+      open(40, "MEDIUM"), // 40 > 30 -> breached
+      open(999, "UNKNOWN"), // no target -> never
+    ]);
+    expect(out.overall).toEqual({ open: 4, breached: 2, pct: 50 });
+    expect(out.perSev.CRITICAL).toEqual({ open: 2, breached: 1, pct: 50, target: 7 });
+    expect(out.perSev.MEDIUM).toEqual({ open: 1, breached: 1, pct: 100, target: 30 });
+  });
+
+  it("opts.scope narrows the population before scoring the backlog (D4b rule 4)", () => {
+    const rows = [
+      { ...open(10, "CRITICAL"), scope: "sca" as const }, // breached
+      { ...open(999, "CRITICAL"), scope: "sast" as const }, // also breached, other scope
+    ];
+    const scaOnly = openPastSla(rows, { scope: "sca" });
+    expect(scaOnly.overall).toEqual({ open: 1, breached: 1, pct: 100 });
+    const all = openPastSla(rows);
+    expect(all.overall.open).toBe(2);
+  });
+});
+
+describe("openPastSlaFromRecords", () => {
+  it("counts breached open frame records against an injected now", () => {
+    const now = Date.parse("2026-07-16T00:00:00Z");
+    const records = [
+      { severity: "CRITICAL", status: "OPEN", firstSeenAt: "2026-06-01T00:00:00Z" }, // 45d > 7 -> breached
+      { severity: "CRITICAL", status: "OPEN", firstSeenAt: "2026-07-14T00:00:00Z" }, // 2d -> in SLA
+      { severity: "MEDIUM", status: "OPEN", firstSeenAt: "2026-05-01T00:00:00Z" }, // 76d > 30 -> breached
+      { severity: "CRITICAL", status: "RESOLVED", firstSeenAt: "2020-01-01T00:00:00Z" }, // resolved -> ignored
+      { status: "OPEN", firstSeenAt: "2020-01-01T00:00:00Z" }, // no severity -> UNKNOWN, no target -> skipped
+      { severity: "CRITICAL", status: "OPEN" }, // no firstSeen -> skipped
+    ];
+    expect(openPastSlaFromRecords(records, now)).toBe(2);
+  });
+
+  it("returns 0 with no records or no first-seen column", () => {
+    expect(openPastSlaFromRecords([], Date.now())).toBe(0);
+    expect(openPastSlaFromRecords([{ severity: "CRITICAL", status: "OPEN" }], Date.now())).toBe(0);
+  });
+});
+
+describe("actionableView", () => {
+  it("projects the actionable clock onto mttr_days/age_days; severity+status pass through", () => {
+    const rows = [
+      bRes(20, 3, "CRITICAL"), // resolved: from-detection 20d, actionable 3d
+      bOpen(50, 8), // open: from-detection 50d, actionable 8d
+      bOpen(40, null, true, "MEDIUM"), // awaiting: actionable fields null
+    ];
+    expect(actionableView(rows)).toEqual([
+      { severity: "CRITICAL", status: "RESOLVED", mttr_days: 3, age_days: null },
+      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 8 },
+      { severity: "MEDIUM", status: "OPEN", mttr_days: null, age_days: null },
+    ]);
+  });
+});
+
+describe("openPastSla over actionableView", () => {
+  it("measures from the actionable age and drops awaiting rows (null actionable age)", () => {
+    // CRITICAL target = 7. All three are past SLA on the from-detection age; only the
+    // second is past it on the actionable clock, and the awaiting row has no clock at all.
+    const rows = [
+      bOpen(40, 3, false, "CRITICAL"), // fix arrived late: actionable 3d -> in SLA
+      bOpen(60, 10, false, "CRITICAL"), // actionable 10d > 7 -> breached
+      bOpen(99, null, true, "CRITICAL"), // awaiting: excluded entirely
+    ];
+    // Naive view breaches all three (every from-detection age > 7).
+    expect(openPastSla(rows).overall).toEqual({ open: 3, breached: 3, pct: 100 });
+    // Actionable view: awaiting row drops out (null age), and the late-fixed row is in SLA.
+    const actionable = openPastSla(actionableView(rows));
+    expect(actionable.overall).toEqual({ open: 2, breached: 1, pct: 50 });
+    expect(actionable.perSev.CRITICAL).toEqual({ open: 2, breached: 1, pct: 50, target: 7 });
+  });
+});
+
+describe("kmMedian naive vs actionable strata", () => {
+  it("differ when the two clocks disagree on the same resolved set", () => {
+    // Same four findings; from-detection mttrs 1..4 (median 2), actionable mttrs 10..40
+    // (a late-available fix shifts every event right), so the KM medians land apart.
+    const rows = [bRes(1, 10), bRes(2, 20), bRes(3, 30), bRes(4, 40)];
+    expect(kmMedian(rows)).toBe(2); // from-detection: crosses .5 at t=2
+    expect(kmMedian(actionableView(rows))).toBe(20); // actionable: crosses .5 at t=20
+  });
+});
+
+describe("awaitingVendorFix", () => {
+  it("counts awaiting rows per sev + overall; pctOfOpen is their share of all open", () => {
+    const rows = [
+      bOpen(5, null, true, "CRITICAL"), // awaiting
+      bOpen(5, 5, false, "CRITICAL"), // open, fix available -> not awaiting
+      bOpen(5, null, true, "HIGH"), // awaiting
+      bRes(3, 3, "HIGH"), // resolved -> not open, ignored
+    ];
+    const out = awaitingVendorFix(rows);
+    expect(out.perSev).toEqual({ CRITICAL: 1, HIGH: 1 });
+    expect(out.overall).toBe(2);
+    expect(out.openTotal).toBe(3); // three OPEN rows
+    expect(out.pctOfOpen).toBeCloseTo((2 / 3) * 100);
+    expect(out.notApplicable).toBe(0); // every row above is scope "sca"
+  });
+
+  it("openTotal 0 -> pctOfOpen null; severity is normalized", () => {
+    expect(awaitingVendorFix([])).toEqual({
+      perSev: {}, overall: 0, openTotal: 0, pctOfOpen: null, notApplicable: 0,
+    });
+    // All resolved: no open rows -> null share, not a fake 0%.
+    expect(awaitingVendorFix([bRes(3, 3, "HIGH")])).toEqual({
+      perSev: {}, overall: 0, openTotal: 0, pctOfOpen: null, notApplicable: 0,
+    });
+    // "weird" normalizes to UNKNOWN.
+    const out = awaitingVendorFix([bOpen(5, null, true, "weird")]);
+    expect(out.perSev).toEqual({ UNKNOWN: 1 });
+    expect(out.overall).toBe(1);
+    expect(out.pctOfOpen).toBe(100);
+    expect(out.notApplicable).toBe(0);
+  });
+
+  // D4b rule 3: sast/secrets have no vendor to wait on, so a non-sca row is never counted as
+  // awaiting a vendor fix — even when its own awaiting_vendor_fix flag reads true (the
+  // scenario an upstream derivation bug would produce).
+  it("sast rows never count as awaiting, even with awaiting_vendor_fix wrongly set true", () => {
+    const rows = [
+      bOpen(5, null, true, "CRITICAL", "sast"), // wrongly-flagged sast row -> notApplicable
+      bOpen(5, null, true, "HIGH", "sca"), // genuinely awaiting sca row
+    ];
+    const out = awaitingVendorFix(rows);
+    expect(out.perSev).toEqual({ HIGH: 1 });
+    expect(out.overall).toBe(1);
+    expect(out.openTotal).toBe(2); // both rows are open, for context
+    expect(out.notApplicable).toBe(1);
+  });
+
+  it("secrets rows never count as awaiting either", () => {
+    const rows = [bOpen(5, null, true, "MEDIUM", "secrets")];
+    const out = awaitingVendorFix(rows);
+    expect(out.perSev).toEqual({});
+    expect(out.overall).toBe(0);
+    expect(out.openTotal).toBe(1);
+    expect(out.notApplicable).toBe(1);
+  });
+
+  it("a non-sca row with no fix signal set is simply not awaiting (openTotal still counts it)", () => {
+    const rows = [bOpen(5, null, false, "LOW", "sast")];
+    const out = awaitingVendorFix(rows);
+    expect(out).toEqual({ perSev: {}, overall: 0, openTotal: 1, pctOfOpen: 0, notApplicable: 0 });
+  });
+
+  it("opts.scope narrows the population before computing (D4b rule 4)", () => {
+    const rows = [
+      bOpen(5, null, true, "CRITICAL", "sca"),
+      bOpen(5, null, true, "HIGH", "sca"),
+    ];
+    const scaOnly = awaitingVendorFix(rows, { scope: "sca" });
+    expect(scaOnly.overall).toBe(2);
+    const noneMatch = awaitingVendorFix(rows, { scope: "sast" });
+    expect(noneMatch.overall).toBe(0);
+    expect(noneMatch.openTotal).toBe(0);
+  });
+});
+
+describe("baseRowNoFix", () => {
+  it("is true only for awaiting, open, SCA rows; resolved / fixed rows are never hidden", () => {
+    expect(baseRowNoFix(bOpen(5, null, true))).toBe(true); // scope defaults to "sca"
+    expect(baseRowNoFix(bOpen(5, 5, false))).toBe(false); // open, fix available
+    expect(baseRowNoFix(bRes(3, 3))).toBe(false); // resolved -> awaiting always false
+  });
+
+  it("is false for a non-sca scope even when awaiting_vendor_fix is (wrongly) true (D4b rule 3)", () => {
+    expect(baseRowNoFix(bOpen(5, null, true, "MEDIUM", "sast"))).toBe(false);
+    expect(baseRowNoFix(bOpen(5, null, true, "MEDIUM", "secrets"))).toBe(false);
+  });
+});
+
+describe("recordNoFix", () => {
+  it("open + no fix -> true", () => {
+    expect(recordNoFix({ status: "OPEN" })).toBe(true);
+  });
+  it("fixedVersion present -> false", () => {
+    expect(recordNoFix({ status: "OPEN", fixedVersion: "1.2.3" })).toBe(false);
+  });
+  it("fixDate present -> false", () => {
+    expect(recordNoFix({ status: "OPEN", fixDate: "2026-07-06T00:00:00Z" })).toBe(false);
+  });
+  it("resolved -> false (resolved rows are never hidden)", () => {
+    expect(recordNoFix({ status: "RESOLVED" })).toBe(false);
+  });
+
+  // D4b rule 3: a record explicitly tagged with a non-sca scope is never no-fix.
+  it("scope !== sca -> false, even with no fix signal at all", () => {
+    expect(recordNoFix({ status: "OPEN", scope: "sast" })).toBe(false);
+    expect(recordNoFix({ status: "OPEN", scope: "secrets" })).toBe(false);
+  });
+  it("no scope tag at all still applies the fixed-signal test (absent scope survives)", () => {
+    expect(recordNoFix({ status: "OPEN" })).toBe(true);
+    expect(recordNoFix({ status: "OPEN", fixedVersion: "1.0" })).toBe(false);
+  });
+  it("scope === sca is treated the same as no scope tag", () => {
+    expect(recordNoFix({ status: "OPEN", scope: "sca" })).toBe(true);
+    expect(recordNoFix({ status: "OPEN", scope: "sca", fixedVersion: "1.0" })).toBe(false);
+  });
+});
+
+describe("recordNoFix vs baseRowNoFix agreement", () => {
+  // The frame predicate (recordNoFix, over dotted scan records) and the durable predicate
+  // (baseRowNoFix, over a ledger-derived BaseRow) must classify the SAME underlying finding
+  // identically. DIVERGENCE from gas/'s version of this test: gas/ built its ledger row via
+  // ledgerCore.baseRows(emptyState()) and asserted against that derivation's OWN output; the
+  // equivalent derivation here (lifecycle.ts) is a concurrently-edited package this one does
+  // not own, so this pins the predicate PAIR directly against hand-built rows encoding the
+  // same scenarios, rather than reaching into a derivation mid-edit.
+  const scenarios: {
+    name: string;
+    rec: Rec;
+    base: Pick<BaseRow, "scope" | "awaiting_vendor_fix">;
+  }[] = [
+    {
+      name: "sca, open, no fix -> awaiting",
+      rec: { scope: "sca", status: "OPEN" },
+      base: { scope: "sca", awaiting_vendor_fix: true },
+    },
+    {
+      name: "sca, open, fixedVersion present -> has a fix",
+      rec: { scope: "sca", status: "OPEN", fixedVersion: "1.2.3" },
+      base: { scope: "sca", awaiting_vendor_fix: false },
+    },
+    {
+      name: "sca, resolved -> never hidden",
+      rec: { scope: "sca", status: "RESOLVED" },
+      base: { scope: "sca", awaiting_vendor_fix: false },
+    },
+    {
+      name: "sast, open, no fix -> STILL not awaiting, even if the flag was set wrong",
+      rec: { scope: "sast", status: "OPEN" },
+      base: { scope: "sast", awaiting_vendor_fix: true },
+    },
+    {
+      name: "secrets, open, no fix -> STILL not awaiting",
+      rec: { scope: "secrets", status: "OPEN" },
+      base: { scope: "secrets", awaiting_vendor_fix: true },
+    },
+  ];
+
+  it("both predicates classify every scenario identically", () => {
+    scenarios.forEach((s) => {
+      expect(recordNoFix(s.rec), s.name).toBe(baseRowNoFix(s.base));
+    });
+  });
+});
+
+// ------------------------------------------------------------------ latency clocks
+//
+// The complement of every other clock in this file: the wait for a fix to EXIST, with rows
+// still awaiting one as the censored population rather than an excluded one. Timestamps are
+// real ISO strings (not pre-baked day counts) because the derivation is what is under test.
+//
+// DIVERGENCE from gas/'s version: no REMEDIATION_ROLLOUT_ISO boundary exists in this register
+// (D4b rule 2), so tests that exercised it are replaced with the boundary that DOES exist here
+// — a row whose first_seen was never captured at all. The "disclosure" origin has no tests here
+// either, for the same reason LatencyOrigin dropped it: no published_date column to anchor to.
+describe("latencyView / latencySegments", () => {
+  const NOW = Date.parse("2026-08-01T00:00:00Z");
+  type LatRow = Parameters<typeof latencyView>[0][number] & {
+    scope: Scope;
+    mttr_days: number | null;
+    age_days: number | null;
+    awaiting_vendor_fix: boolean;
+  };
+  const lat = (over: Partial<LatRow>): LatRow => ({
+    scope: "sca",
+    severity: "HIGH",
+    status: "OPEN",
+    first_seen: "2026-07-01T00:00:00Z",
+    fix_available_at: null,
+    resolved_at: null,
+    // Not read by the latency clocks (they key off isOpen/fix_available_at); carried so the
+    // same rows can be run through baseRowNoFix, the show-no-fix toggle's own predicate.
+    awaiting_vendor_fix: false,
+    // Carried so the SAME objects also feed the from-detection clock, which is what makes the
+    // differential test below a comparison rather than two unrelated numbers.
+    mttr_days: null,
+    age_days: null,
+    ...over,
+  });
+
+  // Four findings whose two clocks disagree on purpose: the fix landed early and the team was
+  // slow (A, D) or the fix landed late and the team was fast (C). Latencies 2/4/6/8,
+  // from-detection mttrs 20/10/8/30.
+  const fourClocks = (): LatRow[] => [
+    lat({ fix_available_at: "2026-07-03T00:00:00Z", resolved_at: "2026-07-21T00:00:00Z", status: "RESOLVED", mttr_days: 20 }),
+    lat({ fix_available_at: "2026-07-05T00:00:00Z", resolved_at: "2026-07-11T00:00:00Z", status: "RESOLVED", mttr_days: 10 }),
+    lat({ fix_available_at: "2026-07-07T00:00:00Z", resolved_at: "2026-07-09T00:00:00Z", status: "RESOLVED", mttr_days: 8 }),
+    lat({ fix_available_at: "2026-07-09T00:00:00Z", resolved_at: "2026-07-31T00:00:00Z", status: "RESOLVED", mttr_days: 30 }),
+  ];
+
+  it("measures the wait for a fix to exist, not the wait to deploy one", () => {
+    // Latency events 2,4,6,8: S(2)=3/4=.75, S(4)=.75*(2/3)=.5 -> crosses at 4.
+    // From-detection events 8,10,20,30: S(8)=.75, S(10)=.5 -> crosses at 10.
+    // Same four rows, same estimator, two different questions.
+    const rows = fourClocks();
+    expect(kmMedian(latencyView(rows, "detection", NOW))).toBe(4);
+    expect(kmMedian(rows)).toBe(10);
+  });
+
+  it("a row with no captured origin is unmeasured, not a zero (D4b rule 2: no rollout boundary here)", () => {
+    // gas/ exempted a pre-REMEDIATION_ROLLOUT_ISO row via ROLLOUT_MS (the old hasFix-only
+    // ingestion guaranteed a fix existed for those). This register has no such migration
+    // boundary — first_seen is either captured or it isn't, and "isn't" is the only way to be
+    // unmeasured now.
+    const rows = [lat({ first_seen: null })];
+    expect(latencyView(rows, "detection", NOW)).toEqual([]);
+    const seg = latencySegments(rows, "detection", NOW);
+    expect(seg).toMatchObject({ total: 1, unmeasured: 1, events: 0, censored: 0 });
+  });
+
+  it("a fix that predates detection is a zero-length wait, not a negative one", () => {
+    // Wiz's upstream fixDate routinely predates our first sight of the finding.
+    const rows = [
+      lat({ first_seen: "2026-07-10T00:00:00Z", fix_available_at: "2026-07-02T00:00:00Z" }),
+    ];
+    expect(latencyView(rows, "detection", NOW)).toEqual([
+      { severity: "HIGH", status: "RESOLVED", mttr_days: 0, age_days: null },
+    ]);
+    expect(latencySegments(rows, "detection", NOW)).toMatchObject({ events: 1, zeroAtOrigin: 1 });
+  });
+
+  it("a finding still awaiting a fix is censored at now, never dropped", () => {
+    const rows = [lat({})]; // open, no fix, first seen 07-01; NOW is 08-01
+    expect(latencyView(rows, "detection", NOW)).toEqual([
+      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 31 },
+    ]);
+    expect(latencySegments(rows, "detection", NOW)).toMatchObject({ censored: 1, events: 0 });
+  });
+
+  it("a finding that closed before any fix appeared is censored at its resolution", () => {
+    // The competing risk: the repository went away, or Wiz stopped returning it. We stopped
+    // being able to observe a fix at that moment, so that is where the observation ends — and
+    // it is counted apart from a genuine still-awaiting row.
+    const rows = [
+      lat({ status: "RESOLVED", resolved_at: "2026-07-11T00:00:00Z" }),
+    ];
+    expect(latencyView(rows, "detection", NOW)).toEqual([
+      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 10 },
+    ]);
+    expect(latencySegments(rows, "detection", NOW)).toMatchObject({
+      closedBeforeFix: 1, censored: 0, events: 0,
+    });
+  });
+
+  it("reports '> N d' rather than inventing a median when most are still awaiting", () => {
+    const rows = [
+      lat({ fix_available_at: "2026-07-06T00:00:00Z" }), // event at 5
+      lat({ first_seen: null }), // no origin captured -> unmeasured
+      lat({}), lat({}), lat({}), // censored at 31
+    ];
+    const km = kaplanMeier(latencyView(rows, "detection", NOW));
+    expect(km.events).toBe(1);
+    expect(km.censored).toBe(3);
+    expect(km.median).toBeNull(); // S(5) = 1 - 1/4 = 0.75, never reaches 0.5
+    expect(km.medianLowerBound).toBe(31);
+  });
+
+  it("segments account for every row, and agree with the estimator's own counts", () => {
+    const rows = [
+      ...fourClocks(), // 4 events
+      lat({}), lat({}), // 2 censored (open, awaiting)
+      lat({ status: "RESOLVED", resolved_at: "2026-07-11T00:00:00Z" }), // 1 closed-before-fix
+      lat({ first_seen: null }), // 1 unmeasured (no origin captured)
+    ];
+    const seg = latencySegments(rows, "detection", NOW);
+    expect(seg).toEqual({
+      events: 4, censored: 2, closedBeforeFix: 1, zeroAtOrigin: 0, unmeasured: 1, total: 8,
+    });
+    // Nothing falls between the two: every row is in exactly one bucket...
+    expect(seg.events + seg.censored + seg.closedBeforeFix + seg.unmeasured).toBe(seg.total);
+    // ...and the estimator's own split matches, with closed-before-fix riding as censored.
+    const km = kaplanMeier(latencyView(rows, "detection", NOW));
+    expect(km.events).toBe(seg.events);
+    expect(km.censored).toBe(seg.censored + seg.closedBeforeFix);
+  });
+
+  it("register-sized population survives the projection and the estimator", () => {
+    const N = 200_000;
+    const base = Date.parse("2026-07-01T00:00:00Z");
+    // 500 distinct fix dates, precomputed: toISOString() per row would dominate the test.
+    const fixes = Array.from({ length: 500 }, (_, i) => new Date(base + (i + 1) * 86_400_000).toISOString());
+    const rows: LatRow[] = [];
+    for (let i = 0; i < N; i++) rows.push(lat({ fix_available_at: fixes[i % 500] }));
+    const km = kaplanMeier(latencyView(rows, "detection", NOW));
+    expect(km.total).toBe(N);
+    expect(km.events).toBe(N);
+    expect(km.restrictionTime).toBe(500); // the largest latency, in days
+  }, 30_000);
+
+  // Why api.ts should compute latency over a population the show-no-fix toggle has NOT
+  // narrowed. baseRowNoFix is that toggle's predicate, and the rows it removes are exactly
+  // this metric's censored population — so routing latency through a no-fix-filtered view
+  // would leave only the findings that got a fix and report how fast the fixed ones were
+  // fixed. If someone later "fixes the inconsistency" by filtering here, this test is what
+  // stops them.
+  it("the show-no-fix filter would delete the entire censored population", () => {
+    const rows = [
+      lat({ fix_available_at: "2026-07-03T00:00:00Z", awaiting_vendor_fix: false }), // event at 2
+      lat({ awaiting_vendor_fix: true }), // awaiting -> censored at 31
+      lat({ awaiting_vendor_fix: true }), // awaiting -> censored at 31
+      lat({ awaiting_vendor_fix: true }), // awaiting -> censored at 31
+    ];
+    const full = latencySegments(rows, "detection", NOW);
+    expect(full).toMatchObject({ events: 1, censored: 3 });
+    // S(2) = 1 - 1/4 = 0.75, so the honest answer is "no median yet, > 31 d".
+    const km = kaplanMeier(latencyView(rows, "detection", NOW));
+    expect(km.median).toBeNull();
+    expect(km.medianLowerBound).toBe(31);
+
+    // Now apply the toggle's own predicate, as a no-fix-filtered view would.
+    const narrowed = rows.filter((r) => !baseRowNoFix(r));
+    expect(latencySegments(narrowed, "detection", NOW)).toMatchObject({ events: 1, censored: 0 });
+    // Every censored observation is gone, so the curve falls straight to zero on its single
+    // event and the metric reports a 2-day vendor wait against a register that has been
+    // waiting at least a month. That is the bias, in one number.
+    expect(kmMedian(latencyView(narrowed, "detection", NOW))).toBe(2);
+  });
+
+  it("opts.scope narrows the population before computing (D4b rule 4)", () => {
+    const rows = [
+      lat({ fix_available_at: "2026-07-03T00:00:00Z", scope: "sca" }), // event at 2
+      lat({ fix_available_at: "2026-07-05T00:00:00Z", scope: "sast" }), // event at 4
+    ];
+    const scaOnly = latencyView(rows, "detection", NOW, { scope: "sca" });
+    expect(scaOnly).toHaveLength(1);
+    expect(scaOnly[0].mttr_days).toBe(2);
+    const all = latencyView(rows, "detection", NOW);
+    expect(all).toHaveLength(2);
+  });
 });
