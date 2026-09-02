@@ -58,6 +58,25 @@ describe("severity is shared, not branded", () => {
     }
   });
 
+  // charts.js (severityBar, stackedAgeBar, severityTrendLines) draws these same six fills
+  // straight from SEVERITY_COLORS as canvas ink (borderColor/backgroundColor on a line or
+  // point, not just a bar swatch) — a fill clearing only the 3:1 graphical-mark floor above
+  // is not enough there; TEXT usage needs 4.5:1, and every severity's LABEL (the coloured
+  // word beside its dot, e.g. `.sev-CRITICAL`) is real text on white/near-white. All six
+  // pairs, by name, so a seventh level or a renamed key fails loudly here rather than
+  // silently missing this check.
+  it("clears 4.5:1 on white for all six text tokens, named individually", () => {
+    const SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
+    expect(Object.keys(SEVERITY_TEXT).sort()).toEqual([...SEVERITIES].sort());
+    for (const sev of SEVERITIES) {
+      expect(SEVERITY_TEXT[sev], `${sev} has no text token`).toBeTruthy();
+      expect(
+        ratio(SEVERITY_TEXT[sev], "#ffffff"),
+        `${sev} text (${SEVERITY_TEXT[sev]}) on white`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("keeps the remediation windows the other three surfaces use", () => {
     expect(SLA_TARGETS).toEqual({ CRITICAL: 7, HIGH: 14, MEDIUM: 30, LOW: 90, INFO: 180 });
   });

@@ -14,6 +14,46 @@
 // source arrives from the deployment that is answering, on the call that needs it, and
 // nothing caches it between loads.
 
-import { ACCENT, coverCurve, setChartTipHandler, trendLine } from "./charts.js";
+import {
+  ACCENT,
+  coverageEfficiencyLines,
+  coverageEfficiencyScatter,
+  coverCurve,
+  destroyChart,
+  fmtDuration,
+  groupPalette,
+  groupPie,
+  groupTrendLines,
+  mttrContributionBars,
+  mttrImpactBars,
+  openResolvedLines,
+  setChartTipHandler,
+  severityBar,
+  severityTrendLines,
+  sparkline,
+  stackedAgeBar,
+  survivalCurve,
+  trendLine,
+} from "./charts.js";
 
-window.__WSK_CHARTS__ = { ACCENT, coverCurve, setChartTipHandler, trendLine };
+window.__WSK_CHARTS__ = {
+  ACCENT,
+  coverageEfficiencyLines,
+  coverageEfficiencyScatter,
+  coverCurve,
+  destroyChart,
+  fmtDuration,
+  groupPalette,
+  groupPie,
+  groupTrendLines,
+  mttrContributionBars,
+  mttrImpactBars,
+  openResolvedLines,
+  setChartTipHandler,
+  severityBar,
+  severityTrendLines,
+  sparkline,
+  stackedAgeBar,
+  survivalCurve,
+  trendLine,
+};
