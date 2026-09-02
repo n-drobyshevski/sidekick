@@ -806,3 +806,235 @@ if (want("sc2")) {
     ["projectId only", { projectId: P }],
   ]) line(`    securityFrameworks · ${label.padEnd(33)} ${String(await fws(f)).padStart(6)}`);
 }
+
+// ==== STAGE AI — "only AI-related issues" is not the same as wct-id-1998. The tenant carries
+// dedicated AI frameworks (OWASP LLM / ML / Agentic, ISO 42001) and each has its own
+// categories. Find every AI-related category, count it, and measure whether the union gives
+// the model anything wct-id-1998 alone does not.
+if (want("ai")) {
+  head("STAGE AI — every AI-related category, not just wct-id-1998");
+
+  const fw = await post(
+    `query F($f:SecurityFrameworkFilters){ securityFrameworks(first:200, filterBy:$f){
+       nodes{ id name enabled } } }`, { f: { enabled: true } });
+  if (!fw.ok) { line(`  securityFrameworks FAILED: ${fw.error}`); }
+  else {
+    const all = fw.data.securityFrameworks.nodes ?? [];
+    const AIRE = /\bAI\b|LLM|\bML\b|agentic|machine learning|GenAI|42001/i;
+    const aiFw = all.filter((f) => AIRE.test(f.name));
+    line(`  ${all.length} enabled frameworks; ${aiFw.length} look AI-related:`);
+    for (const f of aiFw) line(`    ${f.id.padEnd(14)} ${f.name}`);
+
+    // Categories belonging to those frameworks.
+    const cats = new Map();
+    for (const f of aiFw) {
+      const c = await post(
+        `query C($f:SecurityCategoryFilters){ securityCategories(first:200, filterBy:$f){
+           nodes{ id name } } }`, { f: { securityFramework: [f.id] } });
+      if (!c.ok) { line(`    ${f.name}: categories FAILED — ${c.error.slice(0, 90)}`); continue; }
+      for (const x of c.data.securityCategories?.nodes ?? []) {
+        if (!cats.has(x.id)) cats.set(x.id, { ...x, frameworks: [] });
+        cats.get(x.id).frameworks.push(f.name);
+      }
+    }
+    line(`\n  ${cats.size} distinct categories across those frameworks`);
+
+    const base = { status: ["OPEN", "IN_PROGRESS"] };
+    if (PROJECT_ID) base.project = [PROJECT_ID];
+    const count = async (extra) => {
+      const r = await post(CAT_COUNT_Q, { f: { ...base, ...extra } });
+      return r.ok ? r.data.issuesV2.totalCount : null;
+    };
+
+    const rows = [];
+    for (const c of cats.values()) {
+      const n = await count({ frameworkCategory: [c.id] });
+      if (n) rows.push({ ...c, count: n });
+    }
+    rows.sort((a, b) => b.count - a.count);
+    line(`\n  ${"category id".padEnd(16)} ${"issues".padStart(7)}  name`);
+    for (const r of rows) line(`  ${r.id.padEnd(16)} ${String(r.count).padStart(7)}  ${r.name}`);
+    report.aiCategories = rows;
+
+    const ids = rows.map((r) => r.id);
+    if (!ids.includes("wct-id-1998")) ids.push("wct-id-1998");
+    const union = await count({ frameworkCategory: ids });
+    const only = await count({ frameworkCategory: ["wct-id-1998"] });
+    line(`\n  wct-id-1998 alone            ${String(only).padStart(6)} issues`);
+    line(`  UNION of all AI categories   ${String(union).padStart(6)} issues`);
+
+    // Does the union give the model more than wct-id-1998 does?
+    const SEVS = ["INFORMATIONAL", "LOW", "MEDIUM", "HIGH", "CRITICAL"];
+    for (const [label, scope] of [["wct-id-1998 only", ["wct-id-1998"]], ["AI union", ids]]) {
+      const sev = {};
+      for (const s of SEVS) { const n = await count({ frameworkCategory: scope, severity: [s] }); if (n) sev[s] = n; }
+      const due = await count({ frameworkCategory: scope, hasDueDate: true });
+      const tot = await count({ frameworkCategory: scope });
+      const expl = await count({ frameworkCategory: scope, validatedAsExploitable: true });
+      line(`\n  ${label} — ${tot} issues`);
+      line(`    severity   ${JSON.stringify(sev)}`);
+      line(`               effCard ${effectiveCardinality(sev).toFixed(2)}  tie ${tieRate(sev).toFixed(3)}`);
+      line(`    hasDueDate ${due}/${tot} (${pct(due, tot)})    validatedAsExploitable ${expl}`);
+      report[`aiScope_${label}`] = { total: tot, severity: sev, withDue: due, exploitable: expl,
+        effCard: effectiveCardinality(sev), tieRate: tieRate(sev) };
+    }
+
+    // And the question that decides whether an exploitation axis is possible at all.
+    const vscope = PROJECT_ID ? { projectIdV2: { equals: [PROJECT_ID] } } : {};
+    const vf = async (extra) => {
+      const r = await post(`query V($f:VulnerabilityFindingFilters){ vulnerabilityFindings(first:1, filterBy:$f){ totalCount } }`,
+        { f: { ...vscope, status: ["OPEN"], hasRelatedIssue: true, ...extra } });
+      return r.ok ? r.data.vulnerabilityFindings.totalCount : `REFUSED ${r.error.slice(0, 80)}`;
+    };
+    line(`\n  vulnerability findings tied to an issue in that scope:`);
+    line(`    wct-id-1998 only   ${await vf({ relatedIssueFrameworkCategory: { equalsAny: ["wct-id-1998"] } })}`);
+    line(`    AI union           ${await vf({ relatedIssueFrameworkCategory: { equalsAny: ids } })}`);
+  }
+}
+
+// ==== STAGE AI2 — the securityCategories framework filter refuses a list, so match on the
+// category NAMES instead, over the full paged catalogue. Answers: is "AI-related" bigger than
+// wct-id-1998, and does the union give the model anything the single category does not.
+if (want("ai2")) {
+  head("STAGE AI2 — every AI-related category, matched by name over the full catalogue");
+
+  const t = await post(typeQ("SecurityCategoryFilters"), {});
+  if (t.ok && t.data.__type?.inputFields)
+    line(`  SecurityCategoryFilters: { ${t.data.__type.inputFields.map((f) => `${f.name}: ${renderType(f.type)}`).join(", ")} }`);
+
+  // Page the whole catalogue — stage B's first:500 hit the cap and may have truncated.
+  const cats = [];
+  let after = null;
+  for (let page = 0; page < 12; page++) {
+    const r = await post(
+      `query C($after:String){ securityCategories(first:500, after:$after){
+         nodes{ id name } pageInfo{ hasNextPage endCursor } } }`, { after });
+    if (!r.ok) { line(`  securityCategories page ${page} FAILED: ${r.error.slice(0, 110)}`); break; }
+    const p = r.data.securityCategories;
+    cats.push(...(p.nodes ?? []));
+    if (!p.pageInfo?.hasNextPage) break;
+    after = p.pageInfo.endCursor;
+  }
+  line(`  catalogue: ${cats.length} categories`);
+
+  const AIRE = /\bAI\b|\bLLM\d*\b|\bML\d*\b|agentic|machine learning|GenAI|generative|prompt inject|model (poison|theft)|42001/i;
+  const hits = cats.filter((c) => AIRE.test(c.name));
+  line(`  ${hits.length} match an AI-related name\n`);
+
+  const base = { status: ["OPEN", "IN_PROGRESS"] };
+  if (PROJECT_ID) base.project = [PROJECT_ID];
+  const count = async (extra) => {
+    const r = await post(CAT_COUNT_Q, { f: { ...base, ...extra } });
+    return r.ok ? r.data.issuesV2.totalCount : null;
+  };
+
+  const rows = [];
+  for (const c of hits) {
+    const n = await count({ frameworkCategory: [c.id] });
+    rows.push({ ...c, count: n ?? 0 });
+  }
+  rows.sort((a, b) => b.count - a.count);
+  line(`  ${"category id".padEnd(16)} ${"issues".padStart(7)}  name`);
+  for (const r of rows) {
+    if (!r.count) continue;
+    line(`  ${r.id.padEnd(16)} ${String(r.count).padStart(7)}  ${r.name}`);
+  }
+  const withIssues = rows.filter((r) => r.count > 0);
+  line(`\n  ${withIssues.length} of ${hits.length} AI-named categories carry issues in this project.`);
+  report.aiNamedCategories = rows;
+
+  const ids = withIssues.map((r) => r.id);
+  if (!ids.includes("wct-id-1998")) ids.push("wct-id-1998");
+
+  const SEVS = ["INFORMATIONAL", "LOW", "MEDIUM", "HIGH", "CRITICAL"];
+  for (const [label, scope] of [["wct-id-1998 only", ["wct-id-1998"]], ["AI union", ids]]) {
+    const tot = await count({ frameworkCategory: scope });
+    const sev = {};
+    for (const s of SEVS) { const n = await count({ frameworkCategory: scope, severity: [s] }); if (n) sev[s] = n; }
+    const due = await count({ frameworkCategory: scope, hasDueDate: true });
+    const expl = await count({ frameworkCategory: scope, validatedAsExploitable: true });
+    line(`\n  ${label} — ${tot} issues`);
+    line(`    severity   ${JSON.stringify(sev)}`);
+    line(`               effCard ${effectiveCardinality(sev).toFixed(2)}  tie ${tieRate(sev).toFixed(3)}`);
+    line(`    hasDueDate ${due}/${tot} (${pct(due, tot)})    validatedAsExploitable ${expl}`);
+    report[`aiUnion_${label}`] = { total: tot, severity: sev, withDue: due, exploitable: expl,
+      effCard: effectiveCardinality(sev), tieRate: tieRate(sev) };
+  }
+
+  const vscope = PROJECT_ID ? { projectIdV2: { equals: [PROJECT_ID] } } : {};
+  const vf = async (scope) => {
+    const r = await post(`query V($f:VulnerabilityFindingFilters){ vulnerabilityFindings(first:1, filterBy:$f){ totalCount } }`,
+      { f: { ...vscope, status: ["OPEN"], hasRelatedIssue: true, relatedIssueFrameworkCategory: { equalsAny: scope } } });
+    return r.ok ? r.data.vulnerabilityFindings.totalCount : `REFUSED ${r.error.slice(0, 80)}`;
+  };
+  line(`\n  vulnerability findings tied to an issue in that scope:`);
+  line(`    wct-id-1998 only   ${await vf(["wct-id-1998"])}`);
+  line(`    AI union           ${await vf(ids)}`);
+}
+
+// ==== STAGE M99 — the register is 99 rows, so fetch it whole and measure every candidate axis
+// exactly, locally. No sampling, no per-bucket count calls: one page IS the population.
+if (want("m99")) {
+  head("STAGE M99 — every candidate axis over the actual 99-issue register");
+
+  const f = { status: ["OPEN", "IN_PROGRESS"], frameworkCategory: ["wct-id-1998"] };
+  if (PROJECT_ID) f.project = [PROJECT_ID];
+  const r = await post(
+    `query M($f:IssueFilters){ issuesV2(first:200, filterBy:$f){ totalCount
+       nodes{ id severity status createdAt dueAt updatedAt
+         notes{ id } serviceTickets{ id } assignee{ id }
+         projects{ riskProfile{ businessImpact } }
+         entitySnapshot{ id type nativeType }
+         sourceRules{ ... on Control{ id name } ... on CloudConfigurationRule{ id name }
+                      ... on CloudEventRule{ id name } } } } }`, { f });
+  if (!r.ok) { line(`  FAILED: ${r.error}`); }
+  else {
+    const rows = r.data.issuesV2.nodes ?? [];
+    line(`  fetched ${rows.length} of ${r.data.issuesV2.totalCount} — the whole register\n`);
+    const now = Date.now(), DAY = 86400000;
+    const bucket = (v, edges) => {
+      if (v === null || v === undefined) return "none";
+      let i = 0;
+      for (const e of edges) if (v > e) i++;
+      return i === 0 ? `<=${edges[0]}` : i === edges.length ? `>${edges[edges.length - 1]}` : `<=${edges[i]}`;
+    };
+    const EDGES = [30, 90, 180, 365];
+    const ageOf = (x) => x.createdAt ? (now - Date.parse(x.createdAt)) / DAY : null;
+    const overdueOf = (x) => x.dueAt ? (now - Date.parse(x.dueAt)) / DAY : null;
+
+    const axes = {
+      "severity": (x) => x.severity,
+      "rule id": (x) => x.sourceRules?.[0]?.id,
+      "entity type": (x) => x.entitySnapshot?.type,
+      "age bucket": (x) => bucket(ageOf(x), EDGES),
+      "overdue bucket": (x) => bucket(overdueOf(x), EDGES),
+      "has note": (x) => (x.notes?.length ?? 0) > 0,
+      "has ticket": (x) => (x.serviceTickets?.length ?? 0) > 0,
+      "assigned": (x) => Boolean(x.assignee?.id),
+      "rule x age": (x) => `${x.sourceRules?.[0]?.id}|${bucket(ageOf(x), EDGES)}`,
+      "rule x overdue": (x) => `${x.sourceRules?.[0]?.id}|${bucket(overdueOf(x), EDGES)}`,
+      "rule x age x sev": (x) => `${x.sourceRules?.[0]?.id}|${bucket(ageOf(x), EDGES)}|${x.severity}`,
+    };
+    line(`  ${"axis".padEnd(20)} ${"distinct".padStart(8)} ${"tie rate".padStart(9)} ${"effCard".padStart(8)}   distribution`);
+    const out = {};
+    for (const [name, fn] of Object.entries(axes)) {
+      const t = tally(rows, fn);
+      const d = Object.keys(t).length;
+      out[name] = { distinct: d, tieRate: tieRate(t), effCard: effectiveCardinality(t), dist: t };
+      const shown = d <= 6 ? JSON.stringify(t) : `${d} values, top ${JSON.stringify(Object.fromEntries(Object.entries(t).slice(0, 3)))}`;
+      line(`  ${name.padEnd(20)} ${String(d).padStart(8)} ${tieRate(t).toFixed(3).padStart(9)} ${effectiveCardinality(t).toFixed(2).padStart(8)}   ${shown}`);
+    }
+    report.m99 = out;
+
+    const ages = rows.map(ageOf).filter((v) => v !== null).sort((a, b) => a - b);
+    const ov = rows.map(overdueOf).filter((v) => v !== null).sort((a, b) => a - b);
+    const q = (a, p) => a.length ? a[Math.min(a.length - 1, Math.floor(p * a.length))] : null;
+    line(`\n  age days      n=${ages.length}  p25 ${q(ages,.25)?.toFixed(0)}  p50 ${q(ages,.5)?.toFixed(0)}  p75 ${q(ages,.75)?.toFixed(0)}  max ${ages[ages.length-1]?.toFixed(0)}`);
+    line(`  overdue days  n=${ov.length}  p25 ${q(ov,.25)?.toFixed(0)}  p50 ${q(ov,.5)?.toFixed(0)}  p75 ${q(ov,.75)?.toFixed(0)}  max ${ov[ov.length-1]?.toFixed(0)}`);
+    line(`  dueAt present ${rows.filter((x) => x.dueAt).length}/${rows.length}   past due ${ov.filter((v) => v > 0).length}`);
+
+    line(`\n  rules present:`);
+    const byRule = tally(rows, (x) => `${x.sourceRules?.[0]?.id} — ${x.sourceRules?.[0]?.name ?? "?"}`);
+    for (const [k, v] of Object.entries(byRule)) line(`    ${String(v).padStart(3)}  ${k}`);
+  }
+}
