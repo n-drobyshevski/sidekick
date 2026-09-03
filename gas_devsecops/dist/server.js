@@ -423,7 +423,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "cad2e3168412" : "dev";
+  var BUILD_ID = true ? "119056c24d90" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -7251,7 +7251,15 @@ var Server = (() => {
     return mutate(() => saveSettings(p.settings));
   }
   function getChartsBundle(_p) {
-    return run(() => HtmlService.createHtmlOutputFromFile("js_charts").getContent());
+    return run(() => {
+      const html = HtmlService.createHtmlOutputFromFile("js_charts").getContent();
+      const start = html.indexOf("<script");
+      const open = start < 0 ? -1 : html.indexOf(">", start);
+      const close = html.lastIndexOf("<\/script>");
+      const src = open < 0 || close < open ? "" : html.slice(open + 1, close).trim();
+      if (!src) throw new Error("js_charts is missing or empty in this deployment");
+      return src;
+    });
   }
   function modelParams(p) {
     const r = p != null ? p : {};

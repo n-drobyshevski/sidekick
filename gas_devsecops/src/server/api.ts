@@ -221,9 +221,33 @@ export function putSettings(p: { settings?: unknown }): ApiResult<ReturnType<typ
  * Chart.js is ~170 KB of the client payload and most routes draw nothing, so it ships as
  * its own HtmlService partial rather than inside js_app. Returning it through an RPC keeps
  * the sandbox happy — the page cannot add a <script src> the CSP would refuse.
+ *
+ * The `<script>` WRAPPER IS STRIPPED, because `chartsLoader.js` on the client does not render
+ * this string — it EXECUTES it (`new Function`, a `<script>` element's `textContent`, or a
+ * `blob:` URL; see that file's header). The wrapper exists at all only because a GAS project
+ * has nowhere to put a bare `.js` file: `HtmlService.createHtmlOutputFromFile` and
+ * `include()` both read `.html`, so `esbuild.config.mjs` writes the bundle wrapped in the one
+ * shape the platform is willing to store it in. An empty `src` here means the deployment is
+ * missing `js_charts.html` (or shipped it empty) — a deploy fault, so it is reported as an
+ * error rather than as an empty string the client would go on to try to run.
+ *
+ * ONE DELIBERATE DEVIATION FROM gas_ai's COPY OF THIS FUNCTION: that version computes
+ * `indexOf(">", indexOf("<script"))` without checking that `<script` was found. With no
+ * wrapper at all, `indexOf("<script")` is `-1` and `indexOf(">", -1)` searches from the
+ * START of the string, so it can latch onto an unrelated `>` inside the source — the closing
+ * angle bracket of an arrow function, say — and return a head-truncated string that still
+ * looks non-empty. Guarding `start` and requiring `close > open` closes that path.
  */
 export function getChartsBundle(_p?: unknown): ApiResult<string> {
-  return run(() => HtmlService.createHtmlOutputFromFile("js_charts").getContent());
+  return run(() => {
+    const html = HtmlService.createHtmlOutputFromFile("js_charts").getContent();
+    const start = html.indexOf("<script");
+    const open = start < 0 ? -1 : html.indexOf(">", start);
+    const close = html.lastIndexOf("</script>");
+    const src = open < 0 || close < open ? "" : html.slice(open + 1, close).trim();
+    if (!src) throw new Error("js_charts is missing or empty in this deployment");
+    return src;
+  });
 }
 
 // --------------------------------------------------------------------------------------- //
