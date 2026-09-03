@@ -121,9 +121,15 @@ already implements the pipeline and is the behavioural spec (same relationship `
   credential is live — 641 `SAAS_API_KEY` rows are LOW — so the secrets pages segment by
   `validation_state` and `confidence` and never by severity. Volume was never the reason
   either: 1,958 rows is an eighth of SCA. `test/severityScope.test.js` pins the chain.
-- **The second clock is captured but not yet computed.** `fix_date` / `fix_observed_at` are
-  on every ledger row; nothing derives `fix_available_at`, `mttr_actionable_days` or
-  `awaiting_vendor_fix`. Reference: `gas/src/domain/ledgerCore.ts::baseRows`.
+- **The second clock is computed, and it is only real on SCA.** This entry used to read
+  "captured but not yet computed"; `ledgerCore.baseRows` now derives `fix_available_at`,
+  `mttr_actionable_days`, `actionable_age_days` and `awaiting_vendor_fix` from `fix_date` /
+  `fix_observed_at`. The part worth carrying: SAST and secrets have no vendor to wait on, so
+  their `fix_available_at` collapses onto `first_seen` — which makes `mttr_actionable_days`
+  identical to `mttr_days` there and `awaiting_vendor_fix` false by construction. Only SCA
+  can leave `fix_available_at` null, and a null there is what puts a finding in the
+  awaiting-vendor bucket rather than in the actionable one. A figure that averages the
+  actionable clock across all three scopes is therefore two-thirds a restatement of MTTR.
 - **Three scopes, one ledger, and `scope` is part of the key.** The same CVE arriving through
   a dependency and through a host image is two findings with two clocks.
 - **Removed is not rotated.** A secret leaving the register means the string left HEAD. The
