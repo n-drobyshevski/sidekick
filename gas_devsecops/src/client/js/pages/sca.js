@@ -15,18 +15,22 @@
 // helpers are pure and DOM-thin on purpose; when a later package may touch `ui/`, everything
 // under "shared register vocabulary" below is the promotion candidate.
 //
-// WHAT THIS PAGE DOES NOT DRAW, AND WHY. `api_getRegisterPage` ships aggregates plus a
-// top-N oldest-open ranking; it carries no per-finding row set, so `component`
-// (package@version), `fixed_version`, `cwe` and `file_path` reach no table here. The page
-// says so in words rather than drawing a column of dashes and letting a reader think the
-// tenant is missing the data. See `missingColumnsNote` below.
+// THE PER-FINDING TABLE. `api_getRegisterPage` ships aggregates plus a top-N oldest-open
+// ranking; it carries no row set on its own. `api_getRegisterRows` is the RPC that does —
+// paged and sorted SERVER-SIDE (the sca register is ~18,800 rows; a client-side `sortRows`
+// over that would be both slow and a second ordering rule free to disagree with the
+// server's) — and `registerRowsTable` below is the one component all three pages draw it
+// through. What a scope's table can show is exactly `REGISTER_ROW_COLUMNS[scope]`
+// (`domain/pagePayload.ts`); anything still missing (no ledger column exists for it — an
+// ecosystem tag, a commit hash) is still named by `missingColumnsNote` rather than drawn as
+// a column of dashes that would let a reader think the tenant is missing the data.
 
 import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   DEFAULT_PAGE_SIZE, absent, dataTable, el, emptyState, errorState, glossaryTip, heroStat,
   kpiCard, meter, onPageTeardown, pageHeader, pageOf, segmented, sevBadge, sevEntries,
-  sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter, togglePills, fmtDate,
+  sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter, togglePills, fmtDate, triCell,
 } from "../ui.js";
 
 // =========================================================================================
@@ -63,6 +67,30 @@ export function days1(v) {
   return v === null || v === undefined || !Number.isFinite(Number(v))
     ? "—"
     : `${Number(v).toFixed(1)} d`;
+}
+
+/** EPSS is a probability, 0..1 off the wire; rendered as the percentage it names. */
+export function epssPct(v) {
+  return v === null || v === undefined || !Number.isFinite(Number(v))
+    ? "—"
+    : pct1(Number(v) * 100);
+}
+
+/** A cell whose only two states worth telling apart are "here" and "absent" — never a bare
+ *  dash in the same weight as a value. Text strings only; dates go through `fmtDate`. */
+export function textCell(v) {
+  return v === null || v === undefined || v === "" ? absent() : String(v);
+}
+
+/**
+ * A NON-NULLABLE boolean cell — plain Yes/No, never `triCell`.
+ *
+ * `awaiting_vendor_fix` is `boolean` on `BaseRow`, not `boolean | null` — `ledgerCore.baseRows`
+ * always computes it, so there is no "never evaluated" state to protect here. Using `triCell`
+ * on a column that can never be null would draw a signal this one is not.
+ */
+export function yesNo(v) {
+  return v ? "Yes" : "No";
 }
 
 /**
@@ -432,6 +460,92 @@ export function pagedTable(spec) {
   return host;
 }
 
+/**
+ * The per-finding register, SERVER-paged and SERVER-sorted.
+ *
+ * `pagedTable` above sorts and pages a row set the page already has in hand — the aggregate
+ * endpoints' oldest-open ranking, capped at a few hundred rows server-side. This is the
+ * opposite shape: `api_getRegisterRows` is the whole register (sca is ~18,800 rows), so a
+ * click here re-fetches rather than re-sorting an array already in the browser. The ordering
+ * rule itself still lives on the server (`domain/pagePayload.ts`'s `sortRegisterRows` — see
+ * that file's header for why there is exactly one rule and `test/registerRowsOrdering.test.js`
+ * for the twin that holds this component's own `sortRows`/`pageOf` reads to it); this
+ * component only ever reads back what the server already ordered and never re-sorts a page
+ * itself.
+ *
+ *   scope        "sca" | "sast" | "secrets"
+ *   columns      dataTable column spec — `sortable: true` columns must name one of this
+ *                scope's own `REGISTER_ROW_COLUMNS` (readModels.ts falls back to the scope's
+ *                default sort otherwise, silently, so a stray key here would just stop sorting)
+ *   severities   the toolbar's current selection, or `undefined` on secrets (its severity
+ *                filter is refused server-side — see `getRegisterRows`'s own header)
+ *   showNoFix    sca only; `undefined` elsewhere
+ *   defaultSort/defaultDir  the scope's own opening order — mirrors
+ *                `REGISTER_ROW_DEFAULT_SORT` so the FIRST paint's header already reflects
+ *                what the server actually sent, with no flash of the wrong arrow
+ */
+export function registerRowsTable(spec) {
+  const {
+    scope, columns, severities, showNoFix, defaultSort, defaultDir, emptyText,
+  } = spec;
+  const state = {
+    page: 0, pageSize: DEFAULT_PAGE_SIZE, sort: defaultSort, dir: defaultDir || "desc",
+  };
+  const host = el("div", { class: "table-host" });
+
+  function load() {
+    host.replaceChildren(skeletonStack(3, { widths: ["100%", "100%", "70%"] }));
+    const params = {
+      scope, page: state.page, pageSize: state.pageSize, sort: state.sort, dir: state.dir,
+    };
+    if (severities !== undefined) params.severities = severities.length ? severities : undefined;
+    if (showNoFix !== undefined) params.showNoFix = showNoFix;
+    swrCall("api_getRegisterRows", params)
+      .then((data) => paint(data || {}))
+      .catch((e) => {
+        host.replaceChildren(errorState("This table could not be loaded.", {
+          detail: e && e.message ? e.message : String(e),
+        }));
+      });
+  }
+
+  function paint(data) {
+    const rows = Array.isArray(data.rows) ? data.rows : [];
+    // The server is the one source of truth for what page/sort it actually served — a
+    // clamped page or a sort that fell back to the scope's default answers back through
+    // these, so the footer and the active header never show a request the server refused.
+    state.page = num(data.page, state.page);
+    state.pageSize = num(data.pageSize, state.pageSize);
+    state.sort = data.sort || state.sort;
+    state.dir = data.dir === "asc" ? "asc" : "desc";
+    const table = dataTable({
+      columns,
+      rows,
+      sort: { key: state.sort, descending: state.dir === "desc" },
+      onSort: (key) => {
+        state.dir = state.sort === key && state.dir === "desc" ? "asc" : "desc";
+        state.sort = key;
+        state.page = 0;
+        load();
+      },
+      emptyText: emptyText || "Nothing to show.",
+      stickyHeader: true,
+    });
+    const footer = tableFooter({
+      page: state.page,
+      pageCount: num(data.pageCount, 1),
+      total: num(data.total, rows.length),
+      pageSize: state.pageSize,
+      onPage: (p) => { state.page = p; load(); },
+      onPageSize: (size, nextPage) => { state.pageSize = size; state.page = nextPage; load(); },
+    });
+    host.replaceChildren(table, footer);
+  }
+
+  load();
+  return host;
+}
+
 /** A chart card that survives a deployment whose policy refuses the charts bundle. */
 export function chartCard(title, note, draw) {
   const canvas = el("canvas");
@@ -626,20 +740,23 @@ export function scaModel(payload, opts) {
     oldestRepos: oldestReposModel(p.oldest),
     movement: movementModel(p.movement, p.latestScan),
 
-    // FIXED VERSION IS NOT IN THIS PAYLOAD, and saying so is the honest answer to the stub's
-    // first promised section. The count of rows that HAVE one is available — it is the
-    // complement of `awaiting.overall` — but the string itself is per-row and does not ship.
+    // THE AGGREGATE ENDPOINT (`api_getRegisterPage`) STILL CARRIES NO PER-ROW STRING — that
+    // is what `perRow: false` reports, and it is a fact about THIS payload, not about the
+    // page. The string itself, and every other column in `REGISTER_ROW_COLUMNS.sca`, travels
+    // through `api_getRegisterRows` and the per-finding table below.
     fixedVersion: {
       perRow: false,
       withFix: actionableCount,
       withoutFix: awaitingCount,
-      reason: "The fixed version is a per-finding string; this page's endpoint ships "
-        + "aggregates, so the count of rows that have one is published instead of the "
-        + "versions themselves.",
+      reason: "The fixed version is a per-finding string; this aggregate endpoint counts rows "
+        + "that have one rather than naming them — the strings themselves are in the "
+        + "per-finding table below.",
     },
-    missingColumns: missingColumnsNote([
-      "package and version (component)", "fixed_version", "ecosystem",
-    ]),
+    // ECOSYSTEM HAS NO LEDGER COLUMN AT ALL — the one column of the stub's original promise
+    // this page still cannot draw, because there is nowhere in `LEDGER_COLUMNS` for it to
+    // have come from. `component` and `fixed_version` are dropped from this list: both now
+    // ship through `api_getRegisterRows`'s per-finding table.
+    missingColumns: missingColumnsNote(["ecosystem"]),
   };
 }
 
@@ -855,6 +972,60 @@ function paintSca(host, vm, filters) {
         emptyText: "Nothing open.",
       })
       : emptyState("Nothing open in this register.", "Every dependency finding is resolved, or nothing has been scanned yet."),
+  ));
+
+  // ------------------------------------------------------------- every finding, server-paged
+  host.append(sectionCard("Every finding in the register", null,
+    el("p", { class: "small muted" },
+      "Open and resolved, server-paged and server-sorted — click a column to ask for a "
+      + "different order rather than re-sorting what is already on screen."),
+    registerRowsTable({
+      scope: "sca",
+      severities: filters.severities,
+      showNoFix: filters.showNoFix,
+      defaultSort: "age_days",
+      defaultDir: "desc",
+      emptyText: "Nothing in this register.",
+      columns: [
+        { key: "identifier", label: "CVE", sortable: true, cell: (r) => textCell(r.identifier) },
+        { key: "component", label: "Package", sortable: true, cell: (r) => textCell(r.component) },
+        { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
+        { key: "status", label: "Status", sortable: true, cell: (r) => textCell(r.status) },
+        { key: "repo_name", label: "Repository", sortable: true, cell: (r) => textCell(r.repo_name) },
+        { key: "branch", label: "Branch", sortable: true, cell: (r) => textCell(r.branch) },
+        { key: "first_seen", label: "First seen", sortable: true, cell: (r) => fmtDate(r.first_seen) },
+        { key: "last_seen", label: "Last seen", sortable: true, cell: (r) => fmtDate(r.last_seen) },
+        {
+          key: "fixed_version", label: "Fixed version", sortable: true,
+          cell: (r) => textCell(r.fixed_version),
+        },
+        {
+          key: "fix_available_at", label: "Fix available", sortable: true,
+          cell: (r) => fmtDate(r.fix_available_at), help: { term: "two-clocks" },
+        },
+        {
+          key: "awaiting_vendor_fix", label: "Awaiting vendor", sortable: true,
+          cell: (r) => yesNo(r.awaiting_vendor_fix), help: { term: "awaiting-fix" },
+        },
+        { key: "has_kev", label: "KEV", sortable: true, cell: (r) => triCell(r.has_kev) },
+        {
+          key: "has_exploit", label: "Exploit known", sortable: true,
+          cell: (r) => triCell(r.has_exploit),
+        },
+        {
+          key: "epss", label: "EPSS", className: "num", sortable: true,
+          cell: (r) => epssPct(r.epss),
+        },
+        {
+          key: "mttr_days", label: "MTTR", className: "num", sortable: true,
+          cell: (r) => days1(r.mttr_days),
+        },
+        {
+          key: "age_days", label: "Age", className: "num", sortable: true,
+          cell: (r) => days1(r.age_days),
+        },
+      ],
+    }),
     el("p", { class: "small muted" }, vm.missingColumns),
   ));
 

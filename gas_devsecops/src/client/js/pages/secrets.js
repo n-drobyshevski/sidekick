@@ -33,13 +33,13 @@
 
 import { swrCall } from "../store.js";
 import {
-  absent, dataTable, el, emptyState, glossaryTip, heroStat, meter, pageHeader, skeletonStack,
-  statRow,
+  absent, dataTable, el, emptyState, fmtDate, glossaryTip, heroStat, meter, pageHeader,
+  skeletonStack, statRow,
 } from "../ui.js";
 import {
   boundedDays, chartCard, concentrationModel, days1, denomNote, figureCard, fmtCount,
   missingColumnsNote, movementCard, movementModel, num, oldestReposModel, pagedTable, pct1,
-  renderRegisterPage, sectionCard,
+  registerRowsTable, renderRegisterPage, sectionCard, textCell,
 } from "./sca.js";
 
 /**
@@ -266,9 +266,14 @@ export function secretsModel(payload) {
     resolvedNote:
       "A secret finding leaving this register means the string is out of HEAD. It does not "
       + "mean the credential is safe, and it does not mean the old commit is unreadable.",
-    missingColumns: missingColumnsNote([
-      "path and line", "first commit hash", "first seen per finding",
-    ]),
+    // "path and line" and "first seen per finding" are DROPPED from this list — both are in
+    // `REGISTER_ROW_COLUMNS.secrets` (`file_path`, `start_line`, `first_seen`) and the
+    // per-finding table below draws them. "first commit hash" stays: `LEDGER_COLUMNS` has no
+    // commit column at all — SAST spells it `vcsDetails.commitHash` and secrets spells it
+    // `vcsDetails.initialCommitHash`, and neither has ever been carried into the ledger, so
+    // there is nowhere for this table to read it from. That gap is deliberately deferred, not
+    // fixed here.
+    missingColumns: missingColumnsNote(["first commit hash"]),
   };
 }
 
@@ -644,6 +649,55 @@ function paintSecrets(host, vm) {
         "Every secret finding is resolved, or nothing has been scanned yet. Resolved is not "
         + "rotated: check the corners above before reading that as safe.",
       ),
+  ));
+
+  // ------------------------------------------------------------- every finding, server-paged
+  host.append(sectionCard("Every finding in the register", null,
+    el("p", { class: "small muted" },
+      "Open and resolved, server-paged and server-sorted — click a column to ask for a "
+      + "different order rather than re-sorting what is already on screen. No severity "
+      + "column: severity here grades a detection, not whether a credential is live."),
+    // NO severities PARAMETER, for the same reason the aggregate fetch above sends none:
+    // `secretsModel` and `registerRowsModel` both ignore it for this scope outright.
+    registerRowsTable({
+      scope: "secrets",
+      defaultSort: "first_seen",
+      defaultDir: "asc",
+      emptyText: "Nothing in this register.",
+      columns: [
+        {
+          key: "identifier", label: "Credential id", sortable: true,
+          cell: (r) => textCell(r.identifier),
+        },
+        { key: "secret_kind", label: "Kind", sortable: true, cell: (r) => textCell(r.secret_kind) },
+        {
+          key: "confidence", label: "Confidence", sortable: true,
+          cell: (r) => textCell(r.confidence), help: { term: "validation-state" },
+        },
+        { key: "file_path", label: "File", sortable: true, cell: (r) => textCell(r.file_path) },
+        {
+          key: "start_line", label: "Line", className: "num", sortable: true,
+          cell: (r) => (r.start_line === null || r.start_line === undefined ? absent() : String(r.start_line)),
+        },
+        {
+          key: "validation_state", label: "Validation state", sortable: true,
+          cell: (r) => textCell(r.validation_state), help: { term: "validation-state" },
+        },
+        { key: "validated_at", label: "Validated", sortable: true, cell: (r) => fmtDate(r.validated_at) },
+        {
+          key: "rotated_at", label: "Rotated", sortable: true,
+          cell: (r) => fmtDate(r.rotated_at), help: { term: "rotated" },
+        },
+        {
+          key: "removed_at", label: "Removed", sortable: true,
+          cell: (r) => fmtDate(r.removed_at), help: { term: "removed" },
+        },
+        { key: "repo_name", label: "Repository", sortable: true, cell: (r) => textCell(r.repo_name) },
+        { key: "branch", label: "Branch", sortable: true, cell: (r) => textCell(r.branch) },
+        { key: "first_seen", label: "First seen", sortable: true, cell: (r) => fmtDate(r.first_seen) },
+        { key: "last_seen", label: "Last seen", sortable: true, cell: (r) => fmtDate(r.last_seen) },
+      ],
+    }),
     el("p", { class: "small muted" }, vm.missingColumns),
   ));
 

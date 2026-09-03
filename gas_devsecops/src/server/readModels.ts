@@ -14,6 +14,14 @@
 // `programTrendSlice`, `historyModel().{history,trend,scans}` for the two trend slices and
 // `scanRowsSlice`, `executiveModel().byScope` for `execGroupSlice` / `mttrGroupTableSlice`.
 //
+// ONE IMPORT RUNS THE OTHER WAY AND IT IS NOT A SLICE. `registerRowsModel` takes the ORDERING
+// rule — `sortRegisterRows` / `registerSortValue` / `pageOfRegisterRows` and the two constants
+// beside them — from `domain/pagePayload.ts`, because the order a paged register comes back in
+// is part of what the page is sent and there must be exactly ONE rule deciding it (see that
+// file's "register rows" header). The SLICE is still applied in `api.ts`: this model returns
+// the page's `BaseRow`s and `registerRowsSlice` narrows them there, which is the same
+// S5-builds / S7-slices split every other endpoint keeps.
+//
 // --------------------------------------------------------------------------------------- //
 //  THE CACHING AUDIT, PER MODEL. It is not inherited, and getting it wrong makes a stale
 //  figure look authoritative.
@@ -36,6 +44,12 @@
 //                                  rotates. A frozen copy of it reads as a shrinking exposure.
 //   register      cached, 1 h      Age buckets (0-7/8-30/31-90/90+) and the oldest-open
 //                                  ranking. A bucket edge is a wall-clock edge.
+//   registerRows  NOT CACHED       One payload per (scope, filters) TIMES page x pageSize x
+//                                  sort x dir x status. Caching that mints hundreds of entries
+//                                  holding slices of one array, evicts the models worth
+//                                  keeping, and still misses on the first click of every new
+//                                  sort. It reads the shared `baseSnapshot()`, so the
+//                                  derivation is paid once per execution either way.
 //   ------------  ---------------  ----------------------------------------------------------
 //   program       durablyCached    Time-invariant BY CONSTRUCTION, not by luck. The confusion
 //                                  matrix, signal breakdown and rule sensitivity read `status`
@@ -99,7 +113,16 @@ import {
 } from "../domain/config";
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
-import { parseTs, type Rec } from "../domain/util";
+import { clampInt, parseTs, type Rec } from "../domain/util";
+import {
+  REGISTER_ROWS_DEFAULT_PAGE_SIZE,
+  REGISTER_ROWS_PAGE_SIZE_CAP,
+  REGISTER_ROW_DEFAULT_SORT,
+  pageOfRegisterRows,
+  registerRowColumns,
+  registerSortValue,
+  sortRegisterRows,
+} from "../domain/pagePayload";
 import { mttrFromLedger } from "../domain/lifecycle";
 import { overallSlaOldest } from "../domain/metrics";
 import {
@@ -767,6 +790,121 @@ export function registerModel(scope: Scope, p?: ModelParams): Rec {
     () => buildRegister(scope, n),
     CLOCK_TTL_SEC,
   );
+}
+
+// --------------------------------------------------------------------------------------- //
+//  3b. registerRowsModel(scope) — NOT cached, and that is the audit answer
+// --------------------------------------------------------------------------------------- //
+
+/**
+ * How a row page narrows the register, on top of `ModelParams`.
+ *
+ * Every field arrives off an RPC and is therefore `unknown`: `api.ts` transports and this
+ * normalizes, the same division `modelParams` / `norm` already keep for the other three
+ * knobs. A second normalization at the endpoint would be a second answer to "absent vs
+ * null vs nonsense", free to drift from this one.
+ */
+export interface RowPageParams extends ModelParams {
+  /** Zero-based, like `pageOfRegisterRows` and the `pager` control. Clamped into range. */
+  page?: unknown;
+  /** Clamped into [1, REGISTER_ROWS_PAGE_SIZE_CAP] — never honoured above the cap. */
+  pageSize?: unknown;
+  /** A column of this scope's own list; anything else falls back to the scope's default. */
+  sort?: unknown;
+  dir?: unknown;
+  /** "open" | "resolved" | anything else = "all". */
+  status?: unknown;
+}
+
+export type RowStatusFilter = "all" | "open" | "resolved";
+
+function normRowStatus(v: unknown): RowStatusFilter {
+  const s = String(v ?? "").toLowerCase();
+  return s === "open" || s === "resolved" ? s : "all";
+}
+
+/**
+ * One page of per-finding rows for one register.
+ *
+ * NOT CACHED, AND THE AUDIT IS WHY RATHER THAN AN OVERSIGHT. Every other model on this file
+ * is one payload per (scope, severities, showNoFix); this one is one payload per that TIMES
+ * page times pageSize times sort times dir times status. Caching it would mint hundreds of
+ * entries holding slices of the same array, evict the eight models that are worth keeping,
+ * and still miss on the first click of every new sort. What it costs instead is one sort of
+ * the scoped population per call — and `baseSnapshot()` means the derivation itself is
+ * shared with whatever else the same execution builds, so a page that fetches its aggregates
+ * and its first row page pays ONE `loadBaseRows()`, not two.
+ *
+ * PAGING AND SORTING ARE SERVER-SIDE. The sca register is ~18,800 rows; shipping all of them
+ * into an HtmlService page and sorting there would be absurd, and it would also put a second
+ * ordering rule in the browser where it could disagree with this one. The rule itself lives
+ * in `domain/pagePayload.ts` beside the slice — see that file's header for why, and for the
+ * cross-check that holds it identical to `ui/tableModel.js`.
+ *
+ * SEVERITY IS IGNORED ON SECRETS, exactly as `secretsModel` ignores it: the gate is off for
+ * that scope (`DEFAULT_FETCH_SEVERITIES.secrets = []`, empty means all) because severity
+ * there grades a DETECTION. `severityFilterSupported` says so in the payload rather than
+ * leaving a control that silently does nothing.
+ *
+ * ROWS COME BACK AS `BaseRow`s, UNSLICED. `api.ts` applies `registerRowsSlice` — S5 builds,
+ * S7 assembles and slices, the same split `jobSummarySlice` is applied under. Only the
+ * page's rows are returned, so the unsliced array is at most `REGISTER_ROWS_PAGE_SIZE_CAP`
+ * long.
+ */
+export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
+  const n = norm(p);
+  const snap = baseSnapshot();
+  const severityFilterSupported = scope !== "secrets";
+  const severities = severityFilterSupported ? n.severities : null;
+  const scoped = visibleRows(snap.rows, { scope, severities, showNoFix: n.showNoFix });
+
+  const status = normRowStatus(p?.status);
+  const rows = status === "all"
+    ? scoped
+    : scoped.filter((r) => isOpen(r.status) === (status === "open"));
+
+  const def = REGISTER_ROW_DEFAULT_SORT[scope]!;
+  const columns = registerRowColumns(scope);
+  const asked = typeof p?.sort === "string" ? p.sort : "";
+  // A sort on a column this scope does not carry would order every row by `undefined` and
+  // leave the register in `loadBaseRows` order while claiming to be sorted. Fall back.
+  const sort = columns.includes(asked) ? asked : def.sort;
+  const askedDir = String(p?.dir ?? "").toLowerCase();
+  const dir: "asc" | "desc" = askedDir === "asc" || askedDir === "desc"
+    ? askedDir
+    : (sort === def.sort ? def.dir : "asc");
+
+  const pageSize = clampInt(
+    p?.pageSize,
+    REGISTER_ROWS_DEFAULT_PAGE_SIZE,
+    1,
+    REGISTER_ROWS_PAGE_SIZE_CAP,
+  );
+  const sorted = sortRegisterRows(rows as unknown as Rec[], {
+    value: registerSortValue(sort),
+    descending: dir === "desc",
+    // The row identity, and it is unique by construction (`lifecycle.findingKey`), so the
+    // arrangement is total: two requests for the same page return the same rows.
+    tiebreak: (r) => r["finding_key"],
+  });
+  const cut = pageOfRegisterRows(sorted, clampInt(p?.page, 0, 0, Number.MAX_SAFE_INTEGER), pageSize);
+
+  return {
+    asOf: snap.now,
+    scope,
+    columns: columns.slice(),
+    rows: cut.rows,
+    total: sorted.length,
+    page: cut.page,
+    pageCount: cut.pageCount,
+    pageSize,
+    sort,
+    dir,
+    status,
+    severities,
+    severityFilterSupported,
+    showNoFix: n.showNoFix,
+  };
 }
 
 // --------------------------------------------------------------------------------------- //

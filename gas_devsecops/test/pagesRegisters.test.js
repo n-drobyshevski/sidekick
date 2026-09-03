@@ -410,11 +410,24 @@ describe("sca — two clocks, never one blended number", () => {
     expect(SCA.clocks.actionable.denominator).toMatch(/measures us rather than upstream/);
   });
 
-  it("counts rows with a fixed version without claiming to have the versions", () => {
+  it("counts rows with a fixed version without claiming the AGGREGATE endpoint has the versions", () => {
     expect(SCA.fixedVersion.perRow).toBe(false);
     expect(SCA.fixedVersion.withFix).toBe(78);
     expect(SCA.fixedVersion.withoutFix).toBe(12);
-    expect(SCA.missingColumns).toMatch(/fixed_version/);
+  });
+
+  /**
+   * `fixed_version` USED TO BE ON `missingColumns` — this test encoded the claim
+   * "`api_getRegisterPage` is the only endpoint this page reads, so the fixed-version STRING
+   * never reaches the browser". `api_getRegisterRows` falsifies it: `REGISTER_ROW_COLUMNS.sca`
+   * carries `fixed_version` and `component`, and the per-finding table draws both. `ecosystem`
+   * has no ledger column at all (`LEDGER_COLUMNS` names none), so it is the one column that
+   * genuinely cannot travel and is the only one left on the list.
+   */
+  it("names only the column with no ledger source at all — ecosystem — as still missing", () => {
+    expect(SCA.missingColumns).toMatch(/ecosystem/);
+    expect(SCA.missingColumns).not.toMatch(/fixed_version/);
+    expect(SCA.missingColumns).not.toMatch(/component/);
   });
 });
 
@@ -534,9 +547,16 @@ describe("sast — the disappearance-dating caveat is on the page", () => {
     expect(SAST.concentration.map((c) => c.dim)).not.toContain("cwe");
   });
 
-  it("names the per-finding columns this payload does not carry", () => {
-    expect(SAST.missingColumns).toMatch(/file:line/);
-    expect(SAST.missingColumns).toMatch(/language/);
+  /**
+   * THIS TEST USED TO ASSERT `SAST.missingColumns` NAMED file:line AND language AS ABSENT —
+   * the claim that `api_getRegisterPage`'s aggregates were the only thing sast.js could read.
+   * `api_getRegisterRows` falsifies it: `REGISTER_ROW_COLUMNS.sast` is `identifier, cwe,
+   * file_path, start_line, language, origin, ai_verdict, severity, status, repo_name,
+   * first_seen, last_seen, age_days` — every column this page's stub ever promised — and the
+   * per-finding table draws all of them. Nothing is left to name as missing.
+   */
+  it("has nothing left to name as a missing per-finding column", () => {
+    expect(SAST.missingColumns).toBeNull();
   });
 });
 

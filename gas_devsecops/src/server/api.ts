@@ -51,9 +51,11 @@ import {
   execMttrSlice,
   historyTrendSlice,
   jobSummarySlice,
+  latestScanSlice,
   mttrGroupTableSlice,
   mttrPageTrendSlice,
   programTrendSlice,
+  registerRowsSlice,
   scanRowsSlice,
 } from "../domain/pagePayload";
 import { BUILD_ID } from "./buildInfo";
@@ -324,7 +326,13 @@ export function getRegisterPage(p?: unknown): ApiResult {
         + "its axes, so this page's blocks would come back empty.",
       );
     }
-    return readModels.registerModel(scope, modelParams(p));
+    // `buildRegister` attaches the RAW `ScanRow` `movement()` needs for its change badge —
+    // `raw_ref`/`obs_ref` included. `latestScanSlice` is the same allowlist `getScanHistory`
+    // already routes its `scans` array through (`pagePayload.ts`'s `SCAN_ROW_KEYS`), applied
+    // to this endpoint's singular `latestScan` field.
+    const register = { ...readModels.registerModel(scope, modelParams(p)) };
+    register["latestScan"] = latestScanSlice(register["latestScan"]);
+    return register;
   });
 }
 
@@ -349,7 +357,47 @@ export function getSecretsPage(p?: unknown): ApiResult {
     const params = modelParams(p);
     const register = { ...readModels.registerModel("secrets", params) };
     delete register["segments"];
+    // Same leak, same fix as `getRegisterPage` — see its comment. `registerModel("secrets")`
+    // goes through the identical `buildRegister`, so it carries the identical raw `ScanRow`.
+    register["latestScan"] = latestScanSlice(register["latestScan"]);
     return { register, secrets: readModels.secretsModel(params) };
+  });
+}
+
+/**
+ * One PAGE of per-finding rows for one register — sca, sast or secrets, all three.
+ *
+ * UNLIKE `getRegisterPage`, secrets is served here rather than refused: the register-page
+ * refusal is about the SEVERITY-shaped blocks that page draws (secrets has none), not about
+ * whether the register has rows. A per-finding table is the same question for every scope —
+ * "which findings, in what order" — so `REGISTER_ROW_COLUMNS.secrets` answers it with the
+ * lifecycle columns that scope actually carries.
+ *
+ * A READ, LIKE EVERY OTHER GET* HERE — `registerRowsModel` is deliberately not cached (see
+ * its own header), so `run()` is still the right wrapper: nothing here writes.
+ *
+ * THE SLICE HAPPENS HERE, NOT IN `readModels.ts`. `registerRowsModel` returns full `BaseRow`s
+ * so the model stays reusable for anything else that wants a page of rows; `registerRowsSlice`
+ * is what narrows `model.rows` to the allowlisted columns before they leave the server — the
+ * one place a secret's value could newly reach the wire, and an allowlist is why it cannot.
+ */
+export function getRegisterRows(p?: unknown): ApiResult {
+  return run(() => {
+    const scope = requestedScope(p);
+    if (scope === null) {
+      throw new Error("getRegisterRows needs a scope: one of sca, sast, secrets.");
+    }
+    const r = (p ?? {}) as Rec;
+    const params: readModels.RowPageParams = {
+      ...modelParams(p),
+      page: r["page"],
+      pageSize: r["pageSize"],
+      sort: r["sort"],
+      dir: r["dir"],
+      status: r["status"],
+    };
+    const model = readModels.registerRowsModel(scope, params);
+    return { ...model, rows: registerRowsSlice(model["rows"], scope) };
   });
 }
 

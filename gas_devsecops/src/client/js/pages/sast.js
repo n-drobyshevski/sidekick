@@ -23,14 +23,15 @@
 
 import { bootstrapCached, swrCall } from "../store.js";
 import {
-  absent, dataTable, el, emptyState, heroStat, meter, pageHeader, sevBadge, sevEntries,
-  sevSegmentBar, skeletonStack, statRow,
+  absent, dataTable, el, emptyState, fmtDate, heroStat, meter, pageHeader, sevBadge,
+  sevEntries, sevSegmentBar, skeletonStack, statRow,
 } from "../ui.js";
 import {
   RISK_TIER_LABELS, RISK_TIER_ORDER, agingModel, chartCard, concentrationModel, days1,
-  denomNote, figureCard, fmtCount, funnelModel, missingColumnsNote, movementCard,
+  denomNote, figureCard, fmtCount, funnelModel, movementCard,
   movementModel, num, oldestFindingsModel, pagedTable, pct1, readRegisterParams,
-  registerToolbar, renderRegisterPage, sectionCard, sevPalette, signalFigure, tierModel,
+  registerRowsTable, registerToolbar, renderRegisterPage, sectionCard, sevPalette,
+  signalFigure, textCell, tierModel,
 } from "./sca.js";
 
 const SEVERITY_FALLBACK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
@@ -144,10 +145,12 @@ export function sastModel(payload, opts) {
     oldest: oldestFindingsModel(p.oldest),
     movement: movementModel(p.movement, p.latestScan),
 
-    missingColumns: missingColumnsNote([
-      "file_path and start_line (file:line)", "language per finding", "origin (the scanner)",
-      "cwe per finding",
-    ]),
+    // NOTHING LEFT TO NAME AS MISSING. file_path, start_line, language, origin and cwe were
+    // the whole of this page's original "columns absent from the payload" list, and every one
+    // of them is in `REGISTER_ROW_COLUMNS.sast` — `api_getRegisterRows` and the per-finding
+    // table below carry all four. `missingColumns` stays `null` rather than an empty-list
+    // sentence so the page has something concrete to check for its absence.
+    missingColumns: null,
   };
 }
 
@@ -386,7 +389,44 @@ function paintSast(host, vm, filters) {
         "Nothing open in this register.",
         "Every code weakness is resolved, or nothing has been scanned yet.",
       ),
-    el("p", { class: "small muted" }, vm.missingColumns),
+  ));
+
+  // ------------------------------------------------------------- every finding, server-paged
+  host.append(sectionCard("Every finding in the register", null,
+    el("p", { class: "small muted" },
+      "Open and resolved, server-paged and server-sorted — click a column to ask for a "
+      + "different order rather than re-sorting what is already on screen."),
+    registerRowsTable({
+      scope: "sast",
+      severities: filters.severities,
+      defaultSort: "age_days",
+      defaultDir: "desc",
+      emptyText: "Nothing in this register.",
+      columns: [
+        {
+          key: "identifier", label: "Rule / weakness", sortable: true,
+          cell: (r) => textCell(r.identifier), help: { term: "sast" },
+        },
+        { key: "cwe", label: "CWE", sortable: true, cell: (r) => textCell(r.cwe), help: { term: "cwe-top-25" } },
+        { key: "file_path", label: "File", sortable: true, cell: (r) => textCell(r.file_path) },
+        {
+          key: "start_line", label: "Line", className: "num", sortable: true,
+          cell: (r) => (r.start_line === null || r.start_line === undefined ? absent() : String(r.start_line)),
+        },
+        { key: "language", label: "Language", sortable: true, cell: (r) => textCell(r.language) },
+        { key: "origin", label: "Scanner", sortable: true, cell: (r) => textCell(r.origin) },
+        { key: "ai_verdict", label: "AI verdict", sortable: true, cell: (r) => textCell(r.ai_verdict) },
+        { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
+        { key: "status", label: "Status", sortable: true, cell: (r) => textCell(r.status) },
+        { key: "repo_name", label: "Repository", sortable: true, cell: (r) => textCell(r.repo_name) },
+        { key: "first_seen", label: "First seen", sortable: true, cell: (r) => fmtDate(r.first_seen) },
+        { key: "last_seen", label: "Last seen", sortable: true, cell: (r) => fmtDate(r.last_seen) },
+        {
+          key: "age_days", label: "Age", className: "num", sortable: true,
+          cell: (r) => days1(r.age_days),
+        },
+      ],
+    }),
   ));
 
   host.append(movementCard(vm.movement));

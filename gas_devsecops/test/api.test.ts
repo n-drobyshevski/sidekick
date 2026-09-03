@@ -489,6 +489,9 @@ const READ_RPCS: Array<[string, unknown]> = [
   ["getRegisterPage", { scope: "sca" }],
   ["getRegisterPage", { scope: "sast" }],
   ["getSecretsPage", {}],
+  ["getRegisterRows", { scope: "sca" }],
+  ["getRegisterRows", { scope: "sast" }],
+  ["getRegisterRows", { scope: "secrets" }],
   ["getReposPage", {}],
   ["getScanHistory", {}],
   ["getStorageStats", {}],
@@ -532,6 +535,40 @@ describe("every read RPC answers over a committed ledger", () => {
       expect(out["errorKind"]).toBe("busy");
     } finally {
       externalLockHold = false;
+    }
+  });
+
+  /**
+   * THE SWEEP, over EVERY read RPC rather than the three caught by hand.
+   *
+   * FOUND: `getRegisterPage` / `getSecretsPage` shipped `latestScan` as the RAW `ScanRow`
+   * `buildRegister` (readModels.ts) attaches for `movement()`'s change badge —
+   * `raw_ref`/`obs_ref` included, straight onto the wire, in code already committed before
+   * this package started. `getScanHistory` proved the allowlist (`scanRowsSlice`,
+   * `pagePayload.ts`) worked for the ARRAY shape; nothing had applied it to this SINGULAR
+   * one. `latestScanSlice` is the same allowlist, so there is exactly one column list
+   * deciding what a scan may publish, in either shape.
+   *
+   * Asserted over the FULL `JSON.stringify` of the RPC's `data`, at any depth — a key-only
+   * check (`Object.keys` / `toHaveProperty`) would miss a leak nested inside `latestScan` or
+   * smuggled inside a stringified sub-field, exactly like `getJobStatus`'s own
+   * cursor/journal_ref case above.
+   */
+  it("no read RPC's payload carries cursor, journal_ref, raw_ref or obs_ref, at any depth", async () => {
+    const { api, jobId } = await syncedRegister();
+    const rpcs: Array<[string, unknown]> = [...READ_RPCS, ["getJobStatus", { jobId }]];
+    for (const [name, params] of rpcs) {
+      const res = (api as unknown as Rec)[name] as (p: unknown) => Rec;
+      const out = res(params);
+      const json = JSON.stringify(out["data"]);
+      for (const banned of ["raw_ref", "obs_ref", "journal_ref", "cursor"]) {
+        expect(json, `${name}(${JSON.stringify(params)}) leaks "${banned}"`)
+          .not.toContain(banned);
+      }
+      // The VALUE, not only the key — `secret-token` is the fake tenant's cursor text,
+      // baked into the fixture specifically so a leak through a differently-named field
+      // (e.g. smuggled inside a serialized sub-object) still gets caught.
+      expect(json, `${name} leaks the fake tenant's cursor value`).not.toContain("secret-token");
     }
   });
 });
@@ -628,6 +665,71 @@ describe("the register endpoints", () => {
     const rows = (d: Rec) => ((d["secrets"] as Rec)["rowCount"]);
     expect(rows(unfiltered)).toBeGreaterThan(0);
     expect(rows(filtered)).toBe(rows(unfiltered));
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  3b. getRegisterRows — the per-finding row set, over all three scopes
+// --------------------------------------------------------------------------------------- //
+
+describe("getRegisterRows", () => {
+  it("refuses a missing or unknown scope rather than defaulting to one", async () => {
+    const { api } = await syncedRegister();
+    expect((api.getRegisterRows({}) as unknown as Rec)["ok"]).toBe(false);
+    expect((api.getRegisterRows({ scope: "nope" }) as unknown as Rec)["ok"]).toBe(false);
+  });
+
+  it("serves all three scopes, unlike getRegisterPage — secrets is NOT refused here", async () => {
+    const { api } = await syncedRegister();
+    const out = api.getRegisterRows({ scope: "secrets" }) as unknown as Rec;
+    expect(out["ok"]).toBe(true);
+  });
+
+  it("each row carries only that scope's REGISTER_ROW_COLUMNS plus finding_key", async () => {
+    const { api } = await syncedRegister();
+    const { REGISTER_ROW_COLUMNS, REGISTER_ROW_KEY } = await import("../src/domain/pagePayload");
+    for (const scope of SCOPES) {
+      const data = (api.getRegisterRows({ scope }) as unknown as Rec)["data"] as Rec;
+      const rows = data["rows"] as Rec[];
+      expect(rows.length).toBeGreaterThan(0);
+      const expectedKeys = [REGISTER_ROW_KEY, ...REGISTER_ROW_COLUMNS[scope]!].sort();
+      for (const r of rows) expect(Object.keys(r).sort()).toEqual(expectedKeys);
+    }
+  });
+
+  it("carries no raw_ref/obs_ref on any scope's rows", async () => {
+    const { api } = await syncedRegister();
+    for (const scope of SCOPES) {
+      const data = (api.getRegisterRows({ scope }) as unknown as Rec)["data"] as Rec;
+      const json = JSON.stringify(data["rows"]);
+      expect(json).not.toContain("raw_ref");
+      expect(json).not.toContain("obs_ref");
+    }
+  });
+
+  /** The non-negotiable, over a REAL synced secrets register rather than a hand-built one. */
+  it("secrets rows carry no credential-value-shaped key, full JSON.stringify", async () => {
+    const { api } = await syncedRegister();
+    const data = (api.getRegisterRows({ scope: "secrets" }) as unknown as Rec)["data"] as Rec;
+    const json = JSON.stringify(data["rows"]);
+    expect(json).not.toMatch(/snippet|validationDetails|secretValue/i);
+  });
+
+  it("secrets carries no severity column and reports severityFilterSupported: false", async () => {
+    const { api } = await syncedRegister();
+    const data = (api.getRegisterRows({ scope: "secrets" }) as unknown as Rec)["data"] as Rec;
+    expect(data["severityFilterSupported"]).toBe(false);
+    for (const r of data["rows"] as Rec[]) expect(r).not.toHaveProperty("severity");
+  });
+
+  it("returns {ok:true} with the {rows,total,page,pageSize,sort,dir} shape", async () => {
+    const { api } = await syncedRegister();
+    const out = api.getRegisterRows({ scope: "sca" }) as unknown as Rec;
+    expect(out["ok"]).toBe(true);
+    const data = out["data"] as Rec;
+    for (const k of ["rows", "total", "page", "pageSize", "sort", "dir"]) {
+      expect(data, `getRegisterRows dropped ${k}`).toHaveProperty(k);
+    }
   });
 });
 

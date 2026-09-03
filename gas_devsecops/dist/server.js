@@ -24,6 +24,7 @@ var Server = (() => {
     access: () => access_exports,
     api: () => api_exports,
     deploymentDiagnostic: () => deploymentDiagnostic,
+    devSeed: () => devSeed_exports,
     doGet: () => doGet,
     include: () => include,
     readModels: () => readModels_exports,
@@ -422,7 +423,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "8ea3f8241cd4" : "dev";
+  var BUILD_ID = true ? "ff5399d267f8" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -694,6 +695,11 @@ var Server = (() => {
   }
 
   // src/domain/util.ts
+  function clampInt(v, fallback, min, max) {
+    const n2 = Math.round(Number(v));
+    if (!Number.isFinite(n2)) return fallback;
+    return Math.min(max, Math.max(min, n2));
+  }
   function cmp(a, b) {
     return a < b ? -1 : a > b ? 1 : 0;
   }
@@ -3840,6 +3846,7 @@ var Server = (() => {
     getProgramPage: () => getProgramPage,
     getRecentErrors: () => getRecentErrors,
     getRegisterPage: () => getRegisterPage,
+    getRegisterRows: () => getRegisterRows,
     getReposPage: () => getReposPage,
     getScanHistory: () => getScanHistory,
     getSecretsPage: () => getSecretsPage,
@@ -3929,17 +3936,28 @@ var Server = (() => {
   function scanRowsSlice(scans) {
     return pickRows(scans, SCAN_ROW_KEYS);
   }
+  function latestScanSlice(scan) {
+    var _a;
+    if (!scan || typeof scan !== "object") return null;
+    return (_a = scanRowsSlice([scan])[0]) != null ? _a : null;
+  }
   function mttrGroupTableSlice(byGroup) {
     if (!byGroup || typeof byGroup !== "object") return null;
     const b = byGroup;
     return { dimension: b["dimension"], rows: Array.isArray(b["rows"]) ? b["rows"] : [] };
   }
   var JOB_KEYS = [
+    // `page_size` rides along with `page` and `total_count` because the three are the only
+    // honest per-scope progress fraction on offer: `findings_so_far` is cumulative across the
+    // whole sync while `total_count` is one scope's, so their ratio is wrong from the second
+    // register onward. All three are per-scope (scanJobs resets page/page_size on advance) and
+    // none is sensitive — a page size is a constant of this app, not a fact about the tenant.
     "job_id",
     "kind",
     "phase",
     "scope",
     "page",
+    "page_size",
     "findings_so_far",
     "total_count",
     "started_at",
@@ -3961,6 +3979,156 @@ var Server = (() => {
     }
     out["incremental"] = incremental;
     return out;
+  }
+  var REGISTER_ROW_COLUMNS = {
+    sca: [
+      "identifier",
+      "component",
+      "severity",
+      "status",
+      "repo_name",
+      "branch",
+      "first_seen",
+      "last_seen",
+      "fixed_version",
+      "fix_available_at",
+      "awaiting_vendor_fix",
+      "has_kev",
+      "has_exploit",
+      "epss",
+      "mttr_days",
+      "age_days"
+    ],
+    sast: [
+      "identifier",
+      "cwe",
+      "file_path",
+      "start_line",
+      "language",
+      "origin",
+      "ai_verdict",
+      "severity",
+      "status",
+      "repo_name",
+      "first_seen",
+      "last_seen",
+      "age_days"
+    ],
+    secrets: [
+      "identifier",
+      "secret_kind",
+      "confidence",
+      "file_path",
+      "start_line",
+      "validation_state",
+      "validated_at",
+      "rotated_at",
+      "removed_at",
+      "repo_name",
+      "branch",
+      "first_seen",
+      "last_seen"
+    ]
+  };
+  var REGISTER_ROW_KEY = "finding_key";
+  var REGISTER_ROW_DEFAULT_SORT = {
+    sca: { sort: "age_days", dir: "desc" },
+    sast: { sort: "age_days", dir: "desc" },
+    secrets: { sort: "first_seen", dir: "asc" }
+  };
+  var REGISTER_ROWS_PAGE_SIZE_CAP = 250;
+  var REGISTER_ROWS_DEFAULT_PAGE_SIZE = 50;
+  function registerRowColumns(scope) {
+    var _a;
+    return (_a = REGISTER_ROW_COLUMNS[scope]) != null ? _a : [];
+  }
+  function registerRowsSlice(rows, scope) {
+    const cols = registerRowColumns(scope);
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r) => {
+      const key = r[REGISTER_ROW_KEY];
+      const out = { [REGISTER_ROW_KEY]: key === void 0 ? null : key };
+      for (const k of cols) out[k] = r[k] === void 0 ? null : r[k];
+      return out;
+    });
+  }
+  function compareRegisterValues(a, b) {
+    if (typeof a === "number" && typeof b === "number") return a - b;
+    if (typeof a === "boolean" && typeof b === "boolean") return (a ? 1 : 0) - (b ? 1 : 0);
+    const sa = String(a).toLowerCase();
+    const sb = String(b).toLowerCase();
+    return sa < sb ? -1 : sa > sb ? 1 : 0;
+  }
+  function nullsLastOrder(a, b) {
+    const na = a === null || a === void 0;
+    const nb = b === null || b === void 0;
+    if (na && nb) return 0;
+    if (na) return 1;
+    if (nb) return -1;
+    return null;
+  }
+  function sortRegisterRows(rows, spec) {
+    const list = Array.isArray(rows) ? rows.slice() : [];
+    const value = spec && spec.value;
+    if (typeof value !== "function") return list;
+    const descending = Boolean(spec.descending);
+    const tiebreak = typeof spec.tiebreak === "function" ? spec.tiebreak : null;
+    return list.sort((ra, rb) => {
+      const va = value(ra);
+      const vb = value(rb);
+      const order = nullsLastOrder(va, vb);
+      if (order === null) {
+        const d = compareRegisterValues(va, vb);
+        if (d !== 0) return descending ? -d : d;
+      } else if (order !== 0) {
+        return order;
+      }
+      if (!tiebreak) return 0;
+      const ta = tiebreak(ra);
+      const tb = tiebreak(rb);
+      const tie = nullsLastOrder(ta, tb);
+      return tie === null ? compareRegisterValues(ta, tb) : tie;
+    });
+  }
+  function pageOfRegisterRows(rows, page, pageSize) {
+    const size = Math.max(1, Math.floor(pageSize));
+    const pageCount = Math.max(1, Math.ceil(rows.length / size));
+    const clamped = Math.min(Math.max(Math.floor(page) || 0, 0), pageCount - 1);
+    return {
+      rows: rows.slice(clamped * size, (clamped + 1) * size),
+      page: clamped,
+      pageCount
+    };
+  }
+  var DATE_SORT_COLUMNS = /* @__PURE__ */ new Set([
+    "first_seen",
+    "last_seen",
+    "fix_available_at",
+    "validated_at",
+    "rotated_at",
+    "removed_at"
+  ]);
+  var NUMBER_SORT_COLUMNS = /* @__PURE__ */ new Set(["start_line", "epss", "mttr_days", "age_days"]);
+  function severityRank(v) {
+    const s2 = normalizeSeverity(v);
+    const i = SEVERITY_ORDER.indexOf(s2);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function orNull(v) {
+    return v === null || v === void 0 || v === "" ? null : v;
+  }
+  function registerSortValue(column) {
+    if (column === "severity") return (r) => severityRank(r["severity"]);
+    if (DATE_SORT_COLUMNS.has(column)) return (r) => parseTs(r[column]);
+    if (NUMBER_SORT_COLUMNS.has(column)) {
+      return (r) => {
+        const raw = orNull(r[column]);
+        if (raw === null) return null;
+        const n2 = Number(raw);
+        return Number.isFinite(n2) ? n2 : null;
+      };
+    }
+    return (r) => orNull(r[column]);
   }
 
   // src/server/jobsStore.ts
@@ -4817,6 +4985,7 @@ var Server = (() => {
     mttrModel: () => mttrModel,
     programModel: () => programModel,
     registerModel: () => registerModel,
+    registerRowsModel: () => registerRowsModel,
     reposModel: () => reposModel,
     secretsModel: () => secretsModel,
     signalCoverage: () => signalCoverage,
@@ -5655,6 +5824,56 @@ var Server = (() => {
       () => buildRegister(scope, n2),
       CLOCK_TTL_SEC
     );
+  }
+  function normRowStatus(v) {
+    const s2 = String(v != null ? v : "").toLowerCase();
+    return s2 === "open" || s2 === "resolved" ? s2 : "all";
+  }
+  function registerRowsModel(scope, p) {
+    var _a;
+    const n2 = norm(p);
+    const snap = baseSnapshot();
+    const severityFilterSupported = scope !== "secrets";
+    const severities = severityFilterSupported ? n2.severities : null;
+    const scoped = visibleRows(snap.rows, { scope, severities, showNoFix: n2.showNoFix });
+    const status = normRowStatus(p == null ? void 0 : p.status);
+    const rows = status === "all" ? scoped : scoped.filter((r) => isOpen5(r.status) === (status === "open"));
+    const def = REGISTER_ROW_DEFAULT_SORT[scope];
+    const columns = registerRowColumns(scope);
+    const asked = typeof (p == null ? void 0 : p.sort) === "string" ? p.sort : "";
+    const sort = columns.includes(asked) ? asked : def.sort;
+    const askedDir = String((_a = p == null ? void 0 : p.dir) != null ? _a : "").toLowerCase();
+    const dir = askedDir === "asc" || askedDir === "desc" ? askedDir : sort === def.sort ? def.dir : "asc";
+    const pageSize = clampInt(
+      p == null ? void 0 : p.pageSize,
+      REGISTER_ROWS_DEFAULT_PAGE_SIZE,
+      1,
+      REGISTER_ROWS_PAGE_SIZE_CAP
+    );
+    const sorted = sortRegisterRows(rows, {
+      value: registerSortValue(sort),
+      descending: dir === "desc",
+      // The row identity, and it is unique by construction (`lifecycle.findingKey`), so the
+      // arrangement is total: two requests for the same page return the same rows.
+      tiebreak: (r) => r["finding_key"]
+    });
+    const cut = pageOfRegisterRows(sorted, clampInt(p == null ? void 0 : p.page, 0, 0, Number.MAX_SAFE_INTEGER), pageSize);
+    return {
+      asOf: snap.now,
+      scope,
+      columns: columns.slice(),
+      rows: cut.rows,
+      total: sorted.length,
+      page: cut.page,
+      pageCount: cut.pageCount,
+      pageSize,
+      sort,
+      dir,
+      status,
+      severities,
+      severityFilterSupported,
+      showNoFix: n2.showNoFix
+    };
   }
   function buildSecrets(n2) {
     const snap = baseSnapshot();
@@ -6681,8 +6900,17 @@ var Server = (() => {
             page: paging.pageNumber,
             page_size: paging.pageSize,
             // Cumulative across the WHOLE sync — this is one job, and the card counts one
-            // sync. The current scope's own count is `params.perScope[scope].rows`, which
-            // pairs with `total_count` below for a per-scope percentage.
+            // sync. It therefore DOES NOT pair with `total_count` below, which is only the
+            // current scope's total: dividing them is right for the first scope and silently
+            // wrong from the second on. An earlier revision of this comment pointed at
+            // `params.perScope[scope].rows` as the per-scope numerator; that field is only
+            // written when a scope COMPLETES (`progress.rows = slim.length`), so it is absent
+            // for exactly the duration anyone would want it, and `params_json` never reaches
+            // the browser anyway (pagePayload's JOB_KEYS allowlist).
+            //
+            // The honest per-scope fraction is PAGE-BASED — `page` and `page_size` are both
+            // reset on every scope advance below, so `page * page_size / total_count` is a
+            // fraction of one register. syncProgress.js::syncViewModel computes it there.
             findings_so_far: findings,
             // The CURRENT scope's total, per the jobs tab's own column definition.
             total_count: progress.totalCount,
@@ -7060,7 +7288,9 @@ var Server = (() => {
           "The secrets register has its own page \u2014 call getSecretsPage. Severity is not one of its axes, so this page's blocks would come back empty."
         );
       }
-      return registerModel(scope, modelParams(p));
+      const register = { ...registerModel(scope, modelParams(p)) };
+      register["latestScan"] = latestScanSlice(register["latestScan"]);
+      return register;
     });
   }
   function getSecretsPage(p) {
@@ -7068,7 +7298,27 @@ var Server = (() => {
       const params = modelParams(p);
       const register = { ...registerModel("secrets", params) };
       delete register["segments"];
+      register["latestScan"] = latestScanSlice(register["latestScan"]);
       return { register, secrets: secretsModel(params) };
+    });
+  }
+  function getRegisterRows(p) {
+    return run(() => {
+      const scope = requestedScope(p);
+      if (scope === null) {
+        throw new Error("getRegisterRows needs a scope: one of sca, sast, secrets.");
+      }
+      const r = p != null ? p : {};
+      const params = {
+        ...modelParams(p),
+        page: r["page"],
+        pageSize: r["pageSize"],
+        sort: r["sort"],
+        dir: r["dir"],
+        status: r["status"]
+      };
+      const model = registerRowsModel(scope, params);
+      return { ...model, rows: registerRowsSlice(model["rows"], scope) };
     });
   }
   function getReposPage(p) {
@@ -7192,6 +7442,44 @@ var Server = (() => {
         note: "Job failures only \u2014 this register has no error-log tab. A read that fails returns its message to the caller and records no row."
       };
     });
+  }
+
+  // src/server/devSeed.ts
+  var devSeed_exports = {};
+  __export(devSeed_exports, {
+    seedSampleLedger: () => seedSampleLedger
+  });
+
+  // src/server/sampleData.ts
+  var SAMPLE_SYNCS = [];
+
+  // src/server/devSeed.ts
+  function seedSampleLedger() {
+    if (SAMPLE_SYNCS.length === 0) {
+      return { seeded: 0, syncs: 0, rows: 0, reason: "no sample data in this build" };
+    }
+    let rows = 0;
+    const scopesTouched = /* @__PURE__ */ new Set();
+    for (let i = 0; i < SAMPLE_SYNCS.length; i++) {
+      const sync = SAMPLE_SYNCS[i];
+      const perScope = sync.scopes.map((battery) => {
+        rows += battery.rawRecords.length;
+        scopesTouched.add(battery.scope);
+        return {
+          scope: battery.scope,
+          records: battery.rawRecords.map((node) => slimRecord(battery.scope, node)),
+          mode: battery.mode,
+          scannedSeverities: battery.scannedSeverities,
+          rawRef: null
+        };
+      });
+      const jobId = `dev-seed-${i + 1}`;
+      persistSync(jobId, sync.syncId, perScope);
+    }
+    const seeded = Object.values(loadState().ledger).filter(
+      (row) => scopesTouched.has(row.scope)
+    ).length;
+    return { seeded, syncs: SAMPLE_SYNCS.length, rows };
   }
   return __toCommonJS(index_exports);
 })();

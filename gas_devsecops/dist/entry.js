@@ -65,6 +65,7 @@ function api_getMttrPage(p) { return timedApi_("getMttrPage", p); }
 function api_getProgramPage(p) { return timedApi_("getProgramPage", p); }
 function api_getRegisterPage(p) { return timedApi_("getRegisterPage", p); }
 function api_getSecretsPage(p) { return timedApi_("getSecretsPage", p); }
+function api_getRegisterRows(p) { return timedApi_("getRegisterRows", p); }
 function api_getReposPage(p) { return timedApi_("getReposPage", p); }
 function api_getScanHistory(p) { return timedApi_("getScanHistory", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }
