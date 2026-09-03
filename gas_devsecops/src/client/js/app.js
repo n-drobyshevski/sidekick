@@ -488,11 +488,12 @@ function renderSidebar(sidebar, data) {
       "aria-hidden": "true",
     }), hasCreds ? "Credentials loaded" : "No Wiz credentials configured"),
     el("div", { class: "scan-caption" },
-      data && data.latestScan
+      data && data.latestSync
         // `ts`, not `finished_at`: the field is named for the `scans` column it is read from,
-        // and the old name existed on neither side of the wire.
-        ? `Last scan ${fmtDateTime(data.latestScan.ts)}`
-        : "No scans yet."),
+        // and the old name existed on neither side of the wire. "sync", not "scan", because
+        // one run writes a row per register and the rail must not name one of them.
+        ? `Last sync ${fmtDateTime(data.latestSync.ts)}`
+        : "No syncs yet."),
   );
   sidebar.append(zone);
   // A rail rebuild (boot, refresh, or an experimental-flag flip) throws away the old

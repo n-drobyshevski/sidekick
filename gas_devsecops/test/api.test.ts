@@ -429,6 +429,53 @@ async function load(): Promise<{ api: Api; scanJobs: typeof import("../src/serve
   return { api, scanJobs };
 }
 
+describe("bootstrap's freshness caption reports the SYNC, not one of its rows", () => {
+  /**
+   * THE DEFECT THIS PINS was visible on the rendered page before it was visible in a test.
+   * One sync writes one `scans` row per scope, all sharing the bare syncId in `scan_id` and
+   * all written with the same timestamp. `bootstrap` picked the newest row under a strict
+   * `ts > latest.ts`, so among three equal timestamps it kept whichever it met first — and
+   * Executive rendered "Last scan · Dependencies (SCA) · 310 findings" for a sync that had
+   * also written 30 SAST and 112 secrets findings.
+   *
+   * Asserting the SHAPE is not enough here: a payload naming one scope is a perfectly valid
+   * shape. What has to be asserted is that the count of registers equals the count of scans
+   * rows the sync actually wrote, and that the total is their sum.
+   */
+  it("names every register the sync wrote a row for, and totals them", async () => {
+    const { api } = await syncedRegister();
+    const boot = api.bootstrap({});
+    expect(boot.ok).toBe(true);
+    const sync = boot.data!.latestSync;
+    expect(sync, "a committed battery must produce a latestSync").not.toBeNull();
+
+    const { TABS } = await import("../src/server/sheetsDb");
+    const rows = (tables[TABS.scans] ?? []) as Rec[];
+    const members = rows.filter((r) => String(r["scan_id"]) === sync!.sync_id);
+    expect(members.length, "the fixture battery should write one row per scope").toBe(3);
+
+    expect(sync!.scopes).toHaveLength(members.length);
+    expect(sync!.scopes.map((s) => s.scope).sort()).toEqual(["sast", "sca", "secrets"]);
+    expect(sync!.total).toBe(members.reduce((a, r) => a + Number(r["total"] ?? 0), 0));
+  });
+
+  it("carries each register's own coverage, because they differ by design", async () => {
+    const { api } = await syncedRegister();
+    const sync = api.bootstrap({}).data!.latestSync!;
+    const bySc = new Map(sync.scopes.map((s) => [s.scope, s.severities]));
+    // secrets runs with the gate OFF — null means ALL, and a single shared coverage field
+    // could not have expressed that alongside a narrowed sca/sast in the same sync.
+    expect(bySc.get("secrets")).toBeNull();
+    expect(bySc.has("sca")).toBe(true);
+  });
+
+  it("orders the registers by battery order, so the caption does not reshuffle per load", async () => {
+    const { api } = await syncedRegister();
+    const sync = api.bootstrap({}).data!.latestSync!;
+    expect(sync.scopes.map((s) => s.scope)).toEqual(["sca", "sast", "secrets"]);
+  });
+});
+
 /** One committed battery over all three scopes, and the api module that can read it. */
 async function syncedRegister(): Promise<{ api: Api; jobId: string }> {
   const { api, scanJobs } = await load();

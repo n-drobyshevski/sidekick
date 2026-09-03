@@ -423,7 +423,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "ff5399d267f8" : "dev";
+  var BUILD_ID = true ? "cad2e3168412" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -7189,21 +7189,47 @@ var Server = (() => {
   }
   function bootstrap(_p) {
     return run(() => {
-      var _a, _b, _c;
+      var _a, _b;
       const scans = readAll(TABS.scans);
-      let latest = null;
+      let newestTs = "";
+      let newestSyncId = "";
       for (const row of scans) {
         const ts = String((_a = row.ts) != null ? _a : "");
-        if (!ts) continue;
-        if (!latest || ts > latest.ts) {
-          latest = {
-            scan_id: String((_b = row.scan_id) != null ? _b : ""),
-            ts,
-            scope: row.scope == null ? null : String(row.scope),
-            severities: row.severities == null ? null : String(row.severities),
-            total: Number((_c = row.total) != null ? _c : 0)
+        if (!ts || ts <= newestTs) continue;
+        newestTs = ts;
+        newestSyncId = String((_b = row.scan_id) != null ? _b : "");
+      }
+      let latestSync = null;
+      if (newestSyncId) {
+        const members = scans.filter((r) => {
+          var _a2;
+          return String((_a2 = r.scan_id) != null ? _a2 : "") === newestSyncId;
+        });
+        const order = new Map(SCOPES.map((sc, i) => [String(sc), i]));
+        const rows = members.map((r) => {
+          var _a2, _b2, _c;
+          return {
+            scope: String((_a2 = r.scope) != null ? _a2 : ""),
+            total: Number((_b2 = r.total) != null ? _b2 : 0),
+            severities: r.severities == null ? null : String(r.severities),
+            ts: String((_c = r.ts) != null ? _c : "")
           };
+        }).sort((a, b) => {
+          var _a2, _b2;
+          return ((_a2 = order.get(a.scope)) != null ? _a2 : 99) - ((_b2 = order.get(b.scope)) != null ? _b2 : 99);
+        });
+        let total = 0;
+        let ts = "";
+        for (const r of rows) {
+          total += r.total;
+          if (r.ts > ts) ts = r.ts;
         }
+        latestSync = {
+          sync_id: newestSyncId,
+          ts: ts || newestTs,
+          total,
+          scopes: rows.map((r) => ({ scope: r.scope, total: r.total, severities: r.severities }))
+        };
       }
       return {
         product: "Wiz Sidekick DevSecOps",
@@ -7212,7 +7238,7 @@ var Server = (() => {
         scopes: SCOPES,
         severityOrder: SEVERITY_ORDER,
         slaTargets: SLA_TARGETS,
-        latestScan: latest,
+        latestSync,
         canEditAccess: canEditUsers(),
         settings: loadSettings()
       };

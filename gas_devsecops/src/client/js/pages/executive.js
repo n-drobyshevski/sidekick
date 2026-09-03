@@ -428,24 +428,38 @@ export async function renderExecutive(host, params, _ctx) {
    */
   function renderScan() {
     clear(scanHost);
-    scanHost.append(sectionLabel("Last scan"));
-    const latest = boot.latestScan;
+    scanHost.append(sectionLabel("Last sync"));
+    const latest = boot.latestSync;
     if (!latest) {
       scanHost.append(emptyState(
-        "No scan saved yet.",
+        "No sync saved yet.",
         "Every figure above is empty until one runs — run it from the scan zone in the rail.",
       ));
       return;
     }
+    // EVERY REGISTER THE SYNC TOUCHED, not the one that sorted first. One run writes one
+    // `scans` row per scope; naming a single one here reported a third of the observation as
+    // the whole of it — on the page that argues two sections above that the three registers
+    // are three clocks and are never collapsed into one.
     scanHost.append(el("p", { class: "scan-caption" },
       fmtDateTime(latest.ts)
-      + (latest.scope ? " · " + (SCOPE_LABELS[latest.scope] || latest.scope) : " · all registers")
-      + " · " + fmtCount(latest.total) + " " + pluralize(Number(latest.total || 0), "finding")));
+      + " · " + fmtCount(latest.total) + " " + pluralize(Number(latest.total || 0), "finding")
+      + " across " + fmtCount(latest.scopes.length)
+      + " " + pluralize(latest.scopes.length, "register")));
+    scanHost.append(el("ul", { class: "scan-scopes small muted" },
+      ...latest.scopes.map((s) => el("li", {},
+        (SCOPE_LABELS[s.scope] || s.scope)
+        + " · " + fmtCount(s.total) + " " + pluralize(Number(s.total || 0), "finding")
+        // The coverage half of the caption. `null` means the severity gate was off for that
+        // register and it looked at everything — which is the SECRETS default, so rendering
+        // it as "none" would invert the most deliberate choice in this product.
+        + " · " + (s.severities ? "severities " + s.severities : "all severities"),
+      ))));
     scanHost.append(el("p", { class: "small muted" },
-      "What that scan changed is on ",
+      "What that sync changed is on ",
       el("a", { class: "linklike", href: "#/history" }, "Scan history"),
-      ", which is the page sent the per-scan arrival and closure counts. Run another from the"
-      + " scan zone in the rail."));
+      ", which is the page sent the per-scan arrival and closure counts — one row per register"
+      + " per sync. Run another from the scan zone in the rail."));
     if (!boot.hasCredentials) {
       scanHost.append(el("p", { class: "small muted" },
         "No Wiz credentials are configured, so these figures come from a dry run rather than"

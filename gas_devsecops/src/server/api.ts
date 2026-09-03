@@ -109,25 +109,40 @@ export interface Bootstrap {
   severityOrder: readonly string[];
   slaTargets: Record<string, number>;
   /**
-   * The freshness caption's row, NAMED FOR THE COLUMNS IT COMES FROM.
+   * The freshness caption's SYNC — every row of it, not one of them.
    *
-   * `ts` used to be published as `finished_at` — a field named for a column the `scans` tab
-   * does not have, which is the shape of mistake that only shows up in production: the
-   * server built it from `row.ts` and the client read `latestScan.finished_at`, so the day a
-   * scan row existed the caption would have read "Last scan undefined". Nothing in Phase 1
-   * writes a scan row, so nothing could catch it.
+   * THIS USED TO PUBLISH A SINGLE ROW and it under-reported by two thirds. One sync writes
+   * one `scans` row PER SCOPE, all carrying the same bare syncId in `scan_id` with `scope` as
+   * the other half of the key (ledgerStore's `scanIdFor` settled that), and all three share a
+   * timestamp. The old loop kept the row with the greatest `ts` under a strict `>`, so among
+   * three equal timestamps it kept whichever it happened to meet first and dropped the rest —
+   * and the Executive page rendered "Last scan · Dependencies (SCA) · 310 findings" for a
+   * sync that had also written 30 SAST and 112 secrets findings.
    *
-   * `scope` and `severities` ride along because the caption is a claim about coverage, not
-   * just about time: a sync that requested CRITICAL/HIGH on SCA has not looked at a MEDIUM,
-   * and a reader told only when it ran cannot tell that from a sync that looked at
-   * everything. `severities` is the scans tab's own serialized text.
+   * That is the same page which says, two sections higher, that the three registers are never
+   * summed into one number because they are three clocks. Naming one of them as "the scan" is
+   * the same error from the other direction: silently choosing one register and presenting it
+   * as the whole observation.
+   *
+   * Grouping by `scan_id` is not a heuristic here — it IS the sync, by the key ledgerStore
+   * writes. `ts` is the newest among the rows rather than any one row's, since nothing
+   * guarantees they are written in the same millisecond.
+   *
+   * `severities` rides along PER SCOPE because the caption is a claim about coverage, not just
+   * about time: a sync that requested CRITICAL/HIGH on SCA has not looked at a MEDIUM, and it
+   * is normal here for one scope to be narrowed while another is not — `secrets` runs with the
+   * gate off (`null`, meaning all) while `sca` and `sast` do not. A single coverage field could
+   * not have said that.
+   *
+   * `ts` is named for the `scans` column it is read from. It was once published as
+   * `finished_at`, a name neither side of the wire had, so the caption would have read "Last
+   * scan undefined" the first day a scan row existed.
    */
-  latestScan: {
-    scan_id: string;
+  latestSync: {
+    sync_id: string;
     ts: string;
-    scope: string | null;
-    severities: string | null;
     total: number;
+    scopes: Array<{ scope: string; total: number; severities: string | null }>;
   } | null;
   canEditAccess: boolean;
   settings: ReturnType<typeof loadSettings>;
@@ -140,19 +155,41 @@ export interface Bootstrap {
 export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
   return run(() => {
   const scans = readAll(TABS.scans);
-  let latest: Bootstrap["latestScan"] = null;
+  // Pass 1: which sync is newest. Pass 2: every row of THAT sync. Two passes rather than one
+  // because the winner is only known at the end, and a sync's rows are not adjacent on the tab.
+  let newestTs = "";
+  let newestSyncId = "";
   for (const row of scans) {
     const ts = String(row.ts ?? "");
-    if (!ts) continue;
-    if (!latest || ts > latest.ts) {
-      latest = {
-        scan_id: String(row.scan_id ?? ""),
-        ts,
-        scope: row.scope == null ? null : String(row.scope),
-        severities: row.severities == null ? null : String(row.severities),
-        total: Number(row.total ?? 0),
-      };
+    if (!ts || ts <= newestTs) continue;
+    newestTs = ts;
+    newestSyncId = String(row.scan_id ?? "");
+  }
+  let latestSync: Bootstrap["latestSync"] = null;
+  if (newestSyncId) {
+    const members = scans.filter((r) => String(r.scan_id ?? "") === newestSyncId);
+    const order = new Map(SCOPES.map((sc, i) => [String(sc), i]));
+    const rows = members
+      .map((r) => ({
+        scope: String(r.scope ?? ""),
+        total: Number(r.total ?? 0),
+        severities: r.severities == null ? null : String(r.severities),
+        ts: String(r.ts ?? ""),
+      }))
+      // Battery order, not tab order, so the caption reads the same on every load.
+      .sort((a, b) => (order.get(a.scope) ?? 99) - (order.get(b.scope) ?? 99));
+    let total = 0;
+    let ts = "";
+    for (const r of rows) {
+      total += r.total;
+      if (r.ts > ts) ts = r.ts;
     }
+    latestSync = {
+      sync_id: newestSyncId,
+      ts: ts || newestTs,
+      total,
+      scopes: rows.map((r) => ({ scope: r.scope, total: r.total, severities: r.severities })),
+    };
   }
   return {
     product: "Wiz Sidekick DevSecOps",
@@ -161,7 +198,7 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
     scopes: SCOPES,
     severityOrder: SEVERITY_ORDER,
     slaTargets: SLA_TARGETS,
-    latestScan: latest,
+    latestSync,
     canEditAccess: canEditUsers(),
     settings: loadSettings(),
   };

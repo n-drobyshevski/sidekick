@@ -593,18 +593,20 @@ export async function renderSettings(host, params, ctx) {
       boot.hasCredentials ? "ok" : "bad",
       boot.hasCredentials ? "Connected" : "No credentials",
     );
-    const scan = boot.latestScan;
+    // The whole sync, not one of its rows — see api.ts's `latestSync`. A run writes one
+    // `scans` row per register, and the diagnostic used to name whichever sorted first.
+    const scan = boot.latestSync;
     const scanLine = scan
-      ? `${fmtDateTime(scan.ts)} · ${SCOPE_LABELS[scan.scope] || scan.scope || "all registers"} · `
-        + `${Number(scan.total || 0).toLocaleString()} finding(s)`
-      : "No scan recorded yet.";
+      ? `${fmtDateTime(scan.ts)} · ${Number(scan.total || 0).toLocaleString()} finding(s) across `
+        + scan.scopes.map((s) => SCOPE_LABELS[s.scope] || s.scope).join(", ")
+      : "No sync recorded yet.";
     const diagPanel = settingsPanel({
       title: "Deployment",
       body: [
         settingRow({ label: "Product", control: el("span", {}, boot.product || "—") }),
         settingRow({ label: "Build", control: el("span", { class: "num" }, boot.buildId || "—") }),
         settingRow({ label: "Wiz credentials", control: credPill }),
-        settingRow({ label: "Last scan", control: el("span", {}, scanLine) }),
+        settingRow({ label: "Last sync", control: el("span", {}, scanLine) }),
       ],
     });
 
