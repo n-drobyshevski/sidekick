@@ -46,31 +46,29 @@ export interface Settings {
   /**
    * Hour-of-day (0-23, script-local) the daily sync trigger is requested to fire at.
    *
-   * CAPTURED BUT NOT YET WIRED, same shape as `fix_available_at` in the ledger core (CLAUDE.md,
-   * gas_devsecops section): `server/setup.ts` installs the daily trigger at the literal
-   * `DEFAULT_SYNC_HOUR` constant rather than reading this field, because doing so would make
-   * setup() depend on `settingsStore.loadSettings()` — a Sheets read against a `settings` tab
-   * that setup() itself is what creates — and would need `warmTriggerSchedule`'s signature
-   * format extended to cover the chosen hour so a later reschedule reliably reinstalls. Neither
-   * is this package's file to touch (`settingsStore.ts`, `setup.ts`'s trigger block is owned
-   * here but deliberately kept schedule-blind for S6). TODO(S7 or later): read this field in
-   * setup() and fold it into the signature.
+   * STILL CAPTURED AND NOT WIRED, and S7 looked at it and left it on purpose. The blocker is
+   * NOT the Sheets read an earlier revision of this comment named — `setup()` calls
+   * `ensureTabs` before its trigger block, so the tab exists and an empty one cleans to this
+   * same default. It is the RECONCILE: the daily trigger is deduplicated by handler name alone,
+   * so a setting read once at install and never again would let an operator change the hour,
+   * watch setup() report "already installed", and keep firing at the old time. Converging needs
+   * a recorded signature the way `warmTriggerSchedule()` has one, which means a new
+   * `PROP_KEYS` entry and a `test/setup.test.ts` case. `server/setup.ts` carries the full
+   * statement of this beside `DAILY_SYNC_HOUR`.
    */
   syncSchedule: number;
   /**
    * Whether ledger compaction runs automatically after each committed sync.
    *
-   * INTEGRATION POINT: `server/scanJobs.ts` (landed the same day as this field) gates
-   * auto-compaction on the Script Property `AUTO_COMPACT_DAYS` — unset means off — because
-   * Settings had no such knob when it was written. This field and `retentionDays` below are now
-   * that knob's SOURCE OF TRUTH; the property is a leftover implementation detail, not a second
-   * home for the same value (see the `wizProjectId` note above this interface for why two homes
-   * for one value is the failure mode to avoid). `scanJobs.ts` is not this package's file to
-   * touch, so the property itself still gates compaction today. TODO(S7): change
-   * `autoCompactIfDue()` in scanJobs.ts to read `settingsStore.loadSettings().{autoCompact,
-   * retentionDays}` instead of the raw property, then drop `AUTO_COMPACT_DAYS_PROP`. Defaults to
-   * `false` so a fresh install and every existing deployment keep TODAY'S behaviour (property
-   * unset = compaction off) byte-for-byte until an operator opts in.
+   * WIRED (S7). `server/scanJobs.ts::autoCompactIfDue()` reads this field and `retentionDays`
+   * below, and the `AUTO_COMPACT_DAYS` Script Property it used to gate on is GONE — not kept
+   * as a fallback, because a second home for one value is the failure the `wizProjectId` note
+   * above this interface describes: an operator changes the setting, the Data page agrees, and
+   * compaction keeps running on whatever the property said.
+   *
+   * THE DEFAULT DID NOT MOVE ACROSS THAT REWIRE, and that is the property worth keeping: the
+   * old gate was an unset Script Property (= off) and this one is `false`, so a fresh install
+   * and every existing deployment behave identically until an operator opts in.
    */
   autoCompact: boolean;
   /** Compaction retention window, in days. Read only once `autoCompact` is true. */

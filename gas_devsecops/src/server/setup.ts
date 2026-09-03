@@ -26,9 +26,34 @@ import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, setProp } from "./props";
 import { ensureTabs } from "./sheetsDb";
 
 const DAILY_SYNC_HANDLER = "trigger_dailySync";
-// Imported rather than re-literaled: `Settings.syncSchedule` (domain/settingsLogic.ts) is not
-// read by setup() yet (see that field's doc comment for why), but its default and the hour
-// actually installed below must never silently drift apart while that TODO is open.
+/*
+ * THE DAILY HOUR IS STILL THE DEFAULT, NOT `Settings.syncSchedule`, AND S7 LEFT IT THAT WAY
+ * DELIBERATELY. Recording the reasoning so the next package inherits a decision rather than a
+ * bare TODO.
+ *
+ * Reading the setting is the easy half and it is safe: `ensureTabs(ss)` runs above the trigger
+ * block, so the `settings` tab exists by the time `loadSettings()` would be called, and an
+ * empty tab cleans to `DEFAULT_SETTINGS` — i.e. to this same constant. The ordering hazard the
+ * field's own doc comment names is real but survivable.
+ *
+ * THE HARD HALF IS THE RECONCILE, and without it the wiring is worse than nothing. The daily
+ * trigger is deduplicated BY HANDLER NAME ONLY (below): once one exists, setup() never touches
+ * it again. So reading the setting on a fresh install and then never re-reading it would let an
+ * operator change the hour, see setup() report "already installed", and keep firing at the old
+ * time — a setting that looks wired and is not, which is strictly more misleading than one that
+ * is openly unread. Making it converge needs what the warm set has: a recorded signature
+ * (`warmTriggerSchedule()` and `PROP_KEYS.warmTriggerSchedule`) to tell a correct trigger from
+ * a stale one. That means a new key in `props.ts` and a case in `test/setup.test.ts`, neither
+ * of which is S7's file — and a half-wire with no test is the shape of change this file's
+ * header exists to prevent.
+ *
+ * Until then the constant is IMPORTED rather than re-literaled, so the hour installed here and
+ * the default a reader sees in Settings cannot silently drift apart.
+ *
+ * TODO(next): add `PROP_KEYS.dailySyncSchedule`, fold the chosen hour into a signature the way
+ * `warmTriggerSchedule()` does, read `loadSettings().syncSchedule` here, and pin the reinstall
+ * in `test/setup.test.ts`.
+ */
 const DAILY_SYNC_HOUR = DEFAULT_SYNC_HOUR;
 
 const WARM_HANDLER = "trigger_warmReadModels";

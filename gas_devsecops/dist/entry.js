@@ -60,6 +60,22 @@ function api_bootstrap(p) { return timedApi_("bootstrap", p); }
 function api_getSettings(p) { return timedApi_("getSettings", p); }
 function api_putSettings(p) { return timedApi_("putSettings", p); }
 function api_getChartsBundle(p) { return timedApi_("getChartsBundle", p); }
+function api_getExecutivePage(p) { return timedApi_("getExecutivePage", p); }
+function api_getMttrPage(p) { return timedApi_("getMttrPage", p); }
+function api_getProgramPage(p) { return timedApi_("getProgramPage", p); }
+function api_getRegisterPage(p) { return timedApi_("getRegisterPage", p); }
+function api_getSecretsPage(p) { return timedApi_("getSecretsPage", p); }
+function api_getReposPage(p) { return timedApi_("getReposPage", p); }
+function api_getScanHistory(p) { return timedApi_("getScanHistory", p); }
+function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }
+function api_runSync(p) { return timedApi_("runSync", p); }
+function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }
+function api_cancelSync(p) { return timedApi_("cancelSync", p); }
+function api_deleteScans(p) { return timedApi_("deleteScans", p); }
+function api_compact(p) { return timedApi_("compact", p); }
+function api_resetLedger(p) { return timedApi_("resetLedger", p); }
+function api_getExportCsv(p) { return timedApi_("getExportCsv", p); }
+function api_getRecentErrors(p) { return timedApi_("getRecentErrors", p); }
 
 /* ------------------------------------------------------- editor-run, not RPC */
 /* Gated: these run as whoever opened the editor, which is not necessarily the owner. */
@@ -75,6 +91,36 @@ function deploymentDiagnostic() {
 }
 
 /* ----------------------------------------------------------------- triggers */
-/* None yet. When the sync battery lands its continuation handlers go here and they must
-   stay UNGATED: an installable trigger runs with no active user, so an access check would
-   deny every firing silently. */
+/*
+ * THESE FOUR ARE UNGATED, AND THAT IS THE WHOLE POINT.
+ *
+ * An installable trigger runs as the project OWNER with NO ACTIVE USER —
+ * `Session.getActiveUser().getEmail()` is "" inside one. `Server.access.denyResult` fails
+ * closed on an unidentifiable caller, so putting a check here would deny every firing, once a
+ * day, forever, with nothing on screen and nothing in the log to say the sync had stopped
+ * running. That is the failure mode `test/entryPoints.test.js` pins with its own case: the
+ * gate must be ABSENT, not merely correct.
+ *
+ * They are safe ungated because none of them takes an argument that selects what to do. Each
+ * is a fixed verb over server-side state — resume the one active job, reap a dead persist, run
+ * the scheduled battery, warm the read models — with no filename, no id and no user input
+ * anywhere in the call. `include(filename)` is gated for exactly the opposite reason.
+ *
+ * THE NAMES ARE FIXED ELSEWHERE AND ARE COPIED HERE, NEVER CHOSEN HERE.
+ * `jobsStore.CONTINUE_HANDLERS.sync` / `WATCHDOG_HANDLERS.sync` are what `scanJobs` installs
+ * and clears one-shots by, and `setup.ts` installs the standing daily and warm triggers by
+ * name. A rename on either side points a live trigger at a function that does not exist, which
+ * fails silently on a schedule.
+ */
+
+/** jobsStore.CONTINUE_HANDLERS.sync — resume the active sync's next hop. */
+function trigger_continueSync(e) { return Server.scanJobs.continueJob(e); }
+
+/** jobsStore.WATCHDOG_HANDLERS.sync — notice a persist whose execution never came back. */
+function trigger_watchdogSync(e) { return Server.scanJobs.watchdogSync(e); }
+
+/** setup.ts's standing daily trigger — the scheduled full battery. */
+function trigger_dailySync() { return Server.scanJobs.dailySync(); }
+
+/** setup.ts's three standing warm triggers — precompute the landing-page read models. */
+function trigger_warmReadModels() { return Server.readModels.warmReadModels(); }

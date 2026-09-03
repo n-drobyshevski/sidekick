@@ -117,15 +117,17 @@ describe("the rest of the settings contract", () => {
   });
 });
 
-// The S6 fields: syncSchedule, autoCompact, retentionDays. `server/scanJobs.ts` already gates
-// post-sync compaction on the Script Property AUTO_COMPACT_DAYS, unset = off, and these tests
-// pin the one thing that must never move while that ownership migrates: a fresh Settings
-// object still means "compaction off" exactly like an unset property does today.
+// The S6 fields: syncSchedule, autoCompact, retentionDays. Ownership HAS now migrated —
+// `server/scanJobs.ts::autoCompactIfDue()` reads `autoCompact` / `retentionDays` and the
+// `AUTO_COMPACT_DAYS` Script Property it used to gate on is gone (S7) — and these tests still
+// pin the one thing that must never move across that migration: a fresh Settings object means
+// "compaction off", exactly as an unset property did. `test/api.test.ts` pins the same claim
+// from the other end, as a behaviour: a sync over default settings compacts zero times.
 describe("the S6 battery settings", () => {
   it("default to today's behaviour: compaction off", () => {
-    // The iron rule (CLAUDE.md): a knob ships defaulting to today's behaviour. Today,
-    // AUTO_COMPACT_DAYS is unset on every deployment, which scanJobs.ts reads as "off". A
-    // Settings default of true here would flip that the moment ownership migrates to it.
+    // The iron rule (CLAUDE.md): a knob ships defaulting to today's behaviour. The gate this
+    // replaced was an unset AUTO_COMPACT_DAYS on every deployment, which scanJobs.ts read as
+    // "off". A Settings default of true here would have flipped that on the migration.
     expect(DEFAULT_SETTINGS.autoCompact).toBe(false);
   });
 

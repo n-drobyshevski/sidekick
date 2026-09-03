@@ -87,6 +87,7 @@ import {
   type JobRow,
 } from "./jobsStore";
 import * as ledgerStore from "./ledgerStore";
+import * as readModels from "./readModels";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { deleteProp, getProp, hasWizCredentials, projectScope, setProp } from "./props";
 import { loadSettings } from "./settingsStore";
@@ -126,17 +127,6 @@ const FORCE_STOP_LOCK_MS = 10_000;
  * the sample is truncated.
  */
 const MAX_PARTIAL_ERRORS = 10;
-
-/**
- * Retention window for the post-sync auto-compaction, as a Script Property.
- *
- * DIVERGENCE (gas/): gas/ gates this on `settingsStore.getAutoCompact()` /
- * `getRetentionDays()`. This register's `Settings` (domain/settingsLogic.ts) carries no such
- * knob and adding one is not this package's file to touch, so the gate is an operator
- * property instead: UNSET MEANS NO COMPACTION, which is today's behaviour. Set it to a day
- * count to turn compaction on.
- */
-const AUTO_COMPACT_DAYS_PROP = "AUTO_COMPACT_DAYS";
 
 /* ------------------------------------------------------------------ cancellation */
 
@@ -684,12 +674,41 @@ function afterPersist(params: SyncParams, outcome: ledgerStore.PersistOutcome): 
     console.warn(`Failed to record the daily history entry: ${e}`);
   }
   autoCompactIfDue();
-  // TODO(S5): warm the landing-view read models here, LAST, against the now-final
-  // DATA_VERSION (auto-compaction above bumps it again) so the first analyst load after a
-  // sync hits a warm cache instead of recomputing on the interactive path.
-  // `src/server/readModels.ts` does not exist at the time this package was written and
-  // stubbing it here would describe an API that is not there yet. The call belongs between
-  // this comment and the end of this function.
+  warmAfterSync();
+}
+
+/**
+ * The post-sync read-model warm — LAST, and the position is load-bearing twice over.
+ *
+ * AFTER `autoCompactIfDue`, because a compaction bumps DATA_VERSION again and every cache key
+ * is built from it: warming first would compute the whole set under a version nothing can
+ * reach a moment later, paying for it and warming nothing.
+ *
+ * AFTER `updateJob(jobId, {phase: "DONE"})` IN `finishSync`, WHICH IS WHY THIS IS CALLED FROM
+ * `afterPersist` AND NOT FROM INSIDE THE COMMIT. `warmReadModels` refuses outright while
+ * `jobsStore.activeJob()` returns a row — a PERSISTING job is part-way through a wholesale
+ * `overwrite`, so a warm reading the ledger then would cache a TORN read under the pre-bump
+ * version and serve it for the rest of the window. `activeJob()` returns null for any terminal
+ * phase, so the DONE update above is the only thing that lets this run at all. MOVING THAT
+ * UPDATE BELOW `afterPersist` LOOKS TIDIER AND SILENTLY DISABLES THE WARM FOREVER — the sync
+ * still succeeds, the pages are still correct, and the only symptom is that the first analyst
+ * load after every sync pays the full recompute. `test/api.test.ts`'s "the post-sync warm runs
+ * with no active job" case is what stands between that edit and production.
+ *
+ * BEST EFFORT, like every other chore here: the sync is already committed and a cold cache is
+ * not a reason to report a successful commit as a failure.
+ */
+function warmAfterSync(): void {
+  try {
+    const report = readModels.warmReadModels();
+    if (report.blockedBy) {
+      console.warn(`Post-sync read-model warm did not run: ${report.blockedBy}`);
+    } else {
+      console.log(`Post-sync read-model warm: ${report.warmed} warmed, ${report.skipped} cold.`);
+    }
+  } catch (e) {
+    console.warn(`Post-sync read-model warm failed: ${e}`);
+  }
 }
 
 /**
@@ -723,12 +742,26 @@ function dailyStats(params: SyncParams, outcome: ledgerStore.PersistOutcome): Re
   };
 }
 
-/** Auto-compaction after a commit. Off unless an operator set the retention property. */
+/**
+ * Auto-compaction after a commit. OFF unless an operator turned it on in Settings.
+ *
+ * SETTINGS IS THE SOURCE OF TRUTH, and it is now the only one. This used to read a raw
+ * `AUTO_COMPACT_DAYS` Script Property, written when `Settings` had no such knob; it does now
+ * (`domain/settingsLogic.ts`: `autoCompact` / `retentionDays`), and the property has been
+ * dropped rather than kept as a second home for the same value — the failure that costs is an
+ * operator changing the setting, seeing the Data page agree, and compaction continuing to run
+ * on whatever the property said.
+ *
+ * THE DEFAULT DOES NOT MOVE. `autoCompact` defaults to `false` and the property was unset on
+ * every existing deployment, and unset meant off — so both before and after this change,
+ * compaction runs only where someone opted in. `test/api.test.ts` pins that as a behaviour,
+ * not as a reading of the default: a sync over default settings compacts zero times.
+ */
 function autoCompactIfDue(): void {
   try {
-    const raw = getProp(AUTO_COMPACT_DAYS_PROP);
-    if (!raw) return;
-    const days = Number(raw);
+    const settings = loadSettings();
+    if (!settings.autoCompact) return;
+    const days = Number(settings.retentionDays);
     if (!Number.isFinite(days) || days <= 0) return;
     ledgerStore.compactLedger(Math.floor(days));
   } catch (e) {
