@@ -89,8 +89,8 @@ var Server = (() => {
       "</svg>"
     ].join("");
   }
-  function escapeHtml(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  function escapeHtml(s2) {
+    return s2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
   function primaryAction(href, label) {
     return '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
@@ -340,16 +340,16 @@ var Server = (() => {
   });
 
   // src/domain/sha1.ts
-  function utf8Bytes(s) {
+  function utf8Bytes(s2) {
     const out = [];
-    for (let i = 0; i < s.length; i++) {
-      let c = s.charCodeAt(i);
+    for (let i = 0; i < s2.length; i++) {
+      let c = s2.charCodeAt(i);
       if (c < 128) {
         out.push(c);
       } else if (c < 2048) {
         out.push(192 | c >> 6, 128 | c & 63);
-      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
-        const c2 = s.charCodeAt(++i);
+      } else if (c >= 55296 && c <= 56319 && i + 1 < s2.length) {
+        const c2 = s2.charCodeAt(++i);
         const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
         out.push(
           240 | cp >> 18,
@@ -416,7 +416,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "a575aa2c6cea" : "dev";
+  var BUILD_ID = true ? "215c6d8a7ca7" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -493,6 +493,9 @@ var Server = (() => {
   }
 
   // src/domain/util.ts
+  function cmp(a, b) {
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
   function present(v) {
     if (v === null || v === void 0) return false;
     if (typeof v === "number" && Number.isNaN(v)) return false;
@@ -507,11 +510,11 @@ var Server = (() => {
     if (c === null) return null;
     if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
     if (typeof c === "number" && Number.isFinite(c)) return c;
-    let s = String(c).trim();
-    if (!s) return null;
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += "Z";
-    const t = Date.parse(s);
+    let s2 = String(c).trim();
+    if (!s2) return null;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s2)) s2 = s2.replace(" ", "T");
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s2)) s2 += "Z";
+    const t = Date.parse(s2);
     return Number.isNaN(t) ? null : t;
   }
   function toIso(ms) {
@@ -957,7 +960,7 @@ var Server = (() => {
     "INFO",
     "UNKNOWN"
   ];
-  var SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s) => s !== "UNKNOWN");
+  var SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s2) => s2 !== "UNKNOWN");
   var SLA_TARGETS = {
     CRITICAL: 7,
     HIGH: 14,
@@ -987,8 +990,8 @@ var Server = (() => {
     if (!Array.isArray(v)) return null;
     const seen = /* @__PURE__ */ new Set();
     for (const x of v) {
-      const s = String(x).trim().toUpperCase();
-      if (allowed.includes(s)) seen.add(s);
+      const s2 = String(x).trim().toUpperCase();
+      if (allowed.includes(s2)) seen.add(s2);
     }
     return [...seen];
   }
@@ -1089,11 +1092,11 @@ var Server = (() => {
     const users = getProp(PROP_KEYS.allowedUsers);
     if (users) ok("Allowlist", `${users.split(/[,;\s]+/).filter(Boolean).length} address(es)`);
     else bad("Allowlist", "empty \u2014 the app is owner-only until ALLOWED_USERS is set");
-    const s = loadSettings();
-    ok("Scopes collected", s.scopes.join(", ") || "(none)");
+    const s2 = loadSettings();
+    ok("Scopes collected", s2.scopes.join(", ") || "(none)");
     ok("Scopes available", SCOPES.join(", "));
     for (const scope of SCOPES) {
-      ok(`Severities requested (${scope})`, s.fetchSeverities[scope].join(", ") || "(all)");
+      ok(`Severities requested (${scope})`, s2.fetchSeverities[scope].join(", ") || "(all)");
     }
     out.push("");
     out.push("Sync battery: not installed. This build ships the interface base and the page");
@@ -1113,8 +1116,8 @@ var Server = (() => {
   // src/server/jobsStore.ts
   var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
   function normError(v) {
-    const s = v == null ? "" : String(v).trim();
-    return s === "" || s === "null" || s === "undefined" ? null : s;
+    const s2 = v == null ? "" : String(v).trim();
+    return s2 === "" || s2 === "null" || s2 === "undefined" ? null : s2;
   }
   function updateJob(jobId, patch, now) {
     updateWhere(TABS.jobs, "job_id", jobId, {
@@ -1151,6 +1154,11 @@ var Server = (() => {
     return TERMINAL.includes(phase);
   }
   var STALE_JOB_MS = 30 * 6e4;
+  function isStaleJob(job, now) {
+    const updated = parseTs(job.updated_at);
+    if (updated === null) return false;
+    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
+  }
   function activeJob() {
     var _a;
     if (!getProp(ACTIVE_JOB_PROP)) return null;
@@ -1159,10 +1167,227 @@ var Server = (() => {
     return job;
   }
 
+  // src/server/archiveStore.ts
+  function looksLikeLedgerState(v) {
+    return Array.isArray(v["scans"]) && Array.isArray(v["episodes"]) && typeof v["ledger"] === "object" && v["ledger"] !== null && !Array.isArray(v["ledger"]);
+  }
+  var rootFolderMemo;
+  var subfolderMemo = /* @__PURE__ */ new Map();
+  function rootFolder() {
+    if (!rootFolderMemo) {
+      rootFolderMemo = DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
+    }
+    return rootFolderMemo;
+  }
+  function childFolder(parent, name) {
+    const it = parent.getFoldersByName(name);
+    return it.hasNext() ? it.next() : parent.createFolder(name);
+  }
+  function subfolder(name) {
+    const hit = subfolderMemo.get(name);
+    if (hit) return hit;
+    const folder = childFolder(rootFolder(), name);
+    subfolderMemo.set(name, folder);
+    return folder;
+  }
+  function safeName(id) {
+    return id.replace(/[^0-9A-Za-z._-]/g, "") || "scan";
+  }
+  function writeGzJson(folder, name, payload) {
+    const json = JSON.stringify(payload);
+    const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
+    const existing = folder.getFilesByName(name);
+    while (existing.hasNext()) existing.next().setTrashed(true);
+    return folder.createFile(blob);
+  }
+  function parseGzBlob(blob, name) {
+    const bytes = blob.getBytes();
+    const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
+    const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error(`Unparseable archive file ${name}: ${e}`);
+    }
+  }
+  function readGzJson(folder, name) {
+    const it = folder.getFilesByName(name);
+    if (!it.hasNext()) return null;
+    return parseGzBlob(it.next().getBlob(), name);
+  }
+  function trashNamed(folder, name) {
+    const it = subfolder(folder).getFilesByName(name);
+    while (it.hasNext()) it.next().setTrashed(true);
+  }
+  var SNAPSHOT_NAME = "ledger-snapshot.json.gz";
+  function writeLedgerSnapshot(state) {
+    const snap = {
+      version: 1,
+      scans: state.scans,
+      ledger: state.ledger,
+      episodes: state.episodes
+    };
+    writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
+  }
+  function backupFileName(jobId) {
+    return `backup-${safeName(jobId)}.json.gz`;
+  }
+  function readBackup(jobId) {
+    const parsed = readGzJson(subfolder("backups"), backupFileName(jobId));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const obj = parsed;
+    return looksLikeLedgerState(obj) ? obj : null;
+  }
+  function trashBackup(jobId) {
+    trashNamed("backups", backupFileName(jobId));
+  }
+
+  // src/domain/ledgerCore.ts
+  function scansAsc(scans, scope) {
+    const rows = scope === void 0 ? [...scans] : scans.filter((r) => r.scope === scope);
+    return rows.sort((a, b) => {
+      var _a, _b;
+      const ta = (_a = parseTs(a.ts)) != null ? _a : 0;
+      const tb = (_b = parseTs(b.ts)) != null ? _b : 0;
+      if (ta !== tb) return ta - tb;
+      return cmp(a.scan_id, b.scan_id);
+    });
+  }
+
+  // src/domain/program.ts
+  var SIGNAL_NAMES = [
+    "kev",
+    "exploit",
+    "epss",
+    "cwe",
+    "aiVerdict",
+    "critical"
+  ];
+  var RISK_TIER_ORDER = [...SIGNAL_NAMES, "none", "unknown"];
+
+  // src/domain/insights.ts
+  var AGE_BUCKET_EDGES = [7, 30, 90];
+  var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
+
+  // src/server/ledgerStore.ts
+  function s(r, k) {
+    const v = r[k];
+    return v === null || v === void 0 || v === "" ? null : String(v);
+  }
+  function scopeOf(key, raw) {
+    if (raw === "sca" || raw === "sast" || raw === "secrets") return raw;
+    const head = key.slice(0, key.indexOf(":"));
+    return head === "sast" || head === "secrets" ? head : "sca";
+  }
+  function rowToScan(r) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    return {
+      scan_id: String((_a = r["scan_id"]) != null ? _a : ""),
+      ts: String((_b = r["ts"]) != null ? _b : ""),
+      // A scans row has no key to fall back on, so an unreadable scope defaults to sca the way
+      // scopeOf does — but the column is written by this file on every row it appends.
+      scope: scopeOf("", s(r, "scope")),
+      mode: String((_c = r["mode"]) != null ? _c : ""),
+      severities: s(r, "severities"),
+      total: Number((_d = r["total"]) != null ? _d : 0),
+      new_count: Number((_e = r["new_count"]) != null ? _e : 0),
+      resolved_count: Number((_f = r["resolved_count"]) != null ? _f : 0),
+      reopened_count: Number((_g = r["reopened_count"]) != null ? _g : 0),
+      raw_ref: s(r, "raw_ref"),
+      obs_ref: s(r, "obs_ref"),
+      sealed: r["sealed"] === 1 || r["sealed"] === "1" || r["sealed"] === true ? 1 : 0
+    };
+  }
+  var scanRowsMemo;
+  var stateMemo;
+  function invalidateLedgerMemos() {
+    scanRowsMemo = void 0;
+    stateMemo = void 0;
+    bumpDataVersion();
+  }
+  function loadScanRows() {
+    if (scanRowsMemo === void 0) {
+      scanRowsMemo = scansAsc(readAll(TABS.scans).map(rowToScan));
+    }
+    return scanRowsMemo;
+  }
+  function syncCommitted(syncId) {
+    if (!syncId) return false;
+    return loadScanRows().some((r) => r.scan_id === syncId);
+  }
+  function writeStateTables(state) {
+    overwrite(TABS.ledger, Object.values(state.ledger));
+    overwrite(TABS.episodes, state.episodes);
+    overwrite(TABS.scans, scansAsc(state.scans));
+    overwrite(TABS.repos, repoRows(state));
+    writeLedgerSnapshot(state);
+    invalidateLedgerMemos();
+  }
+  function repoRows(state) {
+    const byRepo = /* @__PURE__ */ new Map();
+    const rows = Object.values(state.ledger).slice().sort((a, b) => {
+      var _a, _b;
+      const ta = (_a = parseTs(a.last_seen)) != null ? _a : 0;
+      const tb = (_b = parseTs(b.last_seen)) != null ? _b : 0;
+      if (ta !== tb) return ta - tb;
+      return a.finding_key < b.finding_key ? -1 : a.finding_key > b.finding_key ? 1 : 0;
+    });
+    for (const row of rows) {
+      const id = row.repo_id;
+      if (!id) continue;
+      let acc = byRepo.get(id);
+      if (!acc) {
+        acc = {
+          repo_id: id,
+          repo_name: null,
+          branch: null,
+          platform: null,
+          owner_project: null,
+          owner_path: null,
+          first_seen: null,
+          last_seen: null
+        };
+        byRepo.set(id, acc);
+      }
+      if (row.repo_name !== null) acc.repo_name = row.repo_name;
+      if (row.branch !== null) acc.branch = row.branch;
+      if (row.platform !== null) acc.platform = row.platform;
+      if (row.owner_project !== null) acc.owner_project = row.owner_project;
+      if (row.owner_path !== null) acc.owner_path = row.owner_path;
+      acc.first_seen = earlier(acc.first_seen, row.first_seen);
+      acc.last_seen = later(acc.last_seen, row.last_seen);
+    }
+    return [...byRepo.values()].sort((a, b) => a.repo_id < b.repo_id ? -1 : a.repo_id > b.repo_id ? 1 : 0).map((a) => ({
+      repo_id: a.repo_id,
+      repo_name: a.repo_name,
+      branch: a.branch,
+      platform: a.platform,
+      default_branch: null,
+      owner_project: a.owner_project,
+      owner_path: a.owner_path,
+      projects_json: null,
+      first_seen: a.first_seen,
+      last_seen: a.last_seen
+    }));
+  }
+  function earlier(a, b) {
+    const ta = parseTs(a);
+    const tb = parseTs(b);
+    if (ta === null) return tb === null ? a != null ? a : b : b;
+    if (tb === null) return a;
+    return tb < ta ? b : a;
+  }
+  function later(a, b) {
+    const ta = parseTs(a);
+    const tb = parseTs(b);
+    if (ta === null) return tb === null ? a != null ? a : b : b;
+    if (tb === null) return a;
+    return tb > ta ? b : a;
+  }
+
   // src/server/locks.ts
   var LedgerBusyError = class extends Error {
   };
-  var DEAD_JOB_MS = 30 * 60 * 1e3;
   function withScriptLock(fn, timeoutMs = 3e4) {
     const lock = LockService.getScriptLock();
     if (!lock.tryLock(timeoutMs)) {
@@ -1179,9 +1404,43 @@ var Server = (() => {
   function recoverIfNeeded(now) {
     const job = activeJob();
     if (!job) return;
-    const updated = parseTs(job.updated_at);
-    const ageMs = updated === null ? Infinity : (now != null ? now : Date.now()) - updated;
-    if (job.phase === "PERSISTING" || ageMs > DEAD_JOB_MS) {
+    if (job.phase === "PERSISTING") {
+      if (!job.journal_ref) {
+        updateJob(job.job_id, {
+          phase: "FAILED",
+          error: "Recovered: execution died mid-sync; the last committed snapshot is unchanged."
+        });
+        return;
+      }
+      if (syncCommitted(job.scan_id)) {
+        updateJob(job.job_id, {
+          phase: "FAILED",
+          journal_ref: null,
+          error: "Recovered: execution died after the commit landed; the scan is saved and the journal was discarded."
+        });
+        trashBackup(job.job_id);
+        invalidateLedgerMemos();
+        return;
+      }
+      const backup = readBackup(job.job_id);
+      if (backup) {
+        writeStateTables(backup);
+        updateJob(job.job_id, {
+          phase: "FAILED",
+          journal_ref: null,
+          error: "Recovered: execution died mid-rewrite; the ledger was RESTORED from the journal and the scan was not saved."
+        });
+        trashBackup(job.job_id);
+        return;
+      }
+      updateJob(job.job_id, {
+        phase: "FAILED",
+        journal_ref: null,
+        error: "Recovered: execution died mid-rewrite and the journal could not be read, so the ledger was left as written. Re-run the sync to reconcile it."
+      });
+      return;
+    }
+    if (isStaleJob(job, now)) {
       updateJob(job.job_id, {
         phase: "FAILED",
         error: "Recovered: execution died mid-sync; the last committed snapshot is unchanged."

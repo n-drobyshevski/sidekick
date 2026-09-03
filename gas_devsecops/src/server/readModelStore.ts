@@ -12,13 +12,18 @@
 // because `cached()` stores whatever its compute argument returns.
 //
 // ONLY TIME-INVARIANT READ-MODELS BELONG HERE, and the audit is per model rather than
-// inherited. This project has no `age_days` family: `src/domain` reads the clock NOWHERE, and
-// the ranking functions that take a `nowIso` have no caller in `src/` outside their own
-// files. Exactly two read paths consult a clock, and both are excluded —
-// `getToxicCombos` does SLA arithmetic off `new Date()`, and `getCompliance` carries a
-// `postureScope.fetchedAt` the page renders as "asked at {date} — this page alone is live",
-// which a durable store would make false. Stored timestamps like `latestSync.finished_at`
-// are facts about the ledger, not drift, and are fine.
+// inherited. THE PARAGRAPH THIS REPLACES WAS gas_ai's, carried over by the chassis fork: it
+// named `getToxicCombos` and `getCompliance`, two read paths that do not exist in this
+// register and never will. The rule survives the rename; the examples did not.
+//
+// The audit this register has to make instead is the CLOCK one, and it is not the same shape.
+// gas_ai's domain read the clock nowhere; this one reads it everywhere — `baseRows` derives
+// `age_days` / `actionable_age_days` from `now`, and every open-past-SLA and KM series is
+// as-of a date. A durable copy of any of those would be a figure that says "measured now" and
+// means "measured whenever the file was written", which is precisely the failure the register
+// exists to avoid. So a model whose answer moves with the wall clock does NOT belong here,
+// even when its inputs did not change. Stored timestamps like a scan's `ts` are facts about
+// the ledger, not drift, and are fine.
 //
 // WHY NOT INSIDE `cached()`. There is no import cycle — serverCache -> archiveStore is
 // acyclic — but `cached()` is the one function whose "any cache-layer error falls back to

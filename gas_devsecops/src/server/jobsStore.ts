@@ -11,7 +11,17 @@
 // checks it against TAB_HEADERS at run time, because the two files can still drift.
 //
 // The four dropped fields map onto columns that already existed:
-//   sync_id        -> scan_id          the same id; the scans tab spells it scan_id.
+//   sync_id        -> scan_id          THE BARE syncId, and this line used to say "the same
+//                                      id; the scans tab spells it scan_id", which is half
+//                                      the story and reads as contradicting archiveStore.ts
+//                                      ("scanId = <syncId>-<scope>"). Both are right about
+//                                      DIFFERENT ROWS. One job is one sync, so the job row
+//                                      holds the syncId; the sync then writes one `scans` row
+//                                      PER SCOPE, and each of those spells its id
+//                                      `<syncId>-<scope>`. `ledgerStore.scanIdFor(syncId,
+//                                      scope)` is the single definition, and it is what
+//                                      `locks.recoverIfNeeded` reads this column against to
+//                                      tell a committed sync from a half-written one.
 //   step_index     -> scope            the battery's step IS a scope, and naming it that
 //                                      means a resumed job says which register it is on.
 //   nodes_so_far   -> findings_so_far
