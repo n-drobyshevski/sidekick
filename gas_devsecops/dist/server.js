@@ -416,7 +416,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "edc891e34d2b" : "dev";
+  var BUILD_ID = true ? "be0829fd4f60" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -492,6 +492,31 @@ var Server = (() => {
     return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
   }
 
+  // src/domain/config.ts
+  var SEVERITY_ORDER = [
+    "CRITICAL",
+    "HIGH",
+    "MEDIUM",
+    "LOW",
+    "INFO",
+    "UNKNOWN"
+  ];
+  var SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s2) => s2 !== "UNKNOWN");
+  var SLA_TARGETS = {
+    CRITICAL: 7,
+    HIGH: 14,
+    MEDIUM: 30,
+    LOW: 90,
+    INFO: 180
+  };
+  var SCOPES = ["sca", "sast", "secrets"];
+  var DEFAULT_FETCH_SEVERITIES = {
+    sca: ["CRITICAL", "HIGH"],
+    sast: ["CRITICAL", "HIGH"],
+    secrets: []
+  };
+  var DEFAULT_RETENTION_DAYS = 180;
+
   // src/domain/util.ts
   function cmp(a, b) {
     return a < b ? -1 : a > b ? 1 : 0;
@@ -523,6 +548,118 @@ var Server = (() => {
   }
   function nowIso(now) {
     return toIso(now != null ? now : Date.now());
+  }
+
+  // src/domain/ledgerCore.ts
+  function scansAsc(scans, scope) {
+    const rows = scope === void 0 ? [...scans] : scans.filter((r) => r.scope === scope);
+    return rows.sort((a, b) => {
+      var _a, _b;
+      const ta = (_a = parseTs(a.ts)) != null ? _a : 0;
+      const tb = (_b = parseTs(b.ts)) != null ? _b : 0;
+      if (ta !== tb) return ta - tb;
+      return cmp(a.scan_id, b.scan_id);
+    });
+  }
+
+  // src/domain/program.ts
+  var SIGNAL_NAMES = [
+    "kev",
+    "exploit",
+    "epss",
+    "cwe",
+    "aiVerdict",
+    "critical"
+  ];
+  var RISK_TIER_ORDER = [...SIGNAL_NAMES, "none", "unknown"];
+
+  // src/domain/insights.ts
+  var AGE_BUCKET_EDGES = [7, 30, 90];
+  var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
+
+  // src/domain/maintenance.ts
+  var RETENTION_MIN_DAYS = 30;
+
+  // src/domain/settingsLogic.ts
+  var DEFAULT_SYNC_HOUR = 5;
+  var DEFAULT_SETTINGS = {
+    scopes: [...SCOPES],
+    fetchSeverities: {
+      sca: [...DEFAULT_FETCH_SEVERITIES.sca],
+      sast: [...DEFAULT_FETCH_SEVERITIES.sast],
+      secrets: [...DEFAULT_FETCH_SEVERITIES.secrets]
+    },
+    slaTargets: { ...SLA_TARGETS },
+    showExperimental: false,
+    syncSchedule: DEFAULT_SYNC_HOUR,
+    autoCompact: false,
+    retentionDays: DEFAULT_RETENTION_DAYS
+  };
+  function asList(v, allowed) {
+    if (!Array.isArray(v)) return null;
+    const seen = /* @__PURE__ */ new Set();
+    for (const x of v) {
+      const s2 = String(x).trim().toUpperCase();
+      if (allowed.includes(s2)) seen.add(s2);
+    }
+    return [...seen];
+  }
+  function cleanFetchSeverities(raw) {
+    var _a, _b;
+    const out = {};
+    if (Array.isArray(raw)) {
+      const shared = (_a = asList(raw, SEVERITY_ORDER)) != null ? _a : [];
+      for (const scope of SCOPES) {
+        out[scope] = shared.length ? [...shared] : [...DEFAULT_FETCH_SEVERITIES[scope]];
+      }
+      return out;
+    }
+    const rec = raw != null ? raw : {};
+    for (const scope of SCOPES) {
+      out[scope] = (_b = asList(rec[scope], SEVERITY_ORDER)) != null ? _b : [...DEFAULT_FETCH_SEVERITIES[scope]];
+    }
+    return out;
+  }
+  function numericOrNull(v) {
+    if (typeof v === "number") return Number.isFinite(v) ? v : null;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+  function cleanHourOfDay(v, fallback) {
+    const n = numericOrNull(v);
+    if (n === null) return fallback;
+    return Number.isInteger(n) && n >= 0 && n <= 23 ? n : fallback;
+  }
+  function cleanRetentionDays(v) {
+    const n = numericOrNull(v);
+    if (n === null) return DEFAULT_RETENTION_DAYS;
+    return Math.max(Math.floor(n), RETENTION_MIN_DAYS);
+  }
+  function cleanSettings(raw) {
+    const r = raw || {};
+    const scopes = (Array.isArray(r.scopes) ? r.scopes : []).map((x) => String(x).trim().toLowerCase()).filter((x) => SCOPES.includes(x));
+    const sla = { ...SLA_TARGETS };
+    const rawSla = r.slaTargets || {};
+    for (const sev of SEVERITY_ORDER) {
+      const v = Number(rawSla[sev]);
+      if (Number.isFinite(v) && v > 0) sla[sev] = Math.floor(v);
+    }
+    return {
+      // An empty list would collect nothing while looking configured, so it falls back
+      // rather than persisting a register that can never fill.
+      scopes: scopes.length ? scopes : [...SCOPES],
+      fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
+      slaTargets: sla,
+      showExperimental: r.showExperimental === true,
+      syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
+      // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
+      // only a literal boolean true turns compaction on.
+      autoCompact: r.autoCompact === true,
+      retentionDays: cleanRetentionDays(r.retentionDays)
+    };
   }
 
   // src/server/sheetsDb.ts
@@ -916,6 +1053,16 @@ var Server = (() => {
   }
 
   // src/server/setup.ts
+  var DAILY_SYNC_HANDLER = "trigger_dailySync";
+  var DAILY_SYNC_HOUR = DEFAULT_SYNC_HOUR;
+  var WARM_HANDLER = "trigger_warmReadModels";
+  var WARM_READY_BY_HOURS = [9, 13, 17];
+  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
+  var WARM_TRIGGER_NEAR_MINUTE = 30;
+  var WARM_TRIGGER_TZ = "Europe/Paris";
+  function warmTriggerSchedule() {
+    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  }
   function setup() {
     const notes = [];
     let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
@@ -947,87 +1094,28 @@ var Server = (() => {
         notes.push(`Access: seeded ALLOWED_USERS with ${owner}`);
       }
     }
-    notes.push("Triggers: none installed (no sync battery yet \u2014 Phase 2)");
-    return notes.join("\n");
-  }
-
-  // src/domain/config.ts
-  var SEVERITY_ORDER = [
-    "CRITICAL",
-    "HIGH",
-    "MEDIUM",
-    "LOW",
-    "INFO",
-    "UNKNOWN"
-  ];
-  var SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s2) => s2 !== "UNKNOWN");
-  var SLA_TARGETS = {
-    CRITICAL: 7,
-    HIGH: 14,
-    MEDIUM: 30,
-    LOW: 90,
-    INFO: 180
-  };
-  var SCOPES = ["sca", "sast", "secrets"];
-  var DEFAULT_FETCH_SEVERITIES = {
-    sca: ["CRITICAL", "HIGH"],
-    sast: ["CRITICAL", "HIGH"],
-    secrets: []
-  };
-
-  // src/domain/settingsLogic.ts
-  var DEFAULT_SETTINGS = {
-    scopes: [...SCOPES],
-    fetchSeverities: {
-      sca: [...DEFAULT_FETCH_SEVERITIES.sca],
-      sast: [...DEFAULT_FETCH_SEVERITIES.sast],
-      secrets: [...DEFAULT_FETCH_SEVERITIES.secrets]
-    },
-    slaTargets: { ...SLA_TARGETS },
-    showExperimental: false
-  };
-  function asList(v, allowed) {
-    if (!Array.isArray(v)) return null;
-    const seen = /* @__PURE__ */ new Set();
-    for (const x of v) {
-      const s2 = String(x).trim().toUpperCase();
-      if (allowed.includes(s2)) seen.add(s2);
+    const dailyExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
+    if (!dailyExisting.length) {
+      ScriptApp.newTrigger(DAILY_SYNC_HANDLER).timeBased().everyDays(1).atHour(DAILY_SYNC_HOUR).create();
+      notes.push(`Daily sync trigger: installed (${DAILY_SYNC_HOUR}:00 script-local)`);
+    } else {
+      notes.push("Daily sync trigger: already installed");
     }
-    return [...seen];
-  }
-  function cleanFetchSeverities(raw) {
-    var _a, _b;
-    const out = {};
-    if (Array.isArray(raw)) {
-      const shared = (_a = asList(raw, SEVERITY_ORDER)) != null ? _a : [];
-      for (const scope of SCOPES) {
-        out[scope] = shared.length ? [...shared] : [...DEFAULT_FETCH_SEVERITIES[scope]];
+    const warmExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === WARM_HANDLER);
+    const wantSchedule = warmTriggerSchedule();
+    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
+      notes.push(`Warm triggers: already installed (${wantSchedule})`);
+    } else {
+      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
+      for (const hour of WARM_TRIGGER_HOURS) {
+        ScriptApp.newTrigger(WARM_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
       }
-      return out;
+      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
+      notes.push(
+        `Warm triggers: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
+      );
     }
-    const rec = raw != null ? raw : {};
-    for (const scope of SCOPES) {
-      out[scope] = (_b = asList(rec[scope], SEVERITY_ORDER)) != null ? _b : [...DEFAULT_FETCH_SEVERITIES[scope]];
-    }
-    return out;
-  }
-  function cleanSettings(raw) {
-    const r = raw || {};
-    const scopes = (Array.isArray(r.scopes) ? r.scopes : []).map((x) => String(x).trim().toLowerCase()).filter((x) => SCOPES.includes(x));
-    const sla = { ...SLA_TARGETS };
-    const rawSla = r.slaTargets || {};
-    for (const sev of SEVERITY_ORDER) {
-      const v = Number(rawSla[sev]);
-      if (Number.isFinite(v) && v > 0) sla[sev] = Math.floor(v);
-    }
-    return {
-      // An empty list would collect nothing while looking configured, so it falls back
-      // rather than persisting a register that can never fill.
-      scopes: scopes.length ? scopes : [...SCOPES],
-      fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
-      slaTargets: sla,
-      showExperimental: r.showExperimental === true
-    };
+    return notes.join("\n");
   }
 
   // src/server/settingsStore.ts
@@ -1241,33 +1329,6 @@ var Server = (() => {
   function trashBackup(jobId) {
     trashNamed("backups", backupFileName(jobId));
   }
-
-  // src/domain/ledgerCore.ts
-  function scansAsc(scans, scope) {
-    const rows = scope === void 0 ? [...scans] : scans.filter((r) => r.scope === scope);
-    return rows.sort((a, b) => {
-      var _a, _b;
-      const ta = (_a = parseTs(a.ts)) != null ? _a : 0;
-      const tb = (_b = parseTs(b.ts)) != null ? _b : 0;
-      if (ta !== tb) return ta - tb;
-      return cmp(a.scan_id, b.scan_id);
-    });
-  }
-
-  // src/domain/program.ts
-  var SIGNAL_NAMES = [
-    "kev",
-    "exploit",
-    "epss",
-    "cwe",
-    "aiVerdict",
-    "critical"
-  ];
-  var RISK_TIER_ORDER = [...SIGNAL_NAMES, "none", "unknown"];
-
-  // src/domain/insights.ts
-  var AGE_BUCKET_EDGES = [7, 30, 90];
-  var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
 
   // src/server/ledgerStore.ts
   function s(r, k) {
