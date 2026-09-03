@@ -933,3 +933,58 @@ that produces a plausible-looking result while quietly not doing the work.
 - **UUID stability under a controlled rescan** (§10.8).
 - **`--roots` silently swallowing other flags** (§10.9).
 - **No live PARTIAL in five passes.** The tolerance remains unexercised outside the fixture.
+
+# 11 — sixth pass, 2026-09-03: the three registers re-read before the battery is wired
+
+Read-only (`npm run probe`), run before Wave 4 so that a figure the sync battery later
+produces can be told from a figure the tenant moved. Nothing was written to the sheet, to
+Drive, or to Wiz.
+
+## 11.1 Totals, against the fifth pass
+
+| Register | Root | §10 / CLAUDE.md | This pass | Δ |
+|---|---|---|---|---|
+| sca | `vulnerabilityFindings` | 17,991 | **18,839** | +848 (+4.7 %) |
+| sast | `sastFindings` | 127 | **127** | 0 |
+| secrets | `secretInstances` | 1,958 | **1,931** | −27 (−1.4 %) |
+
+All three read as tenant drift, and each is drift in the direction the register's own
+behaviour predicts: SCA accrues new third-party CVEs continuously, SAST is a small
+first-party set that has not moved at all, and secrets churns slightly as strings leave HEAD.
+None of the failure signatures §10 named appeared — sast is not 0 (which would be
+`VALIDATION_INVALID_TYPE_VARIABLE` on `OBJECT_FILTERS.sast`), and secrets is neither 691 (the
+severity gate returning) nor 843 (the old gated figure) nor 0 (a refusal read as an empty
+register).
+
+## 11.2 The crosstab still sums, and the gate is still off
+
+| type | CRITICAL | HIGH | MEDIUM | LOW | INFORMATIONAL |
+|---|---|---|---|---|---|
+| CERTIFICATE | 0 | 0 | 0 | 0 | **160** |
+| CLOUD_KEY | 0 | 171 | 0 | 39 | 0 |
+| DB_CONNECTION_STRING | 0 | 28 | 0 | 41 | 17 |
+| GIT_CREDENTIAL | 0 | 8 | 0 | 0 | 2 |
+| PASSWORD | 0 | **0** | 104 | 18 | 83 |
+| PRIVATE_KEY | 0 | 156 | 0 | 0 | 0 |
+| SAAS_API_KEY | 0 | 303 | 47 | **641** | 113 |
+| **total** | **0** | **666** | **151** | **739** | **375** |
+
+666 + 151 + 739 + 375 = **1,931**, which is `totalCount` exactly — so every row is accounted
+for and no bucket is empty. `DEFAULT_FETCH_SEVERITIES.secrets` is `[]` and empty means all.
+
+**This is the live re-confirmation of the gate-off decision, not a restatement of it.**
+`CERTIFICATE` is 160 of 160 INFORMATIONAL and `PASSWORD` carries nothing at all above
+MEDIUM — so a `CRITICAL, HIGH` gate inherited from the vulnerability registers would still
+drop both categories in their entirety, and a `+ MEDIUM` gate would still drop every
+certificate. 641 `SAAS_API_KEY` rows remain at LOW, which is the same evidence as before that
+severity here grades a DETECTION rather than whether a credential is live. The secrets pages
+segment by `validation_state` and `confidence`; §10.10's open item stands unchanged, to be
+read on the built page rather than settled here.
+
+## 11.3 What this pass did not change
+
+Still open, verbatim from §10.10: `noConnection` end-to-end (§10.5); UUID stability under a
+controlled rescan (§10.8) — which the **first two real syncs will finally answer**, and until
+they do the secrets clock is provisional; `--roots` silently swallowing other flags (§10.9).
+`partialErrors` was empty again — **six passes, no live PARTIAL**, so that tolerance is still
+exercised only by its fixture.
