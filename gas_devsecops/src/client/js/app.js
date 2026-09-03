@@ -6,18 +6,21 @@
 // never to offer. The scan controls stay in the rail, where the last-scan caption can afford
 // its words.
 //
-// PHASE 1. The shell, the nav and the ten routes are real; the pages are stubs and there is
-// no sync battery yet, so the scan zone states that rather than offering a button that would
-// fail. See README.md.
+// PHASE 1 shipped the shell, the nav and the ten routes with the pages as stubs. PHASE 2 wires
+// the sync battery behind the scan zone (see renderSidebar and the block below navContext()) —
+// `api_runSync` / `api_getJobStatus` / `api_cancelSync` and the progress card ported from
+// gas_ai/src/client/js/syncProgress.js. See README.md.
 
 import { call } from "./api.js";
 import {
   DEFAULT_ROUTE, bootstrap, bootstrapCached, buildHash, invalidateBootstrap,
-  invalidateRpcCache, parseHash,
+  invalidateRpcCache, parseHash, swrCall,
 } from "./store.js";
 import { onExperimentalChange, showExperimental } from "./experimental.js";
+import { openSyncDetails, renderSyncCard, shouldContinuePolling } from "./syncProgress.js";
 import {
-  clear, closeTip, el, fmtDateTime, progressBar, runPageTeardown, statusPill, tipAnchor,
+  clear, closeTip, confirmDialog, el, fmtDateTime, progressBar, runPageTeardown, statusPill,
+  tipAnchor,
 } from "./ui.js";
 import { brandMark } from "./ui/brandMark.js";
 import { toast } from "./ui.js";
@@ -113,6 +116,16 @@ function iconSpan(svg, cls) {
   return s;
 }
 
+// The Run Sync button's glyph — two arrows chasing each other, the universal "sync" mark. Not
+// in routeIcons.js (that module is PAGES/lane marks only, held one-for-one by
+// test/navGroups.test.js) and not in ui/uiIcons.js (this file may compose from ui/ but not
+// edit it), so it lives here, drawn in the same 24-grid/currentColor/aria-hidden convention
+// routeIcons.js uses.
+const SYNC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M4.5 12a7.5 7.5 0 0 1 12.6-5.5l2.4 2.2"/><path d="M17.6 5.4V9h-3.6"/>' +
+  '<path d="M19.5 12a7.5 7.5 0 0 1-12.6 5.5l-2.4-2.2"/><path d="M6.4 18.6V15H10"/></svg>';
+
 // Below this width the rail is not a rail at all — it becomes a wrapping top bar, where a
 // panel has nowhere to fly out to and a 76px icon column would be a column of one. So the nav
 // has two shapes, and this is the switch between them: the icon rail plus its panel above
@@ -130,6 +143,22 @@ let mainEl = null;
 // content" changes which pages the rail lists and nothing else — a full refresh() would
 // re-fetch the whole bootstrap payload to answer a question already settled locally.
 let sidebarEl = null;
+
+// --------------------------------------------------------------------- the sync battery
+
+// The scan zone rebuilds these two nodes on every renderSidebar() (boot, refresh, and every
+// experimental-flag flip), so they are held at module scope and re-pointed each time — the
+// poll interval and the job it is watching outlive any one rail render.
+let syncCardHost = null;
+let syncButtonsRow = null;
+let jobPoller = null;
+let lastJob = null; // the most recent job summary the poll has seen, or null between syncs
+let stoppingJobId = null; // set while a Stop request is in flight, so the card can say so
+let syncDetails = null; // the open details-drawer handle, kept live by the poller
+// Guards the one-time "is a sync already running" probe: a page LOAD (not a route change,
+// not an experimental-flag flip) is the only moment worth asking, since nothing else on this
+// page can start a sync out from under the client without the client itself starting it.
+let resumeChecked = false;
 
 // The Settings toggle reaches the rail through here rather than by importing app.js, which
 // would close the app.js → pages/settings.js import into a cycle. No re-route: the toggle
@@ -428,20 +457,36 @@ function renderSidebar(sidebar, data) {
   if (narrowNav()) renderStackedNav(sidebar);
   else renderRail(sidebar, currentRailItems());
 
-  // THE SCAN ZONE, stated honestly for Phase 1.
-  //
-  // The shell keeps the zone — it is where the register's freshness lives, and moving it
-  // later would move the one caption a reader checks first. What it does NOT keep is a
-  // "Run scan" button, because there is no sync battery behind it yet and a button that
-  // fails on click is worse than no button (PRODUCT.md, principle 5: honest state). The
-  // button and the job card come back with the battery in Phase 2.
+  // THE SCAN ZONE. Where the register's freshness caption lives, and — now that the sync
+  // battery is wired (api_runSync / api_getJobStatus / api_cancelSync, src/server/api.ts) —
+  // where a reader starts a sync and watches it walk sca, then sast, then secrets.
   const zone = el("div", { class: "scan-zone" });
+  const hasCreds = !!(data && data.hasCredentials);
+  const runBtn = el("button", {
+    class: "primary",
+    disabled: !hasCreds,
+    onclick: () => startSync(runBtn),
+  }, iconSpan(SYNC_ICON), el("span", { class: "btn-label" }, "Run sync"));
+  // A button that fails on click is worse than no button (PRODUCT.md, principle 5: honest
+  // state) — so with nothing to sync WITH, the button says so on hover/focus rather than
+  // being clicked once to learn it. `.tip-disabled-wrap` (components.css), not the button
+  // itself: a disabled element does not reliably take pointer/focus events for the tip to
+  // hang off in every browser — see syncProgress.js's Stop button for the same wrap.
+  const runControl = hasCreds
+    ? runBtn
+    : tipAnchor(el("span", { class: "tip-disabled-wrap" }, runBtn),
+        "No Wiz credentials are configured — run setup() before syncing.");
+  syncButtonsRow = el("div", { class: "scan-buttons" }, runControl);
+  syncCardHost = el("div", {});
   zone.append(
-    el("div", { class: "scan-caption" }, statusPill("neutral", "Collection not wired")),
+    syncCardHost,
+    syncButtonsRow,
+    el("div", { class: "scan-caption" },
+      hasCreds ? statusPill("ok", "Credentials loaded") : statusPill("neutral", "No credentials")),
     tipAnchor(el("span", {
-      class: "rail-status-dot neutral",
+      class: `rail-status-dot ${hasCreds ? "ok" : "neutral"}`,
       "aria-hidden": "true",
-    }), "Collection not wired — Phase 2"),
+    }), hasCreds ? "Credentials loaded" : "No Wiz credentials configured"),
     el("div", { class: "scan-caption" },
       data && data.latestScan
         // `ts`, not `finished_at`: the field is named for the `scans` column it is read from,
@@ -450,6 +495,17 @@ function renderSidebar(sidebar, data) {
         : "No scans yet."),
   );
   sidebar.append(zone);
+  // A rail rebuild (boot, refresh, or an experimental-flag flip) throws away the old
+  // syncCardHost/syncButtonsRow nodes; if a sync is live, repaint the poller's last-known job
+  // onto the fresh ones right away rather than showing an empty card until the next 3s tick.
+  if (lastJob && shouldContinuePolling(lastJob)) paintCard(lastJob);
+  // A page LOAD is the only moment worth asking "is a sync already running behind my back" —
+  // nothing else that rebuilds the rail (a route change, an experimental-flag flip) can be
+  // the reason one started, so this runs once per app lifetime, not once per rebuild.
+  if (!resumeChecked) {
+    resumeChecked = true;
+    resumeActiveJob();
+  }
   // The rail is rebuilt wholesale on every refresh() and on every experimental-flag change,
   // so the panel's marks on it — which item is open, which lane holds the current page — have
   // to be re-stamped onto the new nodes each time. The panel's own state survives in
@@ -474,9 +530,152 @@ function navContext() {
   return { savedViews: [] };
 }
 
-// The sync battery's client half — `startSync`, the job poller, the progress card and the
-// details drawer — was removed with the scan button above rather than left calling RPCs
-// that do not exist. gas_ai/src/client/js/syncProgress.js is the reference to port from.
+// The sync battery's client half: start a sync, poll it, paint the card, and let a reader
+// stop it. The pure state logic (which phase/scope reads as what) lives in syncProgress.js —
+// ported from gas_ai/src/client/js/syncProgress.js — so only the RPC plumbing is here.
+
+/** Run button handler: fire the RPC, then start (or hand off to) the poll. */
+async function startSync(btn) {
+  btn.disabled = true;
+  try {
+    const res = await call("api_runSync", {});
+    toast(res.message);
+    if (res.jobId) {
+      stoppingJobId = null;
+      watchJob(res.jobId);
+    }
+    // No jobId: nothing started (no credentials, or nothing selected in Settings) — the
+    // toast already said why, and the button re-enables in the `finally` below.
+  } catch (e) {
+    toast(String(e.message || e), "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** Paint the poller's latest job summary onto the card, and keep an open details drawer
+ *  in step with it — otherwise its values freeze at the moment it was opened. */
+function paintCard(job) {
+  if (!syncCardHost) return;
+  lastJob = job;
+  const stopping = stoppingJobId === job.job_id && job.phase !== "CANCELLED";
+  renderSyncCard(syncCardHost, job, {
+    // Read lastJob at click time, not the job captured when this Details button was built —
+    // renderSyncCard reuses the button across polls, so a captured job would be stale and the
+    // drawer would flash 0 rows for one tick before the poller updates it.
+    onDetails: () => {
+      syncDetails = openSyncDetails(lastJob, { onStop: () => requestStop(lastJob.job_id) });
+    },
+    onStop: stopping ? null : () => requestStop(job.job_id),
+    stopping,
+  });
+  if (syncDetails) syncDetails.update(job);
+  if (syncButtonsRow) syncButtonsRow.style.display = "none";
+}
+
+/** Drop the card and any open drawer, and bring the Run button back. */
+function clearCard() {
+  lastJob = null;
+  syncDetails = null;
+  if (syncCardHost) clear(syncCardHost);
+  if (syncButtonsRow) syncButtonsRow.style.display = "";
+}
+
+function stopWatch() {
+  if (jobPoller) clearInterval(jobPoller);
+  jobPoller = null;
+}
+
+/**
+ * The 3s poll. THE STOP CONDITION IS `shouldContinuePolling` AND NOWHERE ELSE — a null job
+ * (nothing running) and every terminal phase (DONE / FAILED / CANCELLED) clear the interval
+ * before this function does anything else, which is what stops a poll outliving its job.
+ *
+ * Only DONE re-fetches the bootstrap payload and every cached RPC: a cancelled sync commits
+ * nothing (scanJobs.ts — persistSync's append is the only commit, and Stop is cooperative only
+ * during FETCHING, before it), so there is nothing on the ledger for `refresh()` to catch up on.
+ */
+function applyJob(job) {
+  if (!shouldContinuePolling(job)) {
+    stopWatch();
+    if (job && job.phase === "DONE") {
+      if (syncDetails) syncDetails.update(job); // let an open drawer settle on "Complete"
+      toast("Sync complete.");
+      clearCard();
+      refresh();
+    } else if (job && job.phase === "CANCELLED") {
+      stoppingJobId = null;
+      if (syncDetails) syncDetails.update(job); // an open drawer settles on "Cancelled"
+      toast("Sync stopped.");
+      clearCard();
+    } else if (job && job.phase === "FAILED") {
+      paintCard(job); // leave the failure on screen, with its error and a Details button
+      if (syncButtonsRow) syncButtonsRow.style.display = ""; // let a retry start right away
+      toast(job.error || "Sync failed.", "error");
+    } else {
+      clearCard(); // job === null: nothing running — never started, or the row was reclaimed
+    }
+    return;
+  }
+  paintCard(job);
+}
+
+/**
+ * One poll tick, through store.js's `swrCall` rather than a bare `call()` — a revisit with the
+ * same `{jobId}` resolves instantly from the session cache while the RPC refetches in the
+ * background, and `onFresh` repaints the moment the revalidated summary actually differs. The
+ * awaited return handles the very first tick (a cache miss, so it IS the fresh fetch); every
+ * tick after that is a cache hit and its real update arrives through `onFresh` instead — both
+ * paths funnel through the same `applyJob`, so the poll's stop condition is asked in one place.
+ */
+async function pollTick(jobId) {
+  try {
+    const job = await swrCall("api_getJobStatus", { jobId }, (fresh) => applyJob(fresh));
+    applyJob(job);
+  } catch {
+    /* a transient poll failure is fine — the next tick tries again */
+  }
+}
+
+function watchJob(jobId) {
+  stopWatch();
+  pollTick(jobId); // paint immediately rather than leaving the card blank for the first 3s
+  jobPoller = setInterval(() => pollTick(jobId), 3000);
+}
+
+/** A page LOAD is the only time worth asking whether a sync is already running (a reload
+ *  mid-walk, or a second tab) — `getJobStatus` with no jobId returns the server's own
+ *  single-flight `activeJob()`, so this resumes the SAME poll a fresh Run click would start. */
+async function resumeActiveJob() {
+  try {
+    const job = await swrCall("api_getJobStatus", {}, () => {});
+    if (job && shouldContinuePolling(job)) watchJob(job.job_id);
+  } catch {
+    /* unreachable, or nothing active — nothing to resume either way */
+  }
+}
+
+/** Stop button handler, behind a confirm — nothing fetched so far is committed until the
+ *  scopes finish and persistSync runs, so stopping mid-fetch discards the walk so far. */
+async function requestStop(jobId) {
+  const ok = await confirmDialog({
+    title: "Stop this sync?",
+    body: "Nothing fetched so far has been saved — stopping now discards this run, and the " +
+      "next sync starts over from the top of the register.",
+    confirmLabel: "Stop sync",
+    danger: true,
+  });
+  if (!ok) return;
+  stoppingJobId = jobId;
+  if (lastJob && lastJob.job_id === jobId) paintCard(lastJob);
+  try {
+    const res = await call("api_cancelSync", { jobId });
+    toast(res.message || "Stopping sync…");
+  } catch (e) {
+    stoppingJobId = null;
+    toast(String(e.message || e), "error");
+  }
+}
 
 export async function refresh() {
   invalidateBootstrap();

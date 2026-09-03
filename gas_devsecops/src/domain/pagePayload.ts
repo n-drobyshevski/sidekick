@@ -275,7 +275,12 @@ export function mttrGroupTrendSlice(byGroup: unknown): Rec | null {
  * say which one is running.
  */
 const JOB_KEYS = [
-  "job_id", "kind", "phase", "scope", "page", "findings_so_far", "total_count",
+  // `page_size` rides along with `page` and `total_count` because the three are the only
+  // honest per-scope progress fraction on offer: `findings_so_far` is cumulative across the
+  // whole sync while `total_count` is one scope's, so their ratio is wrong from the second
+  // register onward. All three are per-scope (scanJobs resets page/page_size on advance) and
+  // none is sensitive — a page size is a constant of this app, not a fact about the tenant.
+  "job_id", "kind", "phase", "scope", "page", "page_size", "findings_so_far", "total_count",
   "started_at", "updated_at", "error",
 ] as const;
 

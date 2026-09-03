@@ -568,8 +568,17 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
           page: paging.pageNumber,
           page_size: paging.pageSize,
           // Cumulative across the WHOLE sync — this is one job, and the card counts one
-          // sync. The current scope's own count is `params.perScope[scope].rows`, which
-          // pairs with `total_count` below for a per-scope percentage.
+          // sync. It therefore DOES NOT pair with `total_count` below, which is only the
+          // current scope's total: dividing them is right for the first scope and silently
+          // wrong from the second on. An earlier revision of this comment pointed at
+          // `params.perScope[scope].rows` as the per-scope numerator; that field is only
+          // written when a scope COMPLETES (`progress.rows = slim.length`), so it is absent
+          // for exactly the duration anyone would want it, and `params_json` never reaches
+          // the browser anyway (pagePayload's JOB_KEYS allowlist).
+          //
+          // The honest per-scope fraction is PAGE-BASED — `page` and `page_size` are both
+          // reset on every scope advance below, so `page * page_size / total_count` is a
+          // fraction of one register. syncProgress.js::syncViewModel computes it there.
           findings_so_far: findings,
           // The CURRENT scope's total, per the jobs tab's own column definition.
           total_count: progress.totalCount,

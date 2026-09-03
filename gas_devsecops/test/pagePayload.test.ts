@@ -347,8 +347,15 @@ describe("jobSummarySlice — what a 3-second poll is allowed to carry", () => {
   };
 
   it("ships only the fields the progress card draws (plus `scope`, unique to this register)", () => {
+    // `page_size` joined this set deliberately, and the reason is that the obvious progress
+    // fraction is a lie. `findings_so_far` is cumulative across the whole sync while
+    // `total_count` is only the CURRENT scope's total, so their ratio is right while sca is
+    // in flight and then reads ~14,567% on sast. `page` and `page_size` are both reset on
+    // every scope advance, so pages-fetched over pages-expected is a fraction of one
+    // register — see syncProgress.js::syncViewModel. A page size is a constant of this app,
+    // not a fact about the tenant, so it costs nothing to publish.
     expect(Object.keys(jobSummarySlice(JOB, false)!).sort()).toEqual([
-      "error", "findings_so_far", "incremental", "job_id", "kind", "page",
+      "error", "findings_so_far", "incremental", "job_id", "kind", "page", "page_size",
       "phase", "scope", "stale", "started_at", "total_count", "updated_at",
     ]);
   });
