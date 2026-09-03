@@ -18,9 +18,10 @@
 //
 // `LEDGER_COLUMNS` is exported as the same list AS DATA, in tab order, so
 // test/ledgerTypes.test.ts can hold it set-equal to sheetsDb.ts's TAB_HEADERS[TABS.ledger] in
-// both directions — the two are independent sources for the same 39 columns and a drift
-// between them is exactly the class of defect PROBE_FINDINGS.md §10.2 and §10.9 are about:
-// a plausible-looking shape that quietly stops matching what is actually written.
+// both directions — the two are independent sources for the same 40 columns (39, plus
+// `projects_json` added alongside `tags_json`/`owner_project` — the flat projects[] list) and
+// a drift between them is exactly the class of defect PROBE_FINDINGS.md §10.2 and §10.9 are
+// about: a plausible-looking shape that quietly stops matching what is actually written.
 //
 // `scope` IS PART OF THE KEY (see lifecycle.ts's findingKey): the same CVE reaching the
 // estate through a dependency (sca) and through first-party code (sast, in principle; in
@@ -113,6 +114,13 @@ export interface LedgerRow {
   owner_project: string | null;
   owner_path: string | null;
   tags_json: string | null;
+  // The flat projects[] list, uncollapsed — an array of {slug, name, isFolder} entries as
+  // canonical JSON (reconcile.ts's projectsListJson). owner_project/owner_path are two strings
+  // a node's projects were REDUCED to; this is the list itself, foundation for a project-scope
+  // catalogue and membership predicate (src/domain/projectScope.ts) that a later package turns
+  // into an app-header selector. `isFolder` on each entry is tri-state — see projectScope.ts's
+  // ProjectRef for the same rule LedgerRow's has_kev/has_exploit already follow.
+  projects_json: string | null;
 }
 
 /** The ledger's columns, as data, in tab order — see the header comment for what it guards. */
@@ -126,7 +134,7 @@ export const LEDGER_COLUMNS: readonly string[] = [
   "cwe", "ai_verdict", "language", "file_path", "start_line", "origin",
   "secret_kind", "rotated_at", "removed_at", "validation_state", "validated_at",
   "confidence",
-  "owner_project", "owner_path", "tags_json",
+  "owner_project", "owner_path", "tags_json", "projects_json",
 ];
 
 export interface Observation {

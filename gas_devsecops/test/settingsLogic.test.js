@@ -201,3 +201,58 @@ describe("the S6 battery settings", () => {
     expect(validateSettings(DEFAULT_SETTINGS)).toEqual([]);
   });
 });
+
+// projectView: the VIEW scope — which project the pages SHOW, distinct from WIZ_PROJECT_ID_V2
+// (the FETCH scope, which stays a Script Property and is never added here — see
+// settingsLogic.ts's own header). "" means no scope: show the whole register.
+describe("projectView, the view scope", () => {
+  it("defaults to \"\" — no scope, the whole register", () => {
+    expect(DEFAULT_SETTINGS.projectView).toBe("");
+  });
+
+  it("cleanSettings coerces junk to \"\", never to its stringified self", () => {
+    // The trap this guards: String(null) is "null", String(undefined) is "undefined",
+    // String(0) is "0", String(false) is "false", String({}) is "[object Object]" — a naive
+    // `String(v)` cast would turn every one of these into a value that READS as a real (if
+    // odd) project slug instead of "nothing was stored here".
+    for (const junk of [null, undefined, 0, [], {}, false]) {
+      const cleaned = cleanSettings({ projectView: junk }).projectView;
+      expect(cleaned, `projectView(${JSON.stringify(junk)}) -> ${JSON.stringify(cleaned)}`).toBe("");
+    }
+  });
+
+  it("keeps a valid slug through a cleanSettings round trip", () => {
+    expect(cleanSettings({ projectView: "value-chain" }).projectView).toBe("value-chain");
+  });
+
+  it("trims surrounding whitespace on a stored slug", () => {
+    expect(cleanSettings({ projectView: "  value-chain  " }).projectView).toBe("value-chain");
+  });
+
+  it("is not validated against any catalogue — any string, including a stale one, is accepted", () => {
+    const s = { ...DEFAULT_SETTINGS, projectView: "a-project-that-no-longer-exists" };
+    expect(validateSettings(s)).toEqual([]);
+  });
+
+  it("withSettings patching an unrelated field leaves projectView intact", () => {
+    const withScope = cleanSettings({ ...DEFAULT_SETTINGS, projectView: "value-chain" });
+    const patched = withSettings(withScope, { autoCompact: true });
+    expect(patched.projectView).toBe("value-chain");
+    expect(patched.autoCompact).toBe(true);
+  });
+
+  it("withSettings can also patch projectView alone, leaving every other field untouched", () => {
+    const patched = withSettings(DEFAULT_SETTINGS, { projectView: "value-chain" });
+    expect(patched.projectView).toBe("value-chain");
+    for (const key of Object.keys(DEFAULT_SETTINGS)) {
+      if (key === "projectView") continue;
+      expect(patched[key]).toEqual(DEFAULT_SETTINGS[key]);
+    }
+  });
+
+  it("clearing projectView back to \"\" survives a round trip", () => {
+    const withScope = cleanSettings({ ...DEFAULT_SETTINGS, projectView: "value-chain" });
+    const cleared = withSettings(withScope, { projectView: "" });
+    expect(cleared.projectView).toBe("");
+  });
+});

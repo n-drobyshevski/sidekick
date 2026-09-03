@@ -423,7 +423,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "119056c24d90" : "dev";
+  var BUILD_ID = true ? "b1221560f61e" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -998,6 +998,21 @@ var Server = (() => {
     }
     return canonicalJson(entries);
   }
+  function projectsListJson(record) {
+    var _a;
+    const byKey = /* @__PURE__ */ new Map();
+    for (const p of projectList(record)) {
+      const key = str(p, "slug", "id");
+      if (key === null) continue;
+      const name = (_a = str(p, "name")) != null ? _a : key;
+      const entry = { slug: key, name };
+      if (typeof p["isFolder"] === "boolean") entry.isFolder = p["isFolder"];
+      byKey.set(key, entry);
+    }
+    if (!byKey.size) return null;
+    const parts = [...byKey.keys()].sort().map((k) => canonicalJson(byKey.get(k)));
+    return `[${parts.join(", ")}]`;
+  }
   function ownerProject(record) {
     var _a;
     const projects = projectList(record);
@@ -1065,7 +1080,10 @@ var Server = (() => {
       // projects[] is this register's ownership dimension on all three scopes; the
       // vulnerableAsset.tags fallback is what keeps gas/'s tags_json fixture live for SCA,
       // whose nodes come off the same connection the OS register reads.
-      tags_json: (_a = projectsJson(rec)) != null ? _a : tagsJson(rec)
+      tags_json: (_a = projectsJson(rec)) != null ? _a : tagsJson(rec),
+      // The flat projects[] list, uncollapsed — see projectsListJson's own comment for why this
+      // is additive alongside tags_json rather than a replacement for it.
+      projects_json: projectsListJson(rec)
     };
     if (scope === "sast") {
       const parts2 = splitRepoBranch(str(rec, "resource.name"), str(rec, "resource.type"));
@@ -1291,7 +1309,8 @@ var Server = (() => {
       confidence: attrs.confidence,
       owner_project: attrs.owner_project,
       owner_path: attrs.owner_path,
-      tags_json: attrs.tags_json
+      tags_json: attrs.tags_json,
+      projects_json: attrs.projects_json
     };
   }
   function applyValidation(row, rec, scanTsIso) {
@@ -1310,7 +1329,7 @@ var Server = (() => {
     }
   }
   function reconcile(currentRecords, existingLedger, scanId, scanTs, prevScanId, options) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C;
     const {
       scope,
       disappearanceMode = "scan_ts",
@@ -1405,6 +1424,7 @@ var Server = (() => {
       row.owner_project = (_y = attrs.owner_project) != null ? _y : row.owner_project;
       row.owner_path = (_z = attrs.owner_path) != null ? _z : row.owner_path;
       row.tags_json = (_A = attrs.tags_json) != null ? _A : row.tags_json;
+      row.projects_json = (_B = attrs.projects_json) != null ? _B : row.projects_json;
       if (apiSaysResolved && row.status === STATUS_OPEN) {
         row.status = STATUS_RESOLVED;
         row.resolved_at = present(apiResolved) ? toIso(parseTs(apiResolved)) : scanTsIso;
@@ -1428,7 +1448,7 @@ var Server = (() => {
         if (inScope !== null && (sevRow === null || !inScope.has(sevRow))) {
           continue;
         }
-        const expectedPrev = (_B = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _B : prevScanId;
+        const expectedPrev = (_C = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _C : prevScanId;
         if (row.last_scan_id !== expectedPrev) continue;
         if (disappearanceMode === "midpoint" && prevScanTs) {
           row.resolved_at = midpointIso(prevScanTs, scanTsIso);
@@ -1655,7 +1675,11 @@ var Server = (() => {
       confidence: null,
       owner_project: e.owner_project,
       owner_path: null,
-      tags_json: null
+      tags_json: null,
+      // EpisodeRow carries no projects_json (compaction.ts's EpisodeRow has no such column, and
+      // a sealed episode's owner_path is already null above for the same reason) — nothing to
+      // expand it from.
+      projects_json: null
     };
   }
   function baseRows(state, options = {}) {
@@ -3204,7 +3228,8 @@ var Server = (() => {
     showExperimental: false,
     syncSchedule: DEFAULT_SYNC_HOUR,
     autoCompact: false,
-    retentionDays: DEFAULT_RETENTION_DAYS
+    retentionDays: DEFAULT_RETENTION_DAYS,
+    projectView: ""
   };
   function asList(v, allowed) {
     if (!Array.isArray(v)) return null;
@@ -3249,6 +3274,9 @@ var Server = (() => {
     if (n2 === null) return DEFAULT_RETENTION_DAYS;
     return Math.max(Math.floor(n2), RETENTION_MIN_DAYS);
   }
+  function cleanProjectView(v) {
+    return typeof v === "string" ? v.trim() : "";
+  }
   function cleanSettings(raw) {
     const r = raw || {};
     const scopes = (Array.isArray(r.scopes) ? r.scopes : []).map((x) => String(x).trim().toLowerCase()).filter((x) => SCOPES.includes(x));
@@ -3269,8 +3297,12 @@ var Server = (() => {
       // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
       // only a literal boolean true turns compaction on.
       autoCompact: r.autoCompact === true,
-      retentionDays: cleanRetentionDays(r.retentionDays)
+      retentionDays: cleanRetentionDays(r.retentionDays),
+      projectView: cleanProjectView(r.projectView)
     };
+  }
+  function withSettings(current, patch) {
+    return cleanSettings({ ...current, ...patch });
   }
 
   // src/server/sheetsDb.ts
@@ -3430,10 +3462,13 @@ var Server = (() => {
       "validation_state",
       "validated_at",
       "confidence",
-      // All three: ownership, from projects[].
+      // All three: ownership, from projects[]. `projects_json` is the flat list itself, sorted
+      // by slug — owner_project/owner_path are the two strings it was collapsed to; this is what
+      // src/domain/projectScope.ts builds its catalogue and membership predicate from.
       "owner_project",
       "owner_path",
-      "tags_json"
+      "tags_json",
+      "projects_json"
     ],
     [TABS.episodes]: [
       "finding_key",
@@ -3518,7 +3553,7 @@ var Server = (() => {
     ],
     [TABS.meta]: ["version"]
   };
-  var SCHEMA_VERSION = 2;
+  var SCHEMA_VERSION = 3;
   var spreadsheetCache = null;
   function ledgerSpreadsheet() {
     if (spreadsheetCache === null) {
@@ -3854,8 +3889,61 @@ var Server = (() => {
     getStorageStats: () => getStorageStats,
     putSettings: () => putSettings,
     resetLedger: () => resetLedger2,
-    runSync: () => runSync
+    runSync: () => runSync,
+    setProjectView: () => setProjectView
   });
+
+  // src/domain/projectScope.ts
+  function parseProjects(projectsJson2) {
+    if (!projectsJson2) return [];
+    let parsed;
+    try {
+      parsed = JSON.parse(projectsJson2);
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(parsed)) return [];
+    const out = [];
+    for (const p of parsed) {
+      if (p === null || typeof p !== "object" || Array.isArray(p)) continue;
+      const rec = p;
+      const slug = rec["slug"];
+      const name = rec["name"];
+      if (typeof slug !== "string" || slug === "" || typeof name !== "string") continue;
+      const ref = { slug, name };
+      if (typeof rec["isFolder"] === "boolean") ref.isFolder = rec["isFolder"];
+      out.push(ref);
+    }
+    return out;
+  }
+  function projectCatalogue(rows) {
+    const bySlug = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      for (const p of parseProjects(row.projects_json)) {
+        const seen = bySlug.get(p.slug);
+        if (!seen) {
+          bySlug.set(p.slug, { slug: p.slug, name: p.name, isFolder: p.isFolder, findings: 1 });
+          continue;
+        }
+        seen.findings += 1;
+        if (seen.isFolder === void 0 && p.isFolder !== void 0) seen.isFolder = p.isFolder;
+      }
+    }
+    return [...bySlug.values()].sort(
+      (a, b) => a.isFolder === b.isFolder ? a.name.localeCompare(b.name) : a.isFolder ? -1 : 1
+    );
+  }
+  function inProject(projects, slug) {
+    if (!slug) return false;
+    return (projects != null ? projects : []).some((p) => p.slug === slug);
+  }
+  function unattributedCount(rows) {
+    let count = 0;
+    for (const row of rows) {
+      if (parseProjects(row.projects_json).length === 0) count += 1;
+    }
+    return count;
+  }
 
   // src/domain/pagePayload.ts
   function execMttrSlice(mttr) {
@@ -4461,7 +4549,8 @@ var Server = (() => {
       confidence: s(r, "confidence"),
       owner_project: s(r, "owner_project"),
       owner_path: s(r, "owner_path"),
-      tags_json: s(r, "tags_json")
+      tags_json: s(r, "tags_json"),
+      projects_json: s(r, "projects_json")
     };
   }
   function rowToEpisode(r) {
@@ -4557,6 +4646,7 @@ var Server = (() => {
           platform: null,
           owner_project: null,
           owner_path: null,
+          projects_json: null,
           first_seen: null,
           last_seen: null
         };
@@ -4567,6 +4657,7 @@ var Server = (() => {
       if (row.platform !== null) acc.platform = row.platform;
       if (row.owner_project !== null) acc.owner_project = row.owner_project;
       if (row.owner_path !== null) acc.owner_path = row.owner_path;
+      if (row.projects_json !== null) acc.projects_json = row.projects_json;
       acc.first_seen = earlier(acc.first_seen, row.first_seen);
       acc.last_seen = later(acc.last_seen, row.last_seen);
     }
@@ -4578,7 +4669,7 @@ var Server = (() => {
       default_branch: null,
       owner_project: a.owner_project,
       owner_path: a.owner_path,
-      projects_json: null,
+      projects_json: a.projects_json,
       first_seen: a.first_seen,
       last_seen: a.last_seen
     }));
@@ -5482,10 +5573,12 @@ var Server = (() => {
     const scope = scopeRaw && SCOPES.includes(scopeRaw) ? scopeRaw : null;
     const sevRaw = (_b = p == null ? void 0 : p.severities) != null ? _b : null;
     const severities = Array.isArray(sevRaw) && sevRaw.length ? sevRaw.map((s2) => normalizeSeverity(s2)).filter((s2, i, a) => a.indexOf(s2) === i).sort() : null;
-    return { scope, severities, showNoFix: (p == null ? void 0 : p.showNoFix) !== false };
+    const projectRaw = loadSettings().projectView;
+    const project2 = projectRaw ? projectRaw : null;
+    return { scope, severities, showNoFix: (p == null ? void 0 : p.showNoFix) !== false, project: project2 };
   }
   function keyOf(n2) {
-    return { scope: n2.scope, severities: n2.severities, showNoFix: n2.showNoFix };
+    return { scope: n2.scope, severities: n2.severities, showNoFix: n2.showNoFix, project: n2.project };
   }
   var baseMemo;
   function baseSnapshot() {
@@ -5535,6 +5628,7 @@ var Server = (() => {
   function scopedRows(rows, n2) {
     let out = rows;
     if (n2.scope) out = out.filter((r) => r.scope === n2.scope);
+    if (n2.project) out = out.filter((r) => inProject(parseProjects(r.projects_json), n2.project));
     if (n2.severities) {
       const keep = new Set(n2.severities);
       out = out.filter((r) => keep.has(normalizeSeverity(r.severity)));
@@ -5835,7 +5929,7 @@ var Server = (() => {
     const snap = baseSnapshot();
     const severityFilterSupported = scope !== "secrets";
     const severities = severityFilterSupported ? n2.severities : null;
-    const scoped = visibleRows(snap.rows, { scope, severities, showNoFix: n2.showNoFix });
+    const scoped = visibleRows(snap.rows, { ...n2, scope, severities });
     const status = normRowStatus(p == null ? void 0 : p.status);
     const rows = status === "all" ? scoped : scoped.filter((r) => isOpen5(r.status) === (status === "open"));
     const def = REGISTER_ROW_DEFAULT_SORT[scope];
@@ -5877,7 +5971,7 @@ var Server = (() => {
   }
   function buildSecrets(n2) {
     const snap = baseSnapshot();
-    const rows = visibleRows(snap.rows, { scope: "secrets", severities: null, showNoFix: n2.showNoFix });
+    const rows = visibleRows(snap.rows, { ...n2, scope: "secrets", severities: null });
     const secretRows = rows;
     return {
       asOf: snap.now,
@@ -6038,7 +6132,12 @@ var Server = (() => {
       },
       // `mttrPageTrendSlice` reads both of these keys.
       history: listHistory(),
-      trend: trendFor(n2, snap.rows)
+      trend: trendFor(n2, snap.rows),
+      // See the block comment above: `scans`, `perScope` and `history` are per-scan/per-day
+      // facts with no project dimension and do NOT narrow with `n.project`; everything else in
+      // this payload does.
+      scanScopeApplies: false,
+      scanScopeNote: n2.project ? "scans, perScope and history describe the whole register \u2014 a scan battery and a daily snapshot carry no project dimension to narrow by. Only rows/kpis/trend above are scoped to the selected project." : null
     };
   }
   function trendFor(n2, all) {
@@ -6116,7 +6215,9 @@ var Server = (() => {
       distinctSeverities: [...new Set(rows.map((r) => normalizeSeverity(r.severity)))].sort(
         (a, b) => SEVERITY_ORDER.indexOf(a) - SEVERITY_ORDER.indexOf(b)
       ),
-      unknownSeverityCount: rows.filter((r) => normalizeSeverity(r.severity) === "UNKNOWN").length
+      unknownSeverityCount: rows.filter((r) => normalizeSeverity(r.severity) === "UNKNOWN").length,
+      scopeApplies: false,
+      scopeNote: "Storage prices sheet and Drive bytes for the whole spreadsheet \u2014 there is no project column on a tab to narrow one row's worth of storage by. These figures always describe the whole register, regardless of the view-project scope."
     };
   }
   function storageModel() {
@@ -7189,7 +7290,7 @@ var Server = (() => {
   }
   function bootstrap(_p) {
     return run(() => {
-      var _a, _b;
+      var _a, _b, _c, _d;
       const scans = readAll(TABS.scans);
       let newestTs = "";
       let newestSyncId = "";
@@ -7207,12 +7308,12 @@ var Server = (() => {
         });
         const order = new Map(SCOPES.map((sc, i) => [String(sc), i]));
         const rows = members.map((r) => {
-          var _a2, _b2, _c;
+          var _a2, _b2, _c2;
           return {
             scope: String((_a2 = r.scope) != null ? _a2 : ""),
             total: Number((_b2 = r.total) != null ? _b2 : 0),
             severities: r.severities == null ? null : String(r.severities),
-            ts: String((_c = r.ts) != null ? _c : "")
+            ts: String((_c2 = r.ts) != null ? _c2 : "")
           };
         }).sort((a, b) => {
           var _a2, _b2;
@@ -7231,6 +7332,10 @@ var Server = (() => {
           scopes: rows.map((r) => ({ scope: r.scope, total: r.total, severities: r.severities }))
         };
       }
+      const settings = loadSettings();
+      const allRows = loadBaseRows();
+      const projectView = settings.projectView || null;
+      const shown = projectView ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length : allRows.length;
       return {
         product: "Wiz Sidekick DevSecOps",
         buildId: BUILD_ID,
@@ -7240,7 +7345,17 @@ var Server = (() => {
         slaTargets: SLA_TARGETS,
         latestSync,
         canEditAccess: canEditUsers(),
-        settings: loadSettings()
+        settings,
+        scope: {
+          projectView: settings.projectView,
+          shown,
+          register: allRows.length,
+          unattributed: unattributedCount(allRows),
+          // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
+          // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
+          syncProjectId: (_d = (_c = projectScope()) == null ? void 0 : _c[0]) != null ? _d : null
+        },
+        filterOptions: { projectList: projectCatalogue(allRows) }
       };
     });
   }
@@ -7248,7 +7363,13 @@ var Server = (() => {
     return run(() => loadSettings());
   }
   function putSettings(p) {
-    return mutate(() => saveSettings(p.settings));
+    return mutate(() => {
+      var _a;
+      return saveSettings(withSettings(loadSettings(), (_a = p.settings) != null ? _a : {}));
+    });
+  }
+  function setProjectView(p) {
+    return mutate(() => saveSettings(withSettings(loadSettings(), { projectView: p.projectView })));
   }
   function getChartsBundle(_p) {
     return run(() => {
@@ -7373,7 +7494,14 @@ var Server = (() => {
         // The scans tab narrowed to the ten columns the table draws — raw_ref / obs_ref are
         // Drive file ids and are not among them (pagePayload.ts's SCAN_ROW_KEYS).
         scans: scanRowsSlice(h["scans"]),
-        trends: historyTrendSlice(h)
+        trends: historyTrendSlice(h),
+        // `scans` and `perScope` above are per-scan/per-day facts with no project dimension —
+        // see `readModels.ts::buildHistory`'s own comment. `kpis` and `trends` DO narrow to the
+        // view-project scope; these two flags name exactly which keys in THIS payload do not, so
+        // the client can mark the scan table and the per-register coverage strip without
+        // implying the KPIs or trend beside them are unscoped too.
+        scanScopeApplies: h["scanScopeApplies"],
+        scanScopeNote: h["scanScopeNote"]
       };
     });
   }
@@ -7438,10 +7566,13 @@ var Server = (() => {
       const severities = Array.isArray(sevRaw) && sevRaw.length ? new Set(sevRaw.map((s2) => normalizeSeverity(s2))) : null;
       const statusRaw = params["statuses"];
       const statuses = Array.isArray(statusRaw) && statusRaw.length ? new Set(statusRaw.map((s2) => String(s2).toUpperCase())) : null;
+      const projectView = loadSettings().projectView || null;
       const rows = loadBaseRows(scope ? { scope } : {}).filter((r) => !severities || severities.has(normalizeSeverity(r["severity"]))).filter((r) => {
         var _a2;
         return !statuses || statuses.has(String((_a2 = r["status"]) != null ? _a2 : "").toUpperCase());
-      });
+      }).filter(
+        (r) => !projectView || inProject(parseProjects(r["projects_json"]), projectView)
+      );
       const cols = (_a = TAB_HEADERS[TABS.ledger]) != null ? _a : [];
       const lines = [cols.join(",")];
       for (const r of rows) lines.push(cols.map((c) => csvCell(r[c])).join(","));
@@ -7450,7 +7581,8 @@ var Server = (() => {
         filename: `wiz-devsecops-ledger-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.csv`,
         rowCount: rows.length,
         columns: cols.length,
-        scope
+        scope,
+        projectView
       };
     });
   }

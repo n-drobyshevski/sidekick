@@ -22,6 +22,7 @@ import {
   ownerPath,
   ownerProject,
   projectsJson,
+  projectsListJson,
   reconcile,
   tagsJson,
 } from "../src/domain/reconcile";
@@ -460,6 +461,83 @@ describe("ownership from projects[] (all three scopes)", () => {
 });
 
 // --------------------------------------------------------------------------- #
+//  projectsListJson (P1: the flat projects[] list, uncollapsed) — additive alongside
+//  projectsJson, which stays byte-identical (test/reconcile.test.ts:441-ish above).
+// --------------------------------------------------------------------------- #
+
+describe("projectsListJson — the flat projects[] list, additive alongside projectsJson", () => {
+  const projects = [
+    { id: "p1", name: "VALUE-CHAIN", isFolder: true, slug: "value-chain" },
+    { id: "p2", name: "product-TATTOO-idp", isFolder: false, slug: "product-tattoo-idp" },
+    { id: "p3", name: "CE-TRANSPORT", isFolder: true, slug: "ce-transport" },
+    { id: "p4", name: "GITHUB-DKTUNITED", isFolder: false, slug: "github-dktunited" },
+  ];
+
+  it("renders [{slug, name, isFolder}], sorted by slug, through the SAME canonical writer", () => {
+    expect(projectsListJson({ projects })).toBe(
+      '[{"isFolder": true, "name": "CE-TRANSPORT", "slug": "ce-transport"}, ' +
+        '{"isFolder": false, "name": "GITHUB-DKTUNITED", "slug": "github-dktunited"}, ' +
+        '{"isFolder": false, "name": "product-TATTOO-idp", "slug": "product-tattoo-idp"}, ' +
+        '{"isFolder": true, "name": "VALUE-CHAIN", "slug": "value-chain"}]',
+    );
+  });
+
+  it("projectsJson's own output is UNCHANGED on the same input — side by side", () => {
+    const record = { projects };
+    // projectsJson still collapses to {slug: name}; projectsListJson is the new, additive,
+    // uncollapsed sibling. Asserted together so a future edit to one cannot silently start
+    // moving the other's pinned bytes (test/reconcile.test.ts's original assertion at line
+    // ~441 already pins projectsJson alone; this is the side-by-side the package asked for).
+    expect(projectsJson(record)).toBe(
+      '{"ce-transport": "CE-TRANSPORT", "github-dktunited": "GITHUB-DKTUNITED", ' +
+        '"product-tattoo-idp": "product-TATTOO-idp", "value-chain": "VALUE-CHAIN"}',
+    );
+    expect(projectsListJson(record)).not.toBe(projectsJson(record));
+  });
+
+  it("isFolder is TRI-STATE: omitted entirely when the API did not report it, never false", () => {
+    const noFlag = [{ slug: "no-flag", name: "No Flag" }];
+    const rendered = projectsListJson({ projects: noFlag });
+    expect(rendered).toBe('[{"name": "No Flag", "slug": "no-flag"}]');
+    expect(rendered).not.toContain("isFolder");
+    // And round-trips through JSON.parse as a key genuinely absent, not `false`.
+    const parsed = JSON.parse(rendered!);
+    expect("isFolder" in parsed[0]).toBe(false);
+  });
+
+  it("keys on slug, falling back to id, matching projectsJson's rule", () => {
+    const noSlug = [{ id: "p-only-id", name: "Only Id", isFolder: false }];
+    expect(projectsListJson({ projects: noSlug })).toBe(
+      '[{"isFolder": false, "name": "Only Id", "slug": "p-only-id"}]',
+    );
+  });
+
+  it("a record with no projects at all returns null, same convention as projectsJson", () => {
+    expect(projectsListJson({})).toBeNull();
+    expect(projectsListJson({ projects: [] })).toBeNull();
+  });
+
+  it("the ledger row carries it, additively — tags_json/owner_project are untouched", () => {
+    const row = run("sast", [sastNode({ projects })], {}, S1).ledger["sast:id:sast-1"];
+    expect(row.projects_json).toContain('"slug": "value-chain"');
+    expect(row.projects_json).toContain('"isFolder": true');
+    expect(row.owner_project).toBe("product-TATTOO-idp");
+    expect(row.tags_json).toContain('"value-chain": "VALUE-CHAIN"');
+  });
+
+  it("a node with no projects leaves projects_json null too", () => {
+    const row = run("sast", [sastNode()], {}, S1).ledger["sast:id:sast-1"];
+    expect(row.projects_json).toBeNull();
+  });
+
+  it("latest-wins-never-erased: a later scan with no projects[] does not blank the column", () => {
+    const s1 = run("sast", [sastNode({ projects })], {}, S1);
+    const s2 = run("sast", [sastNode({ projects: undefined })], s1.ledger, S2);
+    expect(s2.ledger["sast:id:sast-1"].projects_json).toBe(s1.ledger["sast:id:sast-1"].projects_json);
+  });
+});
+
+// --------------------------------------------------------------------------- #
 //  Rule 3: the birth date, and SAST's in particular
 // --------------------------------------------------------------------------- #
 
@@ -731,7 +809,7 @@ describe("update disciplines (rule 6)", () => {
         cwe: null, ai_verdict: null, language: "JAVASCRIPT", file_path: null, start_line: null,
         origin: null, secret_kind: null, rotated_at: null, removed_at: null,
         validation_state: null, validated_at: null, confidence: null,
-        owner_project: null, owner_path: null, tags_json: null,
+        owner_project: null, owner_path: null, tags_json: null, projects_json: null,
       },
     };
     const { ledger, deltas } = run("sca", [scaNode()], resolved, S2);
@@ -866,6 +944,7 @@ describe("validation is latest-wins among MEASURED states only (rule 7)", () => 
         rotated_at: "2026-03-05T00:00:00Z", removed_at: S1,
         validation_state: "INVALID", validated_at: "2026-03-05T00:00:00Z",
         confidence: "High", owner_project: null, owner_path: null, tags_json: null,
+        projects_json: null,
       },
     };
     // The string is back in HEAD; nobody re-checked the credential (UNKNOWN).
@@ -961,7 +1040,7 @@ describe("severity-scope guard (rule 9)", () => {
       cwe: null, ai_verdict: null, language: null, file_path: null, start_line: null,
       origin: null, secret_kind: null, rotated_at: null, removed_at: null,
       validation_state: null, validated_at: null, confidence: null,
-      owner_project: null, owner_path: null, tags_json: null,
+      owner_project: null, owner_path: null, tags_json: null, projects_json: null,
     };
     const before = JSON.stringify(medium);
 

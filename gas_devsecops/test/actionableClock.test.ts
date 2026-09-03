@@ -40,7 +40,7 @@ function row(over: Partial<LedgerRow>): LedgerRow {
     cwe: null, ai_verdict: null, language: null, file_path: null, start_line: null,
     origin: null, secret_kind: null, rotated_at: null, removed_at: null,
     validation_state: null, validated_at: null, confidence: null,
-    owner_project: null, owner_path: null, tags_json: null,
+    owner_project: null, owner_path: null, tags_json: null, projects_json: null,
     ...over,
   };
 }

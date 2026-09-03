@@ -34,8 +34,8 @@ import { swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   DEFAULT_PAGE_SIZE, clear, dataTable, el, emptyState, fmtDate, fmtDateTime, glossaryTip,
-  heroStat, kpiCard, onPageTeardown, pageHeader, pageOf, sectionLabel, skeletonStack, sortRows,
-  tableFooter,
+  heroStat, kpiCard, onPageTeardown, pageHeader, pageOf, registerWideNote, sectionLabel,
+  skeletonStack, sortRows, tableFooter,
 } from "../ui.js";
 
 const SCOPE_LABELS = { sca: "Dependencies (SCA)", sast: "Code (SAST)", secrets: "Secrets" };
@@ -178,6 +178,18 @@ export function openResolvedPoints(trend) {
   }));
 }
 
+/**
+ * Whether the scan-side tables owe the reader a register-wide note. `scans` and `perScope` are
+ * per-scan/per-day facts with no project dimension (`readModels.ts::buildHistory`'s own
+ * comment) — they never narrow to the view-project scope even though `kpis` and `trends`
+ * beside them do. The server sets `scanScopeNote` to a non-null string exactly when a project
+ * view is set (and to `null` otherwise), so its own presence — not a second client-side scope
+ * check — is the gate.
+ */
+export function scanScopeNoteShown(payload) {
+  return !!(payload && payload.scanScopeNote);
+}
+
 /** One scope's row for the "what was measured" strip. */
 export function perScopeView(perScope) {
   const out = [];
@@ -290,6 +302,15 @@ export async function renderHistory(host, _params, _ctx) {
       rows,
       emptyText: "No scans saved yet.",
     }));
+    // `perScope` (`loadScanRows()` counted per register) carries no project dimension — see
+    // scanScopeNoteShown's doc comment. Worded for THIS table specifically, not a copy of the
+    // KPI band's own scope.
+    if (scanScopeNoteShown(payload)) {
+      perScopeHost.append(registerWideNote(
+        "Scan counts across every register, not narrowed to the selected project — a scan "
+        + "battery carries no project dimension to narrow by.",
+      ));
+    }
   }
 
   function renderTable(payload) {
@@ -355,6 +376,16 @@ export async function renderHistory(host, _params, _ctx) {
         tableHost.append(el("p", { class: "small muted" },
           `${partial.length.toLocaleString()} sync(s) covered fewer than all three registers: `
           + partial.map((g) => `${fmtDate(g.ts)} (${g.scopes.join(", ")})`).join("; ") + "."));
+      }
+      // THIS TABLE SPECIFICALLY, not the KPI band or the trend below it — `scans` is a
+      // per-scan fact with no project dimension, so it never narrows with the view-project
+      // scope even while a project is selected; the KPIs above and the trend below both do.
+      if (scanScopeNoteShown(payload)) {
+        tableHost.append(registerWideNote(
+          "This table lists every scan ever run, not narrowed to the selected project — a "
+          + "scan battery carries no project dimension to narrow by. The KPIs above and the "
+          + "trend below ARE scoped to it.",
+        ));
       }
     }
     draw();

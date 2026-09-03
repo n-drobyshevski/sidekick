@@ -224,6 +224,7 @@ function rowToLedger(r: Rec): LedgerRow {
     owner_project: s(r, "owner_project"),
     owner_path: s(r, "owner_path"),
     tags_json: s(r, "tags_json"),
+    projects_json: s(r, "projects_json"),
   };
 }
 
@@ -357,7 +358,7 @@ export function writeStateTables(state: LedgerState): void {
  * finding in the repository, which is what makes this tab an answer about the REPOSITORY
  * rather than about whichever finding was written last.
  *
- * TWO COLUMNS ARE WRITTEN NULL ON PURPOSE, and neither is an oversight:
+ * ONE COLUMN IS STILL WRITTEN NULL ON PURPOSE, and it is not an oversight:
  *
  *   default_branch   The flag exists on the API node, and it is spelled differently per
  *                    scope — `isDefaultBranch` on sca, `resource.isDefaultBranch` on sast
@@ -366,10 +367,14 @@ export function writeStateTables(state: LedgerState): void {
  *                    by a path inferred rather than measured. That inference is the exact
  *                    mistake CLAUDE.md records as having cost this register twice; a column
  *                    honestly null is cheaper than one confidently wrong.
- *   projects_json    reconcile.ownerProject/ownerPath collapse `projects[]` into two strings
- *                    and the flat list itself never reaches the ledger. reconcile.ts:241
- *                    names this column as where the real hierarchy would live once something
- *                    learns it. Nothing does yet.
+ *
+ * `projects_json` USED TO BE THE OTHER ONE, and is not any more: reconcile.ts's
+ * `projectsListJson` now carries the flat `projects[]` list (uncollapsed — an array of
+ * {slug, name, isFolder} entries) onto every ledger row it can be read off, and this function
+ * folds it here the same latest-non-null-wins way it folds `repo_name`/`branch`/`platform`
+ * below. `ownerProject`/`ownerPath` still collapse the same list into the two strings this
+ * tab has carried since before this column existed; `projects_json` is the list itself, and
+ * is what src/domain/projectScope.ts's catalogue and membership predicate read.
  *
  * Sorted by `repo_id` so the tab is byte-stable across runs that touch no repository.
  */
@@ -381,6 +386,7 @@ function repoRows(state: LedgerState): Rec[] {
     platform: string | null;
     owner_project: string | null;
     owner_path: string | null;
+    projects_json: string | null;
     first_seen: string | null;
     last_seen: string | null;
   }
@@ -403,6 +409,7 @@ function repoRows(state: LedgerState): Rec[] {
         platform: null,
         owner_project: null,
         owner_path: null,
+        projects_json: null,
         first_seen: null,
         last_seen: null,
       };
@@ -413,6 +420,7 @@ function repoRows(state: LedgerState): Rec[] {
     if (row.platform !== null) acc.platform = row.platform;
     if (row.owner_project !== null) acc.owner_project = row.owner_project;
     if (row.owner_path !== null) acc.owner_path = row.owner_path;
+    if (row.projects_json !== null) acc.projects_json = row.projects_json;
     acc.first_seen = earlier(acc.first_seen, row.first_seen);
     acc.last_seen = later(acc.last_seen, row.last_seen);
   }
@@ -426,7 +434,7 @@ function repoRows(state: LedgerState): Rec[] {
       default_branch: null,
       owner_project: a.owner_project,
       owner_path: a.owner_path,
-      projects_json: null,
+      projects_json: a.projects_json,
       first_seen: a.first_seen,
       last_seen: a.last_seen,
     }));

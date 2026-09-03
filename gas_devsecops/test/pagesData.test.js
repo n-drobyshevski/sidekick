@@ -32,10 +32,10 @@ import {
 } from "../src/client/js/pages/repos.js";
 import {
   groupBySync, isAllSeverities, kmMedianPoints, kpiView, openResolvedPoints, perScopeView,
-  scanRowsView, severitiesLabel,
+  scanRowsView, scanScopeNoteShown, severitiesLabel,
 } from "../src/client/js/pages/history.js";
 import {
-  cellsSummary, compactionView, confirmedAction, deletableScans, ledgerSummary,
+  cellsSummary, compactionView, confirmedAction, currentlyScoped, deletableScans, ledgerSummary,
   recentErrorsView, tabCellsView,
 } from "../src/client/js/pages/data.js";
 
@@ -272,6 +272,96 @@ describe("history: KPIs, KM points and the SLA-trend gap", () => {
   it("states, in the rendered text, that the open-past-SLA trend is not in this payload", () => {
     expect(HISTORY_SRC).toMatch(/open-past-SLA trend is not in this page's payload/);
   });
+});
+
+// =========================================================================================
+//  history.js / data.js — the honesty flags: two figures that cannot follow the scope
+// =========================================================================================
+//
+// `historyModel`'s `scans` and `perScope` (and `storageModel`, unconditionally) carry no
+// project dimension — readModels.ts's own comments on `buildHistory` / `buildStorage` say so.
+// `getScanHistory` (api.ts) now forwards `scanScopeApplies` / `scanScopeNote` so the client can
+// mark them; before this package neither flag left the server at all, so the scan table and
+// the per-register coverage strip stayed silently register-wide under a scope with nothing on
+// screen to say so.
+
+describe("history: scanScopeNoteShown is gated on the server's own scanScopeNote, not on a "
+  + "second client-side scope check", () => {
+  it("false with no payload, or a payload carrying no note (no project view is set)", () => {
+    expect(scanScopeNoteShown(null)).toBe(false);
+    expect(scanScopeNoteShown({ scanScopeApplies: false, scanScopeNote: null })).toBe(false);
+  });
+
+  it("true exactly when the server sent a real note string", () => {
+    expect(scanScopeNoteShown({
+      scanScopeApplies: false,
+      scanScopeNote: "scans, perScope and history describe the whole register — a scan "
+        + "battery and a daily snapshot carry no project dimension to narrow by.",
+    })).toBe(true);
+  });
+
+  // PERTURBATION (recorded, then reverted): changing the gate to `payload.scanScopeApplies
+  // === false` (ignoring the note's own null-ness) turned the "no note set" test above red —
+  // it now reported `true` on an unscoped payload, since `scanScopeApplies` is unconditionally
+  // false in buildHistory regardless of whether a project is selected. The "real note" test
+  // stayed green either way, which is exactly why relying on scanScopeApplies alone is wrong:
+  // it cannot tell scoped-but-unmarked apart from genuinely unscoped.
+});
+
+describe("history: the note is placed on the scan-side tables specifically, never worded to "
+  + "imply the KPIs or trend are unscoped", () => {
+  it("renderPerScope gates its own note on scanScopeNoteShown(payload)", () => {
+    const fn = HISTORY_SRC.slice(HISTORY_SRC.indexOf("function renderPerScope"));
+    const body = fn.slice(0, fn.indexOf("\n  }\n"));
+    expect(body).toMatch(/scanScopeNoteShown\(payload\)/);
+    expect(body).toMatch(/registerWideNote\(/);
+  });
+
+  it("renderTable's note explicitly says the KPIs and trend ARE scoped, right beside the "
+    + "claim that the table itself is not", () => {
+    const fn = HISTORY_SRC.slice(HISTORY_SRC.indexOf("function renderTable"));
+    const body = fn.slice(0, fn.indexOf("\n  function renderTrends"));
+    expect(body).toMatch(/scanScopeNoteShown\(payload\)/);
+    expect(body).toMatch(/registerWideNote\(/);
+    expect(body).toMatch(/KPIs above and the/);
+    expect(body).toMatch(/trend below ARE scoped/);
+  });
+
+  it("imports registerWideNote from the shared ui barrel, not a hand-rolled note", () => {
+    expect(HISTORY_SRC).toMatch(/registerWideNote/);
+    expect(HISTORY_SRC).toMatch(/from "\.\.\/ui\.js"/);
+  });
+});
+
+describe("data: Storage's register-wide note only appears while a project view is actually "
+  + "narrowing the rest of the app", () => {
+  it("currentlyScoped() is false with nothing booted (this test's real, un-mocked store.js)", () => {
+    expect(currentlyScoped()).toBe(false);
+  });
+
+  it("renderStorage gates the note on model.scopeApplies === false AND currentlyScoped()", () => {
+    const fn = DATA_SRC.slice(DATA_SRC.indexOf("function renderStorage"));
+    const body = fn.slice(0, fn.indexOf("\n  }\n"));
+    expect(body).toMatch(/model\.scopeApplies === false/);
+    expect(body).toMatch(/currentlyScoped\(\)/);
+    expect(body).toMatch(/registerWideNote\(/);
+  });
+
+  it("falls back to an honest sentence if the server ever omits scopeNote, rather than "
+    + "rendering an empty note", () => {
+    const fn = DATA_SRC.slice(DATA_SRC.indexOf("function renderStorage"));
+    const body = fn.slice(0, fn.indexOf("\n  }\n"));
+    expect(body).toMatch(/model\.scopeNote \|\|/);
+  });
+
+  // PERTURBATION (recorded, then reverted): dropping the `currentlyScoped()` half of the
+  // guard (leaving only `model.scopeApplies === false`, which storageModel sets on every
+  // call) would render this note on every visit to Storage, scoped or not — turning "showing
+  // everything" from the resting, silent state into a permanently-lit badge. There is no
+  // jsdom in this suite to render the page and see the badge appear, so this is recorded as a
+  // manual read of the source rather than a failing assertion: the guard is the ONLY line in
+  // renderStorage that mentions currentlyScoped, so removing it removes the whole condition
+  // the two tests above pin.
 });
 
 // =========================================================================================

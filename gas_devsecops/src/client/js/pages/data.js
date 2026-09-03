@@ -20,11 +20,11 @@
 // and the figure excludes observation files by construction (ledgerStore.ts), not because the
 // number can be null.
 
-import { swrCall } from "../store.js";
+import { bootstrapCached, swrCall } from "../store.js";
 import { call } from "../api.js";
 import {
   clear, confirmDialog, dataTable, downloadText, el, emptyState, errorState, fmtDateTime,
-  heroStat, kpiCard, pageHeader, sectionLabel, skeletonStack, statusPill, toast,
+  heroStat, kpiCard, pageHeader, registerWideNote, sectionLabel, skeletonStack, statusPill, toast,
 } from "../ui.js";
 
 // ---------------------------------------------------------------------------- formatting
@@ -53,6 +53,19 @@ export function pct1(v) {
 /** The denominator node every rate on this page carries — see `sca.js`'s `denomNote`. */
 export function denomNote(sentence) {
   return el("p", { class: "small muted", "data-denominator": sentence }, sentence);
+}
+
+/**
+ * Whether a view-project scope is currently narrowing every OTHER page. `storageModel` takes
+ * no params at all (`readModels.ts::buildStorage`) and reports `scopeApplies: false`
+ * unconditionally — a spreadsheet tab has no project column to narrow, whether or not one is
+ * selected — so THIS page decides when the note is worth saying: unscoped, "showing
+ * everything" is the resting state and a permanent register-wide badge on a register-wide app
+ * is noise, not information.
+ */
+export function currentlyScoped() {
+  const boot = bootstrapCached();
+  return !!(boot && boot.scope && boot.scope.projectView);
 }
 
 // ------------------------------------------------------------------------- pure view models
@@ -257,6 +270,15 @@ export async function renderData(host, _params, ctx) {
       `Plus ${cells.other.toLocaleString()} cell(s) in sheets this register does not manage `
       + `(cellsOther) — ${ledger.ledgerRowCells.toLocaleString()} column(s) per ledger row.`,
     ));
+    // `scopeApplies: false` on `storageModel` is unconditional (it takes no params), but the
+    // note only earns its place while a project view is actually narrowing the rest of the
+    // app — see currentlyScoped's doc comment.
+    if (model && model.scopeApplies === false && currentlyScoped()) {
+      storageHost.append(registerWideNote(
+        model.scopeNote || "These figures describe the whole register, regardless of the "
+          + "view-project scope.",
+      ));
+    }
     if (ledger.unknownSeverityCount > 0) {
       storageHost.append(el("p", { class: "small muted" },
         `${ledger.unknownSeverityCount.toLocaleString()} row(s) carry a severity that did not `

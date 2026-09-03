@@ -203,6 +203,11 @@ vi.mock("../src/server/sheetsDb", () => ({
   cellCount: () => 0,
   gridSize: () => ({ rows: 0, cols: 0 }),
 }));
+// `norm()` reads the view-project scope off `settingsStore.loadSettings()`; the real module
+// would reach `SpreadsheetApp` via `sheetsDb.readAll`, which this file's fake does not define.
+// No scope selected here — this suite is about paging/sorting, not project narrowing (see
+// `test/projectView.test.ts` for that, over a real booted server).
+vi.mock("../src/server/settingsStore", () => ({ loadSettings: () => ({ projectView: "" }) }));
 
 import { __resetModelMemosForTest, registerRowsModel } from "../src/server/readModels";
 
@@ -254,6 +259,7 @@ function scaRow(i: number): BaseRow {
     owner_project: "proj-a",
     owner_path: "org/proj-a",
     tags_json: null,
+    projects_json: null,
     mttr_days: resolved ? 1 : null,
     age_days: resolved ? null : (NOW - firstMs) / DAY,
     fix_available_at: first,

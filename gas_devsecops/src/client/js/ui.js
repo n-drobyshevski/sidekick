@@ -4,7 +4,7 @@
 // keeps importing from "../ui.js" and the modules stay small enough to read. esbuild
 // flattens the re-exports at build time, so the indirection costs nothing at runtime.
 //
-//   dom.js        el, clear, motionOk, downloadText — the element builder
+//   dom.js        el, clear, motionOk, downloadText, registerWideNote — the element builder
 //   format.js     dates in the display zone
 //   severity.js   the severity marks (dot + word, never colour alone)
 //   data.js       quantity display: progress track, the sortable table, the paging footer
@@ -29,8 +29,9 @@
 //   axisBar.js    what one dimension actually read across the register
 //   rowReorder.js the cascade grip: drag as the shortcut, the row's arrows as the control
 //   settings.js   the settings form: panel, labelled row, switch, tab strip, one save bar
+//   projectScope.js  the app-header project switcher: which slice of the register is shown
 
-export { appendAll, clear, downloadText, el, motionOk } from "./ui/dom.js";
+export { appendAll, clear, downloadText, el, motionOk, registerWideNote } from "./ui/dom.js";
 export {
   DISPLAY_TZ, dueRank, fmtDate, fmtDateTime, plural, pluralize, sevRank,
 } from "./ui/format.js";
@@ -71,3 +72,7 @@ export { rowDrag, ruleGrip } from "./ui/rowReorder.js";
 export {
   disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList,
 } from "./ui/settings.js";
+export {
+  SUPPORT_GROUP_PREFIXES, isSupportGroup, projectKind, projectScopeControl, projectScopeView,
+  scopeOptions,
+} from "./ui/projectScope.js";

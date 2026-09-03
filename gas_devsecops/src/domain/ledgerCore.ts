@@ -461,6 +461,10 @@ function rowFromEpisode(e: EpisodeRow): LedgerRow {
     owner_project: e.owner_project,
     owner_path: null,
     tags_json: null,
+    // EpisodeRow carries no projects_json (compaction.ts's EpisodeRow has no such column, and
+    // a sealed episode's owner_path is already null above for the same reason) — nothing to
+    // expand it from.
+    projects_json: null,
   };
 }
 

@@ -113,6 +113,7 @@ import {
 } from "../domain/config";
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
+import { inProject, parseProjects } from "../domain/projectScope";
 import { clampInt, parseTs, type Rec } from "../domain/util";
 import {
   REGISTER_ROWS_DEFAULT_PAGE_SIZE,
@@ -171,6 +172,7 @@ import {
 import { listHistory } from "./historyStore";
 import { activeJob } from "./jobsStore";
 import { cellCount, gridSize, TAB_HEADERS, TABS } from "./sheetsDb";
+import { loadSettings } from "./settingsStore";
 import { cached, dataVersion } from "./serverCache";
 import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
 
@@ -208,6 +210,15 @@ interface NormParams {
   scope: Scope | null;
   severities: string[] | null;
   showNoFix: boolean;
+  /**
+   * The VIEW scope — a project slug, or null for the whole register. Read from
+   * `settingsStore.loadSettings().projectView` below, NEVER from `p` (a caller's page
+   * params): this is app-header chrome, the same global-not-per-page status
+   * `settingsLogic.ts`'s own header assigns it, so a stale bookmark or a page that forgot to
+   * forward a param can never disagree with what the header shows. Deliberately absent from
+   * the public `ModelParams` — nothing calling in from `api.ts` is meant to set it directly.
+   */
+  project: string | null;
 }
 
 /**
@@ -221,12 +232,17 @@ function norm(p?: ModelParams): NormParams {
   const severities = Array.isArray(sevRaw) && sevRaw.length
     ? sevRaw.map((s) => normalizeSeverity(s)).filter((s, i, a) => a.indexOf(s) === i).sort()
     : null;
-  return { scope, severities, showNoFix: p?.showNoFix !== false };
+  // `cleanProjectView` already collapses anything that is not a genuine string to "" — this
+  // is just the last step, turning that "no scope stored" value into the `null` every other
+  // knob here uses for "not narrowed".
+  const projectRaw = loadSettings().projectView;
+  const project = projectRaw ? projectRaw : null;
+  return { scope, severities, showNoFix: p?.showNoFix !== false, project };
 }
 
 /** The key a cached model is stored under. Spelled out so the field order is stable. */
 function keyOf(n: NormParams): Rec {
-  return { scope: n.scope, severities: n.severities, showNoFix: n.showNoFix };
+  return { scope: n.scope, severities: n.severities, showNoFix: n.showNoFix, project: n.project };
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -325,10 +341,20 @@ function isOpen(status: unknown): boolean {
   return !RESOLVED_STATUSES.has(String(status ?? "").toUpperCase());
 }
 
-/** Scope + display-severity narrowing. The no-fix toggle is applied separately — see below. */
+/**
+ * Scope + view-project + display-severity narrowing. The no-fix toggle is applied
+ * separately — see below.
+ *
+ * THE PROJECT FILTER GOES THROUGH `inProject`, THE SINGLE DEFINITION — never a second
+ * `.some()` over `parseProjects(row.projects_json)`. A row carrying no project at all
+ * (`parseProjects` returns `[]`) matches no slug and so drops out of every scoped view,
+ * which is `unattributedCount`'s population and is reported at `bootstrap`, not silently
+ * redistributed into "no scope selected".
+ */
 function scopedRows(rows: BaseRow[], n: NormParams): BaseRow[] {
   let out = rows;
   if (n.scope) out = out.filter((r) => r.scope === n.scope);
+  if (n.project) out = out.filter((r) => inProject(parseProjects(r.projects_json), n.project!));
   if (n.severities) {
     const keep = new Set(n.severities);
     out = out.filter((r) => keep.has(normalizeSeverity(r.severity)));
@@ -856,7 +882,11 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
   const snap = baseSnapshot();
   const severityFilterSupported = scope !== "secrets";
   const severities = severityFilterSupported ? n.severities : null;
-  const scoped = visibleRows(snap.rows, { scope, severities, showNoFix: n.showNoFix });
+  // SPREAD `n`, not a hand-built literal — the view-project scope (and anything else `norm`
+  // ever adds) rides along automatically instead of being a field someone has to remember to
+  // repeat. A literal here once meant the header count narrowed while this page's own row
+  // list did not; see the file's module header ("THE TRAP").
+  const scoped = visibleRows(snap.rows, { ...n, scope, severities });
 
   const status = normRowStatus(p?.status);
   const rows = status === "all"
@@ -931,8 +961,9 @@ function buildSecrets(n: NormParams): Rec {
   const snap = baseSnapshot();
   // Scope is pinned; severities are deliberately NOT applied. showNoFix cannot bite either —
   // `baseRowNoFix` is false for every non-sca row by construction — but it is honoured for
-  // symmetry so the pipeline reads the same everywhere.
-  const rows = visibleRows(snap.rows, { scope: "secrets", severities: null, showNoFix: n.showNoFix });
+  // symmetry so the pipeline reads the same everywhere. SPREAD `n` rather than hand-listing
+  // its fields, for the same reason `registerRowsModel` does — see that call's comment.
+  const rows = visibleRows(snap.rows, { ...n, scope: "secrets", severities: null });
   const secretRows = rows as unknown as SecretRow[];
 
   return {
@@ -1144,6 +1175,16 @@ export function reposModel(p?: ModelParams): Rec {
  * TIME-INVARIANT. `trendFromBase(..., {backfill:true})` emits one point per saved scan plus one
  * per day of pre-first-scan history and stops at the newest scan; every SLA and KM decorator is
  * evaluated as-of a point's own date. Nothing here reaches for today.
+ *
+ * MIXED UNDER THE VIEW-PROJECT SCOPE, AND THE PAYLOAD SAYS SO RATHER THAN PRESENTING ONE
+ * POPULATION. `rows` / `kpis` / `trend` come from `visibleRows` / `trendFor`, which run
+ * through `scopedRows` and DO narrow to `n.project`. `scans` and `perScope`, though, come off
+ * `loadScanRows()` directly — a `ScanRow` is a per-scan BATTERY record (`scan_id, ts, scope,
+ * severities, total, ...`) with no project dimension at all, so there is no subtree of it to
+ * select. `history` (`listHistory()`) is the same shape of fact: a whole-register snapshot
+ * per UTC day, recorded before this package's project scope existed. `scanScopeApplies:
+ * false` names exactly which three keys that covers, so a client cannot draw them as if they
+ * had narrowed alongside the rest of this payload.
  */
 function buildHistory(n: NormParams): Rec {
   const snap = baseSnapshot();
@@ -1177,6 +1218,15 @@ function buildHistory(n: NormParams): Rec {
     // `mttrPageTrendSlice` reads both of these keys.
     history: listHistory(),
     trend: trendFor(n, snap.rows),
+    // See the block comment above: `scans`, `perScope` and `history` are per-scan/per-day
+    // facts with no project dimension and do NOT narrow with `n.project`; everything else in
+    // this payload does.
+    scanScopeApplies: false,
+    scanScopeNote: n.project
+      ? "scans, perScope and history describe the whole register — a scan battery and a "
+        + "daily snapshot carry no project dimension to narrow by. Only rows/kpis/trend above "
+        + "are scoped to the selected project."
+      : null,
   };
 }
 
@@ -1251,6 +1301,12 @@ function cellsByTab(): { tabs: { tab: string; cells: number | null; error?: stri
  *
  * `unknownSeverityCount` is a data-quality diagnostic, not a severity breakdown: it counts
  * rows whose severity did not normalize to anything in `SEVERITY_ORDER`.
+ *
+ * TAKES NO PARAMS AT ALL, AND `scopeApplies: false` IS WHY. Every figure here prices sheet /
+ * Drive BYTES — an allocated grid, a cell ceiling, a scan count — and a spreadsheet tab has no
+ * project column to narrow one row's worth of storage by. The view-project scope genuinely
+ * cannot apply here, so the payload says so rather than silently describing the whole
+ * register under a chip that would otherwise imply it is scoped like every other page.
  */
 function buildStorage(): Rec {
   const snap = baseSnapshot();
@@ -1287,6 +1343,10 @@ function buildStorage(): Rec {
       (a, b) => SEVERITY_ORDER.indexOf(a as never) - SEVERITY_ORDER.indexOf(b as never),
     ),
     unknownSeverityCount: rows.filter((r) => normalizeSeverity(r.severity) === "UNKNOWN").length,
+    scopeApplies: false,
+    scopeNote: "Storage prices sheet and Drive bytes for the whole spreadsheet — there is no "
+      + "project column on a tab to narrow one row's worth of storage by. These figures always "
+      + "describe the whole register, regardless of the view-project scope.",
   };
 }
 

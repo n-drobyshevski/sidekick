@@ -64,8 +64,24 @@ describe("the locally-duplicated constants match the domain values they mirror",
 // =========================================================================================
 
 describe("draftFromSettings never drops one of the seven Settings fields", () => {
-  it("SETTINGS_KEYS names exactly the seven fields Settings declares", () => {
-    expect([...SETTINGS_KEYS].sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort());
+  it("SETTINGS_KEYS names exactly the seven PAGE-EDITABLE fields Settings declares", () => {
+    // Settings itself carries an eighth field, `projectView` (the view scope) — deliberately
+    // excluded from this page, see the module header just above SETTINGS_KEYS in
+    // pages/settings.js. So the exact-set check below is "every Settings key EXCEPT the one
+    // this page does not own", not "every Settings key".
+    const pageEditable = Object.keys(DEFAULT_SETTINGS).filter((k) => k !== "projectView");
+    expect([...SETTINGS_KEYS].sort()).toEqual(pageEditable.sort());
+  });
+
+  it("projectView is a real Settings key, and is deliberately absent from SETTINGS_KEYS", () => {
+    // Pins the exclusion as intentional rather than accidental: a Settings field that exists
+    // but a future edit forgets to route anywhere should fail LOUDLY as "missing everywhere",
+    // not silently pass a same-length-array check that never named the field at all.
+    expect(Object.keys(DEFAULT_SETTINGS)).toContain("projectView");
+    expect(SETTINGS_KEYS).not.toContain("projectView");
+    expect(Object.keys(FIELD_TABS)).not.toContain("projectView");
+    expect(BATCHED_KEYS).not.toContain("projectView");
+    expect(Object.keys(draftFromSettings(DEFAULT_SETTINGS))).not.toContain("projectView");
   });
 
   it("produces exactly those seven keys from a real Settings object", () => {

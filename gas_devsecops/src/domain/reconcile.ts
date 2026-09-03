@@ -225,6 +225,45 @@ export function projectsJson(record: Rec): string | null {
 }
 
 /**
+ * `projects[]` carried onto the ledger UNCOLLAPSED — an array of `{slug, name, isFolder}`
+ * entries, sorted by slug, additive alongside `projectsJson` above (test/reconcile.test.ts:441
+ * pins that function's output byte-for-byte; this is a NEW column, not a replacement).
+ * `owner_project`/`owner_path` stay the two collapsed strings a node's projects were reduced
+ * to; this is the flat list itself, so a later package (src/domain/projectScope.ts) can build
+ * a project catalogue and a membership predicate without re-deriving anything from those two
+ * strings — sheetsDb.ts's `repos` tab named `projects_json` as where this would live once
+ * something learned it (reconcile.ts's ownerProject/ownerPath comment, and
+ * ledgerStore.ts's repoRows comment, both said "nothing does yet"; this is that something).
+ *
+ * Each entry runs through `canonicalJson` too — same sorted-key writer `projectsJson` uses —
+ * so replaying a checkpoint produces the same bytes every time.
+ *
+ * `isFolder` is TRI-STATE and the key is OMITTED when the API did not report it on this
+ * project — never coerced to `false`. Wiz's `isFolder` is a real boolean when present; writing
+ * `false` for "not reported" would erase the distinction a later grouping step needs between
+ * "known leaf" and "unknown", which is exactly the "absent is never zero" failure CLAUDE.md
+ * already names twice for this codebase.
+ *
+ * Keyed on `slug` (falling back to `id`), matching `projectsJson`'s rule. A project repeated on
+ * the same node keeps its LAST occurrence, matching `projectsJson`'s plain object-assignment
+ * loop above.
+ */
+export function projectsListJson(record: Rec): string | null {
+  const byKey = new Map<string, Rec>();
+  for (const p of projectList(record)) {
+    const key = str(p, "slug", "id");
+    if (key === null) continue;
+    const name = str(p, "name") ?? key;
+    const entry: Rec = { slug: key, name };
+    if (typeof p["isFolder"] === "boolean") entry.isFolder = p["isFolder"];
+    byKey.set(key, entry);
+  }
+  if (!byKey.size) return null;
+  const parts = [...byKey.keys()].sort().map((k) => canonicalJson(byKey.get(k)!));
+  return `[${parts.join(", ")}]`;
+}
+
+/**
  * Ownership, from `projects[]`. THIS PAIR IS A CHOICE, not a measurement — Wiz returns
  * projects as a FLAT list with an `isFolder` flag and no parent links (probe sample:
  * VALUE-CHAIN folder, product-TATTOO-idp leaf, CE-TRANSPORT folder, GITHUB-DKTUNITED leaf,
@@ -356,6 +395,7 @@ interface Attributes {
   owner_project: string | null;
   owner_path: string | null;
   tags_json: string | null;
+  projects_json: string | null;
 }
 
 /**
@@ -381,6 +421,9 @@ function attributes(rec: Rec, scope: Scope): Attributes {
     // vulnerableAsset.tags fallback is what keeps gas/'s tags_json fixture live for SCA,
     // whose nodes come off the same connection the OS register reads.
     tags_json: projectsJson(rec) ?? tagsJson(rec),
+    // The flat projects[] list, uncollapsed — see projectsListJson's own comment for why this
+    // is additive alongside tags_json rather than a replacement for it.
+    projects_json: projectsListJson(rec),
   };
 
   if (scope === "sast") {
@@ -734,6 +777,7 @@ function makeRow(
     owner_project: attrs.owner_project,
     owner_path: attrs.owner_path,
     tags_json: attrs.tags_json,
+    projects_json: attrs.projects_json,
   };
 }
 
@@ -948,6 +992,7 @@ export function reconcile(
     row.owner_project = attrs.owner_project ?? row.owner_project;
     row.owner_path = attrs.owner_path ?? row.owner_path;
     row.tags_json = attrs.tags_json ?? row.tags_json;
+    row.projects_json = attrs.projects_json ?? row.projects_json;
 
     // API-declared resolution closes a currently-open row.
     if (apiSaysResolved && row.status === STATUS_OPEN) {

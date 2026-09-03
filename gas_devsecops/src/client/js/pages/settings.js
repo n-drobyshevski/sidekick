@@ -69,13 +69,26 @@ const LOCAL_SCOPES = ["sca", "sast", "secrets"]; // mirrors domain/config.ts SCO
 export const RETENTION_FLOOR_DAYS = 30; // domain/maintenance.ts::RETENTION_MIN_DAYS
 export const DEFAULT_SYNC_HOUR = 5; // domain/settingsLogic.ts::DEFAULT_SYNC_HOUR
 
+// Settings also carries `projectView` — the VIEW scope, which project the pages SHOW —
+// and it is DELIBERATELY ABSENT from SETTINGS_KEYS, from FIELD_TABS, from BATCHED_KEYS and
+// from draftFromSettings below. It is app-header chrome, not a settings-page field: a later
+// package puts a header control on it that reads and writes it directly through its own
+// `api_setProjectView` endpoint, one field at a time, without loading or resending the other
+// seven. Adding it here would (a) draw a control for it on the wrong page and (b) put it in
+// this page's draft, so an ordinary Register/Deadlines/System save — which never touches
+// `api_setProjectView` — would round-trip it through `api_putSettings` right alongside
+// `showExperimental`'s pass-through problem below, except worse: showExperimental's control
+// lives elsewhere in this SAME app and this page still forwards its value, where projectView
+// would have no source at all to forward and would silently save back whatever stale value
+// this page happened to load with. `test/pagesSettings.test.js` pins the exclusion.
 export const SETTINGS_KEYS = [
   "scopes", "fetchSeverities", "slaTargets", "showExperimental",
   "syncSchedule", "autoCompact", "retentionDays",
 ];
 
 // Which of the seven fields the save bar batches, and which tab owns each — showExperimental
-// is deliberately absent, see the module header.
+// is deliberately absent, see the module header. projectView is absent for the separate
+// reason given above SETTINGS_KEYS: it has no tab on this page at all.
 export const FIELD_TABS = {
   scopes: "register",
   fetchSeverities: "register",
@@ -407,12 +420,14 @@ export async function renderSettings(host, params, ctx) {
       body: scopeList.map((scope) => registerScopeBlock(scope)),
     });
     const projectPanel = settingsPanel({
-      title: "Wiz project scope",
+      title: "Wiz project scope (what a sync collects)",
       body: [
         el("p", { class: "small muted" },
           "Set by an operator as the WIZ_PROJECT_ID_V2 script property, outside this settings "
-          + "tab. This page does not offer to edit it, and the current value is not part of "
-          + "what it is given to draw with."),
+          + "tab. This decides what a sync COLLECTS from Wiz, not which project the pages "
+          + "SHOW of what is already collected — that is a separate, page-level scope set "
+          + "elsewhere in the app. This page does not offer to edit either one, and the "
+          + "current fetch value is not part of what it is given to draw with."),
       ],
     });
     clear(panels.register).append(scopesPanel, projectPanel);

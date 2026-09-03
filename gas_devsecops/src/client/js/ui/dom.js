@@ -59,6 +59,32 @@ export function clear(node) {
   return node;
 }
 
+/**
+ * Marks a figure that does not follow the view-project scope — a hairline note, not a warning:
+ * the number beside it is correct, it just answers a wider question than the header is asking.
+ * `data.js`'s Storage page and `history.js`'s Scan history use this for exactly the two models
+ * that say so out loud (`storageModel`'s `scopeApplies: false`, `historyModel`'s
+ * `scanScopeApplies: false` on `scans`/`perScope`) — see each page for where it is gated on the
+ * scope actually being narrowed, since an always-on note on an unscoped register is noise.
+ *
+ * Lives here rather than in ui/projectScope.js because it is a plain DOM builder with no scope
+ * logic of its own — the caller decides the text and whether to call it at all — and because
+ * this file already anticipated it: the comment on `appendAll` above names the exact bug a
+ * caller passing this straight to a raw `.append()` produces.
+ *
+ * @param {string} text  what this figure covers, and what it does not
+ * @param {{tag?: string, live?: boolean}} [opts]  `tag` defaults to "Whole register"; `live`
+ *   marks the OTHER state — the figure DOES follow the scope because it was priced again for
+ *   the selected project — with the same chip, a darker ink, and no tag override needed here.
+ */
+export function registerWideNote(text, opts) {
+  const o = opts || {};
+  return el("p", { class: "register-wide-note" },
+    el("span", { class: `register-wide-tag${o.live ? " scope-live-tag" : ""}` }, o.tag || "Whole register"),
+    el("span", {}, text),
+  );
+}
+
 /** False when the reader asked for reduced motion — every animation checks this. */
 export function motionOk() {
   return !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);

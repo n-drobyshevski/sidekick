@@ -284,9 +284,29 @@ function node(scope: Scope, seq: number): Rec {
         subscriptionExternalId: null,
       },
       artifactType: { codeLibraryLanguage: "JAVASCRIPT" },
-      // NO `projects` — Q_SCA does not select it, and inventing it here would make the
-      // silent-mismatch guard pass on a field the document never returns. That gap is real
-      // and is why owner_project/owner_path/tags_json are unfillable on sca.
+      // `projects` IS selected on sca, and this fixture used to deny it. The comment here
+      // read "NO `projects` — Q_SCA does not select it", and the FILLABLE table below called
+      // owner_project/owner_path/tags_json unfillable on that basis. Both were false:
+      // wizQueries.ts:147 selects `projects { id name isFolder slug }` at the sca node's top
+      // level, a sibling of `vulnerableAsset`. Measured, not reasoned — probe.mjs bundles and
+      // sends the app's OWN Q_SCA, and probe-report.json's `findings.sca.sample.projects[]`
+      // came back with the full ancestor chain (CS-WAREHOUSEBOX and VALUE-CHAIN as folders,
+      // product-RetBox-idp and GITHUB-DKTUNITED as leaves, all four carrying `slug`).
+      //
+      // The cost of the false claim was the whole of sca's ownership: every SCA row landed
+      // with owner_project, owner_path and tags_json null, and the guard that exists to catch
+      // exactly that passed, because the guard had been told the gap was expected. sca is the
+      // largest of the three registers, so a project scope built on this would have answered
+      // for sast and secrets and silently dropped the biggest population.
+      //
+      // The chain below is shaped like the live sample: two folders and one leaf, so
+      // ownerProject picks the leaf, ownerPath keeps the folders, and a folder slug reaches
+      // this row the way projectScope.inProject relies on.
+      projects: [
+        { id: "proj-unit", name: "VALUE-CHAIN", isFolder: true, slug: "value-chain" },
+        { id: "proj-cs", name: "CS-WAREHOUSEBOX", isFolder: true, slug: "cs-warehousebox" },
+        { id: "proj-leaf", name: "product-RetBox-idp", isFolder: false, slug: "product-retbox-idp" },
+      ],
     };
   }
   if (scope === "sast") {
@@ -1159,6 +1179,7 @@ const FILLABLE: Record<Scope, readonly string[]> = {
     "fix_date", "fix_observed_at", "fixed_version",
     "has_kev", "has_exploit", "epss", "risk_observed_at",
     "language",
+    "owner_project", "owner_path", "tags_json", "projects_json",
   ],
   sast: [
     "finding_key", "scope", "identifier", "severity",
@@ -1166,7 +1187,7 @@ const FILLABLE: Record<Scope, readonly string[]> = {
     "first_seen", "last_seen", "status", "reopened_count",
     "first_scan_id", "last_scan_id",
     "cwe", "ai_verdict", "language", "file_path", "start_line", "origin",
-    "owner_project", "owner_path", "tags_json",
+    "owner_project", "owner_path", "tags_json", "projects_json",
   ],
   secrets: [
     "finding_key", "scope", "identifier", "severity",
@@ -1175,7 +1196,7 @@ const FILLABLE: Record<Scope, readonly string[]> = {
     "first_scan_id", "last_scan_id",
     "file_path", "start_line", "secret_kind", "confidence",
     "validation_state", "validated_at",
-    "owner_project", "owner_path", "tags_json",
+    "owner_project", "owner_path", "tags_json", "projects_json",
   ],
 };
 
@@ -1209,9 +1230,6 @@ const UNFILLABLE_REASON: Record<string, string> = {
   validated_at: "secrets only",
   language: "no language on the secrets node",
   identifier: "unreachable — every scope fills it",
-  owner_project: "Q_SCA selects no projects[] — the one ownership gap in the SCA document",
-  owner_path: "Q_SCA selects no projects[]",
-  tags_json: "Q_SCA selects neither projects[] nor vulnerableAsset.tags",
 };
 
 describe("the silent-mismatch guard: slimRecord -> reconcile fills the ledger", () => {

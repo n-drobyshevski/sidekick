@@ -142,8 +142,10 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // says how sure the detector is that it is a credential at all.
     "secret_kind", "rotated_at", "removed_at", "validation_state", "validated_at",
     "confidence",
-    // All three: ownership, from projects[].
-    "owner_project", "owner_path", "tags_json",
+    // All three: ownership, from projects[]. `projects_json` is the flat list itself, sorted
+    // by slug — owner_project/owner_path are the two strings it was collapsed to; this is what
+    // src/domain/projectScope.ts builds its catalogue and membership predicate from.
+    "owner_project", "owner_path", "tags_json", "projects_json",
   ],
   [TABS.episodes]: [
     "finding_key", "scope", "identifier", "component", "severity",
@@ -186,6 +188,11 @@ export const TAB_HEADERS: Record<string, string[]> = {
  * (Q_SECRETS, Q_SAST) and thrown away on the way to the sheet; `obs_ref` on `scans`, which
  * nothing produced yet and which resolve-by-disappearance cannot work without.
  *
+ * 3 — `projects_json` on the ledger: the flat `projects[]` list, uncollapsed, alongside the
+ * `owner_project`/`owner_path` strings it was already being reduced to. Foundation for
+ * src/domain/projectScope.ts's catalogue and membership predicate; a later package builds the
+ * app-header selector on top of it.
+ *
  * A BUMP IS NOT A MIGRATION AND DOES NOT COST A DEPLOYED SHEET ANYTHING. Every write path
  * here goes through `ensureHeaders`, which APPENDS the columns row 1 is missing, on the end,
  * leaving existing column order and existing data untouched; reads and writes map by header
@@ -195,7 +202,7 @@ export const TAB_HEADERS: Record<string, string[]> = {
  * measuring it. A RENAME is the case that does destroy data (the old column stops being
  * written and the new one starts empty), so rename by adding and migrating, never in place.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 let spreadsheetCache: GoogleAppsScript.Spreadsheet.Spreadsheet | null = null;
 

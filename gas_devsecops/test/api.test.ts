@@ -25,8 +25,10 @@
 //      and "the default is false" is a reading of a literal — so this asserts the BEHAVIOUR: a
 //      sync over default settings compacts zero times.
 
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SCOPES, type Scope } from "../src/domain/config";
+import { DEFAULT_SETTINGS } from "../src/domain/settingsLogic";
 import type { Rec } from "../src/domain/util";
 import type { WarmReport } from "../src/server/readModels";
 
@@ -1052,5 +1054,114 @@ describe("auto-compaction after a sync", () => {
     props["AUTO_COMPACT_DAYS"] = "7";
     await syncedRegister();
     expect(compactCalls).toEqual([]);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  8. putSettings merges, it does not replace — and setProjectView
+// --------------------------------------------------------------------------------------- //
+
+describe("putSettings merges a patch over the currently-loaded settings", () => {
+  /**
+   * THE LOAD-BEARING TEST. `saveSettings` runs `cleanSettings` over whatever it is handed and
+   * `overwrite`s the whole `settings` tab with the result — so a field the caller's payload
+   * does not carry reads as "not provided" and comes back as that field's default. The
+   * Settings page's draft is built from exactly `SETTINGS_KEYS` (pages/settings.js) and does
+   * not carry `projectView`, so a plain `saveSettings(p.settings)` in `putSettings` would
+   * reset the view scope to "" on every ordinary settings save from that page. This test
+   * reproduces that page-shaped payload — a real `Settings` object with `projectView` deleted,
+   * exactly what `draftFromSettings` + the save bar would send — and asserts the scope
+   * SURVIVES the round trip.
+   */
+  it("survives a Settings-page-shaped save that never mentions projectView", async () => {
+    const { api } = await load();
+
+    const first = api.putSettings({
+      settings: { ...DEFAULT_SETTINGS, projectView: "value-chain" },
+    }) as unknown as Rec;
+    expect(first["ok"], String(first["error"])).toBe(true);
+    expect((first["data"] as Rec)["projectView"]).toBe("value-chain");
+
+    // A page-shaped draft: every SETTINGS_KEYS field, and no projectView key at all — not
+    // even `projectView: undefined`, since a real page draft never has the property.
+    const pageDraft: Rec = { ...DEFAULT_SETTINGS };
+    delete pageDraft["projectView"];
+    expect(pageDraft).not.toHaveProperty("projectView");
+
+    const second = api.putSettings({ settings: { ...pageDraft, autoCompact: true } }) as unknown as Rec;
+    expect(second["ok"], String(second["error"])).toBe(true);
+    expect((second["data"] as Rec)["projectView"], "the view scope was clobbered by an unrelated save")
+      .toBe("value-chain");
+    expect((second["data"] as Rec)["autoCompact"]).toBe(true);
+
+    // And loadSettings agrees — the tab itself, not just the echoed response, carries the scope.
+    const settings = await import("../src/server/settingsStore");
+    settings.resetSettingsMemo();
+    expect(settings.loadSettings().projectView).toBe("value-chain");
+  });
+
+  it("PERTURBATION: reverting putSettings to a plain replace makes the test above fail", async () => {
+    // Not exercised automatically (that would require swapping the module under test at
+    // runtime) — this block documents the manual perturbation performed while writing this
+    // test and asserts the mechanism it depends on, so a future reader can redo it in ~30
+    // seconds instead of trusting a claim in a comment.
+    //
+    // Manual steps performed: in src/server/api.ts, `putSettings` was changed from
+    //   mutate(() => saveSettings(withSettings(loadSettings(), (p.settings ?? {}) as never)))
+    // back to the old form
+    //   mutate(() => saveSettings(p.settings as never))
+    // and the spec above ("survives a Settings-page-shaped save…") was re-run in isolation.
+    //
+    // OBSERVED: it failed. The second `putSettings` call's response carried
+    // `projectView: ""` instead of `"value-chain"` — a plain replace reads the page-shaped
+    // draft (no `projectView` key) as "clear the scope", which is exactly the silent-reset
+    // bug this package exists to fix. Reverting the file back to the merge form made it pass
+    // again. This assertion pins the API shape the perturbation depends on existing, so a
+    // later reader repeating the manual swap is testing the same code path this session did.
+    const { api } = await load();
+    const src = readFileSync(new URL("../src/server/api.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/saveSettings\(withSettings\(loadSettings\(\)/);
+    // Sanity: the merge path really does load current settings before saving, which is the
+    // one line the perturbation removes.
+    const saved = api.putSettings({ settings: { autoCompact: true } }) as unknown as Rec;
+    expect(saved["ok"]).toBe(true);
+  });
+});
+
+describe("setProjectView", () => {
+  it("sets the scope and bumps the data version", async () => {
+    const { api } = await load();
+    const before = cacheState.version;
+    const res = api.setProjectView({ projectView: "value-chain" }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
+    expect((res["data"] as Rec)["projectView"]).toBe("value-chain");
+    expect(cacheState.version).toBeGreaterThan(before);
+  });
+
+  it("clears the scope back to \"\", and that also bumps the data version", async () => {
+    const { api } = await load();
+    api.setProjectView({ projectView: "value-chain" });
+    const before = cacheState.version;
+    const res = api.setProjectView({ projectView: "" }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
+    expect((res["data"] as Rec)["projectView"]).toBe("");
+    expect(cacheState.version).toBeGreaterThan(before);
+  });
+
+  it("leaves every other Settings field untouched", async () => {
+    const { api } = await load();
+    api.putSettings({ settings: { ...DEFAULT_SETTINGS, autoCompact: true, retentionDays: 90 } });
+    const res = api.setProjectView({ projectView: "value-chain" }) as unknown as Rec;
+    const data = res["data"] as Rec;
+    expect(data["autoCompact"]).toBe(true);
+    expect(data["retentionDays"]).toBe(90);
+  });
+
+  it("takes the script lock, same as every other mutating RPC", async () => {
+    const { api } = await load();
+    const before = lockAcquisitions;
+    const res = api.setProjectView({ projectView: "value-chain" }) as unknown as Rec;
+    expect(res["ok"]).toBe(true);
+    expect(lockAcquisitions).toBeGreaterThan(before);
   });
 });

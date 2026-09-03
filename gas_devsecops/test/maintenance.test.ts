@@ -788,6 +788,7 @@ function ledgerRowFixture(over: Partial<LedgerRow> = {}): LedgerRow {
     start_line: null, origin: null, secret_kind: null, rotated_at: null, removed_at: null,
     validation_state: null, validated_at: null, confidence: null,
     owner_project: "payments", owner_path: "acme/payments", tags_json: null,
+    projects_json: null,
     ...over,
   };
 }

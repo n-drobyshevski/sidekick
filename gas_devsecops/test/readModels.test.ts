@@ -42,6 +42,10 @@ const H = vi.hoisted(() => ({
   cellCountThrows: false,
   /** `warmDepth` observed at the moment each compute actually ran. */
   computeDepths: [] as number[],
+  /** `settingsStore.loadSettings().projectView` — `norm()` reads the view scope from here,
+   *  never from a model's own params. `""` (the default) is "no scope", same as an unset
+   *  Settings field. */
+  projectView: "",
 }));
 
 function memo(name: string, params: unknown, compute: () => unknown): unknown {
@@ -107,6 +111,14 @@ vi.mock("../src/server/historyStore", () => ({
 
 vi.mock("../src/server/jobsStore", () => ({
   activeJob: () => H.activeJobRow,
+}));
+
+// `norm()` reads the view-project scope off `settingsStore.loadSettings()`. Mocked, rather
+// than left to the real module, because the real one reaches `sheetsDb.readAll(TABS.settings)`
+// -> `SpreadsheetApp` — a GAS global nothing in this file's harness defines. See
+// `test/projectView.test.ts` for the same knob exercised over a real booted server.
+vi.mock("../src/server/settingsStore", () => ({
+  loadSettings: () => ({ projectView: H.projectView }),
 }));
 
 vi.mock("../src/server/sheetsDb", async (orig) => {
@@ -187,6 +199,7 @@ function row(over: Partial<BaseRow> & { finding_key: string; scope: Scope }): Ba
     owner_project: "proj-a",
     owner_path: "org/proj-a",
     tags_json: null,
+    projects_json: null,
     mttr_days: resolved ? (Date.parse(resolved) - Date.parse(first)) / DAY : null,
     age_days: resolved ? null : days(first),
     fix_available_at: null,
@@ -300,6 +313,7 @@ beforeEach(() => {
   H.cellCountCalls = 0;
   H.cellCountThrows = false;
   H.computeDepths.length = 0;
+  H.projectView = "";
   seed();
   __resetModelMemosForTest();
   vi.stubGlobal("console", { ...console, warn: () => {}, log: () => {} });

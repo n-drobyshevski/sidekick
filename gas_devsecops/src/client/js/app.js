@@ -1,10 +1,12 @@
 // Wiz Sidekick DevSecOps SPA shell: app header, sidebar navigation, scan zone, hash router.
 //
-// THE HEADER CARRIES IDENTITY, and nothing else. The reference screen puts a search box,
-// notification icons and an avatar along the same bar; none of those has anything behind it
-// here, and a control with nothing behind it is the one thing this app's chrome is careful
-// never to offer. The scan controls stay in the rail, where the last-scan caption can afford
-// its words.
+// THE HEADER CARRIES IDENTITY AND SCOPE, AND NOTHING ELSE. The reference screen puts a search
+// box, notification icons and an avatar along the same bar; none of those has anything behind
+// it here, and a control with nothing behind it is the one thing this app's chrome is careful
+// never to offer. The project-scope switcher (ui/projectScope.js) earns the exception a page
+// filter would not: it governs every page rather than leading to one, so it is chrome in the
+// same sense the wordmark is, not a control that belongs to whichever page is on screen. The
+// scan controls stay in the rail, where the last-scan caption can afford its words.
 //
 // PHASE 1 shipped the shell, the nav and the ten routes with the pages as stubs. PHASE 2 wires
 // the sync battery behind the scan zone (see renderSidebar and the block below navContext()) —
@@ -23,6 +25,7 @@ import {
   tipAnchor,
 } from "./ui.js";
 import { brandMark } from "./ui/brandMark.js";
+import { projectScopeControl } from "./ui/projectScope.js";
 import { toast } from "./ui.js";
 import { renderExecutive } from "./pages/executive.js";
 import { renderMttr } from "./pages/mttr.js";
@@ -327,9 +330,11 @@ function renderAppbar(appbar, data) {
     brandMark(22, { compact: true }),
     el("span", { class: "appbar-name" }, "Wiz Sidekick DevSecOps"),
   );
-  // Phase 1 carries no scope switcher. The register has one population until the sync
-  // battery lands, and a picker over a population of one is a control with nothing behind
-  // it — which is the one thing this shell is careful never to offer.
+  // `null` (boot failed) or an empty `filterOptions.projectList` (nothing synced yet) both
+  // resolve to `show: false` inside projectScopeView — see that module for why an empty
+  // picker is a promise the register cannot keep.
+  const scope = projectScopeControl(data, pickProjectScope);
+  if (scope) appbar.append(scope);
 }
 
 /**
@@ -682,6 +687,32 @@ export async function refresh() {
   invalidateBootstrap();
   invalidateRpcCache();
   await boot();
+}
+
+// Re-entry guard: the combobox commits on a single click/Enter, but the round trip to
+// `api_setProjectView` and the `refresh()` after it are not instant, and the control does not
+// disable itself mid-pick. Without this a fast double-pick could fire two `setProjectView`
+// calls and two overlapping `refresh()`s racing to rebuild the same `<main>`.
+let scopePickInFlight = false;
+
+/**
+ * The project-scope switcher's onPick: persist the new view scope, then let `refresh()` do
+ * everything else. STORES NOTHING CLIENT-SIDE — the scope is server state (`settingsStore
+ * .projectView`), so the client's only job here is to write it and invalidate what it cached.
+ * A client-held copy would be a second source of truth for exactly the value this control
+ * exists to keep singular.
+ */
+async function pickProjectScope(slug) {
+  if (scopePickInFlight) return;
+  scopePickInFlight = true;
+  try {
+    await call("api_setProjectView", { projectView: slug });
+    await refresh();
+  } catch (e) {
+    toast(String(e.message || e), "error");
+  } finally {
+    scopePickInFlight = false;
+  }
 }
 
 async function route() {

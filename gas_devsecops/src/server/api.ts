@@ -45,6 +45,8 @@
 
 import { SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "../domain/config";
 import { normalizeSeverity } from "../domain/severity";
+import { withSettings } from "../domain/settingsLogic";
+import { inProject, parseProjects, projectCatalogue, unattributedCount } from "../domain/projectScope";
 import type { Rec } from "../domain/util";
 import {
   execGroupSlice,
@@ -59,7 +61,7 @@ import {
   scanRowsSlice,
 } from "../domain/pagePayload";
 import { BUILD_ID } from "./buildInfo";
-import { hasWizCredentials } from "./props";
+import { hasWizCredentials, projectScope } from "./props";
 import { loadSettings, saveSettings } from "./settingsStore";
 import { readAll, TAB_HEADERS, TABS } from "./sheetsDb";
 import { canEditUsers } from "./access";
@@ -146,6 +148,42 @@ export interface Bootstrap {
   } | null;
   canEditAccess: boolean;
   settings: ReturnType<typeof loadSettings>;
+  /**
+   * The view-project scope, stated rather than left for the client to re-derive.
+   *
+   * `shown` / `register` are both over the WHOLE ledger (every scope), because this is the
+   * header's own status line, not a page's — a per-page narrowed count already ships on that
+   * page's own model. `unattributed` is `projectScope.unattributedCount`'s population: rows
+   * carrying no project at all, invisible to every scope including "no scope selected" is
+   * NOT one of them — it is a genuinely different population, counted out loud rather than
+   * folded into `register - shown` where a reader would have to do that subtraction
+   * themselves to notice it exists at all.
+   *
+   * `syncProjectId` is the FETCH scope (`props.projectScope()`'s first id, or null for "every
+   * project"), reported for the header to show, NEVER written from here — see
+   * `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO HOMES" note. A view scope narrower than the
+   * fetch scope is normal; a view scope naming a project the fetch scope never collected
+   * yields zero rows, which is exactly `unattributedCount`'s sibling case rather than an
+   * error.
+   */
+  scope: {
+    projectView: string;
+    shown: number;
+    register: number;
+    unattributed: number;
+    syncProjectId: string | null;
+  };
+  /**
+   * Everything a project-scope selector needs to draw its list — REGISTER-WIDE, not filtered
+   * by the CURRENT `projectView`. `projectCatalogue` is asked over every row the ledger holds
+   * so every sibling project — including ones the current scope selection has nothing in
+   * common with — stays offered. A list computed over already-scoped rows collapses to the
+   * current selection the moment one is made, at which point clearing it is the only way to
+   * ever see another project again.
+   */
+  filterOptions: {
+    projectList: ReturnType<typeof projectCatalogue>;
+  };
 }
 
 /**
@@ -191,6 +229,17 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
       scopes: rows.map((r) => ({ scope: r.scope, total: r.total, severities: r.severities })),
     };
   }
+
+  const settings = loadSettings();
+  // Unscoped by construction — `ledgerStore.loadBaseRows()` with no options is every scope,
+  // every project. `scope.register` / `filterOptions.projectList` both read off this same
+  // array so the register-wide side of the header can never disagree with itself.
+  const allRows = ledgerStore.loadBaseRows();
+  const projectView = settings.projectView || null;
+  const shown = projectView
+    ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length
+    : allRows.length;
+
   return {
     product: "Wiz Sidekick DevSecOps",
     buildId: BUILD_ID,
@@ -200,7 +249,17 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
     slaTargets: SLA_TARGETS,
     latestSync,
     canEditAccess: canEditUsers(),
-    settings: loadSettings(),
+    settings,
+    scope: {
+      projectView: settings.projectView,
+      shown,
+      register: allRows.length,
+      unattributed: unattributedCount(allRows),
+      // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
+      // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
+      syncProjectId: projectScope()?.[0] ?? null,
+    },
+    filterOptions: { projectList: projectCatalogue(allRows) },
   };
   });
 }
@@ -210,9 +269,37 @@ export function getSettings(_p?: unknown): ApiResult<ReturnType<typeof loadSetti
   return run(() => loadSettings());
 }
 
-/** Persist settings. Returns what was actually stored, after cleaning. */
+/**
+ * Persist settings. Returns what was actually stored, after cleaning.
+ *
+ * MERGES the incoming payload over the CURRENTLY-LOADED settings, rather than replacing them
+ * outright. `saveSettings` runs `cleanSettings` over whatever object it is handed and
+ * `overwrite`s the whole tab with the result, so a plain `saveSettings(p.settings)` here would
+ * be a REPLACE: any Settings field the caller's payload does not carry reads as "not
+ * provided" and comes back as that field's default. The Settings page's draft is built from
+ * exactly the seven page-editable fields (`SETTINGS_KEYS` in `pages/settings.js`) and does not
+ * carry `projectView` — that field is app-header chrome, not a page field — so every ordinary
+ * settings save from that page would have silently reset the view scope to "" the moment this
+ * endpoint went through a plain replace. `withSettings` (settingsLogic.ts) already exists for
+ * exactly this merge-then-reclean shape; this endpoint is its first caller.
+ */
 export function putSettings(p: { settings?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
-  return mutate(() => saveSettings(p.settings as never));
+  return mutate(() => saveSettings(withSettings(loadSettings(), (p.settings ?? {}) as never)));
+}
+
+/**
+ * Set the view scope alone — which project's rows the pages show, out of everything the
+ * ledger holds. A separate endpoint rather than routing this through `putSettings` because
+ * the header control that will call it (a later package) has no reason to load, mutate and
+ * resend the other seven Settings fields just to change one that lives outside the Settings
+ * page entirely.
+ *
+ * Accepts an UNVALIDATED slug on purpose, including `""` (no scope) and a slug naming a
+ * project the register no longer holds — see `Settings.projectView`'s own doc comment: a
+ * validated field would turn a retired project's stale name into a scope nobody can clear.
+ */
+export function setProjectView(p: { projectView?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
+  return mutate(() => saveSettings(withSettings(loadSettings(), { projectView: p.projectView } as never)));
 }
 
 /**
@@ -492,6 +579,13 @@ export function getScanHistory(p?: unknown): ApiResult {
       // Drive file ids and are not among them (pagePayload.ts's SCAN_ROW_KEYS).
       scans: scanRowsSlice(h["scans"]),
       trends: historyTrendSlice(h),
+      // `scans` and `perScope` above are per-scan/per-day facts with no project dimension —
+      // see `readModels.ts::buildHistory`'s own comment. `kpis` and `trends` DO narrow to the
+      // view-project scope; these two flags name exactly which keys in THIS payload do not, so
+      // the client can mark the scan table and the per-register coverage strip without
+      // implying the KPIs or trend beside them are unscoped too.
+      scanScopeApplies: h["scanScopeApplies"],
+      scanScopeNote: h["scanScopeNote"],
     };
   });
 }
@@ -633,6 +727,14 @@ function csvCell(v: unknown): string {
  * the ledger has no column holding one (`scanJobs.DENIED_KEY` refuses `snippet` and
  * `validationDetails` at ingest), so there is nothing to strip. Keep it that way — a column
  * added upstream would arrive in this export automatically.
+ *
+ * THE VIEW-PROJECT SCOPE APPLIES HERE TOO, and not by accident: this endpoint bypasses
+ * `readModels.ts` entirely (it hand-filters `ledgerStore.loadBaseRows` directly rather than
+ * going through `visibleRows`/`scopedRows`), so without its own filter an export would hand
+ * back a file disagreeing with whatever scoped page the analyst exported it from — the whole
+ * register, silently, under a narrowed screen. `inProject` is still THE single definition of
+ * membership (`domain/projectScope.ts`); this is a second CALLER of it, never a second
+ * `.some()`.
  */
 export function getExportCsv(p?: unknown): ApiResult {
   return run(() => {
@@ -646,10 +748,15 @@ export function getExportCsv(p?: unknown): ApiResult {
     const statuses = Array.isArray(statusRaw) && statusRaw.length
       ? new Set(statusRaw.map((s) => String(s).toUpperCase()))
       : null;
+    const projectView = loadSettings().projectView || null;
 
     const rows = (ledgerStore.loadBaseRows(scope ? { scope } : {}) as unknown as Rec[])
       .filter((r) => !severities || severities.has(normalizeSeverity(r["severity"])))
-      .filter((r) => !statuses || statuses.has(String(r["status"] ?? "").toUpperCase()));
+      .filter((r) => !statuses || statuses.has(String(r["status"] ?? "").toUpperCase()))
+      .filter((r) =>
+        !projectView
+        || inProject(parseProjects(r["projects_json"] as string | null | undefined), projectView),
+      );
 
     const cols = TAB_HEADERS[TABS.ledger] ?? [];
     const lines = [cols.join(",")];
@@ -660,6 +767,7 @@ export function getExportCsv(p?: unknown): ApiResult {
       rowCount: rows.length,
       columns: cols.length,
       scope,
+      projectView,
     };
   });
 }

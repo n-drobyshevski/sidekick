@@ -21,12 +21,21 @@ import type { Rec } from "./util";
 export const DEFAULT_SYNC_HOUR = 5;
 
 /**
- * THE PROJECT SCOPE IS NOT IN HERE, AND MUST NOT BE ADDED. It is `WIZ_PROJECT_ID_V2`, an
- * operator Script Property (props.projectScope) already folded into `serverCache.configStamp`
- * so that changing it invalidates every derived read model. Putting a `wizProjectId` here too
- * would give one value two homes, and the failure that produces is not a conflict anyone sees
- * — it is a cache stamped from one home while the query is built from the other, which reads
- * as a register that will not refresh.
+ * TWO PROJECT SCOPES, TWO HOMES — DO NOT MERGE THEM.
+ *
+ * FETCH scope decides what a sync COLLECTS from Wiz. It is `WIZ_PROJECT_ID_V2`, an operator
+ * Script Property (`props.projectScope`) already folded into `serverCache.configStamp` so
+ * that changing it invalidates every derived read model. It stays a Script Property and MUST
+ * NOT be added here: putting a `wizProjectId` field on `Settings` would give that one value
+ * two homes, and the failure that produces is not a conflict anyone sees — it is a cache
+ * stamped from one home while the query is built from the other, which reads as a register
+ * that will not refresh. That argument is unchanged and still governs the fetch scope.
+ *
+ * VIEW scope decides what the pages SHOW of whatever the ledger already holds — it never
+ * touches `configStamp` and never changes what a sync requests. That is `projectView` below,
+ * and it belongs on `Settings` for the opposite reason `wizProjectId` does not: it is a
+ * display filter read by page renderers, not a fetch parameter folded into a cache stamp, so
+ * there is only one home for it to have and this is that home.
  */
 export interface Settings {
   /** Which registers the sync battery collects. At least one, always. */
@@ -73,6 +82,20 @@ export interface Settings {
   autoCompact: boolean;
   /** Compaction retention window, in days. Read only once `autoCompact` is true. */
   retentionDays: number;
+  /**
+   * The VIEW scope — which project's rows the pages show, out of everything the ledger holds.
+   * `""` means no scope: show the whole register, every project the fetch scope ever collected.
+   *
+   * Holds a project SLUG, not a Wiz object id, and is deliberately NOT validated against any
+   * catalogue of known projects. A stale slug naming a project the register no longer holds
+   * must stay clearable — an operator who renamed or retired a project should be able to clear
+   * this field and see the whole register again — rather than becoming a trap that some
+   * validation step refuses to save because the name it once matched is gone.
+   *
+   * Mutually exclusive with nothing: this register has exactly one scope dimension, so there
+   * is no second view-scope field for this one to conflict with.
+   */
+  projectView: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -87,6 +110,7 @@ export const DEFAULT_SETTINGS: Settings = {
   syncSchedule: DEFAULT_SYNC_HOUR,
   autoCompact: false,
   retentionDays: DEFAULT_RETENTION_DAYS,
+  projectView: "",
 };
 
 function asList(v: unknown, allowed: readonly string[]): string[] | null {
@@ -167,6 +191,20 @@ function cleanRetentionDays(v: unknown): number {
 }
 
 /**
+ * Coerce the stored view-scope slug into a trimmed string, refusing anything that is not
+ * ALREADY a string BEFORE any cast runs — the same trap `numericOrNull` above guards against,
+ * on the string side of it. `String(null)` is `"null"`, `String(undefined)` is `"undefined"`,
+ * `String(0)` is `"0"`, `String(false)` is `"false"`, and `String({})` is `"[object Object]"`:
+ * every one of those would read as a real (if odd) project slug instead of "no scope stored"
+ * if the value were cast before being checked. Only a genuine string is trimmed and kept;
+ * anything else — null, undefined, a number, an array, a plain object — collapses to `""`,
+ * the same value a missing field produces.
+ */
+function cleanProjectView(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/**
  * Stage one: coerce whatever is stored into shape. NEVER throws and never reports — a
  * settings tab edited by hand must not be able to take the app down. Stage two
  * (`validateSettings`) is what tells a human they typed something wrong.
@@ -196,6 +234,7 @@ export function cleanSettings(raw: Rec | null | undefined): Settings {
     // only a literal boolean true turns compaction on.
     autoCompact: r.autoCompact === true,
     retentionDays: cleanRetentionDays(r.retentionDays),
+    projectView: cleanProjectView(r.projectView),
   };
 }
 

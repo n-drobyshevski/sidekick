@@ -182,7 +182,10 @@ const scaRec = (id: string, born: string, repo = "r1"): Rec => ({
     type: "REPOSITORY",
     cloudPlatform: "GitHub",
   },
-  projects: [{ name: "platform-team", isFolder: false }],
+  // `slug` is present (unlike the earliest drafts of this fixture) because projectsListJson
+  // (reconcile.ts) keys the projects_json column on slug, falling back to id, and a project
+  // carrying neither is dropped — see the repos-tab assertion below.
+  projects: [{ slug: "platform-team", name: "platform-team", isFolder: false }],
 });
 
 const sastRec = (id: string, born: string): Rec => ({
@@ -345,9 +348,17 @@ describe("persistSync — the commit", () => {
     // The sca record carries cloudPlatform; the sast one cannot (Q_SAST selects no such
     // field), and a null must not blank what another scope recorded.
     expect(repos[0]!["platform"]).toBe("GitHub");
-    // Nothing on a ledger row can fill these two — see repoRows' comment.
+    // Nothing on a ledger row can fill this one — see repoRows' comment.
     expect(repos[0]!["default_branch"]).toBeNull();
-    expect(repos[0]!["projects_json"]).toBeNull();
+    // UPDATED: this used to assert toBeNull(), encoding the claim "nothing learns the project
+    // hierarchy yet" (ledgerStore.ts's repoRows comment, pre-P1). P1 falsifies that claim —
+    // reconcile.ts's projectsListJson now carries the flat projects[] list onto the ledger row,
+    // and repoRows folds it here the same latest-non-null-wins way it folds repo_name/branch/
+    // platform. r1's sca finding carries `projects: [{slug: "platform-team", ...}]` (above);
+    // its sast finding carries none, and a null must not blank what the sca finding recorded.
+    expect(repos[0]!["projects_json"]).toBe(
+      '[{"isFolder": false, "name": "platform-team", "slug": "platform-team"}]',
+    );
 
     // The outcome is client-safe: counts and ids, and no storage address anywhere in it.
     expect(outcome.committed_scopes).toEqual(["sca", "sast", "secrets"]);
