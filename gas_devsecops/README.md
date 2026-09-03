@@ -10,16 +10,36 @@ bright-yellow brand (`#ffcb13`) instead of Signal Blue or crimson — the severi
 deliberately identical across all three, so a severity means the same thing wherever you
 read it.
 
-## Status: Phase 2 — domain port and sync battery in progress
+## Status: Phase 2 complete — all ten pages lit, never deployed
 
-**What is real:** the shell, the navigation, all ten routes, access control, the settings
-store, the ledger schema (v2), the query layer, the job state machine, the build and the dev
-harness. `npm run check` is green.
+**What is real:** everything from the shell to the screen. The domain layer (19 modules
+ported from `brick/devsecops/` against golden fixtures), the transport, the archives, the
+journaled ledger commit, the sync battery, eight read models behind twenty RPCs, the standing
+triggers, and all ten pages rendering real figures. `test/pagesLit.test.js` is the phase's
+exit gate — seven criteria, and it passes.
 
-**What is not:** the sync battery and the domain layer — both under way. Every page renders
-its composition — the questions it will answer — and says plainly that no data is connected.
-That is deliberate: a page drawing a plausible empty chart would be claiming a pipeline that
-does not exist.
+The battery has been **exercised against the live tenant** (secrets and sast; `sca` skipped
+as ~38 pages against a production API), with Sheets and Drive in memory: 1,931 secrets nodes
+folded to 1,324 ledger rows, SAST's `createdAt` on 127/127 rows, and a second immediate sync
+reporting new/resolved/reopened of 0/0/0. See [PROBE_FINDINGS.md](PROBE_FINDINGS.md) §12.
+
+**What is not, and each is written down rather than implied:**
+
+- **It has never been deployed.** There is no `.clasp.json` in this repo — the `scriptId`
+  belongs to whoever deploys. Nothing has ever run inside Apps Script, against a real Google
+  Sheet, or under the real quotas. The Setup section below is untested in that sense.
+- **The secrets ledger key is an open question, not a decision.** The live fold showed 2.87
+  occurrences per duplicated key where the repo-versus-branch twin model predicts 2. If the
+  excess is the same credential-line in *different repositories*, the key merges genuine
+  findings. PROBE_FINDINGS §12.2 names the read-only measurement that settles it.
+- **UUID stability across Wiz's own rescans is still inferred**, not measured — the
+  idempotency result above only covers an unchanged upstream.
+- **The commit hash is fetched and discarded.** `Q_SAST` selects `commitHash` and `Q_SECRETS`
+  `initialCommitHash`; `LEDGER_COLUMNS` has no column for either. That needs a schema bump.
+- Several page sections are **honestly empty** because the read models do not publish the
+  data: repos ownership (nothing aggregates `owner_project`), the history open-past-SLA trend,
+  and per-severity KM curves. Each page says which figure it cannot draw instead of drawing a
+  zero.
 
 **Where the domain comes from.** Not greenfield.
 [`../brick/devsecops/`](../brick/devsecops/) already implements this product as a tested
@@ -72,7 +92,10 @@ about at least two of them, and the clock is the product.
 3. `npm run push`
 4. In the Apps Script editor, run `setup()` once. It creates the ledger spreadsheet and the
    Drive archive folder, ensures every tab and header, and seeds `ALLOWED_USERS` with the
-   owner. It installs **no triggers** — there is no sync battery to schedule yet.
+   owner. It also installs the standing triggers — one daily sync plus three staggered
+   read-model warms — and records their schedule as a signature so a second `setup()` on an
+   unchanged schedule adds nothing rather than accumulating duplicates against the 20-trigger
+   quota. Budget: 4 standing + up to 2 transient (continuation and watchdog) = 6 of 20.
 5. Set `WIZ_API_TOKEN`, or `WIZ_CLIENT_ID` + `WIZ_CLIENT_SECRET`, in Project Settings.
 6. Run `deploymentDiagnostic()` if anything looks wrong; it reports every check at once
    rather than stopping at the first failure.
@@ -178,7 +201,17 @@ for the value itself. `test/wizQueries.test.js` holds it.
 
 `npm run dev` runs the **real server bundle** in the browser against in-memory fakes for
 SpreadsheetApp, DriveApp, Properties, Lock and Cache (`dev/gas-shims.js`), so no Google
-account is needed. It seeds nothing in Phase 1.
+account is needed. It **does** seed now: `dev/sampleData.dev.ts` generates raw Wiz-shaped
+nodes — 400 sca, 40 sast, 120 secrets including 6 twin pairs, over three synthetic scans — and
+`devSeed.seedSampleLedger()` pushes them through the REAL `slimRecord` -> `persistSync` path,
+so what the harness renders is what the battery produces rather than hand-written rows. Add
+`?noseed` for an empty store, or `?dry` to force the sample dataset when credentials are
+present. Note that with credentials in `.env.local` a plain page load runs a **real sync
+against the tenant**; the banner on startup says which mode you are in.
+
+`src/server/sampleData.ts` is the production counterpart and ships **empty** on purpose — a
+register that can fabricate findings cannot be trusted to report that it has none. A test
+reads that file as text and fails on any non-empty array literal.
 
 ### Constraints worth knowing
 
