@@ -70,6 +70,20 @@ because they are in this file.
   bar is high on purpose: a test asserting the old contract is the normal way a real fix
   announces itself.
 - **Report the honest number.** An attribution hop that recovered 7 of a possible 77 is a 7.
+- **`Number(null)` is `0`, and it is finite — the cast is where "absent is never zero" stops
+  being obvious.** This bit twice in one day, in unrelated packages: `cleanSettings` read a
+  missing `syncSchedule` as the valid hour 0 and a missing `retentionDays` as "retain nothing",
+  and a client `num(v, fallback)` helper rendered every genuinely-null figure (`density_p25`,
+  `falling_behind_pct`) as a confident `0` instead of an em dash. `Number("")`, `Number([])` and
+  `Number(false)` are 0 too. Refuse null/undefined/blank BEFORE the cast, never after, and let
+  `Number.isFinite` guard only the values that were really numbers.
+- **A guard that fires on nothing is a finding, not a pass.** Three separate packages here ran
+  a deliberate perturbation and saw ZERO tests fail: a credential deny-list that was shadowed
+  by an allow-list applied first, a durable-cache audit pinned to a list of names rather than
+  to time-invariance, and an ordering (`DONE` before `afterPersist`) that two packages agreed
+  on by accident and nothing held. In each case the fix was to find the one path where the
+  guard actually bites and test THAT. Perturb every guard you write; if nothing breaks, the
+  test is decorative.
 - **Destructive commands get read twice.** `rm -rf` over a path that may contain a symlink or
   junction once deleted `node_modules/.bin` through it. Remove the link non-recursively first.
 - **Commit locally; do not push or open a PR** unless asked. Message style is
