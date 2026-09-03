@@ -60,9 +60,15 @@ const common = {
    *
    * This began as a margin around scheduling contention: files that booted a whole server
    * per test starved past 5s under file parallelism, and `npm run check` went red at random.
-   * That workload is gone — the boots are shared now, and the slowest file is well under a
-   * second. What is left is a hang-catcher. If a test takes 30s something is genuinely
-   * stuck, and that is worth failing on.
+   * That workload is gone — the boots are shared now — and what is left is a hang-catcher:
+   * if a test takes 30s it is generally stuck, and that is worth failing on.
+   *
+   * IT IS A FLOOR, NOT A CEILING, and two tests have opted out on measurement rather than on
+   * preference. `test/remediation.test.ts`'s two N=200,000 stress cases take 17.6s and 19.1s
+   * running alone and cross 30s under the `pure` project's worker sharing (31.3s / 40.6s
+   * observed) while behaving correctly — see `STRESS_TIMEOUT_MS` there for the numbers and
+   * for why N cannot be traded away to buy wall time. The claim "the slowest test is well
+   * under a second", which this comment used to make, was false when it was written.
    */
   testTimeout: 30_000,
   hookTimeout: 30_000,

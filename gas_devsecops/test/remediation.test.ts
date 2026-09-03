@@ -48,6 +48,29 @@ import type { BaseRow } from "../src/domain/ledgerTypes";
 import { quantile, type Rec } from "../src/domain/util";
 import { brickFixture, expectParity } from "./helpers";
 
+/**
+ * The per-test budget for the two N=200,000 stress cases below, and it is deliberately far
+ * above `vitest.config.ts`'s 30s.
+ *
+ * THAT 30s IS A HANG-CATCHER, and its stated premise — "the slowest file is well under a
+ * second, so if a test takes 30s something is genuinely stuck" — is FALSE for these two.
+ * Measured on this machine (node 22 / x64, 8 logical cores), running this file alone:
+ * 17.6s and 19.1s. Under the full suite's `isolate: false` worker sharing they were observed
+ * at 31.3s and 40.6s, and 45.4s once — i.e. they cross 30s on load alone, while doing exactly
+ * what they are supposed to do.
+ *
+ * This was settled by bisection rather than argued: a clean-HEAD `git worktree` of the commit
+ * that had been green minutes earlier reproduced the same failure with none of the day's new
+ * code in it (transform 2.07s -> 54.68s, import 4.79s -> 90.27s on identical source), so the
+ * machine moved and the change did not. Raising the budget here is therefore not papering over
+ * a regression; it is removing a hang-catcher from two tests that are legitimately slow.
+ *
+ * N MUST NOT SHRINK TO MAKE THIS FAST — see the note above the first test. N=200,000 IS the
+ * claim being made (it must sit past the engine's argument-spread limit on any machine), so
+ * trading it for wall time would leave the test passing while testing nothing.
+ */
+const STRESS_TIMEOUT_MS = 120_000;
+
 // Ledger-base projections: a resolved row carries a finite mttr_days; an open row
 // carries a finite age_days and an open status. (severity | status | mttr_days | age_days.)
 const res = (mttr_days: number | null, severity = "HIGH") => ({
@@ -256,7 +279,7 @@ describe("kaplanMeier", () => {
     expect(km.total).toBe(N);
     expect(km.events).toBe(N);
     expect(km.restrictionTime).toBe(500); // maxNum(times) — the largest mttr_days
-  }, 30_000);
+  }, STRESS_TIMEOUT_MS);
 });
 
 describe("kmQuantileFromCurve", () => {
@@ -880,7 +903,7 @@ describe("latencyView / latencySegments", () => {
     expect(km.total).toBe(N);
     expect(km.events).toBe(N);
     expect(km.restrictionTime).toBe(500); // the largest latency, in days
-  }, 30_000);
+  }, STRESS_TIMEOUT_MS);
 
   // Why api.ts should compute latency over a population the show-no-fix toggle has NOT
   // narrowed. baseRowNoFix is that toggle's predicate, and the rows it removes are exactly
