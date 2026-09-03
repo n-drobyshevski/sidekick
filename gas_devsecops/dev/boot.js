@@ -2,31 +2,29 @@
 // client app script. Provisions the fake environment (Server.setup()), and installs a
 // google.script.run shim that dispatches api_* RPCs to Server.api in this page.
 //
-// SEEDING, HONESTLY STATED. `Server.scanJobs` and `Server.readModels` are real now
-// (src/server/index.ts re-exports both onto the GAS global), and `api.ts`'s page RPCs
-// (getExecutivePage, getMttrPage, getRegisterPage, getSecretsPage, ...) read genuine ledger
-// state through them — this is no longer the "pages render their composition stubs" world
-// the old Phase 1 comment here described. But this file cannot hand that ledger a seed: doing
-// so the RIGHT way means feeding `dev/sampleData.dev.ts`'s raw Wiz-shaped nodes through the
-// REAL `scanJobs.slimRecord` -> `ledgerStore.persistSync` pipeline (never hand-writing rows
-// into the sheet fake — see that file's header), and TWO things stand between here and there:
+// SEEDING, HONESTLY STATED. `Server.scanJobs`, `Server.readModels` and now `Server.devSeed`
+// are all real (`src/server/index.ts` re-exports the three onto the GAS global), and
+// `api.ts`'s page RPCs (getExecutivePage, getMttrPage, getRegisterPage, getSecretsPage, ...)
+// read genuine ledger state through them. The two gaps a previous version of this comment
+// described are both closed:
 //
-//   1. `ledgerStore` is not exported onto `Server` (only `scanJobs` and `readModels` are), so
-//      `persistSync` is unreachable from this page even though `Server.scanJobs.slimRecord`
-//      now is.
-//   2. `dev/sampleData.dev.ts`'s data never reaches the browser at all. `dev/serve.mjs`'s
-//      esbuild alias resolves the specifier `./sampleData` to that file on every dev build,
-//      but nothing under `src/server` imports that specifier — scanJobs.ts's own header says
-//      why: "this project ships no sample data, and inventing one would put fabricated
-//      findings in a security register" is a decision about PRODUCTION code, not about this
-//      harness, but the alias only fires through an import that does not exist yet.
+//   1. `src/server/devSeed.ts` is the import site for the specifier `./sampleData` that
+//      nothing under `src/server` used to reach for — so `dev/serve.mjs`'s esbuild alias
+//      (which rewrites that exact specifier to `dev/sampleData.dev.ts` on every dev build)
+//      now actually fires, and the dev dataset reaches this browser bundle at all.
+//   2. `Server.devSeed.seedSampleLedger()` is reachable from this page and runs the REAL
+//      `scanJobs.slimRecord` -> `ledgerStore.persistSync` pipeline over `dev/sampleData.dev.ts`'s
+//      three-scan battery — never hand-written ledger rows (see `devSeed.ts`'s header). In a
+//      deployed build `./sampleData` resolves instead to `src/server/sampleData.ts`, which
+//      ships every array empty on principle, so the exact same call is a documented no-op
+//      there: "this project ships no sample data, and inventing one would put fabricated
+//      findings in a security register" (scanJobs.ts) holds for production, and this seed
+//      path is now the harness-only exception that principle always meant to allow.
 //
-// Both are `src/server/index.ts` / `dev/serve.mjs` changes — outside this file's ownership.
-// Until one lands, `?noseed` is this file's whole seeding story: skip cleanly, or don't, with
-// nothing in between to fake. `dev/sampleData.dev.ts`'s generator and its full
-// slimRecord -> ledgerStore.persistSync pipeline (twin fold, resolve-by-disappearance, a
-// three-scan trend) run for real in `test/sampleData.test.ts` today — that is where "the seed
-// reconciles to the counts it claims" is actually proven, not here.
+// `?noseed` still skips seeding outright (below); it is no longer this file's ENTIRE seeding
+// story, just the escape hatch that keeps the empty-state rendering reachable. Everything the
+// seed claims — the twin fold, resolve-by-disappearance, the three-scan trend, the exact
+// counts — is pinned by `test/sampleData.test.ts` and `test/devSeed.test.ts`.
 
 (function () {
   "use strict";
@@ -59,17 +57,24 @@
   console.log("[dev] " + Server.setup().split("\n").join("\n[dev] "));
 
   // ?noseed: skip seeding outright, so the empty-state rendering stays reachable and
-  // testable even once a real seed path lands. Nothing to undo today (see header) — this is
-  // the one seeding behaviour this file can actually promise right now.
+  // testable. In LIVE mode there is nothing here to seed either — a real sync populates the
+  // ledger through the app UI, not through this bootstrap — so the sample battery only ever
+  // runs for a dry, unseeded session.
   if (query.has("noseed")) {
     console.log("[dev] ?noseed — no seed attempted; pages read the empty ledger.");
   } else if (!live) {
-    console.log(
-      "[dev] No seed: dev/sampleData.dev.ts is ready (see its SAMPLE_COUNTS — 400 sca, " +
-      "40 sast, 120 secrets, 6 twin pairs) but has no path into this browser session yet " +
-      "(see this file's header). Pages read the empty ledger. Run " +
-      "`npx vitest run test/sampleData.test.ts` to see the seed reconcile for real.",
-    );
+    const result = Server.devSeed.seedSampleLedger();
+    if (result.reason) {
+      // Only reachable if `./sampleData` resolved to the production stub instead of the dev
+      // alias — i.e. this bundle was NOT built by dev/serve.mjs's buildDevServer(). Says so
+      // rather than silently rendering an empty ledger with no explanation.
+      console.log(`[dev] No seed: ${result.reason} — pages read the empty ledger.`);
+    } else {
+      console.log(
+        `[dev] Seeded ${result.seeded} ledger row(s) from ${result.syncs} sync(s) ` +
+        `(${result.rows} raw record(s) through slimRecord -> persistSync).`,
+      );
+    }
   }
 
   // Optional artificial RPC latency (?slow=<ms>) so loading states — the route-reload
