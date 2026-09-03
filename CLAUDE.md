@@ -148,6 +148,12 @@ already implements the pipeline and is the behavioural spec (same relationship `
   a dependency and through a host image is two findings with two clocks.
 - **Removed is not rotated.** A secret leaving the register means the string left HEAD. The
   credential is live until `rotated_at` says otherwise.
+- **The tolerance for a GraphQL PARTIAL is no longer theoretical.** Seven passes saw none;
+  the first live battery run hit one on every SAST fetch — `data` and `errors` together,
+  message `"Resource not found"`, reproduced across two independent runs, so it is a standing
+  condition of this tenant. The 127 rows still land with `first_seen` on all of them, which is
+  the designed behaviour: a page carrying both nodes and errors has good nodes and a suspect
+  COUNT. What the missing resource is remains unknown — the message names nothing.
 - **A zero has to prove it looked.** The probe read its GraphQL connection off a hardcoded
   root chain that never learned `secretInstances`, so an 843-row register printed `0 node(s)`
   and wrote `{count: 0}` to the report with no error beside it — indistinguishable from a
@@ -155,6 +161,17 @@ already implements the pipeline and is the behavioural spec (same relationship `
   silent, and guarding the failure that announces itself is not the same as guarding the one
   that does not. `resolveConnection` now finds the root in the response and REFUSES rather
   than returning an empty connection.
+- **The secrets fold is NOT a twin any more, and that may make the key wrong.** The first
+  live battery run (2026-09-03, PROBE_FINDINGS §12.2) folded 1,931 nodes to 1,324 rows:
+  324 keys carrying duplicates but **607 nodes folded**, i.e. **2.87 occurrences per
+  duplicated key, not 2**. The two-way model below predicts 324. 283 nodes are unexplained by
+  it. The leading candidate is the same `(secretDataId, path, lineNumber)` in DIFFERENT
+  REPOSITORIES — a copied config file does it — and since the key carries no `repo_id`, that
+  would MERGE two genuine findings into one row with one clock and an owner decided by
+  latest-wins. That is the opposite failure from the one the key was chosen to avoid, and no
+  aggregate shows it: the row count merely looks better. Read-only measurement that settles
+  it: group raw nodes by the triple and, for every group above two, print distinct
+  `resource.type` and distinct repository id. Until then the 1,324 figure is provisional.
 - **The secrets ledger key is `(secretDataId, path, lineNumber)` with the EARLIEST
   `firstSeenAt`, and `externalId` is unique for the wrong reason.** This entry recommended
   `externalId` on the evidence that it is unique; it still is, and keying on it would double

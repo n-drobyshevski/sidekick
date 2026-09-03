@@ -988,3 +988,89 @@ controlled rescan (§10.8) — which the **first two real syncs will finally ans
 they do the secrets clock is provisional; `--roots` silently swallowing other flags (§10.9).
 `partialErrors` was empty again — **six passes, no live PARTIAL**, so that tolerance is still
 exercised only by its fixture.
+
+# 12 — the battery's first live run, 2026-09-03: measured, and one number changed in kind
+
+The sync battery landed today, so this is the first time the real
+`fetchPage -> slimRecord -> persistSync` path has been run against the tenant rather than
+against fixtures. Sheets and Drive were in-memory fakes; `UrlFetchApp` did real HTTPS. Nothing
+was written to any Google account, no Wiz object was mutated, and `sca` was deliberately not
+synced — it is ~38 pages against a production API and answers nothing the other two do not.
+Two independent executions, minutes apart, byte-identical results.
+
+## 12.1 What held
+
+| Claim | Result |
+|---|---|
+| `scans` rows: one per scope, sharing the sync id | held |
+| `severities` null for secrets (gate off), configured list for sast | held — `null` / `["CRITICAL","HIGH"]` |
+| SAST `createdAt` reaches the ledger as `first_seen` | **127 / 127 non-null** |
+| SAST `resolved_at` empty on a first sync (death is by disappearance) | **0 / 127** |
+| A second sync over an unchanged upstream is a no-op | **new 0, resolved 0, reopened 0** on every scan row, both scopes |
+| Retries / 401 refresh / 429 / page-size fallback | none fired; 11 `UrlFetchApp` calls per battery |
+| Continuation hops needed | **0** — secrets + sast fit inside the first 45 s budget |
+
+`resolved_count = 42` on the *first* secrets sync looked wrong and is not: `reconcile.ts`
+resolves on first sighting when the incoming node's own `status`/`resolvedAt` already says
+resolved. 42 of 1,324 secrets arrived pre-resolved from Wiz. A first sync CAN resolve; what it
+cannot do is resolve by disappearance.
+
+## 12.2 The twin fold is bigger than documented, and it is no longer a twin
+
+1,931 nodes in, **1,324 ledger rows** out. `twinStats = {keys: 324, folded: 607}`, median gap
+**11.71 d** (§10.7 measured 19.9 d over 187 keys).
+
+The magnitude drift is unremarkable — the register churns. **The shape is not.** The model this
+key was chosen under (§10.6 / §10.7) is a two-way duplicate: one `REPOSITORY` row and one
+`REPOSITORY_BRANCH` row for the same credential at the same line. That model predicts
+`folded == keys`, i.e. 324. We measured 607:
+
+```
+keys carrying duplicates                      324
+nodes folded away                             607
+occurrences per duplicated key               2.87   (not 2)
+nodes beyond what a two-way twin explains     283
+```
+
+So for a large share of these keys the register holds **three or more** rows, and "twin" is the
+wrong word for whatever that is. Three candidate explanations, none of them measured yet:
+
+1. more than two resource forms per credential-line;
+2. several `REPOSITORY_BRANCH` rows — one per branch — for one line;
+3. **the same `(secretDataId, path, lineNumber)` in DIFFERENT REPOSITORIES**, which a copied
+   config file would produce readily.
+
+**(3) would make the current ledger key wrong, not merely coarse.** `(secretDataId, path,
+lineNumber)` carries no repository, so two genuinely distinct findings in two distinct repos
+would merge into one row — one clock, one `first_seen`, one owner, and a `repo_id` decided by
+whichever row the latest-wins rule saw last. That is the opposite failure from the one §10.6
+was written to avoid, and it is not visible in any aggregate: the row count looks *better*.
+
+**The measurement that settles it**, and it is read-only: group the raw `secretInstances` nodes
+by `(secretDataId, path, lineNumber)` and, for every group of more than two, print the distinct
+`resource.type` and the distinct repository id. If the repository ids differ within a group, the
+key needs `repo_id` and the fold has been silently merging registers. Until that is run, treat
+the 1,324-row figure as provisional and the key as an open question rather than a settled one.
+
+## 12.3 First live PARTIAL in seven passes
+
+SAST's single page returned a GraphQL PARTIAL — `data` **and** `errors` — with the message
+`"Resource not found"`, reproduced identically on both independent runs, so it is a standing
+condition of this tenant rather than a blip. Six probe passes had never seen one (§10.10), and
+the tolerance was exercised only by its fixture until now.
+
+The rows still landed: 127 fetched, 127 written, `first_seen` non-null on all of them. That is
+the designed behaviour — a page carrying both nodes and errors has good nodes and a suspect
+COUNT, so the caveat is recorded beside the rows rather than either being discarded. What is
+now open is what the missing resource is; the message names nothing.
+
+## 12.4 A dev-harness defect this run exposed, fixed
+
+`dev/gas-shims.js` fired continuation triggers into `window.Server.jobs.continueJob()` — a
+namespace inherited from the `gas_ai` fork that this bundle does not export (it exposes
+`Server.scanJobs`). Every continuation therefore threw into a `catch` that wrote one console
+line, so a dev-harness sync needing a second hop would sit in FETCHING indefinitely and read as
+a stalled tenant. It survived unnoticed because the only sync anyone had run finishes in **0
+hops**. `dist/entry.js` wires the real trigger correctly, so no deployment was affected. The
+lookup now resolves across candidate namespaces and, finding none, says what it looked for and
+what `Server` actually has.
