@@ -198,3 +198,79 @@ export function draftWarnings(saved, draft, scope) {
   }
   return out;
 }
+
+// ============================================================================ per-tab status
+//
+// TAB_FIELDS below is NOT SETTING_FIELDS above. SETTING_FIELDS/SETTINGS_TABS predate the page
+// that shipped (graph/compliance/access/system, over defaultDepth/maxNodes/autoExpand/
+// fiveRsPins) and nothing in src/ or test/ ever imported them — grepped clean before writing
+// this. pages/settings.js built its own Register/Deadlines/Access/System tabs over the real
+// seven-field Settings contract with its own parallel FIELD_TABS constant instead. Rather than
+// widen that gap, TAB_FIELDS is the real map and pages/settings.js's own FIELD_TABS now reads
+// `= TAB_FIELDS` so the two cannot drift, the same promise SETTING_FIELDS's header makes for
+// the tabs that were never built.
+
+/**
+ * Field -> owning tab for the real Settings page's save-bar batch. Mirrors FIELD_TABS in
+ * pages/settings.js, which re-exports this constant rather than restating it.
+ */
+export const TAB_FIELDS = {
+  scopes: "register",
+  fetchSeverities: "register",
+  slaTargets: "deadlines",
+  syncSchedule: "system",
+  autoCompact: "system",
+  retentionDays: "system",
+};
+
+/** Order-insensitive equality for a draft field value — arrays and per-scope records copy the
+ * same shape `changedFields` above already compares this way; kept local rather than shared
+ * so this module never imports from pages/settings.js (the DOM half imports FROM here, not
+ * the other way around). */
+function sameFieldValue(a, b) {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+  }
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    const ka = Object.keys(a).sort();
+    const kb = Object.keys(b).sort();
+    if (JSON.stringify(ka) !== JSON.stringify(kb)) return false;
+    return ka.every((k) => sameFieldValue(a[k], b[k]));
+  }
+  return a === b;
+}
+
+/**
+ * Per-tab dirty/invalid state, so a tablist can show which HIDDEN tab holds unsaved or
+ * illegal state without a reader opening it first.
+ *
+ * `dirty` — true when some field owned by that tab differs between `draft` and `saved`.
+ * `saved` MUST be the last-SAVED snapshot, never the initial-load one that never changes
+ * across a session: a field changed and then changed back to the saved value is not dirty,
+ * the same rule `changedFields` above already applies to the save bar's own count. Passing
+ * an initial-load snapshot here instead would make a revert read as still-dirty forever.
+ *
+ * `invalid` — true when `errors` names a field owned by that tab. `errors` is any object
+ * keyed by field name; only KEY PRESENCE is read, so the caller's contract is to delete a
+ * key once that field clears rather than to set it to a falsy message.
+ *
+ * `tabFields` is the field->tab map to read (TAB_FIELDS in production) — a parameter rather
+ * than a closed-over constant so this stays testable against a synthetic shape.
+ *
+ * Returns one entry per tab NAMED IN tabFields; a tab that owns no field there (Access, on
+ * this page) never appears and is therefore never dirty or invalid by construction.
+ */
+export function tabStatus(draft, saved, errors, tabFields) {
+  const fields = tabFields || {};
+  const d = draft || {};
+  const s = saved || {};
+  const errs = errors || {};
+  const tabs = {};
+  for (const tab of new Set(Object.values(fields))) tabs[tab] = { dirty: false, invalid: false };
+  for (const [field, tab] of Object.entries(fields)) {
+    if (!tabs[tab]) continue;
+    if (!sameFieldValue(s[field], d[field])) tabs[tab].dirty = true;
+    if (Object.prototype.hasOwnProperty.call(errs, field)) tabs[tab].invalid = true;
+  }
+  return tabs;
+}

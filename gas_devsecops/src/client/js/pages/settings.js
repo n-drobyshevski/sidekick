@@ -57,6 +57,7 @@ import {
   statusPill, tipLabel, toast, togglePills,
 } from "../ui.js";
 import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../ui/settings.js";
+import { TAB_FIELDS, tabStatus } from "../settingsModel.js";
 
 // ============================================================================ vocabulary
 
@@ -89,14 +90,11 @@ export const SETTINGS_KEYS = [
 // Which of the seven fields the save bar batches, and which tab owns each — showExperimental
 // is deliberately absent, see the module header. projectView is absent for the separate
 // reason given above SETTINGS_KEYS: it has no tab on this page at all.
-export const FIELD_TABS = {
-  scopes: "register",
-  fetchSeverities: "register",
-  slaTargets: "deadlines",
-  syncSchedule: "system",
-  autoCompact: "system",
-  retentionDays: "system",
-};
+//
+// `= TAB_FIELDS` rather than a second literal: settingsModel.js's tabStatus() computes each
+// tab's dirty/invalid state for the tablist off this SAME map, so a field can never be
+// listed under one tab in the save bar and marked on a different tab in the tablist.
+export const FIELD_TABS = TAB_FIELDS;
 export const BATCHED_KEYS = Object.keys(FIELD_TABS);
 
 const FIELD_LABELS = {
@@ -357,6 +355,17 @@ export async function renderSettings(host, params, ctx) {
 
   let saved;
   let draft;
+  // Fields currently failing their OWN input's validity check, keyed by SETTINGS_KEYS name —
+  // independent of `draft`, on purpose: an in-progress keystroke that fails validation never
+  // writes into `draft` (see e.g. the SLA oninput below), so a field can be invalid without
+  // being dirty. Cleared wholesale on discard, since `draft` reverts to `saved` and `saved` is
+  // always a legal Settings object. tabStatus() below reads only key PRESENCE, so a field is
+  // marked valid again by deleting its key, never by setting a falsy message.
+  let errors = {};
+
+  function setFieldError(field, message) {
+    if (message) errors[field] = message; else delete errors[field];
+  }
 
   try {
     const settings = await call("api_getSettings", {});
@@ -378,8 +387,10 @@ export async function renderSettings(host, params, ctx) {
 
   function syncDirty() {
     const changed = changedFields(saved, draft);
+    const status = tabStatus(draft, saved, errors, FIELD_TABS);
     for (const t of TABS) {
-      tabs.setDirty(t.key, changed.some((k) => FIELD_TABS[k] === t.key));
+      tabs.setDirty(t.key, !!(status[t.key] && status[t.key].dirty));
+      tabs.setInvalid(t.key, !!(status[t.key] && status[t.key].invalid));
     }
     bar.update(changeCountText(changed.length), changeSummary(changed));
   }
@@ -400,6 +411,7 @@ export async function renderSettings(host, params, ctx) {
 
   function doDiscard() {
     draft = draftFromSettings(saved);
+    errors = {};
     buildPanels();
   }
 
@@ -481,20 +493,37 @@ export async function renderSettings(host, params, ctx) {
 
   function buildDeadlinesPanel() {
     const rows = slaFieldRows(draft.slaTargets, severityOrder);
+    // One "slaTargets" error for the whole field (it is one SETTINGS_KEYS entry, an object
+    // keyed by severity), tracked across however many per-severity rows are invalid right now.
+    const invalidSevs = new Set();
     const body = rows.map((r) => {
       const id = `settings-sla-${r.sev}`;
+      const errorId = `${id}-error`;
+      const errorEl = el(
+        "span", { id: errorId, class: "small settings-field-error", role: "alert", hidden: true },
+      );
       const input = el("input", {
-        type: "number", id, min: "1", step: "1", value: String(r.days),
+        type: "number", id, min: "1", step: "1", value: String(r.days), "aria-describedby": errorId,
         oninput: (ev) => {
           const n = Number(ev.target.value);
-          if (Number.isFinite(n) && n > 0) draft.slaTargets[r.sev] = Math.floor(n);
+          const ok = Number.isFinite(n) && n > 0;
+          if (ok) {
+            draft.slaTargets[r.sev] = Math.floor(n);
+            invalidSevs.delete(r.sev);
+          } else {
+            invalidSevs.add(r.sev);
+          }
+          input.setAttribute("aria-invalid", ok ? "false" : "true");
+          errorEl.hidden = ok;
+          errorEl.textContent = ok ? "" : "Enter a positive whole number of days.";
+          setFieldError("slaTargets", invalidSevs.size ? `${invalidSevs.size} remediation window(s) are not a positive number of days.` : null);
           syncDirty();
         },
       });
       return settingRow({
         label: `${r.sev} target`, htmlFor: id,
         description: "Days to remediate. In SLA means resolved on or before this many days.",
-        control: input,
+        control: el("div", {}, input, errorEl),
       });
     });
     const panel = settingsPanel({
@@ -525,11 +554,34 @@ export async function renderSettings(host, params, ctx) {
 
   function buildSystemPanel() {
     const scheduleId = "settings-sync-hour";
+    const scheduleErrorId = `${scheduleId}-error`;
+    const scheduleError = el(
+      "span", { id: scheduleErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+      "Enter a whole number of hours.",
+    );
     const scheduleInput = el("input", {
       type: "number", id: scheduleId, min: "0", max: "23", step: "1", value: String(draft.syncSchedule),
+      "aria-describedby": scheduleErrorId,
       oninput: (ev) => {
-        const n = Number(ev.target.value);
-        if (Number.isInteger(n) && n >= 0 && n <= 23) draft.syncSchedule = n;
+        const raw = ev.target.value;
+        // Number("") is 0, and 0 is finite (CLAUDE.md: "Number(null) is 0, and it is
+        // finite") — a blank field means NO INPUT, not "hour zero", so blank is refused
+        // BEFORE the cast rather than read as a valid midnight. A browser number input also
+        // blocks non-numeric keystrokes outright, so blank is the only non-numeric shape this
+        // handler will ever actually see; the Number.isFinite check below still guards the
+        // rest of the domain (Infinity, -Infinity) defensively.
+        const blank = raw.trim() === "";
+        const n = Number(raw);
+        // Out-of-range-but-numeric is tolerated, not an error: the description below already
+        // says it falls back to the default on save rather than being rejected. Only a value
+        // that fails to parse as a number at all (blank, non-numeric) is invalid — the same
+        // split retentionDays draws below, between "not a number" (invalid) and "a number the
+        // server will adjust" (a caption, never an error).
+        const numeric = !blank && Number.isFinite(n);
+        if (numeric && Number.isInteger(n) && n >= 0 && n <= 23) draft.syncSchedule = n;
+        scheduleInput.setAttribute("aria-invalid", numeric ? "false" : "true");
+        scheduleError.hidden = numeric;
+        setFieldError("syncSchedule", numeric ? null : "The sync hour must be a number.");
         syncDirty();
       },
     });
@@ -537,7 +589,7 @@ export async function renderSettings(host, params, ctx) {
       label: "Daily sync hour", htmlFor: scheduleId,
       description: `Hour of day (0-23), script-local. An out-of-range value falls back to the `
         + `default (${DEFAULT_SYNC_HOUR}:00) on save rather than being rejected.`,
-      control: scheduleInput,
+      control: el("div", {}, scheduleInput, scheduleError),
     });
     const scheduleCaveat = disclosure(
       "Why a saved hour might not move the trigger yet",
@@ -559,26 +611,45 @@ export async function renderSettings(host, params, ctx) {
     });
 
     const retentionId = "settings-retention-days";
+    const retentionErrorId = `${retentionId}-error`;
     const retentionWarn = el("span", { class: "small settings-retention-warn", hidden: true });
+    const retentionError = el(
+      "span", { id: retentionErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+      "Enter a number of days.",
+    );
     const retentionInput = el("input", {
       type: "number", id: retentionId, min: String(RETENTION_FLOOR_DAYS), step: "1",
-      value: String(draft.retentionDays),
+      value: String(draft.retentionDays), "aria-describedby": retentionErrorId,
       oninput: (ev) => {
-        const n = Number(ev.target.value);
-        if (!Number.isFinite(n)) return;
-        draft.retentionDays = Math.floor(n);
-        const v = retentionFieldView(draft.retentionDays);
-        retentionWarn.hidden = !v.belowFloor;
-        retentionWarn.textContent = v.belowFloor
-          ? `Below the ${v.floor}-day floor — saving will raise it to ${v.floor}.`
-          : "";
+        const raw = ev.target.value;
+        // Same "Number('') is 0, and it is finite" trap as the sync-hour handler above: a
+        // blank field is NO INPUT, not "retain nothing", so it is refused before the cast.
+        const blank = raw.trim() === "";
+        const n = Number(raw);
+        const ok = !blank && Number.isFinite(n);
+        // A below-floor-but-real number is a WARN, not an error — the server clamps it on
+        // save (see retentionFieldView), same as an out-of-range syncSchedule above. Only a
+        // value that fails to parse as a number at all is invalid; previously this handler
+        // returned early on that case WITHOUT calling syncDirty(), so the save bar and the
+        // tablist never learned a keystroke had happened at all.
+        if (ok) {
+          draft.retentionDays = Math.floor(n);
+          const v = retentionFieldView(draft.retentionDays);
+          retentionWarn.hidden = !v.belowFloor;
+          retentionWarn.textContent = v.belowFloor
+            ? `Below the ${v.floor}-day floor — saving will raise it to ${v.floor}.`
+            : "";
+        }
+        retentionInput.setAttribute("aria-invalid", ok ? "false" : "true");
+        retentionError.hidden = ok;
+        setFieldError("retentionDays", ok ? null : "The retention window must be a number.");
         syncDirty();
       },
     });
     const retentionRow = settingRow({
       label: "Retention window", htmlFor: retentionId,
       description: `Read only while automatic compaction is on. Floored at ${RETENTION_FLOOR_DAYS} days.`,
-      control: el("div", {}, retentionInput, retentionWarn),
+      control: el("div", {}, retentionInput, retentionWarn, retentionError),
     });
 
     const maintenancePanel = settingsPanel({

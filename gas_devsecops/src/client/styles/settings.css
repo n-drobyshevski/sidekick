@@ -92,7 +92,10 @@
    uses rotated a quarter turn. It differs from .segmented on purpose: that is a control and
    takes a neutral inset, because there an accent inset would read as the decorative
    side-stripe the system forbids. A dirty tab also gets a painted dot, and tabList appends
-   "unsaved changes" to its accessible name so the cue survives for a reader who cannot see it. */
+   "unsaved changes" to its accessible name so the cue survives for a reader who cannot see it.
+   An invalid tab gets the alert glyph below in --bad, PLUS "has errors" in the same accessible
+   name and aria-invalid="true" on the button — never the red ink alone, the Rationed Ink Rule
+   applied to a control instead of a chart. */
 .tabstrip {
   display: flex; gap: var(--space-half); overflow-x: auto;
   border-bottom: 1px solid var(--hairline);
@@ -116,6 +119,16 @@
   width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none;
   box-shadow: inset 0 0 0 1px var(--accent-edge);
 }
+/* The invalid marker: --bad ink on the glyph itself, never a background tint alone — the
+   shape (an alert-in-circle, distinct from the info glyph it mirrors) and the tab's own
+   "has errors" accessible-name suffix carry the meaning too, so no reader depends on color. */
+.tabstrip__invalid { color: var(--bad); flex: none; display: inline-flex; align-items: center; }
+
+/* A field-level validation message: visible text (never color alone), red ink to match the
+   tab-level glyph it feeds into via setFieldError/tabStatus. Distinct from
+   .settings-retention-warn (a caption saying a LEGAL value will be adjusted on save) — this
+   is for a value that failed to parse as what the field wants at all. */
+.settings-field-error { display: block; margin-top: var(--space-1); color: var(--bad); }
 
 /* One dirty state for the whole page, hidden until there is something to save. Sticky within
    `main`, which is the scrollport here (base.css), so it stays reachable however far a control
