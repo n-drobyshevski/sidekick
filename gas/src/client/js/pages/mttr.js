@@ -1,10 +1,8 @@
 // MTTR & SLA — remediation performance from the durable ledger. Hero stat, trend
 // charts, per-severity SLA table, posture bars. Never fetches from Wiz.
 
-import {
-  destroyChart, groupPalette, groupTrendLines, mttrContributionBars, mttrImpactBars,
-  openResolvedLines, stackedAgeBar, survivalCurve, trendLine,
-} from "../charts.js";
+import { groupPalette } from "../charts.js";
+import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../store.js";
 import { mttrPaintPlan } from "./mttrPaintPlan.js";
 import {
@@ -474,7 +472,9 @@ export async function renderMttr(main, _params, ctx) {
       canvas.style.display = "";
     }
     function showMsg(canvas, msg, text) {
-      destroyChart(canvas);
+      // Fire-and-forget: nothing to destroy if Chart.js never loaded (nothing was ever
+      // drawn), and the message swap below doesn't wait on it either way.
+      loadCharts().then((charts) => charts.destroyChart(canvas)).catch(() => {});
       canvas.style.display = "none";
       msg.textContent = text;
       msg.style.display = "";
@@ -560,12 +560,16 @@ export async function renderMttr(main, _params, ctx) {
           return;
         }
         showChart(lineCanvas, lineMsg);
-        groupTrendLines(lineCanvas, pts, series, {
-          unit: "days",
-          nullAsGap: true,
-          describe: usingKm
-            ? `Kaplan–Meier median time-to-remediation in days per ${dim.noun} over scan history.`
-            : `Naive median MTTR in days per ${dim.noun} over scan history.`,
+        loadCharts().then((charts) => {
+          charts.groupTrendLines(lineCanvas, pts, series, {
+            unit: "days",
+            nullAsGap: true,
+            describe: usingKm
+              ? `Kaplan–Meier median time-to-remediation in days per ${dim.noun} over scan history.`
+              : `Naive median MTTR in days per ${dim.noun} over scan history.`,
+          });
+        }).catch(() => {
+          chartUnavailable(lineCanvas);
         });
       }
 
@@ -654,7 +658,7 @@ export async function renderMttr(main, _params, ctx) {
             ? helpTip(`${dim.Noun} contribution to MTTR`, impactHelp, { className: "help-label" })
             : helpTip(`Median MTTR by ${dim.noun}`, medianHelp, { className: "help-label" }));
         const [hideCanvas, hideMsg] = view === "impact" ? [medianCanvas, medianMsg] : [impactCanvas, impactMsg];
-        destroyChart(hideCanvas);
+        loadCharts().then((charts) => charts.destroyChart(hideCanvas)).catch(() => {});
         hideCanvas.style.display = "none";
         hideMsg.style.display = "none";
         if (view === "impact") paintImpact(); else paintMedian();
@@ -695,7 +699,11 @@ export async function renderMttr(main, _params, ctx) {
           return;
         }
         showChart(impactCanvas, impactMsg);
-        mttrImpactBars(impactCanvas, impactRows, { subject: `${dim.Noun} contribution to MTTR` });
+        loadCharts().then((charts) => {
+          charts.mttrImpactBars(impactCanvas, impactRows, { subject: `${dim.Noun} contribution to MTTR` });
+        }).catch(() => {
+          chartUnavailable(impactCanvas);
+        });
       }
 
       // Median lens (secondary): each group's KM median MTTR against the overall-median reference line —
@@ -711,9 +719,13 @@ export async function renderMttr(main, _params, ctx) {
           return;
         }
         showChart(medianCanvas, medianMsg);
-        mttrContributionBars(medianCanvas, medianRows, {
-          overall: overallKm,
-          subject: `${dim.Noun} median MTTR vs overall`,
+        loadCharts().then((charts) => {
+          charts.mttrContributionBars(medianCanvas, medianRows, {
+            overall: overallKm,
+            subject: `${dim.Noun} median MTTR vs overall`,
+          });
+        }).catch(() => {
+          chartUnavailable(medianCanvas);
         });
       }
       return {
@@ -1046,12 +1058,14 @@ export async function renderMttr(main, _params, ctx) {
             "Median (closed), the naive closed-only median KM corrects for.",
         ],
       }));
-      requestAnimationFrame(() => {
+      loadCharts().then((charts) => {
         // The two KM markers plus the naive closed-only median dot, so the curve shows the
         // bias KM corrects for in place (naiveMean stays off the "MTTR over time" toggle).
-        survivalCurve(canvas, rem.km.curve,
+        charts.survivalCurve(canvas, rem.km.curve,
           { naiveMedian: rem.km.naiveMedian, median: rem.km.median, naiveMean: null, mean: rem.km.mean },
           { maxWeeks: survivalWeeks });
+      }).catch(() => {
+        chartUnavailable(canvas);
       });
     } else {
       const canvas = el("canvas", { id: "resolution-buckets" });
@@ -1062,9 +1076,11 @@ export async function renderMttr(main, _params, ctx) {
             "bars are the tail the median hides.",
         ],
       }));
-      requestAnimationFrame(() => {
-        stackedAgeBar(canvas, rem.buckets.labels || RESOLUTION_LABELS, rem.buckets.perSev,
+      loadCharts().then((charts) => {
+        charts.stackedAgeBar(canvas, rem.buckets.labels || RESOLUTION_LABELS, rem.buckets.perSev,
           boot.palette, "Resolved findings by time-to-resolve bucket and severity.");
+      }).catch(() => {
+        chartUnavailable(canvas);
       });
     }
   }
@@ -1175,9 +1191,9 @@ export async function renderMttr(main, _params, ctx) {
               "corrects for.",
           ],
         }));
-        painters.push(() => (mode === "km"
-          ? trendLine(canvas, kmMedianPoints, { yLabel: "days", xRange })
-          : trendLine(canvas, points.filter((p) => p.y !== null), { yLabel: "days", xRange })));
+        painters.push({ canvas, paint: (charts) => (mode === "km"
+          ? charts.trendLine(canvas, kmMedianPoints, { yLabel: "days", xRange })
+          : charts.trendLine(canvas, points.filter((p) => p.y !== null), { yLabel: "days", xRange })) });
       }
     }
 
@@ -1186,7 +1202,7 @@ export async function renderMttr(main, _params, ctx) {
     if (trend.length > 1) {
       const canvas = el("canvas", { id: "open-resolved" });
       grid.append(chartCard("Open vs resolved", el("div", { class: "chart-box" }, canvas)));
-      painters.push(() => openResolvedLines(canvas, trend, { xRange }));
+      painters.push({ canvas, paint: (charts) => charts.openResolvedLines(canvas, trend, { xRange }) });
     }
 
     // Card 3 — Open past SLA (aged backlog level).
@@ -1199,7 +1215,7 @@ export async function renderMttr(main, _params, ctx) {
             "rollout — findings awaiting a vendor fix are now included in the register.",
         ],
       }));
-      painters.push(() => trendLine(canvas, openSlaPoints, { yLabel: "findings", xRange }));
+      painters.push({ canvas, paint: (charts) => charts.trendLine(canvas, openSlaPoints, { yLabel: "findings", xRange }) });
     }
 
     // Card 4 — SLA quality: cohort attainment (rate) vs net-flow burn (direction), one card.
@@ -1225,9 +1241,9 @@ export async function renderMttr(main, _params, ctx) {
               "cleared, per scan. Above zero = the past-SLA backlog is growing.",
           ],
         }));
-        painters.push(() => (mode === "attainment"
-          ? trendLine(canvas, slaAttainmentPoints, { yLabel: "%", xRange })
-          : trendLine(canvas, slaBurnPoints, { yLabel: "findings", xRange })));
+        painters.push({ canvas, paint: (charts) => (mode === "attainment"
+          ? charts.trendLine(canvas, slaAttainmentPoints, { yLabel: "%", xRange })
+          : charts.trendLine(canvas, slaBurnPoints, { yLabel: "findings", xRange })) });
       }
     }
 
@@ -1250,8 +1266,10 @@ export async function renderMttr(main, _params, ctx) {
           + "Open counts there are exact; resolved and MTTR are lower bounds."));
     }
 
-    requestAnimationFrame(() => {
-      for (const paint of painters) paint();
+    loadCharts().then((charts) => {
+      for (const { paint } of painters) paint(charts);
+    }).catch(() => {
+      for (const { canvas } of painters) chartUnavailable(canvas);
     });
   }
 

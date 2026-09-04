@@ -4,27 +4,28 @@
 // script hosts. Only the components these chart types use are registered —
 // chart.js/auto would pull in every controller/scale/plugin and roughly double the
 // bundle's Chart.js footprint.
+//
+// CHART.JS IS NOT A STATIC IMPORT OF THIS FILE. This module is bundled twice: once into
+// chartsBundle.js (dist/js_charts.html), where Chart.js is a real import, and once into
+// the main app.js bundle, because pages still need this file's Chart.js-FREE exports —
+// TIER_*, tierPalette, groupPalette, fmtDuration — synchronously, to build badges and
+// legends before any canvas has painted. A static `import { Chart } from "chart.js"`
+// here would drag all of Chart.js into THAT bundle too, which is exactly the weight the
+// split (chartsLoader.js) exists to keep off first paint. So the constructor is handed
+// in at runtime instead of imported: chartsBundle.js calls `installChartRuntime` once,
+// after it has actually imported "chart.js", and every drawing function below reads the
+// constructor through this module-level binding. Each bundle gets its OWN copy of this
+// module (esbuild does not share module instances across separate entry points), so a
+// drawing function reached through a direct static import from a page would always see
+// `ChartCtor === null` — which is why every page below calls these through the object
+// `chartsLoader.js` resolves, never through a static import of this file.
+let ChartCtor = null;
 
-import {
-  ArcElement,
-  BarController,
-  BarElement,
-  CategoryScale,
-  Chart,
-  Filler,
-  Legend,
-  LinearScale,
-  LineController,
-  LineElement,
-  PieController,
-  PointElement,
-  Tooltip,
-} from "chart.js";
-
-Chart.register(
-  ArcElement, BarController, BarElement, CategoryScale, Filler, Legend,
-  LinearScale, LineController, LineElement, PieController, PointElement, Tooltip,
-);
+/** Called once by chartsBundle.js after it has imported the real Chart.js. */
+export function installChartRuntime(ctor, components) {
+  ChartCtor = ctor;
+  ChartCtor.register(...components);
+}
 
 const FONT = {
   family:
@@ -157,7 +158,8 @@ function describe(canvas, text) {
 }
 
 function destroyExisting(canvas) {
-  const existing = Chart.getChart(canvas);
+  if (!ChartCtor) return;
+  const existing = ChartCtor.getChart(canvas);
   if (existing) existing.destroy();
 }
 
@@ -240,7 +242,7 @@ export function severityBar(canvas, counts, palette, onClickSeverity) {
   opts.onHover = (evt, elements) => {
     evt.native.target.style.cursor = elements.length && onClickSeverity ? "pointer" : "default";
   };
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "bar",
     data: {
       labels: sevs,
@@ -278,7 +280,7 @@ export function stackedAgeBar(canvas, labels, perSev, palette, desc, opts2 = {})
   if (typeof opts2.slaEdgeAfter === "number") {
     plugins.push(slaEdgeLine(opts2.slaEdgeAfter, opts2.slaEdgeLabel || "SLA"));
   }
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "bar",
     data: {
       labels,
@@ -428,7 +430,7 @@ export function sparkline(canvas, values, { color, desc } = {}) {
   destroyExisting(canvas);
   describe(canvas, desc || "Trend sparkline.");
   const ink = color || "#6b7280";
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "line",
     data: {
       labels: values.map((_, i) => i),
@@ -483,7 +485,7 @@ export function trendLine(canvas, points, { yLabel, xRange } = {}) {
   const days = points.map((p) => dayOf(p.x));
   dayAxis(opts, xRange);
   const band = reconstructedBand(points.map((p) => p.reconstructed), days);
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "line",
     data: {
       datasets: [
@@ -550,7 +552,7 @@ export function severityTrendLines(canvas, points, palette, sevScope) {
   // to hit; index mode reveals every series' value at the nearest date on hover. Matches
   // openResolvedLines.
   opts.interaction = { mode: "index", intersect: false };
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "line",
     data: {
       labels: points.map((p) => p.date.slice(0, 10)),
@@ -596,7 +598,7 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
   const days = points.map((p) => dayOf(p.date));
   dayAxis(opts, xRange);
   const band = reconstructedBand(points.map((p) => p.reconstructed), days);
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "line",
     data: {
       datasets: [
@@ -757,7 +759,7 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
     },
   };
 
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "line",
     data: {
       datasets: [
@@ -877,7 +879,7 @@ export function groupPie(canvas, slices, opts = {}) {
     return s.detail ? base + ", " + s.detail : base;
   });
   describe(canvas, subject + ": " + (parts.join(", ") || "none") + ".");
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "pie",
     data: {
       labels: slices.map((s) => s.label),
@@ -952,7 +954,7 @@ export function groupTrendLines(canvas, points, series, cfg = {}) {
   // to hit; index mode reveals every series' value at the nearest date on hover. Matches
   // openResolvedLines.
   opts.interaction = { mode: "index", intersect: false };
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "line",
     data: {
       labels: points.map((p) => p.date.slice(0, 10)),
@@ -1085,7 +1087,7 @@ export function mttrContributionBars(canvas, groups, opts = {}) {
     return ` ${fmtDuration(Number(g.value))} · ${localeNum(n)} resolved${dir(g.value)}`;
   };
 
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "bar",
     data: {
       labels: groups.map((g) => g.label),
@@ -1211,7 +1213,7 @@ export function mttrImpactBars(canvas, rows, opts = {}) {
       + `${localeNum(r.resolved ?? 0)} resolved — ${dir(v)}`;
   };
 
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "bar",
     data: {
       labels: rows.map((r) => r.label),
@@ -1262,7 +1264,7 @@ export function coverageEfficiencyLines(canvas, points, { xRange } = {}) {
   const days = points.map((p) => dayOf(p.date));
   dayAxis(opts, xRange);
   const band = reconstructedBand(points.map((p) => p.reconstructed), days);
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "line",
     data: {
       datasets: [
@@ -1395,7 +1397,7 @@ export function coverageEfficiencyScatter(canvas, points) {
       ctx.restore();
     },
   };
-  return new Chart(canvas, {
+  return new ChartCtor(canvas, {
     type: "line", // see the note above — NOT "scatter"
     data: {
       datasets: [

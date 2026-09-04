@@ -4,7 +4,7 @@
 // freshness cues, and colored posture deltas rather than raw enums.
 
 import { call } from "../api.js";
-import { openResolvedLines, trendLine } from "../charts.js";
+import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
   clear, confirmDialog, el, emptyState, fmtDays, fmtDateTime,
@@ -318,9 +318,12 @@ export async function renderHistory(main, _params, ctx) {
         el("div", { class: "chart-box" }, openResolvedCanvas)),
       el("div", { class: "chart-card" }, el("h3", {}, "MTTR trend (KM median)"), mttrBody),
     );
-    requestAnimationFrame(() => {
-      openResolvedLines(openResolvedCanvas, trends.trend);
-      if (hasKm) trendLine(mttrCanvas, kmMedianPoints, { yLabel: "days" });
+    loadCharts().then((charts) => {
+      charts.openResolvedLines(openResolvedCanvas, trends.trend);
+      if (hasKm) charts.trendLine(mttrCanvas, kmMedianPoints, { yLabel: "days" });
+    }).catch(() => {
+      chartUnavailable(openResolvedCanvas);
+      if (hasKm) chartUnavailable(mttrCanvas);
     });
   }
 }
