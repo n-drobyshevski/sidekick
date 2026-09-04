@@ -138,6 +138,26 @@ export function pageForSize(page, fromSize, toSize) {
 }
 
 /**
+ * The `<td>` class list for one column — the DOM-free half of dataTable()'s cell loop in
+ * ui/data.js, so the one thing a column spec decides about its own wrapping has a test that
+ * does not need jsdom.
+ *
+ * `wrap: true` adds `col-wrap`, which tables.css uses to opt a single column out of the
+ * 320px nowrap-ellipsis clip every other cell gets — for a column that carries prose rather
+ * than a value (the secrets four-corner table's Reading column, which truncated mid-sentence
+ * even at 560px). Per-column, not a table-wide reset: a numeric column beside it still wants
+ * its single line, so `wrap` is additive to `col.className` rather than replacing it.
+ *
+ * @returns {string|null}
+ */
+export function cellClassName(col) {
+  const classes = [];
+  if (col && col.className) classes.push(col.className);
+  if (col && col.wrap) classes.push("col-wrap");
+  return classes.length ? classes.join(" ") : null;
+}
+
+/**
  * Three states, never two: what a boolean column actually knows.
  *
  * The codebase is emphatic that an absent property means Wiz never reported one, and printing

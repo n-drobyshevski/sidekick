@@ -417,7 +417,7 @@ function paintSecrets(host, vm) {
           help: { term: "rotated" },
         },
         { key: "count", label: "Findings", className: "num", cell: (r) => fmtCount(r.count) },
-        { key: "reading", label: "Reading", cell: (r) => r.reading },
+        { key: "reading", label: "Reading", cell: (r) => r.reading, wrap: true },
       ],
       rows: vm.removalVsRotation.cells,
       emptyText: "Nothing in this register.",

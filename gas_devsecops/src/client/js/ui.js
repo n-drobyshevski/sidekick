@@ -37,7 +37,7 @@
 export { appendAll, clear, downloadText, el, motionOk, registerWideNote } from "./ui/dom.js";
 export { days1, denomNote, fmtCount, fmtDays, num, pct1 } from "./ui/figures.js";
 export {
-  DISPLAY_TZ, dueRank, fmtDate, fmtDateTime, plural, pluralize, sevRank,
+  DISPLAY_TZ, fmtDate, fmtDateTime, plural, pluralize,
 } from "./ui/format.js";
 export {
   sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,

@@ -86,6 +86,17 @@ table.data tbody tr.clickable { cursor: pointer; }
    qualified. `td.num` never had the problem — nothing else sets a td's alignment. */
 table.data th.num, td.num { text-align: right; }
 
+/* dataTable()'s per-column `wrap: true` opt-out of the 320px nowrap-ellipsis clip above,
+   for a column that carries prose rather than a value — the secrets four-corner table's
+   Reading column, which truncated mid-sentence at every width down to 560px. Scoped to
+   `.col-wrap`, not the table, so the numeric Findings column beside it keeps its single
+   line: a column that fits stays clipped, only the one that can't wraps instead.
+   `table.data` is in the selector to WIN over `table.data td` (0,0,1,2) on specificity,
+   the same reason `.detail-row > td` below carries it. */
+table.data td.col-wrap {
+  white-space: normal; max-width: none; overflow: visible; text-overflow: clip;
+}
+
 /* ------------------------------------------------------------------- the name cell */
 /* A node's name behind its kind icon, in that kind's category tint — the same cue the graph
    canvas's medallion carries, so a row and a node read as the same thing in two views. Moved

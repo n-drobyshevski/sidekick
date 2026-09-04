@@ -87,7 +87,13 @@ export function popoverDismiss(spec) {
     focusOut(e);
   }
   function onScrollOrResize(e) {
-    if (e && e.target && pop && pop.contains && pop.contains(e.target)) return; // its own list
+    // `e.target` is the `Window` itself for a `resize` event, not a Node — `Node#contains`
+    // throws `TypeError: Failed to execute 'contains' on 'Node'` on anything else, which
+    // this app hit on every resize once a popover was open. `instanceof Node` is what tells
+    // the two events apart: a scroll's target is always a Node (its own list, or an
+    // ancestor), a resize's never is, so a resize simply cannot be "its own list" and this
+    // guard is meant to fall through rather than fire for it.
+    if (e && e.target instanceof Node && pop && pop.contains && pop.contains(e.target)) return; // its own list
     if (anchor) {
       const rect = anchor.getBoundingClientRect();
       if (rect.bottom < 0 || rect.top > window.innerHeight) { close(); return; }

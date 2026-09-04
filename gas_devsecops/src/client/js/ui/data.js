@@ -1,7 +1,7 @@
 // Quantity display: meters, the sortable data table, and the table pager.
 
 import { clear, el } from "./dom.js";
-import { PAGE_SIZES, pageForSize } from "./tableModel.js";
+import { PAGE_SIZES, cellClassName, pageForSize } from "./tableModel.js";
 import { pluralize } from "./format.js";
 import { tip, tipLabel, tipLines, truncTip } from "./tip.js";
 
@@ -184,9 +184,15 @@ export function dataTable(spec) {
       // time, so a column that fits stays silent and a resized window is respected without
       // repainting the table.
       const cells = columns.map((col) => {
-        const td = el("td", { class: col.className || null }, col.cell(row));
+        // `wrap: true` opts a single column out of the 320px nowrap-ellipsis clip
+        // (tables.css `table.data td`) so a prose column — the secrets four-corner
+        // table's Reading column, cut mid-sentence at 1280px and worse below it —
+        // reads in full instead of behind a truncTip. Per-column rather than a table-wide
+        // reset: the Findings count beside it still wants its single line. cellClassName
+        // (ui/tableModel.js) is the DOM-free half of this, tested directly there.
+        const td = el("td", { class: cellClassName(col) }, col.cell(row));
         const text = td.textContent;
-        if (text && text.length > 12) truncTip(td, text);
+        if (!col.wrap && text && text.length > 12) truncTip(td, text);
         return td;
       });
       const extra = rowClass ? rowClass(row) : "";

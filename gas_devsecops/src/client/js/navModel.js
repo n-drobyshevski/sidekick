@@ -1,12 +1,15 @@
 // What the two-tier rail draws: the items on the icon rail, and what each one's panel holds.
 //
-// Pure and DOM-free, the split prunePanelView.js argues for — the decisions here (which lane
-// a page belongs to, which items earn a panel, what a panel lists once the payload has
-// landed) are the part worth testing, and none of them needs a document.
+// Pure and DOM-free by design — the decisions here (which lane a page belongs to, which
+// items earn a panel, what a panel lists once the payload has landed) are the part worth
+// testing, and none of them needs a document.
 //
 // THE ONE SOURCE IS `PAGES`. app.js keeps the route table and passes it in; this module never
 // carries a second list of pages that could disagree with it, and test/navGroups.test.js
-// holds that boundary from the other side.
+// holds that boundary from the other side. This app's `PAGES` groups nine routes into three
+// labelled lanes — Program (Executive, MTTR & SLA, Coverage & efficiency), Registers
+// (Dependencies, Code, Secrets) and Data (Repositories, Scan history, Storage) — plus one
+// unlabelled tail page, Settings, that stays a plain rail link rather than a lane of one.
 
 /**
  * The rail's items, in order.
@@ -19,12 +22,13 @@
  * and `experimental` (behind a setting). Both are applied first, so a lane they empty never
  * reaches the rail — the way the Labs heading has always vanished with its page.
  *
- * AND A LANE LEFT HOLDING ONE VISIBLE PAGE IS DRAWN AS THAT PAGE. With seven routes hidden,
- * "Risk" means Priorities and "Assurance" means Wiz Scans — a rail naming lanes there would
- * be labelling every item with a category instead of its name, and its panel would open onto
- * a single row repeating what was just clicked. It is the same rule that stops a labelled
- * lane holding one page in the stacked list, applied one tier up: a lane earns its name by
- * having more than one thing under it.
+ * AND A LANE LEFT HOLDING ONE VISIBLE PAGE IS DRAWN AS THAT PAGE. None of this app's three
+ * lanes is down to one page today — Program, Registers and Data each hold three — but if
+ * `hidden` or a disabled `experimental` flag ever thinned one to a single route, a rail
+ * naming the lane would label that item with a category instead of its name, and its panel
+ * would open onto a single row repeating what was just clicked. It is the same rule that
+ * stops a labelled lane holding one page in the stacked list, applied one tier up: a lane
+ * earns its name by having more than one thing under it.
  *
  * @param {object} pages  the PAGES route table
  * @param {{experimental?: boolean}} opts
