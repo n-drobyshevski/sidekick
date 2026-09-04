@@ -34,6 +34,9 @@ const FONT = {
 };
 const INK2 = "rgba(0,0,0,0.65)";
 const HAIRLINE = "#e6e6e9";
+// The brand accent AS CANVAS INK — the value of --accent-text in styles/tokens.css, which a
+// canvas cannot read. gas_shared/test/contracts/tokens.js pins the two to each other.
+export const ACCENT = "#2563eb";
 
 const reducedMotion =
   window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -792,7 +795,8 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
 // the dataviz check all-pairs on the light surface — normal-vision ΔE 19.8, colorblind ΔE 8.2 —
 // with the vivid light green/pink last (assigned to the smallest groups). The two lightest fills
 // clear only the surface-contrast relief bar, covered by the on-arc %, legend point-styles, and
-// direct labels. Kept in sync with --cat-* in styles.css by convention (canvas can't read CSS vars).
+// direct labels. Kept in sync with --chart-cat-* in styles/tokens.css by convention (canvas
+// can't read CSS vars).
 const CATEGORICAL = [
   "#2563eb", "#0d9488", "#90396a", "#7fba04", "#f66bb9",
 ];
