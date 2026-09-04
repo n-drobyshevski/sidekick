@@ -16,6 +16,29 @@
 // confidence and secret kind, and it renders no severity mark, no severity class and no
 // severity column. `test/pagesRegisters.test.js` asserts that over the whole file.
 //
+// VALIDITY IS THE SPINE, AND IT COMES FIRST. Every vendor that scans for credentials triages
+// on whether the credential is LIVE — GitHub's validity checks, GitGuardian's validity facet,
+// TruffleHog's "verified" flag, Wiz's own validation engine — and severity is demoted or
+// absent in all four. This page agreed in principle and disagreed in layout: the validation
+// state and the detector confidence were the SIXTH and SEVENTH blocks a reader met, several
+// screens below the four-corner table and the survival curve. So the first thing under the
+// hero is now `validityTriageView` — confirmed live / unchecked / confirmed dead over the OPEN
+// register, plus the removed-but-unrotated alarm — and the two segment tables that carry the
+// same measurement in full follow immediately after it, side by side.
+//
+// THE THREE VALIDITY FIGURES PARTITION THE OPEN REGISTER, and that is why they are read off
+// the `validation_state` segment rows rather than off `coverage`/`validity`. `bySegment`
+// buckets EVERY secrets row by its state and reports each bucket's own open count, so
+// VALID.open + INVALID.open + (everything else).open is exactly the open row count — one
+// table, two views, and a reader can check the arithmetic against the table below. Reading
+// the same three figures off `postDetectionValidityRate` would count resolved findings too
+// and the three would no longer add up to the "Open" figure in the header strip.
+//
+// NO CROSS-TAB. Validity and confidence qualify each other and a reader will want the joint
+// count; the payload does not carry one — `segments` is three INDEPENDENT one-axis
+// breakdowns — and a matrix multiplied out of two sets of marginals is a fabrication, not a
+// measurement. So the page draws the two tables side by side and says why there is no third.
+//
 // ITS OWN ENDPOINT, FOR THAT REASON. `api_getRegisterPage` REFUSES this scope;
 // `api_getSecretsPage` serves it, in two halves — `register` (the aging, ranking, movement
 // and concentration blocks a register page draws) and `secrets` (validation coverage,
@@ -38,7 +61,7 @@ import { bootstrapCached, swrCall } from "../store.js";
 import {
   absent, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount, fmtDate,
   glossaryTip, heroStat, meter, num, pageHeader, pct1, skeletonStack, statRow,
-  survivalTableModel,
+  survivalTableModel, uiIcon,
 } from "../ui.js";
 import {
   boundedDays, chartCard, concentrationModel, figureCard, missingColumnsNote, movementCard,
@@ -133,7 +156,7 @@ export function secretsModel(payload, opts) {
     opts && opts.synced,
   );
 
-  return {
+  const vm = {
     scope: "secrets",
     firstRun,
     asOf: reg.asOf ?? sec.asOf ?? null,
@@ -150,6 +173,11 @@ export function secretsModel(payload, opts) {
         ? "Nothing has been measured for this register yet."
         : `${fmtCount(rvr.removedNotRotated)} secrets left the code and nobody has `
           + "confirmed the credential is dead.",
+      // THE SECOND HERO LINE, filled in below once the model it reads exists. The alarm above
+      // is a corner of the removal/rotation table; this is the validity split the whole page
+      // now leads with, so the two sit together rather than seven blocks apart. Null on a
+      // first run: the line is not drawn at all there, rather than drawn full of dashes.
+      validitySentence: null,
       denominator:
         `${fmtCount(rvr.removedNotRotated)} of ${fmtCount(rvr.total)} secret findings have a `
         + "removal date and no rotation date. The credential is live until a validation says "
@@ -288,6 +316,156 @@ export function secretsModel(payload, opts) {
     // fixed here.
     missingColumns: missingColumnsNote(["first commit hash"]),
   };
+
+  // Derived from the model rather than beside it: the sentence reads the same segment rows
+  // the spine and the table below both read, so the three cannot drift into three answers.
+  vm.hero.validitySentence = firstRun.show ? null : validitySentence(validityTriageView(vm));
+  return vm;
+}
+
+// =========================================================================================
+//  The validity spine
+// =========================================================================================
+
+/** The glossary entry all three validity figures point at. */
+const VALIDITY_GLOSSARY = "validation-state";
+
+/** The two validation states that constitute a MEASUREMENT — `secretsLifecycle.ts`'s set. */
+export const VALIDITY_MEASURED_STATES = ["VALID", "INVALID"];
+
+/** The `validation_state` segment axis, which the spine and the first table both read. */
+const VALIDITY_AXIS = "validation_state";
+
+/** The two axes drawn side by side directly under the spine, in this order. */
+export const PAIRED_SEGMENT_AXES = [VALIDITY_AXIS, "confidence"];
+
+/** A segment row's axis value, normalised the way the domain normalises the column. */
+function segmentState(row) {
+  return String((row && row.segment) ?? "").trim().toUpperCase();
+}
+
+/**
+ * The four figures a reader of this register needs first, as data.
+ *
+ * PURE, AND OVER THE OPEN REGISTER. The first three read `open` off the `validation_state`
+ * segment rows, which is the same table drawn immediately below — so they partition the
+ * header strip's "Open" figure exactly, and a reader can add them up against the table
+ * rather than having to trust a second computation. Reading them off `postDetectionValidity`
+ * instead would fold resolved findings in and the three would stop summing to Open.
+ *
+ * "Unchecked" is EVERY state that is not VALID or INVALID — UNKNOWN, ERROR and the blank
+ * `(none)` bucket alike — rather than a list of the two spellings this tenant happens to
+ * return. A state nobody anticipated must land in "nobody checked", never quietly nowhere.
+ *
+ * NULL IS AN ANSWER. With no segment rows the three counts are `null`, not `0`: a register
+ * whose validation axis was never computed has not measured zero live credentials. One
+ * unreadable `open` cell makes its whole bucket null for the same reason — a partial sum
+ * printed as a total is the confident-zero failure in a different costume.
+ *
+ * The fourth figure is the alarm and it is NOT a validity state: `removedNotRotated` is a
+ * corner of the removal/rotation table, counted over the whole register (removal resolves a
+ * finding, so a removed row is not in the open denominator the other three share). Its
+ * denominator says so rather than letting the four look like one partition.
+ */
+export function validityTriageView(vm) {
+  const v = vm || {};
+  const axis = (v.segments || []).find((s) => s.axis === VALIDITY_AXIS);
+  const rows = (axis && axis.rows) || [];
+  const known = rows.length > 0;
+
+  const openWhere = (pred) => {
+    if (!known) return null;
+    let sum = 0;
+    for (const row of rows) {
+      if (!pred(segmentState(row))) continue;
+      const n = num(row.open);
+      if (n === null) return null;
+      sum += n;
+    }
+    return sum;
+  };
+
+  const open = num(v.open);
+  const live = openWhere((s) => s === "VALID");
+  const unchecked = openWhere((s) => !VALIDITY_MEASURED_STATES.includes(s));
+  const dead = openWhere((s) => s === "INVALID");
+
+  const rvr = v.removalVsRotation || {};
+  const alarmCell = (rvr.cells || []).find((c) => c.id === "removedNotRotated");
+  const alarm = alarmCell ? num(alarmCell.count) : null;
+  const registerTotal = num(rvr.total);
+  const ofOpen = (n) => `${fmtCount(n)} of ${fmtCount(open)} open`;
+
+  return {
+    known,
+    open,
+    registerTotal,
+    figures: [
+      {
+        id: "live",
+        label: "Confirmed live",
+        count: live,
+        alarm: false,
+        glossary: VALIDITY_GLOSSARY,
+        sub: `${ofOpen(live)} — the provider answered and the credential worked`,
+        denominator:
+          `${ofOpen(live)} findings read VALID: somebody asked the provider and the `
+          + "credential answered. The only rows this register can prove are still dangerous, "
+          + "and the ones a rotation queue is built from.",
+      },
+      {
+        id: "unchecked",
+        label: "Unchecked",
+        count: unchecked,
+        alarm: false,
+        glossary: VALIDITY_GLOSSARY,
+        sub: `${ofOpen(unchecked)} — nobody has asked the provider`,
+        denominator:
+          `${ofOpen(unchecked)} findings read UNKNOWN, ERROR or nothing at all — neither `
+          + "live nor dead, and the state most of this register is in. An unchecked "
+          + "credential is excluded from the revocation clock below, not counted as dead.",
+      },
+      {
+        id: "dead",
+        label: "Confirmed dead",
+        count: dead,
+        alarm: false,
+        glossary: VALIDITY_GLOSSARY,
+        sub: `${ofOpen(dead)} — the provider refused it`,
+        denominator:
+          `${ofOpen(dead)} findings read INVALID: the credential was observed dead. They are `
+          + "still open because the string is still in HEAD, which is a separate event with "
+          + "its own date.",
+      },
+      {
+        id: "removedNotRotated",
+        label: "Removed, not rotated",
+        count: alarm,
+        alarm: true,
+        glossary: "removed",
+        sub: `${fmtCount(alarm)} of ${fmtCount(registerTotal)} in register — the string left `
+          + "HEAD, the credential unconfirmed",
+        denominator:
+          `${fmtCount(alarm)} of ${fmtCount(registerTotal)} secret findings have a removal `
+          + "date and no rotation date. Counted over the whole register, not the open rows "
+          + "the three figures beside it share, because removing the string is what resolves "
+          + "the finding — and the credential is live until a validation says otherwise.",
+      },
+    ],
+  };
+}
+
+/**
+ * The hero's second line: the validity split in one sentence, with its open denominator.
+ *
+ * Every count goes through `fmtCount`, so a register whose validation axis was never computed
+ * says "—" three times rather than claiming three zeros.
+ */
+export function validitySentence(triage) {
+  const at = (id) => (triage.figures.find((f) => f.id === id) || {}).count;
+  return `Of ${fmtCount(triage.open)} open findings, ${fmtCount(at("live"))} credentials `
+    + `still work, ${fmtCount(at("unchecked"))} nobody has checked and `
+    + `${fmtCount(at("dead"))} are confirmed dead.`;
 }
 
 const SEGMENT_AXES = [
@@ -386,7 +564,14 @@ function paintSecrets(host, vm) {
     hero: heroStat(
       "Registers · Secrets",
       vm.hero.value,
-      vm.hero.sentence,
+      // TWO LINES, and the order is the argument: the alarm the figure counts, then the
+      // validity split it sits inside. On a first run `validitySentence` is null and the
+      // hero falls back to the one line, so the empty state is unchanged.
+      vm.hero.validitySentence
+        ? el("span", {},
+          el("span", { class: "hero-line" }, vm.hero.sentence),
+          el("span", { class: "hero-line" }, vm.hero.validitySentence))
+        : vm.hero.sentence,
       { term: "secret-resolved" },
     ),
     aside: el("div", { class: "page-strip" },
@@ -421,6 +606,38 @@ function paintSecrets(host, vm) {
   }
 
   host.append(denomNote(vm.hero.denominator));
+
+  // ------------------------------------------------------------------ the validity spine
+  // FIRST, BEFORE THE FOUR CORNERS AND THE CURVE. Whether the credential is live is the
+  // question every one of this page's other blocks is read against, so it is the first thing
+  // under the hero rather than the sixth block down. `test/secretsTriage.test.js` pins that
+  // order in the source text.
+  const triage = validityTriageView(vm);
+  host.append(el("div", { class: "kpi-row" },
+    ...triage.figures.map((f) => figureCard({
+      label: f.label,
+      value: fmtCount(f.count),
+      sub: f.sub,
+      help: { term: f.glossary },
+      denominator: f.denominator,
+      // COLOUR IS NEVER THE ONLY CUE. The alarm card carries a glyph and the word beside it;
+      // the tint is the third signal, not the first, and no severity mark is available here
+      // by construction — this page has none.
+      chip: f.alarm ? alarmChip() : null,
+    })),
+  ));
+
+  // ------------------------------------------------- validity x confidence, side by side
+  host.append(el("p", { class: "small muted" },
+    "Read the two tables below together: the validation state says whether anybody asked the "
+    + "provider, and the detector confidence says how sure the scanner was that the matched "
+    + "string is a credential at all. They are counted on separate axes and the register "
+    + "carries no joint count, so this is two tables rather than a cross-tab multiplied out "
+    + "of two sets of totals."));
+  const paired = PAIRED_SEGMENT_AXES
+    .map((axis) => vm.segments.find((s) => s.axis === axis))
+    .filter(Boolean);
+  if (paired.length) host.append(el("div", { class: "card-pair" }, ...paired.map(segmentCard)));
 
   // ------------------------------------------------------------ removed is not rotated
   host.append(sectionCard("Removed is not rotated", "removed",
@@ -573,50 +790,11 @@ function paintSecrets(host, vm) {
   ));
 
   // ---------------------------------------------------------------------- segments
+  // Only the axes not already drawn in the pair above — `secret_kind`, which is a breakdown
+  // rather than a triage question and belongs beside the other breakdowns.
   for (const seg of vm.segments) {
-    host.append(sectionCard(seg.label, seg.glossary,
-      seg.rows.length
-        ? el("div", {},
-          el("div", { class: "table-host" }, dataTable({
-            columns: [
-              { key: "segment", label: "Segment", cell: (r) => r.segment },
-              { key: "total", label: "Findings", className: "num", cell: (r) => fmtCount(r.total) },
-              { key: "open", label: "Open", className: "num", cell: (r) => fmtCount(r.open) },
-              {
-                key: "measured",
-                label: "Validated",
-                className: "num",
-                cell: (r) => (r.measured ? fmtCount(r.measured) : absent()),
-                help: { term: "validation-state" },
-              },
-              {
-                key: "valid",
-                label: "Still works",
-                className: "num",
-                cell: (r) => (r.measured ? fmtCount(r.valid) : absent()),
-              },
-              {
-                key: "rotated",
-                label: "Rotated",
-                className: "num",
-                cell: (r) => fmtCount(r.rotated),
-                help: { term: "rotated" },
-              },
-              {
-                key: "removedNotRotated",
-                label: "Removed, not rotated",
-                className: "num",
-                cell: (r) => fmtCount(r.removedNotRotated),
-                help: { term: "removed" },
-              },
-            ],
-            rows: seg.rows,
-            emptyText: "No findings on this axis.",
-          })),
-          denomNote(seg.denominator),
-        )
-        : emptyState("Nothing on this axis.", seg.denominator),
-    ));
+    if (PAIRED_SEGMENT_AXES.includes(seg.axis)) continue;
+    host.append(segmentCard(seg));
   }
 
   // ------------------------------------------------------------------------ exposure
@@ -742,4 +920,66 @@ function paintSecrets(host, vm) {
   host.append(sectionCard("How the register was counted", "twin",
     el("p", {}, vm.twinNote),
   ));
+}
+
+/**
+ * The alarm mark on the removed-but-unrotated card: a glyph AND a word, never a tint alone.
+ *
+ * The pill's own status dot is suppressed by `.kpi-chip` — the glyph already does that job,
+ * and two marks side by side read as two states. There is no severity mark available here in
+ * any case: this page has no severity axis, and this is deliberately not one.
+ */
+function alarmChip() {
+  return el("span", { class: "pill warn kpi-chip" }, uiIcon("alert", 12), "Unconfirmed");
+}
+
+/**
+ * One segment axis as a card. Extracted so the two triage axes can be drawn as a pair under
+ * the spine while `secret_kind` stays down with the other breakdowns — one table definition,
+ * three call sites, rather than the layout change forking the columns.
+ */
+function segmentCard(seg) {
+  return sectionCard(seg.label, seg.glossary,
+    seg.rows.length
+      ? el("div", {},
+        el("div", { class: "table-host" }, dataTable({
+          columns: [
+            { key: "segment", label: "Segment", cell: (r) => r.segment },
+            { key: "total", label: "Findings", className: "num", cell: (r) => fmtCount(r.total) },
+            { key: "open", label: "Open", className: "num", cell: (r) => fmtCount(r.open) },
+            {
+              key: "measured",
+              label: "Validated",
+              className: "num",
+              cell: (r) => (r.measured ? fmtCount(r.measured) : absent()),
+              help: { term: "validation-state" },
+            },
+            {
+              key: "valid",
+              label: "Still works",
+              className: "num",
+              cell: (r) => (r.measured ? fmtCount(r.valid) : absent()),
+            },
+            {
+              key: "rotated",
+              label: "Rotated",
+              className: "num",
+              cell: (r) => fmtCount(r.rotated),
+              help: { term: "rotated" },
+            },
+            {
+              key: "removedNotRotated",
+              label: "Removed, not rotated",
+              className: "num",
+              cell: (r) => fmtCount(r.removedNotRotated),
+              help: { term: "removed" },
+            },
+          ],
+          rows: seg.rows,
+          emptyText: "No findings on this axis.",
+        })),
+        denomNote(seg.denominator),
+      )
+      : emptyState("Nothing on this axis.", seg.denominator),
+  );
 }

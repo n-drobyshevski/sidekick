@@ -37,6 +37,11 @@
 .page-hero-sub, .cov-hero-sub, .inv-hero-sub, .help-hero-sub {
   font-size: var(--fs-label); color: var(--text-3); margin: var(--space-1) 0 0;
 }
+/* A hero sub-line that carries two sentences rather than one: the alarm the figure counts,
+   then the split it sits inside. Blocks rather than a wrap, so the second never reads as a
+   continuation of the first. */
+.page-hero-sub .hero-line { display: block; }
+.page-hero-sub .hero-line + .hero-line { margin-top: var(--space-half); }
 /* No aside: widen the column that is actually carrying something, from ~257px to up to
    460px, so the hero's supporting line stops wrapping beside a thousand empty pixels. The
    SECOND column stays (empty) rather than collapsing to one: .stat-list spans 1 / -1, and on
@@ -56,6 +61,25 @@
 
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-3); margin: 0 0 var(--space-5); }
 .kpi-card { padding: var(--space-3) var(--space-4); }
+/* The chip slot kpiCard has always had and nothing used: a small qualifier riding beside the
+   figure rather than under it, so a card can carry a state without a second line. The
+   secrets register's alarm card is the first caller — its pill drops the status dot every
+   other pill draws, because that variant carries a glyph and the two marks side by side read
+   as two states rather than one. */
+.kpi-value .pill { margin-left: var(--space-2); vertical-align: middle; gap: var(--space-half); }
+.pill.kpi-chip::before { content: none; }
+/* Two cards read as one pair — the secrets register's validation state and detector
+   confidence, which qualify each other and are counted on separate axes. Side by side once
+   the viewport can hold both without either losing a column; below that they stack, which is
+   what a single card already does. */
+.card-pair { display: grid; gap: var(--space-3); }
+/* min-width:0, and it is not optional: a grid item's default `min-width: auto` refuses to
+   shrink below its content, so a seven-column table inside one of these pushed its own track
+   past 1fr and drew the card's right border off the side of the pane. With the floor released
+   the table scrolls inside its own `.table-wrap` instead, which is what every other table on
+   these pages already does. */
+.card-pair > * { min-width: 0; }
+@media (min-width: 1100px) { .card-pair { grid-template-columns: 1fr 1fr; align-items: start; } }
 .kpi-label { font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); }
 .kpi-value { font-size: var(--fs-display); font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin-top: var(--space-half); }
 .kpi-sub { font-size: var(--fs-label); color: var(--text-3); margin-top: var(--space-half); }
