@@ -36,6 +36,10 @@ const PATHS = {
     "M9.5 2.5 H13.5 V6.5",
   ],
   info: ["M8 1.5 a6.5 6.5 0 1 0 0 13 a6.5 6.5 0 0 0 0 -13", "M8 5.3 h0.01", "M8 7.3 V11"],
+  // The settings tablist's per-tab invalid marker: same circle as `info`, mirrored — the
+  // stem sits on top and the dot at the bottom, the conventional alert-in-circle shape, so
+  // it never reads as the same glyph as `info` at a glance.
+  alert: ["M8 1.5 a6.5 6.5 0 1 0 0 13 a6.5 6.5 0 0 0 0 -13", "M8 4.7 V9", "M8 11.3 h0.01"],
   graph: [
     "M4 10.7 a1.3 1.3 0 1 0 0 2.6 a1.3 1.3 0 0 0 0 -2.6",
     "M8 3.7 a1.3 1.3 0 1 0 0 2.6 a1.3 1.3 0 0 0 0 -2.6",

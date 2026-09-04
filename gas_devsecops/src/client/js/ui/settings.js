@@ -15,6 +15,7 @@
 // sheet's scrim.
 
 import { clear, el } from "./dom.js";
+import { uiIcon } from "./uiIcons.js";
 
 /**
  * A settings card: a header (title + optional description), a body of controls, and an
@@ -97,7 +98,13 @@ export function switchToggle({ checked = false, id, ariaLabel, disabled = false,
  *
  * `setDirty` marks a tab whose panel holds unsaved edits: a painted dot AND the words
  * "unsaved changes" appended to the tab's accessible name, because a tabbed page can hide a
- * dirty control and a dot alone would say so only to people who can see it.
+ * dirty control and a dot alone would say so only to people who can see it. `setInvalid`
+ * marks a tab holding a field that fails validation the same way — a red alert glyph, "has
+ * errors" in the accessible name, and `aria-invalid="true"` on the tab button itself — and
+ * the two are independent: a field can be invalid without being dirty (an in-progress
+ * keystroke that never committed to the draft, so it never counts as a change) and dirty
+ * without being invalid (the ordinary case). Both can be true on the same tab at once, and
+ * the accessible name then carries both clauses so a screen-reader user loses neither.
  *
  * `tabs` is `[{ key, label, badge? }]`; `badge` is a node shown after the label.
  * `onSelect(key)` fires on activation, including the initial one, so the caller has a single
@@ -110,19 +117,25 @@ export function tabList({ tabs, active, onSelect, ariaLabel, idPrefix = "tab" })
 
   for (const t of tabs) {
     const dot = el("span", { class: "tabstrip__dot", "aria-hidden": "true", hidden: true });
+    const invalidGlyph = el(
+      "span", { class: "tabstrip__invalid", "aria-hidden": "true", hidden: true }, uiIcon("alert", 14),
+    );
     const btn = el("button", {
       type: "button", class: "tabstrip__tab", role: "tab",
       id: idPrefix + "-" + t.key, "aria-controls": idPrefix + "-panel-" + t.key,
-      "aria-selected": "false", tabindex: "-1",
+      "aria-selected": "false", tabindex: "-1", "aria-invalid": "false",
       onclick: () => select(t.key),
-    }, el("span", { class: "tabstrip__label" }, t.label), t.badge || null, dot);
-    byKey[t.key] = { btn, dot, label: t.label, dirty: false };
+    }, el("span", { class: "tabstrip__label" }, t.label), t.badge || null, dot, invalidGlyph);
+    byKey[t.key] = { btn, dot, invalidGlyph, label: t.label, dirty: false, invalid: false };
     strip.append(btn);
   }
 
   function syncName(key) {
     const e = byKey[key];
-    e.btn.setAttribute("aria-label", e.dirty ? e.label + ", unsaved changes" : e.label);
+    const clauses = [];
+    if (e.dirty) clauses.push("unsaved changes");
+    if (e.invalid) clauses.push("has errors");
+    e.btn.setAttribute("aria-label", clauses.length ? e.label + ", " + clauses.join(", ") : e.label);
   }
 
   function select(key, moveFocus) {
@@ -163,6 +176,14 @@ export function tabList({ tabs, active, onSelect, ariaLabel, idPrefix = "tab" })
       if (!e || e.dirty === !!on) return;
       e.dirty = !!on;
       e.dot.hidden = !on;
+      syncName(key);
+    },
+    setInvalid(key, on) {
+      const e = byKey[key];
+      if (!e || e.invalid === !!on) return;
+      e.invalid = !!on;
+      e.invalidGlyph.hidden = !on;
+      e.btn.setAttribute("aria-invalid", on ? "true" : "false");
       syncName(key);
     },
   };
