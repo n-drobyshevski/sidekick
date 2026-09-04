@@ -30,11 +30,21 @@
 // So this page draws the two series it was actually sent and says, in words, where the third
 // one lives, rather than drawing an empty axis under a promise nothing here can keep.
 
-import { swrCall } from "../store.js";
+// `fmtCount` WAS MISSING FROM THIS IMPORT LIST and the whole page threw on every render.
+// The figure-module consolidation moved `num`/`fmtCount`/`days1`/`denomNote` out of this file
+// into `ui/figures.js` (see the note below) and re-imported three of the four; `fmtCount` is
+// called four times in `renderKpis` and `renderPerScope` and was never brought back, so
+// `renderKpis` raised `ReferenceError: fmtCount is not defined` before drawing a single card
+// and the page rendered its fetch-failure box instead — seeded and empty alike. Nothing
+// caught it because the catch printed "Couldn't load scan history." in a calm `role="status"`
+// box that looks like an empty register, which is the exact confusion the first-run package
+// was opened to end. Swapping that box for `errorState` is what made it visible.
+import { bootstrap, swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   DEFAULT_PAGE_SIZE, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el,
-  emptyState, fmtCount, fmtDate, fmtDateTime, glossaryTip, heroStat, kpiCard, num,
+  emptyState, errorState, firstRunNotice, fmtCount, fmtDate, fmtDateTime, glossaryTip,
+  heroStat, kpiCard, num,
   onPageTeardown, pageHeader, pageOf, registerWideNote, sectionLabel, skeletonStack, sortRows,
   tableFooter,
 } from "../ui.js";
@@ -191,6 +201,7 @@ export function perScopeView(perScope) {
 // ----------------------------------------------------------------------------- the page
 
 export async function renderHistory(host, _params, _ctx) {
+  const boot = await bootstrap();
   host.append(pageHeader({
     hero: heroStat(
       "Data",
@@ -199,7 +210,9 @@ export async function renderHistory(host, _params, _ctx) {
     ),
   }));
 
-  const observedHost = el("p", { class: "small muted" });
+  // A DIV, not a <p>: on the first run this slot holds the shared first-run notice, which is
+  // a block with its own children, and a <p> cannot legally contain one.
+  const observedHost = el("div", { class: "small muted" });
   const kpiHost = el("div", { class: "kpi-row" });
   const perScopeHost = el("div", {});
   const tableHost = el("div", {});
@@ -226,9 +239,13 @@ export async function renderHistory(host, _params, _ctx) {
   const promise = swrCall("api_getScanHistory", {}, (fresh) => paint && paint(fresh));
 
   paint = (payload) => {
+    // `observedFrom` is the page's own honest signal and it is already what `renderObserved`
+    // gates on: it is the first saved scan's date, so a null there means nothing has ever
+    // been measured and every figure below is a count over a window that does not exist.
+    const first = !(payload && payload.observedFrom);
     renderObserved(payload);
-    renderKpis(payload);
-    renderPerScope(payload);
+    renderKpis(payload, first);
+    renderPerScope(payload, first);
     renderTable(payload);
     renderTrends(payload);
   };
@@ -237,20 +254,46 @@ export async function renderHistory(host, _params, _ctx) {
     paint(await promise);
   } catch (e) {
     console.error("[history] api_getScanHistory failed:", e);
-    clear(kpiHost).append(emptyState("Couldn't load scan history.", String((e && e.message) || e)));
+    // A failure, not an absence — this page's whole subject is what HAS been measured, so
+    // announcing a fetch failure in the same voice as "nothing measured yet" was the worst
+    // place in the register to confuse the two.
+    clear(kpiHost).append(errorState(
+      "Couldn't load scan history.",
+      { detail: String((e && e.message) || e) },
+    ));
   }
 
   function renderObserved(payload) {
     const from = payload && payload.observedFrom;
     clear(observedHost);
-    observedHost.textContent = from
-      ? `Watching since ${fmtDate(from)} — the first saved scan dates the observation window.`
-      : "No observation window yet: no scan has been saved, so nothing dates when watching began.";
+    if (from) {
+      observedHost.append(el("p", { class: "small muted" },
+        `Watching since ${fmtDate(from)} — the first saved scan dates the observation window.`));
+      return;
+    }
+    // The SAME notice every other page carries, rather than this page's own wording for the
+    // same state. A reader moving between pages should meet one sentence, not four.
+    observedHost.append(firstRunNotice({
+      synced: !!boot.latestSync,
+      hint: "Nothing dates when watching began, so there is no observation window for the"
+        + " figures below to sit inside. Run a sync from the scan zone in the rail.",
+    }));
   }
 
-  function renderKpis(payload) {
+  function renderKpis(payload, first) {
     const v = kpiView(payload && payload.kpis);
     clear(kpiHost);
+    // SUPPRESSED, not dashed — the convention the Program lane already uses. "Tracked
+    // (all-time) 0" over a register that has never been read is the same confident zero the
+    // front door was printing, and this page is where a reader comes to check that.
+    if (first) {
+      kpiHost.append(emptyState(
+        "Nothing has been tracked yet.",
+        "These four are all-time counts over saved scans, so the first sync is what starts"
+        + " them.",
+      ));
+      return;
+    }
     kpiHost.append(
       kpiCard("Tracked (all-time)", fmtCount(v.tracked)),
       kpiCard("Currently open", fmtCount(v.open)),
@@ -267,9 +310,17 @@ export async function renderHistory(host, _params, _ctx) {
     );
   }
 
-  function renderPerScope(payload) {
+  function renderPerScope(payload, first) {
     const rows = perScopeView(payload && payload.perScope);
     clear(perScopeHost);
+    if (first) {
+      perScopeHost.append(emptyState(
+        "No register has been scanned yet.",
+        "This table is the record of what each register was asked for and when, so it fills"
+        + " in one row per register per sync.",
+      ));
+      return;
+    }
     perScopeHost.append(dataTable({
       columns: [
         { key: "label", label: "Register", cell: (r) => r.label },

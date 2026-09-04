@@ -224,7 +224,13 @@ export async function renderRepos(host, _params, _ctx) {
     paint(await promise);
   } catch (e) {
     console.error("[repos] api_getReposPage failed:", e);
-    clear(densityHost).append(emptyState("Couldn't load the repository profile.", String((e && e.message) || e)));
+    // errorState, like `renderOwnership` below already uses — this one call site was the
+    // page's last "failure dressed as an absence", and it sat two functions above a correct
+    // use of the right component.
+    clear(densityHost).append(errorState(
+      "Couldn't load the repository profile.",
+      { detail: String((e && e.message) || e) },
+    ));
   }
 
   function renderDensity(model) {

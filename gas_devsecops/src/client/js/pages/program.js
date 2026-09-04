@@ -26,10 +26,11 @@
 // and both are excluded from the headline close rate by the server — `monthsCounted` is
 // published beside it so the sample can be checked.
 
-import { swrCall } from "../store.js";
+import { bootstrap, swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  chartTable, chartTableModel, clear, dataTable, el, emptyState, glossaryTip, heroStat, kpiCard,
+  chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState, firstRunNotice,
+  glossaryTip, heroStat, kpiCard,
   onPageTeardown, pageHeader, pluralize, sectionLabel, skeleton, statRow, statusPill,
 } from "../ui.js";
 import { fmtCount, fmtDays } from "./mttr.js";
@@ -79,7 +80,7 @@ const VERDICT_KINDS = { gaining: "ok", "keeping-up": "neutral", "falling-behind"
  * unclassified. That is the one case where a bare number is the whole truth, and the domain's
  * own comment says so.
  */
-export function boundedRateView(rate, denominator, denominatorLabel) {
+export function boundedRateView(rate, denominator, denominatorLabel, emptyLabel) {
   const r = rate || {};
   const den = Number(denominator);
   const point = r.point === null || r.point === undefined ? null : Number(r.point);
@@ -99,6 +100,10 @@ export function boundedRateView(rate, denominator, denominatorLabel) {
     hasBounds,
     denominator: Number.isFinite(den) ? den : null,
     denominatorLabel,
+    // See `rateView` in mttr.js. A base of zero is not a base, and its LABEL must not restate
+    // the zero next to "not measured" — that pairing reads as a measurement of nothing.
+    baseEmpty: !(Number.isFinite(den) && den > 0),
+    emptyLabel: emptyLabel || "nothing has been measured to take it over",
   };
 }
 
@@ -120,11 +125,13 @@ export function coverageEfficiencyView(matrix) {
     m.coverage,
     coverageDen,
     fmtCount(coverageDen) + " classified high-risk findings",
+    "no finding has been classified high risk",
   );
   const efficiency = boundedRateView(
     m.efficiency,
     efficiencyDen,
     fmtCount(efficiencyDen) + " classified remediations",
+    "no classified finding has been remediated",
   );
   const prevalence = m.prevalence === null || m.prevalence === undefined
     ? null
@@ -147,6 +154,7 @@ export function coverageEfficiencyView(matrix) {
       { point: m.signalCoveragePct, lo: m.signalCoveragePct, hi: m.signalCoveragePct },
       total,
       fmtCount(total) + " findings in scope",
+      "no finding is in scope to be scored",
     ),
   };
 }
@@ -363,12 +371,18 @@ function scopeParam(params) {
   return s === "sca" || s === "sast" || s === "secrets" ? s : null;
 }
 
-/** A `[data-denominator]` node — every rate on this page is followed by one of these. */
+/**
+ * A `[data-denominator]` node — every rate on this page is followed by one of these.
+ *
+ * The ATTRIBUTE always carries the number, a zero included. The visible text does not restate
+ * a zero base beside "not measured" — see `rateView` in mttr.js, which this page's rates come
+ * from, for why that pairing is the failure and not the disclosure.
+ */
 function denominatorNode(rate) {
   return el("span", {
     class: "small muted",
     "data-denominator": rate.denominator === null ? "none" : String(rate.denominator),
-  }, rate.denominatorLabel);
+  }, rate.baseEmpty ? "— " + rate.emptyLabel : rate.denominatorLabel);
 }
 
 /** The figure, its interval, and its base — the three things a rate is never published
@@ -381,6 +395,7 @@ function rateCell(rate) {
 }
 
 export async function renderProgram(host, params, _ctx) {
+  const boot = await bootstrap();
   const scope = scopeParam(params);
 
   let paint = null;
@@ -390,13 +405,14 @@ export async function renderProgram(host, params, _ctx) {
     (fresh) => paint && paint(fresh),
   );
 
+  const noticeHost = el("div", {});
   const heroHost = el("div", {});
   const matrixHost = el("div", {});
   const signalHost = el("div", {});
   const sensitivityHost = el("div", {});
   const capacityHost = el("div", {});
   const trendHost = el("div", {});
-  host.append(heroHost, matrixHost, signalHost, sensitivityHost, capacityHost, trendHost);
+  host.append(noticeHost, heroHost, matrixHost, signalHost, sensitivityHost, capacityHost, trendHost);
 
   let live = true;
   onPageTeardown(() => { live = false; });
@@ -406,7 +422,11 @@ export async function renderProgram(host, params, _ctx) {
       fn();
     } catch (e) {
       console.error("[program] " + label + " render failed:", e);
-      clear(target).append(emptyState("Couldn't render " + label + "."));
+      // A render that THREW is a defect, not an absence — see feedback.js.
+      clear(target).append(errorState(
+        "Couldn't render " + label + ".",
+        { detail: String((e && e.message) || e) },
+      ));
     }
   }
 
@@ -418,9 +438,11 @@ export async function renderProgram(host, params, _ctx) {
 
   paint = (payload) => {
     const program = (payload && payload.program) || null;
-    guard("coverage and efficiency", heroHost, () => renderHero(program));
-    guard("the confusion matrix", matrixHost, () => renderMatrix(program));
-    guard("the signal breakdown", signalHost, () => renderSignals(program));
+    const first = Number((program && program.rowCount) || 0) === 0;
+    guard("the first-run notice", noticeHost, () => renderFirstRun(first));
+    guard("coverage and efficiency", heroHost, () => renderHero(program, first));
+    guard("the confusion matrix", matrixHost, () => renderMatrix(program, first));
+    guard("the signal breakdown", signalHost, () => renderSignals(program, first));
     guard("rule sensitivity", sensitivityHost, () => renderSensitivity(program));
     guard("monthly capacity", capacityHost, () => renderCapacity(program));
     guard("the coverage trend", trendHost, () => renderTrend(payload, program));
@@ -430,15 +452,26 @@ export async function renderProgram(host, params, _ctx) {
     paint(await data);
   } catch (e) {
     console.error("[program] api_getProgramPage failed:", e);
-    clear(heroHost).append(emptyState(
+    clear(heroHost).append(errorState(
       "Couldn't load programme data.",
-      String((e && e.message) || e),
+      { detail: String((e && e.message) || e) },
     ));
+  }
+
+  function renderFirstRun(first) {
+    clear(noticeHost);
+    if (!first) return;
+    noticeHost.append(firstRunNotice({
+      synced: !!boot.latestSync,
+      hint: "Coverage and efficiency are both taken over findings the risk rule has scored,"
+        + " so this page waits on a sync that saves rows for it to score. Run one from the"
+        + " scan zone in the rail.",
+    }));
   }
 
   // ------------------------------------------------------------------------------ hero
 
-  function renderHero(program) {
+  function renderHero(program, first) {
     clear(heroHost);
     if (!program) {
       heroHost.append(emptyState("No programme figures yet."));
@@ -473,7 +506,10 @@ export async function renderProgram(host, params, _ctx) {
         { term: "coverage" },
       ),
       aside,
-      stats: [
+      // "Classified: not measured — 0 of 0 findings scored" is the same zero-glued-to-an
+      // -absence the SLA line carried. On an unread ledger the notice above already says
+      // what the whole page waits on, so the stat row is dropped rather than dashed.
+      stats: first ? [] : [
         statRow(
           "Prevalence",
           view.prevalenceText,
@@ -523,11 +559,23 @@ export async function renderProgram(host, params, _ctx) {
 
   // -------------------------------------------------------------------- confusion matrix
 
-  function renderMatrix(program) {
+  function renderMatrix(program, first) {
     clear(matrixHost);
     matrixHost.append(sectionLabel("The confusion matrix"));
     if (!program) {
       matrixHost.append(emptyState("No matrix yet."));
+      return;
+    }
+    // The SECTION STAYS, its figures do not. Four cells of `0` and an `Unclassified 0` beside
+    // them describe a rule that has been run against nothing — and a reader cannot tell that
+    // apart from a rule that placed every row. The heading is kept so the page is not
+    // silently shorter than itself.
+    if (first) {
+      matrixHost.append(emptyState(
+        "The rule has not been run against a finding yet.",
+        "Each of the four cells counts findings by what the rule said and what happened to"
+        + " them, so all four wait on the first sync that saves a row.",
+      ));
       return;
     }
     const view = confusionView(program.matrix);
@@ -581,11 +629,23 @@ export async function renderProgram(host, params, _ctx) {
 
   // -------------------------------------------------------------------- signal breakdown
 
-  function renderSignals(program) {
+  function renderSignals(program, first) {
     clear(signalHost);
     signalHost.append(sectionLabel("What the rule fired on"));
     if (!program) {
       signalHost.append(emptyState("No signal breakdown yet."));
+      return;
+    }
+    // "Fired on 0 · Never captured 0" is a VERDICT on a clause, and this page argues in its
+    // own caption that a coverage of 0% is a measurement — it separates "the AI agreed with
+    // nothing" from "nobody asked the AI". Neither of those is true over an unread ledger,
+    // and printing twelve zeros here would make a third thing look like both.
+    if (first) {
+      signalHost.append(emptyState(
+        "No clause has had a finding to fire on.",
+        "Each row here is a clause of the risk rule; the counts beside it appear once a sync"
+        + " has saved findings for the rule to read.",
+      ));
       return;
     }
     const view = signalBreakdownView(program.signals, program.signalCoverage, program.rowCount);

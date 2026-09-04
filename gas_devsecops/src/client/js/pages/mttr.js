@@ -27,12 +27,12 @@
 // of curves. `shipKM` also drops `naiveMedian` / `naiveMean`, so the survival chart draws the
 // two Kaplan-Meier markers and no closed-only comparison.
 
-import { swrCall } from "../store.js";
+import { bootstrap, swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  chartTable, chartTableModel, clear, dataTable, el, emptyState, fmtCount, fmtDays, heroStat,
-  kpiCard, onPageTeardown, pageHeader, pluralize, sectionLabel, sevBadge, sevEntries,
-  sevSegmentBar, skeleton, statRow, survivalTableModel,
+  chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState, firstRunNotice,
+  fmtCount, fmtDays, heroStat, kpiCard, num, onPageTeardown, pageHeader, pluralize,
+  sectionLabel, sevBadge, sevEntries, sevSegmentBar, skeleton, statRow, survivalTableModel,
 } from "../ui.js";
 
 // ---------------------------------------------------------------------------- formatting
@@ -103,20 +103,72 @@ export function kmHalfLifeView(km) {
  * Every rate on this page goes through here, and every rendered rate puts
  * `denominator`/`denominatorLabel` into a `[data-denominator]` node beside the figure.
  *
+ * A BASE OF ZERO IS ITS OWN CASE, and `baseEmpty` is why. `denominatorLabel` is written by
+ * the caller as a count plus a noun — `"0 resolved"`, `"0 open findings"` — so on an unread
+ * ledger the rendered sentence came out as "not measured 0 resolved": an unmeasured claim
+ * with a number glued to it, which a reader reads as data. PRODUCT.md's corollary is exact
+ * — never a zero that means "unknown" — so where the base is empty the renderer uses
+ * `emptyLabel`, which names the missing population WITHOUT restating its size. The
+ * denominator itself still travels in `denominator` and in the `[data-denominator]`
+ * attribute, so nothing is lost to a test or to a reader who asks.
+ *
+ * `measured: false` with a base that DOES exist (`rateView(undefined, 12, …)`) is a different
+ * state — the server did not compute the rate over a population that is really there — and
+ * keeps the caller's label, because there the number is a fact.
+ *
  * @param {number|null|undefined} pct  a percentage the server already computed, or null
  * @param {number} denominator         the base it was taken over
  * @param {string} denominatorLabel    what that base counts, in words
+ * @param {string} [emptyLabel]        what to say instead when that base is empty
  */
-export function rateView(pct, denominator, denominatorLabel) {
+export function rateView(pct, denominator, denominatorLabel, emptyLabel) {
   const den = Number(denominator);
   const value = pct === null || pct === undefined ? null : Number(pct);
-  const usable = Number.isFinite(den) && den > 0 && value !== null && Number.isFinite(value);
+  const hasBase = Number.isFinite(den) && den > 0;
+  const usable = hasBase && value !== null && Number.isFinite(value);
   return {
     measured: usable,
     value: usable ? value : null,
     text: usable ? fmtPct(value) : "not measured",
     denominator: Number.isFinite(den) ? den : null,
     denominatorLabel,
+    baseEmpty: !hasBase,
+    emptyLabel: emptyLabel || "nothing has been measured to take it over",
+  };
+}
+
+/**
+ * P90, and the sub-line it is allowed to carry.
+ *
+ * "nine in ten close by here" WAS PRINTED UNDER AN EM DASH, on the seeded page as well as
+ * the empty one — a sentence describing a value that is not there. The two absences are not
+ * the same absence and the caption says which:
+ *
+ *   p90 present        "41 days"  "nine in ten close by here"
+ *   events, no p90     "—"        the curve never reached nine in ten inside the window
+ *   no events at all   "—"        nothing has closed, so there is no percentile to place
+ *
+ * The middle case is the normal state of this register — the same reason the hero publishes
+ * a lower bound instead of a median — and it is a statement about the WINDOW, not about the
+ * findings. Collapsing the two would say "nothing closed" over a register where 138 things
+ * did.
+ */
+export function kmP90View(km) {
+  // `num`, not `Number`. `Number("")` is 0 and 0 is finite, so a blank P90 arriving from a
+  // hand-edited cell would have rendered "0 days" under "nine in ten close by here" — the
+  // exact shape CLAUDE.md names, one line below a comment about not doing it.
+  const raw = num(km && km.p90);
+  const events = num(km && km.events, 0);
+  if (raw !== null) {
+    return { measured: true, value: fmtDays(raw), days: raw, note: "nine in ten close by here" };
+  }
+  return {
+    measured: false,
+    value: "—",
+    days: null,
+    note: events > 0
+      ? "the curve never reaches nine in ten inside the observed window"
+      : "nothing has closed yet, so there is no percentile to place",
   };
 }
 
@@ -305,7 +357,7 @@ export function actionableClockView(mttr, opts) {
       + "construction. Only SCA can leave a fix date unknown, and a null there is what puts a "
       + "finding in the awaiting-a-vendor bucket rather than in the actionable one.",
   };
-  if (!a) return { ...base, show: false };
+  if (!a) return { ...base, show: false, populated: false };
   const rowCount = Number(a.rowCount || 0);
   const notMeasured = Number(a.notMeasured || 0);
   const half = kmHalfLifeView(a.km);
@@ -314,6 +366,10 @@ export function actionableClockView(mttr, opts) {
   return {
     ...base,
     show: true,
+    // The block EXISTS but has no SCA population behind it — which is not the same as the
+    // server not shipping it, and is not "0 SCA lifecycles measured" either. Rendering the
+    // KPI row here printed a bare `0` under "Measured here" over a register nobody has read.
+    populated: rowCount + notMeasured > 0,
     rowCount,
     notMeasured,
     half,
@@ -337,12 +393,18 @@ function scopeParam(params) {
   return s === "sca" || s === "sast" || s === "secrets" ? s : null;
 }
 
-/** A `[data-denominator]` node — every rate on this page is followed by one of these. */
+/**
+ * A `[data-denominator]` node — every rate on this page is followed by one of these.
+ *
+ * The ATTRIBUTE always carries the number, including a zero: a test and a reader who asks
+ * both get the base. The visible text does not restate a zero base, because "not measured"
+ * followed by "0 resolved" reads as a measurement of nothing rather than as an absence.
+ */
 function denominatorNode(rate) {
   return el("span", {
     class: "small muted",
     "data-denominator": rate.denominator === null ? "none" : String(rate.denominator),
-  }, rate.denominatorLabel);
+  }, rate.baseEmpty ? "— " + rate.emptyLabel : rate.denominatorLabel);
 }
 
 /** A rate and its base as one cell: the figure, then the base under it. */
@@ -351,6 +413,7 @@ function rateCell(rate) {
 }
 
 export async function renderMttr(host, params, _ctx) {
+  const boot = await bootstrap();
   const scope = scopeParam(params);
 
   let paint = null;
@@ -360,6 +423,7 @@ export async function renderMttr(host, params, _ctx) {
     (fresh) => paint && paint(fresh),
   );
 
+  const noticeHost = el("div", {});
   const heroHost = el("div", {});
   const curveHost = el("div", {});
   const sevHost = el("div", {});
@@ -367,7 +431,7 @@ export async function renderMttr(host, params, _ctx) {
   const bucketHost = el("div", {});
   const clockHost = el("div", {});
   const trendHost = el("div", {});
-  host.append(heroHost, curveHost, sevHost, slaHost, bucketHost, clockHost, trendHost);
+  host.append(noticeHost, heroHost, curveHost, sevHost, slaHost, bucketHost, clockHost, trendHost);
 
   let live = true;
   onPageTeardown(() => { live = false; });
@@ -377,7 +441,13 @@ export async function renderMttr(host, params, _ctx) {
       fn();
     } catch (e) {
       console.error("[mttr] " + label + " render failed:", e);
-      clear(target).append(emptyState("Couldn't render " + label + "."));
+      // A render that THREW is a defect, not an absence. errorState announces it as an alert
+      // and files the exception under a disclosure; emptyState would have said it calmly, in
+      // a role="status" box, in the same words this page uses for "nothing here yet".
+      clear(target).append(errorState(
+        "Couldn't render " + label + ".",
+        { detail: String((e && e.message) || e) },
+      ));
     }
   }
 
@@ -389,7 +459,9 @@ export async function renderMttr(host, params, _ctx) {
 
   paint = (payload) => {
     const mttr = payload && payload.mttr;
-    guard("the half-life", heroHost, () => renderHero(mttr));
+    const first = Number((mttr && mttr.rowCount) || 0) === 0;
+    guard("the first-run notice", noticeHost, () => renderFirstRun(first));
+    guard("the half-life", heroHost, () => renderHero(mttr, first));
     guard("the survival curve", curveHost, () => renderCurve(mttr));
     guard("the per-severity clock", sevHost, () => renderSeverity(mttr));
     guard("SLA by severity", slaHost, () => renderSla(mttr));
@@ -402,15 +474,32 @@ export async function renderMttr(host, params, _ctx) {
     paint(await data);
   } catch (e) {
     console.error("[mttr] api_getMttrPage failed:", e);
-    clear(heroHost).append(emptyState(
+    clear(heroHost).append(errorState(
       "Couldn't load remediation data.",
-      String((e && e.message) || e),
+      { detail: String((e && e.message) || e) },
     ));
+  }
+
+  /**
+   * The origin, before any figure.
+   *
+   * Every section below already says what IT is missing. What none of them could say is that
+   * the ledger has never been read at all — and a page of dashes with no such line leaves a
+   * reader choosing between a broken app and an empty one.
+   */
+  function renderFirstRun(first) {
+    clear(noticeHost);
+    if (!first) return;
+    noticeHost.append(firstRunNotice({
+      synced: !!boot.latestSync,
+      hint: "The clock on this page starts at the first finding a sync saves, and a duration"
+        + " needs a second sync to close against. Run one from the scan zone in the rail.",
+    }));
   }
 
   // ------------------------------------------------------------------------------ hero
 
-  function renderHero(mttr) {
+  function renderHero(mttr, first) {
     const view = mttrHeroView(mttr);
     const km = (mttr && mttr.remediation && mttr.remediation.km) || null;
     const rmst = rmstView(km);
@@ -423,7 +512,10 @@ export async function renderMttr(host, params, _ctx) {
     clear(heroHost);
     heroHost.append(pageHeader({
       hero: heroStat("Remediation half-life", view.value, view.qualifier, { term: "half-life" }),
-      stats: [
+      // SUPPRESSED, not dashed — the same choice Executive and Coverage & efficiency make, so
+      // one reader moving between the three pages meets one convention. "Censored 0 · open
+      // findings kept in as evidence" is a claim about an estimator that has never run.
+      stats: first ? [] : [
         statRow(
           "Censored",
           fmtCount(view.censored),
@@ -431,7 +523,7 @@ export async function renderMttr(host, params, _ctx) {
           null,
           { term: "censoring" },
         ),
-        statRow("P90 (KM)", fmtDays(km && km.p90), "nine in ten close by here"),
+        (() => { const p = kmP90View(km); return statRow("P90 (KM)", p.value, p.note); })(),
         statRow(
           "Restricted mean",
           rmst.text,
@@ -442,14 +534,19 @@ export async function renderMttr(host, params, _ctx) {
       ],
     }));
 
-    const slaLine = el("p", { class: "small muted" },
-      "Resolved inside the SLA window: ",
-      el("span", { class: "num" }, overallSla.text),
-      " ",
-      denominatorNode(overallSla),
-      ". ",
-    );
-    slaLine.append(el("span", {}, "The comparison is inclusive — on or before the target."));
+    // NOT "not measured 0 resolved". Where the base is empty the sentence names the missing
+    // population rather than printing its size beside a claim that nothing was measured.
+    const slaLine = overallSla.baseEmpty
+      ? el("p", { class: "small muted" },
+          "Resolved inside the SLA window: not measured — nothing has closed yet, so there is"
+          + " no resolved population to compare against the target.")
+      : el("p", { class: "small muted" },
+          "Resolved inside the SLA window: ",
+          el("span", { class: "num" }, overallSla.text),
+          " ",
+          denominatorNode(overallSla),
+          ". ",
+          el("span", {}, "The comparison is inclusive — on or before the target."));
     heroHost.append(slaLine);
 
     if (view.isLowerBound) {
@@ -459,7 +556,12 @@ export async function renderMttr(host, params, _ctx) {
         + " is actually true."));
     }
     const awaiting = awaitingView(mttr);
-    if (awaiting.show) {
+    if (awaiting.show && awaiting.share.baseEmpty) {
+      heroHost.append(el("p", { class: "small muted" },
+        "Awaiting a vendor fix: not measured — no SCA finding is open, so there is no backlog"
+        + " to take a share of. A finding with no published fix sits outside every deadline"
+        + " until one exists."));
+    } else if (awaiting.show) {
       heroHost.append(el("p", { class: "small muted" },
         "Awaiting a vendor fix: ",
         el("span", { class: "num" }, fmtCount(awaiting.overall)),
@@ -641,6 +743,15 @@ export async function renderMttr(host, params, _ctx) {
     clockHost.append(sectionLabel(view.heading, { term: "two-clocks" }));
     if (!view.show) {
       clockHost.append(emptyState("No actionable clock in this payload."));
+      clockHost.append(el("p", { class: "small muted" }, view.note));
+      return;
+    }
+    if (!view.populated) {
+      clockHost.append(emptyState(
+        "No SCA finding has entered this clock yet.",
+        "It starts counting the day a fixed version exists for a dependency finding, so it"
+        + " needs a sync that saves at least one SCA row.",
+      ));
       clockHost.append(el("p", { class: "small muted" }, view.note));
       return;
     }

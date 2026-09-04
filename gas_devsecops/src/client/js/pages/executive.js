@@ -26,8 +26,8 @@
 
 import { bootstrap, swrCall } from "../store.js";
 import {
-  clear, dataTable, el, emptyState, fmtCount, fmtDateTime, fmtDays, heroStat, kpiCard,
-  pageHeader, pluralize, sectionLabel, sevBadge, skeleton, statRow, statusPill,
+  clear, dataTable, el, emptyState, errorState, fmtCount, fmtDateTime, fmtDays, heroStat,
+  kpiCard, pageHeader, pluralize, sectionLabel, sevBadge, skeleton, statRow, statusPill,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -209,6 +209,102 @@ export function executiveMovementView(weekTrend) {
   };
 }
 
+/**
+ * The front door on a ledger nobody has read, and what would change that.
+ *
+ * WHAT THIS REPLACES. With no sync saved, this page rendered `0 lifecycles in the ledger · 0
+ * closed findings · 0 kept in as right-censored observations`, five severity tiles each
+ * reading `0 open`, and a table of three registers at `0` — every one of them a confident
+ * zero over a population nobody has looked at. The only honest sentence on the page ("No sync
+ * saved yet") was at the BOTTOM, below all of it. A leader reading top-down met "0 critical
+ * open" first, which is indistinguishable from a clean bill of health and is the single most
+ * expensive misread this register can produce.
+ *
+ * PRODUCT.md's corollary is the rule being applied: *"No MTTR yet" is a state a reader can
+ * act on; "MTTR is 0 days" is a confident lie.* The same holds for a count. So on an unread
+ * ledger the zero-valued blocks are SUPPRESSED rather than dashed — a dash still occupies the
+ * slot of a figure and invites a reader to wait for it to fill — and this panel takes their
+ * place, naming each missing figure with the ONE condition that unlocks it and where that
+ * control lives.
+ *
+ * IT IS NOT ONE STATE, IT IS TWO. No sync at all is a first run. A sync that ran and saved
+ * nothing is a MEASUREMENT: the tenant answered, and the answer was empty. `synced` keeps
+ * them apart, because "no sync has run yet" over a completed sync would be false.
+ *
+ * WHY IT IS PURE. Every unlock condition here is a claim about the domain — the half-life
+ * needs a closed lifecycle, the week trend needs two endpoints a week apart, SLA attainment
+ * needs a deadline to compare against, a register's count needs that register enabled for
+ * collection. Those are testable without a DOM and they are the part that can go wrong.
+ *
+ * @param {object|null|undefined} payload  `api_getExecutivePage`'s reply
+ * @param {object|null|undefined} boot     `bootstrap()`'s reply
+ * @returns {{show: boolean, synced: boolean, heading: string, hint: string,
+ *            items: Array<{figure: string, unlock: string, route: string|null,
+ *                          routeLabel: string}>}}
+ */
+export function executiveFirstRunView(payload, boot) {
+  const b = boot || {};
+  const hero = executiveHeroView(payload);
+  const synced = !!b.latestSync;
+  if (hero.tracked > 0) return { show: false, synced, heading: "", hint: "", items: [] };
+
+  const settings = b.settings || {};
+  const enabled = Array.isArray(settings.scopes) ? settings.scopes : [];
+  const targets = settings.slaTargets || b.slaTargets || {};
+  const hasSlaWindow = Object.keys(targets).length > 0;
+  const RAIL = "the scan zone in the rail";
+
+  const items = [
+    {
+      figure: "Remediation half-life",
+      unlock: "One closed lifecycle with a readable clock. A finding is dated closed at the"
+        + " sync that stopped seeing it, so the first close needs a second sync.",
+      route: null,
+      routeLabel: "Run a sync from " + RAIL,
+    },
+    {
+      figure: "Week-over-week movement",
+      unlock: "Two syncs a week apart. Under a week of history there is no comparison to"
+        + " publish, and none is invented.",
+      route: null,
+      routeLabel: "Run a sync from " + RAIL,
+    },
+    {
+      figure: "SLA attainment",
+      unlock: hasSlaWindow
+        ? "One resolved finding to hold against the deadlines already set per severity."
+        : "A deadline per severity. Without a window there is nothing for a close date to be"
+          + " inside or outside of.",
+      route: "#/settings?tab=deadlines",
+      routeLabel: "Settings → Deadlines",
+    },
+  ];
+
+  for (const scope of ["sca", "sast", "secrets"]) {
+    const on = enabled.indexOf(scope) !== -1;
+    items.push({
+      figure: (SCOPE_LABELS[scope] || scope) + " — open findings",
+      unlock: on
+        ? "This register is enabled for collection; its count arrives with the first sync"
+          + " that saves a row for it."
+        : "This register is not being collected, so no sync will ever fill this count.",
+      route: on ? null : "#/settings?tab=register",
+      routeLabel: on ? "Run a sync from " + RAIL : "Settings → Register",
+    });
+  }
+
+  return {
+    show: true,
+    synced,
+    heading: synced
+      ? "The last sync saved no findings, so there is nothing here to measure yet."
+      : "No sync has run yet, so nothing on this page has been measured.",
+    hint: "Every figure below waits on a different thing. None of them is a zero, and none of"
+      + " them is shown as one.",
+    items,
+  };
+}
+
 // ----------------------------------------------------------------------------- the page
 
 /** The one valid scope a deep link may narrow this page to. */
@@ -228,11 +324,12 @@ export async function renderExecutive(host, params, _ctx) {
     (fresh) => paint && paint(fresh),
   );
 
+  const noticeHost = el("div", {});
   const heroHost = el("div", {});
   const sevHost = el("div", {});
   const registerHost = el("div", {});
   const scanHost = el("div", {});
-  host.append(heroHost, sevHost, registerHost, scanHost);
+  host.append(noticeHost, heroHost, sevHost, registerHost, scanHost);
 
   // One failing section must never blank the front door.
   function guard(label, target, fn) {
@@ -240,7 +337,13 @@ export async function renderExecutive(host, params, _ctx) {
       fn();
     } catch (e) {
       console.error("[executive] " + label + " render failed:", e);
-      clear(target).append(emptyState("Couldn't render " + label + "."));
+      // A render that THREW is a defect, not an absence — see feedback.js. `emptyState` here
+      // announced a crash in a role="status" box, in the same voice this page uses for "no
+      // sync saved yet", and swallowed the exception entirely.
+      clear(target).append(errorState(
+        "Couldn't render " + label + ".",
+        { detail: String((e && e.message) || e) },
+      ));
     }
   }
 
@@ -252,7 +355,17 @@ export async function renderExecutive(host, params, _ctx) {
   guard("the scan caption", scanHost, renderScan);
 
   paint = (payload) => {
-    guard("the half-life", heroHost, () => renderHero(payload));
+    const first = executiveFirstRunView(payload, boot);
+    guard("the first-run panel", noticeHost, () => renderFirstRun(first));
+    guard("the half-life", heroHost, () => renderHero(payload, first));
+    // SUPPRESSED, not dashed. See `executiveFirstRunView`: a dash still holds a figure's slot
+    // and reads as "coming", while the panel above has already named what each of these
+    // waits on. Both blocks are cleared so a stale paint cannot leave zeros behind them.
+    if (first.show) {
+      clear(sevHost);
+      clear(registerHost);
+      return;
+    }
     guard("open findings by severity", sevHost, () => renderSeverity(payload));
     guard("the register split", registerHost, () => renderRegisters(payload));
   };
@@ -261,15 +374,26 @@ export async function renderExecutive(host, params, _ctx) {
     paint(await data);
   } catch (e) {
     console.error("[executive] api_getExecutivePage failed:", e);
-    clear(heroHost).append(emptyState(
+    clear(heroHost).append(errorState(
       "Couldn't load remediation data.",
-      String((e && e.message) || e),
+      { detail: String((e && e.message) || e) },
     ));
+  }
+
+  // ------------------------------------------------------------------- the first run
+
+  function renderFirstRun(first) {
+    clear(noticeHost);
+    if (!first.show) return;
+    noticeHost.append(emptyState(first.heading, first.hint, {
+      variant: "firstrun",
+      items: first.items,
+    }));
   }
 
   // ------------------------------------------------------------------------------ hero
 
-  function renderHero(payload) {
+  function renderHero(payload, first) {
     const view = executiveHeroView(payload);
     clear(heroHost);
 
@@ -293,7 +417,10 @@ export async function renderExecutive(host, params, _ctx) {
         { term: "half-life" },
       ),
       aside: renderMovement(payload),
-      stats,
+      // "Tracked 0 · Resolved 0 · Still open 0" is three zeros over a ledger nobody has read.
+      // The hero's own "Not measured" and its qualifier already carry the honest version, and
+      // the panel above names what the counts wait on.
+      stats: first && first.show ? [] : stats,
     }));
 
     if (view.isLowerBound) {
@@ -394,10 +521,13 @@ export async function renderExecutive(host, params, _ctx) {
           cell: (r) => el("span", {},
             el("span", { class: "num" }, r.share.text),
             " ",
+            // `baseEmpty` over the visible text, the raw denominator in the attribute —
+            // the same split mttr.js's `denominatorNode` makes, and for the same reason:
+            // "not measured 0 open across the registers" reads as a measurement of nothing.
             el("span", {
               class: "small muted",
               "data-denominator": r.share.denominator === null ? "none" : String(r.share.denominator),
-            }, r.share.denominatorLabel)),
+            }, r.share.baseEmpty ? "— " + r.share.emptyLabel : r.share.denominatorLabel)),
         },
         {
           key: "km",
