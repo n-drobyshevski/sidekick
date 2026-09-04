@@ -5,41 +5,29 @@
 // shared contract cannot be a test, it has to be a function this file calls with vitest's
 // own describe/it/expect and this app's specifics.
 //
-// TWO of the six are registered here, and that is the whole set that can pass while this
-// app still owns its client modules. The other four and why they are not here:
+// FIVE of the six are registered here. `brandMark` is the sixth and is still absent: it
+// reads `src/client/index.html`, which P4 does not own — the manifest half it checks
+// (`MANIFEST.productName` / `MANIFEST.openingNoun` reaching the splash from app.js) is
+// already in place, so registering it is a one-line change for whichever package takes
+// index.html.
 //
-//   parity        NOT YET — it asserts there is no local src/client/js/{api,store,icons}.js
-//                 and that src/client/js/ui/ holds only allow-listed modules. gas has all
-//                 three of those files and no ui/ directory at all (ui.js is one module),
-//                 so `readdirSync(uiDir)` throws before the first assertion. The contract
-//                 registers both halves in one call and cannot be scoped to the stylesheet
-//                 half, so registering it now would fail on a fact P4 exists to change
-//                 rather than on a defect. THE EXACT CALL P4 MUST ADD, once ui.js
-//                 re-exports the shared barrel and api/store/icons are gone:
-//
-//                   registerParityContract({
-//                     ...base,
-//                     localUiModules: [/* whatever stays gas's own */],
-//                     sheetOrder: SHEET_ORDER,   // the constant below, already correct
-//                   });
-//
-//                 SHEET_ORDER is exported from this file for exactly that reason: the
-//                 stylesheet half of the contract is true TODAY and is pinned below by
-//                 hand so the cascade order is not unguarded in the meantime.
-//
-//   brandMark     needs the manifest (productName / openingNoun via configureApp), which
-//   navGroups     needs the manifest's defaultRoute and this app's LANE_ICONS/ROUTE_ICONS
-//   emptyStates   reads pages through the shared module layout
-//                 — all three arrive with P4/P5. gas keeps its own test/brandMark.test.js
-//                 and test/navGroups.test.js until then.
+// `parity`, `emptyStates` and `navGroups` arrived with P4, when ui.js became a barrel over
+// `gas_shared/ui/index.js` and api.js / store.js were deleted in favour of the shared pair.
+// Each is registered with this app's own specifics below, and each one's argument list is
+// where a claim about THIS register lives.
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { SEVERITY_COLORS, SLA_TARGETS } from "../src/domain/config";
 
+import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
+import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
+import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
 import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/tokens.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
+
+import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 const base = { describe, it, expect, appRoot: APP_ROOT, app: "os" };
@@ -95,6 +83,89 @@ registerTokenContract({
 });
 
 registerZScaleContract(base);
+
+// =========================================================================================
+//  The seam: what this app is still allowed to keep a local copy of
+// =========================================================================================
+registerParityContract({
+  ...base,
+  // SEVEN MODULES, AND SIX OF THEM ARE HERE ON THEIR MERITS. Each is a fact about an
+  // OS-vulnerability register that means nothing in a sibling: which two scopes exist
+  // (scopeBar), a CVE's page at NIST (nvd), a delta that knows which direction is worse
+  // (changeChip), a duration that changes unit across three orders of magnitude (span), an
+  // in/out proportion with arbitrary tones (splitBar), and a Google Sheet's ten-million-cell
+  // ceiling (usageMeter).
+  //
+  // `combobox.js` IS THE ONE FORK, and it is on this list under protest rather than on its
+  // merits. gas_shared/ui/combobox.js resolves an option row's glyph by NAME through
+  // gas_shared/ui/uiIcons.js, and two of the four names scopeSwitch.js supplies — `users`
+  // and `noTag` — are not in that set; `uiIcon()` falls back to a single dot for an unknown
+  // name, silently, so the swap would quietly blank the glyph on every support-group row and
+  // both no-domain rows. Adding those two entries to gas_shared/ui/uiIcons.js is the whole
+  // fix and is outside what P4 was allowed to change there. When it lands, delete
+  // src/client/js/ui/combobox.js and this line with it.
+  localUiModules: [
+    "changeChip.js", "combobox.js", "nvd.js", "scopeBar.js", "span.js", "splitBar.js",
+    "usageMeter.js",
+  ],
+  sheetOrder: SHEET_ORDER,
+});
+
+// =========================================================================================
+//  A failure is never dressed as an absence
+// =========================================================================================
+registerEmptyStateContract({
+  ...base,
+  // The eight route modules. pages/ also holds accessEditor.js, domainsEditor.js and
+  // mttrPaintPlan.js, which are section renderers rather than routes and have no entry in
+  // PAGES; the contract resolves `<route>.js` per name, so only routes belong here.
+  routes: [
+    "executive", "mttr", "program", "overview", "data", "history", "attribution", "settings",
+  ],
+  // The non-vacuity half: these five still carry the failure messages, on errorState. All
+  // seven "Couldn't …" call sites were emptyState before P4 — a crash announced through
+  // `role="status"`, in the same dashed box the register uses for "no scan saved yet", with
+  // the exception dropped on the floor rather than put in the disclosure.
+  //
+  // "data" JOINED THE LIST, and this list is a registry rather than a claim, so the addition
+  // is what the registry is for. The claim the four-name version encoded was "these are all
+  // the routes whose failure paths reach errorState"; it was true when written because the
+  // pass that wrote it converted only the sites already spelled `emptyState("Couldn't …")`.
+  // pages/data.js's report preview was the same defect wearing different clothes — a
+  // hand-rolled failure surface, `el("p")` with the raw exception as body copy and a Retry
+  // button beside it, no role="alert" and no disclosure — so the sweep above could not see
+  // it and this list did not name it. It is errorState("Couldn't load the report preview.")
+  // now, which is the measurement: the route matches the carrier regex where it did not
+  // before, and dropping it from this list to keep the test green would have re-hidden
+  // exactly the surface the contract exists to find.
+  errorStateCarriers: ["executive", "mttr", "overview", "program", "data"],
+  // The two pages that render section-by-section behind a guard(), because they are the
+  // ones a single failing section must not blank.
+  guardedRoutes: ["executive", "program"],
+  // EMPTY, AND NOT BECAUSE THE PAGES DO NOT SAY IT. The contract's first-run half asserts
+  // the page source matches /latestSync/ — the field name gas_devsecops's bootstrap payload
+  // uses. This register's payload has always called it `latestScan`, and the two pages that
+  // gate on it (data, attribution) read that. Passing them here would fail on a field NAME
+  // rather than on a missing notice, and renaming a payload field to satisfy a regex, or
+  // aliasing one in the page to be matched by it, would be gaming the test. The shared fix
+  // is one line — take the field name as a ctx argument, or match /latest(Scan|Sync)/ — and
+  // it belongs in gas_shared/test/contracts/emptyStates.js, which P4 may not edit.
+  firstRunRoutes: [],
+});
+
+// =========================================================================================
+//  The information architecture has one source
+// =========================================================================================
+registerNavGroupContract({
+  ...base,
+  LANE_ICONS,
+  ROUTE_ICONS,
+  // In rail order. This list moves only when a route is added or removed on purpose.
+  expectedRoutes: [
+    "executive", "mttr", "program", "overview", "data", "history", "attribution", "settings",
+  ],
+  defaultRoute: "executive",
+});
 
 // =========================================================================================
 //  This app's brand, pinned by value

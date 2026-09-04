@@ -3,11 +3,11 @@
 // owns the live "what is this control doing right now" readouts; this file wires DOM controls
 // to the draft and repaints both on every edit.
 
-import { call } from "../api.js";
+import { call } from "../../../../../gas_shared/api.js";
 import { backfillStatusView } from "../backfillStatus.js";
 import { capacityView } from "../capacity.js";
 import { decodePrefill, PREFILL_KEY } from "../attributionPrefill.js";
-import { bootstrap, invalidateBootstrap, invalidateRpcCache, setParams } from "../store.js";
+import { bootstrap, invalidateBootstrap, invalidateRpcCache, setParams } from "../../../../../gas_shared/store.js";
 import {
   changeCountText, changeSummary, changedFields, clampDisplayToFetch, dirtyTabs, draftWarnings,
   normalizeTab, SETTINGS_TABS, settingsDraft, settingsPatch, validateDraft,
@@ -17,8 +17,9 @@ import {
   toggleReadoutBar, toggleReadoutNote,
 } from "../settingsReadouts.js";
 import {
-  clear, confirmDialog, disclosure, el, emptyState, fmtDateTime, openSheet, saveBar, settingRow,
-  settingsPanel, statusPill, switchToggle, tabList, toast, usageMeter,
+  absent, clear, confirmDialog, disclosure, el, emptyState, fmtDateTime, heroStat, openSheet,
+  pageHeader, saveBar, settingRow, settingsPanel, statusPill, switchToggle, tabList, tip,
+  tipAnchor, toast, usageMeter,
 } from "../ui.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
@@ -27,11 +28,14 @@ export async function renderSettings(main, params, ctx) {
   const boot = await bootstrap();
   const accessPanelNode = await renderAccessPanel();
 
-  main.append(
-    el("h1", {}, "Settings"),
-    el("p", { class: "page-sub" },
-      "Scan scope, risk classification, attribution, retention, and system health — grouped by task."),
-  );
+  main.append(pageHeader({
+    hero: heroStat(
+      "Settings",
+      "Scan scope, risk, attribution, retention",
+      "One save bar covers every panel below it; access and the system readouts save "
+        + "themselves, on their own controls.",
+    ),
+  }));
 
   // ------------------------------------------------------------------------ draft model
   // `savedShape` is the nested shape settingsDraft() reads (boot.settings, or api_saveSettings's
@@ -98,16 +102,23 @@ export async function renderSettings(main, params, ctx) {
     const fetchSet = new Set(draft.fetchSeverities);
     for (const sev of boot.palette.selectable) {
       const btn = displayPills.pills[sev];
-      if (fetchSet.has(sev)) {
-        btn.removeAttribute("aria-disabled");
-        btn.removeAttribute("title");
-      } else {
-        btn.setAttribute("aria-disabled", "true");
-        btn.title = "Not in the scan scope — add it above to show it.";
-      }
+      if (fetchSet.has(sev)) btn.removeAttribute("aria-disabled");
+      else btn.setAttribute("aria-disabled", "true");
     }
   }
   syncDisplayLock();
+  // Why a pill is locked used to be a native `title` assigned straight onto the button, which
+  // is the one form el()'s ban cannot catch and the one no keyboard or touch reader could
+  // ever summon — the rule the copy above states in prose was, in the control itself, visible
+  // only to a mouse. Anchored ONCE per pill rather than inside syncDisplayLock: the card's
+  // copy is read at reveal time, so a single anchor answers for both states and an unlocked
+  // pill (null lines) simply shows nothing.
+  for (const sev of boot.palette.selectable) {
+    const pill = displayPills.pills[sev];
+    tip(pill, () => (pill.getAttribute("aria-disabled") === "true"
+      ? ["Not in the scan scope — add it above to show it."]
+      : null));
+  }
 
   const scopeReadoutHost = el("div", {});
   const scopePanel = settingsPanel({
@@ -443,7 +454,7 @@ export async function renderSettings(main, params, ctx) {
         "bag is never overwritten, so a repeated or interrupted run converges on the same " +
         "result. Scans already sealed by compaction had their archives pruned; for those, use " +
         "Domain-tag backfill below, which reads the checkpoints instead."))),
-    el("td", { class: "num" }, "—"),
+    el("td", { class: "num" }, absent()),
     historyStatusCell,
     el("td", {}, historyBtn));
 
@@ -482,7 +493,7 @@ export async function renderSettings(main, params, ctx) {
         "runs. Reads the compaction checkpoints in Drive, which still hold them. Safe to " +
         "re-run: a row that already carries its tags is never overwritten, and a run that " +
         "recovers nothing writes nothing."))),
-    el("td", { class: "num" }, "—"),
+    el("td", { class: "num" }, absent()),
     tagStatusCell,
     el("td", {}, tagBtn));
 
@@ -493,11 +504,17 @@ export async function renderSettings(main, params, ctx) {
   } else {
     sgStatusCell.append(statusPill("neutral", "Not run this session"));
   }
+  // This `title` was a LIVE CRASH, not just an unreachable tooltip: el() throws on the key,
+  // and the ternary only evaluated to null on a tenant that HAS credentials — so the Settings
+  // page rendered fine everywhere the attribute was dropped and blew up on exactly the
+  // tenants the sentence was written for. `tipAnchor`, not `tip`: the button is disabled in
+  // that state, so it is out of the tab order and Chromium dispatches no pointer events over
+  // it; the card is best-effort and the status cell beside it says the same thing in text.
   const sgBtn = el("button", {
     onclick: refreshSupportGroups,
     disabled: boot.hasCredentials ? null : true,
-    title: boot.hasCredentials ? null : "Live Wiz credentials are required.",
   }, "Refresh support groups");
+  if (!boot.hasCredentials) tipAnchor(sgBtn, () => ["Live Wiz credentials are required."]);
   async function refreshSupportGroups() {
     sgBtn.disabled = true;
     clear(sgStatusCell);
@@ -528,7 +545,7 @@ export async function renderSettings(main, params, ctx) {
         "CS-SUPPLY-MONITORING). Refreshing pulls every tagged subscription from Wiz and joins " +
         "it onto findings, powering the Support group filter, breakdown, and domain condition. " +
         "Also refreshes automatically after each scan."))),
-    el("td", { class: "num" }, "—"),
+    el("td", { class: "num" }, absent()),
     sgStatusCell,
     el("td", {}, sgBtn));
 
@@ -607,8 +624,13 @@ export async function renderSettings(main, params, ctx) {
       title: "Recent errors",
       subtitle: "Newest first — the last 25 server-side errors.",
       width: "min(680px, 94vw)",
-      minWidth: 420,
-      storageKey: "sheetWidthDiagnostics",
+      // `minWidth` and `storageKey` were gas's own sheet options and the shared openSheet has
+      // neither — it destructures a fixed list and ignores the rest, so this sheet had
+      // silently lost its drag-to-resize edge. `resizable: true` is the shared spelling; the
+      // sheet persists its width itself under one app-wide key rather than a per-sheet one,
+      // and its floor comes from the --sheet-w-record-min custom property (520px by default)
+      // rather than from a number passed per call.
+      resizable: true,
     });
   }
   async function renderRecentErrors(body) {
@@ -652,11 +674,15 @@ export async function renderSettings(main, params, ctx) {
     for (const e of errs) {
       tbody.append(el("tr", {},
         el("td", { class: "small muted", style: "white-space:nowrap" }, fmtDateTime(e.ts)),
-        el("td", {}, el("strong", {}, e.op || "—")),
+        // absent(), not a bolded em dash: an error the log could not name is a gap in the
+        // record, and printing it in the same weight as a real operation name claims one.
+        el("td", {}, e.op ? el("strong", {}, e.op) : absent()),
         el("td", {}, statusPill(e.kind === "error" ? "bad" : "warn", e.kind || "error")),
         el("td", {},
-          el("code", { class: "small", style: "white-space:pre-wrap; word-break:break-word" },
-            e.message || "—")),
+          e.message
+            ? el("code", { class: "small", style: "white-space:pre-wrap; word-break:break-word" },
+                e.message)
+            : absent()),
       ));
     }
     body.append(el("div", { class: "table-wrap" },
@@ -673,7 +699,9 @@ export async function renderSettings(main, params, ctx) {
   const buildCard = el("div", { class: "health-item" },
     el("span", { class: "label" }, "Build"),
     el("p", { class: "health-build small muted" },
-      "Build ", el("code", { class: "small" }, boot.buildId || "—"), "."));
+      // A missing build id is the whole point of this card — it means the deploy stamp did
+      // not reach the client — so it must not read as a value in code type.
+      "Build ", boot.buildId ? el("code", { class: "small" }, boot.buildId) : absent(), "."));
 
   const healthGrid = el("div", { class: "health-grid" }, storageCard, errorsCard, buildCard);
 

@@ -30,8 +30,10 @@
   /* Ink ON an accent fill. #171717 is --ink, so this app's answer happens to equal the
      token the one rule that needs it used to name directly - and that is exactly why the
      token has to exist: white on #ffcb13 is 1.52:1, but near-black on gas's #2563eb is
-     1.62:1, so a rule hard-coding either answer is only correct on one brand. #171717 on
-     #ffcb13 is 11.78:1. */
+     3.47:1, so a rule hard-coding either answer is only correct on one brand. #171717 on
+     #ffcb13 is 11.78:1. (This comment read 1.62:1 for the blue until gas/test/shared.test.js
+     measured it: 3.4686:1. Still below the 4.5:1 text floor, so gas's --on-accent stays
+     white and nothing else here moves.) */
   --on-accent: #171717;
 
   /* The accent's own wash, for the one control that reports a STANDING state rather than a

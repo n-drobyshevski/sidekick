@@ -1,6 +1,7 @@
 // Wiz Sidekick OS SPA shell: app header, two-tier navigation, scan zone, hash router.
 
-import { call } from "./api.js";
+import { configureApp } from "../../../../gas_shared/appConfig.js";
+import { call } from "../../../../gas_shared/api.js";
 import { brandMark } from "./brandMark.js";
 import {
   focusFirstRow,
@@ -16,8 +17,13 @@ import { itemForRoute, railItems } from "./navModel.js";
 import { LANE_ICONS, ROUTE_ICONS, RUN_ICON } from "./routeIcons.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
 import { scopeSwitchControl } from "./scopeSwitch.js";
-import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
-import { clear, el, fmtDateTime, progressBar, statusPill, toast } from "./ui.js";
+import {
+  bootstrap, buildHash, defaultRoute, invalidateBootstrap, invalidateRpcCache, parseHash,
+} from "../../../../gas_shared/store.js";
+import {
+  clear, closeCombobox, closeTip, el, errorState, fmtDateTime, progressBar, runPageTeardown,
+  statusPill, tip, tipAnchor, toast,
+} from "./ui.js";
 import { renderExecutive } from "./pages/executive.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderMttr } from "./pages/mttr.js";
@@ -27,25 +33,80 @@ import { renderData } from "./pages/data.js";
 import { renderSettings } from "./pages/settings.js";
 import { renderAttribution } from "./pages/attribution.js";
 
+// ============================================================================ the manifest
+//
+// WHAT THIS APP IS, handed to the shared core (gas_shared/appConfig.js) before anything else
+// in this module body runs.
+//
+// The shared modules cannot reach sideways into an app: `gas_shared/ui/tip.js` has no
+// `../helpContent.js` to import and `gas_shared/store.js` cannot know which route is this
+// register's front door. Those answers travel as data instead. `configureApp()` is
+// DELIBERATELY THE FIRST STATEMENT of the module body — imports run before it, but no shared
+// module reads the manifest at import time (see appConfig.js's rule 2), so the first read of
+// it can only happen after this line.
+const MANIFEST = {
+  productName: "Wiz Sidekick OS",
+  // What the boot splash says it is opening — "ledger", not "register": index.html paints
+  // the static first-load copy of that splash ("Opening the ledger…") and P5 owns that file,
+  // so the manifest takes the word the app already says rather than the other way round.
+  openingNoun: "ledger",
+  // Trailing dot included. Two sidekicks served from the same origin must not share a key.
+  storagePrefix: "sidekickos.",
+  // The first key of PAGES below, and the only place the two can disagree — which is what
+  // test/shared.test.js's navGroups contract checks. It used to be a bare "executive"
+  // literal inside store.js's parseHash AND a second `|| PAGES.executive` in route(); the
+  // two agreed by hand and test/navGroups.test.js existed to keep them agreeing.
+  defaultRoute: "executive",
+  // A RESOLVER THAT RESOLVES NOTHING, not `null`. `ui/tip.js` calls this whenever a caller
+  // passes `{ term }` or reaches `glossaryTip`, and it calls it as a function — a literal
+  // null would throw rather than degrade. This register has no help book yet (P7); returning
+  // null per term is what makes `glossaryTip` fall back to the plain label, which is the
+  // documented degrade path (`glossaryTipLines(null)` is null). gas_shared/test/testConfig.js
+  // ships the same shape for the same reason.
+  findHelpEntry: () => null,
+};
+configureApp(MANIFEST);
+
 // THE ONE SOURCE for both the router and the nav. Order matters twice over: pages are drawn
 // in this insertion order, LANES ARE THE CONTIGUOUS RUNS OF ONE `group` (navModel.railItems
 // walks it once and joins a page to the item still open, so a lane split in two would draw
 // two items with one name), and the first key is the app's default landing page — which
-// store.parseHash hardcodes as "executive"; test/navGroups.test.js holds the two together.
+// MANIFEST.defaultRoute above names, and test/shared.test.js holds the two together.
 //
 // `group: null` is the CHROME TAIL: pages that name themselves, drawn under a rule rather
 // than under a heading. Settings is the whole tail here — a "Preferences" heading over one
 // item would restate the link it sits on.
+//
+// EXECUTIVE IS IN THE SECURITY LANE, AND IT USED TO HAVE AN "Overview" LANE OF ITS OWN.
+// A labelled lane earns its heading by holding two pages. navModel.railItems collapses a
+// lane holding one visible page to that page, so on the icon rail "Overview" was never drawn
+// — but renderStackedNav below 800px draws every lane heading UNCONDITIONALLY, and there it
+// really did render the word "Overview" directly above a single link reading "Executive".
+// The old test/navGroups.test.js knew about the collapse and asked multi-page lanes only for
+// a mark, so nothing caught the stacked case. Executive belongs here anyway: it, MTTR and
+// Program performance are all programme-level reads over the population that OS
+// vulnerabilities lists.
 const PAGES = {
-  executive: { title: "Executive", group: "Overview", render: renderExecutive },
+  executive: { title: "Executive", group: "Security", render: renderExecutive },
   mttr: { title: "MTTR & SLA", group: "Security", render: renderMttr },
   program: { title: "Program performance", group: "Security", render: renderProgram },
   overview: { title: "OS vulnerabilities", group: "Security", render: renderOverview },
   data: { title: "Data", group: "Data", render: renderData },
-  scan_history: { title: "Scan History", group: "Data", render: renderHistory },
+  // `history`, not `scan_history`, and the rename is what makes the route table checkable.
+  // gas_shared/test/contracts/navGroups.js resolves each route to `pages/<route>.js`, and
+  // this one was the only route in the app whose key did not name its own module — the page
+  // has always been pages/history.js. ROUTE_ALIASES below keeps every existing
+  // #/scan_history link working and rewrites it, so no bookmark is broken by the fix.
+  history: { title: "Scan History", group: "Data", render: renderHistory },
   attribution: { title: "Attribution", group: "Data", render: renderAttribution },
   settings: { title: "Settings", group: null, render: renderSettings },
 };
+
+// Old bookmarks and links to the two pages that were merged into Data keep working. This was
+// `ROUTE_ALIASES` inside gas's own store.js; the shared store cannot carry one app's aliases,
+// so route() below applies them and REWRITES the hash — a stale link that silently renders a
+// different page than the address bar names is three answers to "where am I".
+const ROUTE_ALIASES = { reports: "data", exports: "data", scan_history: "history" };
 
 // Below this the rail is a stacked list instead of an icon rail with a panel: at that width
 // there is nothing to fly out from and nowhere to put it.
@@ -183,16 +244,16 @@ let scanDetails = null; // open scan-details drawer handle, kept live by the pol
 function bootSplash() {
   const bar = progressBar(null);
   bar.classList.add("boot-splash-bar");
-  bar.setAttribute("aria-label", "Opening the ledger");
+  bar.setAttribute("aria-label", "Opening the " + MANIFEST.openingNoun);
   return el(
     "div",
     { class: "boot-splash", role: "status", "aria-live": "polite" },
     el("div", { class: "boot-splash-inner" },
       el("div", { class: "boot-brand" },
         brandMark(112),
-        el("span", { class: "boot-brand-label" }, "Wiz Sidekick OS")),
+        el("span", { class: "boot-brand-label" }, MANIFEST.productName)),
       bar,
-      el("p", { class: "boot-splash-note" }, "Opening the ledger…")),
+      el("p", { class: "boot-splash-note" }, "Opening the " + MANIFEST.openingNoun + "…")),
   );
 }
 
@@ -259,25 +320,30 @@ async function boot() {
     // already open: the next RPC's forbidden envelope surfaces here as err.kind (api.js), and
     // "Couldn't reach the server / Retry" would be actively misleading — retrying re-sends the
     // same identity and can only fail the same way.
-    const card = e && e.kind === "forbidden"
-      ? el("div", { class: "empty" },
-          el("div", {}, "You don't have access to this app."),
-          el("div", { class: "small", style: "margin:6px 0 4px" }, String(e.message || e)),
-          // Same offer as the denied page doGet serves, so the two surfaces a locked-out
-          // person can land on say the same thing. The href is built server-side (access.ts)
-          // so the prefilled subject exists once rather than in both bundles.
-          e.contact
-            ? el("div", { class: "small", style: "margin:0 0 14px" },
-                "If you think you should have access, contact ",
-                el("a", { href: e.contactUrl || ("mailto:" + e.contact) }, e.contact),
-                ".")
-            : null,
-        )
-      : el("div", { class: "empty" },
-          el("div", {}, "Couldn't reach the server."),
-          el("div", { class: "small", style: "margin:6px 0 14px" }, String(e.message || e)),
-          el("button", { class: "primary", onclick: () => refresh() }, "Retry"),
-        );
+    // BOTH ARE FAILURES, so both are errorState — `role="alert"`, not the `role="status"` the
+    // bare `.empty` div carried. A boot that could not reach the server, and an identity the
+    // server refuses, are defects in the reader's session rather than states the register is
+    // legitimately in; announcing them as calm news is the exact confusion
+    // gas_shared/ui/feedback.js was split to end.
+    let card;
+    if (e && e.kind === "forbidden") {
+      card = errorState("You don't have access to this app.", { detail: String(e.message || e) });
+      // Same offer as the denied page doGet serves, so the two surfaces a locked-out person
+      // can land on say the same thing. The href is built server-side (access.ts) so the
+      // prefilled subject exists once rather than in both bundles. No retry: retrying
+      // re-sends the same identity and can only fail the same way.
+      if (e.contact) {
+        card.append(el("div", { class: "small", style: "margin:8px 0 0" },
+          "If you think you should have access, contact ",
+          el("a", { href: e.contactUrl || ("mailto:" + e.contact) }, e.contact),
+          "."));
+      }
+    } else {
+      card = errorState("Couldn't reach the server.", {
+        detail: String(e.message || e),
+        onRetry: () => refresh(),
+      });
+    }
     clear(mainEl).append(card);
     bootData = null;
     renderAppbar(appbar, null);
@@ -317,7 +383,7 @@ function renderAppbar(appbar, data) {
   // carries no mark at all now, so nothing in this file names the product twice.
   appbar.append(
     brandMark(22, { compact: true }),
-    el("span", { class: "appbar-name" }, "Wiz Sidekick OS"),
+    el("span", { class: "appbar-name" }, MANIFEST.productName),
   );
   // Null when there is no register to slice — including the boot-failure path, where offering
   // a picker over data we could not fetch would be a control with nothing behind it. The rule
@@ -448,13 +514,16 @@ function renderSidebar(sidebar, data) {
     iconSpan(RUN_ICON), el("span", { class: "btn-label" }, "Run scan"));
   const quickBtn = el(
     "button",
-    {
-      onclick: () => startScan(true, quickBtn),
-      title: "Fetch only findings changed since the last full scan and merge them in. " +
-        "Deletions aren't detected — run a full scan for those.",
-    },
+    { onclick: () => startScan(true, quickBtn) },
     "Quick refresh",
   );
+  // Was a `title` attribute, which el() now refuses: a native tooltip cannot be reached by
+  // keyboard, does not exist on touch, and arrives half a second late. tip() attaches to the
+  // button IN PLACE (it is already interactive), so this adds a hover card and no tab stop.
+  tip(quickBtn, [
+    "Fetch only findings changed since the last full scan and merge them in.",
+    "Deletions aren't detected — run a full scan for those.",
+  ]);
   // The controls wrapper (buttons + a persistent caveat) is hidden as a unit while a job
   // runs. The caveat states the Quick refresh trap in visible copy, not just a hover title.
   scanButtonsRow = el("div", { class: "scan-controls" },
@@ -465,6 +534,13 @@ function renderSidebar(sidebar, data) {
   scanCardHost = el("div", {}); // filled by the poller while a job runs
   zone.append(scanCardHost, scanButtonsRow);
   if (data) {
+    const credDot = el("span", {
+      class: `rail-status-dot ${data.hasCredentials ? "ok" : "neutral"}`,
+      "aria-hidden": "true",
+    });
+    tipAnchor(credDot, () => [
+      data.hasCredentials ? "Credentials loaded" : "Dry-run (no credentials)",
+    ]);
     zone.append(
       el("div", { class: "scan-caption" },
         data.hasCredentials
@@ -473,11 +549,12 @@ function renderSidebar(sidebar, data) {
       ),
       // Compact stand-in for the pill above, shown on the icon rail (where the captions do not
       // fit) so the credentials/dry-run state stays glanceable at 76px.
-      el("span", {
-        class: `rail-status-dot ${data.hasCredentials ? "ok" : "neutral"}`,
-        "aria-hidden": "true",
-        title: data.hasCredentials ? "Credentials loaded" : "Dry-run (no credentials)",
-      }),
+      //
+      // tipAnchor, NOT tip(): tip() wraps a non-interactive node in a `.tip-trigger` button,
+      // and this dot is aria-hidden decoration whose words are already on the pill beside it
+      // — a tab stop here would announce nothing and stop everyone. tipAnchor is the shared
+      // answer for an anchor that cannot host a wrapper.
+      credDot,
     );
     if (data.latestScan) {
       const age = Math.floor((Date.now() - Date.parse(data.latestScan.ts)) / 86400000);
@@ -629,9 +706,17 @@ export async function refresh() {
 
 async function route() {
   const seq = ++routeSeq;
-  const { route: key, params } = parseHash();
-  const page = PAGES[key] || PAGES.executive;
-  document.title = `${page.title} — Wiz Sidekick OS`;
+  const parsed = parseHash();
+  const params = parsed.params;
+  // RESOLVE ONCE, then use the resolved key for everything. An alias is rewritten into the
+  // address bar rather than silently rendered under the old path; an unknown path falls back
+  // to the manifest's front door, which used to be a second `PAGES.executive` literal here
+  // that had to agree with a third one inside store.js by hand.
+  let key = ROUTE_ALIASES[parsed.route] || parsed.route;
+  if (key !== parsed.route && PAGES[key]) history.replaceState(null, "", buildHash(key, params));
+  if (!PAGES[key]) key = defaultRoute();
+  const page = PAGES[key];
+  document.title = `${page.title} — ${MANIFEST.productName}`;
   // active nav state — every link, wherever it is drawn: the stacked list, the icon rail, and
   // the panel's rows are all `.nav-link`, and all three have to agree on where you are.
   document.querySelectorAll(".nav-link").forEach((a) => {
@@ -648,6 +733,27 @@ async function route() {
     node.classList.toggle("current", !!here && node.getAttribute("data-nav-item") === here.id);
   });
   setActiveItem(here);
+  // Before the DOM goes: cancel the outgoing page's pending work, so a debounced callback
+  // cannot fire into a page that no longer exists.
+  //
+  // NOTHING IN THIS APP REGISTERS A TEARDOWN YET, and that is stated rather than left for a
+  // reader to discover: no page here calls `debounce` or `onPageTeardown`, so today this
+  // line does nothing. It is here because it is what makes those two safe to reach for — the
+  // first page that debounces anything without it leaks a callback into whatever page
+  // replaces it, and that failure is silent. `closeTip()` below is the half that bites now.
+  runPageTeardown();
+  // THE ONE SURFACE A PAGE TEARDOWN CANNOT REACH. The hover card is portaled to <body>, and
+  // on the merged z scale it sits ABOVE the route overlay (--z-popover 52 against the
+  // overlay's 20, where this app's own scale had it at 30 BELOW the overlay's 40). So a card
+  // left open when a navigation starts would float over the veil, explaining something that
+  // is no longer on screen. The other portaled surface — the combobox popover — closes
+  // itself on a CLICKED navigation — its dismissal is a capture-phase document click, and
+  // clicking a nav link is one — but not on a hashchange with no click behind it: the back
+  // button, a typed URL, a programmatic `location.hash =`. Measured in the dev harness: open
+  // the header scope switcher, set location.hash, and the panel was still in the DOM over the
+  // next page. So both portaled surfaces are dismissed here, explicitly.
+  closeTip();
+  closeCombobox();
   clear(mainEl);
   // The first render after a boot is covered by the boot splash → page skeleton, so it skips
   // the veil to avoid stacking two loaders; later navigations use it as normal.
@@ -658,12 +764,14 @@ async function route() {
       refresh, clearScope, startScan, ...activeScope(),
     });
   } catch (e) {
-    clear(mainEl).append(
-      el("div", { class: "empty" },
-        el("div", {}, "This page failed to load."),
-        el("div", { class: "small", style: "margin-top:6px" }, String(e.message || e)),
-      ),
-    );
+    // A render that THREW is a defect, not an absence: errorState announces it (role="alert"),
+    // offers the retry in place, and demotes the exception into a disclosure instead of
+    // printing it at the reader as body copy. This was a bare `.empty` div with no role at
+    // all, which is neither.
+    clear(mainEl).append(errorState("This page failed to load.", {
+      detail: String(e.message || e),
+      onRetry: () => route(),
+    }));
   } finally {
     // Only the latest route settles the overlay; a newer change keeps it up.
     if (useOverlay && seq === routeSeq) endRouteLoading();

@@ -258,12 +258,20 @@
   font-size: var(--fs-lead); font-weight: 600; letter-spacing: -0.01em;
   color: var(--ink); margin: 0;
 }
+/* MIN-HEIGHT AND BOX-SHADOW ARE NOT REDUNDANT HERE, AND DROPPING THEM WAS THE DEFECT.
+   The pin is a <button>, and the `button` rule in this same sheet sets `min-height: 36px`
+   and `box-shadow: var(--shadow-button)`. Used height is max(height, min-height), so a rule
+   that sets only `height: 26px` renders a 36px-tall button carrying a card shadow inside a
+   26px title row. Measured in the dev harness at 1440x900 with the panel open:
+     the monolith this sheet was cut from   26.0 x 26.0, box-shadow: none
+     this rule without the two lines below  26.0 x 36.0, box-shadow: rgba(0,0,0,.04) 0 1px 2px 0
+   All three apps drew the 26x36 pin, because all three emit the same button. */
 .nav-flyout-pin {
   margin-left: auto; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; padding: 0;
+  width: 26px; height: 26px; min-height: 0; padding: 0;
   border: 1px solid transparent; border-radius: var(--radius-md);
-  background: none; color: var(--text-2); cursor: pointer;
+  background: none; box-shadow: none; color: var(--text-2); cursor: pointer;
 }
 .nav-flyout-pin:hover { background: var(--wash-hover); border-color: var(--hairline); }
 .nav-flyout-pin:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }

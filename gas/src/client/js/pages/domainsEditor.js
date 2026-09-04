@@ -3,10 +3,12 @@
 // confirm. Validation happens server-side on save (domain_rules.validate_domains
 // parity) and inline for fast feedback.
 
-import { call } from "../api.js";
+import { call } from "../../../../../gas_shared/api.js";
 import { buildPrefillRule } from "../attributionPrefill.js";
 import { EXPORT_KIND, parseDomainsImport } from "../domainsImport.js";
-import { clear, confirmDialog, downloadText, el, statusPill, toast } from "../ui.js";
+import {
+  clear, confirmDialog, downloadText, el, statusPill, tip, tipAnchor, toast, truncTip,
+} from "../ui.js";
 
 export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
   let items = JSON.parse(JSON.stringify(boot.settings.domains.items || []));
@@ -246,13 +248,19 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
           el("span", { class: "rule-card__title" },
             `Rule ${ri + 1}`,
             el("span", { class: "rule-card__hint" }, "all conditions must match")),
+          // Was a native `title` beside an aria-label saying the same thing, so the glyph
+          // explained itself to a screen reader and to a mouse, and to nobody else. `tip`
+          // attaches in place because the button is already interactive.
           editing.rules.length > 1
-            ? el("button", { class: "rule-card__remove", type: "button",
-                "aria-label": `Remove rule ${ri + 1}`, title: "Remove rule", onclick: () => {
-                editing.rules.splice(ri, 1);
-                renderRules();
-                schedulePreview();
-              } }, "✕")
+            ? tip(
+                el("button", { class: "rule-card__remove", type: "button",
+                  "aria-label": `Remove rule ${ri + 1}`, onclick: () => {
+                  editing.rules.splice(ri, 1);
+                  renderRules();
+                  schedulePreview();
+                } }, "✕"),
+                ["Remove rule"],
+              )
             : null,
         ));
         (rule.conditions || []).forEach((cond, ci) => {
@@ -374,11 +382,29 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
               }
               schedulePreview();
             });
-            listHost.append(el("label", { class: row.grayed ? "claimed" : null,
-              title: row.owner ? `Already used by domain “${row.owner}”` : row.name },
+            // ONE native `title` was doing two unrelated jobs, and it did neither where a
+            // keyboard or a touch screen could reach it. Which one it was doing depended on
+            // `row.owner`, so they are split here:
+            //
+            //   claimed  the row is greyed and disabled, and the only statement of WHY is
+            //            this sentence — real content, so it gets a card on the label (a
+            //            plain <label>, hence tipAnchor rather than tip; focus on the
+            //            checkbox inside it still opens the card, because the delegated
+            //            listener resolves the anchor with closest("[data-tip]")).
+            //   plain    the title merely repeated the visible name, which `.sub-name`
+            //            truncates with an ellipsis. That is `truncTip`'s exact job: it
+            //            shows the full string only when the box is actually clipping it,
+            //            instead of a tooltip that fires over text already fully readable.
+            const nameEl = el("span", { class: "sub-name" }, row.name);
+            if (!row.owner) truncTip(nameEl, row.name);
+            const pickRow = el("label", { class: row.grayed ? "claimed" : null },
               cb,
-              el("span", { class: "sub-name" }, row.name),
-              row.owner ? el("span", { class: "sub-owner" }, `in ${row.owner}`) : null));
+              nameEl,
+              row.owner ? el("span", { class: "sub-owner" }, `in ${row.owner}`) : null);
+            if (row.owner) {
+              tipAnchor(pickRow, () => [`Already used by domain “${row.owner}”`]);
+            }
+            listHost.append(pickRow);
           });
         }
 
@@ -415,13 +441,17 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
       return el("div", { class: "cond-row" },
         el("span", { class: "cond-conn", "aria-hidden": "true" }, ci === 0 ? "IF" : "AND"),
         typeSel,
+        // Same conversion as the rule card's remove button above, for the same reason.
         (rule.conditions.length > 1)
-          ? el("button", { class: "cond-remove", type: "button",
-              "aria-label": `Remove condition ${ci + 1}`, title: "Remove condition", onclick: () => {
-              rule.conditions.splice(ci, 1);
-              renderRules();
-              schedulePreview();
-            } }, "✕")
+          ? tip(
+              el("button", { class: "cond-remove", type: "button",
+                "aria-label": `Remove condition ${ci + 1}`, onclick: () => {
+                rule.conditions.splice(ci, 1);
+                renderRules();
+                schedulePreview();
+              } }, "✕"),
+              ["Remove condition"],
+            )
           : null,
         fields,
       );

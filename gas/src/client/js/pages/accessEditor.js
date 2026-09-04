@@ -9,8 +9,8 @@
 // an admin may only add and remove ordinary people. See src/server/access.ts for why the tier
 // stops there rather than letting admins make admins.
 
-import { call } from "../api.js";
-import { clear, confirmDialog, el, settingsPanel, statusPill, toast } from "../ui.js";
+import { call } from "../../../../../gas_shared/api.js";
+import { clear, confirmDialog, el, settingsPanel, statusPill, tip, toast } from "../ui.js";
 
 /**
  * The Access panel, or **null** when the caller may not edit it — settings.js appends only
@@ -59,9 +59,18 @@ export async function renderAccessPanel() {
       outsideDomain(email)
         ? statusPill("warn", "outside " + domain)
         : null,
+      // The remove control is a bare "✕", so its meaning lived entirely in a native `title`
+      // and an identical aria-label: a screen reader was told who it removes and a sighted
+      // pointer user got an OS tooltip a keyboard could not summon. `tip` attaches to the
+      // button in place (it is already interactive, so no second control joins the tab
+      // order) and opens on focus as well as hover, which is what puts the same sentence in
+      // front of the reader who tabs to it.
       onRemove
-        ? el("button", { class: "cond-remove", type: "button", title: "Remove " + email,
-            "aria-label": "Remove " + email, onclick: onRemove }, "✕")
+        ? tip(
+            el("button", { class: "cond-remove", type: "button",
+              "aria-label": "Remove " + email, onclick: onRemove }, "✕"),
+            ["Remove " + email],
+          )
         : null);
   }
 
