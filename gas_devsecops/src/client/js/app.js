@@ -1,4 +1,4 @@
-// Wiz Sidekick DevSecOps SPA shell: app header, sidebar navigation, scan zone, hash router.
+// Wiz Sidekick DevSecOps SPA shell: app header, sidebar navigation, sync zone, hash router.
 //
 // THE HEADER CARRIES IDENTITY AND SCOPE, AND NOTHING ELSE. The reference screen puts a search
 // box, notification icons and an avatar along the same bar; none of those has anything behind
@@ -6,10 +6,10 @@
 // never to offer. The project-scope switcher (ui/projectScope.js) earns the exception a page
 // filter would not: it governs every page rather than leading to one, so it is chrome in the
 // same sense the wordmark is, not a control that belongs to whichever page is on screen. The
-// scan controls stay in the rail, where the last-scan caption can afford its words.
+// sync controls stay in the rail, where the last-sync caption can afford its words.
 //
 // PHASE 1 shipped the shell, the nav and the ten routes with the pages as stubs. PHASE 2 wires
-// the sync battery behind the scan zone (see renderSidebar and the block below navContext()) —
+// the sync battery behind the sync zone (see renderSidebar and the block below navContext()) —
 // `api_runSync` / `api_getJobStatus` / `api_cancelSync` and the progress card ported from
 // gas_ai/src/client/js/syncProgress.js. See README.md.
 
@@ -149,7 +149,7 @@ let sidebarEl = null;
 
 // --------------------------------------------------------------------- the sync battery
 
-// The scan zone rebuilds these two nodes on every renderSidebar() (boot, refresh, and every
+// The sync zone rebuilds these two nodes on every renderSidebar() (boot, refresh, and every
 // experimental-flag flip), so they are held at module scope and re-pointed each time — the
 // poll interval and the job it is watching outlive any one rail render.
 let syncCardHost = null;
@@ -462,9 +462,13 @@ function renderSidebar(sidebar, data) {
   if (narrowNav()) renderStackedNav(sidebar);
   else renderRail(sidebar, currentRailItems());
 
-  // THE SCAN ZONE. Where the register's freshness caption lives, and — now that the sync
+  // THE SYNC ZONE. Where the register's freshness caption lives, and — now that the sync
   // battery is wired (api_runSync / api_getJobStatus / api_cancelSync, src/server/api.ts) —
   // where a reader starts a sync and watches it walk sca, then sast, then secrets.
+  //
+  // Named for the act, not for the record it writes (README.md, above the Pages table). The
+  // CSS class is still `.scan-zone` — renaming it is not a copy change, and nothing a reader
+  // sees says "scan zone".
   const zone = el("div", { class: "scan-zone" });
   const hasCreds = !!(data && data.hasCredentials);
   const runBtn = el("button", {

@@ -464,8 +464,8 @@ export async function renderProgram(host, params, _ctx) {
     noticeHost.append(firstRunNotice({
       synced: !!boot.latestSync,
       hint: "Coverage and efficiency are both taken over findings the risk rule has scored,"
-        + " so this page waits on a sync that saves rows for it to score. Run one from the"
-        + " scan zone in the rail.",
+        + " so this page waits on a sync that saves rows for it to score. Run one with the"
+        + " Run sync button in the rail.",
     }));
   }
 

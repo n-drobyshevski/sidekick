@@ -282,7 +282,7 @@ export function __resetModelMemosForTest(): void {
 }
 
 interface LedgerClock {
-  /** Epoch ms of the newest scan, or the wall clock when nothing has ever been scanned. */
+  /** Epoch ms of the newest scan, or the wall clock when no sync has ever saved one. */
   asOf: number;
   asOfSource: "scan" | "wallClock";
   /** ISO of the earliest scan — when this register started WATCHING. Null with no scans. */
@@ -1223,7 +1223,7 @@ function buildHistory(n: NormParams): Rec {
     // this payload does.
     scanScopeApplies: false,
     scanScopeNote: n.project
-      ? "scans, perScope and history describe the whole register — a scan battery and a "
+      ? "scans, perScope and history describe the whole register — a sync and a "
         + "daily snapshot carry no project dimension to narrow by. Only rows/kpis/trend above "
         + "are scoped to the selected project."
       : null,

@@ -655,7 +655,7 @@ function paintSecrets(host, vm) {
       })
       : emptyState(
         "Nothing open in this register.",
-        "Every secret finding is resolved, or nothing has been scanned yet. Resolved is not "
+        "Every secret finding is resolved, or no sync has saved one yet. Resolved is not "
         + "rotated: check the corners above before reading that as safe.",
       ),
   ));

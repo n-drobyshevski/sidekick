@@ -33,11 +33,13 @@
 //   settings.js   the settings form: panel, labelled row, switch, tab strip, one save bar
 //   projectScope.js  the app-header project switcher: which slice of the register is shown
 //   figures.js    the register vocabulary's numeric core: num, fmtCount, days1, pct1,
-//                 denomNote, fmtDays — refuse-before-cast, so an absent figure never renders
-//                 as a confident 0
+//                 denomNote, fmtDays, boundedDays — refuse-before-cast, so an absent figure
+//                 never renders as a confident 0
 
 export { appendAll, clear, downloadText, el, motionOk, registerWideNote } from "./ui/dom.js";
-export { days1, denomNote, fmtCount, fmtDays, num, pct1 } from "./ui/figures.js";
+export {
+  boundedDays, days1, denomNote, fmtCount, fmtDays, num, pct1,
+} from "./ui/figures.js";
 export {
   DISPLAY_TZ, fmtDate, fmtDateTime, plural, pluralize,
 } from "./ui/format.js";

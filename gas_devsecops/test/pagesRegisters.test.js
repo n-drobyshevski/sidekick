@@ -691,9 +691,14 @@ describe("secrets — the denominators are sentences and the exclusions are prin
     expect(SECRETS.timeToRevoke.slaDenominator).toMatch(/7-day target/);
   });
 
+  // The claim: where the curve never reaches half there is no median to print, so a BOUND is
+  // published instead — prefixed in the string, flagged in `bounded`, and never plotted as a
+  // marker at a number the curve never reached. The glyph moved from ">" to the inclusive "≥"
+  // under the vocabulary rule in README.md ("at least N" is inclusive; ">" is not); nothing
+  // else in this case, or this file, changed.
   it("publishes a lower bound rather than a number when the curve never reaches half", () => {
     expect(boundedDays(6.5, null)).toEqual({ text: "6.5 d", bounded: false });
-    expect(boundedDays(null, 41.2)).toEqual({ text: "> 41.2 d", bounded: true });
+    expect(boundedDays(null, 41.2)).toEqual({ text: "≥ 41.2 d", bounded: true });
     expect(boundedDays(null, null)).toEqual({ text: "—", bounded: false });
 
     const unreachable = secretsModel(secretsPayload({
@@ -705,7 +710,7 @@ describe("secrets — the denominators are sentences and the exclusions are prin
         },
       },
     }));
-    expect(unreachable.timeToRevoke.medianText).toBe("> 41.2 d");
+    expect(unreachable.timeToRevoke.medianText).toBe("≥ 41.2 d");
     expect(unreachable.timeToRevoke.medianIsLowerBound).toBe(true);
     // A bound is not a marker: nothing gets plotted at a number the curve never reached.
     expect(unreachable.timeToRevoke.medianDays).toBe(null);

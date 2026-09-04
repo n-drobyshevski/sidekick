@@ -48,7 +48,7 @@ export const DISAPPEARANCE_CAVEAT =
   "A SAST finding carries a real creation date and no resolution date, and this tenant "
   + "returns no resolved SAST findings at all. So the clock STARTS at a measurement and STOPS "
   + "at an estimate: the finding is dated closed at the first scan that stopped seeing it, "
-  + "which overstates the duration by up to one scan interval. Until two scans have run and "
+  + "which overstates the duration by up to one scan interval. Until two syncs have run and "
   + "findings have begun to disappear between them, this register reads near-zero — that is "
   + "an absence of observations, not a fast team.";
 
@@ -401,7 +401,7 @@ function paintSast(host, vm, filters) {
       })
       : emptyState(
         "Nothing open in this register.",
-        "Every code weakness is resolved, or nothing has been scanned yet.",
+        "Every code weakness is resolved, or no sync has saved one yet.",
       ),
   ));
 

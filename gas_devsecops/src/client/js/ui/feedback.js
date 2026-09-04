@@ -118,7 +118,7 @@ export function skeletonStack(count, { gap = "12px", height, widths, variant = "
  * here" are the same claim with the second half filled in. `items` is a list of
  * `{figure, unlock, route, routeLabel}`: WHAT is missing, WHAT would unlock it, and WHERE the
  * action lives. `route` is a hash route (`"#/settings"`); a null route means the control is
- * not a page — it is the rail's scan zone — and `routeLabel` then renders as plain text
+ * not a page — it is the Run sync button in the rail — and `routeLabel` then renders as text
  * rather than as a link that would go nowhere.
  *
  * Both older call shapes still work: `emptyState(msg)` and `emptyState(msg, hint)`.

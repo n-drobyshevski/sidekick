@@ -28,10 +28,10 @@
 import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  DEFAULT_PAGE_SIZE, absent, chartTable, chartTableModel, dataTable, days1, denomNote, el,
-  emptyState, errorState, fmtCount, glossaryTip, heroStat, kpiCard, meter, num, onPageTeardown,
-  pageHeader, pageOf, pct1, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
-  skeletonStack, sortRows, statRow, tableFooter, togglePills, fmtDate, triCell,
+  DEFAULT_PAGE_SIZE, absent, boundedDays, chartTable, chartTableModel, dataTable, days1,
+  denomNote, el, emptyState, errorState, fmtCount, glossaryTip, heroStat, kpiCard, meter, num,
+  onPageTeardown, pageHeader, pageOf, pct1, segmented, sevBadge, sevEntries, sevKeyRow,
+  sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter, togglePills, fmtDate, triCell,
 } from "../ui.js";
 
 // =========================================================================================
@@ -42,10 +42,12 @@ import {
 // `fmtCount`, defined wrongly — see `ui/figures.js`'s module header for the null-renders-as-0
 // defect that shipped this way). They now all live in `ui/figures.js`, the one implementation
 // every page in this package imports, `denomNote` included — see that file's header for the
-// attribute/sentence claim it carries. This file re-exports `pct1` alone because
-// `test/pagesRegisters.test.js` — which this package may not edit — still imports it from
-// here by name.
-export { pct1 };
+// attribute/sentence claim it carries. `boundedDays` joined them, from here AND from
+// `repos.js`: it was defined twice, in two shapes, spelling one lower bound two ways.
+//
+// This file re-exports `pct1` and `boundedDays` because `test/pagesRegisters.test.js` —
+// which this package may not edit — still imports both from here by name.
+export { boundedDays, pct1 };
 
 /** EPSS is a probability, 0..1 off the wire; rendered as the percentage it names. */
 export function epssPct(v) {
@@ -69,23 +71,6 @@ export function textCell(v) {
  */
 export function yesNo(v) {
   return v ? "Yes" : "No";
-}
-
-/**
- * A duration that may only be a LOWER BOUND.
- *
- * PRODUCT.md: "where the curve never reaches half, the page publishes a lower bound rather
- * than a number". `> 41 d` and `41 d` are different claims and this is the one place the
- * difference is spelled, so no caller can flatten it by accident.
- */
-export function boundedDays(value, lowerBound) {
-  if (value !== null && value !== undefined && Number.isFinite(Number(value))) {
-    return { text: days1(value), bounded: false };
-  }
-  if (lowerBound !== null && lowerBound !== undefined && Number.isFinite(Number(lowerBound))) {
-    return { text: `> ${days1(lowerBound)}`, bounded: true };
-  }
-  return { text: "—", bounded: false };
 }
 
 /** A card whose figure is a rate or a count, with its denominator sentence beneath it. */
@@ -1006,7 +991,7 @@ function paintSca(host, vm, filters) {
         ],
         emptyText: "Nothing open.",
       })
-      : emptyState("Nothing open in this register.", "Every dependency finding is resolved, or nothing has been scanned yet."),
+      : emptyState("Nothing open in this register.", "Every dependency finding is resolved, or no sync has saved one yet."),
   ));
 
   // ------------------------------------------------------------- every finding, server-paged

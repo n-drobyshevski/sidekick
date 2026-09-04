@@ -18,6 +18,9 @@ const EXPECTED_IDS = [
   "validation-state", "rotated", "removed", "time-to-revoke",
   "foothold", "capacity", "mmcr", "reconstructed", "unclassified",
   "cwe-top-25", "twin",
+  // P6's three: the two halves of the sync/scan split, and the bound notation. The registry
+  // is a list of ids, not an assertion about copy — a new entry joins it here.
+  "sync", "scan", "lower-bound",
 ];
 
 // Long enough for the three-line entries already in the file (the longest today is 164
@@ -165,5 +168,99 @@ describe("the measurement decisions in the new entries", () => {
     expect(t).toMatch(/line/);
     expect(t).toMatch(/earlier|earliest/);
     expect(t).toContain("187");
+  });
+});
+
+// =========================================================================================
+//  P6 — one vocabulary, and one notation for a lower bound
+// =========================================================================================
+
+/**
+ * The glossary is where a reader goes to settle a word, so it is the one place that cannot
+ * itself be loose about the two words this register uses most.
+ *
+ * THE RULE (README.md, above the Pages table): a sync is the ACT; a scan is the RECORD it
+ * wrote. One sync saves one scan per register. You run a sync; you browse scans. Wiz's own
+ * detectors are a third thing — the scanner.
+ *
+ * These sweeps run over EVERY entry, not just the two that define the split, because the
+ * failure they guard is a future entry casually writing "run a scan" or "the register was
+ * scanned" — which is exactly how the drift started everywhere else in this package.
+ */
+describe("the glossary keeps sync and scan apart", () => {
+  const textOf = (e) => (e.term + " " + e.lines.join(" "));
+  const ALL = ENTRIES.map((e) => [e.id, textOf(e)]);
+
+  // "scan" standing in for the act. Each of these was a real phrasing somewhere in this
+  // package before P6: "Run a sync from the scan zone in the rail", "No register has been
+  // scanned yet", "a scan battery carries no project dimension".
+  const SCAN_AS_ACT = [
+    [/\bscan zone\b/i, "the rail holds the Run sync button, not a \"scan zone\""],
+    [/\brun(?:s|ning)?\s+(?:a|an|the|another)\s+scan\b/i, "you run a sync; a scan is what it saved"],
+    [/\bstart(?:s|ed|ing)?\s+(?:a|an|the|another)\s+scan\b/i, "a scan is not started, a sync is"],
+    [/\bscans?\s+(?:have\s+)?ran\b/i, "a scan does not run — the sync that wrote it did"],
+    [/\bscans?\s+have\s+run\b/i, "a scan does not run — the sync that wrote it did"],
+    [/\bscanned\b/i, "\"scanned\" names the act; say what the sync did, or name the scanner"],
+    [/\bscan\s+battery\b/i, "the battery is a sync battery — it writes scans"],
+  ];
+
+  it("never spells the act with the word scan", () => {
+    for (const [id, text] of ALL) {
+      for (const [re, why] of SCAN_AS_ACT) {
+        expect(re.test(text), `glossary entry "${id}" uses scan for the act: ${why}`).toBe(false);
+      }
+    }
+  });
+
+  // "sync" standing in for the record. A sync is not saved, browsed, deleted or counted —
+  // the scan it wrote is.
+  const SYNC_AS_RECORD = [
+    [/\bsaved syncs?\b/i, "a sync is not saved; the scan it wrote is"],
+    [/\bsync history\b/i, "the page is Scan history — it lists records"],
+    [/\bdelete\s+(?:a\s+|the\s+)?syncs?\b/i, "what is deleted is a scan row"],
+    [/\bsync rows?\b/i, "the ledger's rows are scan rows"],
+  ];
+
+  it("never spells the record with the word sync", () => {
+    for (const [id, text] of ALL) {
+      for (const [re, why] of SYNC_AS_RECORD) {
+        expect(re.test(text), `glossary entry "${id}" uses sync for the record: ${why}`).toBe(false);
+      }
+    }
+  });
+
+  // NOT A VACUOUS SWEEP. The two sweeps above only bite where the words appear at all, so
+  // this pins that both words are defined, that each names itself as one half of the split,
+  // and that the scanner is named as the third thing.
+  it("defines both halves of the split, and the scanner as a third thing", () => {
+    const sync = findEntry("sync");
+    const scan = findEntry("scan");
+    const syncText = textOf(sync).toLowerCase();
+    const scanText = textOf(scan).toLowerCase();
+
+    expect(syncText, "the sync entry does not say it is the act").toMatch(/\bthe act\b/);
+    expect(syncText, "the sync entry does not say a sync saves scans")
+      .toMatch(/saves?\s+one\s+scan\s+per\s+register/);
+    expect(scanText, "the scan entry does not say it is a record").toMatch(/\brecord\b/);
+    expect(scanText, "the scan entry does not say who wrote it").toMatch(/\bsync\b/);
+    expect(scanText, "the scan entry does not name the scanner as a third thing")
+      .toMatch(/\bscanner\b/);
+  });
+});
+
+describe("the lower-bound notation is stated once, in the glossary", () => {
+  it("has exactly one entry about the bound notation, and it is lower-bound", () => {
+    const carriers = ENTRIES.filter((e) => /\u2265/.test(e.lines.join(" ")));
+    expect(carriers.map((e) => e.id), "the bound notation is stated in more than one entry")
+      .toEqual(["lower-bound"]);
+  });
+
+  it("states both forms and says the bound is inclusive", () => {
+    const t = findEntry("lower-bound").lines.join(" ");
+    expect(t, "the prose form is missing").toContain("at least");
+    expect(t, "the figure form is missing").toContain("\u2265");
+    expect(t, "the entry does not say the bound is inclusive").toMatch(/inclusive/i);
+    // ">" is the notation the rule replaces; the entry may not offer it as an alternative.
+    expect(t, "the entry offers \">\" as a bound notation").not.toMatch(/">/);
   });
 });
