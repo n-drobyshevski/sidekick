@@ -8,6 +8,8 @@
 //   format.js     dates in the display zone
 //   severity.js   the severity marks (dot + word, never colour alone)
 //   data.js       quantity display: progress track, the sortable table, the paging footer
+//   chartTable.js the data-table alternative under every canvas — the same series a chart
+//                 was handed, as a disclosure a keyboard and a screen reader can read
 //   tableModel.js how a register orders and pages its rows — comparators, where an unknown
 //                 goes, what a tie does. DOM-free, so the half that can be WRONG is the
 //                 half vitest can hold
@@ -43,6 +45,7 @@ export {
   sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
 } from "./ui/severity.js";
 export { dataTable, meter, pager, progressBar, tableFooter } from "./ui/data.js";
+export { chartTable, chartTableModel, survivalTableModel } from "./ui/chartTable.js";
 export {
   DEFAULT_PAGE_SIZE, PAGE_SIZES, compareValues, nullsLast, pageForSize, pageOf, sortRows,
   triState,

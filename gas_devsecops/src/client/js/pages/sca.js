@@ -28,10 +28,10 @@
 import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  DEFAULT_PAGE_SIZE, absent, dataTable, days1, denomNote, el, emptyState, errorState, fmtCount,
-  glossaryTip, heroStat, kpiCard, meter, num, onPageTeardown, pageHeader, pageOf, pct1,
-  segmented, sevBadge, sevEntries, sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter,
-  togglePills, fmtDate, triCell,
+  DEFAULT_PAGE_SIZE, absent, chartTable, chartTableModel, dataTable, days1, denomNote, el,
+  emptyState, errorState, fmtCount, glossaryTip, heroStat, kpiCard, meter, num, onPageTeardown,
+  pageHeader, pageOf, pct1, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
+  skeletonStack, sortRows, statRow, tableFooter, togglePills, fmtDate, triCell,
 } from "../ui.js";
 
 // =========================================================================================
@@ -512,13 +512,66 @@ export function registerRowsTable(spec) {
   return host;
 }
 
-/** A chart card that survives a deployment whose policy refuses the charts bundle. */
-export function chartCard(title, note, draw) {
+/**
+ * The stacked age bar's series as a table model — `labels` and `perSev` are the SAME two
+ * arrays `stackedAgeBar` is handed, read once here and once there.
+ *
+ * The severity columns are filtered exactly the way `charts.js::stackedAgeBar` filters its
+ * datasets (`order.filter((s) => perSev[s])`), so the table lists the bars that were drawn
+ * and no others. NO TOTAL COLUMN: a stacked total looks obvious and is not, because a null
+ * bucket count would have to be summed as a zero to produce one, which is the exact move
+ * `ui/figures.js` exists to refuse.
+ */
+export function agingTableModel(labels, perSev, order) {
+  const buckets = Array.isArray(labels) ? labels : [];
+  const perSevOf = perSev || {};
+  const sevs = (order || []).filter((s) => perSevOf[s]);
+  return chartTableModel({
+    columns: [
+      { key: "bucket", label: "Age bucket", format: "text", value: (_row, i) => buckets[i] },
+      ...sevs.map((s) => ({
+        key: s,
+        label: s,
+        format: "count",
+        value: (_row, i) => perSevOf[s][i],
+      })),
+    ],
+    rows: buckets,
+  });
+}
+
+/**
+ * The severity bar's counts as a table model. Same `counts` object and same `order` the
+ * wrapper gets, and the same zero-drop rule `charts.js::severityBar` applies — a level with
+ * nothing in it is not a bar, so it is not a row either.
+ */
+export function severityCountsTableModel(counts, order, valueLabel) {
+  const tally = counts || {};
+  return chartTableModel({
+    columns: [
+      { key: "sev", label: "Severity", format: "text", value: (s) => s },
+      { key: "count", label: valueLabel || "Open findings", format: "count", value: (s) => tally[s] },
+    ],
+    rows: (order || []).filter((s) => tally[s]),
+  });
+}
+
+/**
+ * A chart card that survives a deployment whose policy refuses the charts bundle.
+ *
+ * `table` is the canvas's data-table alternative: `{ caption, model }`, where `model` is
+ * already built by `chartTableModel` / `survivalTableModel` from THE SAME arrays the `draw`
+ * callback hands the wrapper. It is rendered EAGERLY, before `loadCharts()` is even asked —
+ * so the case this card was written for (the bundle refused, `chartUnavailable(canvas)`) is
+ * also the case where the figures are the only thing left, and they are already on screen.
+ */
+export function chartCard(title, note, draw, table = null) {
   const canvas = el("canvas");
   const card = el("section", { class: "chart-card" },
     el("h3", { class: "section-label" }, title),
     note ? el("p", { class: "chart-note" }, note) : null,
     el("div", { class: "chart-box" }, canvas),
+    table ? chartTable({ canvas, caption: table.caption, model: table.model }) : null,
   );
   loadCharts()
     .then((api) => {
@@ -750,13 +803,22 @@ export function renderSca(host, params) {
 }
 
 function paintSca(host, vm, filters) {
+  // THE HERO BAR WAS COLOUR AND NOTHING ELSE. Five segments, no key, no counts — the one
+  // thing DESIGN.md rules out outright — and on an empty ledger it degraded to an empty
+  // bordered box that read as a broken widget rather than as "nothing open". `sevKeyRow`
+  // beside it carries the dot, the level name and the count for every segment drawn, and a
+  // zero total renders NEITHER: an absent distribution is stated by the figures beside it,
+  // not by an empty rectangle.
+  const heroSevs = sevEntries(vm.counts, vm.severityOrder);
   host.append(pageHeader({
     hero: heroStat("Registers · Dependencies", vm.hero.value, vm.hero.sub, { term: "sca" }),
     aside: el("div", { class: "page-strip" },
-      sevSegmentBar(sevEntries(vm.counts, vm.severityOrder), {
-        size: "lg",
-        label: "Open findings by severity",
-      }),
+      heroSevs.length
+        ? [
+          sevSegmentBar(heroSevs, { size: "lg", label: "Open findings by severity" }),
+          sevKeyRow(heroSevs),
+        ]
+        : null,
       el("p", { class: "small muted" },
         "A CVE in a third-party package. Fixed by upgrading it — which nobody can do until "
         + "a fixed version exists."),
@@ -843,9 +905,16 @@ function paintSca(host, vm, filters) {
         sevPalette(vm.severityOrder),
         "Open dependency findings by age bucket and severity.",
       );
+    }, {
+      caption: "Every bar of the stack as a count: one row per age bucket, one column per"
+        + " severity drawn.",
+      model: agingTableModel(vm.aging.labels, vm.aging.perSev, vm.severityOrder),
     }),
     chartCard("Open findings by severity", null, (api, canvas) => {
       api.severityBar(canvas, vm.counts, sevPalette(vm.severityOrder), null);
+    }, {
+      caption: "The length of each bar, as a count of open findings.",
+      model: severityCountsTableModel(vm.counts, vm.severityOrder, "Open findings"),
     }),
   ));
 

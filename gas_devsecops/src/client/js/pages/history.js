@@ -33,9 +33,10 @@
 import { swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  DEFAULT_PAGE_SIZE, clear, dataTable, days1, denomNote, el, emptyState, fmtDate, fmtDateTime,
-  glossaryTip, heroStat, kpiCard, num, onPageTeardown, pageHeader, pageOf, registerWideNote,
-  sectionLabel, skeletonStack, sortRows, tableFooter,
+  DEFAULT_PAGE_SIZE, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el,
+  emptyState, fmtCount, fmtDate, fmtDateTime, glossaryTip, heroStat, kpiCard, num,
+  onPageTeardown, pageHeader, pageOf, registerWideNote, sectionLabel, skeletonStack, sortRows,
+  tableFooter,
 } from "../ui.js";
 
 const SCOPE_LABELS = { sca: "Dependencies (SCA)", sast: "Code (SAST)", secrets: "Secrets" };
@@ -385,13 +386,66 @@ export async function renderHistory(host, _params, _ctx) {
     chartsHost.append(
       el("div", { class: "chart-card" },
         el("h3", { class: "section-label" }, "Open vs resolved"),
-        el("div", { class: "chart-box" }, orCanvas)),
+        el("div", { class: "chart-box" }, orCanvas),
+        // `openResolved` — the array handed to the wrapper below — listed, not re-derived.
+        chartTable({
+          canvas: orCanvas,
+          caption: "Both lines as figures: open and resolved counts at each date. A"
+            + " reconstructed row predates the first saved scan, where closures are"
+            + " under-counted.",
+          model: chartTableModel({
+            columns: [
+              {
+                key: "date",
+                label: "Date",
+                format: "text",
+                value: (p) => String(p.date).slice(0, 10),
+              },
+              { key: "open", label: "Open", format: "count" },
+              { key: "resolved", label: "Resolved", format: "count" },
+              {
+                key: "reconstructed",
+                label: "Reconstructed",
+                format: "text",
+                align: "text",
+                value: (p) => (p.reconstructed ? "yes" : "no"),
+              },
+            ],
+            rows: openResolved,
+          }),
+        })),
       el("div", { class: "chart-card" },
         el("h3", { class: "section-label" }, glossaryTip("MTTR trend (KM median)", "half-life")),
         kmPoints.length > 1
           ? el("div", { class: "chart-box" }, kmCanvas)
           : el("p", { class: "chart-empty muted" },
-              "Not enough remediation history to estimate a KM median trend yet.")),
+              "Not enough remediation history to estimate a KM median trend yet."),
+        kmPoints.length > 1
+          ? chartTable({
+            canvas: kmCanvas,
+            caption: "The Kaplan-Meier median, in days, as of each replayed date — the same"
+              + " points the line above plots.",
+            model: chartTableModel({
+              columns: [
+                {
+                  key: "x",
+                  label: "Date",
+                  format: "text",
+                  value: (p) => String(p.x).slice(0, 10),
+                },
+                { key: "y", label: "Half-life", format: "days" },
+                {
+                  key: "reconstructed",
+                  label: "Reconstructed",
+                  format: "text",
+                  align: "text",
+                  value: (p) => (p.reconstructed ? "yes" : "no"),
+                },
+              ],
+              rows: kmPoints,
+            }),
+          })
+          : null),
     );
     if (kmPoints.length > 1) {
       chartsHost.append(el("p", { class: "small muted" },
