@@ -13,11 +13,11 @@
 // rule-health and unassigned-explorer sections below still audit the FALLBACK only — they are
 // about rules, and a tag-attributed finding never reaches a rule to be traced.
 
-import { bootstrap, setParams, swrCall } from "../store.js";
+import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 import {
-  clear, el, emptyState, fmtDate, helpTip, kpiCard, pager, settingsPanel,
-  statusPill,
+  absent, clear, dataTable, el, emptyState, fmtDate, heroStat, kpiCard, pageHeader,
+  settingsPanel, statusPill, tableFooter, tip,
 } from "../ui.js";
 
 // The engine's placeholder domain for findings that matched no rule (domainRules.UNASSIGNED).
@@ -70,15 +70,20 @@ export async function renderAttribution(main, params, ctx) {
   // Current page of the unassigned-resource explorer, mirrored in the hash so
   // #/attribution?page=2 deep-links (0-based; omitted for the first page).
   let page = Math.max(0, parseInt(params.page || "", 10) || 0);
+  // Rows per RPC page. It used to be the literal 50 below and nothing could change it; the
+  // table footer now offers the standard sizes, and the server pages against this value.
+  // Deliberately NOT in the hash: the page number is what a shared link is about.
+  let pageSize = 50;
 
-  main.append(
-    el("h1", {}, "Attribution"),
-    el("p", { class: "page-sub" },
-      "How every finding maps onto the manual groups and support groups, across the whole " +
-      "register. The header scope switcher is deliberately not " +
-      "applied here — this page audits the mapping itself.",
+  main.append(pageHeader({
+    hero: heroStat(
+      "Data",
+      "Attribution",
+      "How every finding maps onto the manual groups and support groups, across the whole "
+        + "register. The header scope switcher is deliberately not applied here — this "
+        + "page audits the mapping itself.",
     ),
-  );
+  }));
 
   if (!boot.latestScan) {
     main.append(emptyState(
@@ -104,13 +109,23 @@ export async function renderAttribution(main, params, ctx) {
     const forPage = page;
     const paintIf = (data) => { if (forPage === page) renderBody(data); };
     paintIf(await swrCall("api_getAttribution",
-      { severities: scopeParam(), page, pageSize: 50 }, paintIf));
+      { severities: scopeParam(), page, pageSize }, paintIf));
   }
   await load();
 
   function goPage(p) {
     if (p < 0 || p === page) return;
     page = p;
+    setParams(page ? { page } : {});
+    load();
+  }
+
+  /** The footer already recomputed which page holds the row that was at the top, so this
+   *  stores both and refetches — a size change must not send the reader back to page 1. */
+  function goPageSize(size, nextPage) {
+    if (size === pageSize) return;
+    pageSize = size;
+    page = Math.max(0, nextPage);
     setParams(page ? { page } : {});
     load();
   }
@@ -198,28 +213,39 @@ export async function renderAttribution(main, params, ctx) {
    *  not, because Wiz no longer re-lists it for any scan to refresh. */
   function renderUnassignedLedger(rows) {
     if (!rows || !rows.length) return;
-    const body = el("tbody", {});
-    for (const r of rows) {
+    // The em dashes below are `absent()` rather than a typed "—": these columns are blank
+    // because the stored lifecycle never carried a subscription, a support group or a last-seen
+    // date, and a dash in the same ink as the values beside it reads as a value.
+    const columns = [
+      { key: "asset", label: "Asset", cell: (r) => assetCell(r) },
+      { key: "subscription", label: "Subscription", className: "muted",
+        cell: (r) => r.subscription || absent() },
+      { key: "supportGroup", label: "Support group", className: "muted",
+        cell: (r) => r.supportGroup || absent() },
+      { key: "open", label: "Open", className: "num",
+        cell: (r) => (r.open || 0).toLocaleString() },
+      { key: "resolved", label: "Resolved", className: "num",
+        cell: (r) => (r.resolved || 0).toLocaleString() },
+      { key: "lastSeen", label: "Last seen", className: "muted",
+        cell: (r) => (r.lastSeen ? fmtDate(r.lastSeen) : absent()) },
+      { key: "tags", label: "Stored tags", className: "small muted", cell: (r) => {
+        const tagEntries = Object.entries(r.tags || {});
+        // "no tags" is a MEASUREMENT, not an absence: the lifecycle carried a tag bag and it
+        // was empty, which is why this one stays a word rather than becoming the dash.
+        return tagEntries.length ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ") : "no tags";
+      } },
+    ];
+    function assetCell(r) {
       const nm = (r.nearMisses || [])[0];
-      const tagEntries = Object.entries(r.tags || {});
-      body.append(el("tr", {},
-        el("td", {},
-          el("div", {}, r.asset),
-          nm
-            ? el("div", { class: "small muted" },
-              "almost matches ", el("em", {}, nm.domain), ` — rule ${nm.ruleIndex + 1}`,
-              (nm.failedTypes && nm.failedTypes.length)
-                ? `, failing: ${nm.failedTypes.join(", ")}` : "")
-            : null,
-        ),
-        el("td", { class: "muted" }, r.subscription || "—"),
-        el("td", { class: "muted" }, r.supportGroup || "—"),
-        el("td", { class: "num" }, (r.open || 0).toLocaleString()),
-        el("td", { class: "num" }, (r.resolved || 0).toLocaleString()),
-        el("td", { class: "muted" }, r.lastSeen ? fmtDate(r.lastSeen) : "—"),
-        el("td", { class: "small muted" },
-          tagEntries.length ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ") : "no tags"),
-      ));
+      return [
+        el("div", {}, r.asset),
+        nm
+          ? el("div", { class: "small muted" },
+            "almost matches ", el("em", {}, nm.domain), ` — rule ${nm.ruleIndex + 1}`,
+            (nm.failedTypes && nm.failedTypes.length)
+              ? `, failing: ${nm.failedTypes.join(", ")}` : "")
+          : null,
+      ];
     }
     bodyHost.append(settingsPanel({
       title: "Unassigned lifecycles (ledger)",
@@ -229,17 +255,7 @@ export async function renderAttribution(main, params, ctx) {
         + "stored on a lifecycle is a snapshot from when it was last seen, so fixing tagging "
         + "today cannot reach one Wiz no longer re-lists. A recent Last seen will heal on the "
         + "next scan; an old one will not.",
-      body: el("div", { class: "table-wrap" },
-        el("table", { class: "data" },
-          el("thead", {}, el("tr", {},
-            el("th", { scope: "col" }, "Asset"),
-            el("th", { scope: "col" }, "Subscription"),
-            el("th", { scope: "col" }, "Support group"),
-            el("th", { scope: "col" }, "Open"),
-            el("th", { scope: "col" }, "Resolved"),
-            el("th", { scope: "col" }, "Last seen"),
-            el("th", { scope: "col" }, "Stored tags"))),
-          body)),
+      body: dataTable({ columns, rows }),
     }));
   }
 
@@ -303,42 +319,39 @@ export async function renderAttribution(main, params, ctx) {
       return;
     }
     const total = coverage.totalFindings || 0;
-    const body = el("tbody", {});
-    for (const d of byDomain) {
-      const isUnassigned = d.domain === UNASSIGNED;
-      const isMissing = d.domain === NOT_ATTRIBUTABLE;
-      const share = total ? d.findings / total : 0;
-      // Zero-count real domains never matched anything (possibly dead); a non-empty
-      // Unassigned row is a coverage gap. Never a warning on an empty Unassigned row (good).
-      // `Not attributable` is NEITHER: nothing an operator does here can close it, so flagging
-      // it as a gap would put a permanent red pill beside work that does not exist.
-      const marker = isMissing
-        ? statusPill("neutral", "no inputs")
-        : isUnassigned
-          ? (d.findings > 0 ? statusPill("bad", "coverage gap") : null)
-          : (d.findings === 0 ? statusPill("warn", "no matches") : null);
-      body.append(el("tr", {},
-        el("td", {},
-          el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
-            el("strong", {}, d.domain), marker)),
-        el("td", { class: "num" }, (d.findings || 0).toLocaleString()),
-        el("td", { class: "num" }, (d.assets || 0).toLocaleString()),
-        el("td", {},
-          el("div", { class: "mix-cell" },
-            shareBar(share),
-            el("span", { class: "mix-text small muted num" }, `${Math.round(share * 100)}%`))),
-      ));
-    }
+    const columns = [
+      { key: "domain", label: "Domain", cell: (d) => {
+        // Zero-count real domains never matched anything (possibly dead); a non-empty
+        // Unassigned row is a coverage gap. Never a warning on an empty Unassigned row (good).
+        // `Not attributable` is NEITHER: nothing an operator does here can close it, so
+        // flagging it as a gap would put a permanent red pill beside work that does not exist.
+        const marker = d.domain === NOT_ATTRIBUTABLE
+          ? statusPill("neutral", "no inputs")
+          : d.domain === UNASSIGNED
+            ? (d.findings > 0 ? statusPill("bad", "coverage gap") : null)
+            : (d.findings === 0 ? statusPill("warn", "no matches") : null);
+        return el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
+          el("strong", {}, d.domain), marker);
+      } },
+      { key: "findings", label: "Findings", className: "num",
+        cell: (d) => (d.findings || 0).toLocaleString() },
+      { key: "assets", label: "Assets", className: "num",
+        cell: (d) => (d.assets || 0).toLocaleString() },
+      { key: "share", label: "Share", cell: (d) => shareCell(total ? d.findings / total : 0) },
+    ];
     bodyHost.append(settingsPanel({
       title: "Coverage by domain",
       description: "How this scan's findings distribute across domains — Wiz/Domain tag values "
         + "and the manual groups that claim what is untagged.",
-      body: el("div", { class: "table-wrap panel-flush" },
-        el("table", { class: "data" },
-          el("thead", {}, el("tr", {},
-            ...["Domain", "Findings", "Assets", "Share"].map((h) => el("th", { scope: "col" }, h)))),
-          body)),
+      body: dataTable({ columns, rows: byDomain, className: "panel-flush" }),
     }));
+  }
+
+  /** The proportional bar and its exact percent, as one cell. Both coverage tables draw it. */
+  function shareCell(share) {
+    return el("div", { class: "mix-cell" },
+      shareBar(share),
+      el("span", { class: "mix-text small muted num" }, `${Math.round(share * 100)}%`));
   }
 
   // -------------------------------------------------- coverage by support group
@@ -409,31 +422,23 @@ export async function renderAttribution(main, params, ctx) {
       return;
     }
     const total = sg.totalFindings || 0;
-    const body = el("tbody", {});
-    for (const g of rows) {
-      const share = total ? g.findings / total : 0;
-      // A non-empty "(none)" row is the unresolved gap; resolved groups carry no marker.
-      const marker = g.unresolved && g.findings > 0 ? statusPill("bad", "unresolved") : null;
-      body.append(el("tr", {},
-        el("td", {},
-          el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
-            el("strong", {}, g.group), marker)),
-        el("td", { class: "num" }, (g.findings || 0).toLocaleString()),
-        el("td", { class: "num" }, (g.assets || 0).toLocaleString()),
-        el("td", {},
-          el("div", { class: "mix-cell" },
-            shareBar(share),
-            el("span", { class: "mix-text small muted num" }, `${Math.round(share * 100)}%`))),
-      ));
-    }
+    const columns = [
+      { key: "group", label: "Support group", cell: (g) => {
+        // A non-empty "(none)" row is the unresolved gap; resolved groups carry no marker.
+        const marker = g.unresolved && g.findings > 0 ? statusPill("bad", "unresolved") : null;
+        return el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
+          el("strong", {}, g.group), marker);
+      } },
+      { key: "findings", label: "Findings", className: "num",
+        cell: (g) => (g.findings || 0).toLocaleString() },
+      { key: "assets", label: "Assets", className: "num",
+        cell: (g) => (g.assets || 0).toLocaleString() },
+      { key: "share", label: "Share", cell: (g) => shareCell(total ? g.findings / total : 0) },
+    ];
     bodyHost.append(settingsPanel({
       title: "Coverage by support group",
       description: "A finding's support group is its subscription's Wiz/provisioning tag.",
-      body: [...notes, el("div", { class: "table-wrap panel-flush" },
-        el("table", { class: "data" },
-          el("thead", {}, el("tr", {},
-            ...["Support group", "Findings", "Assets", "Share"].map((h) => el("th", { scope: "col" }, h)))),
-          body))],
+      body: [...notes, dataTable({ columns, rows, className: "panel-flush" })],
     }));
   }
 
@@ -449,53 +454,70 @@ export async function renderAttribution(main, params, ctx) {
       }));
       return;
     }
-    const body = el("tbody", {});
-    for (const r of rows) {
-      // Top near-miss as a muted second line under the asset name ("almost matches
-      // Payments — rule 2, failing: tag"). ruleIndex is 0-based; show it 1-based.
-      const nm = (r.nearMisses || [])[0];
-      const nearLine = nm
-        ? el("div", { class: "small muted" },
-            "almost matches ", el("em", {}, nm.domain), ` — rule ${nm.ruleIndex + 1}`,
-            (nm.failedTypes && nm.failedTypes.length)
-              ? `, failing: ${nm.failedTypes.join(", ")}` : "")
-        : null;
-      const tagEntries = Object.entries(r.tags || {});
-      const tagsText = tagEntries.length
-        ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ")
-        : "—";
-      body.append(el("tr", {},
-        el("td", {}, el("strong", {}, r.asset || "—"), nearLine),
-        el("td", {}, r.assetType || "—"),
-        el("td", {}, r.subscription || "—"),
-        el("td", {}, r.supportGroup ? r.supportGroup : statusPill("neutral", "(none)")),
-        el("td", {}, el("span", { class: "small muted" }, tagsText)),
-        el("td", {},
-          el("div", { class: "mix-cell" },
-            mixStrip(r.sevCounts || {}),
-            el("span", { class: "mix-text small muted num" },
-              mixText(r.sevCounts || {}) || `${(r.findings || 0).toLocaleString()}`))),
-        el("td", {},
-          el("button", { type: "button", title: `Attribute ${r.asset || "resource"}`,
-            onclick: () => editor.openWithPrefill({
-              asset: r.asset, subscription: r.subscription,
-              subscriptionExtId: r.subscriptionExtId, supportGroup: r.supportGroup,
-            }) }, "Attribute…")),
-      ));
-    }
+    // Every dash here is `absent()`: an asset with no type, no subscription and no tags is a
+    // row Wiz told us nothing about, and a black em dash in the same weight as the values
+    // beside it reads as a recorded value rather than as silence.
+    const columns = [
+      { key: "asset", label: "Asset", cell: (r) => {
+        // Top near-miss as a muted second line under the asset name ("almost matches
+        // Payments — rule 2, failing: tag"). ruleIndex is 0-based; show it 1-based.
+        const nm = (r.nearMisses || [])[0];
+        return [
+          el("strong", {}, r.asset || absent()),
+          nm
+            ? el("div", { class: "small muted" },
+              "almost matches ", el("em", {}, nm.domain), ` — rule ${nm.ruleIndex + 1}`,
+              (nm.failedTypes && nm.failedTypes.length)
+                ? `, failing: ${nm.failedTypes.join(", ")}` : "")
+            : null,
+        ];
+      } },
+      { key: "assetType", label: "Type", cell: (r) => r.assetType || absent() },
+      { key: "subscription", label: "Subscription", cell: (r) => r.subscription || absent() },
+      { key: "supportGroup", label: "Support group",
+        cell: (r) => (r.supportGroup ? r.supportGroup : statusPill("neutral", "(none)")) },
+      { key: "tags", label: "Tags", cell: (r) => {
+        const tagEntries = Object.entries(r.tags || {});
+        return el("span", { class: "small muted" }, tagEntries.length
+          ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ")
+          : absent());
+      } },
+      { key: "findings", label: "Findings", cell: (r) =>
+        el("div", { class: "mix-cell" },
+          mixStrip(r.sevCounts || {}),
+          el("span", { class: "mix-text small muted num" },
+            mixText(r.sevCounts || {}) || `${(r.findings || 0).toLocaleString()}`)) },
+      // The action column's heading is deliberately empty — the button says what it does.
+      { key: "attribute", label: "", cell: (r) => {
+        const btn = el("button", { type: "button",
+          onclick: () => editor.openWithPrefill({
+            asset: r.asset, subscription: r.subscription,
+            subscriptionExtId: r.subscriptionExtId, supportGroup: r.supportGroup,
+          }) }, "Attribute…");
+        // This said WHICH resource it would attribute in a `title`, which el() now throws on:
+        // the one row-specific thing about a column of identical buttons was in a native
+        // tooltip no keyboard and no touch device could reach. `tip` attaches in place on a
+        // control rather than wrapping it in a second one.
+        return tip(btn, [`Attribute ${r.asset || "resource"}`]);
+      } },
+    ];
     bodyHost.append(settingsPanel({
       title: "Unassigned resources",
       description: "Assets whose findings matched no rule. “Attribute…” seeds a new " +
         "rule for the resource in the manual-group editor.",
       body: [
-        el("div", { class: "table-wrap panel-flush" },
-          el("table", { class: "data" },
-            el("thead", {}, el("tr", {},
-              ...["Asset", "Type", "Subscription", "Support group", "Tags", "Findings", ""]
-                .map((h) => el("th", { scope: "col" }, h)))),
-            body)),
-        pager(unassigned.page || 0, unassigned.pageCount || 1,
-          unassigned.total || rows.length, goPage),
+        dataTable({ columns, rows, className: "panel-flush" }),
+        // `tableFooter`, not the bare `pager`: the pager alone printed "1 rows" on a
+        // single-row page, and this register had no way to ask for more than 50 rows at a
+        // time. The size control re-fetches, because the paging here is the SERVER's.
+        tableFooter({
+          page: unassigned.page || 0,
+          pageCount: unassigned.pageCount || 1,
+          total: unassigned.total || rows.length,
+          pageSize,
+          onPage: goPage,
+          onPageSize: goPageSize,
+        }),
       ],
     }));
   }
@@ -504,7 +526,7 @@ export async function renderAttribution(main, params, ctx) {
 
   function renderRuleHealth(rows, editor) {
     const desc = ["How each mapping rule performs against this scan. ",
-      helpTip(el("span", { class: "linklike" }, "status guide"),
+      tip(el("span", { class: "linklike" }, "status guide"),
         ["Fires — claims findings under first-match priority.",
          "Shadowed — matches findings, but an earlier rule or group claims them first.",
          "Never matches — matches nothing in this scan (a dead rule).",
@@ -520,28 +542,34 @@ export async function renderAttribution(main, params, ctx) {
       return;
     }
     const items = (boot.settings.domains && boot.settings.domains.items) || [];
-    const body = el("tbody", {});
-    for (const rh of rows) {
-      const rule = items[rh.domainIndex] && items[rh.domainIndex].rules
-        ? items[rh.domainIndex].rules[rh.ruleIndex] : null;
-      const [kind, label] = STATUS_PILL[rh.status] || ["neutral", rh.status || "?"];
-      body.append(el("tr", {},
-        el("td", {}, el("strong", {}, rh.domain)),
-        el("td", {}, el("span", { class: "small muted" }, summarizeRule(rule))),
-        el("td", { class: "num" }, (rh.fired || 0).toLocaleString()),
-        el("td", { class: "num" }, (rh.matched || 0).toLocaleString()),
-        el("td", {}, statusPill(kind, label)),
-        el("td", {}, el("button", { type: "button", title: `Edit ${rh.domain}`,
-          onclick: () => editor.openEditor(rh.domainIndex) }, "Edit")),
-      ));
-    }
+    const columns = [
+      { key: "domain", label: "Manual group", cell: (rh) => el("strong", {}, rh.domain) },
+      { key: "rule", label: "Rule", cell: (rh) => {
+        const rule = items[rh.domainIndex] && items[rh.domainIndex].rules
+          ? items[rh.domainIndex].rules[rh.ruleIndex] : null;
+        return el("span", { class: "small muted" }, summarizeRule(rule));
+      } },
+      { key: "fired", label: "Fired", className: "num",
+        cell: (rh) => (rh.fired || 0).toLocaleString() },
+      { key: "matched", label: "Matched", className: "num",
+        cell: (rh) => (rh.matched || 0).toLocaleString() },
+      { key: "status", label: "Status", cell: (rh) => {
+        const [kind, label] = STATUS_PILL[rh.status] || ["neutral", rh.status || "?"];
+        return statusPill(kind, label);
+      } },
+      // Empty heading: a column of "Edit" buttons names itself.
+      { key: "edit", label: "", cell: (rh) => {
+        const btn = el("button", { type: "button",
+          onclick: () => editor.openEditor(rh.domainIndex) }, "Edit");
+        // Which group this edits used to ride on a `title`, which el() now throws on — a
+        // native tooltip is unreachable by keyboard and absent on touch. `tip` on a control
+        // attaches in place, so the row does not gain a second tab stop.
+        return tip(btn, [`Edit ${rh.domain}`]);
+      } },
+    ];
     bodyHost.append(settingsPanel({
       title: "Rule health", description: desc, footer,
-      body: el("div", { class: "table-wrap panel-flush" },
-        el("table", { class: "data" },
-          el("thead", {}, el("tr", {},
-            ...["Manual group", "Rule", "Fired", "Matched", "Status", ""].map((h) => el("th", { scope: "col" }, h)))),
-          body)),
+      body: dataTable({ columns, rows, className: "panel-flush" }),
     }));
   }
 
@@ -568,26 +596,21 @@ export async function renderAttribution(main, params, ctx) {
       }));
       return;
     }
-    const body = el("tbody", {});
-    for (const u of untagged) {
-      body.append(el("tr", {},
-        el("td", {}, el("strong", {}, u.subscription)),
-        el("td", {}, u.extId),
-        el("td", { class: "num" }, (u.assets || 0).toLocaleString()),
-        el("td", {},
-          el("div", { class: "mix-cell" },
-            mixStrip(u.sevCounts || {}),
-            el("span", { class: "mix-text small muted num" },
-              mixText(u.sevCounts || {}) || `${(u.findings || 0).toLocaleString()}`))),
-      ));
-    }
+    const columns = [
+      { key: "subscription", label: "Subscription",
+        cell: (u) => el("strong", {}, u.subscription) },
+      { key: "extId", label: "Ext ID", cell: (u) => u.extId },
+      { key: "assets", label: "Assets", className: "num",
+        cell: (u) => (u.assets || 0).toLocaleString() },
+      { key: "findings", label: "Findings", cell: (u) =>
+        el("div", { class: "mix-cell" },
+          mixStrip(u.sevCounts || {}),
+          el("span", { class: "mix-text small muted num" },
+            mixText(u.sevCounts || {}) || `${(u.findings || 0).toLocaleString()}`)) },
+    ];
     bodyHost.append(settingsPanel({
       title: "Untagged subscriptions", description: desc,
-      body: el("div", { class: "table-wrap panel-flush" },
-        el("table", { class: "data" },
-          el("thead", {}, el("tr", {},
-            ...["Subscription", "Ext ID", "Assets", "Findings"].map((h) => el("th", { scope: "col" }, h)))),
-          body)),
+      body: dataTable({ columns, rows: untagged, className: "panel-flush" }),
     }));
   }
 

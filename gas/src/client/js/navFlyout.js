@@ -19,7 +19,7 @@
 
 import { hasPanel, panelBlocks } from "./navModel.js";
 import { ROUTE_ICONS } from "./routeIcons.js";
-import { buildHash, parseHash } from "./store.js";
+import { buildHash, parseHash } from "../../../../gas_shared/store.js";
 import { el } from "./ui.js";
 import { uiIcon } from "./uiIcons.js";
 

@@ -13,8 +13,11 @@
 // the item. Deliberately NOT a copy of any route glyph below: a lane's mark has to be
 // recognisable beside the page marks its own panel lists, so Security is not the shield the
 // OS-vulnerabilities page already owns and Data is not the cylinder its own Data page draws.
-// A lane holding one visible page is drawn AS that page (navModel.railItems), so only lanes
-// that survive that collapse need a mark here.
+// Every labelled lane holds at least two pages, so every one of them reaches the rail and
+// every one of them needs a mark. That used to carry a caveat — navModel.railItems draws a
+// lane holding one visible page AS that page, so the one-page "Overview" lane never reached
+// the rail and never needed a mark. It also never should have existed: renderStackedNav
+// below 800px draws a lane heading unconditionally. See app.js's PAGES.
 export const LANE_ICONS = {
   // Crosshairs over a target. The lane is where the register is read for what to fix and how
   // fast it got fixed — an aim rather than an object, and the one mark here that could not be
@@ -33,7 +36,7 @@ export const ROUTE_ICONS = {
   mttr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13.5" r="7"/><path d="M12 13.5V9.5"/><path d="M12 13.5l3 2"/><path d="M9.5 3.5h5"/></svg>',
   program: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3"/><path d="M12 18.5v3"/><path d="M2.5 12h3"/><path d="M18.5 12h3"/></svg>',
   overview: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2l7 2.4v5.2c0 4.2-2.9 7-7 8.4-4.1-1.4-7-4.2-7-8.4V5.6z"/><path d="M12 8.5v3.4"/><path d="M12 15h.01"/></svg>',
-  scan_history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M3.5 4.5V9h4.5"/><path d="M12 8.5v4l2.8 1.7"/></svg>',
+  history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M3.5 4.5V9h4.5"/><path d="M12 8.5v4l2.8 1.7"/></svg>',
   attribution: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4.5h6.5l9 9-6.5 6.5-9-9z"/><path d="M8 8.5h.01"/></svg>',
   data: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.3" ry="2.8"/><path d="M4.7 5.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/><path d="M4.7 11.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/></svg>',
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7.5h8"/><path d="M16 7.5h4"/><circle cx="14" cy="7.5" r="2"/><path d="M4 16.5h4"/><path d="M12 16.5h8"/><circle cx="10" cy="16.5" r="2"/></svg>',

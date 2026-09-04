@@ -12,7 +12,7 @@
 // its skeleton — including the range input — ONCE and returns an `update()` that only ever
 // rewrites attributes/text/children around it, never the input itself. See its comment below.
 
-import { clear, el, splitBar } from "./ui.js";
+import { clear, el, splitBar, tipAnchor } from "./ui.js";
 import {
   breakdownFromCube, epssHistogram, openSlice, ruleIsEmpty, ruleSentence,
 } from "./riskCube.js";
@@ -266,8 +266,15 @@ export function createRiskReadout() {
       const start = i * per;
       const bar = el("div", {
         class: `epss-bar${start >= rule.epssThreshold ? " above" : ""}`,
-        title: `${start.toFixed(2)}–${(start + per).toFixed(2)}: ${fmt(n)} finding(s)`,
       });
+      // A native `title` used to carry the bucket's exact figure — the one place this
+      // histogram states a number at all — which put it out of reach of touch entirely and
+      // truncated it at the OS's discretion. `tipAnchor` because the bar is a plain div:
+      // twenty bars in the tab order would cost more than the figure is worth, so this stays
+      // a pointer affordance (as the scale note beside it says) and the counts a reader must
+      // have are in the clause rows above.
+      tipAnchor(bar, () =>
+        [`${start.toFixed(2)}–${(start + per).toFixed(2)}: ${fmt(n)} finding(s)`]);
       bar.style.height = n === 0 ? "0%" : `${Math.max(2, scale(n))}%`;
       histBars.append(bar);
     });
@@ -303,12 +310,18 @@ export function renderRetentionReadout(scans, draft) {
       : willSeal ? `would seal at ${draft.retentionDays}d`
         : s.pinned ? "always kept (most recent)"
           : "within the retention window";
-    track.append(el(
+    // The tick's age and its reason were a native `title`, unreachable by keyboard and
+    // absent on touch. Kept as a hover card on the same non-interactive div: the legend and
+    // the summary line beneath the timeline already state every rule in words, so the card
+    // identifies WHICH scan a tick is rather than carrying anything only it knows.
+    const tick = el(
       "div",
-      { class: `retention-tick${cls ? " " + cls : ""}`, title: `${s.ageDays}d old — ${why}` },
+      { class: `retention-tick${cls ? " " + cls : ""}` },
       el("span", { class: "retention-tick__glyph", "aria-hidden": "true" }, glyph),
       el("span", { class: "retention-tick__bar" }),
-    ));
+    );
+    tipAnchor(tick, () => [`${s.ageDays}d old — ${why}`]);
+    track.append(tick);
   }
   const total = list.length;
   const summary = draft.retentionDays === null

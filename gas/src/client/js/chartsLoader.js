@@ -36,7 +36,7 @@
 // chart is unavailable. That is the trade this file makes: every route stops paying for
 // Chart.js, and a deployment whose policy refuses all three loses its charts and is told so.
 
-import { call } from "./api.js";
+import { call } from "../../../../gas_shared/api.js";
 import { el } from "./ui.js";
 
 /** The global chartsBundle.js assigns to. */

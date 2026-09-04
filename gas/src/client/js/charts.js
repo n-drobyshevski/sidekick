@@ -56,7 +56,7 @@ const localeNum = (v) => (typeof v === "number" ? Number(v).toLocaleString() : v
 // Rounding carries up so a boundary value never prints a full next unit (6.98d is "1w",
 // not "1w 7.0d"; 23.7h is "1d", not "0d 24h"). `days` is a non-negative day count;
 // nullish/NaN -> "—" (tooltips always pass a number, but stay defensive). Decimal points
-// use "." to match fmtDays and the rest of the app's duration formatting.
+// use "." to match fmtSpan and the rest of the app's duration formatting.
 export function fmtDuration(days) {
   if (days === null || days === undefined || Number.isNaN(days)) return "—";
   const d = Number(days);

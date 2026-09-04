@@ -100,7 +100,13 @@ nothing else, and every one of its fills carries the edge — `rgba(0,0,0,.40)` 
 resolves to `#997a0b`.
 
 **`--on-accent` exists because the answer differs per brand.** Near-black is 11.78:1 on the
-yellow and 1.62:1 on the blue; white is 1.52:1 on the yellow and 5.17:1 on the blue. A rule
+yellow and 3.47:1 on the blue; white is 1.52:1 on the yellow and 5.17:1 on the blue. (The
+blue figure read 1.62:1 here and in gas_devsecops's tokens.css until `gas/test/shared.test.js`
+re-measured it with the contract's own `ratio()`: #171717 on #2563eb is 3.4686:1. The
+CONCLUSION is unchanged and is why the correction is worth making rather than skipping —
+3.47:1 clears only the 3:1 graphical-mark floor and still fails the 4.5:1 text floor, so white
+is still `--on-accent` on the blue. A wrong number under a right answer is the kind of thing a
+later reader re-derives a rule from.) A rule
 that painted `var(--ink)` on an accent fill — `styles/sheet.css`'s facet tick did, until this
 package — is correct in exactly one of the three apps and wrong in the other two without
 anything failing.

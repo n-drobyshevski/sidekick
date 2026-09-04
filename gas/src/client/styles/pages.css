@@ -49,7 +49,9 @@
    shell gets a max-width, centered container — every other page is full-bleed against the
    left rail. Leadership landing page, so hierarchy is dominated by one big number. */
 .exec { max-width: 720px; margin: 0 auto; text-align: center; }
-.exec .page-sub { margin: 0 0 var(--space-5); }
+/* The page's own <h1> + .page-sub pair is a pageHeader({hero: heroStat(...)}) now, so the
+   centered column has to centre the hero block rather than a paragraph under it. */
+.exec .page-header, .exec .page-hero { text-align: center; }
 /* .scope-bar is a flex row, so it ignores .exec's text-align and would sit hard-left in an
    otherwise centered column. The chip qualifies these figures — it centers with them. */
 .exec .scope-bar { justify-content: center; }
@@ -200,21 +202,37 @@
    color-mix over --accent rather than as a second copy of #2563eb — the brand belongs in
    styles/tokens.css and nowhere else, and 22% / 14% of the accent over transparent
    resolves to exactly the rgba() literals they replace. */
-.scope-bar { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 18px; }
-.scope-chip {
-  display: inline-flex; align-items: center; gap: var(--space-1);
-  font-size: var(--fs-label); padding: 3px var(--space-1) 3px 10px;
+/* ui/scopeBar.js builds these with the shared `filterChipRow` (gas_shared/ui/controls.js)
+   now, so the DOM is `.filter-chips.scope-bar > .filter-chip > .filter-chip-body >
+   (.filter-chip-key + .filter-chip-value)` plus a `.filter-chip-x`. The rules below are the
+   old `.scope-chip*` declarations, unchanged in value, moved onto those selectors.
+
+   THIS IS DRESSING A SHARED COMPONENT, NOT FORKING ONE, and the difference is worth stating
+   because the file it is in usually means the opposite. `gas_shared/styles/components.css`
+   carries only the chip BASE for `.filter-chip` — `display: inline-flex`, centre, 12px/600,
+   shared with `.sev-badge`, `.pill` and `.aars-chip` — and no rule at all for the row, the
+   key, the value or the ✕. There is nowhere else for the rest to live: adding it to
+   gas_shared is a change this package is not allowed to make. When it lands there, delete
+   everything below except the two `--accent` mixes, which are this brand's. */
+.filter-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 18px; }
+.filter-chip {
+  gap: var(--space-1);
+  padding: 3px var(--space-1) 3px 10px;
   border-radius: var(--radius-pill);
   background: var(--accent-wash); color: var(--sev-low-text);
   border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
 }
-.scope-chip b { font-weight: var(--fw-semibold); }
-.scope-chip-x {
+.filter-chip-body { display: inline-flex; align-items: center; gap: var(--space-1); }
+/* The value is the part a reader is scanning for — the key beside it is the dimension's
+   name and is deliberately the quieter half. This is what the old markup said with a bare
+   <b> around the value. */
+.filter-chip-value { font-weight: var(--fw-semibold); }
+.filter-chip-x {
   border: none; background: none; box-shadow: none; color: inherit;
   min-height: 0; padding: var(--space-half) var(--space-1); font-size: var(--fs-micro);
   line-height: 1; border-radius: var(--radius-pill);
 }
-.scope-chip-x:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.filter-chip-x:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
 /* The global filter combobox triggers gain an accent border when active (see
    .combobox-trigger.active in the PENDING P4 block), and the scan zone a hairline accent,
@@ -929,89 +947,13 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
 .health-row { display: flex; align-items: center; gap: 10px; }
 .health-build { margin: 0; }
 
-/* ===================================================================================== */
-/* --- pending P4: replaced when ui.js moves to gas_shared ---------------------------- */
-/* ===================================================================================== */
-/*
-   Every rule below dresses a component gas_shared ALREADY HAS, under the same class name,
-   with a DIFFERENT DOM SHAPE. Deleting them in favour of the shared rule would not be a
-   restyle, it would be a layout break: gas's sheet header is a row where the shared one is
-   a column, gas's chart-empty is an overlay where the shared one is a block that replaces
-   the plot, gas's help bubble is `.helptip` where the shared one is `.tip`.
-
-   So they are TOKENISED HERE AND NOT RESTYLED. P4 swaps gas's ui.js helpers for the shared
-   ones, at which point the markup matches and this whole block is deleted rather than
-   ported. Each entry names the shared component it will collapse into. */
-
-/* -> gas_shared/styles/components.css `.tip*` (ui/tip.js).
-   Help explainer (how a headline metric is calculated). The wrapped metric itself is the
-   hover/focus target — no separate glyph; the bubble is the neutral popover recipe (white /
-   hairline / --shadow-card). Revealed on hover/focus-within; the bubble stays in the DOM
-   (opacity only) so aria-describedby text is announced. See ui.js helpTip().
-
-   ITS Z RANK REVERSED, DELIBERATELY. --z-popover was 30 in this app and sat BELOW the route
-   overlay (40), because the overlay was meant to absorb clicks over an open transient
-   surface. On the merged scale --z-popover is 52 and the route overlay is 20, so a bubble
-   open when a route reload starts now floats ABOVE the veil. The mitigation is dismissal on
-   navigate, which is JS and is P4's; until then a stale bubble can outlive its own page. */
-.helptip { position: relative; }
-/* Metric variant: shrink-to-content so only the metric area is the hover zone, not the row. */
-.hero-metric { display: inline-block; cursor: help; }
-/* Non-hero definition trigger: a chart title, table header, or stat-card row that's the
-   term itself (not a separate "i" glyph or link) — cursor:help is the only affordance,
-   matching .hero-metric's minimalism at inline/row scale instead of the hero. */
-.help-label { cursor: help; }
-/* FIXED AT REST, NOT ONLY ONCE REVEALED — and that is a layout fix, not a positioning one.
-   ui.js place() already pins the bubble with `position: fixed` on hover/focus, and its comment
-   says why: "an opacity-0 fixed bubble can't affect layout". True — but the bubble was
-   `absolute` until the first reveal, and an absolutely-positioned descendant DOES contribute to
-   its scroll container's scrollable overflow. Inside a `.table-wrap` (whose `overflow-x: auto`
-   makes it a scroll container on BOTH axes, per the CSS Overflow computed-value rule) an
-   at-rest bubble hanging below a short table's header gave that table a vertical scroll range
-   of the overhang — measured at 65px on MTTR and 85px on Program performance, on tables that
-   fit their box perfectly. Fixed from the start, it contributes nothing and the range is 0.
-
-   The parked coordinates are arbitrary: place() overwrites left/top before every reveal, and
-   both reveal paths (:hover and :focus-within) fire it via onmouseenter / onfocusin. */
-.helptip-bubble {
-  position: fixed; left: 0; top: 0; z-index: var(--z-popover);
-  width: max-content; max-width: 268px; padding: 10px;
-  display: flex; flex-direction: column; gap: 5px;
-  background: var(--page); color: var(--ink);
-  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-  font-size: var(--fs-label); font-weight: var(--fw-body); line-height: 1.45;
-  letter-spacing: 0; text-transform: none; text-align: left;
-  white-space: normal; /* table headers set nowrap — the bubble must wrap, not overflow */
-  opacity: 0; pointer-events: none; transform: translateY(-2px);
-  transition: opacity var(--dur-fast) ease, transform var(--dur-fast) ease;
-}
-.helptip-line { display: block; }
-.helptip:hover > .helptip-bubble,
-.helptip:focus-within > .helptip-bubble { opacity: 1; pointer-events: auto; transform: translateY(0); }
-/* The four reduced-motion blocks this file used to carry for the bubble, the spinner, the
-   two indeterminate bars and the splash are gone: overrides.css's catch-all zeroes every
-   transition and animation duration with !important, from the LAST sheet in the cascade, so
-   each of them was restating what it already does. */
-
-/* -> gas_shared/styles/base.css `.nav-flyout-pin`. NOT A SHAPE DIFFERENCE — A SHARED DEFECT,
-   and it is here rather than in gas_shared only because this package may not edit that tree.
-
-   base.css's `.nav-flyout-pin` sets `width: 26px; height: 26px` and drops the monolith's
-   `min-height: 0; box-shadow: none`. The element is a <button>, and `button` in the same
-   sheet sets `min-height: 36px` and `box-shadow: var(--shadow-button)`. Used height is
-   max(height, min-height), so the pin renders 36px tall with a card shadow inside a 26px
-   row. MEASURED in the dev harness at 1440x900 with the panel open:
-     HEAD (monolith): 26.0 x 26.0, box-shadow: none
-     shared rule only: 26.0 x 36.0, box-shadow: rgba(0,0,0,.04) 0 1px 2px 0
-   gas_ai/src/client/js/navFlyout.js:125 and gas_devsecops's line 125 emit the same button,
-   so both siblings render the same 26x36 pin today. THE FIX BELONGS IN base.css's own rule
-   (add the two declarations back); delete this block the moment it lands there. */
-.nav-flyout-pin { min-height: 0; box-shadow: none; }
-
-/* -> gas_shared/styles/components.css `.combobox-*` (ui/combobox.js).
-   The shared list renders an option as a single row; gas's filterCombobox nests a
-   `.combobox-option-body` holding the label, with the check and the reset row as siblings. */
+/* ---------------------------------------------------------------- the scope combobox */
+/* ui/combobox.js is the ONE component this package could not hand back to gas_shared, so
+   these rules are not an override of the shared `.combobox-*` — they are the only rules
+   that dress this app's option rows. The shared list draws an option as a single row;
+   gas's nests a `.combobox-option-body` holding the label, with the check and the reset
+   row as siblings. The fork's own header names the exact gas_shared change (two glyphs in
+   ui/uiIcons.js) that retires both it and this block. */
 .combobox-trigger.active { border-color: var(--accent-text); }
 .combobox-option-body {
   flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: var(--space-2);
@@ -1028,35 +970,13 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
   border-bottom: 1px solid var(--hairline); margin-bottom: var(--space-half); padding-bottom: var(--space-2);
 }
 
-/* -> gas_shared/styles/sheet.css `.sheet-header` / `.sheet-close`.
-   The shared header is a COLUMN over a `.sheet-headrow`, so that chips and a back link can
-   stack under the title; gas's sheet.js emits `.sheet-header > .sheet-heading + button.sheet-close`
-   and nothing else, so the shared rule would drop the close button onto its own line under
-   the title. The shared close is a 28px icon box; gas's is a text glyph. Both wait for P4. */
-.sheet-header {
-  padding: var(--space-4) 20px var(--space-3); border-bottom: 1px solid var(--hairline);
-  /* `flex-direction: row` is EXPLICIT and load-bearing, not a restatement of the initial
-     value: sheet.css sets `column` on this selector and it wins by source order without
-     it. Measured on the overview Explore-breakdown sheet — the close ✕ dropped onto its
-     own line under the subtitle. */
-  display: flex; flex-direction: row;
-  align-items: flex-start; justify-content: space-between; gap: 10px;
-  flex: 0 0 auto;
-}
-.sheet-close {
-  flex: 0 0 auto; border: none; background: none; cursor: pointer;
-  font-size: var(--fs-lead); line-height: 1; color: var(--text-3); padding: var(--space-1);
-  border-radius: var(--radius-sm); margin: -4px -4px 0 0;
-  min-height: 0; width: auto; height: auto; display: inline-block;
-}
-.sheet-close:hover { background: var(--wash-hover); color: var(--ink); }
-.sheet-close:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
-
-/* -> gas_shared/styles/tables.css `.chart-empty`.
-   The shared rule REPLACES a plot: a 200px dashed block sized to match .chart-box. gas's is
-   an OVERLAY — chartsLoader.js and the mttr/history pages append it INSIDE a
-   `.chart-box` (position: relative, height 240px) and toggle it while the canvas stays put.
-   Taking the shared rule would put a second 200px block under every chart. */
+/* ------------------------------------------------------------------- the empty chart */
+/* NOT an override of gas_shared/styles/tables.css `.chart-empty` — a genuinely different
+   shape, kept because this app draws it differently and P4 changed no chart code. The
+   shared rule REPLACES a plot: a 200px dashed block sized to match .chart-box. This one is
+   an OVERLAY — chartsLoader.js and the mttr/history pages append it INSIDE a `.chart-box`
+   (position: relative, height 240px) and toggle it while the canvas stays put. Taking the
+   shared rule would put a second 200px block under every chart. */
 .chart-empty {
   position: absolute; inset: 0; margin: 0;
   display: flex; align-items: center; justify-content: center;

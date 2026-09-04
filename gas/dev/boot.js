@@ -11,7 +11,6 @@
   // The server stamps scan ids / timestamps from Date.now(); shifting the clock per
   // seed scan spreads the history over real days so MTTR and trend charts have shape.
   function withNow(ms, fn) {
-    // eslint-disable-next-line no-global-assign
     Date = class extends RealDate {
       constructor(...args) {
         if (args.length) super(...args);
@@ -19,7 +18,7 @@
       }
       static now() { return ms; }
     };
-    try { return fn(); } finally { Date = RealDate; } // eslint-disable-line no-global-assign
+    try { return fn(); } finally { Date = RealDate; }
   }
 
   console.log("[dev] " + Server.setup().split("\n").join("\n[dev] "));

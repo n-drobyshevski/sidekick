@@ -10,11 +10,12 @@
 // exports as CSV so a reader can recompute the page in a spreadsheet.
 
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
-import { call } from "../api.js";
-import { bootstrap, swrCall } from "../store.js";
+import { call } from "../../../../../gas_shared/api.js";
+import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, downloadText, el, emptyState, fmtDate, helpTip, openSheet, pager, scopeBar,
-  sectionLabel, sevBadge, skeleton, statusPill, toast,
+  PAGE_SIZES, absent, clear, dataTable, downloadText, el, emptyState, errorState, fmtDate,
+  heroStat, openSheet, pageHeader, scopeBar, sectionLabel, sevBadge, skeleton, statusPill,
+  tableFooter, tip, toast,
 } from "../ui.js";
 
 // Matrix cells, in reading order. `key` matches the server's `matrix_cell` / cohort quadrant
@@ -64,9 +65,44 @@ function pct0(v) {
   return v === null || v === undefined ? "—" : Math.round(v) + "%";
 }
 
-/** The rate itself. Paired with rangeNode below, never shown without it. */
+/**
+ * The same percent, in a position that can hold a Node.
+ *
+ * `pct` and `pct0` above have to keep returning STRINGS: three call sites each concatenate them
+ * into a sentence (the range beside a rate, the hero source line, the methodology arithmetic),
+ * and `absent()` is a Node, which `+` would render as "[object HTMLSpanElement]". So the muted
+ * dash arrives here instead, at the two call sites that are real cells. The defect it closes is
+ * the one `absent()` exists for: a black "—" in a numeric column reads with exactly the weight
+ * of a measured figure, and this one sits directly under a column of real close rates.
+ */
+function pct0Cell(v) {
+  return v === null || v === undefined ? absent() : pct0(v);
+}
+
+/**
+ * Cell content at caption size, as a span rather than as a class on the cell.
+ *
+ * `dataTable` lands `col.className` on the <th> as well as on every <td>, which is exactly what
+ * the numeric columns here want — a right-aligned heading over right-aligned figures. `.small`
+ * is the opposite case: it is 12px where a table heading is 11px, so putting it on the column
+ * would enlarge the heading in order to shrink the column. A span keeps the two apart.
+ */
+function small(...kids) {
+  return el("span", { class: "small" }, ...kids);
+}
+
+/**
+ * The rate itself. Paired with rangeNode below, never shown without it.
+ *
+ * BOTH of its call sites are Node child positions (the coverage hero value and the efficiency
+ * stat beside it), so this one may return `absent()` rather than a bare dash. It now refuses a
+ * null `point` as well as a null rate: `pct(null)` was already returning the dash for it, in
+ * black, which is the case this whole helper family exists to keep out of the ink of a measured
+ * number.
+ */
 function rateText(rate) {
-  return rate ? pct(rate.point) : "—";
+  if (!rate || rate.point === null || rate.point === undefined) return absent();
+  return pct(rate.point);
 }
 
 /**
@@ -92,7 +128,9 @@ const VERDICT = {
 /** Net-capacity verdict as a pill carrying a glyph and a word — never colour alone. */
 function verdictPill(v) {
   const spec = VERDICT[v];
-  if (!spec) return el("span", { class: "muted" }, "—");
+  // `absent()` IS this span, written once — same tag, same class, same dash. Spelling it out
+  // here was one of the six hand-typed em dashes the shared helper was promoted to end.
+  if (!spec) return absent();
   return statusPill(spec.pill, spec.glyph + " " + spec.text);
 }
 
@@ -112,13 +150,14 @@ export async function renderProgram(main, _params, ctx) {
   let paint;
   const dataPromise = swrCall("api_getProgramPage", params, (fresh) => paint && paint(fresh));
 
-  main.append(
-    el("h1", {}, "Program performance"),
-    el("p", { class: "page-sub" },
-      "Whether remediation effort lands on the findings that matter. Coverage is how much " +
-      "of the high-risk population got fixed; efficiency is how much of the fixing was " +
-      "high-risk. They pull against each other, so neither means anything alone."),
-  );
+  main.append(pageHeader({
+    hero: heroStat(
+      "Security",
+      "Program performance",
+      "Whether remediation effort lands on the findings that matter. Coverage and efficiency "
+        + "pull against each other, so neither means anything alone.",
+    ),
+  }));
 
   const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
   if (scopeChips) main.append(scopeChips);
@@ -138,9 +177,14 @@ export async function renderProgram(main, _params, ctx) {
     try {
       fn();
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error("[program] " + label + " render failed:", e);
-      if (host) clear(host).append(emptyState("Couldn't render " + label + "."));
+      // errorState, NOT emptyState — see the same guard on the executive page: a section
+      // that threw is a defect, not an absence, and the exception belongs in a disclosure
+      // rather than on the floor.
+      if (host) {
+        clear(host).append(errorState("Couldn't render " + label + ".",
+          { detail: String((e && e.message) || e) }));
+      }
     }
   }
 
@@ -166,12 +210,15 @@ export async function renderProgram(main, _params, ctx) {
   try {
     paint(await dataPromise);
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.error("[program] getProgramPage failed:", e);
-    clear(heroHost).append(emptyState(
-      "Couldn't load program performance.",
-      "Try running a scan or reloading the page.",
-    ));
+    // errorState, NOT emptyState — the same correction the per-section `guard` above already
+    // carries. An RPC that THREW was being announced through emptyState's role="status", in the
+    // same dashed box this register uses for "no scan saved yet", so a screen reader heard a
+    // crash as calm news; and the exception itself went nowhere but the console. The hint
+    // sentence goes with it: a disclosure carrying the real message beats advice that may not
+    // apply. gas_shared/test/contracts/emptyStates.js is what now holds the distinction.
+    clear(heroHost).append(errorState("Couldn't load program performance.",
+      { detail: String((e && e.message) || e) }));
     [matrixHost, trendHost, ruleHost, capacityHost, methodHost].forEach((h) => clear(h));
   }
 
@@ -205,7 +252,7 @@ export async function renderProgram(main, _params, ctx) {
   function renderHero(p) {
     clear(heroHost);
     const m = p.matrix;
-    const cov = helpTip(
+    const cov = tip(
       [
         el("div", { class: "label" }, "Remediation coverage"),
         el("div", { class: "hero-value num" }, rateText(m.coverage), rangeNode(m.coverage)),
@@ -219,10 +266,9 @@ export async function renderProgram(main, _params, ctx) {
           "once every finding carries a captured exploit signal.",
         "Higher is better, but coverage alone is easy to buy by fixing everything — read it " +
           "against efficiency.",
-      ],
-      { className: "hero-metric" },
+      ]
     );
-    const eff = helpTip(
+    const eff = tip(
       [
         el("div", { class: "label" }, "Efficiency"),
         el("div", { class: "kpi-value num" }, rateText(m.efficiency), rangeNode(m.efficiency)),
@@ -238,8 +284,7 @@ export async function renderProgram(main, _params, ctx) {
             " here, because that is the share of classified findings that are high risk. " +
             "Efficiency at or below that means the program is not prioritizing."
           : "There is no classified population yet to compare against.",
-      ],
-      { className: "hero-metric" },
+      ]
     );
 
     const minis = el("div", { class: "hero-minis" });
@@ -250,9 +295,7 @@ export async function renderProgram(main, _params, ctx) {
       ["High risk, remediated", m.tp.toLocaleString(), null],
       [
         "Monthly close rate",
-        capOverall.mmcrMean !== null && capOverall.mmcrMean !== undefined
-          ? pct0(capOverall.mmcrMean)
-          : "—",
+        pct0Cell(capOverall.mmcrMean),
         capOverall.oneInN
           ? el("span", { class: "prog-range" }, "1 in " + capOverall.oneInN.toFixed(1))
           : null,
@@ -324,7 +367,7 @@ export async function renderProgram(main, _params, ctx) {
         el("span", { class: "prog-cell-word" },
           spec.abbr ? el("span", { class: "prog-cell-abbr" }, spec.abbr) : null,
           spec.word));
-      return el("td", {}, helpTip(btn, [spec.help], { className: "help-cell" }));
+      return el("td", {}, tip(btn, [spec.help]));
     };
 
     const table = el("table", { class: "data prog-matrix" },
@@ -346,11 +389,10 @@ export async function renderProgram(main, _params, ctx) {
           el("td", { class: "num" }, m.notHighRisk.toLocaleString())),
         el("tr", { class: "prog-unknown-row" },
           el("th", { scope: "row" },
-            helpTip("No captured signal",
+            tip("No captured signal",
               ["Outside the 2×2 on purpose: these findings are not 'low risk', they are " +
                 "unscored. Counting them as low risk would inflate efficiency and deflate " +
-                "coverage at the same time, so they are excluded from both and reported here."],
-              { className: "help-label" })),
+                "coverage at the same time, so they are excluded from both and reported here."])),
           cell("unknownRemediated", m.unknownRemediated),
           cell("unknownOpen", m.unknownOpen),
           el("td", { class: "num" }, m.unknown.toLocaleString()))),
@@ -367,6 +409,11 @@ export async function renderProgram(main, _params, ctx) {
   function openCohort(quadrant, total) {
     const spec = CELLS[quadrant];
     let page = 0;
+    // The size the sheet opens at, and now also a size the reader can change. It has to be a
+    // member of the `sizes` list handed to tableFooter below or the <select> renders blank —
+    // `sizeSelect.value = String(pageSize)` matches no option and the browser falls back to the
+    // first entry, which would then lie about how many rows are on screen.
+    let pageSize = 50;
     openSheet((body) => {
       const host = el("div", {});
       body.append(host);
@@ -374,41 +421,61 @@ export async function renderProgram(main, _params, ctx) {
         clear(host).append(el("div", { class: "muted" }, "Loading…"));
         try {
           const res = await call("api_getRiskCohort", {
-            ...params, quadrant, page, pageSize: 50,
+            ...params, quadrant, page, pageSize,
           });
           clear(host);
           if (!res.rows.length) {
             host.append(emptyState("No findings in this cell."));
             return;
           }
-          const table = el("table", { class: "data" },
-            el("thead", {}, el("tr", {},
-              el("th", { scope: "col" }, "Finding"),
-              el("th", { scope: "col" }, "Severity"),
-              el("th", { scope: "col" }, "Signals"),
-              el("th", { scope: "col" }, "First seen"),
-              el("th", { scope: "col" }, "Resolved"))));
-          const tbody = el("tbody", {});
-          for (const r of res.rows) {
-            tbody.append(el("tr", {},
-              el("td", {},
-                el("div", {}, r.cve || r.vuln_key),
-                el("div", { class: "muted small" }, r.asset_name || "")),
-              el("td", {}, sevBadge(r.severity)),
-              el("td", { class: "small" }, signalText(r)),
-              el("td", { class: "small" }, fmtDate(r.first_seen)),
-              el("td", { class: "small" }, r.resolved_at ? fmtDate(r.resolved_at) : "—")));
-          }
-          table.append(tbody);
-          host.append(el("div", { class: "table-wrap" }, table));
-          if (res.pageCount > 1) {
-            host.append(pager(res.page, res.pageCount, res.total, (n) => {
-              page = n;
-              load();
-            }));
-          }
+          host.append(dataTable({
+            columns: [
+              {
+                key: "finding",
+                label: "Finding",
+                cell: (r) => el("div", {},
+                  el("div", {}, r.cve || r.vuln_key),
+                  el("div", { class: "muted small" }, r.asset_name || "")),
+              },
+              { key: "severity", label: "Severity", cell: (r) => sevBadge(r.severity) },
+              // `.small` rides on a span inside the cell rather than on `className`, and the
+              // three columns below do the same. `dataTable` puts `col.className` on the <th>
+              // too — which is what the numeric tables on this page WANT — but `.small` is
+              // 12px against the heading's own 11px, so spending it there would enlarge three
+              // headings to shrink three columns.
+              { key: "signals", label: "Signals", cell: (r) => small(signalText(r)) },
+              { key: "first_seen", label: "First seen", cell: (r) => small(fmtDate(r.first_seen)) },
+              {
+                key: "resolved_at",
+                label: "Resolved",
+                // A row still open has no resolution date, and the black dash that used to
+                // stand here read as a value in the same ink as the dates above it. `absent()`
+                // is a Node, so it replaces the whole cell content rather than being wrapped.
+                cell: (r) => (r.resolved_at ? small(fmtDate(r.resolved_at)) : absent()),
+              },
+            ],
+            rows: res.rows,
+          }));
+          // tableFooter, and UNCONDITIONALLY, where `pager` was drawn only above one page.
+          // Two things were wrong with that. A cohort that fitted on one page printed no count
+          // at all, so the sheet's subtitle was the only place the size of the cell appeared —
+          // and the shared pager's single-page branch is the one that pluralises ("1 row", not
+          // the "1 rows" a hand-built count gives), so gating it off threw away the correct
+          // spelling along with the number. Second, fifty rows was the only page size on offer.
+          // `onPageSize` is handed a page already recomputed to hold the row that was on top, so
+          // widening the page does not also move the reader somewhere else.
+          host.append(tableFooter({
+            page: res.page,
+            pageCount: res.pageCount,
+            total: res.total,
+            pageSize,
+            sizes: PAGE_SIZES,
+            onPage: (n) => { page = n; load(); },
+            onPageSize: (size, nextPage) => { pageSize = size; page = nextPage; load(); },
+          }));
         } catch (e) {
-          clear(host).append(emptyState("Couldn't load these findings.", e.message));
+          clear(host).append(errorState("Couldn't load these findings.",
+            { detail: String((e && e.message) || e) }));
         }
       };
       body.append(el("div", { style: "margin-bottom:12px" },
@@ -419,7 +486,12 @@ export async function renderProgram(main, _params, ctx) {
       title: spec.word,
       subtitle: total.toLocaleString() + " finding(s) · " + spec.help,
       width: "min(720px, 96vw)",
-      storageKey: "programCohortWidth",
+      // `resizable: true` replaces `storageKey: "programCohortWidth"`, the same substitution the
+      // MTTR by-domain sheet needed and for the same reason: `storageKey` was one of gas's own
+      // sheet options and the shared `openSheet` destructures a fixed set, ignoring anything
+      // else without complaint — so this drawer had quietly stopped being resizable at all. The
+      // shared sheet persists the width itself, under one key for every resizable sheet.
+      resizable: true,
     });
   }
 
@@ -453,7 +525,7 @@ export async function renderProgram(main, _params, ctx) {
     trendHost.append(sectionLabel("Over time"));
     const box = el("div", { class: "chart-box" }, el("canvas", {}));
     const card = el("div", { class: "chart-card" },
-      el("h3", {}, helpTip("Coverage & efficiency over time",
+      el("h3", {}, tip("Coverage & efficiency over time",
         ["Both rates recomputed at each date over the findings that existed then: a finding " +
           "counts as remediated from its resolution date onward, and as open before it.",
           "Risk classification is NOT re-evaluated per date — each finding carries the signals " +
@@ -462,15 +534,13 @@ export async function renderProgram(main, _params, ctx) {
           "and it is what stops last week's plotted value from changing every time a scan lands.",
           "Shaded region: dates before the first saved scan, reconstructed from first-detection " +
           "dates. Closures there are under-counted, because a finding that simply stopped " +
-          "appearing is dated to the scan that noticed."],
-        { className: "help-label" })),
+          "appearing is dated to the scan that noticed."])),
       box);
     trendHost.append(card);
     const canvas = box.querySelector("canvas");
     loadCharts().then((charts) => {
       charts.coverageEfficiencyLines(canvas, points);
     }).catch((e) => {
-      // eslint-disable-next-line no-console
       console.error("[program] trend chart failed:", e);
       chartUnavailable(canvas);
     });
@@ -507,7 +577,10 @@ export async function renderProgram(main, _params, ctx) {
 
     ruleHost.append(el("div", { class: "prog-rule-card" },
       el("p", { class: "prog-rule-sentence" },
-        "A finding is high risk when ", el("strong", {}, p.ruleSentence || "—"), "."),
+        // The muted dash rather than a bold black one: with no rule sentence in the payload the
+        // sentence has no predicate, and setting that absence in the same bold ink as a real
+        // rule claims the register has one.
+        "A finding is high risk when ", el("strong", {}, p.ruleSentence || absent()), "."),
       clauses,
       el("p", { class: "note" },
         "The clauses overlap — a finding can satisfy several — so these counts do not sum to " +
@@ -520,7 +593,7 @@ export async function renderProgram(main, _params, ctx) {
     if (sens.length > 1) {
       const box = el("div", { class: "chart-box chart-box--tall" }, el("canvas", {}));
       ruleHost.append(el("div", { class: "chart-card" },
-        el("h3", {}, helpTip("How much the rule choice matters",
+        el("h3", {}, tip("How much the rule choice matters",
           ["Each point is one combination of signals, scored over this same register: how much " +
             "of what THAT rule calls high risk got fixed (coverage, across) versus how much of " +
             "the fixing it would credit (efficiency, up). The active rule is the filled diamond.",
@@ -528,8 +601,7 @@ export async function renderProgram(main, _params, ctx) {
             "the whole point of tracking both numbers.",
             "This measures sensitivity to the rule, not which rule is objectively right: the " +
             "ground truth here is the rule itself, so a narrow rule can look flattering simply " +
-            "by flagging less."],
-          { className: "help-label" })),
+            "by flagging less."])),
         box));
       // The one caveat that must not depend on a hover: each point is scored against its OWN
       // definition of high risk, so a narrow rule can post high coverage simply by flagging
@@ -543,7 +615,6 @@ export async function renderProgram(main, _params, ctx) {
       loadCharts().then((charts) => {
         charts.coverageEfficiencyScatter(canvas, sens);
       }).catch((e) => {
-        // eslint-disable-next-line no-console
         console.error("[program] scatter failed:", e);
         chartUnavailable(canvas);
       });
@@ -568,52 +639,71 @@ export async function renderProgram(main, _params, ctx) {
     const highByMonth = {};
     for (const m of capHigh.months || []) highByMonth[m.month] = m;
 
-    const table = el("table", { class: "data" },
-      el("thead", {}, el("tr", {},
-        el("th", { scope: "col" }, "Month"),
-        el("th", { scope: "col" }, "Open at start"),
-        el("th", { scope: "col" }, "Opened"),
-        el("th", { scope: "col" }, "Closed"),
-        el("th", { scope: "col" },
-          helpTip("Close rate",
-            ["Closed during the month as a share of the backlog open at its start."],
-            { className: "help-label" })),
-        el("th", { scope: "col" },
-          helpTip("High-risk net",
-            ["High-risk findings closed minus high-risk findings opened, that month. " +
-              "Positive means the program gained ground on the work that matters."],
-            { className: "help-label" })),
-        el("th", { scope: "col" },
-          helpTip("Cross-check",
-            ["Resolutions reported independently by the scans that ran in this month " +
-              "(reconcile's own per-scan deltas). It should track the Closed column; where it " +
-              "does not, the scan cadence crossed a month boundary or the scans were severity-" +
-              "scoped."],
-            { className: "help-label" })))),
-    );
-    const tbody = el("tbody", {});
-    for (const m of months) {
-      const hi = highByMonth[m.month];
-      const tags = [];
-      if (m.partial) tags.push("in progress");
-      if (m.reconstructed) tags.push("reconstructed");
-      tbody.append(el("tr", {},
-        el("td", {},
-          m.month,
-          tags.length ? el("span", { class: "muted small" }, " " + tags.join(", ")) : null),
-        el("td", { class: "num" }, m.openAtStart.toLocaleString()),
-        el("td", { class: "num" }, m.opened.toLocaleString()),
-        el("td", { class: "num" }, m.closed.toLocaleString()),
-        el("td", { class: "num num--key" }, pct0(m.mmcr)),
-        el("td", { class: "num" },
-          hi ? (hi.net > 0 ? "+" : "") + hi.net.toLocaleString() : "—"),
-        el("td", { class: "num muted" },
-          m.scanClosed === null || m.scanClosed === undefined
-            ? "—"
-            : m.scanClosed.toLocaleString())));
-    }
-    table.append(tbody);
-    capacityHost.append(el("div", { class: "table-wrap" }, table));
+    // `dataTable`: a static seven-column list, one header row, no colspan. The three column
+    // definitions that carried a `tip` become `help`, which the component attaches the same way
+    // — and the six numeric columns now carry `num` on the heading as well as the cells, so each
+    // label sits over its own figures instead of adrift to the left of them.
+    capacityHost.append(dataTable({
+      columns: [
+        {
+          key: "month",
+          label: "Month",
+          cell: (m) => {
+            const tags = [];
+            if (m.partial) tags.push("in progress");
+            if (m.reconstructed) tags.push("reconstructed");
+            return el("span", {},
+              m.month,
+              tags.length ? el("span", { class: "muted small" }, " " + tags.join(", ")) : null);
+          },
+        },
+        {
+          key: "openAtStart",
+          label: "Open at start",
+          className: "num",
+          cell: (m) => m.openAtStart.toLocaleString(),
+        },
+        { key: "opened", label: "Opened", className: "num", cell: (m) => m.opened.toLocaleString() },
+        { key: "closed", label: "Closed", className: "num", cell: (m) => m.closed.toLocaleString() },
+        {
+          key: "mmcr",
+          label: "Close rate",
+          className: "num num--key",
+          help: ["Closed during the month as a share of the backlog open at its start."],
+          // A month with no backlog at its start has no close rate, and the black dash `pct0`
+          // returned for it read as a measured figure in a column of measured figures.
+          cell: (m) => pct0Cell(m.mmcr),
+        },
+        {
+          key: "highRiskNet",
+          label: "High-risk net",
+          className: "num",
+          help: ["High-risk findings closed minus high-risk findings opened, that month. " +
+            "Positive means the program gained ground on the work that matters."],
+          cell: (m) => {
+            const hi = highByMonth[m.month];
+            // No high-risk row for this month is "we never scored it", not "net zero".
+            if (!hi) return absent();
+            return (hi.net > 0 ? "+" : "") + hi.net.toLocaleString();
+          },
+        },
+        {
+          key: "scanClosed",
+          label: "Cross-check",
+          className: "num",
+          help: ["Resolutions reported independently by the scans that ran in this month " +
+            "(reconcile's own per-scan deltas). It should track the Closed column; where it " +
+            "does not, the scan cadence crossed a month boundary or the scans were severity-" +
+            "scoped."],
+          // `.muted` stays on a span inside the cell rather than on the column: it would
+          // otherwise repaint this heading a different grey from the six beside it.
+          cell: (m) => (m.scanClosed === null || m.scanClosed === undefined
+            ? absent()
+            : el("span", { class: "muted" }, m.scanClosed.toLocaleString())),
+        },
+      ],
+      rows: months,
+    }));
     if (cap.monthsCounted) {
       capacityHost.append(el("p", { class: "note" },
         "Mean close rate " + pct(cap.mmcrMean) +
