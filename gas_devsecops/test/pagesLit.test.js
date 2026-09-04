@@ -19,10 +19,12 @@ import { describe, expect, it } from "vitest";
 
 import { secretsModel } from "../src/client/js/pages/secrets.js";
 
+// The key sheet joined the Data lane in the help-route package; this list moves only when a
+// route is added or removed on purpose.
 const ROUTES = [
   "executive", "mttr", "program",
   "sca", "sast", "secrets",
-  "repos", "history", "data",
+  "repos", "history", "data", "help",
   "settings",
 ];
 
@@ -126,7 +128,7 @@ function parsePages() {
 const PAGES = parsePages();
 
 describe("exit gate 2/7: every route has a real renderer, and a file behind it", () => {
-  it("PAGES names exactly the ten routes this phase composed", () => {
+  it("PAGES names exactly the eleven routes this phase composed", () => {
     expect(PAGES.map((p) => p.route)).toEqual(ROUTES);
   });
 

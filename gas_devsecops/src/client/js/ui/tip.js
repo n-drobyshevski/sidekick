@@ -124,10 +124,18 @@ function paint(copy) {
 
 function place(rect) {
   const box = host.getBoundingClientRect();
+  // `#main` is the one stable id every route's content pane carries (app.js's route()
+  // replaces the element but keeps the id) — its left edge is where the icon rail ends, so a
+  // card anchored just inside it clamps against the CONTENT column rather than the window's
+  // own x=0, which used to let it come to rest over the rail. Absent on the boot-splash /
+  // access-denied paint before main exists, where contentLeft falls back to tipPlacement's
+  // own default of 0 (the window's edge) — there is no rail yet either.
+  const main = document.getElementById("main");
+  const contentLeft = main ? main.getBoundingClientRect().left : 0;
   const p = tipPlacement(
     rect,
     { width: box.width, height: box.height },
-    { width: window.innerWidth, height: window.innerHeight },
+    { width: window.innerWidth, height: window.innerHeight, left: contentLeft },
   );
   host.style.left = p.left + "px";
   host.style.top = p.top + "px";

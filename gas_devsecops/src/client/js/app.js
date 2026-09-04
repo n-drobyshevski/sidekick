@@ -36,6 +36,7 @@ import { renderSecrets } from "./pages/secrets.js";
 import { renderRepos } from "./pages/repos.js";
 import { renderHistory } from "./pages/history.js";
 import { renderData } from "./pages/data.js";
+import { renderHelp } from "./pages/help.js";
 import { renderSettings } from "./pages/settings.js";
 import { LANE_ICONS, ROUTE_ICONS } from "./routeIcons.js";
 import { itemForRoute, railItems } from "./navModel.js";
@@ -105,6 +106,11 @@ const PAGES = {
   // "Storage", not "Data": the lane is already called Data, and gas/ shipping a Data page
   // inside a Data lane is a repetition worth not inheriting.
   data: { title: "Storage", group: "Data", render: renderData },
+  // The book, not the record: helpContent.js's whole glossary, searchable and deep-linkable
+  // — where every glossaryTip's "Enter for the full definition" has always pointed
+  // (ui/tip.js), landing on nothing until this route existed. Last in the lane because a
+  // reader reaches for it only after wanting to check a word, never on the way in.
+  help: { title: "Key sheet", group: "Data", render: renderHelp },
 
   // The tail: chrome, not a lane. A rule separates it and nothing labels it.
   settings: { title: "Settings", group: null, render: renderSettings },

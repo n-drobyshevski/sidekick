@@ -873,3 +873,37 @@
 .chart-table__body table.data td, .chart-table__body table.data th {
   padding: var(--space-1) var(--space-2);
 }
+
+/* ---------------------------------------------------------------- help key sheet */
+/* pages/help.js. A search field over one flat list of glossary entries — see that file's
+   header for why the list draws no group heading today. */
+.help-search {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  max-width: 480px; margin: 0 0 var(--space-3);
+}
+.help-search input[type="search"] { width: 100%; }
+.help-count { margin: 0 0 var(--space-4); }
+.help-list { display: flex; flex-direction: column; gap: var(--space-4); }
+.help-entry {
+  border: 1px solid var(--hairline); border-radius: var(--radius-xl);
+  background: var(--surface); box-shadow: var(--shadow-card);
+  padding: var(--space-4);
+}
+.help-entry:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+/* The deep-link highlight. --accent-wash is a FILL, never ink — the "linked" tag beside it
+   and aria-current="true" on the entry (see help.js) are what make the state readable
+   without colour, the same split every accent use in this app keeps to. */
+.help-entry--linked {
+  background: var(--accent-wash);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
+}
+.help-entry-term {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--fs-lead); font-weight: var(--fw-semibold); margin: 0 0 var(--space-2);
+}
+.help-entry-linked-tag {
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); color: var(--accent-text);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.help-entry-line { margin: 0 0 var(--space-1); color: var(--text-2); max-width: var(--measure); }
+.help-entry-line:last-child { margin-bottom: 0; }
