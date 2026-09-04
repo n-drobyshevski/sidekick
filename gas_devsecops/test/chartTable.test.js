@@ -155,7 +155,7 @@ describe("every chart canvas ships a data-table alternative", () => {
     }
   });
 
-  it("the register still draws the nine canvases it composes, counted so a deletion shows", () => {
+  it("the register still draws the ten canvases it composes, counted so a deletion shows", () => {
     // A count, so a canvas DELETED to make the test above pass is visible as a change here
     // rather than as a silent green.
     //
@@ -166,8 +166,12 @@ describe("every chart canvas ships a data-table alternative", () => {
     // The claim above is untouched by that: this number moves only when a chart is added or
     // removed ON PURPOSE, and a canvas quietly deleted to satisfy the per-file rule still
     // shows up here as a change rather than as a silent green.
+    //
+    // 9 -> 10 (W2, the open-findings-by-age stack). The tenth canvas is the aging bar in
+    // mttr.js, under "Open findings by age" between the SLA table and the time-to-close
+    // distribution — one `el("canvas"` literal, one drawn chart, one `chartTable` beside it.
     const total = PAGE_FILES.reduce((n, f) => n + count(PAGE_CODE[f], /el\("canvas"/g), 0);
-    expect(total).toBe(9);
+    expect(total).toBe(10);
   });
 
   it("every chartTable call is handed the canvas it describes, so aria-details is wired", () => {

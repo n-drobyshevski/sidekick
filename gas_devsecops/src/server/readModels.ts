@@ -159,7 +159,7 @@ import {
   validationCoverage,
   type SecretRow,
 } from "../domain/secretsLifecycle";
-import { ageBuckets, concentration, movement, oldestOpen, riskTierStats, severityStats, triageFunnel } from "../domain/insights";
+import { ageBuckets, agingDistribution, concentration, movement, oldestOpen, riskTierStats, severityStats, triageFunnel } from "../domain/insights";
 import { kmMedianAsOf } from "../domain/trend";
 import {
   latestScanRow,
@@ -622,6 +622,20 @@ function buildMttr(n: NormParams): Rec {
       kmLowerBoundPerSev,
       kmPerSev,
       openPastSla: openPastSla(rows),
+      /**
+       * The open backlog as an age DISTRIBUTION, against the per-severity SLA edge.
+       *
+       * `openPastSla` above it is the same population reduced to one ratio per severity; a
+       * ratio cannot say whether the breaches are a week late or a year late, and every
+       * surveyed vendor but two compresses age into exactly that percentage. This ships the
+       * shape as well, over the SAME `rows` every other block here measures — so the scope,
+       * project, severity and no-fix filters apply to it identically.
+       *
+       * `unaged` is on the wire for the reason `ageBuckets` could not put it there: an open
+       * row with no readable `first_seen` is not young, it is undated, and the page prints
+       * that count rather than letting the bars quietly cover fewer rows than the hero does.
+       */
+      aging: agingDistribution(rows),
       awaiting: awaitingVendorFix(rows),
       /**
        * The second clock, scoped and labelled. `notMeasured` is every scoped row this block

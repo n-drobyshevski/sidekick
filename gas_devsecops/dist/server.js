@@ -423,7 +423,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "124b6c96fc67" : "dev";
+  var BUILD_ID = true ? "f2bc91ef93d5" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -2121,6 +2121,7 @@ var Server = (() => {
     return out;
   }
   var AGE_BUCKET_EDGES = [7, 30, 90];
+  var AGE_BUCKET_LABELS = ["0-7d", "8-30d", "31-90d", "90+d"];
   function ageBuckets(rows, scope) {
     const { perKey, totalOpen } = ageBucketsBy(rows, (r) => normalizeSeverity(r.severity), scope);
     return { perSev: perKey, totalOpen };
@@ -2140,6 +2141,51 @@ var Server = (() => {
       totalOpen += 1;
     }
     return { perKey, totalOpen };
+  }
+  function slaEdgeBucket(severity) {
+    const target = SLA_TARGETS[normalizeSeverity(severity)];
+    if (typeof target !== "number" || !Number.isFinite(target)) return null;
+    return target <= AGE_BUCKET_EDGES[0] ? 0 : target <= AGE_BUCKET_EDGES[1] ? 1 : target <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+  }
+  function slaEdgeIsExact(severity) {
+    const target = SLA_TARGETS[normalizeSeverity(severity)];
+    return typeof target === "number" && AGE_BUCKET_EDGES.indexOf(target) >= 0;
+  }
+  function agingDistribution(rows, scope) {
+    const perSev = {};
+    let unaged = 0;
+    let totalOpen = 0;
+    for (const row of byScope(rows, scope)) {
+      if (!isOpen2(row.status)) continue;
+      const s2 = normalizeSeverity(row.severity);
+      if (!perSev[s2]) perSev[s2] = [0, 0, 0, 0];
+      const age = row.age_days;
+      if (typeof age !== "number" || !Number.isFinite(age)) {
+        unaged += 1;
+        continue;
+      }
+      const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+      perSev[s2][bucket] += 1;
+      totalOpen += 1;
+    }
+    const slaEdge = {};
+    const slaTargets = {};
+    const slaEdgeExact = {};
+    for (const s2 of Object.keys(perSev)) {
+      slaEdge[s2] = slaEdgeBucket(s2);
+      const t = SLA_TARGETS[s2];
+      slaTargets[s2] = typeof t === "number" && Number.isFinite(t) ? t : null;
+      slaEdgeExact[s2] = slaEdgeIsExact(s2);
+    }
+    return {
+      labels: AGE_BUCKET_LABELS.slice(),
+      perSev,
+      unaged,
+      totalOpen,
+      slaEdge,
+      slaTargets,
+      slaEdgeExact
+    };
   }
   var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
   function openAge(row) {
@@ -5769,6 +5815,20 @@ var Server = (() => {
         kmLowerBoundPerSev,
         kmPerSev,
         openPastSla: openPastSla(rows),
+        /**
+         * The open backlog as an age DISTRIBUTION, against the per-severity SLA edge.
+         *
+         * `openPastSla` above it is the same population reduced to one ratio per severity; a
+         * ratio cannot say whether the breaches are a week late or a year late, and every
+         * surveyed vendor but two compresses age into exactly that percentage. This ships the
+         * shape as well, over the SAME `rows` every other block here measures — so the scope,
+         * project, severity and no-fix filters apply to it identically.
+         *
+         * `unaged` is on the wire for the reason `ageBuckets` could not put it there: an open
+         * row with no readable `first_seen` is not young, it is undated, and the page prints
+         * that count rather than letting the bars quietly cover fewer rows than the hero does.
+         */
+        aging: agingDistribution(rows),
         awaiting: awaitingVendorFix(rows),
         /**
          * The second clock, scoped and labelled. `notMeasured` is every scoped row this block
