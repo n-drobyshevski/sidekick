@@ -26,14 +26,16 @@
 
 import { bootstrap, swrCall } from "../store.js";
 import {
-  clear, dataTable, el, emptyState, fmtDateTime, heroStat, kpiCard, pageHeader, pluralize,
-  sectionLabel, sevBadge, skeleton, statRow, statusPill,
+  clear, dataTable, el, emptyState, fmtCount, fmtDateTime, fmtDays, heroStat, kpiCard,
+  pageHeader, pluralize, sectionLabel, sevBadge, skeleton, statRow, statusPill,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
 // into a sentence has to be the same rule on both pages or the front door and the detail page
 // could describe the same estimate differently. It lives on the page that owns the clock.
-import { fmtCount, fmtDays, kmHalfLifeView, rateView } from "./mttr.js";
+// `fmtCount`/`fmtDays` themselves come from `../ui.js` now, not from `./mttr.js` — see
+// `ui/figures.js`'s module header.
+import { kmHalfLifeView, rateView } from "./mttr.js";
 
 const SCOPE_LABELS = { sca: "Dependencies (SCA)", sast: "Code (SAST)", secrets: "Secrets" };
 

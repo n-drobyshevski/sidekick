@@ -23,37 +23,17 @@
 import { bootstrapCached, swrCall } from "../store.js";
 import { call } from "../api.js";
 import {
-  clear, confirmDialog, dataTable, downloadText, el, emptyState, errorState, fmtDateTime,
-  heroStat, kpiCard, pageHeader, registerWideNote, sectionLabel, skeletonStack, statusPill, toast,
+  clear, confirmDialog, dataTable, denomNote, downloadText, el, emptyState, errorState,
+  fmtCount, fmtDateTime, heroStat, kpiCard, num, pageHeader, pct1, registerWideNote,
+  sectionLabel, skeletonStack, statusPill, toast,
 } from "../ui.js";
 
 // ---------------------------------------------------------------------------- formatting
-
-/**
- * A number from an untrusted payload, or the fallback — and NEVER a silent zero.
- * `Number(null) === 0` is finite, so null/blank must be refused before the cast, not after;
- * see repos.js's copy of this helper for the bug that shape produced.
- */
-export function num(v, fallback = null) {
-  if (v === null || v === undefined || v === "") return fallback;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-export function fmtCount(v) {
-  const n = num(v);
-  return n === null ? "—" : n.toLocaleString();
-}
-
-export function pct1(v) {
-  const n = num(v);
-  return n === null ? "—" : `${n.toFixed(1)}%`;
-}
-
-/** The denominator node every rate on this page carries — see `sca.js`'s `denomNote`. */
-export function denomNote(sentence) {
-  return el("p", { class: "small muted", "data-denominator": sentence }, sentence);
-}
+//
+// `num`, `fmtCount`, `pct1` and `denomNote` used to be DEFINED here — this file had the
+// corrected refuse-before-cast shape, which is why `ui/figures.js` (the one shared
+// implementation every page in this package now imports) matches this file's shape rather
+// than `sca.js`'s wrong one. See that module's header for the defect it replaces.
 
 /**
  * Whether a view-project scope is currently narrowing every OTHER page. `storageModel` takes
