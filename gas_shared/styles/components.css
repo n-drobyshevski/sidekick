@@ -399,7 +399,15 @@
    panel, so a selected "AI Agent" and a selected "LOW" were indistinguishable. Selection
    is an interactive state, not a severity; the accent is the token for that. */
 .kind-pill[aria-pressed="true"] {
-  background: var(--accent-wash); color: var(--accent-text); border-color: var(--accent-edge);
+  background: var(--accent-wash); color: var(--accent-text);
+  /* NOT --accent-edge: that token is `transparent` on gas and gas_ai (it exists to lift a
+     fill too pale to read as a mark, and their accents don't need it), so the pressed pill
+     lost its border on two of the three brands. --accent-text is never transparent, so a
+     28% mix of it is a visible ring on every brand — on gas_ai this reproduces the app's own
+     former literal exactly (--accent-text there is #be123c, and 28% of it over transparent is
+     rgba(190,18,60,.28)). --accent-wash above is unchanged: the shared tokens contract already
+     holds --accent-text readable on it (>=4.5:1) for all three brands. */
+  border-color: color-mix(in srgb, var(--accent-text) 28%, transparent);
 }
 
 /* ------------------------------------------------------------------------- tip */

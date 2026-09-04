@@ -30,7 +30,7 @@
   /* Ink ON an accent fill. #171717 is --ink, so this app's answer happens to equal the
      token the one rule that needs it used to name directly - and that is exactly why the
      token has to exist: white on #ffcb13 is 1.52:1, but near-black on gas's #2563eb is
-     1.62:1, so a rule hard-coding either answer is only correct on one brand. #171717 on
+     3.47:1, so a rule hard-coding either answer is only correct on one brand. #171717 on
      #ffcb13 is 11.78:1. */
   --on-accent: #171717;
 

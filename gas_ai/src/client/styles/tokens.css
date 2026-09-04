@@ -25,9 +25,9 @@
        --accent-edge  is transparent, because a 6.29:1 fill does not need an edge to read
                       as a mark. `transparent` is the explicit "no edge", not an omission;
                       the contract checks that an app declaring it earned it on the fill.
-       --on-accent    is white: 6.29:1 on the crimson. Near-black would be 1.62:1 here and
-                      11.78:1 on the yellow, which is exactly why this is a token rather
-                      than a literal in the shared rule. */
+       --on-accent    is white: 6.29:1 on the crimson. Near-black would be 3.47:1 on gas's
+                      blue and 11.78:1 on the yellow, which is exactly why this is a token
+                      rather than a literal in the shared rule. */
   --accent: #be123c;
   --accent-hover: #9f1239;
   --accent-text: #be123c;

@@ -448,9 +448,14 @@
   .progress-track.indeterminate .progress-fill {
     width: 100%;
     margin-left: 0;
+    /* Self-relative, not --accent-text: on gas and gas_ai --accent-text EQUALS --accent, so a
+       stop pair built from it collapsed to one flat colour and the "working" stripe vanished.
+       color-mix keeps the pair distinct on every brand without depending on how far a sibling
+       token has drifted from --accent (measured >=1.2:1 between stops on all three). */
     background: repeating-linear-gradient(
       45deg, var(--accent), var(--accent) 8px,
-      var(--accent-text) 8px, var(--accent-text) 16px);
+      color-mix(in srgb, var(--accent) 55%, white) 8px,
+      color-mix(in srgb, var(--accent) 55%, white) 16px);
   }
 }
 
@@ -560,9 +565,12 @@ main.full-bleed > .empty { margin: var(--space-6) var(--space-6); }
   .route-overlay-fill {
     width: 100%;
     animation: none;
+    /* Self-relative, not --accent-text — see the identical fix and comment on
+       .progress-track.indeterminate .progress-fill above. */
     background: repeating-linear-gradient(
       45deg, var(--accent), var(--accent) 8px,
-      var(--accent-text) 8px, var(--accent-text) 16px);
+      color-mix(in srgb, var(--accent) 55%, white) 8px,
+      color-mix(in srgb, var(--accent) 55%, white) 16px);
   }
   .route-overlay { transition: none; }
 }

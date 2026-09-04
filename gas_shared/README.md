@@ -100,7 +100,7 @@ nothing else, and every one of its fills carries the edge — `rgba(0,0,0,.40)` 
 resolves to `#997a0b`.
 
 **`--on-accent` exists because the answer differs per brand.** Near-black is 11.78:1 on the
-yellow and 1.62:1 on the blue; white is 1.52:1 on the yellow and 5.17:1 on the blue. A rule
+yellow and 3.47:1 on the blue; white is 1.52:1 on the yellow and 5.17:1 on the blue. A rule
 that painted `var(--ink)` on an accent fill — `styles/sheet.css`'s facet tick did, until this
 package — is correct in exactly one of the three apps and wrong in the other two without
 anything failing.
