@@ -155,11 +155,19 @@ describe("every chart canvas ships a data-table alternative", () => {
     }
   });
 
-  it("the register still draws the eight canvases this package covered", () => {
+  it("the register still draws the nine canvases it composes, counted so a deletion shows", () => {
     // A count, so a canvas DELETED to make the test above pass is visible as a change here
     // rather than as a silent green.
+    //
+    // 8 -> 9 (W1, the per-severity survival fan). The ninth canvas is ONE `el("canvas"`
+    // literal in mttr.js, inside the loop that builds the fan under "The clock, by severity"
+    // — one card, and therefore one drawn canvas, per severity present in
+    // `remediation.kmPerSev`, so the SOURCE count moves by one however many cards render.
+    // The claim above is untouched by that: this number moves only when a chart is added or
+    // removed ON PURPOSE, and a canvas quietly deleted to satisfy the per-file rule still
+    // shows up here as a change rather than as a silent green.
     const total = PAGE_FILES.reduce((n, f) => n + count(PAGE_CODE[f], /el\("canvas"/g), 0);
-    expect(total).toBe(8);
+    expect(total).toBe(9);
   });
 
   it("every chartTable call is handed the canvas it describes, so aria-details is wired", () => {

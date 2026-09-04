@@ -21,14 +21,25 @@
 // `scope`, `rowCount` and `notMeasured` with it); `actionableClockView` refuses the same
 // framing on the client, loudly, rather than trusting a caller to remember.
 //
-// WHAT THIS PAYLOAD DOES NOT CARRY. `remediation.kmMedianPerSev` / `kmP90PerSev` /
-// `kmLowerBoundPerSev` are per-severity STATISTICS; there is no per-severity `curve` in the
-// payload, so the per-severity view here is a table of those three statistics and not a fan
-// of curves. `shipKM` also drops `naiveMedian` / `naiveMean`, so the survival chart draws the
-// two Kaplan-Meier markers and no closed-only comparison.
+// THE PER-SEVERITY CURVES ARE ON THE WIRE. `remediation.kmPerSev` carries one `shipKM`-
+// narrowed Kaplan-Meier curve per severity, from the SAME `kaplanMeier(rs)` call that
+// produces `kmMedianPerSev` / `kmP90PerSev` / `kmLowerBoundPerSev` — so the fan of small
+// multiples and the summary table under it are two views of one estimate rather than two
+// estimates. This header used to say the opposite, and the per-severity view was three fixed
+// statistics for that reason; three statistics cannot show that CRITICAL closes fast and then
+// stalls, or that LOW never moves.
+//
+// WHAT THE PAYLOAD STILL DOES NOT CARRY. `shipKM` narrows every curve to `{t, s}`: `atRisk`
+// and `events` do not travel, which is why `survivalTableModel` publishes three columns here
+// and five on the secrets page. It also drops `naiveMedian` / `naiveMean`, so every survival
+// chart on this page draws the two Kaplan-Meier markers and no closed-only comparison.
 
 import { bootstrap, swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+// The severity palette is READ OFF THE STYLESHEET, never retyped — CLAUDE.md's "byte-identical
+// across all four surfaces" rule. `sevPalette` is defined once in `sca.js`; `sast.js` already
+// imports it from there, and this is the same import rather than a second copy.
+import { sevPalette } from "./sca.js";
 import {
   chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState, firstRunNotice,
   fmtCount, fmtDays, heroStat, kpiCard, num, onPageTeardown, pageHeader, pluralize,
@@ -237,6 +248,57 @@ export function mttrSeverityRows(mttr, order) {
         p90: p90s[sev] === undefined ? null : p90s[sev],
         resolved: Number(s.resolved || 0),
         open: Number(s.open || 0),
+      };
+    });
+}
+
+/**
+ * One small-multiple card per severity: the curve, its colour, and the sentence that has to
+ * carry the card if the colour cannot.
+ *
+ * THE COLOUR IS NEVER THE ONLY CUE, and on a grid of six curves that rule bites hardest —
+ * the red/orange/amber severity band is a measured colourblind risk (HIGH and MEDIUM sit 1.6
+ * apart under deuteranopia). So every card carries the severity BADGE (dot plus the word) and
+ * a caption that states the half-life in words. A reader who sees no colour at all reads the
+ * same six facts.
+ *
+ * `caption` says "at least N days" wherever the median is absent and a bound is not — the
+ * middle case `kmHalfLifeView` exists for, restated per card because a card is read on its
+ * own and "—" beside a drawn curve reads as a broken chart rather than as a censored one.
+ *
+ * A SEVERITY WITH NO CURVE IS SKIPPED RATHER THAN DRAWN EMPTY. `kmPerSev` only holds the
+ * severities that had rows, and a severity whose curve came back with no steps has nothing to
+ * plot — an axis with no staircase asserts "measured, and flat", which is a different claim
+ * from "nothing here".
+ *
+ * @param {object|null|undefined} remediation  `mttr.remediation`
+ * @param {string[]} order                     SEVERITY_ORDER
+ */
+export function severityCurvesView(remediation, order) {
+  const per = (remediation && remediation.kmPerSev) || {};
+  const levels = (order || []).concat(["UNKNOWN"]).filter((s, i, a) => a.indexOf(s) === i);
+  return levels
+    .filter((sev) => {
+      const km = per[sev];
+      return !!km && Array.isArray(km.curve) && km.curve.length > 0;
+    })
+    .map((sev) => {
+      const km = per[sev];
+      const half = kmHalfLifeView(km);
+      const events = Number(km.events || 0);
+      const censored = Number(km.censored || 0);
+      return {
+        sev,
+        curve: km.curve,
+        median: km.median === undefined ? null : km.median,
+        mean: km.mean === undefined ? null : km.mean,
+        half,
+        events,
+        censored,
+        total: Number(km.total || 0),
+        caption: (half.measured ? "Half-life " + half.value : "Half-life not measured")
+          + ". " + fmtCount(events) + " " + pluralize(events, "event") + ", "
+          + fmtCount(censored) + " censored.",
       };
     });
 }
@@ -630,6 +692,59 @@ export async function renderMttr(host, params, _ctx) {
       sevHost.append(emptyState("No per-severity clock yet."));
       return;
     }
+
+    // The fan, ABOVE the summary table. Shape first, then the three statistics that summarise
+    // it — a reader who wants the number reads down, a reader who wants to know whether a
+    // severity stalls reads the staircase, and neither has to take the other on trust.
+    const fan = severityCurvesView(mttr && mttr.remediation, SEVERITY_ORDER);
+    if (fan.length) {
+      const palette = sevPalette(SEVERITY_ORDER);
+      const grid = el("div", { class: "sev-fan" });
+      const pending = [];
+      for (const card of fan) {
+        const canvas = el("canvas", {
+          "aria-label": "Kaplan-Meier survival curve for " + card.sev + " findings",
+        });
+        grid.append(el("section", { class: "chart-card" },
+          el("div", { class: "sev-fan__head" }, sevBadge(card.sev)),
+          el("p", { class: "chart-note" }, card.caption),
+          el("div", { class: "chart-box" }, canvas),
+          // Same `card.curve` reference the wrapper below is handed, named once — the one rule
+          // ui/chartTable.js exists to enforce.
+          chartTable({
+            canvas,
+            caption: "Every step of this severity's curve: weeks and days since detection, and"
+              + " the share of " + card.sev + " findings still open after that step.",
+            model: survivalTableModel(card.curve),
+          })));
+        pending.push({ canvas, card });
+      }
+      sevHost.append(grid);
+      loadCharts().then((charts) => {
+        if (!live) return;
+        for (const { canvas, card } of pending) {
+          onPageTeardown(() => charts.destroyChart(canvas));
+          charts.survivalCurve(
+            canvas,
+            card.curve,
+            { median: card.median, mean: card.mean },
+            // The severity FILL token, read off the stylesheet — never the brand accent, which
+            // is 1.52:1 and cannot carry a 2px line. Markers stay accent ink inside the wrapper.
+            // `scope` is what stops each card's legend claiming "all": the diamond here is
+            // THIS severity's restricted mean, not the register's.
+            {
+              color: palette.colors[card.sev],
+              subject: "for " + card.sev + " findings",
+              scope: card.sev,
+            },
+          );
+        }
+      }).catch(() => {
+        if (!live) return;
+        for (const { canvas } of pending) chartUnavailable(canvas);
+      });
+    }
+
     sevHost.append(dataTable({
       columns: [
         { key: "sev", label: "Severity", cell: (r) => sevBadge(r.sev) },
@@ -647,9 +762,11 @@ export async function renderMttr(host, params, _ctx) {
       rows,
     }));
     sevHost.append(el("p", { class: "small muted" },
-      "Each severity gets its own curve; what the payload carries is that curve's median, its"
-      + " lower bound and its P90, not the curve itself. \"at least N days\" in the half-life"
-      + " column means that severity's curve never fell to half."));
+      "Each severity gets its own curve, and the table is that same curve's median, its lower"
+      + " bound and its P90 — one estimate read two ways, not two estimates. \"at least N"
+      + " days\" means that severity's curve never fell to half, on the card and in the"
+      + " column alike; open findings are in every curve as right-censored observations, so a"
+      + " staircase that stops stepping is a severity that stopped closing."));
   }
 
   // ------------------------------------------------------------------------------- SLA
