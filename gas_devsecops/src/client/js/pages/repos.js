@@ -27,33 +27,27 @@
 import { swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  chartTable, chartTableModel, clear, dataTable, days1, denomNote, el, emptyState, errorState,
-  fmtCount, glossaryTip, heroStat, kpiCard, num, onPageTeardown, pageHeader, pct1, sectionLabel,
-  skeletonStack,
+  boundedDays, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el, emptyState,
+  errorState, fmtCount, glossaryTip, heroStat, kpiCard, num, onPageTeardown, pageHeader, pct1,
+  sectionLabel, skeletonStack,
 } from "../ui.js";
 
 const OVERALL = "OVERALL";
 
 // ---------------------------------------------------------------------------- formatting
 //
-// `num`, `fmtCount`, `pct1`, `days1` and `denomNote` used to be DEFINED here — this file had
-// the corrected refuse-before-cast shape (the bug `test/pagesData.test.js` caught was fixed
-// in place, not left as a second copy of `sca.js`'s wrong one), which is why `ui/figures.js`
-// (the one shared implementation every page in this package now imports) matches this file's
-// shape. See that module's header for the defect it replaces.
+// `num`, `fmtCount`, `pct1`, `days1`, `denomNote` and `boundedDays` used to be DEFINED here
+// — this file had the corrected refuse-before-cast shape (the bug `test/pagesData.test.js`
+// caught was fixed in place, not left as a second copy of `sca.js`'s wrong one), which is why
+// `ui/figures.js` (the one shared implementation every page in this package now imports)
+// matches this file's shape. See that module's header for the defect it replaces.
+//
+// `boundedDays` was the last of them to move, and it moved because it existed TWICE — here
+// and in `sca.js` — spelling the same lower bound two ways.
 
-/**
- * A half-life that may only be a LOWER BOUND — the same distinction the MTTR family makes,
- * ported here because `assetProfile` runs the identical Kaplan–Meier estimator per group.
- * `> 41 d` and `41 d` are different claims.
- */
-export function boundedDays(medianDays, lowerBoundDays) {
-  const median = num(medianDays);
-  if (median !== null) return { text: days1(median), bounded: false };
-  const bound = num(lowerBoundDays);
-  if (bound !== null) return { text: `> ${days1(bound)}`, bounded: true };
-  return { text: "—", bounded: false };
-}
+// Re-exported because `test/pagesData.test.js` — which this package may not edit — still
+// imports `boundedDays` from here by name, the same reason `sca.js` re-exports `pct1`.
+export { boundedDays };
 
 // ------------------------------------------------------------------------- pure view models
 
@@ -239,7 +233,7 @@ export async function renderRepos(host, _params, _ctx) {
     const f = footholdView(result);
     clear(densityHost);
     if (!d.measured) {
-      densityHost.append(emptyState("No repository profile yet.", "It appears once a scan has saved findings."));
+      densityHost.append(emptyState("No repository profile yet.", "It appears once a sync has saved findings."));
       return;
     }
     const densityCard = kpiCard("Median findings per repository", fmtCount(d.p50), "");

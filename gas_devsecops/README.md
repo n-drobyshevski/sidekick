@@ -53,6 +53,17 @@ exported from the Python — the same relationship `gas/` has to `wiz_dashboard/
 Three lanes and a chrome tail. The IA lives in exactly one place — `PAGES` in
 `src/client/js/app.js` — and `test/navGroups.test.js` forbids a second list.
 
+**A sync is the act; a scan is the record it wrote.** You *run a sync*; it touches three
+registers and saves *one scan per register*; you *browse scans*. So "Scan history", "Saved
+scans", "Delete scans" and "first scan / last scan" are right — they name records — and "run
+a scan" is wrong, because a scan is not a thing that runs. The control is the **Run sync**
+button in the rail; the rail area around it is the sync zone, and nothing a reader sees calls
+it a scan zone. Wiz's own detectors are a third thing — **the scanner** — never "the scan" on
+its own. A lower bound is written the same way everywhere: prose says "at least N", a numeric
+cell or tile says "≥ N", and ">" is never used for a bound, because "at least" is inclusive.
+This paragraph is the only place the rule is written; `src/client/js/pages/history.js` points
+here and `test/vocabulary.test.js` holds the copy to it.
+
 | Route | Title | Lane | The one question |
 |---|---|---|---|
 | `executive` | Executive | Program | How fast is code risk closing, how much is open, where is it going? |

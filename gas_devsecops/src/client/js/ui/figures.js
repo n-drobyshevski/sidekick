@@ -27,6 +27,11 @@
 // visible in the diff instead of buried in a default parameter every caller inherits whether
 // they meant it or not.
 //
+// `boundedDays` LIVES HERE FOR THE SAME REASON THE REST OF THIS FILE DOES. It was defined
+// twice — `pages/repos.js` and `pages/sca.js` — in two shapes, and the two spellings of a
+// lower bound are exactly the drift this module exists to end. It is a figure formatter:
+// it turns a number and a flag into the string a cell shows.
+//
 // TWO DAY FORMATTERS, ON PURPOSE. `days1` (ex-`history.js`/`sca.js`) always prints one decimal
 // plus a lower-case "d" — `"41.0 d"` — and is what every register/repository page and the scan
 // history chart axis use. `fmtDays` (ex-`mttr.js`) prints a word, not a unit letter, rounds to
@@ -87,6 +92,32 @@ export function pct1(v) {
 export function days1(v) {
   const n = num(v);
   return n === null ? "—" : `${n.toFixed(1)} d`;
+}
+
+/**
+ * A duration that may only be a LOWER BOUND, and the flag that says which it is.
+ *
+ * PRODUCT.md's sixth principle: "where the curve never reaches half, the page publishes a
+ * lower bound rather than a number". A bound and a median are different claims, so the
+ * string carries the difference and `bounded` carries it again for anything that styles or
+ * captions off it — never off the string.
+ *
+ * "≥", NOT ">". README.md, above the Pages table, fixes one notation per context: prose
+ * says "at least N" (`mttr.js`'s `kmHalfLifeView`) and a numeric cell or tile says "≥ N"
+ * (`mttr.js`'s `rmstView`, and here). The bound is INCLUSIVE — the median is at least this
+ * far out — and ">" claims it is strictly beyond, which is a different and weaker fact.
+ *
+ * ONE IMPLEMENTATION, promoted from `pages/repos.js` and `pages/sca.js`, which each had
+ * their own. The repos copy refused before casting and the sca copy cast first, so
+ * `boundedDays("", [])` disagreed between two pages showing the same kind of figure; this
+ * is the repos shape, the one `ui/figures.js` was written to hold (see the module header).
+ */
+export function boundedDays(value, lowerBound) {
+  const median = num(value);
+  if (median !== null) return { text: days1(median), bounded: false };
+  const bound = num(lowerBound);
+  if (bound !== null) return { text: `≥ ${days1(bound)}`, bounded: true };
+  return { text: "—", bounded: false };
 }
 
 /**

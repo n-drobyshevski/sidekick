@@ -191,7 +191,7 @@ export async function renderData(host, _params, ctx) {
     noticeHost.append(firstRunNotice({
       synced: false,
       hint: "The figures below are a census of what is stored, so they read zero honestly."
-        + " Run a sync from the scan zone in the rail to give them something to count.",
+        + " Run a sync with the Run sync button in the rail to give them something to count.",
     }));
   }
 
@@ -277,8 +277,9 @@ export async function renderData(host, _params, ctx) {
         + tabs.filter((t) => t.unreadable).map((t) => `${t.tab} (${t.error})`).join("; ") + "."));
     }
     storageHost.append(denomNote(
-      `Plus ${cells.other.toLocaleString()} cell(s) in sheets this register does not manage `
-      + `(cellsOther) — ${ledger.ledgerRowCells.toLocaleString()} column(s) per ledger row.`,
+      `Plus ${cells.other.toLocaleString()} cell(s) in sheets this register does not manage — `
+      + `the spreadsheet's own total, less the tabs listed above. `
+      + `${ledger.ledgerRowCells.toLocaleString()} column(s) per ledger row.`,
     ));
     // `scopeApplies: false` on `storageModel` is unconditional (it takes no params), but the
     // note only earns its place while a project view is actually narrowing the rest of the
@@ -404,7 +405,7 @@ export async function renderData(host, _params, ctx) {
     deleteHost.append(
       el("p", { class: "small muted" },
         "Deletion rebuilds the ledger by replaying the surviving scans, as if the deleted "
-        + "ones had never run. This cannot be undone."),
+        + "ones had never been saved. This cannot be undone."),
       deleteBtn,
       tableHost,
     );

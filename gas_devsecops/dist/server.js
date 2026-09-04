@@ -423,7 +423,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "bdefd85d2828" : "dev";
+  var BUILD_ID = true ? "75cc41a03f3c" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -6137,7 +6137,7 @@ var Server = (() => {
       // facts with no project dimension and do NOT narrow with `n.project`; everything else in
       // this payload does.
       scanScopeApplies: false,
-      scanScopeNote: n2.project ? "scans, perScope and history describe the whole register \u2014 a scan battery and a daily snapshot carry no project dimension to narrow by. Only rows/kpis/trend above are scoped to the selected project." : null
+      scanScopeNote: n2.project ? "scans, perScope and history describe the whole register \u2014 a sync and a daily snapshot carry no project dimension to narrow by. Only rows/kpis/trend above are scoped to the selected project." : null
     };
   }
   function trendFor(n2, all) {

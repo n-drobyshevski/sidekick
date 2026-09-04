@@ -252,7 +252,11 @@ export function executiveFirstRunView(payload, boot) {
   const enabled = Array.isArray(settings.scopes) ? settings.scopes : [];
   const targets = settings.slaTargets || b.slaTargets || {};
   const hasSlaWindow = Object.keys(targets).length > 0;
-  const RAIL = "the scan zone in the rail";
+  // The action label for a figure the FIRST SYNC unlocks. It names the control rather than
+  // a page, because there is no page to send the reader to — `route: null` in an
+  // `emptyState` item renders its label as plain text for exactly that reason
+  // (ui/feedback.js). One label, used three times, so the three cannot drift apart.
+  const RUN_SYNC = "Run sync — the button in the rail";
 
   const items = [
     {
@@ -260,14 +264,14 @@ export function executiveFirstRunView(payload, boot) {
       unlock: "One closed lifecycle with a readable clock. A finding is dated closed at the"
         + " sync that stopped seeing it, so the first close needs a second sync.",
       route: null,
-      routeLabel: "Run a sync from " + RAIL,
+      routeLabel: RUN_SYNC,
     },
     {
       figure: "Week-over-week movement",
       unlock: "Two syncs a week apart. Under a week of history there is no comparison to"
         + " publish, and none is invented.",
       route: null,
-      routeLabel: "Run a sync from " + RAIL,
+      routeLabel: RUN_SYNC,
     },
     {
       figure: "SLA attainment",
@@ -289,7 +293,7 @@ export function executiveFirstRunView(payload, boot) {
           + " that saves a row for it."
         : "This register is not being collected, so no sync will ever fill this count.",
       route: on ? null : "#/settings?tab=register",
-      routeLabel: on ? "Run a sync from " + RAIL : "Settings → Register",
+      routeLabel: on ? RUN_SYNC : "Settings → Register",
     });
   }
 
@@ -352,7 +356,7 @@ export async function renderExecutive(host, params, _ctx) {
       skeleton("line", { width: "220px" }),
       skeleton("stat", { width: "260px", height: "56px" })),
   );
-  guard("the scan caption", scanHost, renderScan);
+  guard("the last-sync caption", scanHost, renderScan);
 
   paint = (payload) => {
     const first = executiveFirstRunView(payload, boot);
@@ -502,7 +506,7 @@ export async function renderExecutive(host, params, _ctx) {
     if (!view.show) {
       registerHost.append(emptyState(
         "No per-register split yet.",
-        "It appears once a scan has saved findings for at least one register.",
+        "It appears once a sync has saved findings for at least one register.",
       ));
       return;
     }
@@ -551,12 +555,19 @@ export async function renderExecutive(host, params, _ctx) {
     }
   }
 
-  // ------------------------------------------------------------------------- last scan
+  // ------------------------------------------------------------------------- last sync
 
   /**
-   * When the register last looked. The CONTROL to look again lives in the rail's scan zone
-   * — one run button in one place, so a reader is never offered two that could disagree
+   * When the register last looked. The CONTROL to look again is the Run sync button in the
+   * rail — one button in one place, so a reader is never offered two that could disagree
    * about what is already running.
+   *
+   * ON AN EMPTY LEDGER THIS SECTION DEFERS RATHER THAN RESTATES. It used to print "No sync
+   * saved yet." over its own call to action — the same claim and the same instruction the
+   * first-run panel already carries at the top of this page, several screens up. Two copies
+   * of one sentence drift, and a second call to action invites a reader to hunt for a second
+   * control. The section still earns its place because it answers what the panel does not —
+   * WHEN did the register last look — so it answers that, and leaves the rest where it is.
    */
   function renderScan() {
     clear(scanHost);
@@ -564,8 +575,8 @@ export async function renderExecutive(host, params, _ctx) {
     const latest = boot.latestSync;
     if (!latest) {
       scanHost.append(emptyState(
-        "No sync saved yet.",
-        "Every figure above is empty until one runs — run it from the scan zone in the rail.",
+        "Never.",
+        "What each figure is waiting for is listed in the panel at the top of this page.",
       ));
       return;
     }
@@ -591,7 +602,7 @@ export async function renderExecutive(host, params, _ctx) {
       "What that sync changed is on ",
       el("a", { class: "linklike", href: "#/history" }, "Scan history"),
       ", which is the page sent the per-scan arrival and closure counts — one row per register"
-      + " per sync. Run another from the scan zone in the rail."));
+      + " per sync. Run another with the Run sync button in the rail."));
     if (!boot.hasCredentials) {
       scanHost.append(el("p", { class: "small muted" },
         "No Wiz credentials are configured, so these figures come from a dry run rather than"

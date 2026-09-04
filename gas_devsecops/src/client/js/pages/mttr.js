@@ -493,7 +493,7 @@ export async function renderMttr(host, params, _ctx) {
     noticeHost.append(firstRunNotice({
       synced: !!boot.latestSync,
       hint: "The clock on this page starts at the first finding a sync saves, and a duration"
-        + " needs a second sync to close against. Run one from the scan zone in the rail.",
+        + " needs a second sync to close against. Run one with the Run sync button in the rail.",
     }));
   }
 

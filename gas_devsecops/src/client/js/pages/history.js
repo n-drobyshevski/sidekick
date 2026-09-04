@@ -1,6 +1,9 @@
 // Scan History — the durable ledger's own log: what was actually measured, when, and how the
 // register moved between measurements.
 //
+// VOCABULARY: a sync is the act; a scan is the record it wrote. The rule is written once, in
+// README.md above the Pages table, and `test/vocabulary.test.js` holds this package to it.
+//
 // THREE ROWS PER SYNC, ONE PER SCOPE. One job walks all three registers (sca, sast, secrets)
 // and each gets its own `scans` row, sharing the sync's id (`scan_id`) with `scope` as the
 // other half of the key (readModels.ts's `buildHistory`, `api.ts`'s module header). So the
@@ -9,11 +12,11 @@
 // partial three-scope sweep look identical to a full one.
 //
 // A NULL `severities` READS AS "ALL", NEVER AS "NONE" — this is the one thing on this page
-// that inverts if it is read backwards. `secrets` scans this register with the severity gate
+// that inverts if it is read backwards. `secrets` is collected with the severity gate
 // OFF (`DEFAULT_FETCH_SEVERITIES.secrets = []`), and ledgerCore.ts's `serializeSeverities`
 // turns that empty selection into a stored `severities: null` — "unscoped", not "nothing
 // requested". `sca`/`sast` normally carry a real list (`'["CRITICAL","HIGH"]'`). A reader
-// told only WHEN a scan ran cannot tell a partial sweep from a full one; `severitiesLabel`
+// told only WHEN a scan was saved cannot tell a partial sweep from a full one; `severitiesLabel`
 // below is the one function that has to get the null case right.
 //
 // THE KM-MEDIAN TREND ALREADY RESPECTS `kmSkipMask` — SERVER-SIDE. `historyModel`'s trend
@@ -276,7 +279,7 @@ export async function renderHistory(host, _params, _ctx) {
     observedHost.append(firstRunNotice({
       synced: !!boot.latestSync,
       hint: "Nothing dates when watching began, so there is no observation window for the"
-        + " figures below to sit inside. Run a sync from the scan zone in the rail.",
+        + " figures below to sit inside. Run a sync with the Run sync button in the rail.",
     }));
   }
 
@@ -315,7 +318,7 @@ export async function renderHistory(host, _params, _ctx) {
     clear(perScopeHost);
     if (first) {
       perScopeHost.append(emptyState(
-        "No register has been scanned yet.",
+        "No register has a saved scan yet.",
         "This table is the record of what each register was asked for and when, so it fills"
         + " in one row per register per sync.",
       ));
@@ -338,8 +341,8 @@ export async function renderHistory(host, _params, _ctx) {
     // KPI band's own scope.
     if (scanScopeNoteShown(payload)) {
       perScopeHost.append(registerWideNote(
-        "Scan counts across every register, not narrowed to the selected project — a scan "
-        + "battery carries no project dimension to narrow by.",
+        "Scan counts across every register, not narrowed to the selected project — a sync "
+        + "carries no project dimension to narrow by.",
       ));
     }
   }
@@ -413,8 +416,8 @@ export async function renderHistory(host, _params, _ctx) {
       // scope even while a project is selected; the KPIs above and the trend below both do.
       if (scanScopeNoteShown(payload)) {
         tableHost.append(registerWideNote(
-          "This table lists every scan ever run, not narrowed to the selected project — a "
-          + "scan battery carries no project dimension to narrow by. The KPIs above and the "
+          "This table lists every scan ever saved, not narrowed to the selected project — a "
+          + "sync carries no project dimension to narrow by. The KPIs above and the "
           + "trend below ARE scoped to it.",
         ));
       }

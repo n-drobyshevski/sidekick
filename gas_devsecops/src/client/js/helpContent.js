@@ -9,6 +9,31 @@
 
 const ENTRIES = [
   {
+    id: "sync",
+    term: "Sync",
+    lines: [
+      "The act: one run reads all three registers from Wiz and saves what it found.",
+      "Started from the Run sync button in the rail. One sync saves one scan per register, so a sync and a scan are never the same thing.",
+    ],
+  },
+  {
+    id: "scan",
+    term: "Scan",
+    lines: [
+      "The record a sync wrote for one register: what was asked for, when, and how many findings came back.",
+      "Three per sync — dependencies, code and secrets — unless a sweep covered fewer. You run a sync; you browse scans.",
+      "Wiz's own detectors are a third thing, called the scanner.",
+    ],
+  },
+  {
+    id: "lower-bound",
+    term: "Lower bound",
+    lines: [
+      "A duration the curve never reached: more than half of what was tracked is still open, so the median is at least this far out and cannot be read exactly.",
+      "Prose says \"at least N days\" and a figure says \"≥ N\" — one notation per context, and inclusive either way, which is why \"more than\" would be a different claim.",
+    ],
+  },
+  {
     id: "half-life",
     term: "Remediation half-life",
     lines: [

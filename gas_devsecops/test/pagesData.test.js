@@ -123,10 +123,15 @@ describe("repos: foothold, half-life and capacity read the published fields, not
     expect(halfLifeView(OVERALL_ROW)).toMatchObject({ measured: true, text: "14.2 d", bounded: false });
   });
 
+  // The claim: a bound and a median are DIFFERENT CLAIMS, and the view carries the difference
+  // twice — in the string (prefixed) and in `bounded` (flagged), so nothing has to parse copy.
+  // The glyph moved from ">" to the inclusive "≥" under the vocabulary rule in README.md (a
+  // bound means "at least", which ">" denies); the claim above is untouched, and so is the rest
+  // of this file.
   it("halfLifeView prints a LOWER BOUND, prefixed and flagged, when the curve never halves", () => {
     const v = halfLifeView(REPO_A);
     expect(v.bounded).toBe(true);
-    expect(v.text).toBe("> 30.0 d");
+    expect(v.text).toBe("≥ 30.0 d");
   });
 
   it("boundedDays never collapses '> 30 d' into '30 d'", () => {
