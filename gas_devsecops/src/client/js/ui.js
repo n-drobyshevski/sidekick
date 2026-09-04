@@ -53,7 +53,7 @@ export {
   statRow, statusPill, togglePills,
 } from "./ui/controls.js";
 export {
-  confirmDialog, emptyState, errorState, skeleton, skeletonStack, toast,
+  confirmDialog, emptyState, errorState, firstRunNotice, skeleton, skeletonStack, toast,
 } from "./ui/feedback.js";
 export {
   bookTip, chartTipHandler, closeTip, glossaryTip, tip, tipAnchor, tipLabel, tipLines,

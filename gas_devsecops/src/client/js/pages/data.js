@@ -20,10 +20,11 @@
 // and the figure excludes observation files by construction (ledgerStore.ts), not because the
 // number can be null.
 
-import { bootstrapCached, swrCall } from "../store.js";
+import { bootstrap, bootstrapCached, swrCall } from "../store.js";
 import { call } from "../api.js";
 import {
   clear, confirmDialog, dataTable, denomNote, downloadText, el, emptyState, errorState,
+  firstRunNotice,
   fmtCount, fmtDateTime, heroStat, kpiCard, num, pageHeader, pct1, registerWideNote,
   sectionLabel, skeletonStack, statusPill, toast,
 } from "../ui.js";
@@ -155,6 +156,7 @@ export async function renderData(host, _params, ctx) {
     ),
   }));
 
+  const noticeHost = el("div", {});
   const storageHost = el("div", {});
   const exportHost = el("section", { class: "card" });
   const compactHost = el("section", { class: "card" });
@@ -163,6 +165,7 @@ export async function renderData(host, _params, ctx) {
   const errorsHost = el("div", {});
 
   host.append(
+    noticeHost,
     sectionLabel("Space in use"),
     storageHost,
     sectionLabel("Export"),
@@ -176,6 +179,21 @@ export async function renderData(host, _params, ctx) {
     sectionLabel("Recent errors"),
     errorsHost,
   );
+
+  // THE ZEROS BELOW THIS NOTICE ARE MEASUREMENTS, and that is why they stay. This page's
+  // subject is storage occupancy: "Saved scans 0" is a true census of a ledger that has zero
+  // saved scans, and it is what the delete and reset controls act on. What it needed was the
+  // ORIGIN above it — a reader meeting a page of zeros with no line saying the register has
+  // never been synced cannot tell an empty ledger from a broken read.
+  // `await bootstrap()`, not `bootstrapCached()`: a null cache would read as "never synced"
+  // and post the notice over a register that has been synced all week.
+  if (!(await bootstrap()).latestSync) {
+    noticeHost.append(firstRunNotice({
+      synced: false,
+      hint: "The figures below are a census of what is stored, so they read zero honestly."
+        + " Run a sync from the scan zone in the rail to give them something to count.",
+    }));
+  }
 
   storageHost.append(skeletonStack(3, { variant: "stat" }));
 
@@ -191,21 +209,33 @@ export async function renderData(host, _params, ctx) {
     renderStorage(await storagePromise);
   } catch (e) {
     console.error("[data] api_getStorageStats failed:", e);
-    clear(storageHost).append(emptyState("Couldn't load storage usage.", String((e && e.message) || e)));
+    // A failure, not an absence. This page already had `errorState` on the compaction dry run
+    // (below); these three fetches had `emptyState`, so a broken read of the storage tab and
+    // an empty storage tab were the same box in the same voice.
+    clear(storageHost).append(errorState(
+      "Couldn't load storage usage.",
+      { detail: String((e && e.message) || e) },
+    ));
   }
 
   try {
     renderDelete((await historyPromise).scans);
   } catch (e) {
     console.error("[data] api_getScanHistory failed:", e);
-    clear(deleteHost).append(emptyState("Couldn't load the scan list.", String((e && e.message) || e)));
+    clear(deleteHost).append(errorState(
+      "Couldn't load the scan list.",
+      { detail: String((e && e.message) || e) },
+    ));
   }
 
   try {
     renderErrors(await errorsPromise);
   } catch (e) {
     console.error("[data] api_getRecentErrors failed:", e);
-    clear(errorsHost).append(emptyState("Couldn't load recent errors.", String((e && e.message) || e)));
+    clear(errorsHost).append(errorState(
+      "Couldn't load recent errors.",
+      { detail: String((e && e.message) || e) },
+    ));
   }
 
   // -------------------------------------------------------------------------- storage
