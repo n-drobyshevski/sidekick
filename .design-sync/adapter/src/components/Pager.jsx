@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { pager } from "../../../../gas_devsecops/src/client/js/ui/data.js";
+import { pager } from "../../../../gas_shared/ui/data.js";
 
 /**
  * Prev/Next controls, or a bare row count when a single page fits.

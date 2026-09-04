@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { pageHeader } from "../../../../gas_devsecops/src/client/js/ui/controls.js";
+import { pageHeader } from "../../../../gas_shared/ui/controls.js";
 
 /**
  * The shared page header: a borderless grid closed by a hairline, reading in three levels

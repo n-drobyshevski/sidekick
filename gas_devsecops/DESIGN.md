@@ -87,7 +87,7 @@ like a highlighter.
 The **severity palette is byte-identical** to both siblings: six fills, six darkened text
 twins, the two-token rule intact. A severity means the same thing in every sidekick; the
 brand deliberately does not. `src/domain/config.ts` holds the values and
-`test/tokens.test.js` pins them, including the assertion that every text token really is
+`test/shared.test.js` pins them, including the assertion that every text token really is
 darker than its fill.
 
 Also unchanged: the neutrals, `--text-3` at `0.6` alpha (`0.5` measured ~3.95:1 and failed),

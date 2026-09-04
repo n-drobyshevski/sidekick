@@ -1,0 +1,50 @@
+/* THIS APP'S PAGES, and nothing a sibling would want.
+   Everything the three sidekicks draw the same way lives in gas_shared/styles/; the rules
+   below dress pages only this register has - Executive's ranked fix-next list, its movement
+   strip, and MTTR's per-severity survival fan. Imported after the shared sheets and before
+   gas_shared/styles/overrides.css, which must stay last.
+
+   The sev-fan block arrived from tables.css and the other two from components.css; the
+   declarations are unchanged. */
+
+/* --------------------------------------------------------------- Executive: fix next
+   The front door's ranked list. AN ORDERED LIST, DRAWN AS ONE: the counter is the claim
+   (rank 1 is the thing to do first), so it stays visible rather than being suppressed the
+   way a decorative list's markers would be. No colour of its own — the tier reads through
+   the shared .pill kinds, which already pair a tint with a dot and a word. */
+.fixnext { margin: 0 0 var(--space-3); padding-left: var(--space-5); display: grid; gap: var(--space-2); }
+.fixnext-item { padding-left: var(--space-1); }
+.fixnext-item::marker { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.fixnext-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.fixnext-repo { font-weight: 600; }
+.fixnext-meta { margin-top: var(--space-half); }
+
+/* ------------------------------------------------------- Executive: the movement strip
+   One row per register plus a total, inside the header's second column. The label and the
+   raw pair sit either side of the chip so the delta is never the only number visible —
+   "280 open, was 320" is the arithmetic the chip is a summary of. `gap` rather than a
+   border: this strip lives beside a borderless hero and a rule here would out-weight it. */
+/* Capped so the raw pair stays beside its chip rather than being flung to the far edge of a
+   1fr column on a wide screen — the pair is the chip's arithmetic and has to read as one row. */
+.movement-rows { display: grid; gap: var(--space-1); max-width: 46ch; }
+.movement-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.movement-label { color: var(--text-2); min-width: 8ch; }
+.movement-counts { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* Small multiples: one survival curve per severity, on the MTTR page.
+   `auto-fit` + a 280px floor gives three per row on a desktop content column, two around
+   800px and one below ~560px, without a media query per breakpoint — the floor is where a
+   26-week staircase stops being readable rather than a device width.
+   The canvas is HALF the standard .chart-box so six of them stay light: these cards are read
+   as shapes against each other, and the figures behind each one are a keystroke away in the
+   card's own table. */
+.sev-fan {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.sev-fan .chart-box { height: 160px; }
+/* The badge row. Severity is never colour alone: the dot and the word travel together here,
+   and the caption below states the half-life in words. */
+.sev-fan__head { margin-bottom: var(--space-2); }

@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { ruleGrip } from "../../../../gas_devsecops/src/client/js/ui/rowReorder.js";
+import { ruleGrip } from "../../../../gas_shared/ui/rowReorder.js";
 
 /**
  * The drag handle for a reorderable rule row.

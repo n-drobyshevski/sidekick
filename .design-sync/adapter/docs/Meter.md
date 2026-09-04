@@ -30,4 +30,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.meter`
 - `.meter-fill`
 
-> Source: `gas_devsecops/src/client/js/ui/data.js` → `meter()`.
+> Source: `gas_shared/ui/data.js` → `meter()`.

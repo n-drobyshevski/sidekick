@@ -32,7 +32,7 @@
 // bites.
 
 import { allEntries } from "../helpContent.js";
-import { setParams } from "../store.js";
+import { setParams } from "../../../../../gas_shared/store.js";
 import {
   clear, debounce, el, emptyState, heroStat, motionOk, onPageTeardown, pageHeader, plural,
 } from "../ui.js";

@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { disclosure } from "../../../../gas_devsecops/src/client/js/ui/settings.js";
+import { disclosure } from "../../../../gas_shared/ui/settings.js";
 
 /**
  * A native details/summary fold, for detail that should be available without being in the way.

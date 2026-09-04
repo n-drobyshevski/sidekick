@@ -32,4 +32,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.sev-<variant>`
 - `.sev-dot`
 
-> Source: `gas_devsecops/src/client/js/ui/severity.js` → `sevBadge()`.
+> Source: `gas_shared/ui/severity.js` → `sevBadge()`.

@@ -35,4 +35,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.switch__track`
 - `.switch__thumb`
 
-> Source: `gas_devsecops/src/client/js/ui/settings.js` → `switchToggle()`.
+> Source: `gas_shared/ui/settings.js` → `switchToggle()`.

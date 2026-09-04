@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { emptyState } from "../../../../gas_devsecops/src/client/js/ui/feedback.js";
+import { emptyState } from "../../../../gas_shared/ui/feedback.js";
 
 /**
  * Nothing to show, and why - distinct from ErrorState, which is a failure.

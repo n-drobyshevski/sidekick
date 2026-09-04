@@ -26,9 +26,16 @@ import { describe, expect, it } from "vitest";
 
 const CLIENT_DIR = fileURLToPath(new URL("../src/client/js/", import.meta.url));
 const PAGES_DIR = fileURLToPath(new URL("../src/client/js/pages/", import.meta.url));
+// THE SHARED CORE IS PART OF THE CLIENT, and this sweep would have stopped covering it.
+// `ui/figures.js`, `ui/feedback.js` and `ui/data.js` carry user-visible copy and moved to
+// gas_shared/ when the design system was cut into its own package; walking only
+// src/client/js/ afterwards left 26 modules unswept while every assertion below still
+// passed. The labels come out the same shape either way ("ui/figures.js"), so the sweeps
+// and the by-name lookups below are unchanged.
+const SHARED_DIR = fileURLToPath(new URL("../../gas_shared/", import.meta.url));
 const README = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
-/** Every `.js` under `src/client/js/`, recursively, as repo-relative-ish labels. */
+/** Every `.js` under a client tree, recursively, as package-relative labels. */
 function walk(dir, prefix = "") {
   const out = [];
   for (const name of readdirSync(dir).sort()) {
@@ -73,7 +80,9 @@ function code(src) {
   return out;
 }
 
-const CLIENT = walk(CLIENT_DIR).map(([label, full]) => [label, code(readFileSync(full, "utf8"))]);
+const CLIENT = [...walk(CLIENT_DIR), ...walk(SHARED_DIR)]
+  .filter(([label]) => !label.startsWith("test/"))
+  .map(([label, full]) => [label, code(readFileSync(full, "utf8"))]);
 const PAGES = walk(PAGES_DIR).map(([label, full]) => [label, code(readFileSync(full, "utf8"))]);
 
 // =========================================================================================
@@ -94,7 +103,7 @@ const SCAN_AS_ACT = [
 ];
 
 describe("no user-visible string in the client says \"scan\" for the act", () => {
-  it("holds every module under src/client/js", () => {
+  it("holds every module under src/client/js and gas_shared", () => {
     const hits = [];
     for (const [label, src] of CLIENT) {
       for (const [re, why] of SCAN_AS_ACT) {

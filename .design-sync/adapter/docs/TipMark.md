@@ -21,4 +21,4 @@ These are the classes this component emits, taken from its factory source. They 
 
 - `.tip-mark`
 
-> Source: `gas_devsecops/src/client/js/ui/tip.js` → `tipMark()`.
+> Source: `gas_shared/ui/tip.js` → `tipMark()`.

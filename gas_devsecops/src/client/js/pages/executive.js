@@ -24,7 +24,7 @@
 // dropping each register's own `kmMedianLowerBound` — so a register whose curve never
 // reaches half shows a dash there rather than a bound, and says so.
 
-import { bootstrap, swrCall } from "../store.js";
+import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   clear, dataTable, days1, el, emptyState, errorState, fmtCount, fmtDate, fmtDateTime,
   fmtDays, heroStat, kpiCard, num, pageHeader, pluralize, sectionLabel, sevBadge,

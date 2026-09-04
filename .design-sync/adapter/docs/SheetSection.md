@@ -33,4 +33,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.label`
 - `.sheet-section-title`
 
-> Source: `gas_devsecops/src/client/js/ui/sheet.js` → `sheetSection()`.
+> Source: `gas_shared/ui/sheet.js` → `sheetSection()`.

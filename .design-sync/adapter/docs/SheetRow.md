@@ -41,4 +41,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.sheet-fix-body`
 - `.sheet-row--static`
 
-> Source: `gas_devsecops/src/client/js/ui/sheet.js` → `sheetRow()`.
+> Source: `gas_shared/ui/sheet.js` → `sheetRow()`.

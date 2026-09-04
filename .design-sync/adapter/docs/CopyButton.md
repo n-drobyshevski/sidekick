@@ -27,4 +27,4 @@ These are the classes this component emits, taken from its factory source. They 
 
 - `.copy-btn`
 
-> Source: `gas_devsecops/src/client/js/ui/code.js` → `copyButton()`.
+> Source: `gas_shared/ui/code.js` → `copyButton()`.

@@ -9,7 +9,7 @@
 // imports every page module, so a page importing app.js just to reach these icons would be
 // a cycle. This module has neither problem.
 //
-// test/navGroups.test.js holds both halves against PAGES: every lane has exactly one mark,
+// test/shared.test.js holds both halves against PAGES: every lane has exactly one mark,
 // every route has exactly one, and neither set carries an entry for something that is gone.
 
 // The LANE marks. A lane's mark has to be recognisable BESIDE the page marks its own panel

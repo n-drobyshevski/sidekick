@@ -16,7 +16,7 @@ import {
   registerSortValue,
   sortRegisterRows,
 } from "../src/domain/pagePayload";
-import { compareValues, nullsLast, pageOf, sortRows } from "../src/client/js/ui/tableModel.js";
+import { compareValues, nullsLast, pageOf, sortRows } from "../../gas_shared/ui/tableModel.js";
 
 describe("the ordering rule — server and client comparators agree", () => {
   it("compareRegisterValues / nullsLastOrder agree with their client twins on every case", () => {

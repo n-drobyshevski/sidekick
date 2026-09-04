@@ -1,6 +1,9 @@
-// Record-sheet geometry. The AI sibling also builds per-kind section lists here; this
-// register's sheets are built by their own pages, so only the two DOM-free helpers the
-// shared sheet needs survive the fork — which is why they were written DOM-free.
+// Record-sheet geometry: the two DOM-free helpers ui/sheet.js needs.
+//
+// These were `gas_devsecops/src/client/js/recordSections.js`, the generic half of a module
+// whose other half (per-kind section lists) never crossed the fork — that app's sheets are
+// built by their own pages. With the section lists gone the file held nothing else, so it is
+// gone too and its two helpers live here, beside the sheet that is their only caller.
 
 /**
  * Prev/next/position for stepping through a record list (an inventory row, an issue table

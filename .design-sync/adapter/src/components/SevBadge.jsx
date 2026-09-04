@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { sevBadge } from "../../../../gas_devsecops/src/client/js/ui/severity.js";
+import { sevBadge } from "../../../../gas_shared/ui/severity.js";
 
 /**
  * One severity level as a badge: a dot plus the level in words. role=img, not role=status - a

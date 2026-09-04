@@ -2,7 +2,7 @@
 //
 // NO BOOTED DOM (vitest.config.ts sets no `environment`), so this file follows the split
 // every page test in this repo uses: `helpModel` is pure and is exercised directly; the DOM
-// half (`renderHelp`) is read as source text, the same way `test/navGroups.test.js` reads
+// half (`renderHelp`) is read as source text, the same way `test/shared.test.js` reads
 // `app.js`'s PAGES table and `test/pagesData.test.js` reads its three pages.
 //
 // THREE THINGS THIS FILE PINS, one per section below:
@@ -14,7 +14,7 @@
 //      glossaryTip) targets `#/help?term=<id>` — the route this package adds is the same one
 //      that affordance has named since before this route existed.
 //
-// PROTECTED FILES THIS SUITE DOES NOT TOUCH: test/navGroups.test.js, test/pagesLit.test.js,
+// PROTECTED FILES THIS SUITE DOES NOT TOUCH: test/shared.test.js, test/pagesLit.test.js,
 // test/helpContent.test.js, test/vocabulary.test.js. Both of the first two hardcode "the ten
 // routes" as a literal array and fail, unedited, now that PAGES carries an eleventh —
 // documented in the handback, not worked around here.
@@ -24,7 +24,7 @@ import { describe, expect, it } from "vitest";
 
 import { allEntries } from "../src/client/js/helpContent.js";
 import { helpModel } from "../src/client/js/pages/help.js";
-import { buildHash } from "../src/client/js/store.js";
+import { buildHash } from "../../gas_shared/store.js";
 
 const ENTRIES = allEntries();
 
@@ -32,7 +32,7 @@ const APP_SRC = readFileSync(new URL("../src/client/js/app.js", import.meta.url)
 const ROUTE_ICONS_SRC = readFileSync(
   new URL("../src/client/js/routeIcons.js", import.meta.url), "utf8",
 );
-const TIP_SRC = readFileSync(new URL("../src/client/js/ui/tip.js", import.meta.url), "utf8");
+const TIP_SRC = readFileSync(new URL("../../gas_shared/ui/tip.js", import.meta.url), "utf8");
 const HELP_TEST_SRC = readFileSync(
   new URL("./helpContent.test.js", import.meta.url), "utf8",
 );
@@ -141,7 +141,7 @@ describe("helpModel", () => {
 //  2. The route exists: PAGES, the icon, and every glossary id renders
 // =========================================================================================
 
-/** Read the PAGES table out of app.js as text — mirrors test/navGroups.test.js's parser. */
+/** Read the PAGES table out of app.js as text — mirrors test/shared.test.js's parser. */
 function parsePages(src) {
   const body = src.slice(src.indexOf("const PAGES = {"), src.indexOf("\n};", src.indexOf("const PAGES = {")));
   const out = [];
@@ -159,7 +159,7 @@ function parsePages(src) {
 }
 
 /** The EXPECTED_IDS array test/helpContent.test.js pins, read as text rather than imported —
- *  that file is protected, so this reads its literal array the way navGroups.test.js reads
+ *  that file is protected, so this reads its literal array the way shared.test.js reads
  *  app.js's PAGES rather than importing anything from it. */
 function expectedIds(src) {
   const body = src.slice(src.indexOf("const EXPECTED_IDS = ["), src.indexOf("];", src.indexOf("const EXPECTED_IDS = [")));
@@ -206,7 +206,7 @@ describe("the help route exists", () => {
   });
 
   // ---------------------------------------------------------------------------------------
-  // PERTURBATION: remove the route, watch this test AND navGroups.test.js both catch it.
+  // PERTURBATION: remove the route, watch this test AND shared.test.js both catch it.
   //
   // Performed against the real source (app.js's `help: { ... }` entry deleted, the import
   // line and routeIcons.js's icon both left in place so only the PAGES registration was
@@ -216,7 +216,7 @@ describe("the help route exists", () => {
   //         the Data lane
   //   AssertionError: app.js's PAGES has no help route: expected undefined to be truthy
   //
-  //   FAIL  test/navGroups.test.js > nav marks > give every route exactly one
+  //   FAIL  test/shared.test.js > nav marks > give every route exactly one
   //   AssertionError: expected [ 'data', 'executive', 'help', …(8) ] to deeply equal
   //   [ Array(10) ]
   //     @@ -1,8 +1,9 @@
@@ -233,7 +233,7 @@ describe("the help route exists", () => {
   //     perturbation — removing the row restores the exact ten-route array that test still
   //     hardcodes, which is the fixed-cardinality tension the handback reports separately.)
   //
-  // Both failures are what proves this suite and navGroups.test.js are actually looking at
+  // Both failures are what proves this suite and shared.test.js are actually looking at
   // the live PAGES table rather than a fixture of their own — the second one is a fact about
   // a file this package may not edit, restated here as evidence rather than asserted as a
   // requirement.

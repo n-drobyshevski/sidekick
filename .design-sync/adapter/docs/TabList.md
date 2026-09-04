@@ -37,7 +37,8 @@ These are the classes this component emits, taken from its factory source. They 
 
 - `.tabstrip`
 - `.tabstrip__dot`
+- `.tabstrip__invalid`
 - `.tabstrip__tab`
 - `.tabstrip__label`
 
-> Source: `gas_devsecops/src/client/js/ui/settings.js` → `tabList()`.
+> Source: `gas_shared/ui/settings.js` → `tabList()`.

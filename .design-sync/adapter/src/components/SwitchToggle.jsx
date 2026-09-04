@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { switchToggle } from "../../../../gas_devsecops/src/client/js/ui/settings.js";
+import { switchToggle } from "../../../../gas_shared/ui/settings.js";
 
 /**
  * A two-state switch. Pair it with a SettingRow whose htmlFor matches this id.

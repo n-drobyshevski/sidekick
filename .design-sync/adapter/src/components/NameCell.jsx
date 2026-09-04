@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { nameCell } from "../../../../gas_devsecops/src/client/js/ui/cells.js";
+import { nameCell } from "../../../../gas_shared/ui/nodeCell.js";
 
 /**
  * A record name with its kind medallion, truncated with the full string available on the

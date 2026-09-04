@@ -49,4 +49,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.link`
 - `.filter-clear-all`
 
-> Source: `gas_devsecops/src/client/js/ui/controls.js` → `filterChipRow()`.
+> Source: `gas_shared/ui/controls.js` → `filterChipRow()`.

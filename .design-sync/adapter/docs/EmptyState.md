@@ -27,6 +27,14 @@ Nothing to show, and why - distinct from ErrorState, which is a failure.
 These are the classes this component emits, taken from its factory source. They are part of the design system: styling around this component, or hand-writing the same structure, uses these names rather than new ones.
 
 - `.empty`
+- `.empty--`
 - `.small`
+- `.empty-items`
+- `.empty-item`
+- `.empty-item-figure`
+- `.empty-item-unlock`
+- `.linklike`
+- `.empty-item-action`
+- `.muted`
 
-> Source: `gas_devsecops/src/client/js/ui/feedback.js` → `emptyState()`.
+> Source: `gas_shared/ui/feedback.js` → `emptyState()`.

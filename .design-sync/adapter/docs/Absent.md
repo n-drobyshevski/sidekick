@@ -27,4 +27,4 @@ These are the classes this component emits, taken from its factory source. They 
 
 - `.muted`
 
-> Source: `gas_devsecops/src/client/js/ui/cells.js` → `absent()`.
+> Source: `gas_shared/ui/cells.js` → `absent()`.

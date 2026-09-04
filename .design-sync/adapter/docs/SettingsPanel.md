@@ -55,4 +55,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.settings-panel`
 - `.settings-panel__foot`
 
-> Source: `gas_devsecops/src/client/js/ui/settings.js` → `settingsPanel()`.
+> Source: `gas_shared/ui/settings.js` → `settingsPanel()`.

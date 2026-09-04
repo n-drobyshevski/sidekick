@@ -17,7 +17,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { days1, fmtCount, num, pct1 } from "../src/client/js/ui/figures.js";
+import { days1, fmtCount, num, pct1 } from "../../gas_shared/ui/figures.js";
 
 const PAGES_DIR = new URL("../src/client/js/pages/", import.meta.url);
 

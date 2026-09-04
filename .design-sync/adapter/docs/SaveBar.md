@@ -44,4 +44,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.link`
 - `.savebar__tab`
 
-> Source: `gas_devsecops/src/client/js/ui/settings.js` → `saveBar()`.
+> Source: `gas_shared/ui/settings.js` → `saveBar()`.

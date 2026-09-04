@@ -57,7 +57,7 @@
 // `sca.js` no longer hosts a second copy of those five, only the register-shaped helpers
 // built on top of them.
 
-import { bootstrapCached, swrCall } from "../store.js";
+import { bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import {
   absent, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount, fmtDate,
   glossaryTip, heroStat, meter, num, pageHeader, pct1, skeletonStack, statRow,

@@ -26,4 +26,4 @@ These are the classes this component emits, taken from its factory source. They 
 
 - `.code-block`
 
-> Source: `gas_devsecops/src/client/js/ui/code.js` → `codeBlock()`.
+> Source: `gas_shared/ui/code.js` → `codeBlock()`.

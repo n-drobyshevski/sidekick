@@ -35,4 +35,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.empty-detail`
 - `.small`
 
-> Source: `gas_devsecops/src/client/js/ui/feedback.js` → `errorState()`.
+> Source: `gas_shared/ui/feedback.js` → `errorState()`.

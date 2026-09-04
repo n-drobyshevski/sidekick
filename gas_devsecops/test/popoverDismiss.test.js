@@ -1,5 +1,5 @@
 // ui/popover.js's dismiss handler is DOM-bound (it wires document/window listeners), so it
-// is read as source text rather than executed — the split test/navGroups.test.js and
+// is read as source text rather than executed — the split test/shared.test.js and
 // test/projectScopeView.test.js already use (vitest.config.ts sets no `environment`, so
 // there is no jsdom to fire a real `resize` event in). The browser reproduction that proves
 // the runtime behaviour lives in the P8 handback, not here.
@@ -16,7 +16,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const SRC = readFileSync(new URL("../src/client/js/ui/popover.js", import.meta.url), "utf8");
+const SRC = readFileSync(new URL("../../gas_shared/ui/popover.js", import.meta.url), "utf8");
 
 function onScrollOrResizeBody(src) {
   const start = src.indexOf("function onScrollOrResize(e) {");

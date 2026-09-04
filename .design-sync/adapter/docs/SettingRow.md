@@ -39,4 +39,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.small`
 - `.setting-row__control`
 
-> Source: `gas_devsecops/src/client/js/ui/settings.js` → `settingRow()`.
+> Source: `gas_shared/ui/settings.js` → `settingRow()`.

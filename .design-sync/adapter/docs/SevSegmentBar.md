@@ -36,4 +36,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.sev-fill-<variant>`
 - `.sevbar-seg--empty`
 
-> Source: `gas_devsecops/src/client/js/ui/severity.js` → `sevSegmentBar()`.
+> Source: `gas_shared/ui/severity.js` → `sevSegmentBar()`.

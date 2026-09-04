@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { absent } from "../../../../gas_devsecops/src/client/js/ui/cells.js";
+import { absent } from "../../../../gas_shared/ui/cells.js";
 
 /**
  * The em-dash cell. Absent is not zero - this is what a value that was never measured looks

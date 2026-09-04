@@ -35,4 +35,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.pill-row`
 - `.sev-<variant>`
 
-> Source: `gas_devsecops/src/client/js/ui/controls.js` → `togglePills()`.
+> Source: `gas_shared/ui/controls.js` → `togglePills()`.

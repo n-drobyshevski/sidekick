@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { uiIcon } from "../../../../gas_devsecops/src/client/js/ui/uiIcons.js";
+import { uiIcon } from "../../../../gas_shared/ui/uiIcons.js";
 
 /**
  * One stroked interface icon from the set.

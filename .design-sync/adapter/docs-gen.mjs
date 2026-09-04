@@ -15,7 +15,11 @@ import { EXAMPLES } from "./examples.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const docsDir = join(root, "docs");
-const UI = join(root, "..", "..", "gas_devsecops", "src", "client", "js", "ui");
+const UI = join(root, "..", "..", "gas_shared", "ui");
+// `nameCell` moved out of cells.js into nodeCell.js when the shared core was cut: it is
+// the one cell renderer that reaches icons.js, and absent() must not drag 512 lines of
+// node-kind SVG in behind it.
+const MOD_MOVED = { nameCell: "nodeCell" };
 mkdirSync(docsDir, { recursive: true });
 for (const f of readdirSync(docsDir)) rmSync(join(docsDir, f));
 
@@ -112,7 +116,7 @@ function classesOf(factory, mod) {
 let written = 0;
 for (const c of COMPONENTS) {
   const ex = EXAMPLES[c.name];
-  const classes = classesOf(c.factory, c.mod);
+  const classes = classesOf(c.factory, MOD_MOVED[c.factory] || c.mod);
   const lines = [];
 
   lines.push("---");
@@ -159,7 +163,7 @@ for (const c of COMPONENTS) {
     lines.push("");
   }
 
-  lines.push(`> Source: \`gas_devsecops/src/client/js/ui/${c.mod}.js\` → \`${c.factory}()\`.`);
+  lines.push(`> Source: \`gas_shared/ui/${MOD_MOVED[c.factory] || c.mod}.js\` → \`${c.factory}()\`.`);
   lines.push("");
 
   writeFileSync(join(docsDir, c.name + ".md"), lines.join("\n"));
@@ -167,5 +171,7 @@ for (const c of COMPONENTS) {
 }
 
 console.log(`wrote ${written} component docs to docs/`);
-const noClasses = COMPONENTS.filter((c) => classesOf(c.factory, c.mod).length === 0).map((c) => c.name);
+const noClasses = COMPONENTS
+  .filter((c) => classesOf(c.factory, MOD_MOVED[c.factory] || c.mod).length === 0)
+  .map((c) => c.name);
 if (noClasses.length) console.log(`  (no classes extracted for: ${noClasses.join(", ")})`);

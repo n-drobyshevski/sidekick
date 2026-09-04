@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { settingsPanel } from "../../../../gas_devsecops/src/client/js/ui/settings.js";
+import { settingsPanel } from "../../../../gas_shared/ui/settings.js";
 
 /**
  * A titled panel grouping related settings, with an optional footer for its actions.

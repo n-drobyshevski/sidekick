@@ -27,4 +27,4 @@ The select element itself: options as strings or {value,label}, with value prese
 />
 ```
 
-> Source: `gas_devsecops/src/client/js/ui/controls.js` → `select()`.
+> Source: `gas_shared/ui/controls.js` → `select()`.

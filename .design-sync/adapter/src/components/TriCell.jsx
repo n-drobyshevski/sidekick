@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { triCell } from "../../../../gas_devsecops/src/client/js/ui/cells.js";
+import { triCell } from "../../../../gas_shared/ui/cells.js";
 
 /**
  * A tri-state cell: true, false, or absent. Wiz returns null for a flag it never evaluated,

@@ -1,6 +1,6 @@
 // syncProgress.js's state logic, exercised without a browser — `syncViewModel` and
 // `shouldContinuePolling` are pure functions of a job summary (`jobSummarySlice`'s shape) and
-// the wall clock, so this file never imports a DOM. Same posture as navGroups.test.js and
+// the wall clock, so this file never imports a DOM. Same posture as shared.test.js and
 // charts.test.js: hold the SOURCE against its own contract rather than boot a renderer.
 //
 // The job summary this file builds mirrors src/domain/pagePayload.ts's `jobSummarySlice`

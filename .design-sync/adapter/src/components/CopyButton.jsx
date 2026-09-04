@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { copyButton } from "../../../../gas_devsecops/src/client/js/ui/code.js";
+import { copyButton } from "../../../../gas_shared/ui/code.js";
 
 /**
  * Copies what getText returns. getText is a function rather than a string so the button can

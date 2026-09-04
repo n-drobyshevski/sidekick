@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { statRow } from "../../../../gas_devsecops/src/client/js/ui/controls.js";
+import { statRow } from "../../../../gas_shared/ui/controls.js";
 
 /**
  * One cell of a .stat-list strip: uppercase name, the figure (optionally with a meter), and a

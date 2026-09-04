@@ -26,7 +26,7 @@
 // and both are excluded from the headline close rate by the server — `monthsCounted` is
 // published beside it so the sample can be checked.
 
-import { bootstrap, swrCall } from "../store.js";
+import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState, firstRunNotice,

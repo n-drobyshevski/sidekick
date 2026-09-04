@@ -22,4 +22,4 @@ A tri-state cell: true, false, or absent. Wiz returns null for a flag it never e
 </div>
 ```
 
-> Source: `gas_devsecops/src/client/js/ui/cells.js` → `triCell()`.
+> Source: `gas_shared/ui/cells.js` → `triCell()`.

@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { brandMark } from "../../../../gas_devsecops/src/client/js/ui/brandMark.js";
+import { brandMark } from "../../../../gas_shared/ui/brandMark.js";
 
 /**
  * The Sidekick mark. Decorative by default - it sits next to the wordmark almost everywhere,

@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { settingRow } from "../../../../gas_devsecops/src/client/js/ui/settings.js";
+import { settingRow } from "../../../../gas_shared/ui/settings.js";
 
 /**
  * One setting: its name, a sentence saying what it does, and the control that changes it.

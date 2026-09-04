@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { sevSegmentBar, sevEntries } from "../../../../gas_devsecops/src/client/js/ui/severity.js";
+import { sevSegmentBar, sevEntries } from "../../../../gas_shared/ui/severity.js";
 const DEFAULT_SEV_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 
 /**

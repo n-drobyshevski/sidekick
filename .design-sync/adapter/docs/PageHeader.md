@@ -38,4 +38,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.page-header--solo`
 - `.stat-list`
 
-> Source: `gas_devsecops/src/client/js/ui/controls.js` → `pageHeader()`.
+> Source: `gas_shared/ui/controls.js` → `pageHeader()`.

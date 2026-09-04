@@ -25,7 +25,7 @@
 // ecosystem tag, a commit hash) is still named by `missingColumnsNote` rather than drawn as
 // a column of dashes that would let a reader think the tenant is missing the data.
 
-import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../store.js";
+import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   DEFAULT_PAGE_SIZE, absent, boundedDays, chartTable, chartTableModel, dataTable, days1,

@@ -1,7 +1,8 @@
 // The drill-down sheet: a right-anchored modal overlay with a focus trap, plus the
 // section/row vocabulary its bodies are written in.
 
-import { clampSheetWidth, recordCursor } from "../recordSections.js";
+import { appConfig } from "../appConfig.js";
+import { clampSheetWidth, recordCursor } from "./recordCursor.js";
 import { parseHash } from "../store.js";
 import { clear, el, motionOk } from "./dom.js";
 import { tipLabel } from "./tip.js";
@@ -40,11 +41,22 @@ function focusablesIn(root) {
   );
 }
 
-const SHEET_WIDE_KEY = "sidekickdso.sheetWide";
+/**
+ * The localStorage names, built from the host's own namespace rather than written out.
+ *
+ * READ INSIDE THE FUNCTION, never at module load. Two sidekicks served from the same origin
+ * must not share a key, so the prefix has to come from the manifest (appConfig.js) — and a
+ * top-level read would run during import, before app.js's own body has called
+ * configureApp(). The key was a `sidekickdso.` literal here while this module lived inside
+ * one app; the literal is what could not survive the move.
+ */
+function storageKey(name) {
+  return appConfig().storagePrefix + name;
+}
 
 function wantsWide() {
   try {
-    return localStorage.getItem(SHEET_WIDE_KEY) === "1";
+    return localStorage.getItem(storageKey("sheetWide")) === "1";
   } catch (e) {
     return false; // storage denied (private mode / embedded iframe) — just don't remember
   }
@@ -52,7 +64,7 @@ function wantsWide() {
 
 function rememberWide(on) {
   try {
-    localStorage.setItem(SHEET_WIDE_KEY, on ? "1" : "0");
+    localStorage.setItem(storageKey("sheetWide"), on ? "1" : "0");
   } catch (e) { /* storage denied — the toggle still works for this session */ }
 }
 
@@ -60,12 +72,12 @@ function rememberWide(on) {
  * A record sheet's remembered geometry, as one value rather than two competing ones: the
  * literal "wide" preset, or a pixel width the user dragged to. Storing a class AND a width
  * would let the two disagree, and an inline width silently wins over a class.
+ *
+ * Same storageKey() rule as the pair above: the namespace comes from the manifest.
  */
-const RECORD_WIDTH_KEY = "sidekickdso.recordSheetWidth";
-
 function loadRecordWidth() {
   try {
-    return localStorage.getItem(RECORD_WIDTH_KEY) || "";
+    return localStorage.getItem(storageKey("recordSheetWidth")) || "";
   } catch (e) {
     return "";
   }
@@ -73,8 +85,8 @@ function loadRecordWidth() {
 
 function rememberRecordWidth(v) {
   try {
-    if (v) localStorage.setItem(RECORD_WIDTH_KEY, String(v));
-    else localStorage.removeItem(RECORD_WIDTH_KEY);
+    if (v) localStorage.setItem(storageKey("recordSheetWidth"), String(v));
+    else localStorage.removeItem(storageKey("recordSheetWidth"));
   } catch (e) { /* storage denied — the resize still works for this session */ }
 }
 
