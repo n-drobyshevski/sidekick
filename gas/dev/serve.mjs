@@ -14,6 +14,7 @@ import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { buildStamp } from "../buildStamp.mjs";
 
 const gasRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.PORT || 8787);
@@ -22,6 +23,18 @@ const SCRIPTS = {
   "/gas-shims.js": () => readFileSync(join(gasRoot, "dev/gas-shims.js"), "utf8"),
   "/server.js": () => readFileSync(join(gasRoot, "dev/server.dev.js"), "utf8"),
   "/boot.js": () => readFileSync(join(gasRoot, "dev/boot.js"), "utf8"),
+};
+
+/**
+ * HtmlService partials, for the shim behind `api.getChartsBundle`.
+ *
+ * In GAS these are files in the script project and `createHtmlOutputFromFile` reads them
+ * straight off the runtime. Here the "server" is a bundle running in the browser, so the
+ * partial has to come back over HTTP — see the HtmlService shim in dev/gas-shims.js. Served
+ * as text/plain because it is HTML being read as data, never parsed as a document.
+ */
+const PARTIALS = {
+  "/_partial/js_charts": () => readFileSync(join(gasRoot, "dist/js_charts.html"), "utf8"),
 };
 
 // Dev server bundle: identical to dist/server.js except sampleData is swapped for
@@ -34,6 +47,9 @@ async function buildDevServer() {
     format: "iife",
     globalName: "Server",
     target: "es2019",
+    // The same stamp the client bundle gets, so the Settings build card compares like
+    // with like. Without it the dev server reports a mismatch that isn't one.
+    define: buildStamp(gasRoot).define,
     outfile: join(gasRoot, "dev/server.dev.js"),
     logLevel: "silent",
     plugins: [{
@@ -87,6 +103,14 @@ createServer(async (req, res) => {
         "cache-control": "no-store",
       });
       res.end(body);
+      return;
+    }
+    if (PARTIALS[path]) {
+      res.writeHead(200, {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(PARTIALS[path]());
       return;
     }
     if (path === "/favicon.ico") {

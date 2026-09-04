@@ -19,9 +19,9 @@
 
 import {
   TIER_COLORS, TIER_GLYPHS, TIER_LABELS, TIER_ORDER, TIER_TEXT,
-  destroyChart, groupPalette, groupPie, groupTrendLines, sparkline, stackedAgeBar,
-  tierPalette, trendLine,
+  groupPalette, tierPalette,
 } from "../charts.js";
+import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
   clear, el, emptyState, fmtDate, helpTip, kpiCard, nvdUrl, openSheet, pager,
@@ -428,6 +428,7 @@ export async function renderOverview(main, params, ctx) {
       return card;
     }
     const grid = el("div", { class: "spark-grid" });
+    const pending = [];
     for (const tier of TIER_ORDER) {
       const series = trend.map((p) => p.byGroup[tier] || 0);
       const canvas = el("canvas", {});
@@ -439,13 +440,20 @@ export async function renderOverview(main, params, ctx) {
         el("div", { class: "spark__box" }, canvas),
         el("div", { class: "spark__value num" }, (series[series.length - 1] || 0).toLocaleString()),
       ));
-      requestAnimationFrame(() => sparkline(canvas, series, {
-        color: TIER_COLORS[tier],
-        desc: `${TIER_LABELS[tier]}: ${series[0]} to ${series[series.length - 1]} open findings `
-          + `across ${series.length} scans.`,
-      }));
+      pending.push({ canvas, series, tier });
     }
     card.append(grid);
+    loadCharts().then((charts) => {
+      for (const { canvas, series, tier } of pending) {
+        charts.sparkline(canvas, series, {
+          color: TIER_COLORS[tier],
+          desc: `${TIER_LABELS[tier]}: ${series[0]} to ${series[series.length - 1]} open findings `
+            + `across ${series.length} scans.`,
+        });
+      }
+    }).catch(() => {
+      for (const { canvas } of pending) chartUnavailable(canvas);
+    });
     card.append(el("p", { class: "chart-caption muted" },
       "Tiers are computed from today's signals and applied backwards: has_kev and has_exploit "
       + "never revert, and EPSS is the peak observed. So this traces the BACKLOG moving "
@@ -495,8 +503,8 @@ export async function renderOverview(main, params, ctx) {
         + "counted as a breach. Rows with no recorded age are omitted from the bars, which is "
         + "why this total can trail the open count above."),
     ));
-    requestAnimationFrame(() => {
-      stackedAgeBar(
+    loadCharts().then((charts) => {
+      charts.stackedAgeBar(
         canvas, AGE_LABELS, aging.perTier, tierPalette(),
         "Open findings by age bucket and risk tier.",
         // The 7-day Critical SLA coincides with the first bucket edge. Only mark it when the
@@ -504,6 +512,8 @@ export async function renderOverview(main, params, ctx) {
         // one edge would stand for several different deadlines and mean nothing.
         slaEdgeIndex() === null ? {} : { slaEdgeAfter: 0, slaEdgeLabel: slaEdgeLabel() },
       );
+    }).catch(() => {
+      chartUnavailable(canvas);
     });
     const aw = insights.awaiting;
     if (boot.settings.showNoFix !== false && aw && aw.overall > 0) {
@@ -716,13 +726,15 @@ export async function renderOverview(main, params, ctx) {
       card.append(el("div", { class: "chart-box" }, canvas));
       card.append(el("p", { class: "chart-caption muted" },
         "Total open findings at each saved scan."));
-      requestAnimationFrame(() => {
-        // trendLine reads {x, y} on a proportional epoch-day axis — NOT {date, value}.
-        const points = trend.map((p) => ({
-          x: p.date,
-          y: Object.values(p.bySev || {}).reduce((a, b) => a + (b || 0), 0),
-        }));
-        trendLine(canvas, points, { yLabel: "Open findings" });
+      // trendLine reads {x, y} on a proportional epoch-day axis — NOT {date, value}.
+      const points = trend.map((p) => ({
+        x: p.date,
+        y: Object.values(p.bySev || {}).reduce((a, b) => a + (b || 0), 0),
+      }));
+      loadCharts().then((charts) => {
+        charts.trendLine(canvas, points, { yLabel: "Open findings" });
+      }).catch(() => {
+        chartUnavailable(canvas);
       });
     } else {
       card.append(el("p", { class: "muted small" }, "Trend appears after the second scan."));
@@ -846,7 +858,9 @@ export async function renderOverview(main, params, ctx) {
       canvas.style.display = "";
     }
     function showMsg(canvas, msg, text) {
-      destroyChart(canvas);
+      // Fire-and-forget: nothing to destroy if Chart.js never loaded (nothing was ever
+      // drawn), and the message swap below doesn't wait on it either way.
+      loadCharts().then((charts) => charts.destroyChart(canvas)).catch(() => {});
       canvas.style.display = "none";
       msg.textContent = text;
       msg.style.display = "";
@@ -878,7 +892,11 @@ export async function renderOverview(main, params, ctx) {
           slices.push({ label: "Other", value: tailOpen, color: colors.get("Other") });
         }
         showChart(pieCanvas, pieMsg);
-        requestAnimationFrame(() => groupPie(pieCanvas, slices));
+        loadCharts().then((charts) => {
+          charts.groupPie(pieCanvas, slices);
+        }).catch(() => {
+          chartUnavailable(pieCanvas);
+        });
       }
 
       // Line: ledger-replay trend for the same top groups.
@@ -908,7 +926,11 @@ export async function renderOverview(main, params, ctx) {
           showMsg(lineCanvas, lineMsg, "Trend appears after the second scan.");
         } else {
           showChart(lineCanvas, lineMsg);
-          requestAnimationFrame(() => groupTrendLines(lineCanvas, td.points, series));
+          loadCharts().then((charts) => {
+            charts.groupTrendLines(lineCanvas, td.points, series);
+          }).catch(() => {
+            chartUnavailable(lineCanvas);
+          });
         }
       };
       loadTrend();

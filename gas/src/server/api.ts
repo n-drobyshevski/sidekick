@@ -149,6 +149,36 @@ export function bootstrap(_p?: unknown): ApiResult {
   }));
 }
 
+// --------------------------------------------------------------------------------------- //
+//  Charts bundle
+// --------------------------------------------------------------------------------------- //
+
+/**
+ * Hands back the SECOND client bundle's source (`dist/js_charts.html`) as a string, so
+ * `chartsLoader.js` can fetch Chart.js over `google.script.run` on the first route that
+ * draws a chart instead of paying for it on every route's first paint. See that file's
+ * header for the whole argument, and `chartsBundle.js`'s for why what this returns is the
+ * unwrapped source rather than something that has already run — `chartsLoader.js` is what
+ * EXECUTES it (`new Function`, a `<script>` element's `textContent`, or a `blob:` URL; see
+ * that file's header), never this function. The wrapper exists at all only because a GAS
+ * project has nowhere to put a bare `.js` file: `HtmlService.createHtmlOutputFromFile` and
+ * `include()` both read `.html`, so `esbuild.config.mjs` writes the bundle wrapped in the
+ * one shape the platform is willing to store it in. An empty `src` here means the
+ * deployment is missing `js_charts.html` (or shipped it empty) — a deploy fault, so it is
+ * reported as an error rather than as an empty string the client would go on to try to run.
+ */
+export function getChartsBundle(_p?: unknown): ApiResult<string> {
+  return run(() => {
+    const html = HtmlService.createHtmlOutputFromFile("js_charts").getContent();
+    const start = html.indexOf("<script");
+    const open = start < 0 ? -1 : html.indexOf(">", start);
+    const close = html.lastIndexOf("</script>");
+    const src = open < 0 || close < open ? "" : html.slice(open + 1, close).trim();
+    if (!src) throw new Error("js_charts is missing or empty in this deployment");
+    return src;
+  });
+}
+
 function bootstrapCore(): Rec {
   const scan = findings.currentScan();
   const latest = ledgerStore.latestScanRow();

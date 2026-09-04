@@ -9,7 +9,7 @@
 // all is shown beside every rate rather than quietly dropped; and the whole classified set
 // exports as CSV so a reader can recompute the page in a spreadsheet.
 
-import { coverageEfficiencyLines, coverageEfficiencyScatter } from "../charts.js";
+import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { call } from "../api.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
@@ -466,15 +466,14 @@ export async function renderProgram(main, _params, ctx) {
         { className: "help-label" })),
       box);
     trendHost.append(card);
-    // Chart.js needs the canvas in the document before it measures.
-    setTimeout(() => {
-      try {
-        coverageEfficiencyLines(box.querySelector("canvas"), points);
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error("[program] trend chart failed:", e);
-      }
-    }, 0);
+    const canvas = box.querySelector("canvas");
+    loadCharts().then((charts) => {
+      charts.coverageEfficiencyLines(canvas, points);
+    }).catch((e) => {
+      // eslint-disable-next-line no-console
+      console.error("[program] trend chart failed:", e);
+      chartUnavailable(canvas);
+    });
   }
 
   // ------------------------------------------------------------------- classifier
@@ -540,14 +539,14 @@ export async function renderProgram(main, _params, ctx) {
         "competing on a common yardstick: a narrow rule reaches high coverage by flagging " +
         "little. Read this as how sensitive the headline is to the rule, not as which rule " +
         "is right."));
-      setTimeout(() => {
-        try {
-          coverageEfficiencyScatter(box.querySelector("canvas"), sens);
-        } catch (e) {
-          // eslint-disable-next-line no-console
-          console.error("[program] scatter failed:", e);
-        }
-      }, 0);
+      const canvas = box.querySelector("canvas");
+      loadCharts().then((charts) => {
+        charts.coverageEfficiencyScatter(canvas, sens);
+      }).catch((e) => {
+        // eslint-disable-next-line no-console
+        console.error("[program] scatter failed:", e);
+        chartUnavailable(canvas);
+      });
     }
   }
 

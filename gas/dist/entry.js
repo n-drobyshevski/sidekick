@@ -76,6 +76,7 @@ function timedApi_(name, p) {
   return res;
 }
 function api_bootstrap(p) { return timedApi_("bootstrap", p); }
+function api_getChartsBundle(p) { return timedApi_("getChartsBundle", p); }
 function api_getInsights(p) { return timedApi_("getInsights", p); }
 function api_getOldestOpen(p) { return timedApi_("getOldestOpen", p); }
 function api_getGrouping(p) { return timedApi_("getGrouping", p); }
