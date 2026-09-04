@@ -59,4 +59,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.combobox-search-wrap`
 - `.combobox-search-icon`
 
-> Source: `gas_devsecops/src/client/js/ui/combobox.js` → `filterCombobox()`.
+> Source: `gas_shared/ui/combobox.js` → `filterCombobox()`.

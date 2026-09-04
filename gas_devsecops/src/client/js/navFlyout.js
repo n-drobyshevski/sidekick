@@ -20,12 +20,12 @@
 // would be dropped mid-hover.
 
 import { hasPanel, panelBlocks } from "./navModel.js";
-import { DEFAULT_ROUTE, buildHash } from "./store.js";
-import { coarse, el } from "./ui/dom.js";
-import { popoverDismiss } from "./ui/popover.js";
-import { portalClosed, portalOpened } from "./ui/portals.js";
-import { CLOSE_GRACE, tipDelay } from "./ui/tipPlace.js";
-import { uiIcon } from "./ui/uiIcons.js";
+import { buildHash, defaultRoute } from "../../../../gas_shared/store.js";
+import { coarse, el } from "../../../../gas_shared/ui/dom.js";
+import { popoverDismiss } from "../../../../gas_shared/ui/popover.js";
+import { portalClosed, portalOpened } from "../../../../gas_shared/ui/portals.js";
+import { CLOSE_GRACE, tipDelay } from "../../../../gas_shared/ui/tipPlace.js";
+import { uiIcon } from "../../../../gas_shared/ui/uiIcons.js";
 import { LANE_ICONS, ROUTE_ICONS } from "./routeIcons.js";
 
 // The pinned preference rides the key the collapsed rail used to own, and reads the same way
@@ -182,7 +182,7 @@ function paintPanel(item) {
  * for a panel painted BETWEEN navigations, which is most of them.
  */
 function markActive(scope) {
-  const here = location.hash.replace(/\?.*$/, "").replace(/^#\/?/, "") || DEFAULT_ROUTE;
+  const here = location.hash.replace(/\?.*$/, "").replace(/^#\/?/, "") || defaultRoute();
   scope.querySelectorAll(".nav-link").forEach((a) => {
     const isActive = a.getAttribute("href") === `#/${here}`;
     a.classList.toggle("active", isActive);

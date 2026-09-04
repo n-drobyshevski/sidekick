@@ -27,4 +27,4 @@ These are the classes this component emits, taken from its factory source. They 
 
 - `.pager`
 
-> Source: `gas_devsecops/src/client/js/ui/data.js` → `pager()`.
+> Source: `gas_shared/ui/data.js` → `pager()`.

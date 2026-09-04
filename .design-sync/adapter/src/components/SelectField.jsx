@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { selectField } from "../../../../gas_devsecops/src/client/js/ui/controls.js";
+import { selectField } from "../../../../gas_shared/ui/controls.js";
 
 /**
  * A native select with its dimension named beside it, so a sighted reader sees what the

@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { heroStat } from "../../../../gas_devsecops/src/client/js/ui/controls.js";
+import { heroStat } from "../../../../gas_shared/ui/controls.js";
 
 /**
  * The page subject figure. At most ONE per page: a second hero means neither is. Takes its

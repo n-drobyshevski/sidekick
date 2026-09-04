@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { tabList } from "../../../../gas_devsecops/src/client/js/ui/settings.js";
+import { tabList } from "../../../../gas_shared/ui/settings.js";
 
 /**
  * A real ARIA tablist with roving tabindex and arrow-key cycling.

@@ -37,4 +37,4 @@ These are the classes this component emits, taken from its factory source. They 
 
 - `.segmented`
 
-> Source: `gas_devsecops/src/client/js/ui/controls.js` → `segmented()`.
+> Source: `gas_shared/ui/controls.js` → `segmented()`.

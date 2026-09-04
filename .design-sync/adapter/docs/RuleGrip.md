@@ -25,4 +25,4 @@ These are the classes this component emits, taken from its factory source. They 
 
 - `.rule-grip`
 
-> Source: `gas_devsecops/src/client/js/ui/rowReorder.js` → `ruleGrip()`.
+> Source: `gas_shared/ui/rowReorder.js` → `ruleGrip()`.

@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { tokenList } from "../../../../gas_devsecops/src/client/js/ui/tokenList.js";
+import { tokenList } from "../../../../gas_shared/ui/tokenList.js";
 
 /**
  * A set of values as removable chips with a picker to add more. The picker is built ONCE and

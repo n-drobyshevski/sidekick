@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { meter } from "../../../../gas_devsecops/src/client/js/ui/data.js";
+import { meter } from "../../../../gas_shared/ui/data.js";
 
 /**
  * A proportion drawn as a track and a fill. Decorative when the number is already written

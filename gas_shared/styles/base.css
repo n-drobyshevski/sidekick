@@ -512,7 +512,7 @@ main.full-bleed > .empty { margin: var(--space-6) var(--space-6); }
   right: 0;
   bottom: 0;
   left: var(--rail-w);
-  z-index: 20;
+  z-index: var(--z-route-overlay);
   display: flex;
   justify-content: center;
   background: color-mix(in srgb, var(--surface) 72%, transparent);
@@ -569,9 +569,9 @@ main.full-bleed > .empty { margin: var(--space-6) var(--space-6); }
 
 /* Boot splash: full-viewport branded veil painted by index.html on first load and recreated
    by bootSplash() on refresh(), faded out once the page skeleton has laid out. Sits above the
-   route overlay (20) and sheets (41), below toasts (60). */
+   route overlay and sheets, below toasts - see the z scale in tokens.base.css. */
 .boot-splash {
-  position: fixed; inset: 0; z-index: 55;
+  position: fixed; inset: 0; z-index: var(--z-splash);
   display: flex; align-items: center; justify-content: center;
   background: var(--page); opacity: 1; transition: opacity var(--dur-base) ease-out;
 }
@@ -640,8 +640,12 @@ main.full-bleed > .empty { margin: var(--space-6) var(--space-6); }
      own, and takes it with zero side margins rather than a width the margins then overflow. */
   .sidebar .nav-rule { flex: 0 0 100%; margin: var(--space-2) 0; }
   /* The top bar must stay above the full-width route overlay so nav + sync controls remain
-     visible and clickable during a reload (desktop clears the rail via left:var(--rail-w)). */
-  .sidebar { position: relative; z-index: 45; }
+     visible and clickable during a reload (desktop clears the rail via left:var(--rail-w)).
+     --z-topbar is 32, and it used to be a bare 45 - which ALSO put this bar above the scrim
+     and the sheet, so a modal opened at this width dimmed everything except the top bar and
+     left it clickable. The route-overlay clearance this comment asks for is kept; the
+     accidental one is not. */
+  .sidebar { position: relative; z-index: var(--z-topbar); }
   main { height: auto; overflow: visible; padding: var(--space-4) var(--space-4) var(--space-6); }
   .route-overlay { position: fixed; left: 0; }
   /* Full-bleed workbench degrades to a tall block inside the scrolling page. */

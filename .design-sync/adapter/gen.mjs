@@ -11,8 +11,13 @@ const distDir = join(root, "dist");
 mkdirSync(compDir, { recursive: true });
 mkdirSync(distDir, { recursive: true });
 
-// The shared core lives in the register, not here. Four levels up from src/components/.
-const UI = "../../../../gas_devsecops/src/client/js/ui";
+// The shared core lives in gas_shared/, not in a register and not here. Four levels up
+// from src/components/. It was gas_devsecops/src/client/js/ui until the design system was
+// cut into its own package; the modules are byte-identical, only the path moved.
+const UI = "../../../../gas_shared/ui";
+// `nameCell` split out of cells.js on the way: it is the one cell renderer that reaches
+// icons.js (512 lines of node-kind SVG), and `absent()` must not drag that in.
+const MOD_MOVED = { nameCell: "nodeCell" };
 
 const isFn = (t) => t.includes("=>");
 const wrap = (text, width, indent) => {
@@ -68,7 +73,7 @@ for (const c of COMPONENTS) {
   const imports = [
     'import React from "react";',
     'import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";',
-    `import { ${[...new Set(named)].join(", ")} } from "${UI}/${c.mod}.js";`,
+    `import { ${[...new Set(named)].join(", ")} } from "${UI}/${MOD_MOVED[c.factory] || c.mod}.js";`,
     ...extra,
   ];
   if (needsEntries) {

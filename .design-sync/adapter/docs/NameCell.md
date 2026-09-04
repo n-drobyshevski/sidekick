@@ -28,4 +28,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.cell-name-text`
 - `.cell-name`
 
-> Source: `gas_devsecops/src/client/js/ui/cells.js` → `nameCell()`.
+> Source: `gas_shared/ui/nodeCell.js` → `nameCell()`.

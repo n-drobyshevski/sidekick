@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { progressBar } from "../../../../gas_devsecops/src/client/js/ui/data.js";
+import { progressBar } from "../../../../gas_shared/ui/data.js";
 
 /**
  * Determinate when given a number, indeterminate when not - the running-scan case.

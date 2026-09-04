@@ -1,7 +1,7 @@
 // The app-header project switcher (P5) — the pure half (`projectScopeView`, `scopeOptions`,
 // `isSupportGroup`) is DOM-free and tested directly; the DOM half (`projectScopeControl`,
 // `app.js`'s wiring) is read as source text, the same split test/pagesSettings.test.js and
-// test/navGroups.test.js already use in this repo (vitest.config.ts sets no `environment`, so
+// test/shared.test.js already use in this repo (vitest.config.ts sets no `environment`, so
 // there is no jsdom to boot a real combobox in).
 //
 // NO DOMAINS HERE. `gas_ai/src/client/js/ui/projectScope.js` fronts a second switcher axis
@@ -17,11 +17,14 @@ import { describe, expect, it } from "vitest";
 import {
   SUPPORT_GROUP_PREFIXES, isSupportGroup, projectKind, projectScopeView, scopeOptions,
 } from "../src/client/js/ui/projectScope.js";
-import { UI_ICON_NAMES } from "../src/client/js/ui/uiIcons.js";
+import { UI_ICON_NAMES } from "../../gas_shared/ui/uiIcons.js";
 
 const SRC = readFileSync(new URL("../src/client/js/ui/projectScope.js", import.meta.url), "utf8");
 const APP_SRC = readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8");
 const UI_SRC = readFileSync(new URL("../src/client/js/ui.js", import.meta.url), "utf8");
+const SHARED_UI_SRC = readFileSync(
+  new URL("../../gas_shared/ui/index.js", import.meta.url), "utf8",
+);
 
 // =========================================================================================
 //  isSupportGroup / SUPPORT_GROUP_PREFIXES — the first-segment rule
@@ -415,6 +418,13 @@ describe("ui.js barrel: the new module is exported the same way every other ui/*
   });
 
   it("re-exports registerWideNote from dom.js", () => {
-    expect(UI_SRC).toMatch(/registerWideNote/);
+    // TWO HOPS NOW, and the claim is unchanged. `registerWideNote` used to be named in
+    // ui.js's own export list; the 26 shared modules moved to gas_shared/ and ui.js became
+    // `export * from` the shared barrel, so the name is no longer literally in this file
+    // while still being reachable through it — which is what this test was ever about. The
+    // assertion follows the hop rather than being relaxed: the barrel must re-export it
+    // from dom.js, and ui.js must re-export the barrel.
+    expect(UI_SRC).toMatch(/export \* from "[./]*gas_shared\/ui\/index\.js";/);
+    expect(SHARED_UI_SRC).toMatch(/registerWideNote[^;]*from "\.\/dom\.js";/);
   });
 });

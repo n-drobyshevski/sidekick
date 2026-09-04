@@ -110,7 +110,7 @@ describe("exit gate 1/7: no page still draws p.stub-status", () => {
 //  2. Every route in PAGES has a real, reachable renderer
 // =========================================================================================
 
-/** Read the PAGES table out of app.js as text — mirrors test/navGroups.test.js's parser. */
+/** Read the PAGES table out of app.js as text — mirrors test/shared.test.js's parser. */
 function parsePages() {
   const body = APP_SRC.slice(
     APP_SRC.indexOf("const PAGES = {"),

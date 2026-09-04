@@ -38,9 +38,9 @@
 // chart is unavailable. That is the trade this file makes: every route stops paying for
 // Chart.js, and a deployment whose policy refuses all three loses two charts and is told so.
 
-import { call } from "./api.js";
-import { el } from "./ui/dom.js";
-import { chartTipHandler } from "./ui/tip.js";
+import { call } from "../../../../gas_shared/api.js";
+import { el } from "../../../../gas_shared/ui/dom.js";
+import { chartTipHandler } from "../../../../gas_shared/ui/tip.js";
 
 /** The global chartsBundle.js assigns to. */
 const GLOBAL = "__WSK_CHARTS__";

@@ -221,7 +221,7 @@ h3.sheet-section-title {
    glyph rather than a CSS gradient — the gradient version reads as a caret at 14px. */
 .facet-box::before { content: "✓"; }
 .facet-row[aria-pressed="true"] .facet-box {
-  background: var(--accent); border-color: var(--accent-text); color: var(--ink);
+  background: var(--accent); border-color: var(--accent-text); color: var(--on-accent);
 }
 .facet-label {
   display: flex; align-items: center; gap: var(--space-1); min-width: 0;

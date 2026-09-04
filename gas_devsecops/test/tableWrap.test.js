@@ -1,6 +1,6 @@
 // dataTable()'s per-column `wrap: true` (P8) — the DOM-free half is `cellClassName` in
 // ui/tableModel.js, tested directly below; the DOM half (ui/data.js actually calling it, and
-// tables.css's `.col-wrap` rule) is read as source text, the split test/navGroups.test.js and
+// tables.css's `.col-wrap` rule) is read as source text, the split test/shared.test.js and
 // test/projectScopeView.test.js already use (vitest.config.ts sets no `environment`, so there
 // is no jsdom to render a real `<table>` in).
 //
@@ -14,10 +14,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { cellClassName } from "../src/client/js/ui/tableModel.js";
+import { cellClassName } from "../../gas_shared/ui/tableModel.js";
 
-const DATA_SRC = readFileSync(new URL("../src/client/js/ui/data.js", import.meta.url), "utf8");
-const TABLES_CSS = readFileSync(new URL("../src/client/styles/tables.css", import.meta.url), "utf8");
+const DATA_SRC = readFileSync(new URL("../../gas_shared/ui/data.js", import.meta.url), "utf8");
+const TABLES_CSS = readFileSync(new URL("../../gas_shared/styles/tables.css", import.meta.url), "utf8");
 const SECRETS_SRC = readFileSync(new URL("../src/client/js/pages/secrets.js", import.meta.url), "utf8");
 
 describe("cellClassName — the DOM-free half of a column's <td> class", () => {

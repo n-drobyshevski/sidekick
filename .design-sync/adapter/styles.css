@@ -13,20 +13,23 @@
  * Order is the cascade. These are contiguous slices and must stay in this sequence:
  * tokens first, overrides (reduced motion, phone layout) last. */
 
+@import "../../gas_shared/styles/tokens.base.css";
 @import "../../gas_devsecops/src/client/styles/tokens.css";
-@import "../../gas_devsecops/src/client/styles/base.css";
-@import "../../gas_devsecops/src/client/styles/components.css";
-@import "../../gas_devsecops/src/client/styles/tables.css";
-@import "../../gas_devsecops/src/client/styles/sheet.css";
-@import "../../gas_devsecops/src/client/styles/feedback.css";
-@import "../../gas_devsecops/src/client/styles/settings.css";
+@import "../../gas_shared/styles/base.css";
+@import "../../gas_shared/styles/components.css";
+@import "../../gas_shared/styles/tables.css";
+@import "../../gas_shared/styles/sheet.css";
+@import "../../gas_shared/styles/feedback.css";
+@import "../../gas_shared/styles/settings.css";
+@import "../../gas_shared/styles/help.css";
+@import "../../gas_devsecops/src/client/styles/pages.css";
 
 /* Six shared-core components (AxisBar, PointRail, FilterChipRow, TokenList, SelectField,
    RuleGrip) are byte-identical modules in both registers whose RULES exist only in gas_ai —
    the devsecops fork took the JS and not the CSS, because no devsecops page draws them.
    Without this they ship as unstyled text. See extract-extras.mjs. */
 @import "./shared-extras.css";
-@import "../../gas_devsecops/src/client/styles/overrides.css";
+@import "../../gas_shared/styles/overrides.css";
 
 /* ------------------------------------------------------------------ the brand
  *
@@ -57,6 +60,9 @@
   --accent-hover: #9f1239;
   --accent-text: #be123c;
   --accent-edge: transparent;
+  /* Ink ON an accent fill. The crimson takes white (6.29:1); the yellow takes near-black
+     (11.78:1) — which is the whole reason the token exists rather than a literal. */
+  --on-accent: #ffffff;
   --accent-wash: rgba(190, 18, 60, 0.08);
   --accent-wash-hover: rgba(190, 18, 60, 0.13);
 }

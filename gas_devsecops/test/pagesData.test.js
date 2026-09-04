@@ -4,7 +4,7 @@
 // every page file is split into a pure view-model half (imported and exercised directly
 // here) and a thin DOM half that is only ever invoked from `renderRepos`/`renderHistory`/
 // `renderData` at runtime. This file tests the pure half directly and reads the DOM half as
-// TEXT — the same split `test/navGroups.test.js` and `test/charts.test.js` already use in
+// TEXT — the same split `test/shared.test.js` and `test/charts.test.js` already use in
 // this repo.
 //
 // THE ASSERTION THAT MATTERS MOST ON THE HISTORY PAGE: a `null` `severities` on a scan row

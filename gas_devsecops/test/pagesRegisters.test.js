@@ -3,7 +3,7 @@
 // STRUCTURE, AND WHY IT IS THIS ONE. There is no jsdom in this project (vitest.config.ts sets
 // no `environment`), so each page is written as a PURE VIEW MODEL plus a thin DOM layer, and
 // this file tests the pure half directly plus the source of the thin half as text — the same
-// bargain `test/navGroups.test.js` and `test/tableModel.test.js` already make. The three page
+// bargain `test/shared.test.js` and `test/tableModel.test.js` already make. The three page
 // modules import cleanly in Node: nothing in their graph touches `document` at module scope.
 //
 // WHAT IS ACTUALLY BEING GUARDED. Every assertion here corresponds to a way one of these
@@ -83,7 +83,7 @@ const SECRETS_CODE = code(SECRETS_SRC);
 // copies) — sca.js, sast.js and secrets.js all import it from there now. The case below reads
 // FIGURES_CODE rather than SCA_CODE for exactly that reason.
 const FIGURES_SRC = readFileSync(
-  new URL("../src/client/js/ui/figures.js", import.meta.url), "utf8",
+  new URL("../../gas_shared/ui/figures.js", import.meta.url), "utf8",
 );
 const FIGURES_CODE = code(FIGURES_SRC);
 const PROGRAM_TS = readFileSync(new URL("../src/domain/program.ts", import.meta.url), "utf8");

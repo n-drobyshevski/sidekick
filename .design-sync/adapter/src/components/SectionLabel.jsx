@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { sectionLabel } from "../../../../gas_devsecops/src/client/js/ui/sheet.js";
+import { sectionLabel } from "../../../../gas_shared/ui/sheet.js";
 
 /**
  * A section heading that can carry its own definition, so a term is defined where it is read

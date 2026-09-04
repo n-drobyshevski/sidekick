@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { segmented } from "../../../../gas_devsecops/src/client/js/ui/controls.js";
+import { segmented } from "../../../../gas_shared/ui/controls.js";
 
 /**
  * One joined group of aria-pressed buttons - the exclusive-choice recipe. Uses aria-pressed

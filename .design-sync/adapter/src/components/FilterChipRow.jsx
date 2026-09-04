@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { filterChipRow } from "../../../../gas_devsecops/src/client/js/ui/controls.js";
+import { filterChipRow } from "../../../../gas_shared/ui/controls.js";
 
 /**
  * The applied-filter chips: what is narrowing the view right now, each dismissible. A chip

@@ -24,7 +24,7 @@
 // is explicit that a fabricated number is worse than an honest absence, and "a zero has to
 // prove it looked" applies just as hard to a percentage nobody computed.
 
-import { swrCall } from "../store.js";
+import { swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   boundedDays, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el, emptyState,

@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { filterCombobox } from "../../../../gas_devsecops/src/client/js/ui/combobox.js";
+import { filterCombobox } from "../../../../gas_shared/ui/combobox.js";
 
 /**
  * A filtering combobox. editable:true swaps the trigger button for a real text input carrying

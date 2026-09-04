@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { axisBar, axisSegments } from "../../../../gas_devsecops/src/client/js/ui/axisBar.js";
+import { axisBar, axisSegments } from "../../../../gas_shared/ui/axisBar.js";
 
 /**
  * One distribution drawn along a fixed axis: a segment per axis VALUE, grown by its share.

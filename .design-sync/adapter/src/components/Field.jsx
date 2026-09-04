@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { field } from "../../../../gas_devsecops/src/client/js/ui/controls.js";
+import { field } from "../../../../gas_shared/ui/controls.js";
 
 /**
  * A labelled field. The visible label IS the accessible name (a real label-for), and the hint

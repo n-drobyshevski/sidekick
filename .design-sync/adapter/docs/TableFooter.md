@@ -32,4 +32,4 @@ These are the classes this component emits, taken from its factory source. They 
 
 - `.table-footer`
 
-> Source: `gas_devsecops/src/client/js/ui/data.js` → `tableFooter()`.
+> Source: `gas_shared/ui/data.js` → `tableFooter()`.

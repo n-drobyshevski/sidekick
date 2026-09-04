@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { sheetRow } from "../../../../gas_devsecops/src/client/js/ui/sheet.js";
+import { sheetRow } from "../../../../gas_shared/ui/sheet.js";
 
 /**
  * One row of a record sheet's issue / finding / relationship list. Becomes a button when

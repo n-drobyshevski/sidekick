@@ -20,7 +20,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { chartTableModel, survivalTableModel } from "../src/client/js/ui/chartTable.js";
+import { chartTableModel, survivalTableModel } from "../../gas_shared/ui/chartTable.js";
 
 // ------------------------------------------------------------------ the comment stripper
 

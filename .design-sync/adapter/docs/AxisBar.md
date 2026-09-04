@@ -48,4 +48,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.axis-bar__keyunk`
 - `.axis-bar__total`
 
-> Source: `gas_devsecops/src/client/js/ui/axisBar.js` → `axisBar()`.
+> Source: `gas_shared/ui/axisBar.js` → `axisBar()`.

@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { kpiCard } from "../../../../gas_devsecops/src/client/js/ui/controls.js";
+import { kpiCard } from "../../../../gas_shared/ui/controls.js";
 
 /**
  * A KPI tile: label, the figure, an optional chip beside it and a muted sub-line.

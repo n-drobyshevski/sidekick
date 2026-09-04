@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { sheetSection } from "../../../../gas_devsecops/src/client/js/ui/sheet.js";
+import { sheetSection } from "../../../../gas_shared/ui/sheet.js";
 
 /**
  * One titled section of a record sheet.

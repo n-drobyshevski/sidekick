@@ -54,4 +54,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.table-wrap--panel`
 - `.data`
 
-> Source: `gas_devsecops/src/client/js/ui/data.js` → `dataTable()`.
+> Source: `gas_shared/ui/data.js` → `dataTable()`.

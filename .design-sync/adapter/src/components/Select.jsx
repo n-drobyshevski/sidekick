@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { select } from "../../../../gas_devsecops/src/client/js/ui/controls.js";
+import { select } from "../../../../gas_shared/ui/controls.js";
 
 /**
  * The select element itself: options as strings or {value,label}, with value preselected.

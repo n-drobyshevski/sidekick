@@ -30,4 +30,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.mark-ink-fill`
 - `.mark-knockout`
 
-> Source: `gas_devsecops/src/client/js/ui/brandMark.js` → `brandMark()`.
+> Source: `gas_shared/ui/brandMark.js` → `brandMark()`.

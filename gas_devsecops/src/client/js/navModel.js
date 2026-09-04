@@ -5,7 +5,7 @@
 // testing, and none of them needs a document.
 //
 // THE ONE SOURCE IS `PAGES`. app.js keeps the route table and passes it in; this module never
-// carries a second list of pages that could disagree with it, and test/navGroups.test.js
+// carries a second list of pages that could disagree with it, and test/shared.test.js
 // holds that boundary from the other side. This app's `PAGES` groups nine routes into three
 // labelled lanes — Program (Executive, MTTR & SLA, Coverage & efficiency), Registers
 // (Dependencies, Code, Secrets) and Data (Repositories, Scan history, Storage) — plus one
@@ -43,7 +43,7 @@ export function railItems(pages, opts) {
     if (page.experimental && !experimental) continue;
     const entry = { key, title: page.title };
     const last = items[items.length - 1];
-    // Lanes are contiguous (navGroups.test.js pins it), so the item still open is the only
+    // Lanes are contiguous (shared.test.js pins it), so the item still open is the only
     // one a page can join.
     if (page.group && last && last.lane === page.group) {
       last.pages.push(entry);

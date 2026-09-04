@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { statusPill } from "../../../../gas_devsecops/src/client/js/ui/controls.js";
+import { statusPill } from "../../../../gas_shared/ui/controls.js";
 
 /**
  * OK / warn / bad / neutral state, with a dot the colour never carries alone.

@@ -20,8 +20,8 @@
 // and the figure excludes observation files by construction (ledgerStore.ts), not because the
 // number can be null.
 
-import { bootstrap, bootstrapCached, swrCall } from "../store.js";
-import { call } from "../api.js";
+import { bootstrap, bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
+import { call } from "../../../../../gas_shared/api.js";
 import {
   clear, confirmDialog, dataTable, denomNote, downloadText, el, emptyState, errorState,
   firstRunNotice,

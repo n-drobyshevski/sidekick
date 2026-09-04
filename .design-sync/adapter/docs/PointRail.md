@@ -43,4 +43,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.rail-rd`
 - `.rail`
 
-> Source: `gas_devsecops/src/client/js/ui/rail.js` → `pointRail()`.
+> Source: `gas_shared/ui/rail.js` → `pointRail()`.

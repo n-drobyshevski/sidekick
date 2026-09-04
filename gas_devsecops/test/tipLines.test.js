@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 
 import { allEntries } from "../src/client/js/helpContent.js";
-import { glossaryTipLines, TIP_MARGIN, tipPlacement } from "../src/client/js/ui/tipPlace.js";
+import { glossaryTipLines, TIP_MARGIN, tipPlacement } from "../../gas_shared/ui/tipPlace.js";
 
 const ENTRIES = allEntries();
 

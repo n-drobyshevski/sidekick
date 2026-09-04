@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { togglePills } from "../../../../gas_devsecops/src/client/js/ui/controls.js";
+import { togglePills } from "../../../../gas_shared/ui/controls.js";
 
 /**
  * A row of aria-pressed toggle pills over a set of values. pillClass keeps each row its own

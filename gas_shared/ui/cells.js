@@ -1,4 +1,4 @@
-// What a table cell says when the answer is "nothing", "maybe", or "this is a node".
+// What a table cell says when the answer is "nothing" or "maybe".
 //
 // The three renderers every register needs and only one of them had. They arrive from
 // src/client/js/queryTable.js, where they were the private half of a switch on the Security
@@ -6,15 +6,19 @@
 // renderers are named exports that any `cell(row)` can call, and the graph's switch becomes
 // one caller of them rather than their home.
 //
+// THE THIRD RENDERER LIVES NEXT DOOR. `nameCell` — "this is a node" — moved to
+// ui/nodeCell.js when this package was cut, because it reaches ../icons.js for the kind
+// medallion and that file is 512 lines of node-kind SVG. `absent()` is imported by every
+// register on every page, including ones with no node kinds at all; making the cheapest
+// helper in the tree drag the most expensive module in it is a cost with no reader.
+//
 // This is the smallest of the shared halves and the one with the widest reach: an em dash is
 // written six ways across eighteen files today, and the difference between the spellings is
 // not a style question. `absent()` is the register saying "we were never told"; a bare "—" in
 // black says the same thing in the same weight as a value.
 
 import { el } from "./dom.js";
-import { truncTip } from "./tip.js";
 import { triState } from "./tableModel.js";
-import { categoryOf, kindIconSvg } from "../icons.js";
 
 /** The app's one way of writing "nothing here", used by every register on every page. */
 const EMPTY = "—";
@@ -51,39 +55,4 @@ export function triCell(v) {
   if (state === "yes") return "Yes";
   if (state === "no") return "No";
   return absent();
-}
-
-/**
- * A node's name behind its kind icon, in that kind's category tint — the same cue the graph
- * canvas's medallion carries, so a row and a node read as the same thing in two views.
- *
- * TAKES name AND kind, NOT A ROW, because the callers disagree about what the fields are
- * called: the graph's path cells carry `name`/`kind`, an asset row carries `name`/`kind`, and
- * a problem row carries `assetName` and no node kind at all. A row-shaped signature would have
- * to know all three, which is how a shared helper starts accumulating one page's schema.
- *
- * `opts.badge` is a Node appended after the name — inventory's "Agentic" pill is the case that
- * forced it, and it retires the one inline `style` attribute left in a table cell.
- *
- * The tip hangs off the clipped span, not the wrapper: `.cell-name-text` is the box the
- * ellipsis happens in, so it is the box that knows whether anything was lost.
- */
-export function nameCell(name, kind, opts) {
-  const options = opts || {};
-  const text = truncTip(el("span", { class: "cell-name-text" }, name), name);
-  const kids = [text];
-  if (options.badge) kids.push(options.badge);
-  if (kind === null || kind === undefined || kind === "") {
-    // No kind, no medallion. A tile with nothing to say still costs the name its width, and
-    // `categoryOf` would answer nothing to tint it with — see the register comment above.
-    return el("span", {
-      class: "cell-name" + (options.className ? " " + options.className : ""),
-    }, ...kids);
-  }
-  const icon = kindIconSvg(kind, 14);
-  icon.setAttribute("class", "cell-icon");
-  return el("span", {
-    class: "cell-name" + (options.className ? " " + options.className : ""),
-    "data-category": categoryOf(kind),
-  }, icon, ...kids);
 }

@@ -35,4 +35,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.num`
 - `.page-hero-sub`
 
-> Source: `gas_devsecops/src/client/js/ui/controls.js` → `heroStat()`.
+> Source: `gas_shared/ui/controls.js` → `heroStat()`.

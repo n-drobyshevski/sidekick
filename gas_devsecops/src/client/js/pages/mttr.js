@@ -34,7 +34,7 @@
 // and five on the secrets page. It also drops `naiveMedian` / `naiveMean`, so every survival
 // chart on this page draws the two Kaplan-Meier markers and no closed-only comparison.
 
-import { bootstrap, swrCall } from "../store.js";
+import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 // The severity palette is READ OFF THE STYLESHEET, never retyped — CLAUDE.md's "byte-identical
 // across all four surfaces" rule. `sevPalette` is defined once in `sca.js`; `sast.js` already
@@ -1221,6 +1221,6 @@ export async function renderMttr(host, params, _ctx) {
  * Hard-coded rather than read off `bootstrap()` on purpose: this page's only use for it is
  * ROW ORDER, and a table that silently reordered itself because a bootstrap key moved would
  * be worse than one that states its order. `src/domain/config.ts` holds the same list and
- * `test/tokens.test.js` pins it there.
+ * `test/shared.test.js` pins it there.
  */
 const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];

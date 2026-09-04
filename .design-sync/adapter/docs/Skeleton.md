@@ -32,4 +32,4 @@ These are the classes this component emits, taken from its factory source. They 
 
 - `.skeleton`
 
-> Source: `gas_devsecops/src/client/js/ui/feedback.js` → `skeleton()`.
+> Source: `gas_shared/ui/feedback.js` → `skeleton()`.

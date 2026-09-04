@@ -15,7 +15,7 @@
            The brand mark below is the ONE copy of it that is markup rather than
            geometry in ui/brandMark.js, because it has to paint before any script has
            run. Its path data is that module's exported constants, verbatim, and
-           test/brandMark.test.js fails if the two ever drift. Inline SVG in an HTML
+           test/shared.test.js fails if the two ever drift. Inline SVG in an HTML
            document needs no xmlns, which is what keeps this free of a bare `//` — the
            hazard esbuild.config.mjs's middlebox guard covers for the bundle, and that
            this file, copied through verbatim, is not scanned for. -->
@@ -84,10 +84,10 @@
             <span class="boot-brand-label">Wiz Sidekick DevSecOps</span>
           </div>
           <div class="boot-splash-bar progress-track indeterminate" role="progressbar"
-               aria-valuemin="0" aria-valuemax="100" aria-label="Opening the graph">
+               aria-valuemin="0" aria-valuemax="100" aria-label="Opening the register">
             <div class="progress-fill"></div>
           </div>
-          <p class="boot-splash-note">Opening the graph…</p>
+          <p class="boot-splash-note">Opening the register…</p>
         </div>
         <noscript>Wiz Sidekick DevSecOps requires JavaScript.</noscript>
       </div>

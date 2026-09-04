@@ -52,8 +52,20 @@
 import { coarse, el } from "./dom.js";
 import { popoverDismiss } from "./popover.js";
 import { navigate } from "../store.js";
-import { findEntry } from "../helpContent.js";
+import { appConfig } from "../appConfig.js";
 import { CLOSE_GRACE, glossaryTipLines, tipDelay, tipPlacement } from "./tipPlace.js";
+
+/**
+ * The host's glossary, asked rather than imported.
+ *
+ * This was `findEntry` from `../helpContent.js` while the module lived inside one app. A
+ * shared module has no app to reach sideways into, and the vocabulary is exactly the part
+ * that is NOT shared — so the app hands its own lookup over in the manifest (appConfig.js)
+ * and this calls it. Read inside the function, never at module load: see appConfig.js.
+ */
+function findEntry(term) {
+  return appConfig().findHelpEntry(term);
+}
 
 /** Anchor element -> a function returning its copy, so dynamic anchors stay current. */
 const COPY = new WeakMap();

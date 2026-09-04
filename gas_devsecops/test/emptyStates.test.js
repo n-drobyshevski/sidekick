@@ -1,13 +1,12 @@
-// First-run states, and the two things this register kept confusing with them.
+// First-run states of THIS register, and the two things it kept confusing with them.
 //
-// DEFECT ONE: `emptyState` WAS DOING TWO JOBS. Five pages caught a render exception and put
-// `emptyState("Couldn't render the half-life.")` on the screen — a crash, announced in a
-// `role="status"` box, in the same voice and the same dashed rectangle the register uses for
-// "no sync saved yet", with the exception dropped on the floor. `errorState` already existed
-// (`ui/feedback.js`), already carried `role="alert"` and a `detail` disclosure, and was
-// already used correctly by `sca.js`, `repos.js` and `settings.js`. The two states are not
-// the same claim: an absence is a state of the register, a failure is a defect in the app,
-// and only one of them is the reader's to act on.
+// TWO OF THE ORIGINAL FIVE SECTIONS LEFT. §1 ("a failure is never dressed as an absence")
+// and §5 ("every page below Executive states the origin") are rules every sidekick owes, so
+// they moved to gas_shared/test/contracts/emptyStates.js and are registered from
+// test/shared.test.js — same assertions, same non-vacuity halves, this app's route list
+// passed in. Nothing was dropped; what stayed is what is about THIS register's own view
+// functions and could not be stated over another app: `executiveFirstRunView`, `kmP90View`
+// and `rateView`.
 //
 // DEFECT TWO: NOBODY HAD SEEN THE EMPTY LEDGER. With `?dry&noseed`, Executive printed
 // `0 lifecycles in the ledger · 0 closed findings · 0 kept in as right-censored observations`
@@ -23,16 +22,16 @@
 // health, and it is the front door, read by the one person on this product who reads only
 // the front door.
 //
-// WHY SOURCE TEXT FOR HALF OF THIS. There is no jsdom here (vitest.config.ts sets no
-// `environment`), and the claims in (1) and (4) are about which component a page REACHES
-// FOR, which is a property of the module rather than of any one rendered output. Both sweeps
-// read the comment-stripped code, mirroring `code()` in `pagesLit.test.js` — these very
-// module headers name the strings they are forbidding, and a raw-text check would fail on
-// the sentence that states the rule.
+// WHY SOURCE TEXT FOR §4. There is no jsdom here (vitest.config.ts sets no `environment`),
+// and the claim is about which component a page REACHES FOR, which is a property of the
+// module rather than of any one rendered output. The sweep reads comment-stripped code
+// through the shared `code()` helper — these very module headers name the strings they
+// forbid, and a raw-text check would fail on the sentence that states the rule.
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 import { executiveFirstRunView } from "../src/client/js/pages/executive.js";
 import { kmP90View, rateView } from "../src/client/js/pages/mttr.js";
 
@@ -43,101 +42,9 @@ const ROUTES = [
   "repos", "history", "data",
   "settings",
 ];
-const SRC = Object.fromEntries(
-  ROUTES.map((r) => [r, readFileSync(new URL(`${r}.js`, PAGES_DIR), "utf8")]),
+const CODE = Object.fromEntries(
+  ROUTES.map((r) => [r, code(readFileSync(new URL(r + ".js", PAGES_DIR), "utf8"))]),
 );
-
-/**
- * The file with EVERY comment removed — `//` and `/* *\/` both — string-aware.
- *
- * THIS IS A STRICTER `code()` THAN `pagesLit.test.js`'s, and the difference is load-bearing
- * here rather than stylistic. That helper strips line comments only and treats `'` as a
- * quote opener everywhere else, so the first apostrophe inside a JSDoc block — "this page's
- * own payload" — puts its scanner into string mode and everything up to the next apostrophe,
- * `//` markers included, survives into the "code". Measured on this very package: the first
- * draft of §4's sweep failed on `executive.js`, and the offending text was a LINE COMMENT
- * quoting the defective sentence it forbids, kept alive by an apostrophe in a block comment
- * hundreds of lines above it.
- *
- * That matters more here than anywhere else in the suite, because every module header in
- * this package explains its prohibition by QUOTING it — the sentences these sweeps forbid
- * are written out in prose directly above the code that no longer contains them. A helper
- * that leaks comment text turns every one of those explanations into a false positive.
- *
- * Template literals are tracked too: they can hold `//` and both quote characters.
- */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    if (c === "/" && n === "*") {
-      i += 2;
-      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-      i += 2;
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
-}
-const CODE = Object.fromEntries(ROUTES.map((r) => [r, code(SRC[r])]));
-
-// =========================================================================================
-//  1. A failure is never dressed as an absence
-// =========================================================================================
-
-/**
- * `emptyState(` followed — across newlines, past whitespace — by a string literal opening
- * with `Couldn't `. That is the exact shape all six offending call sites had, on both the
- * one-line form (`emptyState("Couldn't render " + label + ".")`) and the wrapped form
- * (`emptyState(\n  "Couldn't load remediation data.",\n  …)`).
- */
-const EMPTY_STATE_WITH_FAILURE = /\bemptyState\(\s*"Couldn't /;
-
-describe("a render that threw is announced as a failure, not as an absence", () => {
-  it("no page module passes a \"Couldn't …\" message to emptyState", () => {
-    for (const route of ROUTES) {
-      expect(
-        EMPTY_STATE_WITH_FAILURE.test(CODE[route]),
-        `pages/${route}.js dresses a failure as an absence: emptyState("Couldn't …") — `
-        + "use errorState(message, { detail }) so it is announced as an alert and the "
-        + "exception survives into the disclosure",
-      ).toBe(false);
-    }
-  });
-
-  // NOT A VACUOUS SWEEP. The guard above only bites where the failure path exists at all, so
-  // this pins that the failure paths are still there and still say "Couldn't" — a page that
-  // deleted its catch block would pass the sweep above for the wrong reason.
-  it("is not vacuous — the same failure messages are still present, on errorState", () => {
-    const carriers = ROUTES.filter((r) => /\berrorState\(\s*"Couldn't /.test(CODE[r]));
-    expect(carriers.sort()).toEqual([
-      "data", "executive", "history", "mttr", "program", "repos", "settings",
-    ]);
-  });
-
-  it("every page that catches a render exception reaches for errorState", () => {
-    for (const route of ["executive", "mttr", "program"]) {
-      // The per-section `guard()` helper — one failing section must not blank the page.
-      expect(CODE[route], `${route} lost its section guard`).toMatch(/function guard\(/);
-      expect(CODE[route], `${route}'s guard does not use errorState`)
-        .toMatch(/render failed:[\s\S]{0,200}errorState\(/);
-    }
-  });
-});
 
 // =========================================================================================
 //  2. The front door on a ledger nobody has read
@@ -344,28 +251,5 @@ describe("no sentence glues \"not measured\" to a count", () => {
   it("is not a vacuous sweep — both fixed sentences are still on the page, rewritten", () => {
     expect(CODE.mttr).toMatch(/Resolved inside the SLA window: not measured — nothing has closed/);
     expect(CODE.mttr).toMatch(/Awaiting a vendor fix: not measured — no SCA finding is open/);
-  });
-});
-
-// =========================================================================================
-//  5. Every page below Executive states the origin
-// =========================================================================================
-
-describe("the first-run notice", () => {
-  it("is the same component on all four pages that carry it", () => {
-    for (const route of ["mttr", "program", "history", "data"]) {
-      expect(CODE[route], `pages/${route}.js never says the ledger has not been read`)
-        .toMatch(/firstRunNotice\(/);
-    }
-  });
-
-  it("is decided by the ledger and the sync, never by a null bootstrap alone", () => {
-    // Each page gates on `latestSync`, which is `bootstrap()`'s own honest signal — and each
-    // awaits it rather than reading the cache, which can be null before the shell resolves.
-    for (const route of ["mttr", "program", "history", "data"]) {
-      expect(CODE[route], `pages/${route}.js reads a cache that may not be populated yet`)
-        .toMatch(/await bootstrap\(\)/);
-      expect(CODE[route]).toMatch(/latestSync/);
-    }
   });
 });

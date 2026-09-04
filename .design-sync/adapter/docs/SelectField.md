@@ -36,4 +36,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.select-field`
 - `.select-field-label`
 
-> Source: `gas_devsecops/src/client/js/ui/controls.js` → `selectField()`.
+> Source: `gas_shared/ui/controls.js` → `selectField()`.

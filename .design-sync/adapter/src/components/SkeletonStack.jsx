@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { skeletonStack } from "../../../../gas_devsecops/src/client/js/ui/feedback.js";
+import { skeletonStack } from "../../../../gas_shared/ui/feedback.js";
 
 /**
  * Several skeleton blocks in a column, for a list or a table that has not arrived.

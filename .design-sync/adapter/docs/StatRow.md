@@ -34,4 +34,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.meter--stat`
 - `.stat-sub`
 
-> Source: `gas_devsecops/src/client/js/ui/controls.js` → `statRow()`.
+> Source: `gas_shared/ui/controls.js` → `statRow()`.

@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { tableFooter } from "../../../../gas_devsecops/src/client/js/ui/data.js";
+import { tableFooter } from "../../../../gas_shared/ui/data.js";
 
 /**
  * The pager plus a rows-per-page select. onPageSize receives the page already recomputed for

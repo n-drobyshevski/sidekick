@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { saveBar } from "../../../../gas_devsecops/src/client/js/ui/settings.js";
+import { saveBar } from "../../../../gas_shared/ui/settings.js";
 
 /**
  * The unsaved-changes bar: what changed, a jump to each changed field, discard and save.

@@ -42,7 +42,7 @@
 // caught it because the catch printed "Couldn't load scan history." in a calm `role="status"`
 // box that looks like an empty register, which is the exact confusion the first-run package
 // was opened to end. Swapping that box for `errorState` is what made it visible.
-import { bootstrap, swrCall } from "../store.js";
+import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   DEFAULT_PAGE_SIZE, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el,

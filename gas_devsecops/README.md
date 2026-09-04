@@ -51,7 +51,7 @@ exported from the Python — the same relationship `gas/` has to `wiz_dashboard/
 ## Pages
 
 Three lanes and a chrome tail. The IA lives in exactly one place — `PAGES` in
-`src/client/js/app.js` — and `test/navGroups.test.js` forbids a second list.
+`src/client/js/app.js` — and `test/shared.test.js` forbids a second list.
 
 **A sync is the act; a scan is the record it wrote.** You *run a sync*; it touches three
 registers and saves *one scan per register*; you *browse scans*. So "Scan history", "Saved

@@ -32,4 +32,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.why__caret`
 - `.why__body`
 
-> Source: `gas_devsecops/src/client/js/ui/settings.js` → `disclosure()`.
+> Source: `gas_shared/ui/settings.js` → `disclosure()`.

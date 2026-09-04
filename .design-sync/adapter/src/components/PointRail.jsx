@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { pointRail } from "../../../../gas_devsecops/src/client/js/ui/rail.js";
+import { pointRail } from "../../../../gas_shared/ui/rail.js";
 
 /**
  * One labelled lane on a 0-max axis, with a slider and an exact number field over the same

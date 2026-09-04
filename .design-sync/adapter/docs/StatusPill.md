@@ -31,4 +31,4 @@ These are the classes this component emits, taken from its factory source. They 
 
 - `.pill`
 
-> Source: `gas_devsecops/src/client/js/ui/controls.js` → `statusPill()`.
+> Source: `gas_shared/ui/controls.js` → `statusPill()`.

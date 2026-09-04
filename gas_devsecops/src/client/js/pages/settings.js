@@ -49,14 +49,14 @@
 // differs is the WORDS a permitted viewer sees (`manageHint`, pointing at where the roster
 // actually lives), never a button or field this build cannot back.
 
-import { call } from "../api.js";
-import { bootstrapCached } from "../store.js";
+import { call } from "../../../../../gas_shared/api.js";
+import { bootstrapCached } from "../../../../../gas_shared/store.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
 import {
   clear, el, errorState, fmtDateTime, glossaryTip, heroStat, pageHeader, skeletonStack,
   statusPill, tipLabel, toast, togglePills,
 } from "../ui.js";
-import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../ui/settings.js";
+import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../../../../../gas_shared/ui/settings.js";
 import { TAB_FIELDS, tabStatus } from "../settingsModel.js";
 
 // ============================================================================ vocabulary

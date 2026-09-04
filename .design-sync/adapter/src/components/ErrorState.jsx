@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { errorState } from "../../../../gas_devsecops/src/client/js/ui/feedback.js";
+import { errorState } from "../../../../gas_shared/ui/feedback.js";
 
 /**
  * Failure, not emptiness: announced via role=alert, retryable in place, and the raw exception

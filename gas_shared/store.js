@@ -1,6 +1,7 @@
 // Client state: the bootstrap payload cache and hash-based routing with query
 // params (#/graph?seed=agent-a&depth=2) — shareable filtered views.
 
+import { appConfig } from "./appConfig.js";
 import { call } from "./api.js";
 
 let bootstrapData = null;
@@ -78,10 +79,16 @@ const ROUTE_ALIASES = {};
  * or mistyped deep link like #/overview rendered the HIDDEN Security Graph, titled the
  * document "Security Graph", and left no nav item marked current.
  *
- * app.js imports this rather than repeating it, so a future change to the first PAGES key
- * cannot leave a second answer behind.
+ * app.js hands this over in the manifest (appConfig.js) rather than repeating it, so a
+ * future change to the first PAGES key cannot leave a second answer behind.
+ *
+ * A FUNCTION, NOT A CONSTANT, and that is forced rather than stylistic: this module is
+ * shared, so the answer differs per host and cannot be read at module load — see
+ * appConfig.js's rule 2. `parseHash()` calls it; so do app.js and navFlyout.js.
  */
-export const DEFAULT_ROUTE = "executive";
+export function defaultRoute() {
+  return appConfig().defaultRoute;
+}
 
 export function parseHash() {
   const hash = location.hash.replace(/^#\/?/, "");
@@ -94,7 +101,7 @@ export function parseHash() {
       params[decodeURIComponent(k)] = decodeURIComponent(v || "");
     }
   }
-  return { route: ROUTE_ALIASES[pathPart] || pathPart || DEFAULT_ROUTE, params };
+  return { route: ROUTE_ALIASES[pathPart] || pathPart || defaultRoute(), params };
 }
 
 export function buildHash(route, params) {

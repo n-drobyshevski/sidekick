@@ -1,6 +1,6 @@
 import React from "react";
 import { Mounted, Slots, sigOf, useSlot, useStableProps } from "../mount.jsx";
-import { dataTable } from "../../../../gas_devsecops/src/client/js/ui/data.js";
+import { dataTable } from "../../../../gas_shared/ui/data.js";
 
 /**
  * The sortable record table: .table-wrap > table.data, with sortable headers and rows that

@@ -13,18 +13,19 @@
 // `api_runSync` / `api_getJobStatus` / `api_cancelSync` and the progress card ported from
 // gas_ai/src/client/js/syncProgress.js. See README.md.
 
-import { call } from "./api.js";
+import { configureApp } from "../../../../gas_shared/appConfig.js";
+import { call } from "../../../../gas_shared/api.js";
 import {
-  DEFAULT_ROUTE, bootstrap, bootstrapCached, buildHash, invalidateBootstrap,
+  bootstrap, bootstrapCached, buildHash, defaultRoute, invalidateBootstrap,
   invalidateRpcCache, parseHash, swrCall,
-} from "./store.js";
+} from "../../../../gas_shared/store.js";
 import { onExperimentalChange, showExperimental } from "./experimental.js";
 import { openSyncDetails, renderSyncCard, shouldContinuePolling } from "./syncProgress.js";
 import {
   clear, closeTip, confirmDialog, el, fmtDateTime, progressBar, runPageTeardown, statusPill,
   tipAnchor,
 } from "./ui.js";
-import { brandMark } from "./ui/brandMark.js";
+import { brandMark } from "../../../../gas_shared/ui/brandMark.js";
 import { projectScopeControl } from "./ui/projectScope.js";
 import { toast } from "./ui.js";
 import { renderExecutive } from "./pages/executive.js";
@@ -44,6 +45,33 @@ import {
   focusFirstRow, itemHasPanel, mountNavFlyout, openFlyoutFor, setActiveItem, setNavContext,
   tapOpensPanel, wireRail,
 } from "./navFlyout.js";
+import { findEntry } from "./helpContent.js";
+
+// ============================================================================ the manifest
+//
+// WHAT THIS APP IS, handed to the shared core (gas_shared/appConfig.js) before anything
+// else in this module body runs.
+//
+// The shared modules cannot reach sideways into an app: `gas_shared/ui/tip.js` has no
+// `../helpContent.js` to import and `gas_shared/store.js` cannot know which route is this
+// register's front door. Those answers travel as data instead. `configureApp()` is
+// DELIBERATELY THE FIRST STATEMENT of the module body — imports run before it, but no
+// shared module reads the manifest at import time (see appConfig.js's rule 2), so the first
+// read of it can only happen after this line.
+const MANIFEST = {
+  productName: "Wiz Sidekick DevSecOps",
+  // What the boot splash says it is opening. "register", not "graph": this app has no graph,
+  // and the word was inherited from the sibling it was forked from.
+  openingNoun: "register",
+  // Trailing dot included. Two sidekicks served from the same origin must not share a key.
+  storagePrefix: "sidekickdso.",
+  // The first key of PAGES below, and the only place the two can disagree — which is what
+  // test/shared.test.js's navGroups contract checks.
+  defaultRoute: "executive",
+  // This register's own vocabulary. ui/tip.js asks; helpContent.js answers.
+  findHelpEntry: findEntry,
+};
+configureApp(MANIFEST);
 
 // The rail's information architecture, stated once.
 //
@@ -56,11 +84,11 @@ import {
 // The first draft had four lanes, with Executive alone under an "Overview" heading.
 // navModel collapses a lane of one to that page on the rail, so it looked fine there — but
 // renderStackedNav below 800px draws the heading unconditionally, which would have put the
-// word "Overview" directly above a single link reading "Executive". navGroups.test.js
+// word "Overview" directly above a single link reading "Executive". shared.test.js
 // caught it. Executive belongs with the other two anyway: all three are programme-level
 // reads over the whole population, and the registers below ARE that population.
 //
-// Two rules renderSidebar depends on, both held by test/navGroups.test.js:
+// Two rules renderSidebar depends on, both held by test/shared.test.js:
 //   * A LABELLED LANE EARNS ITS HEADING BY HOLDING TWO PAGES. A lane left holding one
 //     visible page is drawn AS that page — see navModel.js.
 //   * LANES ARE CONTIGUOUS. The lastGroup detector emits a fresh heading every time the
@@ -79,7 +107,7 @@ import {
 // `group` is arrangement, not availability. A lane the flags empty out never reaches the
 // rail — see navModel.js, which is where the three meet.
 const PAGES = {
-  // The front door, and DEFAULT_ROUTE in store.js names it. A leader opens the app wanting
+  // The front door, and MANIFEST.defaultRoute names it. A leader opens the app wanting
   // one number; an analyst passes straight through to a register.
   executive: { title: "Executive", group: "Program", render: renderExecutive },
 
@@ -127,7 +155,7 @@ function iconSpan(svg, cls) {
 
 // The Run Sync button's glyph — two arrows chasing each other, the universal "sync" mark. Not
 // in routeIcons.js (that module is PAGES/lane marks only, held one-for-one by
-// test/navGroups.test.js) and not in ui/uiIcons.js (this file may compose from ui/ but not
+// test/shared.test.js) and not in ui/uiIcons.js (this file may compose from ui/ but not
 // edit it), so it lives here, drawn in the same 24-grid/currentColor/aria-hidden convention
 // routeIcons.js uses.
 const SYNC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ' +
@@ -214,16 +242,16 @@ function endRouteLoading() {
 function bootSplash() {
   const bar = progressBar(null);
   bar.classList.add("boot-splash-bar");
-  bar.setAttribute("aria-label", "Opening the graph");
+  bar.setAttribute("aria-label", "Opening the " + MANIFEST.openingNoun);
   return el(
     "div",
     { class: "boot-splash", role: "status", "aria-live": "polite" },
     el("div", { class: "boot-splash-inner" },
       el("div", { class: "boot-brand" },
         brandMark(112),
-        el("span", { class: "boot-brand-label" }, "Wiz Sidekick DevSecOps")),
+        el("span", { class: "boot-brand-label" }, MANIFEST.productName)),
       bar,
-      el("p", { class: "boot-splash-note" }, "Opening the graph…")),
+      el("p", { class: "boot-splash-note" }, "Opening the " + MANIFEST.openingNoun + "…")),
   );
 }
 
@@ -737,20 +765,20 @@ async function route() {
   const parsed = parseHash();
   // RESOLVE ONCE, then use the resolved key for everything. An unknown path (a stale link, a
   // typo) lands on the front door rather than on whatever page this line happened to name
-  // when it was written — see DEFAULT_ROUTE in store.js. The nav highlight used to key off
+  // when it was written — see MANIFEST.defaultRoute above. The nav highlight used to key off
   // the RAW path, so an unresolved hash rendered a page while marking no nav item current.
-  let key = PAGES[parsed.route] ? parsed.route : DEFAULT_ROUTE;
+  let key = PAGES[parsed.route] ? parsed.route : defaultRoute();
   let params = parsed.params;
   // A gated route is a link the reader followed in good faith, so unlike the fallback above
   // this one REWRITES the hash: leaving `#/aars` in the address bar over a different page
   // with no nav item current is three answers to "where am I", two of them wrong.
   if (PAGES[key] && PAGES[key].experimental && !showExperimental()) {
-    key = DEFAULT_ROUTE;
+    key = defaultRoute();
     params = {};
     history.replaceState(null, "", buildHash(key, params));
   }
   const page = PAGES[key];
-  document.title = `${page.title} — Wiz Sidekick DevSecOps`;
+  document.title = `${page.title} — ${MANIFEST.productName}`;
   document.querySelectorAll(".nav-link").forEach((a) => {
     const isActive = a.getAttribute("href") === `#/${key}`;
     a.classList.toggle("active", isActive);

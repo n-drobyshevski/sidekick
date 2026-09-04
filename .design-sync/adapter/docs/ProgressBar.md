@@ -26,4 +26,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.progress-track`
 - `.progress-fill`
 
-> Source: `gas_devsecops/src/client/js/ui/data.js` → `progressBar()`.
+> Source: `gas_shared/ui/data.js` → `progressBar()`.

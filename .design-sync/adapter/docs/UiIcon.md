@@ -27,4 +27,4 @@ One stroked interface icon from the set.
 </div>
 ```
 
-> Source: `gas_devsecops/src/client/js/ui/uiIcons.js` → `uiIcon()`.
+> Source: `gas_shared/ui/uiIcons.js` → `uiIcon()`.

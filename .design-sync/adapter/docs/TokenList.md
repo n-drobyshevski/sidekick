@@ -40,4 +40,4 @@ These are the classes this component emits, taken from its factory source. They 
 - `.token-x`
 - `.token`
 
-> Source: `gas_devsecops/src/client/js/ui/tokenList.js` → `tokenList()`.
+> Source: `gas_shared/ui/tokenList.js` → `tokenList()`.
