@@ -690,7 +690,7 @@ button, .btn {
   color: var(--ink);
   box-shadow: var(--shadow-button);
 }
-button:hover, .btn:hover { background: #f1f1f4; border-color: #d9d9de; }
+button:hover, .btn:hover { background: var(--surface-2); border-color: var(--hairline-strong); }
 button:focus-visible, .btn:focus-visible, a:focus-visible, input:focus-visible,
 select:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
   outline: 2px solid var(--accent-text);

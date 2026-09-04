@@ -1,3 +1,26 @@
+/* ----------------------------------------------------------- breakpoint survivors */
+/* Every max/min-width query in this tree was audited in this tree for a mergeable near-duplicate.
+   Two pairs looked like candidates on the numbers alone (20px apart) and both were kept
+   after a measured check found a real, visible difference in the gap between them —
+   collapsing either pair would silently change what ships in that 20px window rather
+   than just tidy a magic number.
+
+   620 (components.css .stat-row, under the "Open findings by severity" style stat rows
+   on MTTR & SLA) vs. the 640 already used elsewhere (sheet.css .kv, this file's own
+   .sheet-cluster / .sheet-panes rules): measured via getComputedStyle at #/mttr —
+     620px: .stat-row + .stat-row -> border-top: solid, border-left: none, padding: 8px 0
+     640px: .stat-row + .stat-row -> border-left: solid, border-top: none, padding: 0 16px
+   Moving .stat-row's threshold to 640 would flip that border/padding pair for the whole
+   621-640px band, which is exactly the boundary the query exists to control. Kept at 620.
+
+   1100 (tables.css, min-width, .table-wrap--sticky th — the pinned header on the SCA
+   dependencies table) vs. 1120 (this file's own .sheet-cluster max-width, the record
+   sheet's phone-style action row): measured via getComputedStyle at #/sca —
+     1090px: th position: static,  wrap overflow: auto    (sticky OFF)
+     1100px: th position: sticky,  wrap overflow: visible  (sticky ON)
+   Moving the sticky threshold to 1120 would turn the pinned header off again for
+   1100-1119px, undoing the min-width query's own job. Kept at 1100. */
+
 /* --------------------------------------------------------------- reduced motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
@@ -27,7 +50,7 @@
     background: var(--surface); color: var(--ink); box-shadow: none;
     border: 1px solid var(--hairline);
   }
-  .sheet-cluster-btn:hover { background: #f1f1f4; color: var(--ink); }
+  .sheet-cluster-btn:hover { background: var(--surface-2); color: var(--ink); }
   .sheet-cluster-btn:focus-visible {
     box-shadow: none; outline: 2px solid var(--accent-text); outline-offset: 2px;
   }

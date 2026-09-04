@@ -506,7 +506,7 @@
   background: var(--page); color: var(--ink);
   border: 1px solid var(--hairline); border-radius: var(--radius-md); box-shadow: none;
 }
-.combobox-trigger:hover { background: #f1f1f4; }
+.combobox-trigger:hover { background: var(--surface-2); }
 .combobox-trigger-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .combobox-caret { font-size: var(--fs-micro); color: var(--text-3); flex: 0 0 auto; }
 /* The generic portaled popover — openPopover's own surface, which callers dress from the

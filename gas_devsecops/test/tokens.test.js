@@ -125,3 +125,27 @@ describe("the accent, and the split that makes it legal", () => {
     expect(charts).toContain(`export const ACCENT = "${tokenValue("accent-text")}"`);
   });
 });
+
+// tokens.css is the one file allowed to spell a colour literally. Everything else has
+// to name a --token instead, or a future hand-edit reintroduces the drift this package closed
+// (the #f1f1f4/#d9d9de hover pair and the #3f2d04/#450a0a toast pair, all now
+// --surface-2/--hairline-strong/--toast-warn-bg/--toast-error-bg).
+describe("colour lives in tokens.css, not scattered through the rest of the tree", () => {
+  // The one exemption: base.css's conic-gradient mask uses #000 as an ALPHA STOP inside
+  // `-webkit-mask`/`mask` (transparent -> #000 = "fully masked"), not as a colour — there is
+  // no surface it could be a token for, and CSS masks don't take a var() there meaningfully
+  // the way a paint property does.
+  const ALLOW = { "base.css": ["#000"] };
+
+  it("has no hex literal outside the allowlisted mask stops", () => {
+    for (const [name, css] of STYLES) {
+      const file = `${name}.css`;
+      const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
+      const found = stripped.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
+      const allowed = ALLOW[file] || [];
+      const offenders = found.filter((hex) => !allowed.includes(hex));
+      expect(offenders, `${file} has a hex literal outside tokens.css: ${offenders.join(", ")}`)
+        .toEqual([]);
+    }
+  });
+});

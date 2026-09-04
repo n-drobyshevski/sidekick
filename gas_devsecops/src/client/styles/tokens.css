@@ -48,6 +48,12 @@
   --page: #ffffff;
   --surface: #f8f8fa;
   --hairline: #e6e6e9;
+  /* A step darker than --surface, for a hover state on a flat control (button, combobox
+     trigger, sheet-cluster button) that --wash-hover reads as too faint against. */
+  --surface-2: #f1f1f4;
+  /* A step darker than --hairline, paired with --surface-2 on the same hover states so the
+     border darkens with the fill rather than vanishing into it. */
+  --hairline-strong: #d9d9de;
   --text-2: rgba(0, 0, 0, 0.65);
   /* Tertiary text: 0.6 alpha clears WCAG AA (~5.4:1 on the surface tint) for the 11-13px
      labels, captions and sub-values it carries. 0.5 resolved to ~3.95:1 and failed — the
@@ -273,6 +279,11 @@
      than open-coded in feedback.css. */
   --shadow-dialog: 0 12px 32px -8px rgba(0, 0, 0, 0.2);
   --shadow-toast: 0 6px 18px -6px rgba(0, 0, 0, 0.35);
+
+  /* The two non-neutral toast backgrounds (.toast.warn / .toast.error), which were carrying
+     bare literals in feedback.css alongside the graphite default above. */
+  --toast-warn-bg: #3f2d04;
+  --toast-error-bg: #450a0a;
 
   --font: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, "Helvetica Neue",
     sans-serif;
