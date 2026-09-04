@@ -18,7 +18,7 @@
 // mirrored into the hash — the same discipline combos.js documents, so a background SWR
 // revalidation cannot collapse the table you have open.
 
-import { bootstrapCached, setParams, swrCall } from "../store.js";
+import { bootstrapCached, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { openConfigFindingSheet } from "../detailSheets.js";
 import {
   absent, clear, dataTable, debounce, el, emptyState, errorState, fmtDate, heroStat, outcomeBadge,

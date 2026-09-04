@@ -12,12 +12,23 @@
 // — the same bargain inventory.js took.
 
 import {
-  absent, dataTable, el, nameCell, sevBadge, sortRows, tableFooter, triCell,
+  absent, DEFAULT_PAGE_SIZE, dataTable, el, nameCell, sevBadge, sortRows, tableFooter,
+  triCell,
 } from "./ui.js";
-import { kindLabel, kindsLabel } from "./icons.js";
+import { kindLabel, kindsLabel } from "../../../../gas_shared/icons.js";
 // Re-exported so graph.js keeps one import for the table it draws. The list itself is
-// ui/tableModel.js's — two registers had shipped the same four numbers independently.
-export { DEFAULT_PAGE_SIZE } from "./ui.js";
+// gas_shared/ui/tableModel.js's — two registers had shipped the same four numbers
+// independently.
+//
+// IMPORTED AS WELL AS RE-EXPORTED, and that is a fix rather than a tidy. `export { X } from`
+// is a pure re-export: it forwards the binding to this module's consumers and creates NO
+// local binding, so `opts.pageSize || DEFAULT_PAGE_SIZE` below read a free identifier and
+// would have thrown a ReferenceError the first time a caller left `pageSize` falsy. The one
+// call site (pages/graph.js) always passes `state.pageSize`, which graphParams defaults, so
+// the branch has never been reached — a latent crash, one falsy argument away. Nothing could
+// have caught it: tsc does not check .js, esbuild does not error on a free identifier, and
+// the page tests exercise the view-model half. `npm run lint` found it on its first run.
+export { DEFAULT_PAGE_SIZE };
 
 /**
  * WHICH treatment a field gets. The treatments themselves are ui/cells.js's, shared with every

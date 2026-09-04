@@ -82,7 +82,7 @@
   color: var(--text-2); cursor: pointer;
 }
 .help-index-item:hover { background: var(--wash-hover); color: var(--ink); }
-.help-index-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.help-index-item:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
 .help-index-item-label { flex: 1 1 auto; min-width: 0; }
 .help-index-count { flex: 0 0 auto; font-size: var(--fs-micro); color: var(--text-3); }
 /* The section the reader is in: the app's own rule for an active nav item — a 2px accent
@@ -176,7 +176,7 @@
 }
 .help-map-item + .help-map-item { border-top: 1px solid var(--hairline); }
 .help-map-item:hover { background: var(--wash-hover); }
-.help-map-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.help-map-item:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
 .help-map-icon {
   display: inline-flex; align-items: center; justify-content: center;
   width: 30px; height: 30px; border-radius: var(--radius-md);
@@ -186,13 +186,13 @@
 /* Accent only on hover/focus, where it already means "this is the interactive state" —
    the icon tile is neutral at rest, so five of them are not five spots of brand colour. */
 .help-map-item:hover .help-map-icon,
-.help-map-item:focus-visible .help-map-icon { color: var(--accent); border-color: var(--accent); }
+.help-map-item:focus-visible .help-map-icon { color: var(--accent-text); border-color: var(--accent); }
 .help-map-text { min-width: 0; }
 .help-map-q { display: block; font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
 .help-map-page { display: block; font-size: var(--fs-label); color: var(--text-3); margin-top: var(--space-half); }
 .help-map-go { display: inline-flex; color: var(--text-3); }
 .help-map-item:hover .help-map-go,
-.help-map-item:focus-visible .help-map-go { color: var(--accent); }
+.help-map-item:focus-visible .help-map-go { color: var(--accent-text); }
 
 /* ---------------------------------------------------------------------- the limits block */
 /* Derived from the coverage resolvers, never authored here. A one-line row per area, the
@@ -243,7 +243,7 @@
   background: var(--page); padding: var(--space-2) var(--space-3);
   box-shadow: var(--shadow-card);
 }
-.help-figure-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.help-figure-scroll:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 .help-scene { display: block; min-width: 640px; width: 640px; height: auto; }
 .help-figure-note {
   margin: var(--space-3) 0 0; font-size: var(--fs-label); color: var(--text-3); max-width: var(--measure);
@@ -258,7 +258,7 @@
   fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 2 3;
 }
 .help-tc-badge { fill: var(--accent); }
-.help-tc-text { font-size: var(--fs-micro); font-weight: 700; fill: #ffffff; }
+.help-tc-text { font-size: var(--fs-micro); font-weight: 700; fill: var(--on-accent); }
 
 /* The figure mirrors the real card, so the medallion lives here too and the ground stays
    neutral. `color` rides alongside every literal `stroke` so a solid glyph path — which
@@ -309,7 +309,7 @@
   box-shadow: none;
 }
 .help-callout:hover { background: var(--wash-hover); border-color: var(--hairline); }
-.help-callout:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.help-callout:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
 /* The numeral is a real chip at rest. Six numbered marks in a grid read immediately as six
    things you can do; six transparent rectangles read as nothing at all, which is what the
    callouts were before — undetectable until hovered. */
@@ -320,7 +320,7 @@
   font-size: var(--fs-micro); font-weight: 600; color: var(--text-2);
 }
 .help-callout:hover .help-callout-n, .help-callout:focus-visible .help-callout-n {
-  background: var(--accent); border-color: var(--accent); color: #ffffff;
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
 }
 .help-callout-t { font-size: var(--fs-label); line-height: 1.45; }
 .help-callout-t b { display: block; font-weight: 600; }
@@ -350,7 +350,7 @@
 }
 .help-family-block:first-child .help-family { margin-top: 0; }
 .help-family:focus-visible {
-  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-xs);
+  outline: 2px solid var(--accent-text); outline-offset: 2px; border-radius: var(--radius-xs);
 }
 /* A length, not a resolved figure — so it is known at the first synchronous paint and
    never moves when a count lands. */
@@ -374,7 +374,7 @@
 }
 /* The row is a programmatic focus target (tabindex="-1"), never a tab stop; the ring is
    here for the keyboard reader who arrives by a "Full definition →" link. */
-.help-entry:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.help-entry:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 /* Right-aligned, so the ragged edge falls on the outside of the page where nothing scans
    it and the mark-to-term gap is a constant 16px. Left-aligned, an 8px glyph and a 78px
    severity badge left up to 84px of white between a specimen and the word it defines —
@@ -459,7 +459,7 @@
   display: inline-flex; align-items: center;
   padding: var(--space-half) var(--space-2); border-radius: var(--radius-pill);
   font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.05em;
-  background: var(--accent); color: #ffffff;
+  background: var(--accent); color: var(--on-accent);
 }
 /* The halo, on its own, at chip scale. */
 .help-halo {

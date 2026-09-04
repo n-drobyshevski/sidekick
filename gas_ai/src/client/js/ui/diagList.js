@@ -14,7 +14,7 @@
 // already make), and the glyph is `aria-hidden` because the sentence beside it already says
 // what it means; announcing "up-pointing triangle" first would only delay that.
 
-import { el } from "./dom.js";
+import { el } from "../../../../../gas_shared/ui/dom.js";
 
 /**
  * One diagnostic row: what is being measured, what it reads, and — only when it is worth

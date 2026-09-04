@@ -62,7 +62,7 @@
 .viewmode button:first-child { border-radius: var(--radius-md) 0 0 var(--radius-md); }
 .viewmode button:last-child { border-radius: 0 var(--radius-md) var(--radius-md) 0; margin-left: -1px; }
 .viewmode button[aria-pressed="true"] {
-  background: rgba(0, 0, 0, 0.07); border-color: #d9d9de; font-weight: 600;
+  background: rgba(0, 0, 0, 0.07); border-color: var(--hairline-strong); font-weight: 600;
 }
 
 /* --------------------------------------------------- AI Inventory: in-row micro-viz */
@@ -95,7 +95,7 @@
   display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2);
   padding: var(--space-3) var(--space-3); min-height: 0; text-align: left; font: inherit; color: inherit;
 }
-.asset-card:hover { background: #f1f1f4; border-color: #d9d9de; }
+.asset-card:hover { background: var(--surface-2); border-color: var(--hairline-strong); }
 .asset-card-head { display: flex; align-items: center; gap: var(--space-2); }
 .asset-card-icon { flex: 0 0 16px; color: var(--text-3); }
 .asset-card-icon .gnode-icon { stroke: currentColor; fill: none; stroke-width: 1.4; }

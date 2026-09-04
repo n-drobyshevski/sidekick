@@ -21,9 +21,9 @@
 // paint() is what forced the stable-accessHost workaround and the 5Rs card's box.draft
 // indirection, both of which existed to keep a rebuild from eating unsaved edits.
 
-import { call } from "../api.js";
+import { call } from "../../../../../gas_shared/api.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
-import { bootstrap, invalidateBootstrap, invalidateRpcCache, setParams, swrCall } from "../store.js";
+import { bootstrap, invalidateBootstrap, invalidateRpcCache, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { clientBuild, describeBuild } from "../buildInfo.js";
 import {
   changeCountText, changeSummary, changedFields, dirtyTabs, draftWarnings, normalizeTab,
@@ -31,15 +31,17 @@ import {
 } from "../settingsModel.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import {
-  clear, confirmDialog, debounce, disclosure, el, emptyState, saveBar, settingRow,
+  clear, confirmDialog, debounce, disclosure, el, emptyState, errorState, heroStat,
+  pageHeader, saveBar, settingRow,
   settingsPanel, sevBadge, skeleton, statusPill, switchToggle, tabList, toast,
 } from "../ui.js";
 
 export async function renderSettings(main, params, ctx) {
   main.append(
-    el("h1", {}, "Settings"),
-    el("p", { class: "page-sub" },
-      "Graph defaults, compliance scope, access and connection status — grouped by task."),
+    pageHeader({
+      hero: heroStat("Settings", "Graph, compliance, access, system",
+        "Grouped by task; one save bar covers the tabs that share a draft."),
+    }),
   );
 
   const host = el("div", {});
@@ -80,7 +82,7 @@ export async function renderSettings(main, params, ctx) {
   if (settled[0].status === "rejected") {
     const e = settled[0].reason;
     clear(host);
-    host.append(emptyState("Couldn't load settings.", String((e && e.message) || e)));
+    host.append(errorState("Couldn't load settings.", { detail: String((e && e.message) || e) }));
     return;
   }
   const settings = settled[0].value;

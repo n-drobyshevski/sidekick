@@ -11,7 +11,7 @@
 // the container's own pixel width and the SVG carries a matching width in px, so the render
 // is 1:1 and the labels never shrink. Below the layout's minimum the wrapper scrolls.
 
-import { edgeLabel, svgEl } from "./icons.js";
+import { edgeLabel, svgEl } from "../../../../gas_shared/icons.js";
 import { EGO, egoLayout, pickEgoNeighbours } from "./egoLayout.js";
 import { drawNodeCard, nodeAriaLabel, truncate } from "./graphNode.js";
 import { clear, el } from "./ui.js";

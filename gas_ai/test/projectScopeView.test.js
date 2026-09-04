@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { projectScopeView, trendScopeView } from "../src/client/js/ui/projectScope.js";
-import { UI_ICON_NAMES } from "../src/client/js/ui/uiIcons.js";
+import { UI_ICON_NAMES } from "../../gas_shared/ui/uiIcons.js";
 
 const boot = (scope, projectList, domainList) => ({
   scope, filterOptions: { projectList, domainList },

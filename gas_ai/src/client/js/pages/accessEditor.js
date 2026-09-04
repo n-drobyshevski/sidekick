@@ -9,7 +9,7 @@
 // an admin may only add and remove ordinary people. See src/server/access.ts for why the tier
 // stops there rather than letting admins make admins.
 
-import { call } from "../api.js";
+import { call } from "../../../../../gas_shared/api.js";
 import { clear, confirmDialog, el, settingsPanel, statusPill, toast } from "../ui.js";
 
 /**

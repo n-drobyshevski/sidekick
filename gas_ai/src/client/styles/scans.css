@@ -52,7 +52,7 @@
   border: 1px solid var(--hairline); border-radius: var(--radius-xl);
   background: var(--page); padding: var(--space-1) var(--space-3) var(--space-2);
 }
-.cov-diagram-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cov-diagram-scroll:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 /* No width rules here on purpose. The layout is measured, not scaled: scans.js draws the
    viewBox at the container's own pixel width and sets a matching width in px, so the SVG
    always renders 1:1 — full width, labels at the size the stylesheet asked for, and a
@@ -245,7 +245,7 @@
    unscanned); a stage here is a continuous covered-of-total fraction, and the shared
    `.meter` recipe (components.css) is the right primitive for that, not a re-purposed
    severity or coverage bar. */
-.reach-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.reach-wrap:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 4px; }
 
 .reach-ladder { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-3) 0 var(--space-4); }
 .reach-stage {

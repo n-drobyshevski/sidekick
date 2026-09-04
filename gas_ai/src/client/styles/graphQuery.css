@@ -29,7 +29,7 @@
 /* One tab stop for the tree; arrows move within it. The ring is the base recipe's, never
    overridden — a roving-tabindex widget is exactly where a missing focus ring strands
    someone. */
-.gq-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.gq-row:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
 /* A hidden node still constrains the query, so it stays legible rather than being greyed
    into looking disabled — the struck-through eye carries the state. */
 .gq-row.is-hidden .gq-chip { border-style: dashed; }
@@ -58,7 +58,7 @@
 }
 .gq-kw--btn:hover { background: var(--wash-hover); border-color: var(--hairline); color: var(--ink); }
 /* Never overridden. With no caret, this is the only thing that says the pill can be reached. */
-.gq-kw--btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.gq-kw--btn:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
 
 /* Negation is a word, not a colour: "NOT" spelled out, inside the control that sets it. */
 .gq-not {
@@ -100,7 +100,7 @@
 }
 .gq-term:hover { background: var(--wash-hover); }
 /* Never overridden. A control with no caret leans on this ring to be findable at all. */
-.gq-term:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.gq-term:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
 /* A FIND row's term is the entity alone, and a capsule drawn around a single token would be a
    second border saying nothing. So the button keeps the hit target and the focus ring and draws
    nothing itself — which is also how the reference renders that row. */
@@ -221,7 +221,7 @@
 .gq-saved { display: inline-flex; }
 .gq-saved-btn { display: inline-flex; align-items: center; gap: var(--space-1); }
 .gq-saved-caret { font-size: var(--fs-micro); color: var(--text-3); }
-.gq-saved-btn[aria-expanded="true"] { background: #f1f1f4; border-color: #d9d9de; }
+.gq-saved-btn[aria-expanded="true"] { background: var(--surface-2); border-color: var(--hairline-strong); }
 .gq-saved-menu { display: flex; flex-direction: column; padding: var(--space-1); }
 /* Rows reset off the 36px bordered global button recipe the way .gq-iconbtn does — a menu
    row is a line of text you can click, not a control surface stacked inside a card. */
@@ -232,7 +232,7 @@
   font: inherit; font-size: var(--fs-body); color: var(--ink); text-align: left;
 }
 .gq-saved-item:hover { background: var(--wash-hover); }
-.gq-saved-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.gq-saved-item:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
 /* A saved name can be any length; the menu is 260px and the row must not set its width. The
    left margin is the save row's icon (13px) and its gap (8px), so the two line up on one
    text edge rather than one row starting a glyph's width further in than the other. */
@@ -257,7 +257,7 @@
 .gq-edit-btn { min-height: 30px; padding: var(--space-1) var(--space-2); font-size: var(--fs-body); }
 /* Pressed-looking while the card is up, so the row says which state it is in without the
    reader having to look away from it and find the card. */
-.gq-edit-btn[aria-expanded="true"] { background: #f1f1f4; border-color: #d9d9de; }
+.gq-edit-btn[aria-expanded="true"] { background: var(--surface-2); border-color: var(--hairline-strong); }
 .gq-viewbar-sep { width: 1px; align-self: stretch; min-height: 20px; background: var(--hairline); }
 
 /* --------------------------------------------------------------------- path table */
@@ -390,7 +390,7 @@
   color: var(--text-2);
 }
 .gq-pal-rail-item:hover { background: var(--wash-hover); border-color: transparent; color: var(--ink); }
-.gq-pal-rail-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.gq-pal-rail-item:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
 .gq-pal-rail-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gq-pal-rail-count { flex: 0 0 auto; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; color: var(--text-3); }
 .gq-pal-rail-item.is-active {
@@ -453,7 +453,7 @@
 .gq-pal-option.is-on .gq-pal-glyph-wrap { box-shadow: inset 0 0 0 1.5px currentColor; }
 .gq-pal-option-current {
   flex: 0 0 auto; display: inline-flex; align-items: center;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .gq-pal-glyph-wrap {
   flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
@@ -518,7 +518,7 @@
   border: none; box-shadow: none; min-height: 0;
   font: inherit; text-align: left; cursor: pointer;
 }
-.gq-filter-chip .filter-chip-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.gq-filter-chip .filter-chip-body:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
 
 /* ------------------------------------------------------------------- the filter editor */
 /* One control, two frames: in the palette's drill-in pane when a filter is being created, and in
@@ -642,7 +642,7 @@
 }
 .gq-cols-head::-webkit-details-marker { display: none; }
 .gq-cols-head:hover { background: var(--wash-hover); }
-.gq-cols-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.gq-cols-head:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
 .gq-cols-tile {
   flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; border-radius: var(--radius-sm);

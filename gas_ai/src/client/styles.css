@@ -1,31 +1,59 @@
-/* Wiz SIDEKICK AI — the DESIGN.md visual system ("The Audit Ledger") with the deep
+/* Wiz Sidekick AI — the DESIGN.md visual system ("The Audit Ledger") with the deep
    crimson brand. Light theme only; neutral field; saturated color rationed to severity
    and state. Two-token severity rule: --sev-* fills for marks/dots, --sev-*-text for
-   any colored label. The severity palette is IDENTICAL to the OS-vulns tool; the
-   crimson accent (#be123c, rose-700) appears only on interactive/identity surfaces
-   (brand, nav, buttons, focus, links, toxic-combo halo) — never as a severity. */
+   any colored label. The severity palette is IDENTICAL to the OS-vulns tool and to
+   gas_devsecops; the crimson accent (#be123c, rose-700) appears only on interactive and
+   identity surfaces (brand, nav, focus, links, toxic-combo halo) — never as a severity.
+   See styles/tokens.css for the five-token accent contract this brand collapses. */
 
-/* This file is an index. The rules live in styles/, split by what they dress; esbuild
-   inlines them back into one <style> partial at build time (esbuild.config.mjs).
+/* This file is an index, and MOST OF WHAT IT INDEXES IS NO LONGER THIS APP'S. Seven of the
+   sheets moved to gas_shared/styles/ when the design system was cut into its own package —
+   one copy for the three sidekicks instead of three that drift. What is left here is
+   styles/tokens.css, which is the brand and nothing else, and the nine page sheets that
+   dress pages no sibling has (a graph canvas, a query builder, a decision lattice, a
+   compliance register, a scan history, a record sheet).
 
-   Order is the cascade — these are contiguous slices of the original stylesheet and must
-   stay in this sequence. tokens first, overrides (reduced motion, phone layout) last. */
+   esbuild inlines the whole closure back into one <style> partial at build time
+   (esbuild.config.mjs, `bundle: true`), and it resolves a relative @import that leaves the
+   package root exactly like any other relative path.
 
+   ORDER IS THE CASCADE — these are contiguous slices and must stay in this sequence.
+   tokens first (shared base, then the brand that overrides nothing but adds the accent),
+   the shared component sheets next, this app's own page sheets after them, and overrides
+   (reduced motion, phone layout) last.
+
+   MOVING THE LOCAL SHEETS INTO ONE SLOT WAS MEASURED, NOT ASSUMED. They used to be
+   interleaved with the shared ones (inventory before tables, graph before sheet, aars
+   before settings). A selector declared in a local sheet AND in a shared sheet that used
+   to come after it would change winner. Every such pair was enumerated across the eighteen
+   sheets, matching on selector + media context + declared property: ZERO. The reorder
+   moves no declaration's winner.
+
+   gas_shared/styles/help.css IS DELIBERATELY NOT IMPORTED. Every other sidekick's key
+   sheet is one flat list of glossary cards, which is what that sheet dresses; this
+   register's is a four-column grid with a lexicon bar, an anatomy diagram and a route map,
+   and it reuses two of the same class names for different things — `.help-entry` is a card
+   there and a grid row here, `.help-entry-term` a lead line there and a 14px term here.
+   Importing it would put a border, a surface fill and a card shadow on every row of this
+   page's table. The 514-line local sheet stays; nothing in the shared one is unused here,
+   because none of it applies. */
+
+@import "../../../gas_shared/styles/tokens.base.css";
 @import "./styles/tokens.css";
-@import "./styles/base.css";
-@import "./styles/components.css";
+@import "../../../gas_shared/styles/base.css";
+@import "../../../gas_shared/styles/components.css";
+@import "../../../gas_shared/styles/tables.css";
+@import "../../../gas_shared/styles/sheet.css";
+@import "../../../gas_shared/styles/feedback.css";
+@import "../../../gas_shared/styles/settings.css";
 @import "./styles/inventory.css";
-@import "./styles/tables.css";
 @import "./styles/graph.css";
 @import "./styles/graphQuery.css";
-@import "./styles/sheet.css";
 @import "./styles/recordSheet.css";
-@import "./styles/feedback.css";
 @import "./styles/scans.css";
 @import "./styles/compliance.css";
 @import "./styles/combos.css";
 @import "./styles/lattice.css";
 @import "./styles/aars.css";
 @import "./styles/help.css";
-@import "./styles/settings.css";
-@import "./styles/overrides.css";
+@import "../../../gas_shared/styles/overrides.css";

@@ -30,7 +30,7 @@
 // choice instead of one of several.
 
 import { NODE_H, NODE_W } from "./graphNode.js";
-import { svgEl } from "./icons.js";
+import { svgEl } from "../../../../gas_shared/icons.js";
 import { el } from "./ui.js";
 
 // Five category bands, mirroring CATEGORY_ORDER's split in icons.js (AI assets/compute, data,

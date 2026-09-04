@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   CLOSE_GRACE, OPEN_COLD, TIP_ARROW, TIP_GAP, TIP_MARGIN, TIP_RADIUS, WARM_WINDOW,
   glossaryTipLines, tipDelay, tipLead, tipPlacement,
-} from "../src/client/js/ui/tipPlace.js";
+} from "../../gas_shared/ui/tipPlace.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -263,7 +263,7 @@ describe("the native tooltip stays gone", () => {
   });
 
   it("keeps el() refusing the attribute, which is what catches the common form", () => {
-    const dom = readFileSync(join(root, "src/client/js/ui/dom.js"), "utf8");
+    const dom = readFileSync(join(root, "../gas_shared/ui/dom.js"), "utf8");
     expect(dom).toMatch(/k === "title"/);
     expect(dom).toMatch(/throw new Error/);
   });

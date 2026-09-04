@@ -430,7 +430,7 @@
   line-height: 1.5;
 }
 .comp-rail-key--scope b { color: var(--ink); font-weight: 600; }
-.comp-rail-key--scope a { color: var(--accent); }
+.comp-rail-key--scope a { color: var(--accent-text); }
 
 @media (max-width: 1080px) {
   .comp-rail { --rail-cols: 160px 1fr 52px; }
@@ -562,7 +562,7 @@
 /* Pinned means a person decided this, not that the landscape did — a different kind of fact
    from crossMapped/linkedFindings/noAiLink, and it earns its own tint so a reader scanning
    the column can tell "derived" from "somebody's call" without reading every word. */
-.scope-reason--pinned { color: var(--accent); font-weight: 600; }
+.scope-reason--pinned { color: var(--accent-text); font-weight: 600; }
 
 /* The row's control. A drawn checkbox-shaped glyph rather than an actual `<input
    type=checkbox>` — filters.js's facet rows (sheet.css's `.facet-box`) set this precedent
@@ -587,7 +587,7 @@
   border-color: var(--accent); color: var(--ink); font-weight: 600;
 }
 .scope-toggle[aria-pressed="true"] .scope-box {
-  background: var(--accent); border-color: var(--accent); color: #ffffff;
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
 }
 
 /* The Save/Revert/Reset bar: scans.css's `.vars-bar`/`.vars-state` recipe, copied rather
@@ -651,4 +651,4 @@
   padding: var(--space-half) var(--space-2); cursor: pointer;
 }
 .scope-disclose:hover { background: var(--wash-hover); color: var(--ink); }
-.scope-disclose:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.scope-disclose:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }

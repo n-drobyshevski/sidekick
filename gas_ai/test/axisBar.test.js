@@ -10,7 +10,7 @@
 // typecheck && test && build, so vitest would never run.
 
 import { describe, expect, it } from "vitest";
-import { axisSegments } from "../src/client/js/ui/axisBar.js";
+import { axisSegments } from "../../gas_shared/ui/axisBar.js";
 
 const EXPLOIT = ["ACTIVE", "SUSPECTED", "UNKNOWN"];
 
