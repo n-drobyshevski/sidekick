@@ -78,6 +78,14 @@ function code(src) {
 const SCA_CODE = code(SCA_SRC);
 const SAST_CODE = code(SAST_SRC);
 const SECRETS_CODE = code(SECRETS_SRC);
+// `denomNote` moved out of sca.js into ui/figures.js in the figure-module consolidation (one
+// `num`/`fmtCount`/`days1`/`pct1`/`denomNote`/`fmtDays` implementation instead of five drifting
+// copies) — sca.js, sast.js and secrets.js all import it from there now. The case below reads
+// FIGURES_CODE rather than SCA_CODE for exactly that reason.
+const FIGURES_SRC = readFileSync(
+  new URL("../src/client/js/ui/figures.js", import.meta.url), "utf8",
+);
+const FIGURES_CODE = code(FIGURES_SRC);
 const PROGRAM_TS = readFileSync(new URL("../src/domain/program.ts", import.meta.url), "utf8");
 const CONFIG_TS = readFileSync(new URL("../src/domain/config.ts", import.meta.url), "utf8");
 const INSIGHTS_TS = readFileSync(new URL("../src/domain/insights.ts", import.meta.url), "utf8");
@@ -723,8 +731,13 @@ describe("every rate is published beside the denominator it was read against", (
 
   it("writes the sentence into the [data-denominator] attribute a reader can be shown", () => {
     // The node builder is DOM, so this is the source check: the attribute carries the same
-    // sentence the reader sees, rather than the two being able to drift apart.
-    expect(SCA_CODE).toMatch(/"data-denominator": sentence \}, sentence\)/);
+    // sentence the reader sees, rather than the two being able to drift apart. This case
+    // pins WHERE THAT CLAIM HOLDS, not where the function happens to be defined: `denomNote`
+    // moved out of sca.js into ui/figures.js verbatim in the figure-module consolidation, and
+    // sca.js, sast.js and secrets.js all import the single copy there now — so the body this
+    // regex is looking for lives in FIGURES_CODE, not SCA_CODE, and the claim it encodes is
+    // unchanged by the move.
+    expect(FIGURES_CODE).toMatch(/"data-denominator": sentence \}, sentence\)/);
   });
 
   it("gives each of the three pages denominator nodes to draw", () => {

@@ -19,17 +19,18 @@
 // rule whose clause cannot fire is a coverage gap to publish, not one to paper over.
 //
 // The shared register vocabulary is imported from `./sca.js` — see that file's header for
-// why the eldest of the three registers hosts it.
+// why the eldest of the three registers hosts it. The numeric core (`num`/`fmtCount`/
+// `days1`/`pct1`/`denomNote`) comes straight from `../ui.js` instead: `sca.js` no longer
+// hosts a second copy of those five, only the register-shaped helpers built on top of them.
 
 import { bootstrapCached, swrCall } from "../store.js";
 import {
-  absent, dataTable, el, emptyState, fmtDate, heroStat, meter, pageHeader, sevBadge,
-  sevEntries, sevSegmentBar, skeletonStack, statRow,
+  absent, dataTable, days1, denomNote, el, emptyState, fmtCount, fmtDate, heroStat, meter,
+  num, pageHeader, pct1, sevBadge, sevEntries, sevSegmentBar, skeletonStack, statRow,
 } from "../ui.js";
 import {
-  RISK_TIER_LABELS, RISK_TIER_ORDER, agingModel, chartCard, concentrationModel, days1,
-  denomNote, figureCard, fmtCount, funnelModel, movementCard,
-  movementModel, num, oldestFindingsModel, pagedTable, pct1, readRegisterParams,
+  RISK_TIER_LABELS, RISK_TIER_ORDER, agingModel, chartCard, concentrationModel, figureCard,
+  funnelModel, movementCard, movementModel, oldestFindingsModel, pagedTable, readRegisterParams,
   registerRowsTable, registerToolbar, renderRegisterPage, sectionCard, sevPalette,
   signalFigure, textCell, tierModel,
 } from "./sca.js";

@@ -33,40 +33,19 @@
 import { swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  DEFAULT_PAGE_SIZE, clear, dataTable, el, emptyState, fmtDate, fmtDateTime, glossaryTip,
-  heroStat, kpiCard, onPageTeardown, pageHeader, pageOf, registerWideNote, sectionLabel,
-  skeletonStack, sortRows, tableFooter,
+  DEFAULT_PAGE_SIZE, clear, dataTable, days1, denomNote, el, emptyState, fmtDate, fmtDateTime,
+  glossaryTip, heroStat, kpiCard, num, onPageTeardown, pageHeader, pageOf, registerWideNote,
+  sectionLabel, skeletonStack, sortRows, tableFooter,
 } from "../ui.js";
 
 const SCOPE_LABELS = { sca: "Dependencies (SCA)", sast: "Code (SAST)", secrets: "Secrets" };
 
 // ---------------------------------------------------------------------------- formatting
-
-/**
- * A number from an untrusted payload, or the fallback — and NEVER a silent zero.
- * `Number(null) === 0` is finite, so null/blank must be refused before the cast, not after;
- * see repos.js's copy of this helper for the bug that shape produced.
- */
-export function num(v, fallback = null) {
-  if (v === null || v === undefined || v === "") return fallback;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-export function fmtCount(v) {
-  const n = num(v);
-  return n === null ? "—" : n.toLocaleString();
-}
-
-export function days1(v) {
-  const n = num(v);
-  return n === null ? "—" : `${n.toFixed(1)} d`;
-}
-
-/** The denominator node every rate on this page carries — see `sca.js`'s `denomNote`. */
-export function denomNote(sentence) {
-  return el("p", { class: "small muted", "data-denominator": sentence }, sentence);
-}
+//
+// `num`, `fmtCount`, `days1` and `denomNote` used to be DEFINED here — this file had the
+// corrected refuse-before-cast shape from the start, which is why `ui/figures.js` (the one
+// shared implementation every page in this package now imports) is a copy of THIS file's
+// shape and not `sca.js`'s. See that module's header for the defect it replaces.
 
 /**
  * A scan row's severity coverage, in words. `null` means the scan looked at EVERY severity

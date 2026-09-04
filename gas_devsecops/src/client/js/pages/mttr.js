@@ -30,32 +30,20 @@
 import { swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  clear, dataTable, el, emptyState, heroStat, kpiCard, onPageTeardown, pageHeader, pluralize,
-  sectionLabel, sevBadge, sevEntries, sevSegmentBar, skeleton, statRow,
+  clear, dataTable, el, emptyState, fmtCount, fmtDays, heroStat, kpiCard, onPageTeardown,
+  pageHeader, pluralize, sectionLabel, sevBadge, sevEntries, sevSegmentBar, skeleton, statRow,
 } from "../ui.js";
 
 // ---------------------------------------------------------------------------- formatting
-
-/**
- * A day count as words. Null / undefined / NaN is an em dash — never a zero, because a zero
- * here would be a measurement and an absent value is not one.
- *
- * Lives on this page rather than in `ui/format.js` because that module is not this package's
- * to edit; see the report. Executive imports it from here rather than keeping a second copy.
- */
-export function fmtDays(days) {
-  const d = Number(days);
-  if (days === null || days === undefined || !Number.isFinite(d)) return "—";
-  const n = d < 10 ? Math.round(d * 10) / 10 : Math.round(d);
-  return n + " " + pluralize(n, "day");
-}
-
-/** A count as a grouped figure; absent is a dash rather than a 0. */
-export function fmtCount(n) {
-  return n === null || n === undefined || !Number.isFinite(Number(n))
-    ? "—"
-    : Number(n).toLocaleString();
-}
+//
+// `fmtDays` and `fmtCount` used to be DEFINED here. They now live in `ui/figures.js`, the one
+// shared implementation every page in this package imports — this file re-exports both
+// because `test/pagesProgram.test.js` (which this package may not edit) imports them from
+// here by name, and `executive.js` and `program.js` also keep importing them from this file
+// rather than from `../ui.js` directly. `fmtDays`'s prose format ("41 days", "3.2 days") is
+// distinct from `ui/figures.js`'s `days1` ("41.0 d") — see that module's header for why both
+// exist.
+export { fmtCount, fmtDays };
 
 /** A percentage to one decimal. Only ever called through `rateView`, which owns the nulls. */
 function fmtPct(p) {

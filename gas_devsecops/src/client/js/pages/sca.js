@@ -28,46 +28,24 @@
 import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  DEFAULT_PAGE_SIZE, absent, dataTable, el, emptyState, errorState, glossaryTip, heroStat,
-  kpiCard, meter, onPageTeardown, pageHeader, pageOf, segmented, sevBadge, sevEntries,
-  sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter, togglePills, fmtDate, triCell,
+  DEFAULT_PAGE_SIZE, absent, dataTable, days1, denomNote, el, emptyState, errorState, fmtCount,
+  glossaryTip, heroStat, kpiCard, meter, num, onPageTeardown, pageHeader, pageOf, pct1,
+  segmented, sevBadge, sevEntries, sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter,
+  togglePills, fmtDate, triCell,
 } from "../ui.js";
 
 // =========================================================================================
 //  Shared register vocabulary — pure, and imported by sast.js and secrets.js
 // =========================================================================================
-
-/** A number from an untrusted payload, with a stated fallback. Never `NaN` onto a page. */
-export function num(v, fallback = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-/** A count, grouped for reading. */
-export function fmtCount(v) {
-  return num(v).toLocaleString();
-}
-
-/**
- * A percentage, or the em dash.
- *
- * `null` IS AN ANSWER HERE and it is never 0. Every rate in the domain layer returns null
- * when its denominator is empty (`pct()` in secretsLifecycle.ts, `coveragePct` in
- * readModels.ts, `pctOfOpen` in remediation.ts), precisely so a page cannot print "0%" over
- * nothing measured. Collapsing that back to a zero here would undo the decision.
- */
-export function pct1(v) {
-  return v === null || v === undefined || !Number.isFinite(Number(v))
-    ? "—"
-    : `${Number(v).toFixed(1)}%`;
-}
-
-/** Days, or the em dash. */
-export function days1(v) {
-  return v === null || v === undefined || !Number.isFinite(Number(v))
-    ? "—"
-    : `${Number(v).toFixed(1)} d`;
-}
+//
+// `num`, `fmtCount`, `days1`, `pct1` and `denomNote` used to be DEFINED here (and, for `num`/
+// `fmtCount`, defined wrongly — see `ui/figures.js`'s module header for the null-renders-as-0
+// defect that shipped this way). They now all live in `ui/figures.js`, the one implementation
+// every page in this package imports, `denomNote` included — see that file's header for the
+// attribute/sentence claim it carries. This file re-exports `pct1` alone because
+// `test/pagesRegisters.test.js` — which this package may not edit — still imports it from
+// here by name.
+export { pct1 };
 
 /** EPSS is a probability, 0..1 off the wire; rendered as the percentage it names. */
 export function epssPct(v) {
@@ -108,18 +86,6 @@ export function boundedDays(value, lowerBound) {
     return { text: `> ${days1(lowerBound)}`, bounded: true };
   }
   return { text: "—", bounded: false };
-}
-
-/**
- * The denominator node every rate on these three pages carries.
- *
- * A RATE WITHOUT ITS DENOMINATOR IS NOT A MEASUREMENT — "99.6% unvalidated" and "3-day
- * median over four rows" are the two cases this register was built after. The sentence is
- * ALSO written into the attribute so a test can read what a reader reads, rather than
- * asserting that some node happens to sit nearby.
- */
-export function denomNote(sentence) {
-  return el("p", { class: "small muted", "data-denominator": sentence }, sentence);
 }
 
 /** A card whose figure is a rate or a count, with its denominator sentence beneath it. */

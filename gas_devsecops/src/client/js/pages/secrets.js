@@ -29,17 +29,20 @@
 //
 // The shared register vocabulary is imported from ./sca.js — see that file's header. Nothing
 // severity-flavoured is imported: not sevBadge, not sevEntries, not sevSegmentBar, and not
-// the sca aging or oldest-findings models, both of which carry a severity axis.
+// the sca aging or oldest-findings models, both of which carry a severity axis. The numeric
+// core (`num`/`fmtCount`/`days1`/`pct1`/`denomNote`) comes straight from `../ui.js` instead:
+// `sca.js` no longer hosts a second copy of those five, only the register-shaped helpers
+// built on top of them.
 
 import { swrCall } from "../store.js";
 import {
-  absent, dataTable, el, emptyState, fmtDate, glossaryTip, heroStat, meter, pageHeader,
-  skeletonStack, statRow,
+  absent, dataTable, days1, denomNote, el, emptyState, fmtCount, fmtDate, glossaryTip,
+  heroStat, meter, num, pageHeader, pct1, skeletonStack, statRow,
 } from "../ui.js";
 import {
-  boundedDays, chartCard, concentrationModel, days1, denomNote, figureCard, fmtCount,
-  missingColumnsNote, movementCard, movementModel, num, oldestReposModel, pagedTable, pct1,
-  registerRowsTable, renderRegisterPage, sectionCard, textCell,
+  boundedDays, chartCard, concentrationModel, figureCard, missingColumnsNote, movementCard,
+  movementModel, oldestReposModel, pagedTable, registerRowsTable, renderRegisterPage,
+  sectionCard, textCell,
 } from "./sca.js";
 
 /**

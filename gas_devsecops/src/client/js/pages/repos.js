@@ -27,44 +27,19 @@
 import { swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  clear, dataTable, el, emptyState, errorState, glossaryTip, heroStat, kpiCard, onPageTeardown,
-  pageHeader, sectionLabel, skeletonStack,
+  clear, dataTable, days1, denomNote, el, emptyState, errorState, fmtCount, glossaryTip,
+  heroStat, kpiCard, num, onPageTeardown, pageHeader, pct1, sectionLabel, skeletonStack,
 } from "../ui.js";
 
 const OVERALL = "OVERALL";
 
 // ---------------------------------------------------------------------------- formatting
-
-/**
- * A number from an untrusted payload, or the fallback. Never NaN onto a page, AND NEVER A
- * SILENT ZERO: `Number(null) === 0` and `Number("") === 0` are both finite, so a null/blank
- * had to be refused before the `Number()` cast rather than after it — the bug this file
- * shipped with until `test/pagesData.test.js` caught it collapsing an unmeasured capacity
- * share and a real 0% into the same reading.
- */
-export function num(v, fallback = null) {
-  if (v === null || v === undefined || v === "") return fallback;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-/** A count, grouped for reading; null (never measured) prints as an em dash, not 0. */
-export function fmtCount(v) {
-  const n = num(v);
-  return n === null ? "—" : n.toLocaleString();
-}
-
-/** A percentage, or the em dash — null is a real answer (empty denominator), not a zero. */
-export function pct1(v) {
-  const n = num(v);
-  return n === null ? "—" : `${n.toFixed(1)}%`;
-}
-
-/** Days, or the em dash. */
-export function days1(v) {
-  const n = num(v);
-  return n === null ? "—" : `${n.toFixed(1)} d`;
-}
+//
+// `num`, `fmtCount`, `pct1`, `days1` and `denomNote` used to be DEFINED here — this file had
+// the corrected refuse-before-cast shape (the bug `test/pagesData.test.js` caught was fixed
+// in place, not left as a second copy of `sca.js`'s wrong one), which is why `ui/figures.js`
+// (the one shared implementation every page in this package now imports) matches this file's
+// shape. See that module's header for the defect it replaces.
 
 /**
  * A half-life that may only be a LOWER BOUND — the same distinction the MTTR family makes,
@@ -77,15 +52,6 @@ export function boundedDays(medianDays, lowerBoundDays) {
   const bound = num(lowerBoundDays);
   if (bound !== null) return { text: `> ${days1(bound)}`, bounded: true };
   return { text: "—", bounded: false };
-}
-
-/**
- * The denominator node every rate on this page carries, matching the convention `sca.js`
- * established for the register pages: the sentence lives in `data-denominator` too, so a
- * test can read what a reader reads rather than asserting a node merely sits nearby.
- */
-export function denomNote(sentence) {
-  return el("p", { class: "small muted", "data-denominator": sentence }, sentence);
 }
 
 // ------------------------------------------------------------------------- pure view models
