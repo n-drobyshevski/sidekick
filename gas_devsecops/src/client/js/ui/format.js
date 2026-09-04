@@ -49,13 +49,9 @@ export function plural(n, word) {
 
 /**
  * Position on a severity scale, LOWER = WORSE, with anything unrecognised sorting last.
- * `order` is a parameter, not a constant, because the callers rank against different
- * scales — the combos page against its own SEVERITY_RANK, the graph against the palette
- * order the server sent with the payload.
- *
- * Note the sign. assetQuery.js has its own `sevRank` on an INVERTED scale (higher = worse)
- * because it is a hand-kept mirror of src/domain/assetTable.ts that assetQueryMirror.test.ts
- * holds it to. It looks like this one and means the opposite; do not fold them together.
+ * `order` is a parameter, not a constant, so a future caller can rank against whichever
+ * severity order it holds — a page's own fallback list, or the order a payload sends —
+ * rather than a scale fixed here.
  */
 export function sevRank(sev, order) {
   const i = (order || []).indexOf(String(sev || "").toUpperCase());
@@ -67,16 +63,11 @@ export function sevRank(sev, order) {
  *
  * `Number.MAX_SAFE_INTEGER`, not `Infinity` — two rows that both lack a deadline must
  * subtract to `0`, or the comparator returns `NaN` and the sort silently stops moving that
- * pair. See `src/domain/problems.ts`'s `slaRank` for the same fix and the fuller reasoning.
+ * pair.
  *
- * ONE COPY, because there were two and they disagreed. `problemView.js` had the sentence
- * above and the right sentinel; `comboView.js` had the same four lines returning `Infinity`,
- * so the combos register's Due column has been declining to order its undated rows ever since
- * the fix landed next door. A divergence is the argument for sharing, not the cost of it —
- * and it lives here rather than in tableModel.js because this is the file that already owns
+ * Takes the ROW, not the date, so a comparator table adopting it changes by one word. It
+ * lives here rather than in tableModel.js because this is the file that already owns
  * `sevRank`, the other "turn a column into a number" helper.
- *
- * Takes the ROW, not the date, so the two comparator tables adopting it change by one word.
  */
 export function dueRank(row) {
   const t = Date.parse((row && row.dueAt) || "");
