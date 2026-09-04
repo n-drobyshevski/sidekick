@@ -33,11 +33,13 @@ const PAGES = pages();
 const LANES = [...new Set(PAGES.map((p) => p.group).filter(Boolean))];
 
 describe("the route table", () => {
-  it("parses, and holds the ten routes this register composed", () => {
+  it("parses, and holds the eleven routes this register composed", () => {
+    // The key sheet joined the Data lane in the help-route package; this list moves only
+    // when a route is added or removed on purpose.
     expect(PAGES.map((p) => p.route)).toEqual([
       "executive", "mttr", "program",
       "sca", "sast", "secrets",
-      "repos", "history", "data",
+      "repos", "history", "data", "help",
       "settings",
     ]);
   });

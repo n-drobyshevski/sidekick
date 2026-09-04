@@ -43,6 +43,16 @@ export const CLOSE_GRACE = 120;
  * caret has to be computed rather than fixed: a card clamped against the right edge of the
  * window would otherwise point at nothing.
  *
+ * `viewport.left` is the left edge of the CONTENT area — `main`'s scrollport, not the
+ * window's own x=0 — and defaults to 0 for a caller with no rail to keep clear of. Below the
+ * icon rail (`--rail-icon-w`, 76px) a trigger sitting near main's own left edge centres a
+ * card whose left edge then clamps only against the window: at 1568px, hovering the MTTR
+ * hero's "Censored" label (anchor.left=124) computed `left=8` — inside the RAIL's 0-76px
+ * band, not inside the content column the card is explaining. Reusing this SAME clamp shape
+ * (`Math.max(floor, Math.min(left, ceiling))`) with a content-aware floor is what
+ * `ui/popover.js`'s `positionPopover` already does against the plain window edge; there is
+ * no third clamp implementation here, only a floor that now knows where the content starts.
+ *
  * Returns viewport coordinates for `position: fixed`, the side it chose, and the caret's
  * offset from the card's own left edge.
  */
@@ -52,6 +62,7 @@ export function tipPlacement(anchor, size, viewport, opts) {
   const h = size.height;
   const vw = viewport.width;
   const vh = viewport.height;
+  const contentLeft = viewport.left || 0;
   const aLeft = anchor.left;
   const aWidth = anchor.width === undefined ? anchor.right - anchor.left : anchor.width;
 
@@ -67,8 +78,10 @@ export function tipPlacement(anchor, size, viewport, opts) {
 
   const centre = aLeft + aWidth / 2;
   let left = centre - w / 2;
-  left = Math.max(margin, Math.min(left, vw - w - margin));
-  if (vw - margin * 2 < w) left = margin;
+  // The floor is the content area's own left edge plus the margin, not the window's — the
+  // ceiling stays the window's right edge minus the card, since nothing sits to main's right.
+  left = Math.max(contentLeft + margin, Math.min(left, vw - w - margin));
+  if (vw - contentLeft - margin * 2 < w) left = contentLeft + margin;
 
   // The caret stays off both corners so it never overlaps the border radius, and it is
   // pinned to the anchor's centre in between.
@@ -120,6 +133,15 @@ export function tipLead(text, max) {
  * restated heading, so it earns its own line. The term itself does NOT appear: the trigger
  * is the term, and a card that opens by repeating the word under the pointer is noise.
  *
+ * READS `entry.lines` — helpContent.js's own shape, an array of 2-3 whole sentences — and
+ * shows the FIRST TWO, which is the two-line rule stated at the top of helpContent.js ("The
+ * tip card shows the first two lines") and pinned by test/helpContent.test.js's own
+ * MAX_TIP_LINE_LENGTH check on exactly those two. This used to read `entry.blurb`, a field no
+ * entry in the book has carried since helpContent.js moved to multi-line entries — so every
+ * glossary tip in the app showed an empty card, nothing above the "Enter for the full
+ * definition" line. `entry.blurb` is kept as a fallback for a caller that still hands this a
+ * single-string shape rather than `lines`.
+ *
  * Returns null for an entry the book does not carry, so a renamed id degrades to a plain
  * label rather than throwing on the page. test/helpContent.test.js is what catches the
  * rename itself, at build time, where it belongs.
@@ -127,9 +149,12 @@ export function tipLead(text, max) {
 export function glossaryTipLines(entry, opts) {
   if (!entry) return null;
   const { max } = opts || {};
+  const lines = Array.isArray(entry.lines) && entry.lines.length
+    ? entry.lines.slice(0, 2).map((line) => tipLead(line, max))
+    : [tipLead(entry.blurb, max)];
   return {
     aka: entry.aka || null,
-    lines: [tipLead(entry.blurb, max)],
+    lines,
     term: entry.id,
     more: "Enter for the full definition",
   };
