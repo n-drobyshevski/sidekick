@@ -10,7 +10,7 @@
 // cannot import a TS module, so the logic is written twice and test/configViewMirror.test.js
 // asserts the two agree on a fixture set. Change one, change the other, or the test fails.
 
-import { listSplit } from "../store.js";
+import { listSplit } from "../../../../../gas_shared/store.js";
 
 export const CONFIG_SORTS = ["severity", "rule", "resource", "firstSeen", "status"];
 

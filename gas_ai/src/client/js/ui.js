@@ -1,88 +1,48 @@
-// The shared component base, as one import surface.
+// The component base, as one import surface.
 //
-// The implementations live in ./ui/*.js — this file re-exports them so every call site
-// keeps importing from "../ui.js" and the modules stay small enough to read. esbuild
-// flattens the re-exports at build time, so the indirection costs nothing at runtime.
+// ALMOST NONE OF IT IS THIS APP'S ANY MORE. Twenty-three modules moved to `gas_shared/ui/`
+// when the design system was cut into its own package — one copy for the three sidekicks
+// instead of three that drift. This file is the app's end of that seam: it re-exports the
+// shared barrel wholesale and adds the ten modules that are genuinely this register's.
 //
-//   dom.js       el, clear, motionOk, downloadText — the element builder
-//   format.js    dates in the display zone
-//   severity.js  the severity marks (dot + word, never colour alone)
-//   data.js      quantity display: progress track, the sortable table, the paging footer
-//   tableModel.js how a register orders and pages its rows — comparators, where an unknown
-//                goes, what a tie does. DOM-free, so the half that can be WRONG is the half
-//                vitest can hold
-//   cells.js     what a cell says when the answer is "nothing", "maybe", or "this is a
-//                node" — the one muted em dash, yes/no/unknown, the kind medallion
-//   controls.js  status pills, KPI tiles, stat rows
-//   feedback.js  loading / empty / error / toast / dialog
-//   tip.js       the one hover card: the app's only answer to "what does this mean"
-//   tipPlace.js  where that card lands and when it opens — the DOM-free half, so vitest
-//                can hold the geometry without a jsdom this repo does not have
-//   sheet.js     the drill-down overlay and its section+row vocabulary
-//   combobox.js  the searchable portaled listbox
-//   prunePanel.js the Data page's keep-one-project-delete-the-rest control
-//   tokenList.js a rule field holding a LIST of opaque strings: chips + that listbox
-//   code.js      a monospace block, and copying out of a sandboxed iframe
-//   uiIcons.js   chrome glyphs (close, chevrons, grip) — icons.js does node kinds
-//   brandMark.js the product mark, traced off the source raster: the shell's only imagery
-//   rail.js      one value drawn on the shared 0–100 axis, and edited on it
-//   popover.js   where a portaled popover sits, and the one contract for closing it
-//   portals.js   the open-portal count the sheet's focus trap defers to
-//   outcome.js   the problem tree's ACT/ATTEND/TRACK*/TRACK badge
-//   posture.js   the posture lattice's Tier 1..4 badge
-//   lattice.js   the decision lattice: 54 leaves or 27 cells as a grid of cells
-//   axisBar.js   what one decision axis actually read across the landscape
-//   claimRail.js how much of a closed space one cascade row claims, on a shared axis
-//   rowReorder.js the cascade grip: drag as the shortcut, the row's arrows as the control
-//   diagList.js  the "is this rule quietly failing" read-out, shared by all three cascades
-//   settings.js  the settings form: panel, labelled row, switch, tab strip, one save bar
+// WHAT STAYED, AND WHY. Every one of them reads something no sibling has: the decision
+// lattice and its icicle, the ACT/ATTEND/TRACK outcome badge, the Tier 1..4 posture badge,
+// the cascade's claim rail and its "is this rule quietly failing" diagnostic list, the Data
+// page's prune panel, the AARS chip, and this register's project-scope switcher (which
+// reads `src/domain/` and means nothing in a sibling with no asset graph). A component that
+// draws an AARS band is not a component the yellow register can use.
+//
+//   aarsChip.js       the AARS score as a chip, in the shared severity palette
+//   outcome.js        the problem tree's ACT/ATTEND/TRACK*/TRACK badge
+//   posture.js        the posture lattice's Tier 1..4 badge
+//   lattice.js        the decision lattice: 54 leaves or 27 cells as a grid
+//   latticeIcicle.js  the same lattice as nested area, for the shape rather than the cells
+//   latticeSection.js the two together, with the controls that switch between them
+//   claimRail.js      how much of a closed space one cascade row claims, on a shared axis
+//   diagList.js       the "is this rule quietly failing" read-out, shared by all three cascades
+//   prunePanel.js     the Data page's keep-one-project-delete-the-rest control
+//   projectScope.js   this register's own answer to "which slice am I looking at"
+//
+// ONE NAME IS DELIBERATELY SHADOWED. `registerWideNote` exists in both: `gas_shared/ui/dom.js`
+// exports the plain DOM builder `(text, opts)`, and this app's `projectScope.js` exports a
+// scope-AWARE `(bootstrapData, detail)` that reads the live scope and returns null when the
+// view is not narrowed. The explicit re-export below wins over `export *` — that is the ES
+// module rule, not an accident of order — so gas_ai's four call sites (aars, data, scans)
+// keep the wrapper they were written against. Do not "fix" this by dropping the line.
+//
+// Every call site keeps importing from "../ui.js"; esbuild flattens the re-export chain at
+// build time, so the extra hop costs nothing at runtime. test/shared.test.js's parity
+// contract holds `src/client/js/ui/` to exactly the ten local modules above.
 
-export { appendAll, clear, downloadText, el, motionOk } from "./ui/dom.js";
-export { registerWideNote, scopeNote, trendScopeNote, trendScopeView } from "./ui/projectScope.js";
-export {
-  DISPLAY_TZ, dueRank, fmtDate, fmtDateTime, plural, pluralize, sevRank,
-} from "./ui/format.js";
-export {
-  aarsChip, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
-} from "./ui/severity.js";
-export { dataTable, meter, pager, progressBar, tableFooter } from "./ui/data.js";
-export {
-  DEFAULT_PAGE_SIZE, PAGE_SIZES, compareValues, nullsLast, pageForSize, pageOf, sortRows,
-  triState,
-} from "./ui/tableModel.js";
-export { absent, nameCell, triCell } from "./ui/cells.js";
-export {
-  field, filterChipRow, heroStat, kpiCard, pageHeader, segmented, select, selectField,
-  statRow, statusPill, togglePills,
-} from "./ui/controls.js";
-export {
-  confirmDialog, emptyState, errorState, skeleton, skeletonStack, toast,
-} from "./ui/feedback.js";
-export {
-  bookTip, chartTipHandler, closeTip, glossaryTip, tip, tipAnchor, tipLabel, tipLines,
-  tipMark, truncTip,
-} from "./ui/tip.js";
-export {
-  closeActiveSheet, openSheet, sectionLabel, sheetRow, sheetSection,
-} from "./ui/sheet.js";
-export { filterCombobox } from "./ui/combobox.js";
-export { prunePanel, prunePanelView } from "./ui/prunePanel.js";
-export { tokenList } from "./ui/tokenList.js";
-export { openPopover, popoverDismiss, positionPopover } from "./ui/popover.js";
-export { portalsOpen } from "./ui/portals.js";
-export { codeBlock, copyButton, copyText } from "./ui/code.js";
-export { uiIcon } from "./ui/uiIcons.js";
-export { brandMark } from "./ui/brandMark.js";
-export { pointRail, railScale } from "./ui/rail.js";
-export { debounce, onPageTeardown, runPageTeardown } from "./ui/timing.js";
+export * from "../../../../gas_shared/ui/index.js";
+export { aarsChip } from "./ui/aarsChip.js";
 export { outcomeBadge, outcomeLabel, outcomeNote } from "./ui/outcome.js";
 export { tierBadge, tierLabel } from "./ui/posture.js";
 export { latticeGrid } from "./ui/lattice.js";
-export { axisBar, axisSegments } from "./ui/axisBar.js";
 export { latticeSection } from "./ui/latticeSection.js";
-export { claimRail, claimOffsets } from "./ui/claimRail.js";
-export { rowDrag, ruleGrip } from "./ui/rowReorder.js";
+export { claimOffsets, claimRail } from "./ui/claimRail.js";
 export { diagRow, diagWarn, paintUnknownRates } from "./ui/diagList.js";
+export { prunePanel, prunePanelView } from "./ui/prunePanel.js";
 export {
-  disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList,
-} from "./ui/settings.js";
+  registerWideNote, scopeNote, trendScopeNote, trendScopeView,
+} from "./ui/projectScope.js";

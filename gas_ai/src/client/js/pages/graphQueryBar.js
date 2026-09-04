@@ -32,7 +32,7 @@
 
 import { el, openPopover, uiIcon } from "../ui.js";
 import { describeFilter, filterEditor, operatorOf, valuesText } from "./filterEditor.js";
-import { categoryOf, edgeLabel, kindIconSvg, kindLabel, kindsLabel } from "../icons.js";
+import { categoryOf, edgeLabel, kindIconSvg, kindLabel, kindsLabel } from "../../../../../gas_shared/icons.js";
 import {
   MAX_DEPTH,
   addStep,

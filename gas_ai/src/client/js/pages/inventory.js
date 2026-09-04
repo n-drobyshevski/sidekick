@@ -17,13 +17,13 @@
 // The filter/sort/facet logic itself lives in ../assetQuery.js, a hand-kept mirror of
 // src/domain/assetTable.ts that test/assetQueryMirror.test.ts holds to it.
 
-import { bootstrap, buildHash, listJoin, navigate, setParams, swrCall } from "../store.js";
+import { bootstrap, buildHash, listJoin, navigate, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { SAVED_VIEW_KEYS, readSavedViews } from "../savedViews.js";
 import { openAssetSheet } from "../detailSheets.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindIconSvg, kindLabel,
-} from "../icons.js";
+} from "../../../../../gas_shared/icons.js";
 import { facetGroup, filterUI } from "../filters.js";
 import {
   ASSET_FLAGS, DEFAULT_SORT_DIR, FACET_KEYS,
@@ -31,7 +31,7 @@ import {
 } from "../assetQuery.js";
 import {
   absent, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
-  emptyState, errorState,
+  emptyState, errorState, heroStat, pageHeader,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtDate, kpiCard, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
@@ -167,10 +167,13 @@ export async function renderInventory(main, params) {
   closeActiveSheet();
   const boot = await bootstrap();
   main.append(
-    el("h1", {}, "AI Inventory"),
-    el("p", { class: "page-sub" },
-      "Every AI asset and its supporting identity/data surface from the last sync, " +
-      "ranked by how many issues and failing controls are open on it."),
+    // The three-level header every register page uses: the lane it sits in, the page, and
+    // the one line saying what the rows are. It replaces a bare h1 and the paragraph under
+    // it — same two facts, in the shape the rest of the app already reads in.
+    pageHeader({
+      hero: heroStat("Landscape", "AI Inventory",
+        "Every AI asset from the last sync, ranked by what is open on it."),
+    }),
   );
 
   if (!boot.latestSync) {

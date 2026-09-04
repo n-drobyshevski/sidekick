@@ -38,11 +38,12 @@ import {
   ENTRIES, ROUTE_TITLES, groupByFamily, lexTally, resolveEntries, visibleEntries,
 } from "../helpContent.js";
 import { showExperimental } from "../experimental.js";
-import { CATEGORY_LABELS, kindIcon, svgEl } from "../icons.js";
+import { CATEGORY_LABELS, kindIcon, svgEl } from "../../../../../gas_shared/icons.js";
 import { ROUTE_ICONS } from "../routeIcons.js";
-import { bootstrap, bootstrapCached, navigate, setParams, swrCall } from "../store.js";
+import { bootstrap, bootstrapCached, navigate, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, debounce, el, fmtDateTime, motionOk, onPageTeardown, plural, sectionLabel,
+  clear, debounce, el, fmtDateTime, heroStat, motionOk, onPageTeardown,
+  pageHeader, plural, sectionLabel,
   statusPill, tip, uiIcon,
 } from "../ui.js";
 
@@ -123,10 +124,10 @@ export async function renderHelp(main, params, _ctx) {
   main.append(page);
 
   doc.append(
-    el("h1", {}, "Help"),
-    el("p", { class: "page-sub" },
-      "What every word and mark on these screens means, and how much of each this tenant " +
-      "holds. Every figure below is the one the last sync produced."),
+    pageHeader({
+      hero: heroStat("Help", "Key sheet",
+        "What every word and mark means, and how much of each this tenant holds."),
+    }),
   );
 
   const headHost = el("div", { class: "help-head" });

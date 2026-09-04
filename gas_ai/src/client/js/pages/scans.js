@@ -26,17 +26,17 @@
 //    lines of page-local markup on the same visual recipe, which is cheaper than the
 //    confusion.
 
-import { call } from "../api.js";
-import { bootstrap, bootstrapCached, swrCall } from "../store.js";
+import { call } from "../../../../../gas_shared/api.js";
+import { bootstrap, bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import {
   COVERAGE, COVERAGE_ORDER, DESTINATIONS, SCAN_AREAS,
   coverageTally, destinationOf, rankAreas, resolveAreas,
 } from "../scanContent.js";
-import { svgEl } from "../icons.js";
+import { svgEl } from "../../../../../gas_shared/icons.js";
 import { openAreaSheet } from "./scanSheet.js";
 import {
   clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtDate, fmtDateTime,
-  appendAll,
+  appendAll, heroStat, pageHeader,
   meter, motionOk, onPageTeardown, plural, registerWideNote, sectionLabel, skeleton, statRow,
 } from "../ui.js";
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
@@ -57,14 +57,15 @@ export async function renderScans(main, params, ctx) {
   const boot = await bootstrap();
   appendAll(
     main,
-    el("h1", {}, "Wiz Scans"),
-    el("p", { class: "page-sub" },
+    pageHeader({
       // Counted, not typed. This sentence said "nine" while the page rendered ten areas —
       // the exact class of drift the rest of this page exists to refuse, and it only takes
       // one area being added anywhere for a hand-typed number to start lying.
-      "Every figure in this dashboard traces back to one of " + SCAN_AREAS.length +
-      " Wiz scan areas. This is what each one is asked for, what it reported, and where " +
-      "the answer lands."),
+      hero: heroStat("Assurance", "Wiz Scans",
+        "Every figure traces back to one of " + SCAN_AREAS.length + " Wiz scan areas."),
+    }),
+    el("p", { class: "page-sub" },
+      "What each one is asked for, what it reported, and where the answer lands."),
     // "what it reported in this tenant" used to end that sentence, and a project view made it
     // false — the figures below come from scoped endpoints. The split is the point and it is
     // not obvious: the STEPS are a description of the sync battery and never move, while the

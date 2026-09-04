@@ -39,7 +39,7 @@
 
 import {
   bootstrap, navigate, parseHash, setParams, swrCall,
-} from "../store.js";
+} from "../../../../../gas_shared/store.js";
 import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { SAVED_VIEW_KEYS, readSavedViews } from "../savedViews.js";
 import { renderGraph } from "../graphView.js";
@@ -47,7 +47,7 @@ import { renderGraphSkeleton } from "../graphSkeleton.js";
 import { queryTable, DEFAULT_PAGE_SIZE } from "../queryTable.js";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindIconSvg, kindLabel,
-} from "../icons.js";
+} from "../../../../../gas_shared/icons.js";
 import { filterEntries } from "./graphChips.js";
 import {
   applyWhere, defaultQuery, migrateLegacyParams, parseQuery, parseWhere, queryRows,

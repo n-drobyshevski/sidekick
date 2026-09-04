@@ -4,9 +4,9 @@
 // Two geometries, one attribute contract (class names, data-category, data-combo) — so
 // graph.css's selectors don't care which card is on screen.
 
-import { categoryOf, kindIcon, kindLabel, svgEl } from "./icons.js";
-import { sevEntries, sevSpoken } from "./ui/severity.js";
-import { plural } from "./ui/format.js";
+import { categoryOf, kindIcon, kindLabel, svgEl } from "../../../../gas_shared/icons.js";
+import { sevEntries, sevSpoken } from "../../../../gas_shared/ui/severity.js";
+import { plural } from "../../../../gas_shared/ui/format.js";
 
 import { tipAnchor } from "./ui.js";
 // Mirrors SEVERITY_ORDER in src/domain/config.ts, for the same reason egoLayout.js,

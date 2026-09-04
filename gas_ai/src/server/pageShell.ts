@@ -14,7 +14,7 @@
 // THE MARK, A THIRD TIME — and copied rather than imported, deliberately.
 //
 // src/client/js/ui/brandMark.js is the source; src/client/index.html already carries a second
-// copy because the splash paints before any JavaScript runs, and test/brandMark.test.js pins
+// copy because the splash paints before any JavaScript runs, and test/shared.test.js pins
 // that copy to the module's constants. These pages need a third for a different reason: they
 // are served by the SERVER bundle, and the module lives in the client one.
 //

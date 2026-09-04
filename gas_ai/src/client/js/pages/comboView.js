@@ -11,7 +11,7 @@
 // They must be changed in both places or the KPI row and the row pills start telling
 // different stories about the same deadline.
 
-import { dueRank, sevRank as rankSeverity } from "../ui/format.js";
+import { dueRank, sevRank as rankSeverity } from "../../../../../gas_shared/ui/format.js";
 
 export const CONDITION_KEYS = [
   "MISSING_GUARDRAIL", "EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "INTERNET_EXPOSURE",

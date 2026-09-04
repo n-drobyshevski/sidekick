@@ -17,9 +17,9 @@
 // and is mirrored into the hash. That is what fixes the old bug where a background SWR
 // revalidation called paint(fresh) and silently collapsed the table you had open.
 
-import { bootstrap, navigate, setParams, swrCall } from "../store.js";
+import { bootstrap, navigate, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
-import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
+import { kindIconSvg, kindLabel, categoryOf } from "../../../../../gas_shared/icons.js";
 import {
   absent, FINDINGS_SCORE_LABEL, ordinal,
   clear, dataTable, debounce, el, emptyState, errorState, heroStat, outcomeBadge, pageHeader,

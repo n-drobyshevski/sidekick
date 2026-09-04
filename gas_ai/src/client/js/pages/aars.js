@@ -20,7 +20,7 @@
 //    page gets wrong is a wrong caption, never a wrong number. That is what lets the page
 //    carry four moving vocabularies without the model inheriting their instability.
 
-import { call } from "../api.js";
+import { call } from "../../../../../gas_shared/api.js";
 import {
   aarsChip,
   axisBar,
@@ -36,7 +36,9 @@ import {
   el,
   field,
   emptyState,
+  errorState,
   filterCombobox,
+  num,
   onPageTeardown,
   openPopover,
   openSheet,
@@ -64,7 +66,7 @@ import {
   tokenList,
   uiIcon,
 } from "../ui.js";
-import { bootstrapCached } from "../store.js";
+import { bootstrapCached } from "../../../../../gas_shared/store.js";
 import { POSTURE_LATTICE, PROBLEM_LATTICE, toneForKey } from "../lattice.js";
 import {
   OUTCOME_VALUES,
@@ -175,13 +177,15 @@ function cloneRule(rule) {
   return JSON.parse(JSON.stringify(rule));
 }
 
-/** Number from an input. An EMPTY field is not zero — it is "no value yet". */
-function num(raw, fallback) {
-  const s = String(raw).trim();
-  if (s === "") return fallback;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : fallback;
-}
+// `num` comes from gas_shared/ui/figures.js. This page used to define its own — same idea,
+// same refuse-before-cast discipline — and the two differed in exactly one way: the local
+// copy called `.trim()` first, so a whitespace-only field fell to the fallback rather than
+// through `Number(" ")`, which is 0. That branch is unreachable here. Every one of the ten
+// call sites below reads `.value` off an `<input type="number">` (numberInput(), and the
+// one inline field on the cascade rows), and the HTML spec has that IDL attribute return
+// the empty string for anything that is not a valid floating-point number — whitespace
+// included. The shared `num` is also strictly stricter about `[]`, `false` and `true`,
+// none of which an input can hand it. So the trim was dead code, not a lost guard.
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
@@ -700,7 +704,7 @@ export async function renderAarsRules(main, _params, ctx) {
       el(
         "div",
         { class: "workbench-empty" },
-        emptyState("Couldn't load the AARS rule.", String(e.message || e)),
+        errorState("Couldn't load the AARS rule.", { detail: String(e.message || e) }),
       ),
     );
     return;
@@ -2518,7 +2522,7 @@ export async function renderAarsRules(main, _params, ctx) {
         el(
           "div",
           { class: "workbench-empty" },
-          emptyState("Couldn't load the Problem tree rule.", String(e.message || e)),
+          errorState("Couldn't load the Problem tree rule.", { detail: String(e.message || e) }),
         ),
       );
       problemLoading = false;
@@ -3655,7 +3659,7 @@ export async function renderAarsRules(main, _params, ctx) {
         el(
           "div",
           { class: "workbench-empty" },
-          emptyState("Couldn't load the Posture rule.", String(e.message || e)),
+          errorState("Couldn't load the Posture rule.", { detail: String(e.message || e) }),
         ),
       );
       postureLoading = false;

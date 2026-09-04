@@ -19,8 +19,8 @@
 // of solids clears the OKLab separation floor (15) and the dichromatic floor (8), which the
 // previous amber/orange pair missed by more than half.
 
-import { el } from "./dom.js";
-import { bookTip } from "./tip.js";
+import { el } from "../../../../../gas_shared/ui/dom.js";
+import { bookTip } from "../../../../../gas_shared/ui/tip.js";
 
 const TIER_META = {
   4: { kind: "pill--rank4", label: "Tier 4" },

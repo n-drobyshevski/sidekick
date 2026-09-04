@@ -37,12 +37,12 @@
 // tab stop that announces "Active" and nothing else is a stop that costs a keypress and pays
 // nothing.
 
-import { el } from "./dom.js";
-import { svgEl } from "../icons.js";
-import { onPageTeardown } from "./timing.js";
+import { el } from "../../../../../gas_shared/ui/dom.js";
+import { svgEl } from "../../../../../gas_shared/icons.js";
+import { onPageTeardown } from "../../../../../gas_shared/ui/timing.js";
 import { icicleLayout, nestingAxes, vectorSentence } from "../lattice.js";
 
-import { tipAnchor } from "./tip.js";
+import { tipAnchor } from "../../../../../gas_shared/ui/tip.js";
 /** Column widths are equal by construction (`icicleLayout`), so only the height is tuned here. */
 const LEAF_H = 12;
 const HEAD_H = 22;

@@ -37,7 +37,7 @@
 import { el, openPopover, openSheet, uiIcon } from "../ui.js";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, edgeLabel, kindIconSvg, kindLabel,
-} from "../icons.js";
+} from "../../../../../gas_shared/icons.js";
 import { filterEditor } from "./filterEditor.js";
 import { findEntry } from "../helpContent.js";
 import { canNegate, serializeQuery, serializeStep } from "./graphQuery.js";

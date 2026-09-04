@@ -16,11 +16,11 @@
 // control CLAIMS — the label, the caption, whether the stored scope has gone stale — and is
 // DOM-free so those claims can be tested. `projectScopeControl` only assembles them.
 
-import { el } from "./dom.js";
-import { filterCombobox } from "./combobox.js";
-import { uiIcon } from "./uiIcons.js";
+import { el } from "../../../../../gas_shared/ui/dom.js";
+import { filterCombobox } from "../../../../../gas_shared/ui/combobox.js";
+import { uiIcon } from "../../../../../gas_shared/ui/uiIcons.js";
 
-import { tipAnchor } from "./tip.js";
+import { tipAnchor } from "../../../../../gas_shared/ui/tip.js";
 const nf = new Intl.NumberFormat();
 
 function assetCount(n) {

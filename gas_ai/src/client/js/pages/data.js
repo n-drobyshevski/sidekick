@@ -1,9 +1,10 @@
 // Data: sync history, storage stats, and the reset control.
 
-import { call, } from "../api.js";
-import { bootstrapCached, swrCall } from "../store.js";
+import { call, } from "../../../../../gas_shared/api.js";
+import { bootstrap, bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, appendAll, clear, confirmDialog, dataTable, el, emptyState, fmtDateTime,
+  absent, appendAll, clear, confirmDialog, dataTable, el, emptyState, errorState,
+  firstRunNotice, fmtDateTime, heroStat, pageHeader,
   prunePanel, registerWideNote, statRow,
   sectionLabel, skeleton, statusPill, toast,
 } from "../ui.js";
@@ -17,10 +18,30 @@ function fmtBytes(n) {
 
 export async function renderData(main, _params, ctx) {
   main.append(
-    el("h1", {}, "Data"),
-    el("p", { class: "page-sub" },
-      "Sync history, storage footprint, and maintenance."),
+    pageHeader({
+      hero: heroStat("Data", "Sync history and storage",
+        "What has been read, what it occupies, and what can be reset."),
+    }),
   );
+
+  // WHERE THE FIGURES CAME FROM, said out loud on a page whose figures read zero honestly.
+  // Every number below is a census of what is STORED, so an unsynced register renders a
+  // page of legitimate zeroes — and a reader who cannot tell an empty ledger from a broken
+  // read has no way to choose between "nothing to see" and "this is broken".
+  //
+  // `await bootstrap()`, not `bootstrapCached()`: the cache can still be null while the
+  // shell resolves, and a null there would post the notice over a register that has been
+  // synced all week. The two callers of `bootstrapCached()` further down are reading the
+  // project list, which is a different question.
+  const noticeHost = el("div", {});
+  main.append(noticeHost);
+  if (!(await bootstrap()).latestSync) {
+    noticeHost.append(firstRunNotice({
+      synced: false,
+      hint: "The figures below count what the ledger holds, so they read zero honestly."
+        + " Run one with “Sync now” in the sidebar to give them something to count.",
+    }));
+  }
 
   const historyHost = el("div", {});
   const statsHost = el("div", {});
@@ -52,13 +73,15 @@ export async function renderData(main, _params, ctx) {
   if (historyRes.status === "fulfilled") paintHistory(historyRes.value);
   else {
     const e = historyRes.reason;
-    historyHost.append(emptyState("Couldn't load sync history.", String((e && e.message) || e)));
+    historyHost.append(errorState("Couldn't load sync history.",
+      { detail: String((e && e.message) || e) }));
   }
 
   if (statsRes.status === "fulfilled") paintStats(statsRes.value);
   else {
     const e = statsRes.reason;
-    statsHost.append(emptyState("Couldn't load storage stats.", String((e && e.message) || e)));
+    statsHost.append(errorState("Couldn't load storage stats.",
+      { detail: String((e && e.message) || e) }));
   }
 
   main.append(sectionLabel("Maintenance"));

@@ -5,15 +5,15 @@
 // Order is a decision, not a layout: the verdict and the fix come before the ledger of
 // infrastructure facts, because the analyst opened this to decide something.
 
-import { bootstrapCached, navigate, swrCall } from "./store.js";
+import { bootstrapCached, navigate, swrCall } from "../../../../gas_shared/store.js";
 import { egoGraph } from "./egoGraph.js";
 import { expansionStatus, mergeLiveRels, shouldAutoExpand } from "./egoLayout.js";
-import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "./icons.js";
+import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "../../../../gas_shared/icons.js";
 import { severityMixText } from "./graphNode.js";
 import { slaState } from "./pages/comboView.js";
 import {
   assetSections, configFindingSections, issueSections, recordCursor,
-} from "./recordSections.js";
+} from "./sheetSections.js";
 import {
   clear, codeBlock, copyButton, el, emptyState, errorState, fmtDate,
   fmtDateTime,
@@ -551,7 +551,7 @@ export function openAssetSheet(assetId, opts = {}) {
       });
 
       // One renderer per rail section, run the first time its pane is shown. Order here is
-      // documentation only — the rail model in recordSections.js decides what appears and
+      // documentation only — the rail model in sheetSections.js decides what appears and
       // in what sequence, and it is the thing under test.
       const panes = {
         overview(pane) {

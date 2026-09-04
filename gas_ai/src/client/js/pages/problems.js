@@ -27,7 +27,7 @@
 // selected" — the default on load, in either mode — means the table reads exactly the
 // order the server sent.
 
-import { bootstrap, setParams, swrCall } from "../store.js";
+import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {

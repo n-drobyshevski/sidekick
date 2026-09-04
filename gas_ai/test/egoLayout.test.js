@@ -1,4 +1,4 @@
-// The ego-graph mini-diagram as pure data — same split as recordSections.test.js: the
+// The ego-graph mini-diagram as pure data — same split as sheetSections.test.js: the
 // logic is tested here, the pixels are checked in the dev harness.
 
 import { describe, it, expect } from "vitest";

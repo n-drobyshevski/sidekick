@@ -5,6 +5,20 @@
 // Node process can run them. detailSheets.js paints what this module decides; it does no
 // deciding of its own.
 
+// RENAMED FROM recordSections.js, and the name change carries the split. The two DOM-free
+// geometry helpers this module used to define — `recordCursor` and `clampSheetWidth` — moved
+// to `gas_shared/ui/recordCursor.js` with the design system: one steps a list of ids, the
+// other clamps a pixel width, neither was ever about an AI asset's sections, and
+// `gas_shared/ui/sheet.js` is their only caller in every register. What is left is the three
+// section builders, which ARE this register's — an asset has issues, compliance findings,
+// toxic combinations and neighbours, and no sibling has any of those.
+//
+// The old name is now reserved: the shared parity contract forbids a local
+// `src/client/js/recordSections.js` outright, because a file by that name is how the shared
+// helpers would come back in through a copy. The re-export below keeps this module's own
+// consumers (detailSheets.js, and the test beside them) on one import.
+export { clampSheetWidth, recordCursor } from "../../../../gas_shared/ui/recordCursor.js";
+
 function section(id, label, group, count, empty) {
   return { id: id, label: label, group: group, count: count, empty: empty };
 }
@@ -131,49 +145,4 @@ export function configFindingSections(detail) {
     section("projects", "Projects", "Context", projectCount, projectCount === 0),
     section("facts", "Facts", "Context", null, false),
   ];
-}
-
-// -------------------------------------------------------------------------- navigation
-
-/**
- * Prev/next/position for stepping through a record list (an inventory row, an issue table
- * row, ...) one detail sheet at a time. "index" is 0-based; "position" is 1-based and 0
- * when the cursor does not land on a real row at all.
- */
-export function recordCursor(ids, index) {
-  var list = ids || [];
-  var total = list.length;
-  var i = Number(index);
-  var valid = total > 0 && Number.isFinite(i) && i >= 0 && i < total;
-  if (!valid) {
-    return { prevId: null, nextId: null, position: 0, total: total };
-  }
-  return {
-    prevId: i > 0 ? list[i - 1] : null,
-    nextId: i < total - 1 ? list[i + 1] : null,
-    position: i + 1,
-    total: total,
-  };
-}
-
-// ------------------------------------------------------------------------- sheet width
-
-/**
- * The resize floor/ceiling for the detail sheet's draggable width, clamped to an integer
- * pixel count. The floor is applied before the ceiling, so on a viewport too narrow for
- * minPx to fit under maxVwPct — where the ceiling comes out below the floor — that same
- * ordering makes the ceiling win rather than forcing a width the viewport can't hold.
- */
-export function clampSheetWidth(px, minPx, maxVwPct, viewportW) {
-  var floor = Number(minPx);
-  if (!Number.isFinite(floor)) floor = 0;
-  var p = Number(px);
-  var vw = Number(viewportW);
-  var pct = Number(maxVwPct);
-  if (!Number.isFinite(p) || !Number.isFinite(vw) || !Number.isFinite(pct)) {
-    return Math.round(floor);
-  }
-  var ceiling = (vw * pct) / 100;
-  if (!Number.isFinite(ceiling)) return Math.round(floor);
-  return Math.round(Math.min(ceiling, Math.max(floor, p)));
 }

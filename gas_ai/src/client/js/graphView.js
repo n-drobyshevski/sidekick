@@ -6,7 +6,7 @@
 // aria-label suffix; missing guardrail = dashed amber stub + text label; severity =
 // dot + label chip. Kind = icon + text label.
 
-import { kindLabel, svgEl } from "./icons.js";
+import { kindLabel, svgEl } from "../../../../gas_shared/icons.js";
 import { el, uiIcon } from "./ui.js";
 import { NODE_H, NODE_W, drawNodeCard, truncate } from "./graphNode.js";
 import { buildField, edgePath } from "./edgeRoute.js";

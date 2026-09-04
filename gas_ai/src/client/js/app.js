@@ -6,17 +6,18 @@
 // chrome is careful never to offer (see ui/projectScope.js). The sync controls stay in the
 // rail, where they have always been and where the last-sync caption can afford its words.
 
-import { call } from "./api.js";
+import { configureApp } from "../../../../gas_shared/appConfig.js";
+import { call } from "../../../../gas_shared/api.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
 import {
-  DEFAULT_ROUTE, bootstrap, bootstrapCached, buildHash, invalidateBootstrap,
+  bootstrap, bootstrapCached, buildHash, defaultRoute, invalidateBootstrap,
   invalidateRpcCache, parseHash,
-} from "./store.js";
+} from "../../../../gas_shared/store.js";
 import { onExperimentalChange, showExperimental } from "./experimental.js";
 import {
   clear, closeTip, el, fmtDateTime, progressBar, runPageTeardown, statusPill, tipAnchor,
 } from "./ui.js";
-import { brandMark } from "./ui/brandMark.js";
+import { brandMark } from "../../../../gas_shared/ui/brandMark.js";
 import { projectScopeControl } from "./ui/projectScope.js";
 import { toast } from "./ui.js";
 import { renderGraphPage } from "./pages/graph.js";
@@ -37,6 +38,41 @@ import {
   tapOpensPanel, wireRail,
 } from "./navFlyout.js";
 import { SAVED_VIEW_KEYS, readSavedViews } from "./savedViews.js";
+import { findEntry } from "./helpContent.js";
+
+// ============================================================================ the manifest
+//
+// WHAT THIS APP IS, handed to the shared core (gas_shared/appConfig.js) before anything
+// else in this module body runs.
+//
+// The shared modules cannot reach sideways into an app: `gas_shared/ui/tip.js` has no
+// `../helpContent.js` to import and `gas_shared/store.js` cannot know which route is this
+// register's front door. Those answers travel as data instead. `configureApp()` is
+// DELIBERATELY THE FIRST STATEMENT of the module body — imports run before it, but no
+// shared module reads the manifest at import time (see appConfig.js's rule 2), so the first
+// read of it can only happen after this line.
+const MANIFEST = {
+  // ONE SPELLING, and it used to be two. The shell said "Wiz SIDEKICK AI" in three places
+  // (splash label, appbar wordmark, document.title) while the mark's own doc comment and
+  // src/server/pageShell.ts spelled it in prose; the caps were a leftover from the PoC
+  // header, not a wordmark rule — nothing sets text-transform on .appbar-name. The manifest
+  // is now the only place the product is named, so the surfaces cannot drift again.
+  productName: "Wiz Sidekick AI",
+  // What the boot splash says it is opening. This register's front door IS a graph — the
+  // asset graph every page is a lens on — so unlike the DevSecOps sibling, the inherited
+  // noun is the right one here.
+  openingNoun: "graph",
+  // Trailing dot included. Two sidekicks served from the same origin must not share a key.
+  storagePrefix: "sidekickai.",
+  // The `problems` key of PAGES below, and the only place the two can disagree — which is
+  // what test/shared.test.js's navGroups contract checks. It is not the FIRST key here
+  // (`graph` is): this register's front door was moved to Priorities on purpose, and the
+  // map no longer decides it by position.
+  defaultRoute: "problems",
+  // This register's own vocabulary. gas_shared/ui/tip.js asks; helpContent.js answers.
+  findHelpEntry: findEntry,
+};
+configureApp(MANIFEST);
 
 // The rail's information architecture, stated once.
 //
@@ -47,7 +83,7 @@ import { SAVED_VIEW_KEYS, readSavedViews } from "./savedViews.js";
 // from). Those are the three labelled lanes. `Labs` is the gate. The tail — `group: null` —
 // is chrome, separated by a rule and never labelled.
 //
-// Two rules renderSidebar depends on, both held by test/navGroups.test.js:
+// Two rules renderSidebar depends on, both held by test/shared.test.js:
 //   * A LABELLED LANE EARNS ITS HEADING BY HOLDING TWO PAGES. `Labs` is the one exception,
 //     because there the heading IS the statement — it says the page sits outside the
 //     security workflow rather than beside it — and it is drawn only when the gate is open.
@@ -64,7 +100,7 @@ import { SAVED_VIEW_KEYS, readSavedViews } from "./savedViews.js";
 //                   times and helpContent.test.js asserts every one resolves; a hidden route
 //                   still resolves, still renders if someone types its hash, and costs
 //                   nothing. The landing route stayed at Priorities when the seven came
-//                   back: DEFAULT_ROUTE is its own decision, and the queue is a defensible
+//                   back: the front door is its own decision, and the queue is a defensible
 //                   front door whatever else is on the rail.
 //   `experimental`  gates a route behind Settings → Show experimental content, for everyone.
 //   `group`         which lane it sits in, which is about arrangement and not availability.
@@ -80,7 +116,7 @@ const PAGES = {
   // `combos` (one toxic-combination pattern) nor `config` (findings only) can answer
   // "what do I work on Monday". It opens the Risk lane for that reason: it is the page an
   // analyst lives in, and the two under it are lenses on subsets of what it ranks. It is
-  // also this branch's front door — DEFAULT_ROUTE names it.
+  // also this branch's front door — MANIFEST.defaultRoute names it.
   problems: { title: "Priorities", group: "Risk", render: renderProblems },
   combos: { title: "Toxic Combinations", group: "Risk", render: renderCombos },
   config: { title: "Cloud Configuration", group: "Risk", render: renderConfigFindings },
@@ -110,16 +146,17 @@ const PAGES = {
   // questions. Gated, never removed — the key stays in this map so shared `#/aars` links
   // keep working for anyone who has asked for them, and so helpContent's "routes only to
   // pages that exist" guard still has a page to point at.
-  aars: {
-    title: "Scoring Models", group: "Labs", render: renderAarsRules, fullBleed: true,
-    experimental: true,
-  },
+  // ONE LINE, and it has to stay one line: the shared navGroups contract reads this table
+  // as TEXT (app.js touches `document` at module scope, so importing it would drag the whole
+  // SPA into a node test) and its parser takes `title`/`group` off the same line as the key.
+  // Wrapped across three lines, this entry parsed as a route with no title and no lane.
+  aars: { title: "Scoring Models", group: "Labs", render: renderAarsRules, fullBleed: true, experimental: true },
   // The tail: chrome, not a lane. A rule separates it and nothing labels it — "Data" under
   // a heading reading DATA, and "Help" under HELP, were two lines that restated the link
   // beneath them, and "Preferences" over "Settings" was the same line in a synonym.
   data: { title: "Data", group: null, render: renderData },
   settings: { title: "Settings", group: null, render: renderSettings },
-  // Last on purpose. DEFAULT_ROUTE in store.js names the front door, and this map no longer
+  // Last on purpose. MANIFEST.defaultRoute names the front door, and this map no longer
   // decides it by position — which is what made the old coupling worth stating and then
   // worth retiring: the fallback said "problems" while route() still said graph.
   help: { title: "Help", group: null, render: renderHelp },
@@ -206,16 +243,16 @@ let syncDetails = null; // open sync-details drawer handle, kept live by the pol
 function bootSplash() {
   const bar = progressBar(null);
   bar.classList.add("boot-splash-bar");
-  bar.setAttribute("aria-label", "Opening the graph");
+  bar.setAttribute("aria-label", "Opening the " + MANIFEST.openingNoun);
   return el(
     "div",
     { class: "boot-splash", role: "status", "aria-live": "polite" },
     el("div", { class: "boot-splash-inner" },
       el("div", { class: "boot-brand" },
         brandMark(112),
-        el("span", { class: "boot-brand-label" }, "Wiz SIDEKICK AI")),
+        el("span", { class: "boot-brand-label" }, MANIFEST.productName)),
       bar,
-      el("p", { class: "boot-splash-note" }, "Opening the graph…")),
+      el("p", { class: "boot-splash-note" }, "Opening the " + MANIFEST.openingNoun + "…")),
   );
 }
 
@@ -326,7 +363,7 @@ function renderAppbar(appbar, data) {
   // rail carries no mark at all now, so nothing in this file names the product twice.
   appbar.append(
     brandMark(22, { compact: true }),
-    el("span", { class: "appbar-name" }, "Wiz SIDEKICK AI"),
+    el("span", { class: "appbar-name" }, MANIFEST.productName),
   );
   // Null when there is no register to slice — including the boot-failure path, where offering
   // a picker over data we could not fetch would be a control with nothing behind it. The rule
@@ -674,20 +711,20 @@ async function route() {
   const parsed = parseHash();
   // RESOLVE ONCE, then use the resolved key for everything. An unknown path (a stale link, a
   // typo) lands on the front door rather than on whatever page this line happened to name
-  // when it was written — see DEFAULT_ROUTE in store.js. The nav highlight used to key off
+  // when it was written — see MANIFEST.defaultRoute above. The nav highlight used to key off
   // the RAW path, so an unresolved hash rendered a page while marking no nav item current.
-  let key = PAGES[parsed.route] ? parsed.route : DEFAULT_ROUTE;
+  let key = PAGES[parsed.route] ? parsed.route : defaultRoute();
   let params = parsed.params;
   // A gated route is a link the reader followed in good faith, so unlike the fallback above
   // this one REWRITES the hash: leaving `#/aars` in the address bar over a different page
   // with no nav item current is three answers to "where am I", two of them wrong.
   if (PAGES[key] && PAGES[key].experimental && !showExperimental()) {
-    key = DEFAULT_ROUTE;
+    key = defaultRoute();
     params = {};
     history.replaceState(null, "", buildHash(key, params));
   }
   const page = PAGES[key];
-  document.title = `${page.title} — Wiz SIDEKICK AI`;
+  document.title = `${page.title} — ${MANIFEST.productName}`;
   document.querySelectorAll(".nav-link").forEach((a) => {
     const isActive = a.getAttribute("href") === `#/${key}`;
     a.classList.toggle("active", isActive);

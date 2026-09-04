@@ -1,0 +1,265 @@
+// This register's end of the shared design-system contracts.
+//
+// The rules live in `gas_shared/test/contracts/` as SPEC FACTORIES rather than as test
+// files, because `vitest.config.ts` collects only this package's `test/` directory — a
+// shared contract cannot be a test, it has to be a function this file calls with vitest's
+// own describe/it/expect and this app's specifics. Six of them: tokens, empty states, nav
+// groups, brand mark, parity and the z scale.
+//
+// WHAT MOVED HERE, AND FROM WHERE:
+//   test/brandMark.test.js  deleted; the brand-mark contract is a strict superset of it —
+//                            same path constants, same globe arithmetic, same middlebox
+//                            scan, same pageShell.ts third copy — plus the splash-copy
+//                            rules gas_ai never had, which is what put "Wiz Sidekick AI"
+//                            under one source instead of three literals.
+//   test/navGroups.test.js  deleted; every assertion it made is in the navGroups contract,
+//                            which adds seven more (the route list, per-route titles, the
+//                            icon grid, one render import per route, and two sweeps over
+//                            navModel.js). Its landing-route check read `DEFAULT_ROUTE` out
+//                            of store.js; store.js is shared now and the manifest is the
+//                            source, which is what the contract reads.
+//
+// FIVE ASSERTIONS CANNOT HOLD HERE, AND EACH ONE IS STILL RUN.
+//
+// A contract is one implementation on purpose, so this file does not fork it to drop the
+// five. `expectingFailure()` below runs the real assertion and requires it to STILL FAIL,
+// naming the gas_ai fact that makes it false. That is a guard that bites: the day
+// `gas_shared` grows the hook, or this register's IA changes, the inverted test goes red and
+// whoever did it removes the exclusion. A skip would have gone quiet instead.
+//
+// The five, and the fact behind each:
+//
+//   tokens · "keeps the darkened text twins…"          `src/domain/config.ts` exports
+//   tokens · "clears 4.5:1 … for all six text tokens"  SEVERITY_COLORS and nothing else.
+//                            This register's severity TEXT tokens are CSS
+//                            (`--sev-critical-text` … in gas_shared/styles/tokens.base.css,
+//                            measured byte-identical to the siblings' when the sheets were
+//                            cut) and it has no JS twin of them. The contract wants the
+//                            constant, not the token.
+//   tokens · "keeps the remediation windows…"          There are no per-severity SLA
+//                            windows in this register at all. gas and gas_devsecops price a
+//                            deadline from severity; gas_ai reads Wiz's own `dueAt` per
+//                            issue (see src/domain/comboDigest.ts's slaTally). Handing this
+//                            a `{CRITICAL: 7, …}` table to make it pass would be inventing a
+//                            policy the product does not have.
+//   navGroups · "each earn their heading by holding two pages"
+//                            `Labs` holds one page, and app.js says why in as many words:
+//                            there the heading IS the statement — it says Scoring Models
+//                            sits outside the security workflow rather than beside it — and
+//                            the lane is drawn only when the experimental gate is open.
+//                            The deleted navGroups.test.js carried the same exception by
+//                            name (`SINGLETONS_ALLOWED = ["Labs"]`).
+//   navGroups · "is the manifest's, and is one this table actually defines"
+//                            Everything in that assertion holds except its last line, which
+//                            requires the front door to be PAGES[0]. Here PAGES[0] is
+//                            `graph` and the front door is `problems`, deliberately: app.js
+//                            retired the position coupling ("this map no longer decides it
+//                            by position") after the fallback said `problems` while route()
+//                            still said `graph`. Moving `problems` to the top would also
+//                            split the Risk lane in two, which the contract forbids one
+//                            assertion above.
+//
+// The exact hooks that would let all six register whole are in the handback: a
+// `singletonLanes` list and a `frontDoorIsFirst` flag on the navGroups contract, and letting
+// the tokens contract take its severity text/SLA input as optional.
+
+import { readFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { SEVERITY_COLORS } from "../src/domain/config";
+import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
+
+import {
+  composite, ratio, registerTokenContract,
+} from "../../gas_shared/test/contracts/tokens.js";
+import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
+import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
+import { registerBrandMarkContract } from "../../gas_shared/test/contracts/brandMark.js";
+import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
+import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
+
+const APP_ROOT = new URL("../", import.meta.url);
+
+/**
+ * An `it` that inverts the named assertions: it runs the contract's real body and requires
+ * it to throw, so an exclusion cannot outlive the fact that justified it.
+ *
+ * @param {string[]} names  the exact `it` titles this app cannot satisfy
+ * @param {string}   why    one clause, shown in the surviving test's own name
+ */
+function expectingFailure(names, why) {
+  return (name, fn) => {
+    if (!names.includes(name)) return it(name, fn);
+    return it(name + " — CANNOT HOLD HERE (" + why + "); pinned as a known miss", () => {
+      let threw = false;
+      try {
+        fn();
+      } catch (e) {
+        threw = true;
+      }
+      expect(
+        threw,
+        "\"" + name + "\" now PASSES for gas_ai. That is good news, not a failure: drop it "
+        + "from the exclusion list in test/shared.test.js and let the contract hold it.",
+      ).toBe(true);
+    });
+  };
+}
+
+const base = {
+  describe, it, expect, beforeAll, afterAll, appRoot: APP_ROOT, app: "ai",
+};
+
+// The manifest, restated. app.js is the source (configureApp) and the navGroups contract
+// reads defaultRoute back out of it; these two are what the splash contract holds the copy
+// to. "Wiz Sidekick AI", not "Wiz SIDEKICK AI": the caps were a PoC-header leftover carried
+// by three separate literals, and nothing has ever set text-transform on .appbar-name.
+const PRODUCT_NAME = "Wiz Sidekick AI";
+const OPENING_NOUN = "graph";
+
+// Every route in PAGES order. Moves only when a route is added or removed on purpose.
+const ROUTES = [
+  "graph", "inventory", "problems", "combos", "config",
+  "compliance", "scans", "aars", "data", "settings", "help",
+];
+
+registerTokenContract({
+  ...base,
+  it: expectingFailure(
+    [
+      "keeps the darkened text twins, and they really are darker",
+      "clears 4.5:1 on white for all six text tokens, named individually",
+      "keeps the remediation windows the other three surfaces use",
+    ],
+    "this register declares no severity text table and no SLA windows",
+  ),
+  severity: { SEVERITY_COLORS },
+  // recordSheet.css's `.prov-spinner` carries the same masked conic-gradient donut
+  // base.css's `.scan-spinner` does, and `#000` inside a `radial-gradient` mask stop is an
+  // ALPHA END, not a colour — there is no surface it could name a token for. The contract
+  // exempts it for base.css by name for exactly this reason; this is the same construct in
+  // the one page sheet that reuses it.
+  hexAllow: { "recordSheet.css": ["#000"] },
+});
+
+registerEmptyStateContract({
+  ...base,
+  routes: ROUTES,
+  // Every page whose failure path still says "Couldn't …", now on errorState rather than on
+  // emptyState. aars, data and settings joined the list in this package: those six call
+  // sites announced a thrown render inside a role="status" box in the register's own
+  // "nothing here" voice, with the exception dropped into the hint line.
+  errorStateCarriers: [
+    "aars", "combos", "compliance", "config", "data", "inventory", "problems", "scans",
+    "settings",
+  ],
+  // No route here uses the per-section `guard()` helper the sibling register factored out;
+  // these pages catch per section inline (data.js's Promise.allSettled pair, aars.js's three
+  // model loads). The list is empty rather than invented — see the handback.
+  guardedRoutes: [],
+  // ONE ROUTE, AND ONLY ONE EARNS IT. `firstRunNotice` is for a page that still draws its
+  // figures over an unread ledger and owes the reader the origin of the zeroes — data.js's
+  // storage census is exactly that, and it is the shape the sibling register's data.js uses.
+  // The five pages that gate on `!boot.latestSync` (combos, graph, inventory, problems,
+  // scans) do not: they replace the whole page with an emptyState and return, which is what
+  // emptyState is for. Converting them would swap a box that says "run a sync and here is
+  // how" for one quiet line and nothing else.
+  firstRunRoutes: ["data"],
+});
+
+registerNavGroupContract({
+  ...base,
+  it: expectingFailure(
+    [
+      "each earn their heading by holding two pages",
+      "is the manifest's, and is one this table actually defines",
+    ],
+    "Labs is a gated lane of one, and the front door is not PAGES[0]",
+  ),
+  LANE_ICONS,
+  ROUTE_ICONS,
+  expectedRoutes: ROUTES,
+  defaultRoute: "problems",
+});
+
+registerBrandMarkContract({ ...base, productName: PRODUCT_NAME, openingNoun: OPENING_NOUN });
+
+registerParityContract({
+  ...base,
+  // The ten modules that are genuinely this register's. Every one reads something no sibling
+  // has: the decision lattice and its icicle, the ACT/ATTEND/TRACK badge, the Tier 1..4
+  // badge, the cascade's claim rail and diagnostic list, the Data page's prune panel, the
+  // AARS chip, and this register's project-scope switcher.
+  localUiModules: [
+    "aarsChip.js", "claimRail.js", "diagList.js", "lattice.js", "latticeIcicle.js",
+    "latticeSection.js", "outcome.js", "posture.js", "projectScope.js", "prunePanel.js",
+  ],
+  sheetOrder: [
+    "../../../gas_shared/styles/tokens.base.css",
+    "./styles/tokens.css",
+    "../../../gas_shared/styles/base.css",
+    "../../../gas_shared/styles/components.css",
+    "../../../gas_shared/styles/tables.css",
+    "../../../gas_shared/styles/sheet.css",
+    "../../../gas_shared/styles/feedback.css",
+    "../../../gas_shared/styles/settings.css",
+    "./styles/inventory.css",
+    "./styles/graph.css",
+    "./styles/graphQuery.css",
+    "./styles/recordSheet.css",
+    "./styles/scans.css",
+    "./styles/compliance.css",
+    "./styles/combos.css",
+    "./styles/lattice.css",
+    "./styles/aars.css",
+    "./styles/help.css",
+    "../../../gas_shared/styles/overrides.css",
+  ],
+});
+
+registerZScaleContract(base);
+
+// =========================================================================================
+//  This app's brand, pinned by value
+// =========================================================================================
+//
+// The contract above states what any brand owes; these are the answers THIS register chose,
+// and they are here rather than in the shared file for exactly that reason. gas_ai never had
+// a tokens test, so unlike the sibling these are new — but the arithmetic is the shared
+// helpers', not a second implementation.
+
+const TOKENS = readFileSync(new URL("../src/client/styles/tokens.css", import.meta.url), "utf8");
+const tokenValue = (name) => TOKENS.match(new RegExp("--" + name + ":\\s*([^;]+);"))[1].trim();
+
+describe("ai: the accent this register chose", () => {
+  it("is rose-700, carrying its own ink and needing no edge", () => {
+    expect(tokenValue("accent")).toBe("#be123c");
+    expect(tokenValue("accent-hover")).toBe("#9f1239");
+    expect(tokenValue("accent-text")).toBe("#be123c");
+    expect(tokenValue("accent-edge")).toBe("transparent");
+    expect(tokenValue("on-accent")).toBe("#ffffff");
+  });
+
+  // THE COLLAPSE IS EARNED, NOT ASSUMED — and this is the assertion that says so. The
+  // five-token split exists because gas_devsecops's #ffcb13 is 1.52:1 on white; this brand
+  // may point --accent-text at --accent and leave --accent-edge transparent only because the
+  // crimson clears the 4.5:1 TEXT floor on its own, which is a stronger claim than the 3:1
+  // graphical-mark floor the contract checks for a fill.
+  it("earns --accent-text === --accent by clearing the TEXT floor as a fill", () => {
+    expect(ratio(tokenValue("accent"), "#ffffff")).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("puts white on an accent fill, never near-black", () => {
+    const A = tokenValue("accent");
+    expect(ratio("#ffffff", A)).toBeGreaterThanOrEqual(4.5);
+    // The sibling's answer, and why the token has to exist rather than the rule naming one.
+    expect(ratio("#171717", A)).toBeLessThan(3);
+  });
+
+  it("keeps its two washes readable, composited over the page rather than assumed", () => {
+    for (const name of ["accent-wash", "accent-wash-hover"]) {
+      const ground = composite(tokenValue(name), "#ffffff");
+      expect(ratio(tokenValue("accent-text"), ground), name).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});

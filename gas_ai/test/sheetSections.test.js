@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import {
   assetSections, configFindingSections, issueSections, recordCursor, clampSheetWidth,
-} from "../src/client/js/recordSections.js";
+} from "../src/client/js/sheetSections.js";
 
 // No "aars" section. The score's pillar breakdown was the one pane on this rail that
 // explained a model rather than reporting what the sync found; it lives on the Scoring

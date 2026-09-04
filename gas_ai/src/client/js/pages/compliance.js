@@ -56,7 +56,7 @@
 // to its own defaults. The in-memory `view` fields are untouched by the mode switch, so
 // flipping back to "By framework" restores exactly where the reader left it.
 
-import { setParams, swrCall } from "../store.js";
+import { setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
   clear, dataTable, el, emptyState, errorState, filterCombobox, meter, plural,
   sectionLabel, segmented, sevBadge, skeletonStack, statRow,

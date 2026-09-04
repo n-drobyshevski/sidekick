@@ -12,8 +12,8 @@
 // editable variables says so, with the reason — a lock without a reason reads as an
 // oversight, and someone eventually "fixes" it.
 
-import { call } from "../api.js";
-import { navigate } from "../store.js";
+import { call } from "../../../../../gas_shared/api.js";
+import { navigate } from "../../../../../gas_shared/store.js";
 import { COVERAGE } from "../scanContent.js";
 import {
   clear, codeBlock, copyButton, el, openSheet, plural, sheetSection, toast,
