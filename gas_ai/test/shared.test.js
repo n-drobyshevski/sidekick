@@ -19,49 +19,29 @@
 //                            of store.js; store.js is shared now and the manifest is the
 //                            source, which is what the contract reads.
 //
-// FIVE ASSERTIONS CANNOT HOLD HERE, AND EACH ONE IS STILL RUN.
+// ALL SIX HOLD STRAIGHT NOW. This file used to wrap `it` in `expectingFailure()` to invert
+// five assertions the contract could not satisfy here — three because this register has no
+// JS twin of the severity text tokens and no per-severity SLA table, two because `Labs` is a
+// gated lane of one and the front door is not PAGES[0]. Those were facts about this
+// register, not bugs in it, so the fix was hooks on the contract rather than a workaround
+// here:
 //
-// A contract is one implementation on purpose, so this file does not fork it to drop the
-// five. `expectingFailure()` below runs the real assertion and requires it to STILL FAIL,
-// naming the gas_ai fact that makes it false. That is a guard that bites: the day
-// `gas_shared` grows the hook, or this register's IA changes, the inverted test goes red and
-// whoever did it removes the exclusion. A skip would have gone quiet instead.
-//
-// The five, and the fact behind each:
-//
-//   tokens · "keeps the darkened text twins…"          `src/domain/config.ts` exports
-//   tokens · "clears 4.5:1 … for all six text tokens"  SEVERITY_COLORS and nothing else.
-//                            This register's severity TEXT tokens are CSS
-//                            (`--sev-critical-text` … in gas_shared/styles/tokens.base.css,
-//                            measured byte-identical to the siblings' when the sheets were
-//                            cut) and it has no JS twin of them. The contract wants the
-//                            constant, not the token.
-//   tokens · "keeps the remediation windows…"          There are no per-severity SLA
-//                            windows in this register at all. gas and gas_devsecops price a
-//                            deadline from severity; gas_ai reads Wiz's own `dueAt` per
-//                            issue (see src/domain/comboDigest.ts's slaTally). Handing this
-//                            a `{CRITICAL: 7, …}` table to make it pass would be inventing a
-//                            policy the product does not have.
-//   navGroups · "each earn their heading by holding two pages"
-//                            `Labs` holds one page, and app.js says why in as many words:
-//                            there the heading IS the statement — it says Scoring Models
-//                            sits outside the security workflow rather than beside it — and
-//                            the lane is drawn only when the experimental gate is open.
-//                            The deleted navGroups.test.js carried the same exception by
-//                            name (`SINGLETONS_ALLOWED = ["Labs"]`).
-//   navGroups · "is the manifest's, and is one this table actually defines"
-//                            Everything in that assertion holds except its last line, which
-//                            requires the front door to be PAGES[0]. Here PAGES[0] is
-//                            `graph` and the front door is `problems`, deliberately: app.js
-//                            retired the position coupling ("this map no longer decides it
-//                            by position") after the fallback said `problems` while route()
-//                            still said `graph`. Moving `problems` to the top would also
-//                            split the Risk lane in two, which the contract forbids one
-//                            assertion above.
-//
-// The exact hooks that would let all six register whole are in the handback: a
-// `singletonLanes` list and a `frontDoorIsFirst` flag on the navGroups contract, and letting
-// the tokens contract take its severity text/SLA input as optional.
+//   tokens     SEVERITY_TEXT and SLA_TARGETS are now OPTIONAL inputs. Omitting SEVERITY_TEXT
+//              makes the contract read the six `--sev-*-text` tokens out of
+//              gas_shared/styles/tokens.base.css itself and run the same darker-than-fill and
+//              4.5:1 assertions on them — this register's severity TEXT has only ever existed
+//              as that CSS, never as a constant. Omitting SLA_TARGETS turns the remediation-
+//              window assertion into a named `it.skip` (this register reads Wiz's own
+//              `dueAt` per issue — see src/domain/comboDigest.ts's slaTally — rather than
+//              pricing a deadline from severity), so the skip shows in the run summary
+//              instead of silently not running.
+//   navGroups  `singletonLanes: ["Labs"]` lowers the two-pages-per-lane floor to one for
+//              that lane alone — app.js says why in as many words: the heading IS the
+//              statement, and the lane draws only when the experimental gate is open.
+//              `frontDoorIsFirst: false` drops the PAGES[0] position coupling and asserts
+//              instead that the manifest's front door (`problems`) exists in PAGES and is
+//              reachable — not gated behind `experimental` — since a mistyped deep link
+//              falls back to it.
 
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -79,32 +59,6 @@ import { registerParityContract } from "../../gas_shared/test/contracts/parity.j
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
-
-/**
- * An `it` that inverts the named assertions: it runs the contract's real body and requires
- * it to throw, so an exclusion cannot outlive the fact that justified it.
- *
- * @param {string[]} names  the exact `it` titles this app cannot satisfy
- * @param {string}   why    one clause, shown in the surviving test's own name
- */
-function expectingFailure(names, why) {
-  return (name, fn) => {
-    if (!names.includes(name)) return it(name, fn);
-    return it(name + " — CANNOT HOLD HERE (" + why + "); pinned as a known miss", () => {
-      let threw = false;
-      try {
-        fn();
-      } catch (e) {
-        threw = true;
-      }
-      expect(
-        threw,
-        "\"" + name + "\" now PASSES for gas_ai. That is good news, not a failure: drop it "
-        + "from the exclusion list in test/shared.test.js and let the contract hold it.",
-      ).toBe(true);
-    });
-  };
-}
 
 const base = {
   describe, it, expect, beforeAll, afterAll, appRoot: APP_ROOT, app: "ai",
@@ -125,14 +79,9 @@ const ROUTES = [
 
 registerTokenContract({
   ...base,
-  it: expectingFailure(
-    [
-      "keeps the darkened text twins, and they really are darker",
-      "clears 4.5:1 on white for all six text tokens, named individually",
-      "keeps the remediation windows the other three surfaces use",
-    ],
-    "this register declares no severity text table and no SLA windows",
-  ),
+  // No SEVERITY_TEXT, no SLA_TARGETS: this register has neither. The contract falls back to
+  // reading tokens.base.css for the former and skips the SLA assertion by name for the
+  // latter — see the file banner above.
   severity: { SEVERITY_COLORS },
   // recordSheet.css's `.prov-spinner` carries the same masked conic-gradient donut
   // base.css's `.scan-spinner` does, and `#000` inside a `radial-gradient` mask stop is an
@@ -169,17 +118,15 @@ registerEmptyStateContract({
 
 registerNavGroupContract({
   ...base,
-  it: expectingFailure(
-    [
-      "each earn their heading by holding two pages",
-      "is the manifest's, and is one this table actually defines",
-    ],
-    "Labs is a gated lane of one, and the front door is not PAGES[0]",
-  ),
   LANE_ICONS,
   ROUTE_ICONS,
   expectedRoutes: ROUTES,
   defaultRoute: "problems",
+  // Labs holds exactly one page (Scoring Models), gated behind the experimental flag — the
+  // heading IS the statement, not a lane waiting for a second page. And the front door is
+  // `problems`, not PAGES[0] (`graph`) — see the file banner above for both.
+  singletonLanes: ["Labs"],
+  frontDoorIsFirst: false,
 });
 
 registerBrandMarkContract({ ...base, productName: PRODUCT_NAME, openingNoun: OPENING_NOUN });

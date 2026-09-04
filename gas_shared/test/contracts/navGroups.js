@@ -30,6 +30,10 @@ export function parsePages(appSrc) {
       route: m[1],
       group: groupMatch ? (groupMatch[1] === "null" ? null : groupMatch[2]) : undefined,
       title: (m[2].match(/title:\s*"([^"]*)"/) || [])[1],
+      // Whether this route is gated behind Settings -> Show experimental content — read so
+      // ctx.frontDoorIsFirst: false can assert the manifest's front door is actually reachable
+      // rather than only present in the table.
+      experimental: /experimental:\s*true/.test(m[2]),
     });
   }
   return out;
@@ -46,6 +50,18 @@ export function parsePages(appSrc) {
  * @param {object}   ctx.ROUTE_ICONS  from the app's routeIcons.js
  * @param {string[]} ctx.expectedRoutes  the route list, in order — moves only on purpose
  * @param {string}   ctx.defaultRoute  the manifest's front door
+ * @param {string[]} [ctx.singletonLanes]  lane labels allowed to hold exactly one page
+ *                                 without earning the usual "two pages or no heading" floor.
+ *                                 Default `[]`. A lane in this list still has to hold AT
+ *                                 LEAST one page — it only lowers the floor from two to one,
+ *                                 so a lane with two pages that happens to be listed here
+ *                                 still passes (it is no longer a singleton, it just was
+ *                                 never required not to be one).
+ * @param {boolean}  [ctx.frontDoorIsFirst]  Default `true`: the manifest's defaultRoute must
+ *                                 be `PAGES[0]`. When `false`, that position coupling is not
+ *                                 asserted; instead the defaultRoute must exist in PAGES (as
+ *                                 always) and must be REACHABLE — not gated behind
+ *                                 `experimental` — since a mistyped deep link falls back to it.
  */
 export function registerNavGroupContract(ctx) {
   const { describe, it, expect, app } = ctx;
@@ -83,10 +99,15 @@ export function registerNavGroupContract(ctx) {
     });
 
     it("each earn their heading by holding two pages", () => {
+      // ctx.singletonLanes lowers the floor from two to one for a NAMED lane — it does not
+      // raise a ceiling, so a listed lane that grows a second page still passes: it is no
+      // longer a singleton, it was only ever allowed to be one.
+      const singletonLanes = ctx.singletonLanes || [];
       for (const lane of LANES) {
         const held = PAGES.filter((p) => p.group === lane);
+        const floor = singletonLanes.includes(lane) ? 1 : 2;
         expect(held.length, "lane " + lane + " holds " + held.length + " page(s)")
-          .toBeGreaterThanOrEqual(2);
+          .toBeGreaterThanOrEqual(floor);
       }
     });
 
@@ -128,8 +149,21 @@ export function registerNavGroupContract(ctx) {
       expect(m, "app.js's manifest declares no defaultRoute").not.toBe(null);
       expect(m[1]).toBe(ctx.defaultRoute);
       expect(PAGES.map((p) => p.route)).toContain(m[1]);
-      // A mistyped deep link lands here, so it must not be a page gated off the nav.
-      expect(PAGES[0].route, "the front door is not the first page in the table").toBe(m[1]);
+      const frontDoorIsFirst = ctx.frontDoorIsFirst !== false;
+      if (frontDoorIsFirst) {
+        // A mistyped deep link lands here, so it must not be a page gated off the nav.
+        expect(PAGES[0].route, "the front door is not the first page in the table").toBe(m[1]);
+      } else {
+        // The position coupling is deliberately not held here (e.g. gas_ai's front door is
+        // `problems`, not PAGES[0] `graph`) — instead the door has to be one a mistyped deep
+        // link can actually land on, i.e. not gated behind `experimental`.
+        const page = PAGES.find((p) => p.route === m[1]);
+        expect(page, "defaultRoute names no page in PAGES").toBeTruthy();
+        expect(
+          page.experimental,
+          "the front door (" + m[1] + ") is gated behind experimental and is not reachable",
+        ).not.toBe(true);
+      }
     });
   });
 

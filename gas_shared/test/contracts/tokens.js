@@ -84,7 +84,15 @@ export function stylesheetClosure(indexPath) {
  * @param {URL}      ctx.appRoot   the app package root (trailing slash)
  * @param {string}   ctx.app       the app's short name, for failure messages
  * @param {object}   ctx.severity  { SEVERITY_COLORS, SEVERITY_TEXT, SLA_TARGETS } from the
- *                                 app's own src/domain/config.ts
+ *                                 app's own src/domain/config.ts. SEVERITY_TEXT and
+ *                                 SLA_TARGETS are OPTIONAL: a register with no JS twin of the
+ *                                 darkened text tokens (gas, gas_ai) may omit SEVERITY_TEXT
+ *                                 and the contract reads the six `--sev-*-text` tokens out of
+ *                                 tokens.base.css instead, running the same darker-than-fill
+ *                                 and 4.5:1 assertions on them. A register with no per-severity
+ *                                 SLA policy (gas_ai reads Wiz's own `dueAt` per issue instead)
+ *                                 may omit SLA_TARGETS and the window assertion becomes a
+ *                                 named `it.skip` rather than silently not running.
  * @param {string}   [ctx.brandTokensPath]  path (relative to appRoot) of the brand token
  *                                 block. Default "src/client/styles/tokens.css".
  * @param {string[]} [ctx.hexAllow] extra sheets allowed to spell a colour literally, on top
@@ -103,6 +111,29 @@ export function registerTokenContract(ctx) {
     return m[1].trim();
   };
 
+  // THE FALLBACK SOURCE FOR SEVERITY_TEXT, when a register has no JS twin of the darkened
+  // text tokens. Ported out of gas/test/shared.test.js, which read tokens.base.css locally —
+  // moved here so the same fallback serves every register rather than each hand-copying it.
+  // Resolved relative to THIS FILE, not to the calling app: the six --sev-*-text tokens live
+  // in exactly one place regardless of which app's test file is asking.
+  const severityTextFromBase = () => {
+    const basePath = fileURLToPath(new URL("../../styles/tokens.base.css", import.meta.url));
+    const BASE = readFileSync(basePath, "utf8");
+    const sevTextToken = (name) => {
+      const m = BASE.match(new RegExp("--sev-" + name + "-text:\\s*([^;]+);"));
+      if (!m) throw new Error(app + ": tokens.base.css has no --sev-" + name + "-text");
+      return m[1].trim();
+    };
+    return {
+      CRITICAL: sevTextToken("critical"), HIGH: sevTextToken("high"),
+      MEDIUM: sevTextToken("medium"), LOW: sevTextToken("low"),
+      INFO: sevTextToken("info"), UNKNOWN: sevTextToken("unknown"),
+    };
+  };
+  // Lazy and re-resolved per call, not hoisted to a module-level constant: a missing token
+  // must fail the ONE `it` that reads it, not crash every `it` in this file's setup.
+  const severityText = () => severity.SEVERITY_TEXT || severityTextFromBase();
+
   describe(app + ": severity is shared, not branded", () => {
     // Byte-identical to gas/src/domain/config.ts and gas_ai/src/domain/config.ts.
     it("keeps the six fills every sidekick agrees on", () => {
@@ -113,14 +144,15 @@ export function registerTokenContract(ctx) {
     });
 
     it("keeps the darkened text twins, and they really are darker", () => {
-      expect(severity.SEVERITY_TEXT).toEqual({
+      const SEVERITY_TEXT = severityText();
+      expect(SEVERITY_TEXT).toEqual({
         CRITICAL: "#b91c1c", HIGH: "#c2410c", MEDIUM: "#b45309",
         LOW: "#1d4ed8", INFO: "#475569", UNKNOWN: "#334155",
       });
       for (const sev of Object.keys(severity.SEVERITY_COLORS)) {
         if (sev === "INFO" || sev === "UNKNOWN") continue;
         expect(
-          ratio(severity.SEVERITY_TEXT[sev], "#ffffff"),
+          ratio(SEVERITY_TEXT[sev], "#ffffff"),
           sev + " text is not darker than its fill",
         ).toBeGreaterThan(ratio(severity.SEVERITY_COLORS[sev], "#ffffff"));
       }
@@ -140,21 +172,33 @@ export function registerTokenContract(ctx) {
     // pairs, by name, so a seventh level or a renamed key fails loudly here rather than
     // silently missing this check.
     it("clears 4.5:1 on white for all six text tokens, named individually", () => {
+      const SEVERITY_TEXT = severityText();
       const SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
-      expect(Object.keys(severity.SEVERITY_TEXT).sort()).toEqual([...SEVERITIES].sort());
+      expect(Object.keys(SEVERITY_TEXT).sort()).toEqual([...SEVERITIES].sort());
       for (const sev of SEVERITIES) {
-        expect(severity.SEVERITY_TEXT[sev], sev + " has no text token").toBeTruthy();
+        expect(SEVERITY_TEXT[sev], sev + " has no text token").toBeTruthy();
         expect(
-          ratio(severity.SEVERITY_TEXT[sev], "#ffffff"),
-          sev + " text (" + severity.SEVERITY_TEXT[sev] + ") on white",
+          ratio(SEVERITY_TEXT[sev], "#ffffff"),
+          sev + " text (" + SEVERITY_TEXT[sev] + ") on white",
         ).toBeGreaterThanOrEqual(4.5);
       }
     });
 
-    it("keeps the remediation windows the other three surfaces use", () => {
-      expect(severity.SLA_TARGETS)
-        .toEqual({ CRITICAL: 7, HIGH: 14, MEDIUM: 30, LOW: 90, INFO: 180 });
-    });
+    if (severity.SLA_TARGETS) {
+      it("keeps the remediation windows the other three surfaces use", () => {
+        expect(severity.SLA_TARGETS)
+          .toEqual({ CRITICAL: 7, HIGH: 14, MEDIUM: 30, LOW: 90, INFO: 180 });
+      });
+    } else {
+      // A silent skip is what the handback warned against — name WHY here so it shows in the
+      // run summary rather than reading as a check that quietly never happened.
+      it.skip(
+        app + " keeps the remediation windows the other three surfaces use — SKIPPED: this "
+        + "register has no per-severity SLA policy; it reads Wiz's own dueAt per issue instead "
+        + "(src/domain/comboDigest.ts's slaTally)",
+        () => {},
+      );
+    }
   });
 
   describe(app + ": the accent, and the split that makes it legal", () => {
