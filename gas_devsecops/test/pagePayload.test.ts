@@ -151,6 +151,82 @@ describe("execMttrSlice — the hero's four numbers, and nothing else", () => {
     expect(JSON.stringify(WITH_CURVES).length)
       .toBeGreaterThan(JSON.stringify(FULL_MTTR).length + 1000);
   });
+
+  // ------------------------------------------------------------------- the aging distribution
+  //
+  // W2 shipped `remediation.aging`: the open backlog by age bucket and severity, plus the
+  // per-severity SLA edge it is read against, for the MTTR page's stacked bar. Executive
+  // draws no chart, so the same rule as `kmPerSev` applies — the guarantee is not "the key is
+  // dropped" but "the key cannot be reached", which is what an allowlist that REBUILDS gives.
+  //
+  // PERTURBATION (run 2026-09-04, then reverted): `execMttrSlice` in
+  // src/domain/pagePayload.ts was changed to carry the block through explicitly —
+  // `remediation: km ? { km: {...}, aging: ((m["remediation"] ?? {}) as Rec)["aging"] } : {}`
+  // — the deliberate-addition case none of the three general cases above would notice, since
+  // none of them names `aging`. Observed:
+  //
+  //   × ships exactly rowCount, overall.{resolved,open} and km.{median,medianLowerBound}
+  //   × the Executive slice cannot carry kmPerSev, because it is rebuilt rather than pruned
+  //   × the Executive slice has no `aging` key, because it is rebuilt rather than pruned
+  //   × slicing a payload WITH the aging block deep-equals slicing one without it
+  //
+  //   FAIL  ... > ships exactly rowCount, overall.{resolved,open} and km.{median,…}
+  //     AssertionError: expected [ 'km', 'aging' ] to deeply equal [ 'km' ]
+  //     +   "aging",
+  //
+  //   FAIL  ... > the Executive slice has no `aging` key, because it is rebuilt rather than
+  //         pruned
+  //     AssertionError: expected [ 'km', 'aging' ] to deeply equal [ 'km' ]
+  //
+  //   FAIL  ... > slicing a payload WITH the aging block deep-equals slicing one without it
+  //     AssertionError: expected { rowCount: 99, …(2) } to deeply equal { rowCount: 99, …(2) }
+  //       -     "aging": undefined,
+  //       +     "aging": {
+  //
+  //   Test Files  1 failed (1) ; Tests  4 failed | 44 passed (48)
+  //
+  // TWO of the four are cases that already stood here and caught it without naming `aging`
+  // at all — including W1's `kmPerSev` case, which fails on the same rebuilt-vs-pruned
+  // property. The two added below are what fail if a future edit adds the key ON PURPOSE,
+  // which none of the standing four would notice.
+  const AGING = {
+    labels: ["0-7d", "8-30d", "31-90d", "90+d"],
+    perSev: {
+      CRITICAL: [4, 2, 1, 5],
+      HIGH: [10, 8, 6, 16],
+      MEDIUM: [1, 0, 0, 3],
+    },
+    unaged: 7,
+    totalOpen: 56,
+    slaEdge: { CRITICAL: 0, HIGH: 1, MEDIUM: 1 },
+    slaTargets: { CRITICAL: 7, HIGH: 14, MEDIUM: 30 },
+    slaEdgeExact: { CRITICAL: true, HIGH: false, MEDIUM: true },
+  };
+  const WITH_AGING = {
+    ...FULL_MTTR,
+    remediation: { ...FULL_MTTR.remediation, aging: AGING },
+  };
+
+  it("the Executive slice has no `aging` key, because it is rebuilt rather than pruned", () => {
+    const out = execMttrSlice(WITH_AGING)!;
+    expect(Object.keys(out.remediation as object)).toEqual(["km"]);
+    expect(Object.keys(out.remediation as object)).not.toContain("aging");
+    const json = JSON.stringify(out);
+    // Neither the block, nor the buckets, nor the edge that would have to travel with them.
+    for (const gone of ["aging", "unaged", "slaEdge", "slaTargets", "0-7d", "90+d"]) {
+      expect(json, gone + " reached the Executive payload").not.toContain(gone);
+    }
+  });
+
+  it("slicing a payload WITH the aging block deep-equals slicing one without it", () => {
+    expect(execMttrSlice(WITH_AGING)).toEqual(execMttrSlice(FULL_MTTR));
+  });
+
+  it("and the aging block really was in the input, so those two are not vacuous", () => {
+    expect(JSON.stringify(WITH_AGING)).toContain("slaEdge");
+    expect(JSON.stringify(WITH_AGING).length)
+      .toBeGreaterThan(JSON.stringify(FULL_MTTR).length + 200);
+  });
 });
 
 const FULL_GROUP = {

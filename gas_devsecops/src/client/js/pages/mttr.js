@@ -303,6 +303,136 @@ export function severityCurvesView(remediation, order) {
     });
 }
 
+/** `insights.AGE_BUCKET_LABELS`, mirrored — the client cannot import the TypeScript domain.
+ *  Only a FALLBACK: the server ships `remediation.aging.labels` from the same constant, and
+ *  `agingView` prefers what it was sent so a bucket edit reaches the page from one place. */
+export const AGE_BUCKET_LABELS = ["0-7d", "8-30d", "31-90d", "90+d"];
+
+/** How each severity's SLA deadline reads against a bucket boundary. `exact` severities sit
+ *  ON an edge (7 / 30 / 90), so everything to the right of their bucket is wholly late; the
+ *  other two land mid-bucket and their own bucket is part in, part out. */
+const SLA_EDGE_WORDS = ["the first bucket", "the 8-30d bucket", "the 31-90d bucket", "the 90+d bucket"];
+
+/**
+ * Open findings by age, against the per-severity SLA edge.
+ *
+ * WHY THIS SECTION EXISTS BESIDE "SLA by severity". That table is the same open population
+ * reduced to one ratio per severity, and a ratio cannot say whether the breaches are eight
+ * days late or eight hundred. Two of the vendors surveyed for this register publish the
+ * distribution (GitLab's "Vulnerabilities by age", Sonatype Lifecycle's MTTR-by-month);
+ * everyone else compresses it to the compliance percentage this page already prints.
+ *
+ * THE EDGE IS PER SEVERITY, WHICH IS WHY THERE IS USUALLY NO SINGLE LINE TO DRAW.
+ * `SLA_TARGETS` is 7 / 14 / 30 / 90 / 180 days, so CRITICAL's deadline falls at the end of
+ * the first bar and INFO's past the end of the last one. `charts.js::stackedAgeBar` takes ONE
+ * `slaEdgeAfter` index, so a rule is emitted only when every severity drawn agrees on it AND
+ * that shared edge is exact — otherwise one drawn line would claim an edge five sixths of
+ * the chart does not have. The per-severity sentences and the table's "Past SLA for" column
+ * carry it in every other case, which is also the non-colour route to the same fact.
+ *
+ * `unaged` IS A ROW COUNT, NOT A ZERO. The server counts open findings with no readable
+ * `first_seen` separately rather than bucketing them as young; `sum(row.total) + unaged` is
+ * the open population, and the caption prints the remainder whenever it is non-zero.
+ */
+export function agingView(remediation, order) {
+  const aging = (remediation && remediation.aging) || {};
+  const perSev = aging.perSev || {};
+  const labels = Array.isArray(aging.labels) && aging.labels.length
+    ? aging.labels.slice()
+    : AGE_BUCKET_LABELS.slice();
+  const slaEdge = aging.slaEdge || {};
+  const slaTargets = aging.slaTargets || {};
+  const slaEdgeExact = aging.slaEdgeExact || {};
+  const unaged = num(aging.unaged, 0);
+  const totalOpen = num(aging.totalOpen, 0);
+
+  // The same filter `stackedAgeBar` applies to its datasets (`order.filter((s) => perSev[s])`),
+  // so the table lists the bars that were drawn and no others.
+  const sevs = (order || []).concat(["UNKNOWN"])
+    .filter((s, i, a) => a.indexOf(s) === i)
+    .filter((s) => perSev[s]);
+
+  const edgeOf = (sev) => {
+    const e = num(slaEdge[sev]);
+    return e === null ? null : e;
+  };
+
+  const rows = labels.map((label, i) => {
+    const counts = {};
+    let total = 0;
+    let totalKnown = true;
+    for (const sev of sevs) {
+      const v = num((perSev[sev] || [])[i]);
+      counts[sev] = v;
+      // A total is only a total if every cell in the row was measured. Summing a null as a
+      // zero to keep the column tidy is the exact move `ui/figures.js` exists to refuse.
+      if (v === null) totalKnown = false;
+      else total += v;
+    }
+    return {
+      label,
+      counts,
+      total: totalKnown ? total : null,
+      // Severities for which EVERY finding in this bucket is already past its deadline.
+      breaches: sevs.filter((sev) => {
+        const e = edgeOf(sev);
+        return e !== null && i > e;
+      }),
+    };
+  });
+
+  const edges = sevs.map((sev) => {
+    const bucket = edgeOf(sev);
+    const target = num(slaTargets[sev]);
+    const exact = slaEdgeExact[sev] === true;
+    return {
+      sev,
+      target,
+      bucket,
+      exact,
+      sentence: bucket === null || target === null
+        ? sev + " has no SLA target, so no edge is stated for it."
+        : sev + " deadline " + target + " d falls "
+          + (exact ? "at the end of " : "inside ")
+          + (SLA_EDGE_WORDS[bucket] || "the last bucket")
+          + (exact
+            ? " — everything to its right is late."
+            : " — that bucket is part in, part out, and everything to its right is late."),
+    };
+  });
+
+  // One rule only when it is true of every bar drawn: the same bucket for all of them, and
+  // that bucket an exact boundary. Otherwise null, and the sentences above carry the edge —
+  // a single dashed line over six severities with five different deadlines would be a claim
+  // the data does not support.
+  const edgeAfter = edges.length
+    && edges.every((e) => e.exact && e.bucket !== null && e.bucket === edges[0].bucket)
+    ? edges[0].bucket
+    : null;
+
+  return {
+    show: !(totalOpen === 0 && unaged === 0),
+    labels,
+    perSev,
+    sevs,
+    rows,
+    edges,
+    edgeAfter,
+    unaged,
+    totalOpen,
+    // The origin, printed under the chart. PRODUCT.md's sixth principle: a clock says what it
+    // measured from and what it did with the rows it could not measure.
+    denominator: fmtCount(totalOpen) + " open "
+      + pluralize(totalOpen, "finding") + " with a readable age, measured from first_seen to"
+      + " now. Resolved findings are not in this chart at all."
+      + (unaged > 0
+        ? " " + fmtCount(unaged) + " further open " + pluralize(unaged, "finding")
+          + (unaged === 1 ? " carries" : " carry")
+          + " no first-seen date and " + (unaged === 1 ? "is" : "are") + " bucketed nowhere."
+        : ""),
+  };
+}
+
 /**
  * SLA per severity: the share met, the overdue count, and how old the open backlog is.
  *
@@ -490,10 +620,14 @@ export async function renderMttr(host, params, _ctx) {
   const curveHost = el("div", {});
   const sevHost = el("div", {});
   const slaHost = el("div", {});
+  const agingHost = el("div", {});
   const bucketHost = el("div", {});
   const clockHost = el("div", {});
   const trendHost = el("div", {});
-  host.append(noticeHost, heroHost, curveHost, sevHost, slaHost, bucketHost, clockHost, trendHost);
+  host.append(
+    noticeHost, heroHost, curveHost, sevHost, slaHost, agingHost, bucketHost, clockHost,
+    trendHost,
+  );
 
   let live = true;
   onPageTeardown(() => { live = false; });
@@ -527,6 +661,7 @@ export async function renderMttr(host, params, _ctx) {
     guard("the survival curve", curveHost, () => renderCurve(mttr));
     guard("the per-severity clock", sevHost, () => renderSeverity(mttr));
     guard("SLA by severity", slaHost, () => renderSla(mttr));
+    guard("open findings by age", agingHost, () => renderAging(mttr));
     guard("the time-to-close distribution", bucketHost, () => renderBuckets(mttr));
     guard("the two clocks", clockHost, () => renderClocks(mttr));
     guard("the half-life trend", trendHost, () => renderTrend(payload && payload.trends));
@@ -809,6 +944,96 @@ export async function renderMttr(host, params, _ctx) {
       "Two denominators sit in this table and they are not interchangeable. \"Resolved in"
       + " SLA\" is taken over what closed; \"Open past SLA\" is taken over what is still"
       + " running. A single SLA percentage over everything would be neither."));
+  }
+
+  // ------------------------------------------------------- open findings by age
+
+  /**
+   * The open backlog as a shape, with the SLA edge said out loud.
+   *
+   * The table under the canvas is built from the SAME `vm.perSev` / `vm.labels` the chart
+   * wrapper is handed, named once here — `ui/chartTable.js`'s one rule. Its "Past SLA for"
+   * column is the accessible half of the edge: a reader who cannot see a dashed rule, or for
+   * whom no rule was drawn because the six deadlines disagree, still reads which severities
+   * are wholly late in each bar.
+   */
+  function renderAging(mttr) {
+    const vm = agingView(mttr && mttr.remediation, SEVERITY_ORDER);
+    clear(agingHost);
+    agingHost.append(sectionLabel("Open findings by age", { term: "sla-target" }));
+    if (!vm.show) {
+      agingHost.append(emptyState(
+        "No open findings to age yet.",
+        "This chart counts open findings only, measured from first_seen to now.",
+      ));
+      return;
+    }
+
+    const canvas = el("canvas", {
+      "aria-label": "Open findings by age bucket and severity",
+    });
+    const card = el("section", { class: "chart-card" },
+      el("p", { class: "chart-note" }, vm.denominator),
+      el("div", { class: "chart-box" }, canvas),
+      chartTable({
+        canvas,
+        caption: "Every bar of the stack as a count: one row per age bucket, one column per"
+          + " severity drawn, the row total, and which severities are already past their"
+          + " deadline in that bucket.",
+        model: chartTableModel({
+          columns: [
+            { key: "bucket", label: "Age", format: "text", value: (r) => r.label },
+            ...vm.sevs.map((sev) => ({
+              key: sev,
+              label: sev,
+              format: "count",
+              value: (r) => r.counts[sev],
+            })),
+            { key: "total", label: "Total", format: "count", value: (r) => r.total },
+            {
+              key: "past",
+              label: "Past SLA for",
+              format: "text",
+              value: (r) => (r.breaches.length ? r.breaches.join(", ") : null),
+            },
+          ],
+          rows: vm.rows,
+        }),
+      }));
+    agingHost.append(card);
+
+    agingHost.append(el("ul", { class: "small muted" },
+      ...vm.edges.map((e) => el("li", {}, e.sentence))));
+    agingHost.append(el("p", { class: "small muted" },
+      "Open findings only, aged from first_seen to now — a resolved finding stopped ageing"
+      + " and its lifetime is the survival curve's subject, not this one's."
+      + (vm.unaged > 0
+        ? " " + fmtCount(vm.unaged) + " open " + pluralize(vm.unaged, "finding")
+          + (vm.unaged === 1 ? " carries" : " carry")
+          + " no first-seen date; they are counted here in words and drawn in no bar, because"
+          + " an undated finding is not a young one."
+        : "")));
+
+    loadCharts().then((charts) => {
+      if (!live) return;
+      onPageTeardown(() => charts.destroyChart(canvas));
+      charts.stackedAgeBar(
+        canvas,
+        vm.labels,
+        vm.perSev,
+        // The severity fills, read off the stylesheet, over EXACTLY the severities the table
+        // lists — so `stackedAgeBar`'s own `order.filter((s) => perSev[s])` cannot draw a
+        // series the table omits or omit one it lists.
+        sevPalette(vm.sevs),
+        "Open findings by age bucket and severity, measured from first detection.",
+        vm.edgeAfter === null
+          ? {}
+          : { slaEdgeAfter: vm.edgeAfter, slaEdgeLabel: "SLA" },
+      );
+    }).catch(() => {
+      if (!live) return;
+      chartUnavailable(canvas);
+    });
   }
 
   // ------------------------------------------------------------------- time to close

@@ -168,6 +168,129 @@ export function ageBucketsBy<T extends { status: string; age_days: number | null
   return { perKey, totalOpen };
 }
 
+// ------------------------------------------------------------------- the aging distribution
+//
+// WHAT THE FOUR BUCKETS ABOVE COULD NOT SAY, AND WHY THE MTTR PAGE NEEDED IT SAID.
+//
+// `ageBuckets` answers "how old is the open backlog"; it does NOT answer "how much of it is
+// already late". The deadline is per severity (`SLA_TARGETS`: 7 / 14 / 30 / 90 / 180 days),
+// so the same bucket is a breach for CRITICAL and comfortably inside the window for LOW, and
+// a distribution drawn without that line invites the reader to eyeball one edge for all six.
+//
+// TWO DIFFERENCES FROM `ageBuckets`, both deliberate:
+//
+//   1. `unaged` IS COUNTED, NOT SKIPPED. `ageBucketsBy` drops an open row with no finite
+//      `age_days` and says so only in prose, which makes its `totalOpen` quietly smaller than
+//      the open count printed elsewhere on the same page. Here the dropped rows are a
+//      returned number, so `sum(perSev) + unaged` is the whole open population by
+//      construction and a caller cannot fail to notice the difference between "young" and
+//      "never dated". PRODUCT.md's sixth principle is exactly this: a clock says what it did
+//      with the rows it could not measure.
+//   2. `slaEdge` TRAVELS WITH THE COUNTS. The edge is derived from the same `AGE_BUCKET_EDGES`
+//      the counts are, in one place, so a bucket boundary that moves cannot leave the drawn
+//      line pointing at the old one.
+//
+// `totalOpen` keeps `ageBuckets`'s meaning — the BUCKETED count — rather than quietly
+// becoming the open count, because the client sums the drawn buckets and compares.
+
+export interface AgingDistribution {
+  labels: string[];
+  perSev: Record<string, [number, number, number, number]>;
+  /** Open rows with no finite `age_days`. Never folded into a bucket, never dropped. */
+  unaged: number;
+  /** Rows actually bucketed. `totalOpen + unaged` is the open population. */
+  totalOpen: number;
+  /** Per severity: the bucket its SLA deadline lands in; null where no target exists. */
+  slaEdge: Record<string, number | null>;
+  /**
+   * The deadline itself, in days, and whether it sits exactly ON a bucket boundary.
+   *
+   * BOTH TRAVEL BECAUSE THE CLIENT CANNOT DERIVE EITHER. `SLA_TARGETS` and
+   * `AGE_BUCKET_EDGES` are TypeScript constants and the browser bundle imports no domain
+   * module; the alternative was a second, hand-typed copy of five numbers in `mttr.js`, free
+   * to drift from the numbers the buckets were actually cut with. Six keys of JSON is the
+   * cheaper half of that trade. `slaEdgeExact` is what lets the page distinguish "everything
+   * right of this bar is late" (CRITICAL / MEDIUM / LOW, whose targets ARE 7 / 30 / 90) from
+   * "this bar is part in and part out" (HIGH at 14 d, INFO at 180 d).
+   */
+  slaTargets: Record<string, number | null>;
+  slaEdgeExact: Record<string, boolean>;
+}
+
+/**
+ * The bucket an SLA deadline falls in, under the SAME edge comparison the counts use
+ * (`age <= edge`), or null for a severity with no target.
+ *
+ * READ IT AS "THE LAST BUCKET THAT CAN STILL BE IN SLA", not as "the breach starts here".
+ * CRITICAL (7 d), MEDIUM (30 d) and LOW (90 d) sit exactly ON a bucket edge, so for those
+ * three every bucket strictly to the right is wholly a breach. HIGH (14 d) and INFO (180 d)
+ * land INSIDE their bucket, which is therefore part in and part out — the client says so in
+ * words rather than drawing a line that implies the cut is clean.
+ */
+export function slaEdgeBucket(severity: unknown): number | null {
+  const target = SLA_TARGETS[normalizeSeverity(severity)];
+  if (typeof target !== "number" || !Number.isFinite(target)) return null;
+  return target <= AGE_BUCKET_EDGES[0] ? 0
+    : target <= AGE_BUCKET_EDGES[1] ? 1
+      : target <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+}
+
+/** True when a severity's deadline is exactly a bucket boundary, so the bucket it names is
+ *  wholly inside the window and everything to its right is wholly outside it. */
+export function slaEdgeIsExact(severity: unknown): boolean {
+  const target = SLA_TARGETS[normalizeSeverity(severity)];
+  return typeof target === "number" && (AGE_BUCKET_EDGES as readonly number[]).indexOf(target) >= 0;
+}
+
+/**
+ * Open findings by age bucket and severity, with the unaged remainder and the SLA edge.
+ * Open rows only — a resolved finding has stopped ageing, and its lifetime is the survival
+ * curve's subject, not this one's.
+ */
+export function agingDistribution(
+  rows: Pick<BaseRow, "severity" | "status" | "age_days" | "scope">[],
+  scope?: Scope,
+): AgingDistribution {
+  const perSev: Record<string, [number, number, number, number]> = {};
+  let unaged = 0;
+  let totalOpen = 0;
+  for (const row of byScope(rows, scope)) {
+    if (!isOpen(row.status)) continue;
+    const s = normalizeSeverity(row.severity);
+    if (!perSev[s]) perSev[s] = [0, 0, 0, 0];
+    const age = row.age_days;
+    if (typeof age !== "number" || !Number.isFinite(age)) {
+      // Counted, and counted under its severity's key too — a severity whose whole open
+      // population is undated still appears, with four zeroes and a reason.
+      unaged += 1;
+      continue;
+    }
+    const bucket = age <= AGE_BUCKET_EDGES[0] ? 0
+      : age <= AGE_BUCKET_EDGES[1] ? 1
+        : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+    perSev[s][bucket] += 1;
+    totalOpen += 1;
+  }
+  const slaEdge: Record<string, number | null> = {};
+  const slaTargets: Record<string, number | null> = {};
+  const slaEdgeExact: Record<string, boolean> = {};
+  for (const s of Object.keys(perSev)) {
+    slaEdge[s] = slaEdgeBucket(s);
+    const t = SLA_TARGETS[s];
+    slaTargets[s] = typeof t === "number" && Number.isFinite(t) ? t : null;
+    slaEdgeExact[s] = slaEdgeIsExact(s);
+  }
+  return {
+    labels: AGE_BUCKET_LABELS.slice(),
+    perSev,
+    unaged,
+    totalOpen,
+    slaEdge,
+    slaTargets,
+    slaEdgeExact,
+  };
+}
+
 // Open findings older than this many days are the "aged" backlog the oldest-open view ranks
 // by — the 90+ tail of the age buckets above.
 export const AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
