@@ -116,3 +116,21 @@ describe("every route has a page module behind it", () => {
     }
   });
 });
+
+describe("navModel.js names no lane that PAGES does not compose", () => {
+  it("every quoted lane id it compares against is a real PAGES group", () => {
+    // Read navModel.js as text, the same way `pages()` above reads app.js as text rather
+    // than importing it — navModel.js is DOM-free and could be imported, but the point is
+    // to catch a hardcoded lane id even if it sits in dead code no runtime path reaches.
+    const NAV = readFileSync(new URL("../src/client/js/navModel.js", import.meta.url), "utf8");
+    // A lane/group id is capitalized ("Program", "Registers", "Data" — as opposed to the
+    // lowercase `kind` values "lane"/"page" this file also compares with `===`), so filter
+    // on that shape rather than name specific properties, which is what let a fork-inherited
+    // id like "Landscape" or "Risk" go unnoticed here before.
+    const laneLiterals = [...NAV.matchAll(/[=!]==\s*["']([A-Z][A-Za-z]*)["']/g)].map((m) => m[1]);
+    const groups = new Set(PAGES.map((p) => p.group).filter(Boolean));
+    for (const lit of laneLiterals) {
+      expect(groups.has(lit), `navModel.js compares against "${lit}", which is not a PAGES group`).toBe(true);
+    }
+  });
+});

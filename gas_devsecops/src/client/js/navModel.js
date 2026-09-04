@@ -82,10 +82,10 @@ export function itemForRoute(items, route) {
  * A rail item earns a panel by having something to put in it.
  *
  * The same rule as "a labelled lane earns its heading by holding two pages": a panel whose
- * only row repeats the rail item you opened it from is furniture. So Landscape, Risk and
- * Assurance have panels; Labs (one gated page) and the three chrome pages have none, and are
- * plain links. Nothing on the rail advertises the difference — the panel is what shows up,
- * and `aria-haspopup` is what says so to a reader who cannot see it.
+ * only row repeats the rail item you opened it from is furniture. So Program, Registers and
+ * Data — each holding more than one page — have panels; Settings, the one unlabelled tail
+ * page, has none and is a plain link. Nothing on the rail advertises the difference — the
+ * panel is what shows up, and `aria-haspopup` is what says so to a reader who cannot see it.
  */
 export function hasPanel(item, blocks) {
   if (!item) return false;
@@ -100,50 +100,23 @@ export function hasPanel(item, blocks) {
  * somewhere a shared URL cannot reach would be inventing a nav surface the app cannot honour
  * on the way back. `ctx` carries what the shell already holds — nothing here fetches.
  *
- * A block with no rows is omitted rather than drawn empty: the saved-view readers this
- * borrows from return null when web storage is refused and their callers hide the control
- * outright, and an empty heading would say "you have none" where the truth is "we could not
- * ask".
+ * A block with no rows is omitted rather than drawn empty: an empty heading would say "you
+ * have none" where the truth may be "we could not ask".
+ *
+ * NONE OF THIS APP'S THREE LANES (Program, Registers, Data) has instances of its own beyond
+ * the pages they already group — no saved queries, no per-lane collection to list — so this
+ * currently returns no blocks for any of them, and every panel is plain page links. The
+ * function stays lane-shaped rather than a stub so a lane that later gains one (a Registers
+ * page saving its own views, say) has a place to add it without touching navFlyout.js's
+ * contract.
  *
  * @param {object} item  a rail item from railItems()
- * @param {{savedViews?: Array, combos?: Array}} ctx
+ * @param {object} ctx
  * @returns {Array<{id: string, label: string, rows: Array<{label: string, route: string,
  *                  params: object, icon: string|null}>}>}
  */
 export function panelBlocks(item, ctx) {
-  const c = ctx || {};
-  const blocks = [];
-  if (!item || item.kind !== "lane") return blocks;
-
-  if (item.id === "Landscape") {
-    // The reader's own: saved graph queries and saved inventory views, merged into one list
-    // because they are one idea — a question you asked once and want back — and told apart
-    // by the icon of the page each replays into.
-    const rows = (c.savedViews || []).map((v) => ({
-      label: v.name, route: v.route, params: v.params || {}, icon: v.route,
-    }));
-    if (rows.length) blocks.push({ id: "saved", label: "Saved", rows });
-  }
-
-  if (item.id === "Risk") {
-    // shortLabel, not title: the panel is 280px and the titles run to "AWS Bedrock: model
-    // invocation without guardrails". The short forms are written for exactly this — a label
-    // that has to land in one line beside its siblings.
-    const rows = (c.combos || []).map((g) => ({
-      label: g.shortLabel || g.title, route: "combos", params: { open: g.id }, icon: null,
-    }));
-    if (rows.length) blocks.push({ id: "patterns", label: "Combination patterns", rows });
-  }
-
-  // ASSURANCE HAS NO SECOND BLOCK, and the reason is worth writing down because the obvious
-  // one is a trap. Its instances are the collected compliance frameworks, and their names
-  // arrive only with `api_getCompliance` — a payload the shell does not hold until someone
-  // opens that page. The panel never fetches (hovering a rail item must not cost a round
-  // trip), so a Frameworks block would materialise on the second visit and be absent on the
-  // first: a nav that changes shape depending on where you have already been is worse than
-  // one that offers two pages and means it. The other candidate, the ten Wiz scan areas, is
-  // not deep-linkable at all — no `?area=` param exists — and inventing one to fill a panel
-  // would be the tail wagging the page.
-
-  return blocks;
+  if (!item || item.kind !== "lane") return [];
+  void ctx; // read by a future block; no lane fills one yet
+  return [];
 }

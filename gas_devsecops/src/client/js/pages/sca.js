@@ -654,7 +654,7 @@ export async function renderRegisterPage(host, spec) {
  *
  * PURE ON PURPOSE. There is no jsdom in this project (vitest.config.ts sets no
  * `environment`), so anything that touches `document` cannot be unit-tested — the same split
- * `ui/tableModel.js` and `staleness.js` already make. The half that can be WRONG is this
+ * `ui/tableModel.js` and `navModel.js` already make. The half that can be WRONG is this
  * half, and `test/pagesRegisters.test.js` holds it.
  */
 export function scaModel(payload, opts) {
