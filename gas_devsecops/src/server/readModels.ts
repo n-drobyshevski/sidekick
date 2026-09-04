@@ -161,6 +161,7 @@ import {
 } from "../domain/secretsLifecycle";
 import { ageBuckets, concentration, movement, oldestOpen, riskTierStats, severityStats, triageFunnel } from "../domain/insights";
 import { kmMedianAsOf } from "../domain/trend";
+import { fixNext } from "./fixNext";
 import {
   latestScanRow,
   loadBaseRows,
@@ -704,6 +705,10 @@ function buildExecutive(n: NormParams): Rec {
     severityCounts: { counts, open, total: rows.length },
     byScope: { dimension: "scope", rows: byScope },
     weekTrend: weekTrend(scoped, n, snap.now),
+    // What to do next, and what the list left out. One call, one pass over the rows the
+    // severity tiles already counted, so the ranked figure and the tiles cannot disagree.
+    fixNext: fixNext(rows, { now: snap.now }) as unknown as Rec,
+    movement: openMovement(rows, n),
     tiers: riskTierStats(scopedTierRows(rows), undefined),
     signalCoverage: signalCoverage(rows),
   };
@@ -733,6 +738,121 @@ function weekTrend(scoped: BaseRow[], n: NormParams, now: number): Rec | null {
     previous,
     deltaDays: Math.round((current - previous) * 1000) / 1000,
     days: 7,
+  };
+}
+
+/** A comparison this register will publish needs at least this much daylight between the two
+ *  observations. Under it, two syncs describe the same week and their difference is noise. */
+const MOVEMENT_MIN_GAP_DAYS = 7;
+
+/** Days, to one decimal — a gap of 13.5 d is not "14" and not "13". */
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+/** The distinct instants a SYNC happened at. One sync writes one `scans` row per scope, so
+ *  the scan log holds three rows per run here; the movement compares RUNS, not rows. */
+function syncInstants(): { iso: string; ms: number }[] {
+  const seen = new Map<number, string>();
+  for (const s of loadScanRows()) {
+    const ms = parseTs(s.ts);
+    if (ms === null) continue;
+    if (!seen.has(ms)) seen.set(ms, s.ts);
+  }
+  return [...seen.entries()]
+    .map(([ms, iso]) => ({ ms, iso }))
+    .sort((a, b) => a.ms - b.ms);
+}
+
+/** Open as of instant `d`: born by then, and not dated closed before it. */
+function openAsOf(r: BaseRow, d: number): boolean {
+  const first = parseTs(r.first_seen);
+  if (first === null || first > d) return false;
+  const resolved = parseTs(r.resolved_at);
+  return resolved === null || resolved > d;
+}
+
+/**
+ * Week-over-week movement in the OPEN BACKLOG, per register — and the honest reason when
+ * there is none.
+ *
+ * WHY THIS EXISTS BESIDE `weekTrend`, WHICH ALREADY SAID "MOVEMENT". `weekTrend` compares the
+ * Kaplan-Meier half-life now against the half-life a week ago. On a young register that curve
+ * never falls to half at either endpoint — measured on the dev seed: 416 of 554 lifecycles
+ * still open, `km.median === null`, `medianLowerBound === 293.9 d` — so `kmMedianAsOf` returns
+ * null twice, `weekTrend` refuses to substitute a bound for a median, and the aside published
+ * "no comparison" forever. That refusal is CORRECT and is not what changed here. What was
+ * missing is a movement figure that a censored curve cannot suppress: the open count is
+ * observable whether or not half the register has closed.
+ *
+ * THE TWO ENDPOINTS ARE SYNCS, NOT DATES ON A CALENDAR. A register only learns anything when
+ * it looks, so comparing "now" against "seven days ago" would credit the register with changes
+ * on days nobody synced. `until` is the newest sync; `since` is the most recent sync at least
+ * MOVEMENT_MIN_GAP_DAYS older than it. Under that gap the comparison is refused and the ACTUAL
+ * span is published, so a reader learns "this register has only looked twice in three days"
+ * rather than "no comparison available".
+ *
+ * `open` IS THE LIVE COUNT AND `prevOpen` IS A REPLAY, and the two are on the same clock: a
+ * finding is only ever dated closed at the scan that stopped seeing it, so replaying at `until`
+ * reproduces the live count exactly. `test/movement.test.ts` holds that equality rather than
+ * assuming it. Using the live count here is what keeps this block and the severity tiles above
+ * it from printing two different open totals.
+ */
+function openMovement(rows: BaseRow[], n: NormParams): Rec {
+  const instants = syncInstants();
+  const scopes: Scope[] = n.scope ? [n.scope] : [...SCOPES];
+  const until = instants.length ? instants[instants.length - 1]! : null;
+
+  if (until === null) {
+    return { comparable: false, reason: "noSync", syncs: 0, since: null, until: null, days: null };
+  }
+  if (instants.length === 1) {
+    return {
+      comparable: false, reason: "oneSync", syncs: 1, since: null, until: until.iso, days: null,
+    };
+  }
+
+  let since: { iso: string; ms: number } | null = null;
+  for (let i = instants.length - 2; i >= 0; i -= 1) {
+    if ((until.ms - instants[i]!.ms) / DAY_MS >= MOVEMENT_MIN_GAP_DAYS) {
+      since = instants[i]!;
+      break;
+    }
+  }
+  if (since === null) {
+    // The widest span the log can offer, not the nearest gap — it is the most a reader can be
+    // told about how long this register has been watching.
+    return {
+      comparable: false,
+      reason: "tooClose",
+      syncs: instants.length,
+      since: null,
+      until: until.iso,
+      days: round1((until.ms - instants[0]!.ms) / DAY_MS),
+    };
+  }
+
+  const perScope: Rec = {};
+  let open = 0;
+  let prevOpen = 0;
+  for (const scope of scopes) {
+    const sub = rows.filter((r) => r.scope === scope);
+    const nowOpen = sub.filter((r) => isOpen(r.status)).length;
+    const thenOpen = sub.filter((r) => openAsOf(r, since!.ms)).length;
+    perScope[scope] = { open: nowOpen, prevOpen: thenOpen, delta: nowOpen - thenOpen };
+    open += nowOpen;
+    prevOpen += thenOpen;
+  }
+
+  return {
+    comparable: true,
+    reason: null,
+    syncs: instants.length,
+    since: since.iso,
+    until: until.iso,
+    days: round1((until.ms - since.ms) / DAY_MS),
+    perScope,
+    total: { open, prevOpen, delta: open - prevOpen },
   };
 }
 

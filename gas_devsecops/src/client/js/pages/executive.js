@@ -26,8 +26,9 @@
 
 import { bootstrap, swrCall } from "../store.js";
 import {
-  clear, dataTable, el, emptyState, errorState, fmtCount, fmtDateTime, fmtDays, heroStat,
-  kpiCard, pageHeader, pluralize, sectionLabel, sevBadge, skeleton, statRow, statusPill,
+  clear, dataTable, days1, el, emptyState, errorState, fmtCount, fmtDate, fmtDateTime,
+  fmtDays, heroStat, kpiCard, num, pageHeader, pluralize, sectionLabel, sevBadge,
+  skeleton, statRow, statusPill,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -210,6 +211,234 @@ export function executiveMovementView(weekTrend) {
 }
 
 /**
+ * A signed change against a previous value — the Streamlit-style chip, ported from gas/'s
+ * `overview.js` and made pure so what it CLAIMS is testable without a DOM.
+ *
+ * RISING IS WORSE HERE. This chip is only ever handed an open-finding count, and a backlog
+ * that grew is a backlog that grew. The arrow is decorative (`aria-hidden` at the call site);
+ * `direction` and `aria` restate it in words, because a glyph or a tint may never be the only
+ * cue.
+ *
+ * NO PREVIOUS VALUE MEANS NO CHIP, NOT A ZERO ONE. `null` returns null, and the caller draws
+ * nothing — a "±0" over an absent comparison is the confident-zero failure this register keeps
+ * closing. The percentage is dropped in two more cases for the same reason: a previous value
+ * of 0 has no percentage to give, and a change that ROUNDS to 0 % would print "0 %" beside a
+ * non-zero count and read as no movement at all. `pct: null` covers all three and the text
+ * omits the clause rather than printing a zero.
+ *
+ * @param {number|null|undefined} current
+ * @param {number|null|undefined} previous
+ * @returns {{direction: string, delta: number, pct: number|null, text: string, aria: string,
+ *            kind: string}|null}
+ */
+export function deltaChipView(current, previous) {
+  const prev = num(previous);
+  const cur = num(current);
+  if (prev === null || cur === null) return null;
+
+  const delta = cur - prev;
+  if (delta === 0) {
+    return {
+      direction: "flat", delta: 0, pct: null, text: "±0", aria: "unchanged", kind: "neutral",
+    };
+  }
+  const rising = delta > 0;
+  const mag = Math.abs(delta);
+  const rounded = prev ? Math.round((mag / prev) * 100) : 0;
+  const pct = rounded === 0 ? null : rounded;
+  const sign = rising ? "+" : "−";
+  return {
+    direction: rising ? "up" : "down",
+    delta,
+    pct,
+    text: sign + fmtCount(mag) + (pct === null ? "" : " · " + sign + pct + "%"),
+    aria: (rising ? "up " : "down ") + fmtCount(mag)
+      + (pct === null ? "" : ", " + pct + " percent")
+      + (rising ? " — the backlog grew" : " — the backlog shrank"),
+    kind: rising ? "bad" : "ok",
+  };
+}
+
+const MOVEMENT_REASONS = {
+  noSync: "No sync has saved a scan yet, so there are no two observations to compare.",
+  oneSync: "One sync only. A comparison needs two, and the second has to fall at least a week"
+    + " after the first.",
+  tooClose: "The syncs on record are too close together to compare.",
+};
+
+/**
+ * Movement in the OPEN BACKLOG, per register, between two syncs the server actually names.
+ *
+ * WHY THIS IS NOT `executiveMovementView`. That one reads `weekTrend` — the half-life now
+ * against the half-life a week ago — and withholds a badge whenever the Kaplan-Meier curve
+ * fails to reach half at either endpoint, which on a young register is always. Measured on the
+ * dev seed: 416 of 554 lifecycles still open, no median at all, a lower bound of 293.9 days.
+ * So the aside said "no comparison" permanently, not because nothing moved but because the
+ * measure it was asking for is unobservable. Both blocks stay. The half-life comparison is the
+ * better statement where it exists; this one is the statement censoring cannot suppress.
+ *
+ * THE DATES ARE PART OF THE FIGURE. "Down 40" means nothing without the interval it is over,
+ * so `since` / `until` / `days` are rendered beside the chips rather than implied — the sixth
+ * design principle applied to a delta instead of to a duration.
+ */
+export function openMovementView(movement) {
+  const m = movement || null;
+  if (!m || !m.comparable) {
+    const reason = MOVEMENT_REASONS[(m && m.reason) || "noSync"] || MOVEMENT_REASONS.noSync;
+    const days = m ? num(m.days) : null;
+    return {
+      show: false,
+      reason: days === null
+        ? reason
+        : reason + " The whole scan log spans " + fmtDays(days) + ", and a comparison needs"
+          + " two syncs at least 7 days apart.",
+      days,
+      syncs: m ? num(m.syncs, 0) : 0,
+    };
+  }
+  const per = m.perScope || {};
+  const rows = Object.keys(per).map((scope) => {
+    const r = per[scope] || {};
+    return {
+      scope,
+      label: SCOPE_LABELS[scope] || String(scope),
+      open: num(r.open),
+      prevOpen: num(r.prevOpen),
+      delta: num(r.delta),
+      chip: deltaChipView(r.open, r.prevOpen),
+    };
+  });
+  const total = m.total || {};
+  return {
+    show: true,
+    since: m.since || null,
+    until: m.until || null,
+    days: num(m.days),
+    rows,
+    total: {
+      open: num(total.open),
+      prevOpen: num(total.prevOpen),
+      delta: num(total.delta),
+      chip: deltaChipView(total.open, total.prevOpen),
+    },
+    // WHICH two observations, in the display zone, so a reader can check the delta against
+    // Scan history rather than take it on trust.
+    // `days1`, not `fmtDays`: the interval is the ORIGIN of the delta, and `fmtDays` rounds
+    // anything past 10 to a whole day — 13.5 days between two syncs is not "14 days".
+    dates: "Between the syncs on " + fmtDate(m.since) + " and " + fmtDate(m.until)
+      + " — " + days1(m.days) + " apart.",
+  };
+}
+
+/** Tier -> the `.pill` kind. The tier's own words carry it; the tint only repeats them. */
+const TIER_KINDS = { 1: "bad", 2: "warn", 3: "neutral" };
+
+/**
+ * Fix next — the ranked list, and the sentence that accounts for everything it left out.
+ *
+ * WHY THE FRONT DOOR'S SECOND BLOCK RATHER THAN ITS FIRST. The hero is the register's claim
+ * about itself; this is the instruction that follows from it. Both sit above the severity
+ * tiles, because a tile row is a description and a leader reading top-down should meet the two
+ * claims before the description.
+ *
+ * IT IS ABSENT ON A FIRST RUN, NOT EMPTY. `executiveFirstRunView` already names every figure
+ * that is waiting and what unlocks it; a ranked list of nothing underneath that panel would be
+ * a second, weaker statement of the same absence. `show` is decided by that same view rather
+ * than by a second copy of the first-run rule.
+ *
+ * A SYNCED REGISTER WITH NOTHING RANKED IS A DIFFERENT STATE AND SAYS SO. `empty` is true when
+ * the register has rows but no group cleared a tier — which is good news — and the unranked
+ * counts below are the evidence for it rather than a blank panel.
+ */
+export function fixNextView(payload, boot) {
+  const first = executiveFirstRunView(payload, boot);
+  const block = (payload && payload.fixNext) || null;
+  if (first.show || !block) {
+    return { show: false, firstRun: first.show, items: [], unranked: null, empty: false };
+  }
+
+  const groups = Array.isArray(block.groups) ? block.groups : [];
+  const items = groups.map((g, i) => {
+    const tier = num(g.tier, 0);
+    const count = num(g.count, 0);
+    const repo = g.repo === null || g.repo === undefined || g.repo === "" ? null : String(g.repo);
+    const scope = String(g.scope || "");
+    const route = String(g.route || scope);
+    return {
+      rank: i + 1,
+      tier,
+      tierLabel: String(g.label || ""),
+      kind: TIER_KINDS[tier] || "neutral",
+      scope,
+      scopeLabel: SCOPE_LABELS[scope] || scope,
+      repo,
+      // Never "(unknown)": a finding carrying no repository is a gap in attribution, and the
+      // em dash is this register's one mark for that.
+      repoText: repo === null ? "—" : repo,
+      ownerProject: g.owner_project === null || g.owner_project === undefined
+        ? null
+        : String(g.owner_project),
+      count,
+      countText: fmtCount(count) + " open " + pluralize(count, "finding"),
+      oldestDays: num(g.oldestAgeDays),
+      oldestText: num(g.oldestAgeDays) === null
+        ? "no readable age"
+        : "oldest " + fmtDays(g.oldestAgeDays),
+      href: "#/" + route,
+      linkLabel: "Open the " + (SCOPE_LABELS[scope] || scope) + " register",
+    };
+  });
+
+  const u = block.unranked || {};
+  const unranked = {
+    noFix: num(u.noFix, 0),
+    unvalidated: num(u.unvalidated, 0),
+    insideSla: num(u.insideSla, 0),
+    other: num(u.other, 0),
+  };
+  const ranked = num(block.ranked, 0);
+  const openTotal = num(block.openTotal, 0);
+  const groupsCut = num(block.groupsCut, 0);
+  const findingsCut = num(block.findingsCut, 0);
+
+  // One sentence, four numbers, a reason attached to each. A list captioned "top 8" and
+  // nothing else has quietly deleted the rest of the backlog.
+  const unrankedSentence =
+    fmtCount(ranked) + " of " + fmtCount(openTotal) + " open "
+    + pluralize(openTotal, "finding") + " are ranked above. The rest are not: "
+    + fmtCount(unranked.noFix) + " awaiting a vendor fix, "
+    + fmtCount(unranked.unvalidated) + " secrets not confirmed live (unknown, or observed"
+    + " dead), " + fmtCount(unranked.insideSla) + " still inside their SLA window, and "
+    + fmtCount(unranked.other) + " below their tier's severity bar or with no deadline to"
+    + " measure against.";
+
+  return {
+    show: true,
+    firstRun: false,
+    items,
+    unranked,
+    unrankedSentence,
+    ranked,
+    openTotal,
+    empty: items.length === 0,
+    emptyReason: "Nothing to rank: no credential confirmed live, no fixable dependency finding"
+      + " past its SLA, and no critical code weakness past its SLA.",
+    cutNote: groupsCut > 0
+      ? fmtCount(groupsCut) + " further " + pluralize(groupsCut, "group")
+        + " carrying " + fmtCount(findingsCut) + " ranked "
+        + pluralize(findingsCut, "finding") + " are not drawn — the list is capped at "
+        + fmtCount(num(block.limit, items.length)) + "."
+      : null,
+    // The links land on the register, not on the repository: no register page reads a
+    // repository filter out of the hash today (`readRegisterParams` takes `sev` and `nofix`
+    // and nothing else). Saying so costs a sentence; a link that silently ignores half of
+    // what it promised costs a reader's trust in every other link on the page.
+    linkNote: "Each link opens that register unfiltered — the register pages take a severity"
+      + " filter and a fix-availability switch, and no repository filter yet.",
+  };
+}
+
+/**
  * The front door on a ledger nobody has read, and what would change that.
  *
  * WHAT THIS REPLACES. With no sync saved, this page rendered `0 lifecycles in the ledger · 0
@@ -330,10 +559,13 @@ export async function renderExecutive(host, params, _ctx) {
 
   const noticeHost = el("div", {});
   const heroHost = el("div", {});
+  // Directly under the hero and ABOVE the tiles: the hero states the register's claim about
+  // itself, this states what follows from it, and only then comes the description.
+  const fixHost = el("div", {});
   const sevHost = el("div", {});
   const registerHost = el("div", {});
   const scanHost = el("div", {});
-  host.append(noticeHost, heroHost, sevHost, registerHost, scanHost);
+  host.append(noticeHost, heroHost, fixHost, sevHost, registerHost, scanHost);
 
   // One failing section must never blank the front door.
   function guard(label, target, fn) {
@@ -366,10 +598,12 @@ export async function renderExecutive(host, params, _ctx) {
     // and reads as "coming", while the panel above has already named what each of these
     // waits on. Both blocks are cleared so a stale paint cannot leave zeros behind them.
     if (first.show) {
+      clear(fixHost);
       clear(sevHost);
       clear(registerHost);
       return;
     }
+    guard("the fix-next list", fixHost, () => renderFixNext(payload));
     guard("open findings by severity", sevHost, () => renderSeverity(payload));
     guard("the register split", registerHost, () => renderRegisters(payload));
   };
@@ -455,22 +689,123 @@ export async function renderExecutive(host, params, _ctx) {
       ". This page is sent the estimate only, not the curve behind it.");
   }
 
+  /**
+   * One row of the movement strip: a register, its chip, and the pair the chip is FROM.
+   *
+   * The raw pair rides beside the delta on purpose. A chip reading "−40" is a claim about two
+   * numbers, and a reader who cannot see both has to trust it; "280 open, was 320" is the
+   * arithmetic in the open. `null` chip means the previous count was not measurable, and that
+   * renders as words rather than as a ±0 (see `deltaChipView`).
+   */
+  function movementRow(label, r) {
+    const row = el("div", { class: "movement-row" },
+      el("span", { class: "movement-label small" }, label));
+    if (r.chip) {
+      const glyph = r.chip.direction === "up" ? "▲" : r.chip.direction === "down" ? "▼" : "=";
+      row.append(el("span", {
+        class: "pill " + r.chip.kind,
+        // The glyph is decorative; the label spells the direction and the size in words.
+        "aria-label": label + ", " + r.chip.aria,
+      }, el("span", { "aria-hidden": "true" }, glyph), " " + r.chip.text));
+    } else {
+      row.append(el("span", { class: "small muted" }, "no comparison"));
+    }
+    row.append(el("span", { class: "small muted movement-counts" },
+      fmtCount(r.open) + " open, was " + fmtCount(r.prevOpen)));
+    return row;
+  }
+
+  /**
+   * Movement, and what it is movement OF — now two measurements rather than one.
+   *
+   * THE OPEN BACKLOG LEADS. It is observable on any register that has synced twice; the
+   * half-life comparison below it is the better statement but needs a Kaplan-Meier median at
+   * BOTH endpoints, which a young register does not have (this seed: no median at all, a lower
+   * bound of 293.9 days). Where the half-life comparison exists it is drawn underneath, in its
+   * own words; where it does not, nothing is drawn for it — the open-backlog block above has
+   * already said what moved, and a second "no comparison" line would only restate the first.
+   */
   function renderMovement(payload) {
-    const view = executiveMovementView(payload && payload.weekTrend);
+    const open = openMovementView(payload && payload.movement);
+    const half = executiveMovementView(payload && payload.weekTrend);
     const box = el("div", { class: "page-strip" },
       el("div", { class: "kpi-label" }, "Movement"));
-    if (!view.show) {
-      box.append(el("div", { class: "small muted" }, "No week-over-week comparison. " + view.reason));
-      return box;
+
+    if (!open.show) {
+      box.append(el("div", { class: "small muted" },
+        "No open-backlog comparison. " + open.reason));
+    } else {
+      box.append(el("div", { class: "movement-rows" },
+        movementRow("All registers", open.total),
+        ...open.rows.map((r) => movementRow(r.label, r))));
+      box.append(el("div", { class: "small muted" }, open.dates));
+      box.append(el("div", { class: "small muted" },
+        "A rising count is worse. The comparison is between two syncs, not between two"
+        + " calendar dates — a register only learns anything on the days it looks."));
     }
-    // The pill's tint is never the only cue: the arrow, the magnitude and the sentence
-    // underneath all say the same thing in text.
-    const kind = view.direction === "flat" ? "neutral" : view.direction === "up" ? "bad" : "ok";
-    box.append(
-      statusPill(kind, view.magnitude),
-      el("div", { class: "small muted" }, view.label + "."),
-    );
+
+    if (half.show) {
+      const kind = half.direction === "flat" ? "neutral" : half.direction === "up" ? "bad" : "ok";
+      box.append(
+        statusPill(kind, half.magnitude),
+        el("div", { class: "small muted" }, half.label + "."),
+      );
+    }
     return box;
+  }
+
+  // ------------------------------------------------------------------------- fix next
+
+  /**
+   * The ranked list, as an ordered list of GROUPS.
+   *
+   * NO CHART AND NO CANVAS, which is the module header's hard rule and is not relaxed for a
+   * ranking. `<ol>` is the right element because the order IS the claim — a reader using a
+   * screen reader hears "1 of 8" and gets the same argument the page is making visually.
+   *
+   * EVERY ROW CARRIES ITS UNITS. "7" is not a figure; "7 open findings" is. The oldest age
+   * carries "days" for the same reason, and a group whose rows have no readable age says so
+   * rather than printing a 0.
+   */
+  function renderFixNext(payload) {
+    const view = fixNextView(payload, boot);
+    clear(fixHost);
+    if (!view.show) return;
+
+    fixHost.append(sectionLabel("Fix next"));
+    fixHost.append(el("p", { class: "small muted" },
+      "Ranked by what cannot wait rather than by severity: a credential somebody confirmed is"
+      + " live, then a dependency finding with a published fix that is already late, then a"
+      + " critical weakness in first-party code that is already late. Grouped by repository,"
+      + " because that is the smallest unit somebody can be asked to own."));
+
+    if (view.empty) {
+      fixHost.append(emptyState("Nothing is ranked.", view.emptyReason));
+    } else {
+      const list = el("ol", { class: "fixnext" });
+      for (const it of view.items) {
+        list.append(el("li", { class: "fixnext-item" },
+          el("div", { class: "fixnext-head" },
+            statusPill(it.kind, it.tierLabel),
+            el("a", {
+              class: "linklike fixnext-repo",
+              href: it.href,
+              "aria-label": it.tierLabel + " — " + it.repoText + ", " + it.countText
+                + ", " + it.oldestText + ". " + it.linkLabel,
+            }, it.repoText)),
+          el("div", { class: "fixnext-meta small muted" },
+            it.scopeLabel + " · " + it.countText + " · " + it.oldestText
+            + " · " + (it.ownerProject === null
+              ? "no single owning project"
+              : it.ownerProject)),
+        ));
+      }
+      fixHost.append(list);
+    }
+
+    fixHost.append(el("p", { class: "small muted" }, view.unrankedSentence));
+    if (view.cutNote) fixHost.append(el("p", { class: "small muted" }, view.cutNote));
+    fixHost.append(el("p", { class: "small muted" }, view.linkNote));
   }
 
   // -------------------------------------------------------------------------- severity
