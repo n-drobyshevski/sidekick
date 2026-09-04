@@ -931,3 +931,27 @@
 }
 .help-entry-line { margin: 0 0 var(--space-1); color: var(--text-2); max-width: var(--measure); }
 .help-entry-line:last-child { margin-bottom: 0; }
+
+/* --------------------------------------------------------------- Executive: fix next
+   The front door's ranked list. AN ORDERED LIST, DRAWN AS ONE: the counter is the claim
+   (rank 1 is the thing to do first), so it stays visible rather than being suppressed the
+   way a decorative list's markers would be. No colour of its own — the tier reads through
+   the shared .pill kinds, which already pair a tint with a dot and a word. */
+.fixnext { margin: 0 0 var(--space-3); padding-left: var(--space-5); display: grid; gap: var(--space-2); }
+.fixnext-item { padding-left: var(--space-1); }
+.fixnext-item::marker { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.fixnext-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.fixnext-repo { font-weight: 600; }
+.fixnext-meta { margin-top: var(--space-half); }
+
+/* ------------------------------------------------------- Executive: the movement strip
+   One row per register plus a total, inside the header's second column. The label and the
+   raw pair sit either side of the chip so the delta is never the only number visible —
+   "280 open, was 320" is the arithmetic the chip is a summary of. `gap` rather than a
+   border: this strip lives beside a borderless hero and a rule here would out-weight it. */
+/* Capped so the raw pair stays beside its chip rather than being flung to the far edge of a
+   1fr column on a wide screen — the pair is the chip's arithmetic and has to read as one row. */
+.movement-rows { display: grid; gap: var(--space-1); max-width: 46ch; }
+.movement-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.movement-label { color: var(--text-2); min-width: 8ch; }
+.movement-counts { margin-left: auto; font-variant-numeric: tabular-nums; }

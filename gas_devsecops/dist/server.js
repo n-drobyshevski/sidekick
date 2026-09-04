@@ -423,7 +423,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "575483ebc6d0" : "dev";
+  var BUILD_ID = true ? "4524c1f4d8cd" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -5506,6 +5506,125 @@ var Server = (() => {
     return [...buckets.values()].sort((a, b) => cmp(b.total, a.total) || cmp(a.segment, b.segment));
   }
 
+  // src/server/fixNext.ts
+  var FIX_NEXT_LIMIT = 8;
+  var TIER2_SEVERITIES = /* @__PURE__ */ new Set(["CRITICAL", "HIGH"]);
+  var TIER3_SEVERITIES = /* @__PURE__ */ new Set(["CRITICAL"]);
+  var TIER_LABELS = {
+    1: "Live credential",
+    2: "Fixable and late",
+    3: "Critical code weakness"
+  };
+  var TIER_SCOPES = { 1: "secrets", 2: "sca", 3: "sast" };
+  function isOpen5(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function pastSla(row, targets) {
+    const age = row.age_days;
+    if (age === null || age === void 0 || !Number.isFinite(age)) return null;
+    const target = targets[normalizeSeverity(row.severity)];
+    if (target === void 0 || target === null || !Number.isFinite(target)) return null;
+    return age > target;
+  }
+  function secretIsLive(row) {
+    var _a;
+    return String((_a = row.validation_state) != null ? _a : "").toUpperCase() === "VALID";
+  }
+  function classify(row, targets) {
+    const sev2 = normalizeSeverity(row.severity);
+    if (row.scope === "secrets") {
+      return secretIsLive(row) ? { tier: 1 } : { reason: "unvalidated" };
+    }
+    if (row.scope === "sca") {
+      if (row.fix_available_at === null || row.fix_available_at === void 0) {
+        return { reason: "noFix" };
+      }
+      const late2 = pastSla(row, targets);
+      if (late2 === null) return { reason: "other" };
+      if (!late2) return { reason: "insideSla" };
+      return TIER2_SEVERITIES.has(sev2) ? { tier: 2 } : { reason: "other" };
+    }
+    const late = pastSla(row, targets);
+    if (late === null) return { reason: "other" };
+    if (!late) return { reason: "insideSla" };
+    return TIER3_SEVERITIES.has(sev2) ? { tier: 3 } : { reason: "other" };
+  }
+  function repoOf(row) {
+    const name = row.repo_name === null || row.repo_name === void 0 ? "" : String(row.repo_name);
+    if (name.trim() !== "") return name;
+    const id = row.repo_id === null || row.repo_id === void 0 ? "" : String(row.repo_id);
+    return id.trim() === "" ? null : id;
+  }
+  function fixNext(rows, opts = {}) {
+    var _a;
+    const now = opts.now === void 0 ? Date.now() : opts.now;
+    const targets = (_a = opts.slaTargets) != null ? _a : SLA_TARGETS;
+    const limit = opts.limit === void 0 ? FIX_NEXT_LIMIT : Math.max(0, Math.trunc(opts.limit));
+    const tiers = { 1: 0, 2: 0, 3: 0 };
+    const unranked = { noFix: 0, unvalidated: 0, insideSla: 0, other: 0 };
+    const buckets = /* @__PURE__ */ new Map();
+    let openTotal = 0;
+    let ranked = 0;
+    for (const row of rows) {
+      if (!isOpen5(row.status)) continue;
+      openTotal += 1;
+      const verdict = classify(row, targets);
+      if ("reason" in verdict) {
+        unranked[verdict.reason] += 1;
+        continue;
+      }
+      ranked += 1;
+      tiers[String(verdict.tier)] += 1;
+      const repo = repoOf(row);
+      const key = verdict.tier + "\0" + (repo === null ? "" : repo);
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = { tier: verdict.tier, repo, count: 0, oldestAgeDays: null, owners: /* @__PURE__ */ new Set() };
+        buckets.set(key, bucket);
+      }
+      bucket.count += 1;
+      const age = row.age_days;
+      if (age !== null && age !== void 0 && Number.isFinite(age)) {
+        if (bucket.oldestAgeDays === null || age > bucket.oldestAgeDays) bucket.oldestAgeDays = age;
+      }
+      const owner = row.owner_project === null || row.owner_project === void 0 ? "" : String(row.owner_project);
+      if (owner.trim() !== "") bucket.owners.add(owner);
+    }
+    const all = [...buckets.values()].map((b) => {
+      const scope = TIER_SCOPES[b.tier];
+      return {
+        tier: b.tier,
+        label: TIER_LABELS[b.tier],
+        scope,
+        repo: b.repo,
+        owner_project: b.owners.size === 1 ? [...b.owners][0] : null,
+        count: b.count,
+        // One decimal. `age_days` is a float carrying sub-second precision that no reader
+        // wants and every group pays 14 bytes for; the page rounds it to whole days anyway.
+        oldestAgeDays: b.oldestAgeDays === null ? null : Math.round(b.oldestAgeDays * 10) / 10,
+        route: scope,
+        params: { scope, repo: b.repo }
+      };
+    }).sort((a, b) => {
+      var _a2, _b, _c, _d;
+      return a.tier - b.tier || b.count - a.count || ((_a2 = b.oldestAgeDays) != null ? _a2 : -1) - ((_b = a.oldestAgeDays) != null ? _b : -1) || String((_c = a.repo) != null ? _c : "").localeCompare(String((_d = b.repo) != null ? _d : ""));
+    });
+    const groups = all.slice(0, limit);
+    const cutRows = all.slice(limit);
+    return {
+      groups,
+      tiers,
+      unranked,
+      ranked,
+      openTotal,
+      groupsTotal: all.length,
+      groupsCut: cutRows.length,
+      findingsCut: cutRows.reduce((n2, g) => n2 + g.count, 0),
+      limit,
+      asOf: now
+    };
+  }
+
   // src/server/historyStore.ts
   var FOLDER = "history";
   var NAME_RE = /^(\d{4}-\d{2}-\d{2})\.json\.gz$/;
@@ -5668,7 +5787,7 @@ var Server = (() => {
     }
     return newest === null ? { asOf: Date.now(), asOfSource: "wallClock", observedFrom: earliestIso } : { asOf: newest, asOfSource: "scan", observedFrom: earliestIso };
   }
-  function isOpen5(status) {
+  function isOpen6(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function scopedRows(rows, n2) {
@@ -5696,7 +5815,7 @@ var Server = (() => {
   }
   function atLedgerClock(rows, asOf) {
     return rows.map((r) => {
-      if (!isOpen5(r.status)) return r;
+      if (!isOpen6(r.status)) return r;
       const first = parseTs(r.first_seen);
       if (first === null) return r;
       return { ...r, age_days: Math.max(0, asOf - first) / DAY_MS9 };
@@ -5862,7 +5981,7 @@ var Server = (() => {
     const counts = {};
     let open = 0;
     for (const r of rows) {
-      if (!isOpen5(r.status)) continue;
+      if (!isOpen6(r.status)) continue;
       open += 1;
       const s2 = normalizeSeverity(r.severity);
       counts[s2] = ((_a = counts[s2]) != null ? _a : 0) + 1;
@@ -5874,8 +5993,8 @@ var Server = (() => {
         group: scope,
         dimension: "scope",
         total: sub.length,
-        open: sub.filter((r) => isOpen5(r.status)).length,
-        resolved: sub.filter((r) => !isOpen5(r.status)).length,
+        open: sub.filter((r) => isOpen6(r.status)).length,
+        resolved: sub.filter((r) => !isOpen6(r.status)).length,
         kmMedian: km.median,
         kmMedianLowerBound: km.medianLowerBound,
         awaiting: awaitingVendorFix(sub).overall
@@ -5889,6 +6008,10 @@ var Server = (() => {
       severityCounts: { counts, open, total: rows.length },
       byScope: { dimension: "scope", rows: byScope3 },
       weekTrend: weekTrend(scoped, n2, snap.now),
+      // What to do next, and what the list left out. One call, one pass over the rows the
+      // severity tiles already counted, so the ranked figure and the tiles cannot disagree.
+      fixNext: fixNext(rows, { now: snap.now }),
+      movement: openMovement(rows, n2),
       tiers: riskTierStats(scopedTierRows(rows), void 0),
       signalCoverage: signalCoverage(rows)
     };
@@ -5917,6 +6040,81 @@ var Server = (() => {
       days: 7
     };
   }
+  var MOVEMENT_MIN_GAP_DAYS = 7;
+  function round12(n2) {
+    return Math.round(n2 * 10) / 10;
+  }
+  function syncInstants() {
+    const seen = /* @__PURE__ */ new Map();
+    for (const s2 of loadScanRows()) {
+      const ms = parseTs(s2.ts);
+      if (ms === null) continue;
+      if (!seen.has(ms)) seen.set(ms, s2.ts);
+    }
+    return [...seen.entries()].map(([ms, iso]) => ({ ms, iso })).sort((a, b) => a.ms - b.ms);
+  }
+  function openAsOf(r, d) {
+    const first = parseTs(r.first_seen);
+    if (first === null || first > d) return false;
+    const resolved = parseTs(r.resolved_at);
+    return resolved === null || resolved > d;
+  }
+  function openMovement(rows, n2) {
+    const instants = syncInstants();
+    const scopes = n2.scope ? [n2.scope] : [...SCOPES];
+    const until = instants.length ? instants[instants.length - 1] : null;
+    if (until === null) {
+      return { comparable: false, reason: "noSync", syncs: 0, since: null, until: null, days: null };
+    }
+    if (instants.length === 1) {
+      return {
+        comparable: false,
+        reason: "oneSync",
+        syncs: 1,
+        since: null,
+        until: until.iso,
+        days: null
+      };
+    }
+    let since = null;
+    for (let i = instants.length - 2; i >= 0; i -= 1) {
+      if ((until.ms - instants[i].ms) / DAY_MS9 >= MOVEMENT_MIN_GAP_DAYS) {
+        since = instants[i];
+        break;
+      }
+    }
+    if (since === null) {
+      return {
+        comparable: false,
+        reason: "tooClose",
+        syncs: instants.length,
+        since: null,
+        until: until.iso,
+        days: round12((until.ms - instants[0].ms) / DAY_MS9)
+      };
+    }
+    const perScope = {};
+    let open = 0;
+    let prevOpen = 0;
+    for (const scope of scopes) {
+      const sub = rows.filter((r) => r.scope === scope);
+      const nowOpen = sub.filter((r) => isOpen6(r.status)).length;
+      const thenOpen = sub.filter((r) => openAsOf(r, since.ms)).length;
+      perScope[scope] = { open: nowOpen, prevOpen: thenOpen, delta: nowOpen - thenOpen };
+      open += nowOpen;
+      prevOpen += thenOpen;
+    }
+    return {
+      comparable: true,
+      reason: null,
+      syncs: instants.length,
+      since: since.iso,
+      until: until.iso,
+      days: round12((until.ms - since.ms) / DAY_MS9),
+      perScope,
+      total: { open, prevOpen, delta: open - prevOpen }
+    };
+  }
   function executiveModel(p) {
     const n2 = norm(p);
     return cached("dsExecutive1", keyOf(n2), () => buildExecutive(n2), CLOCK_TTL_SEC);
@@ -5939,8 +6137,8 @@ var Server = (() => {
       severities: isSecrets ? null : n2.severities,
       showNoFix: n2.showNoFix,
       rowCount: rows.length,
-      open: rows.filter((r) => isOpen5(r.status)).length,
-      resolved: rows.filter((r) => !isOpen5(r.status)).length,
+      open: rows.filter((r) => isOpen6(r.status)).length,
+      resolved: rows.filter((r) => !isOpen6(r.status)).length,
       // The severity axis, or the reason there is not one.
       severityAxis: isSecrets ? { supported: false, reason: SEVERITY_AXIS_REFUSAL } : { supported: true },
       counts: isSecrets ? null : countsOf(rows),
@@ -5996,7 +6194,7 @@ var Server = (() => {
     const severities = severityFilterSupported ? n2.severities : null;
     const scoped = visibleRows(snap.rows, { ...n2, scope, severities });
     const status = normRowStatus(p == null ? void 0 : p.status);
-    const rows = status === "all" ? scoped : scoped.filter((r) => isOpen5(r.status) === (status === "open"));
+    const rows = status === "all" ? scoped : scoped.filter((r) => isOpen6(r.status) === (status === "open"));
     const def = REGISTER_ROW_DEFAULT_SORT[scope];
     const columns = registerRowColumns(scope);
     const asked = typeof (p == null ? void 0 : p.sort) === "string" ? p.sort : "";
@@ -6047,7 +6245,7 @@ var Server = (() => {
       // refusal is a property of the register, so that is all it states.
       severityAxis: { supported: false, reason: SEVERITY_AXIS_REFUSAL },
       rowCount: rows.length,
-      open: rows.filter((r) => isOpen5(r.status)).length,
+      open: rows.filter((r) => isOpen6(r.status)).length,
       coverage: validationCoverage(secretRows),
       validity: postDetectionValidityRate(secretRows),
       timeToRevoke: timeToRevoke(secretRows, { now: snap.now }),
@@ -6188,8 +6386,8 @@ var Server = (() => {
       perScope: perScopeScanStats(scansAll),
       kpis: {
         tracked: rows.length,
-        open: rows.filter((r) => isOpen5(r.status)).length,
-        resolvedAllTime: rows.filter((r) => !isOpen5(r.status)).length,
+        open: rows.filter((r) => isOpen6(r.status)).length,
+        resolvedAllTime: rows.filter((r) => !isOpen6(r.status)).length,
         // The KM median, NOT the naive closed-only one, and its lower bound beside it: where the
         // curve never reaches half there is no median to print and the bound is what is true.
         medianMttr: (_a = overall.mttr_median) != null ? _a : null,
@@ -7474,6 +7672,12 @@ var Server = (() => {
         // caveat — so these four ship whole.
         severityCounts: exec["severityCounts"],
         weekTrend: exec["weekTrend"],
+        // The two W4 blocks. `fixNext` is capped at eight groups server-side (readModels calls
+        // it with the default limit) and `movement` is a handful of scalars per register, so
+        // both ship whole rather than through a slice — there is nothing in either that the
+        // page does not draw.
+        fixNext: exec["fixNext"],
+        movement: exec["movement"],
         tiers: exec["tiers"],
         signalCoverage: exec["signalCoverage"]
       };

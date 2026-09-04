@@ -403,6 +403,12 @@ export function getExecutivePage(p?: unknown): ApiResult {
       // caveat — so these four ship whole.
       severityCounts: exec["severityCounts"],
       weekTrend: exec["weekTrend"],
+      // The two W4 blocks. `fixNext` is capped at eight groups server-side (readModels calls
+      // it with the default limit) and `movement` is a handful of scalars per register, so
+      // both ship whole rather than through a slice — there is nothing in either that the
+      // page does not draw.
+      fixNext: exec["fixNext"],
+      movement: exec["movement"],
       tiers: exec["tiers"],
       signalCoverage: exec["signalCoverage"],
     };
