@@ -423,7 +423,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "4eea4a1856d7" : "dev";
+  var BUILD_ID = true ? "a6b7c5c8a4f1" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -5731,17 +5731,21 @@ var Server = (() => {
     const kmMedianPerSev = {};
     const kmP90PerSev = {};
     const kmLowerBoundPerSev = {};
+    const kmPerSev = {};
     {
       const bySev = {};
       for (const r of rows) {
         const s2 = normalizeSeverity(r.severity);
         ((_a = bySev[s2]) != null ? _a : bySev[s2] = []).push(r);
       }
-      for (const [s2, rs] of Object.entries(bySev)) {
-        const k = kaplanMeier(rs);
+      const seen = Object.keys(bySev);
+      const ordered = SEVERITY_ORDER.filter((s2) => seen.indexOf(s2) >= 0).concat(seen.filter((s2) => SEVERITY_ORDER.indexOf(s2) < 0));
+      for (const s2 of ordered) {
+        const k = kaplanMeier(bySev[s2]);
         kmMedianPerSev[s2] = k.median;
         kmLowerBoundPerSev[s2] = k.medianLowerBound;
         kmP90PerSev[s2] = kmQuantileFromCurve(k.curve, 0.9);
+        kmPerSev[s2] = shipKM(k);
       }
     }
     const scaScoped = scoped.filter((r) => r.scope === "sca");
@@ -5763,6 +5767,7 @@ var Server = (() => {
         kmMedianPerSev,
         kmP90PerSev,
         kmLowerBoundPerSev,
+        kmPerSev,
         openPastSla: openPastSla(rows),
         awaiting: awaitingVendorFix(rows),
         /**

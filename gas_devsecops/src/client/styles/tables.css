@@ -146,6 +146,24 @@ a { color: var(--accent-text); }
   gap: var(--space-3);
   margin-bottom: var(--space-5);
 }
+/* Small multiples: one survival curve per severity, on the MTTR page.
+   `auto-fit` + a 280px floor gives three per row on a desktop content column, two around
+   800px and one below ~560px, without a media query per breakpoint — the floor is where a
+   26-week staircase stops being readable rather than a device width.
+   The canvas is HALF the standard .chart-box so six of them stay light: these cards are read
+   as shapes against each other, and the figures behind each one are a keystroke away in the
+   card's own table. */
+.sev-fan {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.sev-fan .chart-box { height: 160px; }
+/* The badge row. Severity is never colour alone: the dot and the word travel together here,
+   and the caption below states the half-life in words. */
+.sev-fan__head { margin-bottom: var(--space-2); }
+
 /* The line under a chart title: what the chart leaves out, or what it's still waiting for. */
 .chart-note { margin: -4px 0 var(--space-3); font-size: var(--fs-label); color: var(--text-3); }
 /* Stands in for the plot when there aren't enough points to draw one — matched to the

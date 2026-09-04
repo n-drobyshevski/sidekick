@@ -46,6 +46,15 @@ import { parseTs, type Rec } from "./util";
  * `remediation` is left EMPTY rather than dropped when there is no KM result, because
  * `fmtKmMedian` distinguishes a missing estimate (renders "—") from a present one, and an
  * absent `remediation` and an absent `remediation.km` have to reach it the same way.
+ *
+ * THIS IS AN ALLOWLIST, WHICH IS WHY `kmPerSev` COSTS EXEC NOTHING. `buildMttr` now ships one
+ * `shipKM`-narrowed curve PER SEVERITY (`remediation.kmPerSev`) for the MTTR page's fan of
+ * small multiples — six staircases, each as long as the register has distinct closure times.
+ * Nothing here reads it, and nothing here can accidentally start to: the returned object is
+ * REBUILT from three named paths rather than copied and pruned, so a new key on the read model
+ * reaches Executive only when somebody writes it in. Executive draws no chart at all, so six
+ * curves on it would be pure transfer. `test/pagePayload.test.ts` asserts the slice of a
+ * payload with `kmPerSev` deep-equals the slice of the same payload without it.
  */
 export function execMttrSlice(mttr: unknown): Rec | null {
   if (!mttr || typeof mttr !== "object") return null;

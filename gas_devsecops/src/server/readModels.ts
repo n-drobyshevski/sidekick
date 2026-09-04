@@ -559,23 +559,41 @@ function buildMttr(n: NormParams): Rec {
   const { perSev, overall } = mttrFromLedger(rows as unknown as Rec[], { now: snap.now });
   const { slaPct, oldestDays } = overallSlaOldest(perSev);
 
-  // Per-severity KM median + p90 off ONE curve per severity, keyed by normalized severity so
-  // it lines up with `perSev` (UNKNOWN included). The naive closed-only stats bias low on a
-  // wave of fresh open findings; these do not.
+  // Per-severity KM off ONE curve per severity, keyed by normalized severity so it lines up
+  // with `perSev` (UNKNOWN included). The naive closed-only stats bias low on a wave of fresh
+  // open findings; these do not.
+  //
+  // THE CURVE SHIPS, NOT ONLY ITS THREE STATISTICS. This block used to compute one
+  // `kaplanMeier(rs)` per severity and keep the median, the lower bound and the P90 off it,
+  // discarding the staircase that produced all three — so no surface in the app could compare
+  // severity survival SHAPES, and three fixed statistics cannot say that CRITICAL closes fast
+  // and then stalls, or that LOW never moves at all. `kmPerSev` is that same curve, narrowed
+  // by the SAME `shipKM` the overall curve goes through, so the two views of one estimate
+  // cannot drift: `kmPerSev[s].median` IS `kmMedianPerSev[s]` by construction.
+  //
+  // The three flat maps stay. They are what `mttrSeverityRows` reads and what the page's
+  // summary table draws, and collapsing them into `kmPerSev` would rewrite a read path for no
+  // measured gain. Keys are emitted in `SEVERITY_ORDER` so the client's fan needs no sort.
   const kmMedianPerSev: Record<string, number | null> = {};
   const kmP90PerSev: Record<string, number | null> = {};
   const kmLowerBoundPerSev: Record<string, number | null> = {};
+  const kmPerSev: Record<string, ShippedKM> = {};
   {
     const bySev: Record<string, BaseRow[]> = {};
     for (const r of rows) {
       const s = normalizeSeverity(r.severity);
       (bySev[s] ?? (bySev[s] = [])).push(r);
     }
-    for (const [s, rs] of Object.entries(bySev)) {
-      const k = kaplanMeier(rs);
+    const seen = Object.keys(bySev);
+    const ordered = (SEVERITY_ORDER as readonly string[])
+      .filter((s) => seen.indexOf(s) >= 0)
+      .concat(seen.filter((s) => (SEVERITY_ORDER as readonly string[]).indexOf(s) < 0));
+    for (const s of ordered) {
+      const k = kaplanMeier(bySev[s]!);
       kmMedianPerSev[s] = k.median;
       kmLowerBoundPerSev[s] = k.medianLowerBound;
       kmP90PerSev[s] = kmQuantileFromCurve(k.curve, 0.9);
+      kmPerSev[s] = shipKM(k);
     }
   }
 
@@ -602,6 +620,7 @@ function buildMttr(n: NormParams): Rec {
       kmMedianPerSev,
       kmP90PerSev,
       kmLowerBoundPerSev,
+      kmPerSev,
       openPastSla: openPastSla(rows),
       awaiting: awaitingVendorFix(rows),
       /**

@@ -87,6 +87,70 @@ describe("execMttrSlice — the hero's four numbers, and nothing else", () => {
     expect(execMttrSlice(null)).toBeNull();
     expect(execMttrSlice(undefined)).toBeNull();
   });
+
+  // ------------------------------------------------------------------ the per-severity fan
+  //
+  // W1 shipped `remediation.kmPerSev`: one shipKM-narrowed curve per severity, for the MTTR
+  // page's small multiples. Executive draws NO chart — six staircases there would be pure
+  // transfer — so the guarantee wanted is not "the key is dropped" but "the key cannot be
+  // reached at all", which is what an allowlist that REBUILDS the object gives.
+  //
+  // PERTURBATION (run 2026-09-04, then reverted): `execMttrSlice` in
+  // src/domain/pagePayload.ts was changed to spread the remediation block through —
+  // `? { ...((m["remediation"] ?? {}) as Rec), km: { median: ..., medianLowerBound: ... } }` —
+  // the copy-and-prune shape this allowlist exists instead of. Observed:
+  //
+  //   FAIL  ... > the Executive slice cannot carry kmPerSev, because it is rebuilt rather
+  //         than pruned
+  //     AssertionError: expected [ 'pctiles', 'buckets', 'km', …(8) ] to deeply equal [ 'km' ]
+  //       +   "kmPerSev",
+  //
+  //   FAIL  ... > slicing a payload WITH the curves deep-equals slicing one without them
+  //     AssertionError: expected { rowCount: 99, …(2) } to deeply equal { rowCount: 99, …(2) }
+  //
+  //   Test Files  1 failed (1) ; Tests  5 failed | 40 passed (45)
+  //
+  // THE OTHER THREE FAILURES ARE THE POINT, not collateral: the three cases that already
+  // stood here ("ships exactly …", "drops both Kaplan-Meier curves", "cuts the payload by well
+  // over an order of magnitude") caught the same perturbation without naming `kmPerSev` at
+  // all. The two cases below are still not redundant — they are what fails if a future edit
+  // adds `kmPerSev` to the allowlist DELIBERATELY, which none of the three would notice.
+  const PER_SEV_CURVES = {
+    CRITICAL: {
+      curve: Array.from({ length: 40 }, (_, i) => ({ t: i, s: 1 - i / 80 })),
+      median: 12, medianLowerBound: null, p90: 44, mean: 15, meanTruncated: false,
+      restrictionTime: 40, events: 20, censored: 8, total: 28,
+    },
+    HIGH: {
+      curve: Array.from({ length: 60 }, (_, i) => ({ t: i, s: 1 - i / 200 })),
+      median: null, medianLowerBound: 59, p90: null, mean: 30, meanTruncated: true,
+      restrictionTime: 59, events: 9, censored: 31, total: 40,
+    },
+  };
+  const WITH_CURVES = {
+    ...FULL_MTTR,
+    remediation: { ...FULL_MTTR.remediation, kmPerSev: PER_SEV_CURVES },
+  };
+
+  it("the Executive slice cannot carry kmPerSev, because it is rebuilt rather than pruned", () => {
+    const out = execMttrSlice(WITH_CURVES)!;
+    expect(Object.keys(out.remediation as object)).toEqual(["km"]);
+    expect(Object.keys(out.remediation as object)).not.toContain("kmPerSev");
+    const json = JSON.stringify(out);
+    expect(json).not.toContain("kmPerSev");
+    // Not merely the key: none of the six curves' points reach the wire either.
+    expect(json).not.toContain("curve");
+  });
+
+  it("slicing a payload WITH the curves deep-equals slicing one without them", () => {
+    expect(execMttrSlice(WITH_CURVES)).toEqual(execMttrSlice(FULL_MTTR));
+  });
+
+  it("and the curves really were in the input, so the two assertions above are not vacuous", () => {
+    expect(JSON.stringify(WITH_CURVES)).toContain("kmPerSev");
+    expect(JSON.stringify(WITH_CURVES).length)
+      .toBeGreaterThan(JSON.stringify(FULL_MTTR).length + 1000);
+  });
 });
 
 const FULL_GROUP = {
