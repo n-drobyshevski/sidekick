@@ -30,8 +30,9 @@
 import { swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  clear, dataTable, el, emptyState, fmtCount, fmtDays, heroStat, kpiCard, onPageTeardown,
-  pageHeader, pluralize, sectionLabel, sevBadge, sevEntries, sevSegmentBar, skeleton, statRow,
+  chartTable, chartTableModel, clear, dataTable, el, emptyState, fmtCount, fmtDays, heroStat,
+  kpiCard, onPageTeardown, pageHeader, pluralize, sectionLabel, sevBadge, sevEntries,
+  sevSegmentBar, skeleton, statRow, survivalTableModel,
 } from "../ui.js";
 
 // ---------------------------------------------------------------------------- formatting
@@ -497,7 +498,15 @@ export async function renderMttr(host, params, _ctx) {
         + " their current age. " + fmtCount(km.events) + " " + pluralize(km.events, "event")
         + ", " + fmtCount(km.censored) + " censored. The closed-only comparison markers are not"
         + " in this payload, so the two markers drawn are both Kaplan-Meier."),
-      el("div", { class: "chart-box" }, canvas));
+      el("div", { class: "chart-box" }, canvas),
+      // The same `km.curve` the wrapper below is handed, not a second read of the payload.
+      chartTable({
+        canvas,
+        caption: "Every step of the curve above: weeks and days since detection, the share"
+          + " still open after that step, the risk set it was computed over, and how many"
+          + " findings closed at that time.",
+        model: survivalTableModel(km.curve),
+      }));
     curveHost.append(card);
 
     loadCharts().then((charts) => {
@@ -704,7 +713,33 @@ export async function renderMttr(host, params, _ctx) {
             + " reconstructed from first-detection dates before the first saved scan, where"
             + " closures are under-counted — read those as not measured."
           : "")),
-      el("div", { class: "chart-box" }, canvas)));
+      el("div", { class: "chart-box" }, canvas),
+      // `points` — the same array the wrapper below plots — read once, into both.
+      chartTable({
+        canvas,
+        caption: "The half-life the line above plots, one row per evaluated date. A"
+          + " reconstructed row is one dated before the first saved scan, where closures are"
+          + " under-counted.",
+        model: chartTableModel({
+          columns: [
+            {
+              key: "date",
+              label: "Date",
+              format: "text",
+              value: (p) => String(p.date).slice(0, 10),
+            },
+            { key: "km_median_days", label: "Half-life", format: "days" },
+            {
+              key: "reconstructed",
+              label: "Reconstructed",
+              format: "text",
+              align: "text",
+              value: (p) => (p.reconstructed ? "yes" : "no"),
+            },
+          ],
+          rows: points,
+        }),
+      })));
 
     loadCharts().then((charts) => {
       if (!live) return;

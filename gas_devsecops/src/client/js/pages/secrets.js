@@ -37,7 +37,7 @@
 import { swrCall } from "../store.js";
 import {
   absent, dataTable, days1, denomNote, el, emptyState, fmtCount, fmtDate, glossaryTip,
-  heroStat, meter, num, pageHeader, pct1, skeletonStack, statRow,
+  heroStat, meter, num, pageHeader, pct1, skeletonStack, statRow, survivalTableModel,
 } from "../ui.js";
 import {
   boundedDays, chartCard, concentrationModel, figureCard, missingColumnsNote, movementCard,
@@ -531,6 +531,12 @@ function paintSecrets(host, vm) {
           vm.timeToRevoke.curve,
           { median: vm.timeToRevoke.medianDays },
         ),
+        {
+          caption: "Every step of the curve above: weeks and days since detection, the share"
+            + " of credentials still un-rotated after that step, the risk set behind it, and"
+            + " how many were rotated at that time.",
+          model: survivalTableModel(vm.timeToRevoke.curve),
+        },
       )
       : emptyState(
         "No revocation curve yet.",

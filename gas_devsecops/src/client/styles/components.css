@@ -826,3 +826,50 @@
    approach — the confirm dialog is what actually holds the decision. */
 .access-remove:hover { color: var(--bad); }
 .access-add { display: flex; align-items: center; gap: var(--space-2); }
+
+/* ------------------------------------------------------- the chart's data-table alternative
+
+   THE DEFECT: eight canvases carried role="img" plus one sentence and nothing else, so the
+   values behind every chart were unreachable by keyboard and unreadable by a screen reader.
+   ui/chartTable.js ships the same series as a <details>; this is its dress.
+
+   A SUMMARY IS ALREADY A CONTROL, so this stays a small muted one rather than growing into a
+   second button vocabulary — it sits under a chart, not beside the page's actions. The focus
+   ring is base.css's own `summary:focus-visible` rule (2px --accent-text at 2px offset) and is
+   deliberately NOT restated here: one definition, one place to keep it.
+
+   THE TABLE SCROLLS, NOT THE PAGE. `.table-wrap` already declares overflow-x: auto, and the
+   panel variant drops the border because the chart card around it is the surface. At a 560px
+   viewport a five-column table is wider than the card, and that width has to be spent inside
+   the wrap — a table that pushed `main` sideways would take the whole page's layout with it. */
+.chart-table { margin: var(--space-3) 0 0; }
+.chart-table > summary {
+  cursor: pointer; list-style: none; display: inline-flex; align-items: center;
+  gap: var(--space-1); font-size: var(--fs-label); font-weight: var(--fw-semibold);
+  color: var(--text-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--hairline); border-radius: var(--radius-md);
+  background: var(--page); user-select: none;
+}
+.chart-table > summary::-webkit-details-marker { display: none; }
+.chart-table > summary:hover {
+  color: var(--ink); background: var(--wash-hover); border-color: var(--hairline-strong);
+}
+.chart-table__caret { display: inline-block; font-size: var(--fs-micro); }
+/* Rotation only where the reader has not asked for less motion — ui/chartTable.js adds
+   `--motion` from motionOk(). Without it the caret still changes state, it just does not
+   travel to get there. */
+.chart-table--motion .chart-table__caret {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.chart-table[open] > summary .chart-table__caret { transform: rotate(90deg); }
+.chart-table__body { margin-top: var(--space-2); }
+.chart-table__caption {
+  margin: 0 0 var(--space-2); max-width: var(--measure);
+  font-size: var(--fs-label); color: var(--text-2); line-height: 1.5;
+}
+/* A hairline over the rows, since the panel variant has no box of its own to sit in. */
+.chart-table__body .table-wrap { border-top: 1px solid var(--hairline); }
+.chart-table__body table.data td, .chart-table__body table.data th {
+  padding: var(--space-1) var(--space-2);
+}

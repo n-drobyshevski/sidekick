@@ -27,8 +27,9 @@
 import { swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  clear, dataTable, days1, denomNote, el, emptyState, errorState, fmtCount, glossaryTip,
-  heroStat, kpiCard, num, onPageTeardown, pageHeader, pct1, sectionLabel, skeletonStack,
+  chartTable, chartTableModel, clear, dataTable, days1, denomNote, el, emptyState, errorState,
+  fmtCount, glossaryTip, heroStat, kpiCard, num, onPageTeardown, pageHeader, pct1, sectionLabel,
+  skeletonStack,
 } from "../ui.js";
 
 const OVERALL = "OVERALL";
@@ -317,15 +318,42 @@ export async function renderRepos(host, _params, _ctx) {
       return;
     }
     const canvas = el("canvas");
+    // ONE array, built here and handed to both the wrapper and the table below it. `bounded`
+    // is carried alongside because the plotted y is a MEDIAN for some repositories and a
+    // LOWER BOUND for others — the canvas draws one line either way and cannot say which,
+    // and CLAUDE.md's rule is that where the curve never reaches half we publish the bound
+    // rather than a number pretending to be the median.
+    const points = rows.map((r) => ({
+      x: r.asset_label || r.asset_group,
+      y: r.km_median_days !== null ? r.km_median_days : r.km_median_lower_bound,
+      bounded: r.km_median_days === null,
+    }));
     chartsHost.append(el("div", { class: "chart-card" },
       el("h3", { class: "section-label" }, "Slowest-clearing repositories"),
-      el("div", { class: "chart-box" }, canvas)));
+      el("div", { class: "chart-box" }, canvas),
+      chartTable({
+        canvas,
+        caption: "The plotted repositories and their half-life in days. \"at least\" marks a"
+          + " repository whose curve never fell to half — that figure is a lower bound, not a"
+          + " median.",
+        model: chartTableModel({
+          columns: [
+            { key: "x", label: "Repository", format: "text" },
+            { key: "y", label: "Half-life", format: "days" },
+            {
+              key: "bounded",
+              label: "Reading",
+              format: "text",
+              align: "text",
+              value: (p) => (p.bounded ? "at least" : "median"),
+            },
+          ],
+          rows: points,
+        }),
+      })));
     loadCharts()
       .then((api) => {
-        api.trendLine(canvas, rows.map((r) => ({
-          x: r.asset_label || r.asset_group,
-          y: r.km_median_days !== null ? r.km_median_days : r.km_median_lower_bound,
-        })), { yLabel: "days" });
+        api.trendLine(canvas, points, { yLabel: "days" });
         onPageTeardown(() => {
           try {
             api.destroyChart(canvas);

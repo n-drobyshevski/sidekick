@@ -26,13 +26,13 @@
 import { bootstrapCached, swrCall } from "../store.js";
 import {
   absent, dataTable, days1, denomNote, el, emptyState, fmtCount, fmtDate, heroStat, meter,
-  num, pageHeader, pct1, sevBadge, sevEntries, sevSegmentBar, skeletonStack, statRow,
+  num, pageHeader, pct1, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, skeletonStack, statRow,
 } from "../ui.js";
 import {
-  RISK_TIER_LABELS, RISK_TIER_ORDER, agingModel, chartCard, concentrationModel, figureCard,
-  funnelModel, movementCard, movementModel, oldestFindingsModel, pagedTable, readRegisterParams,
-  registerRowsTable, registerToolbar, renderRegisterPage, sectionCard, sevPalette,
-  signalFigure, textCell, tierModel,
+  RISK_TIER_LABELS, RISK_TIER_ORDER, agingModel, agingTableModel, chartCard,
+  concentrationModel, figureCard, funnelModel, movementCard, movementModel, oldestFindingsModel,
+  pagedTable, readRegisterParams, registerRowsTable, registerToolbar, renderRegisterPage,
+  sectionCard, sevPalette, severityCountsTableModel, signalFigure, textCell, tierModel,
 } from "./sca.js";
 
 const SEVERITY_FALLBACK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
@@ -179,13 +179,19 @@ export function renderSast(host, params) {
 }
 
 function paintSast(host, vm, filters) {
+  // Same defect, same fix as `paintSca`: the hero bar carried severity in colour alone and
+  // drew an empty bordered box over an empty ledger. The key row names and counts every
+  // segment; a zero total renders neither the bar nor the key.
+  const heroSevs = sevEntries(vm.counts, vm.severityOrder);
   host.append(pageHeader({
     hero: heroStat("Registers · Code", vm.hero.value, vm.hero.sub, { term: "sast" }),
     aside: el("div", { class: "page-strip" },
-      sevSegmentBar(sevEntries(vm.counts, vm.severityOrder), {
-        size: "lg",
-        label: "Open weaknesses by severity",
-      }),
+      heroSevs.length
+        ? [
+          sevSegmentBar(heroSevs, { size: "lg", label: "Open weaknesses by severity" }),
+          sevKeyRow(heroSevs),
+        ]
+        : null,
       el("p", { class: "small muted" },
         "A weakness class at a file and a line in our own source. There is no vendor: this "
         + "one is fixed by changing the code."),
@@ -318,9 +324,16 @@ function paintSast(host, vm, filters) {
         sevPalette(vm.severityOrder),
         "Open code weaknesses by age bucket and severity.",
       );
+    }, {
+      caption: "Every bar of the stack as a count: one row per age bucket, one column per"
+        + " severity drawn.",
+      model: agingTableModel(vm.aging.labels, vm.aging.perSev, vm.severityOrder),
     }),
     chartCard("Open weaknesses by severity", null, (api, canvas) => {
       api.severityBar(canvas, vm.counts, sevPalette(vm.severityOrder), null);
+    }, {
+      caption: "The length of each bar, as a count of open weaknesses.",
+      model: severityCountsTableModel(vm.counts, vm.severityOrder, "Open weaknesses"),
     }),
   ));
 

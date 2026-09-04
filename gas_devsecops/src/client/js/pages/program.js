@@ -29,8 +29,8 @@
 import { swrCall } from "../store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  clear, dataTable, el, emptyState, glossaryTip, heroStat, kpiCard, onPageTeardown, pageHeader,
-  pluralize, sectionLabel, skeleton, statRow, statusPill,
+  chartTable, chartTableModel, clear, dataTable, el, emptyState, glossaryTip, heroStat, kpiCard,
+  onPageTeardown, pageHeader, pluralize, sectionLabel, skeleton, statRow, statusPill,
 } from "../ui.js";
 import { fmtCount, fmtDays } from "./mttr.js";
 
@@ -694,7 +694,23 @@ export async function renderProgram(host, params, _ctx) {
           "Coverage on the x axis, efficiency on the y — up and to the right is better. Each"
           + " point is one non-empty subset of the rule's signals; the active rule is"
           + " direct-labelled like every other."),
-        el("div", { class: "chart-box" }, canvas)));
+        el("div", { class: "chart-box" }, canvas),
+        chartTable({
+          canvas,
+          caption: "Each plotted point as a row — coverage is the x axis, efficiency the y,"
+            + " both in percent. This is the same population as the table above, read in the"
+            + " axes the chart puts it on.",
+          model: chartTableModel({
+            columns: [
+              { key: "label", label: "Signals", format: "text" },
+              { key: "coverage", label: "Coverage %", format: "pct" },
+              { key: "efficiency", label: "Efficiency %", format: "pct" },
+              { key: "highRisk", label: "High risk", format: "count" },
+              { key: "unknown", label: "Unclassified", format: "count" },
+            ],
+            rows: group.points,
+          }),
+        })));
 
       const points = group.points;
       loadCharts().then((charts) => {
@@ -827,7 +843,33 @@ export async function renderProgram(host, params, _ctx) {
           : "")
         + " A gap is a date where nothing was high risk yet, drawn as a gap rather than as a"
         + " zero."),
-      el("div", { class: "chart-box" }, canvas)));
+      el("div", { class: "chart-box" }, canvas),
+      // `points` again — one array, plotted below and listed here.
+      chartTable({
+        canvas,
+        caption: "Both series, one row per date, in percent. An em dash is a date where the"
+          + " rate had no denominator — the gap the line draws, not a zero.",
+        model: chartTableModel({
+          columns: [
+            {
+              key: "date",
+              label: "Date",
+              format: "text",
+              value: (p) => String(p.date).slice(0, 10),
+            },
+            { key: "coverage_pct", label: "Coverage %", format: "pct" },
+            { key: "efficiency_pct", label: "Efficiency %", format: "pct" },
+            {
+              key: "reconstructed",
+              label: "Reconstructed",
+              format: "text",
+              align: "text",
+              value: (p) => (p.reconstructed ? "yes" : "no"),
+            },
+          ],
+          rows: points,
+        }),
+      })));
 
     loadCharts().then((charts) => {
       if (!live) return;
