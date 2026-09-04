@@ -34,15 +34,16 @@
 // `sca.js` no longer hosts a second copy of those five, only the register-shaped helpers
 // built on top of them.
 
-import { swrCall } from "../store.js";
+import { bootstrapCached, swrCall } from "../store.js";
 import {
-  absent, dataTable, days1, denomNote, el, emptyState, fmtCount, fmtDate, glossaryTip,
-  heroStat, meter, num, pageHeader, pct1, skeletonStack, statRow, survivalTableModel,
+  absent, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount, fmtDate,
+  glossaryTip, heroStat, meter, num, pageHeader, pct1, skeletonStack, statRow,
+  survivalTableModel,
 } from "../ui.js";
 import {
   boundedDays, chartCard, concentrationModel, figureCard, missingColumnsNote, movementCard,
-  movementModel, oldestReposModel, pagedTable, registerRowsTable, renderRegisterPage,
-  sectionCard, textCell,
+  movementModel, oldestReposModel, pagedTable, registerFirstRunView, registerRowsTable,
+  renderRegisterPage, sectionCard, textCell,
 } from "./sca.js";
 
 /**
@@ -115,7 +116,7 @@ export const REMOVAL_CELLS = [
  * so the segment tables come from the secrets half. Nothing in this model carries a severity
  * axis, a severity count or a severity key.
  */
-export function secretsModel(payload) {
+export function secretsModel(payload, opts) {
   const p = payload || {};
   const reg = p.register || {};
   const sec = p.secrets || {};
@@ -127,19 +128,28 @@ export function secretsModel(payload) {
 
   const total = num(cov.total, num(sec.rowCount, num(reg.rowCount)));
   const median = boundedDays(ttr.median, ttr.medianLowerBound);
+  const firstRun = registerFirstRunView(
+    sec.rowCount !== undefined ? sec.rowCount : reg.rowCount,
+    opts && opts.synced,
+  );
 
   return {
     scope: "secrets",
+    firstRun,
     asOf: reg.asOf ?? sec.asOf ?? null,
     rowCount: num(sec.rowCount, num(reg.rowCount)),
     open: num(sec.open, num(reg.open)),
 
-    // THE HERO IS THE CORNER WHERE THE TWO AXES DISAGREE.
+    // THE HERO IS THE CORNER WHERE THE TWO AXES DISAGREE — suppressed to a dash on a first
+    // run for the same reason sca.js's hero is: "0 secrets left the code" over a register
+    // nobody has read is a confident claim about a corner nobody has looked at yet.
     hero: {
       label: "Removed, not rotated",
-      value: fmtCount(rvr.removedNotRotated),
-      sentence: `${fmtCount(rvr.removedNotRotated)} secrets left the code and nobody has `
-        + "confirmed the credential is dead.",
+      value: firstRun.show ? "—" : fmtCount(rvr.removedNotRotated),
+      sentence: firstRun.show
+        ? "Nothing has been measured for this register yet."
+        : `${fmtCount(rvr.removedNotRotated)} secrets left the code and nobody has `
+          + "confirmed the credential is dead.",
       denominator:
         `${fmtCount(rvr.removedNotRotated)} of ${fmtCount(rvr.total)} secret findings have a `
         + "removal date and no rotation date. The credential is live until a validation says "
@@ -358,13 +368,16 @@ export function bucketTotals(aging) {
 
 /** Credentials in the repository — a lifecycle of its own. */
 export function renderSecrets(host) {
+  const boot = bootstrapCached();
+  const synced = !!(boot && boot.latestSync);
+
   return renderRegisterPage(host, {
     skeleton: () => skeletonStack(6, { widths: ["70%", "100%", "90%", "100%", "80%", "60%"] }),
     // NO SEVERITIES PARAMETER. `secretsModel` ignores it and its cache key omits it, so
     // sending one would mint an argument that changes nothing and imply a filter that does
     // not exist. `showNoFix` is likewise omitted: it cannot bite on a non-dependency row.
     fetch: () => swrCall("api_getSecretsPage", {}),
-    paint: (payload) => paintSecrets(host, secretsModel(payload)),
+    paint: (payload) => paintSecrets(host, secretsModel(payload, { synced })),
   });
 }
 
@@ -383,7 +396,8 @@ function paintSecrets(host, vm) {
         + "rotated."),
       el("p", { class: "small muted" }, vm.resolvedNote),
     ),
-    stats: [
+    // SUPPRESSED, not dashed — see sca.js's paintSca for the same convention.
+    stats: vm.firstRun.show ? [] : [
       statRow("In register", fmtCount(vm.rowCount), "findings, open and resolved"),
       statRow("Open", fmtCount(vm.open), "string still in HEAD"),
       statRow(
@@ -393,6 +407,19 @@ function paintSecrets(host, vm) {
       ),
     ],
   }));
+
+  // FIRST RUN STOPS HERE — see sca.js's paintSca for why every section past this point would
+  // otherwise print its own confident "0", including the removed-vs-rotated four-corner table
+  // and the revocation survival chart.
+  if (vm.firstRun.show) {
+    host.append(firstRunNotice({
+      synced: vm.firstRun.synced,
+      hint: "Secrets arrive with the first sync that saves a row for this register; enable "
+        + "it under Settings → Register if it is off.",
+    }));
+    return;
+  }
+
   host.append(denomNote(vm.hero.denominator));
 
   // ------------------------------------------------------------ removed is not rotated

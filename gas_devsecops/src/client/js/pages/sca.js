@@ -29,9 +29,10 @@ import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../stor
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   DEFAULT_PAGE_SIZE, absent, boundedDays, chartTable, chartTableModel, dataTable, days1,
-  denomNote, el, emptyState, errorState, fmtCount, glossaryTip, heroStat, kpiCard, meter, num,
-  onPageTeardown, pageHeader, pageOf, pct1, segmented, sevBadge, sevEntries, sevKeyRow,
-  sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter, togglePills, fmtDate, triCell,
+  denomNote, el, emptyState, errorState, firstRunNotice, fmtCount, glossaryTip, heroStat,
+  kpiCard, meter, num, onPageTeardown, pageHeader, pageOf, pct1, segmented, sevBadge, sevEntries,
+  sevKeyRow, sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter, togglePills, fmtDate,
+  triCell,
 } from "../ui.js";
 
 // =========================================================================================
@@ -48,6 +49,32 @@ import {
 // This file re-exports `pct1` and `boundedDays` because `test/pagesRegisters.test.js` —
 // which this package may not edit — still imports both from here by name.
 export { boundedDays, pct1 };
+
+/**
+ * The first-run decision, shared by sca.js, sast.js and secrets.js.
+ *
+ * `show` is true when THIS register's own ledger carries nothing at all — `rowCount` (open
+ * plus resolved, together) is 0. sca, sast and secrets are three independent queries against
+ * three independent ledger scopes (CLAUDE.md: "the same CVE arriving through a dependency and
+ * through a host image is two findings with two clocks"), so a register with rows is never
+ * suppressed because a DIFFERENT register is empty, and an empty register is never left to
+ * print a page of zeros because some other register has rows. `num(rowCount, 0)` rather than
+ * a bare `=== 0`: a malformed payload with no `rowCount` field at all degrades to the SAME
+ * safe default — nothing here to show — rather than to a page that assumes data it does not
+ * have.
+ *
+ * `synced` distinguishes "no sync has ever run" from "a sync ran and saved nothing for this
+ * register" — the same split `executiveFirstRunView` and `firstRunNotice` (ui/feedback.js)
+ * already make, and `firstRunNotice` is what every one of the three pages hands this straight
+ * to. The one signal a register page has for it is the shared boot cache: `boot.latestSync`
+ * is set the moment ANY sync completes, whichever scope it touched — a sync that ran and
+ * saved nothing for THIS register still makes `synced` true, which is the whole point: "the
+ * tenant answered and had nothing to report" is a different, true, claim from "nobody has
+ * asked".
+ */
+export function registerFirstRunView(rowCount, synced) {
+  return { show: num(rowCount, 0) === 0, synced: !!synced };
+}
 
 /** EPSS is a probability, 0..1 off the wire; rendered as the percentage it names. */
 export function epssPct(v) {
@@ -666,6 +693,7 @@ export function scaModel(payload, opts) {
   const order = (opts && opts.severityOrder) || SEVERITY_FALLBACK;
   const awaiting = p.awaiting || {};
   const coverage = p.signalCoverage || {};
+  const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced);
 
   // THE TWO CLOCKS. `openTotal` is the whole open backlog in this scope; `overall` is the
   // part of it with no published fix. Everything else is the part a team could have closed.
@@ -675,6 +703,7 @@ export function scaModel(payload, opts) {
 
   return {
     scope: "sca",
+    firstRun,
     asOf: p.asOf ?? null,
     severities: p.severities ?? null,
     showNoFix: p.showNoFix !== false,
@@ -682,11 +711,18 @@ export function scaModel(payload, opts) {
     open: num(p.open),
     resolved: num(p.resolved),
 
+    // ON A FIRST RUN THE FIGURE IS NOT A ZERO. `rowCount`/`open`/`resolved` above stay the
+    // real numbers the payload carried, however zero, because they are what `firstRun` itself
+    // was decided from — but the HERO is the one figure a reader meets before anything else on
+    // the page, and "0 open findings of 0 in the register" is a confident claim about a
+    // register nobody has read. `firstRunNotice`, rendered right below, carries the reason.
     hero: {
       label: "Dependencies",
-      value: fmtCount(p.open),
-      sub: `open findings of ${fmtCount(p.rowCount)} in the register — `
-        + `${fmtCount(p.resolved)} resolved.`,
+      value: firstRun.show ? "—" : fmtCount(p.open),
+      sub: firstRun.show
+        ? "Nothing has been measured for this register yet."
+        : `open findings of ${fmtCount(p.rowCount)} in the register — `
+          + `${fmtCount(p.resolved)} resolved.`,
     },
 
     // TWO FIGURES, NEVER ONE. A single "average time to fix" over both populations would be
@@ -775,6 +811,7 @@ export function renderSca(host, params) {
   // the client bundle is plain JS and cannot import `src/domain/config.ts`.
   const boot = bootstrapCached();
   const order = (boot && boot.severityOrder) || SEVERITY_FALLBACK;
+  const synced = !!(boot && boot.latestSync);
 
   return renderRegisterPage(host, {
     skeleton: () => skeletonStack(6, { widths: ["70%", "100%", "90%", "100%", "80%", "60%"] }),
@@ -783,7 +820,8 @@ export function renderSca(host, params) {
       severities: filters.severities.length ? filters.severities : undefined,
       showNoFix: filters.showNoFix,
     }),
-    paint: (payload) => paintSca(host, scaModel(payload, { severityOrder: order }), filters),
+    paint: (payload) =>
+      paintSca(host, scaModel(payload, { severityOrder: order, synced }), filters),
   });
 }
 
@@ -808,12 +846,30 @@ function paintSca(host, vm, filters) {
         "A CVE in a third-party package. Fixed by upgrading it — which nobody can do until "
         + "a fixed version exists."),
     ),
-    stats: [
+    // SUPPRESSED, not dashed — the same convention Executive and MTTR use. "In register 0 ·
+    // Open 0 · Resolved 0" over a register nobody has read is three more confident zeros
+    // beside the hero's own.
+    stats: vm.firstRun.show ? [] : [
       statRow("In register", fmtCount(vm.rowCount), "findings, open and resolved"),
       statRow("Open", fmtCount(vm.open), "still outstanding"),
       statRow("Resolved", fmtCount(vm.resolved), "closed in the ledger"),
     ],
   }));
+
+  // FIRST RUN STOPS HERE. Every section below — the two clocks, the exploitation signals,
+  // both charts (so neither canvas is ever created), the tier and funnel tables, every
+  // breakdown, the oldest-open ranking, the per-finding table and the movement card — reads a
+  // population of exactly zero on an unread register, and each one would otherwise print its
+  // own confident "0". `firstRunNotice` carries the one sentence this page owes a reader
+  // instead; the notice's `hint` says what specifically fills this register.
+  if (vm.firstRun.show) {
+    host.append(firstRunNotice({
+      synced: vm.firstRun.synced,
+      hint: "Dependency findings arrive with the first sync that saves a row for this "
+        + "register; enable it under Settings → Register if it is off.",
+    }));
+    return;
+  }
 
   host.append(registerToolbar({
     route: "sca",

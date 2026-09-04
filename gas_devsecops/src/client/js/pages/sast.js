@@ -25,14 +25,16 @@
 
 import { bootstrapCached, swrCall } from "../store.js";
 import {
-  absent, dataTable, days1, denomNote, el, emptyState, fmtCount, fmtDate, heroStat, meter,
-  num, pageHeader, pct1, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, skeletonStack, statRow,
+  absent, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount, fmtDate,
+  heroStat, meter, num, pageHeader, pct1, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
+  skeletonStack, statRow,
 } from "../ui.js";
 import {
   RISK_TIER_LABELS, RISK_TIER_ORDER, agingModel, agingTableModel, chartCard,
   concentrationModel, figureCard, funnelModel, movementCard, movementModel, oldestFindingsModel,
-  pagedTable, readRegisterParams, registerRowsTable, registerToolbar, renderRegisterPage,
-  sectionCard, sevPalette, severityCountsTableModel, signalFigure, textCell, tierModel,
+  pagedTable, readRegisterParams, registerFirstRunView, registerRowsTable, registerToolbar,
+  renderRegisterPage, sectionCard, sevPalette, severityCountsTableModel, signalFigure, textCell,
+  tierModel,
 } from "./sca.js";
 
 const SEVERITY_FALLBACK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
@@ -88,9 +90,11 @@ export function sastModel(payload, opts) {
   const concentration = concentrationModel(p.concentration, ["cwe", "repo", "language", "owner_project"]);
   const weakness = concentration.find((c) => c.dim === "cwe") || null;
   const tiers = tierModel(p.tiers, RISK_TIER_ORDER, RISK_TIER_LABELS);
+  const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced);
 
   return {
     scope: "sast",
+    firstRun,
     asOf: p.asOf ?? null,
     severities: p.severities ?? null,
     showNoFix: p.showNoFix !== false,
@@ -98,11 +102,15 @@ export function sastModel(payload, opts) {
     open: num(p.open),
     resolved: num(p.resolved),
 
+    // Suppressed to a dash on a first run, for the same reason scaModel's hero is — see that
+    // module's comment. `rowCount`/`open`/`resolved` above stay the real numbers.
     hero: {
       label: "Code",
-      value: fmtCount(p.open),
-      sub: `open weaknesses of ${fmtCount(p.rowCount)} in the register — `
-        + `${fmtCount(p.resolved)} resolved.`,
+      value: firstRun.show ? "—" : fmtCount(p.open),
+      sub: firstRun.show
+        ? "Nothing has been measured for this register yet."
+        : `open weaknesses of ${fmtCount(p.rowCount)} in the register — `
+          + `${fmtCount(p.resolved)} resolved.`,
     },
 
     // ONE CLOCK, AND THE PAGE SAYS WHY IT IS ONE.
@@ -164,6 +172,7 @@ export function renderSast(host, params) {
   const filters = readRegisterParams(params);
   const boot = bootstrapCached();
   const order = (boot && boot.severityOrder) || SEVERITY_FALLBACK;
+  const synced = !!(boot && boot.latestSync);
 
   return renderRegisterPage(host, {
     skeleton: () => skeletonStack(6, { widths: ["70%", "100%", "90%", "100%", "80%", "60%"] }),
@@ -174,7 +183,8 @@ export function renderSast(host, params) {
       // Sent anyway so the cache key matches the server's `modelParams` default.
       showNoFix: filters.showNoFix,
     }),
-    paint: (payload) => paintSast(host, sastModel(payload, { severityOrder: order }), filters),
+    paint: (payload) =>
+      paintSast(host, sastModel(payload, { severityOrder: order, synced }), filters),
   });
 }
 
@@ -196,12 +206,24 @@ function paintSast(host, vm, filters) {
         "A weakness class at a file and a line in our own source. There is no vendor: this "
         + "one is fixed by changing the code."),
     ),
-    stats: [
+    // SUPPRESSED, not dashed — see sca.js's paintSca for the same convention.
+    stats: vm.firstRun.show ? [] : [
       statRow("In register", fmtCount(vm.rowCount), "weaknesses, open and resolved"),
       statRow("Open", fmtCount(vm.open), "still outstanding"),
       statRow("Resolved", fmtCount(vm.resolved), "dated by disappearance"),
     ],
   }));
+
+  // FIRST RUN STOPS HERE — see sca.js's paintSca for why every section past this point would
+  // otherwise print its own confident "0", including both chart canvases.
+  if (vm.firstRun.show) {
+    host.append(firstRunNotice({
+      synced: vm.firstRun.synced,
+      hint: "Code weaknesses arrive with the first sync that saves a row for this register; "
+        + "enable it under Settings → Register if it is off.",
+    }));
+    return;
+  }
 
   host.append(registerToolbar({
     route: "sast",
