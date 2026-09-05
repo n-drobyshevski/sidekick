@@ -257,6 +257,11 @@ To read the notebooks as well, four more files go on the same `sys.path`:
     └── 08_code_assets.ipynb
 ```
 
+**Catalog mode is the supported deployment.** Pass `--catalog` and `--schema` and the register
+is Delta tables in the lake; `brick/databricks.yml` deploys one Job per scope that way. The two
+CSV paragraphs below are the fallback for a principal with no schema it may create tables in —
+see [`brick/README.md`](../README.md), *Fallback storage* and *The CSV register (legacy)*.
+
 **`--csv_path` makes a workspace directory the register.** Delta is still involved — the ledger
 is `MERGE`d on every scan and read back to compute the gold tables, and a CSV cannot be merged
 into — but only as scratch for the length of one run: the CSV is restored into Delta before the
@@ -272,13 +277,27 @@ asked for is refused. Absence is remediation here, so a `sast` prior meeting a `
 a mislabelled input — every one of its rows is missing from that scan *by construction*, and all
 of them would close as remediated, with real resolution dates.
 
-Then run one scope at a time:
+Then run one scope at a time — in the lake:
 
 ```bash
-python run_pipeline.py --scope=sca --severities=CRITICAL \
-  --csv_path=/Workspace/Users/<you>/wiz/devsecops_csv \
+python run_pipeline.py --scope=sca --severities=CRITICAL,HIGH \
+  --catalog=<your-catalog> --schema=<your-schema> \
   --wiz_api_url=https://api.<region>.app.wiz.io/graphql
 ```
+
+or, on the fallback, with `--csv_path=/Workspace/Users/<you>/wiz/devsecops_csv` in place of the
+catalog pair.
+
+To run either scope on a laptop against a local lake, with no tenant and no cluster:
+
+```bash
+python -m devlake.run --fork=devsecops --scope=sca  --scans=2 --lake=/tmp/lakecheck
+python -m devlake.run --fork=devsecops --scope=sast --scans=2 --lake=/tmp/lakecheck
+```
+
+The fake Wiz in front of it **validates the filter shape per scope**, so the asymmetry below
+(SAST wraps `severity`, bares `projectId`; SCA does the opposite) fails loudly rather than
+fetching zero rows. See [`devlake/README.md`](../../devlake/README.md).
 
 The first run has nothing to restore and says so; after it the directory is the register, and
 each later run reconciles against it. The scratch Delta side defaults to
@@ -289,9 +308,11 @@ by default, `--rebuild_ledger` has nothing to replay in this mode unless
 Read `resolved_count` in the first run's summary before anything else. A plausible day's
 remediation means the scope is right; a number close to the whole register means it is not.
 
-Everything else — parameters, retries, the ledger's lifecycle rules, the CSV register, table
-layout, `--rebuild_ledger` — works exactly as [`brick/README.md`](../README.md) describes, because
-it is the same code. Read that file for the detail; this one covers only what differs.
+Everything else — parameters, retries, the ledger's lifecycle rules, the actionable clock, the
+CSV register, table layout, `--rebuild_ledger` — works exactly as
+[`brick/README.md`](../README.md) describes, because it is the same code. One difference is
+load-bearing and lives there too: `awaiting_vendor_fix` is scope-guarded, because a weakness in
+your own code has no vendor, so `sast` is not in `config.HAS_VENDOR_FIX` and never awaits one. Read that file for the detail; this one covers only what differs.
 
 ## Tests
 

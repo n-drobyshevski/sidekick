@@ -786,7 +786,7 @@ coverage and MTTR are computed over, so importing only the live ledger would shr
 | Not carried | |
 | --- | --- |
 | `tags_json` | brick's ingest selects no asset tags, so nothing downstream would read it — and domain triage is unavailable here either way |
-| the actionable clock | `fix_date` / `fix_observed_at` arrive, but nothing reads them yet |
+| a back-dated actionable clock | `fix_date` / `fix_observed_at` arrive and are read (see [The actionable clock](#the-actionable-clock)), but the bundle carries no fix history beyond what each lifecycle's last observation held |
 | bronze, and therefore a back-dated gold trend | the bundle holds reconciled lifecycles, not raw findings. `<p>scans` shows the imported runs; the gold tables begin accumulating from the first brick run |
 | `mttr_history` | GAS's precomputed daily KPI series. It rides in the bundle and brick has no table for it |
 | several episodes for one `vuln_key` | brick's ledger is one row per key, so the most recently resolved wins; the import counts the rest |
@@ -855,10 +855,74 @@ python brick/run_pipeline.py \
 ```
 
 Off Databricks the `dbutils` accessors return empty rather than raising, so credentials come
-from the environment. Note that `saveAsTable` against a three-level `catalog.schema.table`
-name needs Unity Catalog — a local Spark can only write two-level names.
+from the environment.
 
-## PoC storage: running with no catalog
+**Three-level names work locally, and this file used to say they did not.** The claim was that
+`saveAsTable` against `catalog.schema.table` needs Unity Catalog. Measured (Spark 3.5.9,
+delta-spark 3.3.3): the test session installs `DeltaCatalog` **as** `spark_catalog`, so
+`spark_catalog.<schema>` is a writable three-level namespace, and `saveAsTable`, `MERGE INTO`,
+`CREATE TABLE … CLUSTER BY`, `DELETE`, `OPTIMIZE`, `table_exists` and `databaseExists` all take
+it — two full scans of the committed fixture land under three-part names with clustering and
+deletion vectors intact (`brick/tests/test_catalog_mode.py`, and its devsecops mirror).
+
+What is true is narrower, and worth knowing before you pass `--catalog=hive_metastore`:
+
+- a **named** catalog with no plugin behind it is refused by the session catalog with
+  `[REQUIRES_SINGLE_PART_NAMESPACE] spark_catalog requires a single-part namespace`, and it
+  never reports "not found" — `databaseExists` returns `False` silently and `CREATE SCHEMA`
+  dies inside Spark's own error formatter (`_LEGACY_ERROR_TEMP_1055`), which `ensure_schema`
+  then re-raises as a CREATE-SCHEMA *grant* problem it is not;
+- delta-spark's Python builder is the one call that genuinely cannot: `DeltaTable
+  .createIfNotExists(spark).tableName("a.b.c")` parses a two-part identifier and dies on the
+  second dot with `[PARSE_SYNTAX_ERROR] … pos 22`, before any catalog is consulted. That is
+  `create_clustered`, which is why the local harness pre-creates the clustered tables by SQL
+  DDL and lets `ensure_tables` no-op past them (`devlake/lake.py::precreate_clustered`).
+
+## Running it against a local lake
+
+The whole pipeline runs on a laptop against a directory that mirrors the catalog layout — real
+Delta, real `MERGE`, the real `main()`, and the shipped notebooks — with a fake Wiz in front of
+it. That is `devlake/`, at the repo root; see [`devlake/README.md`](../devlake/README.md).
+
+```bash
+pip install -r brick/requirements.txt -r devlake/requirements.txt
+python -m devlake.run --fork=brick      --scope=os  --scans=2 --lake=/tmp/lakecheck
+python -m devlake.run --fork=devsecops  --scope=sca --scans=2 --lake=/tmp/lakecheck
+```
+
+Two scans rather than one on purpose: the second is truncated so a finding **disappears**, which
+is the branch that dates most remediations and the one most likely to be wrong. Tables land at
+`<lake>/<schema>.db/<prefix><name>` — Spark's own warehouse convention, which is the
+`catalog.schema.table` mirror in Spark's spelling — and `devlake.lake.reregister` re-registers
+every directory holding a `_delta_log` on the next boot, so the lake survives a session restart.
+That re-registration is this file's own `CREATE TABLE … USING DELTA LOCATION` recipe (see
+[Moving it into the lake later](#moving-it-into-the-lake-later)), run on every start.
+
+Nothing reaches Wiz: `devlake/fakewiz.py` patches `ingest._post`, keeps the real `build_filter`,
+the real cursor walk and the real `seq` ordering, and **refuses a filter of the wrong shape**
+with the GraphQL 400 the live API would return — so a scope whose severity filter regressed to a
+bare list fails loudly here instead of fetching zero rows and looking like an empty register.
+
+To read the lake without Spark, DuckDB's `delta` extension reads it directly, deletion vectors
+and all (measured on duckdb 1.5.5, row counts equal to Spark's):
+
+```sql
+INSTALL delta; LOAD delta;
+SELECT severity, km_median, mttr_actionable_median
+FROM   delta_scan('file:///tmp/lakecheck/wiz.db/wiz_os_metrics_mttr');
+```
+
+To open the notebooks, `jupyter lab` from the fork's `notebooks/` directory with
+`devlake/kernel_startup.py` on `IPYTHONDIR` — it supplies `dbutils`, `spark`, `display`,
+`displayHTML` and the `%sql` cell rule, so the shipped notebooks run unedited. The mechanics and
+the env vars are in `devlake/README.md`.
+
+## Fallback storage: running with no catalog
+
+> **Prefer catalog mode.** Everything below
+> exists for a deployment that has nowhere to create tables. If this principal has a schema it
+> may write, use [Running it on Databricks](#running-it-on-databricks) — the catalog is the
+> supported home for the register and the only one the Job bundle deploys against.
 
 A proof of concept usually has nowhere to put tables — no catalog and schema this principal may
 create in. `--data_path` runs the whole pipeline against a **directory** instead:
@@ -939,7 +1003,13 @@ If a path ever has to be rebuilt rather than registered — a directory copied b
 say — `--rebuild_ledger` replays bronze into a fresh register and lands where the live scans
 landed.
 
-## The CSV register
+## The CSV register (legacy)
+
+**Why it exists:** this deployment's service principal had no schema it could create tables in
+and no volume to write to, so the register had to live somewhere that needed neither. **What
+obsoletes it:** a schema with `CREATE TABLE` on it. Once that grant exists, migrate to catalog
+mode and leave this section behind — it is kept because a register currently running on it must
+still be readable, not because it is a good place for one.
 
 A deployment with no catalog it may create tables in **and** no Unity Catalog volume has nowhere
 for the ✅ rows above to point. `csvstore.py` is the answer that deployment actually runs on:
@@ -1454,18 +1524,59 @@ coverage is indistinguishable from "no high-risk findings" to a reader.
 way pandas' `.median()` / `.quantile(0.9)` do. `percentile_approx` would quietly disagree with
 the dashboard.
 
+## The actionable clock
+
+`mttr_days` answers *how long did this finding live*. It is the wrong question to hold a team
+to: for most of that time there was often nothing to install. The actionable clock answers
+*how long did it live once it could have been fixed*, and both are published, because the gap
+between them is how much of the exposure was the vendor's.
+
+Five columns on every lifecycle (`ledger.lifecycle_frame`), ported from
+`gas/src/domain/ledgerCore.ts::baseRows`:
+
+| Column | |
+| --- | --- |
+| `fix_available_at` | when a fix first existed: `fix_date`, else `fix_observed_at` |
+| `actionable_from` | `greatest(first_seen, fix_available_at)` — **the clock never starts before detection** |
+| `mttr_actionable_days` | `resolved_at − actionable_from` |
+| `actionable_age_days` | for an open finding, `now − actionable_from` |
+| `awaiting_vendor_fix` | open, in a scope that HAS a vendor, and no fix available yet |
+
+and on `…metrics_mttr`, per severity plus `OVERALL`: `mttr_actionable_mean`,
+`mttr_actionable_median`, `actionable_resolved`, `actionable_age_p50` / `_p90`, and
+`actionable_sla_compliant`. `actionable_resolved` is the population the second clock could
+price at all, and it is published beside the rates for that reason — it is the denominator that
+says how much of the register the actionable figures actually cover.
+
+**`awaiting_vendor_fix` is scope-guarded, and that guard is load-bearing.** "Open with no fix
+available" is true of every static-analysis finding by construction — a weakness in your own
+code has no vendor to wait for — so without the guard every open SAST row sits awaiting a
+vendor forever: out of every actionable clock, in every exposure count, and the two halves of
+the page disagree in a way that reads as broken arithmetic rather than a category error. The
+mutation is measured rather than argued: put `sast` back into `config.HAS_VENDOR_FIX` and all
+40 open findings in the committed capture flip
+(`tests/test_devsecops.py::test_static_analysis_is_never_awaiting_a_vendor_fix`).
+
+**The `hasFix` population, which is why this port is not a transcription of GAS's.** Every
+scope here whose filter pins `hasFix: true` — `os`, `all`, `sca`, but never `sast` — contains
+only findings that already had a fix when they were ingested. So a row of such a scope with a
+blank fix clock has not "no fix available"; it has a fix whose date the API did not give us, and
+`fix_available_at` falls back to `first_seen`. Taking GAS's `fix_date ?? fix_observed_at ?? null`
+verbatim would mark those rows as awaiting a vendor **inside a population defined by having
+one** — the same category error as the SAST case, reached from the other side. The bound is
+one-sided and the derivation says so: the filter proves a fix existed by the scan that ingested
+the row, not necessarily by `firstDetectedAt`, so `first_seen` can sit before the fix shipped and
+the actionable clock degrades onto the exposure clock rather than inventing a later start. That
+is the harsh direction, which is the one to be wrong in. `config.SCOPES_PINNING_HAS_FIX` is
+derived from `SCOPES` at import rather than written out, so dropping `hasFix` from a filter
+corrects this automatically instead of leaving it asserting a fix that is no longer guaranteed.
+
 ## What v2 does not do
 
 The three things v1 was missing — cross-scan lifecycle tracking, the capacity `reconstructed`
 flag, and the per-scan `resolved_count` cross-check — are done. What is still outstanding, all
 of it available on the GAS side:
 
-- **No actionable clock.** The SLA clock should arguably start when a vendor fix becomes
-  available, not at detection (`gas/src/domain/ledgerCore.ts::baseRows` computes
-  `fix_available_at`, `mttr_actionable_days`, `awaiting_vendor_fix`). The *inputs* are already
-  captured — `fix_date` and `fix_observed_at` are on every ledger row — because they cannot be
-  recovered afterwards: once a finding disappears from the API, a fix signal nobody wrote down
-  is gone for good. Nothing reads them yet; the derivations are the remaining work.
 - **No domain triage.** `gas/src/domain/domainRules.ts` assigns findings to owning teams from
   subscription and tag inputs. `subscription_name` / `subscription_ext_id` are on the ledger;
   **asset tags are not, because `ingest.py` does not select them** — adding that is an ingest

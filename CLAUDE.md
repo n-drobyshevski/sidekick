@@ -76,6 +76,68 @@ because they are in this file.
   `<area>: <lowercase phrase stating the substance>` — the body explains the defect and the
   measurement that justifies the fix.
 
+## brick / devlake — the Databricks register
+
+`brick/` (OS vulnerabilities, scopes `os`/`all`) and `brick/devsecops/` (`sca`/`sast`) are the
+PySpark + Delta surface over the same registers: bronze → silver → a `MERGE`d ledger → the
+`scans` commit row → gold tables. They are deliberate FORKS with identical module names and
+exactly one may be on `sys.path`. `devlake/` at the repo root is the dev-only harness that runs
+either of them on a laptop; it is never deployed.
+
+- **A three-level name is fine locally; a NAMED catalog is not, and the README had it
+  backwards.** It claimed `saveAsTable` on `catalog.schema.table` "needs Unity Catalog — a local
+  Spark can only write two-level names". Measured (Spark 3.5.9 / delta-spark 3.3.3): the session
+  installs `DeltaCatalog` **as** `spark_catalog`, so `spark_catalog.<schema>` is writable and
+  `saveAsTable`, `MERGE INTO`, `CREATE TABLE … CLUSTER BY`, `DELETE`, `OPTIMIZE`, `table_exists`
+  and `databaseExists` all take three parts. The single exception is delta-spark's own Python
+  builder: `DeltaTable.createIfNotExists().tableName("a.b.c")` parses a two-part identifier and
+  dies on the second dot with `[PARSE_SYNTAX_ERROR] … pos 22` before any catalog is consulted —
+  so `create_clustered` is the one call needing SQL DDL locally, which is what
+  `devlake/lake.py::precreate_clustered` is. An unregistered catalog never reports "not found":
+  `databaseExists` returns `False` silently, `CREATE SCHEMA` dies in Spark's own error formatter
+  (`_LEGACY_ERROR_TEMP_1055`) and `ensure_schema` re-raises it as a *grant* problem it is not.
+  Pinned in `brick/tests/test_catalog_mode.py` and its devsecops mirror.
+- **THE JAR DECIDES, not the pip package, and one test found it the long way.** `conftest`
+  sends `--packages io.delta:delta-spark_2.12:<v>` to spark-submit; pip had resolved 3.3.3 while
+  that string still said 3.3.2. Spark 3.5.6 changed RTAS to emit `OverwriteByExpression`, and
+  only 3.3.3's `StagedDeltaTableV2` advertises `TRUNCATE`/`OVERWRITE_BY_FILTER` — so
+  `csvstore.restore`'s `mode("overwrite").saveAsTable(<catalog name>)` failed with *"does not
+  support truncate in batch mode"*, an `AnalysisException` deep inside a restore rather than a
+  version error. `test_pins.py` now asserts `importlib.metadata.version("delta-spark")` EQUALS
+  the pinned jar; a floor is not enough, because the two must be one release.
+- **`DRIVER_MEMORY` was computed in the wrong process, and it read as an OOM.** `conftest`
+  keyed on `PYTEST_XDIST_WORKER_COUNT`, which is unset in the xdist CONTROLLER where conftest is
+  imported first; `os.environ.setdefault` then froze the single-process 4g into
+  `PYSPARK_SUBMIT_ARGS` and every worker inherited it, so `-n 3` meant three 4g JVMs against a
+  ~13 GiB cgroup. The cascade of 17 failures and 11 errors that produced was entirely one
+  worker's JVM dying; re-running the same ids serially passed. Key on `PYTEST_XDIST_WORKER` in
+  `pytest_configure`, which runs per process.
+- **Java 21 runs the whole suite, though Spark 3.5's docs say 8/11/17.** Measured here — session
+  start, Delta write/read, and `OPTIMIZE` on a single-column `CLUSTER BY` table. No guard was
+  added: blocking a setup that measurably works would be the docs overriding the measurement.
+- **`hasFix: true` in a scope's filter is a fact about the POPULATION, and the actionable clock
+  turns on it.** `_BASE` pins it for `os`/`all`/`sca` and never for `sast`, so those registers
+  hold only findings that already had a fix when ingested. A row of such a scope with a blank
+  fix clock therefore has a fix whose DATE is missing, not a missing fix: `fix_available_at`
+  falls back to `first_seen`. GAS's `fix_date ?? fix_observed_at ?? null` copied verbatim would
+  mark it `awaiting_vendor_fix` inside a population defined by having one — the same category
+  error as letting SAST await a vendor it does not have, reached from the other side.
+  `config.SCOPES_PINNING_HAS_FIX` is DERIVED from `SCOPES` at import, so dropping `hasFix` from a
+  filter corrects it rather than leaving it asserting a guarantee that is gone.
+- **The page notebooks could never run, and no test could see it.** Their boot cell opened with
+  `PAGE = {... panels.GROUP_DIMENSIONS ...}` while `import panels` sat fifteen lines below it in
+  the SAME cell — `NameError` on the notebook's first statement, in six notebooks, on any
+  machine including a fresh cluster. `tests/test_notebooks.py` READS the Python cells (it
+  executes only the `%sql` ones), so nothing caught it until `devlake` launched a real kernel.
+  The literal now sits below the import in every page notebook, `boot_cell` finds the cell by
+  its import line, and `without_page` keeps the sameness test saying what it said.
+- **A fake Wiz must validate the SHAPE, not just serve rows.** `devlake/fakewiz.py` patches
+  `ingest._post` (keeping the real `build_filter`, cursor walk and `seq` order) and answers a
+  GraphQL 400 when a scope's filter arrives in the wrong kind — which is what turns the
+  bare-list-vs-`{equals:[…]}` asymmetry into a loud failure instead of an empty register. Patch
+  `get_token` on BOTH `ingest` and `run_pipeline`: the latter does `from ingest import get_token`
+  at import, so patching only the module leaves the real OAuth call bound.
+
 ## gas_devsecops — the code register
 
 A fourth register: MTTR and remediation analytics for **SAST, SCA and secrets** findings.
