@@ -142,6 +142,39 @@ def test_the_ledger_schema_is_upstreams_plus_the_static_analysis_columns():
     assert ours[len(theirs):] == ["cwe", "language", "ai_verdict"]
 
 
+def test_the_project_filter_shape_matches_upstream():
+    """Same GraphQL connection, same filter type, so the project restriction must be byte-equal.
+
+    `sca` and brick's `os` both read `vulnerabilityFindings` behind a
+    `VulnerabilityFindingFilters`, and `projectIdV2` on that type is a
+    `VulnerabilityFindingProjectFilter` -- an object. This fork now routes it through
+    ``config.OBJECT_FILTERS`` instead of writing the object inline; upstream still writes it
+    inline, because upstream has exactly one filter type and a one-entry table would be
+    theatre. The two spellings must still agree, or the same tenant filter means two things.
+
+    It is the *shape* being compared, not the whole filter: the populations differ on purpose.
+    """
+    import ingest as ours
+
+    theirs = upstream("ingest")
+    # `upstream` loads by path, but brick/ingest.py's own `from config import SCOPES` resolves
+    # through `sys.path` -- which this module has already pointed at the fork. Rebinding the
+    # two scope constants from brick's config is what makes `theirs.build_filter` measure
+    # brick's `os` scope rather than this fork's `sca` under brick's code. The mixing guard
+    # exists because that substitution is invisible; here it is deliberate and named.
+    their_config = upstream("config")
+    theirs.SCOPES = their_config.SCOPES
+    theirs.DEFAULT_SCOPE = their_config.DEFAULT_SCOPE
+
+    assert ours.build_filter("sca", project_id="p")["projectIdV2"] == (
+        theirs.build_filter("os", project_id="p")["projectIdV2"]
+    ) == {"equals": ["p"]}
+    # And the asymmetry upstream never has to know about: the SAST type spells it `projectId`
+    # and takes it bare, which is why the shape is data here and a literal there.
+    assert ours.build_filter("sast", project_id="p")["projectId"] == ["p"]
+    assert config.OBJECT_FILTERS["sca"] == ("projectIdV2",)
+
+
 def test_this_fork_measures_code_and_refuses_to_pretend_otherwise():
     """`os` and `all` are brick's scopes. Accepting either here would write `wiz_os_*` tables
     full of code findings, which is a naming lie rather than an error anybody would notice."""

@@ -126,12 +126,25 @@ Four things about this register are different, and none is a detail:
   a weakness fixed within a day two years ago would report 730 days, and the Kaplan–Meier
   median would be set by the register's own start date. `tests/test_devsecops.py` measures that
   age. Turn the flag on if a `resolvedAt` appears, not before.
-- **Two selections are unverified against the live tenant**: whether `SASTFindingFilters`
-  accepts `severity`, and what `aiAnalysis.verdict` actually spells. Every node in the captured
-  response has `aiAnalysis: null`, so the AI clause will never fire until the enum is confirmed
-  — quiet, which is why `ai_verdict_missing` is published beside it. If the severity filter
-  turns out not to exist, set `severity_filter=False` on `config.SAST_SOURCE` and
+- **The same field name carries a different KIND across the two filter types, and the shape is
+  now data.** `SASTFindingFilters` does accept `severity` — that bullet used to call it
+  unverified — but as a `SASTSeverityFilter`, an object taking `{equals: [...]}`, where
+  `VulnerabilityFindingFilters.severity` is a bare `[VulnerabilitySeverity!]`. Same for
+  `status` (`SASTStatusFilter`), and inverted for the project restriction: SCA's `projectIdV2`
+  is an object and SAST's `projectId` is a bare `[String!]`. A mismatch is refused with HTTP
+  400 `VALIDATION_INVALID_TYPE_VARIABLE`, which fetches **zero rows and reads as an empty
+  register**, not as an error — this fork sent the SCA convention to both scopes until the
+  shapes were tabled. `config.OBJECT_FILTERS` holds the asymmetry per scope and
+  `ingest._shape_base` routes **every** list-valued key of `config.SCOPES` through it, because
+  a table covering only part of the filter is worse than none: an inline literal bypasses it
+  and adding the key changes nothing. Copy new entries from `npm run probe -- --schema` in
+  `gas_devsecops/`; never infer one filter type's shape from another's.
+  `config.Source.severity_filter` answers a different question and stays — *whether the type
+  has the key at all*, not what shape it wants — and when it is False,
   `ingest._severity_gate` applies `--severities` to the returned nodes instead.
+- **What `aiAnalysis.verdict` spells is still unverified against the live tenant.** Every node
+  in the captured response has `aiAnalysis: null`, so the AI clause will never fire until the
+  enum is confirmed — quiet, which is why `ai_verdict_missing` is published beside it.
 
 ### Two silver projections, one column contract
 

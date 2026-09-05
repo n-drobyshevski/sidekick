@@ -195,22 +195,59 @@ class Source:
 
     kind: str
     connection: str
-    #: Whether ``filterBy`` accepts a ``severity`` list. False means ``--severities`` cannot be
-    #: pushed to the API, and ``ingest._severity_gate`` applies it to the returned nodes
-    #: instead -- it has to be applied somewhere, because the scan log records the scope and
-    #: the disappearance guard trusts it.
+    #: Whether this scope's filter type accepts a ``severity`` key **at all**. False means
+    #: ``--severities`` cannot be pushed to the API, and ``ingest._severity_gate`` applies it
+    #: to the returned nodes instead -- it has to be applied somewhere, because the scan log
+    #: records the scope and the disappearance guard trusts it.
+    #:
+    #: This answers a DIFFERENT question from ``OBJECT_FILTERS`` below, and the two are not
+    #: substitutes: this one is *whether the key exists on the type*, ``OBJECT_FILTERS`` is
+    #: *what shape the value has to be in* once it does. Both are True/present for `sast`
+    #: today -- the key exists, and it takes an object -- so conflating them would have looked
+    #: fine right up until a type that genuinely lacks the key appeared.
     severity_filter: bool = True
 
 
 VULN_SOURCE = Source(kind="vulnerability", connection="vulnerabilityFindings")
-# UNVERIFIED against the live tenant: whether SASTFindingFilters accepts `severity`. If it does
-# not, flip `severity_filter` to False -- the scan still records its severity scope, so nothing
-# about the disappearance guard changes; the only cost is pulling rows the run then discards.
+# `severity_filter=True` is measured, not assumed: `SASTFindingFilters.severity` exists (as
+# `SASTSeverityFilter` -- see OBJECT_FILTERS for the shape it wants). If a filter type ever
+# turns up without the key, flip this to False -- the scan still records its severity scope, so
+# nothing about the disappearance guard changes; the only cost is pulling rows the run discards.
 SAST_SOURCE = Source(kind="sast", connection="sastFindings")
 
 SOURCES = {
     "sca": VULN_SOURCE,
     "sast": SAST_SOURCE,
+}
+
+# ---- Which filter keys a scope's filter type takes as an OBJECT rather than a bare list ----
+# The two filter types genuinely disagree about the SAME FIELD NAME, and this table exists so
+# that the disagreement is data a reader can check against the schema rather than a branch
+# buried in ``ingest.build_filter``:
+#
+#   VulnerabilityFindingFilters.severity                 [VulnerabilitySeverity!]  a bare list
+#   VulnerabilityFindingFilters.codeToCloudPipelineStage  [ ...Stage!]             a bare list
+#   VulnerabilityFindingFilters.projectIdV2   VulnerabilityFindingProjectFilter    {equals:[..]}
+#   SASTFindingFilters.severity               SASTSeverityFilter                   {equals:[..]}
+#   SASTFindingFilters.status                 SASTStatusFilter                     {equals:[..]}
+#   SASTFindingFilters.projectId              [String!]                            a bare list
+#
+# This asymmetry has cost the sibling register (`gas_devsecops/`) its whole SAST population
+# once, and it cost this fork the same way until now: ``build_filter`` applied the SCA
+# convention to both scopes, so every SAST run would be refused with HTTP 400
+# `VALIDATION_INVALID_TYPE_VARIABLE` and fetch **zero rows** -- which does not read as an error,
+# it reads as an empty register.
+#
+# DO NOT "TIDY" THIS INTO ONE CONVENTION. Applying SAST's object form to SCA breaks SCA, which
+# works today; the type names above are the evidence. And note `projectId` on SAST is a *bare*
+# list while `projectIdV2` on SCA is an object -- one field's shape says nothing about the
+# next's, in the same type or across types.
+#
+# **Copy these from `npm run probe -- --schema` in `gas_devsecops/`, which prints a ready-made
+# entry per filter type. Never infer one from another type.**
+OBJECT_FILTERS = {
+    "sca": ("projectIdV2",),
+    "sast": ("severity", "status"),
 }
 
 # ---- Where this deployment's tables live ----

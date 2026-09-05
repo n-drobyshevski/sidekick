@@ -324,6 +324,86 @@ def test_a_source_that_cannot_filter_severity_filters_it_here_instead():
     assert ingest._severity_gate([]) is None
 
 
+# ------------------------------------------------------- the filter shapes are per type
+
+
+def test_sast_severity_goes_on_the_wire_as_an_object_and_sca_as_a_bare_list():
+    """The same field name, two kinds, and getting it wrong empties the register silently.
+
+    ``VulnerabilityFindingFilters.severity`` is ``[VulnerabilitySeverity!]``, a bare list;
+    ``SASTFindingFilters.severity`` is a ``SASTSeverityFilter``, which takes ``{equals: [...]}``.
+    Sending the SCA convention to the SAST type is refused with HTTP 400
+    `VALIDATION_INVALID_TYPE_VARIABLE` -- so the run fetches **zero rows** and reads as an empty
+    register rather than as an error. This fork sent the bare list to both until now.
+    """
+    assert ingest.build_filter("sca", ["CRITICAL", "HIGH"])["severity"] == ["CRITICAL", "HIGH"]
+    assert ingest.build_filter("sast", ["CRITICAL", "HIGH"])["severity"] == {
+        "equals": ["CRITICAL", "HIGH"]
+    }
+    # The project restriction inverts the pairing, which is the point of a table over a rule:
+    # SCA wraps it (`VulnerabilityFindingProjectFilter`), SAST does not (`[String!]`).
+    assert ingest.build_filter("sca", project_id="p")["projectIdV2"] == {"equals": ["p"]}
+    assert ingest.build_filter("sast", project_id="p")["projectId"] == ["p"]
+
+
+@pytest.mark.parametrize("scope", sorted(ingest.SCOPES))
+def test_every_list_valued_base_key_goes_through_the_shape_table(scope, monkeypatch):
+    """A shape table covering only part of the filter is worse than none.
+
+    The mutation: for every list-valued key the emitted filter carries, add it to (or remove it
+    from) ``OBJECT_FILTERS`` and demand the wire shape MOVES. A key that does not move is a
+    literal that bypassed the table -- which is exactly how the sibling register shipped
+    `codeToCloudPipelineStage` as a bare list while its own table said it was an object: adding
+    the key to the table changed nothing, and nothing failed.
+
+    Both directions, because a one-way test passes against a function that only ever wraps.
+    """
+    table = {k: tuple(v) for k, v in ingest.OBJECT_FILTERS.items()}
+    baseline = ingest.build_filter(scope, ["CRITICAL", "HIGH"], project_id="p")
+    listish = {
+        key: value
+        for key, value in baseline.items()
+        if isinstance(value, list)
+        or (isinstance(value, dict) and set(value) == {"equals"} and isinstance(value["equals"], list))
+    }
+    # Guard the guard: a scope whose filter grew no list-valued keys would pass vacuously.
+    assert listish, f"{scope} emitted no list-valued keys -- this test measured nothing"
+
+    for key, value in listish.items():
+        flipped = dict(table)
+        entry = set(flipped[scope])
+        entry.symmetric_difference_update({key})
+        flipped[scope] = tuple(sorted(entry))
+        monkeypatch.setattr(ingest, "OBJECT_FILTERS", flipped)
+        got = ingest.build_filter(scope, ["CRITICAL", "HIGH"], project_id="p")[key]
+        assert got != value, (
+            f"{scope}.{key} is unchanged by OBJECT_FILTERS -- it bypassed the table, so the "
+            f"table does not describe what goes on the wire"
+        )
+        # And it moved to the *other* convention rather than to something else entirely.
+        expected = value["equals"] if isinstance(value, dict) else {"equals": list(value)}
+        assert got == expected
+        monkeypatch.setattr(ingest, "OBJECT_FILTERS", table)
+
+
+def test_the_resolved_status_flag_would_ship_the_right_shape(monkeypatch):
+    """``SAST_FETCH_RESOLVED`` is off, which makes `status` a mine under a future flag flip.
+
+    ``SASTFindingFilters.status`` is a ``SASTStatusFilter``, not a list -- and the branch that
+    would add it (``config``'s ``if SAST_FETCH_RESOLVED``) writes a plain list into ``SCOPES``,
+    on purpose: ``SCOPES`` is written in one convention and ``_shape_base`` decides the wire
+    form. Flipping the flag must therefore not re-introduce the 400 this commit removed.
+    """
+    import copy as _copy
+
+    scopes = _copy.deepcopy(ingest.SCOPES)
+    scopes["sast"]["status"] = ["OPEN", "RESOLVED"]
+    monkeypatch.setattr(ingest, "SCOPES", scopes)
+    assert ingest.build_filter("sast")["status"] == {"equals": ["OPEN", "RESOLVED"]}
+    # `sca` reaches the same branch through `_BASE` and must stay bare on the same key.
+    assert ingest.build_filter("sca")["status"] == ["OPEN", "RESOLVED"]
+
+
 def sast_node(**over):
     """A minimal ``sastFindings`` node -- the fields ``silver_sast`` reads and nothing else."""
     node = {

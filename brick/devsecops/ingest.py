@@ -29,6 +29,7 @@ from config import (
     DEFAULT_FETCH_SEVERITIES,
     DEFAULT_SCOPE,
     FETCH_ASSET_FIELDS,
+    OBJECT_FILTERS,
     SCOPE_ASSET_MEMBERS,
     SCOPES,
     SOURCES,
@@ -424,6 +425,38 @@ def describe_errors(body: str, limit: int = 2000) -> str:
     return "\n".join(lines)[:limit]
 
 
+def _list_filter(scope: str, key: str, values: Sequence[str]) -> Any:
+    """A list-valued filter, shaped the way THIS scope's filter type wants it.
+
+    One answer per (scope, key), read off ``config.OBJECT_FILTERS`` -- see that table for the
+    schema types and for why the shapes are not interchangeable.
+    """
+    if key in OBJECT_FILTERS.get(scope, ()):
+        return {"equals": list(values)}
+    return list(values)
+
+
+def _shape_base(scope: str, filter_by: Dict[str, Any]) -> Dict[str, Any]:
+    """Route EVERY list-valued key of a scope's base filter through ``_list_filter``.
+
+    ``config.SCOPES`` is written in one convention -- plain lists -- and the shape table decides
+    what goes on the wire. Without this pass a literal in ``SCOPES`` bypasses the table
+    completely, which is exactly how the sibling register shipped `codeToCloudPipelineStage`
+    as a bare list while its table said it was an object: adding the key to the table changed
+    nothing, because the value never went through the shaping function. **A shape table that
+    covers only part of the filter is worse than none**, because it reads as though it covers
+    all of it.
+
+    Non-list values pass through untouched, which is what leaves `sast`'s nested
+    ``resource: {isDefaultBranch: {equals: True}}`` and `sca`'s ``hasFix: True`` alone -- a
+    nested filter object is not a list needing a convention.
+    """
+    return {
+        key: _list_filter(scope, key, value) if isinstance(value, list) else value
+        for key, value in filter_by.items()
+    }
+
+
 def build_filter(
     scope: str = DEFAULT_SCOPE,
     severities: Sequence[str] = DEFAULT_FETCH_SEVERITIES,
@@ -434,23 +467,29 @@ def build_filter(
     Pure and separately testable, because this dict decides which population every downstream
     metric is computed over -- a wrong key here is not an error, it is a plausible-looking
     number about the wrong thing.
+
+    Every list-valued key -- the base's, the severity gate's and the project restriction's --
+    goes through ``config.OBJECT_FILTERS``. That is the whole design: the two filter types
+    spell the same field names with different KINDS, and a mismatch is refused with HTTP 400
+    `VALIDATION_INVALID_TYPE_VARIABLE`, which fetches zero rows while looking like an empty
+    register rather than like an error.
     """
     if scope not in SCOPES:
         raise RuntimeError(f"unknown scope {scope!r} -- expected one of {sorted(SCOPES)}")
-    filter_by: Dict[str, Any] = copy.deepcopy(SCOPES[scope])
+    filter_by: Dict[str, Any] = _shape_base(scope, copy.deepcopy(SCOPES[scope]))
     source = SOURCES[scope]
 
     api_severities = severity_filter(severities)
     if api_severities and source.severity_filter:
-        filter_by["severity"] = api_severities
+        filter_by["severity"] = _list_filter(scope, "severity", api_severities)
     if project_id:
         # The two filter types spell the project restriction differently, and the reference
         # scripts are the evidence for each: sca_request.py passes
         # `projectIdV2: {equals: [...]}` and sast_request.py passes a bare `projectId: [...]`.
-        if source.kind == "sast":
-            filter_by["projectId"] = [project_id]
-        else:
-            filter_by["projectIdV2"] = {"equals": [project_id]}
+        # The NAME is chosen here; the SHAPE comes from the same table every other list-valued
+        # key goes through, because an inline literal is how a key bypasses the table.
+        key = "projectId" if source.kind == "sast" else "projectIdV2"
+        filter_by[key] = _list_filter(scope, key, [project_id])
     return filter_by
 
 
