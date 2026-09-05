@@ -535,20 +535,6 @@ dialog.domains-dialog .dialog-actions {
   border-left: none; border-right: none; border-radius: 0;
 }
 
-/* Capacity meter (ui.js usageMeter): caption over a track/fill bar reusing .progress-track.
-   The warn/bad state recolors the fill AND the note text — meaning never rides on colour
-   alone (the number and note carry it too). */
-.usage-meter__head {
-  display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
-  margin-bottom: 6px;
-}
-.usage-meter__caption { font-size: var(--fs-label); color: var(--text-2); }
-.usage-meter__track.warn .progress-fill { background: var(--warn); }
-.usage-meter__track.bad .progress-fill { background: var(--bad); }
-.usage-meter__note { margin: var(--space-2) 0 0; color: var(--text-2); }
-.usage-meter__note.warn { color: var(--warn); }
-.usage-meter__note.bad { color: var(--bad); }
-
 /* Per-tab capacity breakdown (capacity.js renderCapacity). Nine tabs is past the point where
    hue can carry identity, so this is a table and every bar wears the same accent: the reader's
    job is comparing magnitude, not telling series apart, and the cell counts beside each bar
@@ -932,20 +918,6 @@ table.data.jobs-table td:last-child { text-align: right; white-space: nowrap; }
 /* The status cell can carry a longer sentence (the domain-tag three-figure line, a failure
    message) than the table's default nowrap-ellipsis cell allows for. */
 table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px; overflow: visible; }
-
-/* -------------------------------------------------------------- settings: health grid */
-.health-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-4);
-  margin-bottom: var(--space-5);
-}
-.health-item {
-  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
-  background: var(--surface); padding: 14px var(--space-4); box-shadow: var(--shadow-card);
-  display: flex; flex-direction: column; gap: var(--space-2); min-width: 0;
-}
-.health-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.health-row { display: flex; align-items: center; gap: 10px; }
-.health-build { margin: 0; }
 
 /* ---------------------------------------------------------------- the scope combobox */
 /* ui/combobox.js is the ONE component this package could not hand back to gas_shared, so

@@ -53,8 +53,8 @@ import { call } from "../../../../../gas_shared/api.js";
 import { bootstrapCached } from "../../../../../gas_shared/store.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
 import {
-  clear, el, errorState, fmtDateTime, glossaryTip, heroStat, pageHeader, skeletonStack,
-  statusPill, tipLabel, toast, togglePills,
+  clear, diagnosticsPanel, el, errorState, fmtDateTime, glossaryTip, heroStat, pageHeader,
+  skeletonStack, statusPill, tipLabel, toast, togglePills,
 } from "../ui.js";
 import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../../../../../gas_shared/ui/settings.js";
 import { TAB_FIELDS, tabStatus } from "../settingsModel.js";
@@ -675,27 +675,49 @@ export async function renderSettings(host, params, ctx) {
     });
     const prefsPanel = settingsPanel({ title: "Preferences", body: [expRow] });
 
-    const credPill = statusPill(
-      boot.hasCredentials ? "ok" : "bad",
-      boot.hasCredentials ? "Connected" : "No credentials",
-    );
     // The whole sync, not one of its rows — see api.ts's `latestSync`. A run writes one
     // `scans` row per register, and the diagnostic used to name whichever sorted first.
     const scan = boot.latestSync;
     const scanLine = scan
       ? `${fmtDateTime(scan.ts)} · ${Number(scan.total || 0).toLocaleString()} finding(s) across `
         + scan.scopes.map((s) => SCOPE_LABELS[s.scope] || s.scope).join(", ")
-      : "No sync recorded yet.";
-    const diagPanel = settingsPanel({
-      title: "Deployment",
-      body: [
-        settingRow({ label: "Product", control: el("span", {}, boot.product || "—") }),
-        settingRow({ label: "Build", control: el("span", { class: "num" }, boot.buildId || "—") }),
-        settingRow({ label: "Wiz credentials", control: credPill }),
-        settingRow({ label: "Last sync", control: el("span", {}, scanLine) }),
-      ],
+      : null;
+
+    // The four deployment read-outs, through gas_shared/ui/diagnostics.js. THESE WERE
+    // `settingRow`s, which was the one thing wrong with them: the settings-form vocabulary says
+    // "this is a field you may edit", and a build id is not. They are read-out cards now, same
+    // four facts in the same order under the same single h2.
+    //
+    // WHAT THIS REGISTER DOES NOT PASS, and does not gain: no storage meter (its cell usage is
+    // on the Data page, where `cellsSummary` computes it), and NO ERRORS SECTION — its
+    // `api_getRecentErrors` covers job failures only and is rendered on the Data page. Nothing
+    // moved between pages here.
+    //
+    // NO `client` STAMP EITHER, so no client-vs-server mismatch card. This app has the identical
+    // `buildInfo.js` module that gas_ai uses for that comparison sitting in src/client/js/,
+    // imported by NOTHING; wiring it up while passing through would be a new deployment claim
+    // for this register rather than the same claim expressed once.
+    const diagnostics = diagnosticsPanel({
+      heading: "Deployment",
+      product: { value: boot.product },
+      build: { server: boot.buildId },
+      credentials: {
+        label: "Wiz credentials",
+        present: boot.hasCredentials,
+        okLabel: "Connected",
+        missingLabel: "No credentials",
+        // BAD, NOT NEUTRAL. gas_ai draws the same boolean `neutral`, because running that
+        // workbook against bundled sample data is a legitimate mode; this register has no
+        // sample mode on this path and nothing to sync without credentials, so a missing one
+        // is a fault. The shared section refuses to default the tone for exactly this reason.
+        missingTone: "bad",
+      },
+      // An absolute timestamp and no relative-age phrase. `figures.relativeAge` does not exist
+      // in gas_shared yet, and inventing one here would put a second age vocabulary beside the
+      // one that is coming.
+      lastSync: { value: scanLine, emptyText: "No sync recorded yet." },
     });
 
-    clear(panels.system).append(maintenancePanel, prefsPanel, diagPanel);
+    clear(panels.system).append(maintenancePanel, prefsPanel, diagnostics.node);
   }
 }

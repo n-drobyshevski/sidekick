@@ -182,3 +182,45 @@ details.why[open] > summary .why__caret { transform: rotate(90deg); }
    no surface of its own. Only the focus ring matters, because the panel is tabbable (tabindex
    0) so a keyboard reader landing past the strip has somewhere to be. */
 .settings-tabpanel:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 4px; }
+
+/* ------------------------------------------------- settings: the System-tab read-outs */
+/* The vocabulary in js/ui/diagnostics.js: a grid of read-out cards, one per fact an operator
+   checks when something looks wrong. PROMOTED FROM gas/src/client/styles/pages.css, where the
+   same rules dressed that app's "System health" grid; gas_ai's two panels and
+   gas_devsecops's four deployment rows draw with them now too.
+
+   `.health-`, NOT `.diag-`: gas_ai/src/client/js/ui/diagList.js already owns `.diag-list`,
+   `.diag-row` and `.diag-warn` for an unrelated concept (how well an AARS scoring rule
+   separates its population). One prefix, two meanings, in one app is the collision this
+   package exists to end. */
+.health-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.health-item {
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  background: var(--surface); padding: 14px var(--space-4); box-shadow: var(--shadow-card);
+  display: flex; flex-direction: column; gap: var(--space-2); min-width: 0;
+}
+/* The head is space-between so a one-line fact reads label-left / answer-right — which is what
+   a build id, a product name and a last-sync line are — while a card holding a widget simply
+   has nothing on the right. */
+/* WRAPS, and the label does not. A one-line fact reads label-left / answer-right, but the
+   answers are not all short — gas_devsecops's last-sync line is a timestamp plus a count plus
+   three scope names, in a 260px column. Without the wrap the flex row shrank the LABEL instead,
+   breaking "Last sync" across two lines and crowding the value beside it; with it, a value too
+   long to sit beside its label drops onto its own full-width line and stays right-aligned. */
+.health-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--space-2); flex-wrap: wrap;
+}
+/* The label may be a span or a heading (diagnosticCard's `titleTag`, so each app keeps the
+   heading count its System tab already had). A heading brings UA margins that would push the
+   answer beside it out of line, so they are zeroed here rather than at the call site. */
+.health-label { margin: 0; white-space: nowrap; }
+.health-value { flex: 1 1 12ch; min-width: 0; overflow-wrap: anywhere; text-align: right; }
+.health-row { display: flex; align-items: center; gap: 10px; }
+.health-desc, .health-note, .health-covers { margin: 0; max-width: var(--measure); }
+/* A client/server build disagreement. --bad as INK on the card surface, never as a fill: the
+   sentence beside it says what is wrong, so the colour is emphasis and not the message. */
+.health-mismatch { margin: 0; color: var(--bad); max-width: var(--measure); }

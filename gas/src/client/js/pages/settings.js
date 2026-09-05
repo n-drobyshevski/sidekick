@@ -17,9 +17,9 @@ import {
   toggleReadoutBar, toggleReadoutNote,
 } from "../settingsReadouts.js";
 import {
-  absent, clear, confirmDialog, disclosure, el, emptyState, fmtDateTime, heroStat, openSheet,
-  pageHeader, saveBar, settingRow, settingsPanel, statusPill, switchToggle, tabList, tip,
-  tipAnchor, toast, usageMeter,
+  absent, clear, confirmDialog, diagnosticsPanel, disclosure, el, errorCountBadge, errorLogBody,
+  fmtDateTime, heroStat, normalizeErrorLog, openSheet, pageHeader, saveBar, settingRow,
+  settingsPanel, statusPill, storageBody, switchToggle, tabList, tip, tipAnchor, toast,
 } from "../ui.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
@@ -560,6 +560,11 @@ export async function renderSettings(main, params, ctx) {
   });
 
   // ============================================================================= SYSTEM TAB
+  // The three read-outs this register publishes, drawn by gas_shared/ui/diagnostics.js. Every
+  // section in that module is optional and this app passes exactly the three it already had:
+  // storage, the error log, the build stamp. IT GAINS NOTHING. There is no credential card —
+  // `hasCredentials` in this app only disables a Lifecycle job button — and no last-sync line,
+  // because no `latestSync` field exists in this bootstrap at all.
   const storageHost = el("div", {});
   async function reloadStorageStats() {
     try {
@@ -567,53 +572,49 @@ export async function renderSettings(main, params, ctx) {
       // capacity.js owns the thresholds and the wording so this card and the Data page's
       // breakdown can never disagree about when the ledger is "nearly full".
       const cap = capacityView(stats);
-      clear(storageHost);
-      storageHost.append(
-        usageMeter({
-          used: cap.used, total: cap.total, label: "Spreadsheet cells",
-          state: cap.state, note: cap.note,
-        }),
-        el("p", { class: "muted small", style: "margin:10px 0 0" },
-          `${stats.scanCount} scan(s), ${stats.sealedCount} sealed, ` +
-          `${stats.trackedVulns.toLocaleString()} tracked vulnerabilities.`));
+      // The sentences under the meter stay HERE rather than in the shared module: this register
+      // counts scans and tracked vulnerabilities, a code register counts findings, and one
+      // vocabulary spoken on another's page is the drift the shared package exists to stop.
+      //
       // Data-quality line: tracked vulnerabilities whose severity never normalized to a real
       // value. Additive fields on this payload — guarded defensively so a stale pre-rollout
-      // cache (missing both) simply omits the line.
+      // cache (missing both) simply omits the line, and storageBody() drops a blank one.
+      const lines = [
+        `${stats.scanCount} scan(s), ${stats.sealedCount} sealed, `
+          + `${stats.trackedVulns.toLocaleString()} tracked vulnerabilities.`,
+      ];
       if (stats.unknownSeverityCount) {
         const n = stats.unknownSeverityCount;
-        storageHost.append(el("p", { class: "muted small", style: "margin:6px 0 0" },
-          `${n.toLocaleString()} tracked vulnerabilit${n === 1 ? "y" : "ies"} have an ` +
-          "unrecognized severity. Severity values seen this scan: " +
-          `${(stats.distinctSeverities || []).join(", ")}.`));
+        lines.push(
+          `${n.toLocaleString()} tracked vulnerabilit${n === 1 ? "y" : "ies"} have an `
+          + "unrecognized severity. Severity values seen this scan: "
+          + `${(stats.distinctSeverities || []).join(", ")}.`,
+        );
       }
+      clear(storageHost);
+      storageHost.append(...storageBody({
+        used: cap.used, total: cap.total, label: "Spreadsheet cells",
+        state: cap.state, note: cap.note, lines,
+      }));
     } catch {
       /* stats are decorative */
     }
   }
-  const storageCard = el("div", { class: "health-item" },
-    el("div", { class: "health-head" }, el("span", { class: "label" }, "Storage")),
-    storageHost);
 
   // Recent server-side errors, surfaced in-app so a failure — especially a background one that
   // never shows a toast (post-scan support-group refresh, MTTR snapshot, auto-compaction) — is
   // visible without opening the Apps Script execution log the web app can't reach.
   const errCountHost = el("span", {});
   const recentErrorsBtn = el("button", { onclick: openRecentErrors }, "Recent errors");
-  const errorsCard = el("div", { class: "health-item" },
-    el("div", { class: "health-head" }, el("span", { class: "label" }, "Recent errors")),
-    el("div", { class: "health-row" }, errCountHost, recentErrorsBtn),
-    el("p", { class: "muted small" },
-      "The last 25 server-side errors across scan, support-group refresh, import, compaction, " +
-      "and other operations — including background failures that never surface a toast."));
 
   // Best-effort count badge so a silent failure is discoverable at a glance (the log itself is
-  // decorative — a failed fetch just leaves the badge blank).
+  // decorative — a failed fetch just leaves the badge BLANK, which is deliberately not the same
+  // node as errorCountBadge([])'s "None recorded."; that is why the catch appends nothing).
   (async () => {
     try {
-      const errs = await call("api_getRecentErrors", {});
+      const log = normalizeErrorLog(await call("api_getRecentErrors", {}));
       clear(errCountHost);
-      if (errs && errs.length) errCountHost.append(statusPill("bad", `${errs.length} recorded`));
-      else errCountHost.append(el("span", { class: "muted small" }, "None recorded."));
+      errCountHost.append(errorCountBadge(log.items));
     } catch {
       /* decorative */
     }
@@ -635,75 +636,66 @@ export async function renderSettings(main, params, ctx) {
   }
   async function renderRecentErrors(body) {
     clear(body).append(el("p", { class: "muted" }, "Loading…"));
-    let errs;
+    let log;
     try {
-      errs = await call("api_getRecentErrors", {});
+      // A BARE ARRAY is what this app's api_getRecentErrors answers, and normalizeErrorLog
+      // unwraps that as readily as the {errors, covers, note} envelope a narrower log sends.
+      // `covers` and `note` come back null here, so neither line is drawn — this log covers
+      // everything the server records.
+      log = normalizeErrorLog(await call("api_getRecentErrors", {}));
     } catch (e) {
       clear(body).append(el("p", { class: "muted" }, `Couldn't load errors: ${e.message}`));
       return;
     }
-    clear(body);
-    body.append(el("div", { style: "display:flex; gap:8px; margin-bottom:12px" },
-      el("button", { onclick: () => renderRecentErrors(body) }, "Refresh"),
-      el("button", {
-        disabled: errs.length ? null : true,
-        onclick: async () => {
-          const ok = await confirmDialog({
-            title: "Clear the error log?",
-            body: el("p", {}, "Removes all recorded errors. It doesn't affect any scan or ledger data."),
-            confirmLabel: "Clear",
-          });
-          if (!ok) return;
-          try {
-            await call("api_clearRecentErrors", {});
-            toast("Error log cleared.");
-            clear(errCountHost);
-            errCountHost.append(el("span", { class: "muted small" }, "None recorded."));
-            renderRecentErrors(body);
-          } catch (e) {
-            toast(`Clear failed: ${e.message}`, "error");
-          }
-        },
-      }, "Clear log")));
-    if (!errs.length) {
-      body.append(emptyState("No errors recorded.",
-        "Background and foreground failures will appear here as they happen."));
-      return;
-    }
-    const tbody = el("tbody", {});
-    for (const e of errs) {
-      tbody.append(el("tr", {},
-        el("td", { class: "small muted", style: "white-space:nowrap" }, fmtDateTime(e.ts)),
-        // absent(), not a bolded em dash: an error the log could not name is a gap in the
-        // record, and printing it in the same weight as a real operation name claims one.
-        el("td", {}, e.op ? el("strong", {}, e.op) : absent()),
-        el("td", {}, statusPill(e.kind === "error" ? "bad" : "warn", e.kind || "error")),
-        el("td", {},
-          e.message
-            ? el("code", { class: "small", style: "white-space:pre-wrap; word-break:break-word" },
-                e.message)
-            : absent()),
-      ));
-    }
-    body.append(el("div", { class: "table-wrap" },
-      el("table", { class: "data" },
-        el("thead", {}, el("tr", {},
-          ...["When", "Operation", "Kind", "Message"].map((h) => el("th", { scope: "col" }, h)))),
-        tbody)));
+    clear(body).append(...errorLogBody({
+      items: log.items, covers: log.covers, note: log.note, fmtDateTime,
+      onRefresh: () => renderRecentErrors(body),
+      // Clear is a CAPABILITY: this app has api_clearRecentErrors, so the control exists.
+      // gas_devsecops has no clear RPC, passes no onClear, and draws no button at all rather
+      // than a disabled one offering an operation that does not exist.
+      onClear: async () => {
+        const ok = await confirmDialog({
+          title: "Clear the error log?",
+          body: el("p", {}, "Removes all recorded errors. It doesn't affect any scan or ledger data."),
+          confirmLabel: "Clear",
+        });
+        if (!ok) return;
+        try {
+          await call("api_clearRecentErrors", {});
+          toast("Error log cleared.");
+          clear(errCountHost);
+          errCountHost.append(errorCountBadge([]));
+          renderRecentErrors(body);
+        } catch (e) {
+          toast(`Clear failed: ${e.message}`, "error");
+        }
+      },
+    }));
   }
 
-  // Deployed code stamp — confirm at a glance whether a `clasp push` actually took effect. It
-  // rides on the cached bootstrap, but the cache key is itself stamped with the build id
-  // (serverCache.ts), so a cached payload can never report a build that is no longer live.
-  // Reads "dev" when running locally, where there is no esbuild define step.
-  const buildCard = el("div", { class: "health-item" },
-    el("span", { class: "label" }, "Build"),
-    el("p", { class: "health-build small muted" },
-      // A missing build id is the whole point of this card — it means the deploy stamp did
-      // not reach the client — so it must not read as a value in code type.
-      "Build ", boot.buildId ? el("code", { class: "small" }, boot.buildId) : absent(), "."));
-
-  const healthGrid = el("div", { class: "health-grid" }, storageCard, errorsCard, buildCard);
+  const diagnostics = diagnosticsPanel({
+    heading: "System health",
+    storage: { body: storageHost },
+    errors: {
+      badge: errCountHost,
+      action: recentErrorsBtn,
+      note: "The last 25 server-side errors across scan, support-group refresh, import, "
+        + "compaction, and other operations — including background failures that never surface "
+        + "a toast.",
+    },
+    // Deployed code stamp — confirm at a glance whether a `clasp push` actually took effect. It
+    // rides on the cached bootstrap, but the cache key is itself stamped with the build id
+    // (serverCache.ts), so a cached payload can never report a build that is no longer live.
+    // Reads "dev" when running locally, where there is no esbuild define step.
+    //
+    // ONE STAMP, SO NO MISMATCH CHECK. This app has no client-side build stamp to compare
+    // against — there is no buildInfo.js here — and passing no `client` is what tells the
+    // shared section to print the id rather than a Client/Server comparison whose second half
+    // does not exist. A missing id still reads as absent(), never as a value in code type:
+    // that absence is the whole point of the card, because it means the deploy stamp did not
+    // reach the client.
+    build: { server: boot.buildId },
+  });
 
   // ================================================================ tabs, save bar, assembly
   function tabPanel(key, ...children) {
@@ -716,8 +708,9 @@ export async function renderSettings(main, params, ctx) {
   const riskTab = tabPanel("risk", riskPanel);
   const attributionTab = tabPanel("attribution", domainsPanel, attributionCrossRef);
   const lifecycleTab = tabPanel("lifecycle", retentionPanel, jobsPanel);
-  const systemTab = tabPanel("system",
-    el("h2", { class: "section-label" }, "System health"), healthGrid, accessPanelNode);
+  // The Access roster editor is NOT a diagnostic — it is an editor with its own save control —
+  // so it stays a sibling of the read-out grid rather than moving inside it.
+  const systemTab = tabPanel("system", diagnostics.node, accessPanelNode);
 
   const panels = {
     register: registerTab, risk: riskTab, attribution: attributionTab,

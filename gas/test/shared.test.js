@@ -30,6 +30,7 @@ import { SEVERITY_COLORS, SLA_TARGETS } from "../src/domain/config";
 import { registerBrandMarkContract } from "../../gas_shared/test/contracts/brandMark.js";
 import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
+import { registerDiagnosticsContract } from "../../gas_shared/test/contracts/diagnostics.js";
 import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
 import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js";
 import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/tokens.js";
@@ -108,14 +109,12 @@ registerZScaleContract(base);
 // =========================================================================================
 registerParityContract({
   ...base,
-  // SEVEN MODULES, AND SIX OF THEM ARE HERE ON THEIR MERITS. Each is a fact about an
-  // OS-vulnerability register that means nothing in a sibling: which two scopes exist
-  // (scopeBar), a CVE's page at NIST (nvd), a delta that knows which direction is worse
-  // (changeChip), a duration that changes unit across three orders of magnitude (span), an
-  // in/out proportion with arbitrary tones (splitBar), and a Google Sheet's ten-million-cell
-  // ceiling (usageMeter).
+  // FIVE MODULES, AND EACH IS A FACT ABOUT AN OS-VULNERABILITY REGISTER that means nothing in
+  // a sibling: which two scopes exist (scopeBar), a CVE's page at NIST (nvd), a delta that
+  // knows which direction is worse (changeChip), a duration that changes unit across three
+  // orders of magnitude (span), and an in/out proportion with arbitrary tones (splitBar).
   //
-  // `combobox.js` HAS LEFT THIS LIST, and it was the only entry that was ever on it under
+  // `combobox.js` LEFT THIS LIST FIRST, and it was the only entry that was ever on it under
   // protest. gas_shared/ui/combobox.js resolves an option row's glyph by NAME through
   // gas_shared/ui/uiIcons.js, and two of the four names the scope switcher supplies — `users`
   // and `noTag` — were not in that set; `uiIcon()` falls back to a single dot for an unknown
@@ -123,8 +122,19 @@ registerParityContract({
   // both no-domain rows with nothing failing. Both glyphs are in the shared set now and an
   // unknown name is reported rather than swallowed, so the fork is deleted and the shared
   // control is what this app draws.
+  //
+  // `usageMeter.js` LEFT NEXT, AND ITS JUSTIFICATION HERE WAS FALSE. This comment used to
+  // claim the ten-million-cell ceiling is "a fact about this app's store, which no sibling
+  // has". gas_devsecops/src/server/readModels.ts publishes `cellLimit: 10_000_000` and
+  // pages/data.js's `cellsSummary` computes the same ratio off it, so the CEILING is not
+  // gas-only; what was gas-only is the WIDGET — a used/total numeral caption over the shared
+  // progress recipe, plus warn/bad thresholds, neither of which `meter()` or `progressBar()`
+  // carries. A widget the design system lacked is the design system's business, so it is
+  // gas_shared/ui/usageMeter.js and this app draws it through the barrel. (gas_ai genuinely
+  // cannot use it: its `getStorageStats` publishes no `cellLimit`, so there is no ratio to
+  // draw. That is a missing FIGURE, not a missing widget.)
   localUiModules: [
-    "changeChip.js", "nvd.js", "scopeBar.js", "span.js", "splitBar.js", "usageMeter.js",
+    "changeChip.js", "nvd.js", "scopeBar.js", "span.js", "splitBar.js",
   ],
   sheetOrder: SHEET_ORDER,
 });
@@ -333,4 +343,24 @@ registerScopeContract({
     { kind: "supportGroup", id: "CS-CORE", payload: { domain: "", supportGroup: "CS-CORE" } },
   ],
   resetPayload: { domain: "", supportGroup: "" },
+});
+
+// =========================================================================================
+//  The Settings -> System read-outs
+// =========================================================================================
+registerDiagnosticsContract({
+  ...base,
+  beforeAll,
+  afterAll,
+  // THREE SECTIONS, AND THE THREE THIS APP IS MISSING ARE NOT OVERSIGHTS. There is no
+  // credentials card — `hasCredentials` here only disables a Lifecycle job button, and this
+  // register has no dry-run mode to announce. There is no last-sync line because no
+  // `latestSync` field exists in this bootstrap at all. There is no product name because this
+  // app never printed one. Adding any of them is a product decision, not a tidy-up, and this
+  // list is what makes that decision visible in a diff.
+  //
+  // Storage is here and in neither sibling: gas_devsecops shows its cell usage on the Data
+  // page, and gas_ai's getStorageStats publishes no `cellLimit`, so there is no ratio for a
+  // meter to draw.
+  sections: ["storage", "errors", "build"],
 });

@@ -34,6 +34,7 @@ import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/to
 import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
 import { registerBrandMarkContract } from "../../gas_shared/test/contracts/brandMark.js";
+import { registerDiagnosticsContract } from "../../gas_shared/test/contracts/diagnostics.js";
 import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
 import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js";
 import { scopeChrome, scopeKinds } from "../src/client/js/ui/projectScope.js";
@@ -166,4 +167,19 @@ registerScopeContract({
     { kind: "project", id: "value-chain", payload: { projectView: "value-chain" } },
   ],
   resetPayload: { projectView: "" },
+});
+
+// =========================================================================================
+//  The Settings -> System read-outs
+// =========================================================================================
+registerDiagnosticsContract({
+  ...base,
+  // FOUR SECTIONS, AND NO STORAGE AND NO ERRORS. Cell usage is on the Data page (readModels.ts
+  // publishes `cellLimit` and pages/data.js's cellsSummary computes the ratio), and this
+  // register's api_getRecentErrors covers job failures only — api.ts says so in `covers` — and
+  // is rendered on the Data page too. Nothing moved between pages when these four became cards.
+  sections: ["product", "build", "credentials", "lastSync"],
+  // A register with nothing to sync is broken here, which is why the same boolean gas_ai draws
+  // `neutral` is drawn `bad`. The shared section refuses to default the tone for that reason.
+  credentialsTone: "bad",
 });

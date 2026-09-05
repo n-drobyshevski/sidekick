@@ -19,8 +19,14 @@
 //                  The chips themselves are the shared `filterChipRow` now.
 //   splitBar.js    an in/out proportion with arbitrary tones. `sevSegmentBar` draws
 //                  severities and only severities.
-//   usageMeter.js  the Google Sheet's ten-million-cell ceiling — a fact about this app's
-//                  store, which no sibling has.
+//
+// `usageMeter.js` HAS LEFT THIS LIST TOO, and the reason it was on it was measurably wrong.
+// Its entry read "a fact about this app's store, which no sibling has"; gas_devsecops's
+// `readModels.ts` publishes `cellLimit: 10_000_000` and its Data page computes the same ratio
+// off it. What was gas-only was the WIDGET — a used/total numeral caption plus warn/bad
+// thresholds, which neither `meter()` nor `progressBar()` carries — and a widget is exactly
+// what the design system is for. It is `gas_shared/ui/usageMeter.js` now and arrives through
+// the star below; `capacity.js` never changed its import.
 // `combobox.js` IS GONE, AND THE TWO GLYPHS ARE WHY IT COULD BE. It was a genuine fork,
 // blocked on `users` and `noTag` — two names `scopeSwitch.js` supplied that the shared icon
 // set did not hold, where `uiIcon()` falls back to a 1px dot SILENTLY. Both are in
@@ -41,4 +47,3 @@ export { nvdUrl } from "./ui/nvd.js";
 export { scopeBar } from "./ui/scopeBar.js";
 export { fmtSpan } from "./ui/span.js";
 export { splitBar } from "./ui/splitBar.js";
-export { usageMeter } from "./ui/usageMeter.js";
