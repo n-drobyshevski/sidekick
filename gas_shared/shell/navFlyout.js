@@ -9,7 +9,7 @@
 // overlay — a panel open while a page refetches must stay readable and clickable — and below
 // the scrim, so a sheet still covers it.
 //
-// WHAT IT DOES REUSE is the dismissal contract (popoverDismiss: outside pointerdown AND
+// WHAT IT DOES REUSE is the dismissal contract (`popoverDismiss`: outside pointerdown AND
 // click, Escape with stopPropagation, focusout, one release()) and the hover physiology the
 // tip already settled: 220ms cold, nothing at all inside the warm window, and a close grace
 // long enough to cross the dead space between the rail and the panel. Two surfaces in one app
@@ -18,32 +18,95 @@
 // STATE LIVES HERE, not on the nodes. renderSidebar() clears and rebuilds the rail wholesale
 // on every refresh() and on every experimental-flag change, so anything held on a rail item
 // would be dropped mid-hover.
+//
+// PROMOTED FROM THREE COPIES, AND THE OLDEST ONE WAS NOT THE BASE. gas_ai's and
+// gas_devsecops's were byte-identical and already built on `ui/dom.js`, `ui/popover.js`,
+// `ui/portals.js`, `ui/tipPlace.js` and `ui/uiIcons.js`; gas's was a separate implementation
+// that reimplemented `coarse()`, the 220/400/120 delay policy and the whole dismissal wiring
+// locally — and never called portalOpened()/portalClosed(). The two siblings' version is the
+// right structural base, so it is the one here.
+//
+// WHAT THE PORTAL COUNT IS ACTUALLY FOR HERE, MEASURED. The obvious reading — that gas's
+// missing `portalOpened()` left `ui/sheet.js`'s Tab trap failing to stand down for the panel —
+// is FALSE, and the browser says so: `openSheet` sets `inert` on `#app` (sheet.js), and this
+// panel lives INSIDE `#app` by design (it is a column in `.app-body`, not a portaled popover),
+// so with a sheet open a panel row cannot take focus at all. Probed in gas's dev harness: with
+// the panel open and a sheet then opened, `row.focus()` leaves `document.activeElement` in the
+// sheet. The trap's `!sheet.contains(at)` branch can therefore never see a panel row, and gas
+// was not carrying the defect that reading predicts.
+//
+// The count IS load-bearing, for a different consumer: gas_ai's `pages/graph.js` stands its own
+// Escape handler down on `portalsOpen()` (graph.js:726, :749), and without the handshake one
+// Escape closes the panel AND throws focus back into the graph's query card. That is why it
+// stays.
+//
+// AND IT HAS A COST WORTH WRITING DOWN, because `portalsOpen()` is one global number answering
+// two different questions. A PINNED panel is counted for the whole session, and the sheet's Tab
+// trap is `if (portalsOpen()) return;` — so with the panel pinned, a sheet's Tab no longer wraps
+// from its last focusable back to its first. Measured, same harness: unpinned, Tab from the last
+// control gives `defaultPrevented: true` and wraps; pinned, `false` and does not. `inert` still
+// confines Tab to the sheet and its scrim, so what is lost is the wrap, not the containment.
+// This is pre-existing in both siblings and gas now shares it. The fix is to split the one count
+// into the two questions it is being asked, which belongs with `ui/sheet.js` rather than here.
+//
+// Two things gas's copy did BETTER travelled the other way and are here:
+//   * markActive() resolves the current route through the shared `parseHash()`. The siblings
+//     hand-rolled `location.hash.replace(/\?.*$/,"").replace(/^#\/?/,"") || defaultRoute()`,
+//     a second parser for the one string store.js already owns.
+//   * `panelBlocks` is asked for blocks and the empty ones are dropped — see navModel.js,
+//     which is where that rule lives now.
+//
+// And two things the siblings carried that meant nothing are gone: an unused `LANE_ICONS`
+// import, and `else if (!stickyItem) stickyItem = null;` in setActiveItem, which assigns null
+// to a variable the branch has already established is falsy.
 
+import { appConfig } from "../appConfig.js";
+import { buildHash, parseHash } from "../store.js";
+import { coarse, el } from "../ui/dom.js";
+import { popoverDismiss } from "../ui/popover.js";
+import { portalClosed, portalOpened } from "../ui/portals.js";
+import { CLOSE_GRACE, tipDelay } from "../ui/tipPlace.js";
+import { uiIcon } from "../ui/uiIcons.js";
 import { hasPanel, panelBlocks } from "./navModel.js";
-import { buildHash, defaultRoute } from "../../../../gas_shared/store.js";
-import { coarse, el } from "../../../../gas_shared/ui/dom.js";
-import { popoverDismiss } from "../../../../gas_shared/ui/popover.js";
-import { portalClosed, portalOpened } from "../../../../gas_shared/ui/portals.js";
-import { CLOSE_GRACE, tipDelay } from "../../../../gas_shared/ui/tipPlace.js";
-import { uiIcon } from "../../../../gas_shared/ui/uiIcons.js";
-import { LANE_ICONS, ROUTE_ICONS } from "./routeIcons.js";
 
-// The pinned preference rides the key the collapsed rail used to own, and reads the same way
-// round: "0" was an explicitly expanded rail, which is what a pinned panel now is. A reader
-// who had widened the rail keeps a wide left edge across the change rather than being reset
-// to the default by a rename.
-const PIN_KEY = "sidebarCollapsed";
+/**
+ * The pin's stored preference.
+ *
+ * PREFIXED, AND IT USED NOT TO BE. All three apps carried `PIN_KEY = "sidebarCollapsed"`
+ * verbatim, while `MANIFEST.storagePrefix`'s own comment says "Two sidekicks served from the
+ * same origin must not share a key". A copy-pasted file getting that wrong is latent; a
+ * SHARED module getting it wrong is where the collision actually starts, so the key is
+ * composed from the manifest here.
+ *
+ * THE OLD UNPREFIXED VALUE IS ABANDONED, NOT MIGRATED, and that is a decision rather than an
+ * oversight. Reading it forward once would look like continuity, but the value under
+ * `sidebarCollapsed` was written by whichever of the three apps the reader last used — there
+ * is no way to tell which — so importing it would carry one register's preference into
+ * another and propagate the collision the prefix exists to end. The cost is that a reader who
+ * had pinned the panel re-pins it once, which is one click; the old key is simply left unread
+ * rather than deleted, because clearing a key three apps share is the same mistake again.
+ *
+ * Reads the same way round as the collapsed rail it inherited from: "0" was an explicitly
+ * expanded rail, which is what a pinned panel now is. Its own try/catch, since a GAS iframe
+ * sandbox can refuse web storage outright.
+ */
+function pinKey() {
+  return appConfig().storagePrefix + "sidebarCollapsed";
+}
 function loadPinned() {
-  try { return localStorage.getItem(PIN_KEY) === "0"; } catch { return false; }
+  try { return localStorage.getItem(pinKey()) === "0"; } catch { return false; }
 }
 function savePinned(v) {
-  try { localStorage.setItem(PIN_KEY, v ? "0" : "1"); } catch { /* sandboxed */ }
+  try { localStorage.setItem(pinKey(), v ? "0" : "1"); } catch { /* sandboxed */ }
 }
 
 let hostEl = null;          // the panel
 let ctxProvider = null;     // what the shell holds, asked for rather than cached at boot
 let ctx = {};               // its last answer — see refreshCtx()
-let pinned = loadPinned();
+// LAZY, because the manifest is not readable at import time (appConfig.js's rule 2): under
+// esbuild's bundling order this module body runs BEFORE app.js's configureApp(). `null` is
+// "not asked yet", which is why every read goes through isPinned().
+let pinned = null;
 let hoverItem = null;       // what the pointer/keyboard is asking for right now
 let hoverAnchor = null;     // the rail item it came from, for focus restore
 let stickyItem = null;      // what the PINNED column shows — see pinTarget()
@@ -52,20 +115,27 @@ let counted = false;        // whether this panel is currently counted as an ope
 let openTimer = 0;
 let closeTimer = 0;
 let lastCloseAt = 0;
+let shownItem = null;
+let pinBtn = null;
+
+function isPinned() {
+  if (pinned === null) pinned = loadPinned();
+  return pinned;
+}
 
 /** Blocks for an item, resolved against whatever the shell currently holds. */
 function blocksFor(item) {
-  return panelBlocks(item, ctx);
+  return panelBlocks(item, ctx, appConfig().panelBlocks);
 }
 
 /**
  * Re-ask the shell what it holds.
  *
- * Once per open rather than once per boot, because half of what the panel lists is written by
- * the reader while the app is running: save a view on the Inventory and it has to be in the
- * Landscape panel the next time that panel opens, not the next time the whole app reloads.
- * Not once per row, either — railItems() asks every item whether it has a panel, and reading
- * localStorage twice per item on every rail repaint is a cost with nothing behind it.
+ * Once per open rather than once per boot, because half of what a panel can list is written
+ * by the reader while the app is running: save a view on the Inventory and it has to be in
+ * the Landscape panel the next time that panel opens, not the next time the whole app
+ * reloads. Not once per row, either — railItems() asks every item whether it has a panel, and
+ * reading localStorage twice per item on every rail repaint is a cost with nothing behind it.
  */
 function refreshCtx() {
   if (ctxProvider) ctx = ctxProvider() || {};
@@ -78,8 +148,8 @@ export function itemHasPanel(item) {
 /**
  * What the pinned column shows.
  *
- * Not simply "the lane you are in": three of the rail's items are chrome pages with no panel
- * of their own, and letting the column empty itself on the way to Settings would collapse a
+ * Not simply "the lane you are in": the rail's chrome-tail items are pages with no panel of
+ * their own, and letting the column empty itself on the way to Settings would collapse a
  * 280px column and shove the page sideways for as long as you were there. So the pinned
  * column keeps the last lane that had something to show, and a route into a lane with a panel
  * moves it.
@@ -90,27 +160,10 @@ function pinTarget() {
 
 function effectiveItem() {
   if (hoverItem) return hoverItem;
-  return pinned ? pinTarget() : null;
+  return isPinned() ? pinTarget() : null;
 }
 
 // ------------------------------------------------------------------------------ the panel
-
-/** One row: a real link, so route()'s active pass and the AARS dirty-guard both reach it. */
-function panelRow(label, route, params, icon) {
-  const row = el(
-    "a",
-    {
-      class: "nav-link",
-      href: buildHash(route, params),
-      target: "_self", // index.html sets <base target="_top"> for the GAS sandbox
-    },
-    icon
-      ? iconSpan(icon)
-      : el("span", { class: "nav-icon nav-icon-blank", "aria-hidden": "true" }),
-    el("span", { class: "nav-label" }, label),
-  );
-  return row;
-}
 
 function iconSpan(svg) {
   const s = el("span", { class: "nav-icon", "aria-hidden": "true" });
@@ -118,7 +171,24 @@ function iconSpan(svg) {
   return s;
 }
 
-let pinBtn = null;
+/** One row: a real link, so route()'s active pass and any dirty-guard both reach it. */
+function panelRow(label, route, params, icon) {
+  return el(
+    "a",
+    {
+      class: "nav-link",
+      href: buildHash(route, params),
+      // index.html sets <base target="_top"> so external links escape the GAS sandbox iframe.
+      // Without an explicit _self, hash links inherit it and navigate the top window to the
+      // sandbox's own googleusercontent URL — which, loaded bare, is a blank page.
+      target: "_self",
+    },
+    icon
+      ? iconSpan(icon)
+      : el("span", { class: "nav-icon nav-icon-blank", "aria-hidden": "true" }),
+    el("span", { class: "nav-label" }, label),
+  );
+}
 
 function pinButton() {
   pinBtn = el("button", {
@@ -128,8 +198,8 @@ function pinButton() {
       // Pinning from a hovered panel keeps THAT panel: the click is a statement about the
       // thing under the pointer, and reverting to the route's lane would answer a question
       // nobody asked.
-      if (!pinned && hoverItem) stickyItem = hoverItem;
-      setPinned(!pinned);
+      if (!isPinned() && hoverItem) stickyItem = hoverItem;
+      setPinned(!isPinned());
     },
   });
   syncPinButton();
@@ -141,18 +211,25 @@ function pinButton() {
  *
  * The panel cannot be rebuilt from inside a click on one of its own buttons: the node under
  * the pointer is destroyed mid-click, focus falls to <body>, and the focusout half of the
- * dismissal contract closes the thing you were using. queryPalette.js carries the same scar
- * and the same rule — build once, move state.
+ * dismissal contract closes the thing you were using. Build once, move state.
+ *
+ * `aria-label` and NO `title`. gas's copy set both; a native tooltip cannot be reached by
+ * keyboard, does not exist on touch and arrives half a second late, which is exactly why
+ * `ui/dom.js`'s `el()` throws on a `title` attribute — that copy only got away with it by
+ * calling setAttribute directly. The accessible name is unchanged.
  */
 function syncPinButton() {
   if (!pinBtn) return;
-  pinBtn.setAttribute("aria-pressed", String(pinned));
-  pinBtn.setAttribute("aria-label", pinned ? "Unpin the panel" : "Keep the panel open");
-  pinBtn.replaceChildren(uiIcon(pinned ? "undock" : "dock", 15));
+  const on = isPinned();
+  pinBtn.setAttribute("aria-pressed", String(on));
+  pinBtn.setAttribute("aria-label", on ? "Unpin the panel" : "Keep the panel open");
+  pinBtn.replaceChildren(uiIcon(on ? "undock" : "dock", 15));
 }
 
 /** Rebuild the panel's contents for `item`. Called only when what it shows changes. */
 function paintPanel(item) {
+  const { ROUTE_ICONS } = appConfig();
+  const marks = ROUTE_ICONS || {};
   pinBtn = null;
   hostEl.replaceChildren();
   hostEl.setAttribute("aria-label", item.label);
@@ -163,12 +240,14 @@ function paintPanel(item) {
   );
   const body = el("div", { class: "nav-flyout-body" });
   for (const page of item.pages) {
-    body.append(panelRow(page.title, page.key, {}, ROUTE_ICONS[page.key]));
+    body.append(panelRow(page.title, page.key, {}, marks[page.key]));
   }
+  // Every block here already has rows — navModel.panelBlocks drops the empty ones, because an
+  // empty heading says "you have none" where the truth is often "we could not ask".
   for (const block of blocksFor(item)) {
     body.append(el("h3", { class: "nav-group" }, block.label));
     for (const row of block.rows) {
-      body.append(panelRow(row.label, row.route, row.params, row.icon ? ROUTE_ICONS[row.icon] : null));
+      body.append(panelRow(row.label, row.route, row.params, row.icon ? marks[row.icon] : null));
     }
   }
   hostEl.append(body);
@@ -180,9 +259,13 @@ function paintPanel(item) {
  *
  * route() already runs this pass over every `.nav-link` on every navigation — this repeats it
  * for a panel painted BETWEEN navigations, which is most of them.
+ *
+ * Through the shared `parseHash()`, which already resolves an empty hash to the manifest's
+ * front door. Two of the three copies hand-rolled the same two regexes and an `||
+ * defaultRoute()` beside it: a second parser for the one string store.js owns.
  */
 function markActive(scope) {
-  const here = location.hash.replace(/\?.*$/, "").replace(/^#\/?/, "") || defaultRoute();
+  const here = parseHash().route;
   scope.querySelectorAll(".nav-link").forEach((a) => {
     const isActive = a.getAttribute("href") === `#/${here}`;
     a.classList.toggle("active", isActive);
@@ -193,8 +276,6 @@ function markActive(scope) {
 
 // --------------------------------------------------------------------------- open / close
 
-let shownItem = null;
-
 function show(item) {
   if (!hostEl) return;
   if (shownItem !== item) {
@@ -203,10 +284,10 @@ function show(item) {
     shownItem = item;
   }
   hostEl.hidden = false;
-  // PORTALS.JS IS HOW THIS APP'S OVERLAYS TELL EACH OTHER THEY EXIST, and a panel full of
-  // links is exactly what it is for. Without it the graph page's own Escape handler — which
-  // stands down only for `portalsOpen()` — answers the same keystroke as this panel and
-  // throws focus back into the query card. Counted once: show() runs on every repaint.
+  // PORTALS.JS IS HOW THE OVERLAYS TELL EACH OTHER THEY EXIST. Its live consumer for this panel
+  // is gas_ai's graph page, whose Escape handler stands down while a portal is open — see the
+  // measured note in the header for what this does and, just as importantly, what it does not.
+  // Counted once, because show() runs on every repaint.
   if (!counted) { portalOpened(); counted = true; }
   // One frame between "in the DOM" and "open", or the transition has nothing to run from.
   requestAnimationFrame(() => { if (!hostEl.hidden) hostEl.classList.add("open"); });
@@ -227,7 +308,7 @@ function hide() {
 /** The panel is only dismissible while it is floating; pinned, it is furniture. */
 function wireDismiss() {
   releaseDismiss();
-  if (pinned && !hoverItem) return;
+  if (isPinned() && !hoverItem) return;
   release = popoverDismiss({
     pop: hostEl,
     anchor: null, // a full-height column has no anchor rect to fall out of the viewport
@@ -251,8 +332,8 @@ function syncRailState() {
     const isOpen = !!open && node.getAttribute("data-nav-item") === open.id;
     node.classList.toggle("open", isOpen);
     // On the link, because the link is the trigger — there is no caret beside it to carry
-    // this, and an item with no panel carries no aria-expanded at all rather than a
-    // permanent "false" promising a panel that does not exist.
+    // this, and an item with no panel carries no aria-expanded at all rather than a permanent
+    // "false" promising a panel that does not exist.
     const link = node.querySelector(".rail-link");
     if (link && link.hasAttribute("aria-haspopup")) {
       link.setAttribute("aria-expanded", String(isOpen));
@@ -261,9 +342,13 @@ function syncRailState() {
 }
 
 /**
- * Open for `item`, after the delay the tip already argued for: 220ms cold so crossing the rail
- * on the way somewhere else opens nothing, and instantly inside the warm window so moving
- * between lanes is one gesture rather than four waits. Focus never waits at all.
+ * Open for `item`, after the delay the tip already argued for: 220ms cold so crossing the
+ * rail on the way somewhere else opens nothing, and instantly inside the warm window so
+ * moving between lanes is one gesture rather than four waits. Focus never waits at all.
+ *
+ * `tipDelay` is the shared policy (`ui/tipPlace.js`). gas's copy had its own OPEN_COLD 220 /
+ * WARM_WINDOW 400 / CLOSE_GRACE 120 constants beside the same arithmetic, which is three
+ * numbers that had to agree with the hover card's by hand.
  */
 export function openFlyoutFor(item, anchor, opts) {
   if (!hostEl || !itemHasPanel(item)) return;
@@ -283,7 +368,9 @@ export function openFlyoutFor(item, anchor, opts) {
   else openTimer = window.setTimeout(run, delay);
 }
 
-/** Leaving the rail or the panel: a grace period, because the pointer has dead space to cross. */
+/** Leaving the rail or the panel: a grace period, because the pointer has dead space to
+ *  cross. That grace is WCAG 2.1 SC 1.4.13's "hoverable" requirement, not a preference — a
+ *  zero-grace close makes the panel unreachable by pointer. */
 function scheduleFlyoutClose() {
   window.clearTimeout(openTimer);
   openTimer = 0;
@@ -336,13 +423,14 @@ export function setPinned(v) {
  * The left edge, in one place.
  *
  * `--rail-w` goes on meaning what it has always meant — how much chrome is on the left — so
- * `.route-overlay { left: var(--rail-w) }` keeps working with no change at all. The rail's own
- * track is `--rail-icon-w` now, because that is the part that never moves.
+ * `.route-overlay { left: var(--rail-w) }` keeps working with no change at all. The rail's
+ * own track is `--rail-icon-w`, because that is the part that never moves.
  */
 function applyPinned() {
-  if (hostEl) hostEl.classList.toggle("pinned", pinned);
+  const on = isPinned();
+  if (hostEl) hostEl.classList.toggle("pinned", on);
   const root = document.documentElement;
-  if (pinned) {
+  if (on) {
     root.style.setProperty("--rail-w", "calc(var(--rail-icon-w) + var(--nav-flyout-w))");
   } else {
     root.style.removeProperty("--rail-w");
@@ -393,8 +481,8 @@ function onPanelKey(e) {
 /**
  * The rail's side of it, delegated from the rail element itself.
  *
- * pointerover/pointerout rather than enter/leave because only the first pair bubbles, which is
- * the same reason tip.js delegates the way it does — and delegation is required here for a
+ * pointerover/pointerout rather than enter/leave because only the first pair bubbles, which
+ * is the same reason tip.js delegates the way it does — and delegation is required here for a
  * second reason: renderSidebar() rebuilds every rail item on refresh, so a listener held on
  * one would not survive the next sync.
  */
@@ -411,8 +499,9 @@ export function wireRail(sidebar, itemsFor) {
   sidebar.addEventListener("pointerout", (e) => {
     const node = e.target.closest && e.target.closest(".rail-item");
     if (!node) return;
-    // Moving within one item, or onto its own caret, is not leaving it.
-    if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest(".rail-item") === node) return;
+    // Moving within one item is not leaving it.
+    if (e.relatedTarget && e.relatedTarget.closest
+      && e.relatedTarget.closest(".rail-item") === node) return;
     if (hoverItem) scheduleFlyoutClose();
   });
 }
@@ -429,8 +518,7 @@ export function setNavContext(provider) {
 /** Called by route(): the pinned column follows you into a lane that has one. */
 export function setActiveItem(item) {
   if (item && itemHasPanel(item)) stickyItem = item;
-  else if (!stickyItem) stickyItem = null;
-  if (pinned && !hoverItem) {
+  if (isPinned() && !hoverItem) {
     const target = pinTarget();
     if (target) show(target); else hide();
   }

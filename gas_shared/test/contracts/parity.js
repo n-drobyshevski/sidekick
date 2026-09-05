@@ -51,6 +51,32 @@ export function registerParityContract(ctx) {
       }
     });
 
+    it("keeps no local copy of the shell", () => {
+      // THE SAME RULE ONE TIER UP, for the modules `gas_shared/shell/` took over. Two of
+      // these had already forked in ways nothing caught: gas's `navFlyout.js` never called
+      // portalOpened(), so its own sheet's focus trap did not stand down for it, and its
+      // `brandMark.js` was a copy whose own header said it "should stay" a verbatim one — an
+      // instruction, not a check. `navModel.js` carries module state per copy only in the
+      // trivial sense, but `navFlyout.js` and `experimental.js` both hold LIVE STATE (the
+      // pinned panel, the gate's cached flag), so a second copy is a second answer to the
+      // same question.
+      //
+      // `routeIcons.js` is deliberately absent from this list: the marks are per register and
+      // the manifest is how the shared shell reaches them. `experimental.js` is allowed to
+      // exist only as a RE-EXPORT, because pages/ import it at their own relative depth —
+      // the assertion below is on the content, not on the path.
+      for (const name of ["navModel.js", "navFlyout.js", "brandMark.js", "uiIcons.js"]) {
+        expect(existsSync(resolve(jsDir, name)),
+          app + " has forked gas_shared/shell/" + name + " back into the app").toBe(false);
+      }
+      const gate = resolve(jsDir, "experimental.js");
+      if (existsSync(gate)) {
+        expect(readFileSync(gate, "utf8"),
+          app + "'s experimental.js is an implementation, not a re-export of the shared gate")
+          .toMatch(/export \{[^}]*\} from "[./]*gas_shared\/shell\/experimental\.js";/);
+      }
+    });
+
     it("reaches the shared core through the barrel, not module by module", () => {
       // ui.js is the app's end of the seam. It may add local modules; what it may not do is
       // stop re-exporting the shared barrel, which is how every page's `from "../ui.js"`

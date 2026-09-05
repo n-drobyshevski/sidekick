@@ -5,17 +5,33 @@
 // `tsc --noEmit` — and `npm run check` is typecheck && test && build, so vitest would
 // never run. Vitest picks up **/*.test.{js,ts} either way.
 //
-// navModel.js is DOM-free precisely so this file can exist: every decision the two-tier rail
-// makes is here, and the panel's own module is then only timers, listeners and nodes. The
+// The nav model is DOM-free precisely so this file can exist: every decision the two-tier rail
+// makes is there, and the panel's own module is then only timers, listeners and nodes. The
 // cases that matter are the ones where a rail could quietly lie — a lane that keeps its
 // heading after the gate took its only page, a panel offering a destination a URL cannot
 // reach, and an empty block drawn as a heading over nothing, which reads as "you have none"
 // where the truth is "we could not ask".
+//
+// TWO MODULES NOW, AND THE SPLIT IS THE POINT. The rail's arithmetic is
+// `gas_shared/shell/navModel.js` — one copy for three registers, which is what it always was
+// in triplicate. What this register's panels LIST is `src/client/js/navPanels.js`: a saved
+// graph query and a toxic-combination pattern are facts about an asset graph, and neither
+// sibling has one. `panelBlocks` is called with that builder as its third argument here,
+// exactly as the flyout calls it with `MANIFEST.panelBlocks`.
+//
+// The file was `navFlyout.test.js` and has never tested navFlyout — it tests the model. Named
+// for what it holds now that the model has its own home.
 
 import { describe, expect, it } from "vitest";
 
-import { hasPanel, itemForRoute, panelBlocks, railItems } from "../src/client/js/navModel.js";
+import {
+  hasPanel, itemForRoute, panelBlocks as sharedPanelBlocks, railItems,
+} from "../../gas_shared/shell/navModel.js";
+import { panelBlocksFor } from "../src/client/js/navPanels.js";
 import { SAVED_VIEW_KEYS, readSavedViews } from "../src/client/js/savedViews.js";
+
+/** This register's blocks, through the shared shape — the same composition the flyout does. */
+const panelBlocks = (item, ctx) => sharedPanelBlocks(item, ctx, panelBlocksFor);
 
 /** A PAGES-shaped fixture: the real map's shape, without importing app.js (it touches DOM). */
 const PAGES = {

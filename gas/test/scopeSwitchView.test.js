@@ -31,7 +31,14 @@ import {
   scopeSwitchView,
   supportScopeOptions,
 } from "../src/client/js/scopeKinds.js";
-import { UI_ICON_NAMES } from "../src/client/js/uiIcons.js";
+// The SHARED glyph set, which is the one `gas_shared/ui/scopeControl.js` actually draws
+// from. This read `../src/client/js/uiIcons.js` — a local 8-glyph fork that survived only
+// because navFlyout.js and brandMark.js still imported it; both are shared now and the fork
+// is deleted. The claim is unchanged and STRICTLY STRONGER: the rows are checked against the
+// set the control resolves names in, rather than against a second list that happened to
+// contain them. (The local fork held `funnel`, which the shared set spells `filter` and no
+// scope row asks for.)
+import { UI_ICON_NAMES } from "../../gas_shared/ui/uiIcons.js";
 
 /**
  * A bootstrap payload of the shape api.ts bootstrapCore() returns.

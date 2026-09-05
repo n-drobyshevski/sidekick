@@ -1,29 +1,40 @@
 // The product mark exists TWICE per app, and this is what keeps the copies one drawing.
 //
-// `src/client/index.html` paints the splash before a single byte of JavaScript has run —
+// The static `index.html` paints the splash before a single byte of JavaScript has run —
 // that is the whole point of it — so its mark has to be literal markup. `ui/brandMark.js`
 // draws the same mark for every other surface, including the splash that refresh() rebuilds
-// a second later. Two hand-kept copies of 5 KB of path data is exactly the kind of thing
-// that drifts silently: change the shield in the module and the first paint keeps the old
-// one for as long as it takes anyone to notice a shape flicker on reload.
+// a second later.
 //
-// So the module's exported constants are the source, and the assertions below read the
-// static file and require it to carry them verbatim. A duplication forced by the platform,
-// pinned by a test rather than by a comment.
+// THE STATIC HALF IS NOW RENDERED, NOT AUTHORED. The three `src/client/index.html` files
+// were byte-identical apart from two words, so they are one template
+// (`gas_shared/shell/index.template.html`) filled in from each app's own MANIFEST at build
+// time. The assertions below therefore read what the BUILD EMITS
+// (`gas_shared/shell/renderIndex.js`) rather than a checked-in file — the same claims,
+// against the bytes GAS actually serves.
+//
+// Two hand-kept copies of 5 KB of path data is exactly the kind of thing that drifts
+// silently: change the shield in the module and the first paint keeps the old one for as long
+// as it takes anyone to notice a shape flicker on reload. So the module's exported constants
+// are the source, and the assertions below require the rendered markup to carry them
+// verbatim. A duplication forced by the platform, pinned by a test rather than by a comment.
 //
 // AND THE SPLASH COPY, which is the half no app was checking. The splash says the product's
-// name and what it is opening, in three places (index.html twice, bootSplash() once), and
-// gas_devsecops shipped "Opening the graph…" for its whole life — inherited from the sibling
-// it was forked from, over a register that has no graph. Copy that only ever renders for
-// 400ms is exactly the copy nobody re-reads, so the manifest states it once and this holds
-// every surface to it.
+// name and what it is opening, in three places (the static markup twice, bootSplash() once),
+// and gas_devsecops shipped "Opening the graph…" for its whole life — inherited from the
+// sibling it was forked from, over a register that has no graph. Copy that only ever renders
+// for 400ms is exactly the copy nobody re-reads, so the manifest states it once and this
+// holds every surface to it. Two of those three copies are now STRUCTURALLY the manifest's
+// (the template is filled in from it; bootSplash() reads appConfig()), so what is left to
+// check is that the manifest itself says what this register's own test file says it does.
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
+import { renderIndexHtml } from "../../shell/renderIndex.js";
 import {
-  MARK_CHECK, MARK_COMPACT_RATIO, MARK_COMPACT_VIEWBOX, MARK_DOTS_BLUE, MARK_DOTS_RED,
-  MARK_NODES, MARK_ORBIT, MARK_SHIELD, MARK_VIEWBOX, brandMark,
+  MARK_CHECK, MARK_CHECK_WIDTH, MARK_COMPACT_RATIO, MARK_COMPACT_VIEWBOX, MARK_DOTS_BLUE,
+  MARK_DOTS_RED, MARK_NODES, MARK_ORBIT, MARK_ORBIT_WIDTH, MARK_SHIELD, MARK_VIEWBOX,
+  brandMark,
 } from "../../ui/brandMark.js";
 
 /**
@@ -74,8 +85,17 @@ function normPath(d) {
 export function registerBrandMarkContract(ctx) {
   const { describe, it, expect, beforeAll, afterAll, app } = ctx;
   const root = fileURLToPath(ctx.appRoot);
-  const INDEX = readFileSync(resolve(root, "src/client/index.html"), "utf8");
+  const INDEX = renderIndexHtml(root);
   const APP = readFileSync(resolve(root, "src/client/js/app.js"), "utf8");
+  // The shell's own copy of the splash, which is shared by all three apps and is the half
+  // that has to read the manifest rather than repeat a literal.
+  const SPLASH = readFileSync(
+    fileURLToPath(new URL("../../shell/bootSplash.js", import.meta.url)), "utf8",
+  );
+  // The other shared call site: the app header's compact crop.
+  const APPBAR = readFileSync(
+    fileURLToPath(new URL("../../shell/appbar.js", import.meta.url)), "utf8",
+  );
 
   let realDocument;
   beforeAll(() => {
@@ -122,19 +142,27 @@ export function registerBrandMarkContract(ctx) {
 
   describe(app + ": the splash says what this product is", () => {
     it("names the product on the static first paint and on the rebuilt one", () => {
-      expect(INDEX, "index.html's splash label is not the manifest's product name")
+      expect(INDEX, "the rendered splash label is not the manifest's product name")
         .toContain(">" + ctx.productName + "<");
-      // bootSplash() reads the manifest rather than repeating the string, which is what
-      // stops the two copies drifting the way the "Opening the graph…" pair did.
-      expect(APP).toMatch(/boot-brand-label"\s*\},\s*MANIFEST\.productName/);
+      // THE MANIFEST IS WHERE THE NAME IS DECLARED, and this is the assertion that can still
+      // fail: the template is filled in from `MANIFEST.productName`, so the two static copies
+      // agree with each other by construction — what they cannot do on their own is agree
+      // with what this register's test file says the product is called.
+      expect(APP, "app.js's MANIFEST does not declare productName: " + ctx.productName)
+        .toContain('productName: "' + ctx.productName + '"');
+      // And the runtime copy reads the manifest rather than repeating the string, which is
+      // what stops the pair drifting the way the "Opening the graph…" one did.
+      expect(SPLASH).toMatch(/boot-brand-label"\s*\},\s*productName/);
     });
 
     it("says it is opening the thing the manifest says it is", () => {
-      expect(INDEX, "index.html's splash note names the wrong noun")
+      expect(INDEX, "the rendered splash note names the wrong noun")
         .toContain("Opening the " + ctx.openingNoun + "…");
       expect(INDEX, "the progressbar's accessible name names the wrong noun")
         .toContain('aria-label="Opening the ' + ctx.openingNoun + '"');
-      expect(APP).toMatch(/"Opening the " \+ MANIFEST\.openingNoun/);
+      expect(APP, "app.js's MANIFEST does not declare openingNoun: " + ctx.openingNoun)
+        .toContain('openingNoun: "' + ctx.openingNoun + '"');
+      expect(SPLASH).toMatch(/"Opening the " \+ openingNoun/);
     });
 
     it("tells a reader with JavaScript off which product refused to start", () => {
@@ -279,18 +307,44 @@ export function registerBrandMarkContract(ctx) {
         expect(d).not.toContain("//");
       }
     });
+
+    // The two claims below came from gas's own local brandMark.test.js, which this contract
+    // superseded when gas stopped forking `ui/brandMark.js`. They were true of all three
+    // pageShell.ts files and asserted in only one, so promoting them costs nothing and the
+    // other two registers gain a pin they never had.
+    it("carries the same two stroke widths, not a hand-typed pair", () => {
+      // The geometry above would draw correctly at any weight; these are what make the
+      // standalone card's mark the same WEIGHT as the app's, not just the same shape.
+      expect(SHELL, "the orbit stroke width has drifted").toContain(String(MARK_ORBIT_WIDTH));
+      expect(SHELL, "the check stroke width has drifted").toContain(String(MARK_CHECK_WIDTH));
+    });
+
+    it("keeps the mark decorative, because the wordmark is beside it", () => {
+      expect(SHELL).toContain('aria-hidden="true"');
+      expect(SHELL, "the standalone card labels a mark that already has its name in text")
+        .not.toMatch(/aria-label/);
+    });
   });
 
   describe(app + ": the shell's call sites", () => {
     it("labels no mark, because every one of them sits beside the name in text", () => {
       // Both surviving marks (the header's and the splash's) have the words beside them, and
-      // a labelled one would announce the product name twice in the same landmark.
-      expect([...APP.matchAll(/brandMark\([^)]*label:/g)].length).toBe(0);
+      // a labelled one would announce the product name twice in the same landmark. Both call
+      // sites are in the SHARED shell now, so the sweep reads those rather than app.js — an
+      // app that has no `brandMark(` left in it would otherwise pass this vacuously.
+      const callers = APP + SPLASH + APPBAR;
+      expect(callers, "no brandMark() call site found — the sweep below would be vacuous")
+        .toContain("brandMark(");
+      expect([...callers.matchAll(/brandMark\([^)]*label:/g)].length).toBe(0);
     });
 
     it("still carries the static splash's twin", () => {
-      expect(APP).toMatch(/boot-brand[\s\S]{0,120}brandMark\(112\)/);
+      expect(SPLASH).toMatch(/boot-brand[\s\S]{0,120}brandMark\(112\)/);
       expect(INDEX).toContain('width="112" height="112"');
+    });
+
+    it("puts the compact crop in the header, where 307 dots would be noise", () => {
+      expect(APPBAR).toMatch(/brandMark\(22,\s*\{\s*compact:\s*true\s*\}\)/);
     });
   });
 }

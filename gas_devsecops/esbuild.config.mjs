@@ -3,6 +3,7 @@
 // `dist/appsscript.json` are hand-maintained and never overwritten here.
 import { build } from "esbuild";
 import { buildStamp } from "./buildStamp.mjs";
+import { renderIndexHtml } from "../gas_shared/shell/renderIndex.js";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -152,8 +153,11 @@ if (strippedCss.includes("//")) {
 
 writeFileSync(join(dist, "styles.html"), `<style>\n${css}\n</style>\n`);
 
-// index.html is copied verbatim (it contains <?!= include(...) ?> scriptlets).
-writeFileSync(join(dist, "index.html"), readFileSync(join(root, "src/client/index.html"), "utf8"));
+// index.html is RENDERED from the one template all three apps share
+// (gas_shared/shell/index.template.html), with this app's MANIFEST.productName and
+// MANIFEST.openingNoun substituted in. It still ships verbatim from there — it carries
+// <?!= include(...) ?> scriptlets HtmlService resolves at serve time.
+writeFileSync(join(dist, "index.html"), renderIndexHtml(root));
 
 // --- entry.js drift guard --------------------------------------------------------------
 // dist/entry.js is hand-written and hand-maintained: GAS resolves google.script.run targets
