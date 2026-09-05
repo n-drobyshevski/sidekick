@@ -8,7 +8,8 @@ session already exists, so whichever test module happened to run first decided w
 suite could use Delta -- and alphabetical ordering is not a design.
 
 So the session is built once, here, before any module asks for one. ``PYSPARK_SUBMIT_ARGS`` is set
-at import time because by the time a fixture body runs it may already be too late.
+in ``pytest_configure`` -- which runs once per process, before collection hands control to any
+fixture -- because by the time a fixture body runs it may already be too late.
 
 ``live_tables`` is here for the same reason: it is real pipeline output, every panel and notebook
 test wants it, and building it twice would double the slowest thing the suite does. It used to
@@ -38,7 +39,18 @@ sys.path.insert(0, str(BRICK_DIR))
 # The alternative was to give every clustered table a second key it does not need, which would
 # have let an open-source implementation detail choose the physical layout of the register. The
 # cluster's Delta comes from DBR, where single-column CLUSTER BY is the documented shape.
-DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.3.2"
+#
+# 3.3.3 rather than 3.3.2: Spark 3.5.6 changed how a plain `saveAsTable` with
+# `mode("overwrite")` compiles against a V2 (staged Delta) table -- it now issues a truncating
+# `OverwriteByExpression` rather than a drop-and-recreate, and that path is refused unless the
+# table's `capabilities()` advertise `TRUNCATE`/`OVERWRITE_BY_FILTER`. `StagedDeltaTableV2` in
+# the 3.3.2 jar reports only `V1_BATCH_WRITE`, so `csvstore.restore`'s one overwrite-mode
+# `saveAsTable` call dies with "Table ... does not support truncate in batch mode" -- an
+# `AnalysisException` from Spark's own `TableCapabilityCheck`, not a Delta bug and not a bug in
+# `csvstore.py`. delta-spark 3.3.3's pom targets spark-sql 3.5.6 and its `StagedDeltaTableV2`
+# advertises the wider capability set; pip already installs 3.3.3 (see requirements.txt), and
+# this jar coordinate had drifted behind it.
+DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.3.3"
 
 # Spark 3.5's own docs claim only Java 8/11/17 -- Java 21 support is advertised starting at
 # Spark 4.0. Measured here on OpenJDK 21.0.10: session start, a Delta write/read, and OPTIMIZE
@@ -66,22 +78,53 @@ DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.3.2"
 # those fit where one comfortable one did not.
 #
 # Like --packages, this can only be set before the JVM starts: spark.driver.memory is read by
-# spark-submit at launch and setting it on the builder afterwards is silently ignored. xdist
-# sets PYTEST_XDIST_WORKER_COUNT in each worker's environment before conftest is imported, so
-# it is readable here.
-DRIVER_MEMORY = "4g" if int(os.environ.get("PYTEST_XDIST_WORKER_COUNT", "1")) == 1 else "2g"
+# spark-submit at launch and setting it on the builder afterwards is silently ignored.
+def _driver_memory() -> str:
+    """4g for a single process; 2g per worker under xdist.
 
-# Must happen at import, before anything can launch the JVM: --packages is read by spark-submit
-# when the JVM starts, and jars cannot be added to one that is already running.
-os.environ.setdefault(
-    "PYSPARK_SUBMIT_ARGS",
-    f"--packages {DELTA_PACKAGE} --driver-memory {DRIVER_MEMORY} pyspark-shell",
-)
+    Keyed on ``PYTEST_XDIST_WORKER``, not ``PYTEST_XDIST_WORKER_COUNT``. The count used to be
+    read here at *import* time, but conftest.py is imported in the xdist CONTROLLER first --
+    the controller collects it before any worker exists, where the count is unset and reads as
+    "1" -- so the controller's own process environment got "--driver-memory 4g" written into
+    ``PYSPARK_SUBMIT_ARGS``. Workers inherit their parent's environment when execnet spawns
+    them, so every worker started with 4g already present in ``PYSPARK_SUBMIT_ARGS``
+    regardless of ``-n``, and the ``os.environ.setdefault`` call below never got a chance to
+    override it -- the value was already set, just by the wrong process. ``PYTEST_XDIST_WORKER``
+    (e.g. ``"gw0"``) is set only *inside* a worker's own process, never in the controller, so
+    reading it from ``pytest_configure`` -- which xdist runs separately in every process,
+    controller and each worker alike -- correctly tells this process apart from the controller.
+    """
+    return "2g" if os.environ.get("PYTEST_XDIST_WORKER") else "4g"
+
+
+def pytest_configure(config):
+    """Set ``PYSPARK_SUBMIT_ARGS`` once per process, before any fixture can launch the JVM.
+
+    Moved out of module level for the same reason ``_driver_memory`` is keyed on
+    ``PYTEST_XDIST_WORKER``: a module-level call only ever runs once per *process*, and under
+    xdist the first process to import this module is the controller, not a worker. Hook
+    functions do not have that problem -- pytest calls ``pytest_configure`` in the controller
+    AND in every worker, since each worker imports conftest.py and initializes plugins for
+    itself -- so this is the first point where "which process am I" is answerable per worker,
+    while still running well before collection hands control to any fixture.
+
+    In a worker, the variable is set UNCONDITIONALLY rather than with ``setdefault``: the
+    worker's environment may already carry ``PYSPARK_SUBMIT_ARGS`` inherited from the
+    controller (see ``_driver_memory``), and ``setdefault`` would silently keep that stale
+    value instead of sizing this worker's own heap. Outside a worker, ``setdefault`` is kept so
+    an explicit override in the environment before pytest starts is still respected.
+    """
+    submit_args = f"--packages {DELTA_PACKAGE} --driver-memory {_driver_memory()} pyspark-shell"
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        os.environ["PYSPARK_SUBMIT_ARGS"] = submit_args
+    else:
+        os.environ.setdefault("PYSPARK_SUBMIT_ARGS", submit_args)
+
 
 # Spark resolves the driver's address by looking the machine's hostname up, and in a container
 # with no matching entry in /etc/hosts that lookup can stall before failing over to the
-# loopback address it was always going to use. Naming it outright skips the wait. Also read at
-# JVM start, hence the placement.
+# loopback address it was always going to use. Naming it outright skips the wait. This one is
+# safe to set at import (module level): its value never depends on which process is asking.
 os.environ.setdefault("SPARK_LOCAL_IP", "127.0.0.1")
 
 

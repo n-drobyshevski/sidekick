@@ -2,16 +2,20 @@
 # and Plotly -- do not install pyspark on the cluster, it will shadow the runtime's build.
 # Pinned to the 3.5 patch line delta-spark 3.3.x actually declares (pyspark>=3.5.3,<3.6):
 # an unpinned `pyspark>=3.5` resolves to pyspark 4.x today, which mismatches the
-# io.delta:delta-spark_2.12:3.3.2 jar pinned in tests/conftest.py and fails at SparkSession
+# io.delta:delta-spark_2.12:3.3.3 jar pinned in tests/conftest.py and fails at SparkSession
 # construction rather than at pip install time.
 pyspark>=3.5.3,<3.6
 # The ledger is a Delta table and is MERGEd, so the tests that exercise it need Delta locally.
 # Must match the pyspark minor version: delta-spark 3.2 and 3.3 both pair with Spark 3.5.
 # 3.3 is the floor because OPTIMIZE on a single-column-clustered table is broken in 3.2 -- see
-# the DELTA_PACKAGE comment in tests/conftest.py, which pins the matching jar. Upper-bounded
-# below 3.4 because that jar is 3.3.2 specifically, and delta-spark 3.3.2/3.3.3 are the
-# releases that declare the pyspark>=3.5.3,<3.6 constraint above.
-delta-spark>=3.3.2,<3.4
+# the DELTA_PACKAGE comment in tests/conftest.py, which pins the matching jar. Floor raised to
+# 3.3.3 (still below 3.4) because Spark 3.5.6 made a plain overwrite-mode `saveAsTable` compile
+# to a truncating RTAS against Delta's staged V2 table, and only 3.3.3's `StagedDeltaTableV2`
+# advertises the TRUNCATE/OVERWRITE_BY_FILTER capability that path requires -- 3.3.2 refuses it
+# with "does not support truncate in batch mode" (see the DELTA_PACKAGE comment). This pin is
+# an equality with the jar, not a floor a caller can move independently: Delta ships its Python
+# package and its jar from one release, so `test_pins.py` asserts they match exactly.
+delta-spark>=3.3.3,<3.4
 requests>=2.31
 pandas>=2.0
 # DBR 14.3 LTS ships exactly 5.9.0, so every Plotly API the notebooks use has to exist there.
