@@ -23,7 +23,7 @@ import { openConfigFindingSheet } from "../detailSheets.js";
 import {
   absent, clear, dataTable, debounce, el, emptyState, errorState, fmtDate, heroStat, outcomeBadge,
   pageHeader, statRow,
-  pager, plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
+  plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, tableFooter,
   skeletonStack, statusPill, togglePills,
   scopeNote,
 } from "../ui.js";
@@ -494,10 +494,13 @@ export async function renderConfigFindings(main, params, ctx) {
       emptyText: "No findings match these filters.",
     });
     bodyHost.append(table);
-    bodyHost.append(pager(page, pageCount, model.filtered, (p) => {
-      view.page = p;
-      pushParams();
-      apply();
+    bodyHost.append(tableFooter({
+      page, pageCount, total: model.filtered,
+      onPage: (p) => {
+        view.page = p;
+        pushParams();
+        apply();
+      },
     }));
   }
 }

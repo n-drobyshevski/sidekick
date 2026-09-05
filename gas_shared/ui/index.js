@@ -20,7 +20,7 @@
 //   nodeCell.js   and what it says when the answer is "this is a node": the kind medallion.
 //                 Split from cells.js because it, alone, reaches ../icons.js
 //   controls.js   status pills, KPI tiles, stat rows
-//   feedback.js   loading / empty / error / toast / dialog
+//   feedback.js   loading / empty / error / toast / dialog / the sync-zone freshness caption
 //   tip.js        the one hover card: the app's only answer to "what does this mean"
 //   tipPlace.js   where that card lands and when it opens — the DOM-free half
 //   sheet.js      the drill-down overlay and its section+row vocabulary
@@ -44,12 +44,12 @@
 //   usageMeter.js one ratio against a HARD ceiling: a used/total numeral caption plus warn
 //                 and bad states, which neither meter() nor progressBar() carries
 //   figures.js    the register vocabulary's numeric core: num, fmtCount, days1, pct1,
-//                 denomNote, fmtDays, boundedDays — refuse-before-cast, so an absent figure
-//                 never renders as a confident 0
+//                 denomNote, fmtDays, boundedDays, relativeAge — refuse-before-cast, so an
+//                 absent figure never renders as a confident 0
 
 export { appendAll, clear, downloadText, el, motionOk, registerWideNote } from "./dom.js";
 export {
-  absentText, boundedDays, days1, denomNote, fmtCount, fmtDays, num, pct1,
+  absentText, boundedDays, days1, denomNote, fmtCount, fmtDays, num, pct1, relativeAge,
 } from "./figures.js";
 export {
   DISPLAY_TZ, dueRank, fmtDate, fmtDateTime, plural, pluralize, sevRank,
@@ -70,7 +70,8 @@ export {
   statRow, statusPill, togglePills,
 } from "./controls.js";
 export {
-  confirmDialog, emptyState, errorState, firstRunNotice, skeleton, skeletonStack, toast,
+  confirmDialog, emptyState, errorState, firstRunNotice, skeleton, skeletonStack, syncCaption,
+  toast,
 } from "./feedback.js";
 export {
   bookTip, chartTipHandler, closeTip, glossaryTip, tip, tipAnchor, tipLabel, tipLines,

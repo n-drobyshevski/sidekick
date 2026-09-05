@@ -410,7 +410,10 @@ export async function renderInventory(main, params) {
     const link = el(
       "a",
       { class: "link", href: buildHash("scans", { anchor: "reach" }), target: "_self" },
-      known ? observed.covered + " of " + observed.total : "—",
+      // `absent()`, not a hand-typed dash: `.link`'s own colour would otherwise carry the
+      // dash at the same visual weight the app uses for "click me", which is a stranger
+      // claim about an unmeasured figure than a bare black dash would have been.
+      known ? observed.covered + " of " + observed.total : absent(),
     );
     return el("div", { class: "kpi-row" },
       kpiCard(
@@ -458,7 +461,10 @@ export async function renderInventory(main, params) {
     const countStat = (label, value, key, term) => el("div", { class: "inv-count" },
       el("div", { class: "kpi-label" }, label),
       el("div", { class: "inv-count-row" },
-        el("span", { class: "inv-count-n num" }, value === null ? "—" : String(value)),
+        // `.inv-count-n` sets no colour of its own (it is meant to read at full weight for a
+        // real count), so a hand-typed dash here rendered bold and black — `absent()` is what
+        // this component was missing.
+        el("span", { class: "inv-count-n num" }, value === null ? absent() : String(value)),
         deltaChip(key)),
       term);
     const verdict = el("div", { class: "inv-verdict" },

@@ -1,9 +1,31 @@
 // Interactive and labelled chrome: status pills, KPI tiles, stat rows, toggle groups,
 // labelled fields, and the applied-filter chip row.
 
+import { absent } from "./cells.js";
 import { clear, el } from "./dom.js";
 import { meter } from "./data.js";
+import { absentText } from "./figures.js";
 import { tip, tipAnchor, tipLabel } from "./tip.js";
+
+/**
+ * The one promotion `dataTable` already does for a cell (`ui/data.js`), missing here until
+ * P8: `statRow`, `kpiCard` and `heroStat` all put `value` straight into a bold, full-ink
+ * `.mini-value`/`.kpi-value`/`.hero-value` div with no colour rule of its own — none of the
+ * three sets one, by design, because a MEASURED figure is supposed to read at full weight.
+ * The absent case never got the exception `dataTable`'s own cells did, so a page that had not
+ * yet wrapped its own "—" in a nested `absent()` span rendered the dash in exactly the ink
+ * CLAUDE.md's rule warns about: "the same weight as a value" — bold, unmuted, indistinguishable
+ * from a real number at the one size on the page built to be looked at first.
+ *
+ * `value === absentText` catches it whether that string arrived as the imported constant or
+ * as a hand-typed `"—"` literal — they are the same primitive, which is exactly how
+ * `dataTable`'s own check already works and why no page call site has to change to benefit.
+ * Anything else — a number, a further string, an already-built Node (a page that composed its
+ * own muted span, or the rare figure that is itself interactive) — passes through unchanged.
+ */
+function valueOrAbsent(value) {
+  return value === absentText ? absent() : value;
+}
 
 /**
  * OK / warn / bad / neutral, with a dot the colour never carries alone.
@@ -30,7 +52,7 @@ export function statRow(name, value, sub, meterPct, help) {
   return el("div", { class: "stat-row" },
     el("div", { class: "stat-name" }, tipLabel(name, help)),
     el("div", { class: "stat-figure" },
-      el("div", { class: "mini-value num" }, value),
+      el("div", { class: "mini-value num" }, valueOrAbsent(value)),
       hasMeter ? meter(meterPct, {
         className: "meter--stat",
         label: `${name}, ${meterPct} percent`,
@@ -333,7 +355,7 @@ export function heroStat(label, value, sub, help, opts) {
   const heading = (opts && opts.heading) || "h1";
   return el("div", { class: "page-hero" },
     el(heading, { class: "kpi-label" }, tipLabel(label, help)),
-    el("div", { class: "hero-value num" }, value),
+    el("div", { class: "hero-value num" }, valueOrAbsent(value)),
     sub ? el("div", { class: "page-hero-sub" }, sub) : null,
   );
 }
@@ -363,7 +385,7 @@ export function kpiCard(label, value, sub, chip, help) {
     "div",
     { class: "kpi-card" },
     el("div", { class: "kpi-label" }, tipLabel(label, help)),
-    el("div", { class: "kpi-value num" }, value, chip || null),
+    el("div", { class: "kpi-value num" }, valueOrAbsent(value), chip || null),
     sub ? el("div", { class: "kpi-sub" }, sub) : null,
   );
 }

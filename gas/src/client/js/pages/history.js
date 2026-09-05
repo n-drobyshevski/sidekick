@@ -8,7 +8,7 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   absent, clear, confirmDialog, dataTable, el, emptyState, fmtDateTime, fmtSpan, heroStat,
-  kpiCard, num, pageHeader, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
+  kpiCard, num, pageHeader, relativeAge, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
 } from "../ui.js";
 
 // The rows-per-page the table OPENS on. It is no longer the only size available: the footer
@@ -51,18 +51,6 @@ function deltaCell(n, { good = false, sign = "" } = {}) {
   return el("span",
     { class: "num", style: `color:var(--${good ? "ok" : "bad"})` },
     `${sign}${v.toLocaleString()}`);
-}
-
-function relativeAge(ts) {
-  const ms = Date.now() - Date.parse(ts);
-  if (Number.isNaN(ms)) return "";
-  const min = Math.floor(ms / 60000);
-  if (min < 1) return "just now";
-  if (min < 60) return `${min} min ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} hour${hr > 1 ? "s" : ""} ago`;
-  const d = Math.floor(hr / 24);
-  return `${d} day${d > 1 ? "s" : ""} ago`;
 }
 
 export async function renderHistory(main, _params, ctx) {

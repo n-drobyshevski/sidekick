@@ -155,6 +155,53 @@ export function fmtDays(days) {
 }
 
 /**
+ * "3 hours ago" / "2 days ago" / "just now" — the one clock-relative label across the three
+ * apps, promoted from a private helper `pages/history.js` (gas) had for its Scan History
+ * freshness line and a second, coarser inline calculation (days only, gated at `age >= 2`) in
+ * both siblings' rail captions — three shapes of the same sentence, one of them silently
+ * dropping the "N hours ago" / "N min ago" granularity gas's own history page already had.
+ *
+ * REFUSED BEFORE THE CAST, the same allowlist `num()` above uses and for the reason CLAUDE.md
+ * names directly: `Date.parse(null)` and `Date.parse(undefined)` are `NaN` (safe), but
+ * `Date.parse()` given an already-numeric epoch needed a stated answer, not a bare cast run
+ * without checking what arrived first. Only a real `number` (already epoch ms) or a
+ * non-empty `string` (parsed by `Date.parse`) are even candidates; `null`, `undefined`, `""`,
+ * and anything else typed here — an object, an array, `false` — fall straight to `absentText`,
+ * matching every other formatter in this file. Returned AS A STRING, not a node: every call
+ * site interpolates this into a sentence (`` `Last sync ${fmtDateTime(ts)} · ${relativeAge(ts)}`
+ * ``), the same reason `days1`/`pct1`/`fmtCount` return `absentText` rather than `absent()`.
+ *
+ * A NON-EMPTY STRING THAT DOES NOT PARSE reads the same way: `Date.parse` returning `NaN` is
+ * "we cannot say", not "zero elapsed" — the exact substitution CLAUDE.md's working discipline
+ * warns about — so it takes the same `absentText` branch as never having been told at all,
+ * rather than surfacing as "NaN days ago".
+ *
+ * A FUTURE TIMESTAMP reads as "just now", never as a negative age. Every call site measures a
+ * "last sync/scan" clock reading against the READER'S OWN `Date.now()`; the only realistic way
+ * that clock sits behind a timestamp the server just wrote is skew between the two clocks, not
+ * an event that has not happened yet. There is no more informative way to say "the two clocks
+ * do not quite agree" than to call the event current, so `ms <= 0` collapses into the same
+ * "just now" branch a few seconds of ordinary lag already reaches, rather than growing a
+ * second, more alarming word for the same non-event.
+ */
+export function relativeAge(ts) {
+  let t;
+  if (typeof ts === "number") t = ts;
+  else if (typeof ts === "string" && ts !== "") t = Date.parse(ts);
+  else return absentText;
+  if (!Number.isFinite(t)) return absentText;
+  const ms = Date.now() - t;
+  if (ms <= 0) return "just now";
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hour${hr > 1 ? "s" : ""} ago`;
+  const d = Math.floor(hr / 24);
+  return `${d} day${d > 1 ? "s" : ""} ago`;
+}
+
+/**
  * The denominator node every rate on these pages carries.
  *
  * A RATE WITHOUT ITS DENOMINATOR IS NOT A MEASUREMENT — "99.6% unvalidated" and "3-day

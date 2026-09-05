@@ -35,6 +35,9 @@ import { registerParityContract } from "../../gas_shared/test/contracts/parity.j
 import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js";
 import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/tokens.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
+import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
+import { relativeAge } from "../../gas_shared/ui/figures.js";
+import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
 
 import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 import { scopeChrome, scopeKinds } from "../src/client/js/scopeKinds.js";
@@ -366,3 +369,10 @@ registerDiagnosticsContract({
   // meter to draw.
   sections: ["storage", "errors", "build"],
 });
+
+// =========================================================================================
+//  The one clock-relative label — pages/history.js's freshness line and the rail's
+//  syncCaption() both call this, and P8 promoted it out of a private copy this app had.
+// =========================================================================================
+registerRelativeAgeContract({ ...base, relativeAge });
+registerSyncCaptionContract(base);

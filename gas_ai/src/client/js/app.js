@@ -17,7 +17,7 @@ import { call } from "../../../../gas_shared/api.js";
 import { bootstrapCached } from "../../../../gas_shared/store.js";
 import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
-import { clear, el, fmtDateTime, statusPill, tipAnchor, toast } from "./ui.js";
+import { clear, el, statusPill, syncCaption, tipAnchor, toast } from "./ui.js";
 import { projectScopeView, scopeChrome, scopeKinds } from "./ui/projectScope.js";
 import { scopeControl } from "../../../../gas_shared/ui/scopeControl.js";
 import { scopePayload } from "../../../../gas_shared/ui/scopeModel.js";
@@ -214,17 +214,14 @@ function renderSyncZone(data) {
         "aria-hidden": "true",
       }), data.hasCredentials ? "Credentials loaded" : "Dry-run (no credentials)"),
     );
-    if (data.latestSync) {
-      const ts = data.latestSync.finished_at;
-      const age = Math.floor((Date.now() - Date.parse(ts)) / 86400000);
-      zone.append(
-        el("div", { class: "scan-caption" },
-          `Last sync ${fmtDateTime(ts)}` + (age >= 2 ? ` — ${age} days ago` : ""),
-        ),
-      );
-    } else {
-      zone.append(el("div", { class: "scan-caption" }, "No sync saved yet."));
-    }
+    // `syncCaption` (gas_shared/ui/feedback.js), unified across all three apps: "Last <noun>
+    // <datetime> · <relativeAge>" once a sync is saved, "No <noun>s yet." before the first
+    // one. It used to be a bare Math.floor day count gated at `age >= 2` — a sync an hour old
+    // showed no age at all.
+    zone.append(
+      el("div", { class: "scan-caption" },
+        syncCaption(data.latestSync && data.latestSync.finished_at)),
+    );
     if (data.activeJob) {
       paintCard(data.activeJob);
       watchJob(data.activeJob.job_id);

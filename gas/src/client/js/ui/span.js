@@ -20,10 +20,19 @@
 //
 // So it keeps its behaviour and takes a name that says what it does. Call sites that wanted
 // the shared conventions were moved to `days1` / `fmtDays` per site, not wholesale.
+//
+// THE DASH IS `absentText`, NOT A SECOND "—" LITERAL. P4b's absent()-sweep left this one
+// hand-typed — it worked, by coincidence, only because the character happened to match
+// `dataTable`'s exact-string comparison (`ui/data.js`: `value === absentText`) that promotes a
+// cell's returned string to the muted `absent()` node at render time. A future change to the
+// dash character would silently stop matching here while every other formatter in
+// `gas_shared/ui/figures.js` moved with it — this import is what makes that impossible.
+
+import { absentText } from "../../../../../gas_shared/ui/figures.js";
 
 /** A span in days, printed at the largest unit that keeps it a small number. */
 export function fmtSpan(v) {
-  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  if (v === null || v === undefined || Number.isNaN(v)) return absentText;
   if (v < 1 / 24) return "<1h";
   if (v < 1) return `${Math.round(v * 24)}h`;
   if (v < 30) return `${v.toFixed(1)}d`;

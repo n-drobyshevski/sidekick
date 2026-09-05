@@ -32,9 +32,9 @@ import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   absent, clear, dataTable, debounce, el, emptyState, errorState, fmtDate, glossaryTip, heroStat,
-  pageHeader, pager, plural, segmented, select, selectField, sevBadge,
+  pageHeader, plural, segmented, select, selectField, sevBadge,
   sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statRow,
-  statusPill, tipMark, togglePills,
+  statusPill, tableFooter, tipMark, togglePills,
 } from "../ui.js";
 import {
   PAGE_SIZE, PROBLEM_SORT_DESC, SEVERITY_RANK,
@@ -294,10 +294,15 @@ export async function renderProblems(main, params) {
 
     host.append(
       table(slice, filtered.length, rows.length),
-      pager(view.page, pageCount, sorted.length, (next) => {
-        view.page = next;
-        persist();
-        paint();
+      tableFooter({
+        page: view.page,
+        pageCount,
+        total: sorted.length,
+        onPage: (next) => {
+          view.page = next;
+          persist();
+          paint();
+        },
       }),
     );
   }
@@ -323,10 +328,15 @@ export async function renderProblems(main, params) {
     } else {
       host.append(table(sorted, filtered.length, rows.length));
     }
-    host.append(pager(fresh.page, fresh.pageCount, fresh.filtered, (next) => {
-      view.page = next;
-      persist();
-      refetch();
+    host.append(tableFooter({
+      page: fresh.page,
+      pageCount: fresh.pageCount,
+      total: fresh.filtered,
+      onPage: (next) => {
+        view.page = next;
+        persist();
+        refetch();
+      },
     }));
   }
 
