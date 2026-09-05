@@ -15,6 +15,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { bootServer, teardownServer } from "./gasEnv";
 import { TAB_HEADERS, TABS } from "../src/server/sheetsDb";
 import { registerScopeSignature } from "../src/domain/registerScope";
+import { RISK_CATEGORY_ID } from "../src/domain/toxicCombos";
 import { ledgerCensus, type IssueLedgerRow } from "../src/domain/issueLedger";
 import type { IssueRow, NormalizedVulnFinding } from "../src/domain/graphTypes";
 import type { Rec } from "../src/domain/util";
@@ -79,6 +80,13 @@ function latestHistory(): Rec {
 function seedIssueId(): string {
   const id = sample.SEED_ISSUES[0]?.id;
   expect(id, "the seed landscape carries no issues").toBeTruthy();
+  return String(id);
+}
+
+/** A second seed issue, so a case can give two rows two different readings. */
+function otherIssueId(): string {
+  const id = sample.SEED_ISSUES[1]?.id;
+  expect(id, "the seed landscape carries fewer than two issues").toBeTruthy();
   return String(id);
 }
 
@@ -280,5 +288,70 @@ describe("what a refused optional step does to the ledger", () => {
     expect(after["epss_peak"]).toBeNull();
     expect(store.loadIssueLedger().find((l) => l.issueId === seedIssueId())!.exploitationTier)
       .toBeUndefined();
+  });
+});
+
+// The two columns the posture trend adds to the commit record. Same `writeGrid` discipline
+// as everything above: a column the writer emits and the headers do not declare is dropped
+// on write and read back as a default, silently, on every sync forever.
+describe("sync_history.category_counts_json — the scope series", () => {
+  it("is declared, and a committed sync stamps the open population per category", () => {
+    expect(TAB_HEADERS[TABS.syncHistory]).toContain("category_counts_json");
+    persist();
+    const counts = JSON.parse(String(latestHistory()["category_counts_json"])) as Record<string, number>;
+    // The seed register runs under the default scope, so every open issue carries the one
+    // stamp — and the count is the OPEN population, which here is all of them.
+    expect(counts).toEqual({ [RISK_CATEGORY_ID]: sample.SEED_ISSUES.length });
+    expect(Number(latestHistory()["issue_count"])).toBe(sample.SEED_ISSUES.length);
+  });
+
+  it("counts an issue in TWO categories under both, through the sheet", () => {
+    // The counts deliberately do not sum to `issue_count`: an issue matched by two selected
+    // categories arrives twice from the API and merges to one row carrying both stamps. Read
+    // off the PERSISTED rows rather than an in-memory shape, because the stamp is a
+    // comma-joined cell and a counter reading a different representation is a second answer.
+    const [first, second, ...rest] = sample.SEED_ISSUES;
+    persist([
+      { ...first!, categories: [RISK_CATEGORY_ID, "wct-id-3"] },
+      { ...second!, categories: ["wct-id-3"] },
+      ...rest.map((i) => ({ ...i, categories: [RISK_CATEGORY_ID] })),
+    ]);
+    const counts = JSON.parse(String(latestHistory()["category_counts_json"])) as Record<string, number>;
+    expect(counts[RISK_CATEGORY_ID]).toBe(sample.SEED_ISSUES.length - 1);
+    expect(counts["wct-id-3"]).toBe(2);
+    // The sum exceeds the register, by exactly the one row that sits in both.
+    const summed = Object.keys(counts).reduce((a, k) => a + counts[k]!, 0);
+    expect(summed).toBe(sample.SEED_ISSUES.length + 1);
+    // And the persisted rows say the same thing, so the stamp and the census agree.
+    const stamped = store.loadIssues().filter((i) => (i.categories ?? []).indexOf("wct-id-3") >= 0);
+    expect(stamped.map((i) => i.id).sort()).toEqual([first!.id, second!.id].sort());
+  });
+});
+
+describe("sync_history.kev_linked_count — null when nobody asked", () => {
+  it("is declared, and counts the issues this sync read a KEV tier on", () => {
+    expect(TAB_HEADERS[TABS.syncHistory]).toContain("kev_linked_count");
+    persist(undefined, {
+      vulnFindings: [
+        { id: "vf-1", hasKev: true, hasExploit: true, epss: 0.62, issueIds: [seedIssueId()] },
+        // Exploit-tier, not KEV: the count is the one tier, not "has any evidence".
+        { id: "vf-2", hasKev: false, hasExploit: true, epss: 0.4, issueIds: [otherIssueId()] },
+      ],
+    });
+    expect(Number(latestHistory()["kev_linked_count"])).toBe(1);
+    // The scalar and the census beside it are one reading of one fold, never two.
+    const census = JSON.parse(String(latestHistory()["exploitation_json"])) as Record<string, number>;
+    expect(census["kev"]).toBe(1);
+    expect(census["exploit"]).toBe(1);
+  });
+
+  it("is NULL, not 0, on a sync whose evidence pass never ran", () => {
+    // The whole point of the column being nullable. `exploitation_json` is null on a refused
+    // VULN_FINDINGS step, and "no issue is on the KEV catalogue" is a different claim from
+    // "we never asked" — a zero here would put the first on a chart for a sync that did the
+    // second.
+    persist();
+    expect(latestHistory()["kev_linked_count"]).toBeNull();
+    expect(latestHistory()["exploitation_json"]).toBeNull();
   });
 });

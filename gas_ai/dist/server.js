@@ -466,7 +466,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "09abc41a60ff" : "dev";
+  var BUILD_ID = true ? "1ad135f7e534" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -811,12 +811,25 @@ var Server = (() => {
     const t = Date.parse(s);
     return Number.isNaN(t) ? null : t;
   }
-  function toIso(ms) {
-    if (ms === null || !Number.isFinite(ms)) return null;
-    return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
+  function toIso(ms2) {
+    if (ms2 === null || !Number.isFinite(ms2)) return null;
+    return new Date(Math.floor(ms2 / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
   }
   function nowIso(now) {
     return toIso(now != null ? now : Date.now());
+  }
+  function mean(values) {
+    if (!values.length) return null;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+  }
+  function quantile(values, q) {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const idx = q * (sorted.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
   }
 
   // src/server/sheetsDb.ts
@@ -832,6 +845,7 @@ var Server = (() => {
     configRules: "ai_config_rules",
     identityFindings: "ai_identity_findings",
     issueExploitation: "ai_issue_exploitation",
+    issueLedger: "ai_issue_ledger",
     syncHistory: "sync_history",
     settings: "settings",
     jobs: "jobs",
@@ -1204,6 +1218,52 @@ var Server = (() => {
       "sample_finding_ids",
       "observed_at"
     ],
+    // THE ISSUE LIFECYCLE LEDGER — the one tab here that is never a snapshot.
+    //
+    // Every other data tab above is rewritten wholesale from what the last sync saw, which is
+    // correct for a register that describes today and useless for one that has to say when a
+    // row LEFT. `ai_issues` is filtered to OPEN/IN_PROGRESS, so a remediated issue simply
+    // vanishes from it on the next sync with nothing recording that it was ever there.
+    //
+    // "Never overwritten" is a claim about the CONTENT, not about the write call: `syncStore`
+    // reconciles the stored rows with this sync's register and writes the whole reconciled grid
+    // back, which is a full rewrite of the ledger FROM ITS OWN PRIOR CONTENT and never a
+    // replacement of it by the current snapshot. Nothing may write this tab from `ai_issues`
+    // alone — that is exactly the erasure the tab exists to prevent.
+    //
+    // `disappeared_at` IS NOT A RESOLUTION DATE. It is the timestamp of the sync that first
+    // failed to see the row: an upper bound whose error is the sync interval. `resolution_src`
+    // carries the provenance in the same row so a surface cannot render the date without the
+    // word that qualifies it — "gone by", never "resolved". See domain/issueLedger.ts.
+    //
+    // `register_scope` is the scope the sync that last SAW the row applied; `categories` is the
+    // union of every category that has ever matched it. Two different facts — which questions
+    // were asked, and which ones answered — and only the first can explain an absence.
+    //
+    // Comma-joined for `categories`, matching `environments` and `attributed_asset_ids` on
+    // ai_issues; the `_json` suffix stays reserved for structures. An empty `exploitation_tier`
+    // or `ai_adjacency` cell reads back as UNDEFINED and never as "none"/"UNLINKED": the fold
+    // did not reach the row on the sync that last saw it, which the ranker prices differently
+    // from a measurement.
+    [TABS.issueLedger]: [
+      "issue_id",
+      "first_seen_sync",
+      "first_seen_at",
+      "last_seen_sync",
+      "last_seen_at",
+      "disappeared_at",
+      "resolution_src",
+      "last_status",
+      "categories",
+      "rule_id",
+      "created_at",
+      "due_at",
+      "ai_adjacency",
+      "exploitation_tier",
+      "epss_peak",
+      "register_scope",
+      "episode"
+    ],
     [TABS.syncHistory]: [
       "sync_id",
       "started_at",
@@ -1276,7 +1336,44 @@ var Server = (() => {
       // different claim from "we never asked". The two counts travel INSIDE the object for the
       // reason `edgesKnown` does one row up: the tier counts are unreadable without them, and split
       // into their own columns a later reader plots the tiers alone.
-      "exploitation_json"
+      "exploitation_json",
+      // WHAT THE LIFECYCLE LEDGER DID ON THIS SYNC — `{new, resolved, reopened, carried,
+      // skippedNarrowedScope}` (domain/issueLedger.IssueLedgerDeltas). Appended, same
+      // no-migration contract as every column above.
+      //
+      // TRANSITION COUNTS, not a census of the tab: a row present on both syncs is counted by
+      // none of the five, so these numbers do not sum to the ledger's size and a reader must not
+      // try to make them. `skippedNarrowedScope` is the one to watch — a non-zero there says the
+      // category scope moved and that this sync deliberately resolved nothing by absence, which
+      // is what keeps a re-scoping from being read as a remediation programme.
+      //
+      // Rides here rather than on its own tab because it is one object per sync, exactly like
+      // `adjacency_json` and `exploitation_json` above it, and because `bootstrap.latestSync`
+      // ships the whole history row — so the client gets it with no new endpoint.
+      "ledger_json",
+      // OPEN ISSUES PER RISK CATEGORY at this sync — `{[categoryId]: openIssues}`, counted once
+      // per category a row carries. The scope-over-time series: `register_scope` beside it says
+      // WHICH questions this sync asked, and this says what each one answered.
+      //
+      // THE COUNTS DO NOT SUM TO `issue_count`, and that is a property of the register rather
+      // than a defect: an issue sits in roughly five categories on the reference tenant
+      // (AARS_LIVE_MEASUREMENTS.md §6.1), arrives once per selected category it matches, and is
+      // counted under each. A reader adding them up is measuring the overlap, not the register.
+      //
+      // A KEY ABSENT FROM THE OBJECT IS NOT A ZERO. A sync run under a narrower scope never
+      // collected the categories it was not asked for, so it has no number for them — the
+      // trend plots the gap (aarsTrend.ts CATEGORY_SPEC, `absentKeyIsNull`) rather than drawing
+      // a category that sat at zero until the day it was selected.
+      "category_counts_json",
+      // Issues carrying a KEV-tier exploitation reading at this sync — the one exploitation
+      // figure that earns a scalar column of its own, because it is the tier every surface
+      // leads with.
+      //
+      // NULL, NOT ZERO, when no evidence pass ran, exactly as `exploitation_json` beside it is
+      // null: VULN_FINDINGS is optional, and "no issue is on the KEV catalogue" is a very
+      // different claim from "we never asked". Derived from the same fold that writes that
+      // census, so the two can never disagree about one sync.
+      "kev_linked_count"
     ],
     [TABS.settings]: ["key", "value_json"],
     [TABS.jobs]: [
@@ -8088,6 +8185,24 @@ var Server = (() => {
   ];
 
   // src/domain/rankStats.ts
+  function kendallTauB(a, b) {
+    if (a.length !== b.length) {
+      throw new Error(`kendallTauB: length mismatch (${a.length} vs ${b.length})`);
+    }
+    const n = a.length;
+    let concordantMinusDiscordant = 0;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        concordantMinusDiscordant += Math.sign(a[i] - a[j]) * Math.sign(b[i] - b[j]);
+      }
+    }
+    const n0 = n * (n - 1) / 2;
+    const n1 = tiedPairCount(a);
+    const n2 = tiedPairCount(b);
+    const denom = (n0 - n1) * (n0 - n2);
+    if (denom <= 0) return 0;
+    return concordantMinusDiscordant / Math.sqrt(denom);
+  }
   function tiedPairCount(values) {
     var _a5;
     const counts = /* @__PURE__ */ new Map();
@@ -8113,6 +8228,31 @@ var Server = (() => {
       entropy += -p * Math.log(p);
     }
     return Math.exp(entropy);
+  }
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function next() {
+      a = a + 1831565813 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function bootstrapCI(values, stat, samples, seed) {
+    const n = values.length;
+    const rng = mulberry32(seed);
+    const stats = [];
+    for (let s = 0; s < samples; s++) {
+      const resample = new Array(n);
+      for (let i = 0; i < n; i++) {
+        resample[i] = values[Math.floor(rng() * n)];
+      }
+      stats.push(stat(resample));
+    }
+    return {
+      lo: quantile(stats, 0.025),
+      hi: quantile(stats, 0.975)
+    };
   }
 
   // src/domain/aarsRule.ts
@@ -10076,6 +10216,107 @@ var Server = (() => {
     return failing.size;
   }
 
+  // src/domain/issueLedger.ts
+  function byIssueId(a, b) {
+    return a.issueId < b.issueId ? -1 : a.issueId > b.issueId ? 1 : 0;
+  }
+  function unionCategories2(prev, next) {
+    const out = prev.slice();
+    for (const c of next) if (c && out.indexOf(c) < 0) out.push(c);
+    return out;
+  }
+  function freezeInputs(row, issue2) {
+    var _a5, _b, _c;
+    if (issue2.aiAdjacency === void 0) delete row.aiAdjacency;
+    else row.aiAdjacency = issue2.aiAdjacency;
+    if (issue2.exploitationTier === void 0) {
+      delete row.exploitationTier;
+      delete row.epssPeak;
+    } else {
+      row.exploitationTier = issue2.exploitationTier;
+      row.epssPeak = (_a5 = issue2.epssPeak) != null ? _a5 : null;
+    }
+    row.ruleId = issue2.ruleId;
+    row.createdAt = (_b = issue2.createdAt) != null ? _b : null;
+    row.dueAt = (_c = issue2.dueAt) != null ? _c : null;
+    row.lastStatus = issue2.status;
+  }
+  function reconcileIssueLedger(prev, current, syncId, syncTs, scopeSignature, prevScopeSignature) {
+    var _a5, _b, _c, _d;
+    const deltas = {
+      new: 0,
+      resolved: 0,
+      reopened: 0,
+      carried: 0,
+      skippedNarrowedScope: 0
+    };
+    const byId = {};
+    const order = [];
+    for (const row of prev) {
+      if (!row.issueId || byId[row.issueId]) continue;
+      byId[row.issueId] = { ...row, categories: row.categories.slice() };
+      order.push(row.issueId);
+    }
+    const seen = {};
+    for (const issue2 of current) {
+      if (!issue2.id) continue;
+      const first = !seen[issue2.id];
+      seen[issue2.id] = true;
+      const existing = byId[issue2.id];
+      if (!existing) {
+        const row = {
+          issueId: issue2.id,
+          firstSeenSync: syncId,
+          firstSeenAt: syncTs,
+          lastSeenSync: syncId,
+          lastSeenAt: syncTs,
+          disappearedAt: null,
+          resolutionSrc: null,
+          lastStatus: issue2.status,
+          categories: unionCategories2([], (_a5 = issue2.categories) != null ? _a5 : []),
+          ruleId: issue2.ruleId,
+          createdAt: (_b = issue2.createdAt) != null ? _b : null,
+          dueAt: (_c = issue2.dueAt) != null ? _c : null,
+          registerScope: scopeSignature,
+          episode: 1
+        };
+        freezeInputs(row, issue2);
+        byId[issue2.id] = row;
+        order.push(issue2.id);
+        if (first) deltas.new += 1;
+        continue;
+      }
+      if (existing.disappearedAt !== null) {
+        existing.episode += 1;
+        existing.disappearedAt = null;
+        existing.resolutionSrc = "reopened";
+        if (first) deltas.reopened += 1;
+      }
+      existing.lastSeenSync = syncId;
+      existing.lastSeenAt = syncTs;
+      existing.categories = unionCategories2(existing.categories, (_d = issue2.categories) != null ? _d : []);
+      existing.registerScope = scopeSignature;
+      freezeInputs(existing, issue2);
+    }
+    const scopeCovers = prevScopeSignature !== null && prevScopeSignature === scopeSignature;
+    for (const id of order) {
+      if (seen[id]) continue;
+      const row = byId[id];
+      if (row.disappearedAt !== null) {
+        deltas.carried += 1;
+        continue;
+      }
+      if (!scopeCovers) {
+        deltas.skippedNarrowedScope += 1;
+        continue;
+      }
+      row.disappearedAt = syncTs;
+      row.resolutionSrc = "disappeared";
+      deltas.resolved += 1;
+    }
+    return { rows: order.map((id) => byId[id]).sort(byIssueId), deltas };
+  }
+
   // src/domain/aarsTrend.ts
   var PROJECT_TOTALS_COLUMN = "project_totals_json";
   var PROJECT_TOTALS_MAX_CHARS = 45e3;
@@ -10132,6 +10373,92 @@ var Server = (() => {
     }
     return counts;
   }
+  function countsFromObject(parsed, keys, absentKeyIsNull = false) {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const raw = parsed;
+    const counts = {};
+    for (const k of keys) {
+      if (absentKeyIsNull && !Object.prototype.hasOwnProperty.call(raw, k)) {
+        counts[k] = null;
+        continue;
+      }
+      const n = Number(raw[k]);
+      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+    }
+    return counts;
+  }
+  function parseCounts(v, keys, absentKeyIsNull = false) {
+    if (typeof v !== "string" || !v) return null;
+    try {
+      return countsFromObject(JSON.parse(v), keys, absentKeyIsNull);
+    } catch {
+      return null;
+    }
+  }
+  function parseAnnotations(v, keys) {
+    const out = {};
+    let raw = {};
+    if (typeof v === "string" && v) {
+      try {
+        const parsed = JSON.parse(v);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          raw = parsed;
+        }
+      } catch {
+        raw = {};
+      }
+    }
+    for (const k of keys) {
+      const n = Number(raw[k]);
+      out[k] = Object.prototype.hasOwnProperty.call(raw, k) && Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+    }
+    return out;
+  }
+  function parseProjectCounts(v, projectId, spec) {
+    if (typeof v !== "string" || !v) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const entry = parsed[projectId];
+    if (!entry || typeof entry !== "object") return null;
+    return countsFromObject(
+      entry[spec.projectKey],
+      spec.keys,
+      spec.absentKeyIsNull
+    );
+  }
+  function readTrend(rows, spec, limit, projectId) {
+    var _a5;
+    const points = [];
+    if (!spec.keys.length) return points;
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const counts = projectId ? parseProjectCounts(r[PROJECT_TOTALS_COLUMN], projectId, spec) : parseCounts(r[spec.countsColumn], spec.keys, spec.absentKeyIsNull);
+      if (!counts) continue;
+      if (spec.keys.every((k) => counts[k] === null)) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const v = Number(r[spec.versionColumn]);
+      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+      const point = { at, counts, ruleVersion };
+      if (spec.annotationKeys && spec.annotationKeys.length) {
+        point.annotations = parseAnnotations(r[spec.countsColumn], spec.annotationKeys);
+      }
+      points.push(point);
+    }
+    points.sort(cmpBy((p) => p.at));
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  function trendFromHistory(rows, spec, limit = 90, projectId = "") {
+    return readTrend(rows, spec, limit, projectId);
+  }
+  function sparseTrendFromHistory(rows, spec, limit = 90, projectId = "") {
+    return readTrend(rows, spec, limit, projectId);
+  }
   var COUNT_KEYS = ["issues", "findings", "postureFails"];
   function cellCount2(v) {
     if (v === null || v === void 0 || v === "") return null;
@@ -10184,6 +10511,160 @@ var Server = (() => {
     }
     points.sort(cmpBy((p) => p.at));
     return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  var ADJACENCY_KEYS = ["DIRECT", "ADJACENT", "UNLINKED"];
+  var ADJACENCY_SPEC = {
+    keys: ADJACENCY_KEYS,
+    countsColumn: "adjacency_json",
+    versionColumn: "derivation_version",
+    projectKey: "adjacency",
+    annotationKeys: ["edgesKnown"]
+  };
+  function adjacencyTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, ADJACENCY_SPEC, limit, projectId);
+  }
+  var EXPLOITATION_KEYS = ["kev", "exploit", "epss", "none", "unknown"];
+  var EXPLOITATION_SPEC = {
+    keys: EXPLOITATION_KEYS,
+    countsColumn: "exploitation_json",
+    versionColumn: "derivation_version",
+    projectKey: "exploitation",
+    annotationKeys: ["findings", "unjoined", "droppedNotInRegister"]
+  };
+  function exploitationTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, EXPLOITATION_SPEC, limit, projectId);
+  }
+  var CATEGORY_COUNTS_COLUMN = "category_counts_json";
+  var CATEGORY_SPEC = {
+    keys: [],
+    countsColumn: CATEGORY_COUNTS_COLUMN,
+    versionColumn: "derivation_version",
+    projectKey: "categories",
+    absentKeyIsNull: true
+  };
+  function categorySpecFor(categoryIds) {
+    return { ...CATEGORY_SPEC, keys: [...categoryIds] };
+  }
+  function categoryTrendFromHistory(rows, categoryIds, limit = 90) {
+    return sparseTrendFromHistory(rows, categorySpecFor(categoryIds), limit);
+  }
+  function countIssueCategories(issues2) {
+    var _a5, _b;
+    const counts = {};
+    for (const issue2 of issues2) {
+      const seen = [];
+      for (const c of (_a5 = issue2.categories) != null ? _a5 : []) {
+        if (!c || seen.indexOf(c) >= 0) continue;
+        seen.push(c);
+        counts[c] = ((_b = counts[c]) != null ? _b : 0) + 1;
+      }
+    }
+    return counts;
+  }
+  var LEDGER_KEYS = ["new", "resolved", "reopened"];
+  var LEDGER_SPEC = {
+    keys: LEDGER_KEYS,
+    countsColumn: "ledger_json",
+    versionColumn: "derivation_version",
+    projectKey: "ledger"
+  };
+  function ledgerTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, LEDGER_SPEC, limit, projectId);
+  }
+  var NET_CAPACITY_BAND_PCT = 2;
+  var MIN_COMPARABLE_SYNCS = 2;
+  function verdictOf(netPct) {
+    if (netPct === null || Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
+    return netPct > 0 ? "gaining" : "falling-behind";
+  }
+  function capacityFromLedgerDeltas(rows, limit = 90) {
+    var _a5, _b, _c;
+    const raw = [];
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const counts = parseCounts(r["ledger_json"], [
+        "new",
+        "resolved",
+        "reopened",
+        "carried",
+        "skippedNarrowedScope"
+      ]);
+      if (!counts) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const c = counts;
+      const n = (k) => {
+        var _a6;
+        return Number((_a6 = c[k]) != null ? _a6 : 0);
+      };
+      raw.push({
+        syncId: String((_b = r["sync_id"]) != null ? _b : ""),
+        at,
+        // "" is UNKNOWN, never "the same scope as the row beside it" — see case 2 above.
+        scope: String((_c = r["register_scope"]) != null ? _c : ""),
+        opened: n("new") + n("reopened"),
+        closed: n("resolved"),
+        openAtStart: n("carried") + n("resolved"),
+        skipped: n("skippedNarrowedScope")
+      });
+    }
+    raw.sort(cmpBy((p) => p.at));
+    const points = [];
+    let comparableCount = 0;
+    const rates = [];
+    const netPcts = [];
+    for (let i = 0; i < raw.length; i++) {
+      const cur = raw[i];
+      const prev = i > 0 ? raw[i - 1] : null;
+      const comparable = Boolean(
+        prev && cur.skipped === 0 && cur.scope !== "" && prev.scope !== "" && cur.scope === prev.scope
+      );
+      const netPct = cur.openAtStart > 0 ? (cur.closed - cur.opened) / cur.openAtStart * 100 : null;
+      if (comparable) {
+        comparableCount += 1;
+        if (cur.openAtStart > 0) {
+          rates.push(cur.closed / cur.openAtStart * 100);
+          netPcts.push(netPct != null ? netPct : 0);
+        }
+      }
+      points.push({
+        syncId: cur.syncId,
+        at: cur.at,
+        opened: cur.opened,
+        closed: cur.closed,
+        net: cur.closed - cur.opened,
+        comparable,
+        verdict: comparable ? verdictOf(netPct) : null
+      });
+    }
+    const enough = rates.length >= MIN_COMPARABLE_SYNCS;
+    const mean2 = (xs) => xs.reduce((a, x) => a + x, 0) / xs.length;
+    const trimmed = limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+    return {
+      points: trimmed,
+      overall: {
+        mmcr: enough ? mean2(rates) : null,
+        verdict: enough ? verdictOf(mean2(netPcts)) : null,
+        syncs: points.length,
+        comparable: comparableCount
+      }
+    };
+  }
+  function labelCategories(ids) {
+    return ids.map((id) => {
+      const known = CANDIDATE_CATEGORIES.filter((c) => c.id === id)[0];
+      return { id, name: known ? known.name : id };
+    });
+  }
+  function postureTrendFromHistory(rows, categoryIds, limit = 90) {
+    return {
+      adjacency: adjacencyTrendFromHistory(rows, limit),
+      exploitation: exploitationTrendFromHistory(rows, limit),
+      categories: labelCategories(categoryIds),
+      categoryPoints: categoryTrendFromHistory(rows, categoryIds, limit),
+      ledger: ledgerTrendFromHistory(rows, limit),
+      capacity: capacityFromLedgerDeltas(rows, limit)
+    };
   }
 
   // src/domain/prunePlan.ts
@@ -10828,6 +11309,73 @@ var Server = (() => {
       observed_at: e.observedAt
     };
   }
+  function issueLedgerToRow(l) {
+    var _a5, _b, _c;
+    return {
+      issue_id: l.issueId,
+      first_seen_sync: l.firstSeenSync,
+      first_seen_at: l.firstSeenAt,
+      last_seen_sync: l.lastSeenSync,
+      last_seen_at: l.lastSeenAt,
+      // NULL while the row is present. When set it is the timestamp of the sync that first
+      // failed to see it — an upper bound, and `resolution_src` beside it is what says so.
+      disappeared_at: l.disappearedAt,
+      resolution_src: l.resolutionSrc,
+      last_status: l.lastStatus,
+      // Comma-joined, matching `categories` on ai_issues; the `_json` suffix stays reserved
+      // for structures.
+      categories: ((_a5 = l.categories) != null ? _a5 : []).join(","),
+      rule_id: l.ruleId,
+      created_at: l.createdAt,
+      due_at: l.dueAt,
+      // `?? null`, never a default, for the reason ai_issues states at length: an empty cell
+      // here means the fold did not reach this row on the sync that last saw it, and writing
+      // "UNLINKED" or "none" would turn "nobody looked" into a measurement.
+      ai_adjacency: (_b = l.aiAdjacency) != null ? _b : null,
+      exploitation_tier: (_c = l.exploitationTier) != null ? _c : null,
+      epss_peak: l.epssPeak === null || l.epssPeak === void 0 ? null : l.epssPeak,
+      register_scope: l.registerScope,
+      episode: l.episode
+    };
+  }
+  function rowToIssueLedger(r) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    const row = {
+      issueId: String((_a5 = r["issue_id"]) != null ? _a5 : ""),
+      firstSeenSync: String((_b = r["first_seen_sync"]) != null ? _b : ""),
+      firstSeenAt: String((_c = r["first_seen_at"]) != null ? _c : ""),
+      lastSeenSync: String((_d = r["last_seen_sync"]) != null ? _d : ""),
+      lastSeenAt: String((_e = r["last_seen_at"]) != null ? _e : ""),
+      disappearedAt: (_f = r["disappeared_at"]) != null ? _f : null,
+      // Narrowed, because these two strings are the PROVENANCE of the date beside them: an
+      // unrecognised value must not be able to reach a surface that renders it as a claim.
+      resolutionSrc: r["resolution_src"] === "disappeared" || r["resolution_src"] === "reopened" ? r["resolution_src"] : null,
+      lastStatus: String((_g = r["last_status"]) != null ? _g : ""),
+      categories: String((_h = r["categories"]) != null ? _h : "").split(",").filter(Boolean),
+      ruleId: String((_i = r["rule_id"]) != null ? _i : ""),
+      createdAt: (_j = r["created_at"]) != null ? _j : null,
+      dueAt: (_k = r["due_at"]) != null ? _k : null,
+      registerScope: String((_l = r["register_scope"]) != null ? _l : ""),
+      // 1, not 0: a stored row has been present at least once by definition, and a 0 here would
+      // read as "never seen" on a tab whose every row is a sighting.
+      episode: Number((_m = r["episode"]) != null ? _m : 1) || 1
+    };
+    const adjacency2 = (_n = r["ai_adjacency"]) != null ? _n : null;
+    if (adjacency2 === "DIRECT" || adjacency2 === "ADJACENT" || adjacency2 === "UNLINKED") {
+      row.aiAdjacency = adjacency2;
+    }
+    const tier = String((_o = r["exploitation_tier"]) != null ? _o : "");
+    if (tier) {
+      row.exploitationTier = tier;
+      const peak = r["epss_peak"];
+      const parsed = peak === null || peak === void 0 || peak === "" ? null : Number(peak);
+      row.epssPeak = parsed !== null && isFinite(parsed) ? parsed : null;
+    }
+    return row;
+  }
+  function loadIssueLedger() {
+    return readAll(TABS.issueLedger).map(rowToIssueLedger).filter((l) => !!l.issueId);
+  }
   function withExploitation(issues2, rows) {
     if (!rows.length) return issues2;
     const byIssue = /* @__PURE__ */ new Map();
@@ -10950,7 +11498,7 @@ var Server = (() => {
     };
   }
   function persistSync(rawDoc, issues2, hints, meta, now, findings = [], dataFindings = [], frameworks = [], posture = [], frameworkPolicies = [], extras = {}) {
-    var _a5, _b, _c, _d;
+    var _a5, _b, _c, _d, _e;
     const { version: ruleVersion, rule } = getAarsRule2();
     const counted = withDataFindingCounts(rawDoc, dataFindings);
     const exposed = withExposureEvidence(counted);
@@ -10996,11 +11544,28 @@ var Server = (() => {
     if (exploitation) {
       overwrite(TABS.issueExploitation, exploitation.rows.map(exploitationToRow));
     }
+    const finishedAt = nowIso(now);
+    const registerScope = registerScopeSignature(getIssueCategories2());
+    const prevCommitted = latestSync();
+    const ledger = reconcileIssueLedger(
+      loadIssueLedger(),
+      decidedIssues,
+      meta.syncId,
+      finishedAt,
+      registerScope,
+      // The scope the LAST COMMITTED sync applied — read off the stored row, never off today's
+      // settings. Null when nothing has committed yet or the row predates the column, and null
+      // is UNKNOWN: `reconcileIssueLedger` refuses to resolve by absence against it, because a
+      // ledger that cannot prove the previous scan looked for a row must not date its departure.
+      prevCommitted ? (_e = prevCommitted["register_scope"]) != null ? _e : null : null
+    );
+    overwrite(TABS.issueLedger, ledger.rows.map(issueLedgerToRow));
     const snapshotRef = writeGraphSnapshot(postured);
+    const openIssuesThisSync = decidedIssues.filter(isUnresolvedIssue);
     appendRows(TABS.syncHistory, [{
       sync_id: meta.syncId,
       started_at: meta.startedAt,
-      finished_at: nowIso(now),
+      finished_at: finishedAt,
       status: "SUCCESS",
       mode: meta.mode,
       node_count: postured.nodes.length,
@@ -11039,7 +11604,7 @@ var Server = (() => {
         // control" on one chart. The outcome series is unaffected: a row that fails either
         // gate carries no verdict to count.
         countProjectTotals(postured.nodes, [
-          ...decidedIssues.filter(isUnresolvedIssue),
+          ...openIssuesThisSync,
           ...decidedFindings.filter(isOpenGap)
         ])
       ),
@@ -11086,7 +11651,7 @@ var Server = (() => {
       // battery from, never off the settings at read time. A widened setting and an unsynced
       // ledger disagree until the next sync, and bootstrap says so rather than letting a
       // total counted under one scope be compared with one counted under another.
-      register_scope: registerScopeSignature(getIssueCategories2()),
+      register_scope: registerScope,
       // Where this sync's issues sat relative to the AI estate, WITH the edge count that makes
       // the three figures readable — see AdjacencyCensus.edgesKnown. Mirrors aars_severity_json
       // and problem_outcome_json above: the snapshot this row points at is overwritten by the
@@ -11098,6 +11663,28 @@ var Server = (() => {
       // `hasRelatedIssue: true`, so a row with no issue id is a fact about the SELECTION), and
       // `droppedNotInRegister` is the finding filter and the issue filter having drifted apart.
       // Either one rising is how this axis fails, and neither is visible from the tiers alone.
+      // What the lifecycle ledger DID on this sync — the five transition counts. Never null:
+      // unlike the exploitation census above, the reconcile is not an optional step and always
+      // ran, so a sync that moved nothing writes five zeroes and means it. `skippedNarrowedScope`
+      // above zero is the one to read first: it says the category scope moved and that this sync
+      // deliberately resolved nothing by absence.
+      ledger_json: JSON.stringify(ledger.deltas),
+      // OPEN ISSUES PER CATEGORY, over the same gated population `project_totals_json` counts
+      // above — `isUnresolvedIssue`, the app's one definition of an open issue — so the scope
+      // series and the scoped series cannot be counting different things. Not `issues.length`'s
+      // population: that is the raw collection, and a resolved row in it is not an open issue
+      // under any category.
+      //
+      // Counted from the row's OWN stamps (`IssueRow.categories`), never from the settings, for
+      // the same reason `register_scope` is stamped rather than read back: an issue matched by
+      // two selected categories is counted under both, and one collected under a scope that has
+      // since changed keeps the categories it was actually fetched under.
+      category_counts_json: JSON.stringify(countIssueCategories(openIssuesThisSync)),
+      // Issues this sync read a KEV tier on, and NULL when no evidence pass ran — the same
+      // guard `exploitation_json` below takes, from the same fold, over the same open
+      // population. Reading it as 0 on a refused query would put "nothing is on the KEV
+      // catalogue" on a chart for a sync that never asked.
+      kev_linked_count: exploitation ? openIssuesThisSync.filter((i) => i.exploitationTier === "kev").length : null,
       exploitation_json: exploitation ? JSON.stringify({
         ...censusExploitation(exploitation.rows),
         unjoined: exploitation.unjoined,
@@ -11612,6 +12199,7 @@ var Server = (() => {
     getProblemRule: () => getProblemRule3,
     getProblems: () => getProblems,
     getQueryVocabulary: () => getQueryVocabulary,
+    getRankEval: () => getRankEval,
     getRankRule: () => getRankRule3,
     getScanQueries: () => getScanQueries,
     getScanStepDetail: () => getScanStepDetail,
@@ -11995,6 +12583,430 @@ var Server = (() => {
   }
   function rankProblems(rows, leadWithRank = false) {
     return [...rows].sort(compareProblemsBy(leadWithRank));
+  }
+
+  // src/domain/rankEval.ts
+  var DAY_MS2 = 864e5;
+  var RANDOM_DRAWS = 20;
+  var BOOTSTRAP_SAMPLES = 200;
+  var MIN_SYNCS_FOR_CI = 3;
+  var DEFAULT_EVAL_SEED = 1234567;
+  var NO_RATE = { point: null, lo: null, hi: null };
+  function frac(num2, den) {
+    return den > 0 ? num2 / den : null;
+  }
+  function emptyMatrix() {
+    return {
+      tp: 0,
+      fp: 0,
+      fn: 0,
+      tn: 0,
+      unknownHigh: 0,
+      unknownLow: 0,
+      labelled: 0,
+      unknown: 0,
+      total: 0,
+      resolved: 0,
+      open: 0,
+      atRisk: 0,
+      notAtRisk: 0,
+      coverage: NO_RATE,
+      efficiency: NO_RATE,
+      prevalence: null,
+      labelCoverage: null
+    };
+  }
+  function finalize(m) {
+    m.labelled = m.tp + m.fp + m.fn + m.tn;
+    m.unknown = m.unknownHigh + m.unknownLow;
+    m.total = m.labelled + m.unknown;
+    m.resolved = m.tp + m.fp;
+    m.open = m.fn + m.tn;
+    m.atRisk = m.tp + m.fn;
+    m.notAtRisk = m.fp + m.tn;
+    m.coverage = {
+      point: frac(m.tp, m.tp + m.fn),
+      lo: frac(m.tp, m.tp + m.fn + m.unknownHigh),
+      hi: frac(m.tp + m.unknownHigh, m.tp + m.unknownHigh + m.fn)
+    };
+    m.efficiency = {
+      point: frac(m.tp, m.tp + m.fp),
+      lo: frac(m.tp, m.tp + m.fp + m.unknownLow),
+      hi: frac(m.tp + m.unknownHigh, m.tp + m.unknownHigh + m.fp)
+    };
+    m.prevalence = frac(m.atRisk, m.labelled);
+    m.labelCoverage = frac(m.labelled, m.total);
+    return m;
+  }
+  var SEVERITY_ONLY_NOTE = "Not measured: the lifecycle ledger freezes the rank inputs only, and Wiz's severity is not one of them. Ranking by severity would need a ledger column that does not exist yet.";
+  function ms(iso) {
+    if (!iso) return null;
+    const n = Date.parse(String(iso));
+    return Number.isFinite(n) ? n : null;
+  }
+  function rankInputOf(row) {
+    var _a5;
+    const out = { id: row.issueId, ruleId: row.ruleId };
+    if (row.dueAt) out.dueAt = row.dueAt;
+    if (row.createdAt) out.createdAt = row.createdAt;
+    if (row.aiAdjacency !== void 0) out.aiAdjacency = row.aiAdjacency;
+    if (row.exploitationTier !== void 0) {
+      out.exploitationTier = row.exploitationTier;
+      out.epssPeak = (_a5 = row.epssPeak) != null ? _a5 : null;
+    }
+    return out;
+  }
+  var UNDATED_SCORE = Number.MIN_SAFE_INTEGER;
+  function candidateScorer(rule) {
+    return (rows, atIso) => rows.map((r) => rankOne(rankInputOf(r), rule, atIso).score);
+  }
+  var dueAtScorer = (rows) => rows.map((r) => {
+    const due = ms(r.dueAt);
+    return due === null ? UNDATED_SCORE : -due;
+  });
+  function randomScorer(seed, draw) {
+    return (rows, _atIso, pointIndex) => {
+      const rng = mulberry32(seed + draw * 1000003 + pointIndex * 10007);
+      return rows.map(() => rng());
+    };
+  }
+  function orderOf(rows, scores) {
+    const idx = rows.map((_, i) => i);
+    idx.sort((a, b) => {
+      const d = scores[b] - scores[a];
+      if (d !== 0) return d < 0 ? -1 : 1;
+      const ia = rows[a].issueId;
+      const ib = rows[b].issueId;
+      return ia < ib ? -1 : ia > ib ? 1 : 0;
+    });
+    return idx;
+  }
+  function cleanKs(raw) {
+    const out = [];
+    for (const k of raw != null ? raw : []) {
+      const n = Math.floor(Number(k));
+      if (Number.isFinite(n) && n > 0 && out.indexOf(n) < 0) out.push(n);
+    }
+    return out.sort((a, b) => a - b);
+  }
+  function comparableWindows(syncs, ledger, horizonDays) {
+    var _a5, _b, _c, _d;
+    const ordered = (syncs != null ? syncs : []).filter((s) => s && s.syncId && ms(s.finishedAt) !== null).slice().sort((a, b) => ms(a.finishedAt) - ms(b.finishedAt));
+    const coverEnd = {};
+    for (const s of ordered) {
+      const scope = String((_a5 = s.registerScope) != null ? _a5 : "");
+      if (!scope) continue;
+      const at = ms(s.finishedAt);
+      if (coverEnd[scope] === void 0 || at > coverEnd[scope]) coverEnd[scope] = at;
+    }
+    const windows = [];
+    let scopeChanges = 0;
+    let unknownScopePairs = 0;
+    for (let i = 0; i < ordered.length - 1; i++) {
+      const sync = ordered[i];
+      const next = ordered[i + 1];
+      const scope = String((_b = sync.registerScope) != null ? _b : "");
+      const nextScope = String((_c = next.registerScope) != null ? _c : "");
+      if (!scope || !nextScope) {
+        unknownScopePairs += 1;
+        continue;
+      }
+      if (scope !== nextScope) {
+        scopeChanges += 1;
+        continue;
+      }
+      const atMs = ms(sync.finishedAt);
+      const horizonEndMs = atMs + horizonDays * DAY_MS2;
+      const covered = (_d = coverEnd[scope]) != null ? _d : null;
+      const rows = [];
+      const labels = [];
+      for (const row of ledger) {
+        const first = ms(row.firstSeenAt);
+        if (first === null || first > atMs) continue;
+        const gone = ms(row.disappearedAt);
+        if (gone !== null && gone <= atMs) continue;
+        rows.push(row);
+        if (gone !== null && gone <= horizonEndMs) labels.push("resolved");
+        else if (covered !== null && covered >= horizonEndMs) labels.push("open");
+        else labels.push("unknown");
+      }
+      windows.push({ sync, nextSyncId: next.syncId, atMs, horizonEndMs, rows, labels });
+    }
+    return { windows, scopeChanges, unknownScopePairs, ordered };
+  }
+  function pointFor(window, pointIndex, scorer, ks, prev) {
+    var _a5;
+    const { rows, labels } = window;
+    const scores = scorer(rows, window.sync.finishedAt, pointIndex);
+    const order = orderOf(rows, scores);
+    const counts = { resolved: 0, open: 0, unknown: 0 };
+    for (const l of labels) counts[l] += 1;
+    const precisionAtK = [];
+    let kAtRisk = null;
+    for (const k of ks) {
+      if (k > rows.length) {
+        precisionAtK.push({
+          k,
+          precision: null,
+          resolvedInTopK: 0,
+          labelledInTopK: 0,
+          unknownInTopK: 0,
+          applicable: false
+        });
+        continue;
+      }
+      kAtRisk = k;
+      let resolvedInTopK = 0;
+      let labelledInTopK = 0;
+      let unknownInTopK = 0;
+      for (let i = 0; i < k; i++) {
+        const label = labels[order[i]];
+        if (label === "unknown") unknownInTopK += 1;
+        else {
+          labelledInTopK += 1;
+          if (label === "resolved") resolvedInTopK += 1;
+        }
+      }
+      precisionAtK.push({
+        k,
+        precision: labelledInTopK > 0 ? resolvedInTopK / labelledInTopK : null,
+        resolvedInTopK,
+        labelledInTopK,
+        unknownInTopK,
+        applicable: true
+      });
+    }
+    const matrix = emptyMatrix();
+    if (kAtRisk !== null) {
+      const inTopK = new Array(rows.length).fill(false);
+      for (let i = 0; i < kAtRisk; i++) inTopK[order[i]] = true;
+      for (let i = 0; i < rows.length; i++) {
+        const label = labels[i];
+        if (label === "unknown") {
+          if (inTopK[i]) matrix.unknownHigh += 1;
+          else matrix.unknownLow += 1;
+        } else if (label === "resolved") {
+          if (inTopK[i]) matrix.tp += 1;
+          else matrix.fp += 1;
+        } else if (inTopK[i]) matrix.fn += 1;
+        else matrix.tn += 1;
+      }
+    }
+    finalize(matrix);
+    const byId = {};
+    for (let i = 0; i < rows.length; i++) byId[rows[i].issueId] = scores[i];
+    let tau = null;
+    let tauCommonIds = 0;
+    if (prev) {
+      const a = [];
+      const b = [];
+      for (const id of Object.keys(byId)) {
+        const before = prev.scores[id];
+        if (before === void 0) continue;
+        a.push(before);
+        b.push(byId[id]);
+      }
+      tauCommonIds = a.length;
+      if (a.length >= 2) tau = kendallTauB(a, b);
+    }
+    return {
+      point: {
+        syncId: window.sync.syncId,
+        at: window.sync.finishedAt,
+        horizonEndsAt: new Date(window.horizonEndMs).toISOString(),
+        nextSyncId: window.nextSyncId,
+        registerScope: String((_a5 = window.sync.registerScope) != null ? _a5 : ""),
+        population: rows.length,
+        labelled: counts.resolved + counts.open,
+        unknown: counts.unknown,
+        resolved: counts.resolved,
+        open: counts.open,
+        precisionAtK,
+        kAtRisk,
+        matrix,
+        tieRate: tieRate(scores.slice()),
+        effectiveCardinality: effectiveCardinality(scores.slice()),
+        tau,
+        tauCommonIds
+      },
+      scores: byId
+    };
+  }
+  function meanOf(values) {
+    const kept = values.filter((v) => v !== null && Number.isFinite(v));
+    return kept.length ? mean(kept) : null;
+  }
+  function basisFrom(key, label, note, points, ks, seed) {
+    const pooled = emptyMatrix();
+    for (const p of points) {
+      pooled.tp += p.matrix.tp;
+      pooled.fp += p.matrix.fp;
+      pooled.fn += p.matrix.fn;
+      pooled.tn += p.matrix.tn;
+      pooled.unknownHigh += p.matrix.unknownHigh;
+      pooled.unknownLow += p.matrix.unknownLow;
+    }
+    finalize(pooled);
+    const meanPrecisionAtK = ks.map((k) => {
+      const values = [];
+      for (const p of points) {
+        const cut = p.precisionAtK.find((c) => c.k === k);
+        if (cut && cut.precision !== null) values.push(cut.precision);
+      }
+      const ci = values.length >= MIN_SYNCS_FOR_CI ? bootstrapCI(values, (sample) => {
+        var _a5;
+        return (_a5 = mean(sample)) != null ? _a5 : 0;
+      }, BOOTSTRAP_SAMPLES, seed) : null;
+      return { k, mean: values.length ? mean(values) : null, n: values.length, ci };
+    });
+    return {
+      key,
+      label,
+      note,
+      points,
+      meanPrecisionAtK,
+      matrix: pooled,
+      meanTieRate: meanOf(points.map((p) => p.tieRate)),
+      meanEffectiveCardinality: meanOf(points.map((p) => p.effectiveCardinality)),
+      meanTau: meanOf(points.map((p) => p.tau)),
+      tauN: points.filter((p) => p.tau !== null).length
+    };
+  }
+  function pointsFor(windows, scorer, ks) {
+    const points = [];
+    let prev = null;
+    for (let i = 0; i < windows.length; i++) {
+      const { point, scores } = pointFor(windows[i], i, scorer, ks, prev);
+      points.push(point);
+      prev = { scores };
+    }
+    return points;
+  }
+  function averagePoints(perDraw) {
+    var _a5;
+    const first = (_a5 = perDraw[0]) != null ? _a5 : [];
+    return first.map((base, i) => {
+      const draws = perDraw.map((points) => points[i]);
+      const matrix = emptyMatrix();
+      matrix.tp = mean(draws.map((d) => d.matrix.tp));
+      matrix.fp = mean(draws.map((d) => d.matrix.fp));
+      matrix.fn = mean(draws.map((d) => d.matrix.fn));
+      matrix.tn = mean(draws.map((d) => d.matrix.tn));
+      matrix.unknownHigh = mean(draws.map((d) => d.matrix.unknownHigh));
+      matrix.unknownLow = mean(draws.map((d) => d.matrix.unknownLow));
+      finalize(matrix);
+      return {
+        ...base,
+        matrix,
+        precisionAtK: base.precisionAtK.map((cut, ci) => ({
+          k: cut.k,
+          applicable: cut.applicable,
+          precision: meanOf(draws.map((d) => d.precisionAtK[ci].precision)),
+          resolvedInTopK: mean(draws.map((d) => d.precisionAtK[ci].resolvedInTopK)),
+          labelledInTopK: mean(draws.map((d) => d.precisionAtK[ci].labelledInTopK)),
+          unknownInTopK: mean(draws.map((d) => d.precisionAtK[ci].unknownInTopK))
+        })),
+        tieRate: mean(draws.map((d) => d.tieRate)),
+        effectiveCardinality: mean(draws.map((d) => d.effectiveCardinality)),
+        tau: meanOf(draws.map((d) => d.tau))
+      };
+    });
+  }
+  function evaluateRank(input) {
+    var _a5, _b, _c;
+    const ledger = ((_a5 = input == null ? void 0 : input.ledger) != null ? _a5 : []).filter((r) => r && r.issueId);
+    const horizonDays = Number.isFinite(input == null ? void 0 : input.horizonDays) && input.horizonDays > 0 ? input.horizonDays : 30;
+    const ks = cleanKs(input == null ? void 0 : input.ks);
+    const seed = Number.isFinite(input == null ? void 0 : input.seed) ? Number(input.seed) : DEFAULT_EVAL_SEED;
+    const rule = (_b = input == null ? void 0 : input.rule) != null ? _b : DEFAULT_RANK_RULE;
+    const { windows, scopeChanges, unknownScopePairs, ordered } = comparableWindows((_c = input == null ? void 0 : input.syncs) != null ? _c : [], ledger, horizonDays);
+    const evaluated = {};
+    let labelledRows = 0;
+    let evaluatedRows = 0;
+    for (const w of windows) {
+      for (let i = 0; i < w.rows.length; i++) {
+        const id = w.rows[i].issueId;
+        const wasLabelled = evaluated[id];
+        if (wasLabelled === void 0) {
+          evaluatedRows += 1;
+          evaluated[id] = w.labels[i] !== "unknown";
+          if (evaluated[id]) labelledRows += 1;
+        } else if (!wasLabelled && w.labels[i] !== "unknown") {
+          evaluated[id] = true;
+          labelledRows += 1;
+        }
+      }
+    }
+    const lastSync = ordered.length ? ordered[ordered.length - 1] : null;
+    const base = {
+      computed: false,
+      waitingFor: null,
+      horizonDays,
+      ks,
+      seed,
+      syncsAvailable: ordered.length,
+      comparablePairs: windows.length,
+      scopeChanges,
+      unknownScopePairs,
+      totalRows: ledger.length,
+      evaluatedRows,
+      labelledRows,
+      unknownRows: evaluatedRows - labelledRows,
+      lastSyncAt: lastSync ? lastSync.finishedAt : null,
+      candidate: null,
+      baselines: { rankV1: null, dueAtOnly: null, random: null, severityOnly: null },
+      severityOnlyNote: SEVERITY_ONLY_NOTE
+    };
+    if (windows.length < 1) {
+      base.waitingFor = ordered.length < 2 ? `A label needs two committed syncs under one register scope; ${ordered.length} recorded so far.` : `No two consecutive syncs applied the same register scope, so nothing is comparable \u2014 ${scopeChanges} scope change(s) and ${unknownScopePairs} pair(s) with an unrecorded scope.`;
+      return base;
+    }
+    if (labelledRows < 1) {
+      base.waitingFor = `No row's outcome is known yet: the ${horizonDays}-day horizon on every comparable sync ends after the last sync that could have seen a row leave.`;
+      return base;
+    }
+    if (!ks.length) {
+      base.waitingFor = "No cut of the queue was asked for, so there is nothing to score at.";
+      return base;
+    }
+    const randomDraws = [];
+    for (let d = 0; d < RANDOM_DRAWS; d++) {
+      randomDraws.push(pointsFor(windows, randomScorer(seed, d), ks));
+    }
+    base.computed = true;
+    base.candidate = basisFrom(
+      "candidate",
+      "Candidate rule",
+      "The rule the register ranks by now.",
+      pointsFor(windows, candidateScorer(rule), ks),
+      ks,
+      seed
+    );
+    base.baselines.rankV1 = basisFrom(
+      "rankV1",
+      "Rank v1",
+      "The shipped default: the operator's rule weight and the overdue clock, half each.",
+      pointsFor(windows, candidateScorer(DEFAULT_RANK_RULE), ks),
+      ks,
+      seed
+    );
+    base.baselines.dueAtOnly = basisFrom(
+      "dueAtOnly",
+      "Due date only",
+      "Soonest deadline first, undated rows last.",
+      pointsFor(windows, dueAtScorer, ks),
+      ks,
+      seed
+    );
+    base.baselines.random = basisFrom(
+      "random",
+      "Random",
+      `Mean of ${RANDOM_DRAWS} seeded draws, re-drawn at every sync.`,
+      averagePoints(randomDraws),
+      ks,
+      seed
+    );
+    return base;
   }
 
   // src/domain/actions.ts
@@ -15196,7 +16208,7 @@ var Server = (() => {
 
   // src/domain/comboDigest.ts
   var DUE_SOON_DAYS = 7;
-  var DAY_MS2 = 864e5;
+  var DAY_MS3 = 864e5;
   var carriesCondition = conditionState;
   function mixOf(issues2, field) {
     return countBySeverity2(issues2.map((i) => ({ severity: i[field] })));
@@ -15204,7 +16216,7 @@ var Server = (() => {
   function daysUntil(dueAt, nowMs) {
     const t = Date.parse(dueAt || "");
     if (Number.isNaN(t)) return null;
-    return Math.round((t - nowMs) / DAY_MS2);
+    return Math.round((t - nowMs) / DAY_MS3);
   }
   function slaTally(issues2, nowMs) {
     const out = { pastDue: 0, dueSoon: 0, noDueDate: 0 };
@@ -16266,6 +17278,7 @@ var Server = (() => {
       // Recorded per sync, so the window is short at first and cannot be backfilled — and
       // per SERIES, since the three counts entered the ledger on three different days.
       countTrend: trend,
+      postureTrend: postureTrendFromHistory(history, getIssueCategories2()),
       trendScope: {
         projectId: projectView,
         domainId: getDomainView2(),
@@ -16299,6 +17312,7 @@ var Server = (() => {
         kpis: model.kpis,
         severityCounts: model.severityCounts,
         countTrend: model.countTrend,
+        postureTrend: model.postureTrend,
         trendScope: model.trendScope,
         countDeltas: countDeltas(model.countTrend, model.kpis),
         reach: model.reach,
@@ -17533,6 +18547,49 @@ var Server = (() => {
       return rankRuleState();
     });
   }
+  var RANK_EVAL_HORIZON_DAYS = 30;
+  var RANK_EVAL_KS = [10, 25, 50, 100];
+  var RANK_EVAL_MAX_SYNCS = 25;
+  function getRankEval(args) {
+    return run(() => {
+      const params = args != null ? args : {};
+      const horizonDays = clampInt(params["horizonDays"], RANK_EVAL_HORIZON_DAYS, 1, 365);
+      const rawKs = Array.isArray(params["ks"]) ? params["ks"] : RANK_EVAL_KS;
+      const ks = rawKs.map((k) => clampInt(k, 0, 0, 1e4)).filter((k) => k > 0);
+      const preset = params["preset"] === "v1" || params["preset"] === "v2" ? String(params["preset"]) : "stored";
+      const rule = preset === "v1" ? DEFAULT_RANK_RULE : preset === "v2" ? RANK_PRESET_V2 : effectiveRankRule();
+      const history = syncHistory();
+      const considered = history.slice(-RANK_EVAL_MAX_SYNCS).map((r) => {
+        var _a5, _b;
+        return {
+          syncId: String((_a5 = r["sync_id"]) != null ? _a5 : ""),
+          finishedAt: String(r["finished_at"] || r["started_at"] || ""),
+          registerScope: String((_b = r["register_scope"]) != null ? _b : "")
+        };
+      });
+      const report = evaluateRank({
+        ledger: loadIssueLedger(),
+        syncs: considered,
+        rule,
+        horizonDays,
+        ks
+      });
+      const lastMs = report.lastSyncAt ? Date.parse(report.lastSyncAt) : NaN;
+      const asOf = nowIso();
+      const daysSinceLastSync = Number.isFinite(lastMs) ? (Date.parse(asOf) - lastMs) / 864e5 : null;
+      return {
+        preset,
+        // What the CANDIDATE was ranked by, so a figure read off this panel can be compared
+        // against the rule that is stored now — the job `rankSignature` exists for.
+        signature: rankSignature(rule),
+        asOf,
+        daysSinceLastSync,
+        historyRows: history.length,
+        syncsConsidered: considered.length,
+        ...report
+      };
+    });
+  }
   function decidedForPostureDiscrimination(nodes) {
     var _a5;
     const out = [];
@@ -17701,15 +18758,15 @@ var Server = (() => {
       }
     }
     const swept = skipped ? -1 : sweepReadModels();
-    const ms = Date.now() - t0;
+    const ms2 = Date.now() - t0;
     if (skipped) {
       console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
     } else {
       console.log(
-        `Cache warm: ${warmed} entries in ${ms}ms` + (failed ? `, ${failed} failed` : "") + (swept > 0 ? `, swept ${swept} stale durable file(s)` : "")
+        `Cache warm: ${warmed} entries in ${ms2}ms` + (failed ? `, ${failed} failed` : "") + (swept > 0 ? `, swept ${swept} stale durable file(s)` : "")
       );
     }
-    return { warmed, skipped, failed, ms, swept };
+    return { warmed, skipped, failed, ms: ms2, swept };
   }
   function warmReadModelsScheduled() {
     const job = activeJob();
@@ -18318,10 +19375,10 @@ var Server = (() => {
   }
   function seedTrendHistory(endIso) {
     if (dataRowCount(TABS.syncHistory) > 0) return;
-    const DAY_MS3 = 864e5;
+    const DAY_MS4 = 864e5;
     const end = new Date(endIso).getTime();
     appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
-      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS3).toISOString();
+      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS4).toISOString();
       return {
         sync_id: `sync-sample-${String(i + 1).padStart(2, "0")}`,
         started_at: at,

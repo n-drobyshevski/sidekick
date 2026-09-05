@@ -717,6 +717,27 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       },
       "page": 0,
       "pageCount": 1,
+      "postureTrend": {
+        "adjacency": [],
+        "capacity": {
+          "overall": {
+            "comparable": 0,
+            "mmcr": null,
+            "syncs": 0,
+            "verdict": null,
+          },
+          "points": [],
+        },
+        "categories": [
+          {
+            "id": "wct-id-1998",
+            "name": "AI Security",
+          },
+        ],
+        "categoryPoints": [],
+        "exploitation": [],
+        "ledger": [],
+      },
       "reach": {
         "axes": {
           "exploitation": 0,
@@ -1450,6 +1471,44 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
     },
     "ok": true,
   },
+  "getRankEval": {
+    "data": {
+      "asOf": "2026-08-13T09:00:00Z",
+      "baselines": {
+        "dueAtOnly": null,
+        "random": null,
+        "rankV1": null,
+        "severityOnly": null,
+      },
+      "candidate": null,
+      "comparablePairs": 0,
+      "computed": false,
+      "daysSinceLastSync": null,
+      "evaluatedRows": 0,
+      "historyRows": 0,
+      "horizonDays": 30,
+      "ks": [
+        10,
+        25,
+        50,
+        100,
+      ],
+      "labelledRows": 0,
+      "lastSyncAt": null,
+      "preset": "stored",
+      "scopeChanges": 0,
+      "seed": 1234567,
+      "severityOnlyNote": "Not measured: the lifecycle ledger freezes the rank inputs only, and Wiz's severity is not one of them. Ranking by severity would need a ledger column that does not exist yet.",
+      "signature": "rank|time=dueAtOnly|age=30,90,180,365,540|overdue=0,30,90,180,365|epss=0.1|terms=rule,time",
+      "syncsAvailable": 0,
+      "syncsConsidered": 0,
+      "totalRows": 0,
+      "unknownRows": 0,
+      "unknownScopePairs": 0,
+      "waitingFor": "A label needs two committed syncs under one register scope; 0 recorded so far.",
+    },
+    "ok": true,
+  },
   "getRankRule": {
     "data": {
       "effectiveRule": {
@@ -1798,7 +1857,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getStorageStats": {
     "data": {
       "archiveBytes": 0,
-      "cellCount": 46600,
+      "cellCount": 46700,
       "rows": {
         "assets": 0,
         "dataFindings": 0,
@@ -2421,6 +2480,7 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
       "adjacency_json": "{"DIRECT":24,"ADJACENT":8,"UNLINKED":0,"edgesKnown":79}",
       "api_calls": 0,
+      "category_counts_json": "{"wct-id-1998":32}",
       "derivation_version": 2,
       "edge_count": 118,
       "error": null,
@@ -2428,6 +2488,7 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       "finding_count": 6,
       "finished_at": "2026-08-13T09:00:00Z",
       "issue_count": 32,
+      "kev_linked_count": null,
       "ledger_json": "{"new":32,"resolved":0,"reopened":0,"carried":0,"skippedNarrowedScope":0}",
       "mode": "dry-run",
       "node_count": 119,
@@ -5279,6 +5340,68 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
     },
     "page": 0,
     "pageCount": 2,
+    "postureTrend": {
+      "adjacency": [
+        {
+          "annotations": {
+            "edgesKnown": 79,
+          },
+          "at": "2026-08-13T09:00:00Z",
+          "counts": {
+            "ADJACENT": 8,
+            "DIRECT": 24,
+            "UNLINKED": 0,
+          },
+          "ruleVersion": 2,
+        },
+      ],
+      "capacity": {
+        "overall": {
+          "comparable": 0,
+          "mmcr": null,
+          "syncs": 1,
+          "verdict": null,
+        },
+        "points": [
+          {
+            "at": "2026-08-13T09:00:00Z",
+            "closed": 0,
+            "comparable": false,
+            "net": -32,
+            "opened": 32,
+            "syncId": "sync-2026-08-13T090000Z",
+            "verdict": null,
+          },
+        ],
+      },
+      "categories": [
+        {
+          "id": "wct-id-1998",
+          "name": "AI Security",
+        },
+      ],
+      "categoryPoints": [
+        {
+          "at": "2026-08-13T09:00:00Z",
+          "counts": {
+            "wct-id-1998": 32,
+          },
+          "ruleVersion": 2,
+        },
+      ],
+      "exploitation": [],
+      "ledger": [
+        {
+          "at": "2026-08-13T09:00:00Z",
+          "counts": {
+            "new": 32,
+            "reopened": 0,
+            "resolved": 0,
+          },
+          "ruleVersion": 2,
+        },
+      ],
+    },
     "reach": {
       "axes": {
         "exploitation": 0.02631578947368418,
@@ -16291,6 +16414,47 @@ exports[`read endpoints > getQueryVocabulary (values for AI Agent) answers the s
 }
 `;
 
+exports[`read endpoints > getRankEval answers the same shape 1`] = `
+{
+  "data": {
+    "asOf": "2026-08-13T09:00:00Z",
+    "baselines": {
+      "dueAtOnly": null,
+      "random": null,
+      "rankV1": null,
+      "severityOnly": null,
+    },
+    "candidate": null,
+    "comparablePairs": 0,
+    "computed": false,
+    "daysSinceLastSync": 0,
+    "evaluatedRows": 0,
+    "historyRows": 9,
+    "horizonDays": 30,
+    "ks": [
+      10,
+      25,
+      50,
+      100,
+    ],
+    "labelledRows": 0,
+    "lastSyncAt": "2026-08-13T09:00:00Z",
+    "preset": "stored",
+    "scopeChanges": 0,
+    "seed": 1234567,
+    "severityOnlyNote": "Not measured: the lifecycle ledger freezes the rank inputs only, and Wiz's severity is not one of them. Ranking by severity would need a ledger column that does not exist yet.",
+    "signature": "rank|time=dueAtOnly|age=30,90,180,365,540|overdue=0,30,90,180,365|epss=0.1|terms=rule,time",
+    "syncsAvailable": 9,
+    "syncsConsidered": 9,
+    "totalRows": 32,
+    "unknownRows": 0,
+    "unknownScopePairs": 8,
+    "waitingFor": "No two consecutive syncs applied the same register scope, so nothing is comparable — 0 scope change(s) and 8 pair(s) with an unrecorded scope.",
+  },
+  "ok": true,
+}
+`;
+
 exports[`read endpoints > getRankRule answers the same shape 1`] = `
 {
   "data": {
@@ -17088,8 +17252,8 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 295990,
-    "cellCount": 46600,
+    "archiveBytes": 297195,
+    "cellCount": 46700,
     "rows": {
       "assets": 87,
       "dataFindings": 6,
@@ -17111,6 +17275,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
         "adjacency_json": "{"DIRECT":24,"ADJACENT":8,"UNLINKED":0,"edgesKnown":79}",
         "api_calls": 0,
+        "category_counts_json": "{"wct-id-1998":32}",
         "derivation_version": 2,
         "edge_count": 118,
         "error": null,
@@ -17118,6 +17283,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "finding_count": 6,
         "finished_at": "2026-08-13T09:00:00Z",
         "issue_count": 32,
+        "kev_linked_count": null,
         "ledger_json": "{"new":32,"resolved":0,"reopened":0,"carried":0,"skippedNarrowedScope":0}",
         "mode": "dry-run",
         "node_count": 119,
@@ -17138,6 +17304,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
         "adjacency_json": null,
         "api_calls": 0,
+        "category_counts_json": null,
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -17145,6 +17312,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "finding_count": null,
         "finished_at": "2026-08-12T09:00:00.000Z",
         "issue_count": null,
+        "kev_linked_count": null,
         "ledger_json": null,
         "mode": "dry-run",
         "node_count": null,
@@ -17165,6 +17333,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
         "adjacency_json": null,
         "api_calls": 0,
+        "category_counts_json": null,
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -17172,6 +17341,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "finding_count": null,
         "finished_at": "2026-08-11T09:00:00.000Z",
         "issue_count": null,
+        "kev_linked_count": null,
         "ledger_json": null,
         "mode": "dry-run",
         "node_count": null,
@@ -17192,6 +17362,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "aars_severity_json": "{"CRITICAL":3,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
         "adjacency_json": null,
         "api_calls": 0,
+        "category_counts_json": null,
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -17199,6 +17370,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "finding_count": null,
         "finished_at": "2026-08-10T09:00:00.000Z",
         "issue_count": null,
+        "kev_linked_count": null,
         "ledger_json": null,
         "mode": "dry-run",
         "node_count": null,
@@ -17219,6 +17391,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "aars_severity_json": "{"CRITICAL":3,"HIGH":16,"MEDIUM":0,"LOW":3,"INFO":8}",
         "adjacency_json": null,
         "api_calls": 0,
+        "category_counts_json": null,
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -17226,6 +17399,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "finding_count": null,
         "finished_at": "2026-08-09T09:00:00.000Z",
         "issue_count": null,
+        "kev_linked_count": null,
         "ledger_json": null,
         "mode": "dry-run",
         "node_count": null,
@@ -17246,6 +17420,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "aars_severity_json": "{"CRITICAL":4,"HIGH":16,"MEDIUM":0,"LOW":3,"INFO":9}",
         "adjacency_json": null,
         "api_calls": 0,
+        "category_counts_json": null,
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -17253,6 +17428,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "finding_count": null,
         "finished_at": "2026-08-08T09:00:00.000Z",
         "issue_count": null,
+        "kev_linked_count": null,
         "ledger_json": null,
         "mode": "dry-run",
         "node_count": null,
@@ -17273,6 +17449,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "aars_severity_json": "{"CRITICAL":4,"HIGH":15,"MEDIUM":0,"LOW":3,"INFO":9}",
         "adjacency_json": null,
         "api_calls": 0,
+        "category_counts_json": null,
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -17280,6 +17457,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "finding_count": null,
         "finished_at": "2026-08-07T09:00:00.000Z",
         "issue_count": null,
+        "kev_linked_count": null,
         "ledger_json": null,
         "mode": "dry-run",
         "node_count": null,
@@ -17300,6 +17478,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "aars_severity_json": "{"CRITICAL":5,"HIGH":13,"MEDIUM":0,"LOW":2,"INFO":10}",
         "adjacency_json": null,
         "api_calls": 0,
+        "category_counts_json": null,
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -17307,6 +17486,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "finding_count": null,
         "finished_at": "2026-08-06T09:00:00.000Z",
         "issue_count": null,
+        "kev_linked_count": null,
         "ledger_json": null,
         "mode": "dry-run",
         "node_count": null,
@@ -17327,6 +17507,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "aars_severity_json": "{"CRITICAL":5,"HIGH":12,"MEDIUM":0,"LOW":2,"INFO":11}",
         "adjacency_json": null,
         "api_calls": 0,
+        "category_counts_json": null,
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -17334,6 +17515,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
         "finding_count": null,
         "finished_at": "2026-08-05T09:00:00.000Z",
         "issue_count": null,
+        "kev_linked_count": null,
         "ledger_json": null,
         "mode": "dry-run",
         "node_count": null,
@@ -24267,6 +24449,7 @@ Ignored until: Feb 1, 2026",
     "aars_severity_json": "{"CRITICAL":5,"HIGH":12,"MEDIUM":0,"LOW":2,"INFO":11}",
     "adjacency_json": null,
     "api_calls": 0,
+    "category_counts_json": null,
     "derivation_version": null,
     "edge_count": null,
     "error": null,
@@ -24274,6 +24457,7 @@ Ignored until: Feb 1, 2026",
     "finding_count": null,
     "finished_at": "2026-08-05T09:00:00.000Z",
     "issue_count": null,
+    "kev_linked_count": null,
     "ledger_json": null,
     "mode": "dry-run",
     "node_count": null,

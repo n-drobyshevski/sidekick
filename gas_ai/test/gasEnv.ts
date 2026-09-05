@@ -246,6 +246,20 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
   // a stronger claim than an exemption would be. Mutating endpoints (setRankRule) stay out,
   // per this list's own rule.
   ["getRankRule", {}],
+  // WP8: the rank evaluation panel's single read. In this list for the reason `getRankRule`
+  // above it is — the evaluation is not one of the three confined verdicts, so it passes the
+  // wire guard like a page endpoint rather than being exempted from it.
+  //
+  // It answers `computed: false` here, and the REASON is worth reading rather than assuming:
+  // the seed landscape carries nine history rows, but only the dry run's own commit record
+  // stamps a `register_scope`, so all eight adjacent pairs have an unrecorded scope on at
+  // least one side and none of them is comparable. A blank scope is UNKNOWN and never "the
+  // same scope" — the same refusal `reconcileIssueLedger` makes against a null
+  // `prevScopeSignature`, and the reason a pair the ledger declined to resolve across is a
+  // pair this panel declines to score. That answer is the one worth pinning: it is the shape
+  // a register shows before it has two comparable syncs, and the shape a later change is most
+  // likely to fill with zeroes.
+  ["getRankEval", {}],
   ["getStorageStats", {}],
   // agent-h-chatbot is the max-degree node in the golden getGraph payload (17 neighbors),
   // so it exercises the widest neighbour list getAssetDetail can produce in this landscape.

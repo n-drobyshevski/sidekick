@@ -370,6 +370,29 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // `adjacency_json` and `exploitation_json` above it, and because `bootstrap.latestSync`
     // ships the whole history row — so the client gets it with no new endpoint.
     "ledger_json",
+    // OPEN ISSUES PER RISK CATEGORY at this sync — `{[categoryId]: openIssues}`, counted once
+    // per category a row carries. The scope-over-time series: `register_scope` beside it says
+    // WHICH questions this sync asked, and this says what each one answered.
+    //
+    // THE COUNTS DO NOT SUM TO `issue_count`, and that is a property of the register rather
+    // than a defect: an issue sits in roughly five categories on the reference tenant
+    // (AARS_LIVE_MEASUREMENTS.md §6.1), arrives once per selected category it matches, and is
+    // counted under each. A reader adding them up is measuring the overlap, not the register.
+    //
+    // A KEY ABSENT FROM THE OBJECT IS NOT A ZERO. A sync run under a narrower scope never
+    // collected the categories it was not asked for, so it has no number for them — the
+    // trend plots the gap (aarsTrend.ts CATEGORY_SPEC, `absentKeyIsNull`) rather than drawing
+    // a category that sat at zero until the day it was selected.
+    "category_counts_json",
+    // Issues carrying a KEV-tier exploitation reading at this sync — the one exploitation
+    // figure that earns a scalar column of its own, because it is the tier every surface
+    // leads with.
+    //
+    // NULL, NOT ZERO, when no evidence pass ran, exactly as `exploitation_json` beside it is
+    // null: VULN_FINDINGS is optional, and "no issue is on the KEV catalogue" is a very
+    // different claim from "we never asked". Derived from the same fold that writes that
+    // census, so the two can never disagree about one sync.
+    "kev_linked_count",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [

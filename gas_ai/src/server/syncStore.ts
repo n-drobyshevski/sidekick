@@ -58,7 +58,9 @@ import type { PostureRule } from "../domain/postureRule";
 import { registerScopeSignature } from "../domain/registerScope";
 import { OTHER_GROUP_ID, RISK_CATEGORY_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
-import { countAarsSeverities, countProjectTotals, encodeProjectTotals } from "../domain/aarsTrend";
+import {
+  countAarsSeverities, countIssueCategories, countProjectTotals, encodeProjectTotals,
+} from "../domain/aarsTrend";
 import { inProject, planPrune, type PruneCensus } from "../domain/prunePlan";
 import { nowIso, type Rec } from "../domain/util";
 import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot, trashReadModels } from "./archiveStore";
@@ -1300,6 +1302,11 @@ export function persistSync(
 
   const snapshotRef = writeGraphSnapshot(postured);
 
+  // The open population this sync committed, named once. Three columns on the history row
+  // count it — the per-project blob, the category counts and the KEV count — and computing
+  // the gate three times is three chances for two of them to drift apart.
+  const openIssuesThisSync = decidedIssues.filter(isUnresolvedIssue);
+
   // Commit record LAST.
   appendRows(TABS.syncHistory, [{
     sync_id: meta.syncId,
@@ -1343,7 +1350,7 @@ export function persistSync(
       // control" on one chart. The outcome series is unaffected: a row that fails either
       // gate carries no verdict to count.
       countProjectTotals(postured.nodes, [
-        ...decidedIssues.filter(isUnresolvedIssue),
+        ...openIssuesThisSync,
         ...decidedFindings.filter(isOpenGap),
       ]),
     ),
@@ -1410,6 +1417,24 @@ export function persistSync(
     // above zero is the one to read first: it says the category scope moved and that this sync
     // deliberately resolved nothing by absence.
     ledger_json: JSON.stringify(ledger.deltas),
+    // OPEN ISSUES PER CATEGORY, over the same gated population `project_totals_json` counts
+    // above — `isUnresolvedIssue`, the app's one definition of an open issue — so the scope
+    // series and the scoped series cannot be counting different things. Not `issues.length`'s
+    // population: that is the raw collection, and a resolved row in it is not an open issue
+    // under any category.
+    //
+    // Counted from the row's OWN stamps (`IssueRow.categories`), never from the settings, for
+    // the same reason `register_scope` is stamped rather than read back: an issue matched by
+    // two selected categories is counted under both, and one collected under a scope that has
+    // since changed keeps the categories it was actually fetched under.
+    category_counts_json: JSON.stringify(countIssueCategories(openIssuesThisSync)),
+    // Issues this sync read a KEV tier on, and NULL when no evidence pass ran — the same
+    // guard `exploitation_json` below takes, from the same fold, over the same open
+    // population. Reading it as 0 on a refused query would put "nothing is on the KEV
+    // catalogue" on a chart for a sync that never asked.
+    kev_linked_count: exploitation
+      ? openIssuesThisSync.filter((i) => i.exploitationTier === "kev").length
+      : null,
     exploitation_json: exploitation
       ? JSON.stringify({
         ...censusExploitation(exploitation.rows),

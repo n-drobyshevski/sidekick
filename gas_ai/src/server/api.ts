@@ -43,8 +43,10 @@ import {
   COUNT_KEYS,
   countAarsSeverities,
   countTrendFromHistory,
+  postureTrendFromHistory,
   type CountKey,
   type CountTrendPoint,
+  type PostureTrend,
 } from "../domain/aarsTrend";
 import {
   countProblemOutcomes,
@@ -78,6 +80,7 @@ import {
   rankSignature,
   type RankRule,
 } from "../domain/rank";
+import { evaluateRank } from "../domain/rankEval";
 import {
   concentrationRatio,
   coverCurve,
@@ -1140,6 +1143,16 @@ interface AssetsModel {
   severityCounts: Record<string, number>;
   /** Open issues / cloud findings / compliance posture fails over time. */
   countTrend: CountTrendPoint[];
+  /**
+   * The four posture distributions over time, and the remediation-capacity readout —
+   * adjacency, exploitation, open issues per category, and the ledger's transitions. Rides
+   * on this payload beside `countTrend` rather than on an endpoint of its own: it is read
+   * off the same `sync_history` rows, on the same page, in the same paint.
+   *
+   * REGISTER-WIDE, unlike `countTrend` — see `PostureTrend` for why none of the four can
+   * follow the project switcher.
+   */
+  postureTrend: PostureTrend;
   /** Which population `countTrend` describes, and how much of the ledger it covers. */
   trendScope: {
     /** The project view the series was read for, "" when register-wide. */
@@ -1376,6 +1389,7 @@ function assetsModel(): AssetsModel {
     // Recorded per sync, so the window is short at first and cannot be backfilled — and
     // per SERIES, since the three counts entered the ledger on three different days.
     countTrend: trend,
+    postureTrend: postureTrendFromHistory(history, settingsStore.getIssueCategories()),
     trendScope: {
       projectId: projectView,
       domainId: settingsStore.getDomainView(),
@@ -1437,6 +1451,7 @@ export function getAssets(p?: unknown): ApiResult {
       kpis: model.kpis,
       severityCounts: model.severityCounts,
       countTrend: model.countTrend,
+      postureTrend: model.postureTrend,
       trendScope: model.trendScope,
       countDeltas: countDeltas(model.countTrend, model.kpis),
       reach: model.reach,
@@ -3556,6 +3571,96 @@ export function setRankRule(p?: unknown): ApiResult {
     if (params["rule"] !== undefined) settingsStore.setRankRule(cleanRankRule(params["rule"]));
     if (params["leadsSort"] !== undefined) settingsStore.setRankLeadsSort(params["leadsSort"]);
     return rankRuleState();
+  });
+}
+
+// ----------------------------------------------------------------------- rank evaluation
+
+/** A month, because that is the window an operator argues about. Overridable per call. */
+const RANK_EVAL_HORIZON_DAYS = 30;
+
+/** The cuts of the queue the panel scores at — a screenful, a page, a sprint, a quarter. */
+const RANK_EVAL_KS = [10, 25, 50, 100];
+
+/**
+ * How many of the most recent committed syncs the evaluation reads.
+ *
+ * A CHOICE, and therefore one the payload has to publish: the random baseline alone ranks the
+ * whole population twenty times per evaluated sync, and a ledger with two years of daily syncs
+ * behind it would spend the request budget re-litigating a queue nobody is looking at. The
+ * report carries `historyRows` beside `syncsConsidered` so a reader can see the window rather
+ * than infer it — the same reason the probe's `--roots` exit names the sections it skipped.
+ */
+const RANK_EVAL_MAX_SYNCS = 25;
+
+/**
+ * DOES THE RANKING PUT THE RIGHT THING FIRST — the evaluation panel's single read.
+ *
+ * The labels come from the lifecycle ledger and are DISAPPEARANCES, so every figure this
+ * returns is an upper bound on remediation with the sync interval as its error. The report
+ * leads with the honesty block for that reason: `evaluateRank` returns `computed: false` and a
+ * sentence whenever there is nothing to measure, and the bases are then null rather than a
+ * table of zeroes — an unmeasured evaluation is not an evaluation of zeroes.
+ *
+ * THE CLOCK IS READ HERE AND FOR ONE THING ONLY. `evaluateRank` is pure and takes every date
+ * it needs; `asOf` and `daysSinceLastSync` exist so the panel can say how old the last sync is,
+ * which is a fact about the ledger rather than an input to any figure.
+ */
+export function getRankEval(args?: {
+  horizonDays?: number;
+  ks?: number[];
+  preset?: "v1" | "v2" | "stored";
+}): ApiResult {
+  return run(() => {
+    const params = (args ?? {}) as Rec;
+    const horizonDays = clampInt(params["horizonDays"], RANK_EVAL_HORIZON_DAYS, 1, 365);
+    const rawKs = Array.isArray(params["ks"]) ? (params["ks"] as unknown[]) : RANK_EVAL_KS;
+    const ks = rawKs.map((k) => clampInt(k, 0, 0, 10000)).filter((k) => k > 0);
+    const preset = params["preset"] === "v1" || params["preset"] === "v2"
+      ? String(params["preset"])
+      : "stored";
+    const rule = preset === "v1"
+      ? DEFAULT_RANK_RULE
+      : preset === "v2"
+        ? RANK_PRESET_V2
+        : effectiveRankRule();
+
+    // sync_history IS the commit record — a sync that dies mid-walk appends no row — so every
+    // row here is a completed observation and none is filtered out. `finished_at || started_at`
+    // is the same fallback the trend reads, for the same reason: an empty cell reads as null
+    // from the sheet and as "" from anywhere else, and both mean "no finish time recorded".
+    const history = syncStore.syncHistory();
+    const considered = history.slice(-RANK_EVAL_MAX_SYNCS).map((r) => ({
+      syncId: String(r["sync_id"] ?? ""),
+      finishedAt: String(r["finished_at"] || r["started_at"] || ""),
+      registerScope: String(r["register_scope"] ?? ""),
+    }));
+
+    const report = evaluateRank({
+      ledger: syncStore.loadIssueLedger(),
+      syncs: considered,
+      rule,
+      horizonDays,
+      ks,
+    });
+
+    const lastMs = report.lastSyncAt ? Date.parse(report.lastSyncAt) : NaN;
+    const asOf = nowIso();
+    const daysSinceLastSync = Number.isFinite(lastMs)
+      ? (Date.parse(asOf) - lastMs) / 86400000
+      : null;
+
+    return {
+      preset,
+      // What the CANDIDATE was ranked by, so a figure read off this panel can be compared
+      // against the rule that is stored now — the job `rankSignature` exists for.
+      signature: rankSignature(rule),
+      asOf,
+      daysSinceLastSync,
+      historyRows: history.length,
+      syncsConsidered: considered.length,
+      ...report,
+    };
   });
 }
 
