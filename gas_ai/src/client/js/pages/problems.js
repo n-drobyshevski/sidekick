@@ -88,16 +88,26 @@ function actionsSkeleton() {
 
 export async function renderProblems(main, params) {
   const boot = await bootstrap();
-  main.append(
-    el("h1", {}, "Priorities"),
-    // NINE WORDS. The cascade this page ranks by — Wiz's severity, then how soon it is due,
-    // then how long it has been open — is a definition, and DESIGN.md is explicit that a
-    // definition belongs in the tip that routes to its Help entry rather than in a paragraph
-    // above the thing it describes. The term already existed; only the paragraph was new.
-    el("p", { class: "page-sub" },
-      "Every open issue and finding, ranked on one scale.",
-      glossaryTip(tipMark(), "priorities-rank")),
-  );
+  // `pageHeader`/`heroStat`, not a bare `el("h1", ...)` — the same conversion
+  // `pages/compliance.js` made, on the same reasoning: "Risk" (this route's own PAGES lane,
+  // app.js) is the kicker and the page's `<h1>`; "Priorities" is the hero VALUE, a title
+  // string rather than a number, which `heroStat` carries fine. The two `heroStat` calls
+  // further down this file keep `{ heading: "div" }` for the reason they always had — the
+  // page owns exactly one h1, and it is now this one.
+  main.append(pageHeader({
+    hero: heroStat(
+      "Risk",
+      "Priorities",
+      // NINE WORDS, unchanged by the conversion. The cascade this page ranks by — Wiz's
+      // severity, then how soon it is due, then how long it has been open — is a
+      // definition, and DESIGN.md is explicit that a definition belongs in the tip that
+      // routes to its Help entry rather than in a paragraph above the thing it describes.
+      // An ARRAY, not a string: `el()` flattens its children, so the sentence and the tip
+      // that follows it land in the one `.page-hero-sub` line they used to share as a `<p>`.
+      ["Every open issue and finding, ranked on one scale.",
+        glossaryTip(tipMark(), "priorities-rank")],
+    ),
+  }));
 
   if (!boot.latestSync) {
     main.append(emptyState(

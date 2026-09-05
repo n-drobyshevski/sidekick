@@ -117,13 +117,21 @@ const CONDITION_TERM = {
 
 export async function renderCombos(main, params) {
   const boot = await bootstrap();
-  main.append(
-    el("h1", {}, "Toxic Combinations"),
-    el("p", { class: "page-sub" },
+  // `pageHeader`/`heroStat`, not a bare `el("h1", ...)` — see `pages/compliance.js`'s own
+  // note for the reasoning. "Risk" (this route's PAGES lane) is the kicker and the page's
+  // `<h1>`; "Toxic Combinations" is the hero VALUE. The `heroStat` further down keeps
+  // `{ heading: "div" }`: the page owns one h1 and it is now this one.
+  main.append(pageHeader({
+    hero: heroStat(
+      "Risk",
+      "Toxic Combinations",
+      // The page's own sentence, carried over word for word — this was a header sweep, not
+      // a copy rewrite.
       "Multi-condition risk patterns on AI assets: privileged access, sensitive data and " +
       "missing guardrails combined. Wiz severity is shown beside the adjusted severity " +
-      "this register adds, never replaced by it."),
-  );
+      "this register adds, never replaced by it.",
+    ),
+  }));
 
   if (!boot.latestSync) {
     main.append(emptyState(
