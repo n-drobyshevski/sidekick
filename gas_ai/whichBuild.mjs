@@ -41,21 +41,59 @@ function git(args, cwd = here) {
 const repoRoot = git(["rev-parse", "--show-toplevel"]).trim();
 const prefix = git(["rev-parse", "--show-prefix"]).trim().replace(/\/$/, "");
 
-/** The stamp src/ hashed to at `commit`, or null if this package had no src/ there. */
+/** `D:\temp\x` -> `/d/temp/x` — the form MSYS tar (this box's /usr/bin/tar) accepts as a
+ *  local path instead of misreading the drive letter as a remote-tar host. A no-op on any
+ *  path that is not already `<letter>:\…`. Same helper as gas_shared/measure.mjs's. */
+function toMsysPath(p) {
+  const m = /^([A-Za-z]):[\\/](.*)$/.exec(p);
+  if (!m) return p;
+  return `/${m[1].toLowerCase()}/${m[2].replace(/\\/g, "/")}`;
+}
+
+/** The stamp src/ hashed to at `commit`, or null if this package had no src/ there.
+ *
+ * WRITES THE ARCHIVE TO A FILE FIRST, rather than piping the tar buffer through `tar`'s
+ * stdin the way this used to — measured, that pipe fails on this Windows environment for an
+ * archive of any real size: `execFileSync("tar", …, {input: tar})` throws `spawnSync tar
+ * EOF`, which made this script fail its own preflight (`which-build is broken: cannot hash
+ * src/ at HEAD`) on every invocation here. It is a Node synchronous child_process pipe write
+ * hitting a Windows pipe-buffer ceiling once the buffer is more than a token amount, not a
+ * bug in how this used the pattern. `gas_shared/measure.mjs` hit the identical failure and
+ * fixed it the identical way: `git archive -o <file>` and a plain `tar -xf <file>` both do
+ * ordinary file I/O and neither touches that path.
+ *
+ * ARCHIVES `commit` AT THE REPO ROOT with a repo-relative pathspec (`<prefix>/src`), not
+ * `${commit}:${prefix}` scoped to the package subtree the way this used to. Measured after
+ * the EOF fix above stopped the crash: every historical commit still failed to match the
+ * dist-embedded build id, even HEAD's own committed state against itself. A subtree-scoped
+ * treeish (`HEAD:gas_ai`) has no `<repo-root>/.gitattributes` in view — that file lives one
+ * level above the archived root — so the repo's own `* text=auto eol=lf` (added for exactly
+ * this class of bug, see .gitattributes's header) never applies, and `git archive` falls
+ * back to CRLF on this Windows box: confirmed on the raw tar bytes, `\n` in the git blob and
+ * on disk, `\r\n` in the archived entry. `sourceStamp` hashes raw bytes, so every archived
+ * stamp came out wrong while the live working tree (read directly, never archived) stayed
+ * right — which is why "matches the working tree" fired for a build no commit ever produced.
+ * Archiving the FULL tree at `commit` with pathspec `<prefix>/src` keeps `.gitattributes` in
+ * scope, so `eol=lf` applies and the archived bytes match a real checkout again. */
 function stampAt(commit) {
   const dir = mkdtempSync(join(tmpdir(), "which-build-"));
+  const tarFile = join(dir, "..", `which-build-archive-${Date.now()}.tar`);
   try {
-    const treeish = prefix ? `${commit}:${prefix}` : commit;
-    const tar = execFileSync("git", ["archive", "--format=tar", treeish, "src"], {
-      cwd: repoRoot, maxBuffer: 1 << 28, stdio: ["ignore", "pipe", "ignore"],
+    const pathspec = prefix ? `${prefix}/src` : "src";
+    execFileSync("git", ["archive", "--format=tar", "-o", tarFile, commit, pathspec], {
+      cwd: repoRoot, maxBuffer: 1 << 28, stdio: ["ignore", "ignore", "ignore"],
     });
-    execFileSync("tar", ["-xf", "-", "-C", dir], { input: tar, stdio: ["pipe", "ignore", "ignore"] });
-    return existsSync(join(dir, "src")) ? sourceStamp(dir) : null;
+    execFileSync("tar", ["-xf", toMsysPath(tarFile), "-C", toMsysPath(dir)], {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    const pkgDir = prefix ? join(dir, prefix) : dir;
+    return existsSync(join(pkgDir, "src")) ? sourceStamp(pkgDir) : null;
   } catch {
     // This package did not exist yet at this commit. Tolerated per-commit, but never as a
     // blanket excuse — the preflight has already proved the mechanism works on HEAD.
     return null;
   } finally {
+    rmSync(tarFile, { force: true });
     rmSync(dir, { recursive: true, force: true });
   }
 }
