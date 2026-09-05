@@ -1,0 +1,179 @@
+# The two registers as Databricks Jobs, deployed with Databricks Asset Bundles.
+#
+# `brick/` is the deployment unit, which is why this file lives here rather than at the repo
+# root: `run_pipeline.check_deployment()` requires every runtime module to come from ONE flat
+# folder, and the git_source below hands the workspace exactly that.
+#
+# Three scan jobs, one per register, because a scope drives both the API filter and the table
+# names -- `wiz_<scope>_*` -- so two scopes in one job would write each other's tables. They are
+# separate jobs rather than tasks of one job for the same reason `max_concurrent_runs` is 1: a
+# scope's scan must be able to fail, retry and be re-run without dragging the other two through
+# it.
+#
+# NOT VALIDATED HERE. `databricks bundle validate -t dev` resolves a workspace and the current
+# user, so it cannot run in this repo's test environment; `brick/tests/test_bundle.py` checks
+# the parts that are checkable without a workspace (the guards below, and that every
+# `python_file` and `--scope` actually exists). Run the real validate before deploying.
+bundle:
+  name: brick
+
+variables:
+  catalog:
+    description: >-
+      The catalog the register is written to. No default, deliberately: these tables map
+      unpatched CVEs to named hosts and repositories, so a default that succeeds would land
+      them somewhere permissive. Same reasoning as run_pipeline.resolve_namespace().
+  schema:
+    description: The schema inside that catalog. Created only if it does not already exist.
+    default: wiz
+  wiz_api_url:
+    description: https://api.<region>.app.wiz.io/graphql -- the region is the one in your tenant URL.
+  secret_scope:
+    description: >-
+      The Databricks secret scope holding `wiz-client-id` and `wiz-client-secret`. Credentials
+      are only ever read through dbutils.secrets; nothing is inlined here.
+    default: wiz
+  severities:
+    description: >-
+      The severity gate each scan applies. Recorded per scan and read by the disappearance
+      guard, so narrowing it is a change to what the next scan may resolve by absence.
+    default: CRITICAL,HIGH
+  git_branch:
+    description: The branch the workspace runs the modules from.
+    default: main
+  node_type_id:
+    description: >-
+      Cloud-specific instance type (e.g. Standard_DS3_v2 on Azure, m5d.large on AWS). No
+      default: a wrong instance type fails at deploy on one cloud and silently costs money on
+      another.
+
+resources:
+  jobs:
+    wiz_os_scan:
+      name: wiz-os-scan
+      # Daily at 06:00 UTC. The ledger advances once a day, so a disappearance is dated to
+      # within 24 hours of when it happened.
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: UTC
+      # Two concurrent scans of one scope would both pass the recorded_scan check and advance
+      # every lifecycle twice.
+      max_concurrent_runs: 1
+      git_source:
+        git_url: https://github.com/n-drobyshevski/sidekick
+        git_provider: gitHub
+        git_branch: ${var.git_branch}
+      tasks:
+        - task_key: scan
+          spark_python_task:
+            python_file: brick/run_pipeline.py
+            parameters:
+              - --scope=os
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --wiz_api_url=${var.wiz_api_url}
+              - --secret_scope=${var.secret_scope}
+              - --severities=${var.severities}
+              # Databricks retries a failed task WITHIN the same run, so the retry arrives with
+              # the id the first attempt used, finds its own row in `<prefix>scans` and does
+              # nothing. Without it a retry looks like a brand-new scan and reconciles twice.
+              - --scan_id={{job.run_id}}
+          new_cluster: &single_node
+            spark_version: 14.3.x-scala2.12
+            node_type_id: ${var.node_type_id}
+            # The driver does the API paging and the Spark work is a handful of aggregations
+            # over one scan, so a single node is plenty -- see brick/README.md.
+            num_workers: 0
+            spark_conf:
+              spark.master: "local[*]"
+              spark.databricks.cluster.profile: singleNode
+            custom_tags:
+              ResourceClass: SingleNode
+
+    wiz_sca_scan:
+      name: wiz-sca-scan
+      schedule:
+        quartz_cron_expression: "0 30 6 * * ?"
+        timezone_id: UTC
+      max_concurrent_runs: 1
+      git_source:
+        git_url: https://github.com/n-drobyshevski/sidekick
+        git_provider: gitHub
+        git_branch: ${var.git_branch}
+      tasks:
+        - task_key: scan
+          spark_python_task:
+            # The code register is a separate deployment with the same module names -- exactly
+            # one of the two directories may be on sys.path, which is what this path settles.
+            python_file: brick/devsecops/run_pipeline.py
+            parameters:
+              - --scope=sca
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --wiz_api_url=${var.wiz_api_url}
+              - --secret_scope=${var.secret_scope}
+              - --severities=${var.severities}
+              - --scan_id={{job.run_id}}
+          new_cluster: *single_node
+
+    wiz_sast_scan:
+      name: wiz-sast-scan
+      schedule:
+        quartz_cron_expression: "0 0 7 * * ?"
+        timezone_id: UTC
+      max_concurrent_runs: 1
+      git_source:
+        git_url: https://github.com/n-drobyshevski/sidekick
+        git_provider: gitHub
+        git_branch: ${var.git_branch}
+      tasks:
+        - task_key: scan
+          spark_python_task:
+            python_file: brick/devsecops/run_pipeline.py
+            parameters:
+              - --scope=sast
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --wiz_api_url=${var.wiz_api_url}
+              - --secret_scope=${var.secret_scope}
+              - --severities=${var.severities}
+              - --scan_id={{job.run_id}}
+          new_cluster: *single_node
+
+    # OPTIMIZE over the clustered tables, and nothing else -- it ingests nothing. Its own job,
+    # weekly, deliberately: OPTIMIZE is an unbounded rewrite over the whole register, and the
+    # job that has to finish before anyone can read this morning's number should not be queued
+    # behind it.
+    #
+    # This maintains the `os` register only. The code registers want the same treatment; add
+    # them as copies of this job with devsecops' python_file and --scope=sca / --scope=sast
+    # once those registers are large enough to be worth the rewrite.
+    wiz_os_maintain:
+      name: wiz-os-maintain
+      schedule:
+        quartz_cron_expression: "0 0 3 ? * SUN"
+        timezone_id: UTC
+      max_concurrent_runs: 1
+      git_source:
+        git_url: https://github.com/n-drobyshevski/sidekick
+        git_provider: gitHub
+        git_branch: ${var.git_branch}
+      tasks:
+        - task_key: maintain
+          spark_python_task:
+            python_file: brick/run_pipeline.py
+            parameters:
+              - --maintain=true
+              - --scope=os
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              # Required by the parameter resolver even though --maintain ingests nothing.
+              - --wiz_api_url=${var.wiz_api_url}
+          new_cluster: *single_node
+
+targets:
+  dev:
+    mode: development
+    default: true
+  prod:
+    mode: production
