@@ -612,6 +612,140 @@ def test_untouched_rows_are_not_republished(spark):
     assert list(by_key(touched)) == ["id:f-2"]
 
 
+# ----------------------------------------------------------------- the scope refusal
+#
+# Absence is remediation in this reconciler, so a prior ledger from another population is not a
+# mislabelled input: it is a register that resolves itself. Every `all` row is missing from an
+# `os` scan by construction, and the reconciler cannot tell that from a week of good work.
+#
+# Each scope writes its own tables (`default_table_prefix`), so today the separation is
+# structural and nothing here can fire in production. That is the reason to have it: a
+# structural property nobody checks is one refactor away from being a calling convention nobody
+# knows about. `gas_devsecops` keeps three scopes in ONE tab and had to filter the prior inside
+# reconcile for exactly this; the lesson it wrote down is that reconcile must not trust its
+# caller for this, because the violation is silent and arrives dressed as remediation.
+
+FOREIGN_SCOPE = "all"  # brick's other register: same schema, different population
+NATIVE_SCOPE = "os"
+#: How many OPEN rows the foreign prior holds -- the price of the missing guard, in rows.
+FOREIGN_PRIOR_ROWS = 6
+
+
+def foreign_prior(spark, *, scope=FOREIGN_SCOPE, count=FOREIGN_PRIOR_ROWS):
+    """``count`` OPEN ledger rows stamped ``scope``, all last seen in SCAN_1.
+
+    Built through the real parse and reconcile path, so the rows are a genuine ledger of that
+    scope rather than hand-written ones that might not satisfy the disappearance conditions.
+    """
+    touched = ledger.reconcile(
+        ledger.empty_ledger(spark),
+        observed(
+            spark,
+            [node(id=f"foreign-{i}") for i in range(count)],
+            scan_id=SCAN_1,
+            scan_ts=TS_1,
+            scope=scope,
+        ),
+        scan_id=SCAN_1,
+        scan_ts=TS_1,
+        scope=scope,
+    )
+    prior = touched.select(*ledger.LEDGER_COLUMNS).cache()
+    assert prior.count() == count
+    assert prior.filter(F.col("status") == STATUS_OPEN).count() == count
+    return prior
+
+
+def test_reconcile_refuses_a_prior_from_another_scope(spark):
+    """A ledger of another population, handed to this scope's scan, is refused before the join."""
+    with pytest.raises(RuntimeError) as exc:
+        ledger.reconcile(
+            foreign_prior(spark),
+            observed(spark, [node(id="native-1")], scan_id=SCAN_2, scan_ts=TS_2),
+            scan_id=SCAN_2,
+            scan_ts=TS_2,
+            scope=NATIVE_SCOPE,
+            prev_scan_id=SCAN_1,
+        )
+    msg = str(exc.value)
+    # It has to name both populations and which side carried the wrong one, because the fix
+    # differs: a wrong prior is a table-resolution bug, a wrong observation an ingest one.
+    assert repr(FOREIGN_SCOPE) in msg and repr(NATIVE_SCOPE) in msg
+    assert "prior" in msg and "observation" not in msg
+
+
+def test_reconcile_refuses_an_observation_from_another_scope(spark):
+    """And the other side: this scope's ledger meeting another scope's scan.
+
+    Worse than the first case in one way -- those findings would be written into this
+    register as NEW, with this scope stamped on them, and nothing downstream could tell.
+    """
+    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+    with pytest.raises(RuntimeError) as exc:
+        ledger.reconcile(
+            state,
+            observed(
+                spark,
+                [node(id="foreign-1")],
+                scan_id=SCAN_2,
+                scan_ts=TS_2,
+                scope=FOREIGN_SCOPE,
+            ),
+            scan_id=SCAN_2,
+            scan_ts=TS_2,
+            scope=NATIVE_SCOPE,
+            prev_scan_id=SCAN_1,
+        )
+    msg = str(exc.value)
+    assert repr(FOREIGN_SCOPE) in msg and repr(NATIVE_SCOPE) in msg
+    assert "observation" in msg
+
+
+def test_without_the_scope_guard_a_foreign_prior_resolves_the_register_by_absence(
+    spark, monkeypatch
+):
+    """The mutation, and the price: every open row of the foreign prior closes as remediated.
+
+    The guard is removed and nothing else changes. The foreign rows are OPEN, in severity
+    scope, and their ``last_scan_id`` is the previous scan, so all three disappearance
+    conditions hold -- they are absent only because this scan never looked at their population.
+    The register would report a resolution for each, dated to this scan, with
+    ``resolution_src = 'disappeared'`` and a delta that reads like a good week.
+    """
+    prior = foreign_prior(spark)
+    scan = observed(spark, [node(id="native-1")], scan_id=SCAN_2, scan_ts=TS_2)
+
+    def scan_2(p):
+        return ledger.reconcile(
+            p,
+            scan,
+            scan_id=SCAN_2,
+            scan_ts=TS_2,
+            scope=NATIVE_SCOPE,
+            prev_scan_id=SCAN_1,
+        )
+
+    with pytest.raises(RuntimeError, match="prior"):
+        scan_2(prior)
+
+    monkeypatch.setattr(ledger, "_refuse_foreign_scope", lambda *a, **k: None)
+    touched = scan_2(prior).cache()
+
+    resolved = touched.filter(
+        (F.col("status") == STATUS_RESOLVED) & (F.col("resolution_src") == "disappeared")
+    )
+    assert resolved.count() == FOREIGN_PRIOR_ROWS, (
+        f"without the guard, an {FOREIGN_SCOPE!r} prior of {FOREIGN_PRIOR_ROWS} open rows "
+        f"meeting one {NATIVE_SCOPE!r} scan resolves ALL {FOREIGN_PRIOR_ROWS} as remediated, "
+        "with real resolution dates -- the failure is not an error, it is a remediation "
+        "programme that never happened"
+    )
+    assert deltas(touched)["resolved_count"] == FOREIGN_PRIOR_ROWS
+    # And they are stamped with THIS scope on the way out, so the ledger would not even
+    # remember which population they came from.
+    assert {r["scope"] for r in resolved.select("scope").collect()} == {NATIVE_SCOPE}
+
+
 # ------------------------------------------------------------ the risk-signal contract
 
 

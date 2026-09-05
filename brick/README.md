@@ -215,6 +215,12 @@ bare `findings` or `metrics_capacity` would be a collision waiting to happen; an
 the name keeps an OS run and an all-types run in separate tables. `--table_prefix` overrides it
 (empty opts out entirely).
 
+That separation is structural, and `ledger.reconcile` still refuses to assume it: a prior row or
+an observation stating a scope other than the one it was asked for raises rather than being
+reconciled. Absence is remediation here, so a foreign prior is not a mislabelled input — every
+one of its rows is missing from this scan *by construction*, and all of them would close as
+remediated, with real resolution dates and a delta that reads like a good week.
+
 ### Table layout
 
 Three tables carry a physical layout. The rest are left alone.

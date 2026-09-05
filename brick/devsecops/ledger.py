@@ -281,6 +281,50 @@ def _merge_peak(new: Column, old: Column) -> Column:
     return F.when(new.isNotNull() & (old.isNull() | (new > old)), new).otherwise(old)
 
 
+#: How many offending rows the guard collects before it names them. A refusal has to say WHICH
+#: population it was handed, and one row can only name one scope; three names every scope either
+#: fork has while keeping the check a LIMIT -- no shuffle, no full scan, no aggregate.
+_FOREIGN_SCOPE_SAMPLE = 3
+
+
+def _refuse_foreign_scope(prior: DataFrame, current: DataFrame, scope: str) -> None:
+    """Refuse a prior ledger or an observation that belongs to another population.
+
+    Disappearance-resolution reads absence as remediation, so a ledger from another scope is not
+    a mislabelled input: it is a register that resolves itself. Every row of scope A is missing
+    from a scan of scope B **by construction**, so reconciling one against the other marks the
+    whole prior remediated, with real resolution dates and a plausible-looking delta. The failure
+    is not an error, it is a remediation programme that never happened.
+
+    Today each scope writes its own tables (``default_table_prefix``), so the prior is per-scope
+    by construction and this can only fire on a caller that hand-assembles frames. That is the
+    point. ``gas_devsecops`` keeps three scopes in ONE tab and had to filter the prior itself; the
+    lesson it wrote down is that reconcile must not trust a calling convention for this, because
+    the convention is invisible at the call site and its violation is silent.
+
+    NULL is not foreign, and neither is silence: the golden ``reconcile.json`` prior states no
+    scope, and a frame with no ``scope`` column at all is making no claim about its population.
+    Only a stated, differing scope is refused.
+    """
+    for side, df in (("prior", prior), ("observation", current)):
+        if "scope" not in df.columns:
+            continue
+        found = (
+            df.select("scope")
+            .filter(F.col("scope").isNotNull() & (F.col("scope") != F.lit(scope)))
+            .limit(_FOREIGN_SCOPE_SAMPLE)
+            .collect()
+        )
+        if found:
+            names = ", ".join(sorted({str(r["scope"]) for r in found}))
+            raise RuntimeError(
+                f"reconcile(scope={scope!r}) was handed {side} rows carrying scope {names!r}. "
+                f"Absence is remediation here, and every {names!r} row is absent from a "
+                f"{scope!r} scan by construction, so this would resolve them all as fixed. "
+                f"Filter the {side} to scope {scope!r} before reconciling it."
+            )
+
+
 def reconcile(
     prior: DataFrame,
     current: DataFrame,
@@ -306,7 +350,8 @@ def reconcile(
         current: this scan's findings from ``observed()`` -- one row per ``vuln_key``.
         scan_id / scan_ts: identity and timestamp of this scan.
         scope: the vulnerability population (``os`` / ``all``), stamped on every row so it stays
-            self-describing after a UNION.
+            self-describing after a UNION -- and refused, rather than assumed, when the prior or
+            the observations state a different one (``_refuse_foreign_scope``).
         prev_scan_id: the immediately-previous scan, or None for the very first scan (in which
             case nothing can have disappeared, because there is no "before" to vanish from).
         prev_scan_ts: needed only for ``disappearance="midpoint"``.
@@ -316,7 +361,13 @@ def reconcile(
         scanned_severities: this scan's severity scope, or None for unscoped. Out-of-scope OPEN
             rows are exempt from disappearance -- see the guard below.
         disappearance: ``"scan_ts"`` or ``"midpoint"``.
+
+    Raises:
+        RuntimeError: if any prior row or any observation states a scope other than ``scope``.
+            Before the join, because the join is where the damage happens.
     """
+    _refuse_foreign_scope(prior, current, scope)
+
     now = F.lit(scan_ts).cast("timestamp")
     prev_ts = F.lit(prev_scan_ts).cast("timestamp") if prev_scan_ts else now
 

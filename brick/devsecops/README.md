@@ -266,7 +266,13 @@ the lake. Set the `csv_path` widget (or the flag) to stay out of it — cell 1 o
 `06_run_and_verify` and its run cell both read that widget, so they cannot disagree about where
 the register is.
 
-Then run one scope at a time — they write separate tables and must never be blended:
+The two scopes write separate tables and must never be blended, and `ledger.reconcile` does not
+merely rely on that: a prior row or an observation stating a scope other than the one it was
+asked for is refused. Absence is remediation here, so a `sast` prior meeting a `sca` scan is not
+a mislabelled input — every one of its rows is missing from that scan *by construction*, and all
+of them would close as remediated, with real resolution dates.
+
+Then run one scope at a time:
 
 ```bash
 python run_pipeline.py --scope=sca --severities=CRITICAL \
