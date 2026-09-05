@@ -6,6 +6,7 @@
 //   node phase0.mjs --stage=t     the time axis — can age carry it where dueAt cannot
 //   node phase0.mjs --stage=d     vulnerabilityFindings: the funnel from 5.17M to ~17k
 //   node phase0.mjs --stage=j     attribution — can the exploitation signal reach the queue
+//   node phase0.mjs --stage=k     related-issue field: shape, selection, widened resolution rate
 //   node phase0.mjs --stage=e     framework join: finding.rule -> config rule -> policy
 //   node phase0.mjs --stage=r2    distinct resources behind the widened register
 //   node phase0.mjs --stage=cf    config findings under the candidate categories
@@ -595,6 +596,213 @@ if (want("j")) {
     line(`    effCard ${effectiveCardinality(axis).toFixed(2)}   tie rate ${tieRate(axis).toFixed(3)}`);
     report.exploitationAxisExact = { axis, effCard: effectiveCardinality(axis), tieRate: tieRate(axis) };
   }
+}
+
+// ==== STAGE K — the related-issue field. Stage J proved a KEV finding can reach an issue via
+// hasRelatedIssue; this stage builds the concrete selection for that field (single object vs
+// connection/list is unknown until introspected — the same union lesson §6.8 learned from
+// VulnerableAsset applies to any object-shaped field, not only unions) and measures how much of
+// the KEV/hasRelatedIssue sample actually resolves into the candidate-category issue set versus
+// the AI-only set.
+if (want("k")) {
+  head("STAGE K — the related-issue field: shape, selection, and where it resolves");
+
+  const refusals = [];
+  const stageK = {
+    sample: Math.min(SAMPLE, 100),
+    relatedIssueField: null, vulnerableAssetFragment: "",
+    distinctRelatedIssues: null, resolvedIntoCandidate: null, resolvedIntoAiOnly: null,
+    share: null, nullCensus: null,
+  };
+
+  // ---- 1. Introspect VulnerabilityFinding, list every /issue/i field with kind + inner type.
+  // A dedicated deep query: the field could be a raw `[Issue!]!` list (needs three ofType hops
+  // to reach the named type) rather than the Connection object every other paginated root here
+  // uses, and the shared typeQ() only carries two hops — not enough to tell which shape it is.
+  const deepFieldQ = (n) => `{ __type(name:${JSON.stringify(n)}){ name kind
+    fields{ name type{ kind name ofType{ kind name ofType{ kind name ofType{ kind name
+      ofType{ kind name } } } } } } } }`;
+  const unwrap = (t) => {
+    let isList = false, cur = t;
+    while (cur && (cur.kind === "NON_NULL" || cur.kind === "LIST")) {
+      if (cur.kind === "LIST") isList = true;
+      cur = cur.ofType;
+    }
+    return { isList, kind: cur?.kind ?? null, inner: cur?.name ?? null };
+  };
+
+  const vfType = await post(deepFieldQ("VulnerabilityFinding"), {});
+  let issueFields = [];
+  if (!vfType.ok || !vfType.data.__type) {
+    const msg = `VulnerabilityFinding introspection FAILED: ${vfType.error ?? "null"}`;
+    refusals.push(msg); line(`  ${msg}`);
+  } else {
+    const all = vfType.data.__type.fields ?? [];
+    issueFields = all.filter((f) => /issue/i.test(f.name)).map((f) => ({ name: f.name, ...unwrap(f.type) }));
+    if (!issueFields.length) {
+      const msg = "no field on VulnerabilityFinding matches /issue/i";
+      refusals.push(msg); line(`  ${msg}`);
+    } else {
+      line(`  VulnerabilityFinding fields matching /issue/i (${issueFields.length}):`);
+      for (const f of issueFields) {
+        const kindLabel = f.isList ? "LIST" : (f.kind ?? "?");
+        const innerLabel = f.isList || f.kind === "OBJECT" ? (f.inner ?? "?") : "";
+        line(`    ${f.name.padEnd(28)} kind=${kindLabel.padEnd(10)} inner=${innerLabel || "-"}`);
+      }
+      stageK.issueFields = issueFields.map((f) => ({
+        name: f.name, kind: f.isList ? "LIST" : f.kind,
+        inner: f.isList || f.kind === "OBJECT" ? f.inner : null,
+      }));
+    }
+  }
+
+  // Prefer a field literally named relatedIssue(s); fall back to the first /issue/i match so
+  // the stage still reports something to look at when the name guess is wrong.
+  const chosen = issueFields.find((f) => /^relatedissues?$/i.test(f.name)) ?? issueFields[0] ?? null;
+  let relatedSelection = "", cardinality = null;
+  if (chosen) {
+    if (chosen.isList) {
+      // A raw list already yields the item objects directly — no `nodes` wrapper to unwrap.
+      relatedSelection = `${chosen.name}{ id }`;
+      cardinality = "list";
+    } else if (chosen.kind === "OBJECT") {
+      const innerT = await post(typeQ(chosen.inner), {});
+      const innerFieldNames = innerT.ok && innerT.data.__type?.fields ? innerT.data.__type.fields.map((f) => f.name) : [];
+      if (innerFieldNames.includes("nodes")) { relatedSelection = `${chosen.name}{ nodes{ id } }`; cardinality = "connection"; }
+      else { relatedSelection = `${chosen.name}{ id }`; cardinality = "single"; }
+    } else {
+      relatedSelection = chosen.name; // scalar/enum id — select the field bare
+      cardinality = "scalar";
+    }
+    stageK.relatedIssueField = { name: chosen.name, kind: chosen.isList ? "LIST" : chosen.kind, inner: chosen.inner, cardinality };
+    line(`\n  SELECTED related-issue field: ${chosen.name} -> selection \`${relatedSelection}\` (${cardinality})`);
+  } else {
+    const msg = "no related-issue field to select — see the introspection refusal above";
+    refusals.push(msg); line(`\n  ${msg}`);
+  }
+
+  // ---- 2. VulnerableAsset union fragment — id-less members fall back to __typename only.
+  const vaType = await post(typeQ("VulnerableAsset"), {});
+  let assetFragment = "";
+  if (!vaType.ok || !vaType.data.__type?.possibleTypes?.length) {
+    const msg = `VulnerableAsset union introspection FAILED: ${vaType.error ?? "no possibleTypes"}`;
+    refusals.push(msg); line(`\n  ${msg}`);
+  } else {
+    const members = vaType.data.__type.possibleTypes.map((p) => p.name);
+    const parts = [];
+    for (const m of members) {
+      const mt = await post(typeQ(m), {});
+      const fields = mt.ok && mt.data.__type?.fields ? mt.data.__type.fields.map((f) => f.name) : [];
+      parts.push(fields.includes("id") ? `... on ${m}{ id type name }` : `... on ${m}{ __typename }`);
+    }
+    assetFragment = `vulnerableAsset{ ${parts.join(" ")} }`;
+    line(`\n  VulnerableAsset union — ${members.length} members`);
+    line(`  fragment: ${assetFragment}`);
+  }
+  stageK.vulnerableAssetFragment = assetFragment;
+
+  // ---- 3/4. The sample query — related-issue selection + asset fragment together — and the
+  // widened issue-id sets to resolve against.
+  if (!chosen || !assetFragment) {
+    const msg = "sample query skipped — no related-issue field or no asset fragment to select";
+    refusals.push(msg); line(`\n  ${msg}`);
+  } else {
+    const sampleN = Math.min(SAMPLE, 100);
+    const filterK = { status: ["OPEN"], hasCisaKevExploit: true, hasRelatedIssue: true };
+    if (PROJECT_ID) filterK.projectIdV2 = { equals: [PROJECT_ID] };
+    const q = `query V($f:VulnerabilityFindingFilters,$n:Int!){ vulnerabilityFindings(first:$n, filterBy:$f){
+      totalCount nodes{ id name severity hasExploit hasCisaKevExploit epssProbability epssPercentile
+        epssSeverity firstDetectedAt ${relatedSelection} ${assetFragment} } } }`;
+    const r = await post(q, { f: filterK, n: sampleN });
+    if (!r.ok) {
+      const msg = `sample query FAILED: ${r.error}`;
+      refusals.push(msg); line(`\n  ${msg}`);
+    } else {
+      const rows = r.data.vulnerabilityFindings.nodes ?? [];
+      const total = r.data.vulnerabilityFindings.totalCount;
+      line(`\n  ${rows.length} sampled of ${total} (KEV & hasRelatedIssue, OPEN, project scope)`);
+
+      // Null census — null vs falsy(false/0) vs truthy, kept apart because "absent is never
+      // zero" (CLAUDE.md, gas_ai scoring conventions).
+      const census = (key) => {
+        let n = 0, falsy = 0, truthy = 0;
+        for (const row of rows) {
+          const v = row[key];
+          if (v === null || v === undefined) n++; else if (v === false || v === 0) falsy++; else truthy++;
+        }
+        return { null: n, falsy, truthy };
+      };
+      const nullCensus = { hasExploit: census("hasExploit"), hasCisaKevExploit: census("hasCisaKevExploit"),
+        epssProbability: census("epssProbability") };
+      line(`\n  NULL CENSUS (over ${rows.length} sampled)`);
+      for (const [k2, v2] of Object.entries(nullCensus)) line(`    ${k2.padEnd(20)} null=${v2.null} falsy=${v2.falsy} truthy=${v2.truthy}`);
+      stageK.nullCensus = nullCensus;
+
+      const extractIds = (row) => {
+        const v = row[chosen.name];
+        if (v == null) return [];
+        if (cardinality === "list") return Array.isArray(v) ? v.map((x) => x?.id).filter(Boolean) : [];
+        if (cardinality === "connection") return (v.nodes ?? []).map((x) => x?.id).filter(Boolean);
+        if (cardinality === "single") return v.id ? [v.id] : [];
+        return [];
+      };
+      const relatedIds = new Set();
+      for (const row of rows) for (const id of extractIds(row)) relatedIds.add(id);
+      line(`\n  distinct related-issue ids in sample: ${relatedIds.size}`);
+      stageK.distinctRelatedIssues = relatedIds.size;
+
+      // The widened issue-id sets, paginated (issuesV2 has no bulk "in set" filter here, so the
+      // membership test has to be done client-side against every id in scope).
+      const fetchIssueIds = async (categories) => {
+        const f = { status: ["OPEN", "IN_PROGRESS"], frameworkCategory: categories };
+        if (PROJECT_ID) f.project = [PROJECT_ID];
+        const q2 = `query I($f:IssueFilters,$n:Int!,$a:String){ issuesV2(first:$n, after:$a, filterBy:$f){
+          totalCount pageInfo{ hasNextPage endCursor } nodes{ id } } }`;
+        const ids = new Set();
+        let after = null, pages = 0, totalCount = null;
+        while (true) {
+          const rr = await post(q2, { f, n: 500, a: after });
+          if (!rr.ok) return { ok: false, error: rr.error, ids, pages };
+          const conn = rr.data.issuesV2;
+          totalCount = conn.totalCount;
+          for (const node of conn.nodes ?? []) if (node?.id) ids.add(node.id);
+          pages++;
+          if (!conn.pageInfo?.hasNextPage || pages > 40) break;
+          after = conn.pageInfo.endCursor;
+        }
+        return { ok: true, ids, pages, totalCount };
+      };
+
+      const candidateSet = await fetchIssueIds(CANDIDATE_SET);
+      const aiSet = await fetchIssueIds(["wct-id-1998"]);
+
+      if (!candidateSet.ok) {
+        const msg = `candidate issue-id fetch FAILED after ${candidateSet.pages} page(s): ${candidateSet.error}`;
+        refusals.push(msg); line(`\n  ${msg}`);
+      } else {
+        const resolvedIntoCandidate = [...relatedIds].filter((id) => candidateSet.ids.has(id)).length;
+        const share = pct(resolvedIntoCandidate, relatedIds.size);
+        line(`\n  widened candidate issue set: ${candidateSet.ids.size} ids over ${candidateSet.pages} page(s)` +
+             ` (declared totalCount ${candidateSet.totalCount})`);
+        line(`  resolved into candidate set: ${resolvedIntoCandidate}/${relatedIds.size} (${share})`);
+        stageK.resolvedIntoCandidate = resolvedIntoCandidate;
+        stageK.share = share;
+      }
+
+      if (!aiSet.ok) {
+        const msg = `AI-only issue-id fetch FAILED after ${aiSet.pages} page(s): ${aiSet.error}`;
+        refusals.push(msg); line(`\n  ${msg}`);
+      } else {
+        const resolvedIntoAiOnly = [...relatedIds].filter((id) => aiSet.ids.has(id)).length;
+        line(`  resolved into AI-only set (wct-id-1998): ${resolvedIntoAiOnly}/${relatedIds.size} (${pct(resolvedIntoAiOnly, relatedIds.size)})`);
+        stageK.resolvedIntoAiOnly = resolvedIntoAiOnly;
+      }
+    }
+  }
+
+  stageK.refusals = refusals;
+  if (refusals.length) line(`\n  ${refusals.length} REFUSAL(S) — the figures above are partial; see refusals[] in the report.`);
+  report.stageK = stageK;
 }
 
 // ============================ STAGE E — framework join: is the rule->framework map real?
