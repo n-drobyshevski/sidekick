@@ -310,12 +310,14 @@ def test_every_scope_asks_for_resolved_findings():
 def test_sast_does_not_ask_for_resolved_findings_yet():
     """The invariant above is deliberately **declined** here, not unavailable.
 
-    A SAST finding has a status, so the API can almost certainly be asked for resolved ones.
-    Asking while the query selects no timestamps is what must not happen: an already-resolved
-    finding is born and closed in the same instant and reports MTTR = 0. See
+    A SAST finding has a status, so the API can be asked for resolved ones. Two live reasons not
+    to: ``SASTFinding`` has no ``resolvedAt``, and `status: RESOLVED` returns zero rows against
+    this tenant. The query now selects ``createdAt``, so an already-resolved finding would land
+    `first_seen = createdAt` and `resolved_at = now` -- reporting its AGE as its MTTR, which is
+    worse than the flat 0 that arithmetic used to give because it looks like a measurement. See
     `config.SAST_FETCH_RESOLVED` for the trace, and
-    `test_devsecops.test_asking_sast_for_resolved_findings_would_report_zero_day_mttr` for the
-    measurement.
+    `test_devsecops.test_asking_sast_for_resolved_findings_would_report_its_age_as_its_mttr`
+    for the measurement.
 
     `hasFix` is a separate matter and simply meaningless for a weakness in first-party code.
     """

@@ -194,18 +194,26 @@ QUERY = build_query()
 # more here than it does for the query above, because this one is the only evidence available
 # that a given selection actually validates against the tenant.
 #
-# **There are no timestamps in it, and that is not an oversight.** The reference query selects
-# none, so none is known to exist on ``SASTFinding``. The consequence is that every SAST
-# lifetime is dated from observation: `first_seen` is the scan that first returned the finding
-# and `resolved_at` is the scan that stopped returning it. MTTR is therefore meaningless until
-# the register has run for a while, and reads as near-zero before then -- the same failure the
-# README's backfill section describes for a ledger started today.
+# **A SAST finding has a birth date and no death date, and that is enough.** This comment used
+# to read "there are no timestamps in it, and that is not an oversight", on the reasoning that
+# the reference query selects none so none is known to exist. A live probe against the tenant
+# (2026-08-27, recorded in the repo's CLAUDE.md) falsified it: ``SASTFinding.createdAt`` is a
+# non-null ``DateTime!``, both filterable and sortable, and it is selected below. It is also
+# what the captured response's `endCursor` was always hinting at -- that cursor decodes to a
+# sort key of `finding_severityOrder = "4_2026-07-02T23:39:17.79412Z"`.
 #
-# The captured response's `endCursor` decodes to a sort key of
-# `finding_severityOrder = "4_2026-07-02T23:39:17.79412Z"`, so a timestamp does exist server
-# side. If it turns out to be selectable, add it here and to ``SAST_NODE_SCHEMA``; nothing else
-# has to change, because `metrics.silver_sast` already reads the column and the ledger already
-# prefers an API date over an observed one.
+# What the same probe did NOT find is a death date. There is no ``resolvedAt`` on the type, and
+# `status: RESOLVED` returns zero rows -- which is why ``config.SAST_FETCH_RESOLVED`` stays off,
+# for those two reasons rather than the old one. So the clock is half-measured and half-
+# inferred: `first_seen` is the API's own `createdAt` (the ledger prefers an API date over an
+# observed one), and `resolved_at` is the scan that stopped returning the finding. That is a
+# genuine MTTR once two scans exist, not the near-zero age metric a purely observed lifetime
+# gives, and `resolution_src` reads `disappeared` so the reader can see which half is which.
+#
+# It cannot be applied retroactively: bronze holds only the fields the query asked for, so
+# `--rebuild_ledger` over scans taken before this line existed still reads NULL and falls back
+# to observation. That fallback is exercised by the committed capture, which predates the
+# column.
 _SAST_QUERY_TEMPLATE = """
 query DevSecOpsSastFindings(
   $filterBy: SASTFindingFilters
@@ -217,6 +225,7 @@ query DevSecOpsSastFindings(
       id
       name
       status
+      createdAt
       severity
       originalSeverity
       filePath

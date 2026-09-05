@@ -132,30 +132,38 @@ SCOPES = {
 }
 
 # ---- Whether the sast scope asks for resolved findings as well as open ones ----
-# OFF, and **not** because the filter key is unavailable. A SAST finding plainly has a status --
-# `sast_request.py` selects it, `resolutionReason` sits beside it, and the captured response
-# returns "OPEN" -- so RESOLVED is a real state the API can almost certainly be asked for.
+# OFF, for two reasons a live probe measured (2026-08-27, recorded in the repo's CLAUDE.md),
+# neither of which is the one this comment used to give. The old reason was that
+# `ingest.SAST_QUERY` selects no timestamps. It selects one now: `SASTFinding.createdAt` is a
+# non-null `DateTime!`, filterable and sortable. The two that remain:
 #
-# It is off because asking for it, *while ingest.SAST_QUERY selects no timestamps*, makes MTTR
-# actively wrong rather than merely absent. Trace one already-resolved finding through
-# `ledger.reconcile`:
+#   1. There is no `resolvedAt` on the type. The birth date exists; the death date does not.
+#   2. `status: RESOLVED` returns **zero rows** against this tenant. The filter would not
+#      deliver the population it appears to ask for even if the dates were there.
 #
-#   first sighting  ->  first_seen = least(coalesce(firstDetectedAt, now), now) = now
-#   status RESOLVED ->  api_resolved, so resolved_at = coalesce(resolvedAt, now) = now
-#   therefore           mttr_days = resolved_at - first_seen = 0.0
+# Reason 1 is still what makes it actively wrong rather than merely useless, and the arithmetic
+# has moved rather than gone away. Trace one already-resolved finding through
+# `ledger.reconcile`, with `createdAt` now selected:
 #
-# Every historical resolved finding would land at exactly zero days on the scan that first saw
-# it, and the Kaplan-Meier median would collapse toward zero. That is worse than the empty
-# result it replaces: "no MTTR yet" is a state a reader can act on, "MTTR is 0 days" is a
-# confident lie. `tests/test_devsecops.py` pins the zero so nobody flips this without meeting it.
+#   first sighting  ->  first_seen = least(coalesce(createdAt, now), now) = createdAt
+#   status RESOLVED ->  api_resolved, and there is no resolvedAt to read, so
+#                       resolved_at = coalesce(NULL, now) = now
+#   therefore           mttr_days = now - createdAt = the finding's AGE at first sighting
 #
-# The `sca` scope takes `status: [OPEN, RESOLVED]` safely for one reason and one only: its
-# findings carry `firstDetectedAt`, so `first_seen` is a real date and the subtraction means
-# something.
+# So the number stops being a flat zero and starts being a plausible one, which is worse. A
+# finding that was fixed within a day two years ago would report an MTTR of 730 days, and the
+# Kaplan-Meier median would be dragged up by the register's own start date instead of down by
+# it. Every historical resolved finding is priced by when we happened to look. `first_seen` is
+# real, `resolved_at` is fabricated, and their difference measures neither.
+# `tests/test_devsecops.py` pins that arithmetic so nobody flips this without meeting it.
 #
-# **Turn this on in the same change that adds a timestamp to ingest.SAST_QUERY, not before.**
-# At that point it is a genuine improvement -- an API resolution is better evidence than an
-# inferred disappearance, and `resolution_src` stops reading `disappeared` for every row.
+# The `sca` scope takes `status: [OPEN, RESOLVED]` safely because it has BOTH dates:
+# `firstDetectedAt` and `resolvedAt`, so the subtraction has two measured ends.
+#
+# **Turn this on if a `resolvedAt` (or equivalent) appears on `SASTFinding`, not before.** Until
+# then a disappearance between two scans is the better evidence, and it is honest about its
+# error bar: `resolution_src` reads `disappeared` and the date is an upper bound whose
+# uncertainty is the scan interval.
 SAST_FETCH_RESOLVED = False
 
 if SAST_FETCH_RESOLVED:

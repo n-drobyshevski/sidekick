@@ -104,22 +104,28 @@ Four things about this register are different, and none is a detail:
   and is **deliberately incomplete**. An unmapped child classifies `low`, so the gap costs
   coverage's numerator silently — `signal_breakdown` publishes `cwe_unmapped` as its size, and
   that is the number to read before quoting a SAST coverage figure.
-- **There are no timestamps.** `ingest.SAST_QUERY` selects none, because the reference query
-  selects none and nothing else is known to validate. Every SAST lifetime is therefore dated
-  from *observation*, so **MTTR is not readable until the register has run for a while** — and
-  findings that predate the first scan are under-measured permanently, because their
-  `first_seen` is pinned to that scan's date. The captured `endCursor` decodes to a sort key
-  containing a timestamp, so one exists server-side; if it is selectable, adding it here and to
-  `metrics.SAST_NODE_SCHEMA` is the whole change. **It cannot be applied retroactively** —
-  bronze only holds the fields the query asked for, so `--rebuild_ledger` cannot recover them.
-- **Every closure is inferred, by choice.** A SAST finding plainly has a status, so the API can
-  almost certainly be asked for resolved ones. `config.SAST_FETCH_RESOLVED` declines, and the
-  reason is the timestamps above: an already-resolved finding with no dates is born and closed
-  in the same instant, so `first_seen == resolved_at` and **`mttr_days` is exactly 0**. Every
-  historical resolved finding would land at zero days and drag the Kaplan–Meier median with it —
-  worse than the empty result it replaces, because "no MTTR yet" is a state a reader can act on
-  and "MTTR is 0 days" is a confident lie. `tests/test_devsecops.py` measures that zero. Turn
-  the flag on in the same change that adds a timestamp, not before.
+- **There is a birth date and no death date.** This bullet used to say there were no timestamps
+  at all; a live probe (2026-08-27) falsified that. `SASTFinding.createdAt` is a non-null
+  `DateTime!`, filterable and sortable, and `ingest.SAST_QUERY` now selects it —
+  `metrics.silver_sast` reads it into `first_detected_at` and the ledger prefers it over the
+  scan that first saw the finding. There is still no `resolvedAt`, so a death date arrives only
+  when a later scan stops returning a finding. **SAST therefore has a genuine MTTR once two
+  scans exist**: a measured start, a disappearance-dated end carrying an error bar of one scan
+  interval, and `resolution_src = 'disappeared'` saying so. What remains under-measured is the
+  *end*, not the beginning — findings that predate the first scan now carry their real age.
+  **The column cannot be applied retroactively** — bronze holds only the fields the query asked
+  for, so `--rebuild_ledger` over older scans still reads NULL and falls back to observation.
+  The committed capture predates the column and exercises exactly that fallback.
+- **Every closure is inferred, by choice, and the reason has changed.**
+  `config.SAST_FETCH_RESOLVED` declines to ask for RESOLVED findings for two measured reasons:
+  the type has no `resolvedAt`, and `status: RESOLVED` returns **zero rows** against this
+  tenant. The old reason — "no timestamps at all" — is gone, but the arithmetic only moved. With
+  `createdAt` selected and no `resolvedAt` to read, an already-resolved finding lands
+  `first_seen = createdAt`, `resolved_at = now`, so **`mttr_days` is the finding's age at the
+  moment we first looked**. That is worse than the flat 0 it replaces, because it is plausible:
+  a weakness fixed within a day two years ago would report 730 days, and the Kaplan–Meier
+  median would be set by the register's own start date. `tests/test_devsecops.py` measures that
+  age. Turn the flag on if a `resolvedAt` appears, not before.
 - **Two selections are unverified against the live tenant**: whether `SASTFindingFilters`
   accepts `severity`, and what `aiAnalysis.verdict` actually spells. Every node in the captured
   response has `aiAnalysis: null`, so the AI clause will never fire until the enum is confirmed

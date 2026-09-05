@@ -95,8 +95,6 @@ already implements the pipeline and is the behavioural spec (same relationship `
   survives anyway: the ledger prefers the API birth date and dates the death by
   DISAPPEARANCE, so SAST gets a genuine MTTR rather than an age metric once two scans exist
   (`brick/devsecops/ledger.py`, pinned by `test_mttr_is_measured_from_the_ledgers_own_dates`).
-  Caveat for the port: `brick`'s own `ingest.py:206` claims `silver_sast` already reads the
-  column; it does not — `metrics.py:371` hard-codes `null_ts`.
 - **The same field name carries DIFFERENT KINDS across filter types, and it has now cost the
   register twice.** `VulnerabilityFindingFilters.severity` is `[VulnerabilitySeverity!]`, a
   bare list; `SASTFindingFilters.severity` is `SASTSeverityFilter`, an object taking

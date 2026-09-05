@@ -324,35 +324,70 @@ def test_a_source_that_cannot_filter_severity_filters_it_here_instead():
     assert ingest._severity_gate([]) is None
 
 
-def test_asking_sast_for_resolved_findings_would_report_zero_day_mttr(spark):
-    """**Why ``config.SAST_FETCH_RESOLVED`` is off, measured rather than asserted.**
-
-    A SAST finding has a status -- `sast_request.py` selects it and `resolutionReason` sits
-    beside it -- so the API can almost certainly be asked for RESOLVED ones. The reason not to
-    is that ``ingest.SAST_QUERY`` selects no timestamps, so an already-resolved finding is born
-    and closed in the same instant:
-
-        first_seen  = least(coalesce(firstDetectedAt, now), now) = now
-        resolved_at = coalesce(resolvedAt, now)                  = now
-
-    Every historical resolved finding would land at exactly zero days and drag the
-    Kaplan-Meier median down with it. "No MTTR yet" is a state a reader can act on; "MTTR is
-    0 days" is a confident lie, and this test is what stands between the two.
-
-    Turn the flag on in the same change that adds a timestamp to the query -- not before.
-    """
-    import ledger as ledger_mod
-    from config import SAST_FETCH_RESOLVED
-
+def sast_node(**over):
+    """A minimal ``sastFindings`` node -- the fields ``silver_sast`` reads and nothing else."""
     node = {
-        "id": "f-resolved",
+        "id": "f-1",
         "name": "SQL Injection",
-        "status": "RESOLVED",
+        "status": "OPEN",
         "severity": "HIGH",
         "filePath": "a/B.java",
         "weaknesses": [{"id": "CWE-89"}],
         "resource": {"id": "r1", "name": "org/repo/main", "type": "REPOSITORY_BRANCH"},
     }
+    node.update(over)
+    return node
+
+
+def test_the_sast_query_selects_the_birth_date():
+    """``createdAt`` has to be in BOTH places or it reads NULL and nothing complains.
+
+    Two independent halves: the GraphQL document decides whether the field arrives in bronze,
+    and ``SAST_NODE_SCHEMA`` decides whether ``from_json`` keeps it. Drop either and
+    ``first_detected_at`` is silently NULL for every SAST row -- the ledger falls back to
+    observation, every figure still renders, and the register quietly goes back to dating its
+    findings from when we happened to look.
+    """
+    assert "createdAt" in ingest.SAST_QUERY
+    assert "createdAt" in metrics.SAST_NODE_SCHEMA.fieldNames()
+
+
+def test_asking_sast_for_resolved_findings_would_report_its_age_as_its_mttr(spark):
+    """**Why ``config.SAST_FETCH_RESOLVED`` is off, measured rather than asserted.**
+
+    This test used to be named ``..._would_report_zero_day_mttr`` and it encoded a claim that
+    has since been falsified. The claim was that ``ingest.SAST_QUERY`` selects no timestamps,
+    so an already-resolved finding is born and closed in the same instant and reports exactly
+    0.0 days. A live probe against the tenant (2026-08-27, recorded in the repo's CLAUDE.md)
+    found ``SASTFinding.createdAt`` -- a non-null ``DateTime!``, filterable and sortable -- and
+    the query now selects it, so the old arithmetic no longer runs.
+
+    The conclusion survives; the number moves, and moves in the worse direction. There is still
+    no ``resolvedAt`` on the type, so an API-resolved finding lands:
+
+        first_seen  = least(coalesce(createdAt, now), now) = createdAt
+        resolved_at = coalesce(NULL, now)                  = now
+        mttr_days   = now - createdAt = the finding's AGE at the moment we first looked
+
+    A flat 0.0 at least looks broken. This looks like a measurement: a weakness fixed within a
+    day two years ago reports 730 days, and the Kaplan-Meier median is set by the register's own
+    start date rather than by any remediation programme. One end is measured, the other is
+    fabricated, and the difference between them measures neither.
+
+    (The second live reason is not visible from here: ``status: RESOLVED`` returns zero rows
+    against this tenant, so the filter would not even deliver the population it appears to ask
+    for. Both reasons are in ``config.SAST_FETCH_RESOLVED``.)
+
+    Turn the flag on if a ``resolvedAt`` appears on the type -- not before.
+    """
+    import datetime as dt
+
+    import ledger as ledger_mod
+    from config import SAST_FETCH_RESOLVED
+
+    # 30 days before SCAN_TS, which is 2026-08-01.
+    created_at = "2026-07-02T00:00:00Z"
+    node = sast_node(id="f-resolved", status="RESOLVED", createdAt=created_at)
     silver = metrics.silver_findings(bronze(spark, [node], "sast"), "sast")
     touched = ledger_mod.reconcile(
         ledger_mod.empty_ledger(spark),
@@ -363,17 +398,108 @@ def test_asking_sast_for_resolved_findings_would_report_zero_day_mttr(spark):
     )
     row = touched.first()
     assert row["status"] == "RESOLVED"
-    # Born and closed at the same instant -- and `api`, so nothing downstream even flags it as
-    # an inference a reader might discount.
-    assert row["first_seen"] == row["resolved_at"]
+    # The birth date is the API's. The death date is this scan, because there is nothing else
+    # to read -- and `api`, so nothing downstream flags it as an inference a reader might
+    # discount.
+    assert row["first_seen"] == dt.datetime(2026, 7, 2)
+    assert row["resolved_at"] == dt.datetime(2026, 8, 1)
     assert row["resolution_src"] == "api"
 
     ledger_rows = touched.select(*ledger_mod.LEDGER_SCHEMA.fieldNames())
-    assert ledger_mod.lifecycle_frame(ledger_rows, SCAN_TS).first()["mttr_days"] == 0.0
+    mttr = ledger_mod.lifecycle_frame(ledger_rows, SCAN_TS).first()["mttr_days"]
+    # 30 days: the age, not a remediation time, and emphatically not the old 0.0.
+    assert mttr == pytest.approx(30.0)
+    assert mttr != 0.0
 
     # ...which is why the register does not ask for these findings in the first place.
     assert SAST_FETCH_RESOLVED is False
     assert "status" not in ingest.build_filter("sast")
+
+
+def test_sast_first_seen_prefers_the_api_birth_date_over_the_scan(spark):
+    """**The payoff.** A SAST finding resolved by disappearance now reports a real MTTR.
+
+    Two scans a day apart, over a finding the API says was created 30 days before the first.
+    The second scan does not return it, so ``reconcile`` resolves it by absence. If
+    ``first_seen`` came from observation -- the old behaviour, when the query selected no
+    timestamps -- this would report ~1 day: the scan interval, and nothing about the weakness.
+    It reports ~31 instead, which is the 30 days the finding existed before anybody looked plus
+    the interval within which it went away.
+
+    The death date is still an upper bound whose error is the scan interval, which is what
+    ``resolution_src = 'disappeared'`` is for. The birth date is not an estimate at all.
+    """
+    import datetime as dt
+
+    import ledger as ledger_mod
+
+    created_at = "2026-07-02T00:00:00Z"  # 30 days before scan 1
+    scan_2_ts = "2026-08-02T00:00:00Z"  # one day after scan 1
+
+    node = sast_node(createdAt=created_at)
+    silver = metrics.silver_findings(bronze(spark, [node], "sast"), "sast")
+    after_1 = ledger_mod.reconcile(
+        ledger_mod.empty_ledger(spark),
+        ledger_mod.observed(silver),
+        scan_id="scan-1",
+        scan_ts=SCAN_TS,
+        scope="sast",
+    ).select(*ledger_mod.LEDGER_SCHEMA.fieldNames())
+
+    first = after_1.first()
+    assert first["first_seen"] == dt.datetime(2026, 7, 2)
+    assert first["status"] == "OPEN"
+
+    # Scan 2 sees nothing at all -- the truncation that makes the disappearance pass fire.
+    empty = metrics.silver_findings(bronze(spark, [], "sast"), "sast")
+    after_2 = ledger_mod.reconcile(
+        after_1,
+        ledger_mod.observed(empty),
+        scan_id="scan-2",
+        scan_ts=scan_2_ts,
+        scope="sast",
+        prev_scan_id="scan-1",
+    )
+    row = after_2.first()
+    assert row["status"] == "RESOLVED"
+    assert row["resolution_src"] == "disappeared"
+    # Not re-derived from the second scan: the birth date the API gave us, unchanged.
+    assert row["first_seen"] == dt.datetime(2026, 7, 2)
+    assert row["resolved_at"] == dt.datetime(2026, 8, 2)
+
+    ledger_rows = after_2.select(*ledger_mod.LEDGER_SCHEMA.fieldNames())
+    mttr = ledger_mod.lifecycle_frame(ledger_rows, scan_2_ts).first()["mttr_days"]
+    assert mttr == pytest.approx(31.0)
+
+
+def test_a_sast_node_with_no_created_at_still_lands(spark):
+    """The committed capture predates the column, and that is the retroactivity case.
+
+    Bronze holds only the fields the query asked for, so a scan taken before ``createdAt`` was
+    selected -- and every node in ``sast_response.json`` -- projects ``first_detected_at`` as
+    NULL. Nothing may break on that: the ledger falls back to the observation date, exactly as
+    it did before this column existed. If this test ever fails it means the projection started
+    requiring a field that half the register's history does not have.
+    """
+    import ledger as ledger_mod
+
+    nodes = sast_nodes()
+    silver = metrics.silver_findings(bronze(spark, nodes, "sast"), "sast")
+    assert silver.count() == len(nodes)
+    # Every one of them, not merely "some": the fixture has no `createdAt` anywhere in it, so
+    # this also pins the gold built from it as unmoved by this change.
+    assert silver.where(F.col("first_detected_at").isNotNull()).count() == 0
+
+    touched = ledger_mod.reconcile(
+        ledger_mod.empty_ledger(spark),
+        ledger_mod.observed(silver),
+        scan_id="scan-1",
+        scan_ts=SCAN_TS,
+        scope="sast",
+    )
+    assert touched.count() == len(nodes)
+    # Observation, because there is nothing better to fall back to.
+    assert touched.where(F.col("first_seen") != F.lit(SCAN_TS).cast("timestamp")).count() == 0
 
 
 def test_each_scope_queries_its_own_connection():

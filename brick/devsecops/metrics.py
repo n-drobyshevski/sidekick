@@ -150,6 +150,11 @@ SAST_NODE_SCHEMA = StructType(
         StructField("id", StringType()),
         StructField("name", StringType()),
         StructField("status", StringType()),
+        # The one timestamp ``SASTFinding`` has (see ``ingest._SAST_QUERY_TEMPLATE``). Declared
+        # StringType and cast in the projection, exactly like ``firstDetectedAt`` above: a
+        # TimestampType field here would put date parsing inside ``from_json``, where a value it
+        # cannot read takes the whole node to NULL rather than the one column.
+        StructField("createdAt", StringType()),
         StructField("severity", StringType()),
         StructField("originalSeverity", StringType()),
         StructField("filePath", StringType()),
@@ -343,9 +348,18 @@ def silver_sast(bronze: DataFrame) -> DataFrame:
     is the point of ``config.SastRiskRule`` existing at all, and under ``RiskRule`` every row
     here would classify `unknown` -- correctly, and uselessly.
 
-    ``first_detected_at`` and ``resolved_at`` are NULL too, because ``ingest.SAST_QUERY``
-    selects no timestamps (see its comment). The ledger then dates the lifecycle from
-    observation, which is the honest fallback and not the same as a measured one.
+    **The clock is half measured and half inferred, and the row says which half.**
+    ``first_detected_at`` is the API's own ``createdAt`` -- a real birth date, which the ledger
+    prefers over the scan that first saw the finding. ``resolved_at`` stays NULL, because
+    ``SASTFinding`` has no ``resolvedAt`` (see ``config.SAST_FETCH_RESOLVED``): a death date
+    arrives only when a later scan stops returning the finding, and lands with
+    ``resolution_src = 'disappeared'`` so a reader can discount it by the scan interval.
+    A scan taken before ``createdAt`` was selected holds no such column in bronze, so
+    ``first_detected_at`` is NULL there and the ledger falls back to observation.
+
+    ``fix_date`` is NULL and stays NULL. A weakness in first-party code has no vendor to ship a
+    fix, so there is no second clock to start -- the same reason ``_BASE``'s ``hasFix`` is left
+    off this scope's filter.
     """
     node = F.from_json(F.col("node_json"), SAST_NODE_SCHEMA).alias("node")
     seq = F.col("seq") if "seq" in bronze.columns else F.lit(None).cast("long")
@@ -368,7 +382,7 @@ def silver_sast(bronze: DataFrame) -> DataFrame:
         ).alias("severity"),
         F.col("node.status").alias("status"),
         is_open(F.col("node.status")).alias("is_open"),
-        null_ts.alias("first_detected_at"),
+        F.col("node.createdAt").cast("timestamp").alias("first_detected_at"),
         null_ts.alias("last_detected_at"),
         null_ts.alias("resolved_at"),
         null_ts.alias("fix_date"),
