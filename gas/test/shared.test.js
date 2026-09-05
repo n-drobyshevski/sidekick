@@ -140,6 +140,7 @@ registerParityContract({
     "changeChip.js", "nvd.js", "scopeBar.js", "span.js", "splitBar.js",
   ],
   sheetOrder: SHEET_ORDER,
+  localSheets: ["./styles/tokens.css", "./styles/pages.css"],
 });
 
 // =========================================================================================
@@ -289,29 +290,6 @@ describe("os: the accent this register chose", () => {
       expect(charts).toContain(hex);
     }
     expect(charts).toContain("--chart-cat-*");
-  });
-});
-
-// =========================================================================================
-//  The stylesheet index, until the parity contract can hold it
-// =========================================================================================
-describe("os: the stylesheet index imports the shared sheets in cascade order", () => {
-  const INDEX = readFileSync(new URL("../src/client/styles.css", import.meta.url), "utf8");
-  const imports = [...INDEX.matchAll(/@import\s+"([^"]+)"/g)].map((m) => m[1]);
-
-  it("names them in exactly the documented order", () => {
-    expect(imports).toEqual(SHEET_ORDER);
-  });
-
-  it("puts overrides.css last, which is what makes it an override", () => {
-    // Reduced motion and the phone layout are the last word by position, not by
-    // specificity. A sheet appended after it would silently outrank both.
-    expect(imports[imports.length - 1]).toMatch(/overrides\.css$/);
-  });
-
-  it("keeps the two local sheets local, and everything else shared", () => {
-    const local = imports.filter((p) => p.startsWith("./"));
-    expect(local).toEqual(["./styles/tokens.css", "./styles/pages.css"]);
   });
 });
 

@@ -17,7 +17,7 @@ read the tree as `"type": "module"`.
 | `icons.js` | node-kind SVG (512 lines; only `ui/nodeCell.js` and `ui/uiIcons.js` reach it) |
 | `ui/` | 31 component modules plus `index.js`, the one import surface, and `helpPage.js` — a page, not a component, so deliberately not in the barrel |
 | `styles/` | nine stylesheets: `tokens.base.css` first, `overrides.css` last |
-| `test/contracts/` | nine spec factories the apps register from their own test files |
+| `test/contracts/` | eleven spec factories the apps register from their own test files |
 | `test/testConfig.js` | a manifest fixture, for tests that reach a module reading one |
 | `test/domStub.js` | a DOM small enough to render a component into, for a repo with no jsdom |
 
@@ -264,14 +264,17 @@ registerTokenContract({ describe, it, expect, appRoot: new URL("../", import.met
 
 | contract | what it holds |
 |---|---|
-| `tokens.js` | the severity palette, the five-token accent split, no `--accent` as ink, the graphite primary button, `charts.js`'s `ACCENT`, no hex literal outside the two token files |
-| `emptyStates.js` | a failure is never dressed as an absence; every page below the front door says where its figures came from. `ctx.syncField` names the bootstrap field a first-run page gates on (`latestSync` by default, `latestScan` in gas) — hard-coding it had silently excused gas from this whole half |
+| `tokens.js` | the severity palette, the five-token accent split, no `--accent` as ink, the graphite primary button, `charts.js`'s `ACCENT`, no hex literal outside the two token files (its own allow-list mechanism covers mask stops and a chart palette's greys — see `ctx.hexAllow`) |
+| `emptyStates.js` | a failure is never dressed as an absence; every page below the front door says where its figures came from. `ctx.syncField` names the bootstrap field a first-run page gates on (`latestSync` by default, `latestScan` in gas) — hard-coding it had silently excused gas from this whole half. Also exports `code()`, the comment-and-string-aware stripper every other sweep in this directory (and `measure.mjs`) reads through, rather than the raw source |
 | `navGroups.js` | `PAGES` is the only IA list — lane contiguity, two pages per labelled lane, one mark per lane and route, the manifest's front door |
 | `brandMark.js` | the static splash SVG is the module's geometry, and the splash copy is the manifest's |
-| `parity.js` | nothing shared has been forked back into an app; the stylesheet index is in cascade order |
+| `parity.js` | nothing shared has been forked back into an app: no re-copied `ui/` module, no local `api.js`/`store.js`/`icons.js`, no re-forked shell module, the barrel is still a re-export, and — P9 — no local DECLARATION of `relativeAge`/`syncCaption`/`absentText` anywhere in the app's client tree (catches the pre-P8 shape: a private helper inline in a page, not a second copy of the shared file). The stylesheet half: cascade order, `overrides.css` last, `tokens.base.css` FIRST (P9, asserted against the real parsed imports rather than the caller's own expected-order array), and — where `ctx.localSheets` is given — that only the declared local sheets remain local |
 | `scope.js` | the kinds an app declares, the value encoding, and the exact object a pick puts on the wire |
 | `zscale.js` | every app layer is a `--z-*` token |
 | `diagnostics.js` | the Settings -> System read-outs: what the shared renderer promises, and the exact SET of sections each app asked it for. Half of it renders into `test/domStub.js`; half reads that app's own `pages/settings.js` |
+| `help.js` | `ui/helpPage.js`'s behaviour: the search field, the `?term=` deep link, `/` to focus, Escape to clear, and the pure `helpModel()` underneath it all. Registered by `gas/` and `gas_devsecops/`; `gas_ai/` keeps its own bespoke lexicon page and does not register this one — see "The one page that IS shared" above |
+| `relativeAge.js` | the one clock-relative label ("3 hours ago") — refuses null/undefined/blank/`[]`/`false` BEFORE any `Number()`/`Date.parse()` cast, with a perturbation proving the tempting cast-first rewrite fails on exactly those inputs |
+| `syncCaption.js` | the rail's freshness sentence — that `app.js` calls the shared `syncCaption()` rather than growing its own `Math.floor(Date.now() - Date.parse(...))` day-count back |
 
 `gas_devsecops/test/shared.test.js` is the worked example.
 
@@ -289,6 +292,149 @@ work: ESLint 10 resolves a flat config's `files` globs against a base path it ta
 cwd, and reports every file here as "ignored because it is located outside of the base path".
 Changing the cwd is the supported answer, not a workaround. The guard was perturbed (a free
 identifier added to `ui/`) and does bite.
+
+## Before / after
+
+The wave's own plan called for "re-run the baseline script and record the after-column."
+No such script was ever saved — the 2026-09-04 baseline that established "19 of 23 shared
+ui/*.js are byte-identical between gas_ai and gas_devsecops" (the first `gas_shared/` commit's
+own message) was computed ad hoc, once, by a method that was never written down. That is why
+this section cannot simply "record the after-column": there was no committed method to re-run.
+
+`gas_shared/measure.mjs` is that method, committed. It measures client JS/CSS size, cross-app
+duplication (byte-identical / near-identical <=15% churn via `git diff --no-index --numstat` /
+diverged), CSS hygiene, component vocabulary, `dist/` size with gzip, and the 12-item scorecard
+below — against **any two refs, by the same code path**, so a before/after table is never one
+column measured one way beside a column measured another:
+
+```
+node gas_shared/measure.mjs                              # this working tree only
+node gas_shared/measure.mjs --ref <sha>                  # one historical ref, read-only
+node gas_shared/measure.mjs --before 01aca7b --after HEAD   # the wave's own comparison
+```
+
+`--ref`/`--before` materialize a commit read-only via `git archive -o <file>` + `tar -xf`
+into a scratch directory (the same technique `gas/whichBuild.mjs` uses to hash `src/` at a
+historical commit) — nothing is checked out, no worktree is touched. `01aca7b` is the commit
+immediately before `gas_shared/` existed at all (`git ls-tree 01aca7b -- gas_shared` is empty;
+it is the direct parent of the first `gas_shared/` commit).
+
+**Both columns below are one run's output** (`npm run measure:wave` from this directory),
+derived, not typed — the module-count mistake this file already made once, when two packages
+each counted only their own addition, is the reason the rule is "run the walk, don't type the
+number."
+
+| | gas | gas_ai | gas_devsecops | gas_shared |
+|---|---|---|---|---|
+| **before** — client JS | 32 files / 13,304 lines | 91 / 38,315 | 55 / 18,702 | (did not exist) |
+| **before** — client CSS | 1 / 2,062 | 19 / 7,194 | 9 / 2,893 | (did not exist) |
+| **after** — client JS | 35 / 12,228 | 65 / 31,982 | 24 / 11,445 | 46 / 9,357 |
+| **after** — client CSS | 3 / 1,059 | 12 / 4,447 | 3 / 131 | 9 / 3,312 |
+
+Every app's own client tree shrank; the difference moved into one `gas_shared/` copy rather
+than disappearing. gas_ai's CSS count looks like it shrank from 19 files to 12 — that is
+`gas_shared/`'s seven shared sheets leaving gas_ai's own `styles/` directory, not seven
+stylesheets deleted.
+
+**Duplication across apps' own client trees** — same-basename files still living in more than
+one app's own `src/client` tree (not counting anything routed through `gas_shared/`):
+
+| | shared-basename pairs | identical | near-identical (<=15%) | diverged |
+|---|---|---|---|---|
+| before | 99 | 17 | 20 | 62 |
+| after | 50 | 1 | 3 | 46 |
+
+The after-column's 50 remaining pairs are overwhelmingly **same name, different page** —
+`app.js`, `data.js`, `settings.js`, `ui.js`, each app's own `styles.css`/`tokens.css` — the
+kind of file every app is expected to have its own copy of. None of them are the shared
+component base any more; that is what `gas_shared/test/contracts/parity.js` now holds by
+construction rather than by this script's count.
+
+**A disagreement with the hand-computed 2026-09-04 baseline, reported rather than
+reconciled.** The first `gas_shared/` commit's message claims "19 of 23 shared ui/*.js are
+byte-identical between gas_ai and gas_devsecops" at the commit immediately before it —
+`01aca7b`, the same ref this script's "before" column uses. Measuring that exact pair at
+that exact commit (`gas_ai/src/client/js/ui/*.js` vs `gas_devsecops/src/client/js/ui/*.js`,
+byte comparison): **24 shared basenames, 10 byte-identical, not 19 of 23.** Loosening the bar
+to <=15% churn (this script's own "near-identical" bucket) adds 10 more — `dom.js` 12.9%,
+`tipPlace.js` 10.4%, `tableModel.js` 16.0% (just over), `settings.js` 6.5%, `severity.js`
+5.5%, `sheet.js` 0.3%, `tip.js` 1.0%, `popover.js` 2.2%, `uiIcons.js` 1.1%, `data.js` 1.8% —
+leaving only `feedback.js` (21.8%), `format.js` (25.9%) and `tableModel.js`'s own second
+look diverged outright, plus `projectScope.js` (54.4%), which is the one file in that list
+that is SUPPOSED to differ (it reads each app's own domain layer). So "19 identical, 4
+trivially different" reads as "10 identical, 10 within 16% churn, 3 genuinely apart" once
+measured the same way twice. The direction of the finding — a handful of near-copies, one
+legitimate exception — still supports the commit's argument; the specific count in it does
+not survive a second measurement, which is exactly the class of error this script exists to
+stop happening a third time.
+
+**The `dist/` total went UP, not down**, and that is not this script contradicting itself —
+`gas/dist/` gained a whole extra bundle (`js_charts.html`, Chart.js split out of the main
+client bundle) somewhere in the same window, which is a real feature, not de-duplication
+noise. Total dist bytes (raw / gzip), same run:
+
+| | before | after |
+|---|---|---|
+| gas | 996,788 / 280,039 | 1,040,132 / 287,889 |
+| gas_ai | 1,717,611 / 489,176 | 1,733,690 / 493,489 |
+| gas_devsecops | 814,555 / 244,561 | 833,908 / 248,922 |
+
+Line/duplication counts are where the wave's saving shows; `dist/` size answers a different
+question ("does the user download more or less") and the honest answer here is "slightly
+more, for an unrelated reason," not "the wave made the bundles smaller."
+
+### The 12-item cross-app inconsistency scorecard
+
+Same run, same method, both columns. Every mark below is a structural check (an import, a
+call-site count, a contract registration) — not a restatement of the claim it is checking.
+
+| item | before | after |
+|---|---|---|
+| boot-splash copy | ✗ | ✓ |
+| page-header pattern | ✗ | ✗ |
+| sevBadge role | ✗ | ✓ |
+| empty-vs-error | ✗ | ✓ |
+| table pagination | ✗ | ✓ |
+| scope-control chrome | ✗ | ✓ |
+| sync button disabled-with-reason | ✓* | ✓* |
+| last-sync caption | ✗ | ✓ |
+| diagnostics/System panel | ✗ | ✓ |
+| help page presence and shape | ✗ | ✓* |
+| z-index scale | ✗ | ✓ |
+| `--ok` / `--warn` | ✗ | ✓ |
+
+Two rows are not a plain ✓, on purpose:
+
+- **`sync button disabled-with-reason` measures ✓* at BOTH ends**, which disagrees with "all
+  12 were ✗ at baseline" for this one item, and that disagreement is reported rather than
+  smoothed over. gas and gas_ai fall back to a dry run without credentials and have never had
+  a disabled state to explain; gas_devsecops's disabled button already reached the same
+  tooltip-on-disabled mechanism (`tipAnchor()` / `.tip-disabled-wrap`) before this wave, via
+  the fork from gas_ai's chassis. There was no gap here to close, at either end — a ✓ that
+  claimed the wave fixed this would be inventing a before-state that measures false.
+- **`help page presence and shape` is ✓\*, not ✓**, because it is shared by two of three apps
+  BY DECISION — gas_ai's bespoke lexicon page is a documented exception (see "The one page
+  that IS shared, and the one that is not" above), not an unfinished migration.
+- **`page-header pattern` is still ✗.** gas and gas_devsecops draw every page title through
+  `pageHeader()`; gas_ai has five bare `el("h1", …)` call sites left (`combos.js`, `aars.js`,
+  `graph.js`, `problems.js`, `config.js`) — `graph.js` and `aars.js`'s carry a `workbench-title`
+  class, which may be a distinct sub-heading component rather than the page header proper, but
+  this script does not re-derive that distinction; it reports the honest count rather than
+  assuming the exception.
+
+### Component vocabulary and CSS hygiene, same run
+
+```
+node gas_shared/measure.mjs --before 01aca7b --after HEAD
+```
+
+prints, per app, both before and after: `el("h1")` vs `pageHeader()` calls, hand-typed em
+dashes vs `absent()`, `emptyState()` vs `errorState()`, `pager()` vs `tableFooter()`, local
+`num()` definitions, `sevBadge()` calls, test-file counts, and a CSS hygiene line (hex
+literals outside the token files, distinct `font-size` values, `z-index` literals, reduced-
+motion blocks, `outline:` on `--accent` vs `--accent-text`). The full output is long enough
+that it is not reproduced here in full — run the command above for the current numbers
+rather than trusting a snapshot that will drift the next time either app changes.
 
 ## Known follow-up
 

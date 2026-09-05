@@ -200,6 +200,13 @@ nothing else. Every animation keeps a `prefers-reduced-motion` alternative.
 - **Crimson** (`#be123c`, hover `#9f1239`): the single brand accent, and the one real divergence
   from the sibling tool's Signal Blue. It carries brand, nav, interactive state, the focus ring,
   links, and the toxic-combination halo. **It is never a severity and never a surface.**
+- This is the **five-token accent contract** (`gas_shared/test/contracts/tokens.js`;
+  `gas_shared/README.md`'s "The five-token accent contract") stated for this brand:
+  `--accent`/`--accent-hover` = `#be123c`/`#9f1239` (a fill); `--accent-text` = `#be123c` too,
+  because crimson clears the 4.5:1 TEXT floor on its own, not just the 3:1 graphical-mark
+  floor a fill owes — that is what lets `--accent-edge` stay `transparent` here and
+  `--on-accent` be `#ffffff`. `gas_devsecops`'s yellow cannot make that same collapse; see its
+  own `DESIGN.md`.
 
 ### Secondary
 - **Graphite** (`#0a0a0a`, hover `#27272a`, text on it `#fafafa`): the solid near-black that fills

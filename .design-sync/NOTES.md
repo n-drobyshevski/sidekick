@@ -45,6 +45,17 @@ CLAUDE.md: the severity palette is byte-identical, the brand deliberately is not
   brand is a swappable token block — not a fork.
 - Do NOT collapse the split. `--accent: #ffcb13` is 1.52:1 on white; it is a FILL token.
 
+**UPDATE — this is now implemented, not just an observation.** `gas_shared/` (created after
+this note was written) IS that structural base: `styles/tokens.base.css` carries the shared
+scale and the severity palette; each app's own `src/client/styles/tokens.css` carries exactly
+the five accent tokens (`--accent`, `--accent-hover`, `--accent-text`, `--accent-edge`,
+`--on-accent`) as the swappable block this note predicted. See `gas_shared/README.md`'s "The
+five-token accent contract" for the arithmetic per brand, and
+`gas_shared/test/contracts/tokens.js` for the contract that holds it. The 2026-09-02 measured
+numbers above (19/23, the 37/50-line diffs) are the pre-`gas_shared/` baseline this note was
+written against — `gas_shared/README.md`'s "Before / after" section has the post-wave
+re-measurement, by a committed script rather than by hand a second time.
+
 ## Preview-harness traps
 
 - **`el()` throws on a `title` attribute** (deliberate, `ui/dom.js`). Any preview passing
@@ -153,11 +164,18 @@ not by reading signatures:
 
 ## Re-sync risks — what can go stale
 
-- **The adapter tracks the register by import, not by copy.** `src/components/*.jsx` import
-  `../../../../gas_devsecops/src/client/js/ui/*.js` directly, so a change to a factory's
-  signature silently changes the component while `spec.mjs` keeps describing the old one.
-  After any edit under `gas_devsecops/src/client/js/ui/`, re-read the changed factory against
-  its `spec.mjs` entry — nothing checks this automatically.
+- **The adapter tracks the register by import, not by copy.** `src/components/*.jsx` imported
+  `../../../../gas_devsecops/src/client/js/ui/*.js` directly when this note was written;
+  `gen.mjs`/`docs-gen.mjs`/`spec.mjs` were re-pointed at `../../../../gas_shared/` when that
+  package was cut (see `gas_shared/README.md`'s "Known follow-up" — `nameCell` following
+  `cells.js` -> `nodeCell.js`), so a change to a factory's signature still silently changes
+  the component while `spec.mjs` keeps describing the old one, just from the new path. After
+  any edit under `gas_shared/ui/` (or `gas_devsecops/src/client/js/ui/projectScope.js`, the
+  one file still genuinely local), re-read the changed factory against its `spec.mjs` entry —
+  nothing checks this automatically. The converter itself (`validate`, the DTS step, the
+  preview screenshots) was NOT re-run after the re-point — `.design-sync/adapter/node_modules`
+  is a per-clone symlink this worktree lacks — so the imports are proven to RESOLVE, not
+  proven to still render correctly.
 - **`shared-extras.css` is generated from gas_ai and pinned to nothing.** If gas_ai's
   `aars.css` / `graph.css` are edited, re-run `extract-extras.mjs` and re-run the class-coverage
   check above.

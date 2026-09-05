@@ -20,6 +20,82 @@ spec: `gas/test/export_*.py` generate golden fixtures by running this code, and 
 ports are tested against them — after changing the Python domain layer, regenerate the fixtures
 and run `cd gas && npm run check`. See `gas/README.md`.
 
+`gas_shared/` is the one copy of the component base, stylesheets and design tokens that
+`gas/`, `gas_ai/` and `gas_devsecops/` all draw with — plain ES modules and plain CSS,
+imported by relative path, bundled by each app's own esbuild step, nothing installed. It
+holds `ui/` (components, `index.js` the one barrel, `helpPage.js` a page and deliberately
+not in the barrel), `shell/` (`app.js`'s shell — nav rail, appbar, boot splash, the flyout
+panel — plus a generated `index.template.html`), `api.js`/`store.js`/`icons.js` (the RPC
+bridge, the bootstrap/RPC cache, node-kind SVG), `appConfig.js` (the seam, below),
+`styles/` (nine sheets, `tokens.base.css` first and `overrides.css` last), `test/contracts/`
+(eleven spec factories the apps register from their own test files), and `measure.mjs` (the
+wave's own before/after measurement — see `gas_shared/README.md`'s "Before / after"). Read
+`gas_shared/README.md` before touching any of it; it is the design system's own spec, the
+same way `wiz_dashboard/domain/` is `gas/`'s.
+
+**The `appConfig` seam.** A shared module cannot reach sideways into an app — `ui/tip.js` has
+no `../helpContent.js` to import, `store.js` cannot know which route is a register's front
+door. Each app's `app.js` calls `configureApp(manifest)` as the FIRST statement of its module
+body (productName, openingNoun, storagePrefix, defaultRoute, findHelpEntry, sync, …), and
+every shared consumer calls `appConfig()` to read it back — **always inside a function, never
+at module top level.** A top-level read runs during `import`, which under esbuild's bundling
+order happens BEFORE `app.js`'s own body runs, and throws even on a correctly wired app.
+`appConfig()` throws with nothing configured, on purpose: a default would silently hand one
+app another app's front door.
+
+**The contract-factory pattern.** `vitest.config.ts` in each app collects only that app's own
+`test/` directory, so a shared rule cannot *be* a test file — it is a factory function in
+`gas_shared/test/contracts/*.js` that an app's own `test/shared.test.js` calls with vitest's
+`describe`/`it`/`expect` and that app's specifics (severity constants, route lists, the
+manifest's copy). The same arithmetic or sweep then runs against three different brands /
+route sets / section lists instead of being re-typed three times. Every assertion in there is
+optional-with-a-named-skip where an app legitimately differs (no SLA table, no error log, no
+`ctx.localSheets` given yet) — a silent pass is the failure mode these guard against, so a skip
+always names why in the test summary rather than just not running.
+
+**Traps this wave earned:**
+
+- **`npm run check:exact` uses POSIX `VAR=1 cmd`** (`test:exact`'s `GAS_TEST_FULL_ISOLATION=1
+  vitest run`), which fails under npm's default Windows shell (`npm_config_script_shell=bash`
+  was the four-times-repeated workaround). P9 fixed the script itself in all three
+  `package.json`s to `node -e "process.env.X='1';require('child_process').execSync(...)"`,
+  which needs no shell-specific env-var syntax at all; the workaround still works too, but is
+  no longer necessary.
+- **The dev harness serves a stale CSS bundle.** Bust it with `?dry&v=<n>`. A 0.0000%
+  screenshot diff between two runs is a finding that the harness served the SAME bundle
+  twice, not a pass.
+- **A committed `dist/` going stale bit twice** (P4a: `gas_devsecops/dist/styles.html`
+  missing 90 selectors; P4b: all three stale at `5ae4701`, `.rail-amp` in `gas_shared/`
+  source and absent from every committed stylesheet) — both times because a `gas_shared/`
+  change never triggers a rebuild here, and `gas/buildStamp.mjs`'s `sourceStamp()` only
+  hashes `<root>/src`, so it stays green through exactly this class of defect. `npm run
+  check-dist-fresh` (`checkDistFresh.mjs`, wired into `check`/`check:exact`, one per app)
+  actually rebuilds and diffs the result against the committed bundle, modulo the
+  `__BUILD_ID__` stamp, via `git show HEAD:<path>` — no second stamp mechanism, and no
+  worktree touched.
+- **`Number(null)` is `0`, and it is finite — the third time this bit.** `ui/figures.js`'s
+  `relativeAge()` refuses null/undefined/blank/`[]`/`false` BEFORE any cast; the tempting
+  "simplify the two branches" rewrite casts first and reads every one of them as epoch 0.
+  `test/contracts/relativeAge.js`'s own perturbation reproduces the defective rewrite inline
+  and shows it failing, rather than asserting the rule from a comment.
+- **`portalsOpen()` answers two different questions with one counter, and the fix is not
+  yours to make here — it belongs with `ui/sheet.js`.** `gas_shared/shell/navFlyout.js`'s own
+  header has the full measurement: a PINNED nav panel is counted for the whole session, and
+  the sheet's Tab trap (`if (portalsOpen()) return;`) stops wrapping while one is pinned
+  (measured `{defaultPrevented: false, wrappedToFirst: false}` pinned vs `{true, true}`
+  unpinned — `inert` still contains Tab to the sheet, only the wrap is lost). It stays because
+  `gas_ai/pages/graph.js` (:726, :749) stands its own Escape handler down on the same count.
+- **The dry-run fallback makes "disabled with a reason" a ONE-APP AFFORDANCE, not a parity
+  gap.** `gas` and `gas_ai` fall back to `dryRunScan`/`dryRunSync` without credentials, so
+  they have no disabled sync/scan button to explain; only `gas_devsecops` needs one, and its
+  reason reaches the reader through the shared `tipAnchor()`/`.tip-disabled-wrap` mechanism
+  (a disabled control does not reliably take the pointer/focus events a plain `title` or a
+  bare tooltip needs). A scorecard or contract that expects all three to carry this is
+  checking for a gap that was never there.
+- **`gas_devsecops` still has no `navModel.js` test of its own** — `gas/test/navModel.test.js`
+  and `gas_ai/test/navModel.test.js` exist; `gas_devsecops` has neither, and nothing here
+  fixes that.
+
 ## Design Context
 
 Before any UI or design work, read:

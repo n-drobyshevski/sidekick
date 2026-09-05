@@ -47,6 +47,12 @@ So the accent's work is **split across two tokens**, and the split is the design
 | `--accent-text` | `#7c4a0a` | 7.39:1 | links, focus rings, the active option, any accent ink, the chart series |
 | `--accent-hover` | `#ebb800` | 1.84:1 | the hover state of an accent fill |
 | `--accent-wash` | `rgba(255,203,19,.24)` | — | the one control reporting a standing state |
+| `--on-accent` | `#171717` | 11.78:1 on `--accent` | ink drawn **on** an accent fill — near-black here, white on the other two siblings, which is the whole reason this fifth token exists rather than a rule naming one colour |
+
+`--on-accent` is the fifth token in `gas_shared/test/contracts/tokens.js`'s accent contract
+(see `gas_shared/README.md`'s "five-token accent contract"), formalised after a rule that
+painted `var(--ink)` on an accent fill turned out to be correct in exactly one of the three
+apps and wrong in the other two with nothing failing.
 
 ### Why the edge is not optional
 

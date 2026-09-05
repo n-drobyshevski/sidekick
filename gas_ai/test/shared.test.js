@@ -176,6 +176,12 @@ registerParityContract({
     "./styles/help.css",
     "../../../gas_shared/styles/overrides.css",
   ],
+  localSheets: [
+    "./styles/tokens.css", "./styles/inventory.css", "./styles/graph.css",
+    "./styles/graphQuery.css", "./styles/recordSheet.css", "./styles/scans.css",
+    "./styles/compliance.css", "./styles/combos.css", "./styles/lattice.css",
+    "./styles/aars.css", "./styles/help.css",
+  ],
 });
 
 registerZScaleContract(base);
