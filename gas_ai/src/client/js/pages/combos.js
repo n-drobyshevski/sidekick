@@ -21,7 +21,7 @@ import { bootstrap, navigate, setParams, swrCall } from "../../../../../gas_shar
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { kindIconSvg, kindLabel, categoryOf } from "../../../../../gas_shared/icons.js";
 import {
-  absent, FINDINGS_SCORE_LABEL, ordinal,
+  absent,
   clear, dataTable, debounce, el, emptyState, errorState, heroStat, outcomeBadge, pageHeader,
   outcomeLabel, plural, sectionLabel, select, statRow, tableFooter,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,

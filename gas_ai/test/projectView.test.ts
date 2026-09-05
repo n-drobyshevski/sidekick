@@ -332,3 +332,130 @@ describe("the project view", () => {
     expect(scoped["total"]).toEqual(wide["total"]);
   });
 });
+
+/**
+ * THE ISSUE WHOSE ENTITY NEVER BECAME AN ASSET.
+ *
+ * The register's issue population is no longer only AI-kinded entities: widening the fetch by
+ * category brings back issues raised on VMs, containers and identities, and `kindFromWizType`
+ * refuses those types — so no asset row is written for them and they hang off an `assetId`
+ * that is in no tab. Scoping issues by asset membership ALONE therefore removed every one of
+ * them from every project view, with nothing on screen saying so. A list that looks complete
+ * and is not is the worst shape this feature can take, which is why it gets its own block
+ * rather than a clause in the "scopes the populations" test above.
+ *
+ * The rows are appended to the tab directly. A sync cannot produce this shape on the seeded
+ * landscape — every seeded issue hangs off a seeded asset — and a fixture that could not
+ * exercise the defect would leave the fix asserting nothing.
+ */
+describe("an issue whose entity is absent from ai_assets", () => {
+  const ORPHAN = "iss-orphan-vm";
+  const LEGACY = "iss-orphan-legacy";
+  const ORPHAN_ASSET = "vm-that-kindFromWizType-refused";
+
+  function issueIds(): Set<string> {
+    return new Set((ok<Rec>(server.api.getIssues({}))["rows"] as Rec[]).map((r) => String(r["id"])));
+  }
+
+  beforeAll(async () => {
+    const db = await import("../src/server/sheetsDb");
+    const store = await import("../src/server/syncStore");
+    // Both rows name the same absent asset and the same project. The ONLY difference is
+    // whether the row carries its own project refs, which is precisely the question.
+    const base = {
+      ruleId: "wc-id-9001",
+      ruleName: "Virtual machine running an AI workload with high privileges",
+      comboGroup: "other",
+      nativeSeverity: "HIGH" as const,
+      adjustedSeverity: "HIGH" as const,
+      status: "OPEN",
+      assetId: ORPHAN_ASSET,
+      assetName: ORPHAN_ASSET,
+      projects: ["PROJECT-DELTA"],
+    };
+    db.appendRows(db.TABS.issues, [
+      store.issueToRow({
+        ...base,
+        id: ORPHAN,
+        projectRefs: [{ id: SMALL, name: "PROJECT-DELTA", isFolder: false }],
+      }),
+      // No `projectRefs` at all — the shape of every row already in a ledger written before
+      // the column existed. Its cell is empty, and an empty cell must read back as unknown.
+      store.issueToRow({ ...base, id: LEGACY }),
+    ]);
+    store.__resetMemosForTest();
+    expect(store.loadIssues().find((i) => i.id === LEGACY)?.projectRefs).toBeUndefined();
+  });
+
+  it("is in the register when nothing is chosen", () => {
+    // The control. If these rows were not readable at all the two assertions below would
+    // pass for the wrong reason.
+    setView("");
+    const all = issueIds();
+    expect(all.has(ORPHAN)).toBe(true);
+    expect(all.has(LEGACY)).toBe(true);
+  });
+
+  it("survives a project view its own refs match, with no asset to hang off", () => {
+    setView(SMALL);
+    expect(issueIds().has(ORPHAN)).toBe(true);
+  });
+
+  it("is excluded from a project its refs do not name", () => {
+    // The other half, and the one that keeps the fix from being "show everything": BETA is
+    // disjoint from DELTA in the seed, so a row attributed to DELTA has no claim on it.
+    setView(BETA);
+    expect(issueIds().has(ORPHAN)).toBe(false);
+  });
+
+  it("keeps today's behaviour for a row whose refs are absent", () => {
+    // ABSENT IS NOT EMPTY AND IT IS NOT A MATCH EITHER. The row predates the column, so its
+    // attribution was never measured; deciding it in either direction would state a fact no
+    // sync established. Asset membership alone decides it, exactly as before — and its asset
+    // is in no tab, so it is out of every project view until a sync re-writes the row.
+    setView(SMALL);
+    expect(issueIds().has(LEGACY)).toBe(false);
+    setView("");
+    expect(issueIds().has(LEGACY)).toBe(true);
+  });
+});
+
+/**
+ * THE SAME DEFECT ON THE FINDINGS HALF, and this one the seed already carries.
+ *
+ * A configuration finding is evaluated against whatever resource the rule names — the seed
+ * has one on a REGION, one on a RAW_ACCESS_POLICY and one on a SERVICE_ACCOUNT — and none of
+ * those three types becomes an asset row. Measured on the seed: 3 of the 7 findings have a
+ * resource that is in no tab, and all three carry project refs of their own. Under a project
+ * view every one of them used to disappear.
+ *
+ * `FindingRow.projects` has held the refs as objects since the tab existed, so this needed no
+ * new column — only the same OR.
+ */
+describe("a config finding whose resource is not an asset", () => {
+  function findingIds(): Set<string> {
+    return new Set(
+      (ok<Rec>(server.api.getConfigFindings({}))["rows"] as Rec[]).map((r) => String(r["id"])),
+    );
+  }
+
+  it("stays in view when its own refs name the project", () => {
+    // cfg-005 (RAW_ACCESS_POLICY) and cfg-006 (SERVICE_ACCOUNT) are both attributed to ALPHA
+    // and neither resource is in ai_assets.
+    setView(LEAF);
+    const ids = findingIds();
+    expect(ids.has("cfg-005")).toBe(true);
+    expect(ids.has("cfg-006")).toBe(true);
+  });
+
+  it("still falls out of a project its refs do not name", () => {
+    // cfg-004 is attributed to GAMMA alone, so ALPHA has no claim on it — the OR admits a row
+    // to the project it names, never to every project.
+    setView(LEAF);
+    expect(findingIds().has("cfg-004")).toBe(false);
+    setView(BETA);
+    const beta = findingIds();
+    expect(beta.has("cfg-005")).toBe(false);
+    expect(beta.has("cfg-006")).toBe(false);
+  });
+});

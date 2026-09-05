@@ -1,4 +1,5 @@
-// Settings: four task tabs (Graph / Compliance / Access / System) over ONE batched save bar.
+// Settings: five task tabs (Graph / Register / Compliance / Access / System) over ONE batched
+// save bar.
 //
 // THIS PAGE USED TO ARGUE WITH ITSELF, and the argument is why it now looks like this. Every
 // card saved on its own, and two comments in the old file explained why that was the least-bad
@@ -26,14 +27,16 @@ import { setShowExperimental, showExperimental } from "../experimental.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { clientBuild } from "../buildInfo.js";
 import {
-  changeCountText, changeSummary, changedFields, dirtyTabs, draftWarnings, normalizeTab,
-  SETTINGS_TABS, settingsDraft, settingsPatch, validateDraft,
+  categoryDraftPatch, changeCountText, changeSummary, changedFields, dirtyTabs, draftWarnings,
+  normalizeTab, rankDraftFromPreset, rankDraftPatch, rankShareTotal, SETTINGS_TABS,
+  settingsDraft, settingsPatch, validateDraft,
 } from "../settingsModel.js";
 import { renderAccessPanel } from "./accessEditor.js";
+import { staleNotices } from "../staleness.js";
 import {
   clear, confirmDialog, debounce, diagnosticsPanel, disclosure, el, emptyState, errorState,
-  heroLines,
-  pageHeader, saveBar, settingRow,
+  field, heroLines,
+  pageHeader, saveBar, select, settingRow,
   settingsPanel, sevBadge, skeleton, statusPill, switchToggle, tabList, toast,
 } from "../ui.js";
 
@@ -42,7 +45,7 @@ export async function renderSettings(main, params, ctx) {
     pageHeader({
       route: "settings",
       lede: heroLines(
-        "Graph, compliance, access, system",
+        "Graph, register scope and ranking, compliance, access, system",
         "Grouped by task; one save bar covers the tabs that share a draft.",
       ),
     }),
@@ -487,6 +490,223 @@ export async function renderSettings(main, params, ctx) {
     fiveRs = { sync: syncAll, count: selectedCount, total: scope.total };
   }
 
+  // ============================================================================== REGISTER TAB
+  //
+  // Two questions about the same register, neither of which Graph (traversal defaults) or
+  // Compliance (the 5Rs framework) already answers: which Wiz risk categories the issue
+  // register collects (issueCategories), and how the rows it collects are ordered
+  // (rankRule / rankLeadsSort, src/domain/rank.ts's minimal model). Both feed the same
+  // downstream pages — Priorities, AARS, Toxic Combinations — so both live on one tab.
+
+  const candidateCategories = settings.candidateCategories || [];
+  // The category the register cannot run without. First in the list BY CONSTRUCTION
+  // (domain/registerScope.ts's CANDIDATE_CATEGORIES puts the AI category first) — read
+  // positionally rather than repeating its id here, so this file names no category itself.
+  const requiredCategoryId = candidateCategories.length ? candidateCategories[0].id : null;
+
+  const categoryRows = candidateCategories.map((c) => {
+    const required = c.id === requiredCategoryId;
+    const inputId = "set-cat-" + c.id.replace(/[^a-zA-Z0-9]+/g, "-");
+    const sw = switchToggle({
+      id: inputId,
+      checked: draft.issueCategories.indexOf(c.id) >= 0,
+      disabled: required,
+      onChange: (v) => {
+        draft.issueCategories =
+          categoryDraftPatch(draft.issueCategories, c.id, v, requiredCategoryId);
+        onEdit();
+      },
+    });
+    return {
+      id: c.id,
+      sw,
+      row: settingRow({
+        label: c.name,
+        htmlFor: inputId,
+        description: required
+          ? "Always collected — this is what makes the register an AI register."
+          : "Include this category's open issues and findings in the register.",
+        control: sw.node,
+      }),
+    };
+  });
+
+  // The one live signal this tab can show for free: bootstrap already carries whether the
+  // STORED register was collected under a different scope than the one below holds right
+  // now. staleNotices() is the shared derivation (staleness.js) rather than a second
+  // re-reading of boot.registerScope, so the wording here can never drift from what the
+  // rest of the app would say about the same fact.
+  const scopeNotices = boot ? staleNotices(boot).filter((n) => n.id === "registerScope") : [];
+
+  const registerPanel = settingsPanel({
+    title: "Register scope",
+    description: "Which Wiz risk categories the issue register collects.",
+    body: [
+      disclosure("Why this matters", el("p", {},
+        "Every issue-shaped figure this app publishes — the Priorities queue, AARS "
+        + "pillar A, the Toxic Combinations page, the ai_issues tab itself — counts "
+        + "only the rows one frameworkCategory filter returned. Widening this list does not "
+        + "extend the register, it changes what every one of those figures counts: a total "
+        + "of 6,073 beside a total of 99 is not growth, it is a different question being "
+        + "answered. Nothing on an issue names which category fetched it, so a row is only "
+        + "ever counted under a category selected here at the time of the sync that "
+        + "collected it.")),
+      // THE STANDING NOTICE. Always shown, never gated behind a colour: the words carry the
+      // claim (bold, not tinted), and it says what to do about it in the same sentence.
+      el("p", { class: "small", style: "margin:0 0 4px" },
+        el("strong", {}, "Changing this changes what every published figure counts. "),
+        "The stored register keeps counting the OLD categories until the next sync applies "
+        + "the new scope — nothing here takes effect on its own."),
+      ...scopeNotices.map((n) => el("div", { class: "notice warn", role: "status" },
+        n.text + " ", el("a", { href: n.href }, n.link))),
+      ...categoryRows.map((c) => c.row),
+    ],
+  });
+
+  // ---------------------------------------------------------------- priorities ranking
+
+  const rankPresets = settings.rankPresets || {};
+
+  /** Read/write one top-level field of draft.rankRule without hand-rolling the pair twice. */
+  function rankField(key) {
+    return {
+      get: () => draft.rankRule[key],
+      set: (v) => { draft.rankRule = rankDraftPatch(draft.rankRule, { [key]: v }); },
+    };
+  }
+  /** Same, one level into a nested table (shares / exploitationWeights / adjacencyWeights). */
+  function rankLeaf(table, key) {
+    return {
+      get: () => (draft.rankRule[table] || {})[key],
+      set: (v) => { draft.rankRule = rankDraftPatch(draft.rankRule, { [table]: { [key]: v } }); },
+    };
+  }
+
+  const shareTotalOut = el("p", { class: "small muted", role: "status", style: "margin:4px 0 0" });
+  function syncShareTotal() {
+    const total = rankShareTotal(draft.rankRule.shares);
+    shareTotalOut.textContent = "Shares total " + total.toFixed(2) + ". They need not sum to "
+      + "1 — the blend renormalises over whichever terms a given row actually measured.";
+  }
+
+  /** One 0..1 number field bound to a rank-rule leaf, repaintable from `rankInputs[id]`. */
+  const rankInputs = {};
+  function rankNumber(id, labelText, leaf, { step = "0.05", min = "0", max = "1" } = {}) {
+    const eltId = "set-rank-" + id;
+    const input = el("input", {
+      type: "number", id: eltId, min, max, step,
+      oninput: () => {
+        const v = Number(input.value);
+        leaf.set(Number.isFinite(v) ? v : 0);
+        onEdit();
+        syncShareTotal();
+      },
+    });
+    rankInputs[id] = { input, leaf };
+    return field(eltId, labelText, input).node;
+  }
+
+  const presetSelect = select({
+    options: Object.keys(rankPresets).map((k) => ({
+      value: k, label: k === "v1" ? "v1 (today)" : k === "v2" ? "v2 (four terms)" : k,
+    })),
+    value: "",
+    placeholder: "Load a preset…",
+    ariaLabel: "Load a ranking preset",
+    onChange: (v) => {
+      if (!v || !rankPresets[v]) return;
+      draft.rankRule = rankDraftFromPreset(rankPresets[v]);
+      presetSelect.value = ""; // an action fired once, not a state this control keeps echoing
+      repaintRankControls();
+      onEdit();
+    },
+  });
+  presetSelect.id = "set-rank-preset";
+
+  const timeSourceSelect = select({
+    options: [
+      { value: "dueAtOnly", label: "Due date only (v1)" },
+      { value: "dueAtElseAge", label: "Due date, falling back to age" },
+    ],
+    value: "dueAtOnly",
+    ariaLabel: "Which clock the ranking reads",
+    onChange: (v) => { rankField("timeSource").set(v); onEdit(); },
+  });
+  timeSourceSelect.id = "set-rank-time";
+
+  const rankLeadsSwitch = switchToggle({
+    id: "set-rank-leads",
+    checked: draft.rankLeadsSort,
+    onChange: (v) => { draft.rankLeadsSort = v; onEdit(); },
+  });
+
+  const rankPanel = settingsPanel({
+    title: "Priorities ranking",
+    description: "The minimal model that scores every row in the Priorities queue.",
+    body: [
+      disclosure("Why this matters", el("p", {},
+        "Four terms, blended: the operator's own rule judgement, a clock (due date, or age "
+        + "once a preset turns on the fallback), exploitation evidence folded up from an "
+        + "issue's linked findings, and how close the row sits to the AI estate. A term "
+        + "nobody could measure on a given row is dropped from BOTH sides of the blend "
+        + "rather than counted as zero — an unmeasured exploitation must never read as "
+        + "“we looked and found nothing.” Presets are a starting point for a "
+        + "future evaluation harness to move, not a final answer.")),
+      settingRow({
+        label: "Load a preset", htmlFor: "set-rank-preset",
+        description: "Replaces every number below. Save afterwards like any other edit.",
+        control: presetSelect,
+      }),
+      el("div", { class: "rank-inputs" },
+        el("span", { class: "rank-inputs__title" }, "Term shares"),
+        rankNumber("share-rule", "Rule judgement", rankLeaf("shares", "rule")),
+        rankNumber("share-time", "Clock", rankLeaf("shares", "time")),
+        rankNumber("share-exploit", "Exploitation", rankLeaf("shares", "exploitation")),
+        rankNumber("share-adjacency", "AI adjacency", rankLeaf("shares", "adjacency"))),
+      shareTotalOut,
+      settingRow({
+        label: "Clock source", htmlFor: "set-rank-time",
+        description: "dueAtOnly is v1 exactly. dueAtElseAge reads a row's age once it has no "
+          + "deadline set.",
+        control: timeSourceSelect,
+      }),
+      el("div", { class: "rank-inputs" },
+        el("span", { class: "rank-inputs__title" }, "Exploitation ladder"),
+        rankNumber("expl-kev", "On CISA KEV", rankLeaf("exploitationWeights", "kev")),
+        rankNumber("expl-exploit", "Exploit available", rankLeaf("exploitationWeights", "exploit")),
+        rankNumber("expl-epss", "EPSS over threshold", rankLeaf("exploitationWeights", "epss")),
+        rankNumber("expl-none", "No exploit observed", rankLeaf("exploitationWeights", "none")),
+        rankNumber("expl-threshold", "EPSS threshold", rankField("epssThreshold"),
+          { step: "0.01" })),
+      el("div", { class: "rank-inputs" },
+        el("span", { class: "rank-inputs__title" }, "AI adjacency"),
+        rankNumber("adj-direct", "On an AI asset", rankLeaf("adjacencyWeights", "DIRECT")),
+        rankNumber("adj-adjacent", "Adjacent to one", rankLeaf("adjacencyWeights", "ADJACENT")),
+        rankNumber("adj-unlinked", "No known link", rankLeaf("adjacencyWeights", "UNLINKED"))),
+      settingRow({
+        label: "Rank leads the Priorities order", htmlFor: "set-rank-leads",
+        description: "Off: the Priorities page keeps Wiz severity → due date → age. "
+          + "On: rank leads.",
+        control: rankLeadsSwitch.node,
+      }),
+    ],
+  });
+
+  /** Repaint every rank control from `draft.rankRule` / `draft.rankLeadsSort`. */
+  function repaintRankControls() {
+    const r = draft.rankRule || {};
+    for (const id of Object.keys(rankInputs)) {
+      const { input, leaf } = rankInputs[id];
+      if (document.activeElement !== input) {
+        const v = leaf.get();
+        input.value = Number.isFinite(Number(v)) ? String(v) : "";
+      }
+    }
+    timeSourceSelect.value = r.timeSource === "dueAtElseAge" ? "dueAtElseAge" : "dueAtOnly";
+    setSwitch(rankLeadsSwitch, !!draft.rankLeadsSort);
+    syncShareTotal();
+  }
+
   // =============================================================================== SYSTEM TAB
   // TWO of the three panels on this tab are diagnostics and go through
   // gas_shared/ui/diagnostics.js; the experimental toggle between them is a preference and
@@ -602,6 +822,7 @@ export async function renderSettings(main, params, ctx) {
 
   const panels = {
     graph: tabPanel("graph", graphPanel, expandPanel),
+    register: tabPanel("register", registerPanel, rankPanel),
     compliance: tabPanel("compliance", fiveRsHost),
     system: tabPanel(
       "system", diagnostics.sections.credentials, experimentalPanel, diagnostics.sections.build,
@@ -664,6 +885,8 @@ export async function renderSettings(main, params, ctx) {
     if (document.activeElement !== nodesInput) nodesInput.value = String(draft.maxNodes);
     setSwitch(autoExpandSwitch, draft.autoExpand);
     if (fiveRs) fiveRs.sync();
+    for (const c of categoryRows) setSwitch(c.sw, draft.issueCategories.indexOf(c.id) >= 0);
+    repaintRankControls();
     onEdit();
   }
 

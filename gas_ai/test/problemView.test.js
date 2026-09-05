@@ -5,8 +5,9 @@
 import { describe, expect, it } from "vitest";
 import {
   KIND_VALUES, MODE_VALUES, OUTCOME_RANK, PROBLEM_COMPARATORS, PROBLEM_SORT_DESC,
-  applyProblemFilters, problemFilterOptions, problemParamPatch, readProblemParams,
-  sortProblems,
+  RANK_REASON_LABEL,
+  applyProblemFilters, defaultProblemSort, problemFilterOptions, problemParamPatch,
+  rankCellModel, rankReasonLines, readProblemParams, sortProblems,
 } from "../src/client/js/pages/problemView.js";
 
 const ROWS = [
@@ -234,5 +235,91 @@ describe("rank ordering (the minimal model's column)", () => {
 
   it("is registered as a descending-by-default column", () => {
     expect(PROBLEM_SORT_DESC.rank).toBe(true);
+  });
+});
+
+describe("the rank cell", () => {
+  it("renders the score to two decimal places", () => {
+    // Two places is more than the ladders can distinguish and enough to read an order by —
+    // the raw float lands on long tails (0.6000000000000001 is an ordinary value of it) and
+    // printing that offers a precision the model does not have.
+    expect(rankCellModel({ rankScore: 0.6000000000000001, rankTimed: true }).score).toBe("0.60");
+    expect(rankCellModel({ rankScore: 1 }).score).toBe("1.00");
+    expect(rankCellModel({ rankScore: 0 }).score).toBe("0.00");
+  });
+
+  it("hatches a row whose clock was UNMEASURED, and says so in a word", () => {
+    const untimed = rankCellModel({ rankScore: 0.5, rankTimed: false });
+    expect(untimed.untimed).toBe(true);
+    // A word, never a tint alone: the score beside it was computed from fewer terms than the
+    // rule asked for, which is a different claim about a similar-looking number.
+    expect(untimed.note).toMatch(/no deadline/);
+    expect(untimed.basis).toBe("");
+  });
+
+  it("does not hatch a timed row, and names which date the clock read", () => {
+    const timed = rankCellModel({ rankScore: 0.5, rankTimed: true, rankTimeBasis: "createdAt" });
+    expect(timed.untimed).toBe(false);
+    expect(timed.note).toBe("");
+    expect(timed.basis).toBe("createdAt");
+  });
+
+  it("reads an unscored row as an em dash, never as 0.00", () => {
+    // An unscored row has not scored zero — the same reason the comparator sorts it last.
+    for (const row of [{}, { rankScore: null }, { rankScore: "0.4" }, { rankScore: NaN }]) {
+      const model = rankCellModel(row);
+      expect(model.scored).toBe(false);
+      expect(model.score).toBe("—");
+      expect(model.untimed).toBe(false);
+    }
+  });
+});
+
+describe("the rank reasons", () => {
+  it("lists one clause per measured term, in the order the model emitted them", () => {
+    const lines = rankReasonLines({
+      rankReasons: ["rule wc-id-2742 weight 0.80", "overdue 43d (bucket 3 of 5)", "KEV on 2 linked findings"],
+    });
+    expect(lines).toEqual([
+      "rule wc-id-2742 weight 0.80",
+      "overdue 43d (bucket 3 of 5)",
+      "KEV on 2 linked findings",
+    ]);
+  });
+
+  it("is empty for a row that was never scored — nothing to explain, not an empty panel", () => {
+    expect(rankReasonLines({})).toEqual([]);
+    expect(rankReasonLines(null)).toEqual([]);
+    expect(rankReasonLines({ rankReasons: ["", null] })).toEqual([]);
+  });
+
+  it("names the disclosure in one place", () => {
+    expect(RANK_REASON_LABEL).toBe("Why this rank");
+  });
+});
+
+describe("which order the header says it is showing", () => {
+  it("names the rank column only when the SERVER led with it", () => {
+    // "No sort selected" means "trust the order the server sent", and the server now sends
+    // one of two orders — an unmarked header cannot say which one arrived.
+    expect(defaultProblemSort(true)).toBe("rank");
+    expect(defaultProblemSort(false)).toBe("");
+    expect(defaultProblemSort(undefined)).toBe("");
+    // Not truthiness: the flag is off by default, so anything that is not a real `true`
+    // has to read as the severity-led order.
+    expect(defaultProblemSort("true")).toBe("");
+  });
+
+  it("rank reads as descending on the first click, like severity", () => {
+    expect(PROBLEM_SORT_DESC.rank).toBe(true);
+  });
+
+  it("sorts by rank descending, with an unscored row last either way", () => {
+    const rows = [
+      { id: "none", assetName: "n" },
+      { id: "low", assetName: "l", rankScore: 0.2 },
+      { id: "high", assetName: "h", rankScore: 0.9 },
+    ];
+    expect(sortProblems(rows, "rank", 1).map((r) => r.id)).toEqual(["high", "low", "none"]);
   });
 });

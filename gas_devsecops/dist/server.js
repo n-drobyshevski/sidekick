@@ -45,6 +45,8 @@ var Server = (() => {
   // src/server/access.ts
   var access_exports = {};
   __export(access_exports, {
+    ACCESS_MAX_BYTES: () => ACCESS_MAX_BYTES,
+    ACCESS_MAX_ENTRIES: () => ACCESS_MAX_ENTRIES,
     PRODUCT: () => PRODUCT,
     __resetMemosForTest: () => __resetMemosForTest,
     accountChooserUrl: () => accountChooserUrl,
@@ -63,7 +65,8 @@ var Server = (() => {
     ownerDomain: () => ownerDomain,
     ownerEmail: () => ownerEmail,
     parseAllowlist: () => parseAllowlist,
-    serviceUrl: () => serviceUrl
+    serviceUrl: () => serviceUrl,
+    validateAddresses: () => validateAddresses
   });
 
   // src/server/pageShell.ts
@@ -173,7 +176,16 @@ var Server = (() => {
     // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
     // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
     // from one an older deployment left behind. Written by setup(), read by setup().
-    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE"
+    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
+    /**
+     * When a real token exchange plus a real query last succeeded.
+     *
+     * Separate from the credentials themselves because they answer different questions.
+     * `hasWizCredentials()` says three strings are non-empty; this says the tenant accepted
+     * them, once, at a time you can read. A Settings page that showed only the first was
+     * inviting the stronger reading with nothing to support it.
+     */
+    wizVerifiedAt: "WIZ_VERIFIED_AT"
   };
   var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
   function getProp(key) {
@@ -226,6 +238,21 @@ var Server = (() => {
       out.push(email);
     }
     return out;
+  }
+  var ACCESS_MAX_BYTES = 8e3;
+  var ACCESS_MAX_ENTRIES = 500;
+  function validateAddresses(raw) {
+    const list = parseAllowlist(Array.isArray(raw) ? raw.join("\n") : String(raw != null ? raw : ""));
+    const bad = list.filter((e) => e.indexOf("@") < 0);
+    if (bad.length) throw new Error(`Not an email address: ${bad.join(", ")}`);
+    if (list.length > ACCESS_MAX_ENTRIES) {
+      throw new Error(`Too many people (${list.length}); the limit is ${ACCESS_MAX_ENTRIES}.`);
+    }
+    const bytes = list.join(",").length;
+    if (bytes > ACCESS_MAX_BYTES) {
+      throw new Error(`That list is too long to store (${bytes} of ${ACCESS_MAX_BYTES} bytes).`);
+    }
+    return list;
   }
   function decide(active, owner, raw, adminsRaw) {
     const email = (active || "").trim();
@@ -423,7 +450,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "3f5dfc7acafe" : "dev";
+  var BUILD_ID = true ? "5c336794fb12" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -603,6 +630,11 @@ var Server = (() => {
     sca: ["CRITICAL", "HIGH"],
     sast: ["CRITICAL", "HIGH"],
     secrets: []
+  };
+  var SCOPE_LABELS = {
+    sca: "Dependencies",
+    sast: "Code",
+    secrets: "Secrets"
   };
   var RESOLVED_STATUSES = /* @__PURE__ */ new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
   var STATUS_OPEN = "OPEN";
@@ -3838,6 +3870,97 @@ var Server = (() => {
     return notes.join("\n");
   }
 
+  // src/server/jobsStore.ts
+  var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
+  function normError(v) {
+    const s2 = v == null ? "" : String(v).trim();
+    return s2 === "" || s2 === "null" || s2 === "undefined" ? null : s2;
+  }
+  function newJobId(kind, now) {
+    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
+  }
+  function createJob(row, now) {
+    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
+    appendRows(TABS.jobs, [full]);
+    setProp(ACTIVE_JOB_PROP, full.job_id);
+    return full;
+  }
+  function updateJob(jobId, patch, now) {
+    updateWhere(TABS.jobs, "job_id", jobId, {
+      ...patch,
+      updated_at: nowIso(now)
+    });
+    if (patch.phase && isTerminalPhase(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
+  }
+  function rowToJob(r) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    return {
+      job_id: String((_a = r["job_id"]) != null ? _a : ""),
+      kind: (_b = r["kind"]) != null ? _b : "sync",
+      phase: (_c = r["phase"]) != null ? _c : "FAILED",
+      scan_id: (_d = r["scan_id"]) != null ? _d : null,
+      scope: (_e = r["scope"]) != null ? _e : null,
+      cursor: (_f = r["cursor"]) != null ? _f : null,
+      page: Number((_g = r["page"]) != null ? _g : 0),
+      findings_so_far: Number((_h = r["findings_so_far"]) != null ? _h : 0),
+      page_size: Number((_i = r["page_size"]) != null ? _i : 0),
+      total_count: Number((_j = r["total_count"]) != null ? _j : 0),
+      params_json: (_k = r["params_json"]) != null ? _k : null,
+      journal_ref: (_l = r["journal_ref"]) != null ? _l : null,
+      error: normError(r["error"]),
+      started_at: String((_m = r["started_at"]) != null ? _m : ""),
+      updated_at: String((_n = r["updated_at"]) != null ? _n : "")
+    };
+  }
+  function listJobs() {
+    return readAll(TABS.jobs).map(rowToJob);
+  }
+  var JOB_TAIL_ROWS = 25;
+  function getJob(jobId) {
+    var _a, _b;
+    const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
+    return (_b = (_a = recent.find((j) => j.job_id === jobId)) != null ? _a : listJobs().find((j) => j.job_id === jobId)) != null ? _b : null;
+  }
+  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
+  function isTerminalPhase(phase) {
+    return TERMINAL.includes(phase);
+  }
+  var STALE_JOB_MS = 30 * 6e4;
+  function isStaleJob(job, now) {
+    const updated = parseTs(job.updated_at);
+    if (updated === null) return false;
+    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
+  }
+  function clearTriggers(handlerName) {
+    for (const t of ScriptApp.getProjectTriggers()) {
+      if (t.getHandlerFunction() === handlerName) ScriptApp.deleteTrigger(t);
+    }
+  }
+  var CONTINUE_HANDLERS = {
+    sync: "trigger_continueSync"
+  };
+  var WATCHDOG_HANDLERS = {
+    sync: "trigger_watchdogSync"
+  };
+  function reclaimIfStale(job, now) {
+    if (!isStaleJob(job, now)) return false;
+    for (const handler of [CONTINUE_HANDLERS[job.kind], WATCHDOG_HANDLERS[job.kind]]) {
+      if (handler) clearTriggers(handler);
+    }
+    updateJob(job.job_id, {
+      phase: "FAILED",
+      error: "Reclaimed: the job stalled with no progress."
+    });
+    return true;
+  }
+  function activeJob() {
+    var _a;
+    if (!getProp(ACTIVE_JOB_PROP)) return null;
+    const job = (_a = listJobs().find((j) => !isTerminalPhase(j.phase))) != null ? _a : null;
+    if (!job) deleteProp(ACTIVE_JOB_PROP);
+    return job;
+  }
+
   // src/server/settingsStore.ts
   var settingsMemo;
   function loadSettings() {
@@ -3868,14 +3991,457 @@ var Server = (() => {
     return cleaned;
   }
 
-  // src/server/diagnostics.ts
-  function deploymentDiagnostic() {
+  // src/server/wizQueries.ts
+  var PAGE_SIZE = 500;
+  var PAGE_SIZE_FALLBACK = 250;
+  var MAX_PAGES = 1e3;
+  var Q_SAST = `query DevSecOpsSastFindings(
+  $filterBy: SASTFindingFilters
+  $first: Int
+  $after: String
+) {
+  sastFindings(filterBy: $filterBy, first: $first, after: $after) {
+    nodes {
+      id
+      name
+      status
+      severity
+      originalSeverity
+      filePath
+      startLine
+      codeLibraryLanguage
+      origin
+      resolutionReason
+      createdAt
+      updatedAt
+      firstDetectedAtSource
+      resource { id name type }
+      weaknesses { id name }
+      projects { id name isFolder slug }
+      vcsDetails { commitHash }
+      aiAnalysis { verdict }
+    }
+    totalCount
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
+  var Q_SCA = `query DevSecOpsVulnerabilityFindings(
+  $filterBy: VulnerabilityFindingFilters
+  $first: Int
+  $after: String
+) {
+  vulnerabilityFindings(filterBy: $filterBy, first: $first, after: $after) {
+    nodes {
+      id
+      name
+      detailedName
+      severity
+      status
+      firstDetectedAt
+      lastDetectedAt
+      resolvedAt
+      fixDate
+      fixedVersion
+      hasExploit
+      hasCisaKevExploit
+      epssProbability
+      vulnerableAsset {
+        ... on VulnerableAssetBase {
+          id
+          type
+          name
+          cloudPlatform
+          subscriptionName
+          subscriptionExternalId
+        }
+        ... on VulnerableAssetRepositoryBranch {
+          id
+          type
+          name
+          cloudPlatform
+        }
+      }
+      artifactType { codeLibraryLanguage }
+      projects { id name isFolder slug }
+    }
+    totalCount
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
+  var Q_SECRETS = `query DevSecOpsSecretInstances(
+  $filterBy: SecretInstanceFilters
+  $first: Int
+  $after: String
+) {
+  secretInstances(filterBy: $filterBy, first: $first, after: $after) {
+    nodes {
+      id
+      externalId
+      secretDataId
+      name
+      type
+      confidence
+      severity
+      path
+      lineNumber
+      status
+      resolvedAt
+      validationStatus
+      lastValidatedAt
+      firstSeenAt
+      lastSeenAt
+      lastUpdatedAt
+      codeToCloudPipelineStage
+      vcsDetails { initialCommitHash }
+      resource { id name type externalId nativeType cloudPlatform }
+      projects { id name isFolder slug }
+    }
+    totalCount
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
+  var QUERIES = {
+    sast: Q_SAST,
+    sca: Q_SCA,
+    secrets: Q_SECRETS
+  };
+  var API_SEVERITY = {
+    CRITICAL: "CRITICAL",
+    HIGH: "HIGH",
+    MEDIUM: "MEDIUM",
+    LOW: "LOW",
+    INFO: "INFORMATIONAL"
+  };
+  var BASE = {
+    sca: {
+      status: ["OPEN", "RESOLVED"],
+      hasFix: true,
+      codeToCloudPipelineStage: ["CODE"],
+      isDefaultBranch: { equals: true }
+    },
+    sast: {
+      // Deliberately NOT status: ["OPEN","RESOLVED"]. See SAST_FETCH_RESOLVED below.
+      resource: { isDefaultBranch: { equals: true } }
+    },
+    secrets: {
+      // THE NARROWING IS THE MEASUREMENT, not tidiness. Unscoped, this register is 394,927
+      // rows and most of them are cloud/runtime rather than code; CODE narrows it to 1,933.
+      //
+      // It also decides whether the secrets clock is trustworthy at all. Sampled across every
+      // stage, secrets close 0.25s-63s after first being seen — the born-and-closed-in-the-
+      // same-instant artifact that keeps SAST_FETCH_RESOLVED off. Scoped to CODE, NOT ONE of
+      // the 72 resolved rows closes inside a day: median 5.15d, p90 56.1d, max 300d. The
+      // artifact is a cloud-stage phenomenon. PROBE_FINDINGS.md §3.
+      codeToCloudPipelineStage: ["CODE"],
+      status: ["OPEN", "RESOLVED"]
+    }
+  };
+  function shapeBase(scope, base) {
+    const out = {};
+    for (const [key, value] of Object.entries(base)) {
+      out[key] = Array.isArray(value) ? listFilter(scope, key, value) : value;
+    }
+    return out;
+  }
+  var SAST_FETCH_RESOLVED = false;
+  var OBJECT_FILTERS = {
+    // VulnerabilityFindingFilters takes every LIST bare — severity, status,
+    // codeToCloudPipelineStage — and wraps only the project restriction.
+    //   projectIdV2  VulnerabilityFindingProjectFilter  { equals: [...] }
+    sca: ["projectIdV2"],
+    sast: ["severity", "status"],
+    // SecretInstanceFilters MIXES BOTH CONVENTIONS INTERNALLY, which is the §4 trap at finer
+    // grain. One field's shape says nothing about the next one's, IN THE SAME TYPE:
+    //   status                    SecretInstanceStatusFilter                    { equals: [...] }
+    //   validationStatus          SecretInstanceValidationStatusFilter          { equals: [...] }
+    //   severity                  SecretInstanceSeverityFilter                  { equals: [...] }
+    //   codeToCloudPipelineStage  SecretInstanceCodeToCloudPipelineStageFilter  { equals: [...] }
+    //   projectId                 [String!]                                     a bare list
+    //
+    // codeToCloudPipelineStage was the one key here ever sent on INFERENCE rather than on
+    // reading — shaped after SCA, which spells the same field name
+    // [VulnerabilityCodeToCloudPipelineStage!], a bare list. The inference did not hold, and
+    // the register fetched zero rows until it was corrected. Schema print and live response
+    // agree; with only this key fixed the query returns 691 rows (PROBE_FINDINGS.md §8.1).
+    //
+    // THAT IS THE THIRD TIME one field name has carried two kinds across filter types in this
+    // codebase — after `severity` in §4 and the commitHash / initialCommitHash split in §7.3.
+    // Copy these from `--schema`, which prints a ready-made OBJECT_FILTERS entry per type.
+    // Never carry one across.
+    secrets: ["severity", "status", "validationStatus", "codeToCloudPipelineStage"]
+  };
+  function listFilter(scope, key, values) {
+    return OBJECT_FILTERS[scope].includes(key) ? { equals: [...values] } : [...values];
+  }
+  function severityFilter(severities) {
     const out = [];
-    const ok = (label, value) => out.push(`  OK    ${label}: ${value}`);
-    const bad = (label, value) => out.push(`  FAIL  ${label}: ${value}`);
-    out.push(`Wiz Sidekick DevSecOps \u2014 deployment diagnostic`);
-    out.push(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
-    out.push("");
+    for (const s2 of severities) {
+      const api = API_SEVERITY[String(s2).trim().toUpperCase()];
+      if (api && !out.includes(api)) out.push(api);
+    }
+    return out;
+  }
+  function buildFilter(scope, opts = {}) {
+    var _a, _b;
+    if (QUERIES[scope] == null) {
+      throw new Error(`no query document for scope "${scope}" \u2014 see wizQueries.ts`);
+    }
+    const filterBy = shapeBase(scope, JSON.parse(JSON.stringify((_a = BASE[scope]) != null ? _a : {})));
+    if (scope === "sast" && SAST_FETCH_RESOLVED) {
+      filterBy.status = listFilter(scope, "status", ["OPEN", "RESOLVED"]);
+    }
+    const sev2 = severityFilter((_b = opts.severities) != null ? _b : []);
+    if (sev2.length) filterBy.severity = listFilter(scope, "severity", sev2);
+    if (opts.projectId) {
+      const key = scope === "sca" ? "projectIdV2" : "projectId";
+      filterBy[key] = listFilter(scope, key, [opts.projectId]);
+    }
+    return filterBy;
+  }
+  function buildVariables(scope, opts = {}) {
+    var _a, _b;
+    return {
+      filterBy: buildFilter(scope, opts),
+      first: (_a = opts.first) != null ? _a : PAGE_SIZE,
+      after: (_b = opts.after) != null ? _b : null
+    };
+  }
+
+  // src/server/wizClient.ts
+  var WizQueryError = class extends Error {
+  };
+  var WizNotAuthorizedError = class extends Error {
+  };
+  var EXTERNAL_REQUEST_SCOPE = "script.external_request";
+  function guardAuthorization(fn) {
+    var _a;
+    try {
+      return fn();
+    } catch (e) {
+      const message = String((_a = e == null ? void 0 : e.message) != null ? _a : e);
+      if (message.indexOf(EXTERNAL_REQUEST_SCOPE) < 0) throw e;
+      throw new WizNotAuthorizedError(
+        "This deployment is not authorized to make outbound requests, so it cannot reach Wiz. The credentials are not the problem. Push the current build first \u2014 its appsscript.json declares script.external_request, and a manifest change is what makes Apps Script ask for consent. Then: (1) run wizDiagnostic() in the editor and ACCEPT the prompt; (2) Deploy > Manage deployments > Edit > New version, because pushing code does not change what the web app URL serves; (3) check the daily scan trigger still fires, since a scope change can suspend an installable trigger silently."
+      );
+    }
+  }
+  var TOKEN_CACHE_KEY = "wiz_devsecops_token";
+  function staticToken() {
+    const raw = getProp(PROP_KEYS.wizApiToken);
+    return raw && raw.trim() ? raw.trim() : null;
+  }
+  function forgetToken() {
+    try {
+      CacheService.getScriptCache().remove(TOKEN_CACHE_KEY);
+    } catch {
+    }
+  }
+  function getToken(forceRefresh = false) {
+    var _a, _b;
+    const token = staticToken();
+    if (token) return token;
+    const cache = CacheService.getScriptCache();
+    if (forceRefresh) {
+      forgetToken();
+    } else {
+      const cached2 = cache.get(TOKEN_CACHE_KEY);
+      if (cached2) return cached2;
+    }
+    const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
+    const response = guardAuthorization(() => UrlFetchApp.fetch(authUrl, {
+      method: "post",
+      contentType: "application/x-www-form-urlencoded",
+      payload: {
+        grant_type: "client_credentials",
+        audience: "wiz-api",
+        client_id: requireProp(PROP_KEYS.wizClientId),
+        client_secret: requireProp(PROP_KEYS.wizClientSecret)
+      },
+      muteHttpExceptions: true
+    }));
+    if (response.getResponseCode() !== 200) {
+      throw new WizQueryError(
+        `Wiz token request failed (${response.getResponseCode()}): ` + errorDigest(response.getContentText())
+      );
+    }
+    const body = JSON.parse(response.getContentText());
+    const issued = body["access_token"];
+    if (typeof issued !== "string" || !issued) {
+      throw new WizQueryError("Wiz token response carried no access_token.");
+    }
+    const expiresIn = Number((_b = body["expires_in"]) != null ? _b : 3600);
+    const ttl = Math.max(60, Math.min(Math.trunc(expiresIn) - 300, 21600));
+    cache.put(TOKEN_CACHE_KEY, issued, ttl);
+    return issued;
+  }
+  var ERROR_BODY_MAX = 800;
+  function redact(text) {
+    return String(text).replace(
+      /(access_token|refresh_token|id_token|client_secret)("|')?\s*[:=]\s*("|')?[^"',}\s&]+("|')?/gi,
+      "$1=<redacted>"
+    ).replace(/Bearer\s+[A-Za-z0-9._~+/-]{8,}=*/gi, "Bearer <redacted>");
+  }
+  function errorDigest(text) {
+    try {
+      const parsed = JSON.parse(text);
+      const errors = parsed["errors"];
+      if (Array.isArray(errors) && errors.length) {
+        const parts = errors.map((e) => {
+          var _a, _b;
+          if (!e || typeof e !== "object") return "";
+          const rec = e;
+          const ext = rec["extensions"];
+          const code = ext && typeof ext === "object" ? String((_a = ext["code"]) != null ? _a : "") : "";
+          const message = String((_b = rec["message"]) != null ? _b : "");
+          if (code && message) return `${code}: ${message}`;
+          return code || message;
+        }).filter(Boolean);
+        if (parts.length) return redact(parts.join(" | ")).slice(0, ERROR_BODY_MAX);
+      }
+    } catch {
+    }
+    return redact(String(text)).slice(0, ERROR_BODY_MAX);
+  }
+  function errorMessages(errors) {
+    if (!Array.isArray(errors)) return [];
+    return errors.map((e) => {
+      var _a;
+      return e && typeof e === "object" ? String((_a = e["message"]) != null ? _a : "") : String(e);
+    }).filter(Boolean).map((m) => redact(m));
+  }
+  function resolveConnection(data) {
+    const source = data != null ? data : {};
+    const keys = Object.keys(source);
+    const root = keys.find((k) => {
+      const v = source[k];
+      return v !== null && typeof v === "object" && ("nodes" in v || "pageInfo" in v);
+    });
+    if (root === void 0) return { ok: false, keys };
+    return { ok: true, root, conn: source[root] };
+  }
+  var MAX_ATTEMPTS = 4;
+  function queryPage(query, variables) {
+    var _a, _b, _c;
+    const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
+    let token = getToken();
+    let refreshed = false;
+    let lastError = "";
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const response = guardAuthorization(() => UrlFetchApp.fetch(apiUrl, {
+        method: "post",
+        contentType: "application/json",
+        headers: { Authorization: `Bearer ${token}` },
+        payload: JSON.stringify({ query, variables }),
+        muteHttpExceptions: true
+      }));
+      const code = response.getResponseCode();
+      if (code === 401 && !refreshed && !staticToken()) {
+        refreshed = true;
+        token = getToken(true);
+        continue;
+      }
+      if (code === 429 || code >= 500) {
+        lastError = `HTTP ${code}`;
+        if (attempt + 1 < MAX_ATTEMPTS) Utilities.sleep(1e3 * Math.pow(2, attempt));
+        continue;
+      }
+      if (code !== 200) {
+        const hint = code !== 401 ? "" : staticToken() ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh." : " \u2014 a freshly issued OAuth token was rejected; check WIZ_CLIENT_ID / WIZ_CLIENT_SECRET and the API scopes granted to that service account.";
+        throw new WizQueryError(
+          `Wiz query failed (HTTP ${code})${hint}: ${errorDigest(response.getContentText())}`
+        );
+      }
+      const text = response.getContentText();
+      const body = JSON.parse(text);
+      const data = body["data"];
+      if (!data) {
+        throw new WizQueryError(`Wiz response carried no data: ${errorDigest(text)}`);
+      }
+      const found = resolveConnection(data);
+      if (!found.ok) {
+        throw new WizQueryError(
+          `Wiz response carried no connection; root keys: [${found.keys.join(", ")}]. A response that parses but carries no nodes/pageInfo is a defect, not an empty register.`
+        );
+      }
+      const conn = found.conn;
+      const pageInfo = (_a = conn["pageInfo"]) != null ? _a : {};
+      const rawTotal = conn["totalCount"];
+      return {
+        nodes: (_b = conn["nodes"]) != null ? _b : [],
+        pageInfo: {
+          hasNextPage: Boolean(pageInfo["hasNextPage"]),
+          endCursor: (_c = pageInfo["endCursor"]) != null ? _c : null
+        },
+        totalCount: typeof rawTotal === "number" ? rawTotal : null,
+        // PARTIAL: data AND errors. The nodes are returned; the errors travel with them.
+        partialErrors: errorMessages(body["errors"])
+      };
+    }
+    throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
+  }
+  function smallerPageCouldHelp(e) {
+    if (!(e instanceof WizQueryError)) return true;
+    const m = e.message;
+    if (/HTTP 429/.test(m)) return false;
+    if (/HTTP 4\d\d/.test(m)) return false;
+    if (/internal error has occurred/i.test(m)) return true;
+    if (/carried no data/.test(m)) return false;
+    if (/carried no connection/.test(m)) return false;
+    return true;
+  }
+  function newScanPaging(pageSize = PAGE_SIZE) {
+    return { pageSize, pageNumber: 0 };
+  }
+  function fetchPage(scope, variables, paging = newScanPaging()) {
+    const query = QUERIES[scope];
+    if (query == null) {
+      throw new WizQueryError(`no query document for scope "${scope}" \u2014 see wizQueries.ts`);
+    }
+    if (paging.pageNumber >= MAX_PAGES) {
+      throw new WizQueryError(
+        `Wiz ${scope} walk reached MAX_PAGES (${MAX_PAGES}) at ${paging.pageSize} rows a page and the cursor still reports more. Refusing to truncate silently \u2014 a partial register that looks complete is worse than a failed scan.`
+      );
+    }
+    const send = (first) => queryPage(query, { ...variables, first });
+    const probing = paging.pageNumber === 0 && paging.pageSize > PAGE_SIZE_FALLBACK;
+    try {
+      const page = send(paging.pageSize);
+      paging.pageNumber += 1;
+      return page;
+    } catch (e) {
+      if (!probing || !smallerPageCouldHelp(e)) throw e;
+      const page = send(PAGE_SIZE_FALLBACK);
+      paging.pageSize = PAGE_SIZE_FALLBACK;
+      paging.pageNumber += 1;
+      return page;
+    }
+  }
+  function testConnection(scope = "sast") {
+    forgetToken();
+    const page = fetchPage(scope, {}, { pageSize: 1, pageNumber: 0 });
+    return { ok: true, rows: page.totalCount };
+  }
+
+  // src/server/diagnostics.ts
+  function reporter() {
+    const lines = [];
+    return {
+      line(m) {
+        console.log(m);
+        lines.push(m);
+      },
+      text() {
+        return lines.join("\n");
+      }
+    };
+  }
+  function deploymentDiagnostic() {
+    const r = reporter();
+    const ok = (label, value) => r.line(`  OK    ${label}: ${value}`);
+    const bad = (label, value) => r.line(`  FAIL  ${label}: ${value}`);
+    r.line(`Wiz Sidekick DevSecOps \u2014 deployment diagnostic`);
+    r.line(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
+    r.line("");
     const ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
     if (ssId) {
       try {
@@ -3883,7 +4449,7 @@ var Server = (() => {
         ok("Ledger spreadsheet", `${ss.getName()} (${ssId})`);
         for (const tab of Object.values(TABS)) {
           const rows = dataRowCount(tab);
-          out.push(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
+          r.line(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
         }
         ok("Cells used", String(cellCount()));
       } catch (e) {
@@ -3906,10 +4472,24 @@ var Server = (() => {
     for (const scope of SCOPES) {
       ok(`Severities requested (${scope})`, s2.fetchSeverities[scope].join(", ") || "(all)");
     }
-    out.push("");
-    out.push("Sync battery: not installed. This build ships the interface base and the page");
-    out.push("composition; collection is Phase 2 (see README.md).");
-    return out.join("\n");
+    r.line("");
+    const daily = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === "trigger_dailyScan").length;
+    if (daily) ok("Daily scan trigger", `installed (${daily})`);
+    else bad("Daily scan trigger", "not installed \u2014 run setup()");
+    const job = activeJob();
+    if (job) {
+      ok("Scan in flight", `${job.job_id} \u2014 ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
+      r.line(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
+      if (isStaleJob(job)) {
+        bad("  heartbeat", "silent for over 30 minutes \u2014 run resetStuckJob() from the editor");
+      }
+    } else {
+      ok("Scan in flight", "none");
+    }
+    const verified = getProp(PROP_KEYS.wizVerifiedAt);
+    if (verified) ok("Credentials last verified", verified);
+    else bad("Credentials last verified", "never \u2014 the tenant has not accepted them yet");
+    return r.text();
   }
 
   // src/server/api.ts
@@ -3919,6 +4499,7 @@ var Server = (() => {
     cancelSync: () => cancelSync2,
     compact: () => compact,
     deleteScans: () => deleteScans2,
+    getAccess: () => getAccess,
     getChartsBundle: () => getChartsBundle,
     getExecutivePage: () => getExecutivePage,
     getExportCsv: () => getExportCsv,
@@ -3936,7 +4517,10 @@ var Server = (() => {
     putSettings: () => putSettings,
     resetLedger: () => resetLedger2,
     runSync: () => runSync,
-    setProjectView: () => setProjectView
+    saveAccess: () => saveAccess,
+    saveAdmins: () => saveAdmins,
+    setProjectView: () => setProjectView,
+    testWizConnection: () => testWizConnection
   });
 
   // src/domain/projectScope.ts
@@ -4263,97 +4847,6 @@ var Server = (() => {
       };
     }
     return (r) => orNull(r[column]);
-  }
-
-  // src/server/jobsStore.ts
-  var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
-  function normError(v) {
-    const s2 = v == null ? "" : String(v).trim();
-    return s2 === "" || s2 === "null" || s2 === "undefined" ? null : s2;
-  }
-  function newJobId(kind, now) {
-    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
-  }
-  function createJob(row, now) {
-    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
-    appendRows(TABS.jobs, [full]);
-    setProp(ACTIVE_JOB_PROP, full.job_id);
-    return full;
-  }
-  function updateJob(jobId, patch, now) {
-    updateWhere(TABS.jobs, "job_id", jobId, {
-      ...patch,
-      updated_at: nowIso(now)
-    });
-    if (patch.phase && isTerminalPhase(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
-  }
-  function rowToJob(r) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
-    return {
-      job_id: String((_a = r["job_id"]) != null ? _a : ""),
-      kind: (_b = r["kind"]) != null ? _b : "sync",
-      phase: (_c = r["phase"]) != null ? _c : "FAILED",
-      scan_id: (_d = r["scan_id"]) != null ? _d : null,
-      scope: (_e = r["scope"]) != null ? _e : null,
-      cursor: (_f = r["cursor"]) != null ? _f : null,
-      page: Number((_g = r["page"]) != null ? _g : 0),
-      findings_so_far: Number((_h = r["findings_so_far"]) != null ? _h : 0),
-      page_size: Number((_i = r["page_size"]) != null ? _i : 0),
-      total_count: Number((_j = r["total_count"]) != null ? _j : 0),
-      params_json: (_k = r["params_json"]) != null ? _k : null,
-      journal_ref: (_l = r["journal_ref"]) != null ? _l : null,
-      error: normError(r["error"]),
-      started_at: String((_m = r["started_at"]) != null ? _m : ""),
-      updated_at: String((_n = r["updated_at"]) != null ? _n : "")
-    };
-  }
-  function listJobs() {
-    return readAll(TABS.jobs).map(rowToJob);
-  }
-  var JOB_TAIL_ROWS = 25;
-  function getJob(jobId) {
-    var _a, _b;
-    const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
-    return (_b = (_a = recent.find((j) => j.job_id === jobId)) != null ? _a : listJobs().find((j) => j.job_id === jobId)) != null ? _b : null;
-  }
-  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
-  function isTerminalPhase(phase) {
-    return TERMINAL.includes(phase);
-  }
-  var STALE_JOB_MS = 30 * 6e4;
-  function isStaleJob(job, now) {
-    const updated = parseTs(job.updated_at);
-    if (updated === null) return false;
-    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
-  }
-  function clearTriggers(handlerName) {
-    for (const t of ScriptApp.getProjectTriggers()) {
-      if (t.getHandlerFunction() === handlerName) ScriptApp.deleteTrigger(t);
-    }
-  }
-  var CONTINUE_HANDLERS = {
-    sync: "trigger_continueSync"
-  };
-  var WATCHDOG_HANDLERS = {
-    sync: "trigger_watchdogSync"
-  };
-  function reclaimIfStale(job, now) {
-    if (!isStaleJob(job, now)) return false;
-    for (const handler of [CONTINUE_HANDLERS[job.kind], WATCHDOG_HANDLERS[job.kind]]) {
-      if (handler) clearTriggers(handler);
-    }
-    updateJob(job.job_id, {
-      phase: "FAILED",
-      error: "Reclaimed: the job stalled with no progress."
-    });
-    return true;
-  }
-  function activeJob() {
-    var _a;
-    if (!getProp(ACTIVE_JOB_PROP)) return null;
-    const job = (_a = listJobs().find((j) => !isTerminalPhase(j.phase))) != null ? _a : null;
-    if (!job) deleteProp(ACTIVE_JOB_PROP);
-    return job;
   }
 
   // src/server/archiveStore.ts
@@ -6553,416 +7046,6 @@ var Server = (() => {
     startSync: () => startSync,
     watchdogSync: () => watchdogSync
   });
-
-  // src/server/wizQueries.ts
-  var PAGE_SIZE = 500;
-  var PAGE_SIZE_FALLBACK = 250;
-  var MAX_PAGES = 1e3;
-  var Q_SAST = `query DevSecOpsSastFindings(
-  $filterBy: SASTFindingFilters
-  $first: Int
-  $after: String
-) {
-  sastFindings(filterBy: $filterBy, first: $first, after: $after) {
-    nodes {
-      id
-      name
-      status
-      severity
-      originalSeverity
-      filePath
-      startLine
-      codeLibraryLanguage
-      origin
-      resolutionReason
-      createdAt
-      updatedAt
-      firstDetectedAtSource
-      resource { id name type }
-      weaknesses { id name }
-      projects { id name isFolder slug }
-      vcsDetails { commitHash }
-      aiAnalysis { verdict }
-    }
-    totalCount
-    pageInfo { hasNextPage endCursor }
-  }
-}`;
-  var Q_SCA = `query DevSecOpsVulnerabilityFindings(
-  $filterBy: VulnerabilityFindingFilters
-  $first: Int
-  $after: String
-) {
-  vulnerabilityFindings(filterBy: $filterBy, first: $first, after: $after) {
-    nodes {
-      id
-      name
-      detailedName
-      severity
-      status
-      firstDetectedAt
-      lastDetectedAt
-      resolvedAt
-      fixDate
-      fixedVersion
-      hasExploit
-      hasCisaKevExploit
-      epssProbability
-      vulnerableAsset {
-        ... on VulnerableAssetBase {
-          id
-          type
-          name
-          cloudPlatform
-          subscriptionName
-          subscriptionExternalId
-        }
-        ... on VulnerableAssetRepositoryBranch {
-          id
-          type
-          name
-          cloudPlatform
-        }
-      }
-      artifactType { codeLibraryLanguage }
-      projects { id name isFolder slug }
-    }
-    totalCount
-    pageInfo { hasNextPage endCursor }
-  }
-}`;
-  var Q_SECRETS = `query DevSecOpsSecretInstances(
-  $filterBy: SecretInstanceFilters
-  $first: Int
-  $after: String
-) {
-  secretInstances(filterBy: $filterBy, first: $first, after: $after) {
-    nodes {
-      id
-      externalId
-      secretDataId
-      name
-      type
-      confidence
-      severity
-      path
-      lineNumber
-      status
-      resolvedAt
-      validationStatus
-      lastValidatedAt
-      firstSeenAt
-      lastSeenAt
-      lastUpdatedAt
-      codeToCloudPipelineStage
-      vcsDetails { initialCommitHash }
-      resource { id name type externalId nativeType cloudPlatform }
-      projects { id name isFolder slug }
-    }
-    totalCount
-    pageInfo { hasNextPage endCursor }
-  }
-}`;
-  var QUERIES = {
-    sast: Q_SAST,
-    sca: Q_SCA,
-    secrets: Q_SECRETS
-  };
-  var API_SEVERITY = {
-    CRITICAL: "CRITICAL",
-    HIGH: "HIGH",
-    MEDIUM: "MEDIUM",
-    LOW: "LOW",
-    INFO: "INFORMATIONAL"
-  };
-  var BASE = {
-    sca: {
-      status: ["OPEN", "RESOLVED"],
-      hasFix: true,
-      codeToCloudPipelineStage: ["CODE"],
-      isDefaultBranch: { equals: true }
-    },
-    sast: {
-      // Deliberately NOT status: ["OPEN","RESOLVED"]. See SAST_FETCH_RESOLVED below.
-      resource: { isDefaultBranch: { equals: true } }
-    },
-    secrets: {
-      // THE NARROWING IS THE MEASUREMENT, not tidiness. Unscoped, this register is 394,927
-      // rows and most of them are cloud/runtime rather than code; CODE narrows it to 1,933.
-      //
-      // It also decides whether the secrets clock is trustworthy at all. Sampled across every
-      // stage, secrets close 0.25s-63s after first being seen — the born-and-closed-in-the-
-      // same-instant artifact that keeps SAST_FETCH_RESOLVED off. Scoped to CODE, NOT ONE of
-      // the 72 resolved rows closes inside a day: median 5.15d, p90 56.1d, max 300d. The
-      // artifact is a cloud-stage phenomenon. PROBE_FINDINGS.md §3.
-      codeToCloudPipelineStage: ["CODE"],
-      status: ["OPEN", "RESOLVED"]
-    }
-  };
-  function shapeBase(scope, base) {
-    const out = {};
-    for (const [key, value] of Object.entries(base)) {
-      out[key] = Array.isArray(value) ? listFilter(scope, key, value) : value;
-    }
-    return out;
-  }
-  var SAST_FETCH_RESOLVED = false;
-  var OBJECT_FILTERS = {
-    // VulnerabilityFindingFilters takes every LIST bare — severity, status,
-    // codeToCloudPipelineStage — and wraps only the project restriction.
-    //   projectIdV2  VulnerabilityFindingProjectFilter  { equals: [...] }
-    sca: ["projectIdV2"],
-    sast: ["severity", "status"],
-    // SecretInstanceFilters MIXES BOTH CONVENTIONS INTERNALLY, which is the §4 trap at finer
-    // grain. One field's shape says nothing about the next one's, IN THE SAME TYPE:
-    //   status                    SecretInstanceStatusFilter                    { equals: [...] }
-    //   validationStatus          SecretInstanceValidationStatusFilter          { equals: [...] }
-    //   severity                  SecretInstanceSeverityFilter                  { equals: [...] }
-    //   codeToCloudPipelineStage  SecretInstanceCodeToCloudPipelineStageFilter  { equals: [...] }
-    //   projectId                 [String!]                                     a bare list
-    //
-    // codeToCloudPipelineStage was the one key here ever sent on INFERENCE rather than on
-    // reading — shaped after SCA, which spells the same field name
-    // [VulnerabilityCodeToCloudPipelineStage!], a bare list. The inference did not hold, and
-    // the register fetched zero rows until it was corrected. Schema print and live response
-    // agree; with only this key fixed the query returns 691 rows (PROBE_FINDINGS.md §8.1).
-    //
-    // THAT IS THE THIRD TIME one field name has carried two kinds across filter types in this
-    // codebase — after `severity` in §4 and the commitHash / initialCommitHash split in §7.3.
-    // Copy these from `--schema`, which prints a ready-made OBJECT_FILTERS entry per type.
-    // Never carry one across.
-    secrets: ["severity", "status", "validationStatus", "codeToCloudPipelineStage"]
-  };
-  function listFilter(scope, key, values) {
-    return OBJECT_FILTERS[scope].includes(key) ? { equals: [...values] } : [...values];
-  }
-  function severityFilter(severities) {
-    const out = [];
-    for (const s2 of severities) {
-      const api = API_SEVERITY[String(s2).trim().toUpperCase()];
-      if (api && !out.includes(api)) out.push(api);
-    }
-    return out;
-  }
-  function buildFilter(scope, opts = {}) {
-    var _a, _b;
-    if (QUERIES[scope] == null) {
-      throw new Error(`no query document for scope "${scope}" \u2014 see wizQueries.ts`);
-    }
-    const filterBy = shapeBase(scope, JSON.parse(JSON.stringify((_a = BASE[scope]) != null ? _a : {})));
-    if (scope === "sast" && SAST_FETCH_RESOLVED) {
-      filterBy.status = listFilter(scope, "status", ["OPEN", "RESOLVED"]);
-    }
-    const sev2 = severityFilter((_b = opts.severities) != null ? _b : []);
-    if (sev2.length) filterBy.severity = listFilter(scope, "severity", sev2);
-    if (opts.projectId) {
-      const key = scope === "sca" ? "projectIdV2" : "projectId";
-      filterBy[key] = listFilter(scope, key, [opts.projectId]);
-    }
-    return filterBy;
-  }
-  function buildVariables(scope, opts = {}) {
-    var _a, _b;
-    return {
-      filterBy: buildFilter(scope, opts),
-      first: (_a = opts.first) != null ? _a : PAGE_SIZE,
-      after: (_b = opts.after) != null ? _b : null
-    };
-  }
-
-  // src/server/wizClient.ts
-  var WizQueryError = class extends Error {
-  };
-  var TOKEN_CACHE_KEY = "wiz_devsecops_token";
-  function staticToken() {
-    const raw = getProp(PROP_KEYS.wizApiToken);
-    return raw && raw.trim() ? raw.trim() : null;
-  }
-  function getToken(forceRefresh = false) {
-    var _a, _b;
-    const token = staticToken();
-    if (token) return token;
-    const cache = CacheService.getScriptCache();
-    if (forceRefresh) {
-      try {
-        cache.remove(TOKEN_CACHE_KEY);
-      } catch {
-      }
-    } else {
-      const cached2 = cache.get(TOKEN_CACHE_KEY);
-      if (cached2) return cached2;
-    }
-    const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
-    const response = UrlFetchApp.fetch(authUrl, {
-      method: "post",
-      contentType: "application/x-www-form-urlencoded",
-      payload: {
-        grant_type: "client_credentials",
-        audience: "wiz-api",
-        client_id: requireProp(PROP_KEYS.wizClientId),
-        client_secret: requireProp(PROP_KEYS.wizClientSecret)
-      },
-      muteHttpExceptions: true
-    });
-    if (response.getResponseCode() !== 200) {
-      throw new WizQueryError(
-        `Wiz token request failed (${response.getResponseCode()}): ` + errorDigest(response.getContentText())
-      );
-    }
-    const body = JSON.parse(response.getContentText());
-    const issued = body["access_token"];
-    if (typeof issued !== "string" || !issued) {
-      throw new WizQueryError("Wiz token response carried no access_token.");
-    }
-    const expiresIn = Number((_b = body["expires_in"]) != null ? _b : 3600);
-    const ttl = Math.max(60, Math.min(Math.trunc(expiresIn) - 300, 21600));
-    cache.put(TOKEN_CACHE_KEY, issued, ttl);
-    return issued;
-  }
-  var ERROR_BODY_MAX = 800;
-  function redact(text) {
-    return String(text).replace(
-      /(access_token|refresh_token|id_token|client_secret)("|')?\s*[:=]\s*("|')?[^"',}\s&]+("|')?/gi,
-      "$1=<redacted>"
-    ).replace(/Bearer\s+[A-Za-z0-9._~+/-]{8,}=*/gi, "Bearer <redacted>");
-  }
-  function errorDigest(text) {
-    try {
-      const parsed = JSON.parse(text);
-      const errors = parsed["errors"];
-      if (Array.isArray(errors) && errors.length) {
-        const parts = errors.map((e) => {
-          var _a, _b;
-          if (!e || typeof e !== "object") return "";
-          const rec = e;
-          const ext = rec["extensions"];
-          const code = ext && typeof ext === "object" ? String((_a = ext["code"]) != null ? _a : "") : "";
-          const message = String((_b = rec["message"]) != null ? _b : "");
-          if (code && message) return `${code}: ${message}`;
-          return code || message;
-        }).filter(Boolean);
-        if (parts.length) return redact(parts.join(" | ")).slice(0, ERROR_BODY_MAX);
-      }
-    } catch {
-    }
-    return redact(String(text)).slice(0, ERROR_BODY_MAX);
-  }
-  function errorMessages(errors) {
-    if (!Array.isArray(errors)) return [];
-    return errors.map((e) => {
-      var _a;
-      return e && typeof e === "object" ? String((_a = e["message"]) != null ? _a : "") : String(e);
-    }).filter(Boolean).map((m) => redact(m));
-  }
-  function resolveConnection(data) {
-    const source = data != null ? data : {};
-    const keys = Object.keys(source);
-    const root = keys.find((k) => {
-      const v = source[k];
-      return v !== null && typeof v === "object" && ("nodes" in v || "pageInfo" in v);
-    });
-    if (root === void 0) return { ok: false, keys };
-    return { ok: true, root, conn: source[root] };
-  }
-  var MAX_ATTEMPTS = 4;
-  function queryPage(query, variables) {
-    var _a, _b, _c;
-    const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
-    let token = getToken();
-    let refreshed = false;
-    let lastError = "";
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const response = UrlFetchApp.fetch(apiUrl, {
-        method: "post",
-        contentType: "application/json",
-        headers: { Authorization: `Bearer ${token}` },
-        payload: JSON.stringify({ query, variables }),
-        muteHttpExceptions: true
-      });
-      const code = response.getResponseCode();
-      if (code === 401 && !refreshed && !staticToken()) {
-        refreshed = true;
-        token = getToken(true);
-        continue;
-      }
-      if (code === 429 || code >= 500) {
-        lastError = `HTTP ${code}`;
-        if (attempt + 1 < MAX_ATTEMPTS) Utilities.sleep(1e3 * Math.pow(2, attempt));
-        continue;
-      }
-      if (code !== 200) {
-        const hint = code !== 401 ? "" : staticToken() ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh." : " \u2014 a freshly issued OAuth token was rejected; check WIZ_CLIENT_ID / WIZ_CLIENT_SECRET and the API scopes granted to that service account.";
-        throw new WizQueryError(
-          `Wiz query failed (HTTP ${code})${hint}: ${errorDigest(response.getContentText())}`
-        );
-      }
-      const text = response.getContentText();
-      const body = JSON.parse(text);
-      const data = body["data"];
-      if (!data) {
-        throw new WizQueryError(`Wiz response carried no data: ${errorDigest(text)}`);
-      }
-      const found = resolveConnection(data);
-      if (!found.ok) {
-        throw new WizQueryError(
-          `Wiz response carried no connection; root keys: [${found.keys.join(", ")}]. A response that parses but carries no nodes/pageInfo is a defect, not an empty register.`
-        );
-      }
-      const conn = found.conn;
-      const pageInfo = (_a = conn["pageInfo"]) != null ? _a : {};
-      const rawTotal = conn["totalCount"];
-      return {
-        nodes: (_b = conn["nodes"]) != null ? _b : [],
-        pageInfo: {
-          hasNextPage: Boolean(pageInfo["hasNextPage"]),
-          endCursor: (_c = pageInfo["endCursor"]) != null ? _c : null
-        },
-        totalCount: typeof rawTotal === "number" ? rawTotal : null,
-        // PARTIAL: data AND errors. The nodes are returned; the errors travel with them.
-        partialErrors: errorMessages(body["errors"])
-      };
-    }
-    throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
-  }
-  function smallerPageCouldHelp(e) {
-    if (!(e instanceof WizQueryError)) return true;
-    const m = e.message;
-    if (/HTTP 429/.test(m)) return false;
-    if (/HTTP 4\d\d/.test(m)) return false;
-    if (/internal error has occurred/i.test(m)) return true;
-    if (/carried no data/.test(m)) return false;
-    if (/carried no connection/.test(m)) return false;
-    return true;
-  }
-  function newScanPaging(pageSize = PAGE_SIZE) {
-    return { pageSize, pageNumber: 0 };
-  }
-  function fetchPage(scope, variables, paging = newScanPaging()) {
-    const query = QUERIES[scope];
-    if (query == null) {
-      throw new WizQueryError(`no query document for scope "${scope}" \u2014 see wizQueries.ts`);
-    }
-    if (paging.pageNumber >= MAX_PAGES) {
-      throw new WizQueryError(
-        `Wiz ${scope} walk reached MAX_PAGES (${MAX_PAGES}) at ${paging.pageSize} rows a page and the cursor still reports more. Refusing to truncate silently \u2014 a partial register that looks complete is worse than a failed scan.`
-      );
-    }
-    const send = (first) => queryPage(query, { ...variables, first });
-    const probing = paging.pageNumber === 0 && paging.pageSize > PAGE_SIZE_FALLBACK;
-    try {
-      const page = send(paging.pageSize);
-      paging.pageNumber += 1;
-      return page;
-    } catch (e) {
-      if (!probing || !smallerPageCouldHelp(e)) throw e;
-      const page = send(PAGE_SIZE_FALLBACK);
-      paging.pageSize = PAGE_SIZE_FALLBACK;
-      paging.pageNumber += 1;
-      return page;
-    }
-  }
-
-  // src/server/scanJobs.ts
   var BUDGET_MS = 27e4;
   var FIRST_STEP_BUDGET_MS = 45e3;
   var CONTINUE_DELAY_MS = 3e4;
@@ -7541,7 +7624,7 @@ var Server = (() => {
     try {
       return { ok: true, data: fn() };
     } catch (e) {
-      const kind = e instanceof LedgerBusyError ? "busy" : "error";
+      const kind = e instanceof LedgerBusyError ? "busy" : e instanceof WizNotAuthorizedError ? "not-authorized" : "error";
       return { ok: false, error: String(e instanceof Error ? e.message : e), errorKind: kind };
     }
   }
@@ -7553,15 +7636,25 @@ var Server = (() => {
   }
   function bootstrap(_p) {
     return run(() => {
-      var _a, _b, _c, _d;
+      var _a, _b, _c, _d, _e, _f;
       const scans = readAll(TABS.scans);
       let newestTs = "";
       let newestSyncId = "";
+      const lastScanByScope = {};
+      for (const scope of SCOPES) lastScanByScope[scope] = null;
       for (const row of scans) {
         const ts = String((_a = row.ts) != null ? _a : "");
         if (!ts || ts <= newestTs) continue;
         newestTs = ts;
         newestSyncId = String((_b = row.scan_id) != null ? _b : "");
+      }
+      for (const row of scans) {
+        const ts = String((_c = row.ts) != null ? _c : "");
+        const scope = String((_d = row.scope) != null ? _d : "");
+        if (!ts || !(scope in lastScanByScope)) continue;
+        if (lastScanByScope[scope] === null || ts > lastScanByScope[scope]) {
+          lastScanByScope[scope] = ts;
+        }
       }
       let latestSync = null;
       if (newestSyncId) {
@@ -7603,10 +7696,17 @@ var Server = (() => {
         product: "Wiz Sidekick DevSecOps",
         buildId: BUILD_ID,
         hasCredentials: hasWizCredentials(),
+        wizVerifiedAt: getProp(PROP_KEYS.wizVerifiedAt),
         scopes: SCOPES,
+        scopeLabels: SCOPE_LABELS,
         severityOrder: SEVERITY_ORDER,
         slaTargets: SLA_TARGETS,
         latestSync,
+        lastScanByScope,
+        activeJob: (() => {
+          const job = activeJob();
+          return job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null;
+        })(),
         canEditAccess: canEditUsers(),
         settings,
         scope: {
@@ -7616,10 +7716,58 @@ var Server = (() => {
           unattributed: unattributedCount(allRows),
           // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
           // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
-          syncProjectId: (_d = (_c = projectScope()) == null ? void 0 : _c[0]) != null ? _d : null
+          syncProjectId: (_f = (_e = projectScope()) == null ? void 0 : _e[0]) != null ? _f : null
         },
         filterOptions: { projectList: projectCatalogue(allRows) }
       };
+    });
+  }
+  function testWizConnection(_p) {
+    return run(() => {
+      const res = testConnection();
+      const at = (/* @__PURE__ */ new Date()).toISOString();
+      setProp(PROP_KEYS.wizVerifiedAt, at);
+      return { ...res, at };
+    });
+  }
+  function logAccessChange(what, actor, before, after) {
+    const added = after.filter((e) => before.indexOf(e) < 0);
+    const removed = before.filter((e) => after.indexOf(e) < 0);
+    console.log(JSON.stringify({ access: "changed", what, actor, added, removed }));
+  }
+  function getAccess(_p) {
+    return run(() => {
+      if (!canEditUsers()) return { canEditUsers: false, canEditAdmins: false };
+      return {
+        canEditUsers: true,
+        canEditAdmins: canEditAdmins(),
+        owner: ownerEmail(),
+        domain: ownerDomain(),
+        users: currentUsers(),
+        admins: currentAdmins()
+      };
+    });
+  }
+  function saveAccess(p) {
+    return run(() => {
+      if (!canEditUsers()) throw new Error("Only the owner or an admin can change access.");
+      const before = currentUsers();
+      const list = validateAddresses(p == null ? void 0 : p.users);
+      const owner = ownerEmail().trim().toLowerCase();
+      const withOwner = owner && list.indexOf(owner) < 0 ? [owner].concat(list) : list;
+      setProp(PROP_KEYS.allowedUsers, withOwner.join(", "));
+      logAccessChange("users", check().email, before, withOwner);
+      return { users: withOwner };
+    });
+  }
+  function saveAdmins(p) {
+    return run(() => {
+      if (!canEditAdmins()) throw new Error("Only the owner can change admins.");
+      const before = currentAdmins();
+      const list = validateAddresses(p == null ? void 0 : p.admins);
+      setProp(PROP_KEYS.allowedAdmins, list.join(", "));
+      logAccessChange("admins", check().email, before, list);
+      return { admins: list };
     });
   }
   function getSettings(_p) {

@@ -32,6 +32,55 @@ import { MAX_PAGES, PAGE_SIZE, PAGE_SIZE_FALLBACK, QUERIES } from "./wizQueries"
 /** Raised by the transport and the response readers, and by nothing else. */
 export class WizQueryError extends Error {}
 
+/**
+ * Raised when APPS SCRIPT ITSELF refuses the outbound call — the deployment's authorization,
+ * never the Wiz credentials. Ported from an earlier revision of this file: a live report
+ * arrived as "not authorized to call UrlFetchApp.fetch — required permissions
+ * .../script.external_request" with no consent prompt anywhere, in the editor or the web app,
+ * on a project that had never before called `UrlFetchApp`. Its own class so a caller (the
+ * Settings "Test connection" affordance, `wizDiagnostic()`) can answer with the sequence that
+ * fixes it instead of the generic "Refused" a `WizQueryError` would print.
+ */
+export class WizNotAuthorizedError extends Error {}
+
+/**
+ * The scope Apps Script names when the project may not reach the network.
+ *
+ * MATCHED ON THE URL, NEVER ON THE MESSAGE TEXT, and that is the whole point of this
+ * constant. The platform localises the sentence — the report that prompted this arrived as
+ * "Vous n'êtes pas autorisé à appeler UrlFetchApp.fetch" — so an English match would pass
+ * every test here and fail for the operator who hit it. The scope URL is the one token in the
+ * message that is the same in every locale.
+ */
+const EXTERNAL_REQUEST_SCOPE = "script.external_request";
+
+/**
+ * Re-raise a platform authorization refusal with the sequence that fixes it.
+ *
+ * The remedy is specific and not guessable from the platform's message: what makes Apps
+ * Script ask for consent is the MANIFEST declaring the scope (`dist/appsscript.json`,
+ * `test/manifestScopes.test.js`), and even then only a NEW deployment version serves it —
+ * pushing code does not change what an existing web-app URL runs.
+ */
+function guardAuthorization<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    const message = String((e as Error)?.message ?? e);
+    if (message.indexOf(EXTERNAL_REQUEST_SCOPE) < 0) throw e;
+    throw new WizNotAuthorizedError(
+      "This deployment is not authorized to make outbound requests, so it cannot reach Wiz. "
+      + "The credentials are not the problem. Push the current build first — its "
+      + "appsscript.json declares script.external_request, and a manifest change is what "
+      + "makes Apps Script ask for consent. Then: (1) run wizDiagnostic() in the editor and "
+      + "ACCEPT the prompt; (2) Deploy > Manage deployments > Edit > New version, because "
+      + "pushing code does not change what the web app URL serves; (3) check the daily scan "
+      + "trigger still fires, since a scope change can suspend an installable trigger "
+      + "silently.",
+    );
+  }
+}
+
 /* ------------------------------------------------------------------------ auth */
 
 // Namespaced per project. gas uses `wiz_token` and gas_ai `wiz_ai_token`; these are separate
@@ -55,6 +104,22 @@ function staticToken(): string | null {
 }
 
 /**
+ * Drop the cached OAuth token, if any.
+ *
+ * Exported so a caller that needs a REAL exchange — the Settings "Test connection" affordance
+ * (`testConnection` below) and the editor's `wizDiagnostic()` — can force one without
+ * duplicating this module's cache key. A cached token outlives a revoked client secret by up
+ * to six hours, which is exactly the false reassurance those two callers exist to avoid.
+ */
+export function forgetToken(): void {
+  try {
+    CacheService.getScriptCache().remove(TOKEN_CACHE_KEY);
+  } catch {
+    /* eviction is best-effort; a subsequent getToken(true) replaces the entry either way */
+  }
+}
+
+/**
  * A bearer token: the static one verbatim, or an OAuth client-credentials exchange cached
  * in CacheService.
  *
@@ -71,18 +136,14 @@ export function getToken(forceRefresh = false): string {
 
   const cache = CacheService.getScriptCache();
   if (forceRefresh) {
-    try {
-      cache.remove(TOKEN_CACHE_KEY);
-    } catch {
-      /* eviction is best-effort; the put below replaces the entry either way */
-    }
+    forgetToken();
   } else {
     const cached = cache.get(TOKEN_CACHE_KEY);
     if (cached) return cached;
   }
 
   const authUrl = getProp(PROP_KEYS.wizAuthUrl) ?? DEFAULT_WIZ_AUTH_URL;
-  const response = UrlFetchApp.fetch(authUrl, {
+  const response = guardAuthorization(() => UrlFetchApp.fetch(authUrl, {
     method: "post",
     contentType: "application/x-www-form-urlencoded",
     payload: {
@@ -92,7 +153,7 @@ export function getToken(forceRefresh = false): string {
       client_secret: requireProp(PROP_KEYS.wizClientSecret),
     },
     muteHttpExceptions: true,
-  });
+  }));
   if (response.getResponseCode() !== 200) {
     throw new WizQueryError(
       `Wiz token request failed (${response.getResponseCode()}): ` +
@@ -261,13 +322,13 @@ export function queryPage(query: string, variables: Rec): WizPage {
   let lastError = "";
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const response = UrlFetchApp.fetch(apiUrl, {
+    const response = guardAuthorization(() => UrlFetchApp.fetch(apiUrl, {
       method: "post",
       contentType: "application/json",
       headers: { Authorization: `Bearer ${token}` },
       payload: JSON.stringify({ query, variables }),
       muteHttpExceptions: true,
-    });
+    }));
     const code = response.getResponseCode();
 
     // A static WIZ_API_TOKEN cannot be refreshed, so only retry-with-refresh in OAuth mode.
@@ -446,6 +507,20 @@ export function fetchPage(
     paging.pageNumber += 1;
     return page;
   }
+}
+
+/**
+ * Does the tenant answer at all, with these credentials?
+ *
+ * One token exchange and one page of one row. This is what turns "credentials are present in
+ * Script Properties" — three truthiness tests, which is all `hasWizCredentials()` has ever
+ * meant — into something measured. `forgetToken()` first, or a cached token would let a
+ * revoked client secret keep reporting success for up to six hours.
+ */
+export function testConnection(scope: Scope = "sast"): { ok: true; rows: number | null } {
+  forgetToken();
+  const page = fetchPage(scope, {}, { pageSize: 1, pageNumber: 0 });
+  return { ok: true, rows: page.totalCount };
 }
 
 export { MAX_PAGES, PAGE_SIZE, PAGE_SIZE_FALLBACK };

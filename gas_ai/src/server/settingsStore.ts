@@ -180,6 +180,36 @@ export function setPostureRule(rule: unknown): logic.StoredPostureRule {
   return stored;
 }
 
+export const getRankRule = (): logic.StoredRankRule => logic.getRankRule(loadSettings());
+
+/**
+ * Save a rank rule and return it as stored — cleaned, and with its new generation.
+ *
+ * NO NO-OP GUARD, unlike the three setters above, and the absence is the design rather than
+ * an omission to fix later. Each of those guards exists to decide whether a PERSISTED column
+ * — a score, a verdict, a tier — was stranded by the edit. Nothing persists a rank score:
+ * `withRankScores` computes it per request from rows already in hand, so every edit is
+ * current the moment it lands and there is no marker to move forward. A guard here would be
+ * answering a staleness question this model cannot have.
+ *
+ * A PATCH, like `setIssueCategories`: `withRankRule` rewrites one key of the loaded settings
+ * and returns the rest untouched, so two tabs of one Settings form saving a minute apart do
+ * not revert each other.
+ */
+export function setRankRule(rule: unknown): logic.StoredRankRule {
+  saveSettings(logic.withRankRule(loadSettings(), rule));
+  return getRankRule();
+}
+
+/** Whether the Priorities register leads its order with the rank score. False by default. */
+export const getRankLeadsSort = (): boolean => logic.getRankLeadsSort(loadSettings());
+
+/** The same PATCH discipline: one key, everything else as it was found. */
+export function setRankLeadsSort(on: unknown): boolean {
+  saveSettings(logic.withRankLeadsSort(loadSettings(), on));
+  return getRankLeadsSort();
+}
+
 export const getSkippedSteps = (): string[] => logic.getSkippedSteps(loadSettings());
 
 /** Record what the sync just skipped. Skips the whole-tab rewrite when nothing changed. */
@@ -260,6 +290,32 @@ export function getSelectedFrameworks(
 export function setSelectedFrameworks(ids: unknown): string[] {
   saveSettings(logic.withSelectedFrameworks(loadSettings(), ids));
   return getSelectedFrameworks();
+}
+
+/**
+ * Which risk categories the issue register collects, cleaned — defaulting to the AI
+ * category alone, which is what this register collected before the list was a setting.
+ *
+ * No catalogue thunk, unlike getSelectedFrameworks above: a framework id is version-scoped
+ * and has to be re-resolved by name against what the tenant carries, while a category id is
+ * the filter value itself and the six candidates are recorded with the measurement that
+ * chose them (registerScope.ts). There is nothing to resolve it against and nothing that
+ * would make resolving it more honest.
+ */
+export const getIssueCategories = (): string[] => logic.getIssueCategories(loadSettings());
+
+/** The generation of the stored list — 0 until something is chosen. */
+export const getIssueCategoriesVersion = (): number =>
+  logic.getIssueCategoriesVersion(loadSettings());
+
+/**
+ * Choose the categories. A PATCH — `withIssueCategories` rewrites one key of the loaded
+ * settings and returns the rest untouched, so two tabs of one Settings form saving a minute
+ * apart do not revert each other.
+ */
+export function setIssueCategories(ids: unknown): string[] {
+  saveSettings(logic.withIssueCategories(loadSettings(), ids));
+  return getIssueCategories();
 }
 
 /**

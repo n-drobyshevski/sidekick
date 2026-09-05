@@ -204,8 +204,12 @@ export function cohensKappa(a: string[], b: string[], categories: string[]): num
  * reason sampleData picks its own generator conventions — a short, auditable core with no
  * dependency — and it passes the usual small-crush suites well enough for a resampling
  * interval, which needs "well distributed", not cryptographic.
+ *
+ * EXPORTED, because `bootstrapCI` is no longer the only caller that needs a reproducible
+ * stream: `rankEval.ts`'s random baseline draws one per (sync, draw), and a second generator
+ * beside this one would be a second definition of "seeded" for the same report.
  */
-function mulberry32(seed: number): () => number {
+export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return function next(): number {
     a = (a + 0x6d2b79f5) | 0;

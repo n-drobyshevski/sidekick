@@ -78,6 +78,10 @@ function api_compact(p) { return timedApi_("compact", p); }
 function api_resetLedger(p) { return timedApi_("resetLedger", p); }
 function api_getExportCsv(p) { return timedApi_("getExportCsv", p); }
 function api_getRecentErrors(p) { return timedApi_("getRecentErrors", p); }
+function api_testWizConnection(p) { return timedApi_("testWizConnection", p); }
+function api_getAccess(p) { return timedApi_("getAccess", p); }
+function api_saveAccess(p) { return timedApi_("saveAccess", p); }
+function api_saveAdmins(p) { return timedApi_("saveAdmins", p); }
 
 /* ------------------------------------------------------- editor-run, not RPC */
 /* Gated: these run as whoever opened the editor, which is not necessarily the owner. */
@@ -90,6 +94,18 @@ function setup() {
 function deploymentDiagnostic() {
   Server.access.assertAllowed("deploymentDiagnostic");
   return Server.deploymentDiagnostic();
+}
+
+/**
+ * The one to run when Wiz cannot be reached — and the one that ASKS FOR THE SCOPE.
+ *
+ * Apps Script grants a permission when code needing it actually runs, so a diagnostic that
+ * only reads Script Properties authorizes nothing. This makes the real calls, which is what
+ * puts the consent screen in front of the operator; `deploymentDiagnostic()` never can.
+ */
+function wizDiagnostic() {
+  Server.access.assertAllowed("wizDiagnostic");
+  return Server.wizDiagnostic();
 }
 
 /* ----------------------------------------------------------------- triggers */
@@ -126,3 +142,12 @@ function trigger_dailySync() { return Server.scanJobs.dailySync(); }
 
 /** setup.ts's three standing warm triggers — precompute the landing-page read models. */
 function trigger_warmReadModels() { return Server.readModels.warmReadModels(); }
+
+/**
+ * Last resort when a job is wedged: jobs are single-flight, so one non-terminal row with no
+ * live execution behind it blocks every future sync and the daily trigger with it.
+ */
+function resetStuckJob() {
+  Server.access.assertAllowed("resetStuckJob");
+  return Server.scanJobs.resetStuckJob();
+}

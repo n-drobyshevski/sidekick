@@ -37,9 +37,9 @@ import {
   statusPill, tableFooter, tipMark, togglePills,
 } from "../ui.js";
 import {
-  PAGE_SIZE, PROBLEM_SORT_DESC, SEVERITY_RANK,
-  applyProblemFilters, problemFilterOptions, problemParamPatch,
-  readProblemParams, sortProblems,
+  PAGE_SIZE, PROBLEM_SORT_DESC, RANK_REASON_LABEL, SEVERITY_RANK,
+  applyProblemFilters, defaultProblemSort, problemFilterOptions, problemParamPatch,
+  rankCellModel, rankReasonLines, readProblemParams, sortProblems,
 } from "./problemView.js";
 import {
   ACTION_COMPARATORS, ACTION_SORT_DESC,
@@ -125,6 +125,11 @@ export async function renderProblems(main, params) {
   // being read by `problemParamPatch`.
   const view = readProblemParams(params);
   view.openActions = new Set();
+  // Which problem rows have their "Why this rank" disclosure open, by row id. Page-local and
+  // ephemeral like `openActions`, and multi-open for the same reason: comparing why one row
+  // outranks another is the question the disclosure exists to answer, and it cannot be asked
+  // one row at a time.
+  view.openRanks = new Set();
   view.aSeverity = "";
   view.aKind = "";
   view.aQ = "";
@@ -456,8 +461,20 @@ export async function renderProblems(main, params) {
       // The ranking's third level, shown because a reader should be able to see the order
       // they are being given rather than take it on trust.
       { key: "firstSeen", label: "First seen", cell: (r) => fmtDate(r.firstSeenAt) || absent() },
+      // The minimal model's own number, and the clauses behind it. Last column on purpose:
+      // it is the newest reading on this row and the one a reader is least likely to be
+      // looking for, and putting it left of Wiz's own severity would imply a precedence the
+      // shipped default (`rank_leads_sort` off) does not give it.
+      { key: "rank", label: "Rank", className: "num", cell: (r) => rankCell(r) },
     ];
-    const descending = view.sort && (PROBLEM_SORT_DESC[view.sort] ? view.dir === 1 : view.dir === -1);
+    // Which column reads as the active sort when the reader has chosen none: the server sends
+    // one of two orders now, and an unmarked header cannot say which one arrived.
+    const leadKey = defaultProblemSort(problemsData && problemsData.rankLeadsSort);
+    const activeKey = view.sort || leadKey;
+    const descending = activeKey
+      && (PROBLEM_SORT_DESC[activeKey]
+        ? (view.sort ? view.dir === 1 : true)
+        : view.dir === -1);
 
     return el("div", {},
       el("div", { class: "filter-meta" },
@@ -471,7 +488,7 @@ export async function renderProblems(main, params) {
           key: col.key, label: col.label, help: col.help, sortable: true, cell: col.cell,
         })),
         rows,
-        sort: view.sort ? { key: view.sort, descending } : null,
+        sort: activeKey ? { key: activeKey, descending } : null,
         onSort: (key) => {
           view.dir = view.sort === key ? -view.dir : 1;
           view.sort = key;
@@ -481,8 +498,64 @@ export async function renderProblems(main, params) {
         },
         onRowOpen: (r) => openRow(r),
         rowLabel: (r) => (r.kind === "ISSUE" ? "Issue on " : "Finding on ") + r.assetName,
+        // The disclosure lives in the rank CELL, not on the row: activating a problem row
+        // opens its record sheet, and a row that meant two things by one press would be
+        // offering a reader a coin flip. data.js's own key handler is written for exactly
+        // this — it ignores Enter and Space from a focused descendant so a cell can hold its
+        // own control, the same shape the config register's rule tip already uses.
+        rowDetail: (r) => (view.openRanks.has(r.id) ? rankDetail(r) : null),
         emptyText: "No problem matches the current filters.",
       }));
+  }
+
+  /**
+   * The rank cell: the score, a word where the clock behind it was not measured, and the
+   * disclosure that opens the clauses.
+   *
+   * The untimed note is a WORD in an `.sr-only` span plus a visible em dash rather than a
+   * tint: a score computed from fewer terms than the rule asked for is a different claim
+   * about a similar-looking number, and colour alone never carries a claim here.
+   */
+  function rankCell(r) {
+    const model = rankCellModel(r);
+    const parts = [el("span", {}, model.score)];
+    if (model.untimed) {
+      parts.push(el("span", { class: "muted", "aria-hidden": "true" }, " —"));
+      parts.push(el("span", { class: "sr-only" }, ", " + model.note));
+    }
+    if (!model.scored || !rankReasonLines(r).length) {
+      return el("span", {}, ...parts);
+    }
+    const open = view.openRanks.has(r.id);
+    return el("span", {},
+      ...parts,
+      el("button", {
+        class: "link",
+        // NAMED PER ROW. Twenty-five buttons all reading "Why" is one control repeated, not
+        // twenty-five controls, to anyone navigating by the button list — the visible word is
+        // short because the column is narrow, and the accessible name carries the row.
+        "aria-label": (open ? "Hide why this rank: " : RANK_REASON_LABEL + ": ")
+          + r.title + " on " + r.assetName,
+        "aria-expanded": String(open),
+        onclick: (e) => {
+          // The row is a button too, and this one sits inside it.
+          e.stopPropagation();
+          if (open) view.openRanks.delete(r.id);
+          else view.openRanks.add(r.id);
+          paint();
+        },
+      }, open ? "Hide why" : "Why"));
+  }
+
+  /** The clauses that produced the score, one line each, in the model's own blend order. */
+  function rankDetail(r) {
+    const lines = rankReasonLines(r);
+    return el("div", { class: "action-detail" },
+      sheetSection(RANK_REASON_LABEL,
+        lines.length
+          ? el("ul", { class: "small" }, ...lines.map((line) => el("li", {}, line)))
+          : el("p", { class: "muted small" },
+              "The model read nothing on this row, so it ranked by the rule weight alone.")));
   }
 
   // =====================================================================================

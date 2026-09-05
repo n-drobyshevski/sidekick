@@ -562,6 +562,114 @@ describe("fetchPage", () => {
 
 /* ------------------------------------------------------------------ the secrets */
 
+/* ------------------------------------------- Apps Script itself refusing the call */
+
+describe("Apps Script itself refusing the outbound call", () => {
+  // The failure that reached an operator live: the deployment's authorization predates the
+  // bundle ever calling UrlFetchApp, so the PLATFORM throws before any request is made — none
+  // of the HTTP-response branches above ever run — and its own sentence names a scope URL and
+  // no remedy.
+  //
+  // THE TWO LANGUAGES ARE THE POINT OF THIS BLOCK. The message is localised, and the report
+  // that prompted this arrived in French: an English-only match would pass every other test in
+  // this file and fail for the person who actually hit it. `sheetsDb.ts` deliberately does not
+  // test for "exceeds the maximum" for the same reason, against the same tenant. Only the scope
+  // URL is the same in every locale.
+  const FRENCH = "Vous n'êtes pas autorisé à appeler UrlFetchApp.fetch. Autorisations "
+    + "requises : https://www.googleapis.com/auth/script.external_request";
+  const ENGLISH = "You do not have permission to call UrlFetchApp.fetch. Required "
+    + "permissions: https://www.googleapis.com/auth/script.external_request";
+
+  const throwOnFetch = (message: string) => {
+    vi.stubGlobal("UrlFetchApp", {
+      fetch: () => {
+        throw new Error(message);
+      },
+    });
+  };
+
+  it("recognises the refusal in French", async () => {
+    throwOnFetch(FRENCH);
+    const { getToken, WizNotAuthorizedError } = await load();
+    expect(() => getToken(true)).toThrow(WizNotAuthorizedError);
+  });
+
+  it("recognises it in English too", async () => {
+    throwOnFetch(ENGLISH);
+    const { getToken, WizNotAuthorizedError } = await load();
+    expect(() => getToken(true)).toThrow(WizNotAuthorizedError);
+  });
+
+  it("carries the remedy, not the scope URL, as the thrown message", async () => {
+    // The middle step is the one that is skipped in practice: pushing code does not change
+    // what an already-deployed web app URL serves.
+    throwOnFetch(FRENCH);
+    const { getToken } = await load();
+    expect(() => getToken(true)).toThrow(/wizDiagnostic\(\)/);
+    expect(() => getToken(true)).toThrow(/New version/);
+  });
+
+  it("catches it at the query POST too, not only the token exchange", async () => {
+    // A static token skips the auth POST entirely, so queryPage's own fetch is the first (and
+    // only) network call — this is where a static-token deployment actually hits the guard.
+    props["WIZ_API_TOKEN"] = STATIC_TOKEN;
+    throwOnFetch(FRENCH);
+    const { queryPage, WizNotAuthorizedError } = await load();
+    expect(() => queryPage("query {}", {})).toThrow(WizNotAuthorizedError);
+  });
+
+  it("does NOT claim an ordinary transport failure is an authorization problem", async () => {
+    // The guard fires on the scope URL alone. A DNS blip or a bad host must keep its own
+    // message, or every transport failure would send the reader off to redeploy the web app.
+    throwOnFetch("DNS lookup failed for api.test.app.wiz.io");
+    const { getToken, WizNotAuthorizedError } = await load();
+    expect(() => getToken(true)).toThrow(/DNS lookup failed/);
+    try {
+      getToken(true);
+      throw new Error("expected getToken to throw");
+    } catch (e) {
+      expect(e).not.toBeInstanceOf(WizNotAuthorizedError);
+    }
+  });
+});
+
+/* ---------------------------------------------------- forgetToken / testConnection */
+
+describe("forgetToken", () => {
+  it("drops the cached OAuth token, so the next getToken is a fresh exchange", async () => {
+    const { forgetToken, getToken } = await load();
+    expect(getToken()).toBe(CACHED_TOKEN);
+    forgetToken();
+    expect(getToken()).toBe(ISSUED_TOKEN);
+    expect(authCalls).toBe(1);
+  });
+
+  it("is a no-op, not a throw, when nothing is cached", async () => {
+    cached = null;
+    const { forgetToken } = await load();
+    expect(() => forgetToken()).not.toThrow();
+  });
+});
+
+describe("testConnection", () => {
+  it("turns 'present' into 'measured': a real exchange, never the cached token", async () => {
+    // A cached token outlives a revoked client secret by up to six hours, so a connection test
+    // that accepted the cache would keep reporting success after the credentials stopped
+    // working — the exact false reassurance this function exists to refuse.
+    replies = [{ status: 200, body: okBody([{ id: "a" }, { id: "b" }], "sastFindings") }];
+    const { testConnection } = await load();
+    expect(testConnection()).toEqual({ ok: true, rows: 2 });
+    expect(authCalls).toBe(1);
+  });
+
+  it("asks for one row, not a page", async () => {
+    replies = [{ status: 200, body: okBody() }];
+    const { testConnection } = await load();
+    testConnection();
+    expect(gqlCalls[0]!.first).toBe(1);
+  });
+});
+
 describe("no thrown message carries a credential", () => {
   it("redacts a bearer token a gateway echoed back at us", async () => {
     props["WIZ_API_TOKEN"] = STATIC_TOKEN;

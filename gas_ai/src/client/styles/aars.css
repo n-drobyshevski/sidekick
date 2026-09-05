@@ -598,3 +598,53 @@ ul.axis-steps > .axis-step::before {
   background: var(--surface);
   color: var(--text-3); font-size: var(--fs-label); line-height: 1.5;
 }
+
+/* ------------------------------------------------------- the rank evaluation pane */
+/* ONE SCROLLER, NO IMPACT HALF. The other three tabs edit a rule and pin the consequence of
+   the draft beside it; this one has no draft — it reads the register's own history back and
+   reports what the stored rule already did. A second pane would be an empty frame implying a
+   control that does not exist, so the section fills the body the way `.rule-panes` does and
+   scrolls as one. Same padding as `.rule-editor`, because it is the same kind of column. */
+.rank-eval {
+  position: absolute; inset: 0; overflow-y: auto;
+  padding: var(--space-4) var(--space-4) var(--space-6);
+}
+
+/* The honesty block, which is drawn in BOTH states — it is what a report with no figures has
+   instead of them. Auto-fit rather than a fixed column count so the four facts stay on one
+   line where there is room and stack where there is not, with no second breakpoint to keep in
+   step with the workbench's own. */
+.rank-eval__honesty {
+  display: grid; gap: var(--space-3); margin: 0 0 var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.rank-eval__fact {
+  padding: var(--space-3); border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.rank-eval__fact dt {
+  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.rank-eval__fact dd {
+  margin: var(--space-half) 0 0; font-size: var(--fs-display-sm);
+  font-variant-numeric: tabular-nums; color: var(--ink);
+}
+/* The caveat rides WITH the figure rather than in a legend: a count of rows still being
+   observed is unreadable anywhere except beside the count it is missing from. */
+.rank-eval__fact-note {
+  margin: var(--space-1) 0 0; font-size: var(--fs-label); color: var(--text-3);
+  line-height: 1.45;
+}
+.rank-eval__waiting { margin-top: var(--space-2); }
+/* The basis name and what it ranks by, in one cell: four rows of opaque keys would need a
+   legend, and a legend is a second place for the wording to drift. */
+.rank-eval__basis { display: flex; flex-direction: column; gap: 2px; }
+.rank-eval__basis-note {
+  font-size: var(--fs-label); color: var(--text-3); white-space: normal;
+}
+.rank-eval__table table.data td { font-variant-numeric: tabular-nums; }
+.rank-eval__note {
+  margin: var(--space-3) 0 0; max-width: var(--measure);
+  font-size: var(--fs-label); color: var(--text-3); line-height: 1.5;
+}

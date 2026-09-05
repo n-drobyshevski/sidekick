@@ -115,14 +115,23 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
         options: ORDER_DIRECTIONS,
       },
     ],
-    // Deliberately NOT offering filterBy.frameworkCategory. Every figure this app
-    // publishes — the issue count, AARS pillar A, the Toxic Combinations page, the tab
-    // literally called ai_issues — is scoped to wct-id-1998 and labelled AI. Nothing in
-    // the response says "this is an AI issue"; the category filter IS the claim. Widen it
-    // and "AI issues" silently means "all issues", with no field to catch it. Same reason
-    // AGENTIC_IDENTITIES locks its purpose filter.
-    locked: "The AI risk category (wct-id-1998) is fixed: it is what makes these issues AI " +
-      "issues, so widening it would relabel the whole register rather than extend it.",
+    // STILL NOT offering filterBy.frameworkCategory, and the reason has moved rather than
+    // gone away. Every figure this app publishes — the issue count, AARS pillar A, the Toxic
+    // Combinations page, the tab literally called ai_issues — counts what this filter
+    // returned, and nothing in the response says which category a row matched. The register
+    // CAN now be widened, but only through the `issue_categories` Setting, which generates
+    // one ISSUES_CAT_<id> step per category so each row is stamped with the category that
+    // fetched it and each sync records the scope it applied.
+    //
+    // As a per-step variable it could not be either of those things: cleanStepVars would let
+    // a hand-edited cell change WHICH POPULATION every published figure counts, with no
+    // stamp on the rows and nothing in sync_history saying the scope moved. A knob that
+    // silently redefines the denominator is not a knob.
+    locked: "This step collects the AI risk category (wct-id-1998) and its category filter " +
+      "is not editable here: widening it would change what every published figure counts, " +
+      "with nothing on the row to say so. Choose categories in Settings (issue_categories) " +
+      "instead — each one gets its own step, and each row is stamped with the category it " +
+      "was collected under.",
   },
   {
     stepId: "AI_ASSET_PROPERTIES",
@@ -134,6 +143,31 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
     locked: "This step mirrors the AI inventory's own type list — it exists to add two fields " +
       "to assets already collected, so filtering it separately could only make the two " +
       "disagree about which assets exist.",
+  },
+  {
+    stepId: "VULN_FINDINGS",
+    fields: [],
+    // LOCKED, and for a reason none of the other locks state: this filter is not a scope
+    // knob, it is the CLAIM ITSELF.
+    //
+    // Nothing on a vulnerability finding says it is exploitation evidence for this register.
+    // What makes it so is that it names an issue in one of the selected categories — the
+    // filter is the entire assertion, and the row it produces is folded onto that issue and
+    // read as "this issue is exploited". Widen it and the register asserts exploitation for
+    // issues it does not hold; drop `hasRelatedIssue` and the same document answers 5,173,698
+    // rows in project scope (AARS_LIVE_MEASUREMENTS.md §6.4), which is not a bigger version of
+    // this step but a different product with no page and no storage budget behind it.
+    //
+    // The category list is not editable here either, and for the reason ISSUES_TOXIC's lock
+    // gives one entry up: it must stay the SAME list the issue steps use, or a finding joins
+    // an issue the register never collected and the axis quietly thins out. Settings
+    // (issue_categories) moves both together; a per-step cell could move only one.
+    locked: "This step's filter is the claim itself: a vulnerability finding counts as " +
+      "exploitation evidence only because it names an issue in the collected categories. " +
+      "Widening it would assert exploitation for issues this register does not hold, and " +
+      "dropping the related-issue filter turns one query into five million rows. The " +
+      "categories follow Settings (issue_categories), so this step and the issue steps can " +
+      "never read different registers.",
   },
   {
     stepId: "CONFIG_FINDINGS",
@@ -190,9 +224,16 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
   {
     stepId: "CONFIG_RULES",
     fields: [],
-    locked: "This step takes no variables at all: it walks Wiz's whole rule catalogue " +
-      "unfiltered, deliberately — the filter input's type is unverified here, and naming an " +
-      "input type wrong fails the document while sending none cannot.",
+    // It DOES take a filter now — `hasFindings: true`, which cuts 3,905 catalogue rows to
+    // 1,401 against the reference tenant. The old reason given here was that the filter
+    // input's type was unverified; phase0 sent CloudConfigurationRuleFilters against this
+    // tenant on 2026-08-23 and it answered (AARS_LIVE_MEASUREMENTS.md §6.10). Still not
+    // editable: the catalogue is a JOIN TARGET for issues and findings already stored, so
+    // narrowing it further is not a preference, it is a way to make a stored row's rule
+    // gloss disappear.
+    locked: "This step's one filter (rules that have findings) is not editable: the rule " +
+      "catalogue is what glosses the rule ids stored issues and findings already point at, " +
+      "so narrowing it further would blank references the ledger still holds.",
   },
   {
     stepId: "IDENTITY_HYGIENE",
@@ -274,6 +315,19 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
     locked: "This step's only filter picks whether disabled frameworks appear in the " +
       "Settings picker. It does not decide what posture is collected — the framework " +
       "selection does — so there is nothing here worth tuning per tenant.",
+  },
+  {
+    // Matches every generated category step (ISSUES_CAT_wct-id-3, …) so the family shares
+    // one lock reason instead of falling through to the generic "no spec" text. Same shape
+    // as the posture family just below, and locked for the same kind of reason: the id is
+    // not a filter to tune, it is what the step's rows ARE — every row it returns is stamped
+    // with the category in its own name.
+    stepId: "ISSUES_CAT_",
+    prefix: true,
+    fields: [],
+    locked: "This step takes no editable variable: its category is not a filter to tune — " +
+      "it is what the step's rows are, and every row it collects is stamped with it. " +
+      "Choose categories in Settings (issue_categories) instead.",
   },
   {
     // Matches every generated posture step (COMPLIANCE_POSTURE_wf-id-275, …) so the family

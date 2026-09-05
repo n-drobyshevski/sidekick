@@ -26,6 +26,10 @@ import {
 } from "../../../../../gas_shared/icons.js";
 import { facetGroup, filterUI } from "../filters.js";
 import {
+  ADJACENCY_SERIES, EXPLOITATION_SERIES, adjacencyPointNotes, capacityReadout,
+  categorySeries, exploitationPointNotes, gappySeries, labelList, presentSeries, seriesData,
+} from "../postureTrendModel.js";
+import {
   ASSET_FLAGS, DEFAULT_SORT_DIR, FACET_KEYS,
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
@@ -387,6 +391,8 @@ export async function renderInventory(main, params) {
     resultsHost = el("div", { class: "table-host" });
     host.append(resultsHost);
     host.append(trendSection(fresh));
+    const posture = postureTrendSection(fresh);
+    if (posture) host.append(posture);
 
     renderResults(fresh);
     panel.sync();
@@ -1140,5 +1146,177 @@ export async function renderInventory(main, params) {
     }
 
     return el("div", { class: "inv-history" }, sectionLabel("History"), card);
+  }
+
+  // ---- posture over time: the four series a sync records beside its counts
+  //
+  // BESIDE the counts trend, in the same History region and off the same `sync_history`
+  // rows, because they answer the question the counts raise: the counts say the register
+  // moved, these say what moved in it. Four cards rather than one chart with fifteen lines —
+  // they are four different populations and only the first is a partition.
+  //
+  // REGISTER-WIDE, and it says so under the heading. `project_totals_json` carries the AARS
+  // and outcome distributions per project and nothing else, so none of these four can follow
+  // the project switcher; a scoped read would draw an empty chart, which reads as "this
+  // project has no posture" rather than "the ledger never held the dimension".
+  function postureTrendSection(fresh) {
+    const trend = fresh.postureTrend || null;
+    if (!trend) return null;
+    const adjacency = trend.adjacency || [];
+    const exploitation = trend.exploitation || [];
+    const categoryPoints = trend.categoryPoints || [];
+    const capacity = trend.capacity || null;
+    const readout = capacityReadout(capacity);
+    // AN UNMEASURED REGISTER IS NOT A REGISTER OF ZEROES. Four empty cards over a ledger
+    // nobody has synced twice state four facts about a population nothing has looked at, so
+    // the section says that once and draws nothing.
+    if (!adjacency.length && !exploitation.length && !categoryPoints.length
+      && !readout.rows.length) {
+      return el("div", { class: "inv-history" },
+        sectionLabel("Posture over time"),
+        el("div", { class: "chart-card" },
+          el("p", { class: "chart-empty", role: "status" },
+            "Nothing recorded yet. Each sync adds a point to these series; earlier syncs "
+            + "can't be recovered.")));
+    }
+
+    const cards = el("div", { class: "posture-trend-grid" },
+      chartCard({
+        title: "Where issues sit",
+        points: adjacency,
+        series: ADJACENCY_SERIES,
+        stacked: true,
+        notes: adjacencyPointNotes(adjacency),
+        label: "Open issues by how close they sit to an AI asset, stacked, over time",
+        // The denominator, in the card as well as in every point's hover: a reader who never
+        // hovers must not take an UNLINKED band as a measurement of relatedness.
+        foot: adjacencyFoot(adjacency),
+      }),
+      chartCard({
+        title: "Exploitation evidence",
+        points: exploitation,
+        series: EXPLOITATION_SERIES,
+        notes: exploitationPointNotes(exploitation),
+        label: "Open issues by exploitation tier over time, one line per tier",
+        // A refused evidence pass writes no census at all, so a missing point here is a sync
+        // that never asked — not a sync that found nothing.
+        foot: "A sync whose exploitation pass was refused records no census and has no point "
+          + "on this chart.",
+      }),
+      chartCard({
+        title: "Open issues by category",
+        points: categoryPoints,
+        series: categorySeries(trend.categories),
+        label: "Open issues per risk category over time, one line per category",
+        foot: "One line per category the register collects now. A sync run under a narrower "
+          + "scope never counted the others, so those lines start where the scope did — a "
+          + "gap, not a zero. An issue in two categories is counted in both, so the lines "
+          + "do not sum to the register.",
+      }),
+      capacityCard(readout),
+    );
+    return el("div", { class: "inv-history" },
+      sectionLabel("Posture over time"),
+      el("p", { class: "chart-note" },
+        "The whole register. These four are recorded per sync and have no project grain, so "
+        + "they do not follow the project view."),
+      cards);
+  }
+
+  /** How many edges the last point traversed — the adjacency counts' denominator, in words. */
+  function adjacencyFoot(points) {
+    const last = points.length ? points[points.length - 1] : null;
+    const known = last && last.annotations ? last.annotations.edgesKnown : null;
+    if (known === null || known === undefined) {
+      return "No sync in this window recorded how many adjacency edges it could traverse, so "
+        + "“not linked” cannot be read as “unrelated”.";
+    }
+    return `Latest sync traversed ${known.toLocaleString()} adjacency edges. Where the graph `
+      + "holds few, “not linked” means untraversed rather than unrelated — each "
+      + "point carries its own edge count.";
+  }
+
+  /** One trend card: heading, sync count, the chart or the reason there isn't one, a note. */
+  function chartCard({ title, points, series, stacked, notes, label, foot }) {
+    const present = presentSeries(points, series);
+    const gappy = gappySeries(points, present);
+    const canvas = el("canvas", { "aria-label": label, role: "img" });
+    const card = el("div", { class: "chart-card" },
+      el("h3", {}, title),
+      el("p", { class: "chart-note" },
+        points.length >= 2 ? `${points.length} syncs` : "One point per sync"),
+      points.length >= 2 && present.length
+        ? el("div", { class: "chart-box", style: "height:200px" }, canvas)
+        : el("div", { class: "chart-empty", role: "status" },
+            points.length === 1
+              ? "One sync has recorded this — the series draws from the second."
+              : points.length
+                ? "No sync in this window recorded a figure for any of these."
+                : "No sync has recorded this yet."),
+      // A GAP IS NOT A ZERO, said in words wherever a line breaks or begins in mid-air.
+      points.length >= 2 && gappy.length
+        ? el("p", { class: "chart-note" },
+            `${labelList(gappy)} ${gappy.length === 1 ? "has" : "have"} no `
+            + "figure for every sync in this window. Those points are gaps, not zeros.")
+        : null,
+      foot ? el("p", { class: "chart-note" }, foot) : null,
+    );
+
+    if (points.length >= 2 && present.length) {
+      // Chart.js arrives on demand, and a refusal keeps the card — see trendSection's own
+      // note for why the rejection branch is the honest half.
+      loadCharts().then((charts) => {
+        if (!canvas.isConnected) return;
+        requestAnimationFrame(() => charts.trendLine(canvas, points.map((pt) => ({ x: pt.at })), {
+          yLabel: "count",
+          series: seriesData(points, present),
+          stacked: Boolean(stacked),
+          pointNotes: notes,
+        }));
+      }).catch(() => {
+        if (!canvas.isConnected) return;
+        chartUnavailable(canvas);
+      });
+    }
+    return card;
+  }
+
+  /**
+   * The capacity readout: a WORD, a dot that repeats it, and the syncs it could not use.
+   *
+   * The word is the signal and the dot is the redundancy, never the other way round — the
+   * verdict has to survive being read in greyscale, and a hue on its own would be the only
+   * carrier of a three-valued fact.
+   */
+  function capacityCard(readout) {
+    const dotClass = readout.verdict ? `cap-dot cap-dot--${readout.verdict}` : "cap-dot";
+    const recent = readout.rows.slice(-6).reverse();
+    return el("div", { class: "chart-card" },
+      el("h3", {}, "Remediation capacity"),
+      el("p", { class: "cap-verdict" },
+        el("span", { class: dotClass, "aria-hidden": "true" }),
+        el("span", { class: "cap-verdict-word" }, readout.word)),
+      el("p", { class: "chart-note" }, readout.detail),
+      recent.length
+        ? el("table", { class: "cap-table" },
+            el("thead", {},
+              el("tr", {},
+                el("th", { scope: "col" }, "Sync"),
+                el("th", { scope: "col", class: "num" }, "Opened"),
+                el("th", { scope: "col", class: "num" }, "Closed"),
+                el("th", { scope: "col", class: "num" }, "Net"),
+                el("th", { scope: "col" }, "Verdict"))),
+            el("tbody", {}, ...recent.map((r) => el("tr", {},
+              el("td", {}, fmtDate(r.at)),
+              el("td", { class: "num" }, String(r.opened)),
+              el("td", { class: "num" }, String(r.closed)),
+              el("td", { class: "num" }, r.net > 0 ? `+${r.net}` : String(r.net)),
+              el("td", {}, r.verdict)))))
+        : null,
+      el("p", { class: "chart-note" },
+        "Opened counts new and reopened issues; closed counts the ledger's own "
+        + "disappearance-dated resolutions. A sync that changed the register's scope, or "
+        + "resolved nothing by absence, is plotted but not compared."),
+    );
   }
 }

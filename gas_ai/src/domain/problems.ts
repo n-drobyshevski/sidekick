@@ -17,7 +17,12 @@ import type { DecisionVector, AmplificationFactor } from "./problem";
 import { OUTCOME_VALUES, nodeAmplificationVector } from "./problem";
 import type { FindingRow, GNode, IssueRow } from "./graphTypes";
 import { SEVERITY_ORDER, isOpenGap, isUnresolvedIssue, type Severity } from "./config";
-import { rankOne, type RankRule } from "./rank";
+import {
+  rankOne,
+  type AiAdjacency,
+  type ExploitationTier,
+  type RankRule,
+} from "./rank";
 import { postureStateOf, type PostureState, type Tier } from "./posture";
 
 export type ProblemKind = "ISSUE" | "FINDING";
@@ -96,6 +101,27 @@ export interface ProblemRow {
   ruleId?: string;
   /** A finding's `ruleShortId` (e.g. `SUB-082`) — absent on an ISSUE row, which has none. */
   ruleShortId?: string;
+
+  // ---- WP6: the rank model's own INPUTS, carried onto the projection rather than left on
+  // the source row. `withRankScores` takes a `ProblemRow`, so a term whose field never
+  // reached this shape is a term the ranker reads as unmeasured — silently, and at full
+  // strength, since the blend renormalises over what it can see. Projecting them is what
+  // makes "this term scored null" mean "the source row had nothing to say" rather than
+  // "the projection dropped it".
+  /**
+   * The exploitation ladder folded up from the row's linked findings, upstream. Absent is
+   * `unknown` is UNMEASURED — `rank.exploitationOf` reads all three the same way and never
+   * as `none`, which is the opposite claim.
+   */
+  exploitationTier?: ExploitationTier;
+  /** The highest EPSS across those findings; demotes an `epss` tier below the rule's bar. */
+  epssPeak?: number | null;
+  /** Reasons text only — how many findings the tier was folded from. */
+  exploitationFindingCount?: number;
+  /** Where the row sits relative to the AI estate. Absent means no adjacency pass ran. */
+  aiAdjacency?: AiAdjacency;
+  /** The edge label an `ADJACENT` row came through — reasons text only. */
+  adjacencyVia?: string;
   /**
    * The minimal model's ordering key, 0..1 — `domain/rank.ts`. Computed SERVER-SIDE and shipped
    * on the row on purpose: `actionView.js`'s header argues at length against a client-computed
@@ -109,6 +135,31 @@ export interface ProblemRow {
    * number, so a surface can hatch it instead of implying a reading nobody took.
    */
   rankTimed?: boolean;
+  /**
+   * WHICH DATE the clock read — `dueAt`, `createdAt`, or `null` when it read neither. Beside
+   * `rankTimed` rather than folded into it: "overdue by 40 days" and "born 40 days ago and
+   * nobody set a deadline" are both a measured clock and they are not the same claim, and a
+   * surface that showed one number for both would be inventing a deadline.
+   */
+  rankTimeBasis?: "dueAt" | "createdAt" | null;
+  /**
+   * One clause per term that ENTERED the score, in blend order — `rank.ts`'s own `reasons`,
+   * carried whole. This is the row's answer to "why is this above that one", and it is
+   * shipped rather than re-derived on a surface for the same reason `rankScore` is: two
+   * derivations of one number eventually disagree with no way for a reader to tell which is
+   * lying.
+   */
+  rankReasons?: string[];
+  /** The term names behind `rankReasons`, same order and same length — the audit half. */
+  rankMeasured?: string[];
+  /**
+   * The exploitation and adjacency readings, published EVEN WHEN THEIR SHARE IS 0 and the
+   * score therefore did not use them. `rank.ts`'s header states the argument: a reading the
+   * score did not use is still a reading, and the evaluation harness needs it to decide
+   * whether the share should move. `null` is unmeasured, never a zero reading.
+   */
+  rankExploitation?: number | null;
+  rankAdjacency?: number | null;
   /** Worst of `projects[].riskProfile.businessImpact`, straight off the source row — same
    *  field IssueRow and FindingRow both already carry under this exact name. */
   businessImpact?: string;
@@ -131,6 +182,54 @@ export interface ProblemRow {
    * is exactly why THIS field, not that one, is safe for actions.ts to aggregate by rule.
    */
   ruleRemediation?: string;
+}
+
+/**
+ * The five rank inputs the source rows carry, read STRUCTURALLY.
+ *
+ * Structural rather than off `IssueRow` / `FindingRow` for the reason `rank.ts`'s own header
+ * gives for being shape-typed: these are three strings and two numbers, and a structural read lets
+ * this projection compile against a ledger schema that has not grown the exploitation fold
+ * yet — a row without them is a row the ranker reads as unmeasured, which is exactly what an
+ * un-folded ledger IS. Not a cast: an unrecognised tier is dropped rather than passed
+ * through, and `rank.exploitationOf` would read it as `null` anyway, so the two agree.
+ */
+interface RankSourceFields {
+  exploitationTier?: unknown;
+  epssPeak?: unknown;
+  exploitationFindingCount?: unknown;
+  aiAdjacency?: unknown;
+  adjacencyVia?: unknown;
+}
+
+const EXPLOITATION_TIERS: readonly string[] = ["kev", "exploit", "epss", "none", "unknown"];
+const AI_ADJACENCIES: readonly string[] = ["DIRECT", "ADJACENT", "UNLINKED"];
+
+type RankInputFields = Pick<
+  ProblemRow,
+  "exploitationTier" | "epssPeak" | "exploitationFindingCount" | "aiAdjacency" | "adjacencyVia"
+>;
+
+function rankInputsOf(row: RankSourceFields): RankInputFields {
+  const tier = String(row.exploitationTier ?? "").trim().toLowerCase();
+  const adjacency = String(row.aiAdjacency ?? "").trim().toUpperCase();
+  const peak = typeof row.epssPeak === "number" && Number.isFinite(row.epssPeak)
+    ? row.epssPeak
+    : undefined;
+  const count = typeof row.exploitationFindingCount === "number"
+    && Number.isFinite(row.exploitationFindingCount)
+    ? row.exploitationFindingCount
+    : undefined;
+  const via = String(row.adjacencyVia ?? "").trim();
+  return {
+    exploitationTier: EXPLOITATION_TIERS.indexOf(tier) >= 0
+      ? (tier as ExploitationTier)
+      : undefined,
+    epssPeak: peak,
+    exploitationFindingCount: count,
+    aiAdjacency: AI_ADJACENCIES.indexOf(adjacency) >= 0 ? (adjacency as AiAdjacency) : undefined,
+    adjacencyVia: via || undefined,
+  };
 }
 
 /** One open toxic-combination issue, projected. */
@@ -157,6 +256,7 @@ export function issueToProblemRow(issue: IssueRow, node: GNode | undefined): Pro
     ignored: false,
     firstSeenAt: issue.createdAt,
     ruleRemediation: issue.resolutionRecommendation,
+    ...rankInputsOf(issue as RankSourceFields),
   };
 }
 
@@ -192,6 +292,10 @@ export function findingToProblemRow(finding: FindingRow, node: GNode | undefined
     ignored: (finding.ignoreRuleIds ?? []).length > 0,
     firstSeenAt: finding.firstSeenAt,
     ruleRemediation: finding.remediationInstructions,
+    // The same read as the issue arm, against a row type that carries none of these fields
+    // today. Deliberate: the fold is upstream of this projection and may reach findings
+    // later, and an arm that silently could not see them would be the harder bug of the two.
+    ...rankInputsOf(finding as RankSourceFields),
   };
 }
 
@@ -223,8 +327,16 @@ export function buildProblemRows(
 }
 
 /**
- * Stamp every row with the minimal model's score. Pure: the caller supplies the rule and the
- * clock, exactly as `comboDigest` takes its `nowIso` rather than reading one.
+ * Stamp every row with the minimal model's score, and with the readings behind it. Pure: the
+ * caller supplies the rule and the clock, exactly as `comboDigest` takes its `nowIso` rather
+ * than reading one.
+ *
+ * EVERY FIELD `RankInput` OFFERS IS FILLED HERE, and that is the whole change over the
+ * two-field version this replaced. The blend renormalises over the terms it can READ, so a
+ * term whose input never reached the ranker is not scored low — it is dropped from both
+ * halves of the fraction, and the row is silently ranked on fewer terms than the operator's
+ * rule asked for. A half-filled `RankInput` therefore does not under-read the model; it
+ * changes which model ran, on which rows, invisibly.
  */
 export function withRankScores(
   rows: readonly ProblemRow[],
@@ -233,11 +345,36 @@ export function withRankScores(
 ): ProblemRow[] {
   return rows.map((row) => {
     const result = rankOne(
-      { id: row.id, ruleId: row.ruleId, ruleShortId: row.ruleShortId, dueAt: row.dueAt ?? undefined },
+      {
+        id: row.id,
+        ruleId: row.ruleId,
+        ruleShortId: row.ruleShortId,
+        dueAt: row.dueAt ?? undefined,
+        // THE BIRTH DATE, AND IT IS `firstSeenAt` ON BOTH ARMS. `FindingRow` carries no
+        // `createdAt` field at all — `findingToProblemRow` maps its `firstSeenAt` into this
+        // one, and `issueToProblemRow` maps the issue's own `createdAt` into the same place.
+        // One field, one meaning: when this row started being true. Read only by
+        // `timeSource: "dueAtElseAge"`, and only where there is no deadline.
+        createdAt: row.firstSeenAt,
+        exploitationTier: row.exploitationTier,
+        epssPeak: row.epssPeak,
+        exploitationFindingCount: row.exploitationFindingCount,
+        aiAdjacency: row.aiAdjacency,
+        adjacencyVia: row.adjacencyVia,
+      },
       rule,
       nowIso,
     );
-    return { ...row, rankScore: result.score, rankTimed: result.timeComponent !== null };
+    return {
+      ...row,
+      rankScore: result.score,
+      rankTimed: result.timeComponent !== null,
+      rankTimeBasis: result.timeBasis,
+      rankReasons: result.reasons,
+      rankMeasured: result.measuredTerms,
+      rankExploitation: result.exploitationComponent,
+      rankAdjacency: result.adjacencyComponent,
+    };
   });
 }
 
@@ -304,6 +441,18 @@ function severityRank(sev: Severity | null): number {
  *    still sort the same way every time this runs, or a repaint would silently reshuffle a
  *    page nothing about the underlying data changed — the same discipline
  *    `comboView.js`'s `sortIssues` and `assetTable.ts`'s comparators both keep.
+ *
+ * THERE IS NOW AN OPTIONAL LEVEL 0, AND IT IS OFF. `compareProblemsBy(true)` puts
+ * `rankScore` descending above all four, with an unranked row last; `compareProblemsBy(false)`
+ * IS this function, by identity rather than by resemblance, so every existing caller and
+ * every pinned expectation below is the same code path it was. The flag comes from the
+ * `rank_leads_sort` setting, which DEFAULTS TO FALSE — the iron rule: leading the register by
+ * a model's own number is a tuning change, it ships as a knob that does not move, and the
+ * evaluation harness's figures are what should move it. The knob exists at all because a
+ * rank nobody can put in front of the order it proposes cannot be evaluated against the one
+ * it would replace; `getProblems` publishes `rankLeadsSort` and `rankSignature` beside the
+ * rows so a page can say which of the two orders it is showing rather than leaving a reader
+ * to infer it from the shuffle.
  */
 export function compareProblems(a: ProblemRow, b: ProblemRow): number {
   const sev = severityRank(a.severity) - severityRank(b.severity);
@@ -325,9 +474,41 @@ export function compareProblems(a: ProblemRow, b: ProblemRow): number {
   return a.id.localeCompare(b.id);
 }
 
-/** A ranked copy — never sorts the caller's array in place, matching `sortAssetRows`. */
-export function rankProblems(rows: readonly ProblemRow[]): ProblemRow[] {
-  return [...rows].sort(compareProblems);
+/**
+ * The comparator this register orders by, with or without the rank model in the lead.
+ *
+ * `false` returns `compareProblems` ITSELF rather than a wrapper that delegates to it: the
+ * proof that turning the flag off changes nothing is then a fact about the reference, not a
+ * claim about a function body that could drift. An unscored row (`rankScore` absent, or a
+ * non-finite number) sorts LAST at level 0 and then falls through to the four levels below —
+ * the same "missing sorts last" convention `severityRank` and `slaRank` already keep, for the
+ * same reason: a row the model never scored is not a mild row.
+ */
+export function compareProblemsBy(
+  leadWithRank: boolean,
+): (a: ProblemRow, b: ProblemRow) => number {
+  if (!leadWithRank) return compareProblems;
+  return (a, b) => {
+    const ra = typeof a.rankScore === "number" && Number.isFinite(a.rankScore) ? a.rankScore : null;
+    const rb = typeof b.rankScore === "number" && Number.isFinite(b.rankScore) ? b.rankScore : null;
+    if (ra === null && rb !== null) return 1;
+    if (rb === null && ra !== null) return -1;
+    // Descending: a higher score is a worse row, and this cascade is worst-first throughout.
+    if (ra !== null && rb !== null && ra !== rb) return rb - ra;
+    return compareProblems(a, b);
+  };
+}
+
+/**
+ * A ranked copy — never sorts the caller's array in place, matching `sortAssetRows`.
+ *
+ * `leadWithRank` defaults to false, so every existing caller keeps today's order exactly.
+ */
+export function rankProblems(
+  rows: readonly ProblemRow[],
+  leadWithRank = false,
+): ProblemRow[] {
+  return [...rows].sort(compareProblemsBy(leadWithRank));
 }
 
 /**

@@ -56,9 +56,14 @@ describe("the web-app entry", () => {
   });
 });
 
+// The old two-trigger contract (`trigger_continueScan` / `trigger_dailyScan`) was superseded
+// when the battery grew a watchdog and a warm-cache trigger of its own — see the richer
+// "trigger handlers" block below, which asserts against `TRIGGERS` (the four names this
+// register's `jobsStore.ts` / `setup.ts` actually install) rather than a hardcoded pair.
+
 describe("editor-run entry points", () => {
   it("are gated — the editor runs as whoever opened it", () => {
-    for (const name of ["setup", "deploymentDiagnostic"]) {
+    for (const name of ["setup", "deploymentDiagnostic", "wizDiagnostic", "resetStuckJob"]) {
       expect(ENTRY).toMatch(
         new RegExp(`function ${name}\\(\\)[\\s\\S]{0,120}assertAllowed\\("${name}"\\)`),
       );

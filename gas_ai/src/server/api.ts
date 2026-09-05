@@ -43,8 +43,10 @@ import {
   COUNT_KEYS,
   countAarsSeverities,
   countTrendFromHistory,
+  postureTrendFromHistory,
   type CountKey,
   type CountTrendPoint,
+  type PostureTrend,
 } from "../domain/aarsTrend";
 import {
   countProblemOutcomes,
@@ -67,9 +69,18 @@ import {
   buildProblemRows,
   PROBLEMS_CLIENT_ALL_MAX,
   rankProblems,
+  withRankScores,
   type ProblemRow,
 } from "../domain/problems";
-import { rankRuleFromExploitation } from "../domain/rank";
+import {
+  cleanRankRule,
+  DEFAULT_RANK_RULE,
+  RANK_PRESET_V2,
+  rankRuleFromExploitation,
+  rankSignature,
+  type RankRule,
+} from "../domain/rank";
+import { evaluateRank } from "../domain/rankEval";
 import {
   concentrationRatio,
   coverCurve,
@@ -124,6 +135,7 @@ import {
 } from "../domain/complianceOverview";
 import { dropUnselected, scopeFiveRs, withCountsFrom } from "../domain/complianceScope";
 import { fiveRsDerivedPosture } from "../domain/fiveRsPosture";
+import { CANDIDATE_CATEGORIES, registerScopeSignature } from "../domain/registerScope";
 import { cleanFiveRsPins } from "../domain/settingsLogic";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
@@ -328,16 +340,60 @@ function viewGraphDoc(): GraphDoc | null {
   return doc;
 }
 
+/**
+ * The project a row may claim membership of ON ITS OWN, or "" when the row's own attribution
+ * must not be consulted.
+ *
+ * Empty for a DOMAIN view, which is not a lapse. A domain is the value of a resource's
+ * `Wiz/Domain` TAG: it lives on the asset and nowhere else, so a row's project refs cannot
+ * answer whether it is in one. Under a domain view these two populations keep exactly the
+ * behaviour they had — the asset link, and nothing beside it.
+ */
+function selfScopeProject(): string {
+  if (settingsStore.getDomainView()) return "";
+  return settingsStore.getProjectView();
+}
+
+/**
+ * Issues in view: the ones hanging off an asset in view, OR attributed to the project itself.
+ *
+ * THE SECOND CLAUSE IS A CORRECTNESS FIX, not a widening for its own sake. The register's
+ * issue population is no longer only AI-kinded entities: an issue raised on a VM, a
+ * container or an identity has a `kindFromWizType` that this app refuses, so NO asset row is
+ * written for it — and scoping by the asset alone therefore removed every one of those rows
+ * from every project view, with nothing on screen saying so. A filtered list that looks
+ * complete is the worst shape this can take.
+ *
+ * `inProject` from domain/prunePlan.ts rather than a second `p.id === view` written here.
+ * Its own comment gives the reason and it applies with more force now there are two callers
+ * on the read path: two spellings of "does this belong to that project" are two answers, and
+ * the first symptom is a list disagreeing with the count beside it.
+ *
+ * An issue whose `projectRefs` are ABSENT keeps exactly today's behaviour — asset membership
+ * decides it. Absent means the row was written before the column existed, so its attribution
+ * is unknown, and `inProject(undefined, …)` is false rather than a guess.
+ */
 function viewIssues(): IssueRow[] {
   const ids = viewAssetIds();
   const all = syncStore.loadIssues();
-  return ids ? all.filter((i) => ids.has(i.assetId)) : all;
+  if (!ids) return all;
+  const project = selfScopeProject();
+  return all.filter((i) => ids.has(i.assetId) || inProject(i.projectRefs, project));
 }
 
+/**
+ * Findings in view, on the same rule and for the same reason — a configuration finding is
+ * evaluated against a REGION or a RAW_ACCESS_POLICY as readily as against an AI asset, and
+ * those resource types are not in the graph either (`FindingRow.resourceType` says so in as
+ * many words). `FindingRow.projects` has carried the refs as objects since the tab existed,
+ * so this needed no new column.
+ */
 function viewFindings(): FindingRow[] {
   const ids = viewAssetIds();
   const all = syncStore.loadFindings();
-  return ids ? all.filter((f) => ids.has(f.resourceId)) : all;
+  if (!ids) return all;
+  const project = selfScopeProject();
+  return all.filter((f) => ids.has(f.resourceId) || inProject(f.projects, project));
 }
 
 function run<T>(fn: () => T): ApiResult<T> {
@@ -363,6 +419,25 @@ function openIssues(): IssueRow[] {
 }
 
 // ------------------------------------------------------------------------ bootstrap
+
+/**
+ * The scope-drift notice, or null when there is nothing to say.
+ *
+ * Compared as SIGNATURES rather than as lists, so reordering the same categories is not a
+ * change — the order decides which step runs first and nothing else, and a notice that fired
+ * on a reorder would train an operator to ignore it. Both sides travel with the notice
+ * because "the register moved" is useless without saying from what to what.
+ *
+ * Not an `export`: every exported function in this file needs a matching GAS delegator in
+ * dist/entry.js, and this is a detail of bootstrap, not an endpoint.
+ */
+function registerScopeNotice(latest: Rec | null): Rec | null {
+  const persisted = latest ? String(latest["register_scope"] ?? "") : "";
+  if (!persisted) return null;
+  const current = registerScopeSignature(settingsStore.getIssueCategories());
+  if (persisted === current) return null;
+  return { kind: "registerScope", persisted, current, remedy: "sync" };
+}
 
 export function bootstrap(_p?: unknown): ApiResult {
   return run(() => ({
@@ -461,6 +536,16 @@ function bootstrapCore(): Rec {
       // from the condition that raises it.
       remedy: "sync",
     },
+    // A THIRD kind, and the same argument one axis over. `derivation` says the stored facts
+    // were READ differently; this says a different POPULATION was asked for. The ledger holds
+    // whatever categories the last sync applied, the settings hold what the next one will,
+    // and between the two every issue figure on every page is counted under the old scope
+    // while the Settings page shows the new one. Only a sync closes that.
+    //
+    // Null — no notice at all — when they agree, when nothing has ever been synced (an
+    // unmeasured register is not a register with a scope problem), and when the history row
+    // predates the column: an absent stamp is unknown, never "a different scope".
+    registerScope: registerScopeNotice(latest),
     latestSync: latest,
     // This block is dereferenced in exactly ONE place in the client — helpContent's
     // "severity" lexicon entry — and it reads `openIssues` alone. `aiAssets`, `totalAssets`
@@ -1058,6 +1143,16 @@ interface AssetsModel {
   severityCounts: Record<string, number>;
   /** Open issues / cloud findings / compliance posture fails over time. */
   countTrend: CountTrendPoint[];
+  /**
+   * The four posture distributions over time, and the remediation-capacity readout —
+   * adjacency, exploitation, open issues per category, and the ledger's transitions. Rides
+   * on this payload beside `countTrend` rather than on an endpoint of its own: it is read
+   * off the same `sync_history` rows, on the same page, in the same paint.
+   *
+   * REGISTER-WIDE, unlike `countTrend` — see `PostureTrend` for why none of the four can
+   * follow the project switcher.
+   */
+  postureTrend: PostureTrend;
   /** Which population `countTrend` describes, and how much of the ledger it covers. */
   trendScope: {
     /** The project view the series was read for, "" when register-wide. */
@@ -1294,6 +1389,7 @@ function assetsModel(): AssetsModel {
     // Recorded per sync, so the window is short at first and cannot be backfilled — and
     // per SERIES, since the three counts entered the ledger on three different days.
     countTrend: trend,
+    postureTrend: postureTrendFromHistory(history, settingsStore.getIssueCategories()),
     trendScope: {
       projectId: projectView,
       domainId: settingsStore.getDomainView(),
@@ -1355,6 +1451,7 @@ export function getAssets(p?: unknown): ApiResult {
       kpis: model.kpis,
       severityCounts: model.severityCounts,
       countTrend: model.countTrend,
+      postureTrend: model.postureTrend,
       trendScope: model.trendScope,
       countDeltas: countDeltas(model.countTrend, model.kpis),
       reach: model.reach,
@@ -2328,10 +2425,30 @@ export function getCombosDigest(_p?: unknown): ApiResult {
 // -------------------------------------------------------------------------- problems
 
 interface ProblemsModel {
-  /** Ranked once, by `compareProblems` — never re-sorted per request. */
+  /** Ranked once, by `compareProblemsBy(rankLeadsSort)` — never re-sorted per request. */
   rows: ProblemRow[];
   /** Problems by Wiz severity, the register's own filter dimension. */
   severityCounts: Record<string, number>;
+  /** What the scores on those rows were computed AGAINST — `rank.rankSignature`. */
+  rankSignature: string;
+  /** Whether the order above leads with the rank score or with Wiz's severity. */
+  rankLeadsSort: boolean;
+}
+
+/**
+ * The rule the register actually ranks by: the operator's stored knobs, with the rule
+ * weights read off the judgement table they already keep.
+ *
+ * `rankRuleFromExploitation` spreads its `base`, so every knob the stored rule carries —
+ * the shares, the two ladders, the timeSource — flows through and only `ruleWeights` is
+ * replaced. That is the point rank.ts's own header argues: `ProblemRule.exploitationByRuleId`
+ * is already a per-rule operator judgement keyed on the same rule id, already persisted and
+ * already edited through a picker backed by the rule-id census, so a second per-rule table
+ * beside it would ask an operator to say the same thing twice and then drift.
+ */
+function effectiveRankRule(stored?: RankRule): RankRule {
+  const base = stored ?? settingsStore.getRankRule().rule;
+  return rankRuleFromExploitation(settingsStore.getProblemRule().rule.exploitationByRuleId, base);
 }
 
 /**
@@ -2346,14 +2463,23 @@ function problemsModel(): ProblemsModel {
   // Populations and join scoped together. Handing `buildProblemRows` the whole register
   // against a filtered `assetsById` would keep every row and merely un-enrich the ones out
   // of view — rows missing their posture tier rather than rows correctly absent.
-  const rows = rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById));
+  // Scored BEFORE the sort, and the sort is told whether to lead with the score. At the
+  // shipped default (`rank_leads_sort` false) `compareProblemsBy(false)` IS `compareProblems`,
+  // so this line's order is byte-identical to what it was and the scores ride along as extra
+  // columns — which is exactly the proof the iron rule asks for.
+  const rule = effectiveRankRule();
+  const leadsSort = settingsStore.getRankLeadsSort();
+  const rows = rankProblems(
+    withRankScores(buildProblemRows(viewIssues(), viewFindings(), assetsById), rule, nowIso()),
+    leadsSort,
+  );
   const severityCounts: Record<string, number> = {};
   for (const sev of SEVERITY_ORDER) severityCounts[sev] = 0;
   for (const r of rows) {
     const sev = String(r.severity ?? "");
     if (sev) severityCounts[sev] = (severityCounts[sev] ?? 0) + 1;
   }
-  return { rows, severityCounts };
+  return { rows, severityCounts, rankSignature: rankSignature(rule), rankLeadsSort: leadsSort };
 }
 
 /**
@@ -2437,6 +2563,26 @@ function publicProblemRow(r: ProblemRow): Rec {
     businessImpact: r.businessImpact,
     iac: r.iac,
     ignored: r.ignored,
+    // ---- WP6: the rank model's published readings.
+    //
+    // ON THE ALLOW-LIST DELIBERATELY, and it is worth saying why this is not the thing
+    // `VERDICT_ROW_KEYS` above exists to stop. The three confined verdicts are per-asset and
+    // per-problem CLAIMS produced by models that measured 100% of one landscape into one band
+    // (ai/AARS_SCORING_ASSESSMENT.md §3); the rank is an ORDER over one queue, computed from
+    // the operator's own judgement table and a clock, and it ships with the clauses that
+    // produced it. A number a reader cannot interrogate is the failure mode; `rankReasons` is
+    // the answer to that, so it travels with the score rather than behind a second call.
+    //
+    // `rankExploitation` / `rankAdjacency` ride along even at share 0, where the score did
+    // not use them — rank.ts's own header: a reading the score did not use is still a
+    // reading, and the harness needs it to decide whether the share should move.
+    rankScore: r.rankScore,
+    rankTimed: r.rankTimed,
+    rankTimeBasis: r.rankTimeBasis,
+    rankReasons: r.rankReasons,
+    rankMeasured: r.rankMeasured,
+    rankExploitation: r.rankExploitation,
+    rankAdjacency: r.rankAdjacency,
   };
 }
 
@@ -2474,6 +2620,15 @@ export function getProblems(p?: unknown): ApiResult {
       // finding, regardless of the outcome filter or the mode below.
       total: model.rows.length,
       severityCounts: model.severityCounts,
+      // WHICH ORDER THIS PAYLOAD IS IN, said rather than left to be inferred. The rows are
+      // sorted server-side and a page that re-sorted them would be a second ranking
+      // authority, so the page has no way of its own to tell the severity-led order from the
+      // rank-led one — two orders that agree on plenty of rows and differ on the interesting
+      // ones, which is the shape of a difference nobody notices. The signature names the
+      // DERIVATION knobs the scores were computed against (rank.rankSignature), so a stored
+      // score and a stored rule can be compared instead of assumed to match.
+      rankSignature: model.rankSignature,
+      rankLeadsSort: model.rankLeadsSort,
     };
 
     if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
@@ -2771,6 +2926,20 @@ export function getSettings(_p?: unknown): ApiResult {
     // The operator's overrides on the 5Rs scope. Only the pins: the derived default is
     // computed in getCompliance, where the trees and findings it needs already are.
     fiveRsPins: settingsStore.getFiveRsPins(),
+    // WHICH RISK CATEGORIES THE ISSUE REGISTER COLLECTS, and the candidates offered. The
+    // candidate list travels with the selection because a bare id is unreadable — the
+    // measured names live in domain/registerScope.ts and a second copy in the client would
+    // be a second place for them to drift.
+    issueCategories: settingsStore.getIssueCategories(),
+    candidateCategories: CANDIDATE_CATEGORIES.map((c) => ({ id: c.id, name: c.name })),
+    // The minimal model's knobs and whether it leads the Priorities order. The two presets
+    // travel WITH them for the same reason the candidate list above travels with its
+    // selection: a client that hand-copied `DEFAULT_RANK_RULE` or `RANK_PRESET_V2` would be
+    // a second copy of the shipped defaults, and the failure of a second copy is that it
+    // stops matching without saying so. The editor offers what the server actually holds.
+    rankRule: settingsStore.getRankRule().rule,
+    rankLeadsSort: settingsStore.getRankLeadsSort(),
+    rankPresets: { v1: DEFAULT_RANK_RULE, v2: RANK_PRESET_V2 },
   }));
 }
 
@@ -2803,6 +2972,23 @@ export function setSettings(p?: unknown): ApiResult {
         ),
       );
     }
+    // WHICH POPULATION EVERY PUBLISHED ISSUE FIGURE COUNTS. Not validated against the
+    // candidate list: `securityCategories` returns 500+ rows on this tenant including
+    // UUID-keyed custom ones, so a whitelist would lock an operator out of their own
+    // register. `cleanCategoryIds` folds an empty list back to the default, because an empty
+    // category filter is not an empty register — it is an UNFILTERED one.
+    if (params["issueCategories"] !== undefined) {
+      settingsStore.setIssueCategories(params["issueCategories"]);
+    }
+    // Cleaned rather than validated: `cleanRankRule` clamps every knob into range and reads a
+    // pre-v2 rule as the two-term case, so a hand-edited or older blob degrades to a rule
+    // that scores rather than to a refused save. Same latitude the two above take.
+    if (params["rankRule"] !== undefined) settingsStore.setRankRule(params["rankRule"]);
+    // `!== undefined`, not truthiness — `false` is the DEFAULT here, so the truthy form would
+    // make the one value an operator most needs to send impossible to send.
+    if (params["rankLeadsSort"] !== undefined) {
+      settingsStore.setRankLeadsSort(params["rankLeadsSort"]);
+    }
     return {
       defaultDepth: settingsStore.getDefaultDepth(),
       maxNodes: settingsStore.getMaxNodes(),
@@ -2812,6 +2998,15 @@ export function setSettings(p?: unknown): ApiResult {
       projectView: settingsStore.getProjectView(),
       domainView: settingsStore.getDomainView(),
       fiveRsPins: settingsStore.getFiveRsPins(),
+      // Echoed like the rest, so the Settings page repaints the STORED list rather than
+      // the one it asked for.
+      issueCategories: settingsStore.getIssueCategories(),
+      // Echoed for the same reason, and it matters more here: `cleanRankRule` can return a
+      // rule that is not the one the caller sent (a share out of range, a v1 blob read as
+      // the two-term case), so a page that repainted its own request would show knobs the
+      // register is not ranking by.
+      rankRule: settingsStore.getRankRule().rule,
+      rankLeadsSort: settingsStore.getRankLeadsSort(),
     };
   });
 }
@@ -3310,6 +3505,162 @@ export function setPostureRule(p?: unknown): ApiResult {
     if (errors.length) throw new Error(errors.join(" "));
     settingsStore.setPostureRule(proposed);
     return postureRuleState();
+  });
+}
+
+// ---------------------------------------------------------------------------- rank rule
+//
+// A FOURTH rule editor's endpoints, mirroring the three above — and shorter than any of
+// them, in one specific way that is the model rather than an omission. The other three carry
+// a `stale` flag, because each prices a column the sync PERSISTS and an edit can strand it.
+// A rank score is computed per request over rows already in hand and written to no tab, so
+// there is nothing an edit can strand: the answer is "it is current", always, and publishing
+// a flag that is a constant would be a readout that says nothing while looking like a check.
+//
+// What replaces it is `signature`. `rankSignature` names the DERIVATION knobs — which bucket
+// a row lands in, which clock is read, which terms are read at all — so a score published
+// beside a signature can be compared against the rule that is stored now. That is the same
+// job `problemRule.vectorSignature` does, and the same failure both exist to stop: a knob
+// that changes WHICH READING a row gets, with a stored input reused across the flip, so the
+// knob appears to do nothing.
+
+/**
+ * The {version, rule, effectiveRule, signature, leadsSort, presets} shape both endpoints
+ * share, for the reason `problemRuleState()` is factored out rather than duplicated.
+ *
+ * `effectiveRule` is the honest half: `rule` is what an operator typed, and `effectiveRule`
+ * is what the register ACTUALLY ranks by once the rule weights are read off the exploitation
+ * judgement table. Showing only the first would put an editor in front of a rule whose
+ * `ruleWeights: []` is never the list the ranker used.
+ */
+function rankRuleState(): Rec {
+  const stored = settingsStore.getRankRule();
+  const effective = effectiveRankRule(stored.rule);
+  return {
+    version: stored.version,
+    rule: stored.rule,
+    effectiveRule: effective,
+    signature: rankSignature(effective),
+    leadsSort: settingsStore.getRankLeadsSort(),
+    // Shipped here as well as on `getSettings`, so the editor and the Settings tab read one
+    // source. A preset copied into a client is a second copy of a shipped default, and the
+    // failure of a second copy is that it stops matching without saying so.
+    presets: { v1: DEFAULT_RANK_RULE, v2: RANK_PRESET_V2 },
+  };
+}
+
+export function getRankRule(_p?: unknown): ApiResult {
+  return run(() => rankRuleState());
+}
+
+/**
+ * Save the rank rule. NO VALIDATION PASS, unlike `setProblemRule` / `setPostureRule`, and
+ * that asymmetry is deliberate: those two edit a rule LIST where a row can shadow another
+ * or reach nothing, which is a structural mistake worth refusing. Every knob here is a
+ * number in a range or a name from a closed set, and `cleanRankRule` clamps rather than
+ * rejects — a rule that cannot say which clock it meant gets the clock every published score
+ * was computed against, which is a repair, not an error.
+ *
+ * `leadsSort` is accepted here as well as on `setSettings` so the editor that moves the
+ * shares can put the model in front of the order it proposes in one call. Absent leaves it
+ * exactly as it was — this is a PATCH, like everything else that writes settings.
+ */
+export function setRankRule(p?: unknown): ApiResult {
+  return mutate(() => {
+    const params = (p ?? {}) as Rec;
+    if (params["rule"] !== undefined) settingsStore.setRankRule(cleanRankRule(params["rule"]));
+    if (params["leadsSort"] !== undefined) settingsStore.setRankLeadsSort(params["leadsSort"]);
+    return rankRuleState();
+  });
+}
+
+// ----------------------------------------------------------------------- rank evaluation
+
+/** A month, because that is the window an operator argues about. Overridable per call. */
+const RANK_EVAL_HORIZON_DAYS = 30;
+
+/** The cuts of the queue the panel scores at — a screenful, a page, a sprint, a quarter. */
+const RANK_EVAL_KS = [10, 25, 50, 100];
+
+/**
+ * How many of the most recent committed syncs the evaluation reads.
+ *
+ * A CHOICE, and therefore one the payload has to publish: the random baseline alone ranks the
+ * whole population twenty times per evaluated sync, and a ledger with two years of daily syncs
+ * behind it would spend the request budget re-litigating a queue nobody is looking at. The
+ * report carries `historyRows` beside `syncsConsidered` so a reader can see the window rather
+ * than infer it — the same reason the probe's `--roots` exit names the sections it skipped.
+ */
+const RANK_EVAL_MAX_SYNCS = 25;
+
+/**
+ * DOES THE RANKING PUT THE RIGHT THING FIRST — the evaluation panel's single read.
+ *
+ * The labels come from the lifecycle ledger and are DISAPPEARANCES, so every figure this
+ * returns is an upper bound on remediation with the sync interval as its error. The report
+ * leads with the honesty block for that reason: `evaluateRank` returns `computed: false` and a
+ * sentence whenever there is nothing to measure, and the bases are then null rather than a
+ * table of zeroes — an unmeasured evaluation is not an evaluation of zeroes.
+ *
+ * THE CLOCK IS READ HERE AND FOR ONE THING ONLY. `evaluateRank` is pure and takes every date
+ * it needs; `asOf` and `daysSinceLastSync` exist so the panel can say how old the last sync is,
+ * which is a fact about the ledger rather than an input to any figure.
+ */
+export function getRankEval(args?: {
+  horizonDays?: number;
+  ks?: number[];
+  preset?: "v1" | "v2" | "stored";
+}): ApiResult {
+  return run(() => {
+    const params = (args ?? {}) as Rec;
+    const horizonDays = clampInt(params["horizonDays"], RANK_EVAL_HORIZON_DAYS, 1, 365);
+    const rawKs = Array.isArray(params["ks"]) ? (params["ks"] as unknown[]) : RANK_EVAL_KS;
+    const ks = rawKs.map((k) => clampInt(k, 0, 0, 10000)).filter((k) => k > 0);
+    const preset = params["preset"] === "v1" || params["preset"] === "v2"
+      ? String(params["preset"])
+      : "stored";
+    const rule = preset === "v1"
+      ? DEFAULT_RANK_RULE
+      : preset === "v2"
+        ? RANK_PRESET_V2
+        : effectiveRankRule();
+
+    // sync_history IS the commit record — a sync that dies mid-walk appends no row — so every
+    // row here is a completed observation and none is filtered out. `finished_at || started_at`
+    // is the same fallback the trend reads, for the same reason: an empty cell reads as null
+    // from the sheet and as "" from anywhere else, and both mean "no finish time recorded".
+    const history = syncStore.syncHistory();
+    const considered = history.slice(-RANK_EVAL_MAX_SYNCS).map((r) => ({
+      syncId: String(r["sync_id"] ?? ""),
+      finishedAt: String(r["finished_at"] || r["started_at"] || ""),
+      registerScope: String(r["register_scope"] ?? ""),
+    }));
+
+    const report = evaluateRank({
+      ledger: syncStore.loadIssueLedger(),
+      syncs: considered,
+      rule,
+      horizonDays,
+      ks,
+    });
+
+    const lastMs = report.lastSyncAt ? Date.parse(report.lastSyncAt) : NaN;
+    const asOf = nowIso();
+    const daysSinceLastSync = Number.isFinite(lastMs)
+      ? (Date.parse(asOf) - lastMs) / 86400000
+      : null;
+
+    return {
+      preset,
+      // What the CANDIDATE was ranked by, so a figure read off this panel can be compared
+      // against the rule that is stored now — the job `rankSignature` exists for.
+      signature: rankSignature(rule),
+      asOf,
+      daysSinceLastSync,
+      historyRows: history.length,
+      syncsConsidered: considered.length,
+      ...report,
+    };
   });
 }
 

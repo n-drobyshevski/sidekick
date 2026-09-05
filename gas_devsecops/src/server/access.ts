@@ -87,6 +87,42 @@ export function parseAllowlist(raw: string | null): string[] {
 }
 
 /**
+ * Storage limits on the two lists, checked BEFORE the write.
+ *
+ * A Script Property has a hard size cap, and hitting it throws GAS's raw storage-quota
+ * exception with the caller's edit already lost. Refusing ahead of time turns that into a
+ * sentence they can act on.
+ */
+export const ACCESS_MAX_BYTES = 8000;
+export const ACCESS_MAX_ENTRIES = 500;
+
+/**
+ * Parse and vet a submitted roster, or throw a sentence saying why not.
+ *
+ * Pure, and here beside `parseAllowlist` rather than private in `api.ts`, because this is the
+ * same concern and because a privilege surface's validation should be reachable by a test.
+ * (This module touches no GAS global at import time, so a test can import it directly.)
+ *
+ * AN ENTRY WITH NO `@` IS A TYPO, NOT A POLICY. It can never match a Google account, so
+ * keeping it silently would leave someone convinced they had added a colleague — the failure
+ * mode being avoided is a person who thinks access was granted and finds out otherwise from
+ * the colleague.
+ */
+export function validateAddresses(raw: unknown): string[] {
+  const list = parseAllowlist(Array.isArray(raw) ? raw.join("\n") : String(raw ?? ""));
+  const bad = list.filter((e) => e.indexOf("@") < 0);
+  if (bad.length) throw new Error(`Not an email address: ${bad.join(", ")}`);
+  if (list.length > ACCESS_MAX_ENTRIES) {
+    throw new Error(`Too many people (${list.length}); the limit is ${ACCESS_MAX_ENTRIES}.`);
+  }
+  const bytes = list.join(",").length;
+  if (bytes > ACCESS_MAX_BYTES) {
+    throw new Error(`That list is too long to store (${bytes} of ${ACCESS_MAX_BYTES} bytes).`);
+  }
+  return list;
+}
+
+/**
  * The decision, as a pure function of its inputs, so the table below is unit-testable
  * without any GAS global:
  *

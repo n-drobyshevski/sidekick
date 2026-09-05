@@ -36,6 +36,8 @@ import { CONDITION_KEYS, comboGapCode, type ConditionKey } from "./toxicCombos";
 import {
   AI_ASSET_KINDS,
   edgeId,
+  type AiAdjacency,
+  type EdgeType,
   type FindingRow,
   type IdentityFindingRow,
   type GEdge,
@@ -339,6 +341,146 @@ export function withIssueAttribution(doc: GraphDoc, issues: IssueRow[]): IssueRo
     // absent-is-not-zero discipline the flags themselves now keep.
     return { ...issue, attributedAssetIds: [], attributionHop: "none" as const };
   });
+}
+
+/**
+ * The edge vocabulary an adjacency hop may walk, and the list is a POPULATION DECISION rather
+ * than a convenience: every type here is one whose presence means the entity and the AI asset
+ * are genuinely wired together — the agent's identity, the host it runs on, the IAM grant, the
+ * binding, the endpoint, the tools, models and datasets it uses, and the three lineage legs.
+ *
+ * WHAT IS DELIBERATELY OUT. `HAS_ISSUE` and `HAS_FINDING` join a row to its own evidence, so
+ * admitting either would make almost everything ADJACENT to almost everything and the reading
+ * would carry no information. `PROTECTED_BY` is the negated edge — it is emitted to say the
+ * guardrail is ABSENT, and an absence is not a link, which is also why the walk below skips
+ * any `negated` edge rather than trusting this list to have excluded them all.
+ *
+ * WHY `CAN_INVOKE` IS HERE, WHICH THE FIRST DRAFT OF THIS LIST GOT WRONG. Without it the whole
+ * sample landscape censuses `{DIRECT: 24, ADJACENT: 0, UNLINKED: 8}` — the fold reads a state
+ * it can never reach, on the only estate any test exercises. All eight UNLINKED rows are
+ * ACCESS_ROLE nodes sitting exactly one `CAN_INVOKE` edge from `model-bedrock-claude`, and
+ * `CAN_INVOKE` is the Bedrock-specific twin of `ALLOWS_ACCESS_TO`, which is in the list: an
+ * identity's permission to invoke a model IS the relationship this register is mostly about
+ * (`wc-id-2742` fires 659 of 840 AI-category issues on the reference tenant, and it is that
+ * permission). Admitting one spelling and refusing the other was an asymmetry, not a
+ * population decision. It changes no live figure — `ai_edges` holds 68 asset edges and not one
+ * `CAN_INVOKE` among them (AARS_LIVE_MEASUREMENTS.md §4 row A) — which is precisely why only
+ * the sample landscape could have caught it.
+ *
+ * STILL OUT, and deliberately: `BUILT_FROM`. It would make a CONTAINER_IMAGE one hop from the
+ * agent built out of it, which is a real reading and the exact join §6.4 wants (KEV findings
+ * sit on VMs and container images this register does not hold). It is a widening with its own
+ * measurement to do, not a spelling correction, so it belongs in its own round.
+ */
+export const ADJACENCY_EDGE_TYPES: readonly EdgeType[] = [
+  "RUNS_AS", "HOSTED_ON", "ALLOWS_ACCESS_TO", "CAN_INVOKE", "BOUND_TO", "SERVES",
+  "USES_TOOL", "INVOKES_TOOL", "USES_MODEL", "USES_DATASET",
+  "PRODUCES", "READS_DATA_FROM", "STORES_DATA_IN",
+];
+
+/** The three states plus the denominator they are only readable against. */
+export interface AdjacencyCensus {
+  DIRECT: number;
+  ADJACENT: number;
+  UNLINKED: number;
+  /**
+   * How many edges of an adjacency type the graph held when this census was taken. It rides
+   * beside every figure above and is not optional decoration: on the reference tenant
+   * `ai_edges` holds 68 asset edges in total (AARS_LIVE_MEASUREMENTS.md §4 row A), so an
+   * UNLINKED count there means "the estate records almost no topology", never "this row is
+   * unrelated to the AI estate". Publish the two together or publish neither.
+   */
+  edgesKnown: number;
+}
+
+/**
+ * Place every issue relative to the AI estate — EXACTLY ONE HOP, in either direction, along
+ * `ADJACENCY_EDGE_TYPES`.
+ *
+ * A separate exported fold for the reason `withIssueAttribution` and `withProblemVerdicts`
+ * both give: it has to be re-runnable on its own over a graph already in the sheet.
+ *
+ * WHY IT IS NOT `withIssueAttribution` WITH A LONGER LIST. Attribution answers "which AI asset
+ * does this issue DESCRIBE", and its one-hop cap on `RUNS_AS` is the model rather than an
+ * optimisation: two hops would charge an agent for issues on things its identity can merely
+ * reach. This answers a weaker question — "is this row anywhere near the estate" — which is
+ * why it may read twelve edge types that attribution must not, and why its answer is a
+ * position, not an id list to score from. Same cap, and for the same reason: a second hop
+ * turns "beside an AI asset" into "connected to the cloud", which is true of everything.
+ *
+ * WHY UNLINKED IS NOT "UNRELATED". This walk can only be as good as the edges the sync
+ * persisted, and on the reference tenant that is 68 asset edges across the whole register —
+ * 585 of 590 lineage rows arrive as a bare root with every optional leg null. So UNLINKED
+ * mostly means NOT TRAVERSED, and the census carries `edgesKnown` so no reader can quote the
+ * count without the denominator that makes it honest. `rank.adjacencyOf` prices UNLINKED
+ * mid-scale for the same reason, and absent (no pass) as `null`.
+ *
+ * DIRECT BEATS ADJACENT. A row on an AI asset is DIRECT even when edges also reach others;
+ * the strongest true statement about the row wins, and `adjacentAssetIds` stays empty there
+ * because the asset it sits on is `assetId` and is already on the row.
+ */
+export function withAiAdjacency(
+  doc: GraphDoc,
+  issues: IssueRow[],
+): { issues: IssueRow[]; census: AdjacencyCensus } {
+  const kindById = new Map<string, string>();
+  for (const n of doc.nodes) kindById.set(n.id, n.kind);
+  const isAi = (id: string | undefined): boolean =>
+    id !== undefined && AI_ASSET_KINDS.includes(kindById.get(id) as NodeKind);
+
+  const viaRank = new Map<string, number>(ADJACENCY_EDGE_TYPES.map((t, i) => [t, i]));
+  // entity id -> the AI assets one adjacency edge away, with the type each was reached by.
+  const near = new Map<string, { id: string; type: EdgeType }[]>();
+  let edgesKnown = 0;
+  for (const e of doc.edges) {
+    if (!viaRank.has(e.type)) continue;
+    // Counted on TYPE MEMBERSHIP, which is what makes it a denominator for the walk's reach
+    // rather than for its result: an edge of an adjacency type that the walk then declines is
+    // still an edge the register holds. No type in the list above is ever emitted negated —
+    // only `PROTECTED_BY` is — so today the two readings coincide.
+    edgesKnown += 1;
+    if (e.negated) continue;
+    if (isAi(e.dst)) pushInto(near, e.src, { id: e.dst, type: e.type });
+    if (isAi(e.src)) pushInto(near, e.dst, { id: e.src, type: e.type });
+  }
+
+  const census: AdjacencyCensus = { DIRECT: 0, ADJACENT: 0, UNLINKED: 0, edgesKnown };
+  const out = issues.map((issue) => {
+    if (isAi(issue.assetId)) {
+      census.DIRECT += 1;
+      // `adjacencyVia` explicitly cleared, not merely left unset: this fold is re-runnable
+      // over rows already in the sheet, and a row that was ADJACENT last sync carries a stale
+      // edge label the spread would preserve under its new state.
+      return {
+        ...issue, aiAdjacency: "DIRECT" as AiAdjacency, adjacencyVia: undefined,
+        adjacentAssetIds: [],
+      };
+    }
+    // Self-edges are possible in principle and would be a lie here: a node is not adjacent to
+    // itself, and admitting one would report an entity as ADJACENT to nothing but itself.
+    const hops = (near.get(issue.assetId) ?? []).filter((h) => h.id !== issue.assetId);
+    if (hops.length) {
+      census.ADJACENT += 1;
+      // Sorted, and the `via` tie-broken by declaration order above, so a re-run over the same
+      // graph cannot reorder a persisted value and read as a change.
+      const ids = [...new Set(hops.map((h) => h.id))].sort();
+      let via = hops[0]!.type;
+      for (const h of hops) if (viaRank.get(h.type)! < viaRank.get(via)!) via = h.type;
+      return {
+        ...issue,
+        aiAdjacency: "ADJACENT" as AiAdjacency,
+        adjacencyVia: via,
+        adjacentAssetIds: ids,
+      };
+    }
+    census.UNLINKED += 1;
+    // An empty list WITH a state is "we looked and found none"; both absent is "no pass ran".
+    return {
+      ...issue, aiAdjacency: "UNLINKED" as AiAdjacency, adjacencyVia: undefined,
+      adjacentAssetIds: [],
+    };
+  });
+  return { issues: out, census };
 }
 
 /**

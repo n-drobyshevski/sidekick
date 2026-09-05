@@ -225,6 +225,26 @@ export const QUERIES: Record<Scope, string | null> = {
   secrets: Q_SECRETS,
 };
 
+/**
+ * The connection each document returns its rows under.
+ *
+ * A FACT ABOUT THE DOCUMENT, so it lives beside the documents rather than in the transport —
+ * and `test/wizQueries.test.js` asserts each query actually selects the root named here, so
+ * the pair cannot drift.
+ *
+ * It exists because "find whatever connection came back" is not quite enough. That generic
+ * form (probeHelpers.resolveConnection, written after §9.1's false zero) catches a response
+ * with NO connection in it, which is the dangerous case; it cannot catch a response whose
+ * connection is the WRONG ONE — a scope that sent another scope's document would be read
+ * happily, and the register would fill with the wrong population. Naming the expected root
+ * turns that into a refusal too.
+ */
+export const ROOT_FIELDS: Record<Scope, string> = {
+  sast: "sastFindings",
+  sca: "vulnerabilityFindings",
+  secrets: "secretInstances",
+};
+
 /* ----------------------------------------------------------------- the filters */
 
 export interface FilterOptions {

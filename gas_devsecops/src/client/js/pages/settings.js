@@ -50,11 +50,11 @@
 // actually lives), never a button or field this build cannot back.
 
 import { call } from "../../../../../gas_shared/api.js";
-import { bootstrapCached } from "../../../../../gas_shared/store.js";
+import { bootstrapCached, invalidateBootstrap } from "../../../../../gas_shared/store.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
 import {
-  clear, diagnosticsPanel, el, errorState, fmtDateTime, glossaryTip, heroLines, pageHeader,
-  skeletonStack, statusPill, tipLabel, toast, togglePills,
+  clear, diagnosticCard, diagnosticsPanel, el, errorState, fmtDateTime, glossaryTip, heroLines,
+  pageHeader, skeletonStack, statusPill, tipLabel, toast, togglePills,
 } from "../ui.js";
 import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../../../../../gas_shared/ui/settings.js";
 import { TAB_FIELDS, tabStatus } from "../settingsModel.js";
@@ -554,6 +554,90 @@ export async function renderSettings(host, params, ctx) {
     clear(panels.access).append(panel);
   }
 
+  /**
+   * The credential row's SECOND fact: not "present" (three non-empty Script Properties, which
+   * the shared `diagnosticsPanel` credentials card already draws above this one) but whether
+   * the tenant has ever actually ANSWERED with them. A green "Connected" pill on `present`
+   * alone invites the stronger reading with nothing beside it to correct that — this card is
+   * the correction, not a duplicate.
+   *
+   * The verification is a real token exchange plus one page of one row
+   * (`api_testWizConnection` -> `wizClient.testConnection`), and it drops the cached token
+   * first: a cached one outlives a revoked client secret by up to six hours, so a test that
+   * accepted it would keep reporting success after the credentials had already stopped
+   * working.
+   */
+  function connectionCard() {
+    // `.settings-inline`, not `.health-row`: the notAuthorized state's four-step remedy list
+    // is `.settings-remedy`, which drops to its own full-width line via `flex-basis: 100%` —
+    // that only works inside a `flex-wrap: wrap` parent, which `.health-row` (the generic
+    // one-line diagnostic body) deliberately is not.
+    const wrap = el("div", { class: "settings-inline" });
+    const paint = (state) => {
+      clear(wrap);
+      if (!boot.hasCredentials) {
+        wrap.append(statusPill("neutral", "Not set — nothing to test"));
+        return;
+      }
+      if (state && state.ok) {
+        wrap.append(statusPill("ok", `Verified ${fmtDateTime(state.at)}`));
+      } else if (state && state.notAuthorized) {
+        // A DIFFERENT FAILURE WITH A DIFFERENT REMEDY, and it is not about Wiz at all: Apps
+        // Script refused the outbound call before one was made. The platform's own sentence
+        // names a scope URL and nothing a reader can act on — print the steps instead.
+        wrap.append(
+          statusPill("bad", "Not authorized"),
+          el("span", { class: "muted small" },
+            "This deployment may not make outbound requests, so it cannot reach Wiz. "
+            + "The credentials are not the problem."),
+          el("ol", { class: "settings-remedy" },
+            el("li", {}, "Push the current build. Its appsscript.json declares "
+              + "script.external_request, and a manifest change is what makes Apps Script "
+              + "ask for consent — inference alone did not."),
+            el("li", {}, "In the Apps Script editor, run wizDiagnostic() and ACCEPT the "
+              + "prompt. Read the Execution log: it names which step fails."),
+            el("li", {}, "Deploy → Manage deployments → Edit → New version. "
+              + "Pushing code does not change what the web app URL serves."),
+            el("li", {}, "Check the daily sync trigger still fires: a scope change can "
+              + "suspend an installable trigger silently.")),
+        );
+      } else if (state && state.error) {
+        wrap.append(statusPill("bad", "Refused"), el("span", { class: "muted small" }, state.error));
+      } else if (boot.wizVerifiedAt) {
+        wrap.append(statusPill("ok", `Last verified ${fmtDateTime(boot.wizVerifiedAt)}`));
+      } else {
+        // Stored, never exercised. Neutral rather than green: nothing is wrong, and nothing
+        // has been confirmed either.
+        wrap.append(statusPill("neutral", "Stored, never verified"));
+      }
+      const btn = el("button", {
+        class: "linklike",
+        disabled: !boot.hasCredentials || (state && state.pending) ? true : null,
+        onclick: async () => {
+          btn.disabled = true;
+          paint({ pending: true });
+          try {
+            const res = await call("api_testWizConnection", {});
+            paint({ ok: true, at: res.at });
+            toast(res.rows === null
+              ? "The tenant answered."
+              : `The tenant answered — ${res.rows.toLocaleString()} finding(s) in scope.`);
+            // The stored timestamp moved, so the next reader of this page sees it too.
+            invalidateBootstrap();
+          } catch (e) {
+            // `errorKind` is set server-side; the message is the platform's and may be in any
+            // language, so the branch must not key on reading it.
+            if (e.kind === "not-authorized") paint({ notAuthorized: true });
+            else paint({ error: String(e.message || e).slice(0, 200) });
+          }
+        },
+      }, "Test connection");
+      wrap.append(btn);
+    };
+    paint(null);
+    return wrap;
+  }
+
   function buildSystemPanel() {
     const scheduleId = "settings-sync-hour";
     const scheduleErrorId = `${scheduleId}-error`;
@@ -719,6 +803,14 @@ export async function renderSettings(host, params, ctx) {
       // one that is coming.
       lastSync: { value: scanLine, emptyText: "No sync recorded yet." },
     });
+    // A second fact about the SAME row, not a duplicate of it: `present` (above, from the
+    // shared card) is three non-empty Script Properties; this one is whether the tenant has
+    // ever actually answered them. Appended to the same grid via `diagnosticsPanel`'s returned
+    // handle rather than a second `diagnosticsPanel` call, so the two credential facts sit
+    // beside each other under the one "Deployment" heading.
+    diagnostics.grid.append(diagnosticCard({
+      key: "wizConnection", label: "Wiz connection", body: connectionCard(),
+    }));
 
     clear(panels.system).append(maintenancePanel, prefsPanel, diagnostics.node);
   }

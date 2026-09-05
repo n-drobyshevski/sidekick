@@ -41,12 +41,36 @@ reporting new/resolved/reopened of 0/0/0. See [PROBE_FINDINGS.md](PROBE_FINDINGS
   and per-severity KM curves. Each page says which figure it cannot draw instead of drawing a
   zero.
 
+**The registers page server-side**, because SCA is 17,991 rows and the reader looks at fifty.
+`src/server/readModels.ts`'s `registerRowsModel` (through `serverCache.ts`'s durable, 1-hour
+memo) derives the full filtered/sorted set once and slices it per request: `page` and
+`pageSize` are deliberately not in the cache key, while anything selecting which rows exist
+is. The rule is the sibling's, and its reason is the same — without it every Next click
+re-runs the whole pass to throw all but one page away.
+
+**A resolved finding's death date is not always a measurement**, and the registers say so per
+row rather than in a footnote. Where `resolution_src` is `disappeared` the date is the scan
+that first stopped seeing the finding — an upper bound whose error is the scan interval. On
+SAST that is *every* closed row; on SCA and secrets it is most of them.
+
+**The design that carried the risk.** Neither source register does three scopes in one
+ledger: `gas/` has one, and `brick/devsecops`'s reconcile takes a `scope` but only stamps it,
+because its caller hands it a prior already filtered down. Here the prior is one tab holding
+all three, and every row of the other two is absent from any given scan by construction — so
+a disappearance pass that did not filter by scope would resolve 19,949 findings as
+remediated in one sync. `reconcile` filters the prior itself rather than trusting a calling
+convention, and a mutation check in the suite confirms that removing the guard does exactly
+that.
+
 **Where the domain comes from.** Not greenfield.
-[`../brick/devsecops/`](../brick/devsecops/) already implements this product as a tested
-Spark pipeline: real captured Wiz queries for both scopes, a cross-scan lifecycle
-reconciler, Kaplan–Meier with censoring and RMST, the P2P coverage/efficiency/capacity
-family, and ~6,400 lines of tests. Phase 2 ports that to TypeScript against golden fixtures
-exported from the Python — the same relationship `gas/` has to `wiz_dashboard/domain/`.
+[`../brick/devsecops/`](../brick/devsecops/) implements this product as a tested Spark
+pipeline: real captured Wiz queries, a cross-scan lifecycle reconciler, Kaplan–Meier with
+censoring and RMST, the P2P coverage/efficiency/capacity family, and ~6,400 lines of tests.
+`test/reconcile.test.js` replays the behaviours its `test_ledger.py` names. The statistics
+are ported from `gas/src/domain/remediation.ts` — with one correction the port found by
+measuring: its KM quantile compares survival to the threshold exactly, and a running product
+that mathematically lands on it can land one ULP above, so the p90 came back 10 where the
+arithmetic says 9.
 
 ## Pages
 
@@ -107,9 +131,40 @@ about at least two of them, and the clock is the product.
    read-model warms — and records their schedule as a signature so a second `setup()` on an
    unchanged schedule adds nothing rather than accumulating duplicates against the 20-trigger
    quota. Budget: 4 standing + up to 2 transient (continuation and watchdog) = 6 of 20.
-5. Set `WIZ_API_TOKEN`, or `WIZ_CLIENT_ID` + `WIZ_CLIENT_SECRET`, in Project Settings.
+5. Set `WIZ_API_TOKEN`, or `WIZ_CLIENT_ID` + `WIZ_CLIENT_SECRET`, in Project Settings. Then
+   open Settings → System and press **Test connection**: `hasCredentials` only means three
+   Script Properties are non-empty, and the button is what turns that into a token exchange
+   the tenant actually accepted.
+
+   **A deployment made before the collection round cannot reach Wiz until the project is
+   re-authorized**, and the symptom names a scope rather than a remedy: *"not authorized to
+   call UrlFetchApp.fetch — required permissions: …/script.external_request"*, in the script
+   owner's locale.
+
+   `dist/appsscript.json` declares `oauthScopes` explicitly for exactly this reason. Both
+   sibling projects rely on Apps Script inferring them and get away with it — but they called
+   `UrlFetchApp` from their first push, so their first consent already covered it. This is the
+   only one of the three that ever WIDENED an already-authorized project, and inference did
+   not ask: the call is present in `dist/server.js`, the editor run failed with that message,
+   and no consent prompt appeared anywhere. Declaring the scope makes the requirement a fact
+   about the manifest, and a manifest change is what makes Apps Script re-ask.
+   `test/manifestScopes.test.js` keeps the list honest in both directions — it fails if a
+   service the bundle calls has no scope, and if a scope is declared that nothing calls.
+
+   In order:
+
+   1. `npm run push`, so the new manifest reaches the project.
+   2. In the editor, run **`wizDiagnostic()`** and **accept the consent prompt**. Read the
+      **Execution log** — that is where both diagnostics print, and it names which step
+      failed.
+   3. **Deploy → Manage deployments → Edit → New version.** `clasp push` changes the code the
+      editor runs; the `/exec` URL keeps serving the version it was pinned to.
+   4. Check the daily sync trigger still fires. A scope change is the one thing that can
+      suspend an installable trigger with nothing in the UI to say so.
 6. Run `deploymentDiagnostic()` if anything looks wrong; it reports every check at once
-   rather than stopping at the first failure.
+   rather than stopping at the first failure. `wizDiagnostic()` is its network-touching
+   sibling: it does the real token exchange and one query, and names which of the two failed
+   — they look identical from the app and have different remedies.
 
 Access fails **closed**: an unset `ALLOWED_USERS` means owner-only, and the owner is allowed
 by identity rather than by membership.
@@ -199,6 +254,21 @@ population, **1,958 rows** including every `CERTIFICATE` and `PASSWORD`. One cor
 because it *preserves* the repo/branch duplicate, and the two twins carry `firstSeenAt`
 a median of 20 days apart. Key on `(secretDataId, path, lineNumber)` with the earliest
 `firstSeenAt` (§10.6, §10.7).
+
+**That key is now implemented.** `src/domain/secretsLedger.ts` is the secrets normalizer: it
+derives the key from the triple, folds the twins, and resolves every field they can disagree
+about rather than taking whichever row the API returned first — earliest `first_seen`, latest
+`last_seen`, OPEN beating RESOLVED, the worse severity, and `VALID` beating `INVALID` beating
+`UNKNOWN` on the rotation axis. Because the fold *discards* a measurement, each row records
+what it discarded: `twin_count`, `twin_first_seen_spread_days` and `source_external_ids`.
+`test/secretsLedger.test.js` pins each rule to the section that measured it, and pins the
+`externalId` key producing two findings where the ledger key produces one.
+
+§10.9's probe defect is fixed in the same pass, along with one of the same family it did not
+name: an unrecognised argument is now **refused** rather than ignored (`--crosstab` was never
+a flag), `--roots` names the sections its short-circuit skipped, and the crosstab states
+whether it counted the whole population or stopped early — a table read as a population has
+to say that it is one.
 
 ### What the probe and the register will not select
 

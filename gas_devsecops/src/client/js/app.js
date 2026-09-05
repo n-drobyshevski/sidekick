@@ -13,6 +13,13 @@
 // filter would not: it governs every page rather than leading to one, so it is chrome in the
 // same sense the wordmark is. The sync controls stay in the rail, where the last-sync caption
 // can afford its words.
+//
+// THE SYNC ZONE'S DOT IS A MEASUREMENT NOW, not an assertion. It used to be
+// `hasCredentials ? "ok" : "neutral"` — a literal reading one field, agreeing with Settings
+// only by accident and never noticing a register that ran once and then went quiet for a
+// week. `railStatus()` (below, via renderSyncZone) takes the WORST over the scopes Settings
+// collects — a register nobody has ever scanned outranks a merely stale one — and every state
+// carries a sentence, because above 800px the dot IS the whole status readout.
 
 import { configureApp } from "../../../../gas_shared/appConfig.js";
 import { call } from "../../../../gas_shared/api.js";
@@ -25,6 +32,7 @@ import {
 import { projectScopeView, scopeChrome, scopeKinds } from "./ui/projectScope.js";
 import { scopeControl } from "../../../../gas_shared/ui/scopeControl.js";
 import { scopePayload } from "../../../../gas_shared/ui/scopeModel.js";
+import { railStatus, withLabels } from "./railStatus.js";
 import { renderExecutive } from "./pages/executive.js";
 import { renderMttr } from "./pages/mttr.js";
 import { renderProgram } from "./pages/program.js";
@@ -158,6 +166,11 @@ const PAGES = {
 // object literal — no call — and no shared module reads the manifest at import time (rule 2).
 configureApp({ ...MANIFEST, PAGES });
 
+// The Run scan button's mark: an arrow travelling into a store, not a "play" triangle. What
+// the button does is fetch a population and put it somewhere, and a play glyph would promise
+// something that starts and runs rather than something that collects and commits.
+const RUN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v10.5"/><path d="M8.2 10.3L12 14.1l3.8-3.8"/><path d="M4.5 15.5v3a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3"/></svg>';
+
 // A span carrying an inline SVG (el() builds HTML nodes, so SVG goes in via innerHTML).
 function iconSpan(svg) {
   const s = el("span", { class: "nav-icon", "aria-hidden": "true" });
@@ -198,6 +211,14 @@ let resumeChecked = false;
  * Named for the act, not for the record it writes (README.md, above the Pages table). The
  * CSS class is still `.scan-zone` — renaming it is not a copy change, and nothing a reader
  * sees says "scan zone".
+ *
+ * THE DOT IS DERIVED, NEVER ASSERTED — see railStatus.js for why that sentence needed writing
+ * down. It used to be `hasCreds ? "ok" : "neutral"`: a literal reading one field, agreeing
+ * with Settings only by accident and never noticing a register that ran once and then went
+ * silent for a week. `railStatus()` takes the WORST over the scopes Settings collects — `never
+ * scanned` beats `stale`, because a register nobody has looked at is not a stale one — and
+ * ABOVE 800px THE DOT IS THE WHOLE STATUS READOUT (the caption text is visually hidden, not
+ * removed), so every state carries a sentence rather than only a colour.
  */
 function renderSyncZone(data) {
   const zone = el("div", { class: "scan-zone" });
@@ -218,18 +239,35 @@ function renderSyncZone(data) {
         "No Wiz credentials are configured — run setup() before syncing.");
   syncButtonsRow = el("div", { class: "scan-buttons" }, runControl);
   syncCardHost = el("div", {});
+  const status = railStatus({
+    hasCredentials: hasCreds,
+    lastScanByScope: withLabels(data && data.lastScanByScope, data && data.scopeLabels),
+    // The scopes SETTINGS COLLECTS, never the constant list of all three — a register the
+    // reader turned off is not "never scanned", it is out of scope, and railStatus() would
+    // flag it as the worst offender on every load otherwise.
+    scopes: (data && data.settings && data.settings.scopes) || [],
+    job: data ? data.activeJob : null,
+  });
   zone.append(
     syncCardHost,
     syncButtonsRow,
-    el("div", { class: "scan-caption" },
-      hasCreds ? statusPill("ok", "Credentials loaded") : statusPill("neutral", "No credentials")),
+    // The sentence comes FIRST in the DOM and is only visually hidden above 800px (base.css),
+    // so it is in the accessibility tree at every width.
+    el("div", { class: "scan-caption" }, statusPill(
+      status.state === "warn" ? "warn" : status.state === "bad" ? "bad"
+        : status.state === "ok" ? "ok" : "neutral",
+      status.label,
+    )),
     tipAnchor(el("span", {
-      class: `rail-status-dot ${hasCreds ? "ok" : "neutral"}`,
+      class: `rail-status-dot ${status.state}`,
       "aria-hidden": "true",
-    }), hasCreds ? "Credentials loaded" : "No Wiz credentials configured"),
+      tabindex: "0",
+    }), [status.label, status.detail].filter(Boolean).join(" — ")),
+    ...(status.detail ? [el("div", { class: "scan-caption" }, status.detail)] : []),
     // `syncCaption` (gas_shared/ui/feedback.js), unified across all three apps: "Last <noun>
     // <datetime> · <relativeAge>" once a sync is saved, "No <noun>s yet." before the first
-    // one — this rail used to show the datetime with no relative age at all. `ts`, not
+    // one. A DIFFERENT fact from the dot above: this is when the register last ran ANYTHING,
+    // not the worst per-scope freshness the dot is deliberately weighted toward. `ts`, not
     // `finished_at`: the field is named for the `scans` column it is read from, and the old
     // name existed on neither side of the wire.
     el("div", { class: "scan-caption" },

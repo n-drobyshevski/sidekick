@@ -32,6 +32,7 @@ import {
   clear,
   closeActiveSheet,
   confirmDialog,
+  dataTable,
   debounce,
   downloadText,
   el,
@@ -67,6 +68,7 @@ import {
   tokenList,
   uiIcon,
 } from "../ui.js";
+import { rankEvalHonesty, rankEvalRows } from "../rankEvalModel.js";
 import { bootstrapCached } from "../../../../../gas_shared/store.js";
 import { POSTURE_LATTICE, PROBLEM_LATTICE, toneForKey } from "../lattice.js";
 import {
@@ -507,13 +509,20 @@ export async function renderAarsRules(main, _params, ctx) {
   const aarsPane = el("div", { class: "tab-pane" });
   const problemPane = el("div", { class: "tab-pane", hidden: true });
   const posturePane = el("div", { class: "tab-pane", hidden: true });
-  body.append(aarsPane, problemPane, posturePane);
+  // WP8. A FOURTH TAB THAT EDITS NOTHING, and it belongs here rather than on a page of its
+  // own for the reason the other three share this route: it is a model under calibration and
+  // says so. What it does not share is the editor/impact split — there is no draft to preview,
+  // because this pane reads the register's own history back and reports what the stored rule
+  // ALREADY did. A second pane would be an empty frame implying a control that does not exist.
+  const rankPane = el("div", { class: "tab-pane", hidden: true });
+  body.append(aarsPane, problemPane, posturePane, rankPane);
 
   const modelTabs = segmented({
     options: [
       { value: "aars", label: "AARS" },
       { value: "problem", label: "Problem tree" },
       { value: "posture", label: "Posture" },
+      { value: "rank", label: "Rank eval" },
     ],
     value: "aars",
     ariaLabel: "Scoring model",
@@ -549,7 +558,7 @@ export async function renderAarsRules(main, _params, ctx) {
    *
    * Keyed by tab because all three panes exist at once and only one is on screen.
    */
-  const impactAlerts = { aars: "", problem: "", posture: "" };
+  const impactAlerts = { aars: "", problem: "", posture: "", rank: "" };
   function setImpactAlert(tab, reason) {
     if (impactAlerts[tab] === (reason || "")) return;
     impactAlerts[tab] = reason || "";
@@ -652,6 +661,9 @@ export async function renderAarsRules(main, _params, ctx) {
       + "Wiz's severity instead.",
     posture: "The posture lattice — an in-house capability \u00d7 containment \u00d7 "
       + "consequence tier. It is computed and stored on every sync; no other page reads it.",
+    rank: "The rank evaluation — does the ordering put the rows that left the register first. "
+      + "Remediation is dated by DISAPPEARANCE, so every figure here is an upper bound whose "
+      + "error is the sync interval.",
   };
 
   function selectModelTab(which) {
@@ -659,6 +671,7 @@ export async function renderAarsRules(main, _params, ctx) {
     const isAars = which === "aars";
     const isProblem = which === "problem";
     const isPosture = which === "posture";
+    const isRank = which === "rank";
     clear(expNote).append(
       statusPill("warn", "Experimental"),
       el("span", {}, EXP_NOTE[which] || ""),
@@ -666,15 +679,20 @@ export async function renderAarsRules(main, _params, ctx) {
     aarsPane.hidden = !isAars;
     problemPane.hidden = !isProblem;
     posturePane.hidden = !isPosture;
+    rankPane.hidden = !isRank;
     if (aarsControls) aarsControls.hidden = !isAars;
     if (problemControls) problemControls.hidden = !isProblem;
     if (postureControls) postureControls.hidden = !isPosture;
     if (!isProblem) closeProblemLatticePop();
     if (!isPosture) closePostureLatticePop();
+    // The rank tab has no impact pane, so the control that folds one away would be a switch
+    // over nothing — and its persisted state would then fold the NEXT tab away invisibly.
+    impactToggle.hidden = isRank;
     modelTabs.set(which);
     applyImpactCollapsed(); // the dot belongs to the tab on screen, not to the last one
     if (isProblem) loadProblemPane();
     if (isPosture) loadPosturePane();
+    if (isRank) loadRankPane();
   }
 
   // The page opens on the AARS tab, and `selectModelTab` only ever ran on a CHANGE — so
@@ -4379,6 +4397,173 @@ export async function renderAarsRules(main, _params, ctx) {
     uLattice.repaint();
     paintPostureImpact();
     schedulePosturePreview();
+  }
+
+  // ============================================================ tab 4: rank evaluation
+
+  let rankLoaded = false;
+  let rankLoading = false;
+
+  /**
+   * ONE READ, ON FIRST VISIT, and no refresh control.
+   *
+   * The evaluation is a function of the ledger and the sync history, both of which move only
+   * when a sync commits — so a refresh button on this pane would offer to re-fetch an answer
+   * that cannot have changed while the reader was looking at it. The other three tabs load
+   * the same way for the same reason.
+   */
+  async function loadRankPane() {
+    if (rankLoaded || rankLoading) return;
+    rankLoading = true;
+    rankPane.append(
+      el(
+        "div",
+        {
+          role: "status",
+          "aria-label": "Loading the rank evaluation",
+          style: "position:absolute; inset:20px; display:flex; flex-direction:column; gap:14px",
+        },
+        skeleton("title", { width: "220px" }),
+        skeleton("line", { width: "70%" }),
+        skeleton("chart", { height: "160px" }),
+      ),
+    );
+    let report;
+    try {
+      report = await call("api_getRankEval", {});
+    } catch (e) {
+      clear(rankPane).append(
+        el(
+          "div",
+          { class: "workbench-empty" },
+          errorState("Couldn't load the rank evaluation.", { detail: String(e.message || e) }),
+        ),
+      );
+      rankLoading = false;
+      return;
+    }
+    rankLoading = false;
+    rankLoaded = true;
+    clear(rankPane).append(buildRankEval(report));
+  }
+
+  /**
+   * THE HONESTY BLOCK COMES FIRST, ALWAYS, and the table is what may be missing.
+   *
+   * The order is the argument. A precision figure means nothing without the number of syncs
+   * it was measured over and the share of the population whose outcome is still unknown, and
+   * a reader who meets the table first has already formed an impression by the time they
+   * reach the caveat. So the block is drawn in both states — it is what a waiting report has
+   * INSTEAD of numbers — and the table is appended under it only when there is one.
+   */
+  function buildRankEval(report) {
+    // `.rank-eval` is the pane's own scroller (the tab-pane itself is a bare positioned box),
+    // and `.rule-section` inside it keeps the heading and lede in the workbench's grammar.
+    const section = el("section", { class: "rule-section" });
+    const pane = el("div", { class: "rank-eval" }, section);
+    section.append(
+      el("h2", {}, "Rank evaluation"),
+      el(
+        "p",
+        { class: "rule-section__lede" },
+        "Every committed sync is replayed as a queue, and each row is asked whether it left "
+        + "the register within the horizon. A row the register has not finished observing is "
+        + "counted as unknown and never as unremediated.",
+      ),
+    );
+
+    const facts = el("dl", { class: "rank-eval__honesty" });
+    for (const entry of rankEvalHonesty(report)) {
+      facts.append(
+        el("div", { class: "rank-eval__fact" },
+          el("dt", {}, entry.label),
+          el("dd", {}, entry.value),
+          entry.note ? el("p", { class: "rank-eval__fact-note" }, entry.note) : null),
+      );
+    }
+    section.append(facts);
+
+    if (!report || !report.computed) {
+      // NOT AN EMPTY TABLE. Four bases of em-dashes would state four facts about a question
+      // nobody has been able to ask yet; the sentence says which one it is waiting on.
+      section.append(
+        el("div", { class: "rank-eval__waiting" },
+          emptyState(
+            "Nothing to evaluate yet",
+            String((report && report.waitingFor) || "No comparable pair of syncs."),
+          )),
+      );
+      return pane;
+    }
+
+    const rows = rankEvalRows(report);
+    const ks = Array.isArray(report.ks) ? report.ks : [];
+    const columns = [
+      {
+        key: "basis",
+        label: "Basis",
+        cell: (r) => el("span", { class: "rank-eval__basis" },
+          el("strong", {}, r.label),
+          r.note ? el("span", { class: "rank-eval__basis-note" }, r.note) : null),
+      },
+      ...ks.map((k, i) => ({
+        key: "p" + k,
+        label: "precision@" + k,
+        className: "num",
+        help: "Of the top " + k + " rows whose outcome is known, the share that left the "
+          + "register within the horizon. Averaged over the evaluated syncs.",
+        cell: (r) => (r.precision[i] ? r.precision[i].text : ""),
+      })),
+      {
+        key: "coverage",
+        label: "Coverage",
+        className: "num",
+        help: "Of the rows this basis put in its top k, the share that left the register. "
+          + "The bracket is what it would be if every unknown outcome went one way, then "
+          + "the other.",
+        cell: (r) => r.coverage.text,
+      },
+      {
+        key: "efficiency",
+        label: "Efficiency",
+        className: "num",
+        help: "Of the rows that left the register, the share the top k had already named. "
+          + "Same bracket, same reason.",
+        cell: (r) => r.efficiency.text,
+      },
+      {
+        key: "tau",
+        label: "\u03c4",
+        className: "num",
+        help: "Kendall's tau-b between one sync's order and the last comparable one's, over "
+          + "the rows both held. 1 is an order that did not move; near 0 is a queue that is "
+          + "different every week.",
+        cell: (r) => r.tau.text,
+      },
+    ];
+    section.append(dataTable({
+      columns,
+      rows,
+      panel: true,
+      className: "rank-eval__table",
+      emptyText: "No basis could be evaluated.",
+    }));
+
+    // What the panel could NOT do, said under the thing it could. The severity baseline is a
+    // permanent absence with a reason rather than a figure waiting on another sync.
+    section.append(
+      el("p", { class: "rank-eval__note" }, report.severityOnlyNote || ""),
+      el(
+        "p",
+        { class: "rank-eval__note" },
+        "Ranked by the stored rule (" + String(report.signature || "") + ")."
+        + (report.syncsConsidered < report.historyRows
+          ? " The most recent " + report.syncsConsidered + " of " + report.historyRows
+            + " committed syncs were read."
+          : ""),
+      ),
+    );
+    return pane;
   }
 
   // --------------------------------------------------------------------- first paint

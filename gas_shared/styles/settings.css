@@ -224,3 +224,61 @@ details.why[open] > summary .why__caret { transform: rotate(90deg); }
 /* A client/server build disagreement. --bad as INK on the card surface, never as a fill: the
    sentence beside it says what is wrong, so the colour is emphasis and not the message. */
 .health-mismatch { margin: 0; color: var(--bad); max-width: var(--measure); }
+
+/* An identifier quoted inside a settings row — a project id, a build stamp. Monospace so a
+   hash reads as a hash, at the row's own size rather than a code block's. */
+.code-inline {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--fs-small);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* A settings row's control when it is more than one thing: a state pill, a sentence, and
+   sometimes an action. Wraps, because the credential row's failure state is three steps
+   long and a nowrap control would push the row off its own panel. */
+.settings-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+/* The sentence beside the pill wraps with it rather than widening the row. */
+.settings-inline > .muted { max-width: 62ch; }
+
+/* The remedy for a failure the reader has to act on OUTSIDE the app — today, only the
+   deployment-authorization one. Numbered because the steps are ordered and the middle one is
+   the one everybody skips: pushing code does not change what the web app serves.
+
+   THE MEASURE IS CAPPED, and not only for readability. `.setting-row__control` is
+   `flex: 0 0 auto`, so it sizes to its content — three sentences of prose sized the control
+   column to 1662px inside a 1210px row and the whole row scrolled sideways. Caught in the
+   browser. A cap here fixes it without touching a class every other settings row uses. */
+.settings-remedy {
+  flex-basis: 100%;
+  max-width: 62ch;
+  min-width: 0;
+  margin: var(--space-1) 0 0;
+  padding-left: 1.25rem;
+  font-size: var(--fs-small);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.settings-remedy li + li { margin-top: var(--space-1); }
+
+/* The rank editor's small labelled number fields (gas_ai's Register-scope tab) — the term
+   shares, the two weight tables, the EPSS threshold. Same recipe as the AARS band rail's
+   precise-entry row (aars.css .band-rail__inputs, .rule-row): a flex-wrap row of field()
+   columns, so four shares read as one group of numbers rather than four settings-rows
+   competing for the full row width. Ported into the shared sheet rather than left app-local
+   because that is the only settings.css gas_ai loads post-unification — devsecops and gas
+   simply never emit `.rank-inputs`. */
+.rank-inputs { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-2) 0; }
+.rank-inputs .field { display: flex; flex-direction: column; }
+.rank-inputs input[type="number"] { width: 88px; }
+.rank-inputs__title {
+  flex-basis: 100%; font-size: var(--fs-label); font-weight: var(--fw-semibold); color: var(--ink);
+  margin: var(--space-2) 0 0;
+}

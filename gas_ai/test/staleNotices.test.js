@@ -42,6 +42,42 @@ describe("staleNotices", () => {
     expect(notice.href).toBe("#/scans");
   });
 
+  it("renders a scope-drift notice, naming BOTH scopes", () => {
+    // A third kind: the stored figures are not damaged, they count a different POPULATION
+    // than the settings now select. Only a sync reconciles the two, so it takes the sync
+    // remedy — but the sentence has to print both sides, because "the register moved" is
+    // useless without saying from what to what.
+    const [notice] = staleNotices({
+      ...FRESH,
+      registerScope: {
+        kind: "registerScope",
+        persisted: "wct-id-1998",
+        current: "wct-id-1998|wct-id-3",
+        remedy: "sync",
+      },
+    });
+    expect(notice.id).toBe("registerScope");
+    expect(notice.href).toBe("#/scans");
+    expect(notice.text).toContain("wct-id-1998|wct-id-3");
+    expect(notice.text).toMatch(/until the next sync/);
+  });
+
+  it("says nothing when the persisted scope matches the selected one", () => {
+    // The server sends null when they agree, when nothing has ever been synced, and when
+    // the history row predates the column — an absent stamp is unknown, not a mismatch.
+    expect(staleNotices({ ...FRESH, registerScope: null })).toEqual([]);
+    expect(staleNotices({ ...FRESH })).toEqual([]);
+  });
+
+  it("orders the three notices worst-remedy first", () => {
+    const all = staleNotices({
+      aarsRule: { stale: true },
+      derivation: { stale: true, remedy: "sync" },
+      registerScope: { kind: "registerScope", persisted: "a", current: "b", remedy: "sync" },
+    });
+    expect(all.map((n) => n.id)).toEqual(["derivation", "registerScope", "aarsRule"]);
+  });
+
   it("survives a bootstrap that carries neither block", () => {
     expect(staleNotices({})).toEqual([]);
     expect(staleNotices(null)).toEqual([]);
