@@ -203,8 +203,10 @@ registerNavGroupContract({
   LANE_ICONS,
   ROUTE_ICONS,
   // In rail order. This list moves only when a route is added or removed on purpose.
+  // `help` joined it with P7: the key sheet, last page of the Data lane.
   expectedRoutes: [
-    "executive", "mttr", "program", "overview", "data", "history", "attribution", "settings",
+    "executive", "mttr", "program", "overview", "data", "history", "attribution", "help",
+    "settings",
   ],
   defaultRoute: "executive",
   // No `panelBlocksModule`: this register's nav panels list page links and nothing else, so

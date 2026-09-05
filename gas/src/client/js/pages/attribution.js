@@ -16,8 +16,8 @@
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 import {
-  absent, clear, dataTable, el, emptyState, firstRunNotice, fmtDate, heroStat, kpiCard,
-  pageHeader, settingsPanel, statusPill, tableFooter, tip,
+  absent, clear, dataTable, el, emptyState, firstRunNotice, fmtDate, glossaryTip, heroStat,
+  kpiCard, pageHeader, settingsPanel, statusPill, tableFooter, tip,
 } from "../ui.js";
 
 // The engine's placeholder domain for findings that matched no rule (domainRules.UNASSIGNED).
@@ -535,11 +535,11 @@ export async function renderAttribution(main, params, ctx) {
 
   function renderRuleHealth(rows, editor) {
     const desc = ["How each mapping rule performs against this scan. ",
-      tip(el("span", { class: "linklike" }, "status guide"),
-        ["Fires — claims findings under first-match priority.",
-         "Shadowed — matches findings, but an earlier rule or group claims them first.",
-         "Never matches — matches nothing in this scan (a dead rule).",
-         "Malformed — the rule failed to compile and never matches."])];
+      // The four states are ONE definition, and it lives in helpContent.js's `rule-health`
+      // entry now rather than as four lines here. `glossaryTip` shows the entry's first two
+      // lines in the card and leads to the whole thing — which matters for this trigger more
+      // than most, because the fourth state (Malformed) was the line the card cut off.
+      glossaryTip(el("span", { class: "linklike" }, "status guide"), "rule-health")];
     const footer = el("a", { href: "#/settings", target: "_self" },
       "Edit manual groups in Settings →");
     if (!rows.length) {

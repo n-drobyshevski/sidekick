@@ -1,6 +1,44 @@
 // Help: the key sheet. What every word and mark on these screens means, and how much of
 // each this tenant holds.
 //
+// ============================================================================================
+// THIS PAGE IS DELIBERATELY NOT THE SHARED ONE, AND THAT IS A DECISION, NOT AN OVERSIGHT.
+// ============================================================================================
+//
+// `gas_shared/ui/helpPage.js` is the key sheet `gas/` and `gas_devsecops/` both render: one
+// search field over one flat, alphabetical list of `{ id, term, lines[] }` cards, a `?term=`
+// deep link, and a pure `helpModel(entries, query, term)` behind it. P7 promoted it out of
+// gas_devsecops and wired gas to it. THIS PAGE WAS LEFT ALONE ON PURPOSE. What it is, measured
+// against that shape:
+//
+//   * A FOUR-COLUMN GRID, not a list of cards — `92px | minmax(0,var(--measure)) |
+//     minmax(150px,190px) | minmax(0,1fr)`, with an index rail whose scroll-position tracker
+//     puts `aria-current` on the RAIL ITEM rather than on the entry.
+//   * FAMILY HEADINGS. This book carries a `family` field and six sections of it; the shared
+//     model collapses to at most one group and draws no heading, precisely because no other
+//     register's book has families.
+//   * LIVE FIGURES PER ENTRY. `count(ctx)` resolves against the bootstrap, KPI and digest
+//     payloads, so an entry states how much of the thing this tenant actually holds. The
+//     shared page's entries are prose and nothing else.
+//   * `mark()` FUNCTIONS THAT RENDER THE REAL COMPONENT beside the definition, and a fixed
+//     640x126 anatomy SVG with six callout buttons. Neither has an analogue there.
+//   * IT ALREADY OPTS OUT OF THE SHARED STYLESHEET, for a stated reason: `src/client/styles.css`
+//     records that `.help-entry` is a CARD there and a GRID ROW here, and `.help-entry-term` a
+//     lead line there and a 14px term here. Importing `gas_shared/styles/help.css` would put a
+//     border, a surface fill and a card shadow on every row of this page's table.
+//
+// So the honest shape of a page that is three-quarters different is a DIFFERENT PAGE. The
+// alternative — bending the shared module with a `groupBy`, a per-entry render slot, a count
+// resolver and a diagram slot, none of which any other consumer would ever pass — buys one
+// import and costs the shared page its readability, which is the whole thing it was extracted
+// for. Do not "finish the migration": there is nothing left to migrate that would not make
+// both pages worse. `gas_shared/README.md` states the same exception, and
+// `gas_shared/test/contracts/help.js` is registered by the other two apps and NOT by this one.
+//
+// WHAT IS SHARED HERE, AND IS NOT UP FOR DEBATE: the vocabulary of a definition — `{ id, term,
+// lines[] }`, kebab-case ids — and the `?term=` deep-link contract, so a `glossaryTip` behaves
+// identically in all three registers. Only the drawing differs.
+//
 // THE PAGE IS A REFERENCE, NOT A TOUR. Three deliberate calls worth knowing before editing:
 //
 // 1. NO PIPELINE DIAGRAM BELONGS HERE. Wiz Scans owns provenance — nine queries into one

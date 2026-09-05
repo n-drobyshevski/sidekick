@@ -18,7 +18,8 @@ import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
 import { scopeChrome, scopeKinds, scopeSwitchView } from "./scopeKinds.js";
 import {
-  clear, el, fmtDateTime, scopeControl, scopePayload, statusPill, tip, tipAnchor, toast,
+  bookTip, clear, el, fmtDateTime, scopeControl, scopePayload, statusPill, tip, tipAnchor,
+  toast,
 } from "./ui.js";
 import { LANE_ICONS, ROUTE_ICONS, RUN_ICON } from "./routeIcons.js";
 import { renderExecutive } from "./pages/executive.js";
@@ -29,6 +30,8 @@ import { renderHistory } from "./pages/history.js";
 import { renderData } from "./pages/data.js";
 import { renderSettings } from "./pages/settings.js";
 import { renderAttribution } from "./pages/attribution.js";
+import { renderHelp } from "./pages/help.js";
+import { findEntry } from "./helpContent.js";
 
 // ============================================================================ the manifest
 //
@@ -54,13 +57,17 @@ const MANIFEST = {
   // literal inside store.js's parseHash AND a second `|| PAGES.executive` in route(); the
   // two agreed by hand and test/navGroups.test.js existed to keep them agreeing.
   defaultRoute: "executive",
-  // A RESOLVER THAT RESOLVES NOTHING, not `null`. `ui/tip.js` calls this whenever a caller
-  // passes `{ term }` or reaches `glossaryTip`, and it calls it as a function — a literal
-  // null would throw rather than degrade. This register has no help book yet (P7); returning
-  // null per term is what makes `glossaryTip` fall back to the plain label, which is the
-  // documented degrade path (`glossaryTipLines(null)` is null). gas_shared/test/testConfig.js
-  // ships the same shape for the same reason.
-  findHelpEntry: () => null,
+  // THIS REGISTER HAS A HELP BOOK NOW, and this line used to be the placeholder that said it
+  // did not: `findHelpEntry: () => null` — a resolver that resolves nothing, which made every
+  // glossary trigger degrade to a plain label (`glossaryTipLines(null)` is null) because there
+  // was nothing to resolve against and no `#/help` route to arrive at. Both ends landed
+  // together: `helpContent.js` holds the 21 definitions that were already written inside this
+  // app's own tip call sites, and PAGES below registers the route those tips have always named.
+  // `ui/tip.js` calls this as a FUNCTION, so a literal null would throw rather than degrade —
+  // which is why the placeholder was a function too, and why this is a reference and not a
+  // call. gas_shared/test/testConfig.js still ships the resolves-nothing shape, on purpose:
+  // a manifest fixture has no book.
+  findHelpEntry: findEntry,
   // WHAT FILLS THIS REGISTER IS A SCAN, NOT A SYNC, and the shared first-run notice used to
   // say otherwise. `firstRunNotice` (gas_shared/ui/feedback.js) hard-coded "No sync has run
   // yet"; this app's endpoint is `api_runScan`, its bootstrap field is `latestScan` and the
@@ -120,6 +127,14 @@ const PAGES = {
   // #/scan_history link working and rewrites it, so no bookmark is broken by the fix.
   history: { title: "Scan History", group: "Data", render: renderHistory },
   attribution: { title: "Attribution", group: "Data", render: renderAttribution },
+  // The book, not the record: helpContent.js's whole glossary, searchable and deep-linkable —
+  // where every glossary tip's "Enter for the full definition" has always pointed
+  // (gas_shared/ui/tip.js's markTerm), landing on nothing until this route existed. LAST in the
+  // lane because a reader reaches for it only after wanting to check a word, never on the way
+  // in; in the Data lane rather than the chrome tail because the key sheet IS a page of this
+  // register's content. gas_devsecops files it identically and gas_ai does not — the two
+  // existing answers disagreed, and this is the one taken here.
+  help: { title: "Key sheet", group: "Data", render: renderHelp },
   settings: { title: "Settings", group: null, render: renderSettings },
 };
 
@@ -268,12 +283,19 @@ function renderScanZone(data) {
     "Quick refresh",
   );
   // Was a `title` attribute, which el() now refuses: a native tooltip cannot be reached by
-  // keyboard, does not exist on touch, and arrives half a second late. tip() attaches to the
-  // button IN PLACE (it is already interactive), so this adds a hover card and no tab stop.
-  tip(quickBtn, [
-    "Fetch only findings changed since the last full scan and merge them in.",
-    "Deletions aren't detected — run a full scan for those.",
-  ]);
+  // keyboard, does not exist on touch, and arrives half a second late. The card attaches to
+  // the button IN PLACE (it is already interactive), so this adds a hover card and no tab stop.
+  //
+  // `bookTip`, NOT `tip(..., { term })`, AND THE DIFFERENCE IS MEASURED RATHER THAN STYLISTIC.
+  // A term tip calls markTerm(), which registers the anchor in tip.js's ACTIVATE map; tip.js's
+  // delegated click handler then runs `act(e)` — navigate("help", { term }) — and does NOT
+  // preventDefault or stopPropagation. This button already has a click action of its own
+  // (startScan), so a term tip here would start a quick refresh AND route away from the page
+  // that is about to report it, on one click. bookTip reads the same entry out of the same book
+  // and attaches no activation, so the sentence still lives once in helpContent.js and the
+  // button still does the one thing it says. The trade is the "Enter for the full definition"
+  // affordance, which bookTip does not offer and therefore does not promise.
+  bookTip(quickBtn, "quick-refresh");
   // The controls wrapper (buttons + a persistent caveat) is hidden as a unit while a job
   // runs. The caveat states the Quick refresh trap in visible copy, not just a hover title.
   scanButtonsRow = el("div", { class: "scan-controls" },

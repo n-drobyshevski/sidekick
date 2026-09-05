@@ -13,46 +13,36 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  PAGE_SIZES, absent, clear, dataTable, downloadText, el, emptyState, errorState, fmtDate,
-  heroStat, openSheet, pageHeader, scopeBar, sectionLabel, sevBadge, skeleton, statusPill,
-  tableFooter, tip, toast,
+  PAGE_SIZES, absent, bookTip, clear, dataTable, downloadText, el, emptyState, errorState,
+  fmtDate, glossaryTip, heroStat, openSheet, pageHeader, scopeBar, sectionLabel, sevBadge,
+  skeleton, statusPill, tableFooter, tip, toast,
 } from "../ui.js";
 
 // Matrix cells, in reading order. `key` matches the server's `matrix_cell` / cohort quadrant
 // so a cell button and its drill-down can't drift apart. `word` is the plain-English label
 // that sits beside the TP/FP/FN/TN shorthand — the shorthand alone is jargon, and a leader
 // reading this page should not have to decode it.
+// `term`, NOT `help`, AND THE SENTENCES MOVED RATHER THAN BEING DELETED. Each cell's one
+// help line is a glossary entry in helpContent.js now, which is what lets the key sheet list
+// all six beside the two rates they move. The cell reads its entry through `bookTip`.
+//
+// BOOKTIP RATHER THAN `tip(..., { term })`, AND THE REASON IS MEASURED. A term tip registers
+// the anchor in tip.js's ACTIVATE map, and tip.js's delegated click handler then runs
+// `navigate("help", { term })` WITHOUT preventDefault or stopPropagation. Every cell here is
+// already a button that opens its cohort drill-down, so a term tip would open the sheet AND
+// route away from it on one click. bookTip attaches the card and no activation, so the
+// sentence still lives once and the button still does the one thing it says. What it gives up
+// is the "Enter for the full definition" affordance — which is exactly the trade
+// gas_shared/ui/tip.js's own bookTip header describes for a badge inside a focusable row.
 const CELLS = {
-  tp: {
-    abbr: "TP",
-    word: "Fixed, and it mattered",
-    help: "High risk under the active rule, and remediated. The numerator of both coverage and efficiency.",
-  },
-  fp: {
-    abbr: "FP",
-    word: "Fixed, but low risk",
-    help: "Not high risk under the active rule, but remediated anyway. Effort that may have been more productive elsewhere — this is what pulls efficiency down.",
-  },
-  fn: {
-    abbr: "FN",
-    word: "High risk, still open",
-    help: "High risk under the active rule and not yet remediated. Unremediated risk — this is what pulls coverage down.",
-  },
-  tn: {
-    abbr: "TN",
-    word: "Correctly deprioritized",
-    help: "Not high risk, and still open. Work correctly left undone.",
-  },
+  tp: { abbr: "TP", word: "Fixed, and it mattered", term: "cell-tp" },
+  fp: { abbr: "FP", word: "Fixed, but low risk", term: "cell-fp" },
+  fn: { abbr: "FN", word: "High risk, still open", term: "cell-fn" },
+  tn: { abbr: "TN", word: "Correctly deprioritized", term: "cell-tn" },
   unknownRemediated: {
-    abbr: "",
-    word: "Unclassified, remediated",
-    help: "Remediated, but no exploit signal was ever captured for it, so it cannot be scored either way. Excluded from both rates and reflected in their published ranges.",
+    abbr: "", word: "Unclassified, remediated", term: "cell-unclassified-remediated",
   },
-  unknownOpen: {
-    abbr: "",
-    word: "Unclassified, still open",
-    help: "Still open, and no exploit signal was ever captured for it. Excluded from both rates and reflected in their published ranges.",
-  },
+  unknownOpen: { abbr: "", word: "Unclassified, still open", term: "cell-unclassified-open" },
 };
 
 /** Percent to one decimal, or an em dash when the denominator was empty (never a fake 0%). */
@@ -252,6 +242,13 @@ export async function renderProgram(main, _params, ctx) {
   function renderHero(p) {
     clear(heroHost);
     const m = p.matrix;
+    // `tip(..., { term })` RATHER THAN `glossaryTip`, AND THE ONE LINE THAT STAYS IS WHY.
+    // Each of these tips opened with THIS scan's arithmetic — "TP / (TP + FN) — here 412 of
+    // 1,204" — which no glossary entry can carry and which is the part that makes the rate
+    // checkable rather than asserted. So the figure-bearing line stays in place and `term`
+    // adds the route; the two general lines each tip used to carry (what the bracketed range
+    // means, why the pair is never published apart) moved into helpContent.js, where the
+    // Efficiency entry can finally state the prevalence floor without restating it here.
     const cov = tip(
       [
         el("div", { class: "label" }, "Remediation coverage"),
@@ -261,12 +258,8 @@ export async function renderProgram(main, _params, ctx) {
         "Of every finding the active rule calls high risk, the share that has been " +
           "remediated. TP / (TP + FN) — here " + m.tp.toLocaleString() + " of " +
           (m.tp + m.fn).toLocaleString() + ".",
-        "The bracketed range is what coverage would be if every unclassified finding turned " +
-          "out to be high risk (low end) or not (high end). It closes to a single number " +
-          "once every finding carries a captured exploit signal.",
-        "Higher is better, but coverage alone is easy to buy by fixing everything — read it " +
-          "against efficiency.",
-      ]
+      ],
+      { term: "coverage" },
     );
     const eff = tip(
       [
@@ -276,15 +269,12 @@ export async function renderProgram(main, _params, ctx) {
       [
         "Of everything remediated, the share that was actually high risk. TP / (TP + FP) — " +
           "here " + m.tp.toLocaleString() + " of " + (m.tp + m.fp).toLocaleString() + ".",
-        "The remainder is effort spent on findings the rule did not flag. Some of that is " +
-          "unavoidable: one patch often closes several CVEs at once, and only one of them " +
-          "may be the dangerous one.",
         m.prevalence !== null
           ? "Picking findings at random would score about " + pct(m.prevalence) +
-            " here, because that is the share of classified findings that are high risk. " +
-            "Efficiency at or below that means the program is not prioritizing."
-          : "There is no classified population yet to compare against.",
-      ]
+            " here, because that is the share of classified findings that are high risk."
+          : null,
+      ].filter(Boolean),
+      { term: "efficiency" },
     );
 
     const minis = el("div", { class: "hero-minis" });
@@ -367,7 +357,7 @@ export async function renderProgram(main, _params, ctx) {
         el("span", { class: "prog-cell-word" },
           spec.abbr ? el("span", { class: "prog-cell-abbr" }, spec.abbr) : null,
           spec.word));
-      return el("td", {}, tip(btn, [spec.help]));
+      return el("td", {}, bookTip(btn, spec.term));
     };
 
     const table = el("table", { class: "data prog-matrix" },
@@ -389,10 +379,7 @@ export async function renderProgram(main, _params, ctx) {
           el("td", { class: "num" }, m.notHighRisk.toLocaleString())),
         el("tr", { class: "prog-unknown-row" },
           el("th", { scope: "row" },
-            tip("No captured signal",
-              ["Outside the 2×2 on purpose: these findings are not 'low risk', they are " +
-                "unscored. Counting them as low risk would inflate efficiency and deflate " +
-                "coverage at the same time, so they are excluded from both and reported here."])),
+            glossaryTip("No captured signal", "no-captured-signal")),
           cell("unknownRemediated", m.unknownRemediated),
           cell("unknownOpen", m.unknownOpen),
           el("td", { class: "num" }, m.unknown.toLocaleString()))),
@@ -525,16 +512,8 @@ export async function renderProgram(main, _params, ctx) {
     trendHost.append(sectionLabel("Over time"));
     const box = el("div", { class: "chart-box" }, el("canvas", {}));
     const card = el("div", { class: "chart-card" },
-      el("h3", {}, tip("Coverage & efficiency over time",
-        ["Both rates recomputed at each date over the findings that existed then: a finding " +
-          "counts as remediated from its resolution date onward, and as open before it.",
-          "Risk classification is NOT re-evaluated per date — each finding carries the signals " +
-          "ever observed for it. A CVE that only reached the KEV catalog later therefore counts " +
-          "as high risk in earlier points too. That makes the early series read pessimistically, " +
-          "and it is what stops last week's plotted value from changing every time a scan lands.",
-          "Shaded region: dates before the first saved scan, reconstructed from first-detection " +
-          "dates. Closures there are under-counted, because a finding that simply stopped " +
-          "appearing is dated to the scan that noticed."])),
+      el("h3", {}, glossaryTip("Coverage & efficiency over time",
+        "coverage-efficiency-trend")),
       box);
     trendHost.append(card);
     const canvas = box.querySelector("canvas");
@@ -593,15 +572,8 @@ export async function renderProgram(main, _params, ctx) {
     if (sens.length > 1) {
       const box = el("div", { class: "chart-box chart-box--tall" }, el("canvas", {}));
       ruleHost.append(el("div", { class: "chart-card" },
-        el("h3", {}, tip("How much the rule choice matters",
-          ["Each point is one combination of signals, scored over this same register: how much " +
-            "of what THAT rule calls high risk got fixed (coverage, across) versus how much of " +
-            "the fixing it would credit (efficiency, up). The active rule is the filled diamond.",
-            "Up and to the right is better, and no rule reaches the corner — that trade-off is " +
-            "the whole point of tracking both numbers.",
-            "This measures sensitivity to the rule, not which rule is objectively right: the " +
-            "ground truth here is the rule itself, so a narrow rule can look flattering simply " +
-            "by flagging less."])),
+        el("h3", {}, glossaryTip("How much the rule choice matters",
+          "rule-sensitivity")),
         box));
       // The one caveat that must not depend on a hover: each point is scored against its OWN
       // definition of high risk, so a narrow rule can post high coverage simply by flagging

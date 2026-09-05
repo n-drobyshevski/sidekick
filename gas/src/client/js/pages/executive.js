@@ -27,8 +27,8 @@
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, dataTable, el, emptyState, errorState, fmtDateTime, fmtSpan, heroStat, num,
-  pageHeader, scopeBar, sectionLabel, skeleton, statusPill, tip, tipAnchor,
+  absent, clear, dataTable, el, emptyState, errorState, fmtDateTime, fmtSpan, glossaryTip,
+  heroStat, num, pageHeader, scopeBar, sectionLabel, skeleton, statusPill, tip, tipAnchor,
 } from "../ui.js";
 
 // A play triangle for the Run scan button — inlined stroke/fill SVG (the GAS/CSP sandbox
@@ -327,19 +327,18 @@ export async function renderExecutive(main, _params, ctx) {
     // register's when it isn't. The chip above says the same thing for the page as a whole; this
     // says it for the figure, which is the part that gets screenshotted out of context.
     const scopeSuffix = domain ? ` — ${domain}` : supportGroup ? ` — ${supportGroup}` : "";
-    const metric = tip(
+    // THE SENTENCE USED TO BE WRITTEN OUT HERE AND AGAIN IN pages/mttr.js, and the two copies
+    // had already drifted a word apart ("at least that many days out" against "at least that
+    // far out"). It is helpContent.js's `km-median` entry now, and `glossaryTip` is the shape
+    // for "the book already says it": the card shows the entry's first two lines and Enter
+    // opens the whole definition on the key sheet. `tip(content, lines, { term })` is the other
+    // shape, for a trigger that says something sharper in place than the book does.
+    const metric = glossaryTip(
       [
         el("div", { class: "label" }, `Median MTTR (Kaplan–Meier)${scopeSuffix}`),
         el("div", { class: "exec-hero-value num" }, fmtKmMedian(km)),
       ],
-      [
-        "Kaplan–Meier median days from first detection to remediation. Still-open findings " +
-          "count as censored observations instead of being ignored, so a wave of fresh open " +
-          "findings can't bias this down.",
-        "\"> X d\" means the curve never dropped to 50% within the observed window — over " +
-          "half of tracked findings are still open, so the true median is at least that many " +
-          "days out.",
-      ]
+      "km-median",
     );
     // The metric sits in an inline row with the week-over-week badge to its bottom-right (a small
     // arrow + number, red when MTTR rose, green when it fell). The badge is a sibling, not a child
