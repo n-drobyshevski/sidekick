@@ -1,5 +1,9 @@
 {
   "name": "wiz-sidekick-shared",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "measure": "node measure.mjs",
+    "measure:wave": "node measure.mjs --before 01aca7b --after HEAD"
+  }
 }

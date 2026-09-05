@@ -107,6 +107,7 @@ registerParityContract({
     "./styles/pages.css",
     "../../../gas_shared/styles/overrides.css",
   ],
+  localSheets: ["./styles/tokens.css", "./styles/pages.css"],
 });
 
 registerZScaleContract(base);

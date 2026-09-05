@@ -26,6 +26,12 @@ import { resolve } from "node:path";
  * @param {string[]} ctx.localUiModules  the only files allowed under src/client/js/ui/
  * @param {string[]} ctx.sheetOrder      the @import specifiers of src/client/styles.css,
  *                                       in order
+ * @param {string[]} [ctx.localSheets]   the subset of ctx.sheetOrder that is THIS app's own
+ *                                       (the "./…" specifiers, not "../../../gas_shared/…").
+ *                                       Optional: an app that has not enumerated its own
+ *                                       sheets yet gets a named `it.skip` instead of a vacuous
+ *                                       pass — see the "keeps only its declared local
+ *                                       stylesheets" test below.
  */
 export function registerParityContract(ctx) {
   const { describe, it, expect, app } = ctx;
@@ -84,6 +90,43 @@ export function registerParityContract(ctx) {
       const UI = readFileSync(resolve(jsDir, "ui.js"), "utf8");
       expect(UI).toMatch(/export \* from "[./]*gas_shared\/ui\/index\.js";/);
     });
+
+    it("defines relativeAge / syncCaption / absentText nowhere but gas_shared", () => {
+      // THE FAILURE THE ALLOW-LIST ABOVE CANNOT SEE. A re-forked ui/figures.js would already
+      // fail "keeps only the allow-listed local modules", but the pre-P8 defect was never a
+      // second FILE — it was a private helper inline in pages/history.js (gas) and a second,
+      // coarser inline calculation in each app's own rail caption (all three). Neither shows
+      // up in a directory listing. So this sweeps every .js file this app ships for a
+      // DECLARATION of one of these three names — not a usage, not an import, a declaration —
+      // anywhere under src/client/js/, ui/ included.
+      const FORKABLE = ["relativeAge", "syncCaption", "absentText"];
+      /** @type {string[]} */
+      const files = [];
+      const walk = (dir) => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          const p = resolve(dir, e.name);
+          if (e.isDirectory()) walk(p);
+          else if (e.name.endsWith(".js")) files.push(p);
+        }
+      };
+      walk(jsDir);
+      expect(files.length, app + ": the walk found no client .js files at all").toBeGreaterThan(0);
+
+      const offenders = [];
+      for (const file of files) {
+        const src = readFileSync(file, "utf8");
+        for (const name of FORKABLE) {
+          const declared = new RegExp(
+            "(function\\s+" + name + "\\s*\\(|\\b(?:const|let|var)\\s+" + name + "\\s*=)",
+          );
+          if (declared.test(src)) {
+            offenders.push(file.slice(root.length).replace(/\\/g, "/") + " declares " + name);
+          }
+        }
+      }
+      expect(offenders, app + " has reforked a shared primitive back into a local declaration")
+        .toEqual([]);
+    });
   });
 
   describe(app + ": the stylesheet index imports the shared sheets in cascade order", () => {
@@ -100,6 +143,40 @@ export function registerParityContract(ctx) {
       const imports = [...src.matchAll(/@import\s+"([^"]+)"/g)].map((m) => m[1]);
       expect(imports[imports.length - 1]).toMatch(/overrides\.css$/);
     });
+
+    it("puts tokens.base.css first, ahead of the app's own brand tokens.css", () => {
+      // The z scale, the severity palette and the five-token accent shape all live in
+      // tokens.base.css. An app's own tokens.css REDEFINES the five brand tokens on top of
+      // it (--accent, --accent-text, …) — if the cascade ran the other way, the brand values
+      // would win the specificity tie by being declared last and the base file's defaults
+      // would be the ones actually painted. This is asserted against the REAL parsed
+      // imports, not against ctx.sheetOrder: ctx.sheetOrder is supplied by the very same test
+      // file this contract is guarding, so a wrong sheetOrder and a wrong styles.css could
+      // agree with each other and this would be the only thing left to notice.
+      const src = readFileSync(resolve(root, "src/client/styles.css"), "utf8");
+      const imports = [...src.matchAll(/@import\s+"([^"]+)"/g)].map((m) => m[1]);
+      expect(imports[0], app + "'s styles.css does not import tokens.base.css first")
+        .toMatch(/tokens\.base\.css$/);
+    });
+
+    // The generalisation of a check gas's OWN test file used to carry as a duplicate describe
+    // block ("until the parity contract can hold it" — see gas/test/shared.test.js history).
+    // ctx.localSheets is optional: an app that has not enumerated its own sheets gets a named
+    // skip rather than a check that vacuously passes on an empty expectation. The skip/run
+    // choice has to be made HERE, at registration time — vitest's own `it.skip` cannot be
+    // called from inside a running `it`.
+    if (ctx.localSheets) {
+      it("keeps only its declared local stylesheets — every other sheet is shared", () => {
+        const src = readFileSync(resolve(root, "src/client/styles.css"), "utf8");
+        const imports = [...src.matchAll(/@import\s+"([^"]+)"/g)].map((m) => m[1]);
+        const local = imports.filter((p) => p.startsWith("./"));
+        expect(local, app + ": local stylesheets drifted from ctx.localSheets")
+          .toEqual(ctx.localSheets);
+      });
+    } else {
+      it.skip(app + " keeps only its declared local stylesheets — SKIPPED: no ctx.localSheets "
+        + "given", () => {});
+    }
 
     it("resolves every one of them to a file that exists", () => {
       const indexPath = resolve(root, "src/client/styles.css");

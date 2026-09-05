@@ -13,10 +13,12 @@
 
 // THE MARK, A THIRD TIME — and copied rather than imported, deliberately.
 //
-// src/client/js/ui/brandMark.js is the source; src/client/index.html already carries a second
-// copy because the splash paints before any JavaScript runs, and test/shared.test.js pins
-// that copy to the module's constants. These pages need a third for a different reason: they
-// are served by the SERVER bundle, and the module lives in the client one.
+// gas_shared/ui/brandMark.js is the source; gas_shared/shell/index.template.html (rendered
+// per app from its own MANIFEST — there is no more per-app src/client/index.html) already
+// carries a second copy because the splash paints before any JavaScript runs, and
+// gas_shared/test/contracts/brandMark.js pins that copy to the module's constants. These
+// pages need a third for a different reason: they are served by the SERVER bundle, and the
+// module lives in the client one.
 //
 // Importing it across that line was tried and rejected on two counts. tsc refuses (`allowJs`
 // is off, so the .js has no declarations) and would need a hand-written .d.ts shim. Worse,
@@ -25,12 +27,12 @@
 // server bundle's graph, one refactor away from evaluating `document` inside doGet. That is a
 // total outage traded for a decorative glyph.
 //
-// So the geometry below is duplicated and pinned by the same test that pins index.html — the
-// pattern that file already documents: a duplication forced by the platform, held by a test
-// rather than by a comment. Only the COMPACT crop is here: it is a viewBox over the same
-// artwork with the world map left out, which is ~500 bytes instead of ~5KB, and it is the crop
-// the app header uses at this size for the reason brandMark.js gives — 307 dots inside a 22px
-// glyph read as grey noise.
+// So the geometry below is duplicated and pinned by the same contract that pins the rendered
+// index.html — the pattern that contract already documents: a duplication forced by the
+// platform, held by a test rather than by a comment. Only the COMPACT crop is here: it is a
+// viewBox over the same artwork with the world map left out, which is ~500 bytes instead of
+// ~5KB, and it is the crop the app header uses at this size for the reason
+// gas_shared/ui/brandMark.js gives — 307 dots inside a 22px glyph read as grey noise.
 //
 // The literal hex is on the presentation attributes, exactly as in the module, which is what
 // lets the mark draw correctly on these pages with no stylesheet behind it.

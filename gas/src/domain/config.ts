@@ -4,7 +4,8 @@
 export const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"] as const;
 export type Severity = (typeof SEVERITY_ORDER)[number];
 
-// Light-theme severity palette (see DESIGN.md); mirrored as --sev-* tokens in styles.css.
+// Light-theme severity palette (see DESIGN.md); mirrored as --sev-* tokens in
+// gas_shared/styles/tokens.base.css, byte-identical across all four surfaces.
 export const SEVERITY_COLORS: Record<string, string> = {
   CRITICAL: "#dc2626",
   HIGH: "#ea580c",
