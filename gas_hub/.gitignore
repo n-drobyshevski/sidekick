@@ -1,0 +1,6 @@
+node_modules/
+.clasp.json
+# The dev harness's own build of the server bundle (dev/serve.mjs writes it per page load).
+# The three registers' equivalents are listed in the REPO-ROOT .gitignore, one line each;
+# this one is here instead so the rule ships with the package that generates it.
+dev/server.dev.js
