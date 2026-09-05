@@ -246,11 +246,22 @@ describe("kaplanMeier", () => {
   });
 
   // THIS TEST CARRIES AN EXPLICIT TIMEOUT BECAUSE IT IS LEGITIMATELY SLOW, not because it is
-  // flaky. `kaplanMeier` costs about 7us per row and this feeds it 200k of them, so it measures
-  // ~2.8s on a 4-core x64 box — against vitest's 5s default, which is only 1.7x headroom. On a
-  // smaller machine (a 2-vCPU cloud shell, a shared CI runner) that tips over and the suite
-  // fails on a claim that is still perfectly true. The generous budget below is the honest fix:
-  // nothing about the assertion is weakened, only the clock it is judged against.
+  // flaky — and the 30_000 that used to be here was NOT real headroom: vitest.config.ts's own
+  // `testTimeout` is already 30_000, so restating it added nothing, and the two numbers that
+  // comment cited ("vitest's 5s default", "~2.8s measured on a 4-core x64 box") were both
+  // stale by the time anyone next looked. Re-measured 2026-09-05 on this machine (node 24/x64,
+  // 8 logical cores): this file run alone (the `pure` project, isolate:false) took 5.9s / 13.2s
+  // / 13.8s across three consecutive runs — already a >2x spread on an otherwise idle box.
+  // Under `test:exact` (GAS_TEST_FULL_ISOLATION=1, isolate:true, sharing one process with all
+  // 69 files) it got both slower and more variable: 12.3s / 19.5s / 26.8s / 25.6s across four
+  // runs — the worst of those left 3.2s of headroom under the OLD 30s budget, on an UNLOADED
+  // dev machine, not a busy CI box. A prior pass on this exact defect bisected it to
+  // environment sensitivity rather than a regression (a clean-HEAD worktree of the pre-wave
+  // commit, same node_modules, also flipped pass/fail run-to-run with none of this wave's code
+  // present) — consistent with the variance re-measured here. 120_000 below matches the budget
+  // `gas_devsecops/test/remediation.test.ts` already uses for its own N=200,000 cases (see its
+  // STRESS_TIMEOUT_MS comment) — more than 4x the worst wall time measured above, not a number
+  // raised until red went away.
   //
   // N STAYS AT 200k, and shrinking it would be the wrong way to make this fast. The argument
   // limit is a function of the available stack, so it MOVES with the engine and the
@@ -268,6 +279,24 @@ describe("kaplanMeier", () => {
     // stack once the array is large — the crash that took down the Executive view (which asks
     // for every severity, maximizing the set). 200k rows is well past that spread limit; maxNum
     // must fold it with a two-arg reduce instead. Guards against reintroducing the spread.
+    //
+    // CAVEAT found while re-measuring this test's timeout (2026-09-05), NOT fixed here: "well
+    // past" holds on the main thread (125,275, node 22/x64 — see the comment above the `it`)
+    // but not inside the worker_threads this suite actually runs tests in (`pool: "threads"`,
+    // vitest.config.ts). A worker_thread's default V8 stack tolerates a much bigger spread
+    // than the main thread's — measured here (node 24/x64) via a bare `Math.max(...arr)` run
+    // in a worker_thread: 200k/300k/400k/490k all returned cleanly, 500k threw, so the real
+    // threshold sits near 490k-500k, not ~125k. Perturbing this test by literally reverting
+    // `maxNum` to `Math.max(...times)` and rerunning at N=200_000 (as-is) produces a clean
+    // PASS, no overflow and no timeout; the same reversion at N=600_000 fails in ~330ms with
+    // the intended RangeError. So at today's N this test does not actually catch the
+    // regression it is named for, under the pool this suite runs in — only `test/util.test.ts`
+    // (a direct call, not a spread-limit probe) and real-world exposure (a browser / Apps
+    // Script V8, not this runner) still stand behind it. Raising N to restore real coverage
+    // multiplies this test's already-large runtime by roughly N's own ratio (kaplanMeier's
+    // curve cost is O(distinct times x observations), and distinct times stay fixed at 500),
+    // which is a bigger, separate change than a timeout fix and is left as a finding, not
+    // silently patched over: "a guard that fires on nothing is a finding, not a pass."
     const N = 200_000;
     const rows: ReturnType<typeof res>[] = [];
     for (let i = 0; i < N; i++) rows.push(res((i % 500) + 1));
@@ -275,7 +304,7 @@ describe("kaplanMeier", () => {
     expect(km.total).toBe(N);
     expect(km.events).toBe(N);
     expect(km.restrictionTime).toBe(500); // maxNum(times) — the largest mttr_days
-  }, 30_000);
+  }, 120_000);
 });
 
 describe("kmQuantileFromCurve", () => {
@@ -565,10 +594,6 @@ describe("latencyView / latencySegments", () => {
     expect(km.censored).toBe(seg.censored + seg.closedBeforeFix);
   });
 
-  // The sibling of the Math.max(...times) regression above, on the latency path. Same shape
-  // as that test on purpose — many rows, FEW distinct event times — because kmCurve is
-  // O(distinct times x observations): 200k rows with 200k distinct times is quadratic and
-  // would time out for a reason that has nothing to do with what is being guarded.
   // Why api.ts computes latency over a population the show-no-fix toggle has NOT narrowed.
   // baseRowNoFix is that toggle's predicate, and the rows it removes are exactly this
   // metric's censored population — so routing latency through visibleBase() would leave only
@@ -597,6 +622,31 @@ describe("latencyView / latencySegments", () => {
     expect(kmMedian(latencyView(narrowed, "detection", NOW))).toBe(2);
   });
 
+  // The sibling of the Math.max(...times) regression above, on the latency path. Same shape
+  // as that test on purpose — many rows, FEW distinct event times — because kmCurve is
+  // O(distinct times x observations): 200k rows with 200k distinct times is quadratic and
+  // would time out for a reason that has nothing to do with what is being guarded; the 500
+  // distinct fix dates below (not 200k) are what keeps this test testing the estimator
+  // instead of testing Date arithmetic. (This paragraph used to sit two tests up, above
+  // "the show-no-fix filter..." — a 4-row fixture with no N and no distinct-times question —
+  // moved here to where the thing it describes actually is.)
+  //
+  // Carries the same kind of explicit timeout as kaplanMeier's "large risk set" test above,
+  // for the same reason: re-measured 2026-09-05 under `test:exact` (GAS_TEST_FULL_ISOLATION=1,
+  // isolate:true, all 69 files), this test alone took 24.2s / 11.2s / 29.1s / 17.3s across
+  // four runs — the worst leaving under a second of headroom against the OLD 30_000 budget,
+  // which (like the sibling test's) was only vitest.config.ts's own default restated, not
+  // real margin. N STAYS AT 200k for the same reason it does above — this test's claim IS
+  // "register-sized", and shrinking the register shrinks the claim, not the runtime. 120_000
+  // matches `gas_devsecops/test/remediation.test.ts`'s STRESS_TIMEOUT_MS for its own
+  // N=200,000 cases — more than 4x the worst wall time measured above.
+  //
+  // The same CAVEAT documented on the "large risk set" test above applies here too, since
+  // this test also runs its rows through `kaplanMeier` -> `maxNum`: at N=200_000, under the
+  // `pool: "threads"` worker this suite actually runs in, the spread-overflow this is a
+  // sibling guard for does not reliably fire (measured threshold ~490k-500k here, not the
+  // ~125k measured on the main thread). Not fixed here — see that test's comment for the
+  // full measurement and why raising N is a separate, larger change than this timeout fix.
   it("register-sized population survives the projection and the estimator", () => {
     const N = 200_000;
     const base = Date.parse("2026-07-01T00:00:00Z");
@@ -608,7 +658,7 @@ describe("latencyView / latencySegments", () => {
     expect(km.total).toBe(N);
     expect(km.events).toBe(N);
     expect(km.restrictionTime).toBe(500); // the largest latency, in days
-  }, 30_000);
+  }, 120_000);
 });
 
 describe("awaitingVendorFix", () => {
